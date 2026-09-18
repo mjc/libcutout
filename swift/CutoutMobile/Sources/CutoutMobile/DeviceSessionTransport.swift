@@ -3,6 +3,25 @@ import Foundation
 
 /// Queue-confined CoreBluetooth effects for one Rust-owned, protocol-verified attempt.
 final class DeviceSessionTransport: @unchecked Sendable {
+    private typealias PendingOperation = (CoreBluetoothPlannedOperation, (CoreBluetoothWriteDisposition) -> Void)
+
+    private final class SettingWriteReceipt {
+        let id: DeviceSettingID
+        let requestID: UInt64
+        var chunks: [CoreBluetoothWriteDisposition]
+
+        init(id: DeviceSettingID, requestID: UInt64, chunkCount: Int) {
+            self.id = id
+            self.requestID = requestID
+            chunks = Array(repeating: .queued, count: chunkCount)
+        }
+
+        var disposition: CoreBluetoothWriteDisposition {
+            if chunks.isEmpty || chunks.contains(.rejected) { return .rejected }
+            return chunks.contains(.queued) ? .queued : .submitted
+        }
+    }
+
     let token: ConnectionAttemptToken
     private let state: CutoutSessionStateHandle
     private let planner: CoreBluetoothTransportPlanner
@@ -17,7 +36,8 @@ final class DeviceSessionTransport: @unchecked Sendable {
     private var chargeEstimate = ChargeEstimateState.missingProfile
     private var timer: DispatchSourceTimer?
     private var waitingForSubscription: BluetoothUuid?
-    private var pendingOperations: [(CoreBluetoothPlannedOperation, DeviceSettingID?)] = []
+    private var pendingOperations: [PendingOperation] = []
+    private var invalidated = false
     private(set) var records: [CoreBluetoothLiveRecord] = []
     private var publishedControls: DeviceControlsSnapshot?
     private var lastControlsPublication: MonotonicMilliseconds?
@@ -88,16 +108,22 @@ final class DeviceSessionTransport: @unchecked Sendable {
     }
 
     func submitSetting(_ id: DeviceSettingID, value: DeviceSettingValue, at: MonotonicMilliseconds) throws -> CoreBluetoothSessionStep {
-        guard waitingForSubscription == nil else { throw DeviceSettingSubmissionError.ConnectionUnavailable }
+        guard !invalidated, waitingForSubscription == nil else { throw DeviceSettingSubmissionError.ConnectionUnavailable }
+        defer { publishControls(at: clock.now(), immediately: true) }
+        let step = try state.submitSetting(token: token, id: id, value: value, monotonicMs: at.rawValue)
+        guard let requestID = state.deviceControlsSnapshot().setting(for: id)?.requestId else {
+            throw DeviceSettingSubmissionError.ConnectionUnavailable
+        }
         return try process(
-            state.submitSetting(token: token, id: id, value: value, monotonicMs: at.rawValue),
+            step,
             at: at,
-            settingID: id
+            settingRequest: (id, requestID)
         )
     }
 
     func submitAction(_ id: DeviceActionID, at: MonotonicMilliseconds) throws -> CoreBluetoothSessionStep {
-        guard waitingForSubscription == nil else { throw DeviceActionSubmissionError.ConnectionUnavailable }
+        guard !invalidated, waitingForSubscription == nil else { throw DeviceActionSubmissionError.ConnectionUnavailable }
+        defer { publishControls(at: clock.now(), immediately: true) }
         return try process(state.submitAction(token: token, id: id, monotonicMs: at.rawValue), at: at)
     }
 
@@ -116,22 +142,24 @@ final class DeviceSessionTransport: @unchecked Sendable {
     }
 
     func invalidate() {
+        guard !invalidated else { return }
         timer?.cancel()
         timer = nil
-        pendingOperations.removeAll()
+        rejectPendingOperations()
         waitingForSubscription = nil
         if state.connectionAttemptIsCurrent(token: token) {
             sink?.clearPendingWithoutResponseWrites()
             persistVoltageSag(force: true)
         }
+        invalidated = true
         chargeEstimator.reset()
     }
 
     func handleNotificationStateUpdate(channel: BluetoothUuid, isNotifying: Bool, error: Error?) {
-        guard state.verifiedConnectionAttemptIsCurrent(token: token), waitingForSubscription == channel else { return }
+        guard !invalidated, state.verifiedConnectionAttemptIsCurrent(token: token), waitingForSubscription == channel else { return }
         waitingForSubscription = nil
         guard error == nil, isNotifying else {
-            pendingOperations.removeAll()
+            rejectPendingOperations()
             onSubscriptionFailure?(channel, error)
             return
         }
@@ -142,7 +170,7 @@ final class DeviceSessionTransport: @unchecked Sendable {
     }
 
     func handlePeripheralIsReadyToSendWithoutResponse() {
-        guard state.verifiedConnectionAttemptIsCurrent(token: token) else { return }
+        guard !invalidated, state.verifiedConnectionAttemptIsCurrent(token: token) else { return }
         sink?.peripheralIsReadyToSendWithoutResponse()
     }
 
@@ -153,6 +181,7 @@ final class DeviceSessionTransport: @unchecked Sendable {
         channel: Data = Data(),
         bytes: Data = Data()
     ) throws -> CoreBluetoothSessionStep {
+        guard !invalidated else { throw DeviceSettingSubmissionError.ConnectionUnavailable }
         guard let step = state.ingestDeviceSession(token: token, input: MobileSessionInputDto(
             kind: kind, monotonicMs: at.dto, maxWriteLen: writeLimit?.dto,
             channel: channel, bytes: bytes
@@ -167,7 +196,7 @@ final class DeviceSessionTransport: @unchecked Sendable {
         _ step: MobileDeviceSessionStepDto,
         at: MonotonicMilliseconds,
         publishImmediately: Bool = true,
-        settingID: DeviceSettingID? = nil
+        settingRequest: (id: DeviceSettingID, requestID: UInt64)? = nil
     ) throws -> CoreBluetoothSessionStep {
         guard step.session.connection.token == token,
               state.verifiedConnectionAttemptIsCurrent(token: token) else {
@@ -181,7 +210,35 @@ final class DeviceSessionTransport: @unchecked Sendable {
         if let error = step.result.error { throw CutoutSessionError(error) }
         let actions = step.result.outputs.map(SessionAction.init)
         let operations = actions.flatMap(planner.plan(action:))
-        execute(operations.map { ($0, settingID) })
+        let chunkCount = operations.reduce(0) { count, operation in
+            if case .writeWithoutResponse = operation { return count + 1 }
+            return count
+        }
+        let receipt = settingRequest.map {
+            SettingWriteReceipt(id: $0.id, requestID: $0.requestID, chunkCount: chunkCount)
+        }
+        // Later tick outputs have no request identity; only attribute this submission's writes.
+        if let receipt, chunkCount == 0, actions.contains(where: { $0.kind == .write }) {
+            recordSettingTransport(receipt)
+        }
+        var chunkIndex = 0
+        execute(operations.map { operation in
+            let index = chunkIndex
+            if case .writeWithoutResponse = operation { chunkIndex += 1 }
+            return (operation, { [weak self] disposition in
+                guard let self, !self.invalidated,
+                      self.state.verifiedConnectionAttemptIsCurrent(token: self.token) else { return }
+                self.record(.writeReceipt(
+                    platformIdentifier: self.context.platformIdentifier,
+                    operation: operation,
+                    disposition: disposition
+                ))
+                if let receipt, receipt.chunks[index] == .queued {
+                    receipt.chunks[index] = disposition
+                    self.recordSettingTransport(receipt)
+                }
+            })
+        })
         return CoreBluetoothSessionStep(
             operations: operations,
             snapshot: TelemetrySnapshot(step.telemetry, chargeEstimate: chargeEstimate),
@@ -191,50 +248,43 @@ final class DeviceSessionTransport: @unchecked Sendable {
         )
     }
 
-    private func execute(_ operations: [(CoreBluetoothPlannedOperation, DeviceSettingID?)]) {
-        var markedSettings = Set<DeviceSettingID>()
-        for (operation, settingID) in operations {
-            guard state.verifiedConnectionAttemptIsCurrent(token: token) else { return }
+    private func execute(_ operations: [PendingOperation]) {
+        for (operation, onReceipt) in operations {
+            guard !invalidated, state.verifiedConnectionAttemptIsCurrent(token: token) else { return }
             if waitingForSubscription != nil {
-                pendingOperations.append((operation, settingID))
-                if case .writeWithoutResponse = operation, let settingID {
-                    recordSettingTransport(settingID, disposition: .queued)
-                    markedSettings.insert(settingID)
-                }
+                pendingOperations.append((operation, onReceipt))
+                if case .writeWithoutResponse = operation { onReceipt(.queued) }
                 continue
             }
             // An already-enabled characteristic can acknowledge synchronously.
             // Install the wait before asking the native sink to subscribe.
             if case .subscribe(let channel) = operation { waitingForSubscription = channel }
-            let disposition = executor.execute(operation)
+            executor.execute(operation, onWriteReceipt: onReceipt)
             record(.operation(platformIdentifier: context.platformIdentifier, operation: operation))
-            if let disposition, case .writeWithoutResponse = operation, let settingID {
-                record(.writeReceipt(
-                    platformIdentifier: context.platformIdentifier,
-                    operation: operation,
-                    disposition: disposition
-                ))
-                recordSettingTransport(settingID, disposition: disposition)
-                markedSettings.insert(settingID)
-            }
         }
-        for (_, settingID) in operations {
-            guard let settingID, !markedSettings.contains(settingID) else { continue }
-            recordSettingTransport(settingID, disposition: .rejected)
+    }
+
+    private func rejectPendingOperations() {
+        let cancelled = pendingOperations
+        pendingOperations.removeAll()
+        for (operation, onReceipt) in cancelled {
+            if case .writeWithoutResponse = operation { onReceipt(.rejected) }
         }
     }
 
     private func recordSettingTransport(
-        _ id: DeviceSettingID,
-        disposition: CoreBluetoothWriteDisposition
+        _ receipt: SettingWriteReceipt
     ) {
         let status: MobileSettingTransportStatusDto
-        switch disposition {
+        switch receipt.disposition {
         case .submitted: status = .submitted
         case .queued: status = .queued
         case .rejected: status = .rejected
         }
-        guard state.markSettingTransport(token: token, id: id, status: status) else { return }
+        guard state.markSettingTransport(
+            token: token, id: receipt.id, requestId: receipt.requestID,
+            status: status, monotonicMs: clock.now().rawValue
+        ) else { return }
         publishControls(at: clock.now(), immediately: true)
     }
 

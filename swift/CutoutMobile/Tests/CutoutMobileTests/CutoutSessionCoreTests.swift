@@ -3115,12 +3115,13 @@ private final class RecordingOperationSink: CoreBluetoothOperationSink {
         recordedEvents.append(.subscribe)
     }
 
-    func writeWithoutResponse(channel: BluetoothUuid, bytes: Data) -> CoreBluetoothWriteDisposition {
+    func writeWithoutResponse(channel: BluetoothUuid, bytes: Data, onReceipt: @escaping (CoreBluetoothWriteDisposition) -> Void) -> CoreBluetoothWriteDisposition {
         writesChanged.lock()
         recordedWrites.append(bytes)
         recordedEvents.append(.write)
         writesChanged.broadcast()
         writesChanged.unlock()
+        onReceipt(.submitted)
         return .submitted
     }
 

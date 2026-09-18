@@ -45,15 +45,44 @@ without a validation-mode switch: four lights/display controls, five limits
 and alarms, five ride-feel controls, and four wheel modes. Source/hardware
 evidence remains distinct from ordinary command availability;
 the production descriptor does not claim a physical test. Rust owns the model,
-value-bound, fresh-speed, command sequencing, and lifecycle policy. Enforcement
-is incomplete across lower-level binding and delayed native transport: accepted
-plans can precede host submission and queued writes can lose operation identity.
+value-bound, fresh-speed, command sequencing, and lifecycle policy. Mobile
+setting requests now retain identity through native queueing and distinguish
+acceptance from host submission. Lower-level bindings, delayed multi-step
+actions, and rechecking authorization at delayed native handoff still need
+their broader contract work.
 The low-level NOSFET/Falcon encoders now reject inexact speed values instead of
 truncating them. Swift submits typed values and
 renders state; it must not supply a second policy. Simulator state is synthetic
 evidence and must not become a live readback claim.
 
 ## Physical evidence and open acceptance
+
+### September 18 Tune failure report
+
+The phone capture covering the user's 15:15 screenshot contains successful
+writes followed by matching CRC-validated page-8 readback: display brightness
+0→30%, beeper volume 0→5%, and tilt-back speed 56→55 km/h (34.2 mph).
+Those observations are stronger evidence than the generic error retained in
+the screenshot. The same capture also contains wheel speed above the existing
+500 mm/s settings limit around the screenshot time. It does not record the
+timestamp and reason of each refused button press, so it cannot establish the
+exact cause of every displayed error.
+
+The regression `nf2557_reported_tune_values_send_when_stopped_and_refuse_while_moving`
+replays complete stopped and moving packets from that capture. It checks the
+four reported values (55 km/h tilt-back, 80% PWM duty, 45° lateral limit, and
+56 km/h speed alarm), their command destinations and payload values, refusal
+without any write while moving, and a successful retry after stopping.
+
+The repaired mobile path retains the typed protocol refusal instead of
+replacing it with the generic send error. Rejected drafts remain drafts; edits
+and matching readback clear stale local feedback. Transport receipts carry a
+request identity through BLE queueing and chunk completion. Queue overflow
+rejects the incoming write rather than silently evicting earlier work, and
+confirmation timing begins after host submission. Host submission alone is
+not proof of delivery or a physical effect. Delayed multi-step actions still
+need their own end-to-end operation correlation; this settings repair does
+not close that acceptance item.
 
 The user's NF2557 reports are evidence of individual interactions, not a
 controlled acceptance run with recorded request, host receipt, readback and

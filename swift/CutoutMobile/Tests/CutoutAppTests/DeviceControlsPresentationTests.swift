@@ -23,7 +23,7 @@ final class DeviceControlsPresentationTests: XCTestCase {
         XCTAssertNil(DeviceControlPresentation.status(.idle))
         XCTAssertNil(DeviceControlPresentation.actionStatus(.idle))
         XCTAssertEqual(DeviceControlPresentation.status(.failed), "Failed")
-        XCTAssertEqual(DeviceControlPresentation.status(.sentWithoutConfirmation), "Sent; no confirmation")
+        XCTAssertEqual(DeviceControlPresentation.status(.sentWithoutConfirmation), "Requested; no confirmation")
         XCTAssertEqual(DeviceControlPresentation.refusal(.busy), "The wheel is processing another command.")
     }
 
@@ -81,7 +81,7 @@ final class DeviceControlsPresentationTests: XCTestCase {
         state.status = .sentWithoutConfirmation
         XCTAssertNil(state.current)
         XCTAssertEqual(DeviceControlPresentation.value(state.requested, control: .boolean), "On")
-        XCTAssertEqual(DeviceControlPresentation.status(state.status), "Sent; no confirmation")
+        XCTAssertEqual(DeviceControlPresentation.status(state.status), "Requested; no confirmation")
         state.current = .boolean(value: false)
         XCTAssertEqual(DeviceControlPresentation.value(state.current, control: .boolean), "Off")
         XCTAssertEqual(DeviceControlPresentation.value(state.requested, control: .boolean), "On")
@@ -94,7 +94,7 @@ final class DeviceControlsPresentationTests: XCTestCase {
         XCTAssertEqual(DeviceControlPresentation.sourceLabel(nil), "Wheel")
         XCTAssertEqual(
             DeviceControlPresentation.status(.sentWithoutConfirmation),
-            "Sent; no confirmation"
+            "Requested; no confirmation"
         )
         XCTAssertEqual(localizedAppText("settings.state.timed_out"), "Not confirmed")
     }
@@ -127,6 +127,19 @@ final class DeviceControlsPresentationTests: XCTestCase {
         }
     }
 
+    func testBooleanRequestSelectionDoesNotSurviveTransportRejectionOrLocalThrow() {
+        var state = makeState()
+        state.current = .boolean(value: false)
+        state.requested = .boolean(value: true)
+        state.status = .sentWithoutConfirmation
+        state.transport = .rejected
+        XCTAssertEqual(DeviceControlPresentation.booleanSelection(state), false)
+        state.transport = .submitted
+        XCTAssertEqual(DeviceControlPresentation.booleanSelection(state, submissionError: "Refused"), false)
+        state.current = nil
+        XCTAssertNil(DeviceControlPresentation.booleanSelection(state, submissionError: "Refused"))
+    }
+
     func testNumericStepsAlignFractionalReadbackAndDoNotOverflow() {
         let control = DeviceSettingControl.number(minimum: 10, maximum: 95, step: 10, precision: 0, unit: .percent, canDisable: true)
         XCTAssertEqual(DeviceControlPresentation.steppedValue(draft: nil, current: .number(value: 26), control: control, increasing: true), .number(value: 30))
@@ -147,7 +160,7 @@ final class DeviceControlsPresentationTests: XCTestCase {
         XCTAssertFalse(DeviceControlPresentation.hasChanges(draft: .disabled, current: .disabled))
         XCTAssertEqual(DeviceControlPresentation.value(nil, control: .boolean), "—")
         XCTAssertNil(DeviceControlPresentation.status(.confirmed))
-        XCTAssertEqual(DeviceControlPresentation.actionStatus(.sentWithoutConfirmation), "Sent; no confirmation")
+        XCTAssertEqual(DeviceControlPresentation.actionStatus(.sentWithoutConfirmation), "Requested; no confirmation")
         XCTAssertNotNil(DeviceControlPresentation.status(.waitingForConfirmation))
         XCTAssertNotNil(DeviceControlPresentation.status(.timedOut))
         XCTAssertNotNil(DeviceControlPresentation.status(.refused))
@@ -159,12 +172,174 @@ final class DeviceControlsPresentationTests: XCTestCase {
         XCTAssertEqual(DeviceControlPresentation.error(DeviceSettingSubmissionError.InvalidValue), "Choose one of the available values.")
     }
 
+    func testSessionRefusalsUseExistingLocalizedReasonsAndUnknownErrorsKeepFallback() {
+        let reasons: [(CommandRefusalReason, MobileControlRefusalReasonDto)] = [
+            (.missingArm, .missingArm), (.expiredArm, .expiredArm), (.busy, .busy),
+            (.wrongModel, .wrongModel), (.unsupportedCommand, .unsupportedCommand),
+            (.currentLimitExceeded, .currentLimitExceeded), (.wrongSafetyClass, .wrongSafetyClass),
+        ]
+        for (reason, snapshotReason) in reasons {
+            XCTAssertEqual(
+                DeviceControlPresentation.error(CutoutSessionError.commandRefused(reason)),
+                DeviceControlPresentation.refusal(snapshotReason)
+            )
+        }
+        XCTAssertEqual(DeviceControlPresentation.error(CutoutSessionError.commandRefused(.missingArm)),
+                       "Stop the wheel before changing this setting. A fresh speed reading is required.")
+        XCTAssertEqual(DeviceControlPresentation.error(CutoutSessionError.commandRefused(nil)), "Refused")
+        XCTAssertEqual(DeviceControlPresentation.error(CutoutSessionError.unexpectedStepError("diagnostic")),
+                       "The command could not be sent.")
+    }
+
+    func testThrownSubmissionRemainsDraftEvenWhenSnapshotContainsSameRequest() {
+        // PWM, lateral tilt and speed values from the reported failure.
+        for (requested, current): (Int32, Int32) in [(80, 30), (45, 40), (560, 550)] {
+            var state = makeState()
+            state.current = .number(value: current)
+            state.requested = .number(value: requested)
+            state.status = .waitingForConfirmation
+            state.transport = .accepted
+            var draft = DeviceSettingDraft()
+            draft.edit(state.requested)
+            draft.send(state.requested!) { _ in throw CutoutSessionError.commandRefused(.expiredArm) }
+            draft.reconcile(state)
+            XCTAssertEqual(draft.label(state), "Draft")
+            XCTAssertNil(draft.submittedValue)
+            XCTAssertNotNil(draft.submissionError)
+            XCTAssertTrue(draft.canApply(state))
+            XCTAssertEqual(state.current, .number(value: current), "UI feedback never changes wheel readback")
+
+            draft.send(state.requested!) { _ in }
+            XCTAssertEqual(draft.label(state), "Requested")
+            XCTAssertNil(draft.submissionError)
+            XCTAssertFalse(draft.canApply(state))
+            state.status = .timedOut
+            XCTAssertTrue(draft.canApply(state), "An accepted request can be retried after timeout")
+            XCTAssertEqual(draft.label(state), "Requested")
+        }
+    }
+
+    func testDraftEditAndMatchingWheelValueClearStaleFailure() {
+        var state = makeState()
+        state.current = .number(value: 30)
+        var draft = DeviceSettingDraft()
+        draft.edit(.number(value: 80))
+        draft.send(.number(value: 80)) { _ in throw DeviceSettingSubmissionError.ConnectionUnavailable }
+        draft.edit(.number(value: 45))
+        XCTAssertNil(draft.submissionError)
+        XCTAssertEqual(draft.label(state), "Draft")
+
+        draft.send(.number(value: 45)) { _ in throw CutoutSessionError.commandRefused(.missingArm) }
+        draft.reconcile(state)
+        XCTAssertNotNil(draft.submissionError, "An unrelated readback must preserve the failure")
+        state.current = .number(value: 45)
+        draft.reconcile(state)
+        XCTAssertNil(draft.submissionError, "Matching readback clears even a locally thrown submission")
+        XCTAssertNil(draft.value, "Do not leave Draft equal to Wheel")
+        XCTAssertFalse(draft.canApply(state))
+    }
+
+    func testConfirmedDraftSettlesAndDirectBooleanFailureClearsOnMatchingReadback() {
+        var state = makeState()
+        var draft = DeviceSettingDraft()
+        draft.edit(.number(value: 80))
+        draft.send(.number(value: 80)) { _ in }
+        state.current = .number(value: 80)
+        state.status = .confirmed
+        state.transport = .submitted
+        draft.reconcile(state)
+        XCTAssertNil(draft.value)
+        XCTAssertNil(draft.submittedValue)
+        XCTAssertNil(DeviceControlPresentation.feedback(state, submissionError: draft.submissionError))
+
+        draft.send(.boolean(value: true)) { _ in throw CutoutSessionError.commandRefused(.busy) }
+        XCTAssertNil(draft.value, "Direct boolean controls do not create a numeric/choice draft")
+        state.current = nil
+        draft.reconcile(state)
+        XCTAssertNotNil(draft.submissionError, "Unknown is not a matching wheel value")
+        state.current = .boolean(value: true)
+        draft.reconcile(state)
+        XCTAssertNil(draft.submissionError)
+    }
+
+    func testTransportEvidenceProducesOneStatusWithQueueAndRejectionPrecedence() {
+        var state = makeState()
+        for status: DeviceSettingStatus in [.waitingForConfirmation, .sentWithoutConfirmation, .timedOut] {
+            state.status = status
+            for (transport, text, isError): (MobileSettingTransportStatusDto, String, Bool) in [
+                (.accepted, "Accepted by app", false),
+                (.queued, "Queued for Bluetooth", false),
+                (.rejected, "Rejected before Bluetooth", true),
+            ] {
+                state.transport = transport
+                XCTAssertEqual(DeviceControlPresentation.feedback(state), .init(text: text, isError: isError))
+            }
+        }
+        state.status = .failed
+        state.transport = .queued
+        XCTAssertEqual(DeviceControlPresentation.feedback(state), .init(text: "Failed", isError: true))
+        state.transport = .rejected
+        XCTAssertEqual(DeviceControlPresentation.feedback(state), .init(text: "Rejected before Bluetooth", isError: true))
+    }
+
+    func testSubmittedAndLegacyEvidenceNeverClaimDeliveryAndConfirmationHidesStatus() {
+        var state = makeState()
+        for transport: MobileSettingTransportStatusDto? in [nil, .submitted] {
+            state.transport = transport
+            state.status = .waitingForConfirmation
+            XCTAssertEqual(DeviceControlPresentation.feedback(state), .init(text: "Pending", isError: false))
+            state.status = .sentWithoutConfirmation
+            XCTAssertEqual(DeviceControlPresentation.feedback(state), .init(text: "Requested; no confirmation", isError: false))
+            state.status = .timedOut
+            XCTAssertEqual(DeviceControlPresentation.feedback(state), .init(text: "Not confirmed", isError: true))
+            state.status = .idle
+            XCTAssertNil(DeviceControlPresentation.feedback(state))
+        }
+        for transport: MobileSettingTransportStatusDto? in [nil, .accepted, .queued, .submitted, .rejected] {
+            state.transport = transport
+            state.status = .confirmed
+            XCTAssertNil(DeviceControlPresentation.feedback(state))
+        }
+        XCTAssertNil(DeviceControlPresentation.feedback(nil))
+    }
+
+    func testSpecificAndLocalFailuresTakePrecedenceOverGenericStatus() {
+        var state = makeState()
+        state.status = .timedOut
+        state.transport = .queued
+        state.refusal = .missingArm
+        XCTAssertEqual(DeviceControlPresentation.feedback(state),
+                       .init(text: DeviceControlPresentation.refusal(.missingArm), isError: true))
+        let localError = DeviceControlPresentation.error(DeviceSettingSubmissionError.ConnectionUnavailable)
+        XCTAssertEqual(DeviceControlPresentation.feedback(state, submissionError: localError),
+                       .init(text: localError, isError: true))
+        state.status = .confirmed
+        XCTAssertNil(DeviceControlPresentation.feedback(state), "Settled state hides older refusal evidence")
+        XCTAssertEqual(DeviceControlPresentation.feedback(state, submissionError: localError),
+                       .init(text: localError, isError: true), "A new local failure must survive an older confirmed snapshot")
+    }
+
+    func testEditingADifferentDraftHidesTheOlderRequestOutcome() {
+        var state = makeState()
+        state.requested = .number(value: 80)
+        state.status = .refused
+        state.refusal = .missingArm
+        XCTAssertNil(
+            DeviceControlPresentation.feedback(state, draft: .number(value: 45)),
+            "An older refusal must not remain attached to a new unsubmitted draft"
+        )
+        XCTAssertEqual(
+            DeviceControlPresentation.feedback(state, draft: .number(value: 80)),
+            .init(text: DeviceControlPresentation.refusal(.missingArm), isError: true)
+        )
+    }
+
     private func makeDescriptor(access: DeviceSettingAccess = .writable) -> DeviceSettingDescriptor {
         .init(id: .highBeam, labelKey: "settings.high_beam.label", helpKey: nil, valueSemanticsKey: nil, group: .interface, order: 1, control: .boolean, access: access, writeVerification: .unverified, confirmationSupported: false)
     }
 
     private func makeState() -> DeviceSettingSnapshot {
-        .init(id: .highBeam, current: nil, currentSource: nil, evidence: nil, requested: nil, status: .idle, transport: nil, ageMs: nil, refusal: nil)
+        .init(id: .highBeam, current: nil, currentSource: nil, evidence: nil, requested: nil, requestId: nil, status: .idle, transport: nil, ageMs: nil, refusal: nil)
     }
 
     func testActionButtonsFollowRustNextStepWithoutInferringFromStatus() {

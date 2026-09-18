@@ -284,6 +284,8 @@ pub struct MobileSettingSnapshotDto {
     pub evidence: Option<MobileSettingEvidenceDto>,
     /// Most recent protocol submission, distinct from current readback.
     pub requested: Option<MobileSettingValueDto>,
+    /// Rust-generated identity required by host transport callbacks.
+    pub request_id: Option<u64>,
     /// Shared request lifecycle.
     pub status: MobileSettingStatusDto,
     /// Host transport evidence, independent of wheel readback confirmation.
@@ -306,6 +308,7 @@ impl From<DeviceSettingSnapshot> for MobileSettingSnapshotDto {
                 verification: measured.verification.into(),
             }),
             requested: value.requested.map(Into::into),
+            request_id: value.request_id,
             status: value.status.into(),
             transport: value.transport.map(Into::into),
             age_ms: value.age.map(|age| age.as_milliseconds()),
@@ -487,7 +490,12 @@ impl CutoutSessionStateHandle {
         value: MobileSettingValueDto,
         monotonic_ms: u64,
     ) -> Result<MobileDeviceSessionStepDto, MobileDeviceSettingRequestError> {
-        self.lock_inner()
+        let mut inner = self.lock_inner();
+        inner
+            .session_state_mut()
+            .settings
+            .require_managed_transport();
+        inner
             .submit_setting(
                 &token.into(),
                 id.into(),
@@ -503,24 +511,56 @@ impl CutoutSessionStateHandle {
         &self,
         token: MobileConnectionAttemptTokenDto,
         id: MobileSettingIdDto,
+        request_id: u64,
         status: MobileSettingTransportStatusDto,
+        monotonic_ms: u64,
     ) -> bool {
         let token = token.into();
         let mut inner = self.lock_inner();
-        if !inner.session_state().connection.is_current(&token) {
+        if !inner.session_state().connection.is_verified(&token) {
             return false;
         }
-        inner
-            .session_state_mut()
-            .settings
-            .transport(id.into(), status.into());
-        true
+        inner.session_state_mut().settings.transport(
+            id.into(),
+            request_id,
+            status.into(),
+            cutout_core::MonotonicTimestamp::new(monotonic_ms),
+        )
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn transport_callback_requires_verified_connection_even_when_token_is_current() {
+        let handle = CutoutSessionStateHandle::new();
+        let token = handle
+            .begin_connection_attempt("A".into(), 0)
+            .token
+            .unwrap();
+        handle.connection_link_established(token.clone());
+        handle.lock_inner().session_state_mut().settings.submission(
+            SettingId::HighBeam,
+            DeviceSettingValue::Boolean(true),
+            cutout_core::SettingSubmissionOutcome::Accepted,
+            false,
+            cutout_core::MonotonicTimestamp::new(1),
+        );
+        let before = handle.settings_snapshot();
+        let request_id = before.settings[0].request_id.unwrap();
+        assert!(handle.connection_attempt_is_current(token.clone()));
+        assert!(!handle.verified_connection_attempt_is_current(token.clone()));
+        assert!(!handle.mark_setting_transport(
+            token,
+            MobileSettingIdDto::HighBeam,
+            request_id,
+            MobileSettingTransportStatusDto::Submitted,
+            2
+        ));
+        assert_eq!(handle.settings_snapshot(), before);
+    }
 
     #[test]
     fn generic_charge_profile_follows_verified_protocol_and_attempt() {
@@ -672,8 +712,25 @@ mod tests {
         assert_eq!(headlight.current, None);
         assert_eq!(
             headlight.status,
-            MobileSettingStatusDto::SentWithoutConfirmation
+            MobileSettingStatusDto::WaitingForConfirmation
         );
+        assert!(headlight.request_id.is_some());
+        let first_request_id = headlight.request_id.unwrap();
+        assert!(!handle.mark_setting_transport(
+            token.clone(),
+            MobileSettingIdDto::HighBeam,
+            first_request_id + 1,
+            MobileSettingTransportStatusDto::Submitted,
+            2
+        ));
+        assert!(!handle.mark_setting_transport(
+            token.clone(),
+            MobileSettingIdDto::HighBeam,
+            first_request_id,
+            MobileSettingTransportStatusDto::Accepted,
+            2
+        ));
+        assert_eq!(handle.settings_snapshot(), before);
         assert_eq!(
             handle
                 .submit_setting(
@@ -720,6 +777,23 @@ mod tests {
             assert_eq!(setting.requested, Some(value));
             assert_eq!(
                 setting.status,
+                MobileSettingStatusDto::WaitingForConfirmation
+            );
+            assert!(handle.mark_setting_transport(
+                token.clone(),
+                descriptor.id,
+                setting.request_id.unwrap(),
+                MobileSettingTransportStatusDto::Submitted,
+                3
+            ));
+            let submitted = handle
+                .settings_snapshot()
+                .settings
+                .into_iter()
+                .find(|item| item.id == descriptor.id)
+                .unwrap();
+            assert_eq!(
+                submitted.status,
                 if descriptor.confirmation_supported {
                     MobileSettingStatusDto::WaitingForConfirmation
                 } else {
@@ -728,9 +802,25 @@ mod tests {
             );
         }
         assert!(!handle.settings_descriptors().validation_authorized);
+        let before_stale_callback = handle.settings_snapshot();
+        assert!(!handle.mark_setting_transport(
+            token.clone(),
+            MobileSettingIdDto::HighBeam,
+            first_request_id,
+            MobileSettingTransportStatusDto::Rejected,
+            3
+        ));
+        assert_eq!(handle.settings_snapshot(), before_stale_callback);
         assert!(handle.authorize_device_controls(token.clone()));
         assert!(handle.settings_descriptors().validation_authorized);
         let next = handle.begin_connection_attempt("B".into(), 4);
+        assert!(!handle.mark_setting_transport(
+            token.clone(),
+            MobileSettingIdDto::HighBeam,
+            first_request_id,
+            MobileSettingTransportStatusDto::Submitted,
+            5
+        ));
         assert_eq!(
             handle
                 .submit_setting(

@@ -60,7 +60,7 @@ final class DeviceControlsTests: XCTestCase {
         XCTAssertEqual(snapshot.connection.token, token)
         XCTAssertEqual(highBeam.requested, requested)
         XCTAssertNil(highBeam.current)
-        XCTAssertEqual(highBeam.status, .sentWithoutConfirmation)
+        XCTAssertEqual(highBeam.status, .waitingForConfirmation)
         let replacement = state.beginConnectionAttempt(platformIdentifier: "B", nowMs: 3)
         XCTAssertThrowsError(try state.submitSetting(token: token, id: .highBeam, value: .boolean(value: false), monotonicMs: 4)) { error in
             XCTAssertEqual(error as? DeviceSettingSubmissionError, .ConnectionUnavailable)

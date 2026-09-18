@@ -199,6 +199,62 @@ mod tests {
     }
 
     #[test]
+    fn nf2557_reported_tune_values_send_when_stopped_and_refuse_while_moving() {
+        // Complete CRC-protected packets from the 2026-09-18 phone capture
+        // covering the reported 15:15 Tune failures. The first reports 0 km/h;
+        // the second reports 3.4 km/h. No device write is performed by this test.
+        let stopped = hex_literal::hex!("dc5a5c532f3b000036350001f3f5001e001a123604af000002260230a8f607800081011280c80000808080808080022880805a80800fed0fec0fed0fed0fed0fe70fec0fed0fed0fed0fed0fe70fec0fed0fe80e425347").to_vec();
+        let moving = hex_literal::hex!("dc5a5c532f35002236470001f407001efffb124f04b0000002260226a8f607800064032080c80000808080808080022880805a80800fed0fed0fed0fed0fed0fe70fec0fed0fed0fed0fed0fe70fec0fed0fe945e6b8ce").to_vec();
+        for (id, value, magic, offset, wire_value) in [
+            (SettingId::TiltbackSpeed, 550, *b"LdAp", 12, 55),
+            (SettingId::PwmTiltback, 80, *b"LdAp", 13, 80),
+            (SettingId::LateralTiltLimit, 45, *b"LkAp", 17, 45),
+            (SettingId::SpeedAlarmThreshold, 560, *b"LkAp", 12, 56),
+        ] {
+            let (mut owner, token) = connected_nf2557(&[stopped.clone(), moving.clone()]);
+            for (at, frame, accepted) in [
+                (10, &stopped, true),
+                (20, &moving, false),
+                (30, &stopped, true),
+            ] {
+                replay_nf2557(&mut owner, &token, std::slice::from_ref(frame), at);
+                let step = owner
+                    .submit_setting(
+                        &token,
+                        id,
+                        DeviceSettingValue::Number(value),
+                        MonotonicTimestamp::new(at + 1),
+                    )
+                    .unwrap();
+                let writes: Vec<_> = step
+                    .result
+                    .outputs
+                    .iter()
+                    .filter_map(|output| match output {
+                        SessionOutput::Transport(TransportAction::Write { bytes, .. }) => {
+                            Some(bytes.as_slice())
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                if accepted {
+                    assert_eq!(step.result.error, None, "{id:?}");
+                    assert_eq!(writes.len(), 1, "{id:?}");
+                    assert_eq!(&writes[0][..4], &magic, "{id:?}");
+                    assert_eq!(writes[0][offset], wire_value, "{id:?}");
+                } else {
+                    assert_eq!(
+                        step.result.error.unwrap().reason,
+                        cutout_core::ControlRefusalReason::MissingArm,
+                        "{id:?}"
+                    );
+                    assert!(writes.is_empty(), "{id:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
     fn nf2557_high_beam_on_off_emit_once_and_preserve_unknown_readback() {
         let notifications = nf2557_notifications();
         let (mut owner, token) = connected_nf2557(&notifications);

@@ -83,9 +83,9 @@ private struct DeviceSettingRow: View {
     let state: DeviceSettingSnapshot?
     let submit: (DeviceSettingValue) throws -> Void
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @State private var draft: DeviceSettingValue?
-    @State private var submittedDraft: DeviceSettingValue?
-    @State private var submissionError: String?
+    @State private var editing = DeviceSettingDraft()
+
+    private var draft: DeviceSettingValue? { editing.value }
 
     private var displayedValue: String {
         DeviceControlPresentation.value(draft ?? state?.current, control: descriptor.control)
@@ -155,23 +155,17 @@ private struct DeviceSettingRow: View {
             case .readOnly:
                 titleAndValue
             }
-            if let error = submissionError ?? state?.refusal.map(DeviceControlPresentation.refusal) {
-                Text(error).font(.footnote).foregroundStyle(PevColors.red)
-                    .accessibilityIdentifier("settings.error.\(descriptor.id)")
-            } else {
-                if let state, let transport = DeviceControlPresentation.transportStatus(state.transport) {
-                    Text(transport).font(.footnote)
-                        .foregroundStyle(PevColors.muted)
-                        .accessibilityIdentifier("settings.transport.\(descriptor.id)")
-                }
-                if let state, let status = DeviceControlPresentation.status(state.status) {
-                    Text(status).font(.footnote)
-                        .foregroundStyle(state.status == .waitingForConfirmation ? PevColors.muted : PevColors.red)
-                        .accessibilityIdentifier("settings.status.\(descriptor.id)")
-                }
+            if let feedback = DeviceControlPresentation.feedback(
+                state,
+                submissionError: editing.submissionError,
+                draft: editing.value
+            ) {
+                Text(feedback.text).font(.footnote)
+                    .foregroundStyle(feedback.isError ? PevColors.red : PevColors.muted)
+                    .accessibilityIdentifier("settings.\(feedback.isError ? "error" : "status").\(descriptor.id)")
             }
         }
-        .onChange(of: state) { reconcileDraft() }
+        .onChange(of: state) { editing.reconcile(state) }
     }
 
     private var title: some View {
@@ -192,7 +186,7 @@ private struct DeviceSettingRow: View {
         VStack(alignment: .trailing, spacing: 2) {
             if let draft {
                 labeledValue(
-                    draftLabel,
+                    editing.label(state),
                     draft,
                     identifier: "settings.draft.\(descriptor.id)"
                 )
@@ -212,13 +206,6 @@ private struct DeviceSettingRow: View {
             }
         }
         .accessibilityElement(children: .contain)
-    }
-
-    private var draftLabel: String {
-        guard let state, state.requested == draft, state.status != .idle else {
-            return localizedAppText("settings.value.draft")
-        }
-        return localizedAppText("settings.value.requested")
     }
 
     private func labeledValue(
@@ -279,7 +266,7 @@ private struct DeviceSettingRow: View {
     }
 
     private func booleanButton(_ value: Bool) -> some View {
-        let selected = DeviceControlPresentation.booleanSelection(state) == value
+        let selected = DeviceControlPresentation.booleanSelection(state, submissionError: editing.submissionError) == value
         return Button {
             send(.boolean(value: value))
         } label: {
@@ -297,7 +284,7 @@ private struct DeviceSettingRow: View {
     }
 
     @ViewBuilder private var applyButton: some View {
-        if DeviceControlPresentation.hasChanges(draft: draft, current: state?.current), draft != submittedDraft {
+        if editing.canApply(state) {
             Button {
                 guard let draft else { return }
                 send(draft)
@@ -310,29 +297,62 @@ private struct DeviceSettingRow: View {
     }
 
     private func send(_ value: DeviceSettingValue) {
-        do {
-            try submit(value)
-            submittedDraft = draft
-            submissionError = nil
-        } catch {
-            submissionError = DeviceControlPresentation.error(error)
-        }
+        editing.send(value, submit: submit)
+        editing.reconcile(state)
     }
 
     private func edit(_ value: DeviceSettingValue?) {
-        draft = value
-        submittedDraft = nil
+        editing.edit(value)
+    }
+}
+
+/// Local editing feedback only; the snapshot owns command and transport outcomes.
+struct DeviceSettingDraft {
+    private(set) var value: DeviceSettingValue?
+    private(set) var submittedValue: DeviceSettingValue?
+    private(set) var submissionError: String?
+    private var failedValue: DeviceSettingValue?
+
+    mutating func edit(_ value: DeviceSettingValue?) {
+        self.value = value
+        submittedValue = nil
+        submissionError = nil
+        failedValue = nil
     }
 
-    private func reconcileDraft() {
-        guard let submittedDraft, submittedDraft == draft else { return }
-        if state?.current == submittedDraft {
-            draft = nil
-            self.submittedDraft = nil
-        } else if state?.requested == submittedDraft,
-                  state?.status == .failed || state?.status == .refused || state?.status == .timedOut {
-            self.submittedDraft = nil
+    mutating func send(_ value: DeviceSettingValue, submit: (DeviceSettingValue) throws -> Void) {
+        do {
+            try submit(value)
+            submittedValue = value
+            submissionError = nil
+            failedValue = nil
+        } catch {
+            submittedValue = nil
+            submissionError = DeviceControlPresentation.error(error)
+            failedValue = value
         }
+    }
+
+    mutating func reconcile(_ state: DeviceSettingSnapshot?) {
+        guard let current = state?.current else { return }
+        if value == current {
+            edit(nil)
+        } else if failedValue == current {
+            submissionError = nil
+            failedValue = nil
+        }
+    }
+
+    func label(_ state: DeviceSettingSnapshot?) -> String {
+        let accepted = value != nil && value == submittedValue && value == state?.requested
+            && state?.status != .idle && state?.status != .refused && state?.transport != .rejected
+        return localizedAppText(accepted ? "settings.value.requested" : "settings.value.draft")
+    }
+
+    func canApply(_ state: DeviceSettingSnapshot?) -> Bool {
+        DeviceControlPresentation.hasChanges(draft: value, current: state?.current)
+            && (value != submittedValue || state?.status == .failed || state?.status == .refused
+                || state?.status == .timedOut || state?.transport == .rejected)
     }
 }
 
@@ -356,8 +376,7 @@ private struct DeviceActionRow: View {
             .accessibilityIdentifier("settings.action.\(descriptor.id)")
             if let submissionError {
                 Text(submissionError).foregroundStyle(.red)
-            }
-            if let refusal = state?.refusal {
+            } else if let refusal = state?.refusal {
                 Text(DeviceControlPresentation.refusal(refusal)).foregroundStyle(PevColors.red)
             } else if let state, let text = DeviceControlPresentation.actionStatus(state.status) {
                 Text(text).foregroundStyle(.secondary)
@@ -405,8 +424,9 @@ enum DeviceControlPresentation {
         status == .waitingForConfirmation || status == .sentWithoutConfirmation
     }
 
-    static func booleanSelection(_ state: DeviceSettingSnapshot?) -> Bool? {
-        if acceptsRequestedSelection(state?.status), case let .boolean(value) = state?.requested {
+    static func booleanSelection(_ state: DeviceSettingSnapshot?, submissionError: String? = nil) -> Bool? {
+        if submissionError == nil, state?.transport != .rejected,
+           acceptsRequestedSelection(state?.status), case let .boolean(value) = state?.requested {
             return value
         }
         if case let .boolean(value) = state?.current { return value }
@@ -484,8 +504,18 @@ enum DeviceControlPresentation {
         }
     }
 
-    static func status(_ status: DeviceSettingStatus) -> String? {
-        switch status {
+    static func status(_ status: DeviceSettingStatus, transport: MobileSettingTransportStatusDto? = nil) -> String? {
+        // Confirmation settles the row. Earlier host evidence must not linger.
+        if status == .confirmed { return nil }
+        if status == .refused { return localizedAppText("settings.state.refused") }
+        if transport == .rejected { return localizedAppText("settings.transport.rejected") }
+        if status == .failed { return localizedAppText("settings.state.failed") }
+        switch transport {
+        case .accepted: return localizedAppText("settings.transport.accepted")
+        case .queued: return localizedAppText("settings.transport.queued")
+        case .submitted, .rejected, nil: break
+        }
+        return switch status {
         case .idle, .confirmed: nil
         case .sentWithoutConfirmation: localizedAppText("settings.state.sent_without_confirmation")
         case .waitingForConfirmation: localizedAppText("settings.state.pending")
@@ -495,14 +525,26 @@ enum DeviceControlPresentation {
         }
     }
 
-    static func transportStatus(_ status: MobileSettingTransportStatusDto?) -> String? {
-        switch status {
-        case .accepted: localizedAppText("settings.transport.accepted")
-        case .queued: localizedAppText("settings.transport.queued")
-        case .submitted: localizedAppText("settings.transport.submitted")
-        case .rejected: localizedAppText("settings.transport.rejected")
-        case nil: nil
+    struct Feedback: Equatable {
+        let text: String
+        let isError: Bool
+    }
+
+    static func feedback(
+        _ state: DeviceSettingSnapshot?,
+        submissionError: String? = nil,
+        draft: DeviceSettingValue? = nil
+    ) -> Feedback? {
+        if let submissionError { return Feedback(text: submissionError, isError: true) }
+        guard let state else { return nil }
+        if let draft, draft != state.requested { return nil }
+        if state.status != .confirmed, let reason = state.refusal {
+            return Feedback(text: refusal(reason), isError: true)
         }
+        guard let text = status(state.status, transport: state.transport) else { return nil }
+        let isError = state.status == .refused || state.status == .failed || state.transport == .rejected
+            || (state.status == .timedOut && state.transport != .accepted && state.transport != .queued)
+        return Feedback(text: text, isError: isError)
     }
 
     static func actionAvailable(descriptor: DeviceActionDescriptor, state: DeviceActionSnapshot?) -> Bool {
@@ -546,6 +588,17 @@ enum DeviceControlPresentation {
 
     static func error(_ error: Error) -> String {
         switch error {
+        case let CutoutSessionError.commandRefused(reason):
+            switch reason {
+            case .missingArm: refusal(.missingArm)
+            case .expiredArm: refusal(.expiredArm)
+            case .busy: refusal(.busy)
+            case .wrongModel: refusal(.wrongModel)
+            case .unsupportedCommand: refusal(.unsupportedCommand)
+            case .currentLimitExceeded: refusal(.currentLimitExceeded)
+            case .wrongSafetyClass: refusal(.wrongSafetyClass)
+            case nil: localizedAppText("settings.state.refused")
+            }
         case DeviceSettingSubmissionError.ConnectionUnavailable, DeviceActionSubmissionError.ConnectionUnavailable:
             localizedAppText("controls.error.connection")
         case DeviceSettingSubmissionError.Unverified, DeviceActionSubmissionError.Unverified:

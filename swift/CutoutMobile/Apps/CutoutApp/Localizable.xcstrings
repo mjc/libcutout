@@ -934,8 +934,8 @@
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Pending" } } }
     },
     "settings.state.sent_without_confirmation" : {
-      "comment" : "Status for a setting command sent to a wheel whose physical effect has no confirmation path.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Sent; no confirmation" } } }
+      "comment" : "Status for an accepted command with no device confirmation path. Does not assert Bluetooth delivery.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Requested; no confirmation" } } }
     },
     "settings.state.confirmed" : {
       "comment" : "Status for a setting command confirmed by the device.",
@@ -964,10 +964,6 @@
     "settings.transport.queued" : {
       "comment" : "Transport evidence for a setting request queued for Bluetooth submission.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Queued for Bluetooth" } } }
-    },
-    "settings.transport.submitted" : {
-      "comment" : "Transport evidence for a setting request handed to the wheel's Bluetooth transport.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Sent to wheel" } } }
     },
     "settings.transport.rejected" : {
       "comment" : "Transport evidence for a setting request rejected before reaching the wheel.",

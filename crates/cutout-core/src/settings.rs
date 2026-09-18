@@ -90,8 +90,8 @@ pub enum SettingState<Value> {
         current: Option<SettingValue<Value>>,
         /// Requested value awaiting confirmation.
         requested: Value,
-        /// Host monotonic time at which the write was accepted.
-        submitted_at: MonotonicTimestamp,
+        /// Host handoff time; absent while managed transport is still waiting.
+        submitted_at: Option<MonotonicTimestamp>,
     },
 
     /// Readback confirmed the requested value.
@@ -167,8 +167,22 @@ where
         *self = Self::Pending {
             current,
             requested,
-            submitted_at,
+            submitted_at: Some(submitted_at),
         };
+    }
+
+    /// Waits for host handoff before allowing confirmation or starting its deadline.
+    pub fn await_transport(&mut self) {
+        if let Self::Pending { submitted_at, .. } = self {
+            *submitted_at = None;
+        }
+    }
+
+    /// Starts confirmation timing when the host hands the request to transport.
+    pub fn transport_submitted(&mut self, at: MonotonicTimestamp) {
+        if let Self::Pending { submitted_at, .. } = self {
+            *submitted_at = Some(at);
+        }
     }
 
     /// Confirms a matching live readback, returning whether it matched a pending request.
@@ -185,7 +199,7 @@ where
     ) -> bool {
         let Self::Pending {
             requested,
-            submitted_at,
+            submitted_at: Some(submitted_at),
             ..
         } = *self
         else {
@@ -222,7 +236,7 @@ where
                 current,
                 submitted_at,
                 ..
-            } if observed_at >= *submitted_at => {
+            } if submitted_at.is_none_or(|at| observed_at >= at) => {
                 *current = Some(SettingValue { value, source });
             }
             Self::Pending { .. } => {}
@@ -246,7 +260,11 @@ where
     ///
     /// Returns whether the state transitioned to timed out.
     pub fn timeout_if_elapsed(&mut self, now: MonotonicTimestamp, timeout: Duration) -> bool {
-        let Self::Pending { submitted_at, .. } = *self else {
+        let Self::Pending {
+            submitted_at: Some(submitted_at),
+            ..
+        } = *self
+        else {
             return false;
         };
         if now.saturating_duration_since(submitted_at) < timeout {
@@ -283,12 +301,16 @@ where
     ) -> SettingCommandStatus {
         match self {
             Self::Unknown | Self::Current(_) => SettingCommandStatus::Idle,
+            Self::Pending {
+                submitted_at: None, ..
+            } => SettingCommandStatus::WaitingForConfirmation,
             Self::Pending { .. } if !confirmation_supported => {
                 SettingCommandStatus::SentWithoutConfirmation
             }
-            Self::Pending { submitted_at, .. }
-                if now.saturating_duration_since(submitted_at) >= SETTING_CONFIRMATION_TIMEOUT =>
-            {
+            Self::Pending {
+                submitted_at: Some(submitted_at),
+                ..
+            } if now.saturating_duration_since(submitted_at) >= SETTING_CONFIRMATION_TIMEOUT => {
                 SettingCommandStatus::TimedOut
             }
             Self::Pending { .. } => SettingCommandStatus::WaitingForConfirmation,

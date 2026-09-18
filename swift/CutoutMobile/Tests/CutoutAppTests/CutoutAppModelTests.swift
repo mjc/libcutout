@@ -2948,9 +2948,8 @@ final class CutoutAppModelTests: XCTestCase {
         )
 
         model.start()
-        for _ in 0 ..< 200 {
-            if await manager.lastStartedSnapshot != nil { break }
-            await Task.yield()
+        await Self.waitUntil("auto live activity start") {
+            await manager.lastStartedSnapshot != nil
         }
 
         let snapshot = await manager.lastStartedSnapshot
