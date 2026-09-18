@@ -522,8 +522,7 @@ fn pull_ios_captures(root: &Path) -> Result<()> {
     ensure!(cfg!(target_os = "macos"), "iOS capture pull requires macOS");
     let device =
         env::var("CUTOUT_IOS_DEVICE_UDID").map_or_else(|_| discover_ios_device(root), Ok)?;
-    let bundle =
-        env::var("CUTOUT_IOS_APP_BUNDLE_ID").unwrap_or_else(|_| "io.cutout.cutoutapp".into());
+    let bundle = env::var("CUTOUT_IOS_APP_BUNDLE_ID").unwrap_or_else(|_| "lol.cutout.app".into());
     let destination = env::var_os("CUTOUT_IOS_CAPTURE_DESTINATION")
         .map_or_else(|| root.join("target/ios-captures"), PathBuf::from);
     let limit = env::var("CUTOUT_IOS_CAPTURE_LIMIT")
@@ -623,18 +622,43 @@ fn capture_names(document: &Value, limit: usize) -> Result<Vec<&str>> {
 }
 
 fn verify_ios_app(product: &Path) -> Result<()> {
+    let metadata = plist_json(&product.join("Info.plist"))?;
+    verify_ios_metadata(&metadata)?;
+    let bundle_id =
+        env::var("CUTOUT_IOS_APP_BUNDLE_ID").unwrap_or_else(|_| "lol.cutout.app".into());
+    ensure!(
+        metadata["CFBundleIdentifier"] == bundle_id,
+        "app bundle ID mismatch"
+    );
+    let extension = product.join("PlugIns/CutoutLiveActivityExtension.appex");
+    let extension_metadata = plist_json(&extension.join("Info.plist"))?;
+    ensure!(
+        extension_metadata["CFBundleIdentifier"] == format!("{bundle_id}.liveactivity"),
+        "Live Activity bundle ID mismatch"
+    );
+    let privacy = plist_json(&product.join("PrivacyInfo.xcprivacy"))?;
+    verify_ios_privacy_manifest(&privacy)?;
+    ensure!(
+        plist_json(&extension.join("PrivacyInfo.xcprivacy"))? == privacy,
+        "Live Activity privacy manifest differs from app"
+    );
+    Ok(())
+}
+
+fn plist_json(path: &Path) -> Result<Value> {
     let output = command("/usr/bin/plutil")
         .args(["-convert", "json", "-o", "-", "--"])
-        .arg(product.join("Info.plist"))
+        .arg(path)
         .output()?;
-    ensure_success(output.status, "read built app metadata")?;
-    verify_ios_metadata(&serde_json::from_slice(&output.stdout)?)
+    ensure_success(output.status, &format!("read {}", path.display()))?;
+    Ok(serde_json::from_slice(&output.stdout)?)
 }
 
 fn verify_ios_metadata(metadata: &Value) -> Result<()> {
     let expected = serde_json::json!({
         "CFBundleDisplayName": "CutOut",
-        "NSBluetoothAlwaysUsageDescription": "CutOut uses Bluetooth to read live vehicle telemetry.",
+        "NSBluetoothAlwaysUsageDescription": "CutOut connects to your vehicle over Bluetooth to show live telemetry and keep an active ride recording when the screen is locked.",
+        "NSLocationWhenInUseUsageDescription": "CutOut uses your location to record your ride route. An active ride can continue recording when the screen is locked.",
         "UIDeviceFamily": [1],
         "UISupportedInterfaceOrientations": [
             "UIInterfaceOrientationPortrait",
@@ -652,6 +676,36 @@ fn verify_ios_metadata(metadata: &Value) -> Result<()> {
             metadata[key]
         );
     }
+    for key in [
+        "NSLocationAlwaysUsageDescription",
+        "NSLocationAlwaysAndWhenInUseUsageDescription",
+    ] {
+        ensure!(
+            metadata.get(key).is_none(),
+            "unexpected Always location declaration: {key}"
+        );
+    }
+    ensure!(
+        metadata["UIBackgroundModes"] == serde_json::json!(["bluetooth-central", "location"]),
+        "unexpected background modes"
+    );
+    Ok(())
+}
+
+fn verify_ios_privacy_manifest(privacy: &Value) -> Result<()> {
+    ensure!(
+        privacy["NSPrivacyTracking"] == false,
+        "unexpected tracking declaration"
+    );
+    ensure!(
+        privacy["NSPrivacyAccessedAPITypes"]
+            == serde_json::json!([
+                {"NSPrivacyAccessedAPIType": "NSPrivacyAccessedAPICategoryUserDefaults", "NSPrivacyAccessedAPITypeReasons": ["CA92.1"]},
+                {"NSPrivacyAccessedAPIType": "NSPrivacyAccessedAPICategorySystemBootTime", "NSPrivacyAccessedAPITypeReasons": ["35F9.1"]},
+                {"NSPrivacyAccessedAPIType": "NSPrivacyAccessedAPICategoryFileTimestamp", "NSPrivacyAccessedAPITypeReasons": ["C617.1"]}
+            ]),
+        "unexpected privacy API reasons"
+    );
     Ok(())
 }
 
@@ -1533,7 +1587,9 @@ mod tests {
     fn ios_metadata_rejects_missing_and_incorrect_values() {
         let valid = serde_json::json!({
             "CFBundleDisplayName": "CutOut",
-            "NSBluetoothAlwaysUsageDescription": "CutOut uses Bluetooth to read live vehicle telemetry.",
+            "NSBluetoothAlwaysUsageDescription": "CutOut connects to your vehicle over Bluetooth to show live telemetry and keep an active ride recording when the screen is locked.",
+            "NSLocationWhenInUseUsageDescription": "CutOut uses your location to record your ride route. An active ride can continue recording when the screen is locked.",
+            "UIBackgroundModes": ["bluetooth-central", "location"],
             "UIDeviceFamily": [1],
             "UISupportedInterfaceOrientations": [
                 "UIInterfaceOrientationPortrait",
@@ -1549,10 +1605,40 @@ mod tests {
             changed[key] = serde_json::json!("incorrect");
             assert!(verify_ios_metadata(&changed).is_err(), "incorrect {key}");
         }
+        for key in [
+            "NSLocationAlwaysUsageDescription",
+            "NSLocationAlwaysAndWhenInUseUsageDescription",
+        ] {
+            let mut changed = valid.clone();
+            changed[key] = serde_json::json!("unused");
+            assert!(verify_ios_metadata(&changed).is_err(), "unexpected {key}");
+        }
         assert_eq!(
             parse_cli(&["ios".into(), "verify-app".into(), "Cutout App.app".into()]).unwrap(),
             DevCommand::IosVerifyApp(PathBuf::from("Cutout App.app"))
         );
+    }
+
+    #[test]
+    fn ios_privacy_manifest_rejects_missing_reasons_and_tracking() {
+        let valid = serde_json::json!({
+            "NSPrivacyTracking": false,
+            "NSPrivacyAccessedAPITypes": [
+                {"NSPrivacyAccessedAPIType": "NSPrivacyAccessedAPICategoryUserDefaults", "NSPrivacyAccessedAPITypeReasons": ["CA92.1"]},
+                {"NSPrivacyAccessedAPIType": "NSPrivacyAccessedAPICategorySystemBootTime", "NSPrivacyAccessedAPITypeReasons": ["35F9.1"]},
+                {"NSPrivacyAccessedAPIType": "NSPrivacyAccessedAPICategoryFileTimestamp", "NSPrivacyAccessedAPITypeReasons": ["C617.1"]}
+            ]
+        });
+        verify_ios_privacy_manifest(&valid).unwrap();
+        let mut missing = valid.clone();
+        missing["NSPrivacyAccessedAPITypes"]
+            .as_array_mut()
+            .unwrap()
+            .pop();
+        assert!(verify_ios_privacy_manifest(&missing).is_err());
+        let mut tracking = valid;
+        tracking["NSPrivacyTracking"] = serde_json::json!(true);
+        assert!(verify_ios_privacy_manifest(&tracking).is_err());
     }
 
     #[test]

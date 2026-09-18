@@ -44,6 +44,7 @@ protocol CutoutSessionDriving: AnyObject {
     func now() -> MonotonicMilliseconds
 
     func resetRideMapLocationAdmission()
+    func updateRideLocationDemand(for state: MobileRideMapStateDto)
     func startRideMapGpsOnly(atMs: UInt64, lastConnectedVehicle: String?) throws -> MobileRideMapSnapshotDto
     func pauseRideMap(atMs: UInt64) throws -> MobileRideMapSnapshotDto
     func resumeRideMap(atMs: UInt64) throws -> MobileRideMapSnapshotDto

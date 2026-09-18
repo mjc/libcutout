@@ -220,7 +220,7 @@ cutout_export_ios_ad_hoc_ipa() {
     printf 'CUTOUT_IOS_AD_HOC_ARCHIVE does not exist: %s\n' "$archive_path" >&2
     return 1
   fi
-  bundle_id="${CUTOUT_IOS_APP_BUNDLE_ID:-io.cutout.cutoutapp}"
+  bundle_id="${CUTOUT_IOS_APP_BUNDLE_ID:-lol.cutout.app}"
   team_id="${CUTOUT_IOS_DEVELOPMENT_TEAM:-}"
   profile_specifier="${CUTOUT_IOS_AD_HOC_PROFILE:-}"
   signing_certificate="${CUTOUT_IOS_AD_HOC_CERTIFICATE:-Apple Distribution}"
