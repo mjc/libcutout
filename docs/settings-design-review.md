@@ -182,9 +182,10 @@ Skipped, submitted-unconfirmed and failed cases cannot count as confirmed tests.
    is not independent protocol evidence.
 5. Revisit native presentation against the approved comps using unknown, pending,
    observed and failed snapshots. Verify display-unit round trips explicitly.
-6. Run reviewed physical cases individually on NF2557. Keep headlight, sound,
-   lateral tilt, speed alarm, brake alarm, pedal angle, mode switches and trip
-   reset open until their required effects and evidence are established.
+6. Run reviewed physical cases individually on NF2557. Headlight On/Off is
+   physically confirmed with the modern literal commands. Keep sound, lateral
+   tilt, speed alarm, brake alarm, pedal angle, mode switches and trip reset
+   open until their required effects and evidence are established.
 
 This is the design baseline for further work, not a claim that those repairs
 have already been implemented or that #106 is ready to merge.
