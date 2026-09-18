@@ -486,6 +486,15 @@ final class CutoutAppModel {
         self.core.onRideMapSnapshotChange = { [weak self] snapshot in
             guard let self else { return }
             guard self.acceptsRideMapSnapshot(snapshot) else { return }
+            if let previousRideID = self.rideMapSnapshot?.rideID,
+               previousRideID != snapshot.rideID
+            {
+                // A newer Rust snapshot can be an automatic replacement, not merely a new
+                // revision of the same ride. Invalidate both successful and failed projections
+                // from the previous ride before publishing the replacement.
+                self.invalidateLiveProjection(clearPoints: true)
+                self.rideMapLiveError = nil
+            }
             self.rideMapSnapshot = snapshot
             self.rideMapLiveTelemetryState = snapshot.telemetryState
             self.updateRideMapDurationTicker()
@@ -2101,9 +2110,11 @@ final class CutoutAppModel {
     static func shouldApplyLiveProjection(
         generation: UInt64,
         currentGeneration: UInt64,
-        enabled: Bool
+        enabled: Bool,
+        rideID: String,
+        currentRideID: String?
     ) -> Bool {
-        enabled && generation == currentGeneration
+        enabled && generation == currentGeneration && currentRideID == rideID
     }
 
     static func shouldApplyRestoredLiveProjection(
@@ -2163,6 +2174,7 @@ final class CutoutAppModel {
         guard rideMapLiveProjectionTask == nil else { return }
 
         guard let state = core.rideMapStateHandle else { return }
+        guard let rideID = rideMapSnapshot?.rideID, rideID.isEmpty == false else { return }
         let budget = Self.rideMapLimits.liveTailPointLimit
         rideMapLiveProjectionTask = Task { [weak self] in
             defer {
@@ -2191,7 +2203,9 @@ final class CutoutAppModel {
                     guard Self.shouldApplyLiveProjection(
                         generation: generation,
                         currentGeneration: self.rideMapLiveProjectionGeneration,
-                        enabled: self.rideMapLiveProjectionEnabled
+                        enabled: self.rideMapLiveProjectionEnabled,
+                        rideID: rideID,
+                        currentRideID: self.rideMapSnapshot?.rideID
                     ) else {
                         continue
                     }
@@ -2203,7 +2217,9 @@ final class CutoutAppModel {
                     guard Self.shouldApplyLiveProjection(
                         generation: generation,
                         currentGeneration: self.rideMapLiveProjectionGeneration,
-                        enabled: self.rideMapLiveProjectionEnabled
+                        enabled: self.rideMapLiveProjectionEnabled,
+                        rideID: rideID,
+                        currentRideID: self.rideMapSnapshot?.rideID
                     ) else {
                         continue
                     }

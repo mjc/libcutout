@@ -2014,9 +2014,14 @@ public final class CutoutSessionCore: NSObject {
                 // Capture the context at the failure boundary so a first auto-start and a
                 // terminal-ride replacement cannot publish an unscoped error that the app
                 // model incorrectly rejects as stale.
-                let errorContext = MobileRideMapErrorContext(
-                    snapshot: rideMapState.currentSnapshot(atMs: receivedAt.rawValue)
-                )
+                let snapshot = rideMapState.currentSnapshot(atMs: receivedAt.rawValue)
+                // Publish the authoritative post-admission snapshot before its scoped error.
+                // The model rejects ride-scoped errors until it has seen that ride; ordering the
+                // pair makes the stale-work invariant hold for first starts and replacements.
+                if let snapshot {
+                    self.publishRideMapSnapshot(snapshot)
+                }
+                let errorContext = MobileRideMapErrorContext(snapshot: snapshot)
                 self.publishRideMapError(error, context: errorContext)
                 self.recordRideMapDiagnostic("ride_map_connection_error=\(error)")
             } catch {
@@ -3485,6 +3490,9 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
     }
 
     public func locationManagerDidChangeAuthorization(_: CLLocationManager) {
+        // Authorization changes are presentation state even when no ride currently demands
+        // updates. Publish first so granting permission clears a stale warning immediately.
+        publishRideMapAvailability()
         updateLocationManagerDemand()
     }
 

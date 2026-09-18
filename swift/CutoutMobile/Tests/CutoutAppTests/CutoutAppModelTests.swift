@@ -1028,21 +1028,36 @@ final class CutoutAppModelTests: XCTestCase {
             CutoutAppModel.shouldApplyLiveProjection(
                 generation: 3,
                 currentGeneration: 3,
-                enabled: true
+                enabled: true,
+                rideID: "ride-a",
+                currentRideID: "ride-a"
             )
         )
         XCTAssertFalse(
             CutoutAppModel.shouldApplyLiveProjection(
                 generation: 2,
                 currentGeneration: 3,
-                enabled: true
+                enabled: true,
+                rideID: "ride-a",
+                currentRideID: "ride-a"
             )
         )
         XCTAssertFalse(
             CutoutAppModel.shouldApplyLiveProjection(
                 generation: 3,
                 currentGeneration: 3,
-                enabled: false
+                enabled: false,
+                rideID: "ride-a",
+                currentRideID: "ride-a"
+            )
+        )
+        XCTAssertFalse(
+            CutoutAppModel.shouldApplyLiveProjection(
+                generation: 3,
+                currentGeneration: 3,
+                enabled: true,
+                rideID: "ride-a",
+                currentRideID: "ride-b"
             )
         )
     }
