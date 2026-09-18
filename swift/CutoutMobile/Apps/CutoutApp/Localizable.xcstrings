@@ -865,130 +865,6 @@
     "settings.validation.description" : {
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Settings marked Needs validation are available for testing. Verify their behavior on the wheel; enabling this mode does not validate them." } } }
     },
-    "settings.aero.title" : {
-      "comment" : "Section title for captured NOSFET Aero binary settings writes.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Aero controls" } } }
-    },
-    "settings.aero.additional.title" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Wheel settings" } } }
-    },
-    "settings.aero.current_value" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Current value" } } }
-    },
-    "settings.aero.display_backlight.title" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Display backlight" } } }
-    },
-    "settings.aero.beeper_volume.title" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Beeper volume" } } }
-    },
-    "settings.aero.dynamic_assist.title" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Dynamic assist" } } }
-    },
-    "settings.aero.pedal_dip_compensation.title" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Pedal-dip compensation" } } }
-    },
-    "settings.aero.lateral_tilt_limit.title" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Lateral tilt limit" } } }
-    },
-    "settings.aero.voltage_correction.title" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Voltage correction" } } }
-    },
-    "settings.aero.max_charge_raw.title" : {
-      "comment" : "Label for the official NOSFET MxV raw maximum-charge control; do not present it as volts.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Max charge (raw)" } } }
-    },
-    "settings.aero.high_speed_mode.title" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "High-speed mode" } } }
-    },
-    "settings.aero.low_battery_mode.title" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Low-battery mode" } } }
-    },
-    "settings.aero.transport_mode.title" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Transportation mode" } } }
-    },
-    "settings.aero.riding_mode.title" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Riding mode" } } }
-    },
-    "settings.aero.riding_mode.hard" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Hard" } } }
-    },
-    "settings.aero.riding_mode.medium" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Medium" } } }
-    },
-    "settings.aero.riding_mode.soft" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Soft" } } }
-    },
-    "settings.aero.brake_overpressure.title" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Brake overpressure alarm" } } }
-    },
-    "settings.aero.gyro_calibration.title" : {
-      "comment" : "Button that starts or completes NOSFET Aero gyro calibration.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Calibrate gyro" } } }
-    },
-    "settings.aero.gyro_calibration.stop" : {
-      "comment" : "Button that stops an active NOSFET Aero gyro calibration.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Stop calibration" } } }
-    },
-    "settings.aero.gyro_calibration.idle" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Ready to start" } } }
-    },
-    "settings.aero.gyro_calibration.waiting" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Calibration in progress" } } }
-    },
-    "settings.aero.gyro_calibration.complete" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Calibration complete" } } }
-    },
-    "settings.aero.wheel_units.title" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Wheel display units" } } }
-    },
-    "settings.aero.wheel_units.metric" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Metric (km/h)" } } }
-    },
-    "settings.aero.wheel_units.imperial" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Imperial (mph)" } } }
-    },
-    "settings.aero.footer" : {
-      "comment" : "Safety note for NOSFET Aero settings writes.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Writes are available while parked or below 500 mm/s; verify each change on the wheel." } } }
-    },
-    "settings.aero.send" : {
-      "comment" : "Button that sends a selected NOSFET Aero setting.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Send" } } }
-    },
-    "settings.aero.tiltback.title" : {
-      "comment" : "NOSFET Aero tilt-back speed setting.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Tilt-back" } } }
-    },
-    "settings.aero.pwm.title" : {
-      "comment" : "NOSFET Aero PWT threshold expressed as PWM utilization.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Tilt-back PWM" } } }
-    },
-    "settings.aero.pwm.current" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Current tilt-back PWM" } } }
-    },
-    "settings.aero.pwm.disabled" : {
-      "comment" : "Readback showing PWM tilt-back is disabled; distinct from zero headroom.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Off" } } }
-    },
-    "settings.aero.pwm.off" : {
-      "comment" : "Disables the NOSFET Aero PWT alarm.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Disable PWM tilt-back" } } }
-    },
-    "settings.aero.pedal_hardness.title" : {
-      "comment" : "Numeric NOSFET Aero MD pedal hardness, separate from the hard/medium/soft presets.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Pedal hardness (MD)" } } }
-    },
-    "settings.aero.pedal_hardness.current" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Current pedal hardness" } } }
-    },
-    "settings.aero.alarm.title" : {
-      "comment" : "NOSFET Aero alarm speed setting.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Alarm speed" } } }
-    },
-    "settings.aero.angle.title" : {
-      "comment" : "NOSFET Aero ANG (vertical angle) adjustment setting.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "ANG (vertical angle)" } } }
-    },
     "settings.capabilities.title" : {
       "comment" : "Section title for settings that are not currently editable.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Other settings" } } }
@@ -1140,30 +1016,6 @@
     "settings.speed_alarm_mode.pwm_tiltback" : {
       "comment" : "PWM tiltback speed alarm readback value.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "PWM tiltback" } } }
-    },
-    "settings.begode_max_speed.title" : {
-      "comment" : "Label for the Begode max-speed write control.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Max speed" } } }
-    },
-    "settings.begode_max_speed.footer" : {
-      "comment" : "Safety guidance for the Begode max-speed write control.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Change only while parked or at 500 mm/s or less." } } }
-    },
-    "settings.begode_beeper_volume.title" : {
-      "comment" : "Label for the Begode beeper-volume write control.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Beeper volume" } } }
-    },
-    "settings.begode_beeper_volume.footer" : {
-      "comment" : "Safety guidance for the Begode beeper-volume write control.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Change only while parked or at 500 mm/s or less." } } }
-    },
-    "settings.begode_led_mode.title" : {
-      "comment" : "Label for the Begode LED-mode write control.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "LED mode" } } }
-    },
-    "settings.begode_led_mode.footer" : {
-      "comment" : "Safety guidance for the Begode LED-mode write control.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Change only while parked or at 500 mm/s or less." } } }
     },
     "settings.acceleration_assist.title" : {
       "comment" : "Label for the EUC acceleration assist setting.",
@@ -2784,10 +2636,6 @@
     "ride_map.status.draft" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Ready to record" } } } },
     "ride_map.status.imported" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Imported" } } } },
     "ride_map.status.interrupted" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Interrupted" } } } },
-    "settings.aero.riding_mode.title" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Riding mode" } } } },
-    "settings.aero.riding_mode.hard" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Hard" } } } },
-    "settings.aero.riding_mode.medium" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Medium" } } } },
-    "settings.aero.riding_mode.soft" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Soft" } } } },
     "actions.gyro_calibration.help" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Keep the wheel upright and still. Prepare calibration, then start when the wheel reports ready." } } } },
     "actions.gyro_calibration.label" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Calibrate gyro" } } } },
     "actions.horn.help" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Sounds the wheel horn." } } } },

@@ -97,7 +97,6 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(localizedAppText("settings.capabilities.title"), "Other settings")
         XCTAssertEqual(localizedAppText("settings.capabilities.unverified"), "Needs validation")
         XCTAssertEqual(localizedAppText("settings.capabilities.unsupported"), "Not supported")
-        XCTAssertEqual(localizedAppText("settings.aero.max_charge_raw.title"), "Max charge (raw)")
         XCTAssertEqual(localizedAppText("settings.state.pending"), "Pending")
         XCTAssertEqual(localizedAppText("settings.state.confirmed"), "Confirmed")
         XCTAssertEqual(localizedAppText("settings.state.confirmed_ago", Int64(2)), "Confirmed 2s ago")
