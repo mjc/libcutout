@@ -1766,7 +1766,7 @@ impl SupportsReadRequests for VescGenericModel {
     }
 }
 
-fn handle_read_only_session<M: ReadOnlyModelSpec, const ACCEPT_ANY_NOTIFICATION: bool>(
+fn handle_read_only_session<M: ReadOnlyModelSpec, const _ACCEPT_ANY_NOTIFICATION: bool>(
     connected: &mut bool,
     decoder: &mut M::NotificationDecoder,
     input: SessionInput<'_>,
@@ -1799,7 +1799,10 @@ fn handle_read_only_session<M: ReadOnlyModelSpec, const ACCEPT_ANY_NOTIFICATION:
             monotonic_ms,
         } => {
             if *connected {
-                if ACCEPT_ANY_NOTIFICATION || channel == M::SUBSCRIBE_CHANNEL {
+                // The selected model owns one protocol notification channel.  The legacy const
+                // generic remains in the public session type for compatibility, but it must not
+                // let a selected decoder consume bytes from another protocol's characteristic.
+                if channel == M::SUBSCRIBE_CHANNEL {
                     decoder.handle_notification(M::PROTOCOL, channel, bytes, monotonic_ms, output);
                 } else {
                     output.push(SessionOutput::NotificationIngest(
