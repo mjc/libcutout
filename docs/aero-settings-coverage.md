@@ -9,7 +9,13 @@ methods now corroborate the frame shapes for the existing Rust controls; the
 remaining model-gated branches are still intentionally outside the generic
 write API.
 
-## Implemented commands
+## Implementation coverage, not acceptance
+
+Status reviewed 2026-09-18: this catalog describes software paths and source
+evidence, not a completed settings implementation or a merge gate for PR #106.
+The [settings design review](settings-design-review.md) is the proposed repair
+baseline across all protocols. Veteran is the protocol, NOSFET its dialect,
+and Aero the model used by the NF2557 fixture.
 
 | Setting | Rust / CLI / mobile / Tune | Live confirmation |
 | --- | --- | --- |
@@ -29,7 +35,7 @@ write API.
 | Beeper volume (F) | Implemented as a typed 0–100% control | Page-8 byte 63 reaches mobile state; new writes still need device proof |
 | Dynamic assist (L) | Implemented as a typed 0–100% control | Page-8 byte 66 reaches mobile state; new writes still need device proof |
 | Pedal-dip compensation (Q) | Implemented as a typed 0–100% control | Page-8 byte 68 reaches mobile state; new writes still need device proof |
-| Voltage correction (X) | Implemented as a typed signed −15…15 control | Page-8 byte 59 reaches mobile state; new writes still need device proof |
+| Voltage correction (X) | Implemented as a typed signed −15…15 control in tenths of a percent (−1.5…1.5%) | Page-8 byte 59 reaches mobile state; new writes still need device proof |
 | Lateral cutoff (O) | Implemented as a typed 35–75° control | Selector-2 byte 47 reaches mobile state; new writes still need device proof |
 | Modern binary riding mode (T) | Implemented as a distinct hard/medium/soft command | EUC World source-backed LkAp frames; new writes still need device proof |
 | Brake overpressure alarm | Implemented as a typed 90–125% command | Official NOSFET source-backed LdAp frame and page-8 byte 65; new writes still need device proof |
@@ -38,10 +44,45 @@ The production Tune catalog exposes all 18 source-backed editable settings
 without a validation-mode switch: four lights/display controls, five limits
 and alarms, five ride-feel controls, and four wheel modes. Source/hardware
 evidence remains distinct from ordinary command availability;
-the production descriptor does not claim a physical test. Rust applies the model,
-value-bound, fresh-speed, command sequencing, and lifecycle rules. Swift submits
-typed values and renders state. Simulator state is synthetic evidence and must
-not become a live readback claim.
+the production descriptor does not claim a physical test. Rust owns the model,
+value-bound, fresh-speed, command sequencing, and lifecycle policy. Enforcement
+is incomplete across lower-level encoding and delayed native transport: accepted
+plans can precede host submission, queued writes can lose operation identity,
+and speed encoding can truncate inexact values. Swift submits typed values and
+renders state; it must not supply a second policy. Simulator state is synthetic
+evidence and must not become a live readback claim.
+
+## Physical evidence and open acceptance
+
+The user's NF2557 reports are evidence of individual interactions, not a
+controlled acceptance run with recorded request, host receipt, readback and
+restoration. Preserve positive reports without using them to close other paths:
+
+| Controls | Reported result | Remaining acceptance |
+| --- | --- | --- |
+| Display brightness, beeper volume, tilt-back speed, PWM tilt-back, pedal hardness, dynamic assist, pedal dip, voltage correction | User reported working | Individually record exact targets, units, effect, available readback and restoration under the repaired lifecycle |
+| Headlight, horn, reset trip, pedal angle | User reported no effect | Establish correct applicability/encoding and required physical effect; transport submission alone is insufficient |
+| Lateral tilt and speed alarm | Repeated unconfirmed/timeout results; speed alarm also had a reported crash | Resolve encoding, display-unit conversion, observation acquisition and terminal outcomes; reproduce the crash path offline |
+| Brake alarm | Initially reported working without updating the wheel percentage; later 120 reported sent without confirmation | Establish desired effect and fresh reported percentage separately |
+| High-speed and low-battery modes | Beeped but were not confirmed | Sound is not state confirmation; verify mode observation and effect |
+| Calibration and transport mode | No acceptance established; user declined calibration | Remain open; no automatic action sweep |
+
+The user distinguished working beeper volume from nonworking “wheel volume.”
+That requested effect remains unresolved; it does not establish a second wire
+setting. Trace the intended sound behavior against the source-backed key-tone
+mapping below before adding another control or declaring sound parity complete.
+
+The reported speed-alarm value “34.8” had no specified unit. Canonical 348
+deci-km/h is inexact for a whole-km/h write, but displayed 34.8 mph is about
+56 km/h. The actual display-to-request path must be reproduced before assigning
+cause. Library bounds and confirmation flags are declarations, not negotiated
+wheel capabilities. The recent early `current=nil` inventory preceded settings
+telemetry and does not negate the captured settings pages below.
+
+The subsequent audible incident ended after a power cycle. Its offending
+command and complete restoration remain unknown. Further physical work requires
+the offline harness repairs and individually reviewed cases in the design review;
+descriptor minima, guessed values and broad audible opt-ins are not safe cases.
 
 ## Remaining settings and unresolved parity
 
@@ -55,7 +96,7 @@ not become a live readback claim.
 | CAL gyro calibration | Covered by the source-backed ANG TLT gyro command above; it remains a lifecycle rather than a scalar setting | Keep requested, reported, and physically confirmed states separate |
 | Running lights / stealth | No corresponding Veteran/NOSFET entry exists in the inspected EUC World menu | Exact Aero commands remain unknown |
 | App-only persistence, scaling, logs, and firmware entries | `vn_headlight_persistent`, `vn_safety_margin_scaling`, `vn_download_event_log`, and firmware preferences do not mutate the wheel setting page | Kept outside the settings-write surface |
-| PWT disabled setting | EUC World maps its −1 Off choice to wire 200; Rust and the mobile Tune surface preserve this as an explicit `Disabled` write |
+| PWT disabled setting | EUC World maps its −1 Off choice to wire 200; Rust and the mobile Tune surface preserve this as an explicit `Disabled` write | Source-backed encoding is not a new physical acceptance result |
 
 EUC World's `beeper_volume` and the official app's `key tone` control share the
 same page-8 byte 63 and `LdAp` position; they are one wire setting, not two

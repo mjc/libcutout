@@ -2,6 +2,13 @@
 
 Purpose: disposable implementation mockups for wiring real telemetry, not final visual design.
 
+That purpose applies to this original screen set. The later
+[EUC Tune specification](cutout-11-euc-tune-spec.md) is the approved clean
+production settings reference and supersedes the dense diagnostic treatment
+for Tune. Settings correctness and physical acceptance remain open under the
+[design review](../../../../settings-design-review.md); do not add validation
+scaffolding to Tune or infer device observations from mockup values.
+
 Screens:
 1. Device picker
    - Add EUC

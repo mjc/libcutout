@@ -47,6 +47,10 @@ that API, and sending an un-gated legacy companion frame can produce the extra
 acknowledgement beep observed on Aero. This is static command-construction
 evidence, not proof of a physical write or readback result.
 
+The later audible live-test incident has no established offending command;
+the earlier companion-frame observation does not identify its cause. The sound
+ceased after a power cycle, which does not prove restoration of every setting.
+
 ## Reproducible code trail
 
 Local reference roots: `eucworld-2.66.1`, `eucworld-resources`,
@@ -76,13 +80,17 @@ keeping its offset: `LdAp` position 12 is tilt-back, not speed alarm, and
 `LdAp` position 17 is transport mode, not lateral tilt.
 
 Cutout's shared [protocol/dialect wire contract](control-wire-contract.md)
-checks the complete Veteran schema and its NOSFET dialect at compile time.
+checks the declared Veteran wire destinations and its NOSFET dialect at compile time.
 Duplicate bank/offset destinations fail compilation, including inherited fields;
 the checked schema also supplies the emitted header, discriminator, and offset.
 The speed-alarm/lateral-tilt regression checks both bank separation and the
 resulting frames, and the session test checks the bytes scheduled for transport.
 These checks prevent the discovered aliasing bug; they do not establish that
 the remaining NF2557 physical-control failures have been resolved.
+Nor do they establish complete typed semantic bindings, exact input conversion,
+host submission or operation completion; those gaps are tracked in the
+[settings design review](settings-design-review.md) and
+[LIBCU-DOC-8](https://lific.mjc.lol/LIBCU/pages/30).
 
 | EUC World key (`vn_` prefix omitted) | Setter | Values and frame | Readback / Cutout gap |
 | --- | --- | --- | --- |
@@ -105,6 +113,14 @@ the remaining NF2557 physical-control failures have been resolved.
 | `headlight_mode` | M | Off/On; binary pos 8 or legacy ASCII | This EUC World menu field is not the command used by Cutout's canonical Aero Headlight control; Cutout follows the official Aero light frame and does not infer a second light setting from this entry |
 | `riding_mode` | T | UI hard/medium/soft → binary 3/2/1 at pos 7, or legacy ASCII | Distinct from MD; Cutout exposes both the modern binary command and legacy presets |
 
+The speed bounds above are in km/h; Cutout's canonical request quantities use
+deci-km/h. A whole-km/h write must reject inexact canonical inputs rather than
+truncate them. The user's reported “34.8” has no recorded display unit: 34.8 mph
+is approximately 56 km/h, so a negative test for canonical 348 alone cannot
+explain that report. Voltage correction's signed −15…15 domain is in tenths of
+a percent, meaning −1.5…1.5%, not ±15%. These source-derived domains are library
+declarations, not negotiated device bounds or factory defaults.
+
 Remaining menu keys are accounted for separately, not invented as new wheel writes:
 
 | Key | Classification / remaining trace |
@@ -125,6 +141,12 @@ Page-8 byte `0x80` means unavailable. The existing NF2557 capture contains
 **100 at byte 66 and 0 at byte 68**, not unavailable sentinels. EUC World's mapping
 therefore supplies a concrete lead for numeric assist/dip controls on this Aero;
 it still does not establish the result of sending a new value.
+
+The recent Mac inventory sampled descriptors before settings telemetry and
+stopped at ride readiness. Its empty current values cannot supersede this
+capture evidence or establish unavailable readback. Observation acquisition must
+cover the relevant page cycle and identify which fields were actually received.
+Do not remove an observation mapping merely because a new write was unconfirmed.
 
 The 2026-06-22 NF2557 page-8 capture reports MD 50% and raw PWT 79%. EUC World's
 PWT control displays unused PWM margin, so this raw threshold corresponds to a

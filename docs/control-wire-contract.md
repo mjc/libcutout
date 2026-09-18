@@ -4,6 +4,9 @@ This document describes the implemented wire-schema checks. The broader
 [settings design review](settings-design-review.md) records remaining gaps in
 semantic bindings, native transport outcomes, readback and physical testing.
 Schema collision checks alone do not establish control correctness.
+The corresponding tracker baseline is
+[LIBCU-DOC-8](https://lific.mjc.lol/LIBCU/pages/30); its broader contract remains
+proposed, not fully implemented by this schema.
 
 Manufacturers, device models, base protocols, and dialects are separate concepts:
 
@@ -54,6 +57,28 @@ prove that a source-derived command matches a wheel's firmware or that hardware
 applied it. Golden frames, fresh readback, and physical acceptance remain separate
 checks; an unsuccessful write must not remove a setting's readback capability.
 
+## Remaining typed-contract work
+
+The schema checks above cover destinations and protocol types. They do not tie
+all semantic membership, canonical domains, encoding, observation comparison
+and completion policy together: those are still separately declared. A checked
+dialect marker is not proof that every control binding is complete.
+
+The proposed design consolidates these into one typed definition selected by
+model/firmware applicability, with public descriptors projected from it. A
+writable binding must require a checked encoder; readback completion must require
+the matching typed observation/comparison binding, not a confirmation boolean.
+Write and observation domains may differ, so reported values must not be rejected
+solely because they cannot be selected for writing. Keep the semantic public API;
+no compatibility facade or parallel settings framework is required.
+
+Private checked constructors must protect lower encoder entry points as well as
+FFI requests. In particular, dividing speed by 10 before checking its wire value
+can truncate an inexact canonical input today. Range checks alone cannot enforce
+exact representability or correct display-unit conversion. Runtime identity,
+firmware applicability and fresh operating guards remain necessary alongside
+compile-time structure.
+
 ## Tests
 
 The compiler tests compile the production schema checker in const contexts and
@@ -61,3 +86,8 @@ require the specific collision diagnostic. They cover binary-bank collisions,
 padding aliases, literal opcodes, submenu widths, literal bypasses, inherited
 collisions, and valid distinct/inherited layouts. Existing encoder and session
 tests check complete frame bytes, CRCs, and timed transaction steps.
+
+Further acceptance requires compile-fail cases for missing encoder/readback
+bindings and boundary tests for exact units, sentinels and inexact inputs across
+supported dialects. Native receipt/queue tests and independently sourced captured
+page cycles are separate requirements; green encoder tests do not close them.

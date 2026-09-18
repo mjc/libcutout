@@ -4,6 +4,12 @@ The SVG and PNG show four scroll positions of the same Settings screen, covering
 all 18 supported editable Aero settings. They replace the earlier annotated
 validation-dashboard comp. Values are design samples, not hardware observations.
 
+This remains the approved clean final-screen reference. The
+[settings design review](../../../../settings-design-review.md) and
+[LIBCU-DOC-8](https://lific.mjc.lol/LIBCU/pages/30) change the correctness
+requirements, not this visual direction. Recent implementation changes are not
+renewed visual approval, and catalog coverage is not physical acceptance.
+
 ## Screen contract
 
 - Grouped labels, values, and native controls in the existing dark CutOut theme.
@@ -11,8 +17,10 @@ validation-dashboard comp. Values are design samples, not hardware observations.
   disclosure, provenance, raw diagnostic group, instructional subtitle, or
   permanent Requested text.
 - Headlight and mode booleans use direct Off/On commands. Before any request,
-  unknown current state selects neither button. Accepted commands highlight the
-  chosen button without overwriting reported state; failed requests do not.
+  unknown current state selects neither button. A locally accepted request may
+  highlight the chosen button as pending, never as an observed or confirmed
+  value. Host submission and completion come from Rust; failure must not leave a
+  false success indication. Preserve any known reported state separately.
   No menu or Apply for booleans.
 - Numeric rows use the descriptor's bounded slider and precise stepper. The
   displayed value comes from the local draft or reported current value; unknown
@@ -25,7 +33,8 @@ validation-dashboard comp. Values are design samples, not hardware observations.
 - Trip reset keeps its confirmation. Calibration keeps its start/stop lifecycle.
 - Swift renders the Rust catalog. Ordinary availability requires no UI-side
   validation authorization. Identity, range, stationary/fresh telemetry, charging,
-  arming, and procedure checks remain in Rust.
+  arming, and procedure checks remain in Rust. These are requirements; the
+  checkpoint's delayed-write and outcome gaps still need repair.
 - Semantic text styles and adaptive layout support Dynamic Type. Interactive
   targets are at least 44 points. Light appearance uses the shared theme.
 
@@ -43,6 +52,26 @@ The unresolved charging-ceiling conversion is not a usable setting. Raw charge
 bytes, charging status, and shutdown countdown do not belong in Tune. Unknown
 manufacturer commands are not fabricated to fill a menu. See
 [the coverage audit](../../../../aero-settings-coverage.md) for remaining protocol gaps.
+
+## Behavioral acceptance against this comp
+
+Exercise unknown, locally pending, host-submitted, observed, failed and reconnect
+snapshots without adding permanent status prose or engineering rows. Defaults
+and design sample values must not become device readings. An unknown readback
+does not hide an otherwise supported writable control.
+
+Verify speed values, bounds and increments through the actual display-unit
+round trip. The reported “34.8” has no recorded unit; a canonical 348 rejection
+does not explain 34.8 mph (approximately 56 km/h). Rust must reject inexact
+canonical values, and the UI must not silently truncate a displayed request.
+Voltage correction −15…15 at precision 1 displays as −1.5…1.5%, not ±15%.
+
+Confirm that new telemetry never overwrites a draft, reconnect clears old
+operation identity/drafts, and late callbacks cannot show success on a new
+connection. A matched readback establishes observed desired state; a host
+write-without-response receipt alone does not. UI snapshot/unit tests, matching
+the comp, and physical device effects are separate acceptance checks. Keep
+unresolved controls open in LIBCU-390; the visual design does not certify them.
 
 ## Design references
 

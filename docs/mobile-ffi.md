@@ -4,6 +4,21 @@
 the Swift and Kotlin clients. Rust owns the transport-independent DTOs and
 concrete protocol sessions; platform code owns Bluetooth and UI concerns.
 
+For settings, that ownership includes value domains, applicability, observations,
+completion strategy, guards, serialization, deadlines and retry policy. The
+[settings design review](settings-design-review.md) proposes the remaining
+contract repairs; the current adapter/FFI boundary is not proof that native
+submission and operation completion already obey that contract.
+
+Each operation must retain its connection-attempt and operation IDs through
+preparation, native queueing, actual host submission/failure and completion.
+Native adapters report receipts to Rust rather than deciding success. A BLE
+write-without-response host receipt is not a wheel acknowledgment. Queue
+overflow must fail the affected operation explicitly, and delayed sends must
+recheck their applicable guards. The checkpoint currently publishes accepted
+plans before native execution and can drop the oldest queued write without a
+request-specific failure; these are open defects, not supported semantics.
+
 The Swift app consumes a generated package selector in ignored build state:
 
 ```text
@@ -225,58 +240,56 @@ Useful app commands are:
 devenv tasks run build:ios-app
 devenv tasks run run:ios-app-on-mac
 devenv tasks run deploy:ios-device
-devenv tasks run validate:aero-live-connection
 devenv shell -- cutout-melk-live
 ```
 
 ### Live Aero settings validation on macOS
 
-The mutating harness is under design review. Its checkpoint implementation has
-known retry, deadline and outcome-reporting defects; the opt-in switches do not
-make it suitable for physical acceptance testing. Use connection-only observation
-while the [settings design review](settings-design-review.md) is addressed. The
-settings invocation below documents the existing interface, not a recommended
-hardware test procedure.
+`validate:aero-live-connection` is the existing macOS CoreBluetooth harness,
+not currently a settings acceptance procedure. Repair it offline before further
+mutating runs. The checkpoint can repeat a failed suite, treat pending as
+terminal, begin restoration too soon, and report success despite skipped or
+unconfirmed cases. An attempted restore is not proof of restoration.
 
-`validate:aero-live-connection` remains read-only unless the settings mode is
-explicitly enabled. With the wheel powered on, stationary, and advertising,
-run the macOS CoreBluetooth validator against the NF2557 fixture:
+Existing configuration is recorded here for code review, not as a run recipe:
 
-```console
-CUTOUT_AERO_SETTINGS_TEST=1 \
-CUTOUT_AERO_TARGET=NF2557 \
-CUTOUT_AERO_VALIDATION_TIMEOUT=180 \
-devenv tasks run validate:aero-live-connection
-```
+| Switch | Checkpoint behavior / limitation |
+| --- | --- |
+| `CUTOUT_AERO_SETTINGS_TEST` | Enables the mutating suite; does not fix its retry or terminal-outcome defects |
+| `CUTOUT_AERO_INCLUDE_HEADLIGHT`, `CUTOUT_AERO_INCLUDE_AUDIBLE`, `CUTOUT_AERO_INCLUDE_ALARM_MODES`, `CUTOUT_AERO_INCLUDE_TRIP_RESET` | Broad opt-ins for control groups, not reviewed individual cases or evidence of safety |
+| `CUTOUT_AERO_ALLOW_UNRESTORABLE_WRITES` | Allows guessed targets without known restorable state; not an acceptable testing policy |
+| `CUTOUT_AERO_TARGET`, `CUTOUT_AERO_VALIDATION_TIMEOUT` | Select target and overall timeout; neither establishes settings-page coverage or a per-operation deadline |
 
-The settings mode waits for live telemetry and Rust-owned validation
-authorization, then exercises the controls that have been problematic on the
-Aero: high beam/headlight, tiltback speed, PWM tiltback, pedal hardness,
-display brightness, beeper volume, dynamic assist, pedal dip, lateral tilt
-limit, voltage correction, high-speed mode, low-battery mode, speed-alarm
-threshold, pedal angle, brake alarm, horn, and trip reset. It submits one
-request at a time and logs the semantic lifecycle result (`confirmed`,
-`sent_without_confirmation`, `timed_out`, `failed`, or `refused`) instead of
-equating a BLE write with a working control. Settings with a readable current
-value are restored after their probe.
+Disabling the settings suite does not make connection-only discovery proven
+harmless. A recorded NF2557 connection emitted Begode N/V/M probes and flushed
+queued probe bytes after Veteran identity resolved. FFE0/FFE1 is shared; probe
+eligibility and retirement of incompatible queued work need repair. “Read-only”
+describes intended semantic operations, not an absence of transport writes.
 
-Unknown numeric current values are skipped by default so a live test cannot
-leave an unreadable setting changed. Headlight writes are also skipped unless
-`CUTOUT_AERO_INCLUDE_HEADLIGHT=1` is set. Audible controls (beeper volume and
-horn), alarm mode writes, and trip reset are skipped unless their separate
-opt-ins are set:
+The recent descriptor inventory ran before settings telemetry and exited once
+ride telemetry was live. Its `current=nil` values do not show lack of device
+readback. Bounds and confirmation flags came from library declarations, not
+wheel negotiation. The replacement observation mode must run for a bounded
+relevant page cycle and report actual fields/pages received separately.
 
-```console
-CUTOUT_AERO_INCLUDE_HEADLIGHT=1   # high-beam on/off sequence
-CUTOUT_AERO_INCLUDE_AUDIBLE=1       # beeper volume and horn
-CUTOUT_AERO_INCLUDE_ALARM_MODES=1  # high-speed and low-battery modes
-CUTOUT_AERO_INCLUDE_TRIP_RESET=1   # reset trip meter
-```
+The [design review](settings-design-review.md) specifies the replacement:
+fake-transport tests for zero control writes in inventory mode, exactly-once
+execution, genuine terminal waiting, honest incomplete verdicts and cancellation
+of the actual child and queued work; then one reviewed physical case at a time.
+Each case names exact identity, target, expected physical effect, expected
+evidence and restoration policy. No descriptor-minimum probes, generated numeric
+targets, boolean sweeps or live invalid-input tests. Intent and transport/readback
+evidence must stream durably, and failed restoration remains an explicit recovery
+obligation. The audible incident ceased after power cycling; neither its cause
+nor complete restoration was established.
 
-To deliberately test an unknown numeric setting that cannot be restored, also
-set `CUTOUT_AERO_ALLOW_UNRESTORABLE_WRITES=1`; the output marks those writes
-and they may require manual restoration on the wheel. The validator never runs
-pedal/gyro calibration.
+Tracker ownership: [LIBCU-836](https://lific.mjc.lol/LIBCU/issues/LIBCU-836)
+for harness repair; LIBCU-477 for operation lifecycle; LIBCU-641 for backpressure;
+LIBCU-476 for observations; LIBCU-505 for probe safety. The shared proposed
+contract is [LIBCU-DOC-8](https://lific.mjc.lol/LIBCU/pages/30); physical
+acceptance remains in LIBCU-390 after those prerequisites.
+
+### App build and deployment behavior
 
 The app build task targets an ARM64 iOS Simulator. The Mac command builds the
 iPhone app for Apple Silicon Mac and opens it. Its

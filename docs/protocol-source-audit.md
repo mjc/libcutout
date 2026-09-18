@@ -1,11 +1,15 @@
 # Protocol Source Audit
 
-Date: 2026-06-21
+Initial source audit: 2026-06-21. Settings evidence/status reconciled 2026-09-18.
 
 This note records public protocol sources checked before replacing provisional
-Aero/Begode request bytes. It is intentionally provenance-focused; implementation
-must still be test-driven and verified against live Bluetooth captures before a
-device is considered fully specced.
+Veteran/NOSFET and Begode request bytes. It is intentionally provenance-focused;
+implementation must still be test-driven and verified against live Bluetooth
+captures before a device is considered fully specced.
+
+Later findings in the [EUC World inventory](eucworld-aero-settings-re.md) and
+the [settings design review](settings-design-review.md) supersede provisional
+settings assumptions below; source inspection is not physical acceptance.
 
 ## Sources Checked
 
@@ -54,18 +58,25 @@ device is considered fully specced.
 - Brand cannot be inferred from GATT alone. The initial notification bytes
   should classify protocol family: `dc5a5c` for Veteran/LeaperKim/NOSFET,
   `55aa` for Begode/Gotway.
+- Shared GATT does not establish cross-protocol probe safety. The later NF2557
+  Mac trace emitted Begode N/V/M probes, including queued bytes after Veteran
+  identity resolved. Probe eligibility and retirement of incompatible work are
+  unresolved requirements (LIBCU-505), not established by the session classifier.
 - Veteran/Aero telemetry frames are length-prefixed after the `dc5a5c` magic.
   A reassembled frame is `len + 4` bytes. Short frames have no CRC; longer
   smart-BMS frames include a big-endian CRC32 trailer.
-- NOSFET Aero is documented as a 30-cell / 134 V Patton-family model with
-  model id `43`. Its battery range is documented as raw centivolts
-  `9918..12337` for 0..100%.
+- The initial source grouped model id `43` with the Patton-family ranges and
+  raw centivolts `9918..12337` for 0..100%. Do not reuse that grouping's 134 V
+  label as an Aero charging limit: the later settings inventory identifies the
+  fixture as a 126 V pack and leaves its charging-ceiling conversion unresolved.
 - Veteran/NOSFET smart-BMS long frames use the byte at absolute offset `46` as
   the BMS page selector. Selectors `0` and `4` are pack metadata; selectors
   `1`/`5` and `2`/`6` are 15-value cell-voltage pages starting at absolute
   offset `53`; selectors `3`/`7` carry six signed temperature values starting
-  at absolute offset `47`; selector `8` is currently reserved/newer and must
-  stay raw until live behavior proves a stable meaning.
+  at absolute offset `47`. Selector `8`, initially left raw, now has source-backed
+  settings mappings and an NF2557 capture; see the inventory for per-field
+  evidence. The charging-ceiling field remains raw because its model-specific
+  conversion is unresolved; that does not make the whole page undecodable.
 - For metadata pages `0` and `4`, the documented BMS pack-current fields live
   at absolute offsets `69` and `71` and are signed big-endian centiamps. For
   Aero's 30-cell layout, page `3`/`7` should not expose cells beyond index 29;
@@ -120,12 +131,14 @@ from the `ANG` write. The Rust `AeroAngleAdjustment` type therefore describes
 `ANG` as a vertical-angle value; it does not claim to decode pedal mode.
 
 On the live NF2557/Aero capture (firmware 43.2.54), the repeated settings
-readback currently proves raw fields `0x0018=550`, `0x001a=540`, and
+readback recorded raw fields `0x0018=550`, `0x001a=540`, and
 `0x001e=1920`. The first two are the observed alarm and tilt-back values;
 `0x001e` remains raw until a controlled capture proves its meaning. A
 reversible `TLT` write has completed a 54 -> 53 -> 54 readback round trip;
-an `ALM` write that did not produce a matching readback is reported as failed
-closed.
+an `ALM` write did not produce a matching readback and remained unconfirmed.
+These are historical observations, not proof of present end-to-end settings
+acceptance. Lack of confirmation does not establish that no physical effect
+occurred or that the setting has no readable state.
 
 ## Current implementation and remaining proof
 
@@ -135,6 +148,9 @@ parser classify notification streams by wire magic; the Aero session fixture
 decodes frame length, model id, firmware, voltage, and the fixed-header
 telemetry fields. The registered session and CLI write path require the
 protocol GATT fingerprint plus model id `43` before arming any write.
+This statement describes the model-specific control path, not all discovery
+probes or delayed native writes. Operation identity, actual host receipts and
+queue guards remain incomplete (LIBCU-477, LIBCU-641).
 
 The implemented source-backed EUC World Veteran menu has evidence gaps, but its
 wheel-setting write variants are represented by the Rust/mobile/Tune surface.
@@ -157,6 +173,16 @@ remain write-only or unconfirmed until the matching NF2557 effect/readback/rollb
 capture exists. The [EUC World RE inventory](eucworld-aero-settings-re.md) records
 the recovered commands, ranges, menu mappings, and deliberate non-Aero/app-only
 exclusions.
+
+The current repair baseline is [LIBCU-DOC-8](https://lific.mjc.lol/LIBCU/pages/30).
+Captured observation coverage (LIBCU-476), alarm correctness (LIBCU-349) and
+physical acceptance (LIBCU-390) remain distinct from static frame corroboration.
+The [coverage record](aero-settings-coverage.md#physical-evidence-and-open-acceptance)
+preserves later user reports, including successful controls and unresolved
+headlight, sound, lateral tilt, speed/brake alarms, pedal angle, modes and reset.
+The early Mac `current=nil` inventory is not evidence against captured readback;
+the live harness defects are tracked in
+[LIBCU-836](https://lific.mjc.lol/LIBCU/issues/LIBCU-836).
 
 GPL repositories remain behavioral cross-checks only; the Rust implementation
 is based on protocol facts, MIT documentation, our captures, and tests. The

@@ -44,6 +44,15 @@ related work in `LIBCU-772` and `LIBCU-815`.
 These are design references, not simulator screenshots or hardware proof.
 Tune follows the newer availability-first policy: omit unknown optional readbacks
 and empty groups; preserve known zero/false/Off and visible operation failures.
+An unknown current value does not remove an otherwise supported editable
+control or become a default. The
+[settings design review](../../../settings-design-review.md), mirrored in
+[LIBCU-DOC-8](https://lific.mjc.lol/LIBCU/pages/30), specifies the remaining
+contract repairs. Keep this visual reference unchanged: no provenance wall,
+validation badges or permanent request-status paragraphs. Native presentation
+still needs snapshot and display-unit checks against the interaction contract;
+the recent checkpoint and unconfirmed wheel runs are not visual or hardware
+acceptance.
 
 ## BMS Screens
 

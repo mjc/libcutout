@@ -8,10 +8,16 @@ Cutout command support is split by safety class before a protocol encoder can
 produce transport writes. Read-only sessions must fail closed for every
 non-read command.
 
+The required gates below are not a claim of complete end-to-end enforcement.
+The [settings design review](settings-design-review.md) records the 2026-09-18
+gaps in semantic bindings, native queues, discovery and the live harness.
+“Benign” is an API classification, not a promise that an audible control is
+harmless to exercise or that a legal setting value is safe to probe.
+
 | Command class | Current commands | Required type bound | Required runtime gate | Live write status |
 | --- | --- | --- | --- | --- |
-| Read-only probes | `RequestIdentity`, `RequestTelemetry`, `RequestFirmwareInfo`, `RequestBatteryInfo`, `RequestDiagnostics`, `RequestSettings` | `SupportsReadRequests` / `ReadOnlyModelSpec` | Command kind must be in model `READ_CAPABILITIES`; unsupported read probes emit diagnostics without writes | Enabled for capture-backed read-only paths |
-| Stationary-only settings writes | `InvokeAction` for reset/calibration and `SetSetting` with a profile-defined `SettingId`/value | `SupportsSettingsWrites` plus `StationarySettingsWriteSession` | Live arming requires a speed sample at most two seconds old and within the model limit (500 mm/s for Aero). The arm is bound to the model and expires. Motion, charging, failed rearm, stale speed, and disconnect cancel pending work; rearming cannot extend an older sequence's deadline. | The production descriptor exposes each supported Aero setting directly. Settings without decoded live readback retain an unconfirmed lifecycle; submission is never treated as confirmation. The simulator covers the source-backed command path, not physical effect. |
+| Read-only probes | `RequestIdentity`, `RequestTelemetry`, `RequestFirmwareInfo`, `RequestBatteryInfo`, `RequestDiagnostics`, `RequestSettings` | `SupportsReadRequests` / `ReadOnlyModelSpec` | Command kind must be in model `READ_CAPABILITIES`; unsupported read probes emit diagnostics without writes. Discovery must establish probe eligibility for all still-plausible protocols. | Session read gates exist; cross-protocol discovery safety and queued probe retirement remain open |
+| Stationary-only settings writes | `InvokeAction` for reset/calibration and `SetSetting` with a profile-defined `SettingId`/value | `SupportsSettingsWrites` plus `StationarySettingsWriteSession` | Live arming requires a speed sample at most two seconds old and within the model limit (500 mm/s for Aero). The arm must be model-bound and expire. Motion, charging, failed rearm, stale speed, and disconnect must cancel pending work; rearming must not extend an older sequence's deadline. | Source-backed encoders and session guards exist. Native queued-effect identity, host receipts and delayed-send guard enforcement remain incomplete. A descriptor or accepted plan is neither host submission nor wheel confirmation. |
 | Benign controls | `SetLights`, `SetTaillight`, `SoundHorn` | `SupportsBenignControls` plus a benign-control session shell | Model allow-list, exact captured command bytes, command capability, explicit unsupported diagnostics | Generic lights are emitted only by profiles that advertise them. Aero's Tune surface uses one canonical Headlight setting; unsupported lighting commands remain omitted. |
 | Dangerous actuation | `SetRawMotorCurrent` | `SupportsDangerousActuation` plus dangerous-control feature and session shell | Non-default build feature, explicit runtime arming token, short expiry, current limits, stationary/no-probing validation where applicable | Not enabled |
 | Firmware operations | No `DeviceCommand` variant yet | Separate firmware operation marker, not a control trait | Explicit firmware mode, image provenance, rollback/failsafe plan, hardware-specific acceptance | Not enabled |
@@ -33,6 +39,14 @@ Live CLI `connect` and `capture` paths also require the selected Aero/Falcon
 profile's registered GATT fingerprint before constructing a protocol session;
 an unrelated BLE peripheral is rejected without a session probe or write.
 
+That fingerprint does not distinguish Veteran from Begode on their shared
+FFE0/FFE1 channel. The Mac discovery trace included Begode probes on NF2557,
+including queued bytes flushed after identity resolution. Read-only session
+classification alone does not establish safety of the discovery path. Before
+delayed execution, Rust must revalidate the connection and applicable guard;
+the native queue must retain operation identity and report overflow/failure
+instead of silently dropping an old write or sequence fragment.
+
 ## Before Enabling Live Controls
 
 Each model-specific control issue must provide capture-backed request bytes,
@@ -46,9 +60,13 @@ safety class, and absolute raw-current limit. The feature-gated
 model-specific encoder, so even authorized commands cannot reach a transport
 until a capture-backed control issue adds that path.
 
-The current NF2557 proof path uses an explicit peripheral identifier, the Aero
-protocol profile, the discovered FFE0/FFE1 GATT fingerprint, and reported model
-id 43 before arming a write. A live tiltback write was confirmed by the typed
-readback changing 54 to 53 and then restored to 54. A live alarm write emitted
-one protocol write but did not change the reported 55 value, so the CLI rejects
-it as unconfirmed instead of treating transport success as setting success.
+The historical NF2557 CLI capture used an explicit peripheral identifier, the
+Aero model profile selecting the Veteran/NOSFET dialect, the discovered FFE0/FFE1
+GATT fingerprint, and reported model id 43 before arming a write. Its tilt-back
+readback changed 54 to 53 and then returned to 54; an alarm write did not change
+the reported 55 value and was unconfirmed. This is evidence for those captured
+interactions, not current acceptance of the Mac harness, all controls or all
+firmware. Fresh matching telemetry establishes observed state, not causal
+acknowledgment without an echoed operation ID. Use the
+[coverage record](aero-settings-coverage.md#physical-evidence-and-open-acceptance)
+for subsequent user reports and unresolved controls.

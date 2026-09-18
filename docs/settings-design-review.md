@@ -5,6 +5,12 @@ reopens the settings/control boundary on PR #106; a clean build or a committed
 checkpoint does not close the physical failures. It applies to every supported
 protocol, not just the NF2557 fixture.
 
+Tracker mirror: [LIBCU-DOC-8](https://lific.mjc.lol/LIBCU/pages/30).
+[LIBCU-664](https://lific.mjc.lol/LIBCU/issues/LIBCU-664) and
+[LIBCU-PLAN-16](https://lific.mjc.lol/LIBCU/plans/68) own delivery. The
+[reconciliation index](settings-tracker-reconciliation.md) maps the existing
+repair owners and records which documents, plans and tickets were updated.
+
 ## Correct the evidence first
 
 The recent Mac inventory logged the first nonempty *descriptor* snapshot during

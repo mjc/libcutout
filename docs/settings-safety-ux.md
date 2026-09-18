@@ -5,13 +5,21 @@ distinct from a wheel-reported state. It is deliberately shared by the CLI,
 simulator, and Swift UI; Swift renders the Rust-owned state and does not invent
 protocol behavior.
 
+This is the required behavior, not a claim of complete enforcement. The
+2026-09-18 [settings design review](settings-design-review.md) identifies gaps
+in typed bindings, native submission, queues, readback acquisition and the live
+harness. It does not replace the approved clean production visual design.
+
 ## State and confirmation
 
 Every setting uses these states when the protocol exposes them:
 
 - **Current**: the last value reported by the wheel (with source and age).
-- **Pending**: a typed request was accepted locally and is awaiting a result.
-- **Confirmed**: a matching, fresh readback arrived after submission.
+- **Pending**: a typed request was accepted locally and is awaiting a result;
+  preparation/queueing is not host submission.
+- **Confirmed by readback**: a matching, fresh observation arrived after actual
+  host submission. This establishes the observed desired state, not a causal
+  device acknowledgment unless the protocol echoes the operation identity.
 - **Unconfirmed**: the request has no usable confirming readback. Retain this
   distinction in the model; do not overwrite current state or show a success claim.
 - **Refused/failed/expired**: no state change is implied. Keep the last reported
@@ -22,6 +30,12 @@ default. Compose ordinary screens from typed availability: omit absent optional
 readbacks and unsupported controls, and omit groups left empty by that filtering.
 Real zero, `false`, and `Off` values remain visible. Do not filter by matching
 localized placeholder text.
+
+The model must distinguish not-yet-observed, unavailable, stale and undecodable
+values. A known factory default needs independent provenance and must never
+stand in for a current device reading. Write-only submission, protocol
+acknowledgment, matching readback and procedure completion are distinct typed
+outcomes, not variants of a single confirmation boolean.
 
 A writable control remains actionable even if its protocol cannot report its
 current value. Do not add a limitation paragraph, a verification badge, or a
@@ -45,20 +59,27 @@ Rust must reject a settings write unless all applicable checks pass:
    read-only session.
 3. Telemetry is fresh and within the model's stationary limit (Aero: 500 mm/s).
 4. The wheel is not charging and the arm has not expired.
-5. The value is a typed, range-checked value for the resolved dialect.
+5. The value is typed, range-checked and exactly representable in the resolved
+   dialect's canonical units. Display conversion cannot silently truncate it.
 
-The session enforces these checks and returns actionable refusal reasons.
+The Rust session must enforce these checks both at request preparation and at
+every applicable delayed send, returning actionable refusal reasons. Operation
+and connection identity must survive the native queue; the current checkpoint
+does not yet establish this end-to-end guarantee.
 Ordinary supported settings do not require a rider-facing validation mode.
 Source and hardware verification remain engineering evidence, not settings
 screen copy. Unsupported commands do not acquire an encoder through UI policy.
 
 ## Reversibility and retries
 
-Numeric settings and toggles are reversible when a current value is known. The
+Numeric settings and toggles may be restorable when a valid current value is
+known and the dialect supports writing it; read and write domains can differ. The
 UI should offer the previous value for an explicit retry or restore action; it
-must not silently undo a user request. Trip reset, calibration, transport, and
-power actions are non-idempotent: require confirmation where exposed, serialize
-them, and never retry automatically after timeout or disconnect.
+must not silently undo a user request. Trip reset, calibration, transport-mode
+changes and power actions require explicit effect-aware policy: confirm where
+appropriate, serialize them, and never retry automatically after timeout or
+disconnect. Restoration is a separate operation whose failure remains visible;
+remembering the old value does not prove it was restored.
 
 A repeated idempotent setting request may be submitted again, but success still
 requires a matching post-write readback when one exists. A prior value matching
@@ -71,6 +92,13 @@ pending settings work and the old capability/state projection. No queued write
 may execute after its arm expires or after the session owner changes. Read-only
 and capture sessions cannot schedule writes. Dangerous actuation stays behind
 its separate feature and runtime gate.
+
+Here, “writes” means control mutations, not every BLE write used for a read
+request. Discovery probes still need evidence of safety for every plausible
+protocol on their channel. Shared GATT identifiers alone are not that evidence;
+identity resolution must retire incompatible queued probes. Queue overflow must
+fail the affected operation explicitly, never silently discard a command or
+sequence fragment.
 
 ## Accessibility and copy
 
