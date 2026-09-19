@@ -14,7 +14,7 @@ final class DeviceControlsPresentationTests: XCTestCase {
         XCTAssertEqual(DeviceControlPresentation.value(.boolean(value: true), control: .boolean), "On")
     }
 
-    func testSubmissionFeedbackShowsPendingUnconfirmedAndFailures() {
+    func testSubmissionFeedbackShowsPendingAndFailuresWithoutConfirmationJargon() {
         for raw: Int32 in [0, 46, 70] {
             XCTAssertEqual(DeviceControlPresentation.value(.number(value: raw), control: .readOnly), String(raw))
         }
@@ -23,7 +23,7 @@ final class DeviceControlsPresentationTests: XCTestCase {
         XCTAssertNil(DeviceControlPresentation.status(.idle))
         XCTAssertNil(DeviceControlPresentation.actionStatus(.idle))
         XCTAssertEqual(DeviceControlPresentation.status(.failed), "Failed")
-        XCTAssertEqual(DeviceControlPresentation.status(.sentWithoutConfirmation), "Requested; no confirmation")
+        XCTAssertNil(DeviceControlPresentation.status(.sentWithoutConfirmation))
         XCTAssertEqual(DeviceControlPresentation.refusal(.busy), "The wheel is processing another command.")
     }
 
@@ -81,7 +81,7 @@ final class DeviceControlsPresentationTests: XCTestCase {
         state.status = .sentWithoutConfirmation
         XCTAssertNil(state.current)
         XCTAssertEqual(DeviceControlPresentation.value(state.requested, control: .boolean), "On")
-        XCTAssertEqual(DeviceControlPresentation.status(state.status), "Requested; no confirmation")
+        XCTAssertNil(DeviceControlPresentation.status(state.status))
         state.current = .boolean(value: false)
         XCTAssertEqual(DeviceControlPresentation.value(state.current, control: .boolean), "Off")
         XCTAssertEqual(DeviceControlPresentation.value(state.requested, control: .boolean), "On")
@@ -92,11 +92,8 @@ final class DeviceControlsPresentationTests: XCTestCase {
         XCTAssertEqual(DeviceControlPresentation.sourceLabel(.captureReplay), "Replay")
         XCTAssertEqual(DeviceControlPresentation.sourceLabel(.userRequest), "Requested")
         XCTAssertEqual(DeviceControlPresentation.sourceLabel(nil), "Wheel")
-        XCTAssertEqual(
-            DeviceControlPresentation.status(.sentWithoutConfirmation),
-            "Requested; no confirmation"
-        )
-        XCTAssertEqual(localizedAppText("settings.state.timed_out"), "Not confirmed")
+        XCTAssertNil(DeviceControlPresentation.status(.sentWithoutConfirmation))
+        XCTAssertNil(DeviceControlPresentation.status(.timedOut))
     }
 
     func testNumericDraftWinsOverChangingReadbackAndRespectsFixedPointBounds() {
@@ -160,9 +157,9 @@ final class DeviceControlsPresentationTests: XCTestCase {
         XCTAssertFalse(DeviceControlPresentation.hasChanges(draft: .disabled, current: .disabled))
         XCTAssertEqual(DeviceControlPresentation.value(nil, control: .boolean), "—")
         XCTAssertNil(DeviceControlPresentation.status(.confirmed))
-        XCTAssertEqual(DeviceControlPresentation.actionStatus(.sentWithoutConfirmation), "Requested; no confirmation")
+        XCTAssertNil(DeviceControlPresentation.actionStatus(.sentWithoutConfirmation))
         XCTAssertNotNil(DeviceControlPresentation.status(.waitingForConfirmation))
-        XCTAssertNotNil(DeviceControlPresentation.status(.timedOut))
+        XCTAssertNil(DeviceControlPresentation.status(.timedOut))
         XCTAssertNotNil(DeviceControlPresentation.status(.refused))
     }
 
@@ -292,9 +289,9 @@ final class DeviceControlsPresentationTests: XCTestCase {
             state.status = .waitingForConfirmation
             XCTAssertEqual(DeviceControlPresentation.feedback(state), .init(text: "Pending", isError: false))
             state.status = .sentWithoutConfirmation
-            XCTAssertEqual(DeviceControlPresentation.feedback(state), .init(text: "Requested; no confirmation", isError: false))
+            XCTAssertNil(DeviceControlPresentation.feedback(state))
             state.status = .timedOut
-            XCTAssertEqual(DeviceControlPresentation.feedback(state), .init(text: "Not confirmed", isError: true))
+            XCTAssertNil(DeviceControlPresentation.feedback(state))
             state.status = .idle
             XCTAssertNil(DeviceControlPresentation.feedback(state))
         }

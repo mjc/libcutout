@@ -536,10 +536,10 @@ enum DeviceControlPresentation {
         }
         return switch status {
         case .idle, .confirmed: nil
-        case .sentWithoutConfirmation: localizedAppText("settings.state.sent_without_confirmation")
+        case .sentWithoutConfirmation: nil
         case .waitingForConfirmation: localizedAppText("settings.state.pending")
         case .refused: localizedAppText("settings.state.refused")
-        case .timedOut: localizedAppText("settings.state.timed_out")
+        case .timedOut: nil
         case .failed: localizedAppText("settings.state.failed")
         }
     }
@@ -586,7 +586,7 @@ enum DeviceControlPresentation {
     static func actionStatus(_ status: DeviceActionStatus) -> String? {
         switch status {
         case .idle: nil
-        case .sentWithoutConfirmation: localizedAppText("settings.state.sent_without_confirmation")
+        case .sentWithoutConfirmation: nil
         case .waitingForProgress: localizedAppText("controls.waiting")
         case .readyForNextStep: localizedAppText("controls.ready")
         case .refused: localizedAppText("settings.state.refused")
