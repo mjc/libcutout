@@ -150,8 +150,16 @@ pub struct SettingDescriptor {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct SettingBinding {
     pub control: SettingControl,
-    pub completion: SettingCompletionStrategy,
+    pub observation: SettingObservationBinding,
     pub write_access: SettingWriteAccess,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum SettingObservationBinding {
+    None,
+    ObservedField(u16),
+    MatchingField(u16),
+    ReadOnlyField(u16),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -161,7 +169,7 @@ pub(super) enum SettingWriteAccess {
 }
 
 impl SettingBinding {
-    fn new(id: SettingId, control: SettingControl, completion: SettingCompletionStrategy) -> Self {
+    fn new(id: SettingId, control: SettingControl, observation: SettingObservationBinding) -> Self {
         let write_access = match id {
             SettingId::ChargeLimitDiagnostic
             | SettingId::AutoShutdownRemaining
@@ -172,8 +180,30 @@ impl SettingBinding {
         };
         Self {
             control,
-            completion,
+            observation,
             write_access,
+        }
+    }
+
+    fn completion(&self) -> SettingCompletionStrategy {
+        if matches!(
+            self.observation,
+            SettingObservationBinding::MatchingField(_)
+        ) {
+            SettingCompletionStrategy::MatchingReadback
+        } else {
+            SettingCompletionStrategy::SubmissionOnly
+        }
+    }
+}
+
+impl SettingObservationBinding {
+    fn field(self) -> Option<u16> {
+        match self {
+            Self::None => None,
+            Self::ObservedField(field)
+            | Self::MatchingField(field)
+            | Self::ReadOnlyField(field) => Some(field),
         }
     }
 }
@@ -342,6 +372,7 @@ impl DeviceControlProfile {
                     return None;
                 }
                 let binding = adapter.binding(id)?;
+                let completion = binding.completion();
                 let mut control = binding.control;
                 let writable = self.available_settings.contains(&id)
                     && (self
@@ -373,7 +404,7 @@ impl DeviceControlProfile {
                     } else {
                         VerificationStatus::Unverified
                     },
-                    completion: binding.completion,
+                    completion,
                 })
             })
             .collect()
@@ -875,6 +906,29 @@ mod tests {
                 .write_verification,
             VerificationStatus::Unverified
         );
+    }
+
+    #[test]
+    fn matching_completion_requires_a_typed_observation_binding() {
+        for (adapter, profile) in [
+            (SettingsAdapter::Aero, aero_control_profile()),
+            (SettingsAdapter::Falcon, falcon_control_profile()),
+        ] {
+            for descriptor in profile.descriptors(true) {
+                let binding = adapter.binding(descriptor.id).unwrap();
+                assert_eq!(descriptor.completion, binding.completion());
+                if descriptor.completion.supports_readback() {
+                    assert!(
+                        matches!(
+                            binding.observation,
+                            SettingObservationBinding::MatchingField(_)
+                        ),
+                        "matching readback without a typed observation: {:?}",
+                        descriptor.id
+                    );
+                }
+            }
+        }
     }
 
     #[test]

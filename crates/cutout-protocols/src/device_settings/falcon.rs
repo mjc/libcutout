@@ -3,27 +3,27 @@ use cutout_core::{
 };
 
 use super::{
-    SettingBinding, SettingCompletionStrategy, SettingControl, SettingUnit, choices, number,
+    SettingBinding, SettingControl, SettingObservationBinding, SettingUnit, choices, number,
     readback::SettingObservation, speed_control,
 };
 
 pub(super) fn binding(id: SettingId) -> Option<SettingBinding> {
-    let (control, completion) = match id {
+    let (control, observation) = match id {
         SettingId::Headlight | SettingId::AccelerationAssist | SettingId::Taillight => (
             SettingControl::Boolean,
-            SettingCompletionStrategy::SubmissionOnly,
+            SettingObservationBinding::ObservedField(crate::BEGODE_FIELD_LED_AND_LIGHT_MODE),
         ),
         SettingId::MaximumSpeed => (
             speed_control(0, 99),
-            SettingCompletionStrategy::MatchingReadback,
+            SettingObservationBinding::MatchingField(crate::BEGODE_FIELD_TILTBACK_SPEED_KMH),
         ),
         SettingId::BeeperVolumeLevel => (
             number(1, 9, 0, SettingUnit::Level),
-            SettingCompletionStrategy::SubmissionOnly,
+            SettingObservationBinding::None,
         ),
         SettingId::PowerOffDelay => (
             number(0, 255, 0, SettingUnit::Minutes),
-            SettingCompletionStrategy::SubmissionOnly,
+            SettingObservationBinding::ReadOnlyField(crate::BEGODE_FIELD_POWER_OFF_TIMER_MINUTES),
         ),
         SettingId::LightingPattern => (
             choices(&[
@@ -38,7 +38,7 @@ pub(super) fn binding(id: SettingId) -> Option<SettingBinding> {
                 (8, "settings.choice.pattern_8", false),
                 (9, "settings.choice.pattern_9", false),
             ]),
-            SettingCompletionStrategy::SubmissionOnly,
+            SettingObservationBinding::ReadOnlyField(crate::BEGODE_FIELD_LED_AND_LIGHT_MODE),
         ),
         SettingId::PedalMode => (
             choices(&[
@@ -46,7 +46,7 @@ pub(super) fn binding(id: SettingId) -> Option<SettingBinding> {
                 (1, "settings.choice.medium", true),
                 (2, "settings.choice.soft", true),
             ]),
-            SettingCompletionStrategy::MatchingReadback,
+            SettingObservationBinding::MatchingField(crate::BEGODE_FIELD_SETTINGS_BITS),
         ),
         SettingId::RollAngleMode => (
             choices(&[
@@ -54,7 +54,7 @@ pub(super) fn binding(id: SettingId) -> Option<SettingBinding> {
                 (1, "settings.choice.medium", true),
                 (2, "settings.choice.high", true),
             ]),
-            SettingCompletionStrategy::MatchingReadback,
+            SettingObservationBinding::MatchingField(crate::BEGODE_FIELD_SETTINGS_BITS),
         ),
         SettingId::SpeedAlarmMode => (
             choices(&[
@@ -63,11 +63,11 @@ pub(super) fn binding(id: SettingId) -> Option<SettingBinding> {
                 (2, "settings.choice.off", false),
                 (3, "settings.choice.pwm_tiltback", false),
             ]),
-            SettingCompletionStrategy::MatchingReadback,
+            SettingObservationBinding::MatchingField(crate::BEGODE_FIELD_SETTINGS_BITS),
         ),
         _ => return None,
     };
-    Some(SettingBinding::new(id, control, completion))
+    Some(SettingBinding::new(id, control, observation))
 }
 
 pub(super) fn normalize_readback(entry: SettingsEntry, observations: &mut Vec<SettingObservation>) {

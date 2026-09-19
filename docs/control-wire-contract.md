@@ -75,13 +75,12 @@ write therefore cannot remove a setting's readback capability, and a submitted
 write is not presented as device confirmation unless the descriptor requires a
 matching observation.
 
-The schema checks and adapter definitions still do not make semantic membership,
-canonical domains, encoding, observation comparison, and completion policy one
-literal declaration. The checked request path does require a concrete encoder for
-every writable command, and readback observations are normalized through the
-selected adapter, but compile-time missing-binding diagnostics and one-definition
-projection remain follow-up work. A checked dialect marker is not proof that
-every control binding is complete.
+The current Aero/NOSFET and Falcon adapter binding co-locates semantic control
+shape, write access, the typed observation field, and the derived completion
+strategy. The checked request path still supplies the concrete encoder, while
+the decoder supplies the value comparison, so compile-time missing-encoder and
+complete one-definition diagnostics remain follow-up work. A checked dialect
+marker is not proof that every control binding is complete.
 
 Write and observation domains may differ, so reported values must not be rejected
 solely because they cannot be selected for writing. Keep the semantic public API;

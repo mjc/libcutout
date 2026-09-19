@@ -1,27 +1,33 @@
 use cutout_core::{DeviceSettingValue, PedalMode, SettingId, SettingsEntry};
 
 use super::{
-    SettingBinding, SettingCompletionStrategy, SettingControl, SettingUnit, choices, number,
+    SettingBinding, SettingControl, SettingObservationBinding, SettingUnit, choices, number,
     readback::SettingObservation, speed_control,
 };
 
 pub(super) fn binding(id: SettingId) -> Option<SettingBinding> {
-    let (control, completion) = match id {
-        SettingId::HighBeam => (
-            SettingControl::Boolean,
-            SettingCompletionStrategy::SubmissionOnly,
-        ),
+    let (control, observation) = match id {
+        SettingId::HighBeam => (SettingControl::Boolean, SettingObservationBinding::None),
         SettingId::HighSpeedMode | SettingId::LowBatteryMode | SettingId::TransportMode => (
             SettingControl::Boolean,
-            SettingCompletionStrategy::MatchingReadback,
+            SettingObservationBinding::MatchingField(match id {
+                SettingId::HighSpeedMode => crate::AERO_FIELD_HIGH_SPEED_MODE,
+                SettingId::LowBatteryMode => crate::AERO_FIELD_LOW_BATTERY_MODE,
+                SettingId::TransportMode => crate::AERO_FIELD_TRANSPORT_MODE,
+                _ => unreachable!(),
+            }),
         ),
         SettingId::TiltbackSpeed | SettingId::SpeedAlarmThreshold => (
             speed_control(10, 200),
-            SettingCompletionStrategy::MatchingReadback,
+            SettingObservationBinding::MatchingField(match id {
+                SettingId::TiltbackSpeed => crate::VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH,
+                SettingId::SpeedAlarmThreshold => crate::VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
+                _ => unreachable!(),
+            }),
         ),
         SettingId::PwmTiltback => (
             number(30, 100, 0, SettingUnit::PwmDutyPercent),
-            SettingCompletionStrategy::MatchingReadback,
+            SettingObservationBinding::MatchingField(crate::AERO_FIELD_PWM_PERCENT),
         ),
         SettingId::PedalHardness
         | SettingId::DisplayBrightness
@@ -29,30 +35,41 @@ pub(super) fn binding(id: SettingId) -> Option<SettingBinding> {
         | SettingId::DynamicAssist
         | SettingId::PedalDipCompensation => (
             number(0, 100, 0, SettingUnit::Percent),
-            SettingCompletionStrategy::MatchingReadback,
+            SettingObservationBinding::MatchingField(match id {
+                SettingId::PedalHardness => crate::AERO_FIELD_PEDAL_HARDNESS_PERCENT,
+                SettingId::DisplayBrightness => crate::AERO_FIELD_DISPLAY_BACKLIGHT_PERCENT,
+                SettingId::BeeperVolumePercent => crate::AERO_FIELD_BEEPER_VOLUME_PERCENT,
+                SettingId::DynamicAssist => crate::AERO_FIELD_DYNAMIC_ASSIST_PERCENT,
+                SettingId::PedalDipCompensation => crate::AERO_FIELD_PEDAL_DIP_COMPENSATION_PERCENT,
+                _ => unreachable!(),
+            }),
         ),
         SettingId::LateralTiltLimit => (
             number(35, 75, 0, SettingUnit::Degrees),
-            SettingCompletionStrategy::MatchingReadback,
+            SettingObservationBinding::MatchingField(crate::AERO_FIELD_LATERAL_TILT_LIMIT_DEGREES),
         ),
         SettingId::VoltageCorrection => (
             number(-15, 15, 1, SettingUnit::Percent),
-            SettingCompletionStrategy::MatchingReadback,
+            SettingObservationBinding::MatchingField(
+                crate::AERO_FIELD_VOLTAGE_CORRECTION_TENTHS_PERCENT,
+            ),
         ),
         SettingId::PedalAngle => (
             number(-80, 80, 1, SettingUnit::Degrees),
-            SettingCompletionStrategy::SubmissionOnly,
+            SettingObservationBinding::None,
         ),
         SettingId::BrakeOverpressureAlarm => (
             number(90, 125, 0, SettingUnit::Percent),
-            SettingCompletionStrategy::MatchingReadback,
+            SettingObservationBinding::MatchingField(
+                crate::AERO_FIELD_BRAKE_OVERPRESSURE_ALARM_PERCENT,
+            ),
         ),
         SettingId::DisplayUnits => (
             choices(&[
                 (0, "settings.choice.metric", true),
                 (1, "settings.choice.imperial", true),
             ]),
-            SettingCompletionStrategy::MatchingReadback,
+            SettingObservationBinding::MatchingField(crate::AERO_FIELD_WHEEL_UNITS),
         ),
         SettingId::RidingPreset => (
             choices(&[
@@ -60,26 +77,28 @@ pub(super) fn binding(id: SettingId) -> Option<SettingBinding> {
                 (1, "settings.choice.medium", true),
                 (2, "settings.choice.soft", true),
             ]),
-            SettingCompletionStrategy::SubmissionOnly,
+            SettingObservationBinding::None,
         ),
         SettingId::ChargeLimitDiagnostic => (
             SettingControl::ReadOnly,
-            SettingCompletionStrategy::SubmissionOnly,
+            SettingObservationBinding::ReadOnlyField(crate::AERO_FIELD_MAX_CHARGE_VOLTAGE_RAW),
         ),
         SettingId::AutoShutdownRemaining => (
             number(0, i32::MAX, 0, SettingUnit::Seconds),
-            SettingCompletionStrategy::SubmissionOnly,
+            SettingObservationBinding::ReadOnlyField(
+                crate::VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS,
+            ),
         ),
         SettingId::ChargeMode => (
             choices(&[
                 (0, "settings.choice.not_charging", false),
                 (1, "settings.choice.charging", false),
             ]),
-            SettingCompletionStrategy::SubmissionOnly,
+            SettingObservationBinding::ReadOnlyField(crate::VETERAN_FIELD_CHARGE_MODE),
         ),
         _ => return None,
     };
-    Some(SettingBinding::new(id, control, completion))
+    Some(SettingBinding::new(id, control, observation))
 }
 
 pub(super) fn normalize_readback(entry: SettingsEntry, observations: &mut Vec<SettingObservation>) {

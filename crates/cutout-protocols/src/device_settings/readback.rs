@@ -13,6 +13,8 @@ pub struct SettingObservation {
     pub protocol: Option<ProtocolFamily>,
     /// Stable setting identity.
     pub id: SettingId,
+    /// Protocol field that produced this semantic observation.
+    pub field: u16,
     /// Original evidence, or explicit unknown when the present field is unusable.
     /// A field absent from the response produces no observation at all.
     pub value: Option<Measured<DeviceSettingValue>>,
@@ -31,7 +33,13 @@ impl DeviceControlProfile {
                 .normalize_readback(entry, &mut observations);
         }
         let descriptors = self.descriptors(false);
-        observations.retain(|entry| descriptors.iter().any(|item| item.id == entry.id));
+        observations.retain(|entry| {
+            descriptors.iter().any(|item| item.id == entry.id)
+                && self
+                    .settings_adapter
+                    .binding(entry.id)
+                    .is_some_and(|binding| binding.observation.field() == Some(entry.field))
+        });
         for observation in &mut observations {
             observation.protocol = Some(protocol);
         }
@@ -48,6 +56,7 @@ pub(super) fn push(
     observations.push(SettingObservation {
         protocol: None,
         id,
+        field: entry.field.id,
         value: value.map(|value| Measured {
             value,
             source: entry.source,
