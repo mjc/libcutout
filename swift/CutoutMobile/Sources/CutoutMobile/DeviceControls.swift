@@ -1,7 +1,7 @@
 import CutoutMobileFFI
 
 // Native views render the shared semantic catalog and immutable owner snapshots.
-public typealias DeviceControlsSnapshot = CutoutMobileFFI.MobileDeviceControlsSnapshotDto
+public typealias DeviceSettings = CutoutMobileFFI.MobileSettingsDto
 public typealias DeviceSettingID = CutoutMobileFFI.MobileSettingIdDto
 public typealias DeviceSettingValue = CutoutMobileFFI.MobileSettingValueDto
 public typealias DeviceSettingDescriptor = CutoutMobileFFI.MobileSettingDescriptorDto
@@ -43,7 +43,7 @@ public extension DeviceSettingsSnapshot {
     }
 }
 
-public extension DeviceControlsSnapshot {
+public extension DeviceSettings {
     /// Returns the descriptor for one semantic setting, if this profile exposes it.
     func descriptor(for id: DeviceSettingID) -> DeviceSettingDescriptor? {
         settingDescriptors.first { $0.id == id }

@@ -11,7 +11,7 @@ protocol CutoutSessionDriving: AnyObject {
     var onReconnectScheduled: ((SessionConnectionRetry) -> Void)? { get set }
     var onCaptureEvent: ((CaptureEvent) -> Void)? { get set }
     var onScanStateChange: ((DevicePickerScanState) -> Void)? { get set }
-    var onDeviceControlsChange: ((DeviceControlsSnapshot) -> Void)? { get set }
+    var onSettingsChange: ((DeviceSettings) -> Void)? { get set }
     var onFaultHistoryReadbackChange: ((FaultHistoryReadback?) -> Void)? { get set }
     var onBmsSnapshotChange: ((BmsSnapshot?) -> Void)? { get set }
     var onPhoneLocationSnapshotChange: ((MobilePhoneLocationSnapshotDto, MonotonicMilliseconds) -> Void)? { get set }
@@ -24,7 +24,7 @@ protocol CutoutSessionDriving: AnyObject {
     var protocolIdentityCandidate: DevicePickerDiscoveryCandidate? { get }
     var isRecordOnlyConnection: Bool { get }
     var electricUnicycleModel: ElectricUnicycleModel? { get }
-    var deviceControlsSnapshot: DeviceControlsSnapshot { get }
+    var settings: DeviceSettings { get }
 
     func start()
     func pair(platformIdentifier: String) -> Bool

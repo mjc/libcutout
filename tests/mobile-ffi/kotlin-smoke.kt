@@ -31,6 +31,6 @@ fun main() {
         check(step.session.connection.token == token)
         check(state.settingsDescriptors().connection.token == token)
         check(state.settingsSnapshot().connection.token == token)
-        check(state.deviceControlsSnapshot().connection.token == token)
+        check(state.settings().connection.token == token)
     }
 }

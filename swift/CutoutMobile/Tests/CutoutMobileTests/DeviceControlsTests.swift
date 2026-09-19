@@ -85,7 +85,7 @@ final class DeviceControlsTests: XCTestCase {
             nowMs: 1
         )
 
-        let ordinary = state.deviceControlsSnapshot()
+        let ordinary = state.settings()
         XCTAssertFalse(ordinary.validationAuthorized)
         XCTAssertEqual(
             ordinary.descriptor(for: .pwmTiltback)?.access,
@@ -97,7 +97,7 @@ final class DeviceControlsTests: XCTestCase {
         )
 
         XCTAssertTrue(state.authorizeDeviceControls(token: token))
-        let validation = state.deviceControlsSnapshot()
+        let validation = state.settings()
         XCTAssertTrue(validation.validationAuthorized)
         XCTAssertEqual(
             validation.descriptor(for: .pwmTiltback)?.access,
@@ -107,7 +107,7 @@ final class DeviceControlsTests: XCTestCase {
         let replacement = try XCTUnwrap(
             state.beginConnectionAttempt(platformIdentifier: "B", nowMs: 2).token
         )
-        XCTAssertFalse(state.deviceControlsSnapshot().validationAuthorized)
+        XCTAssertFalse(state.settings().validationAuthorized)
         XCTAssertFalse(state.authorizeDeviceControls(token: token))
 
         _ = state.connectionLinkEstablished(token: replacement)
@@ -126,7 +126,7 @@ final class DeviceControlsTests: XCTestCase {
         _ = state.observeConnectionNotification(token: token, bytes: frame)
         _ = state.resolveDeviceSession(token: token, identificationComplete: false, nowMs: 1)
 
-        let controls = state.deviceControlsSnapshot()
+        let controls = state.settings()
         XCTAssertEqual(controls.descriptor(for: .highBeam)?.group, .interface)
         XCTAssertNil(controls.setting(for: .highBeam))
     }

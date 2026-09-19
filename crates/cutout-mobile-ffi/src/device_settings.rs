@@ -351,9 +351,13 @@ impl From<DeviceSettingsSnapshot> for MobileDeviceSettingsSnapshotDto {
     }
 }
 
-/// Complete generic controls publication from one connection-owner observation.
+/// Complete generic settings publication from one connection-owner observation.
+///
+/// This is the UI facade. Protocol-specific descriptors, encodings, and
+/// completion policy are projected into this semantic snapshot by the Rust
+/// session owner; Swift does not select a protocol or interpret wire fields.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
-pub struct MobileDeviceControlsSnapshotDto {
+pub struct MobileSettingsDto {
     /// Attempt and readiness associated with every row.
     pub connection: MobileConnectionAttemptSnapshotDto,
     /// Whether this attempt authorizes source-backed validation writes.
@@ -412,9 +416,9 @@ impl From<DeviceSettingRequestError> for MobileDeviceSettingRequestError {
 
 #[uniffi::export]
 impl CutoutSessionStateHandle {
-    /// Reads the complete Tune presentation under the existing session lock.
+    /// Reads the complete generic settings presentation under the existing session lock.
     #[must_use]
-    pub fn device_controls_snapshot(&self) -> MobileDeviceControlsSnapshotDto {
+    pub fn settings(&self) -> MobileSettingsDto {
         let inner = self.lock_inner();
         let settings: MobileDeviceSettingsSnapshotDto = inner.settings_snapshot().into();
         let actions = inner.actions_snapshot();
@@ -429,7 +433,7 @@ impl CutoutSessionStateHandle {
                     verification: profile.usable_capacity.verification.into(),
                     charge_flow_verification: profile.charge_flow_verification.into(),
                 });
-        MobileDeviceControlsSnapshotDto {
+        MobileSettingsDto {
             connection: settings.connection,
             validation_authorized: inner.validation_authorized(),
             default_charge_profile,
@@ -597,19 +601,11 @@ mod tests {
             .token
             .unwrap();
         assert!(handle.configure_connection_vesc_profile(first.clone(), profile));
-        assert!(
-            handle
-                .device_controls_snapshot()
-                .default_charge_profile
-                .is_none()
-        );
+        assert!(handle.settings().default_charge_profile.is_none());
         handle.connection_link_established(first.clone());
         handle.observe_connection_notification(first.clone(), vesc_reply.clone());
         handle.resolve_device_session(first.clone(), false, 1);
-        let selected = handle
-            .device_controls_snapshot()
-            .default_charge_profile
-            .unwrap();
+        let selected = handle.settings().default_charge_profile.unwrap();
         assert_eq!(
             selected,
             MobileChargeProfileDto {
@@ -629,10 +625,7 @@ mod tests {
         aero_frame[28..30].copy_from_slice(&43_000_u16.to_be_bytes());
         handle.observe_connection_notification(second.clone(), aero_frame);
         handle.resolve_device_session(second.clone(), false, 3);
-        let selected = handle
-            .device_controls_snapshot()
-            .default_charge_profile
-            .unwrap();
+        let selected = handle.settings().default_charge_profile.unwrap();
         assert_eq!(
             selected.profile_id, 43,
             "saved VESC capacity must not overwrite an EUC profile"
@@ -646,12 +639,7 @@ mod tests {
         handle.connection_link_established(third.clone());
         handle.observe_connection_notification(third.clone(), vesc_reply);
         handle.resolve_device_session(third, false, 5);
-        assert!(
-            handle
-                .device_controls_snapshot()
-                .default_charge_profile
-                .is_none()
-        );
+        assert!(handle.settings().default_charge_profile.is_none());
     }
 
     #[test]

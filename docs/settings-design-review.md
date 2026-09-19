@@ -73,6 +73,13 @@ Keep the existing Rust session as the sole control owner. Swift, Kotlin and CLI
 clients select semantic controls and render snapshots. They do not select wire
 banks, decide confirmation policy, invent defaults, or implement retry policy.
 
+The UI-facing generic facade is `CutoutSessionStateHandle.settings()`, which
+returns one atomic `MobileSettingsDto` containing the connection identity,
+descriptors, requested/observed setting state, actions, and charge basis. Swift
+exposes that same projection as `CutoutSessionCore.settings` and `DeviceSettings`.
+Protocol and dialect adapters remain behind this boundary. This is the current
+in-repository presentation facade, not a compatibility layer for older clients.
+
 Identity keeps protocol, dialect, manufacturer, model and firmware separate:
 
 - Veteran protocol -> NOSFET dialect -> Aero model; add an Aero-specific dialect
@@ -86,8 +93,8 @@ Use one typed control definition per dialect binding. It supplies semantic ID,
 canonical quantity/value domain, write encoding, readable observation mapping,
 completion strategy and applicability. A model/firmware profile selects these
 definitions and constraints. Public descriptors are projections of that
-selection. Preserve the existing semantic public API; add no compatibility
-facade or parallel generic framework.
+selection. Preserve this semantic public API; add no compatibility facade or
+parallel generic framework.
 
 The write domain and observation domain may differ: firmware can report a value
 that is not selectable for writing. Model those domains explicitly instead of

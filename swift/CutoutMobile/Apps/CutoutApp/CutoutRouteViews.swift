@@ -208,7 +208,7 @@ struct EucTuneRouteView: View {
 
     var body: some View {
         Group {
-            if let snapshot = model.deviceControlsSnapshot {
+            if let snapshot = model.settings {
                 DeviceControlsForm(
                     snapshot: snapshot,
                     submitSetting: model.submitDeviceSetting,

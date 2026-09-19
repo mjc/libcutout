@@ -42,9 +42,9 @@ final class DeviceSessionTransportTests: XCTestCase {
             defer { transport.invalidate() }
             sink.dispositions = [.queued]
             _ = try transport.submitSetting(.highBeam, value: .boolean(value: true), at: MonotonicMilliseconds(3))
-            XCTAssertEqual(state.deviceControlsSnapshot().setting(for: .highBeam)?.transport, .queued)
+            XCTAssertEqual(state.settings().setting(for: .highBeam)?.transport, .queued)
             transport.handlePeripheralIsReadyToSendWithoutResponse()
-            let setting = try XCTUnwrap(state.deviceControlsSnapshot().setting(for: .highBeam))
+            let setting = try XCTUnwrap(state.settings().setting(for: .highBeam))
             XCTAssertEqual(setting.transport, .submitted)
             XCTAssertEqual(setting.status, .sentWithoutConfirmation)
             XCTAssertNil(setting.current)
@@ -71,9 +71,9 @@ final class DeviceSessionTransportTests: XCTestCase {
                 sink.dispositions = dispositions
                 _ = try transport.submitSetting(.highBeam, value: .boolean(value: true), at: MonotonicMilliseconds(3))
                 XCTAssertEqual(sink.writes.count, 3)
-                XCTAssertEqual(state.deviceControlsSnapshot().setting(for: .highBeam)?.transport, expected)
+                XCTAssertEqual(state.settings().setting(for: .highBeam)?.transport, expected)
                 transport.handlePeripheralIsReadyToSendWithoutResponse()
-                let setting = try XCTUnwrap(state.deviceControlsSnapshot().setting(for: .highBeam))
+                let setting = try XCTUnwrap(state.settings().setting(for: .highBeam))
                 XCTAssertEqual(setting.transport, expected == .queued ? .submitted : .rejected)
                 XCTAssertEqual(setting.status, expected == .queued ? .sentWithoutConfirmation : .failed)
             }
@@ -86,14 +86,14 @@ final class DeviceSessionTransportTests: XCTestCase {
             defer { transport.invalidate() }
             sink.dispositions = [.queued, .queued]
             _ = try transport.submitSetting(.highBeam, value: .boolean(value: true), at: MonotonicMilliseconds(3))
-            let oldID = state.deviceControlsSnapshot().setting(for: .highBeam)?.requestId
+            let oldID = state.settings().setting(for: .highBeam)?.requestId
             _ = try transport.submitSetting(.highBeam, value: .boolean(value: false), at: MonotonicMilliseconds(3))
-            XCTAssertNotEqual(oldID, state.deviceControlsSnapshot().setting(for: .highBeam)?.requestId)
+            XCTAssertNotEqual(oldID, state.settings().setting(for: .highBeam)?.requestId)
             sink.receipts[0](.rejected)
-            XCTAssertEqual(state.deviceControlsSnapshot().setting(for: .highBeam)?.transport, .queued)
+            XCTAssertEqual(state.settings().setting(for: .highBeam)?.transport, .queued)
             sink.receipts[1](.submitted)
             sink.receipts[0](.submitted)
-            let setting = try XCTUnwrap(state.deviceControlsSnapshot().setting(for: .highBeam))
+            let setting = try XCTUnwrap(state.settings().setting(for: .highBeam))
             XCTAssertEqual(setting.transport, .submitted)
             XCTAssertEqual(setting.requested, .boolean(value: false))
         }
@@ -107,9 +107,9 @@ final class DeviceSessionTransportTests: XCTestCase {
             let lateReceipt = try XCTUnwrap(sink.receipts.first)
             transport.invalidate()
             XCTAssertEqual(sink.clears, 1)
-            XCTAssertEqual(state.deviceControlsSnapshot().setting(for: .highBeam)?.transport, .rejected)
+            XCTAssertEqual(state.settings().setting(for: .highBeam)?.transport, .rejected)
             lateReceipt(.submitted)
-            XCTAssertEqual(state.deviceControlsSnapshot().setting(for: .highBeam)?.transport, .rejected)
+            XCTAssertEqual(state.settings().setting(for: .highBeam)?.transport, .rejected)
             XCTAssertThrowsError(try transport.submitSetting(.highBeam, value: .boolean(value: false), at: MonotonicMilliseconds(4)))
         }
     }
@@ -120,14 +120,14 @@ final class DeviceSessionTransportTests: XCTestCase {
             defer { transport.invalidate() }
             sink.dispositions = [.queued]
             _ = try transport.submitSetting(.highBeam, value: .boolean(value: true), at: MonotonicMilliseconds(3))
-            var published: DeviceControlsSnapshot?
-            transport.onControlsChange = { published = $0 }
+            var published: DeviceSettings?
+            transport.onSettingsChange = { published = $0 }
             XCTAssertThrowsError(try transport.submitSetting(.highBeam, value: .number(value: 999), at: MonotonicMilliseconds(4)))
-            let queued = try XCTUnwrap(state.deviceControlsSnapshot().setting(for: .highBeam))
+            let queued = try XCTUnwrap(state.settings().setting(for: .highBeam))
             XCTAssertEqual(queued.transport, .queued)
             XCTAssertNil(published, "An invalid retry changes neither the Rust snapshot nor its publication")
             sink.receipts[0](.submitted)
-            XCTAssertEqual(state.deviceControlsSnapshot().setting(for: .highBeam)?.transport, .submitted)
+            XCTAssertEqual(state.settings().setting(for: .highBeam)?.transport, .submitted)
         }
     }
 
@@ -138,9 +138,9 @@ final class DeviceSessionTransportTests: XCTestCase {
             sink.dispositions = [.queued]
             _ = try transport.submitSetting(.highBeam, value: .boolean(value: true), at: MonotonicMilliseconds(3))
             _ = state.beginConnectionAttempt(platformIdentifier: "B", nowMs: 4)
-            let before = state.deviceControlsSnapshot()
+            let before = state.settings()
             sink.receipts[0](.submitted)
-            XCTAssertEqual(state.deviceControlsSnapshot(), before)
+            XCTAssertEqual(state.settings(), before)
         }
     }
 
@@ -150,7 +150,7 @@ final class DeviceSessionTransportTests: XCTestCase {
             defer { transport.invalidate() }
             _ = try transport.submitSetting(.highBeam, value: .boolean(value: true), at: MonotonicMilliseconds(3))
             XCTAssertTrue(sink.writes.isEmpty)
-            XCTAssertEqual(state.deviceControlsSnapshot().setting(for: .highBeam)?.transport, .rejected)
+            XCTAssertEqual(state.settings().setting(for: .highBeam)?.transport, .rejected)
         }
     }
 
@@ -226,7 +226,7 @@ final class DeviceSessionTransportTests: XCTestCase {
             transport.handleNotificationStateUpdate(channel: .bluetooth16(0xffe1), isNotifying: true, error: nil)
             _ = try transport.handleNotification(bytes: frame, channel: .bluetooth16(0xffe1), at: MonotonicMilliseconds(2))
             _ = try transport.submitSetting(.highBeam, value: .boolean(value: true), at: MonotonicMilliseconds(3))
-            let controls = state.deviceControlsSnapshot()
+            let controls = state.settings()
             let highBeam = try XCTUnwrap(controls.setting(for: .highBeam))
             XCTAssertEqual(controls.connection.token, token)
             XCTAssertEqual(controls.defaultChargeProfile?.profileId, 43)
@@ -242,7 +242,7 @@ final class DeviceSessionTransportTests: XCTestCase {
             XCTAssertEqual(sink.writes.count, count)
             _ = try transport.submitSetting(.tiltbackSpeed, value: .number(value: 400), at: MonotonicMilliseconds(5))
             XCTAssertEqual(sink.writes.count, count + 1)
-            XCTAssertFalse(state.deviceControlsSnapshot().validationAuthorized)
+            XCTAssertFalse(state.settings().validationAuthorized)
             transport.invalidate()
 
         }
@@ -290,7 +290,7 @@ final class DeviceSessionTransportTests: XCTestCase {
             _ = try transport.submitSetting(.highBeam, value: .boolean(value: false), at: MonotonicMilliseconds(4))
             XCTAssertEqual(sink.writes.count, before + 2)
             XCTAssertEqual(sink.writes.last, Data([0x4c, 0x6b, 0x41, 0x70, 0x0d, 0x01, 0x80, 0x80, 0x00, 0x20, 0xea, 0x0b, 0x43]))
-            let highBeam = try XCTUnwrap(state.deviceControlsSnapshot().setting(for: .highBeam))
+            let highBeam = try XCTUnwrap(state.settings().setting(for: .highBeam))
             XCTAssertEqual(highBeam.requested, .boolean(value: false))
             XCTAssertNil(highBeam.current, "A write-only setting must not invent readback")
         }
@@ -311,19 +311,19 @@ final class DeviceSessionTransportTests: XCTestCase {
             defer { transport.invalidate() }
             _ = try transport.handleLinkUp(at: MonotonicMilliseconds(1))
             _ = try transport.handleNotification(bytes: frame, channel: .bluetooth16(0xffe1), at: MonotonicMilliseconds(2))
-            let before = state.deviceControlsSnapshot()
+            let before = state.settings()
             XCTAssertThrowsError(try transport.submitSetting(.highBeam, value: .boolean(value: true), at: MonotonicMilliseconds(3))) {
                 XCTAssertEqual($0 as? DeviceSettingSubmissionError, .ConnectionUnavailable)
             }
             XCTAssertThrowsError(try transport.submitAction(.horn, at: MonotonicMilliseconds(4))) {
                 XCTAssertEqual($0 as? DeviceActionSubmissionError, .ConnectionUnavailable)
             }
-            XCTAssertEqual(state.deviceControlsSnapshot().settings, before.settings)
-            XCTAssertEqual(state.deviceControlsSnapshot().actions, before.actions)
+            XCTAssertEqual(state.settings().settings, before.settings)
+            XCTAssertEqual(state.settings().actions, before.actions)
             XCTAssertTrue(sink.writes.isEmpty)
             transport.handleNotificationStateUpdate(channel: .bluetooth16(0xffe1), isNotifying: true, error: nil)
             XCTAssertFalse(sink.writes.contains(Data([0x4c, 0x6b, 0x41, 0x70, 0x0d, 0x01, 0x80, 0x80, 0x01, 0x57, 0xed, 0x3b, 0xd5])), "The rejected light command must not execute after subscription")
-            XCTAssertNil(state.deviceControlsSnapshot().setting(for: .highBeam)?.requested)
+            XCTAssertNil(state.settings().setting(for: .highBeam)?.requested)
         }
     }
 

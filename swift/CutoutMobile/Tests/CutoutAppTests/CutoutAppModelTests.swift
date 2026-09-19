@@ -451,12 +451,12 @@ final class CutoutAppModelTests: XCTestCase {
         model.start()
         XCTAssertTrue(model.pair(platformIdentifier: fixture.candidate.platformIdentifier))
         await Self.waitUntil("generic controls publication", maxTurns: 100_000) {
-            model.phase == .live && model.deviceControlsSnapshot != nil
+            model.phase == .live && model.settings != nil
         }
-        let snapshot = try XCTUnwrap(model.deviceControlsSnapshot)
+        let snapshot = try XCTUnwrap(model.settings)
         let token = try XCTUnwrap(snapshot.connection.token)
         XCTAssertEqual(snapshot.connection.readiness, .verified)
-        XCTAssertEqual(snapshot.settingDescriptors, core.deviceControlsSnapshot.settingDescriptors)
+        XCTAssertEqual(snapshot.settingDescriptors, core.settings.settingDescriptors)
         XCTAssertEqual(snapshot.descriptor(for: .pwmTiltback)?.access, .writable)
         XCTAssertEqual(snapshot.settingDescriptors.filter { $0.access == .writable }.count, 18)
         XCTAssertFalse(snapshot.validationAuthorized)
@@ -466,14 +466,14 @@ final class CutoutAppModelTests: XCTestCase {
         try model.submitDeviceSetting(token: token, id: .pwmTiltback, value: .number(value: 80))
         try model.submitDeviceSetting(token: token, id: .highBeam, value: .boolean(value: true))
         await Self.waitUntil("unconfirmed request publication") {
-            model.deviceControlsSnapshot?.setting(for: .highBeam)?.requested == .boolean(value: true)
+            model.settings?.setting(for: .highBeam)?.requested == .boolean(value: true)
         }
-        let highBeam = try XCTUnwrap(model.deviceControlsSnapshot?.setting(for: .highBeam))
+        let highBeam = try XCTUnwrap(model.settings?.setting(for: .highBeam))
         XCTAssertEqual(highBeam.status, .sentWithoutConfirmation)
         XCTAssertNil(highBeam.current)
         core.onPhaseChange?(.failed(.sessionFailed("write channel unavailable")))
-        core.onDeviceControlsChange?(snapshot)
-        XCTAssertNil(model.deviceControlsSnapshot)
+        core.onSettingsChange?(snapshot)
+        XCTAssertNil(model.settings)
         core.disconnectAndScan()
     }
 
@@ -3686,7 +3686,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     var onReconnectScheduled: ((SessionConnectionRetry) -> Void)?
     var onCaptureEvent: ((CaptureEvent) -> Void)?
     var onScanStateChange: ((DevicePickerScanState) -> Void)?
-    var onDeviceControlsChange: ((DeviceControlsSnapshot) -> Void)?
+    var onSettingsChange: ((DeviceSettings) -> Void)?
     var onFaultHistoryReadbackChange: ((FaultHistoryReadback?) -> Void)?
     var onBmsSnapshotChange: ((BmsSnapshot?) -> Void)?
     var onPhoneLocationSnapshotChange: ((MobilePhoneLocationSnapshotDto, MonotonicMilliseconds) -> Void)?
@@ -3699,8 +3699,8 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     var protocolIdentityCandidate: DevicePickerDiscoveryCandidate?
     var isRecordOnlyConnection = false
     var electricUnicycleModel: ElectricUnicycleModel?
-    var deviceControlsSnapshot: DeviceControlsSnapshot {
-        rideSessionStateHandle.deviceControlsSnapshot()
+    var settings: DeviceSettings {
+        rideSessionStateHandle.settings()
     }
     private let scanState: DevicePickerScanState
     private let pairingSucceeds: Bool
@@ -3808,11 +3808,11 @@ private final class SessionDriverSpy: CutoutSessionDriving {
 
     func submitDeviceSetting(token: ConnectionAttemptToken, id: DeviceSettingID, value: DeviceSettingValue) throws {
         _ = try rideSessionStateHandle.submitSetting(token: token, id: id, value: value, monotonicMs: nowValue)
-        onDeviceControlsChange?(deviceControlsSnapshot)
+        onSettingsChange?(settings)
     }
     func submitDeviceAction(token: ConnectionAttemptToken, id: DeviceActionID) throws {
         _ = try rideSessionStateHandle.submitAction(token: token, id: id, monotonicMs: nowValue)
-        onDeviceControlsChange?(deviceControlsSnapshot)
+        onSettingsChange?(settings)
     }
     func now() -> MonotonicMilliseconds {
         MonotonicMilliseconds(nowValue)

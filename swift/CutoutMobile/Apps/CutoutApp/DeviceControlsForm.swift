@@ -6,7 +6,7 @@ import SwiftUI
 /// One native renderer for the shared semantic catalog. Drafts belong to each
 /// attempt-scoped row; reported and requested values remain Rust snapshots.
 struct DeviceControlsForm: View {
-    let snapshot: DeviceControlsSnapshot
+    let snapshot: DeviceSettings
     let submitSetting: (ConnectionAttemptToken, DeviceSettingID, DeviceSettingValue) throws -> Void
     let submitAction: (ConnectionAttemptToken, DeviceActionID) throws -> Void
 

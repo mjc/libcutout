@@ -447,8 +447,8 @@ public final class CutoutSessionCore: NSObject {
     public var electricUnicycleModel: ElectricUnicycleModel? {
         onBleQueue { selectedModel }
     }
-    public var deviceControlsSnapshot: DeviceControlsSnapshot {
-        rustSessionState.deviceControlsSnapshot()
+    public var settings: DeviceSettings {
+        rustSessionState.settings()
     }
 
 #if DEBUG
@@ -464,7 +464,7 @@ public final class CutoutSessionCore: NSObject {
     public var onRecord: ((String) -> Void)?
     public var onCaptureEvent: ((CaptureEvent) -> Void)?
     public var onScanStateChange: ((DevicePickerScanState) -> Void)?
-    public var onDeviceControlsChange: ((DeviceControlsSnapshot) -> Void)?
+    public var onSettingsChange: ((DeviceSettings) -> Void)?
     public var onFaultHistoryReadbackChange: ((FaultHistoryReadback?) -> Void)?
     public var onBmsSnapshotChange: ((BmsSnapshot?) -> Void)?
     public var onPhoneLocationSnapshotChange: ((MobilePhoneLocationSnapshotDto, MonotonicMilliseconds) -> Void)?
@@ -1036,7 +1036,7 @@ public final class CutoutSessionCore: NSObject {
             )
             let owner = makeDeviceTransport(token: token, advertisement: advertisement, sink: sink)
             liveOwner = owner
-            attachDeviceControlsCallback()
+            attachSettingsCallback()
             do {
                 let step = try owner.handleLinkUp(at: clock.now())
                 let channels = step.operations.compactMap { operation -> BluetoothUuid? in
@@ -1423,7 +1423,7 @@ public final class CutoutSessionCore: NSObject {
             guard self.connectionSnapshot.generation == generation else { return }
             self.onPhaseChange?(phase)
         }
-        publishDeviceControls(deviceControlsSnapshot)
+        publishSettings(settings)
     }
 
     func acceptsConnectionCallback(_ peripheral: CBPeripheral, token: ConnectionAttemptToken) -> Bool {
@@ -1609,7 +1609,7 @@ public final class CutoutSessionCore: NSObject {
                 )
             )
             liveOwner = owner
-            attachDeviceControlsCallback()
+            attachSettingsCallback()
             setPhase(.subscribing)
             owner.recordInventory(CoreBluetoothGattInventory(services: peripheral.services ?? []))
             applyLinkUpStep(try owner.handleLinkUp(at: clock.now()))
@@ -1875,18 +1875,18 @@ public final class CutoutSessionCore: NSObject {
     }
 
 
-    private func publishDeviceControls(_ value: DeviceControlsSnapshot) {
+    private func publishSettings(_ value: DeviceSettings) {
         publishOnMain { [weak self] in
             guard let self, self.connectionSnapshot.revision == value.connection.revision else { return }
-            self.onDeviceControlsChange?(value)
+            self.onSettingsChange?(value)
         }
     }
 
-    private func attachDeviceControlsCallback() {
+    private func attachSettingsCallback() {
         guard let owner = liveOwner else { return }
-        owner.onControlsChange = { [weak self, weak owner] state in
+        owner.onSettingsChange = { [weak self, weak owner] state in
             guard let self, let owner, self.liveOwner === owner else { return }
-            self.publishDeviceControls(state)
+            self.publishSettings(state)
         }
     }
 

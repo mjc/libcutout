@@ -159,7 +159,7 @@ final class CutoutAppModel {
     private(set) var activeCaptureLabels = Set<CaptureQuickLabel>()
     private(set) var recordOnlyDeviceKind: String?
     private(set) var hasSavedDevice = false
-    private(set) var deviceControlsSnapshot: DeviceControlsSnapshot?
+    private(set) var settings: DeviceSettings?
 
     var selectedRideTitle: String? {
         connectionState.selection?.title
@@ -462,10 +462,10 @@ final class CutoutAppModel {
         self.core.onScanStateChange = { [weak self] scanState in
             self?.handleScanStateChange(scanState)
         }
-        self.core.onDeviceControlsChange = { [weak self] snapshot in
+        self.core.onSettingsChange = { [weak self] snapshot in
             guard let self, self.phase == .live,
                   self.core.rideSessionStateHandle.connectionAttemptSnapshot().revision == snapshot.connection.revision else { return }
-            self.deviceControlsSnapshot = snapshot
+            self.settings = snapshot
         }
         self.core.onFaultHistoryReadbackChange = { [weak self] faultHistoryReadback in
             self?.faultHistoryReadback = faultHistoryReadback
@@ -2329,7 +2329,7 @@ final class CutoutAppModel {
             title: selectedRow.title,
             route: selectedRow.connectionRoute ?? .electricUnicycle
         )
-        clearDeviceControls()
+        clearSettings()
         liveActivityError = nil
         connectionState = .connecting(selection, phase: .discoveringServices)
         permitsStoredDeviceAutoPairing = true
@@ -2574,12 +2574,12 @@ final class CutoutAppModel {
         liveActivityIdentity = nil
         liveActivityGlyph = .electricUnicycle
         permitsStoredDeviceAutoPairing = false
-        clearDeviceControls()
+        clearSettings()
         core.disconnectAndScan()
     }
 
-    private func clearDeviceControls() {
-        deviceControlsSnapshot = nil
+    private func clearSettings() {
+        settings = nil
     }
 
     func forgetSavedDevice() {
@@ -2708,7 +2708,7 @@ final class CutoutAppModel {
         }
         self.phase = phase
         if phase != .live {
-            clearDeviceControls()
+            clearSettings()
         }
         switch phase {
         case .connecting, .discoveringServices, .subscribing:

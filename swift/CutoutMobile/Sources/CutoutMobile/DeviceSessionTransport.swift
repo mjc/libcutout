@@ -39,9 +39,9 @@ final class DeviceSessionTransport: @unchecked Sendable {
     private var pendingOperations: [PendingOperation] = []
     private var invalidated = false
     private(set) var records: [CoreBluetoothLiveRecord] = []
-    private var publishedControls: DeviceControlsSnapshot?
-    private var lastControlsPublication: MonotonicMilliseconds?
-    var onControlsChange: ((DeviceControlsSnapshot) -> Void)?
+    private var publishedSettings: DeviceSettings?
+    private var lastSettingsPublication: MonotonicMilliseconds?
+    var onSettingsChange: ((DeviceSettings) -> Void)?
     var onSubscriptionFailure: ((BluetoothUuid, Error?) -> Void)?
 
     init(
@@ -65,8 +65,8 @@ final class DeviceSessionTransport: @unchecked Sendable {
         self.executor = CoreBluetoothOperationExecutor(sink: operationSink)
         self.queue = queue
         self.clock = clock
-        let controls = state.deviceControlsSnapshot()
-        if controls.connection.token == token, let profile = controls.defaultChargeProfile {
+        let settings = state.settings()
+        if settings.connection.token == token, let profile = settings.defaultChargeProfile {
             chargeEstimator.configureProfile(profile: profile)
         }
         if let model = voltageSagStore.load(for: token.platformIdentifier),
@@ -109,9 +109,9 @@ final class DeviceSessionTransport: @unchecked Sendable {
 
     func submitSetting(_ id: DeviceSettingID, value: DeviceSettingValue, at: MonotonicMilliseconds) throws -> CoreBluetoothSessionStep {
         guard !invalidated, waitingForSubscription == nil else { throw DeviceSettingSubmissionError.ConnectionUnavailable }
-        defer { publishControls(at: clock.now(), immediately: true) }
+        defer { publishSettings(at: clock.now(), immediately: true) }
         let step = try state.submitSetting(token: token, id: id, value: value, monotonicMs: at.rawValue)
-        guard let requestID = state.deviceControlsSnapshot().setting(for: id)?.requestId else {
+        guard let requestID = state.settings().setting(for: id)?.requestId else {
             throw DeviceSettingSubmissionError.ConnectionUnavailable
         }
         return try process(
@@ -123,7 +123,7 @@ final class DeviceSessionTransport: @unchecked Sendable {
 
     func submitAction(_ id: DeviceActionID, at: MonotonicMilliseconds) throws -> CoreBluetoothSessionStep {
         guard !invalidated, waitingForSubscription == nil else { throw DeviceActionSubmissionError.ConnectionUnavailable }
-        defer { publishControls(at: clock.now(), immediately: true) }
+        defer { publishSettings(at: clock.now(), immediately: true) }
         return try process(state.submitAction(token: token, id: id, monotonicMs: at.rawValue), at: at)
     }
 
@@ -134,7 +134,7 @@ final class DeviceSessionTransport: @unchecked Sendable {
         guard accepted else {
             throw DeviceSettingSubmissionError.ConnectionUnavailable
         }
-        publishControls(at: at, immediately: true)
+        publishSettings(at: at, immediately: true)
     }
 
     func handleTick(at: MonotonicMilliseconds) throws -> CoreBluetoothSessionStep {
@@ -206,7 +206,7 @@ final class DeviceSessionTransport: @unchecked Sendable {
             at: at.dto, snapshot: step.telemetry, freshness: MobileDurationDto(milliseconds: 30_000)
         )))
         persistVoltageSag()
-        publishControls(at: at, immediately: publishImmediately)
+        publishSettings(at: at, immediately: publishImmediately)
         if let error = step.result.error { throw CutoutSessionError(error) }
         let actions = step.result.outputs.map(SessionAction.init)
         let operations = actions.flatMap(planner.plan(action:))
@@ -285,7 +285,7 @@ final class DeviceSessionTransport: @unchecked Sendable {
             token: token, id: receipt.id, requestId: receipt.requestID,
             status: status, monotonicMs: clock.now().rawValue
         ) else { return }
-        publishControls(at: clock.now(), immediately: true)
+        publishSettings(at: clock.now(), immediately: true)
     }
 
     private func startTimer() {
@@ -305,13 +305,13 @@ final class DeviceSessionTransport: @unchecked Sendable {
         timer.resume()
     }
 
-    private func publishControls(at: MonotonicMilliseconds, immediately: Bool) {
-        guard immediately || lastControlsPublication.map({ at.elapsed(since: $0).rawValue >= 1_000 }) != false else { return }
-        let value = state.deviceControlsSnapshot()
-        guard value.connection.token == token, value != publishedControls else { return }
-        publishedControls = value
-        lastControlsPublication = at
-        onControlsChange?(value)
+    private func publishSettings(at: MonotonicMilliseconds, immediately: Bool) {
+        guard immediately || lastSettingsPublication.map({ at.elapsed(since: $0).rawValue >= 1_000 }) != false else { return }
+        let value = state.settings()
+        guard value.connection.token == token, value != publishedSettings else { return }
+        publishedSettings = value
+        lastSettingsPublication = at
+        onSettingsChange?(value)
     }
 
     private func persistVoltageSag(force: Bool = false) {
