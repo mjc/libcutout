@@ -204,11 +204,20 @@ impl SettingsAdapter {
     fn checked_request(self, id: SettingId, value: DeviceSettingValue) -> Option<DeviceCommand> {
         match self {
             Self::None => None,
-            // The profile has already validated the semantic descriptor, including
-            // controls such as the explicitly-disabled PWM option. The adapter only
-            // selects the protocol family; it must not repeat a weaker wire-shaped
-            // validation pass here.
-            Self::Aero | Self::Falcon => Some(DeviceCommand::SetSetting { id, value }),
+            Self::Aero => {
+                let command = DeviceCommand::SetSetting { id, value };
+                (crate::request_encoder::NosfetDialect::encode(command).is_some()
+                    || crate::request_encoder::NosfetDialect::encode_settings_sequence(command)
+                        .is_some())
+                .then_some(command)
+            }
+            Self::Falcon => {
+                let command = DeviceCommand::SetSetting { id, value };
+                (crate::request_encoder::FalconDialect::encode(command).is_some()
+                    || crate::request_encoder::FalconDialect::encode_settings_sequence(command)
+                        .is_some())
+                .then_some(command)
+            }
         }
     }
 
@@ -1081,6 +1090,58 @@ mod tests {
                         Err(SettingsRequestError::Unavailable)
                     );
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn every_falcon_writable_descriptor_has_a_checked_wire_binding() {
+        let profile = falcon_control_profile();
+        for descriptor in profile.descriptors(false) {
+            if descriptor.access != SettingAccess::Writable {
+                continue;
+            }
+            let values: Vec<_> = match descriptor.control {
+                SettingControl::Boolean => vec![
+                    DeviceSettingValue::Boolean(false),
+                    DeviceSettingValue::Boolean(true),
+                ],
+                SettingControl::Choices(choices) => choices
+                    .into_iter()
+                    .filter(|choice| choice.writable)
+                    .map(|choice| DeviceSettingValue::Choice(choice.id))
+                    .collect(),
+                SettingControl::Number {
+                    minimum,
+                    maximum,
+                    step,
+                    can_disable,
+                    ..
+                } => {
+                    let mut values = vec![DeviceSettingValue::Number(minimum)];
+                    if maximum != minimum {
+                        values.push(DeviceSettingValue::Number(maximum));
+                    }
+                    if can_disable {
+                        values.push(DeviceSettingValue::Disabled);
+                    }
+                    assert!(step > 0);
+                    values
+                }
+                SettingControl::ReadOnly => panic!("writable descriptor is read-only"),
+            };
+            assert!(!values.is_empty(), "{:?}", descriptor.id);
+            for value in values {
+                let command = profile
+                    .command(descriptor.id, value, false)
+                    .unwrap_or_else(|error| panic!("{:?} {value:?}: {error}", descriptor.id));
+                assert!(
+                    crate::FalconDialect::encode(command).is_some()
+                        || crate::FalconDialect::encode_settings_sequence(command).is_some(),
+                    "missing Falcon encoder for {:?} {:?}",
+                    descriptor.id,
+                    value
+                );
             }
         }
     }
