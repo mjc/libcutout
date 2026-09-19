@@ -41,8 +41,11 @@ final class DeviceSessionTransportTests: XCTestCase {
             let (state, transport, sink) = try makeReadyTransport()
             defer { transport.invalidate() }
             sink.dispositions = [.queued]
-            _ = try transport.submitSetting(.highBeam, value: .boolean(value: true), at: MonotonicMilliseconds(3))
-            XCTAssertEqual(state.settings().setting(for: .highBeam)?.transport, .queued)
+            let step = try transport.submitSetting(.highBeam, value: .boolean(value: true), at: MonotonicMilliseconds(3))
+            let submittedSetting = try XCTUnwrap(state.settings().setting(for: .highBeam))
+            let write = try XCTUnwrap(step.actions.first(where: { $0.kind == .write }))
+            XCTAssertEqual(write.operationID, submittedSetting.requestId)
+            XCTAssertEqual(submittedSetting.transport, .queued)
             transport.handlePeripheralIsReadyToSendWithoutResponse()
             let setting = try XCTUnwrap(state.settings().setting(for: .highBeam))
             XCTAssertEqual(setting.transport, .submitted)

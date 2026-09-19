@@ -514,6 +514,8 @@ public struct SessionAction: Equatable, Hashable, Sendable {
     public let kind: SessionActionKind
     public let channel: Data
     public let bytes: Data
+    /// Rust-owned transport operation identity for native receipt correlation.
+    public let operationID: UInt64?
     public let faultHistoryReadback: FaultHistoryReadback?
     public let bmsSnapshot: BmsSnapshot?
     public let rawTelemetry: RawTelemetryReadback?
@@ -525,6 +527,7 @@ public struct SessionAction: Equatable, Hashable, Sendable {
         kind: SessionActionKind,
         channel: Data,
         bytes: Data,
+        operationID: UInt64? = nil,
         faultHistoryReadback: FaultHistoryReadback? = nil,
         bmsSnapshot: BmsSnapshot? = nil,
         rawTelemetry: RawTelemetryReadback? = nil,
@@ -534,6 +537,7 @@ public struct SessionAction: Equatable, Hashable, Sendable {
         self.kind = kind
         self.channel = channel
         self.bytes = bytes
+        self.operationID = operationID
         self.faultHistoryReadback = faultHistoryReadback
         self.bmsSnapshot = bmsSnapshot
         self.rawTelemetry = rawTelemetry
@@ -592,6 +596,7 @@ public struct SessionAction: Equatable, Hashable, Sendable {
         self.kind = SessionActionKind(dto.kind)
         self.channel = dto.channel
         self.bytes = dto.bytes
+        self.operationID = dto.operationId
         self.faultHistoryReadback = dto.faultHistoryReadback.map(FaultHistoryReadback.init)
         self.bmsSnapshot = dto.bmsSnapshot.map(BmsSnapshot.init)
         self.rawTelemetry = dto.rawTelemetry.map(RawTelemetryReadback.init)

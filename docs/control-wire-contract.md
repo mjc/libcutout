@@ -82,6 +82,12 @@ the decoder supplies the value comparison, so compile-time missing-encoder and
 complete one-definition diagnostics remain follow-up work. A checked dialect
 marker is not proof that every control binding is complete.
 
+Accepted settings writes also carry the Rust request operation identity through
+the core/mobile FFI boundary. Swift must preserve that identity into the native
+receipt path before advancing host transport state; it still must not interpret
+that receipt as wheel confirmation. Read-only polling and multi-step operation
+identity remain separate follow-up work.
+
 Write and observation domains may differ, so reported values must not be rejected
 solely because they cannot be selected for writing. Keep the semantic public API;
 no compatibility facade or parallel settings framework is required.

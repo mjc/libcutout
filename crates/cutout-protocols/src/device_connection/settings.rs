@@ -110,7 +110,7 @@ impl DeviceConnectionSession {
             .map_or(SettingCompletionStrategy::SubmissionOnly, |descriptor| {
                 descriptor.completion
             });
-        let step = self
+        let mut step = self
             .ingest_validated(
                 token,
                 &cutout_core::SessionInputDto::CommandAt {
@@ -127,9 +127,20 @@ impl DeviceConnectionSession {
             .map_or(cutout_core::SettingSubmissionOutcome::Accepted, |refusal| {
                 cutout_core::SettingSubmissionOutcome::Refused(refusal.reason)
             });
-        self.state
+        let request_id = self
+            .state
             .settings
             .submission(id, value, outcome, completion, at);
+        for output in &mut step.result.outputs {
+            let cutout_core::SessionOutput::Transport(cutout_core::TransportAction::Write {
+                bytes,
+                ..
+            }) = output
+            else {
+                continue;
+            };
+            bytes.set_operation_id(cutout_core::TransportOperationId::new(request_id));
+        }
         Ok(step)
     }
 }
@@ -276,6 +287,13 @@ mod tests {
                 )
                 .unwrap();
             assert!(step.result.error.is_none());
+            let request_id = owner
+                .settings_snapshot()
+                .settings
+                .iter()
+                .find(|setting| setting.id == SettingId::HighBeam)
+                .and_then(|setting| setting.request_id)
+                .unwrap();
             let writes: Vec<_> = step
                 .result
                 .outputs
@@ -285,7 +303,7 @@ mod tests {
                         channel,
                         bytes,
                         mode,
-                    }) => Some((*channel, bytes.as_slice(), *mode)),
+                    }) => Some((*channel, bytes.as_slice(), *mode, bytes.operation_id())),
                     _ => None,
                 })
                 .collect();
@@ -294,7 +312,8 @@ mod tests {
                 [(
                     crate::VETERAN_DATA_CHANNEL,
                     expected,
-                    cutout_core::WriteMode::WithoutResponse
+                    cutout_core::WriteMode::WithoutResponse,
+                    Some(cutout_core::TransportOperationId::new(request_id)),
                 )]
             );
 

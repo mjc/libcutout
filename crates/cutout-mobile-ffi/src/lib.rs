@@ -2598,6 +2598,9 @@ pub struct MobileSessionOutputDto {
     /// Transport payload bytes.
     pub bytes: Vec<u8>,
 
+    /// Rust-owned transport operation identity, when this is a write.
+    pub operation_id: Option<u64>,
+
     /// Typed parser-first ingest outcome.
     pub ingest: Option<MobileNotificationIngestOutcomeDto>,
 
@@ -11598,6 +11601,7 @@ impl MobileSessionOutputDto {
             kind,
             channel: Vec::new(),
             bytes: Vec::new(),
+            operation_id: None,
             ingest: None,
             fault_history_readback: None,
             bms_snapshot: None,
@@ -11645,8 +11649,16 @@ impl From<SessionOutputDto> for MobileSessionOutputDto {
                     Vec::new(),
                 )
             }
-            SessionOutputDto::Transport(TransportActionDto::Write { channel, bytes, .. }) => {
-                Self::transport(MobileSessionOutputKindDto::Write, channel.to_vec(), bytes)
+            SessionOutputDto::Transport(TransportActionDto::Write {
+                channel,
+                bytes,
+                operation_id,
+                ..
+            }) => {
+                let mut output =
+                    Self::transport(MobileSessionOutputKindDto::Write, channel.to_vec(), bytes);
+                output.operation_id = operation_id;
+                output
             }
             SessionOutputDto::Transport(TransportActionDto::Disconnect) => {
                 Self::empty(MobileSessionOutputKindDto::Disconnect)

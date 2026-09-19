@@ -8,11 +8,13 @@ final class DeviceSessionTransport: @unchecked Sendable {
     private final class SettingWriteReceipt {
         let id: DeviceSettingID
         let requestID: UInt64
+        let operationID: UInt64?
         var chunks: [CoreBluetoothWriteDisposition]
 
-        init(id: DeviceSettingID, requestID: UInt64, chunkCount: Int) {
+        init(id: DeviceSettingID, requestID: UInt64, operationID: UInt64?, chunkCount: Int) {
             self.id = id
             self.requestID = requestID
+            self.operationID = operationID
             chunks = Array(repeating: .queued, count: chunkCount)
         }
 
@@ -214,8 +216,14 @@ final class DeviceSessionTransport: @unchecked Sendable {
             if case .writeWithoutResponse = operation { return count + 1 }
             return count
         }
+        let operationID = actions.first(where: { $0.kind == .write })?.operationID
         let receipt = settingRequest.map {
-            SettingWriteReceipt(id: $0.id, requestID: $0.requestID, chunkCount: chunkCount)
+            SettingWriteReceipt(
+                id: $0.id,
+                requestID: $0.requestID,
+                operationID: operationID,
+                chunkCount: chunkCount
+            )
         }
         // Later tick outputs have no request identity; only attribute this submission's writes.
         if let receipt, chunkCount == 0, actions.contains(where: { $0.kind == .write }) {
@@ -275,6 +283,10 @@ final class DeviceSessionTransport: @unchecked Sendable {
     private func recordSettingTransport(
         _ receipt: SettingWriteReceipt
     ) {
+        // The native queue may only advance a setting whose Rust operation
+        // identity survived the FFI boundary. A missing or mismatched identity
+        // is not a submission receipt for this request.
+        guard receipt.operationID == receipt.requestID else { return }
         let status: MobileSettingTransportStatusDto
         switch receipt.disposition {
         case .submitted: status = .submitted

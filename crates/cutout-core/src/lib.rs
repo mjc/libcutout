@@ -7392,7 +7392,10 @@ pub enum SessionInput<'a> {
 
 /// Bounded transport write payload.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct WritePayload(WritePayloadStorage);
+pub struct WritePayload {
+    storage: WritePayloadStorage,
+    operation_id: Option<TransportOperationId>,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum WritePayloadStorage {
@@ -7416,30 +7419,36 @@ impl WritePayload {
         }
 
         if bytes.len() <= MAX_INLINE_TRANSPORT_WRITE_LEN {
-            return Ok(Self(WritePayloadStorage::Inline(
-                ArrayVec::<u8, MAX_INLINE_TRANSPORT_WRITE_LEN>::try_from(bytes).map_err(|_| {
+            return Ok(Self {
+                storage: WritePayloadStorage::Inline(
+                    ArrayVec::<u8, MAX_INLINE_TRANSPORT_WRITE_LEN>::try_from(bytes).map_err(
+                        |_| WritePayloadTooLong {
+                            len: bytes.len(),
+                            max: MAX_TRANSPORT_WRITE_LEN,
+                        },
+                    )?,
+                ),
+                operation_id: None,
+            });
+        }
+
+        Ok(Self {
+            storage: WritePayloadStorage::Large(Box::new(
+                ArrayVec::<u8, MAX_TRANSPORT_WRITE_LEN>::try_from(bytes).map_err(|_| {
                     WritePayloadTooLong {
                         len: bytes.len(),
                         max: MAX_TRANSPORT_WRITE_LEN,
                     }
                 })?,
-            )));
-        }
-
-        Ok(Self(WritePayloadStorage::Large(Box::new(
-            ArrayVec::<u8, MAX_TRANSPORT_WRITE_LEN>::try_from(bytes).map_err(|_| {
-                WritePayloadTooLong {
-                    len: bytes.len(),
-                    max: MAX_TRANSPORT_WRITE_LEN,
-                }
-            })?,
-        ))))
+            )),
+            operation_id: None,
+        })
     }
 
     /// Returns the write payload as bytes.
     #[must_use]
     pub fn as_slice(&self) -> &[u8] {
-        match &self.0 {
+        match &self.storage {
             WritePayloadStorage::Inline(bytes) => bytes.as_slice(),
             WritePayloadStorage::Large(bytes) => bytes.as_slice(),
         }
@@ -7460,7 +7469,18 @@ impl WritePayload {
     /// Returns whether this payload uses the common inline representation.
     #[must_use]
     pub const fn is_inline(&self) -> bool {
-        matches!(self.0, WritePayloadStorage::Inline(_))
+        matches!(self.storage, WritePayloadStorage::Inline(_))
+    }
+
+    /// Returns the host correlation identity assigned to this write, if any.
+    #[must_use]
+    pub const fn operation_id(&self) -> Option<TransportOperationId> {
+        self.operation_id
+    }
+
+    /// Associates this payload with one host transport operation.
+    pub fn set_operation_id(&mut self, operation_id: TransportOperationId) {
+        self.operation_id = Some(operation_id);
     }
 }
 
@@ -7473,6 +7493,26 @@ pub struct WritePayloadTooLong {
 
     /// Maximum accepted payload length.
     pub max: usize,
+}
+
+/// Stable identity for correlating a semantic write with native transport
+/// submission and cancellation receipts.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct TransportOperationId(u64);
+
+impl TransportOperationId {
+    /// Creates an operation identity from a nonzero request identity.
+    #[must_use]
+    pub const fn new(value: u64) -> Self {
+        Self(value)
+    }
+
+    /// Returns the raw operation identity for FFI correlation.
+    #[must_use]
+    pub const fn get(self) -> u64 {
+        self.0
+    }
 }
 
 /// Action a host transport must perform for a protocol session.
@@ -8561,15 +8601,15 @@ mod tests {
             size_of::<crate::ReadOnlyResponse>()
         );
         assert!(size_of::<SessionOutput>() <= 1024);
-        assert_eq!(size_of::<TransportAction>(), 64);
+        assert_eq!(size_of::<TransportAction>(), 80);
     }
 
     #[test]
     fn inline_write_capacity_size_snapshot_quantifies_transport_cost() {
         assert_eq!(crate::MAX_TRANSPORT_WRITE_LEN, 512);
         assert_eq!(crate::MAX_INLINE_TRANSPORT_WRITE_LEN, 32);
-        assert_eq!(size_of::<WritePayload>(), 40);
-        assert_eq!(size_of::<TransportAction>(), 64);
+        assert_eq!(size_of::<WritePayload>(), 56);
+        assert_eq!(size_of::<TransportAction>(), 80);
         assert!(size_of::<SessionOutput>() <= 1024);
     }
 

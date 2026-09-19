@@ -14,8 +14,8 @@ use crate::{
     ReservedPayloadEvidence, RideOperatingMode, RideOperatingState, RideStopReason, RideWarning,
     RollAngle, SafetyClass, SemanticEventCount, SessionInput, SessionOutput, SettingId,
     SettingsEntry, SettingsReadback, SettingsReadbackAvailability, Speed, SpeedAlarmMode,
-    TelemetryDelta, TelemetrySnapshot, Temperature, TransportAction, TransportWriteLimit,
-    ValueQuality, ValueSource, VerificationStatus, Voltage, WriteMode,
+    TelemetryDelta, TelemetrySnapshot, Temperature, TransportAction, TransportOperationId,
+    TransportWriteLimit, ValueQuality, ValueSource, VerificationStatus, Voltage, WriteMode,
 };
 
 /// UniFFI-ready owned read-only output.
@@ -2367,6 +2367,9 @@ pub enum TransportActionDto {
 
         /// Transport write behavior.
         mode: WriteModeDto,
+
+        /// Rust-owned operation identity for native submission correlation.
+        operation_id: Option<u64>,
     },
 
     /// Disconnect the underlying transport.
@@ -2387,6 +2390,7 @@ impl From<TransportAction> for TransportActionDto {
                 channel: channel.as_bytes(),
                 bytes: bytes.as_slice().to_vec(),
                 mode: mode.into(),
+                operation_id: bytes.operation_id().map(TransportOperationId::get),
             },
             TransportAction::Disconnect => Self::Disconnect,
         }
@@ -3243,6 +3247,7 @@ mod tests {
                 channel: [0xB2; 16],
                 bytes: vec![1, 2, 3],
                 mode: WriteModeDto::WithoutResponse,
+                operation_id: None,
             })
         );
         assert_eq!(

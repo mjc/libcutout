@@ -270,15 +270,14 @@ impl DeviceSettingsState {
         outcome: SettingSubmissionOutcome,
         completion: SettingCompletionStrategy,
         submitted_at: MonotonicTimestamp,
-    ) {
+    ) -> u64 {
         let record = self.records.entry(id).or_default();
-        record.request_id = Some(
-            NEXT_REQUEST_ID
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
-                    next.checked_add(1)
-                })
-                .expect("setting request identity exhausted"),
-        );
+        let request_id = NEXT_REQUEST_ID
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
+                next.checked_add(1)
+            })
+            .expect("setting request identity exhausted");
+        record.request_id = Some(request_id);
         record.transport_at = Some(submitted_at);
         record.completion = completion;
         record.transport = Some(match outcome {
@@ -296,6 +295,7 @@ impl DeviceSettingsState {
             SettingSubmissionOutcome::Refused(reason) => record.state.refuse(reason),
             SettingSubmissionOutcome::Failed => record.state.fail(),
         }
+        request_id
     }
 
     /// Advances only the latest request through the host transport lifecycle.
