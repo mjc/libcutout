@@ -151,6 +151,7 @@ pub struct SettingDescriptor {
 pub(super) struct SettingBinding {
     pub control: SettingControl,
     pub observation: SettingObservationBinding,
+    pub encoder: SettingEncoderBinding,
     pub write_access: SettingWriteAccess,
 }
 
@@ -162,6 +163,18 @@ pub(super) enum SettingObservationBinding {
     ReadOnlyField(u16),
 }
 
+/// The protocol encoder explicitly admitted by a semantic setting definition.
+///
+/// Keeping this on the same binding as the control and observation prevents a
+/// setting from becoming writable merely because a separate adapter-level
+/// encoder happens to recognize its identifier.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum SettingEncoderBinding {
+    None,
+    Nosfet,
+    Falcon,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum SettingWriteAccess {
     Writable,
@@ -169,19 +182,41 @@ pub(super) enum SettingWriteAccess {
 }
 
 impl SettingBinding {
-    fn new(id: SettingId, control: SettingControl, observation: SettingObservationBinding) -> Self {
-        let write_access = match id {
-            SettingId::ChargeLimitDiagnostic
-            | SettingId::AutoShutdownRemaining
-            | SettingId::ChargeMode
-            | SettingId::PowerOffDelay
-            | SettingId::LightingPattern => SettingWriteAccess::ReadOnly,
-            _ => SettingWriteAccess::Writable,
+    fn new(
+        control: SettingControl,
+        observation: SettingObservationBinding,
+        encoder: SettingEncoderBinding,
+    ) -> Self {
+        let write_access = match encoder {
+            SettingEncoderBinding::None => SettingWriteAccess::ReadOnly,
+            SettingEncoderBinding::Nosfet | SettingEncoderBinding::Falcon => {
+                SettingWriteAccess::Writable
+            }
         };
         Self {
             control,
             observation,
+            encoder,
             write_access,
+        }
+    }
+
+    fn checked_request(&self, id: SettingId, value: DeviceSettingValue) -> Option<DeviceCommand> {
+        let command = DeviceCommand::SetSetting { id, value };
+        match self.encoder {
+            SettingEncoderBinding::None => None,
+            SettingEncoderBinding::Nosfet => {
+                (crate::request_encoder::NosfetDialect::encode(command).is_some()
+                    || crate::request_encoder::NosfetDialect::encode_settings_sequence(command)
+                        .is_some())
+                .then_some(command)
+            }
+            SettingEncoderBinding::Falcon => {
+                (crate::request_encoder::FalconDialect::encode(command).is_some()
+                    || crate::request_encoder::FalconDialect::encode_settings_sequence(command)
+                        .is_some())
+                .then_some(command)
+            }
         }
     }
 
@@ -261,23 +296,7 @@ impl SettingsAdapter {
     }
 
     fn checked_request(self, id: SettingId, value: DeviceSettingValue) -> Option<DeviceCommand> {
-        match self {
-            Self::None => None,
-            Self::Aero => {
-                let command = DeviceCommand::SetSetting { id, value };
-                (crate::request_encoder::NosfetDialect::encode(command).is_some()
-                    || crate::request_encoder::NosfetDialect::encode_settings_sequence(command)
-                        .is_some())
-                .then_some(command)
-            }
-            Self::Falcon => {
-                let command = DeviceCommand::SetSetting { id, value };
-                (crate::request_encoder::FalconDialect::encode(command).is_some()
-                    || crate::request_encoder::FalconDialect::encode_settings_sequence(command)
-                        .is_some())
-                .then_some(command)
-            }
-        }
+        self.binding(id)?.checked_request(id, value)
     }
 
     fn normalize_readback(self, entry: SettingsEntry, observations: &mut Vec<SettingObservation>) {

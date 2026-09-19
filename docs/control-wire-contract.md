@@ -77,10 +77,13 @@ matching observation.
 
 The current Aero/NOSFET and Falcon adapter binding co-locates semantic control
 shape, write access, the typed observation field, and the derived completion
-strategy. The checked request path still supplies the concrete encoder, while
-the decoder supplies the value comparison, so compile-time missing-encoder and
-complete one-definition diagnostics remain follow-up work. A checked dialect
-marker is not proof that every control binding is complete.
+strategy with an explicit NOSFET, Falcon, or read-only encoder binding. Checked
+requests are now encoded through that setting binding; the adapter no longer
+has a separate vendor-wide write switch that can accidentally grant authority
+to an unrelated setting. The concrete semantic-to-wire mapping inside each
+dialect and the decoder's value comparison are still separate implementation
+details, so compile-time missing-mapping diagnostics remain follow-up work.
+A dialect binding is not proof of physical acceptance.
 
 Accepted settings writes also carry the Rust request operation identity through
 the core/mobile FFI boundary. Swift must preserve that identity into the native

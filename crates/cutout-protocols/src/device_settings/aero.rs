@@ -1,13 +1,17 @@
 use cutout_core::{DeviceSettingValue, PedalMode, SettingId, SettingsEntry};
 
 use super::{
-    SettingBinding, SettingControl, SettingObservationBinding, SettingUnit, choices, number,
-    readback::SettingObservation, speed_control,
+    SettingBinding, SettingControl, SettingEncoderBinding, SettingObservationBinding, SettingUnit,
+    choices, number, readback::SettingObservation, speed_control,
 };
 
 pub(super) fn binding(id: SettingId) -> Option<SettingBinding> {
-    let (control, observation) = match id {
-        SettingId::HighBeam => (SettingControl::Boolean, SettingObservationBinding::None),
+    let (control, observation, encoder) = match id {
+        SettingId::HighBeam => (
+            SettingControl::Boolean,
+            SettingObservationBinding::None,
+            SettingEncoderBinding::Nosfet,
+        ),
         SettingId::HighSpeedMode | SettingId::LowBatteryMode | SettingId::TransportMode => (
             SettingControl::Boolean,
             SettingObservationBinding::MatchingField(match id {
@@ -16,6 +20,7 @@ pub(super) fn binding(id: SettingId) -> Option<SettingBinding> {
                 SettingId::TransportMode => crate::AERO_FIELD_TRANSPORT_MODE,
                 _ => unreachable!(),
             }),
+            SettingEncoderBinding::Nosfet,
         ),
         SettingId::TiltbackSpeed | SettingId::SpeedAlarmThreshold => (
             speed_control(10, 200),
@@ -24,10 +29,12 @@ pub(super) fn binding(id: SettingId) -> Option<SettingBinding> {
                 SettingId::SpeedAlarmThreshold => crate::VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
                 _ => unreachable!(),
             }),
+            SettingEncoderBinding::Nosfet,
         ),
         SettingId::PwmTiltback => (
             number(30, 100, 0, SettingUnit::PwmDutyPercent),
             SettingObservationBinding::MatchingField(crate::AERO_FIELD_PWM_PERCENT),
+            SettingEncoderBinding::Nosfet,
         ),
         SettingId::PedalHardness
         | SettingId::DisplayBrightness
@@ -43,26 +50,31 @@ pub(super) fn binding(id: SettingId) -> Option<SettingBinding> {
                 SettingId::PedalDipCompensation => crate::AERO_FIELD_PEDAL_DIP_COMPENSATION_PERCENT,
                 _ => unreachable!(),
             }),
+            SettingEncoderBinding::Nosfet,
         ),
         SettingId::LateralTiltLimit => (
             number(35, 75, 0, SettingUnit::Degrees),
             SettingObservationBinding::MatchingField(crate::AERO_FIELD_LATERAL_TILT_LIMIT_DEGREES),
+            SettingEncoderBinding::Nosfet,
         ),
         SettingId::VoltageCorrection => (
             number(-15, 15, 1, SettingUnit::Percent),
             SettingObservationBinding::MatchingField(
                 crate::AERO_FIELD_VOLTAGE_CORRECTION_TENTHS_PERCENT,
             ),
+            SettingEncoderBinding::Nosfet,
         ),
         SettingId::PedalAngle => (
             number(-80, 80, 1, SettingUnit::Degrees),
             SettingObservationBinding::None,
+            SettingEncoderBinding::Nosfet,
         ),
         SettingId::BrakeOverpressureAlarm => (
             number(90, 125, 0, SettingUnit::Percent),
             SettingObservationBinding::MatchingField(
                 crate::AERO_FIELD_BRAKE_OVERPRESSURE_ALARM_PERCENT,
             ),
+            SettingEncoderBinding::Nosfet,
         ),
         SettingId::DisplayUnits => (
             choices(&[
@@ -70,6 +82,7 @@ pub(super) fn binding(id: SettingId) -> Option<SettingBinding> {
                 (1, "settings.choice.imperial", true),
             ]),
             SettingObservationBinding::MatchingField(crate::AERO_FIELD_WHEEL_UNITS),
+            SettingEncoderBinding::Nosfet,
         ),
         SettingId::RidingPreset => (
             choices(&[
@@ -78,16 +91,19 @@ pub(super) fn binding(id: SettingId) -> Option<SettingBinding> {
                 (2, "settings.choice.soft", true),
             ]),
             SettingObservationBinding::None,
+            SettingEncoderBinding::Nosfet,
         ),
         SettingId::ChargeLimitDiagnostic => (
             SettingControl::ReadOnly,
             SettingObservationBinding::ReadOnlyField(crate::AERO_FIELD_MAX_CHARGE_VOLTAGE_RAW),
+            SettingEncoderBinding::None,
         ),
         SettingId::AutoShutdownRemaining => (
             number(0, i32::MAX, 0, SettingUnit::Seconds),
             SettingObservationBinding::ReadOnlyField(
                 crate::VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS,
             ),
+            SettingEncoderBinding::None,
         ),
         SettingId::ChargeMode => (
             choices(&[
@@ -95,10 +111,11 @@ pub(super) fn binding(id: SettingId) -> Option<SettingBinding> {
                 (1, "settings.choice.charging", false),
             ]),
             SettingObservationBinding::ReadOnlyField(crate::VETERAN_FIELD_CHARGE_MODE),
+            SettingEncoderBinding::None,
         ),
         _ => return None,
     };
-    Some(SettingBinding::new(id, control, observation))
+    Some(SettingBinding::new(control, observation, encoder))
 }
 
 pub(super) fn normalize_readback(entry: SettingsEntry, observations: &mut Vec<SettingObservation>) {
