@@ -11,6 +11,8 @@ use cutout_core::{
     UsablePackCapacity, VerificationStatus,
 };
 
+pub use cutout_core::SettingCompletionStrategy;
+
 /// Meaning of a fixed-point numeric value before native display-unit conversion.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SettingUnit {
@@ -113,23 +115,6 @@ pub enum SettingAccess {
     Unverified,
     /// Physical meaning or write semantics are unresolved.
     ReadOnly,
-}
-
-/// How a submitted setting reaches a terminal success state.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum SettingCompletionStrategy {
-    /// Host transport submission is the strongest available completion evidence.
-    SubmissionOnly,
-    /// A fresh typed observation matching the requested value is required.
-    MatchingReadback,
-}
-
-impl SettingCompletionStrategy {
-    /// Whether the setting owns a matching-readback confirmation deadline.
-    #[must_use]
-    pub const fn supports_readback(self) -> bool {
-        matches!(self, Self::MatchingReadback)
-    }
 }
 
 /// Shared setting definition consumed by every native settings renderer.

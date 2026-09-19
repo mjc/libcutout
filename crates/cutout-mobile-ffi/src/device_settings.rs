@@ -555,7 +555,7 @@ mod tests {
             SettingId::HighBeam,
             DeviceSettingValue::Boolean(true),
             cutout_core::SettingSubmissionOutcome::Accepted,
-            false,
+            SettingCompletionStrategy::SubmissionOnly,
             cutout_core::MonotonicTimestamp::new(1),
         );
         let before = handle.settings_snapshot();

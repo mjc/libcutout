@@ -129,7 +129,7 @@ impl DeviceConnectionSession {
             });
         self.state
             .settings
-            .submission(id, value, outcome, completion.supports_readback(), at);
+            .submission(id, value, outcome, completion, at);
         Ok(step)
     }
 }

@@ -8,6 +8,23 @@ pub const SETTING_CONFIRMATION_TIMEOUT: Duration = Duration::from_milliseconds(2
 /// Compatibility name used by typed settings callers.
 pub const SETTING_WRITE_CONFIRMATION_TIMEOUT: Duration = SETTING_CONFIRMATION_TIMEOUT;
 
+/// How a submitted setting reaches a terminal success state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SettingCompletionStrategy {
+    /// Host transport submission is the strongest evidence available.
+    SubmissionOnly,
+    /// A fresh typed observation matching the requested value is required.
+    MatchingReadback,
+}
+
+impl SettingCompletionStrategy {
+    /// Whether this setting owns a matching-readback confirmation deadline.
+    #[must_use]
+    pub const fn supports_readback(self) -> bool {
+        matches!(self, Self::MatchingReadback)
+    }
+}
+
 /// Provenance for a setting value held by the state reducer.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SettingValueSource {
@@ -297,14 +314,14 @@ where
     pub fn command_status(
         self,
         now: MonotonicTimestamp,
-        confirmation_supported: bool,
+        completion: SettingCompletionStrategy,
     ) -> SettingCommandStatus {
         match self {
             Self::Unknown | Self::Current(_) => SettingCommandStatus::Idle,
             Self::Pending {
                 submitted_at: None, ..
             } => SettingCommandStatus::WaitingForConfirmation,
-            Self::Pending { .. } if !confirmation_supported => {
+            Self::Pending { .. } if !completion.supports_readback() => {
                 SettingCommandStatus::SentWithoutConfirmation
             }
             Self::Pending {
@@ -365,21 +382,33 @@ mod tests {
     fn command_status_is_owned_by_rust_setting_state() {
         let mut state = SettingState::unknown();
         assert_eq!(
-            state.command_status(MonotonicTimestamp::new(0), true),
+            state.command_status(
+                MonotonicTimestamp::new(0),
+                SettingCompletionStrategy::MatchingReadback,
+            ),
             SettingCommandStatus::Idle
         );
 
         state.submit(LightState::On, MonotonicTimestamp::new(10));
         assert_eq!(
-            state.command_status(MonotonicTimestamp::new(10), true),
+            state.command_status(
+                MonotonicTimestamp::new(10),
+                SettingCompletionStrategy::MatchingReadback,
+            ),
             SettingCommandStatus::WaitingForConfirmation
         );
         assert_eq!(
-            state.command_status(MonotonicTimestamp::new(2_010), true),
+            state.command_status(
+                MonotonicTimestamp::new(2_010),
+                SettingCompletionStrategy::MatchingReadback,
+            ),
             SettingCommandStatus::TimedOut
         );
         assert_eq!(
-            state.command_status(MonotonicTimestamp::new(2_010), false),
+            state.command_status(
+                MonotonicTimestamp::new(2_010),
+                SettingCompletionStrategy::SubmissionOnly,
+            ),
             SettingCommandStatus::SentWithoutConfirmation
         );
     }

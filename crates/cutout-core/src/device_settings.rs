@@ -8,8 +8,8 @@ static NEXT_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 
 use crate::{
     ControlRefusalReason, Duration, Measured, MonotonicTimestamp, SETTING_CONFIRMATION_TIMEOUT,
-    SettingCommandStatus, SettingState, SettingTransportStatus, SettingValue, SettingValueSource,
-    ValueQuality, ValueSource, VerificationStatus,
+    SettingCommandStatus, SettingCompletionStrategy, SettingState, SettingTransportStatus,
+    SettingValue, SettingValueSource, ValueQuality, ValueSource, VerificationStatus,
 };
 
 /// Stable semantic identity, independent of protocol fields or model names.
@@ -131,7 +131,7 @@ struct SettingRecord {
     state: SettingState<DeviceSettingValue>,
     observed_at: Option<MonotonicTimestamp>,
     evidence: Option<Measured<()>>,
-    confirmation_supported: bool,
+    completion: SettingCompletionStrategy,
     transport: Option<SettingTransportStatus>,
     request_id: Option<u64>,
     transport_at: Option<MonotonicTimestamp>,
@@ -143,7 +143,7 @@ impl Default for SettingRecord {
             state: SettingState::unknown(),
             observed_at: None,
             evidence: None,
-            confirmation_supported: true,
+            completion: SettingCompletionStrategy::MatchingReadback,
             transport: None,
             request_id: None,
             transport_at: None,
@@ -251,7 +251,7 @@ impl DeviceSettingsState {
                             | VerificationStatus::SourceAndHardwareVerified
                     )
             });
-        if (!record.confirmation_supported || !usable_confirmation)
+        if (!record.completion.supports_readback() || !usable_confirmation)
             && let SettingState::Pending { current, .. } = &mut record.state
         {
             *current = Some(value);
@@ -268,7 +268,7 @@ impl DeviceSettingsState {
         id: SettingId,
         requested: DeviceSettingValue,
         outcome: SettingSubmissionOutcome,
-        confirmation_supported: bool,
+        completion: SettingCompletionStrategy,
         submitted_at: MonotonicTimestamp,
     ) {
         let record = self.records.entry(id).or_default();
@@ -280,7 +280,7 @@ impl DeviceSettingsState {
                 .expect("setting request identity exhausted"),
         );
         record.transport_at = Some(submitted_at);
-        record.confirmation_supported = confirmation_supported;
+        record.completion = completion;
         record.transport = Some(match outcome {
             SettingSubmissionOutcome::Accepted => SettingTransportStatus::Accepted,
             SettingSubmissionOutcome::Refused(_) | SettingSubmissionOutcome::Failed => {
@@ -342,7 +342,7 @@ impl DeviceSettingsState {
     /// Advances confirmation deadlines for readable settings only.
     pub fn tick(&mut self, now: MonotonicTimestamp) {
         for record in self.records.values_mut() {
-            if record.confirmation_supported {
+            if record.completion.supports_readback() {
                 record
                     .state
                     .timeout_if_elapsed(now, SETTING_CONFIRMATION_TIMEOUT);
@@ -370,9 +370,7 @@ impl DeviceSettingsState {
                     .map(|(current, evidence)| evidence.map_value(|()| current.value)),
                 requested: record.state.requested_value(),
                 request_id: record.request_id,
-                status: record
-                    .state
-                    .command_status(now, record.confirmation_supported),
+                status: record.state.command_status(now, record.completion),
                 transport: record.transport,
                 age: record
                     .observed_at
@@ -422,7 +420,7 @@ mod tests {
                         id,
                         value,
                         SettingSubmissionOutcome::Accepted,
-                        true,
+                        SettingCompletionStrategy::MatchingReadback,
                         time(10),
                     );
                     let measured = Measured {
@@ -494,7 +492,7 @@ mod tests {
             id,
             DeviceSettingValue::Boolean(true),
             SettingSubmissionOutcome::Accepted,
-            true,
+            SettingCompletionStrategy::MatchingReadback,
             time(20),
         );
         settings.invalidate_readback(id, time(21));
@@ -568,7 +566,7 @@ mod tests {
             id,
             DeviceSettingValue::Number(1),
             SettingSubmissionOutcome::Accepted,
-            true,
+            SettingCompletionStrategy::MatchingReadback,
             time(10),
         );
         let accepted = settings.snapshot(time(10));
@@ -600,7 +598,10 @@ mod tests {
 
     #[test]
     fn managed_transport_waits_for_handoff_before_confirmation_or_timeout() {
-        for confirmation_supported in [true, false] {
+        for completion in [
+            SettingCompletionStrategy::MatchingReadback,
+            SettingCompletionStrategy::SubmissionOnly,
+        ] {
             let mut settings = DeviceSettingsState::default();
             settings.require_managed_transport();
             let id = SettingId::DisplayBrightness;
@@ -609,7 +610,7 @@ mod tests {
                 id,
                 value,
                 SettingSubmissionOutcome::Accepted,
-                confirmation_supported,
+                completion,
                 time(10),
             );
             let request_id = settings.snapshot(time(10))[0].request_id.unwrap();
@@ -641,7 +642,7 @@ mod tests {
             settings.tick(time(11_999));
             assert_eq!(
                 settings.snapshot(time(11_999))[0].status,
-                if confirmation_supported {
+                if completion.supports_readback() {
                     SettingCommandStatus::WaitingForConfirmation
                 } else {
                     SettingCommandStatus::SentWithoutConfirmation
@@ -651,7 +652,7 @@ mod tests {
             confirming.observe(id, value, SettingValueSource::LiveReadback, time(11_999));
             assert_eq!(
                 confirming.snapshot(time(11_999))[0].status,
-                if confirmation_supported {
+                if completion.supports_readback() {
                     SettingCommandStatus::Confirmed
                 } else {
                     SettingCommandStatus::SentWithoutConfirmation
@@ -660,7 +661,7 @@ mod tests {
             settings.tick(time(12_000));
             assert_eq!(
                 settings.snapshot(time(12_000))[0].status,
-                if confirmation_supported {
+                if completion.supports_readback() {
                     SettingCommandStatus::TimedOut
                 } else {
                     SettingCommandStatus::SentWithoutConfirmation
@@ -681,7 +682,7 @@ mod tests {
                     id,
                     DeviceSettingValue::Boolean(true),
                     SettingSubmissionOutcome::Accepted,
-                    true,
+                    SettingCompletionStrategy::MatchingReadback,
                     time(10),
                 );
                 let request_id = settings.snapshot(time(10))[0].request_id.unwrap();
@@ -724,7 +725,7 @@ mod tests {
                 id,
                 DeviceSettingValue::Boolean(true),
                 SettingSubmissionOutcome::Accepted,
-                true,
+                SettingCompletionStrategy::MatchingReadback,
                 time(10),
             );
             let before = settings.snapshot(time(10));
@@ -752,7 +753,7 @@ mod tests {
             id,
             DeviceSettingValue::Boolean(true),
             SettingSubmissionOutcome::Refused(ControlRefusalReason::Busy),
-            true,
+            SettingCompletionStrategy::MatchingReadback,
             time(20),
         );
         let snapshot = settings.snapshot(time(25));
@@ -770,7 +771,7 @@ mod tests {
             id,
             DeviceSettingValue::Boolean(true),
             SettingSubmissionOutcome::Accepted,
-            true,
+            SettingCompletionStrategy::MatchingReadback,
             time(30),
         );
         settings.observe(
@@ -796,14 +797,14 @@ mod tests {
     }
 
     #[test]
-    fn readable_values_do_not_confirm_a_write_without_confirmation_support() {
+    fn submission_only_readback_does_not_confirm_a_write() {
         let mut settings = DeviceSettingsState::default();
         let id = SettingId::Headlight;
         settings.submission(
             id,
             DeviceSettingValue::Boolean(true),
             SettingSubmissionOutcome::Accepted,
-            false,
+            SettingCompletionStrategy::SubmissionOnly,
             time(10),
         );
         settings.observe(
@@ -840,7 +841,7 @@ mod tests {
             SettingId::MaximumSpeed,
             DeviceSettingValue::Number(30),
             SettingSubmissionOutcome::Accepted,
-            false,
+            SettingCompletionStrategy::SubmissionOnly,
             time(10),
         );
         settings.tick(time(5_000));
@@ -861,14 +862,14 @@ mod tests {
             SettingId::MaximumSpeed,
             DeviceSettingValue::Number(30),
             SettingSubmissionOutcome::Accepted,
-            false,
+            SettingCompletionStrategy::SubmissionOnly,
             time(10),
         );
         settings.submission(
             SettingId::MaximumSpeed,
             DeviceSettingValue::Number(40),
             SettingSubmissionOutcome::Failed,
-            false,
+            SettingCompletionStrategy::SubmissionOnly,
             time(20),
         );
         let snapshot = settings.snapshot(time(20));
