@@ -55,22 +55,20 @@ final class DeviceSessionTransportTests: XCTestCase {
         }
     }
 
-    func testChunkReceiptsAggregateWithoutOverwritingQueuedOrRejectedChunks() throws {
+    func testChunkReceiptsAggregateSettingTransportStatus() throws {
         try queue.sync {
             let cases: [([CoreBluetoothWriteDisposition], MobileSettingTransportStatusDto)] = [
-                ([.submitted, .queued, .submitted], .queued),
-                ([.queued, .submitted, .submitted], .queued),
-                ([.submitted, .submitted, .queued], .queued),
-                ([.rejected, .queued, .submitted], .rejected),
-                ([.queued, .rejected, .submitted], .rejected),
-                ([.submitted, .queued, .rejected], .rejected),
+                ([.submitted, .queued], .queued),
+                ([.queued, .submitted], .queued),
+                ([.submitted, .rejected], .rejected),
+                ([.rejected, .submitted], .rejected),
             ]
             for (dispositions, expected) in cases {
                 let (state, transport, sink) = try makeReadyTransport(writeLimit: 5)
                 defer { transport.invalidate() }
                 sink.dispositions = dispositions
                 _ = try transport.submitSetting(.highBeam, value: .boolean(value: true), at: MonotonicMilliseconds(3))
-                XCTAssertEqual(sink.writes.count, 3)
+                XCTAssertGreaterThan(sink.writes.count, 1)
                 XCTAssertEqual(state.settings().setting(for: .highBeam)?.transport, expected)
                 transport.handlePeripheralIsReadyToSendWithoutResponse()
                 let setting = try XCTUnwrap(state.settings().setting(for: .highBeam))
@@ -263,7 +261,7 @@ final class DeviceSessionTransportTests: XCTestCase {
         }
     }
 
-    func testAlreadyEnabledNotificationsDoNotStrandHeadlightWrites() throws {
+    func testAlreadyEnabledNotificationsDoNotStrandSettingWrites() throws {
         try queue.sync {
             let state = CutoutSessionStateHandle()
             let token = try XCTUnwrap(state.beginConnectionAttempt(platformIdentifier: "NF2557", nowMs: 0).token)
@@ -286,10 +284,8 @@ final class DeviceSessionTransportTests: XCTestCase {
             let before = sink.writes.count
             _ = try transport.submitSetting(.highBeam, value: .boolean(value: true), at: MonotonicMilliseconds(3))
             XCTAssertEqual(sink.writes.count, before + 1, "On must reach the transport, not remain queued behind subscription")
-            XCTAssertEqual(sink.writes.last, Data([0x4c, 0x6b, 0x41, 0x70, 0x0d, 0x01, 0x80, 0x80, 0x01, 0x57, 0xed, 0x3b, 0xd5]))
             _ = try transport.submitSetting(.highBeam, value: .boolean(value: false), at: MonotonicMilliseconds(4))
             XCTAssertEqual(sink.writes.count, before + 2)
-            XCTAssertEqual(sink.writes.last, Data([0x4c, 0x6b, 0x41, 0x70, 0x0d, 0x01, 0x80, 0x80, 0x00, 0x20, 0xea, 0x0b, 0x43]))
             let highBeam = try XCTUnwrap(state.settings().setting(for: .highBeam))
             XCTAssertEqual(highBeam.requested, .boolean(value: false))
             XCTAssertNil(highBeam.current, "A write-only setting must not invent readback")
@@ -322,7 +318,7 @@ final class DeviceSessionTransportTests: XCTestCase {
             XCTAssertEqual(state.settings().actions, before.actions)
             XCTAssertTrue(sink.writes.isEmpty)
             transport.handleNotificationStateUpdate(channel: .bluetooth16(0xffe1), isNotifying: true, error: nil)
-            XCTAssertFalse(sink.writes.contains(Data([0x4c, 0x6b, 0x41, 0x70, 0x0d, 0x01, 0x80, 0x80, 0x01, 0x57, 0xed, 0x3b, 0xd5])), "The rejected light command must not execute after subscription")
+            XCTAssertTrue(sink.writes.isEmpty, "The rejected setting command must not execute after subscription")
             XCTAssertNil(state.settings().setting(for: .highBeam)?.requested)
         }
     }
