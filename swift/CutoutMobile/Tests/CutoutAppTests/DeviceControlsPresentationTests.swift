@@ -102,7 +102,10 @@ final class DeviceControlsPresentationTests: XCTestCase {
         XCTAssertEqual(DeviceControlPresentation.steppedValue(draft: .number(value: 15), current: nil, control: control, increasing: true), .number(value: 15))
         XCTAssertEqual(DeviceControlPresentation.steppedValue(draft: .number(value: -15), current: nil, control: control, increasing: false), .number(value: -15))
         XCTAssertEqual(DeviceControlPresentation.value(.number(value: 4), control: control), "0.4%")
-        XCTAssertEqual(DeviceControlPresentation.steppedValue(draft: nil, current: nil, control: control, increasing: true), .number(value: -15), "Only an explicit step creates the first draft")
+        XCTAssertNil(
+            DeviceControlPresentation.steppedValue(draft: nil, current: nil, control: control, increasing: true),
+            "An unknown wheel value must not create a fabricated minimum draft"
+        )
     }
 
     func testBooleanSelectionAcknowledgesAcceptedCommandsButNeverFailures() {

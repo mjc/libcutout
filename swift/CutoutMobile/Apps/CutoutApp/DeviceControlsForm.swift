@@ -152,6 +152,7 @@ private struct DeviceSettingRow: View {
                         .accessibilityLabel(localizedAppText(descriptor.labelKey))
                         .accessibilityValue(displayedValue)
                         .accessibilityIdentifier("settings.slider.\(descriptor.id)")
+                        .disabled(!hasNumericBaseValue)
                     }
                     numericStepper
                 }
@@ -277,6 +278,11 @@ private struct DeviceSettingRow: View {
         .accessibilityLabel(localizedAppText(descriptor.labelKey))
         .accessibilityValue(displayedValue)
         .accessibilityIdentifier("settings.stepper.\(descriptor.id)")
+        .disabled(!hasNumericBaseValue)
+    }
+
+    private var hasNumericBaseValue: Bool {
+        editing.value != nil || state?.current != nil
     }
 
     private func booleanButton(_ value: Bool) -> some View {
@@ -456,7 +462,19 @@ enum DeviceControlPresentation {
     static func steppedValue(draft: DeviceSettingValue?, current: DeviceSettingValue?, control: DeviceSettingControl, increasing: Bool) -> DeviceSettingValue? {
         guard case let .number(minimum, maximum, step, _, _, _) = control,
               minimum <= maximum, step > 0 else { return nil }
-        guard case let .number(value) = draft ?? current else { return .number(value: minimum) }
+        // Unknown wheel state is not a default. Do not manufacture the
+        // minimum as a first draft from a +/− tap. Explicit Off is a known
+        // value, so it can step back onto the numeric lattice.
+        let source = draft ?? current
+        let value: Int32
+        switch source {
+        case let .number(number):
+            value = number
+        case .disabled:
+            return .number(value: minimum)
+        case .boolean, .choice, nil:
+            return nil
+        }
         let lower = Int64(minimum)
         let stride = Int64(step)
         let lastIndex = (Int64(maximum) - lower) / stride

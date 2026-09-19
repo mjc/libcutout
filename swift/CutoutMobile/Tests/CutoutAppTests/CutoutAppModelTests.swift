@@ -2075,7 +2075,7 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testUnresolvedProtocolConnectionEntersCaptureInsteadOfRide() {
+    func testUnresolvedProtocolConnectionReturnsToPickerInsteadOfEnteringCapture() {
         let row = DevicePickerRow(
             id: "unknown-1234",
             title: "Unknown PEV",
@@ -2092,10 +2092,21 @@ final class CutoutAppModelTests: XCTestCase {
         driver.isRecordOnlyConnection = true
         driver.onPhaseChange?(.live)
 
-        XCTAssertTrue(model.isRecordOnlyCapture)
-        XCTAssertEqual(model.recordOnlyDeviceKind, row.title)
-        XCTAssertEqual(model.connectionState, .picker)
-        XCTAssertEqual(model.connectionState.navigationIntent(isRecordOnlyCapture: true), .openCapture)
+        XCTAssertFalse(model.isRecordOnlyCapture)
+        XCTAssertNil(model.recordOnlyDeviceKind)
+        XCTAssertEqual(
+            model.connectionState,
+            .failed(
+                ConnectionSelection(
+                    platformIdentifier: row.id,
+                    title: row.title,
+                    route: .electricUnicycle
+                ),
+                .identificationFailed(.timedOut)
+            )
+        )
+        XCTAssertEqual(driver.disconnectCount, 1)
+        XCTAssertEqual(model.connectionState.navigationIntent(isRecordOnlyCapture: false), .returnToPicker)
     }
 
     @MainActor

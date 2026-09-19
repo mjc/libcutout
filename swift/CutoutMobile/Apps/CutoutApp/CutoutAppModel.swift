@@ -2717,6 +2717,23 @@ final class CutoutAppModel {
             }
         case .live:
             if core.isRecordOnlyConnection {
+                // Record-only is an explicit capture choice. A normal Use/auto-reconnect
+                // attempt must never silently turn a known wheel into the capture screen when
+                // protocol detection times out (for example while the wheel is powered off).
+                if let selection = connectionState.selection {
+                    isRecordOnlyCapture = false
+                    recordOnlyDeviceKind = nil
+                    captureStatus = nil
+                    captureProgress = nil
+                    connectionState = .failed(
+                        selection,
+                        .identificationFailed(.timedOut)
+                    )
+                    liveActivityIdentity = nil
+                    core.disconnectAndScan()
+                    syncLiveActivity()
+                    break
+                }
                 recordOnlyDeviceKind = core.protocolIdentityCandidate?.productCategory
                     ?? connectionState.selection?.title
                 connectionState = .picker

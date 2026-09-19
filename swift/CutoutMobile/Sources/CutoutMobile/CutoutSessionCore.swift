@@ -3305,21 +3305,6 @@ extension CutoutSessionCore {
             return false
         }
         guard let token = connectionAttempt?.token else { return false }
-        let resolved = rustSessionState.resolveDeviceSession(
-            token: token,
-            identificationComplete: allowClosestMatch,
-            nowMs: clock.now().rawValue
-        )
-        switch resolved.connection.readiness {
-        case .recordOnly:
-            recordUnresolvedProtocolDetection(.unsupported, on: peripheral)
-            return false
-        case .verified:
-            connectionDeadlineWorkItem?.cancel()
-            publishConnectionSnapshot()
-        case .pending, .disconnected, .failed, .conflicted:
-            return false
-        }
         let candidate = rustSessionState.connectionAdmissionCandidate(
             platformIdentifier: advertisement.peripheralIdentifier.rawValue,
             displayName: advertisement.localName
@@ -3329,6 +3314,20 @@ extension CutoutSessionCore {
         switch DevicePickerCandidateSupport(candidate) {
         case .supported(let route, let model):
             guard let route else { return false }
+            // The Rust candidate is the authoritative result of protocol detection. Resolve
+            // the connection from that exact supported evidence before any family-specific
+            // fallback probe can be sent. In particular, a Veteran model frame must promote
+            // an Aero attempt before the Begode N/V/M probe sequence runs.
+            let resolved = rustSessionState.resolveDeviceSession(
+                token: token,
+                identificationComplete: true,
+                nowMs: clock.now().rawValue
+            )
+            guard resolved.connection.readiness == .verified else {
+                return false
+            }
+            connectionDeadlineWorkItem?.cancel()
+            publishConnectionSnapshot()
             isDetectingProtocol = false
             clearProtocolDetectionExpiry()
             selectedRoute = route
@@ -3337,6 +3336,21 @@ extension CutoutSessionCore {
             buildOwner(for: peripheral)
             return liveOwner != nil
         case .probeRecommended, .unknownRecordable, .knownUnsupported, .ambiguous, .conflicting, .rejectedNoise, .manualEntry, .unsupported:
+            let resolved = rustSessionState.resolveDeviceSession(
+                token: token,
+                identificationComplete: allowClosestMatch,
+                nowMs: clock.now().rawValue
+            )
+            switch resolved.connection.readiness {
+            case .recordOnly:
+                recordUnresolvedProtocolDetection(.unsupported, on: peripheral)
+                return false
+            case .pending, .disconnected, .failed, .conflicted:
+                return false
+            case .verified:
+                connectionDeadlineWorkItem?.cancel()
+                publishConnectionSnapshot()
+            }
             let failure: IdentificationProbeFailure = candidate.support == .conflicting
                 ? .conflictingEvidence
                 : (candidate.support == .unknownRecordable ? .unsupported : .unsupported)

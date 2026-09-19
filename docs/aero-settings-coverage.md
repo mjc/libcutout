@@ -17,6 +17,22 @@ The [settings design review](settings-design-review.md) is the proposed repair
 baseline across all protocols. Veteran is the protocol, NOSFET its dialect,
 and Aero the model used by the NF2557 fixture.
 
+## Protocol detection and capture boundary
+
+Advertisement data chooses the device the user selected; it does not choose a
+wire protocol. Detection accumulates fragmented notifications and keeps the
+attempt pending while the evidence is incomplete. Once the Rust detector has a
+supported protocol/model candidate, the mobile session must admit that exact
+candidate before sending any family-specific fallback probe. This prevents a
+known Veteran/NOSFET Aero from being treated as a generic Begode candidate just
+because both families share a GATT transport.
+
+Record-only capture remains an explicit path for an unresolved device and a
+terminal fallback for a first-use attempt that never produces usable evidence.
+An incomplete fragment or a temporary missing response is not, by itself, a
+reason to navigate to capture, and a normal reconnect must not silently turn a
+known device into capture mode.
+
 | Setting | Rust / CLI / mobile / Tune | Live confirmation |
 | --- | --- | --- |
 | Headlight power | Implemented as the one canonical Aero lighting power control with direct Off/On values | A live NF2557 test physically confirmed both `SetLightON` and `SetLightOFF`; the wheel does not expose a decoded light-state readback |
@@ -32,7 +48,7 @@ and Aero the model used by the NF2557 fixture.
 | Low-battery mode (P) | Implemented as a typed toggle | Page-8 byte 60 readback decoded; new writes still need device proof |
 | Transportation mode (W/TRM) | Implemented as a typed toggle | Page-8 byte 57 readback decoded; new writes still need device proof |
 | ANG TLT gyro calibration | Implemented as a stationary source-backed toggle; page-8 byte 56 reports idle/waiting/complete | Official NOSFET app frame and state mapping are decoded; the simulator and Tune surface now stop a completed calibration with the same command; physical calibration effect still needs device proof |
-| Display backlight (J) | Implemented as a typed 0–100% control | Page-8 byte 55 reaches mobile state; a live mirrored NF2557 test requesting 1% left the wheel at 0% and the app reported `Not confirmed`; the target was restored to 0% |
+| Display backlight (J) | Implemented as a typed 0–100% control | Page-8 byte 55 reaches mobile state; live NF2557 testing confirmed the control works, with 0% meaning the display is off |
 | Beeper volume (F) | Implemented as a typed 0–100% control | Page-8 byte 63 reaches mobile state; new writes still need device proof |
 | Dynamic assist (L) | Implemented as a typed 0–100% control | Page-8 byte 66 reaches mobile state; new writes still need device proof |
 | Pedal-dip compensation (Q) | Implemented as a typed 0–100% control | Page-8 byte 68 reaches mobile state; new writes still need device proof |
@@ -92,7 +108,7 @@ restoration. Preserve positive reports without using them to close other paths:
 | Controls | Reported result | Remaining acceptance |
 | --- | --- | --- |
 | Beeper volume, tilt-back speed, PWM tilt-back, pedal hardness, dynamic assist, pedal dip, voltage correction | User reported working | Individually record exact targets, units, effect, available readback and restoration under the repaired lifecycle |
-| Display brightness | User previously reported working; a live mirrored NF2557 test requested 1%, displayed `Wheel 0%`, and ended `Not confirmed`; the requested target was restored to 0% | Determine whether the request was submitted, why no matching readback arrived, and why the operation did not produce a clean terminal result |
+| Display brightness | User confirmed it works as advertised; 0% turns the display off | Keep the 0% off semantics in the generic setting contract and verify other requested levels during the broader acceptance pass |
 | Headlight power | The old binary `LkAp` frame was transmitted but had no physical effect on NF2557; the corrected literal commands turned the lamp on and off in a live test | Keep the exact command bytes and physical result as the acceptance evidence; no decoded light-state readback is expected |
 | Headlight intensity modes | Deferred because the reference app path does not currently establish a brightness-cycle command | Revisit only if EUC World or another source provides a verified command; do not treat `SetLightON` as a brightness selector |
 | Horn, reset trip, pedal angle | Horn and pedal angle remain unconfirmed; reset had no effect | A new app trip attempts the semantic trip-reset action automatically for any live device that exposes a trip meter; the current Aero encoding is the established `CLEARMETER` literal, while horn and pedal angle still need protocol/device evidence |
