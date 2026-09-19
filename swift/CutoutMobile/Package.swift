@@ -37,6 +37,7 @@ let package = Package(
             name: "CutoutAppTests",
             dependencies: [
                 "CutoutApp",
+                "CutoutMobile",
                 .product(name: "CutoutMobileFFI", package: "CutoutMobileFFI"),
             ],
             path: "Tests/CutoutAppTests"
