@@ -4,7 +4,8 @@ use cutout_core::{
 };
 
 use crate::{
-    DeviceConnectionSession, DeviceConnectionStep, SettingDescriptor, SettingsRequestError,
+    DeviceConnectionSession, DeviceConnectionStep, SettingCompletionStrategy, SettingDescriptor,
+    SettingsRequestError,
 };
 
 /// A semantic request rejected before the protocol accepted it.
@@ -102,10 +103,13 @@ impl DeviceConnectionSession {
             .ok_or(DeviceSettingRequestError::ConnectionUnavailable)?;
         let profile = device.control_profile();
         let command = profile.command(id, value, validation_authorized)?;
-        let confirmation_supported = profile
+        let completion = profile
             .descriptors(validation_authorized)
             .iter()
-            .any(|descriptor| descriptor.id == id && descriptor.confirmation_supported);
+            .find(|descriptor| descriptor.id == id)
+            .map_or(SettingCompletionStrategy::SubmissionOnly, |descriptor| {
+                descriptor.completion
+            });
         let step = self
             .ingest_validated(
                 token,
@@ -125,7 +129,7 @@ impl DeviceConnectionSession {
             });
         self.state
             .settings
-            .submission(id, value, outcome, confirmation_supported, at);
+            .submission(id, value, outcome, completion.supports_readback(), at);
         Ok(step)
     }
 }
@@ -602,7 +606,7 @@ mod tests {
                     assert_eq!(state.requested, Some(value));
                     assert_eq!(
                         state.status,
-                        if descriptor.confirmation_supported {
+                        if descriptor.completion.supports_readback() {
                             SettingCommandStatus::WaitingForConfirmation
                         } else {
                             SettingCommandStatus::SentWithoutConfirmation

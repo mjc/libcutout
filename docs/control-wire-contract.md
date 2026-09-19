@@ -64,17 +64,25 @@ prove that a source-derived command matches a wheel's firmware or that hardware
 applied it. Golden frames, fresh readback, and physical acceptance remain separate
 checks; an unsuccessful write must not remove a setting's readback capability.
 
-## Remaining typed-contract work
+## Typed-contract status
 
-The schema checks above cover destinations and protocol types. They do not tie
-all semantic membership, canonical domains, encoding, observation comparison
-and completion policy together: those are still separately declared. A checked
-dialect marker is not proof that every control binding is complete.
+The public settings contract now exposes a typed completion strategy selected by
+the protocol adapter. `MatchingReadback` is owned by the adapter's semantic
+setting definitions; `SubmissionOnly` means that host submission is the
+strongest evidence currently available. There is no public confirmation boolean
+or vendor-specific settings facade for native consumers to interpret. A failed
+write therefore cannot remove a setting's readback capability, and a submitted
+write is not presented as device confirmation unless the descriptor requires a
+matching observation.
 
-The proposed design consolidates these into one typed definition selected by
-model/firmware applicability, with public descriptors projected from it. A
-writable binding must require a checked encoder; readback completion must require
-the matching typed observation/comparison binding, not a confirmation boolean.
+The schema checks and adapter definitions still do not make semantic membership,
+canonical domains, encoding, observation comparison, and completion policy one
+literal declaration. The checked request path does require a concrete encoder for
+every writable command, and readback observations are normalized through the
+selected adapter, but compile-time missing-binding diagnostics and one-definition
+projection remain follow-up work. A checked dialect marker is not proof that
+every control binding is complete.
+
 Write and observation domains may differ, so reported values must not be rejected
 solely because they cannot be selected for writing. Keep the semantic public API;
 no compatibility facade or parallel settings framework is required.

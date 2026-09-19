@@ -3,7 +3,8 @@ use cutout_core::{
 };
 
 use super::{
-    SettingControl, SettingUnit, choices, number, readback::SettingObservation, speed_control,
+    SettingCompletionStrategy, SettingControl, SettingUnit, choices, number,
+    readback::SettingObservation, speed_control,
 };
 
 pub(super) fn control(id: SettingId) -> Option<SettingControl> {
@@ -48,6 +49,15 @@ pub(super) fn control(id: SettingId) -> Option<SettingControl> {
 
 pub(super) const fn is_read_only(id: SettingId) -> bool {
     matches!(id, SettingId::LightingPattern | SettingId::PowerOffDelay)
+}
+
+pub(super) const fn completion(id: SettingId) -> SettingCompletionStrategy {
+    match id {
+        SettingId::PedalMode | SettingId::RollAngleMode | SettingId::SpeedAlarmMode => {
+            SettingCompletionStrategy::MatchingReadback
+        }
+        _ => SettingCompletionStrategy::SubmissionOnly,
+    }
 }
 
 pub(super) fn normalize_readback(entry: SettingsEntry, observations: &mut Vec<SettingObservation>) {

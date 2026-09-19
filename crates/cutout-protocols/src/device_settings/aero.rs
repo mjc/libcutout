@@ -1,7 +1,8 @@
 use cutout_core::{DeviceSettingValue, PedalMode, SettingId, SettingsEntry};
 
 use super::{
-    SettingControl, SettingUnit, choices, number, readback::SettingObservation, speed_control,
+    SettingCompletionStrategy, SettingControl, SettingUnit, choices, number,
+    readback::SettingObservation, speed_control,
 };
 
 pub(super) fn control(id: SettingId) -> Option<SettingControl> {
@@ -45,6 +46,27 @@ pub(super) const fn is_read_only(id: SettingId) -> bool {
         id,
         SettingId::ChargeLimitDiagnostic | SettingId::AutoShutdownRemaining | SettingId::ChargeMode
     )
+}
+
+pub(super) const fn completion(id: SettingId) -> SettingCompletionStrategy {
+    match id {
+        SettingId::TiltbackSpeed
+        | SettingId::SpeedAlarmThreshold
+        | SettingId::PwmTiltback
+        | SettingId::PedalHardness
+        | SettingId::DisplayBrightness
+        | SettingId::DisplayUnits
+        | SettingId::BeeperVolumePercent
+        | SettingId::DynamicAssist
+        | SettingId::PedalDipCompensation
+        | SettingId::LateralTiltLimit
+        | SettingId::VoltageCorrection
+        | SettingId::HighSpeedMode
+        | SettingId::LowBatteryMode
+        | SettingId::TransportMode
+        | SettingId::BrakeOverpressureAlarm => SettingCompletionStrategy::MatchingReadback,
+        _ => SettingCompletionStrategy::SubmissionOnly,
+    }
 }
 
 pub(super) fn normalize_readback(entry: SettingsEntry, observations: &mut Vec<SettingObservation>) {

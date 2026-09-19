@@ -23,7 +23,7 @@ fn legacy_pedal_mode_does_not_confirm_the_modern_aero_riding_preset() {
         .find(|descriptor| descriptor.id == SettingId::RidingPreset)
         .unwrap();
     assert_eq!(preset.access, SettingAccess::Writable);
-    assert!(!preset.confirmation_supported);
+    assert!(!preset.completion.supports_readback());
     assert_eq!(preset.write_verification, VerificationStatus::Unverified);
 }
 

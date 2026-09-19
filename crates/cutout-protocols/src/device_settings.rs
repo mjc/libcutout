@@ -115,6 +115,23 @@ pub enum SettingAccess {
     ReadOnly,
 }
 
+/// How a submitted setting reaches a terminal success state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SettingCompletionStrategy {
+    /// Host transport submission is the strongest available completion evidence.
+    SubmissionOnly,
+    /// A fresh typed observation matching the requested value is required.
+    MatchingReadback,
+}
+
+impl SettingCompletionStrategy {
+    /// Whether the setting owns a matching-readback confirmation deadline.
+    #[must_use]
+    pub const fn supports_readback(self) -> bool {
+        matches!(self, Self::MatchingReadback)
+    }
+}
+
 /// Shared setting definition consumed by every native settings renderer.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SettingDescriptor {
@@ -136,8 +153,8 @@ pub struct SettingDescriptor {
     pub access: SettingAccess,
     /// Write evidence, independent of production availability and readback evidence.
     pub write_verification: VerificationStatus,
-    /// Whether device readback can confirm a submitted value.
-    pub confirmation_supported: bool,
+    /// Typed completion rule for an accepted write.
+    pub completion: SettingCompletionStrategy,
 }
 
 /// A semantic request rejected before it reaches the live session checks.
@@ -166,7 +183,6 @@ pub struct DeviceControlProfile {
     pub(crate) production: Capabilities,
     available_settings: &'static [SettingId],
     verified_settings: &'static [SettingId],
-    confirmation_settings: &'static [SettingId],
     readable: &'static [SettingId],
     default_charge_profile: Option<ChargeProfile>,
 }
@@ -221,6 +237,14 @@ impl SettingsAdapter {
         }
     }
 
+    fn completion(self, id: SettingId) -> SettingCompletionStrategy {
+        match self {
+            Self::None => SettingCompletionStrategy::SubmissionOnly,
+            Self::Aero => aero::completion(id),
+            Self::Falcon => falcon::completion(id),
+        }
+    }
+
     fn normalize_readback(self, entry: SettingsEntry, observations: &mut Vec<SettingObservation>) {
         match self {
             Self::None => {}
@@ -249,7 +273,6 @@ impl DeviceControlProfile {
             production: verified,
             available_settings: &[],
             verified_settings: &[],
-            confirmation_settings: &[],
             readable: &[],
             default_charge_profile: None,
         }
@@ -274,11 +297,9 @@ impl DeviceControlProfile {
         mut self,
         available: &'static [SettingId],
         verified: &'static [SettingId],
-        confirmation: &'static [SettingId],
     ) -> Self {
         self.available_settings = available;
         self.verified_settings = verified;
-        self.confirmation_settings = confirmation;
         self
     }
 
@@ -345,8 +366,7 @@ impl DeviceControlProfile {
                     } else {
                         VerificationStatus::Unverified
                     },
-                    confirmation_supported: !adapter.is_read_only(id)
-                        && self.confirmation_settings.contains(&id),
+                    completion: adapter.completion(id),
                 })
             })
             .collect()
@@ -420,23 +440,6 @@ pub const fn aero_control_profile() -> DeviceControlProfile {
             SettingId::PedalAngle,
         ],
         &[],
-        &[
-            SettingId::TiltbackSpeed,
-            SettingId::SpeedAlarmThreshold,
-            SettingId::PwmTiltback,
-            SettingId::PedalHardness,
-            SettingId::DisplayBrightness,
-            SettingId::DisplayUnits,
-            SettingId::BeeperVolumePercent,
-            SettingId::DynamicAssist,
-            SettingId::PedalDipCompensation,
-            SettingId::LateralTiltLimit,
-            SettingId::VoltageCorrection,
-            SettingId::HighSpeedMode,
-            SettingId::LowBatteryMode,
-            SettingId::TransportMode,
-            SettingId::BrakeOverpressureAlarm,
-        ],
     )
     .with_readable_settings(&[SettingId::AutoShutdownRemaining, SettingId::ChargeMode])
     .with_default_charge_profile(ChargeProfile::new(
@@ -474,11 +477,6 @@ pub const fn falcon_control_profile() -> DeviceControlProfile {
                 SettingId::MaximumSpeed,
                 SettingId::BeeperVolumeLevel,
                 SettingId::LightingPattern,
-            ],
-            &[
-                SettingId::PedalMode,
-                SettingId::RollAngleMode,
-                SettingId::SpeedAlarmMode,
             ],
         )
         .with_readable_settings(&[SettingId::PowerOffDelay])
@@ -824,7 +822,7 @@ mod tests {
     }
 
     #[test]
-    fn confirmation_requires_a_positive_profile_capability() {
+    fn completion_strategy_is_adapter_owned_and_explicit() {
         let available = Capabilities::from_supported_commands([CommandKind::SetLights]);
         let unknown = DeviceControlProfile::new(available, available);
         assert!(unknown.descriptors(false).is_empty());
@@ -840,7 +838,8 @@ mod tests {
                     .iter()
                     .find(|entry| entry.id == id)
                     .unwrap()
-                    .confirmation_supported,
+                    .completion
+                    .supports_readback(),
                 "{id:?}"
             );
         }
@@ -857,7 +856,8 @@ mod tests {
                 aero.iter()
                     .find(|entry| entry.id == id)
                     .unwrap()
-                    .confirmation_supported,
+                    .completion
+                    .supports_readback(),
                 "{id:?} has device readback; an unconfirmed write must not disable it"
             );
         }

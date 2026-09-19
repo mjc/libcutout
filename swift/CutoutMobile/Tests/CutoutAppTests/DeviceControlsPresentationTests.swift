@@ -335,7 +335,7 @@ final class DeviceControlsPresentationTests: XCTestCase {
     }
 
     private func makeDescriptor(access: DeviceSettingAccess = .writable) -> DeviceSettingDescriptor {
-        .init(id: .highBeam, labelKey: "settings.high_beam.label", helpKey: nil, valueSemanticsKey: nil, group: .interface, order: 1, control: .boolean, access: access, writeVerification: .unverified, confirmationSupported: false)
+        .init(id: .highBeam, labelKey: "settings.high_beam.label", helpKey: nil, valueSemanticsKey: nil, group: .interface, order: 1, control: .boolean, access: access, writeVerification: .unverified, completion: .submissionOnly)
     }
 
     private func makeState() -> DeviceSettingSnapshot {

@@ -5,8 +5,8 @@ use cutout_core::{
     SettingTransportStatus,
 };
 use cutout_protocols::{
-    DeviceSettingRequestError, DeviceSettingsSnapshot, SettingAccess, SettingControl,
-    SettingDescriptor, SettingGroup, SettingUnit, SettingsRequestError,
+    DeviceSettingRequestError, DeviceSettingsSnapshot, SettingAccess, SettingCompletionStrategy,
+    SettingControl, SettingDescriptor, SettingGroup, SettingUnit, SettingsRequestError,
 };
 
 use crate::{
@@ -100,6 +100,12 @@ setting_enum!(
     SettingAccess,
     "Static submission availability resolved by the protocol profile.",
     [Writable, Unverified, ReadOnly]
+);
+setting_enum!(
+    MobileSettingCompletionStrategyDto,
+    SettingCompletionStrategy,
+    "Typed terminal completion rule for a settings request.",
+    [SubmissionOnly, MatchingReadback]
 );
 setting_enum!(
     MobileSettingStatusDto,
@@ -239,8 +245,8 @@ pub struct MobileSettingDescriptorDto {
     pub access: MobileSettingAccessDto,
     /// Write evidence, independent of availability and observed values.
     pub write_verification: MobileVerificationStatusDto,
-    /// Whether actual readback can confirm an accepted request.
-    pub confirmation_supported: bool,
+    /// Typed terminal completion rule for an accepted request.
+    pub completion: MobileSettingCompletionStrategyDto,
 }
 
 impl From<SettingDescriptor> for MobileSettingDescriptorDto {
@@ -255,7 +261,7 @@ impl From<SettingDescriptor> for MobileSettingDescriptorDto {
             control: value.control.into(),
             access: value.access.into(),
             write_verification: value.write_verification.into(),
-            confirmation_supported: value.confirmation_supported,
+            completion: value.completion.into(),
         }
     }
 }
@@ -782,7 +788,7 @@ mod tests {
                 .unwrap();
             assert_eq!(
                 submitted.status,
-                if descriptor.confirmation_supported {
+                if descriptor.completion == MobileSettingCompletionStrategyDto::MatchingReadback {
                     MobileSettingStatusDto::WaitingForConfirmation
                 } else {
                     MobileSettingStatusDto::SentWithoutConfirmation
