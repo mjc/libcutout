@@ -46,13 +46,20 @@ Compilation rejects:
 - Literal commands that occupy a declared binary field or submenu entry point.
 - A dialect extension that collides with an inherited command.
 - A model selecting a dialect of a different base-protocol type.
+- A paired binary command whose primary or companion field collides with any
+  declared destination.
 
 Aliases for one physical operation must resolve to one canonical wire command,
-not declare duplicate destinations. Distinct protocols/dialects may legitimately
-reuse bytes; there is no global ban on matching opcodes across unrelated devices.
-New wire-layout kinds require an exhaustive overlap rule and serializer.
+not declare duplicate destinations. Some Veteran settings are intentionally
+ordered frame pairs: lateral cutoff sends the `LkAp` field followed by an
+`LdAp` companion with discriminator `01 00`; both fields belong to one semantic
+setting and are declared together in the checked schema. Distinct
+protocols/dialects may legitimately reuse bytes; there is no global ban on
+matching opcodes across unrelated devices. New wire-layout kinds require an
+exhaustive overlap rule and serializer.
 
-The compiler proves the declared mapping is internally non-colliding. It cannot
+The compiler proves the declared mapping is internally non-colliding, including
+both destinations of a paired command. It cannot
 prove that a source-derived command matches a wheel's firmware or that hardware
 applied it. Golden frames, fresh readback, and physical acceptance remain separate
 checks; an unsuccessful write must not remove a setting's readback capability.

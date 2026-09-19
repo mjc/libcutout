@@ -1056,10 +1056,21 @@ mod tests {
                     crate::VeteranCommandMode::Binary,
                     crate::VeteranCommandMode::Ascii,
                 ] {
-                    let encoded = crate::NosfetDialect::encode_in_mode(command, mode)
-                        .unwrap_or_else(|| panic!("missing encoder: {id:?} {value:?} {mode:?}"));
-                    assert!(!encoded.payload.as_slice().is_empty());
-                    assert_eq!(encoded.mode, cutout_core::WriteMode::WithoutResponse);
+                    if let Some(encoded) = crate::NosfetDialect::encode_in_mode(command, mode) {
+                        assert!(!encoded.payload.as_slice().is_empty());
+                        assert_eq!(encoded.mode, cutout_core::WriteMode::WithoutResponse);
+                    } else {
+                        let sequence = crate::NosfetDialect::encode_settings_sequence(command)
+                            .unwrap_or_else(|| {
+                                panic!("missing encoder: {id:?} {value:?} {mode:?}")
+                            });
+                        assert!(!sequence.steps.is_empty());
+                        assert!(
+                            sequence.steps.iter().all(|step| {
+                                step.mode == cutout_core::WriteMode::WithoutResponse
+                            })
+                        );
+                    }
                 }
             }
         }

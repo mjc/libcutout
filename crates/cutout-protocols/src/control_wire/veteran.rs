@@ -1,6 +1,6 @@
 //! Veteran protocol command destinations. Model support is selected separately.
 
-use super::Layout;
+use super::{BinaryField, Layout};
 
 pub(super) mod nosfet;
 
@@ -8,7 +8,10 @@ control_wire_schema! {
     crate::VeteranProtocol => VeteranWire {
         PedalAngle => Layout::Field { magic: *b"LkAp", bank: &[1], offset: 11 },
         SpeedAlarm => Layout::Field { magic: *b"LkAp", bank: &[1], offset: 12 },
-        LateralTilt => Layout::Field { magic: *b"LkAp", bank: &[1], offset: 17 },
+        LateralTilt => Layout::FieldPair {
+            primary: BinaryField { magic: *b"LkAp", bank: &[1], offset: 17 },
+            companion: BinaryField { magic: *b"LdAp", bank: &[1, 0], offset: 17 },
+        },
         PedalHardness => Layout::Field { magic: *b"LdAp", bank: &[1, 2], offset: 10 },
         TiltbackSpeed => Layout::Field { magic: *b"LdAp", bank: &[1, 2], offset: 12 },
         PwmTiltback => Layout::Field { magic: *b"LdAp", bank: &[1, 2], offset: 13 },

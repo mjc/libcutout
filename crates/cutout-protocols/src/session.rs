@@ -5385,6 +5385,45 @@ mod tests {
     }
 
     #[test]
+    fn aero_lateral_tilt_session_sends_the_checked_frame_pair() {
+        let mut session = StationarySettingsWriteSession::<NosfetAeroModel, false>::default();
+        let mut output = Vec::new();
+        session.arm(
+            StationarySettingsPolicy {
+                model: NosfetAeroModel::MODEL,
+                arm_duration: Duration::from_milliseconds(100),
+            }
+            .arm(RideOperatingState::Parked, ms(10))
+            .expect("parked state arms settings writes"),
+        );
+        session.handle(
+            SessionInput::Command(DeviceCommand::SetSetting {
+                id: cutout_core::SettingId::LateralTiltLimit,
+                value: cutout_core::DeviceSettingValue::Number(55),
+            }),
+            &mut output,
+        );
+        assert!(matches!(
+            output.as_slice(),
+            [SessionOutput::Transport(TransportAction::Write { bytes, .. })]
+                if bytes.as_slice().starts_with(b"LkAp\x16\x01\x80")
+        ));
+
+        output.clear();
+        session.handle(
+            SessionInput::Tick {
+                monotonic_ms: ms(10),
+            },
+            &mut output,
+        );
+        assert!(output.iter().any(|item| matches!(
+            item,
+            SessionOutput::Transport(TransportAction::Write { bytes, .. })
+                if bytes.as_slice().starts_with(b"LdAp\x16\x01\x00")
+        )));
+    }
+
+    #[test]
     fn aero_stationary_settings_session_schedules_single_high_beam_write() {
         let mut session = StationarySettingsWriteSession::<NosfetAeroModel, false>::default();
         let mut output = Vec::new();

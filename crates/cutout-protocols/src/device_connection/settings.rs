@@ -536,27 +536,63 @@ mod tests {
                 let step = owner
                     .submit_setting(&token, id, value, MonotonicTimestamp::new(10 + age))
                     .unwrap();
-                let writes: Vec<_> = step
+                let mut writes: Vec<Vec<u8>> = step
                     .result
                     .outputs
                     .iter()
                     .filter_map(|output| match output {
                         SessionOutput::Transport(TransportAction::Write { bytes, .. }) => {
-                            Some(bytes.as_slice())
+                            Some(bytes.as_slice().to_vec())
                         }
                         _ => None,
                     })
                     .collect();
+                if id == SettingId::LateralTiltLimit && accepted {
+                    let follow_up = owner
+                        .ingest(
+                            &token,
+                            &cutout_core::SessionInputDto::Tick {
+                                monotonic_ms: cutout_core::MonotonicMillisDto { milliseconds: 11 },
+                            },
+                        )
+                        .unwrap();
+                    writes.extend(follow_up.result.outputs.iter().filter_map(
+                        |output| match output {
+                            SessionOutput::Transport(TransportAction::Write { bytes, .. }) => {
+                                Some(bytes.as_slice().to_vec())
+                            }
+                            _ => None,
+                        },
+                    ));
+                }
                 assert_eq!(
                     step.result.error.is_none(),
                     accepted,
                     "{id:?} speed={speed:?} age={age}"
                 );
                 if accepted {
-                    let encoded =
-                        crate::NosfetDialect::encode(profile.command(id, value, false).unwrap())
-                            .unwrap();
-                    assert_eq!(writes, [encoded.payload.as_slice()], "{id:?}");
+                    let command = profile.command(id, value, false).unwrap();
+                    let expected: Vec<_> = crate::NosfetDialect::encode_settings_sequence(command)
+                        .map(|sequence| {
+                            sequence
+                                .steps
+                                .into_iter()
+                                .map(|step| step.payload)
+                                .collect()
+                        })
+                        .or_else(|| {
+                            crate::NosfetDialect::encode(command)
+                                .map(|encoded| vec![encoded.payload])
+                        })
+                        .unwrap();
+                    assert_eq!(
+                        writes,
+                        expected
+                            .iter()
+                            .map(|payload| payload.as_slice().to_vec())
+                            .collect::<Vec<_>>(),
+                        "{id:?}"
+                    );
                     let state = owner
                         .settings_snapshot()
                         .settings

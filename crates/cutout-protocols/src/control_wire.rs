@@ -8,7 +8,7 @@ use crate::request_encoder::EncodedControlStep;
 use crate::request_encoder::request_payload as payload;
 
 mod schema;
-pub(crate) use schema::{Layout, Schema};
+pub(crate) use schema::{BinaryField, Layout, Schema};
 
 impl Schema {
     pub(crate) fn payload(&self, index: usize, value: u8) -> Option<WritePayload> {
@@ -19,30 +19,36 @@ impl Schema {
                 magic,
                 bank,
                 offset,
-            } => {
-                let mut frame = ArrayVec::<u8, 33>::new();
-                frame.try_extend_from_slice(&magic).ok()?;
-                frame.push(offset + 5);
-                frame.try_extend_from_slice(bank).ok()?;
-                while frame.len() < usize::from(offset) {
-                    frame.push(0x80);
-                }
-                frame.push(value);
-                let crc = crc32fast::hash(&frame).to_be_bytes();
-                frame.try_extend_from_slice(&crc).ok()?;
-                Some(payload(&frame))
-            }
+            } => Some(field_payload(
+                BinaryField {
+                    magic,
+                    bank,
+                    offset,
+                },
+                value,
+            )),
+            Layout::FieldPair { .. } => None,
         }
     }
 
     pub(crate) fn steps(&self, index: usize, value: u8) -> Option<ArrayVec<EncodedControlStep, 5>> {
+        let mut steps = ArrayVec::new();
+        if let Layout::FieldPair { primary, companion } = self.layout(index) {
+            for field in [primary, companion] {
+                steps.push(EncodedControlStep {
+                    delay_ms: 0,
+                    payload: field_payload(field, value),
+                    mode: WriteMode::WithoutResponse,
+                });
+            }
+            return Some(steps);
+        }
         let Layout::DecimalMenu { selector, digits } = self.layout(index) else {
             return None;
         };
         if (digits == 1 && value > 9) || value > 99 {
             return None;
         }
-        let mut steps = ArrayVec::new();
         let mut push = |delay_ms, byte| {
             steps.push(EncodedControlStep {
                 delay_ms,
@@ -59,6 +65,26 @@ impl Schema {
         push(200, b'b');
         Some(steps)
     }
+}
+
+fn field_payload(field: BinaryField, value: u8) -> WritePayload {
+    let mut frame = ArrayVec::<u8, 33>::new();
+    frame
+        .try_extend_from_slice(&field.magic)
+        .expect("binary field magic fits");
+    frame.push(field.offset + 5);
+    frame
+        .try_extend_from_slice(field.bank)
+        .expect("binary field bank fits");
+    while frame.len() < usize::from(field.offset) {
+        frame.push(0x80);
+    }
+    frame.push(value);
+    let crc = crc32fast::hash(&frame).to_be_bytes();
+    frame
+        .try_extend_from_slice(&crc)
+        .expect("binary field CRC fits");
+    payload(&frame)
 }
 
 pub(crate) trait WireCommand: Copy {

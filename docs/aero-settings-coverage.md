@@ -37,7 +37,7 @@ and Aero the model used by the NF2557 fixture.
 | Dynamic assist (L) | Implemented as a typed 0–100% control | Page-8 byte 66 reaches mobile state; new writes still need device proof |
 | Pedal-dip compensation (Q) | Implemented as a typed 0–100% control | Page-8 byte 68 reaches mobile state; new writes still need device proof |
 | Voltage correction (X) | Implemented as a typed signed −15…15 control in tenths of a percent (−1.5…1.5%) | Page-8 byte 59 reaches mobile state; new writes still need device proof |
-| Lateral cutoff (O) | Implemented as a typed 35–75° control | Selector-2 byte 47 reaches mobile state; new writes still need device proof |
+| Lateral cutoff (O) | Implemented as a typed 35–75° control; the checked Veteran/NOSFET encoder sends the required `LkAp` frame followed by the `LdAp` companion (`01 00`) as one sequence | Selector-2 byte 47 reaches mobile state; the earlier NF2557 capture sent only `LkAp` and stayed at 40°, so physical confirmation of the paired write remains open |
 | Modern binary riding mode (T) | Implemented as a distinct hard/medium/soft command | EUC World source-backed LkAp frames; new writes still need device proof |
 | Brake overpressure alarm | Implemented as a typed 90–125% command | Official NOSFET source-backed LdAp frame and page-8 byte 65; new writes still need device proof |
 
@@ -96,7 +96,7 @@ restoration. Preserve positive reports without using them to close other paths:
 | Headlight power | The old binary `LkAp` frame was transmitted but had no physical effect on NF2557; the corrected literal commands turned the lamp on and off in a live test | Keep the exact command bytes and physical result as the acceptance evidence; no decoded light-state readback is expected |
 | Headlight intensity modes | Deferred because the reference app path does not currently establish a brightness-cycle command | Revisit only if EUC World or another source provides a verified command; do not treat `SetLightON` as a brightness selector |
 | Horn, reset trip, pedal angle | Horn and pedal angle remain unconfirmed; reset had no effect | A new app trip attempts the semantic trip-reset action automatically for any live device that exposes a trip meter; the current Aero encoding is the established `CLEARMETER` literal, while horn and pedal angle still need protocol/device evidence |
-| Lateral tilt and speed alarm | Repeated unconfirmed/timeout results; speed alarm also had a reported crash | Resolve encoding, display-unit conversion, observation acquisition and terminal outcomes; reproduce the crash path offline |
+| Lateral tilt and speed alarm | The earlier NF2557 lateral attempt transmitted only the `LkAp` half and stayed at 40° | The lateral encoder now emits the checked `LkAp` + `LdAp (01 00)` pair; deploy and verify both outbound frames plus selector-2 readback before closing this item; speed alarm remains separately open |
 | Brake alarm | Initially reported working without updating the wheel percentage; later 120 reported sent without confirmation | Establish desired effect and fresh reported percentage separately |
 | High-speed and low-battery modes | Beeped but were not confirmed | Sound is not state confirmation; verify mode observation and effect |
 | Calibration and transport mode | No acceptance established; user declined calibration | Remain open; no automatic action sweep |

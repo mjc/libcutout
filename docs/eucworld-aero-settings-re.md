@@ -73,8 +73,10 @@ as evidence that those paths do not exist.
 `pos` below is the absolute, zero-based value-byte position. `Ld` means `LdAp`
 with bytes 5–6 = `01 02`; intervening bytes are `80`. Total frame size is
 `pos + 5`, including the trailing four-byte CRC32. `Lk` setters use `LkAp` and
-byte 5 = `01`; the serializer can select `LdAp` for newer firmware, so these
-are not unconditional family-wide encodings. Preserve protocol/firmware gates.
+byte 5 = `01`; lateral cutoff is the documented paired exception: it sends the
+`LkAp` field and then an `LdAp` companion with bytes 5–6 = `01 00`, both at
+position 17. The companion is not the ordinary `LdAp` `01 02` field namespace.
+Preserve protocol/firmware gates.
 That does **not** authorize replacing a field's header and discriminator while
 keeping its offset: `LdAp` position 12 is tilt-back, not speed alarm, and
 `LdAp` position 17 is transport mode, not lateral tilt.
@@ -104,7 +106,7 @@ host submission or operation completion; those gaps are tracked in the
 | `pedal_dip_compensation` | Q | 0–100%, Ld pos 28 | Page-8 byte 68; typed mobile readback implemented |
 | `pedals_sensitivity` | R | 0–100%, Ld pos 10 | Page-8 byte 50; Cutout MD write and readback implemented |
 | `pedals_tilt` | S | Signed −80…80 tenths of a degree, pos 11 | Cutout ANG write uses the documented −80…80 range; live setting readback unresolved |
-| `lateral_tilt_limit` | O | 35–75 degrees, Lk pos 17 | Selector-2 byte 47 readback is decoded; typed mobile readback implemented |
+| `lateral_tilt_limit` | O | 35–75 degrees, checked `LkAp` + `LdAp` pair at pos 17 (`LdAp` discriminator `01 00`) | Selector-2 byte 47 readback is decoded; typed mobile readback implemented; NF2557 physical confirmation is still pending the deployed paired-frame test |
 | `high_speed_mode` | N | 0/1, Ld pos 21 | Page-8 byte 61; typed encoder/readback/UI implemented on the settings branch; physical write proof pending |
 | `low_battery_mode` | P | 0/1, Ld pos 20 | Page-8 byte 60; typed encoder/readback/UI implemented on the settings branch; physical write proof pending |
 | `transportation_mode` | W | 0/1, Ld pos 17 | Page-8 byte 57; typed encoder/readback/UI implemented on the settings branch; physical write proof pending |

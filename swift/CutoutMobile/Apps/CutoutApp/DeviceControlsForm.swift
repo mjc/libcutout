@@ -10,6 +10,11 @@ struct DeviceControlsForm: View {
     let submitSetting: (ConnectionAttemptToken, DeviceSettingID, DeviceSettingValue) throws -> Void
     let submitAction: (ConnectionAttemptToken, DeviceActionID) throws -> Void
 
+    private var canInteract: Bool {
+        snapshot.connection.readiness == .verified
+            && snapshot.connection.transport == .connected
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
@@ -42,7 +47,6 @@ struct DeviceControlsForm: View {
         .foregroundStyle(PevColors.primaryText)
         .tint(PevColors.yellow)
         .id(snapshot.connection.generation)
-        .disabled(snapshot.connection.readiness != .verified || snapshot.connection.transport != .connected)
     }
 
     private func controlsCard(title: String, @ViewBuilder content: () -> some View) -> some View {
@@ -58,7 +62,11 @@ struct DeviceControlsForm: View {
         ForEach(descriptors, id: \.id) { descriptor in
             VStack(spacing: 0) {
                 if descriptor.id != descriptors.first?.id { Divider() }
-                DeviceSettingRow(descriptor: descriptor, state: snapshot.setting(for: descriptor.id)) { value in
+                DeviceSettingRow(
+                    descriptor: descriptor,
+                    state: snapshot.setting(for: descriptor.id),
+                    isEnabled: canInteract
+                ) { value in
                     guard let token = snapshot.connection.token else { throw DeviceSettingSubmissionError.ConnectionUnavailable }
                     try submitSetting(token, descriptor.id, value)
                 }
@@ -69,7 +77,11 @@ struct DeviceControlsForm: View {
 
     private func actionRows(_ descriptors: [DeviceActionDescriptor]) -> some View {
         ForEach(descriptors, id: \.id) { descriptor in
-            DeviceActionRow(descriptor: descriptor, state: snapshot.actions.first { $0.id == descriptor.id }) {
+            DeviceActionRow(
+                descriptor: descriptor,
+                state: snapshot.actions.first { $0.id == descriptor.id },
+                isEnabled: canInteract
+            ) {
                 guard let token = snapshot.connection.token else { throw DeviceActionSubmissionError.ConnectionUnavailable }
                 try submitAction(token, descriptor.id)
             }
@@ -81,6 +93,7 @@ struct DeviceControlsForm: View {
 private struct DeviceSettingRow: View {
     let descriptor: DeviceSettingDescriptor
     let state: DeviceSettingSnapshot?
+    let isEnabled: Bool
     let submit: (DeviceSettingValue) throws -> Void
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var editing = DeviceSettingDraft()
@@ -165,6 +178,7 @@ private struct DeviceSettingRow: View {
                     .accessibilityIdentifier("settings.\(feedback.isError ? "error" : "status").\(descriptor.id)")
             }
         }
+        .disabled(!isEnabled)
         .onChange(of: state) { editing.reconcile(state) }
     }
 
@@ -359,6 +373,7 @@ struct DeviceSettingDraft {
 private struct DeviceActionRow: View {
     let descriptor: DeviceActionDescriptor
     let state: DeviceActionSnapshot?
+    let isEnabled: Bool
     let submit: () throws -> Void
     @State private var confirmsDestructiveAction = false
     @State private var submissionError: String?
@@ -372,7 +387,10 @@ private struct DeviceActionRow: View {
                     send()
                 }
             }
-            .disabled(!DeviceControlPresentation.actionAvailable(descriptor: descriptor, state: state))
+            .disabled(
+                !isEnabled
+                    || !DeviceControlPresentation.actionAvailable(descriptor: descriptor, state: state)
+            )
             .accessibilityIdentifier("settings.action.\(descriptor.id)")
             if let submissionError {
                 Text(submissionError).foregroundStyle(.red)
