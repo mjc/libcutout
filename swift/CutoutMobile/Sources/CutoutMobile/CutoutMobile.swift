@@ -4961,6 +4961,8 @@ public enum CoreBluetoothWriteDisposition: Equatable, Hashable, Sendable {
     case queued
     /// The write could not be accepted by the transport.
     case rejected
+    /// The native queue cancelled the write before it was submitted.
+    case cancelled
 }
 
 public extension CoreBluetoothOperationSink {
@@ -5011,7 +5013,7 @@ final class CoreBluetoothWriteQueue {
     func clear() {
         let cancelled = pending
         pending.removeAll()
-        cancelled.forEach { $0.receipt(.rejected) }
+        cancelled.forEach { $0.receipt(.cancelled) }
     }
 }
 

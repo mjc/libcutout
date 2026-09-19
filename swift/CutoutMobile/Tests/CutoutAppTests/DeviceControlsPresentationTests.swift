@@ -262,7 +262,7 @@ final class DeviceControlsPresentationTests: XCTestCase {
         XCTAssertNil(draft.submissionError)
     }
 
-    func testTransportEvidenceProducesOneStatusWithQueueAndRejectionPrecedence() {
+    func testTransportEvidenceProducesOneStatusWithQueueRejectionAndCancellationPrecedence() {
         var state = makeState()
         for status: DeviceSettingStatus in [.waitingForConfirmation, .sentWithoutConfirmation, .timedOut] {
             state.status = status
@@ -270,6 +270,7 @@ final class DeviceControlsPresentationTests: XCTestCase {
                 (.accepted, "Accepted by app", false),
                 (.queued, "Queued for Bluetooth", false),
                 (.rejected, "Rejected before Bluetooth", true),
+                (.cancelled, "Cancelled", true),
             ] {
                 state.transport = transport
                 XCTAssertEqual(DeviceControlPresentation.feedback(state), .init(text: text, isError: isError))
@@ -280,6 +281,8 @@ final class DeviceControlsPresentationTests: XCTestCase {
         XCTAssertEqual(DeviceControlPresentation.feedback(state), .init(text: "Failed", isError: true))
         state.transport = .rejected
         XCTAssertEqual(DeviceControlPresentation.feedback(state), .init(text: "Rejected before Bluetooth", isError: true))
+        state.transport = .cancelled
+        XCTAssertEqual(DeviceControlPresentation.feedback(state), .init(text: "Cancelled", isError: true))
     }
 
     func testSubmittedAndLegacyEvidenceNeverClaimDeliveryAndConfirmationHidesStatus() {

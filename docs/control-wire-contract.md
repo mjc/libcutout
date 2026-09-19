@@ -89,9 +89,11 @@ Accepted settings writes also carry the Rust request operation identity through
 the core/mobile FFI boundary and into correlated CoreBluetooth planned writes,
 including each chunk of a bounded write. Swift preserves that identity through
 the native queue and receipt path before advancing host transport state; it
-still must not interpret that receipt as wheel confirmation. Read-only polling,
-multi-step operation identity beyond the current write chunks, and explicit
-cancellation receipts remain separate follow-up work.
+still must not interpret that receipt as wheel confirmation. Clearing a pending
+settings write now produces a typed cancellation receipt, distinct from
+rejection. Read-only polling, multi-step operation identity beyond the current
+write chunks, and cancellation receipts for other operation classes remain
+separate follow-up work.
 
 Write and observation domains may differ, so reported values must not be rejected
 solely because they cannot be selected for writing. Keep the semantic public API;

@@ -20,9 +20,10 @@ plans before native execution and can drop the oldest queued write without a
 request-specific failure; these remain open defects. Settings writes now carry
 the Rust request operation identity through the core and mobile FFI into the
 Swift action, correlated CoreBluetooth planned writes (including chunks), and
-the native receipt boundary. Broader operation classes and explicit native
-cancellation receipts remain follow-up work; this identity path is not a device
-acknowledgment.
+the native receipt boundary. A settings write cancelled before native
+submission is now reported distinctly from host rejection; broader operation
+classes still need the same cancellation treatment. This identity path is not
+a device acknowledgment.
 
 The Swift app consumes a generated package selector in ignored build state:
 
@@ -275,9 +276,10 @@ Disabling the settings suite does not make connection-only discovery proven
 harmless. The Rust detector now avoids starting Begode N/V/M probes after
 Veteran, VESC or conflict evidence resolves the protocol, and retires the
 corresponding pending Rust probe state. A recorded NF2557 connection emitted
-those probes and flushed queued bytes after Veteran identity resolved; native
-queue cancellation is still not implemented. FFE0/FFE1 is shared, so probe
-eligibility while multiple protocols remain plausible still needs a safe plan.
+those probes and flushed queued bytes after Veteran identity resolved; typed
+native cancellation for discovery probes is still not implemented. FFE0/FFE1 is
+shared, so probe eligibility while multiple protocols remain plausible still
+needs a safe plan.
 “Read-only” describes intended semantic operations, not an absence of transport
 writes.
 

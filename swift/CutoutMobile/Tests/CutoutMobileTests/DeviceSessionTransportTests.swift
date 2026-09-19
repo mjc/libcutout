@@ -112,7 +112,7 @@ final class DeviceSessionTransportTests: XCTestCase {
         }
     }
 
-    func testInvalidationRejectsQueuedWritesAndIgnoresLateReceipts() throws {
+    func testInvalidationCancelsQueuedWritesAndIgnoresLateReceipts() throws {
         try queue.sync {
             let (state, transport, sink) = try makeReadyTransport()
             sink.dispositions = [.queued]
@@ -120,9 +120,9 @@ final class DeviceSessionTransportTests: XCTestCase {
             let lateReceipt = try XCTUnwrap(sink.receipts.first)
             transport.invalidate()
             XCTAssertEqual(sink.clears, 1)
-            XCTAssertEqual(state.settings().setting(for: .highBeam)?.transport, .rejected)
+            XCTAssertEqual(state.settings().setting(for: .highBeam)?.transport, .cancelled)
             lateReceipt(.submitted)
-            XCTAssertEqual(state.settings().setting(for: .highBeam)?.transport, .rejected)
+            XCTAssertEqual(state.settings().setting(for: .highBeam)?.transport, .cancelled)
             XCTAssertThrowsError(try transport.submitSetting(.highBeam, value: .boolean(value: false), at: MonotonicMilliseconds(4)))
         }
     }
@@ -188,14 +188,14 @@ final class DeviceSessionTransportTests: XCTestCase {
         XCTAssertEqual(receipts, [[.queued, .submitted], [.queued, .submitted], [.rejected]])
     }
 
-    func testNativeQueueClearRejectsEveryPendingWriteExactlyOnce() {
+    func testNativeQueueClearCancelsEveryPendingWriteExactlyOnce() {
         let writes = CoreBluetoothWriteQueue(capacity: 2)
         var receipts: [CoreBluetoothWriteDisposition] = []
         _ = writes.submit(canSend: { false }, write: { XCTFail("Cancelled write executed") }, onReceipt: { receipts.append($0) })
         writes.clear()
         writes.clear()
         writes.flush { true }
-        XCTAssertEqual(receipts, [.queued, .rejected])
+        XCTAssertEqual(receipts, [.queued, .cancelled])
     }
 
     func testGenericVescDefersRequestsUntilSubscriptionAndRejectsReplacementCallbacks() throws {
@@ -391,6 +391,6 @@ private final class TransportSink: CoreBluetoothOperationSink {
         clears += 1
         let pending = receipts
         receipts.removeAll()
-        pending.forEach { $0(.rejected) }
+        pending.forEach { $0(.cancelled) }
     }
 }

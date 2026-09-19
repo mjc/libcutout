@@ -103,6 +103,7 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(localizedAppText("settings.state.refused"), "Refused")
         XCTAssertEqual(localizedAppText("settings.state.timed_out"), "Not confirmed")
         XCTAssertEqual(localizedAppText("settings.state.failed"), "Failed")
+        XCTAssertEqual(localizedAppText("settings.transport.cancelled"), "Cancelled")
         XCTAssertEqual(localizedAppText("settings.pedal_mode.title"), "Pedal mode")
         XCTAssertEqual(localizedAppText("settings.roll_angle.title"), "Roll angle")
         XCTAssertEqual(localizedAppText("settings.roll_angle.footer"), "Change only while parked.")

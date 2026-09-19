@@ -80,6 +80,9 @@ pub enum SettingTransportStatus {
 
     /// The request was rejected before it reached the peripheral transport.
     Rejected,
+
+    /// The host or native queue cancelled the request before completion.
+    Cancelled,
 }
 
 /// A setting value paired with its provenance.

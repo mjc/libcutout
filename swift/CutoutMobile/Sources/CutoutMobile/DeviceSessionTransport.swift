@@ -19,7 +19,9 @@ final class DeviceSessionTransport: @unchecked Sendable {
         }
 
         var disposition: CoreBluetoothWriteDisposition {
-            if chunks.isEmpty || chunks.contains(.rejected) { return .rejected }
+            if chunks.isEmpty { return .rejected }
+            if chunks.contains(.cancelled) { return .cancelled }
+            if chunks.contains(.rejected) { return .rejected }
             return chunks.contains(.queued) ? .queued : .submitted
         }
     }
@@ -277,7 +279,7 @@ final class DeviceSessionTransport: @unchecked Sendable {
         let cancelled = pendingOperations
         pendingOperations.removeAll()
         for (operation, onReceipt) in cancelled {
-            if isWrite(operation) { onReceipt(.rejected) }
+            if isWrite(operation) { onReceipt(.cancelled) }
         }
     }
 
@@ -309,6 +311,7 @@ final class DeviceSessionTransport: @unchecked Sendable {
         case .submitted: status = .submitted
         case .queued: status = .queued
         case .rejected: status = .rejected
+        case .cancelled: status = .cancelled
         }
         guard state.markSettingTransport(
             token: token, id: receipt.id, requestId: receipt.requestID,

@@ -320,9 +320,12 @@ impl DeviceSettingsState {
                     SettingTransportStatus::Queued
                         | SettingTransportStatus::Submitted
                         | SettingTransportStatus::Rejected
+                        | SettingTransportStatus::Cancelled
                 ) | (
                     Some(SettingTransportStatus::Queued),
-                    SettingTransportStatus::Submitted | SettingTransportStatus::Rejected
+                    SettingTransportStatus::Submitted
+                        | SettingTransportStatus::Rejected
+                        | SettingTransportStatus::Cancelled
                 )
             )
         {
@@ -332,7 +335,9 @@ impl DeviceSettingsState {
         record.transport_at = Some(at);
         match status {
             SettingTransportStatus::Submitted => record.state.transport_submitted(at),
-            SettingTransportStatus::Rejected => record.state.fail(),
+            SettingTransportStatus::Rejected | SettingTransportStatus::Cancelled => {
+                record.state.fail()
+            }
             SettingTransportStatus::Queued => {}
             SettingTransportStatus::Accepted => unreachable!(),
         }
@@ -672,9 +677,9 @@ mod tests {
 
     #[test]
     fn transport_accepts_only_forward_transitions_for_the_latest_request() {
-        use SettingTransportStatus::{Accepted, Queued, Rejected, Submitted};
+        use SettingTransportStatus::{Accepted, Cancelled, Queued, Rejected, Submitted};
         for from in [Accepted, Queued, Submitted, Rejected] {
-            for to in [Accepted, Queued, Submitted, Rejected] {
+            for to in [Accepted, Queued, Submitted, Rejected, Cancelled] {
                 let mut settings = DeviceSettingsState::default();
                 settings.require_managed_transport();
                 let id = SettingId::Headlight;
@@ -692,7 +697,8 @@ mod tests {
                 let before = settings.snapshot(time(30));
                 let allowed = matches!(
                     (from, to),
-                    (Accepted, Queued | Submitted | Rejected) | (Queued, Submitted | Rejected)
+                    (Accepted, Queued | Submitted | Rejected | Cancelled)
+                        | (Queued, Submitted | Rejected | Cancelled)
                 );
                 assert_eq!(
                     settings.transport(id, request_id, to, time(30)),
@@ -701,7 +707,7 @@ mod tests {
                 );
                 if !allowed {
                     assert_eq!(settings.snapshot(time(30)), before);
-                } else if to == Rejected {
+                } else if matches!(to, Rejected | Cancelled) {
                     assert_eq!(
                         settings.snapshot(time(30))[0].status,
                         SettingCommandStatus::Failed

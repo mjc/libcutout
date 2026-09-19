@@ -73,7 +73,7 @@ setting_enum!(
     MobileSettingTransportStatusDto,
     SettingTransportStatus,
     "Host transport evidence for the most recent setting request.",
-    [Accepted, Queued, Submitted, Rejected]
+    [Accepted, Queued, Submitted, Rejected, Cancelled]
 );
 setting_enum!(
     MobileSettingUnitDto,

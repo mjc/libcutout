@@ -527,11 +527,12 @@ enum DeviceControlPresentation {
         if status == .confirmed { return nil }
         if status == .refused { return localizedAppText("settings.state.refused") }
         if transport == .rejected { return localizedAppText("settings.transport.rejected") }
+        if transport == .cancelled { return localizedAppText("settings.transport.cancelled") }
         if status == .failed { return localizedAppText("settings.state.failed") }
         switch transport {
         case .accepted: return localizedAppText("settings.transport.accepted")
         case .queued: return localizedAppText("settings.transport.queued")
-        case .submitted, .rejected, nil: break
+        case .submitted, .rejected, .cancelled, nil: break
         }
         return switch status {
         case .idle, .confirmed: nil
@@ -560,7 +561,8 @@ enum DeviceControlPresentation {
             return Feedback(text: refusal(reason), isError: true)
         }
         guard let text = status(state.status, transport: state.transport) else { return nil }
-        let isError = state.status == .refused || state.status == .failed || state.transport == .rejected
+        let isError = state.status == .refused || state.status == .failed
+            || state.transport == .rejected || state.transport == .cancelled
             || (state.status == .timedOut && state.transport != .accepted && state.transport != .queued)
         return Feedback(text: text, isError: isError)
     }

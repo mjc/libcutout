@@ -969,6 +969,10 @@
       "comment" : "Transport evidence for a setting request rejected before reaching the wheel.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Rejected before Bluetooth" } } }
     },
+    "settings.transport.cancelled" : {
+      "comment" : "Transport evidence for a setting request cancelled from a host or native queue.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Cancelled" } } }
+    },
     "settings.pedal_mode.title" : {
       "comment" : "Label for the EUC pedal mode setting.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Pedal mode" } } }
