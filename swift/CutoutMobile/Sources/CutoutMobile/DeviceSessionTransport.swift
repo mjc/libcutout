@@ -213,10 +213,11 @@ final class DeviceSessionTransport: @unchecked Sendable {
         let actions = step.result.outputs.map(SessionAction.init)
         let operations = actions.flatMap(planner.plan(action:))
         let chunkCount = operations.reduce(0) { count, operation in
-            if case .writeWithoutResponse = operation { return count + 1 }
+            if isWrite(operation) { return count + 1 }
             return count
         }
-        let operationID = actions.first(where: { $0.kind == .write })?.operationID
+        let operationID = operations.compactMap { operationID(of: $0) }.first
+            ?? actions.first(where: { $0.kind == .write })?.operationID
         let receipt = settingRequest.map {
             SettingWriteReceipt(
                 id: $0.id,
@@ -232,7 +233,7 @@ final class DeviceSessionTransport: @unchecked Sendable {
         var chunkIndex = 0
         execute(operations.map { operation in
             let index = chunkIndex
-            if case .writeWithoutResponse = operation { chunkIndex += 1 }
+            if isWrite(operation) { chunkIndex += 1 }
             return (operation, { [weak self] disposition in
                 guard let self, !self.invalidated,
                       self.state.verifiedConnectionAttemptIsCurrent(token: self.token) else { return }
@@ -276,8 +277,24 @@ final class DeviceSessionTransport: @unchecked Sendable {
         let cancelled = pendingOperations
         pendingOperations.removeAll()
         for (operation, onReceipt) in cancelled {
-            if case .writeWithoutResponse = operation { onReceipt(.rejected) }
+            if isWrite(operation) { onReceipt(.rejected) }
         }
+    }
+
+    private func isWrite(_ operation: CoreBluetoothPlannedOperation) -> Bool {
+        switch operation {
+        case .writeWithoutResponse, .writeWithoutResponseWithOperationID:
+            return true
+        case .subscribe, .disconnect:
+            return false
+        }
+    }
+
+    private func operationID(of operation: CoreBluetoothPlannedOperation) -> UInt64? {
+        guard case .writeWithoutResponseWithOperationID(_, _, let operationID) = operation else {
+            return nil
+        }
+        return operationID
     }
 
     private func recordSettingTransport(

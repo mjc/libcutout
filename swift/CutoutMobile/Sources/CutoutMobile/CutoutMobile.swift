@@ -4857,6 +4857,12 @@ public struct CoreBluetoothAdvertisement: Equatable, Hashable, Sendable {
 public enum CoreBluetoothPlannedOperation: Equatable, Hashable, Sendable {
     case subscribe(channel: BluetoothUuid)
     case writeWithoutResponse(channel: BluetoothUuid, bytes: Data)
+    /// A native write carrying the Rust operation identity that owns it.
+    case writeWithoutResponseWithOperationID(
+        channel: BluetoothUuid,
+        bytes: Data,
+        operationID: UInt64
+    )
     case disconnect
 }
 
@@ -4878,8 +4884,15 @@ public struct CoreBluetoothTransportPlanner: Equatable, Hashable, Sendable {
             guard let channel = BluetoothUuid(action.channel) else {
                 return []
             }
-            return chunked(action.bytes, by: Int(writeLimit.rawValue)).map {
-                .writeWithoutResponse(channel: channel, bytes: $0)
+            return chunked(action.bytes, by: Int(writeLimit.rawValue)).map { bytes in
+                if let operationID = action.operationID {
+                    return .writeWithoutResponseWithOperationID(
+                        channel: channel,
+                        bytes: bytes,
+                        operationID: operationID
+                    )
+                }
+                return .writeWithoutResponse(channel: channel, bytes: bytes)
             }
         case .disconnect:
             return [.disconnect]
@@ -5023,6 +5036,12 @@ public struct CoreBluetoothOperationExecutor {
             sink?.subscribe(channel: channel)
             return nil
         case .writeWithoutResponse(let channel, let bytes):
+            guard let sink else {
+                onWriteReceipt(.rejected)
+                return .rejected
+            }
+            return sink.writeWithoutResponse(channel: channel, bytes: bytes, onReceipt: onWriteReceipt)
+        case .writeWithoutResponseWithOperationID(let channel, let bytes, _):
             guard let sink else {
                 onWriteReceipt(.rejected)
                 return .rejected

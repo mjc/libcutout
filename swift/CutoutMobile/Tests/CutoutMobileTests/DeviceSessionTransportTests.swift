@@ -45,6 +45,18 @@ final class DeviceSessionTransportTests: XCTestCase {
             let submittedSetting = try XCTUnwrap(state.settings().setting(for: .highBeam))
             let write = try XCTUnwrap(step.actions.first(where: { $0.kind == .write }))
             XCTAssertEqual(write.operationID, submittedSetting.requestId)
+            let correlatedOperations = step.operations.filter { operation in
+                if case .writeWithoutResponseWithOperationID = operation { return true }
+                return false
+            }
+            XCTAssertEqual(correlatedOperations.count, sink.writes.count)
+            for operation in correlatedOperations {
+                guard case .writeWithoutResponseWithOperationID(_, _, let operationID) = operation else {
+                    XCTFail("expected an operation-correlated write")
+                    continue
+                }
+                XCTAssertEqual(operationID, submittedSetting.requestId)
+            }
             XCTAssertEqual(submittedSetting.transport, .queued)
             transport.handlePeripheralIsReadyToSendWithoutResponse()
             let setting = try XCTUnwrap(state.settings().setting(for: .highBeam))

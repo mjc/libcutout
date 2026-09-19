@@ -65,10 +65,11 @@ Rust must reject a settings write unless all applicable checks pass:
 The Rust session must enforce these checks both at request preparation and at
 every applicable delayed send, returning actionable refusal reasons. Operation
 and connection identity must survive the native queue; the settings checkpoint
-now carries the Rust request operation identity through the FFI and rejects a
-native receipt that does not match it. Delayed multi-operation sequences and
-explicit cancellation receipts for every operation class remain open work;
-identity correlation is not a device acknowledgment.
+now carries the Rust request operation identity through the FFI and correlated
+CoreBluetooth writes, including chunks, and rejects a native receipt that does
+not match it. Delayed multi-operation sequences and explicit cancellation
+receipts for every operation class remain open work; identity correlation is
+not a device acknowledgment.
 Ordinary supported settings do not require a rider-facing validation mode.
 Source and hardware verification remain engineering evidence, not settings
 screen copy. Unsupported commands do not acquire an encoder through UI policy.

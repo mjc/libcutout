@@ -19,9 +19,10 @@ recheck their applicable guards. The checkpoint currently publishes accepted
 plans before native execution and can drop the oldest queued write without a
 request-specific failure; these remain open defects. Settings writes now carry
 the Rust request operation identity through the core and mobile FFI into the
-Swift action and require that identity at the native receipt boundary. Broader
-operation classes and explicit native cancellation receipts remain follow-up
-work; this identity path is not a device acknowledgment.
+Swift action, correlated CoreBluetooth planned writes (including chunks), and
+the native receipt boundary. Broader operation classes and explicit native
+cancellation receipts remain follow-up work; this identity path is not a device
+acknowledgment.
 
 The Swift app consumes a generated package selector in ignored build state:
 

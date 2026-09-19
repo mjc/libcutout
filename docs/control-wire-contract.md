@@ -86,10 +86,12 @@ details, so compile-time missing-mapping diagnostics remain follow-up work.
 A dialect binding is not proof of physical acceptance.
 
 Accepted settings writes also carry the Rust request operation identity through
-the core/mobile FFI boundary. Swift must preserve that identity into the native
-receipt path before advancing host transport state; it still must not interpret
-that receipt as wheel confirmation. Read-only polling and multi-step operation
-identity remain separate follow-up work.
+the core/mobile FFI boundary and into correlated CoreBluetooth planned writes,
+including each chunk of a bounded write. Swift preserves that identity through
+the native queue and receipt path before advancing host transport state; it
+still must not interpret that receipt as wheel confirmation. Read-only polling,
+multi-step operation identity beyond the current write chunks, and explicit
+cancellation receipts remain separate follow-up work.
 
 Write and observation domains may differ, so reported values must not be rejected
 solely because they cannot be selected for writing. Keep the semantic public API;
