@@ -278,7 +278,7 @@ writes.
 
 The removed descriptor inventory ran before settings telemetry and exited once
 ride telemetry was live. Its `current=nil` values do not show lack of device
-readback. Bounds and confirmation flags came from library declarations, not
+readback. Bounds and typed completion strategies came from library declarations, not
 wheel negotiation. The Rust readback boundary now carries the selected protocol
 on normalized observations, but that tag is not independent packet provenance
 and does not turn a matching observation into an acknowledgment. The replacement

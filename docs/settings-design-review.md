@@ -16,7 +16,7 @@ repair owners and records which documents, plans and tickets were updated.
 The recent Mac inventory logged the first nonempty *descriptor* snapshot during
 subscription, before usable telemetry. The validator then exited as soon as ride
 telemetry was ready. Its `current=nil` rows do not establish that the device has
-no settings readback. Its bounds and `confirmationSupported` fields are our
+no settings readback. Its bounds and typed completion strategy are our
 library's declarations, not capabilities negotiated from the wheel. Existing
 NF2557 fixtures and the source inventory describe settings readback.
 
@@ -54,7 +54,7 @@ unproven.
 
 | Boundary | Source evidence | Consequence |
 | --- | --- | --- |
-| Control definition | `device_settings.rs`, `device_settings/aero.rs`, `request_encoder.rs`, and `control_wire/` separately define membership, bounds, mappings and confirmation | A collision-free wire schema can still encode the wrong semantic control or accept a differently scaled value. |
+| Control definition | `device_settings.rs`, `device_settings/aero.rs`, `request_encoder.rs`, and `control_wire/` separately define membership, bounds, mappings and typed completion | A collision-free wire schema can still encode the wrong semantic control or accept a differently scaled value. |
 | Encoding | `request_encoder.rs` now requires canonical deci-km/h inputs to be divisible by 10 before checked wire-value construction | The low-level NOSFET and Falcon encoders no longer silently truncate an inexact speed value; display-unit conversion and end-to-end request provenance remain open. |
 | Transport outcome | `device_connection/settings.rs::submit_setting` records acceptance; Swift `DeviceSessionTransport.process` publishes controls before executing native operations | An accepted plan can appear sent before the host actually submits it. |
 | Native backpressure | `CutoutSessionCore.writeWithoutResponse` drops the oldest queued write when full; queue entries contain a characteristic and bytes | A dropped command or partial sequence lacks a request-specific failure; captured write intent is not evidence of host submission. |
