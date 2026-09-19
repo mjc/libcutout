@@ -15,6 +15,8 @@ devenv.local.yaml
 .DS_Store
 xcuserdata/
 *.xcuserstate
+# Xcode-generated SwiftPM workspace state; Package.swift owns the canonical lockfile.
+**/*.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
 # br doctor per-run artifacts
 .doctor/
 
