@@ -1,72 +1,85 @@
 use cutout_core::{DeviceSettingValue, PedalMode, SettingId, SettingsEntry};
 
 use super::{
-    SettingCompletionStrategy, SettingControl, SettingUnit, choices, number,
+    SettingBinding, SettingCompletionStrategy, SettingControl, SettingUnit, choices, number,
     readback::SettingObservation, speed_control,
 };
 
-pub(super) fn control(id: SettingId) -> Option<SettingControl> {
-    Some(match id {
-        SettingId::HighBeam
-        | SettingId::HighSpeedMode
-        | SettingId::LowBatteryMode
-        | SettingId::TransportMode => SettingControl::Boolean,
-        SettingId::TiltbackSpeed | SettingId::SpeedAlarmThreshold => speed_control(10, 200),
-        SettingId::PwmTiltback => number(30, 100, 0, SettingUnit::PwmDutyPercent),
+pub(super) fn binding(id: SettingId) -> Option<SettingBinding> {
+    let (control, completion) = match id {
+        SettingId::HighBeam => (
+            SettingControl::Boolean,
+            SettingCompletionStrategy::SubmissionOnly,
+        ),
+        SettingId::HighSpeedMode | SettingId::LowBatteryMode | SettingId::TransportMode => (
+            SettingControl::Boolean,
+            SettingCompletionStrategy::MatchingReadback,
+        ),
+        SettingId::TiltbackSpeed | SettingId::SpeedAlarmThreshold => (
+            speed_control(10, 200),
+            SettingCompletionStrategy::MatchingReadback,
+        ),
+        SettingId::PwmTiltback => (
+            number(30, 100, 0, SettingUnit::PwmDutyPercent),
+            SettingCompletionStrategy::MatchingReadback,
+        ),
         SettingId::PedalHardness
         | SettingId::DisplayBrightness
         | SettingId::BeeperVolumePercent
         | SettingId::DynamicAssist
-        | SettingId::PedalDipCompensation => number(0, 100, 0, SettingUnit::Percent),
-        SettingId::LateralTiltLimit => number(35, 75, 0, SettingUnit::Degrees),
-        SettingId::VoltageCorrection => number(-15, 15, 1, SettingUnit::Percent),
-        SettingId::PedalAngle => number(-80, 80, 1, SettingUnit::Degrees),
-        SettingId::BrakeOverpressureAlarm => number(90, 125, 0, SettingUnit::Percent),
-        SettingId::DisplayUnits => choices(&[
-            (0, "settings.choice.metric", true),
-            (1, "settings.choice.imperial", true),
-        ]),
-        SettingId::RidingPreset => choices(&[
-            (0, "settings.choice.hard", true),
-            (1, "settings.choice.medium", true),
-            (2, "settings.choice.soft", true),
-        ]),
-        SettingId::ChargeLimitDiagnostic => SettingControl::ReadOnly,
-        SettingId::AutoShutdownRemaining => number(0, i32::MAX, 0, SettingUnit::Seconds),
-        SettingId::ChargeMode => choices(&[
-            (0, "settings.choice.not_charging", false),
-            (1, "settings.choice.charging", false),
-        ]),
+        | SettingId::PedalDipCompensation => (
+            number(0, 100, 0, SettingUnit::Percent),
+            SettingCompletionStrategy::MatchingReadback,
+        ),
+        SettingId::LateralTiltLimit => (
+            number(35, 75, 0, SettingUnit::Degrees),
+            SettingCompletionStrategy::MatchingReadback,
+        ),
+        SettingId::VoltageCorrection => (
+            number(-15, 15, 1, SettingUnit::Percent),
+            SettingCompletionStrategy::MatchingReadback,
+        ),
+        SettingId::PedalAngle => (
+            number(-80, 80, 1, SettingUnit::Degrees),
+            SettingCompletionStrategy::SubmissionOnly,
+        ),
+        SettingId::BrakeOverpressureAlarm => (
+            number(90, 125, 0, SettingUnit::Percent),
+            SettingCompletionStrategy::MatchingReadback,
+        ),
+        SettingId::DisplayUnits => (
+            choices(&[
+                (0, "settings.choice.metric", true),
+                (1, "settings.choice.imperial", true),
+            ]),
+            SettingCompletionStrategy::MatchingReadback,
+        ),
+        SettingId::RidingPreset => (
+            choices(&[
+                (0, "settings.choice.hard", true),
+                (1, "settings.choice.medium", true),
+                (2, "settings.choice.soft", true),
+            ]),
+            SettingCompletionStrategy::SubmissionOnly,
+        ),
+        SettingId::ChargeLimitDiagnostic => (
+            SettingControl::ReadOnly,
+            SettingCompletionStrategy::SubmissionOnly,
+        ),
+        SettingId::AutoShutdownRemaining => (
+            number(0, i32::MAX, 0, SettingUnit::Seconds),
+            SettingCompletionStrategy::SubmissionOnly,
+        ),
+        SettingId::ChargeMode => (
+            choices(&[
+                (0, "settings.choice.not_charging", false),
+                (1, "settings.choice.charging", false),
+            ]),
+            SettingCompletionStrategy::SubmissionOnly,
+        ),
         _ => return None,
-    })
-}
-
-pub(super) const fn is_read_only(id: SettingId) -> bool {
-    matches!(
-        id,
-        SettingId::ChargeLimitDiagnostic | SettingId::AutoShutdownRemaining | SettingId::ChargeMode
-    )
-}
-
-pub(super) const fn completion(id: SettingId) -> SettingCompletionStrategy {
-    match id {
-        SettingId::TiltbackSpeed
-        | SettingId::SpeedAlarmThreshold
-        | SettingId::PwmTiltback
-        | SettingId::PedalHardness
-        | SettingId::DisplayBrightness
-        | SettingId::DisplayUnits
-        | SettingId::BeeperVolumePercent
-        | SettingId::DynamicAssist
-        | SettingId::PedalDipCompensation
-        | SettingId::LateralTiltLimit
-        | SettingId::VoltageCorrection
-        | SettingId::HighSpeedMode
-        | SettingId::LowBatteryMode
-        | SettingId::TransportMode
-        | SettingId::BrakeOverpressureAlarm => SettingCompletionStrategy::MatchingReadback,
-        _ => SettingCompletionStrategy::SubmissionOnly,
-    }
+    };
+    Some(SettingBinding::new(id, control, completion))
 }
 
 pub(super) fn normalize_readback(entry: SettingsEntry, observations: &mut Vec<SettingObservation>) {
@@ -139,7 +152,7 @@ fn semantic_value(id: SettingId, raw: i64) -> Option<DeviceSettingValue> {
             .contains(&raw)
             .then(|| i32::try_from(raw).ok().map(DeviceSettingValue::Number))
             .flatten(),
-        _ => super::control_value(control(id)?, raw),
+        _ => super::control_value(binding(id)?.control, raw),
     }
 }
 

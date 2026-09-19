@@ -3,61 +3,71 @@ use cutout_core::{
 };
 
 use super::{
-    SettingCompletionStrategy, SettingControl, SettingUnit, choices, number,
+    SettingBinding, SettingCompletionStrategy, SettingControl, SettingUnit, choices, number,
     readback::SettingObservation, speed_control,
 };
 
-pub(super) fn control(id: SettingId) -> Option<SettingControl> {
-    Some(match id {
-        SettingId::Headlight | SettingId::AccelerationAssist | SettingId::Taillight => {
-            SettingControl::Boolean
-        }
-        SettingId::MaximumSpeed => speed_control(0, 99),
-        SettingId::BeeperVolumeLevel => number(1, 9, 0, SettingUnit::Level),
-        SettingId::PowerOffDelay => number(0, 255, 0, SettingUnit::Minutes),
-        SettingId::LightingPattern => choices(&[
-            (0, "settings.choice.pattern_0", false),
-            (1, "settings.choice.pattern_1", false),
-            (2, "settings.choice.pattern_2", false),
-            (3, "settings.choice.pattern_3", false),
-            (4, "settings.choice.pattern_4", false),
-            (5, "settings.choice.pattern_5", false),
-            (6, "settings.choice.pattern_6", false),
-            (7, "settings.choice.pattern_7", false),
-            (8, "settings.choice.pattern_8", false),
-            (9, "settings.choice.pattern_9", false),
-        ]),
-        SettingId::PedalMode => choices(&[
-            (0, "settings.choice.hard", true),
-            (1, "settings.choice.medium", true),
-            (2, "settings.choice.soft", true),
-        ]),
-        SettingId::RollAngleMode => choices(&[
-            (0, "settings.choice.low", true),
-            (1, "settings.choice.medium", true),
-            (2, "settings.choice.high", true),
-        ]),
-        SettingId::SpeedAlarmMode => choices(&[
-            (0, "settings.choice.both_alarm_stages", true),
-            (1, "settings.choice.first_alarm_stage", true),
-            (2, "settings.choice.off", false),
-            (3, "settings.choice.pwm_tiltback", false),
-        ]),
+pub(super) fn binding(id: SettingId) -> Option<SettingBinding> {
+    let (control, completion) = match id {
+        SettingId::Headlight | SettingId::AccelerationAssist | SettingId::Taillight => (
+            SettingControl::Boolean,
+            SettingCompletionStrategy::SubmissionOnly,
+        ),
+        SettingId::MaximumSpeed => (
+            speed_control(0, 99),
+            SettingCompletionStrategy::MatchingReadback,
+        ),
+        SettingId::BeeperVolumeLevel => (
+            number(1, 9, 0, SettingUnit::Level),
+            SettingCompletionStrategy::SubmissionOnly,
+        ),
+        SettingId::PowerOffDelay => (
+            number(0, 255, 0, SettingUnit::Minutes),
+            SettingCompletionStrategy::SubmissionOnly,
+        ),
+        SettingId::LightingPattern => (
+            choices(&[
+                (0, "settings.choice.pattern_0", false),
+                (1, "settings.choice.pattern_1", false),
+                (2, "settings.choice.pattern_2", false),
+                (3, "settings.choice.pattern_3", false),
+                (4, "settings.choice.pattern_4", false),
+                (5, "settings.choice.pattern_5", false),
+                (6, "settings.choice.pattern_6", false),
+                (7, "settings.choice.pattern_7", false),
+                (8, "settings.choice.pattern_8", false),
+                (9, "settings.choice.pattern_9", false),
+            ]),
+            SettingCompletionStrategy::SubmissionOnly,
+        ),
+        SettingId::PedalMode => (
+            choices(&[
+                (0, "settings.choice.hard", true),
+                (1, "settings.choice.medium", true),
+                (2, "settings.choice.soft", true),
+            ]),
+            SettingCompletionStrategy::MatchingReadback,
+        ),
+        SettingId::RollAngleMode => (
+            choices(&[
+                (0, "settings.choice.low", true),
+                (1, "settings.choice.medium", true),
+                (2, "settings.choice.high", true),
+            ]),
+            SettingCompletionStrategy::MatchingReadback,
+        ),
+        SettingId::SpeedAlarmMode => (
+            choices(&[
+                (0, "settings.choice.both_alarm_stages", true),
+                (1, "settings.choice.first_alarm_stage", true),
+                (2, "settings.choice.off", false),
+                (3, "settings.choice.pwm_tiltback", false),
+            ]),
+            SettingCompletionStrategy::MatchingReadback,
+        ),
         _ => return None,
-    })
-}
-
-pub(super) const fn is_read_only(id: SettingId) -> bool {
-    matches!(id, SettingId::LightingPattern | SettingId::PowerOffDelay)
-}
-
-pub(super) const fn completion(id: SettingId) -> SettingCompletionStrategy {
-    match id {
-        SettingId::PedalMode | SettingId::RollAngleMode | SettingId::SpeedAlarmMode => {
-            SettingCompletionStrategy::MatchingReadback
-        }
-        _ => SettingCompletionStrategy::SubmissionOnly,
-    }
+    };
+    Some(SettingBinding::new(id, control, completion))
 }
 
 pub(super) fn normalize_readback(entry: SettingsEntry, observations: &mut Vec<SettingObservation>) {
@@ -154,7 +164,7 @@ const fn speed_alarm_mode_from_begode_settings_bits(raw: u16) -> Option<SpeedAla
 }
 
 fn semantic_value(id: SettingId, raw: i64) -> Option<DeviceSettingValue> {
-    super::control_value(control(id)?, raw)
+    super::control_value(binding(id)?.control, raw)
 }
 
 fn pedal_choice(value: PedalMode) -> DeviceSettingValue {

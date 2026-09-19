@@ -142,6 +142,42 @@ pub struct SettingDescriptor {
     pub completion: SettingCompletionStrategy,
 }
 
+/// Per-dialect definition shared by the descriptor and completion paths.
+///
+/// A binding is deliberately smaller than a descriptor: profile capability and
+/// write verification are selected by the connection, while the dialect owns
+/// the semantic value shape and the evidence required to finish a write.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct SettingBinding {
+    pub control: SettingControl,
+    pub completion: SettingCompletionStrategy,
+    pub write_access: SettingWriteAccess,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum SettingWriteAccess {
+    Writable,
+    ReadOnly,
+}
+
+impl SettingBinding {
+    fn new(id: SettingId, control: SettingControl, completion: SettingCompletionStrategy) -> Self {
+        let write_access = match id {
+            SettingId::ChargeLimitDiagnostic
+            | SettingId::AutoShutdownRemaining
+            | SettingId::ChargeMode
+            | SettingId::PowerOffDelay
+            | SettingId::LightingPattern => SettingWriteAccess::ReadOnly,
+            _ => SettingWriteAccess::Writable,
+        };
+        Self {
+            control,
+            completion,
+            write_access,
+        }
+    }
+}
+
 /// A semantic request rejected before it reaches the live session checks.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum SettingsRequestError {
@@ -186,19 +222,11 @@ enum SettingsAdapter {
 }
 
 impl SettingsAdapter {
-    fn control(self, id: SettingId) -> Option<SettingControl> {
+    fn binding(self, id: SettingId) -> Option<SettingBinding> {
         match self {
             Self::None => None,
-            Self::Aero => aero::control(id),
-            Self::Falcon => falcon::control(id),
-        }
-    }
-
-    const fn is_read_only(self, id: SettingId) -> bool {
-        match self {
-            Self::None => false,
-            Self::Aero => aero::is_read_only(id),
-            Self::Falcon => falcon::is_read_only(id),
+            Self::Aero => aero::binding(id),
+            Self::Falcon => falcon::binding(id),
         }
     }
 
@@ -219,14 +247,6 @@ impl SettingsAdapter {
                         .is_some())
                 .then_some(command)
             }
-        }
-    }
-
-    fn completion(self, id: SettingId) -> SettingCompletionStrategy {
-        match self {
-            Self::None => SettingCompletionStrategy::SubmissionOnly,
-            Self::Aero => aero::completion(id),
-            Self::Falcon => falcon::completion(id),
         }
     }
 
@@ -321,7 +341,8 @@ impl DeviceControlProfile {
                 if !self.readable.contains(&id) && !self.available_settings.contains(&id) {
                     return None;
                 }
-                let mut control = adapter.control(id)?;
+                let binding = adapter.binding(id)?;
+                let mut control = binding.control;
                 let writable = self.available_settings.contains(&id)
                     && (self
                         .production
@@ -331,6 +352,13 @@ impl DeviceControlProfile {
                 if let SettingControl::Number { can_disable, .. } = &mut control {
                     *can_disable = id == SettingId::PwmTiltback && writable;
                 }
+                let access = if binding.write_access == SettingWriteAccess::ReadOnly {
+                    SettingAccess::ReadOnly
+                } else if writable {
+                    SettingAccess::Writable
+                } else {
+                    SettingAccess::Unverified
+                };
                 Some(SettingDescriptor {
                     id,
                     label_key,
@@ -339,19 +367,13 @@ impl DeviceControlProfile {
                     group,
                     order,
                     control,
-                    access: if adapter.is_read_only(id) {
-                        SettingAccess::ReadOnly
-                    } else if writable {
-                        SettingAccess::Writable
-                    } else {
-                        SettingAccess::Unverified
-                    },
+                    access,
                     write_verification: if self.verified_settings.contains(&id) {
                         VerificationStatus::HardwareVerified
                     } else {
                         VerificationStatus::Unverified
                     },
-                    completion: adapter.completion(id),
+                    completion: binding.completion,
                 })
             })
             .collect()
