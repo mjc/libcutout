@@ -277,6 +277,7 @@ enum CutoutUITestSessionFixture: Equatable {
             candidate: candidate,
             telemetry: emitsPendingTelemetry ? nil : telemetry,
             protocolNotifications: protocolNotifications,
+            protocolNotificationIntervalMilliseconds: isEuc && CommandLine.arguments.contains("-CUTOUT_UI_TEST_SETTINGS") ? 500 : nil,
             telemetryUpdate: telemetryUpdate,
             telemetryUpdateDelayMilliseconds: telemetryUpdateDelayMilliseconds,
             bmsSnapshot: testBmsSnapshot,

@@ -16,22 +16,21 @@ use cutout_core::{
 };
 
 use crate::{
-    AeroCommandMode, AeroCommandModeDetector, AeroControlEncoder, AeroProbe, AeroRequestEncoder,
-    BEGODE_DATA_CHANNEL, BEGODE_SERVICE_CHANNEL, BegodeBmsCellPage, BegodeBmsPageError,
-    BegodeBmsSummary, BegodeFrame, BegodeFrameError, BegodeFrameParseResult,
+    AeroProbe, AeroRequestEncoder, BEGODE_DATA_CHANNEL, BEGODE_SERVICE_CHANNEL, BegodeBmsCellPage,
+    BegodeBmsPageError, BegodeBmsSummary, BegodeFrame, BegodeFrameError, BegodeFrameParseResult,
     BegodeFrameReassembler, BegodeLiveATelemetry, BegodeLiveBTelemetry, BegodePackVoltageProfile,
-    BegodeTelemetryContext, BegodeTelemetryError, EncodedControl, EncodedControlSequence,
-    EncodedControlStep, EncodedRequest, FalconControlEncoder, FalconProbe, FalconRequestEncoder,
-    RefloatCodecError, RefloatReadOnlyRequest, RefloatReply, RefloatStreamDecoder,
-    RefloatStreamResult, RequestDisposition, VESC_COMM_CUSTOM_APP_DATA, VESC_MAX_FRAME_LEN,
-    VESC_NOTIFY_CHANNEL, VESC_WRITE_CHANNEL, VETERAN_DATA_CHANNEL, VETERAN_SERVICE_CHANNEL,
-    VescBoardProfile, VescCodecError, VescReadOnlyCodec, VescReadOnlyReply, VescReadOnlyRequest,
+    BegodeTelemetryContext, BegodeTelemetryError, EncodedControlStep, EncodedRequest,
+    FalconDialect, FalconProbe, FalconRequestEncoder, NosfetDialect, RefloatCodecError,
+    RefloatReadOnlyRequest, RefloatReply, RefloatStreamDecoder, RefloatStreamResult,
+    RequestDisposition, VESC_COMM_CUSTOM_APP_DATA, VESC_MAX_FRAME_LEN, VESC_NOTIFY_CHANNEL,
+    VESC_WRITE_CHANNEL, VETERAN_DATA_CHANNEL, VETERAN_SERVICE_CHANNEL, VescBoardProfile,
+    VescCodecError, VescReadOnlyCodec, VescReadOnlyReply, VescReadOnlyRequest,
     VescReadOnlyStreamDecoder, VescReadOnlyStreamResult, VescRequestEncoder, VescStatsMask,
     VescStatsTelemetry, VescValuesMask, VescValuesTelemetry, VeteranBmsCellPage,
-    VeteranBmsMetadataPage, VeteranBmsPageEvidence, VeteranBmsTemperaturePage, VeteranFrame,
-    VeteranFrameParseResult, VeteranFrameReassembler, VeteranReassemblyError, VeteranTelemetry,
-    VeteranTelemetryError, begode_falcon_target_voltage_profile, decode_veteran_bms_page,
-    util::u64_to_i64_saturating,
+    VeteranBmsMetadataPage, VeteranBmsPageEvidence, VeteranBmsTemperaturePage, VeteranCommandMode,
+    VeteranCommandModeDetector, VeteranFrame, VeteranFrameParseResult, VeteranFrameReassembler,
+    VeteranReassemblyError, VeteranTelemetry, VeteranTelemetryError,
+    begode_falcon_target_voltage_profile, decode_veteran_bms_page, util::u64_to_i64_saturating,
 };
 
 /// Raw VESC electrical RPM telemetry field id.
@@ -199,7 +198,7 @@ pub enum ControlEncodingContext {
     #[default]
     Default,
     /// NOSFET command representation selected from complete telemetry packets.
-    Aero(AeroCommandMode),
+    Veteran(VeteranCommandMode),
 }
 
 /// No-op notification decoder for models without typed notification decoding yet.
@@ -232,7 +231,7 @@ impl ReadOnlyNotificationDecoder for NoopNotificationDecoder {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct VeteranNotificationDecoder {
     reassembler: VeteranFrameReassembler,
-    command_mode: AeroCommandModeDetector,
+    command_mode: VeteranCommandModeDetector,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -251,7 +250,7 @@ impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
     }
 
     fn control_encoding_context(&self) -> ControlEncodingContext {
-        ControlEncodingContext::Aero(self.command_mode.mode())
+        ControlEncodingContext::Veteran(self.command_mode.mode())
     }
 
     fn handle_notification(
@@ -1529,28 +1528,12 @@ fn push_parser_error(error: ParserError, output: &mut Vec<SessionOutput>) {
 }
 
 /// Type-level settings-write capability.
-pub trait SupportsSettingsWrites: ProtocolModelSpec {
+pub trait SupportsSettingsWrites: ProtocolModelSpec + crate::control_wire::Model {
     /// Commands this model can write after stationary-state validation.
     const WRITE_CAPABILITIES: Capabilities;
 
     /// Optional sub-one-mph settings-write window for models that document it.
     const MAX_SETTINGS_SPEED: Option<cutout_core::Speed> = None;
-
-    /// Encodes a supported settings write.
-    fn encode_settings_write(
-        command: DeviceCommand,
-        context: ControlEncodingContext,
-    ) -> Option<EncodedControl>;
-
-    /// Encodes a supported multi-step settings write, when the protocol requires timing.
-    #[must_use]
-    fn encode_settings_sequence(
-        command: DeviceCommand,
-        context: ControlEncodingContext,
-    ) -> Option<EncodedControlSequence> {
-        let _ = (command, context);
-        None
-    }
 
     /// Issues a short-lived settings arm from current ride-state evidence.
     #[must_use]
@@ -1568,19 +1551,13 @@ pub trait SupportsSettingsWrites: ProtocolModelSpec {
 }
 
 /// Type-level benign-control capability.
-pub trait SupportsBenignControls: ProtocolModelSpec {
+pub trait SupportsBenignControls: ProtocolModelSpec + crate::control_wire::Model {
     /// Commands this model can control through benign write paths.
     const CONTROL_CAPABILITIES: Capabilities;
-
-    /// Encodes a supported benign control.
-    fn encode_benign_control(
-        command: DeviceCommand,
-        context: ControlEncodingContext,
-    ) -> Option<EncodedControl>;
 }
 
 /// Type-level dangerous-actuation capability.
-pub trait SupportsDangerousActuation: ProtocolModelSpec {
+pub trait SupportsDangerousActuation: ProtocolModelSpec + crate::control_wire::Model {
     /// Commands this model can use for direct actuation.
     const ACTUATION_CAPABILITIES: Capabilities;
 }
@@ -1674,61 +1651,24 @@ impl SupportsReadRequests for NosfetAeroModel {
     }
 }
 
+impl crate::control_wire::Model for NosfetAeroModel {
+    type Protocol = crate::VeteranProtocol;
+    type WireDialect = NosfetDialect;
+}
+
 impl SupportsBenignControls for NosfetAeroModel {
     const CONTROL_CAPABILITIES: Capabilities =
         Capabilities::from_supported_commands([CommandKind::SoundHorn]);
-
-    fn encode_benign_control(
-        command: DeviceCommand,
-        context: ControlEncodingContext,
-    ) -> Option<EncodedControl> {
-        let mode = match context {
-            ControlEncodingContext::Aero(mode) => mode,
-            ControlEncodingContext::Default => AeroCommandMode::Binary,
-        };
-        AeroControlEncoder::encode_in_mode(command, mode)
-    }
 }
 
 impl SupportsSettingsWrites for NosfetAeroModel {
     const WRITE_CAPABILITIES: Capabilities = Capabilities::from_supported_commands([
-        CommandKind::SetPedalMode,
+        CommandKind::SetSetting,
         CommandKind::ResetTripMeter,
-        CommandKind::SetAeroTiltbackSpeed,
-        CommandKind::SetAeroPwmPercent,
-        CommandKind::SetAeroPwmOff,
-        CommandKind::SetAeroGyroCalibration,
-        CommandKind::SetAeroRidingMode,
-        CommandKind::SetAeroBrakeOverpressureAlarm,
-        CommandKind::SetAeroPedalHardness,
-        CommandKind::SetAeroDisplayBacklight,
-        CommandKind::SetAeroBeeperVolume,
-        CommandKind::SetAeroDynamicAssist,
-        CommandKind::SetAeroPedalDipCompensation,
-        CommandKind::SetAeroLateralTiltLimit,
-        CommandKind::SetAeroVoltageCorrection,
-        CommandKind::SetAeroMaxChargeVoltageRaw,
-        CommandKind::SetAeroWheelUnits,
-        CommandKind::SetAeroHighSpeedMode,
-        CommandKind::SetAeroLowBatteryMode,
-        CommandKind::SetAeroTransportMode,
-        CommandKind::SetAeroAlarmSpeed,
-        CommandKind::SetAeroAngleAdjustment,
-        CommandKind::SetAeroHighBeam,
+        CommandKind::GyroCalibration,
     ]);
     const MAX_SETTINGS_SPEED: Option<cutout_core::Speed> =
         Some(cutout_core::Speed::from_millimetres_per_second(500));
-
-    fn encode_settings_write(
-        command: DeviceCommand,
-        context: ControlEncodingContext,
-    ) -> Option<EncodedControl> {
-        let mode = match context {
-            ControlEncodingContext::Aero(mode) => mode,
-            ControlEncodingContext::Default => AeroCommandMode::Binary,
-        };
-        AeroControlEncoder::encode_in_mode(command, mode)
-    }
 }
 
 /// Begode Falcon read-only model spec.
@@ -1784,41 +1724,19 @@ impl SupportsReadRequests for BegodeFalconModel {
     }
 }
 
+impl crate::control_wire::Model for BegodeFalconModel {
+    type Protocol = crate::BegodeProtocol;
+    type WireDialect = FalconDialect;
+}
+
 impl SupportsBenignControls for BegodeFalconModel {
     const CONTROL_CAPABILITIES: Capabilities =
         Capabilities::from_supported_commands([CommandKind::SetLights]);
-
-    fn encode_benign_control(
-        command: DeviceCommand,
-        _context: ControlEncodingContext,
-    ) -> Option<EncodedControl> {
-        FalconControlEncoder::encode(command)
-    }
 }
 
 impl SupportsSettingsWrites for BegodeFalconModel {
-    const WRITE_CAPABILITIES: Capabilities = Capabilities::from_supported_commands([
-        CommandKind::SetPedalMode,
-        CommandKind::SetRollAngle,
-        CommandKind::SetSpeedAlarmMode,
-        CommandKind::SetBegodeMaxSpeed,
-        CommandKind::SetBegodeBeeperVolume,
-        CommandKind::SetBegodeLedMode,
-    ]);
-
-    fn encode_settings_write(
-        command: DeviceCommand,
-        _context: ControlEncodingContext,
-    ) -> Option<EncodedControl> {
-        FalconControlEncoder::encode(command)
-    }
-
-    fn encode_settings_sequence(
-        command: DeviceCommand,
-        _context: ControlEncodingContext,
-    ) -> Option<EncodedControlSequence> {
-        FalconControlEncoder::encode_settings_sequence(command)
-    }
+    const WRITE_CAPABILITIES: Capabilities =
+        Capabilities::from_supported_commands([CommandKind::SetSetting]);
 }
 
 /// Generic VESC read-only model spec.
@@ -1848,7 +1766,7 @@ impl SupportsReadRequests for VescGenericModel {
     }
 }
 
-fn handle_read_only_session<M: ReadOnlyModelSpec, const ACCEPT_ANY_NOTIFICATION: bool>(
+fn handle_read_only_session<M: ReadOnlyModelSpec, const _ACCEPT_ANY_NOTIFICATION: bool>(
     connected: &mut bool,
     decoder: &mut M::NotificationDecoder,
     input: SessionInput<'_>,
@@ -1881,7 +1799,10 @@ fn handle_read_only_session<M: ReadOnlyModelSpec, const ACCEPT_ANY_NOTIFICATION:
             monotonic_ms,
         } => {
             if *connected {
-                if ACCEPT_ANY_NOTIFICATION || channel == M::SUBSCRIBE_CHANNEL {
+                // The selected model owns one protocol notification channel.  The legacy const
+                // generic remains in the public session type for compatibility, but it must not
+                // let a selected decoder consume bytes from another protocol's characteristic.
+                if channel == M::SUBSCRIBE_CHANNEL {
                     decoder.handle_notification(M::PROTOCOL, channel, bytes, monotonic_ms, output);
                 } else {
                     output.push(SessionOutput::NotificationIngest(
@@ -1915,7 +1836,7 @@ fn handle_read_only_session<M: ReadOnlyModelSpec, const ACCEPT_ANY_NOTIFICATION:
             }
             ReadOnlyCommandGate::Unsupported(CommandKind::RequestBatteryInfo) => {
                 output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
-                    ReadOnlyResponse::Battery(cutout_core::BatteryReadback::unsupported()),
+                    ReadOnlyResponse::Battery(BatteryReadback::unsupported()),
                 )));
             }
             ReadOnlyCommandGate::Unsupported(_) => {}
@@ -1925,9 +1846,9 @@ fn handle_read_only_session<M: ReadOnlyModelSpec, const ACCEPT_ANY_NOTIFICATION:
 
 fn unavailable_readback_response(kind: CommandKind) -> Option<ReadOnlyResponse> {
     match kind {
-        CommandKind::RequestBatteryInfo => Some(ReadOnlyResponse::Battery(
-            cutout_core::BatteryReadback::unavailable(),
-        )),
+        CommandKind::RequestBatteryInfo => {
+            Some(ReadOnlyResponse::Battery(BatteryReadback::unavailable()))
+        }
         CommandKind::RequestFaultHistory => Some(ReadOnlyResponse::FaultHistory(
             cutout_core::FaultHistoryReadback::unavailable(),
         )),
@@ -1939,35 +1860,9 @@ fn unavailable_readback_response(kind: CommandKind) -> Option<ReadOnlyResponse> 
         | CommandKind::RequestTelemetry
         | CommandKind::RequestDiagnostics
         | CommandKind::ResetTripMeter
-        | CommandKind::SetAeroTiltbackSpeed
-        | CommandKind::SetAeroPwmPercent
-        | CommandKind::SetAeroPwmOff
-        | CommandKind::SetAeroGyroCalibration
-        | CommandKind::SetAeroRidingMode
-        | CommandKind::SetAeroBrakeOverpressureAlarm
-        | CommandKind::SetAeroPedalHardness
-        | CommandKind::SetAeroDisplayBacklight
-        | CommandKind::SetAeroBeeperVolume
-        | CommandKind::SetAeroDynamicAssist
-        | CommandKind::SetAeroPedalDipCompensation
-        | CommandKind::SetAeroLateralTiltLimit
-        | CommandKind::SetAeroVoltageCorrection
-        | CommandKind::SetAeroMaxChargeVoltageRaw
-        | CommandKind::SetAeroWheelUnits
-        | CommandKind::SetAeroHighSpeedMode
-        | CommandKind::SetAeroLowBatteryMode
-        | CommandKind::SetAeroTransportMode
-        | CommandKind::SetAeroAlarmSpeed
-        | CommandKind::SetAeroAngleAdjustment
-        | CommandKind::SetAeroHighBeam
-        | CommandKind::SetAccelerationAssist
+        | CommandKind::GyroCalibration
+        | CommandKind::SetSetting
         | CommandKind::SetLights
-        | CommandKind::SetPedalMode
-        | CommandKind::SetRollAngle
-        | CommandKind::SetSpeedAlarmMode
-        | CommandKind::SetBegodeMaxSpeed
-        | CommandKind::SetBegodeBeeperVolume
-        | CommandKind::SetBegodeLedMode
         | CommandKind::SetTaillight
         | CommandKind::SoundHorn
         | CommandKind::SetRawMotorCurrent => None,
@@ -2095,7 +1990,10 @@ fn handle_benign_control<M: ReadOnlyModelSpec + SupportsBenignControls>(
 ) {
     let kind = command.kind();
     if M::CONTROL_CAPABILITIES.supports_command_kind(kind) {
-        if let Some(encoded) = M::encode_benign_control(command, context) {
+        if let Some(encoded) =
+            <M::WireDialect as crate::control_wire::Dialect>::select(command, context)
+                .and_then(|selection| selection.single(command))
+        {
             output.push(SessionOutput::Transport(TransportAction::Write {
                 channel: M::WRITE_CHANNEL,
                 bytes: encoded.payload,
@@ -2200,7 +2098,10 @@ impl<M: ReadOnlyModelSpec + SupportsBenignControls, const ACCEPT_ANY_NOTIFICATIO
             && M::CONTROL_CAPABILITIES.supports_command_kind(kind)
         {
             let context = self.read_only.decoder.control_encoding_context();
-            if let Some(encoded) = M::encode_benign_control(command, context) {
+            if let Some(encoded) =
+                <M::WireDialect as crate::control_wire::Dialect>::select(command, context)
+                    .and_then(|selection| selection.single(command))
+            {
                 if let DeviceCommand::SetLights(state) = command {
                     self.light_command_state =
                         LightCommandState::Requested(RequestedLightState::new(state));
@@ -2460,7 +2361,10 @@ impl<
         }
 
         let context = self.read_only.decoder.control_encoding_context();
-        if let Some(sequence) = M::encode_settings_sequence(command, context) {
+        if let Some(sequence) =
+            <M::WireDialect as crate::control_wire::Dialect>::select(command, context)
+                .and_then(|selection| selection.sequence(command))
+        {
             let mut steps = sequence.steps.into_iter();
             let Some(first) = steps.next() else {
                 output.push(SessionOutput::Event(DeviceEvent::ControlRefusal(
@@ -2493,7 +2397,10 @@ impl<
             return;
         }
 
-        if let Some(encoded) = M::encode_settings_write(command, context) {
+        if let Some(encoded) =
+            <M::WireDialect as crate::control_wire::Dialect>::select(command, context)
+                .and_then(|selection| selection.single(command))
+        {
             output.push(SessionOutput::Transport(TransportAction::Write {
                 channel: M::WRITE_CHANNEL,
                 bytes: encoded.payload,
@@ -2652,7 +2559,7 @@ mod tests {
     use arrayvec::ArrayVec;
     use core::mem::size_of;
     use cutout_core::{
-        BatteryPageKind, BegodeMaxSpeed, Duration, LinkInfo, Measured, ProtocolTag, RawFieldValue,
+        BatteryPageKind, Duration, LinkInfo, Measured, ProtocolTag, RawFieldValue,
         ReadOnlyResponse, RideOperatingState, StationarySettingsPolicy, TelemetryDelta,
         TransportAction, VerificationStatus, WriteMode,
     };
@@ -2661,6 +2568,12 @@ mod tests {
     const TEST_CHANNEL: GattChannel = GattChannel::from_bytes([0x11; 16]);
 
     struct TestModel;
+
+    // This session fixture delegates encoding to the checked Aero adapter.
+    impl crate::control_wire::Model for TestModel {
+        type Protocol = crate::VeteranProtocol;
+        type WireDialect = NosfetDialect;
+    }
 
     impl ProtocolModelSpec for TestModel {
         const MANUFACTURER: Manufacturer = Manufacturer::Nosfet;
@@ -2684,25 +2597,11 @@ mod tests {
 
     impl SupportsSettingsWrites for TestModel {
         const WRITE_CAPABILITIES: Capabilities =
-            Capabilities::from_supported_commands([CommandKind::SetPedalMode]);
-
-        fn encode_settings_write(
-            command: DeviceCommand,
-            _context: ControlEncodingContext,
-        ) -> Option<EncodedControl> {
-            AeroControlEncoder::encode(command)
-        }
+            Capabilities::from_supported_commands([CommandKind::SetSetting]);
     }
 
     impl SupportsBenignControls for TestModel {
         const CONTROL_CAPABILITIES: Capabilities = Capabilities::from_supported_commands([]);
-
-        fn encode_benign_control(
-            _command: DeviceCommand,
-            _context: ControlEncodingContext,
-        ) -> Option<EncodedControl> {
-            None
-        }
     }
 
     struct SilentSemanticReadbackModel;
@@ -4912,7 +4811,7 @@ mod tests {
     fn nosfet_aero_decoder_reports_oversized_frame_as_parser_diagnostic_ingest() {
         let mut decoder = VeteranNotificationDecoder {
             reassembler: VeteranFrameReassembler::saturated_candidate_for_test(),
-            command_mode: AeroCommandModeDetector::default(),
+            command_mode: VeteranCommandModeDetector::default(),
         };
         let mut output = Vec::new();
 
@@ -5361,7 +5260,10 @@ mod tests {
             &mut output,
         );
         session.handle(
-            SessionInput::Command(DeviceCommand::SetPedalMode(cutout_core::PedalMode::Hard)),
+            SessionInput::Command(DeviceCommand::SetSetting {
+                id: cutout_core::SettingId::RidingPreset,
+                value: cutout_core::DeviceSettingValue::Choice(0),
+            }),
             &mut output,
         );
 
@@ -5391,14 +5293,19 @@ mod tests {
             &mut output,
         );
         session.handle(
-            SessionInput::Command(DeviceCommand::ResetTripMeter),
+            SessionInput::Command(DeviceCommand::InvokeAction(
+                cutout_core::DeviceActionRequest {
+                    id: cutout_core::DeviceActionId::ResetTripMeter,
+                    step: cutout_core::DeviceActionStep::Invoke,
+                },
+            )),
             &mut output,
         );
 
         assert!(output.iter().any(|item| matches!(
             item,
             SessionOutput::Transport(TransportAction::Write { bytes, .. })
-                if bytes.as_slice() == hex_literal::hex!("4c6b41700b0001090a31f8")
+                if bytes.as_slice() == b"CLEARMETER"
         )));
     }
 
@@ -5406,35 +5313,46 @@ mod tests {
     fn aero_stationary_settings_session_schedules_tlt_pwt_alm_and_ang() {
         let cases = [
             (
-                DeviceCommand::SetAeroTiltbackSpeed(
-                    cutout_core::AeroSpeedSetting::new(53).expect("53 km/h fits"),
-                ),
+                DeviceCommand::SetSetting {
+                    id: cutout_core::SettingId::TiltbackSpeed,
+                    value: cutout_core::DeviceSettingValue::Number(530),
+                },
                 *b"LdAp",
                 12,
                 53,
             ),
             (
-                DeviceCommand::SetAeroPwmPercent(
-                    cutout_core::AeroPwmPercent::new(64)
-                        .expect("64 percent fits")
-                        .into(),
-                ),
+                DeviceCommand::SetSetting {
+                    id: cutout_core::SettingId::PwmTiltback,
+                    value: cutout_core::DeviceSettingValue::Number(64),
+                },
                 *b"LdAp",
                 13,
-                36,
+                64,
             ),
             (
-                DeviceCommand::SetAeroAlarmSpeed(
-                    cutout_core::AeroSpeedSetting::new(56).expect("56 km/h fits"),
-                ),
+                DeviceCommand::SetSetting {
+                    id: cutout_core::SettingId::LateralTiltLimit,
+                    value: cutout_core::DeviceSettingValue::Number(55),
+                },
+                *b"LkAp",
+                17,
+                55,
+            ),
+            (
+                DeviceCommand::SetSetting {
+                    id: cutout_core::SettingId::SpeedAlarmThreshold,
+                    value: cutout_core::DeviceSettingValue::Number(560),
+                },
                 *b"LkAp",
                 12,
                 56,
             ),
             (
-                DeviceCommand::SetAeroAngleAdjustment(
-                    cutout_core::AeroAngleAdjustment::new(-12).expect("-1.2 degrees fits"),
-                ),
+                DeviceCommand::SetSetting {
+                    id: cutout_core::SettingId::PedalAngle,
+                    value: cutout_core::DeviceSettingValue::Number(-12),
+                },
                 *b"LkAp",
                 11,
                 244,
@@ -5467,6 +5385,45 @@ mod tests {
     }
 
     #[test]
+    fn aero_lateral_tilt_session_sends_the_checked_frame_pair() {
+        let mut session = StationarySettingsWriteSession::<NosfetAeroModel, false>::default();
+        let mut output = Vec::new();
+        session.arm(
+            StationarySettingsPolicy {
+                model: NosfetAeroModel::MODEL,
+                arm_duration: Duration::from_milliseconds(100),
+            }
+            .arm(RideOperatingState::Parked, ms(10))
+            .expect("parked state arms settings writes"),
+        );
+        session.handle(
+            SessionInput::Command(DeviceCommand::SetSetting {
+                id: cutout_core::SettingId::LateralTiltLimit,
+                value: cutout_core::DeviceSettingValue::Number(55),
+            }),
+            &mut output,
+        );
+        assert!(matches!(
+            output.as_slice(),
+            [SessionOutput::Transport(TransportAction::Write { bytes, .. })]
+                if bytes.as_slice().starts_with(b"LkAp\x16\x01\x80")
+        ));
+
+        output.clear();
+        session.handle(
+            SessionInput::Tick {
+                monotonic_ms: ms(10),
+            },
+            &mut output,
+        );
+        assert!(output.iter().any(|item| matches!(
+            item,
+            SessionOutput::Transport(TransportAction::Write { bytes, .. })
+                if bytes.as_slice().starts_with(b"LdAp\x16\x01\x00")
+        )));
+    }
+
+    #[test]
     fn aero_stationary_settings_session_schedules_single_high_beam_write() {
         let mut session = StationarySettingsWriteSession::<NosfetAeroModel, false>::default();
         let mut output = Vec::new();
@@ -5487,13 +5444,16 @@ mod tests {
         output.clear();
 
         session.handle(
-            SessionInput::Command(DeviceCommand::SetAeroHighBeam(cutout_core::LightState::On)),
+            SessionInput::Command(DeviceCommand::SetSetting {
+                id: cutout_core::SettingId::HighBeam,
+                value: cutout_core::DeviceSettingValue::Boolean(true),
+            }),
             &mut output,
         );
         assert!(matches!(
             output.as_slice(),
             [SessionOutput::Transport(TransportAction::Write { bytes, .. })]
-                if bytes.as_slice().starts_with(b"LkAp")
+                if bytes.as_slice() == b"SetLightON"
         ));
 
         output.clear();
@@ -5528,7 +5488,10 @@ mod tests {
             &mut output,
         );
         session.handle(
-            SessionInput::Command(DeviceCommand::SetPedalMode(cutout_core::PedalMode::Hard)),
+            SessionInput::Command(DeviceCommand::SetSetting {
+                id: cutout_core::SettingId::PedalMode,
+                value: cutout_core::DeviceSettingValue::Choice(0),
+            }),
             &mut output,
         );
 
@@ -5558,7 +5521,10 @@ mod tests {
             &mut output,
         );
         session.handle(
-            SessionInput::Command(DeviceCommand::SetRollAngle(cutout_core::RollAngle::High)),
+            SessionInput::Command(DeviceCommand::SetSetting {
+                id: cutout_core::SettingId::RollAngleMode,
+                value: cutout_core::DeviceSettingValue::Choice(2),
+            }),
             &mut output,
         );
 
@@ -5588,9 +5554,10 @@ mod tests {
             &mut output,
         );
         session.handle(
-            SessionInput::Command(DeviceCommand::SetSpeedAlarmMode(
-                cutout_core::SpeedAlarmMode::StageOneOnly,
-            )),
+            SessionInput::Command(DeviceCommand::SetSetting {
+                id: cutout_core::SettingId::SpeedAlarmMode,
+                value: cutout_core::DeviceSettingValue::Choice(1),
+            }),
             &mut output,
         );
 
@@ -5622,9 +5589,10 @@ mod tests {
         output.clear();
 
         session.handle(
-            SessionInput::Command(DeviceCommand::SetBegodeMaxSpeed(
-                BegodeMaxSpeed::new(30).expect("30 km/h is encodable"),
-            )),
+            SessionInput::Command(DeviceCommand::SetSetting {
+                id: cutout_core::SettingId::MaximumSpeed,
+                value: cutout_core::DeviceSettingValue::Number(300),
+            }),
             &mut output,
         );
         assert!(matches!(
@@ -5682,9 +5650,10 @@ mod tests {
         output.clear();
 
         session.handle(
-            SessionInput::Command(DeviceCommand::SetBegodeMaxSpeed(
-                BegodeMaxSpeed::new(30).expect("30 km/h is encodable"),
-            )),
+            SessionInput::Command(DeviceCommand::SetSetting {
+                id: cutout_core::SettingId::MaximumSpeed,
+                value: cutout_core::DeviceSettingValue::Number(300),
+            }),
             &mut output,
         );
         output.clear();
@@ -5727,7 +5696,10 @@ mod tests {
                 .expect("stationary"),
         );
         session.handle(
-            SessionInput::Command(DeviceCommand::SetAeroHighBeam(cutout_core::LightState::On)),
+            SessionInput::Command(DeviceCommand::SetSetting {
+                id: cutout_core::SettingId::HighBeam,
+                value: cutout_core::DeviceSettingValue::Boolean(true),
+            }),
             &mut outputs,
         );
         session.arm(
@@ -5764,7 +5736,10 @@ mod tests {
                 .expect("stationary"),
         );
         session.handle(
-            SessionInput::Command(DeviceCommand::SetAeroHighBeam(cutout_core::LightState::On)),
+            SessionInput::Command(DeviceCommand::SetSetting {
+                id: cutout_core::SettingId::HighBeam,
+                value: cutout_core::DeviceSettingValue::Boolean(true),
+            }),
             &mut outputs,
         );
         let mut frame = live_aero_frame();
@@ -5793,7 +5768,12 @@ mod tests {
         )));
         outputs.clear();
         session.handle(
-            SessionInput::Command(DeviceCommand::ResetTripMeter),
+            SessionInput::Command(DeviceCommand::InvokeAction(
+                cutout_core::DeviceActionRequest {
+                    id: cutout_core::DeviceActionId::ResetTripMeter,
+                    step: cutout_core::DeviceActionStep::Invoke,
+                },
+            )),
             &mut outputs,
         );
         assert!(
@@ -5834,7 +5814,10 @@ mod tests {
     fn stationary_settings_session_requires_fresh_stationary_arm() {
         let mut session = StationarySettingsWriteSession::<TestModel, false>::default();
         let mut output = Vec::new();
-        let command = DeviceCommand::SetPedalMode(cutout_core::PedalMode::Hard);
+        let command = DeviceCommand::SetSetting {
+            id: cutout_core::SettingId::RidingPreset,
+            value: cutout_core::DeviceSettingValue::Choice(0),
+        };
 
         session.handle(SessionInput::Command(command), &mut output);
 
@@ -5842,7 +5825,7 @@ mod tests {
             output,
             vec![SessionOutput::Event(DeviceEvent::ControlRefusal(
                 ControlRefusal {
-                    command: CommandKind::SetPedalMode,
+                    command: CommandKind::SetSetting,
                     safety_class: SafetyClass::StationaryOnly,
                     reason: ControlRefusalReason::MissingArm,
                 }
@@ -5954,9 +5937,10 @@ mod tests {
         let mut output = Vec::new();
 
         session.handle(
-            SessionInput::Command(DeviceCommand::SetAccelerationAssist(
-                cutout_core::AccelerationAssistState::Enabled,
-            )),
+            SessionInput::Command(DeviceCommand::SetSetting {
+                id: cutout_core::SettingId::AccelerationAssist,
+                value: cutout_core::DeviceSettingValue::Boolean(true),
+            }),
             &mut output,
         );
 
@@ -5964,7 +5948,7 @@ mod tests {
             output,
             vec![SessionOutput::Event(DeviceEvent::ControlRefusal(
                 ControlRefusal {
-                    command: CommandKind::SetAccelerationAssist,
+                    command: CommandKind::SetSetting,
                     safety_class: SafetyClass::StationaryOnly,
                     reason: ControlRefusalReason::UnsupportedCommand,
                 }
@@ -6057,7 +6041,7 @@ mod tests {
         assert_eq!(
             output,
             vec![SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
-                ReadOnlyResponse::Battery(cutout_core::BatteryReadback::unavailable())
+                ReadOnlyResponse::Battery(BatteryReadback::unavailable())
             ))]
         );
     }
@@ -6080,7 +6064,7 @@ mod tests {
         assert_eq!(
             output,
             vec![SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
-                ReadOnlyResponse::Battery(cutout_core::BatteryReadback::unsupported())
+                ReadOnlyResponse::Battery(BatteryReadback::unsupported())
             ))]
         );
     }
@@ -6158,7 +6142,7 @@ mod tests {
             output,
             vec![
                 SessionOutput::Event(DeviceEvent::ReadOnlyResponse(ReadOnlyResponse::Battery(
-                    cutout_core::BatteryReadback::unavailable()
+                    BatteryReadback::unavailable()
                 ))),
                 SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
                     ReadOnlyResponse::FaultHistory(cutout_core::FaultHistoryReadback::unavailable())
@@ -6211,7 +6195,7 @@ mod tests {
         assert_eq!(
             output,
             vec![SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
-                ReadOnlyResponse::Battery(cutout_core::BatteryReadback::unavailable())
+                ReadOnlyResponse::Battery(BatteryReadback::unavailable())
             ))]
         );
     }

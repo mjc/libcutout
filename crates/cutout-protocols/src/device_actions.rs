@@ -3,7 +3,7 @@
 use cutout_core::{
     CommandKind, DeviceActionId, DeviceActionProgress, DeviceActionRequest, DeviceActionStep,
     DeviceActionsState, DeviceCommand, Measured, MonotonicTimestamp, SettingsEntry,
-    SettingsReadback,
+    SettingsReadback, VerificationStatus,
 };
 
 use crate::{AERO_FIELD_GYRO_CALIBRATION_STATE, DeviceControlProfile};
@@ -50,8 +50,10 @@ pub struct ActionDescriptor {
     pub order: u16,
     /// Presentation and confirmation behavior.
     pub role: ActionRole,
-    /// Static write evidence.
+    /// Static invocation availability.
     pub access: ActionAccess,
+    /// Write evidence, independent of production availability and progress evidence.
+    pub write_verification: VerificationStatus,
     /// Device evidence available after invocation.
     pub confirmation: ActionConfirmation,
 }
@@ -95,10 +97,15 @@ impl DeviceControlProfile {
                         help_key,
                         order,
                         role,
-                        access: if validation_mode || self.verified.supports_command_kind(kind) {
+                        access: if validation_mode || self.production.supports_command_kind(kind) {
                             ActionAccess::Available
                         } else {
                             ActionAccess::Unverified
+                        },
+                        write_verification: if self.verified.supports_command_kind(kind) {
+                            VerificationStatus::HardwareVerified
+                        } else {
+                            VerificationStatus::Unverified
                         },
                         confirmation,
                     })
@@ -128,8 +135,9 @@ impl DeviceControlProfile {
         }
         Ok(match request.id {
             DeviceActionId::Horn => DeviceCommand::SoundHorn,
-            DeviceActionId::ResetTripMeter => DeviceCommand::ResetTripMeter,
-            DeviceActionId::GyroCalibration => DeviceCommand::SetAeroGyroCalibration,
+            DeviceActionId::ResetTripMeter | DeviceActionId::GyroCalibration => {
+                DeviceCommand::InvokeAction(request)
+            }
         })
     }
 
@@ -138,7 +146,7 @@ impl DeviceControlProfile {
     pub fn normalize_action_readback(self, readback: SettingsReadback) -> Vec<ActionObservation> {
         if !self
             .available
-            .supports_command_kind(CommandKind::SetAeroGyroCalibration)
+            .supports_command_kind(CommandKind::GyroCalibration)
         {
             return Vec::new();
         }
@@ -236,6 +244,6 @@ const fn action_kind(id: DeviceActionId) -> CommandKind {
     match id {
         DeviceActionId::Horn => CommandKind::SoundHorn,
         DeviceActionId::ResetTripMeter => CommandKind::ResetTripMeter,
-        DeviceActionId::GyroCalibration => CommandKind::SetAeroGyroCalibration,
+        DeviceActionId::GyroCalibration => CommandKind::GyroCalibration,
     }
 }

@@ -20,7 +20,8 @@ use crate::{
 /// Protocol-owned result of requesting identification queries.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum IdentificationProbePlan {
-    /// Available transport evidence does not support these queries.
+    /// Available transport evidence does not support these queries, or stronger
+    /// protocol evidence has made the family-specific queries inappropriate.
     Unsupported,
     /// A previous query is still awaiting its response.
     AlreadyPending,
@@ -348,6 +349,15 @@ impl DeviceDetectionSession {
         state: &mut CutoutSessionState,
         at: MonotonicTimestamp,
     ) -> IdentificationProbePlan {
+        let current = self.resolution(state);
+        if matches!(
+            current.protocol,
+            ProtocolFamilyState::VeteranLeaperkimNosfet
+                | ProtocolFamilyState::Vesc
+                | ProtocolFamilyState::Conflict
+        ) {
+            return IdentificationProbePlan::Unsupported;
+        }
         if let Some(selected) = state.discovery().selected_platform_identifier.as_deref() {
             let supports_queries = state.discovery().observations.iter().any(|observation| {
                 observation.platform_identifier == selected
@@ -453,6 +463,14 @@ impl DeviceDetectionSession {
                 .into_iter()
                 .flatten()
                 .fold(current.protocol, ProtocolFamilyState::merge_observed);
+                if matches!(
+                    observed_protocol,
+                    ProtocolFamilyState::VeteranLeaperkimNosfet
+                        | ProtocolFamilyState::Vesc
+                        | ProtocolFamilyState::Conflict
+                ) {
+                    state.identity_mut().retire_pending_probes();
+                }
                 let mut decision =
                     NotificationDecision::from_bytes(current.protocol, bytes, vesc_reply);
                 decision.protocol = observed_protocol;
@@ -1646,6 +1664,55 @@ mod tests {
                 .begin_identification_probes(&mut session.root, MonotonicTimestamp::new(1)),
             crate::IdentificationProbePlan::Writes(_)
         ));
+    }
+
+    #[test]
+    fn resolved_veteran_protocol_does_not_start_begode_identity_probes() {
+        let mut session = DeviceDetectionSession::new();
+        session.root.identity_mut().protocol_family = Some(ProtocolFamily::VeteranLeaperkimNosfet);
+        session.root.select_discovered_platform("selected".into());
+
+        assert_eq!(
+            session
+                .detector
+                .begin_identification_probes(&mut session.root, MonotonicTimestamp::new(1)),
+            crate::IdentificationProbePlan::Unsupported
+        );
+        assert_eq!(
+            session
+                .root
+                .identity()
+                .next_probe_expiry(Duration::from_milliseconds(1)),
+            None
+        );
+    }
+
+    #[test]
+    fn veteran_wire_evidence_retires_pending_begode_probe_state() {
+        let mut session = DeviceDetectionSession::new();
+        let _ = session.observe(DeviceDetectionEvent::ProbeWrite {
+            probe: PendingProbe::BegodeName,
+        });
+        assert!(
+            session
+                .root
+                .identity()
+                .next_probe_expiry(Duration::from_milliseconds(1))
+                .is_some()
+        );
+
+        let frame = synthetic_veteran_frame_with_model_id(43);
+        let update = session.observe(DeviceDetectionEvent::Notification { bytes: &frame });
+
+        assert_eq!(update.protocol, ProtocolFamilyState::VeteranLeaperkimNosfet);
+        assert_eq!(update.missing_probe_response, None);
+        assert_eq!(
+            session
+                .root
+                .identity()
+                .next_probe_expiry(Duration::from_milliseconds(1)),
+            None
+        );
     }
 
     #[test]

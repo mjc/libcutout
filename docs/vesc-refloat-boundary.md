@@ -6,6 +6,19 @@ This note records the integration decision for VESC/Refloat read-only support.
 It is intentionally an architecture and provenance note, not an implementation
 port.
 
+The 2026-09-18 [settings design review](settings-design-review.md) applies to
+future writable support without enabling it. VESC is firmware/protocol;
+Refloat is a package dialect with a separate package version, not a device
+manufacturer. Keep controller identity/firmware and package identity/version
+distinct. Typed dialect bindings must join exact value domains, encoding,
+observations, completion and applicability; native queues retain operation and
+connection identity and report actual host submission/failure to Rust.
+Read-only support is not write authority, and host submission is not device ACK.
+
+[LIBCU-DOC-8](https://lific.mjc.lol/LIBCU/pages/30) coordinates this contract
+with LIBCU-477/640/641 for lifecycle and transport. LIBCU-348 still owns future
+VESC/Refloat controls; the settings reset does not broaden the read-only probe.
+
 ## Sources Checked
 
 - `ikalnytskyi/vesc-rs`

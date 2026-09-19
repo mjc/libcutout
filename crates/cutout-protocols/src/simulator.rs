@@ -1,15 +1,13 @@
 use cutout_core::{
-    AeroAngleAdjustment, AeroBeeperVolume, AeroBrakeOverpressureAlarm, AeroDisplayBacklight,
-    AeroDynamicAssist, AeroGyroCalibrationState, AeroHighSpeedMode, AeroLateralTiltLimit,
-    AeroLowBatteryMode, AeroMaxChargeVoltageRaw, AeroPedalDipCompensation, AeroPedalHardness,
-    AeroPwmPercent, AeroPwmSetting, AeroSpeedSetting, AeroTransportMode, AeroVoltageCorrection,
-    DeviceCommand, DeviceEvent, Duration, GattChannel, GattFingerprint, HostSession, LightState,
-    LinkInfo, ModelRegistryEntry, MonotonicTimestamp, PedalMode, RawFieldValue, ReadOnlyResponse,
-    RideOperatingState, SessionOutput, SettingsEntry, SettingsReadback, Speed,
-    StationarySettingsPolicy, TransportAction, TransportWriteLimit, ValueQuality, ValueSource,
-    VerificationStatus, WriteMode, WritePayload,
+    DeviceActionId, DeviceActionRequest, DeviceCommand, DeviceEvent, DeviceSettingValue, Duration,
+    GattChannel, GattFingerprint, HostSession, LightState, LinkInfo, ModelRegistryEntry,
+    MonotonicTimestamp, PedalMode, RawFieldValue, ReadOnlyResponse, RideOperatingState,
+    SessionOutput, SettingId, SettingsEntry, SettingsReadback, Speed, StationarySettingsPolicy,
+    TransportAction, TransportWriteLimit, ValueQuality, ValueSource, VerificationStatus, WriteMode,
+    WritePayload,
 };
 
+use crate::settings_wire::*;
 use crate::{
     NOSFET_AERO_REGISTRY_ENTRY, NosfetAeroModel, ProtocolModelSpec, StationarySettingsWriteSession,
     SupportsSettingsWrites,
@@ -19,58 +17,58 @@ use crate::{
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AeroSettingsReadback {
     /// Current TLT speed, when the simulator has a value.
-    pub tiltback_speed: Option<AeroSpeedSetting>,
+    pub tiltback_speed: Option<VeteranSpeedSetting>,
 
     /// Current PWT percentage, when the simulator has a value.
-    pub pwm_percent: Option<AeroPwmSetting>,
+    pub pwm_percent: Option<VeteranPwmSetting>,
 
     /// Current simulated wheel display backlight brightness, when explicitly set.
-    pub display_backlight: Option<AeroDisplayBacklight>,
+    pub display_backlight: Option<VeteranDisplayBacklight>,
 
     /// Current simulated wheel beeper volume, when explicitly set.
-    pub beeper_volume: Option<AeroBeeperVolume>,
+    pub beeper_volume: Option<VeteranBeeperVolume>,
 
     /// Current simulated dynamic assist, when explicitly set.
-    pub dynamic_assist: Option<AeroDynamicAssist>,
+    pub dynamic_assist: Option<VeteranDynamicAssist>,
 
     /// Current simulated pedal-dip compensation, when explicitly set.
-    pub pedal_dip_compensation: Option<AeroPedalDipCompensation>,
+    pub pedal_dip_compensation: Option<VeteranPedalDipCompensation>,
 
     /// Current simulated lateral tilt limit, when explicitly set.
-    pub lateral_tilt_limit: Option<AeroLateralTiltLimit>,
+    pub lateral_tilt_limit: Option<VeteranLateralTiltLimit>,
 
     /// Current simulated voltage correction, when explicitly set.
-    pub voltage_correction: Option<AeroVoltageCorrection>,
+    pub voltage_correction: Option<VeteranVoltageCorrection>,
 
     /// Current official MxV raw maximum-charge value.
-    pub max_charge_voltage_raw: Option<AeroMaxChargeVoltageRaw>,
+    pub max_charge_voltage_raw: Option<VeteranMaxChargeVoltageRaw>,
 
     /// Current numeric MD pedal hardness, when the simulator has a value.
-    pub pedal_hardness: Option<AeroPedalHardness>,
+    pub pedal_hardness: Option<VeteranPedalHardness>,
 
     /// Simulated wheel display units, independent of host formatting preferences.
-    pub wheel_units: Option<cutout_core::AeroWheelUnits>,
+    pub wheel_units: Option<VeteranWheelUnits>,
 
     /// Current high-speed mode, when explicitly set.
-    pub high_speed_mode: Option<AeroHighSpeedMode>,
+    pub high_speed_mode: Option<VeteranHighSpeedMode>,
 
     /// Current low-battery mode, when explicitly set.
-    pub low_battery_mode: Option<AeroLowBatteryMode>,
+    pub low_battery_mode: Option<VeteranLowBatteryMode>,
 
     /// Current transportation mode, when explicitly set.
-    pub transport_mode: Option<AeroTransportMode>,
+    pub transport_mode: Option<VeteranTransportMode>,
 
     /// Current ALM speed, when the simulator has a value.
-    pub alarm_speed: Option<AeroSpeedSetting>,
+    pub alarm_speed: Option<VeteranSpeedSetting>,
 
     /// Current ANG adjustment, when the simulator has a value.
-    pub angle_adjustment: Option<AeroAngleAdjustment>,
+    pub angle_adjustment: Option<VeteranAngleAdjustment>,
 
     /// Current page-8 gyro-calibration phase.
-    pub gyro_calibration_state: Option<AeroGyroCalibrationState>,
+    pub gyro_calibration_state: Option<VeteranGyroCalibrationState>,
 
     /// Current NOSFET brake overpressure alarm threshold.
-    pub brake_overpressure_alarm: Option<AeroBrakeOverpressureAlarm>,
+    pub brake_overpressure_alarm: Option<VeteranBrakeOverpressureAlarm>,
 
     /// Current pedal mode, when the simulator has a value.
     pub pedal_mode: Option<PedalMode>,
@@ -118,19 +116,19 @@ impl AeroSettingsReadback {
     /// Creates a useful stationary test fixture using typed default values.
     #[must_use]
     pub fn with_defaults() -> Self {
-        let Some(tiltback_speed) = AeroSpeedSetting::new(20) else {
+        let Some(tiltback_speed) = VeteranSpeedSetting::new(20) else {
             return Self::unknown();
         };
-        let Some(pwm_percent) = AeroPwmPercent::new(60) else {
+        let Some(pwm_percent) = VeteranPwmPercent::new(60) else {
             return Self::unknown();
         };
-        let Some(alarm_speed) = AeroSpeedSetting::new(20) else {
+        let Some(alarm_speed) = VeteranSpeedSetting::new(20) else {
             return Self::unknown();
         };
-        let Some(angle_adjustment) = AeroAngleAdjustment::new(0) else {
+        let Some(angle_adjustment) = VeteranAngleAdjustment::new(0) else {
             return Self::unknown();
         };
-        let Some(brake_overpressure_alarm) = AeroBrakeOverpressureAlarm::new(100) else {
+        let Some(brake_overpressure_alarm) = VeteranBrakeOverpressureAlarm::new(100) else {
             return Self::unknown();
         };
         Self {
@@ -150,7 +148,7 @@ impl AeroSettingsReadback {
             transport_mode: None,
             alarm_speed: Some(alarm_speed),
             angle_adjustment: Some(angle_adjustment),
-            gyro_calibration_state: Some(AeroGyroCalibrationState::Idle),
+            gyro_calibration_state: Some(VeteranGyroCalibrationState::Idle),
             brake_overpressure_alarm: Some(brake_overpressure_alarm),
             pedal_mode: Some(PedalMode::Medium),
             high_beam: Some(LightState::Off),
@@ -302,89 +300,139 @@ impl AeroSettingsSimulator {
 
     fn apply_readback(&mut self, command: DeviceCommand) -> SessionOutput {
         match command {
-            DeviceCommand::ResetTripMeter => {
-                self.readback.trip_meter_reset_count =
-                    self.readback.trip_meter_reset_count.saturating_add(1);
-            }
-            DeviceCommand::SetAeroTiltbackSpeed(value) => {
-                self.readback.tiltback_speed = Some(value);
-            }
-            DeviceCommand::SetAeroPwmPercent(value) => {
-                self.readback.pwm_percent = Some(value);
-            }
-            DeviceCommand::SetAeroPwmOff => {
-                self.readback.pwm_percent = Some(AeroPwmSetting::Off);
-            }
-            DeviceCommand::SetAeroGyroCalibration => {
-                let current = self
-                    .readback
-                    .gyro_calibration_state
-                    .unwrap_or(AeroGyroCalibrationState::Idle);
-                self.readback.gyro_calibration_state = Some(match current {
-                    AeroGyroCalibrationState::Waiting => AeroGyroCalibrationState::Complete,
-                    AeroGyroCalibrationState::Idle => AeroGyroCalibrationState::Waiting,
-                    AeroGyroCalibrationState::Complete => AeroGyroCalibrationState::Idle,
-                });
-            }
-            DeviceCommand::SetAeroBrakeOverpressureAlarm(value) => {
-                self.readback.brake_overpressure_alarm = Some(value);
-            }
-            DeviceCommand::SetAeroDisplayBacklight(value) => {
-                self.readback.display_backlight = Some(value);
-            }
-            DeviceCommand::SetAeroBeeperVolume(value) => {
-                self.readback.beeper_volume = Some(value);
-            }
-            DeviceCommand::SetAeroDynamicAssist(value) => {
-                self.readback.dynamic_assist = Some(value);
-            }
-            DeviceCommand::SetAeroPedalDipCompensation(value) => {
-                self.readback.pedal_dip_compensation = Some(value);
-            }
-            DeviceCommand::SetAeroLateralTiltLimit(value) => {
-                self.readback.lateral_tilt_limit = Some(value);
-            }
-            DeviceCommand::SetAeroVoltageCorrection(value) => {
-                self.readback.voltage_correction = Some(value);
-            }
-            DeviceCommand::SetAeroMaxChargeVoltageRaw(value) => {
-                self.readback.max_charge_voltage_raw = Some(value);
-            }
-            DeviceCommand::SetAeroPedalHardness(value) => {
-                self.readback.pedal_hardness = Some(value);
-            }
-            DeviceCommand::SetAeroWheelUnits(value) => {
-                self.readback.wheel_units = Some(value);
-            }
-            DeviceCommand::SetAeroHighSpeedMode(value) => {
-                self.readback.high_speed_mode = Some(value);
-            }
-            DeviceCommand::SetAeroLowBatteryMode(value) => {
-                self.readback.low_battery_mode = Some(value);
-            }
-            DeviceCommand::SetAeroTransportMode(value) => {
-                self.readback.transport_mode = Some(value);
-            }
-            DeviceCommand::SetAeroAlarmSpeed(value) => {
-                self.readback.alarm_speed = Some(value);
-            }
-            DeviceCommand::SetAeroAngleAdjustment(value) => {
-                self.readback.angle_adjustment = Some(value);
-            }
-            DeviceCommand::SetAeroHighBeam(value) => {
-                self.readback.high_beam = Some(value);
+            DeviceCommand::InvokeAction(DeviceActionRequest { id, .. }) => match id {
+                DeviceActionId::ResetTripMeter => {
+                    self.readback.trip_meter_reset_count =
+                        self.readback.trip_meter_reset_count.saturating_add(1);
+                }
+                DeviceActionId::GyroCalibration => {
+                    let current = self
+                        .readback
+                        .gyro_calibration_state
+                        .unwrap_or(VeteranGyroCalibrationState::Idle);
+                    self.readback.gyro_calibration_state = Some(match current {
+                        VeteranGyroCalibrationState::Waiting => {
+                            VeteranGyroCalibrationState::Complete
+                        }
+                        VeteranGyroCalibrationState::Idle => VeteranGyroCalibrationState::Waiting,
+                        VeteranGyroCalibrationState::Complete => VeteranGyroCalibrationState::Idle,
+                    });
+                }
+                DeviceActionId::Horn => {}
+            },
+            DeviceCommand::SetSetting { id, value } => {
+                self.apply_setting_readback(id, value);
             }
             DeviceCommand::SetLights(value) => {
                 self.readback.headlight = Some(value);
-            }
-            DeviceCommand::SetPedalMode(value) => {
-                self.readback.pedal_mode = Some(value);
             }
             _ => {}
         }
         SessionOutput::Event(DeviceEvent::ReadOnlyResponse(ReadOnlyResponse::Settings(
             self.settings_readback(),
         )))
+    }
+
+    fn apply_setting_readback(&mut self, id: SettingId, value: DeviceSettingValue) {
+        match (id, value) {
+            (SettingId::TiltbackSpeed, DeviceSettingValue::Number(value)) => {
+                self.readback.tiltback_speed = u8::try_from(value / 10)
+                    .ok()
+                    .and_then(VeteranSpeedSetting::new);
+            }
+            (SettingId::SpeedAlarmThreshold, DeviceSettingValue::Number(value)) => {
+                self.readback.alarm_speed = u8::try_from(value / 10)
+                    .ok()
+                    .and_then(VeteranSpeedSetting::new);
+            }
+            (SettingId::PedalAngle, DeviceSettingValue::Number(value)) => {
+                self.readback.angle_adjustment = i8::try_from(value)
+                    .ok()
+                    .and_then(VeteranAngleAdjustment::new);
+            }
+            (SettingId::PwmTiltback, DeviceSettingValue::Disabled) => {
+                self.readback.pwm_percent = Some(VeteranPwmSetting::Off);
+            }
+            (SettingId::PwmTiltback, DeviceSettingValue::Number(value)) => {
+                self.readback.pwm_percent = u8::try_from(value)
+                    .ok()
+                    .and_then(|duty| 100_u8.checked_sub(duty))
+                    .and_then(VeteranPwmPercent::new)
+                    .map(VeteranPwmSetting::Margin);
+            }
+            (SettingId::BrakeOverpressureAlarm, DeviceSettingValue::Number(value)) => {
+                self.readback.brake_overpressure_alarm = u8::try_from(value)
+                    .ok()
+                    .and_then(VeteranBrakeOverpressureAlarm::new);
+            }
+            (SettingId::DisplayBrightness, DeviceSettingValue::Number(value)) => {
+                self.readback.display_backlight = u8::try_from(value)
+                    .ok()
+                    .and_then(VeteranDisplayBacklight::new);
+            }
+            (SettingId::BeeperVolumePercent, DeviceSettingValue::Number(value)) => {
+                self.readback.beeper_volume =
+                    u8::try_from(value).ok().and_then(VeteranBeeperVolume::new);
+            }
+            (SettingId::DynamicAssist, DeviceSettingValue::Number(value)) => {
+                self.readback.dynamic_assist =
+                    u8::try_from(value).ok().and_then(VeteranDynamicAssist::new);
+            }
+            (SettingId::PedalDipCompensation, DeviceSettingValue::Number(value)) => {
+                self.readback.pedal_dip_compensation = u8::try_from(value)
+                    .ok()
+                    .and_then(VeteranPedalDipCompensation::new);
+            }
+            (SettingId::LateralTiltLimit, DeviceSettingValue::Number(value)) => {
+                self.readback.lateral_tilt_limit = u8::try_from(value)
+                    .ok()
+                    .and_then(VeteranLateralTiltLimit::new);
+            }
+            (SettingId::VoltageCorrection, DeviceSettingValue::Number(value)) => {
+                self.readback.voltage_correction = i8::try_from(value)
+                    .ok()
+                    .and_then(VeteranVoltageCorrection::new);
+            }
+            (SettingId::ChargeLimitDiagnostic, DeviceSettingValue::Number(value)) => {
+                self.readback.max_charge_voltage_raw = u8::try_from(value)
+                    .ok()
+                    .and_then(VeteranMaxChargeVoltageRaw::new);
+            }
+            (SettingId::PedalHardness, DeviceSettingValue::Number(value)) => {
+                self.readback.pedal_hardness =
+                    u8::try_from(value).ok().and_then(VeteranPedalHardness::new);
+            }
+            (SettingId::DisplayUnits, DeviceSettingValue::Choice(value)) => {
+                self.readback.wheel_units = u8::try_from(value)
+                    .ok()
+                    .and_then(VeteranWheelUnits::from_display_mode);
+            }
+            (SettingId::HighSpeedMode, DeviceSettingValue::Boolean(value)) => {
+                self.readback.high_speed_mode = Some(VeteranHighSpeedMode::new(value));
+            }
+            (SettingId::LowBatteryMode, DeviceSettingValue::Boolean(value)) => {
+                self.readback.low_battery_mode = Some(VeteranLowBatteryMode::new(value));
+            }
+            (SettingId::TransportMode, DeviceSettingValue::Boolean(value)) => {
+                self.readback.transport_mode = Some(VeteranTransportMode::new(value));
+            }
+            (SettingId::RidingPreset, DeviceSettingValue::Choice(value)) => {
+                self.readback.pedal_mode = match value {
+                    0 => Some(PedalMode::Hard),
+                    1 => Some(PedalMode::Medium),
+                    2 => Some(PedalMode::Soft),
+                    _ => None,
+                };
+            }
+            (SettingId::HighBeam, DeviceSettingValue::Boolean(value)) => {
+                self.readback.high_beam = Some(if value {
+                    LightState::On
+                } else {
+                    LightState::Off
+                });
+            }
+            _ => {}
+        }
     }
 
     fn settings_readback(&self) -> SettingsReadback {
@@ -518,10 +566,10 @@ const fn pedal_mode_raw(value: PedalMode) -> u16 {
     }
 }
 
-const fn pwm_wire_value(value: AeroPwmSetting) -> u8 {
+const fn pwm_wire_value(value: VeteranPwmSetting) -> u8 {
     match value {
-        AeroPwmSetting::Off => 200,
-        AeroPwmSetting::Margin(percent) => 100 - percent.percent(),
+        VeteranPwmSetting::Off => 200,
+        VeteranPwmSetting::Margin(percent) => 100 - percent.percent(),
     }
 }
 
@@ -551,21 +599,32 @@ fn simulator_write(output: &SessionOutput) -> Option<AeroSimulatorWrite> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::AeroControlEncoder;
-    use cutout_core::{ControlRefusalReason, DeviceEvent, RollAngle};
+    use crate::NosfetDialect;
+    use cutout_core::{ControlRefusalReason, DeviceActionStep, DeviceEvent};
 
-    fn speed(value: u8) -> AeroSpeedSetting {
-        AeroSpeedSetting::new(value).expect("test speed is in range")
+    fn speed(value: u8) -> VeteranSpeedSetting {
+        VeteranSpeedSetting::new(value).expect("test speed is in range")
     }
 
-    fn pwm(value: u8) -> AeroPwmSetting {
-        AeroPwmPercent::new(value)
+    fn pwm(value: u8) -> VeteranPwmSetting {
+        VeteranPwmPercent::new(value)
             .expect("test pwm is in range")
             .into()
     }
 
-    fn angle(value: i8) -> AeroAngleAdjustment {
-        AeroAngleAdjustment::new(value).expect("test angle is in range")
+    fn angle(value: i8) -> VeteranAngleAdjustment {
+        VeteranAngleAdjustment::new(value).expect("test angle is in range")
+    }
+
+    const fn setting(id: SettingId, value: DeviceSettingValue) -> DeviceCommand {
+        DeviceCommand::SetSetting { id, value }
+    }
+
+    const fn action(id: DeviceActionId) -> DeviceCommand {
+        DeviceCommand::InvokeAction(DeviceActionRequest {
+            id,
+            step: DeviceActionStep::Invoke,
+        })
     }
 
     const fn parked() -> RideOperatingState {
@@ -577,20 +636,26 @@ mod tests {
         let mut simulator = AeroSettingsSimulator::default();
         let now = MonotonicTimestamp::new(10);
         let commands = [
-            DeviceCommand::SetAeroTiltbackSpeed(speed(53)),
-            DeviceCommand::SetAeroPwmPercent(pwm(64)),
-            DeviceCommand::SetAeroAlarmSpeed(speed(56)),
-            DeviceCommand::SetAeroAngleAdjustment(angle(-12)),
-            DeviceCommand::SetPedalMode(PedalMode::Hard),
-            DeviceCommand::SetAeroHighSpeedMode(AeroHighSpeedMode::new(true)),
-            DeviceCommand::SetAeroLowBatteryMode(AeroLowBatteryMode::new(false)),
-            DeviceCommand::SetAeroTransportMode(AeroTransportMode::new(true)),
+            setting(SettingId::TiltbackSpeed, DeviceSettingValue::Number(530)),
+            setting(SettingId::PwmTiltback, DeviceSettingValue::Number(64)),
+            setting(
+                SettingId::SpeedAlarmThreshold,
+                DeviceSettingValue::Number(560),
+            ),
+            setting(SettingId::PedalAngle, DeviceSettingValue::Number(-12)),
+            setting(SettingId::RidingPreset, DeviceSettingValue::Choice(0)),
+            setting(SettingId::HighSpeedMode, DeviceSettingValue::Boolean(true)),
+            setting(
+                SettingId::LowBatteryMode,
+                DeviceSettingValue::Boolean(false),
+            ),
+            setting(SettingId::TransportMode, DeviceSettingValue::Boolean(true)),
         ];
 
         for command in commands {
             let outputs = simulator.issue(command, parked(), None, now);
             assert!(outputs.iter().any(has_transport_write));
-            let expected = AeroControlEncoder::encode(command).map(|encoded| encoded.payload);
+            let expected = NosfetDialect::encode(command).map(|encoded| encoded.payload);
             assert_eq!(
                 simulator
                     .writes()
@@ -602,16 +667,22 @@ mod tests {
 
         let readback = simulator.readback();
         assert_eq!(readback.tiltback_speed, Some(speed(53)));
-        assert_eq!(readback.pwm_percent, Some(pwm(64)));
+        assert_eq!(readback.pwm_percent, Some(pwm(36)));
         assert_eq!(readback.alarm_speed, Some(speed(56)));
         assert_eq!(readback.angle_adjustment, Some(angle(-12)));
         assert_eq!(readback.pedal_mode, Some(PedalMode::Hard));
-        assert_eq!(readback.high_speed_mode, Some(AeroHighSpeedMode::new(true)));
+        assert_eq!(
+            readback.high_speed_mode,
+            Some(VeteranHighSpeedMode::new(true))
+        );
         assert_eq!(
             readback.low_battery_mode,
-            Some(AeroLowBatteryMode::new(false))
+            Some(VeteranLowBatteryMode::new(false))
         );
-        assert_eq!(readback.transport_mode, Some(AeroTransportMode::new(true)));
+        assert_eq!(
+            readback.transport_mode,
+            Some(VeteranTransportMode::new(true))
+        );
         assert_eq!(simulator.writes().len(), commands.len());
     }
 
@@ -620,32 +691,32 @@ mod tests {
         let mut simulator = AeroSettingsSimulator::default();
         let now = MonotonicTimestamp::new(10);
 
-        let _ = simulator.issue(DeviceCommand::SetAeroGyroCalibration, parked(), None, now);
+        let _ = simulator.issue(action(DeviceActionId::GyroCalibration), parked(), None, now);
         assert_eq!(
             simulator.readback().gyro_calibration_state,
-            Some(AeroGyroCalibrationState::Waiting)
+            Some(VeteranGyroCalibrationState::Waiting)
         );
 
         let _ = simulator.issue(
-            DeviceCommand::SetAeroGyroCalibration,
+            action(DeviceActionId::GyroCalibration),
             parked(),
             None,
             MonotonicTimestamp::new(1_210),
         );
         assert_eq!(
             simulator.readback().gyro_calibration_state,
-            Some(AeroGyroCalibrationState::Complete)
+            Some(VeteranGyroCalibrationState::Complete)
         );
 
         let _ = simulator.issue(
-            DeviceCommand::SetAeroGyroCalibration,
+            action(DeviceActionId::GyroCalibration),
             parked(),
             None,
             MonotonicTimestamp::new(1_220),
         );
         assert_eq!(
             simulator.readback().gyro_calibration_state,
-            Some(AeroGyroCalibrationState::Idle)
+            Some(VeteranGyroCalibrationState::Idle)
         );
     }
 
@@ -653,7 +724,7 @@ mod tests {
     fn simulator_emits_the_typed_settings_readback_event() {
         let mut simulator = AeroSettingsSimulator::default();
         let outputs = simulator.issue(
-            DeviceCommand::SetAeroTiltbackSpeed(speed(53)),
+            setting(SettingId::TiltbackSpeed, DeviceSettingValue::Number(530)),
             parked(),
             None,
             MonotonicTimestamp::new(10),
@@ -675,7 +746,7 @@ mod tests {
     fn simulator_readback_event_matches_production_settings_shape() {
         let mut simulator = AeroSettingsSimulator::default();
         let mut outputs = simulator.issue(
-            DeviceCommand::SetAeroPwmPercent(pwm(64)),
+            setting(SettingId::PwmTiltback, DeviceSettingValue::Number(64)),
             parked(),
             None,
             MonotonicTimestamp::new(10),
@@ -706,41 +777,37 @@ mod tests {
                 crate::VETERAN_FIELD_PEDALS_MODE,
             ]
         );
-        assert_eq!(simulator.readback().pwm_percent, Some(pwm(64)));
+        assert_eq!(simulator.readback().pwm_percent, Some(pwm(36)));
     }
 
     #[test]
     fn simulator_readback_event_includes_page_eight_settings() {
-        let mut simulator = AeroSettingsSimulator::default();
+        let mut initial = AeroSettingsReadback::default();
+        initial.max_charge_voltage_raw = VeteranMaxChargeVoltageRaw::new(46);
+        let mut simulator = AeroSettingsSimulator::new(initial);
         let now = MonotonicTimestamp::new(10);
         let commands = [
-            DeviceCommand::SetAeroPwmPercent(pwm(64)),
-            DeviceCommand::SetAeroDisplayBacklight(
-                AeroDisplayBacklight::new(80).expect("80 percent fits"),
+            setting(SettingId::PwmTiltback, DeviceSettingValue::Number(64)),
+            setting(SettingId::DisplayBrightness, DeviceSettingValue::Number(80)),
+            setting(
+                SettingId::BeeperVolumePercent,
+                DeviceSettingValue::Number(40),
             ),
-            DeviceCommand::SetAeroBeeperVolume(AeroBeeperVolume::new(40).expect("40 percent fits")),
-            DeviceCommand::SetAeroDynamicAssist(
-                AeroDynamicAssist::new(35).expect("35 percent fits"),
+            setting(SettingId::DynamicAssist, DeviceSettingValue::Number(35)),
+            setting(
+                SettingId::PedalDipCompensation,
+                DeviceSettingValue::Number(25),
             ),
-            DeviceCommand::SetAeroPedalDipCompensation(
-                AeroPedalDipCompensation::new(25).expect("25 percent fits"),
+            setting(SettingId::LateralTiltLimit, DeviceSettingValue::Number(55)),
+            setting(SettingId::VoltageCorrection, DeviceSettingValue::Number(-5)),
+            setting(SettingId::PedalHardness, DeviceSettingValue::Number(70)),
+            setting(SettingId::DisplayUnits, DeviceSettingValue::Choice(1)),
+            setting(SettingId::HighSpeedMode, DeviceSettingValue::Boolean(true)),
+            setting(
+                SettingId::LowBatteryMode,
+                DeviceSettingValue::Boolean(false),
             ),
-            DeviceCommand::SetAeroLateralTiltLimit(
-                AeroLateralTiltLimit::new(55).expect("55 degrees fits"),
-            ),
-            DeviceCommand::SetAeroVoltageCorrection(
-                AeroVoltageCorrection::new(-5).expect("-5 tenths fits"),
-            ),
-            DeviceCommand::SetAeroMaxChargeVoltageRaw(
-                AeroMaxChargeVoltageRaw::new(46).expect("official raw MxV value fits"),
-            ),
-            DeviceCommand::SetAeroPedalHardness(
-                AeroPedalHardness::new(70).expect("70 percent fits"),
-            ),
-            DeviceCommand::SetAeroWheelUnits(cutout_core::AeroWheelUnits::Imperial),
-            DeviceCommand::SetAeroHighSpeedMode(AeroHighSpeedMode::new(true)),
-            DeviceCommand::SetAeroLowBatteryMode(AeroLowBatteryMode::new(false)),
-            DeviceCommand::SetAeroTransportMode(AeroTransportMode::new(true)),
+            setting(SettingId::TransportMode, DeviceSettingValue::Boolean(true)),
         ];
 
         for (index, command) in commands.into_iter().enumerate() {
@@ -758,7 +825,7 @@ mod tests {
             .map(|entry| (entry.field.id, entry.field.value))
             .collect();
 
-        assert!(fields.contains(&(crate::AERO_FIELD_PWM_PERCENT, 36)));
+        assert!(fields.contains(&(crate::AERO_FIELD_PWM_PERCENT, 64)));
         assert!(fields.contains(&(crate::AERO_FIELD_DISPLAY_BACKLIGHT_PERCENT, 80)));
         assert!(fields.contains(&(crate::AERO_FIELD_BEEPER_VOLUME_PERCENT, 40)));
         assert!(fields.contains(&(crate::AERO_FIELD_DYNAMIC_ASSIST_PERCENT, 35)));
@@ -778,7 +845,7 @@ mod tests {
         let mut simulator = AeroSettingsSimulator::default();
         let settings = simulator
             .issue(
-                DeviceCommand::SetAeroPwmOff,
+                setting(SettingId::PwmTiltback, DeviceSettingValue::Disabled),
                 parked(),
                 None,
                 MonotonicTimestamp::new(10),
@@ -801,7 +868,7 @@ mod tests {
     fn simulator_accepts_500_mm_per_second_and_refuses_above_it() {
         let mut simulator = AeroSettingsSimulator::default();
         let accepted = simulator.issue(
-            DeviceCommand::SetAeroPwmPercent(pwm(70)),
+            setting(SettingId::PwmTiltback, DeviceSettingValue::Number(70)),
             RideOperatingState::Riding,
             Some(Speed::from_millimetres_per_second(500)),
             MonotonicTimestamp::new(10),
@@ -810,7 +877,7 @@ mod tests {
         let write_count = simulator.writes().len();
 
         let refused = simulator.issue(
-            DeviceCommand::SetAeroPwmPercent(pwm(69)),
+            setting(SettingId::PwmTiltback, DeviceSettingValue::Number(69)),
             RideOperatingState::Riding,
             Some(Speed::from_millimetres_per_second(501)),
             MonotonicTimestamp::new(20),
@@ -823,14 +890,14 @@ mod tests {
                     if refusal.reason == ControlRefusalReason::MissingArm
             )
         }));
-        assert_eq!(simulator.readback().pwm_percent, Some(pwm(70)));
+        assert_eq!(simulator.readback().pwm_percent, Some(pwm(30)));
     }
 
     #[test]
     fn simulator_keeps_unsupported_commands_write_free() {
         let mut simulator = AeroSettingsSimulator::default();
         let outputs = simulator.issue(
-            DeviceCommand::SetRollAngle(RollAngle::High),
+            setting(SettingId::RollAngleMode, DeviceSettingValue::Choice(2)),
             parked(),
             None,
             MonotonicTimestamp::new(10),
@@ -848,11 +915,11 @@ mod tests {
     #[test]
     fn simulator_records_idempotent_writes_and_trip_resets() {
         let mut simulator = AeroSettingsSimulator::default();
-        let command = DeviceCommand::SetAeroTiltbackSpeed(speed(42));
+        let command = setting(SettingId::TiltbackSpeed, DeviceSettingValue::Number(420));
         let _ = simulator.issue(command, parked(), None, MonotonicTimestamp::new(10));
         let _ = simulator.issue(command, parked(), None, MonotonicTimestamp::new(11));
         let _ = simulator.issue(
-            DeviceCommand::ResetTripMeter,
+            action(DeviceActionId::ResetTripMeter),
             parked(),
             None,
             MonotonicTimestamp::new(12),
@@ -868,9 +935,12 @@ mod tests {
         let mut simulator = AeroSettingsSimulator::default();
         let mode = simulator.readback().pedal_mode;
         for percent in [0, 100] {
-            let hardness = AeroPedalHardness::new(percent).expect("documented bound");
+            let hardness = VeteranPedalHardness::new(percent).expect("documented bound");
             let _ = simulator.issue(
-                DeviceCommand::SetAeroPedalHardness(hardness),
+                setting(
+                    SettingId::PedalHardness,
+                    DeviceSettingValue::Number(i32::from(percent)),
+                ),
                 parked(),
                 None,
                 MonotonicTimestamp::new(10),
@@ -878,11 +948,11 @@ mod tests {
             assert_eq!(simulator.readback().pedal_hardness, Some(hardness));
             assert_eq!(simulator.readback().pedal_mode, mode);
         }
-        assert!(AeroPedalHardness::new(101).is_none());
-        assert!(AeroPedalHardness::new(u8::MAX).is_none());
+        assert!(VeteranPedalHardness::new(101).is_none());
+        assert!(VeteranPedalHardness::new(u8::MAX).is_none());
         simulator.clear_writes();
         let _ = simulator.issue(
-            DeviceCommand::SetAeroPedalHardness(AeroPedalHardness::new(50).expect("in range")),
+            setting(SettingId::PedalHardness, DeviceSettingValue::Number(50)),
             RideOperatingState::Riding,
             Some(Speed::from_millimetres_per_second(501)),
             MonotonicTimestamp::new(11),
@@ -890,7 +960,7 @@ mod tests {
         assert!(simulator.writes().is_empty());
         assert_eq!(
             simulator.readback().pedal_hardness,
-            AeroPedalHardness::new(100)
+            VeteranPedalHardness::new(100)
         );
     }
 
@@ -899,7 +969,7 @@ mod tests {
         let mut simulator = AeroSettingsSimulator::default();
         let now = MonotonicTimestamp::new(10);
         let first_outputs = simulator.issue(
-            DeviceCommand::SetAeroHighBeam(LightState::On),
+            setting(SettingId::HighBeam, DeviceSettingValue::Boolean(true)),
             parked(),
             None,
             now,
@@ -908,8 +978,11 @@ mod tests {
         let second_outputs = simulator.tick(now);
         assert!(!second_outputs.iter().any(is_settings_readback));
 
-        let expected = AeroControlEncoder::encode(DeviceCommand::SetAeroHighBeam(LightState::On))
-            .expect("high beam has a source-backed frame");
+        let expected = NosfetDialect::encode(setting(
+            SettingId::HighBeam,
+            DeviceSettingValue::Boolean(true),
+        ))
+        .expect("high beam has a source-backed frame");
         assert_eq!(simulator.writes().len(), 1);
         assert_eq!(simulator.writes()[0].payload, expected.payload);
         assert_eq!(simulator.writes()[0].mode, expected.mode);
@@ -920,14 +993,14 @@ mod tests {
     fn simulator_keeps_completed_high_beam_write_after_later_command() {
         let mut simulator = AeroSettingsSimulator::default();
         let _ = simulator.issue(
-            DeviceCommand::SetAeroHighBeam(LightState::On),
+            setting(SettingId::HighBeam, DeviceSettingValue::Boolean(true)),
             parked(),
             None,
             MonotonicTimestamp::new(10),
         );
         simulator.clear_writes();
         let _ = simulator.issue(
-            DeviceCommand::SetAeroTiltbackSpeed(speed(53)),
+            setting(SettingId::TiltbackSpeed, DeviceSettingValue::Number(530)),
             parked(),
             None,
             MonotonicTimestamp::new(6_000),

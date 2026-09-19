@@ -22,7 +22,7 @@ trap cleanup EXIT
 run_production_test() {
   cargo cutout swift -- test \
     --package-path "$root/swift/CutoutMobile" \
-    --filter AeroSettingsSimulatorTests
+    --filter DeviceControlsTests
 }
 
 generation() {

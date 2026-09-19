@@ -1,11 +1,15 @@
 //! Semantic settings state shared by device sessions and native clients.
 
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+// Keep identities distinct even when a connection replaces its settings owner.
+static NEXT_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 
 use crate::{
     ControlRefusalReason, Duration, Measured, MonotonicTimestamp, SETTING_CONFIRMATION_TIMEOUT,
-    SettingCommandStatus, SettingState, SettingValue, SettingValueSource, ValueQuality,
-    ValueSource, VerificationStatus,
+    SettingCommandStatus, SettingState, SettingTransportStatus, SettingValue, SettingValueSource,
+    ValueQuality, ValueSource, VerificationStatus,
 };
 
 /// Stable semantic identity, independent of protocol fields or model names.
@@ -110,8 +114,12 @@ pub struct DeviceSettingSnapshot {
     pub measured: Option<Measured<DeviceSettingValue>>,
     /// Last request, kept separate from device readback.
     pub requested: Option<DeviceSettingValue>,
+    /// Rust-generated identity of the most recent submission.
+    pub request_id: Option<u64>,
     /// Rust-owned confirmation state.
     pub status: SettingCommandStatus,
+    /// Host transport evidence for the most recent request.
+    pub transport: Option<SettingTransportStatus>,
     /// Age of the current observation; absent when no value has been observed.
     pub age: Option<Duration>,
     /// Reason for the last refused request.
@@ -124,6 +132,9 @@ struct SettingRecord {
     observed_at: Option<MonotonicTimestamp>,
     evidence: Option<Measured<()>>,
     confirmation_supported: bool,
+    transport: Option<SettingTransportStatus>,
+    request_id: Option<u64>,
+    transport_at: Option<MonotonicTimestamp>,
 }
 
 impl Default for SettingRecord {
@@ -133,6 +144,9 @@ impl Default for SettingRecord {
             observed_at: None,
             evidence: None,
             confirmation_supported: true,
+            transport: None,
+            request_id: None,
+            transport_at: None,
         }
     }
 }
@@ -145,9 +159,17 @@ impl Default for SettingRecord {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct DeviceSettingsState {
     records: BTreeMap<SettingId, SettingRecord>,
+    managed_transport: bool,
 }
 
 impl DeviceSettingsState {
+    /// Requires explicit host handoff for subsequent submissions.
+    ///
+    /// Native FFI callers opt in; direct protocol callers retain immediate timing.
+    pub fn require_managed_transport(&mut self) {
+        self.managed_transport = true;
+    }
+
     /// Records ordered readback without treating old values as confirmation.
     pub fn observe(
         &mut self,
@@ -188,7 +210,7 @@ impl DeviceSettingsState {
         if record
             .observed_at
             .is_some_and(|latest| observed_at < latest)
-            || matches!(record.state, SettingState::Pending { submitted_at, .. } if observed_at < submitted_at)
+            || matches!(record.state, SettingState::Pending { submitted_at: Some(at), .. } if observed_at < at)
         {
             return;
         }
@@ -214,7 +236,7 @@ impl DeviceSettingsState {
         if record
             .observed_at
             .is_some_and(|latest| observed_at < latest)
-            || matches!(record.state, SettingState::Pending { submitted_at, .. } if observed_at < submitted_at)
+            || matches!(record.state, SettingState::Pending { submitted_at: Some(at), .. } if observed_at < at)
         {
             return;
         }
@@ -250,13 +272,71 @@ impl DeviceSettingsState {
         submitted_at: MonotonicTimestamp,
     ) {
         let record = self.records.entry(id).or_default();
+        record.request_id = Some(
+            NEXT_REQUEST_ID
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
+                    next.checked_add(1)
+                })
+                .expect("setting request identity exhausted"),
+        );
+        record.transport_at = Some(submitted_at);
         record.confirmation_supported = confirmation_supported;
+        record.transport = Some(match outcome {
+            SettingSubmissionOutcome::Accepted => SettingTransportStatus::Accepted,
+            SettingSubmissionOutcome::Refused(_) | SettingSubmissionOutcome::Failed => {
+                SettingTransportStatus::Rejected
+            }
+        });
         record.state.submit(requested, submitted_at);
+        if self.managed_transport {
+            record.state.await_transport();
+        }
         match outcome {
             SettingSubmissionOutcome::Accepted => {}
             SettingSubmissionOutcome::Refused(reason) => record.state.refuse(reason),
             SettingSubmissionOutcome::Failed => record.state.fail(),
         }
+    }
+
+    /// Advances only the latest request through the host transport lifecycle.
+    /// Returns false for stale identities, timestamps, or invalid transitions.
+    pub fn transport(
+        &mut self,
+        id: SettingId,
+        request_id: u64,
+        status: SettingTransportStatus,
+        at: MonotonicTimestamp,
+    ) -> bool {
+        let Some(record) = self.records.get_mut(&id) else {
+            return false;
+        };
+        if record.request_id != Some(request_id)
+            || record.transport_at.is_some_and(|latest| at < latest)
+            || !matches!(record.state, SettingState::Pending { .. })
+            || !matches!(
+                (record.transport, status),
+                (
+                    Some(SettingTransportStatus::Accepted),
+                    SettingTransportStatus::Queued
+                        | SettingTransportStatus::Submitted
+                        | SettingTransportStatus::Rejected
+                ) | (
+                    Some(SettingTransportStatus::Queued),
+                    SettingTransportStatus::Submitted | SettingTransportStatus::Rejected
+                )
+            )
+        {
+            return false;
+        }
+        record.transport = Some(status);
+        record.transport_at = Some(at);
+        match status {
+            SettingTransportStatus::Submitted => record.state.transport_submitted(at),
+            SettingTransportStatus::Rejected => record.state.fail(),
+            SettingTransportStatus::Queued => {}
+            SettingTransportStatus::Accepted => unreachable!(),
+        }
+        true
     }
 
     /// Advances confirmation deadlines for readable settings only.
@@ -289,9 +369,11 @@ impl DeviceSettingsState {
                     .zip(record.evidence)
                     .map(|(current, evidence)| evidence.map_value(|()| current.value)),
                 requested: record.state.requested_value(),
+                request_id: record.request_id,
                 status: record
                     .state
                     .command_status(now, record.confirmation_supported),
+                transport: record.transport,
                 age: record
                     .observed_at
                     .filter(|_| record.state.current_readback().is_some())
@@ -476,6 +558,184 @@ mod tests {
         assert_eq!(pwm.current.unwrap().value, DeviceSettingValue::Disabled);
         assert_eq!(pwm.age.unwrap().as_milliseconds(), 10);
         assert_eq!(pwm.status, SettingCommandStatus::Idle);
+    }
+
+    #[test]
+    fn transport_evidence_is_separate_from_wheel_confirmation() {
+        let mut settings = DeviceSettingsState::default();
+        let id = SettingId::DisplayBrightness;
+        settings.submission(
+            id,
+            DeviceSettingValue::Number(1),
+            SettingSubmissionOutcome::Accepted,
+            true,
+            time(10),
+        );
+        let accepted = settings.snapshot(time(10));
+        assert_eq!(
+            accepted[0].status,
+            SettingCommandStatus::WaitingForConfirmation
+        );
+        assert_eq!(
+            accepted[0].transport,
+            Some(SettingTransportStatus::Accepted)
+        );
+
+        assert!(settings.transport(
+            id,
+            accepted[0].request_id.unwrap(),
+            SettingTransportStatus::Submitted,
+            time(20),
+        ));
+        let submitted = settings.snapshot(time(20));
+        assert_eq!(
+            submitted[0].status,
+            SettingCommandStatus::WaitingForConfirmation
+        );
+        assert_eq!(
+            submitted[0].transport,
+            Some(SettingTransportStatus::Submitted)
+        );
+    }
+
+    #[test]
+    fn managed_transport_waits_for_handoff_before_confirmation_or_timeout() {
+        for confirmation_supported in [true, false] {
+            let mut settings = DeviceSettingsState::default();
+            settings.require_managed_transport();
+            let id = SettingId::DisplayBrightness;
+            let value = DeviceSettingValue::Number(1);
+            settings.submission(
+                id,
+                value,
+                SettingSubmissionOutcome::Accepted,
+                confirmation_supported,
+                time(10),
+            );
+            let request_id = settings.snapshot(time(10))[0].request_id.unwrap();
+            for (at, status) in [
+                (3_000, SettingTransportStatus::Accepted),
+                (6_000, SettingTransportStatus::Queued),
+            ] {
+                if status == SettingTransportStatus::Queued {
+                    assert!(settings.transport(id, request_id, status, time(at)));
+                }
+                settings.observe(id, value, SettingValueSource::LiveReadback, time(at));
+                settings.tick(time(at));
+                let snapshot = settings.snapshot(time(at))[0];
+                assert_eq!(snapshot.current.unwrap().value, value);
+                assert_eq!(snapshot.requested, Some(value));
+                assert_eq!(
+                    snapshot.status,
+                    SettingCommandStatus::WaitingForConfirmation
+                );
+                assert_eq!(snapshot.transport, Some(status));
+            }
+            assert!(settings.transport(
+                id,
+                request_id,
+                SettingTransportStatus::Submitted,
+                time(10_000)
+            ));
+            settings.observe(id, value, SettingValueSource::LiveReadback, time(9_999));
+            settings.tick(time(11_999));
+            assert_eq!(
+                settings.snapshot(time(11_999))[0].status,
+                if confirmation_supported {
+                    SettingCommandStatus::WaitingForConfirmation
+                } else {
+                    SettingCommandStatus::SentWithoutConfirmation
+                }
+            );
+            let mut confirming = settings.clone();
+            confirming.observe(id, value, SettingValueSource::LiveReadback, time(11_999));
+            assert_eq!(
+                confirming.snapshot(time(11_999))[0].status,
+                if confirmation_supported {
+                    SettingCommandStatus::Confirmed
+                } else {
+                    SettingCommandStatus::SentWithoutConfirmation
+                }
+            );
+            settings.tick(time(12_000));
+            assert_eq!(
+                settings.snapshot(time(12_000))[0].status,
+                if confirmation_supported {
+                    SettingCommandStatus::TimedOut
+                } else {
+                    SettingCommandStatus::SentWithoutConfirmation
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn transport_accepts_only_forward_transitions_for_the_latest_request() {
+        use SettingTransportStatus::{Accepted, Queued, Rejected, Submitted};
+        for from in [Accepted, Queued, Submitted, Rejected] {
+            for to in [Accepted, Queued, Submitted, Rejected] {
+                let mut settings = DeviceSettingsState::default();
+                settings.require_managed_transport();
+                let id = SettingId::Headlight;
+                settings.submission(
+                    id,
+                    DeviceSettingValue::Boolean(true),
+                    SettingSubmissionOutcome::Accepted,
+                    true,
+                    time(10),
+                );
+                let request_id = settings.snapshot(time(10))[0].request_id.unwrap();
+                if from != Accepted {
+                    assert!(settings.transport(id, request_id, from, time(20)));
+                }
+                let before = settings.snapshot(time(30));
+                let allowed = matches!(
+                    (from, to),
+                    (Accepted, Queued | Submitted | Rejected) | (Queued, Submitted | Rejected)
+                );
+                assert_eq!(
+                    settings.transport(id, request_id, to, time(30)),
+                    allowed,
+                    "{from:?} -> {to:?}"
+                );
+                if !allowed {
+                    assert_eq!(settings.snapshot(time(30)), before);
+                } else if to == Rejected {
+                    assert_eq!(
+                        settings.snapshot(time(30))[0].status,
+                        SettingCommandStatus::Failed
+                    );
+                    assert_eq!(
+                        settings.snapshot(time(30))[0].requested,
+                        Some(DeviceSettingValue::Boolean(true))
+                    );
+                }
+            }
+        }
+        let mut settings = DeviceSettingsState::default();
+        settings.require_managed_transport();
+        let id = SettingId::Headlight;
+        let mut previous_id = 0;
+        for reset in [false, false, true] {
+            if reset {
+                settings.disconnect();
+            }
+            settings.submission(
+                id,
+                DeviceSettingValue::Boolean(true),
+                SettingSubmissionOutcome::Accepted,
+                true,
+                time(10),
+            );
+            let before = settings.snapshot(time(10));
+            let request_id = before[0].request_id.unwrap();
+            assert!(request_id > previous_id);
+            assert!(!settings.transport(id, previous_id, Submitted, time(20)));
+            assert!(!settings.transport(SettingId::HighBeam, request_id, Submitted, time(20)));
+            assert!(!settings.transport(id, request_id, Submitted, time(9)));
+            assert_eq!(settings.snapshot(time(10)), before);
+            previous_id = request_id;
+        }
     }
 
     #[test]

@@ -183,7 +183,7 @@ struct IdentificationProbeTransportCoordinator {
     ) -> IdentificationProbeOutcome {
         let outcome = detectionSession.beginIdentificationProbe(at: now)
         if case .writes(let writes) = outcome {
-            writes.forEach { sink.writeWithoutResponse(channel: $0.channel, bytes: $0.bytes) }
+            writes.forEach { _ = sink.writeWithoutResponse(channel: $0.channel, bytes: $0.bytes) }
         }
         return outcome
     }
@@ -200,14 +200,14 @@ struct IdentificationProbeTransportCoordinator {
         guard let linkActions = try? session.linkUp(
             at: now,
             writeLimit: TransportWriteLimitBytes(512)
-        ), let requestActions = try? session.perform(.requestTelemetry, at: now) else {
+        ) else {
             return
         }
-        (linkActions + requestActions)
+        linkActions
             .filter { $0.kind == .write }
             .forEach { action in
                 guard let channel = BluetoothUuid(action.channel) else { return }
-                sink.writeWithoutResponse(channel: channel, bytes: action.bytes)
+                _ = sink.writeWithoutResponse(channel: channel, bytes: action.bytes)
             }
     }
 }
@@ -307,6 +307,7 @@ public enum CutoutSessionTestInitialBluetoothState: Sendable {
 public struct CutoutSessionTestScript {
     public let candidate: DevicePickerDiscoveryCandidate
     public let protocolNotifications: [Data]
+    public let protocolNotificationIntervalMilliseconds: UInt64?
     public let telemetry: TelemetrySnapshot?
     public let telemetryUpdate: TelemetrySnapshot?
     public let telemetryUpdateDelayMilliseconds: UInt64
@@ -329,6 +330,7 @@ public struct CutoutSessionTestScript {
         candidate: DevicePickerDiscoveryCandidate,
         telemetry: TelemetrySnapshot?,
         protocolNotifications: [Data] = [],
+        protocolNotificationIntervalMilliseconds: UInt64? = nil,
         telemetryUpdate: TelemetrySnapshot? = nil,
         telemetryUpdateDelayMilliseconds: UInt64 = 0,
         bmsSnapshot: BmsSnapshot? = nil,
@@ -348,6 +350,7 @@ public struct CutoutSessionTestScript {
     ) {
         self.candidate = candidate
         self.protocolNotifications = protocolNotifications
+        self.protocolNotificationIntervalMilliseconds = protocolNotificationIntervalMilliseconds
         self.telemetry = telemetry
         self.telemetryUpdate = telemetryUpdate
         self.telemetryUpdateDelayMilliseconds = telemetryUpdateDelayMilliseconds
@@ -374,8 +377,10 @@ private final class CutoutSessionTestOperationSink: CoreBluetoothOperationSink {
 
     func subscribe(channel _: BluetoothUuid) {}
 
-    func writeWithoutResponse(channel: BluetoothUuid, bytes: Data) {
+    func writeWithoutResponse(channel: BluetoothUuid, bytes: Data, onReceipt: @escaping (CoreBluetoothWriteDisposition) -> Void) -> CoreBluetoothWriteDisposition {
         writes.append((channel, bytes))
+        onReceipt(.submitted)
+        return .submitted
     }
 
     func disconnect() {}
@@ -429,7 +434,6 @@ public final class CutoutSessionCore: NSObject {
     public var droppedRecordCount: Int { diagnosticLog.droppedCount }
     public private(set) var hasObservedSpeedSnapshot = false
     public private(set) var scanState = DevicePickerScanState(status: .idle, rows: [])
-    public private(set) var settingsReadback: SettingsReadback?
     public private(set) var faultHistoryReadback: FaultHistoryReadback?
     public private(set) var bmsSnapshot: BmsSnapshot?
     public private(set) var phoneLocationSnapshot = MobilePhoneLocationSnapshotDto(latestSample: nil, gpsSpeed: nil)
@@ -443,8 +447,8 @@ public final class CutoutSessionCore: NSObject {
     public var electricUnicycleModel: ElectricUnicycleModel? {
         onBleQueue { selectedModel }
     }
-    public var deviceControlsSnapshot: DeviceControlsSnapshot {
-        rustSessionState.deviceControlsSnapshot()
+    public var settings: DeviceSettings {
+        rustSessionState.settings()
     }
 
 #if DEBUG
@@ -460,8 +464,7 @@ public final class CutoutSessionCore: NSObject {
     public var onRecord: ((String) -> Void)?
     public var onCaptureEvent: ((CaptureEvent) -> Void)?
     public var onScanStateChange: ((DevicePickerScanState) -> Void)?
-    public var onDeviceControlsChange: ((DeviceControlsSnapshot) -> Void)?
-    public var onSettingsReadbackChange: ((SettingsReadback?) -> Void)?
+    public var onSettingsChange: ((DeviceSettings) -> Void)?
     public var onFaultHistoryReadbackChange: ((FaultHistoryReadback?) -> Void)?
     public var onBmsSnapshotChange: ((BmsSnapshot?) -> Void)?
     public var onPhoneLocationSnapshotChange: ((MobilePhoneLocationSnapshotDto, MonotonicMilliseconds) -> Void)?
@@ -497,8 +500,7 @@ public final class CutoutSessionCore: NSObject {
     private var isRecordOnly = false
     private var isDetectingProtocol = false
     private var subscribedCharacteristics: [BluetoothUuid: CBCharacteristic] = [:]
-    private var pendingWithoutResponseWrites: [(CBCharacteristic, Data)] = []
-    private static let maximumPendingWithoutResponseWrites = 64
+    private let pendingWithoutResponseWrites = CoreBluetoothWriteQueue(capacity: 64)
     private var pendingServiceDiscoveries = Set<CBUUID>()
     private var connectionGattInventory: [MobileGattFingerprintDto] = []
     private var suppressReconnect = false
@@ -537,10 +539,14 @@ public final class CutoutSessionCore: NSObject {
     private var testOperationSink: CutoutSessionTestOperationSink?
     private var testScriptWorkItem: DispatchWorkItem?
     private var testScriptUpdateWorkItem: DispatchWorkItem?
+    private var testProtocolNotificationTimer: DispatchSourceTimer?
     private var testScriptDidReconnect = false
 #endif
 
     deinit {
+#if DEBUG
+        testProtocolNotificationTimer?.cancel()
+#endif
         connectionDeadlineWorkItem?.cancel()
         protocolDetectionExpiryWorkItem?.cancel()
         rideMapWritePoller?.cancel()
@@ -844,6 +850,26 @@ public final class CutoutSessionCore: NSObject {
             }
         }.get()
     }
+    /// Attempts the generic trip-meter reset action for a new ride when the
+    /// selected device profile exposes that capability.
+    ///
+    /// The wheel has no completion readback for this action, so this reports only
+    /// whether the command was accepted by the live transport.
+    @discardableResult
+    public func resetTripMeterForNewRide() -> Bool {
+        onBleQueue {
+            guard let owner = liveOwner else { return false }
+            do {
+                _ = try owner.submitAction(.resetTripMeter, at: clock.now())
+                record("trip_meter_reset_on_new_ride=submitted")
+                return true
+            } catch {
+                record("trip_meter_reset_on_new_ride=failed")
+                return false
+            }
+        }
+    }
+
     public func setDeviceControlsValidation(token: ConnectionAttemptToken, authorized: Bool) throws {
         try onBleQueue {
             Result {
@@ -1010,7 +1036,7 @@ public final class CutoutSessionCore: NSObject {
             )
             let owner = makeDeviceTransport(token: token, advertisement: advertisement, sink: sink)
             liveOwner = owner
-            attachDeviceControlsCallback()
+            attachSettingsCallback()
             do {
                 let step = try owner.handleLinkUp(at: clock.now())
                 let channels = step.operations.compactMap { operation -> BluetoothUuid? in
@@ -1022,6 +1048,7 @@ public final class CutoutSessionCore: NSObject {
                     for bytes in testScript.protocolNotifications {
                         _ = try owner.handleNotification(bytes: bytes, channel: channel, at: clock.now())
                     }
+                    repeatTestProtocolNotifications(testScript, token: token, channel: channel)
                 }
             } catch {
                 setPhase(.failed(.sessionFailed(error.sessionMessage)))
@@ -1060,6 +1087,35 @@ public final class CutoutSessionCore: NSObject {
         scheduleTestTelemetryUpdateIfNeeded(testScript, token: token)
         scheduleTestReconnectIfNeeded(testScript, token: token)
         scheduleTestBluetoothLossIfNeeded(testScript, token: token)
+    }
+
+    private func repeatTestProtocolNotifications(_ script: CutoutSessionTestScript, token: ConnectionAttemptToken, channel: BluetoothUuid) {
+        testProtocolNotificationTimer?.cancel()
+        testProtocolNotificationTimer = nil
+        guard let interval = script.protocolNotificationIntervalMilliseconds, interval > 0 else { return }
+        let timer = DispatchSource.makeTimerSource(queue: bleQueue)
+        timer.schedule(deadline: .now() + .milliseconds(Int(clamping: interval)), repeating: .milliseconds(Int(clamping: interval)))
+        timer.setEventHandler { [weak self] in
+            guard let self else { return }
+            guard self.rustSessionState.verifiedConnectionAttemptIsCurrent(token: token),
+                  let owner = self.liveOwner, owner.token == token else {
+                self.testProtocolNotificationTimer?.cancel()
+                self.testProtocolNotificationTimer = nil
+                return
+            }
+            do {
+                for bytes in script.protocolNotifications {
+                    let at = self.clock.now()
+                    self.applyNotificationStep(try owner.handleNotification(bytes: bytes, channel: channel, at: at), receivedAt: at)
+                }
+            } catch {
+                self.testProtocolNotificationTimer?.cancel()
+                self.testProtocolNotificationTimer = nil
+                self.setPhase(.failed(.notificationIngestFailed(error.sessionMessage)))
+            }
+        }
+        testProtocolNotificationTimer = timer
+        timer.resume()
     }
 
     private func scheduleTestTelemetryUpdateIfNeeded(_ testScript: CutoutSessionTestScript, token: ConnectionAttemptToken) {
@@ -1178,7 +1234,7 @@ public final class CutoutSessionCore: NSObject {
         chargeEstimateProfile = nil
         vescBoardProfile = nil
         liveOwner = nil
-        pendingWithoutResponseWrites.removeAll()
+        clearPendingWithoutResponseWrites()
         deviceDetectionSession.reset()
         clearPendingBegodeProbeResponses()
         clearProtocolDetectionExpiry()
@@ -1187,7 +1243,6 @@ public final class CutoutSessionCore: NSObject {
         connectionGattInventory.removeAll()
         displayState = RideDisplayState()
         hasObservedSpeedSnapshot = false
-        clearSettingsReadback()
         clearFaultHistoryReadback()
         clearBmsSnapshot()
         clearProtocolIdentityCandidate()
@@ -1255,13 +1310,7 @@ public final class CutoutSessionCore: NSObject {
 
     private func applySessionAction(_ action: SessionAction) {
         switch action.kind {
-        case .settingsReadback:
-            if let update = action.settingsReadback {
-                settingsReadback = settingsReadback?.merging(update) ?? update
-            } else {
-                settingsReadback = nil
-            }
-            publishSettingsReadback()
+
         case .faultHistoryReadback:
             faultHistoryReadback = action.faultHistoryReadback
             publishFaultHistoryReadback()
@@ -1297,13 +1346,6 @@ public final class CutoutSessionCore: NSObject {
         }
     }
 
-    private func clearSettingsReadback() {
-        guard settingsReadback != nil else {
-            return
-        }
-        settingsReadback = nil
-        publishSettingsReadback()
-    }
 
     private func clearFaultHistoryReadback() {
         guard faultHistoryReadback != nil else {
@@ -1381,7 +1423,7 @@ public final class CutoutSessionCore: NSObject {
             guard self.connectionSnapshot.generation == generation else { return }
             self.onPhaseChange?(phase)
         }
-        publishDeviceControls(deviceControlsSnapshot)
+        publishSettings(settings)
     }
 
     func acceptsConnectionCallback(_ peripheral: CBPeripheral, token: ConnectionAttemptToken) -> Bool {
@@ -1419,7 +1461,7 @@ public final class CutoutSessionCore: NSObject {
         connectionGattInventory.removeAll()
         subscribedCharacteristics.removeAll()
         pendingServiceDiscoveries.removeAll()
-        pendingWithoutResponseWrites.removeAll()
+        clearPendingWithoutResponseWrites()
         connectionAttempt = CoreBluetoothConnectionAttempt(token: token, peripheral: peripheral, owner: self)
         if let previous, previous.state == .connected || previous.state == .connecting || previous.state == .disconnecting {
             retiringPeripheralIdentifiers.insert(previous.identifier)
@@ -1493,7 +1535,6 @@ public final class CutoutSessionCore: NSObject {
                 [pevcapAnnotation(key: "user_note", value: $0)]
             } ?? [])
         ) else { return }
-        clearSettingsReadback()
         clearFaultHistoryReadback()
         clearBmsSnapshot()
         clearProtocolIdentityCandidate()
@@ -1523,7 +1564,6 @@ public final class CutoutSessionCore: NSObject {
         _ = deviceDetectionSession.observeAdvertisement(name: advertisement.localName.map { Data($0.utf8) })
         guard startCapture(reason: "protocol-detection", annotations: ["intent=manual_use"])
         else { return }
-        clearSettingsReadback()
         clearFaultHistoryReadback()
         clearBmsSnapshot()
         clearProtocolIdentityCandidate()
@@ -1569,7 +1609,7 @@ public final class CutoutSessionCore: NSObject {
                 )
             )
             liveOwner = owner
-            attachDeviceControlsCallback()
+            attachSettingsCallback()
             setPhase(.subscribing)
             owner.recordInventory(CoreBluetoothGattInventory(services: peripheral.services ?? []))
             applyLinkUpStep(try owner.handleLinkUp(at: clock.now()))
@@ -1638,7 +1678,7 @@ public final class CutoutSessionCore: NSObject {
             record("connection_attempt_failed=\(failure)")
             clearProtocolDetectionExpiry()
             clearPendingBegodeProbeResponses()
-            pendingWithoutResponseWrites.removeAll()
+            clearPendingWithoutResponseWrites()
             liveOwner = nil
             setPhase(.discoveringServices)
             disconnect()
@@ -1668,7 +1708,7 @@ public final class CutoutSessionCore: NSObject {
             _ = rustSessionState.resetDeviceDetectionLinkForAttempt(token: token)
         }
         subscribedCharacteristics.removeAll()
-        pendingWithoutResponseWrites.removeAll()
+        clearPendingWithoutResponseWrites()
         pendingServiceDiscoveries.removeAll()
 
         guard !suppressReconnect else {
@@ -1834,23 +1874,19 @@ public final class CutoutSessionCore: NSObject {
         publishOnMain { self.onScanStateChange?(value) }
     }
 
-    private func publishSettingsReadback() {
-        let value = settingsReadback
-        publishOnMain { self.onSettingsReadbackChange?(value) }
-    }
 
-    private func publishDeviceControls(_ value: DeviceControlsSnapshot) {
+    private func publishSettings(_ value: DeviceSettings) {
         publishOnMain { [weak self] in
             guard let self, self.connectionSnapshot.revision == value.connection.revision else { return }
-            self.onDeviceControlsChange?(value)
+            self.onSettingsChange?(value)
         }
     }
 
-    private func attachDeviceControlsCallback() {
+    private func attachSettingsCallback() {
         guard let owner = liveOwner else { return }
-        owner.onControlsChange = { [weak self, weak owner] state in
+        owner.onSettingsChange = { [weak self, weak owner] state in
             guard let self, let owner, self.liveOwner === owner else { return }
-            self.publishDeviceControls(state)
+            self.publishSettings(state)
         }
     }
 
@@ -1995,12 +2031,20 @@ public final class CutoutSessionCore: NSObject {
                   self.connectionSnapshot.generation == connectionGeneration
             else { return }
             do {
+                let previousRideID = rideMapState
+                    .currentSnapshot(atMs: receivedAt.rawValue)?.rideID
                 let snapshot = try rideMapState.ensureRecordingForVerifiedConnection(
                     connectionState: self.rustSessionState,
                     token: token,
                     atMs: receivedAt.rawValue,
                 )
                 if snapshot != nil {
+                    // Admission returns the current ride for repeated notifications too.
+                    // Only reset when Rust created a different ride, so reconnects and
+                    // telemetry notifications cannot clear the same trip repeatedly.
+                    if snapshot?.rideID != previousRideID {
+                        _ = self.resetTripMeterForNewRide()
+                    }
                     _ = try rideMapState.observeTelemetry(atMs: receivedAt.rawValue)
                     if let snapshot = rideMapState.currentSnapshot(atMs: receivedAt.rawValue) {
                         self.publishRideMapSnapshot(snapshot)
@@ -2576,7 +2620,6 @@ private extension CutoutSessionCore {
     func prepareRestoredRide() -> Bool {
         guard startCapture(reason: "protocol-detection", annotations: ["intent=previously_connected"])
         else { return false }
-        clearSettingsReadback()
         clearFaultHistoryReadback()
         clearBmsSnapshot()
         clearProtocolIdentityCandidate()
@@ -3034,39 +3077,49 @@ extension CutoutSessionCore: CoreBluetoothOperationSink {
             setPhase(.failed(.missingNotifyChannel))
             return
         }
+        if characteristic.isNotifying {
+            // Protocol detection owns the initial subscription. The live owner
+            // must adopt it without waiting for a second state-change callback.
+            liveOwner?.handleNotificationStateUpdate(channel: channel, isNotifying: true, error: nil)
+            return
+        }
         peripheral?.setNotifyValue(true, for: characteristic)
     }
 
-    public func writeWithoutResponse(channel: BluetoothUuid, bytes: Data) {
+    public func writeWithoutResponse(channel: BluetoothUuid, bytes: Data, onReceipt: @escaping (CoreBluetoothWriteDisposition) -> Void) -> CoreBluetoothWriteDisposition {
         observeDetectionProbeWrite(channel: channel, bytes: bytes)
         guard let characteristic = subscribedCharacteristics[channel] else {
             setPhase(.failed(.missingWriteChannel))
-            return
+            onReceipt(.rejected)
+            return .rejected
         }
         guard characteristic.properties.contains(.writeWithoutResponse) else {
             setPhase(.failed(.missingWriteChannel))
-            return
+            onReceipt(.rejected)
+            return .rejected
         }
-        guard let peripheral else { return }
+        guard let peripheral else {
+            onReceipt(.rejected)
+            return .rejected
+        }
         guard captureFrame(
             direction: "write_without_response",
             characteristic: channel.coreBluetoothUuid,
             bytes: bytes
         ) else {
-            return
+            onReceipt(.rejected)
+            return .rejected
         }
-        guard pendingWithoutResponseWrites.isEmpty, peripheral.canSendWriteWithoutResponse else {
-            if pendingWithoutResponseWrites.count >= Self.maximumPendingWithoutResponseWrites {
-                pendingWithoutResponseWrites.removeFirst()
-                record("write_without_response_dropped=queue_full_oldest")
-            }
-            pendingWithoutResponseWrites.append((characteristic, bytes))
-            record("write_without_response_queued=\(channel.coreBluetoothUuid.uuidString) bytes=\(bytes.count)")
-            flushPendingWithoutResponseWrites()
-            return
-        }
-        peripheral.writeValue(bytes, for: characteristic, type: .withoutResponse)
-        record("write_without_response=\(channel.coreBluetoothUuid.uuidString) bytes=\(bytes.count)")
+        return pendingWithoutResponseWrites.submit(
+            canSend: { [weak self] in
+                self?.peripheral === peripheral && peripheral.canSendWriteWithoutResponse
+            },
+            write: { [weak self] in
+                peripheral.writeValue(bytes, for: characteristic, type: .withoutResponse)
+                self?.record("write_without_response=\(channel.coreBluetoothUuid.uuidString) bytes=\(bytes.count)")
+            },
+            onReceipt: onReceipt
+        )
     }
 
     public func canSubmitWithoutResponse() -> Bool {
@@ -3075,11 +3128,17 @@ extension CutoutSessionCore: CoreBluetoothOperationSink {
 
     private func flushPendingWithoutResponseWrites() {
         guard let peripheral else { return }
-        while peripheral.canSendWriteWithoutResponse, !pendingWithoutResponseWrites.isEmpty {
-            let (characteristic, bytes) = pendingWithoutResponseWrites.removeFirst()
-            peripheral.writeValue(bytes, for: characteristic, type: .withoutResponse)
-            record("write_without_response_flush=\(characteristic.uuid.uuidString) bytes=\(bytes.count)")
+        pendingWithoutResponseWrites.flush { [weak self] in
+            self?.peripheral === peripheral && peripheral.canSendWriteWithoutResponse
         }
+    }
+
+    public func peripheralIsReadyToSendWithoutResponse() {
+        flushPendingWithoutResponseWrites()
+    }
+
+    public func clearPendingWithoutResponseWrites() {
+        pendingWithoutResponseWrites.clear()
     }
 
     public func disconnect() {

@@ -1,6 +1,9 @@
 //! Native settings records and conversions; validation and lifecycle live in Rust owners.
 
-use cutout_core::{DeviceSettingSnapshot, DeviceSettingValue, SettingCommandStatus, SettingId};
+use cutout_core::{
+    DeviceSettingSnapshot, DeviceSettingValue, SettingCommandStatus, SettingId,
+    SettingTransportStatus,
+};
 use cutout_protocols::{
     DeviceSettingRequestError, DeviceSettingsSnapshot, SettingAccess, SettingControl,
     SettingDescriptor, SettingGroup, SettingUnit, SettingsRequestError,
@@ -65,6 +68,12 @@ setting_enum!(
         ChargeMode,
         PowerOffDelay
     ]
+);
+setting_enum!(
+    MobileSettingTransportStatusDto,
+    SettingTransportStatus,
+    "Host transport evidence for the most recent setting request.",
+    [Accepted, Queued, Submitted, Rejected]
 );
 setting_enum!(
     MobileSettingUnitDto,
@@ -228,6 +237,8 @@ pub struct MobileSettingDescriptorDto {
     pub control: MobileSettingControlDto,
     /// Static submission availability.
     pub access: MobileSettingAccessDto,
+    /// Write evidence, independent of availability and observed values.
+    pub write_verification: MobileVerificationStatusDto,
     /// Whether actual readback can confirm an accepted request.
     pub confirmation_supported: bool,
 }
@@ -243,6 +254,7 @@ impl From<SettingDescriptor> for MobileSettingDescriptorDto {
             order: value.order,
             control: value.control.into(),
             access: value.access.into(),
+            write_verification: value.write_verification.into(),
             confirmation_supported: value.confirmation_supported,
         }
     }
@@ -272,8 +284,12 @@ pub struct MobileSettingSnapshotDto {
     pub evidence: Option<MobileSettingEvidenceDto>,
     /// Most recent protocol submission, distinct from current readback.
     pub requested: Option<MobileSettingValueDto>,
+    /// Rust-generated identity required by host transport callbacks.
+    pub request_id: Option<u64>,
     /// Shared request lifecycle.
     pub status: MobileSettingStatusDto,
+    /// Host transport evidence, independent of wheel readback confirmation.
+    pub transport: Option<MobileSettingTransportStatusDto>,
     /// Observation age at the snapshot timestamp.
     pub age_ms: Option<u64>,
     /// Protocol guard refusal, if any.
@@ -292,7 +308,9 @@ impl From<DeviceSettingSnapshot> for MobileSettingSnapshotDto {
                 verification: measured.verification.into(),
             }),
             requested: value.requested.map(Into::into),
+            request_id: value.request_id,
             status: value.status.into(),
+            transport: value.transport.map(Into::into),
             age_ms: value.age.map(|age| age.as_milliseconds()),
             refusal: value
                 .refusal
@@ -333,9 +351,13 @@ impl From<DeviceSettingsSnapshot> for MobileDeviceSettingsSnapshotDto {
     }
 }
 
-/// Complete generic controls publication from one connection-owner observation.
+/// Complete generic settings publication from one connection-owner observation.
+///
+/// This is the UI facade. Protocol-specific descriptors, encodings, and
+/// completion policy are projected into this semantic snapshot by the Rust
+/// session owner; Swift does not select a protocol or interpret wire fields.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
-pub struct MobileDeviceControlsSnapshotDto {
+pub struct MobileSettingsDto {
     /// Attempt and readiness associated with every row.
     pub connection: MobileConnectionAttemptSnapshotDto,
     /// Whether this attempt authorizes source-backed validation writes.
@@ -394,9 +416,9 @@ impl From<DeviceSettingRequestError> for MobileDeviceSettingRequestError {
 
 #[uniffi::export]
 impl CutoutSessionStateHandle {
-    /// Reads the complete Tune presentation under the existing session lock.
+    /// Reads the complete generic settings presentation under the existing session lock.
     #[must_use]
-    pub fn device_controls_snapshot(&self) -> MobileDeviceControlsSnapshotDto {
+    pub fn settings(&self) -> MobileSettingsDto {
         let inner = self.lock_inner();
         let settings: MobileDeviceSettingsSnapshotDto = inner.settings_snapshot().into();
         let actions = inner.actions_snapshot();
@@ -411,7 +433,7 @@ impl CutoutSessionStateHandle {
                     verification: profile.usable_capacity.verification.into(),
                     charge_flow_verification: profile.charge_flow_verification.into(),
                 });
-        MobileDeviceControlsSnapshotDto {
+        MobileSettingsDto {
             connection: settings.connection,
             validation_authorized: inner.validation_authorized(),
             default_charge_profile,
@@ -472,7 +494,12 @@ impl CutoutSessionStateHandle {
         value: MobileSettingValueDto,
         monotonic_ms: u64,
     ) -> Result<MobileDeviceSessionStepDto, MobileDeviceSettingRequestError> {
-        self.lock_inner()
+        let mut inner = self.lock_inner();
+        inner
+            .session_state_mut()
+            .settings
+            .require_managed_transport();
+        inner
             .submit_setting(
                 &token.into(),
                 id.into(),
@@ -482,11 +509,62 @@ impl CutoutSessionStateHandle {
             .map(Into::into)
             .map_err(Into::into)
     }
+
+    /// Records host transport evidence for one accepted setting request.
+    pub fn mark_setting_transport(
+        &self,
+        token: MobileConnectionAttemptTokenDto,
+        id: MobileSettingIdDto,
+        request_id: u64,
+        status: MobileSettingTransportStatusDto,
+        monotonic_ms: u64,
+    ) -> bool {
+        let token = token.into();
+        let mut inner = self.lock_inner();
+        if !inner.session_state().connection.is_verified(&token) {
+            return false;
+        }
+        inner.session_state_mut().settings.transport(
+            id.into(),
+            request_id,
+            status.into(),
+            cutout_core::MonotonicTimestamp::new(monotonic_ms),
+        )
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn transport_callback_requires_verified_connection_even_when_token_is_current() {
+        let handle = CutoutSessionStateHandle::new();
+        let token = handle
+            .begin_connection_attempt("A".into(), 0)
+            .token
+            .unwrap();
+        handle.connection_link_established(token.clone());
+        handle.lock_inner().session_state_mut().settings.submission(
+            SettingId::HighBeam,
+            DeviceSettingValue::Boolean(true),
+            cutout_core::SettingSubmissionOutcome::Accepted,
+            false,
+            cutout_core::MonotonicTimestamp::new(1),
+        );
+        let before = handle.settings_snapshot();
+        let request_id = before.settings[0].request_id.unwrap();
+        assert!(handle.connection_attempt_is_current(token.clone()));
+        assert!(!handle.verified_connection_attempt_is_current(token.clone()));
+        assert!(!handle.mark_setting_transport(
+            token,
+            MobileSettingIdDto::HighBeam,
+            request_id,
+            MobileSettingTransportStatusDto::Submitted,
+            2
+        ));
+        assert_eq!(handle.settings_snapshot(), before);
+    }
 
     #[test]
     fn generic_charge_profile_follows_verified_protocol_and_attempt() {
@@ -523,19 +601,11 @@ mod tests {
             .token
             .unwrap();
         assert!(handle.configure_connection_vesc_profile(first.clone(), profile));
-        assert!(
-            handle
-                .device_controls_snapshot()
-                .default_charge_profile
-                .is_none()
-        );
+        assert!(handle.settings().default_charge_profile.is_none());
         handle.connection_link_established(first.clone());
         handle.observe_connection_notification(first.clone(), vesc_reply.clone());
         handle.resolve_device_session(first.clone(), false, 1);
-        let selected = handle
-            .device_controls_snapshot()
-            .default_charge_profile
-            .unwrap();
+        let selected = handle.settings().default_charge_profile.unwrap();
         assert_eq!(
             selected,
             MobileChargeProfileDto {
@@ -555,10 +625,7 @@ mod tests {
         aero_frame[28..30].copy_from_slice(&43_000_u16.to_be_bytes());
         handle.observe_connection_notification(second.clone(), aero_frame);
         handle.resolve_device_session(second.clone(), false, 3);
-        let selected = handle
-            .device_controls_snapshot()
-            .default_charge_profile
-            .unwrap();
+        let selected = handle.settings().default_charge_profile.unwrap();
         assert_eq!(
             selected.profile_id, 43,
             "saved VESC capacity must not overwrite an EUC profile"
@@ -572,12 +639,7 @@ mod tests {
         handle.connection_link_established(third.clone());
         handle.observe_connection_notification(third.clone(), vesc_reply);
         handle.resolve_device_session(third, false, 5);
-        assert!(
-            handle
-                .device_controls_snapshot()
-                .default_charge_profile
-                .is_none()
-        );
+        assert!(handle.settings().default_charge_profile.is_none());
     }
 
     #[test]
@@ -638,8 +700,25 @@ mod tests {
         assert_eq!(headlight.current, None);
         assert_eq!(
             headlight.status,
-            MobileSettingStatusDto::SentWithoutConfirmation
+            MobileSettingStatusDto::WaitingForConfirmation
         );
+        assert!(headlight.request_id.is_some());
+        let first_request_id = headlight.request_id.unwrap();
+        assert!(!handle.mark_setting_transport(
+            token.clone(),
+            MobileSettingIdDto::HighBeam,
+            first_request_id + 1,
+            MobileSettingTransportStatusDto::Submitted,
+            2
+        ));
+        assert!(!handle.mark_setting_transport(
+            token.clone(),
+            MobileSettingIdDto::HighBeam,
+            first_request_id,
+            MobileSettingTransportStatusDto::Accepted,
+            2
+        ));
+        assert_eq!(handle.settings_snapshot(), before);
         assert_eq!(
             handle
                 .submit_setting(
@@ -652,9 +731,84 @@ mod tests {
             MobileDeviceSettingRequestError::InvalidValue
         );
         assert_eq!(handle.settings_snapshot(), before);
+        let writable: Vec<_> = descriptors
+            .descriptors
+            .iter()
+            .filter(|descriptor| descriptor.access == MobileSettingAccessDto::Writable)
+            .collect();
+        assert_eq!(writable.len(), 18);
+        for descriptor in writable {
+            assert_eq!(
+                descriptor.write_verification,
+                MobileVerificationStatusDto::Unverified
+            );
+            let value = match &descriptor.control {
+                MobileSettingControlDto::Boolean => MobileSettingValueDto::Boolean { value: true },
+                MobileSettingControlDto::Number { minimum, .. } => {
+                    MobileSettingValueDto::Number { value: *minimum }
+                }
+                MobileSettingControlDto::Choices { choices } => {
+                    MobileSettingValueDto::Choice { id: choices[0].id }
+                }
+                MobileSettingControlDto::ReadOnly => unreachable!(),
+            };
+            let step = handle
+                .submit_setting(token.clone(), descriptor.id, value, 3)
+                .unwrap();
+            assert!(step.result.error.is_none(), "{:?}", descriptor.id);
+            let settings = handle.settings_snapshot();
+            let setting = settings
+                .settings
+                .iter()
+                .find(|item| item.id == descriptor.id)
+                .unwrap();
+            assert_eq!(setting.requested, Some(value));
+            assert_eq!(
+                setting.status,
+                MobileSettingStatusDto::WaitingForConfirmation
+            );
+            assert!(handle.mark_setting_transport(
+                token.clone(),
+                descriptor.id,
+                setting.request_id.unwrap(),
+                MobileSettingTransportStatusDto::Submitted,
+                3
+            ));
+            let submitted = handle
+                .settings_snapshot()
+                .settings
+                .into_iter()
+                .find(|item| item.id == descriptor.id)
+                .unwrap();
+            assert_eq!(
+                submitted.status,
+                if descriptor.confirmation_supported {
+                    MobileSettingStatusDto::WaitingForConfirmation
+                } else {
+                    MobileSettingStatusDto::SentWithoutConfirmation
+                }
+            );
+        }
+        assert!(!handle.settings_descriptors().validation_authorized);
+        let before_stale_callback = handle.settings_snapshot();
+        assert!(!handle.mark_setting_transport(
+            token.clone(),
+            MobileSettingIdDto::HighBeam,
+            first_request_id,
+            MobileSettingTransportStatusDto::Rejected,
+            3
+        ));
+        assert_eq!(handle.settings_snapshot(), before_stale_callback);
         assert!(handle.authorize_device_controls(token.clone()));
         assert!(handle.settings_descriptors().validation_authorized);
         let next = handle.begin_connection_attempt("B".into(), 4);
+        assert!(!handle.mark_setting_transport(
+            token.clone(),
+            MobileSettingIdDto::HighBeam,
+            first_request_id,
+            MobileSettingTransportStatusDto::Submitted,
+            5
+        ));
         assert_eq!(
             handle
                 .submit_setting(

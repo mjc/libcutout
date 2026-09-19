@@ -309,7 +309,10 @@ mod tests {
             DeviceSession::from_detection(&resolution).expect("validated family remains readable");
         assert_eq!(session.identity().model, None);
         let result = session.ingest_checked(&SessionInputDto::Command(
-            cutout_core::DeviceCommandDto::ResetTripMeter,
+            cutout_core::DeviceCommandDto::InvokeAction(cutout_core::DeviceActionRequestDto {
+                id: cutout_core::DeviceActionIdDto::ResetTripMeter,
+                step: cutout_core::DeviceActionStepDto::Invoke,
+            }),
         ));
         assert!(result.error.is_some());
         assert!(

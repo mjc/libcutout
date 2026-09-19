@@ -76,6 +76,8 @@ pub struct MobileDeviceActionDescriptorDto {
     pub role: MobileDeviceActionRoleDto,
     /// Static protocol availability.
     pub access: MobileDeviceActionAccessDto,
+    /// Write evidence, independent of availability and reported progress.
+    pub write_verification: MobileVerificationStatusDto,
     /// Available completion evidence.
     pub confirmation: MobileDeviceActionConfirmationDto,
 }
@@ -88,6 +90,7 @@ impl From<ActionDescriptor> for MobileDeviceActionDescriptorDto {
             order: value.order,
             role: value.role.into(),
             access: value.access.into(),
+            write_verification: value.write_verification.into(),
             confirmation: value.confirmation.into(),
         }
     }
@@ -322,15 +325,13 @@ mod tests {
             .find(|item| item.id == MobileDeviceActionIdDto::ResetTripMeter)
             .unwrap();
         assert_eq!(reset.confirmation, MobileDeviceActionConfirmationDto::None);
-        let before_refusal = handle.actions_snapshot();
+        assert_eq!(reset.access, MobileDeviceActionAccessDto::Available);
+        assert_eq!(reset.role, MobileDeviceActionRoleDto::Destructive);
         assert_eq!(
-            handle
-                .submit_action(token.clone(), MobileDeviceActionIdDto::ResetTripMeter, 3)
-                .unwrap_err(),
-            MobileDeviceActionSubmissionError::Unverified
+            reset.write_verification,
+            MobileVerificationStatusDto::Unverified
         );
-        assert_eq!(handle.actions_snapshot(), before_refusal);
-        assert!(handle.authorize_device_controls(token.clone()));
+        assert!(!handle.settings_descriptors().validation_authorized);
         handle
             .submit_action(token.clone(), MobileDeviceActionIdDto::ResetTripMeter, 3)
             .unwrap();

@@ -436,16 +436,18 @@ final class CutoutSessionCoreTests: XCTestCase {
         let first = try XCTUnwrap(oldToken)
         let current = try XCTUnwrap(newToken)
         XCTAssertNotEqual(first.generation, current.generation)
-        let before = core.deviceControlsSnapshot
+        let before = core.settings
         XCTAssertThrowsError(try core.submitDeviceSetting(token: first, id: .highBeam, value: .boolean(value: true))) {
             XCTAssertEqual($0 as? DeviceSettingSubmissionError, .ConnectionUnavailable)
         }
-        XCTAssertEqual(core.deviceControlsSnapshot.settings, before.settings)
-        XCTAssertThrowsError(try core.submitDeviceSetting(token: current, id: .pwmTiltback, value: .number(value: 80))) {
-            XCTAssertEqual($0 as? DeviceSettingSubmissionError, .Unverified)
+        XCTAssertEqual(core.settings.settings, before.settings)
+        XCTAssertThrowsError(try core.submitDeviceSetting(token: current, id: .pwmTiltback, value: .number(value: 101))) {
+            XCTAssertEqual($0 as? DeviceSettingSubmissionError, .InvalidValue)
         }
+        try core.submitDeviceSetting(token: current, id: .pwmTiltback, value: .number(value: 80))
+        XCTAssertFalse(core.settings.validationAuthorized)
         try core.submitDeviceSetting(token: current, id: .highBeam, value: .boolean(value: true))
-        let highBeam = try XCTUnwrap(core.deviceControlsSnapshot.settings.first { $0.id == .highBeam })
+        let highBeam = try XCTUnwrap(core.settings.setting(for: .highBeam))
         XCTAssertEqual(highBeam.requested, .boolean(value: true))
         XCTAssertEqual(highBeam.status, .sentWithoutConfirmation)
         XCTAssertNil(highBeam.current)
@@ -1576,742 +1578,6 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertEqual(core.displayState.lastUpdate, MonotonicMilliseconds(99))
     }
 
-    func testVescOnewheelCoreBluetoothSessionSubscribesAndRequestsTelemetryOnLinkUp() throws {
-        let session = CoreBluetoothSession.vescOnewheel()
-        let runner = CoreBluetoothSessionRunner(
-            session: session,
-            writeLimit: TransportWriteLimitBytes(20)
-        )
-
-        let step = try runner.handle(.linkUp(at: MonotonicMilliseconds(7)))
-
-        assertVescTelemetryRequests(step.operations, includesSubscribe: true)
-        XCTAssertNil(step.snapshot?.speed)
-    }
-
-    func testVescOnewheelCoreBluetoothSessionRequestsTelemetryWithReadOnlyCommand() throws {
-        let session = CoreBluetoothSession.vescOnewheel()
-        let runner = CoreBluetoothSessionRunner(
-            session: session,
-            writeLimit: TransportWriteLimitBytes(20)
-        )
-
-        _ = try runner.handle(.linkUp(at: MonotonicMilliseconds(0)))
-        let step = try runner.handle(.command(.requestTelemetry, at: MonotonicMilliseconds(111)))
-
-        assertVescTelemetryRequests(step.operations, includesSubscribe: false)
-        XCTAssertNil(step.snapshot?.speed)
-    }
-
-    func testEucLiveOwnerWritesTypedHeadlightCommands() throws {
-        let sink = RecordingOperationSink()
-        let owner = CoreBluetoothLiveSessionOwner(
-            session: try .electricUnicycle(model: .falcon),
-            advertisement: CoreBluetoothAdvertisement(
-                peripheralIdentifier: CoreBluetoothPeripheralIdentifier("headlight-test"),
-                localName: ElectricUnicycleModel.falcon.displayName,
-                advertisedServiceUuids: []
-            ),
-            writeLimit: TransportWriteLimitBytes(20),
-            operationSink: sink
-        )
-
-        _ = try owner.handleCommand(.setLights(.on), at: MonotonicMilliseconds(1))
-
-        XCTAssertEqual(sink.writes, [Data("Q".utf8)])
-    }
-
-    func testFalconLiveOwnerTimesOutPendingHeadlightOnTick() throws {
-        let sink = RecordingOperationSink()
-        let owner = CoreBluetoothLiveSessionOwner(
-            session: try .electricUnicycle(model: .falcon),
-            advertisement: CoreBluetoothAdvertisement(
-                peripheralIdentifier: CoreBluetoothPeripheralIdentifier("headlight-timeout-test"),
-                localName: ElectricUnicycleModel.aero.displayName,
-                advertisedServiceUuids: []
-            ),
-            writeLimit: TransportWriteLimitBytes(20),
-            operationSink: sink
-        )
-
-        _ = try owner.handleCommand(.setLights(.on), at: MonotonicMilliseconds(1))
-        XCTAssertEqual(owner.headlightState?.kind, .pending)
-
-        _ = try owner.handleTick(at: MonotonicMilliseconds(2_010))
-
-        XCTAssertEqual(owner.headlightState?.kind, .timedOut)
-    }
-
-    func testLiveOwnerPublishesSettingStateAfterCommandAndTick() throws {
-        let sink = RecordingOperationSink()
-        let owner = CoreBluetoothLiveSessionOwner(
-            session: try .electricUnicycle(model: .falcon),
-            advertisement: CoreBluetoothAdvertisement(
-                peripheralIdentifier: CoreBluetoothPeripheralIdentifier("settings-state-test"),
-                localName: ElectricUnicycleModel.falcon.displayName,
-                advertisedServiceUuids: []
-            ),
-            writeLimit: TransportWriteLimitBytes(20),
-            operationSink: sink
-        )
-        var snapshots = [EucSettingsState]()
-        owner.onSettingsStateChange = { snapshots.append($0) }
-
-        _ = try owner.handleCommand(.setLights(.on), at: MonotonicMilliseconds(1))
-        XCTAssertEqual(snapshots.last?.headlight.kind, .pending)
-
-        _ = try owner.handleTick(at: MonotonicMilliseconds(2_010))
-        XCTAssertEqual(snapshots.last?.headlight.kind, .timedOut)
-
-        _ = try owner.handleTick(at: MonotonicMilliseconds(2_011))
-        XCTAssertEqual(snapshots.count, 2)
-    }
-
-    func testFalconHeadlightCommandReachesOperationSink() throws {
-        let sink = RecordingOperationSink()
-        let owner = CoreBluetoothLiveSessionOwner(
-            session: try .electricUnicycle(model: .falcon),
-            advertisement: CoreBluetoothAdvertisement(
-                peripheralIdentifier: CoreBluetoothPeripheralIdentifier("falcon-headlight-test"),
-                localName: ElectricUnicycleModel.falcon.displayName,
-                advertisedServiceUuids: []
-            ),
-            writeLimit: TransportWriteLimitBytes(20),
-            operationSink: sink
-        )
-
-        _ = try owner.handleCommand(.setLights(.off), at: MonotonicMilliseconds(1))
-
-        XCTAssertEqual(sink.writes, [Data("E".utf8)])
-    }
-
-    func testElectricUnicycleSessionExposesValidationAwareSettingCapabilities() throws {
-        let aero = try ElectricUnicycleSession(model: .aero)
-        let falcon = try ElectricUnicycleSession(model: .falcon)
-
-        XCTAssertEqual(aero.settingsCapabilities.headlight, .supported)
-        XCTAssertEqual(aero.settingsCapabilities.aeroHighBeam, .supported)
-        XCTAssertEqual(falcon.settingsCapabilities.aeroHighBeam, .unsupported)
-        XCTAssertEqual(falcon.settingsCapabilities.headlight, .supported)
-        XCTAssertEqual(aero.settingsCapabilities.taillight, .unsupported)
-        XCTAssertEqual(aero.settingsCapabilities.pedalMode, .unverified)
-        XCTAssertEqual(aero.settingsCapabilities.rollAngle, .unsupported)
-        XCTAssertEqual(falcon.settingsCapabilities.rollAngle, .supported)
-        XCTAssertEqual(aero.settingsCapabilities.accelerationAssist, .unsupported)
-        XCTAssertEqual(aero.settingsCapabilities.begodeMaxSpeed, .unsupported)
-        XCTAssertEqual(falcon.settingsCapabilities.begodeMaxSpeed, .supported)
-        XCTAssertEqual(falcon.settingsCapabilities.begodeBeeperVolume, .supported)
-        XCTAssertEqual(falcon.settingsCapabilities.begodeLedMode, .supported)
-    }
-
-    func testAeroPedalHardnessUsesTheDocumentedNumericRange() {
-        XCTAssertEqual(AeroPedalHardness(percent: 0)?.percent, 0)
-        XCTAssertEqual(AeroPedalHardness(percent: 75)?.percent, 75)
-        XCTAssertEqual(AeroPedalHardness(percent: 100)?.percent, 100)
-        XCTAssertNil(AeroPedalHardness(percent: 101))
-        XCTAssertNil(AeroPedalHardness(percent: 255))
-    }
-
-    func testAdditionalAeroValueRangesAndDefaultWriteRefusals() throws {
-        XCTAssertNotNil(AeroDisplayBacklight(percent: 0))
-        XCTAssertNotNil(AeroDisplayBacklight(percent: 100))
-        XCTAssertNil(AeroDisplayBacklight(percent: 101))
-        XCTAssertNotNil(AeroBeeperVolume(percent: 0))
-        XCTAssertNotNil(AeroBeeperVolume(percent: 100))
-        XCTAssertNil(AeroBeeperVolume(percent: 101))
-        XCTAssertNotNil(AeroDynamicAssist(percent: 0))
-        XCTAssertNotNil(AeroDynamicAssist(percent: 100))
-        XCTAssertNil(AeroDynamicAssist(percent: 101))
-        XCTAssertNotNil(AeroPedalDipCompensation(percent: 0))
-        XCTAssertNotNil(AeroPedalDipCompensation(percent: 100))
-        XCTAssertNil(AeroPedalDipCompensation(percent: 101))
-        XCTAssertNotNil(AeroLateralTiltLimit(degrees: 35))
-        XCTAssertNotNil(AeroLateralTiltLimit(degrees: 75))
-        XCTAssertNil(AeroLateralTiltLimit(degrees: 76))
-        XCTAssertNil(AeroLateralTiltLimit(degrees: 34))
-        XCTAssertNotNil(AeroVoltageCorrection(tenthsOfPercent: -15))
-        XCTAssertNotNil(AeroVoltageCorrection(tenthsOfPercent: 15))
-        XCTAssertNil(AeroVoltageCorrection(tenthsOfPercent: 16))
-        XCTAssertNil(AeroVoltageCorrection(tenthsOfPercent: -16))
-        XCTAssertEqual(AeroMaxChargeVoltageRaw(raw: 0)?.raw, 0)
-        XCTAssertEqual(AeroMaxChargeVoltageRaw(raw: 70)?.raw, 70)
-        XCTAssertNil(AeroMaxChargeVoltageRaw(raw: 71))
-        XCTAssertNotNil(AeroSpeedSetting(kilometresPerHour: 10))
-        XCTAssertNotNil(AeroSpeedSetting(kilometresPerHour: 200))
-        XCTAssertNil(AeroSpeedSetting(kilometresPerHour: 9))
-        XCTAssertNil(AeroSpeedSetting(kilometresPerHour: 201))
-
-        let session = try ElectricUnicycleSession(model: .aero)
-        let displayBacklight = try XCTUnwrap(AeroDisplayBacklight(percent: 75))
-        let beeperVolume = try XCTUnwrap(AeroBeeperVolume(percent: 75))
-        let dynamicAssist = try XCTUnwrap(AeroDynamicAssist(percent: 75))
-        let pedalDipCompensation = try XCTUnwrap(AeroPedalDipCompensation(percent: 75))
-        let lateralTiltLimit = try XCTUnwrap(AeroLateralTiltLimit(degrees: 55))
-        let voltageCorrection = try XCTUnwrap(AeroVoltageCorrection(tenthsOfPercent: -5))
-        let maxChargeVoltageRaw = try XCTUnwrap(AeroMaxChargeVoltageRaw(raw: 46))
-        let commands: [DeviceCommand] = [
-            .setAeroDisplayBacklight(displayBacklight),
-            .setAeroBeeperVolume(beeperVolume),
-            .setAeroDynamicAssist(dynamicAssist),
-            .setAeroPedalDipCompensation(pedalDipCompensation),
-            .setAeroLateralTiltLimit(lateralTiltLimit),
-            .setAeroVoltageCorrection(voltageCorrection),
-            .setAeroMaxChargeVoltageRaw(maxChargeVoltageRaw),
-            .setAeroWheelUnits(.imperial),
-        ]
-        for command in commands {
-            XCTAssertThrowsError(try session.perform(command, at: MonotonicMilliseconds(10))) { error in
-                XCTAssertEqual(error as? CutoutSessionError, .commandRefused(command, .unsupportedCommand))
-            }
-        }
-        XCTAssertEqual(session.aeroDisplayBacklightState.kind, .refused)
-        XCTAssertEqual(session.aeroDisplayBacklightState.requested, displayBacklight)
-        XCTAssertEqual(session.aeroBeeperVolumeState.kind, .refused)
-        XCTAssertEqual(session.aeroBeeperVolumeState.requested, beeperVolume)
-        XCTAssertEqual(session.aeroDynamicAssistState.kind, .refused)
-        XCTAssertEqual(session.aeroDynamicAssistState.requested, dynamicAssist)
-        XCTAssertEqual(session.aeroPedalDipCompensationState.kind, .refused)
-        XCTAssertEqual(session.aeroPedalDipCompensationState.requested, pedalDipCompensation)
-        XCTAssertEqual(session.aeroLateralTiltLimitState.kind, .refused)
-        XCTAssertEqual(session.aeroLateralTiltLimitState.requested, lateralTiltLimit)
-        XCTAssertEqual(session.aeroVoltageCorrectionState.kind, .refused)
-        XCTAssertEqual(session.aeroVoltageCorrectionState.requested, voltageCorrection)
-        XCTAssertEqual(session.aeroMaxChargeVoltageRawState.kind, .refused)
-        XCTAssertEqual(session.aeroMaxChargeVoltageRawState.requested, maxChargeVoltageRaw)
-        XCTAssertEqual(session.aeroWheelUnitsState.kind, .refused)
-        XCTAssertEqual(session.aeroWheelUnitsState.requested, .imperial)
-    }
-    func testAeroPwmMarginMatchesRustDomain() {
-        XCTAssertEqual(AeroPwmPercent(percent: 0)?.percent, 0)
-        XCTAssertEqual(AeroPwmPercent(percent: 70)?.percent, 70)
-        XCTAssertNil(AeroPwmPercent(percent: 71))
-        XCTAssertNil(AeroPwmPercent(percent: 100))
-    }
-
-    func testBegodeWSettingValuesUseDocumentedRanges() {
-        XCTAssertEqual(BegodeMaxSpeed(kilometresPerHour: 0)?.kilometresPerHour, 0)
-        XCTAssertEqual(BegodeMaxSpeed(kilometresPerHour: 99)?.kilometresPerHour, 99)
-        XCTAssertNil(BegodeMaxSpeed(kilometresPerHour: 100))
-
-        XCTAssertEqual(BegodeBeeperVolume(level: 1)?.level, 1)
-        XCTAssertEqual(BegodeBeeperVolume(level: 9)?.level, 9)
-        XCTAssertNil(BegodeBeeperVolume(level: 0))
-        XCTAssertNil(BegodeBeeperVolume(level: 10))
-
-        XCTAssertEqual(BegodeLedMode(mode: 0)?.mode, 0)
-        XCTAssertEqual(BegodeLedMode(mode: 9)?.mode, 9)
-        XCTAssertNil(BegodeLedMode(mode: 10))
-    }
-
-    func testUnverifiedEucSettingCommandsAreTypedRefusals() throws {
-        let session = try ElectricUnicycleSession(model: .aero)
-        let commands: [DeviceCommand] = [
-            .setAccelerationAssist(.enabled),
-            .setTaillight(.on),
-        ]
-
-        for command in commands {
-            XCTAssertThrowsError(
-                try session.perform(command, at: MonotonicMilliseconds(1))
-            ) { error in
-                XCTAssertEqual(
-                    error as? CutoutSessionError,
-                    .commandRefused(command, .unsupportedCommand)
-                )
-            }
-        }
-    }
-
-    func testElectricUnicycleSessionExposesRustOwnedLightState() throws {
-        let session = try ElectricUnicycleSession(model: .falcon)
-
-        XCTAssertEqual(session.headlightState.kind, .unknown)
-        XCTAssertEqual(session.aeroHighBeamState.kind, .unknown)
-
-        _ = try session.perform(.setLights(.on), at: MonotonicMilliseconds(10))
-
-        XCTAssertEqual(session.headlightState.kind, .pending)
-        XCTAssertEqual(session.headlightState.requested, .on)
-        XCTAssertEqual(session.headlightState.submittedAt, MonotonicMilliseconds(10))
-
-        XCTAssertThrowsError(
-            try session.perform(.setAeroHighBeam(.on), at: MonotonicMilliseconds(10))
-        )
-        XCTAssertEqual(session.aeroHighBeamState.kind, .refused)
-        XCTAssertEqual(session.aeroHighBeamState.requested, .on)
-    }
-
-    func testElectricUnicycleSessionExposesAeroSettingStates() throws {
-        let session = try ElectricUnicycleSession(model: .aero)
-        let speed = try XCTUnwrap(AeroSpeedSetting(kilometresPerHour: 30))
-        let pwm = try XCTUnwrap(AeroPwmPercent(percent: 64))
-        let angle = try XCTUnwrap(AeroAngleAdjustment(tenthsOfDegree: -36))
-
-        XCTAssertEqual(session.aeroTiltbackSpeedState.kind, .unknown)
-        XCTAssertEqual(session.aeroPwmPercentState.kind, .unknown)
-        XCTAssertEqual(session.aeroAlarmSpeedState.kind, .unknown)
-        XCTAssertEqual(session.aeroAngleAdjustmentState.kind, .unknown)
-
-        for command in [
-            DeviceCommand.setAeroTiltbackSpeed(speed),
-            .setAeroPwmPercent(pwm),
-            .setAeroAlarmSpeed(speed),
-            .setAeroAngleAdjustment(angle),
-        ] {
-            XCTAssertThrowsError(try session.perform(command, at: MonotonicMilliseconds(10)))
-        }
-
-        XCTAssertEqual(session.aeroTiltbackSpeedState.kind, .refused)
-        XCTAssertEqual(session.aeroTiltbackSpeedState.requested, speed)
-        XCTAssertEqual(session.aeroPwmPercentState.kind, .refused)
-        XCTAssertEqual(session.aeroPwmPercentState.requested, pwm)
-        XCTAssertEqual(session.aeroAlarmSpeedState.kind, .refused)
-        XCTAssertEqual(session.aeroAlarmSpeedState.requested, speed)
-        XCTAssertEqual(session.aeroAngleAdjustmentState.kind, .refused)
-        XCTAssertEqual(session.aeroAngleAdjustmentState.requested, angle)
-    }
-
-    func testElectricUnicycleSessionRefusesUnverifiedPedalModeBeforeTransport() throws {
-        let session = try ElectricUnicycleSession(model: .aero)
-
-        XCTAssertEqual(session.pedalModeState.kind, .unknown)
-        XCTAssertThrowsError(
-            try session.perform(.setPedalMode(.hard), at: MonotonicMilliseconds(10))
-        ) { error in
-            XCTAssertEqual(
-                error as? CutoutSessionError,
-                .commandRefused(.setPedalMode(.hard), .unsupportedCommand)
-            )
-        }
-        XCTAssertEqual(session.pedalModeState.kind, .refused)
-        XCTAssertEqual(session.pedalModeState.requested, .hard)
-        XCTAssertEqual(session.pedalModeState.refusalReason, .unsupportedCommand)
-    }
-
-    func testFalconRollAngleWriteIsGuardedUntilArmed() throws {
-        let session = try ElectricUnicycleSession(model: .falcon)
-
-        XCTAssertThrowsError(
-            try session.perform(.setRollAngle(.high), at: MonotonicMilliseconds(10))
-        ) { error in
-            XCTAssertEqual(
-                error as? CutoutSessionError,
-                .commandRefused(.setRollAngle(.high), .missingArm)
-            )
-        }
-
-        XCTAssertEqual(session.rollAngleState.kind, .refused)
-        XCTAssertEqual(session.rollAngleState.requested, .high)
-        XCTAssertEqual(session.rollAngleState.refusalReason, .missingArm)
-    }
-
-    func testElectricUnicycleSessionExposesRustOwnedUnverifiedSettingStates() throws {
-        let session = try ElectricUnicycleSession(model: .aero)
-
-        XCTAssertThrowsError(
-            try session.perform(.setAccelerationAssist(.enabled), at: MonotonicMilliseconds(10))
-        )
-        XCTAssertEqual(session.accelerationAssistState.kind, .refused)
-        XCTAssertEqual(session.accelerationAssistState.requested, .enabled)
-        XCTAssertEqual(session.accelerationAssistState.refusalReason, .unsupportedCommand)
-
-        XCTAssertThrowsError(
-            try session.perform(.setTaillight(.on), at: MonotonicMilliseconds(11))
-        )
-        XCTAssertEqual(session.taillightState.kind, .refused)
-        XCTAssertEqual(session.taillightState.requested, .on)
-        XCTAssertEqual(session.taillightState.refusalReason, .unsupportedCommand)
-    }
-
-    func testVescLiveOwnerSubscribesBeforeWritingRequests() throws {
-        let sink = RecordingOperationSink()
-        let owner = CoreBluetoothLiveSessionOwner(
-            session: .vescOnewheel(),
-            advertisement: CoreBluetoothAdvertisement(
-                peripheralIdentifier: CoreBluetoothPeripheralIdentifier("ios-local-vesc"),
-                localName: "Floatwheel Atom",
-                advertisedServiceUuids: []
-            ),
-            writeLimit: TransportWriteLimitBytes(20),
-            operationSink: sink
-        )
-
-        _ = try owner.handleLinkUp(at: MonotonicMilliseconds(1))
-
-        XCTAssertEqual(sink.events, [.subscribe])
-
-        owner.handleNotificationStateUpdate(
-            channel: .vescNordicUartNotify,
-            isNotifying: true,
-            error: nil
-        )
-        XCTAssertEqual(sink.events, [.subscribe, .write, .write, .write])
-    }
-
-    func testVescLiveOwnerRetriesTelemetryAfterLinkUp() throws {
-        let sink = RecordingOperationSink()
-        let executionQueue = DispatchQueue(label: "cutout.vesc-live-owner.retry")
-        let owner = CoreBluetoothLiveSessionOwner(
-            session: .vescOnewheel(),
-            advertisement: CoreBluetoothAdvertisement(
-                peripheralIdentifier: CoreBluetoothPeripheralIdentifier("ios-local-vesc"),
-                localName: "Floatwheel Atom",
-                advertisedServiceUuids: []
-            ),
-            writeLimit: TransportWriteLimitBytes(20),
-            operationSink: sink,
-            retryCommandOnLinkUp: .requestTelemetry,
-            retryDelay: .milliseconds(10),
-            executionQueue: executionQueue
-        )
-
-        _ = try owner.handleLinkUp(at: MonotonicMilliseconds(1))
-        XCTAssertEqual(sink.writes.count, 0)
-        owner.handleNotificationStateUpdate(
-            channel: .vescNordicUartNotify,
-            isNotifying: true,
-            error: nil
-        )
-
-        waitForWrites(9, in: sink)
-
-        XCTAssertGreaterThanOrEqual(sink.writes.count, 9)
-        XCTAssertEqual(sink.writes.count % 3, 0)
-        XCTAssertEqual(sink.writes.prefix(3), sink.writes.suffix(3))
-    }
-
-    func testVescLiveOwnerUsesCurrentMonotonicTimeForTelemetryRetry() throws {
-        let sink = RecordingOperationSink()
-        let executionQueue = DispatchQueue(label: "cutout.vesc-live-owner.monotonic")
-        let owner = CoreBluetoothLiveSessionOwner(
-            session: .vescOnewheel(),
-            advertisement: CoreBluetoothAdvertisement(
-                peripheralIdentifier: CoreBluetoothPeripheralIdentifier("ios-local-vesc"),
-                localName: "Floatwheel Atom",
-                advertisedServiceUuids: []
-            ),
-            writeLimit: TransportWriteLimitBytes(20),
-            operationSink: sink,
-            retryCommandOnLinkUp: .requestTelemetry,
-            maximumRetryAttempts: 1,
-            retryDelay: .milliseconds(10),
-            executionQueue: executionQueue,
-            monotonicClock: MonotonicClock {
-                MonotonicMilliseconds(41)
-            }
-        )
-
-        _ = try owner.handleLinkUp(at: MonotonicMilliseconds(1))
-        owner.handleNotificationStateUpdate(
-            channel: .vescNordicUartNotify,
-            isNotifying: true,
-            error: nil
-        )
-
-        let retryFinished = expectation(description: "VESC telemetry retry uses current monotonic time")
-        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(30)) {
-            retryFinished.fulfill()
-        }
-        wait(for: [retryFinished], timeout: 1.0)
-
-        XCTAssertTrue(owner.records.contains(
-            .command(.requestTelemetry, at: MonotonicMilliseconds(41))
-        ))
-    }
-
-    func testVescLiveOwnerBoundsTelemetryRetries() throws {
-        let sink = RecordingOperationSink()
-        let executionQueue = DispatchQueue(label: "cutout.vesc-live-owner.bounds")
-        let owner = CoreBluetoothLiveSessionOwner(
-            session: .vescOnewheel(),
-            advertisement: CoreBluetoothAdvertisement(
-                peripheralIdentifier: CoreBluetoothPeripheralIdentifier("ios-local-vesc"),
-                localName: "Floatwheel Atom",
-                advertisedServiceUuids: []
-            ),
-            writeLimit: TransportWriteLimitBytes(20),
-            operationSink: sink,
-            retryCommandOnLinkUp: .requestTelemetry,
-            maximumRetryAttempts: 2,
-            retryDelay: .milliseconds(10),
-            executionQueue: executionQueue
-        )
-
-        _ = try owner.handleLinkUp(at: MonotonicMilliseconds(1))
-        owner.handleNotificationStateUpdate(
-            channel: .vescNordicUartNotify,
-            isNotifying: true,
-            error: nil
-        )
-
-        waitForWrites(9, in: sink)
-
-        XCTAssertEqual(sink.writes.count, 9)
-    }
-
-
-    func testVescLiveOwnerRetriesAfterNonRealtimeNotification() throws {
-        let sink = RecordingOperationSink()
-        let executionQueue = DispatchQueue(label: "cutout.vesc-live-owner.notification")
-        let owner = CoreBluetoothLiveSessionOwner(
-            session: .vescOnewheel(),
-            advertisement: CoreBluetoothAdvertisement(
-                peripheralIdentifier: CoreBluetoothPeripheralIdentifier("ios-local-vesc"),
-                localName: "Floatwheel Atom",
-                advertisedServiceUuids: []
-            ),
-            writeLimit: TransportWriteLimitBytes(20),
-            operationSink: sink,
-            retryCommandOnLinkUp: .requestTelemetry,
-            retryDelay: .milliseconds(10),
-            executionQueue: executionQueue
-        )
-
-        _ = try owner.handleLinkUp(at: MonotonicMilliseconds(1))
-        owner.handleNotificationStateUpdate(
-            channel: .vescNordicUartNotify,
-            isNotifying: true,
-            error: nil
-        )
-        _ = try owner.handleNotification(
-            bytes: Data([0x01]),
-            channel: .bluetooth16(0xffff),
-            at: MonotonicMilliseconds(2)
-        )
-
-        waitForWrites(9, in: sink)
-
-        XCTAssertGreaterThanOrEqual(sink.writes.count, 9)
-    }
-
-    func testSettingsReadbackUpdatesCurrentSessionStateUntilDisconnect() {
-        let core = CutoutSessionCore()
-        let readback = SettingsReadback(entries: [
-            SettingsReadbackEntry(
-                field: RawSettingField(id: 42, value: 1_234),
-                source: .reported,
-                quality: .known,
-                verification: .sourceVerified
-            ),
-        ], availability: .available)
-        var observedReadbacks: [SettingsReadback?] = []
-        core.onSettingsReadbackChange = { observedReadbacks.append($0) }
-
-        let action = SessionAction.withSettingsReadback(readback)
-        core.applyNotificationStep(
-            CoreBluetoothSessionStep(operations: [], snapshot: nil, actions: [action]),
-            receivedAt: MonotonicMilliseconds(42)
-        )
-
-        XCTAssertEqual(core.settingsReadback, readback)
-        XCTAssertEqual(core.settingsReadback?.availability, .available)
-        XCTAssertEqual(observedReadbacks, [readback])
-
-        core.disconnectAndScan()
-
-        XCTAssertNil(core.settingsReadback)
-        XCTAssertEqual(observedReadbacks, [readback, nil])
-    }
-
-    func testSettingsReadbackMergesBoundedVeteranChunksWithoutDroppingFields() {
-        let core = CutoutSessionCore()
-        let firstChunk = SettingsReadback(entries: [
-            SettingsReadbackEntry(
-                field: RawSettingField(id: 0x0014, value: 30),
-                source: .reported,
-                quality: .known,
-                verification: .hardwareVerified
-            ),
-            SettingsReadbackEntry(
-                field: RawSettingField(id: 0x0016, value: 1),
-                source: .reported,
-                quality: .known,
-                verification: .hardwareVerified
-            ),
-            SettingsReadbackEntry(
-                field: RawSettingField(id: 0x0018, value: 116),
-                source: .reported,
-                quality: .known,
-                verification: .hardwareVerified
-            ),
-            SettingsReadbackEntry(
-                field: RawSettingField(id: 0x001a, value: 420),
-                source: .reported,
-                quality: .known,
-                verification: .hardwareVerified
-            ),
-        ])
-        let secondChunk = SettingsReadback(entries: [
-            SettingsReadbackEntry(
-                field: RawSettingField(id: 0x001e, value: 1_920),
-                source: .reported,
-                quality: .known,
-                verification: .hardwareVerified
-            ),
-        ], eucGarageSettings: EucGarageSettingsSnapshot(
-            pedalMode: .available(.rawMode(1_920))
-        ))
-
-        core.applyNotificationStep(
-            CoreBluetoothSessionStep(operations: [], snapshot: nil, actions: [
-                .withSettingsReadback(firstChunk),
-                .withSettingsReadback(secondChunk),
-            ]),
-            receivedAt: MonotonicMilliseconds(42)
-        )
-
-        XCTAssertEqual(
-            core.settingsReadback?.entries.map(\.field.id),
-            [0x0014, 0x0016, 0x0018, 0x001a, 0x001e]
-        )
-        XCTAssertEqual(core.settingsReadback?.entries.last?.field.value, 1_920)
-        XCTAssertEqual(core.settingsReadback?.eucGarageSettings.pedalMode, .available(.rawMode(1_920)))
-    }
-
-    func testUnavailableSettingsChunkDoesNotDowngradeKnownReadback() {
-        let core = CutoutSessionCore()
-        let known = SettingsReadback(entries: [
-            SettingsReadbackEntry(
-                field: RawSettingField(id: 0x001e, value: 1),
-                source: .reported,
-                quality: .known,
-                verification: .hardwareVerified
-            ),
-        ])
-
-        core.applyNotificationStep(
-            CoreBluetoothSessionStep(operations: [], snapshot: nil, actions: [
-                .withSettingsReadback(known),
-                .withSettingsReadback(SettingsReadback(entries: [], availability: .unavailable)),
-            ]),
-            receivedAt: MonotonicMilliseconds(42)
-        )
-
-        XCTAssertEqual(core.settingsReadback, known)
-    }
-
-    func testNonAvailableSettingsReadbackDoesNotCarryRawEntries() {
-        let readback = SettingsReadback(entries: [
-            SettingsReadbackEntry(
-                field: RawSettingField(id: 42, value: 1_234),
-                source: .reported,
-                quality: .known,
-                verification: .sourceVerified
-            ),
-        ], availability: .unsupported)
-
-        XCTAssertEqual(readback.availability, .unsupported)
-        XCTAssertTrue(readback.entries.isEmpty)
-        XCTAssertEqual(
-            readback.eucGarageSettings,
-            EucGarageSettingsSnapshot(
-                beepMargin: .unsupported,
-                tiltback: .unsupported,
-                pedalMode: .unsupported,
-                rollAngle: .unsupported,
-                speedAlarmMode: .unsupported,
-                autoShutdownSeconds: .unsupported,
-                chargeMode: .unsupported
-            )
-        )
-    }
-
-    func testNonAvailableSettingsReadbackDoesNotCarryGarageProjection() {
-        let readback = SettingsReadback(
-            entries: [],
-            availability: .unsupported,
-            eucGarageSettings: EucGarageSettingsSnapshot(
-                beepMargin: .available(Speed(value: 3_222)),
-                tiltback: .available(Speed(value: 11_666)),
-                pedalMode: .available(PedalMode.rawMode(1_920))
-            )
-        )
-
-        XCTAssertEqual(
-            readback.eucGarageSettings,
-            EucGarageSettingsSnapshot(
-                beepMargin: .unsupported,
-                tiltback: .unsupported,
-                pedalMode: .unsupported,
-                rollAngle: .unsupported,
-                speedAlarmMode: .unsupported,
-                autoShutdownSeconds: .unsupported,
-                chargeMode: .unsupported
-            )
-        )
-    }
-
-    func testSettingsReadbackCarriesProjectedVeteranGarageSettings() {
-        let readback = SettingsReadback(entries: [
-            SettingsReadbackEntry(
-                field: RawSettingField(id: 0x0005, value: 116),
-                source: .reported,
-                quality: .known,
-                verification: .sourceAndHardwareVerified
-            ),
-            SettingsReadbackEntry(
-                field: RawSettingField(id: 0x0006, value: 420),
-                source: .reported,
-                quality: .known,
-                verification: .sourceAndHardwareVerified
-            ),
-            SettingsReadbackEntry(
-                field: RawSettingField(id: 0x001e, value: 1_920),
-                source: .reported,
-                quality: .known,
-                verification: .sourceAndHardwareVerified
-            ),
-            SettingsReadbackEntry(
-                field: RawSettingField(id: 0x9999, value: 123),
-                source: .reported,
-                quality: .known,
-                verification: .sourceVerified
-            ),
-        ], eucGarageSettings: EucGarageSettingsSnapshot(
-            beepMargin: .available(Speed(value: 3_222)),
-            tiltback: .available(Speed(value: 11_666)),
-            pedalMode: .available(PedalMode.rawMode(1_920))
-        ))
-
-        XCTAssertEqual(
-            readback.eucGarageSettings,
-            EucGarageSettingsSnapshot(
-                beepMargin: .available(Speed(value: 3_222)),
-                tiltback: .available(Speed(value: 11_666)),
-                pedalMode: .available(PedalMode.rawMode(1_920))
-            )
-        )
-    }
-
-    func testSettingsReadbackCarriesProjectedBegodeGarageSettings() {
-        let readback = SettingsReadback(entries: [
-            SettingsReadbackEntry(
-                field: RawSettingField(id: 0x040a, value: 50),
-                source: .reported,
-                quality: .known,
-                verification: .sourceVerified
-            ),
-            SettingsReadbackEntry(
-                field: RawSettingField(id: 0x0406, value: 0),
-                source: .reported,
-                quality: .known,
-                verification: .sourceVerified
-            ),
-        ], eucGarageSettings: EucGarageSettingsSnapshot(
-            beepMargin: .unavailable,
-            tiltback: .available(Speed(value: 13_888)),
-            pedalMode: .unavailable
-        ))
-
-        XCTAssertEqual(
-            readback.eucGarageSettings,
-            EucGarageSettingsSnapshot(
-                beepMargin: .unavailable,
-                tiltback: .available(Speed(value: 13_888)),
-                pedalMode: .unavailable
-            )
-        )
-    }
 
     func testFaultHistoryReadbackUpdatesCurrentSessionStateUntilDisconnect() {
         let core = CutoutSessionCore()
@@ -2777,7 +2043,7 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
     func testBegodeProbeWriteDoesNotUseSkippedWriteGuard() {
         let core = CutoutSessionCore()
 
-        core.writeWithoutResponse(channel: .bluetooth16(0xffe1), bytes: Data("N".utf8))
+        _ = core.writeWithoutResponse(channel: .bluetooth16(0xffe1), bytes: Data("N".utf8))
 
         XCTAssertEqual(core.phase, .failed(.missingWriteChannel))
         XCTAssertTrue(core.records.contains("begode_probe_write=model"))
@@ -2786,7 +2052,7 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
     func testVescTelemetryRequestDoesNotUseSkippedWriteGuard() {
         let core = CutoutSessionCore()
 
-        core.writeWithoutResponse(
+        _ = core.writeWithoutResponse(
             channel: .vescNordicUartWrite,
             bytes: Data([0x02, 0x01, 0x04, 0x40, 0x84, 0x03])
         )
@@ -2797,7 +2063,7 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
     func testVescRealtimeTelemetryRequestDoesNotUseReadOnlyWriteGuard() {
         let core = CutoutSessionCore()
 
-        core.writeWithoutResponse(
+        _ = core.writeWithoutResponse(
             channel: .vescNordicUartWrite,
             bytes: Data([0x02, 0x01, 0x0e, 0xe1, 0xce, 0x03])
         )
@@ -2805,24 +2071,6 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertEqual(core.phase, .failed(.missingWriteChannel))
     }
 
-    func testFalconLinkUpPlansBegodeIdentityProbeWrites() throws {
-        let runner = CoreBluetoothSessionRunner(
-            session: try .electricUnicycle(model: .falcon),
-            writeLimit: TransportWriteLimitBytes(23)
-        )
-
-        let step = try runner.handle(.linkUp(at: MonotonicMilliseconds(42)))
-
-        XCTAssertEqual(
-            step.operations,
-            [
-                .subscribe(channel: .bluetooth16(0xffe1)),
-                .writeWithoutResponse(channel: .bluetooth16(0xffe1), bytes: Data("N".utf8)),
-                .writeWithoutResponse(channel: .bluetooth16(0xffe1), bytes: Data("V".utf8)),
-                .writeWithoutResponse(channel: .bluetooth16(0xffe1), bytes: Data("M".utf8)),
-            ]
-        )
-    }
 
     func testIdentificationProbeTransportSubscribesBeforeOrderedWrites() {
         let sink = RecordingOperationSink()
@@ -2854,7 +2102,7 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
     func testUnrelatedWriteReachesNormalTransportValidation() {
         let core = CutoutSessionCore()
 
-        core.writeWithoutResponse(channel: .bluetooth16(0xffe1), bytes: Data([0x01]))
+        _ = core.writeWithoutResponse(channel: .bluetooth16(0xffe1), bytes: Data([0x01]))
 
         XCTAssertEqual(core.phase, .failed(.missingWriteChannel))
         XCTAssertFalse(core.records.contains("begode_probe_write=model"))
@@ -2863,7 +2111,7 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
     func testMultiBytePayloadStartingWithProbeByteReachesNormalTransportValidation() {
         let core = CutoutSessionCore()
 
-        core.writeWithoutResponse(channel: .bluetooth16(0xffe1), bytes: Data("NAME".utf8))
+        _ = core.writeWithoutResponse(channel: .bluetooth16(0xffe1), bytes: Data("NAME".utf8))
 
         XCTAssertEqual(core.phase, .failed(.missingWriteChannel))
         XCTAssertFalse(core.records.contains("begode_probe_write=model"))
@@ -3867,12 +3115,14 @@ private final class RecordingOperationSink: CoreBluetoothOperationSink {
         recordedEvents.append(.subscribe)
     }
 
-    func writeWithoutResponse(channel: BluetoothUuid, bytes: Data) {
+    func writeWithoutResponse(channel: BluetoothUuid, bytes: Data, onReceipt: @escaping (CoreBluetoothWriteDisposition) -> Void) -> CoreBluetoothWriteDisposition {
         writesChanged.lock()
         recordedWrites.append(bytes)
         recordedEvents.append(.write)
         writesChanged.broadcast()
         writesChanged.unlock()
+        onReceipt(.submitted)
+        return .submitted
     }
 
     func disconnect() {}

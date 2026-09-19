@@ -1,7 +1,8 @@
 # Cutout iOS Test UI Mockups v2
 
-These are disposable implementation mockups for wiring CutoutApp test screens,
-not final visual design.
+The original archive assets in this directory are disposable implementation
+mockups for wiring CutoutApp test screens. The EUC Tune redesign below is the
+current production visual reference.
 
 ## Source
 
@@ -29,6 +30,29 @@ and tracker work can reference stable repo paths.
 | `cutout-03-vesc-onewheel-ride.png` | 390x844 | `LIBCU-421` |
 | `cutout-04-vesc-onewheel-debug.png` | 390x844 | `LIBCU-422` |
 | `cutout-screen-mockups-v2-sheet.png` | 2118x956 | `LIBCU-417` |
+
+## EUC Tune redesign
+
+The newly authored [Tune interaction sheet](screens/cutout-11-euc-tune.png)
+extends this visual direction with four 390x844 scroll positions covering all
+18 editable Aero settings and the wheel actions. It represents the production
+screen, without validation scaffolding or explanatory annotations.
+[Editable SVG](screens/cutout-11-euc-tune.svg) and
+[interaction contract and PEV research](screens/cutout-11-euc-tune-spec.md)
+are attached to the final comp comment on `LIBCU-664` (comment #6951), with
+related work in `LIBCU-772` and `LIBCU-815`.
+These are design references, not simulator screenshots or hardware proof.
+Tune follows the newer availability-first policy: omit unknown optional readbacks
+and empty groups; preserve known zero/false/Off and visible operation failures.
+An unknown current value does not remove an otherwise supported editable
+control or become a default. The
+[settings design review](../../../settings-design-review.md), mirrored in
+[LIBCU-DOC-8](https://lific.mjc.lol/LIBCU/pages/30), specifies the remaining
+contract repairs. Keep this visual reference unchanged: no provenance wall,
+validation badges or permanent request-status paragraphs. Native presentation
+still needs snapshot and display-unit checks against the interaction contract;
+the recent checkpoint and unconfirmed wheel runs are not visual or hardware
+acceptance.
 
 ## BMS Screens
 
@@ -64,5 +88,5 @@ and tracker work can reference stable repo paths.
 
 The screen epics intentionally link each visible datum back to the Rust,
 mobile FFI, and Swift API work needed to make the UI hard to misuse. Mockup-only
-or unproven live fields should render as unavailable until their linked data
-contract and validation issues are complete.
+or unproven live fields must not imply confirmed data. Follow the screen's
+availability contract and linked settings issues.

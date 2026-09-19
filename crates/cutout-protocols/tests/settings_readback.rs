@@ -1,6 +1,6 @@
 use cutout_core::{
-    DeviceCommand, DeviceSettingValue, Measured, RawFieldValue, SettingId, SettingsEntry,
-    SettingsReadback, ValueQuality, ValueSource, VerificationStatus,
+    DeviceCommand, DeviceSettingValue, Measured, ProtocolFamily, RawFieldValue, SettingId,
+    SettingsEntry, SettingsReadback, ValueQuality, ValueSource, VerificationStatus,
 };
 use cutout_protocols::{
     AERO_FIELD_PWM_PERCENT, AERO_FIELD_VOLTAGE_CORRECTION_TENTHS_PERCENT,
@@ -10,6 +10,22 @@ use cutout_protocols::{
     VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS, VETERAN_FIELD_CHARGE_MODE,
     VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, aero_control_profile, falcon_control_profile,
 };
+
+#[test]
+fn legacy_pedal_mode_does_not_confirm_the_modern_aero_riding_preset() {
+    let profile = aero_control_profile();
+    for raw in [-1, 0, 1, 2, 3, 1920, i64::MAX] {
+        assert!(read(profile, cutout_protocols::VETERAN_FIELD_PEDALS_MODE, raw).is_empty());
+    }
+    let preset = profile
+        .descriptors(false)
+        .into_iter()
+        .find(|descriptor| descriptor.id == SettingId::RidingPreset)
+        .unwrap();
+    assert_eq!(preset.access, SettingAccess::Writable);
+    assert!(!preset.confirmation_supported);
+    assert_eq!(preset.write_verification, VerificationStatus::Unverified);
+}
 
 fn read(profile: DeviceControlProfile, field: u16, raw: i64) -> Vec<SettingObservation> {
     profile.normalize_readback(SettingsReadback::available([Some(SettingsEntry {
@@ -35,6 +51,12 @@ fn value(observations: &[SettingObservation], id: SettingId) -> Option<DeviceSet
 #[test]
 fn pwm_readback_is_duty_and_readability_does_not_grant_a_write() {
     let profile = aero_control_profile();
+    assert_eq!(
+        read(profile, AERO_FIELD_PWM_PERCENT, 50)
+            .first()
+            .and_then(|observation| observation.protocol),
+        Some(ProtocolFamily::VeteranLeaperkimNosfet)
+    );
     for duty in 0..=100 {
         assert_eq!(
             value(
@@ -104,17 +126,20 @@ fn fractional_speed_is_preserved_without_rounding_into_a_confirmable_request() {
             )
             .is_err()
     );
-    let DeviceCommand::SetAeroTiltbackSpeed(speed) = profile
+    let command = profile
         .command(
             SettingId::TiltbackSpeed,
             DeviceSettingValue::Number(120),
             true,
         )
-        .unwrap()
-    else {
-        panic!("wrong command")
-    };
-    assert_eq!(speed.kilometres_per_hour(), 12);
+        .unwrap();
+    assert_eq!(
+        command,
+        DeviceCommand::SetSetting {
+            id: SettingId::TiltbackSpeed,
+            value: DeviceSettingValue::Number(120),
+        }
+    );
     assert_eq!(
         value(
             &read(

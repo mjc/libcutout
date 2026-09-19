@@ -11,11 +11,8 @@ use std::{
 
 use anyhow::{Context, Result, bail, ensure};
 use cutout_core::{
-    AeroAngleAdjustment, AeroBeeperVolume, AeroBrakeOverpressureAlarm, AeroDisplayBacklight,
-    AeroDynamicAssist, AeroHighSpeedMode, AeroLateralTiltLimit, AeroLowBatteryMode,
-    AeroMaxChargeVoltageRaw, AeroPedalDipCompensation, AeroPedalHardness, AeroPwmPercent,
-    AeroPwmSetting, AeroRidingMode, AeroSpeedSetting, AeroTransportMode, AeroVoltageCorrection,
-    AeroWheelUnits, DeviceCommand, LightState, MonotonicTimestamp, PedalMode, RideOperatingState,
+    DeviceActionId, DeviceActionRequest, DeviceActionStep, DeviceCommand, DeviceSettingValue,
+    LightState, MonotonicTimestamp, RideOperatingState, SettingId,
 };
 use cutout_protocols::AeroSettingsSimulator;
 use serde_json::Value;
@@ -128,8 +125,21 @@ fn build_apple_client(root: &Path, tool: &str, args: &[String]) -> Result<()> {
     prepare_swift_ffi(root, &lock)?;
     let mut build = command("/usr/bin/xcrun");
     build.current_dir(root).arg(tool).args(args);
-    let _inherited_lock = attach_lock_handle(&mut build, &lock)?;
-    run(&mut build, "build Apple client")
+    handoff_apple_client(&mut build, &lock)
+}
+
+#[cfg(unix)]
+fn handoff_apple_client(build: &mut Command, lock: &fs::File) -> Result<()> {
+    use std::os::unix::process::CommandExt;
+
+    let _inherited_lock = attach_lock_handle(build, lock)?;
+    // Replace this coordinator so signals to its PID reach the native tool.
+    Err(build.exec()).context("failed to build Apple client")
+}
+
+#[cfg(not(unix))]
+fn handoff_apple_client(_build: &mut Command, _lock: &fs::File) -> Result<()> {
+    bail!("native Apple builds require Unix file-descriptor inheritance")
 }
 
 #[cfg(unix)]
@@ -139,11 +149,11 @@ fn attach_lock_handle(command: &mut Command, lock: &fs::File) -> Result<fs::File
 
     let inherited_lock = lock.try_clone()?;
     let lock_fd = inherited_lock.as_raw_fd();
-    // SAFETY: dup2 is async-signal-safe, and the duplicated descriptor is
-    // intentionally left open across exec so the native build keeps the lock.
+    // SAFETY: fcntl is async-signal-safe. The owned clone remains open across
+    // exec so the native tool keeps the lock, and closes normally if exec fails.
     unsafe {
         command.pre_exec(move || {
-            if libc::dup2(lock_fd, 3) == -1 {
+            if libc::fcntl(lock_fd, libc::F_SETFD, 0) == -1 {
                 return Err(std::io::Error::last_os_error());
             }
             Ok(())
@@ -152,64 +162,50 @@ fn attach_lock_handle(command: &mut Command, lock: &fs::File) -> Result<fs::File
     Ok(inherited_lock)
 }
 
-#[cfg(not(unix))]
-fn attach_lock_handle(_command: &mut Command, _lock: &fs::File) -> Result<fs::File> {
-    bail!("native Apple builds require Unix file-descriptor inheritance")
-}
-
 fn run_aero_settings_simulator() -> Result<()> {
     let commands = [
-        DeviceCommand::SetAeroTiltbackSpeed(
-            AeroSpeedSetting::new(53).context("53 km/h is a valid Aero tiltback speed")?,
+        setting(SettingId::TiltbackSpeed, DeviceSettingValue::Number(530)),
+        setting(SettingId::PwmTiltback, DeviceSettingValue::Number(64)),
+        setting(
+            SettingId::SpeedAlarmThreshold,
+            DeviceSettingValue::Number(560),
         ),
-        DeviceCommand::SetAeroPwmPercent(AeroPwmSetting::Margin(
-            AeroPwmPercent::new(64).context("64% is a valid Aero PWM setting")?,
-        )),
-        DeviceCommand::SetAeroAlarmSpeed(
-            AeroSpeedSetting::new(56).context("56 km/h is a valid Aero alarm speed")?,
+        setting(SettingId::PedalAngle, DeviceSettingValue::Number(-12)),
+        setting(SettingId::RidingPreset, DeviceSettingValue::Choice(1)),
+        setting(SettingId::PedalHardness, DeviceSettingValue::Number(64)),
+        setting(SettingId::DisplayBrightness, DeviceSettingValue::Number(80)),
+        setting(
+            SettingId::BeeperVolumePercent,
+            DeviceSettingValue::Number(40),
         ),
-        DeviceCommand::SetAeroAngleAdjustment(
-            AeroAngleAdjustment::new(-12).context("-1.2 degrees is a valid Aero angle")?,
+        setting(SettingId::DynamicAssist, DeviceSettingValue::Number(35)),
+        setting(
+            SettingId::PedalDipCompensation,
+            DeviceSettingValue::Number(25),
         ),
-        DeviceCommand::SetPedalMode(PedalMode::Hard),
-        DeviceCommand::SetAeroRidingMode(AeroRidingMode::Medium),
-        DeviceCommand::SetAeroPedalHardness(
-            AeroPedalHardness::new(64).context("64% is a source-documented MD hardness")?,
+        setting(SettingId::LateralTiltLimit, DeviceSettingValue::Number(55)),
+        setting(SettingId::VoltageCorrection, DeviceSettingValue::Number(-5)),
+        setting(SettingId::DisplayUnits, DeviceSettingValue::Choice(1)),
+        setting(SettingId::HighSpeedMode, DeviceSettingValue::Boolean(true)),
+        setting(
+            SettingId::LowBatteryMode,
+            DeviceSettingValue::Boolean(false),
         ),
-        DeviceCommand::SetAeroDisplayBacklight(
-            AeroDisplayBacklight::new(80).context("80% is a valid Aero backlight")?,
+        setting(SettingId::TransportMode, DeviceSettingValue::Boolean(true)),
+        setting(
+            SettingId::BrakeOverpressureAlarm,
+            DeviceSettingValue::Number(110),
         ),
-        DeviceCommand::SetAeroBeeperVolume(
-            AeroBeeperVolume::new(40).context("40% is a valid Aero beeper volume")?,
-        ),
-        DeviceCommand::SetAeroDynamicAssist(
-            AeroDynamicAssist::new(35).context("35% is a valid Aero dynamic assist")?,
-        ),
-        DeviceCommand::SetAeroPedalDipCompensation(
-            AeroPedalDipCompensation::new(25)
-                .context("25% is a valid Aero pedal-dip compensation")?,
-        ),
-        DeviceCommand::SetAeroLateralTiltLimit(
-            AeroLateralTiltLimit::new(55).context("55 degrees is a valid Aero lateral limit")?,
-        ),
-        DeviceCommand::SetAeroVoltageCorrection(
-            AeroVoltageCorrection::new(-5).context("-0.5% is a valid Aero voltage correction")?,
-        ),
-        DeviceCommand::SetAeroMaxChargeVoltageRaw(
-            AeroMaxChargeVoltageRaw::new(46).context("46 is a valid raw Aero MxV value")?,
-        ),
-        DeviceCommand::SetAeroWheelUnits(AeroWheelUnits::Imperial),
-        DeviceCommand::SetAeroHighSpeedMode(AeroHighSpeedMode::new(true)),
-        DeviceCommand::SetAeroLowBatteryMode(AeroLowBatteryMode::new(false)),
-        DeviceCommand::SetAeroTransportMode(AeroTransportMode::new(true)),
-        DeviceCommand::SetAeroBrakeOverpressureAlarm(
-            AeroBrakeOverpressureAlarm::new(110)
-                .context("110% is a valid Aero brake overpressure alarm")?,
-        ),
-        DeviceCommand::SetAeroGyroCalibration,
-        DeviceCommand::SetAeroHighBeam(LightState::On),
+        DeviceCommand::InvokeAction(DeviceActionRequest {
+            id: DeviceActionId::GyroCalibration,
+            step: DeviceActionStep::Invoke,
+        }),
+        setting(SettingId::HighBeam, DeviceSettingValue::Boolean(true)),
         DeviceCommand::SetLights(LightState::On),
-        DeviceCommand::ResetTripMeter,
+        DeviceCommand::InvokeAction(DeviceActionRequest {
+            id: DeviceActionId::ResetTripMeter,
+            step: DeviceActionStep::Invoke,
+        }),
     ];
     let mut simulator = AeroSettingsSimulator::default();
     println!("model={}", AeroSettingsSimulator::registry_entry().model);
@@ -219,7 +215,13 @@ fn run_aero_settings_simulator() -> Result<()> {
     );
 
     for (index, command) in commands.into_iter().enumerate() {
-        let high_beam = matches!(command, DeviceCommand::SetAeroHighBeam(_));
+        let high_beam = matches!(
+            command,
+            DeviceCommand::SetSetting {
+                id: SettingId::HighBeam,
+                ..
+            }
+        );
         let before = simulator.writes().len();
         let monotonic_ms =
             10 + u64::try_from(index).context("scenario index fits in a timestamp")?;
@@ -244,6 +246,10 @@ fn run_aero_settings_simulator() -> Result<()> {
         println!("  readback={:?}", simulator.readback());
     }
     Ok(())
+}
+
+const fn setting(id: SettingId, value: DeviceSettingValue) -> DeviceCommand {
+    DeviceCommand::SetSetting { id, value }
 }
 
 fn workspace_root() -> PathBuf {
@@ -1776,6 +1782,154 @@ mod tests {
         contender.try_lock().unwrap();
         drop(contender);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn terminal_native_handoff_reports_exec_failure_without_leaking_lock() {
+        // Run exec failure in a disposable process: pre_exec may change its FDs.
+        if let Some(root) = env::var_os("CUTOUT_HANDOFF_FAILURE_ROOT") {
+            let root = PathBuf::from(root);
+            // Keep an unrelated descriptor open before acquiring the lock.
+            let _unrelated = fs::File::create(root.join("unrelated")).unwrap();
+            let lock = lock_swift_ffi(&root).unwrap();
+            let error =
+                handoff_apple_client(&mut Command::new(root.join("missing")), &lock).unwrap_err();
+            assert!(error.to_string().contains("build Apple client"));
+            assert_eq!(
+                error.downcast_ref::<std::io::Error>().unwrap().kind(),
+                std::io::ErrorKind::NotFound
+            );
+            drop(lock);
+            let contender = fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(root.join(SWIFT_FFI_LOCK))
+                .unwrap();
+            contender
+                .try_lock()
+                .expect("failed exec must release the lock");
+            return;
+        }
+        let root = tempfile::tempdir().unwrap();
+        let result = Command::new(env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "tests::terminal_native_handoff_reports_exec_failure_without_leaking_lock",
+                "--nocapture",
+            ])
+            .env("CUTOUT_HANDOFF_FAILURE_ROOT", root.path())
+            .output()
+            .unwrap();
+        assert!(result.status.success(), "{result:?}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn terminal_native_handoff_preserves_pid_lock_and_interrupt_exit() {
+        check_terminal_native_handoff("INT", libc::SIGINT);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn terminal_native_handoff_preserves_pid_lock_and_terminate_exit() {
+        check_terminal_native_handoff("TERM", libc::SIGTERM);
+    }
+
+    #[cfg(unix)]
+    fn check_terminal_native_handoff(signal: &str, expected_signal: i32) {
+        use std::{
+            io::{BufRead, Write},
+            os::unix::process::ExitStatusExt,
+            process::Stdio,
+            sync::mpsc,
+            time::{Duration, Instant},
+        };
+
+        struct ReapedChild(std::process::Child);
+        impl Drop for ReapedChild {
+            fn drop(&mut self) {
+                self.0.stdin.take();
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+
+        let test = if signal == "INT" {
+            "tests::terminal_native_handoff_preserves_pid_lock_and_interrupt_exit"
+        } else {
+            "tests::terminal_native_handoff_preserves_pid_lock_and_terminate_exit"
+        };
+        if let Some(root) = env::var_os("CUTOUT_HANDOFF_ROOT") {
+            let root = PathBuf::from(root);
+            if env::var_os("CUTOUT_HANDOFF_REPLACEMENT").is_some() {
+                println!("replacement_pid={}", std::process::id());
+                std::io::stdout().flush().unwrap();
+                // Stay alive until signalled, or exit on EOF if the parent fails.
+                let _ = std::io::stdin().read_line(&mut String::new());
+                return;
+            }
+            let lock = lock_swift_ffi(&root).unwrap();
+            let mut replacement = Command::new(env::current_exe().unwrap());
+            replacement.args(["--exact", test, "--nocapture"]);
+            replacement.env("CUTOUT_HANDOFF_REPLACEMENT", "1");
+            handoff_apple_client(&mut replacement, &lock).unwrap();
+            return;
+        }
+
+        let root = tempfile::tempdir().unwrap();
+        let mut child = ReapedChild(
+            Command::new(env::current_exe().unwrap())
+                .args(["--exact", test, "--nocapture"])
+                .env("CUTOUT_HANDOFF_ROOT", root.path())
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .spawn()
+                .unwrap(),
+        );
+        let output = child.0.stdout.take().unwrap();
+        let (sender, receiver) = mpsc::channel();
+        std::thread::spawn(move || {
+            for line in std::io::BufReader::new(output).lines() {
+                let Ok(line) = line else { break };
+                if let Some(pid) = line.strip_prefix("replacement_pid=") {
+                    let _ = sender.send(pid.parse::<u32>().unwrap());
+                    break;
+                }
+            }
+        });
+        let pid = receiver.recv_timeout(Duration::from_secs(10)).unwrap();
+        let contender = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(root.path().join(SWIFT_FFI_LOCK))
+            .unwrap();
+        let lock_was_held = matches!(contender.try_lock(), Err(fs::TryLockError::WouldBlock));
+        assert!(
+            Command::new("kill")
+                .args([&format!("-{signal}"), &pid.to_string()])
+                .status()
+                .unwrap()
+                .success()
+        );
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let status = loop {
+            if let Some(status) = child.0.try_wait().unwrap() {
+                break status;
+            }
+            assert!(Instant::now() < deadline, "replacement failed to exit");
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        assert_eq!(
+            pid,
+            child.0.id(),
+            "native handoff must replace the coordinator"
+        );
+        assert!(lock_was_held, "replacement must retain the FFI lock");
+        assert_eq!(status.signal(), Some(expected_signal));
+        contender
+            .try_lock()
+            .expect("replacement exit must release the lock");
     }
 
     #[cfg(unix)]

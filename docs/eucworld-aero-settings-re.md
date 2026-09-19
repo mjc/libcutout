@@ -29,16 +29,16 @@ for the settings already implemented in Rust:
 
 | DarknessBot method | Decoded frame shape | Existing Cutout command |
 | --- | --- | --- |
-| `changeGyroLevel` | `LkAp`, declared length 16, value at absolute byte 11 | `SetAeroAngleAdjustment` |
-| `changeMaxRollAngle` | `LkAp`, declared length 22, value at absolute byte 17 | `SetAeroLateralTiltLimit` |
-| `changeSafeMode` | `LdAp`, declared length 25, value at absolute byte 20 | `SetAeroLowBatteryMode` |
-| `changeMaxSpeed` | `LdAp`, declared length 17, value at absolute byte 12 | `SetAeroTiltbackSpeed` |
-| `changeVolume` | `LdAp`, declared length 28, value at absolute byte 23 | `SetAeroBeeperVolume` |
+| `changeGyroLevel` | `LkAp`, declared length 16, value at absolute byte 11 | `SettingId::PedalAngle` |
+| `changeMaxRollAngle` | `LkAp`, declared length 22, value at absolute byte 17 | `SettingId::LateralTiltLimit` |
+| `changeSafeMode` | `LdAp`, declared length 25, value at absolute byte 20 | `SettingId::LowBatteryMode` |
+| `changeMaxSpeed` | `LdAp`, declared length 17, value at absolute byte 12 | `SettingId::TiltbackSpeed` |
+| `changeVolume` | `LdAp`, declared length 28, value at absolute byte 23 | `SettingId::BeeperVolumePercent` |
 | `changeTorchMode` | Modern branch uses the ASCII `SetLightON`/`SetLightOFF` commands; an older branch constructs model-gated binary frames | `SetLights` for the modern branch |
-| `changeRidingLevel` | Selects an advanced `LdAp` frame (declared length 24) or a legacy binary frame based on the adapter's riding-mode flag | `SetAeroRidingMode` covers the source-backed modern command; legacy selection still needs a model/firmware gate |
-| `changeLimitSpeed` | Stores the app's limit-speed preference and delegates to `changeMaxSpeed` only when the adapter's limit-mode flag is enabled; it is not a second wheel setting | `SetAeroTiltbackSpeed`; no separate limit-mode wheel write is inferred |
+| `changeRidingLevel` | Selects an advanced `LdAp` frame (declared length 24) or a legacy binary frame based on the adapter's riding-mode flag | `SettingId::RidingPreset` covers the source-backed modern command; legacy selection still needs a model/firmware gate |
+| `changeLimitSpeed` | Stores the app's limit-speed preference and delegates to `changeMaxSpeed` only when the adapter's limit-mode flag is enabled; it is not a second wheel setting | `SettingId::TiltbackSpeed`; no separate limit-mode wheel write is inferred |
 | `changeLimitMode` | Updates the app/device preference record and conditionally invokes `changeMaxSpeed`; no independent command builder is present | App policy, not a separate benign wheel command |
-| `resetSingleMileage` | Protocol-v2 branch constructs a multi-write reset sequence; the recovered AOT does not expose a stable setting key or generic model gate | `ResetTripMeter` exists, but the multi-step legacy sequence remains outside the generic API |
+| `resetSingleMileage` | Protocol-v2 branch constructs a multi-write reset sequence; the recovered AOT does not expose a stable setting key or generic model gate | The established Aero-compatible reset command is the literal `CLEARMETER`; the un-gated multi-write legacy path remains outside the generic API |
 
 The byte shapes, positions, and CRCs are covered by the existing Rust golden
 frame tests. The older `changeTorchMode` branch is recorded as evidence but is
@@ -46,6 +46,10 @@ not emitted by the generic encoder: model/firmware selection is not an input to
 that API, and sending an un-gated legacy companion frame can produce the extra
 acknowledgement beep observed on Aero. This is static command-construction
 evidence, not proof of a physical write or readback result.
+
+The later audible live-test incident has no established offending command;
+the earlier companion-frame observation does not identify its cause. The sound
+ceased after a power cycle, which does not prove restoration of every setting.
 
 ## Reproducible code trail
 
@@ -69,14 +73,32 @@ as evidence that those paths do not exist.
 `pos` below is the absolute, zero-based value-byte position. `Ld` means `LdAp`
 with bytes 5–6 = `01 02`; intervening bytes are `80`. Total frame size is
 `pos + 5`, including the trailing four-byte CRC32. `Lk` setters use `LkAp` and
-byte 5 = `01`; the serializer can select `LdAp` for newer firmware, so these
-are not unconditional family-wide encodings. Preserve protocol/firmware gates.
+byte 5 = `01`; lateral cutoff is the documented paired exception: it sends the
+`LkAp` field and then an `LdAp` companion with bytes 5–6 = `01 00`, both at
+position 17. The companion is not the ordinary `LdAp` `01 02` field namespace.
+Preserve protocol/firmware gates.
+That does **not** authorize replacing a field's header and discriminator while
+keeping its offset: `LdAp` position 12 is tilt-back, not speed alarm, and
+`LdAp` position 17 is transport mode, not lateral tilt.
+
+Cutout's shared [protocol/dialect wire contract](control-wire-contract.md)
+checks the declared Veteran wire destinations and its NOSFET dialect at compile time.
+Duplicate bank/offset destinations fail compilation, including inherited fields;
+the checked schema also supplies the emitted header, discriminator, and offset.
+The speed-alarm/lateral-tilt regression checks both bank separation and the
+resulting frames, and the session test checks the bytes scheduled for transport.
+These checks prevent the discovered aliasing bug; they do not establish that
+the remaining NF2557 physical-control failures have been resolved.
+Nor do they establish complete typed semantic bindings, exact input conversion,
+host submission or operation completion; those gaps are tracked in the
+[settings design review](settings-design-review.md) and
+[LIBCU-DOC-8](https://lific.mjc.lol/LIBCU/pages/30).
 
 | EUC World key (`vn_` prefix omitted) | Setter | Values and frame | Readback / Cutout gap |
 | --- | --- | --- | --- |
 | `alarm_speed` | E | 10–200 km/h, Lk pos 12 | Header 24–25 deci-km/h; typed Cutout setting uses 10–200 |
 | `speed_limit` | V | 10–200 km/h, Ld pos 12 | Header 26–27 and page-8 byte 52; typed Cutout setting uses 10–200 |
-| `safety_margin_limit` | U | UI 0–70% → wire `100 − UI`, Ld pos 13; UI −1 = Off → wire 200 | Page-8 byte 53; Cutout exposes margin and explicit Off writes |
+| `safety_margin_limit` | U | UI 0–70% → wire `100 − UI`, Ld pos 13; UI −1 = Off → wire 200 | Page-8 byte 53; Cutout exposes semantic duty and explicit `Disabled` writes |
 | `display_mode` | K | 0/1, Ld pos 18 | Page-8 byte 58; typed wheel-units readback and write implemented |
 | `display_backlight` | J | 0–100%, Ld pos 15 | Page-8 byte 55; typed mobile readback implemented |
 | `beeper_volume` | F | 0–100%, Ld pos 23 | Page-8 byte 63; typed mobile readback implemented; not the fixed PWM alarm |
@@ -84,21 +106,29 @@ are not unconditional family-wide encodings. Preserve protocol/firmware gates.
 | `pedal_dip_compensation` | Q | 0–100%, Ld pos 28 | Page-8 byte 68; typed mobile readback implemented |
 | `pedals_sensitivity` | R | 0–100%, Ld pos 10 | Page-8 byte 50; Cutout MD write and readback implemented |
 | `pedals_tilt` | S | Signed −80…80 tenths of a degree, pos 11 | Cutout ANG write uses the documented −80…80 range; live setting readback unresolved |
-| `lateral_tilt_limit` | O | 35–75 degrees, Lk pos 17 | Selector-2 byte 47 readback is decoded; typed mobile readback implemented |
+| `lateral_tilt_limit` | O | 35–75 degrees, checked `LkAp` + `LdAp` pair at pos 17 (`LdAp` discriminator `01 00`) | Selector-2 byte 47 readback is decoded; typed mobile readback implemented; NF2557 physical confirmation is still pending the deployed paired-frame test |
 | `high_speed_mode` | N | 0/1, Ld pos 21 | Page-8 byte 61; typed encoder/readback/UI implemented on the settings branch; physical write proof pending |
 | `low_battery_mode` | P | 0/1, Ld pos 20 | Page-8 byte 60; typed encoder/readback/UI implemented on the settings branch; physical write proof pending |
 | `transportation_mode` | W | 0/1, Ld pos 17 | Page-8 byte 57; typed encoder/readback/UI implemented on the settings branch; physical write proof pending |
-| `charging_voltage_limit` | G | Raw page-8 byte 64; official generic UI uses decivolts minus 1450 at Ld pos 24 | Raw readback, write, and a `0..=70` raw Tune control are implemented for protocol validation, but no voltage conversion or safe Aero range is claimed: the generic `145 + raw / 10` display would report 149.6 V for a 126 V Aero pack |
+| `charging_voltage_limit` | G | Raw page-8 byte 64; official generic UI uses decivolts minus 1450 at Ld pos 24 | Raw readback is retained as a diagnostic; no write or voltage conversion is exposed because the generic `145 + raw / 10` display would report 149.6 V for a 126 V Aero pack |
 | `voltage_correction` | X | Signed −15…15, displayed in tenths of a percent, Ld pos 19 | Page-8 byte 59 signed; typed mobile readback implemented; not a volts offset |
-| `headlight_mode` | M | Off/On; binary pos 8 or legacy ASCII | Page-8 byte 47; existing writes; readback/beam applicability needs separate proof |
+| `headlight_mode` | M | Off/On; modern `SetLightON`/`SetLightOFF` literals, with an older model-gated binary branch | Cutout's canonical Aero Headlight power control follows the modern literal commands in both detected Veteran command modes. EUC World's inspected path does not establish the AERO's separate physical brightness-cycle command, so no intensity setting is inferred |
 | `riding_mode` | T | UI hard/medium/soft → binary 3/2/1 at pos 7, or legacy ASCII | Distinct from MD; Cutout exposes both the modern binary command and legacy presets |
+
+The speed bounds above are in km/h; Cutout's canonical request quantities use
+deci-km/h. A whole-km/h write must reject inexact canonical inputs rather than
+truncate them. The user's reported “34.8” has no recorded display unit: 34.8 mph
+is approximately 56 km/h, so a negative test for canonical 348 alone cannot
+explain that report. Voltage correction's signed −15…15 domain is in tenths of
+a percent, meaning −1.5…1.5%, not ±15%. These source-derived domains are library
+declarations, not negotiated device bounds or factory defaults.
 
 Remaining menu keys are accounted for separately, not invented as new wheel writes:
 
 | Key | Classification / remaining trace |
 | --- | --- |
 | `vn_headlight_persistent` | App persistence preference; not another physical lighting mode |
-| `reset_user_distance` | Reset action through the app confirmation handler; Cutout trip reset exists, binary/legacy parity still needs tracing |
+| `reset_user_distance` | Reset action through the app confirmation handler; the generic trip-reset action is attempted for any live device profile that exposes a trip meter, with the current Aero encoding as the established `CLEARMETER` command |
 | `vn_download_event_log` | Log retrieval, not a settings mutation |
 | `vn_safety_margin_scaling` | App-side correction setting; do not confuse with the PWT wheel command |
 | `vn_firmware_list` | Firmware listing/update entry point; not authorized by ordinary settings writes |
@@ -114,6 +144,12 @@ Page-8 byte `0x80` means unavailable. The existing NF2557 capture contains
 therefore supplies a concrete lead for numeric assist/dip controls on this Aero;
 it still does not establish the result of sending a new value.
 
+The recent Mac inventory sampled descriptors before settings telemetry and
+stopped at ride readiness. Its empty current values cannot supersede this
+capture evidence or establish unavailable readback. Observation acquisition must
+cover the relevant page cycle and identify which fields were actually received.
+Do not remove an observation mapping merely because a new write was unconfirmed.
+
 The 2026-06-22 NF2557 page-8 capture reports MD 50% and raw PWT 79%. EUC World's
 PWT control displays unused PWM margin, so this raw threshold corresponds to a
 21% margin. Its legal input is 0..70%, encoded as `100 - margin`; Off is a
@@ -127,9 +163,9 @@ capabilities remain Unverified until physical write behavior is established.
 The same capture reports page-8 byte 64 as raw `46`. Although the generic
 NOSFET/EUC World setting path labels that byte as a 145–151.6 V charging limit,
 that conversion is incompatible with the identified 126 V Aero pack. Cutout
-keeps the source-backed transport as an explicitly raw, unverified read/write;
-the mobile surface must not present it as volts until an Aero-specific
-conversion and safe range are physically established.
+keeps the source-backed transport as an engineering-only raw observation; the
+production mobile surface omits it until an Aero-specific conversion and safe
+range are established.
 
 FreeWheel's Veteran decoder calls page-8 byte 68 `acceleration_limit`, while
 EUC World 2.66.1 exposes the same wire position as
@@ -157,4 +193,8 @@ until their protocol gate and device behavior are independently established.
 `changeLimitSpeed` and `changeLimitMode` do not add new wheel commands: the
 recovered code only persists policy and, in one branch, delegates to the
 already traced maximum-speed setter.
+The current Aero trip reset uses the separately established `CLEARMETER` literal;
+other devices should add their own checked dialect encoding when their trip-meter
+capability is exposed. The recovered multi-write path is not substituted without
+a model/firmware gate.
 Unknown manufacturer-menu items stay open.

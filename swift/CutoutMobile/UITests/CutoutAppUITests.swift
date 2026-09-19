@@ -899,6 +899,14 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testEucTuneUsesOrdinaryGenericControlsWithoutInventedValues() throws {
+        try assertEucTuneSettings()
+    }
+
+    func testEucTuneUsesOrdinaryGenericControlsAtAccessibilityDynamicType() throws {
+        try assertEucTuneSettings()
+    }
+
+    private func assertEucTuneSettings() throws {
         XCTAssertTrue(pairAvailableDevice(.euc))
         guard connectedScreen(timeout: 20) != nil else {
             XCTFail("The deterministic EUC fixture did not open its Ride screen")
@@ -911,21 +919,80 @@ final class CutoutAppUITests: XCTestCase {
         let screen = app.descendants(matching: .any)["settings.screen.eucTune"]
         XCTAssertTrue(screen.waitForExistence(timeout: 5))
 
-        let highBeamDraft = app.buttons["settings.draft.highBeam"]
-        XCTAssertTrue(highBeamDraft.waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["High beam"].exists)
-        let apply = app.buttons["settings.apply.highBeam"]
-        XCTAssertTrue(apply.exists)
-        XCTAssertFalse(apply.isEnabled, "Unknown readback must not initialize a command draft")
-        highBeamDraft.tap()
-        app.buttons["On"].tap()
-        XCTAssertTrue(apply.isEnabled)
+        let turnOn = app.buttons["settings.on.highBeam"]
+        let turnOff = app.buttons["settings.off.highBeam"]
+        XCTAssertTrue(turnOn.waitForExistence(timeout: 5))
+        XCTAssertTrue(turnOff.exists)
+        XCTAssertTrue(app.staticTexts["Headlight"].exists)
+        XCTAssertGreaterThanOrEqual(turnOn.frame.height, 44)
+        XCTAssertGreaterThanOrEqual(turnOff.frame.height, 44)
+        XCTAssertFalse(app.buttons["settings.apply.highBeam"].exists)
+        XCTAssertFalse(app.staticTexts["settings.current.highBeam"].exists)
+        for button in [turnOn, turnOff] {
+            button.tap()
+            let selected = XCTNSPredicateExpectation(predicate: NSPredicate(format: "selected == true"), object: button)
+            XCTAssertEqual(XCTWaiter.wait(for: [selected], timeout: 5), .completed)
+            XCTAssertEqual(button.value as? String, "Requested")
+            XCTAssertFalse(app.staticTexts["settings.requested.highBeam"].exists)
+            XCTAssertFalse(app.staticTexts["settings.status.highBeam"].exists)
+            XCTAssertFalse(app.staticTexts["settings.current.highBeam"].exists)
+            XCTAssertFalse(app.staticTexts["settings.error.highBeam"].exists)
+        }
 
-        let pwmLabel = app.staticTexts["PWM duty tilt-back"]
-        for _ in 0..<5 where !pwmLabel.isHittable { screen.swipeUp() }
-        XCTAssertTrue(pwmLabel.exists)
-        XCTAssertFalse(app.buttons["settings.apply.pwmTiltback"].exists, "Ordinary Tune must not enable validation-only writes")
-        XCTAssertTrue(app.staticTexts["Writing this setting has not been verified."].firstMatch.exists)
+        let brightness = app.steppers["settings.stepper.displayBrightness"]
+        for _ in 0..<8 where !brightness.isHittable { screen.swipeUp() }
+        XCTAssertTrue(brightness.isHittable)
+        XCTAssertFalse(app.buttons["settings.apply.displayBrightness"].exists)
+        brightness.buttons.element(boundBy: 1).tap()
+        XCTAssertTrue(app.staticTexts["settings.draft.displayBrightness"].exists)
+        let draftValue = app.staticTexts["settings.draft.displayBrightness"].label
+        let apply = app.buttons["settings.apply.displayBrightness"]
+        XCTAssertTrue(apply.exists)
+        for _ in 0..<4 where !apply.isHittable { screen.swipeUp() }
+        apply.tap()
+        XCTAssertFalse(apply.exists, "Apply should disappear after submitting the local draft")
+        XCTAssertEqual(app.staticTexts["settings.draft.displayBrightness"].label, draftValue, "A pending value must not snap back to old readback")
+
+        let controls = [
+            "highBeam", "displayBrightness", "displayUnits", "beeperVolumePercent",
+            "tiltbackSpeed", "pwmTiltback", "lateralTiltLimit", "speedAlarmThreshold", "brakeOverpressureAlarm",
+            "pedalHardness", "dynamicAssist", "pedalDipCompensation", "pedalAngle", "ridingPreset",
+            "voltageCorrection", "highSpeedMode", "lowBatteryMode", "transportMode",
+        ]
+        let booleans: Set<String> = ["highBeam", "highSpeedMode", "lowBatteryMode", "transportMode"]
+        let choices: Set<String> = ["displayUnits", "ridingPreset"]
+        for _ in 0..<8 where !turnOn.isHittable { screen.swipeDown() }
+        for id in controls {
+            let label = app.staticTexts["settings.control.\(id)"]
+            for _ in 0..<12 where !label.isHittable { screen.swipeUp() }
+            XCTAssertTrue(label.isHittable, "Missing ordinary setting \(id)")
+            XCTAssertEqual(app.staticTexts.matching(identifier: "settings.control.\(id)").count, 1)
+            if booleans.contains(id) {
+                XCTAssertTrue(app.buttons["settings.on.\(id)"].exists)
+                XCTAssertTrue(app.buttons["settings.off.\(id)"].exists)
+            } else if choices.contains(id) {
+                XCTAssertTrue(app.buttons["settings.picker.\(id)"].exists)
+            } else {
+                XCTAssertTrue(app.sliders["settings.slider.\(id)"].exists)
+                XCTAssertTrue(app.steppers["settings.stepper.\(id)"].exists)
+            }
+            if id != "displayBrightness" {
+                XCTAssertFalse(app.buttons["settings.apply.\(id)"].exists)
+            }
+            XCTAssertFalse(app.staticTexts["settings.requested.\(id)"].exists)
+        }
+        XCTAssertFalse(app.staticTexts["settings.control.chargeLimitDiagnostic"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["settings.validationDisclosure"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["settings.validationAuthorization"].exists)
+        for text in [
+            "Details", "New value", "Choose a value", "Reported diagnostics",
+            "Advanced · needs validation", "Advanced · validation enabled",
+            "Writing this setting has not been verified.", "Wheel confirmation unavailable.",
+            "Requested · no confirmation available", "Adjust while parked. Check changes on the wheel.",
+        ] {
+            XCTAssertFalse(app.staticTexts[text].exists)
+        }
+        attachScreenshot(of: app, named: "Tune — all 18 ordinary settings")
     }
 
     private func assertRidePublishesDynamicTelemetryAfterRouteMounts(_ family: ConnectedDeviceFamily) throws {
@@ -2957,6 +3024,10 @@ final class CutoutAppUITests: XCTestCase {
 
     private var launchArguments: [String] {
         var arguments = fixture.launchArguments
+        if name.contains("EucTune") { arguments += ["-CUTOUT_UI_TEST_SETTINGS", "YES"] }
+        if name.contains("EucTuneUsesOrdinaryGenericControlsAtAccessibilityDynamicType") {
+            arguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+        }
         if name.contains("SixtyReadings") {
             arguments += ["-CUTOUT_UI_TEST_BMS_COUNT", "60"]
         }

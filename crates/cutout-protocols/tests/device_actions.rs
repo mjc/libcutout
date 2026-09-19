@@ -1,7 +1,7 @@
 use cutout_core::{
-    DeviceActionId, DeviceActionProgress, DeviceActionStatus, DeviceActionStep, DeviceActionsState,
-    DeviceCommand, MonotonicTimestamp, RawFieldValue, SettingsEntry, SettingsReadback,
-    ValueQuality, ValueSource, VerificationStatus,
+    DeviceActionId, DeviceActionProgress, DeviceActionRequest, DeviceActionStatus,
+    DeviceActionStep, DeviceActionsState, DeviceCommand, MonotonicTimestamp, RawFieldValue,
+    SettingsEntry, SettingsReadback, ValueQuality, ValueSource, VerificationStatus,
 };
 use cutout_protocols::{
     AERO_FIELD_GYRO_CALIBRATION_STATE, ActionAccess, ActionConfirmation, ActionRole,
@@ -21,7 +21,7 @@ fn gyro_readback(raw: i64) -> SettingsReadback {
 }
 
 #[test]
-fn aero_actions_are_typed_and_remain_unverified_outside_validation_mode() {
+fn ordinary_aero_actions_preserve_roles_and_write_verification() {
     let profile = aero_control_profile();
     let actions = profile.action_descriptors(false);
     assert_eq!(actions.len(), 3);
@@ -42,7 +42,8 @@ fn aero_actions_are_typed_and_remain_unverified_outside_validation_mode() {
     assert_eq!(reset.help_key, "actions.trip_meter_reset.help");
     assert_eq!(reset.role, ActionRole::Destructive);
     assert_eq!(reset.confirmation, ActionConfirmation::None);
-    assert_eq!(reset.access, ActionAccess::Unverified);
+    assert_eq!(reset.access, ActionAccess::Available);
+    assert_eq!(reset.write_verification, VerificationStatus::Unverified);
 
     let gyro = actions
         .iter()
@@ -52,7 +53,8 @@ fn aero_actions_are_typed_and_remain_unverified_outside_validation_mode() {
     assert_eq!(gyro.help_key, "actions.gyro_calibration.help");
     assert_eq!(gyro.role, ActionRole::Procedure);
     assert_eq!(gyro.confirmation, ActionConfirmation::ProgressReadback);
-    assert_eq!(gyro.access, ActionAccess::Unverified);
+    assert_eq!(gyro.access, ActionAccess::Available);
+    assert_eq!(gyro.write_verification, VerificationStatus::Unverified);
 
     let actions = DeviceActionsState::default();
     let horn = actions.next_request(DeviceActionId::Horn).unwrap();
@@ -68,11 +70,14 @@ fn aero_actions_are_typed_and_remain_unverified_outside_validation_mode() {
     );
     assert_eq!(
         profile.action_command(reset, false),
-        Err(cutout_protocols::ActionRequestError::Unverified)
+        Ok(DeviceCommand::InvokeAction(reset))
     );
     assert_eq!(
-        profile.action_command(gyro, true),
-        Ok(DeviceCommand::SetAeroGyroCalibration)
+        profile.action_command(gyro, false),
+        Ok(DeviceCommand::InvokeAction(DeviceActionRequest {
+            id: DeviceActionId::GyroCalibration,
+            step: DeviceActionStep::PrepareGyroCalibration,
+        }))
     );
     assert!(falcon_control_profile().action_descriptors(true).is_empty());
     assert!(
@@ -84,7 +89,7 @@ fn aero_actions_are_typed_and_remain_unverified_outside_validation_mode() {
 
 #[test]
 fn action_commands_reject_steps_that_do_not_belong_to_the_action() {
-    let invalid = cutout_core::DeviceActionRequest {
+    let invalid = DeviceActionRequest {
         id: DeviceActionId::ResetTripMeter,
         step: DeviceActionStep::StartGyroCalibration,
     };

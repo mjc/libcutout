@@ -451,26 +451,29 @@ final class CutoutAppModelTests: XCTestCase {
         model.start()
         XCTAssertTrue(model.pair(platformIdentifier: fixture.candidate.platformIdentifier))
         await Self.waitUntil("generic controls publication", maxTurns: 100_000) {
-            model.phase == .live && model.deviceControlsSnapshot != nil
+            model.phase == .live && model.settings != nil
         }
-        let snapshot = try XCTUnwrap(model.deviceControlsSnapshot)
+        let snapshot = try XCTUnwrap(model.settings)
         let token = try XCTUnwrap(snapshot.connection.token)
         XCTAssertEqual(snapshot.connection.readiness, .verified)
-        XCTAssertEqual(snapshot.settingDescriptors, core.deviceControlsSnapshot.settingDescriptors)
-        XCTAssertEqual(snapshot.settingDescriptors.first { $0.id == .pwmTiltback }?.access, .unverified)
-        XCTAssertThrowsError(try model.submitDeviceSetting(token: token, id: .pwmTiltback, value: .number(value: 80))) {
-            XCTAssertEqual($0 as? DeviceSettingSubmissionError, .Unverified)
+        XCTAssertEqual(snapshot.settingDescriptors, core.settings.settingDescriptors)
+        XCTAssertEqual(snapshot.descriptor(for: .pwmTiltback)?.access, .writable)
+        XCTAssertEqual(snapshot.settingDescriptors.filter { $0.access == .writable }.count, 18)
+        XCTAssertFalse(snapshot.validationAuthorized)
+        XCTAssertThrowsError(try model.submitDeviceSetting(token: token, id: .pwmTiltback, value: .number(value: 101))) {
+            XCTAssertEqual($0 as? DeviceSettingSubmissionError, .InvalidValue)
         }
+        try model.submitDeviceSetting(token: token, id: .pwmTiltback, value: .number(value: 80))
         try model.submitDeviceSetting(token: token, id: .highBeam, value: .boolean(value: true))
         await Self.waitUntil("unconfirmed request publication") {
-            model.deviceControlsSnapshot?.settings.first { $0.id == .highBeam }?.requested == .boolean(value: true)
+            model.settings?.setting(for: .highBeam)?.requested == .boolean(value: true)
         }
-        let highBeam = try XCTUnwrap(model.deviceControlsSnapshot?.settings.first { $0.id == .highBeam })
+        let highBeam = try XCTUnwrap(model.settings?.setting(for: .highBeam))
         XCTAssertEqual(highBeam.status, .sentWithoutConfirmation)
         XCTAssertNil(highBeam.current)
         core.onPhaseChange?(.failed(.sessionFailed("write channel unavailable")))
-        core.onDeviceControlsChange?(snapshot)
-        XCTAssertNil(model.deviceControlsSnapshot)
+        core.onSettingsChange?(snapshot)
+        XCTAssertNil(model.settings)
         core.disconnectAndScan()
     }
 
@@ -740,6 +743,7 @@ final class CutoutAppModelTests: XCTestCase {
 
         XCTAssertFalse(model.isRideMapRecording)
         XCTAssertTrue(model.startGpsOnlyRide())
+        XCTAssertEqual(driver.tripMeterResetCount, 1)
         XCTAssertEqual(driver.resetRideMapLocationAdmissionCount, 1)
         XCTAssertTrue(model.isRideMapRecording)
         XCTAssertEqual(driver.rideLocationDemandStates, [.active])
@@ -764,6 +768,11 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(driver.resetRideMapLocationAdmissionCount, 1)
 
         XCTAssertFalse(model.startGpsOnlyRide())
+        XCTAssertEqual(
+            driver.tripMeterResetCount,
+            1,
+            "a rejected start must not reset the device trip meter"
+        )
         XCTAssertEqual(
             driver.resetRideMapLocationAdmissionCount,
             1,
@@ -2080,7 +2089,6 @@ final class CutoutAppModelTests: XCTestCase {
         model.start()
 
         XCTAssertTrue(model.pair(platformIdentifier: row.id))
-        driver.onPhaseChange?(.subscribing)
         driver.isRecordOnlyConnection = true
         driver.onPhaseChange?(.live)
 
@@ -2945,9 +2953,8 @@ final class CutoutAppModelTests: XCTestCase {
         )
 
         model.start()
-        for _ in 0 ..< 200 {
-            if await manager.lastStartedSnapshot != nil { break }
-            await Task.yield()
+        await Self.waitUntil("auto live activity start") {
+            await manager.lastStartedSnapshot != nil
         }
 
         let snapshot = await manager.lastStartedSnapshot
@@ -3679,8 +3686,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     var onReconnectScheduled: ((SessionConnectionRetry) -> Void)?
     var onCaptureEvent: ((CaptureEvent) -> Void)?
     var onScanStateChange: ((DevicePickerScanState) -> Void)?
-    var onDeviceControlsChange: ((DeviceControlsSnapshot) -> Void)?
-    var onSettingsReadbackChange: ((SettingsReadback?) -> Void)?
+    var onSettingsChange: ((DeviceSettings) -> Void)?
     var onFaultHistoryReadbackChange: ((FaultHistoryReadback?) -> Void)?
     var onBmsSnapshotChange: ((BmsSnapshot?) -> Void)?
     var onPhoneLocationSnapshotChange: ((MobilePhoneLocationSnapshotDto, MonotonicMilliseconds) -> Void)?
@@ -3693,8 +3699,8 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     var protocolIdentityCandidate: DevicePickerDiscoveryCandidate?
     var isRecordOnlyConnection = false
     var electricUnicycleModel: ElectricUnicycleModel?
-    var deviceControlsSnapshot: DeviceControlsSnapshot {
-        rideSessionStateHandle.deviceControlsSnapshot()
+    var settings: DeviceSettings {
+        rideSessionStateHandle.settings()
     }
     private let scanState: DevicePickerScanState
     private let pairingSucceeds: Bool
@@ -3708,6 +3714,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     private(set) var captureAnnotations = [String]()
     private(set) var flushCaptureCount = 0
     private(set) var disconnectCount = 0
+    private(set) var tripMeterResetCount = 0
     private(set) var resetRideMapLocationAdmissionCount = 0
     private(set) var rideLocationDemandStates = [MobileRideMapStateDto]()
     var nowValue: UInt64 = 0
@@ -3785,6 +3792,12 @@ private final class SessionDriverSpy: CutoutSessionDriving {
         disconnectCount += 1
     }
 
+    @discardableResult
+    func resetTripMeterForNewRide() -> Bool {
+        tripMeterResetCount += 1
+        return true
+    }
+
     func resetRideMapLocationAdmission() {
         resetRideMapLocationAdmissionCount += 1
     }
@@ -3795,11 +3808,11 @@ private final class SessionDriverSpy: CutoutSessionDriving {
 
     func submitDeviceSetting(token: ConnectionAttemptToken, id: DeviceSettingID, value: DeviceSettingValue) throws {
         _ = try rideSessionStateHandle.submitSetting(token: token, id: id, value: value, monotonicMs: nowValue)
-        onDeviceControlsChange?(deviceControlsSnapshot)
+        onSettingsChange?(settings)
     }
     func submitDeviceAction(token: ConnectionAttemptToken, id: DeviceActionID) throws {
         _ = try rideSessionStateHandle.submitAction(token: token, id: id, monotonicMs: nowValue)
-        onDeviceControlsChange?(deviceControlsSnapshot)
+        onSettingsChange?(settings)
     }
     func now() -> MonotonicMilliseconds {
         MonotonicMilliseconds(nowValue)
