@@ -30,7 +30,7 @@ renewed visual approval, and catalog coverage is not physical acceptance.
 - Choice rows use a native picker. Only an explicit selection creates a draft.
 - Only actionable errors, refusals, pending activity, and procedure progress add
   feedback. No invented current value or success state.
-- Trip reset keeps its confirmation. Calibration keeps its start/stop lifecycle.
+- Trip reset keeps its confirmation. Calibration keeps its prepare/ready/start lifecycle and reports when a wheel restart is required.
 - Swift renders the Rust catalog. Ordinary availability requires no UI-side
   validation authorization. Identity, range, stationary/fresh telemetry, charging,
   arming, and procedure checks remain in Rust. These are requirements; the

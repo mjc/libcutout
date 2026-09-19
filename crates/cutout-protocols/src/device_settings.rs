@@ -164,7 +164,6 @@ pub struct DeviceControlProfile {
     pub(crate) available: Capabilities,
     pub(crate) verified: Capabilities,
     pub(crate) production: Capabilities,
-    confirmation: Capabilities,
     available_settings: &'static [SettingId],
     verified_settings: &'static [SettingId],
     confirmation_settings: &'static [SettingId],
@@ -231,19 +230,14 @@ impl SettingsAdapter {
 }
 
 impl DeviceControlProfile {
-    /// Selects available encoders, verified writes, and writes with usable confirmation.
+    /// Selects available encoders and verified writes.
     #[must_use]
-    pub const fn new(
-        available: Capabilities,
-        verified: Capabilities,
-        confirmation: Capabilities,
-    ) -> Self {
+    pub const fn new(available: Capabilities, verified: Capabilities) -> Self {
         Self {
             settings_adapter: SettingsAdapter::None,
             available,
             verified,
             production: verified,
-            confirmation,
             available_settings: &[],
             verified_settings: &[],
             confirmation_settings: &[],
@@ -391,7 +385,6 @@ pub const fn aero_control_profile() -> DeviceControlProfile {
     DeviceControlProfile::new(
         available,
         Capabilities::from_supported_commands([CommandKind::SetSetting, CommandKind::SoundHorn]),
-        Capabilities::from_supported_commands([CommandKind::SetSetting]),
     )
     .with_production_commands(available)
     .with_settings_adapter(SettingsAdapter::Aero)
@@ -452,47 +445,43 @@ pub const fn aero_control_profile() -> DeviceControlProfile {
 #[must_use]
 pub const fn falcon_control_profile() -> DeviceControlProfile {
     let available = Capabilities::from_supported_commands([CommandKind::SetSetting]);
-    DeviceControlProfile::new(
-        available,
-        available,
-        Capabilities::from_supported_commands([CommandKind::SetSetting]),
-    )
-    .with_settings_adapter(SettingsAdapter::Falcon)
-    .with_setting_capabilities(
-        &[
-            SettingId::Headlight,
-            SettingId::PedalMode,
-            SettingId::RollAngleMode,
-            SettingId::SpeedAlarmMode,
-            SettingId::MaximumSpeed,
-            SettingId::BeeperVolumeLevel,
-            SettingId::LightingPattern,
-        ],
-        &[
-            SettingId::Headlight,
-            SettingId::PedalMode,
-            SettingId::RollAngleMode,
-            SettingId::SpeedAlarmMode,
-            SettingId::MaximumSpeed,
-            SettingId::BeeperVolumeLevel,
-            SettingId::LightingPattern,
-        ],
-        &[
-            SettingId::PedalMode,
-            SettingId::RollAngleMode,
-            SettingId::SpeedAlarmMode,
-        ],
-    )
-    .with_readable_settings(&[SettingId::PowerOffDelay])
-    .with_default_charge_profile(ChargeProfile::new(
-        ChargeProfileIdentity::new(44),
-        UsablePackCapacity::new(
-            Capacity::from_milliamp_hours(10_000),
-            CapacitySource::ProtocolProfile,
-            VerificationStatus::SourceVerified,
-        ),
-        VerificationStatus::Unverified,
-    ))
+    DeviceControlProfile::new(available, available)
+        .with_settings_adapter(SettingsAdapter::Falcon)
+        .with_setting_capabilities(
+            &[
+                SettingId::Headlight,
+                SettingId::PedalMode,
+                SettingId::RollAngleMode,
+                SettingId::SpeedAlarmMode,
+                SettingId::MaximumSpeed,
+                SettingId::BeeperVolumeLevel,
+                SettingId::LightingPattern,
+            ],
+            &[
+                SettingId::Headlight,
+                SettingId::PedalMode,
+                SettingId::RollAngleMode,
+                SettingId::SpeedAlarmMode,
+                SettingId::MaximumSpeed,
+                SettingId::BeeperVolumeLevel,
+                SettingId::LightingPattern,
+            ],
+            &[
+                SettingId::PedalMode,
+                SettingId::RollAngleMode,
+                SettingId::SpeedAlarmMode,
+            ],
+        )
+        .with_readable_settings(&[SettingId::PowerOffDelay])
+        .with_default_charge_profile(ChargeProfile::new(
+            ChargeProfileIdentity::new(44),
+            UsablePackCapacity::new(
+                Capacity::from_milliamp_hours(10_000),
+                CapacitySource::ProtocolProfile,
+                VerificationStatus::SourceVerified,
+            ),
+            VerificationStatus::Unverified,
+        ))
 }
 
 const CATALOG: &[(SettingId, &str, SettingGroup, u16)] = &[
@@ -828,7 +817,7 @@ mod tests {
     #[test]
     fn confirmation_requires_a_positive_profile_capability() {
         let available = Capabilities::from_supported_commands([CommandKind::SetLights]);
-        let unknown = DeviceControlProfile::new(available, available, Capabilities::default());
+        let unknown = DeviceControlProfile::new(available, available);
         assert!(unknown.descriptors(false).is_empty());
         let aero = aero_control_profile().descriptors(true);
         for id in [
@@ -875,8 +864,7 @@ mod tests {
     #[test]
     fn generic_capabilities_do_not_inherit_an_unrelated_settings_adapter() {
         let capabilities = Capabilities::from_supported_commands([CommandKind::SetLights]);
-        let profile =
-            DeviceControlProfile::new(capabilities, capabilities, Capabilities::default());
+        let profile = DeviceControlProfile::new(capabilities, capabilities);
         assert!(profile.descriptors(false).is_empty());
         assert_eq!(
             profile

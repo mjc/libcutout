@@ -171,7 +171,6 @@ fn run_aero_settings_simulator() -> Result<()> {
             DeviceSettingValue::Number(560),
         ),
         setting(SettingId::PedalAngle, DeviceSettingValue::Number(-12)),
-        setting(SettingId::PedalMode, DeviceSettingValue::Choice(0)),
         setting(SettingId::RidingPreset, DeviceSettingValue::Choice(1)),
         setting(SettingId::PedalHardness, DeviceSettingValue::Number(64)),
         setting(SettingId::DisplayBrightness, DeviceSettingValue::Number(80)),
@@ -186,10 +185,6 @@ fn run_aero_settings_simulator() -> Result<()> {
         ),
         setting(SettingId::LateralTiltLimit, DeviceSettingValue::Number(55)),
         setting(SettingId::VoltageCorrection, DeviceSettingValue::Number(-5)),
-        setting(
-            SettingId::ChargeLimitDiagnostic,
-            DeviceSettingValue::Number(46),
-        ),
         setting(SettingId::DisplayUnits, DeviceSettingValue::Choice(1)),
         setting(SettingId::HighSpeedMode, DeviceSettingValue::Boolean(true)),
         setting(

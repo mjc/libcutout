@@ -1931,7 +1931,6 @@ fn parse_aero_write_command(setting: AeroSetting, value: &str) -> Result<DeviceC
             SettingId::HighBeam,
             DeviceSettingValue::Boolean(parse_toggle(value)?),
         ),
-        AeroSetting::Pedal => semantic_choice(SettingId::PedalMode, value, "pedal"),
         AeroSetting::RidingMode => semantic_choice(SettingId::RidingPreset, value, "riding mode"),
         AeroSetting::TiltbackSpeed => semantic_speed(SettingId::TiltbackSpeed, value, "tiltback"),
         AeroSetting::PedalHardness => semantic_range(
@@ -4067,13 +4066,6 @@ mod tests {
         assert_eq!(
             parse_aero_write_command(AeroSetting::Headlight, "off").expect("headlight parses"),
             DeviceCommand::SetLights(LightState::Off)
-        );
-        assert_eq!(
-            parse_aero_write_command(AeroSetting::Pedal, "hard").expect("pedal parses"),
-            DeviceCommand::SetSetting {
-                id: SettingId::PedalMode,
-                value: DeviceSettingValue::Choice(0),
-            }
         );
         assert_eq!(
             parse_aero_write_command(AeroSetting::TiltbackSpeed, "31")

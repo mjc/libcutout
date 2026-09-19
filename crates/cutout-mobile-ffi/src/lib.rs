@@ -10119,14 +10119,6 @@ impl From<PendingProbe> for MobilePendingProbeDto {
     }
 }
 
-/// Mobile Falcon construction error.
-#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
-pub enum MobileSessionConstructorError {
-    /// Requested Falcon profile is not supported.
-    #[error("unsupported Falcon profile")]
-    UnsupportedFalconProfile,
-}
-
 const CAPTURE_WRITER_QUEUE_CAPACITY: usize = 256;
 const CAPTURE_WRITER_BUFFER_BYTES: u64 = 128 * 1024;
 const CAPTURE_WRITER_FLUSH_INTERVAL: Duration = Duration::from_millis(500);
@@ -12928,17 +12920,6 @@ impl From<ChargeEstimateError> for MobileChargeEstimateErrorDto {
         match error {
             ChargeEstimateError::TimestampOrder => Self::TimestampOrder,
             _ => Self::ArithmeticOverflow,
-        }
-    }
-}
-
-impl From<ConcreteSessionErrorDto> for MobileSessionConstructorError {
-    fn from(error: ConcreteSessionErrorDto) -> Self {
-        match error {
-            ConcreteSessionErrorDto::CommandRefused { .. }
-            | ConcreteSessionErrorDto::UnsupportedFalconProfile { .. } => {
-                Self::UnsupportedFalconProfile
-            }
         }
     }
 }
