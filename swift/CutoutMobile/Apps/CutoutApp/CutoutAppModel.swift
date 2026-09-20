@@ -243,8 +243,7 @@ final class CutoutAppModel {
 
     func setPhoneAlarmsEnabled(_ enabled: Bool, deviceIdentity: String) async {
         if enabled, !phoneAlarmAuthorization.capability.canSchedule {
-            phoneAlarmAuthorizationTask?.cancel()
-            applyPhoneAlarmAuthorization(await phoneAlarmDelivery.requestAuthorization())
+            await requestPhoneAlarmAuthorization()
             guard phoneAlarmAuthorization.capability.canSchedule else { return }
         }
         do {
@@ -277,15 +276,26 @@ final class CutoutAppModel {
 
     func requestPhoneAlarmAuthorization() async {
         phoneAlarmAuthorizationTask?.cancel()
-        applyPhoneAlarmAuthorization(await phoneAlarmDelivery.requestAuthorization())
+        phoneAlarmAuthorizationGeneration &+= 1
+        let generation = phoneAlarmAuthorizationGeneration
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let authorization = await phoneAlarmDelivery.requestAuthorization()
+            guard !Task.isCancelled, generation == phoneAlarmAuthorizationGeneration else { return }
+            applyPhoneAlarmAuthorization(authorization)
+        }
+        phoneAlarmAuthorizationTask = task
+        await task.value
     }
 
     func refreshPhoneAlarmAuthorization() {
         phoneAlarmAuthorizationTask?.cancel()
+        phoneAlarmAuthorizationGeneration &+= 1
+        let generation = phoneAlarmAuthorizationGeneration
         phoneAlarmAuthorizationTask = Task { @MainActor [weak self] in
             guard let self else { return }
             let authorization = await phoneAlarmDelivery.authorizationStatus()
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, generation == phoneAlarmAuthorizationGeneration else { return }
             applyPhoneAlarmAuthorization(authorization)
         }
     }
@@ -316,6 +326,9 @@ final class CutoutAppModel {
     func applyPhoneAlarmActions(_ actions: MobilePhoneAlarmActionsDto) {
         phoneAlarmDelivery.cancel(requestIDs: actions.cancelRequestIds)
         actions.schedule.forEach(schedulePhoneAlarmDelivery)
+        if core.rideSessionStateHandle.phoneAlarmPreferences() == nil {
+            phoneAlarmSettings = nil
+        }
     }
 
     private func schedulePhoneAlarmDelivery(_ request: MobilePhoneAlarmDeliveryRequestDto) {
@@ -452,6 +465,7 @@ final class CutoutAppModel {
     private var rideMapDurableProjectionCancellation: MobileRideMapProjectionCancellation?
     private var rideMapLiveProjectionGeneration: UInt64 = 0
     private var rideMapLiveProjectionEnabled = false
+    private var phoneAlarmAuthorizationGeneration: UInt64 = 0
     private static let liveActivityUpdateIntervalMilliseconds: UInt64 = 1_000
 
     isolated deinit {
@@ -2715,6 +2729,7 @@ final class CutoutAppModel {
 
     func disconnectTransport() {
         applyPhoneAlarmActions(core.rideSessionStateHandle.deactivatePhoneAlarmDevice())
+        phoneAlarmSettings = nil
         endLiveActivity(reason: .disconnected)
         isRecordOnlyCapture = false
         activeCaptureLabels.removeAll()
