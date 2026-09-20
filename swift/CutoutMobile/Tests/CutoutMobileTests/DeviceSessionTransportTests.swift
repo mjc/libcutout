@@ -98,7 +98,7 @@ final class DeviceSessionTransportTests: XCTestCase {
             defer { transport.invalidate() }
             sink.dispositions = [.queued, .queued, .queued]
             _ = try transport.submitSetting(.displayBrightness, value: .number(value: 10), at: MonotonicMilliseconds(3))
-            _ = try transport.submitSetting(.pedalAngle, value: .number(value: 100), at: MonotonicMilliseconds(4))
+            _ = try transport.submitSetting(.pedalAngle, value: .number(value: 10), at: MonotonicMilliseconds(4))
             _ = try transport.submitSetting(.displayBrightness, value: .number(value: 20), at: MonotonicMilliseconds(5))
             let expected = Array(sink.writes.suffix(2))
             transport.handlePeripheralIsReadyToSendWithoutResponse()
