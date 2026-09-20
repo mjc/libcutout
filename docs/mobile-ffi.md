@@ -4,6 +4,27 @@
 the Swift and Kotlin clients. Rust owns the transport-independent DTOs and
 concrete protocol sessions; platform code owns Bluetooth and UI concerns.
 
+For settings, that ownership includes value domains, applicability, observations,
+completion strategy, guards, serialization, deadlines and retry policy. The
+[settings design review](settings-design-review.md) proposes the remaining
+contract repairs; the current adapter/FFI boundary is not proof that native
+submission and operation completion already obey that contract.
+
+Each operation must retain its connection-attempt and operation IDs through
+preparation, native queueing, actual host submission/failure and completion.
+Native adapters report receipts to Rust rather than deciding success. A BLE
+write-without-response host receipt is not a wheel acknowledgment. Queue
+overflow must fail the affected operation explicitly, and delayed sends must
+recheck their applicable guards. The checkpoint currently publishes accepted
+plans before native execution and can drop the oldest queued write without a
+request-specific failure; these remain open defects. Settings writes now carry
+the Rust request operation identity through the core and mobile FFI into the
+Swift action, correlated CoreBluetooth planned writes (including chunks), and
+the native receipt boundary. A settings write cancelled before native
+submission is now reported distinctly from host rejection; broader operation
+classes still need the same cancellation treatment. This identity path is not
+a device acknowledgment.
+
 The Swift app consumes a generated package selector in ignored build state:
 
 ```text
@@ -225,9 +246,70 @@ Useful app commands are:
 devenv tasks run build:ios-app
 devenv tasks run run:ios-app-on-mac
 devenv tasks run deploy:ios-device
-devenv tasks run validate:aero-live-connection
 devenv shell -- cutout-melk-live
 ```
+
+### Live Aero settings validation on macOS
+
+`validate:aero-live-connection` is the existing macOS CoreBluetooth harness,
+not a settings acceptance procedure. The unsafe mutating sweep has been removed:
+`--settings` and all legacy mutation opt-ins now fail before constructing the
+Bluetooth session. The remaining connection smoke check runs once, streams logs
+as they arrive, uses a finite timeout, and explicitly reports
+`settings_validation=not_run`. It does not inventory settings observations.
+
+The terminal native-tool handoff replaces the build coordinator on Unix instead
+of leaving a waiting parent. Offline subprocess tests cover retained PID/FFI
+lock, INT/TERM exit, and lock cleanup after failed exec. This fixes that handoff,
+not cancellation of every outer launcher/descendant or native queued write.
+
+Existing configuration is recorded here for code review, not as a run recipe:
+
+| Switch | Current behavior / limitation |
+| --- | --- |
+| `CUTOUT_AERO_SETTINGS_TEST` | Value `1` is rejected before Bluetooth starts |
+| `CUTOUT_AERO_INCLUDE_HEADLIGHT`, `CUTOUT_AERO_INCLUDE_AUDIBLE`, `CUTOUT_AERO_INCLUDE_ALARM_MODES`, `CUTOUT_AERO_INCLUDE_TRIP_RESET` | Value `1` is rejected, even without settings mode |
+| `CUTOUT_AERO_ALLOW_UNRESTORABLE_WRITES` | Value `1` is rejected; unknown baselines never authorize generated probes |
+| `CUTOUT_AERO_TARGET`, `CUTOUT_AERO_VALIDATION_TIMEOUT` | Select target and connection timeout (default 45 seconds, finite, greater than 0 and at most 600); neither establishes settings-page coverage or a per-operation deadline |
+
+Disabling the settings suite does not make connection-only discovery proven
+harmless. The Rust detector now avoids starting Begode N/V/M probes after
+Veteran, VESC or conflict evidence resolves the protocol, and retires the
+corresponding pending Rust probe state. A recorded NF2557 connection emitted
+those probes and flushed queued bytes after Veteran identity resolved; typed
+native cancellation for discovery probes is still not implemented. FFE0/FFE1 is
+shared, so probe eligibility while multiple protocols remain plausible still
+needs a safe plan.
+“Read-only” describes intended semantic operations, not an absence of transport
+writes.
+
+The removed descriptor inventory ran before settings telemetry and exited once
+ride telemetry was live. Its `current=nil` values do not show lack of device
+readback. Bounds and typed completion strategies came from library declarations, not
+wheel negotiation. The Rust readback boundary now carries the selected protocol
+on normalized observations, but that tag is not independent packet provenance
+and does not turn a matching observation into an acknowledgment. The replacement
+observation mode must run for a bounded relevant page cycle and report actual
+fields/pages received separately.
+
+The [design review](settings-design-review.md) specifies the replacement:
+fake-transport tests for zero control writes in inventory mode, exactly-once
+execution, genuine terminal waiting, honest incomplete verdicts and cancellation
+of the actual child and queued work; then one reviewed physical case at a time.
+Each case names exact identity, target, expected physical effect, expected
+evidence and restoration policy. No descriptor-minimum probes, generated numeric
+targets, boolean sweeps or live invalid-input tests. Intent and transport/readback
+evidence must stream durably, and failed restoration remains an explicit recovery
+obligation. The audible incident ceased after power cycling; neither its cause
+nor complete restoration was established.
+
+Tracker ownership: [LIBCU-836](https://lific.mjc.lol/LIBCU/issues/LIBCU-836)
+for harness repair; LIBCU-477 for operation lifecycle; LIBCU-641 for backpressure;
+LIBCU-476 for observations; LIBCU-505 for probe safety. The shared proposed
+contract is [LIBCU-DOC-8](https://lific.mjc.lol/LIBCU/pages/30); physical
+acceptance remains in LIBCU-390 after those prerequisites.
+
+### App build and deployment behavior
 
 The app build task targets an ARM64 iOS Simulator. The Mac command builds the
 iPhone app for Apple Silicon Mac and opens it. Its

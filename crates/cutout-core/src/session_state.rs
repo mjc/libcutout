@@ -208,6 +208,17 @@ impl DeviceIdentityState {
         self.malformed_probe_response = None;
     }
 
+    /// Retires identity probes owned by a protocol that is no longer plausible.
+    ///
+    /// Retired probes are not missing responses: their protocol was ruled out by
+    /// stronger wire evidence, so reporting them as timed out would misdescribe
+    /// the detection result. Native queue cancellation remains a transport concern.
+    pub fn retire_pending_probes(&mut self) {
+        self.pending_probe_started_at.fill(None);
+        self.missing_probe_response = None;
+        self.malformed_probe_response = None;
+    }
+
     /// Records an identity probe and the monotonic time at which it was written.
     pub fn observe_probe_write(&mut self, probe: PendingProbe, started_at: MonotonicTimestamp) {
         self.pending_probe_started_at[probe.index()].get_or_insert(started_at);

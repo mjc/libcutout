@@ -121,7 +121,7 @@ impl ConcreteAeroBenignControlSession {
     pub fn set_monotonic(&mut self, monotonic_ms: u64) {
         self.host
             .session_mut()
-            .set_monotonic(cutout_core::MonotonicTimestamp::new(monotonic_ms));
+            .set_monotonic(MonotonicTimestamp::new(monotonic_ms));
     }
 
     /// Drives one DTO input and returns owned outputs plus any stable error DTO.
@@ -244,7 +244,7 @@ impl ConcreteFalconBenignControlSession {
     pub fn set_monotonic(&mut self, monotonic_ms: u64) {
         self.host
             .session_mut()
-            .set_monotonic(cutout_core::MonotonicTimestamp::new(monotonic_ms));
+            .set_monotonic(MonotonicTimestamp::new(monotonic_ms));
     }
 
     /// Drives one DTO input and returns owned outputs plus any stable error DTO.
@@ -803,8 +803,12 @@ mod tests {
         assert!(session.arm_settings_writes(RideOperatingStateDto::Parked, Some(0), 10));
         assert!(!session.arm_settings_writes(RideOperatingStateDto::Riding, Some(501), 11));
 
-        let result =
-            session.ingest_checked(&SessionInputDto::Command(DeviceCommandDto::ResetTripMeter));
+        let result = session.ingest_checked(&SessionInputDto::Command(
+            DeviceCommandDto::InvokeAction(cutout_core::DeviceActionRequestDto {
+                id: cutout_core::DeviceActionIdDto::ResetTripMeter,
+                step: cutout_core::DeviceActionStepDto::Invoke,
+            }),
+        ));
 
         assert_eq!(
             result.error,
@@ -851,8 +855,12 @@ mod tests {
             monotonic_ms: ms(60_000),
         });
         assert!(!session.arm_settings_writes(RideOperatingStateDto::Parked, Some(0), 60_000));
-        let result =
-            session.ingest_checked(&SessionInputDto::Command(DeviceCommandDto::ResetTripMeter));
+        let result = session.ingest_checked(&SessionInputDto::Command(
+            DeviceCommandDto::InvokeAction(cutout_core::DeviceActionRequestDto {
+                id: cutout_core::DeviceActionIdDto::ResetTripMeter,
+                step: cutout_core::DeviceActionStepDto::Invoke,
+            }),
+        ));
         assert!(result.error.is_some());
         assert!(result.outputs.iter().all(|output| !matches!(
             output,

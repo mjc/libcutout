@@ -47,6 +47,7 @@ pub use battery_profile::{
 mod family;
 pub use family::*;
 mod ffi;
+pub mod settings_wire;
 pub use ffi::*;
 mod device_session;
 pub use device_session::*;
@@ -79,6 +80,8 @@ pub use registry::{
     RegisteredModelDefinition, SESSION_REGISTRATIONS, SessionRegistration, VETERAN_PARSER_KEY,
     begode_falcon_session_with_voltage_profile, find_session_registration,
 };
+mod control_wire;
+pub use control_wire::{BegodeProtocol, VescProtocol, VeteranProtocol};
 mod device_actions;
 mod device_settings;
 mod request_encoder;
@@ -100,10 +103,10 @@ pub use refloat_codec::{
     RefloatStreamResult, VESC_COMM_CUSTOM_APP_DATA, encode_refloat_request,
 };
 pub use request_encoder::{
-    AeroCommandMode, AeroCommandModeDetector, AeroControlEncoder, AeroRequestEncoder,
-    EncodedControl, EncodedControlSequence, EncodedControlStep, EncodedIdentificationProbe,
-    EncodedRequest, FalconControlEncoder, FalconRequestEncoder, RequestDisposition, VescCanTarget,
-    VescRequestEncoder, begode_identification_probes,
+    AeroRequestEncoder, EncodedControl, EncodedControlSequence, EncodedControlStep,
+    EncodedIdentificationProbe, EncodedRequest, FalconDialect, FalconRequestEncoder, NosfetDialect,
+    RequestDisposition, VescCanTarget, VescRequestEncoder, VeteranCommandMode,
+    VeteranCommandModeDetector, begode_identification_probes,
 };
 #[cfg(feature = "dangerous-controls")]
 pub use session::DangerousControlSession;

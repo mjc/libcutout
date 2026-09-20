@@ -68,7 +68,6 @@ final class CutoutAppModel {
     private(set) var phase = SessionConnectionPhase.starting
     private(set) var devicePickerScanState: DevicePickerScanState?
     private(set) var connectionState = ConnectionState.picker
-    private(set) var settingsReadback: SettingsReadback?
     private(set) var faultHistoryReadback: FaultHistoryReadback?
     private(set) var bmsSnapshot: BmsSnapshot?
     private(set) var phoneLocationReadback = PhoneLocationReadback(
@@ -160,7 +159,7 @@ final class CutoutAppModel {
     private(set) var activeCaptureLabels = Set<CaptureQuickLabel>()
     private(set) var recordOnlyDeviceKind: String?
     private(set) var hasSavedDevice = false
-    private(set) var deviceControlsSnapshot: DeviceControlsSnapshot?
+    private(set) var settings: DeviceSettings?
 
     var selectedRideTitle: String? {
         connectionState.selection?.title
@@ -463,13 +462,10 @@ final class CutoutAppModel {
         self.core.onScanStateChange = { [weak self] scanState in
             self?.handleScanStateChange(scanState)
         }
-        self.core.onDeviceControlsChange = { [weak self] snapshot in
+        self.core.onSettingsChange = { [weak self] snapshot in
             guard let self, self.phase == .live,
                   self.core.rideSessionStateHandle.connectionAttemptSnapshot().revision == snapshot.connection.revision else { return }
-            self.deviceControlsSnapshot = snapshot
-        }
-        self.core.onSettingsReadbackChange = { [weak self] settingsReadback in
-            self?.handleSettingsReadback(settingsReadback)
+            self.settings = snapshot
         }
         self.core.onFaultHistoryReadbackChange = { [weak self] faultHistoryReadback in
             self?.faultHistoryReadback = faultHistoryReadback
@@ -1158,6 +1154,7 @@ final class CutoutAppModel {
             try core.startRideMapGpsOnly(atMs: currentMonotonicTime.rawValue)
         }
         guard started else { return false }
+        _ = core.resetTripMeterForNewRide()
         core.resetRideMapLocationAdmission()
         // Apply the user's default to the fresh Rust-owned ride timeline.
         core.updateMusicCaptureObservation(nil)
@@ -2307,13 +2304,7 @@ final class CutoutAppModel {
     func submitDeviceAction(token: ConnectionAttemptToken, id: DeviceActionID) throws {
         try core.submitDeviceAction(token: token, id: id)
     }
-    func setDeviceControlsValidation(token: ConnectionAttemptToken, authorized: Bool) throws {
-        try core.setDeviceControlsValidation(token: token, authorized: authorized)
-    }
 
-    private func handleSettingsReadback(_ readback: SettingsReadback?) {
-        settingsReadback = readback
-    }
     func pair(platformIdentifier: String) -> Bool {
         switch connectionState {
         case .connecting, .retrying, .connected:
@@ -2338,7 +2329,7 @@ final class CutoutAppModel {
             title: selectedRow.title,
             route: selectedRow.connectionRoute ?? .electricUnicycle
         )
-        clearDeviceControls()
+        clearSettings()
         liveActivityError = nil
         connectionState = .connecting(selection, phase: .discoveringServices)
         permitsStoredDeviceAutoPairing = true
@@ -2583,12 +2574,12 @@ final class CutoutAppModel {
         liveActivityIdentity = nil
         liveActivityGlyph = .electricUnicycle
         permitsStoredDeviceAutoPairing = false
-        clearDeviceControls()
+        clearSettings()
         core.disconnectAndScan()
     }
 
-    private func clearDeviceControls() {
-        deviceControlsSnapshot = nil
+    private func clearSettings() {
+        settings = nil
     }
 
     func forgetSavedDevice() {
@@ -2698,6 +2689,8 @@ final class CutoutAppModel {
             switch connectionState {
             case .connecting(_, phase: .subscribing), .identified:
                 break
+            case .connecting(_, phase: .discoveringServices) where core.isRecordOnlyConnection:
+                break
             default:
                 return
             }
@@ -2715,7 +2708,7 @@ final class CutoutAppModel {
         }
         self.phase = phase
         if phase != .live {
-            clearDeviceControls()
+            clearSettings()
         }
         switch phase {
         case .connecting, .discoveringServices, .subscribing:
@@ -2724,6 +2717,23 @@ final class CutoutAppModel {
             }
         case .live:
             if core.isRecordOnlyConnection {
+                // Record-only is an explicit capture choice. A normal Use/auto-reconnect
+                // attempt must never silently turn a known wheel into the capture screen when
+                // protocol detection times out (for example while the wheel is powered off).
+                if let selection = connectionState.selection {
+                    isRecordOnlyCapture = false
+                    recordOnlyDeviceKind = nil
+                    captureStatus = nil
+                    captureProgress = nil
+                    connectionState = .failed(
+                        selection,
+                        .identificationFailed(.timedOut)
+                    )
+                    liveActivityIdentity = nil
+                    core.disconnectAndScan()
+                    syncLiveActivity()
+                    break
+                }
                 recordOnlyDeviceKind = core.protocolIdentityCandidate?.productCategory
                     ?? connectionState.selection?.title
                 connectionState = .picker

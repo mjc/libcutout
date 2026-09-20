@@ -278,7 +278,6 @@ pub(crate) struct AeroWriteArgs {
 pub(crate) enum AeroSetting {
     Headlight,
     HighBeam,
-    Pedal,
     #[value(alias = "md")]
     PedalHardness,
     #[value(alias = "t")]

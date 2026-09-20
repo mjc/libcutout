@@ -417,7 +417,7 @@ mod tests {
             cutout_core::SettingId::PwmTiltback,
             cutout_core::DeviceSettingValue::Number(85),
             cutout_core::SettingSubmissionOutcome::Accepted,
-            true,
+            cutout_core::SettingCompletionStrategy::MatchingReadback,
             MonotonicTimestamp::new(11),
         );
         let _ = owner.ingest(&token, &pwm_duty_readback(128, 12));

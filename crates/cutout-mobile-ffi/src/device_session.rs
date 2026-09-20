@@ -218,6 +218,13 @@ mod tests {
         38, 208, 3,
     ];
 
+    fn veteran_frame_with_model_id(model_id: u16) -> Vec<u8> {
+        let mut frame = vec![0_u8; 42];
+        frame[..4].copy_from_slice(&[0xdc, 0x5a, 0x5c, 38]);
+        frame[28..30].copy_from_slice(&(model_id * 1_000).to_be_bytes());
+        frame
+    }
+
     #[test]
     fn expired_attempt_cannot_promote_from_late_protocol_reply() {
         let handle = CutoutSessionStateHandle::new();
@@ -296,5 +303,38 @@ mod tests {
             crate::MobileConnectionReadinessDto::RecordOnly
         );
         assert!(snapshot.identity.is_none());
+    }
+
+    #[test]
+    fn supported_veteran_model_can_admit_a_pending_attempt_from_detection_evidence() {
+        let handle = CutoutSessionStateHandle::new();
+        let token = handle
+            .begin_connection_attempt("NF2557".into(), 0)
+            .token
+            .unwrap();
+        handle.connection_link_established(token.clone());
+        handle.observe_connection_notification(token.clone(), veteran_frame_with_model_id(43));
+
+        let candidate =
+            handle.connection_admission_candidate("NF2557".into(), "NF2557".into(), false);
+        assert_eq!(
+            candidate.support,
+            crate::DiscoveryCandidateSupport::Supported
+        );
+        assert_eq!(
+            candidate.electric_unicycle_model,
+            Some(crate::DiscoveryElectricUnicycleModel::Aero)
+        );
+
+        let snapshot = handle.resolve_device_session(token.clone(), true, 1);
+        assert_eq!(
+            snapshot.connection.readiness,
+            crate::MobileConnectionReadinessDto::Verified
+        );
+        assert_eq!(
+            snapshot.identity.unwrap().model.as_deref(),
+            Some("NOSFET Aero")
+        );
+        assert!(handle.verified_connection_attempt_is_current(token));
     }
 }

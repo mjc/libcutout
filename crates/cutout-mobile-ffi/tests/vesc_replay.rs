@@ -15,7 +15,6 @@ fn shared_vesc_fixture_replays_through_mobile_ffi() {
         max_write_len: Some(MobileTransportWriteLimitDto { bytes: 20 }),
         channel: Vec::new(),
         bytes: Vec::new(),
-        command: None,
     });
     assert_eq!(link.error, None);
     let mut previous_time = 0;
@@ -35,7 +34,6 @@ fn shared_vesc_fixture_replays_through_mobile_ffi() {
             max_write_len: None,
             channel: channel.clone(),
             bytes: bytes.clone(),
-            command: None,
         });
         assert_eq!(step.error, None, "{}", notification["name"]);
         assert_eq!(
@@ -132,7 +130,6 @@ fn complete_refloat_descriptor_survives_every_notification_split() {
             max_write_len: Some(MobileTransportWriteLimitDto { bytes: 20 }),
             channel: Vec::new(),
             bytes: Vec::new(),
-            command: None,
         });
         assert_eq!(link.error, None);
         for (index, bytes) in [
@@ -151,7 +148,6 @@ fn complete_refloat_descriptor_survives_every_notification_split() {
                 max_write_len: None,
                 channel: byte_array(&descriptor["channel"]),
                 bytes,
-                command: None,
             });
             assert_eq!(step.error, None, "split {split}, part {index}");
         }

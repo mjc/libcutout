@@ -4,53 +4,57 @@ import Foundation
 @main
 struct CutoutMobileLiveValidator {
     static func main() {
-        let timeoutSeconds = TimeInterval(
-            CommandLine.arguments.dropFirst().first.flatMap(Double.init) ?? 45
+        let environment = ProcessInfo.processInfo.environment
+        let status = LiveValidatorInvocation.run(
+            arguments: Array(CommandLine.arguments.dropFirst()),
+            environment: environment,
+            observeConnection: { timeout in
+                CutoutLiveValidator(timeout: timeout, targetFilter: environment["CUTOUT_AERO_TARGET"])
+                    .start()
+            },
+            record: writeRecord
         )
-        let validator = CutoutLiveValidator(timeout: timeoutSeconds)
-        validator.start()
-        exit(validator.didValidate ? EXIT_SUCCESS : EXIT_FAILURE)
+        exit(status)
     }
 }
 
+private func writeRecord(_ record: String) {
+    // Emit evidence as it arrives, including when a run is interrupted.
+    FileHandle.standardOutput.write(Data((record + "\n").utf8))
+}
+
+// Connection smoke check only. Protocol discovery can still transmit probes;
+// this is neither passive capture nor settings acceptance (LIBCU-505/836).
 private final class CutoutLiveValidator {
     private let timeout: TimeInterval
-    private let startedAt = Date()
+    private let targetFilter: String?
     private let core = CutoutSessionCore()
-    private var records: [String] = []
     private var candidateRecordCount = 0
-    private var candidateSamples: [String] = []
     private var didRequestProbe = false
-    private(set) var didValidate = false
 
-    init(timeout: TimeInterval) {
+    init(timeout: TimeInterval, targetFilter: String?) {
         self.timeout = timeout
-        core.onRecord = { [weak self] record in
-            self?.appendRecord(record)
-        }
-        core.onPhaseChange = { [weak self] phase in
-            self?.appendDiagnostic("phase=\(phase)")
-        }
-        core.onScanStateChange = { [weak self] state in
-            self?.probeFirstCandidate(from: state)
-        }
+        self.targetFilter = targetFilter
+        core.onRecord = { [weak self] record in self?.appendRecord(record) }
+        core.onPhaseChange = { phase in writeRecord("phase=\(phase)") }
+        core.onScanStateChange = { [weak self] state in self?.probeFirstCandidate(from: state) }
     }
 
-    func start() {
+    func start() -> Bool {
+        let startedAt = ProcessInfo.processInfo.systemUptime
         core.start()
-        while !didValidate, Date().timeIntervalSince(startedAt) < timeout {
-            RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.1))
-            didValidate = rideState.isLiveValidationReady && hasConfirmedAeroIdentity
-        }
-        if didValidate {
-            appendDiagnostic("validation=ok")
+        defer {
             core.disconnect()
-            printRecords()
-        } else {
-            print("validation=timeout")
-            print("missing_fields=\(missingFieldText)")
-            printRecords()
+            writeRecord("candidate_records=\(candidateRecordCount)")
         }
+        while ProcessInfo.processInfo.systemUptime - startedAt < timeout {
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
+            if rideState.isLiveValidationReady && hasConfirmedAeroIdentity {
+                return true
+            }
+        }
+        writeRecord("connection_timeout missing_fields=\(missingFieldText)")
+        return false
     }
 
     private var rideState: EucRideScreenState {
@@ -59,9 +63,7 @@ private final class CutoutLiveValidator {
 
     private var missingFieldText: String {
         var fields = rideState.liveValidationMissingFields.map(\.rawValue)
-        if !hasConfirmedAeroIdentity {
-            fields.append("protocolIdentity")
-        }
+        if !hasConfirmedAeroIdentity { fields.append("protocolIdentity") }
         return fields.isEmpty ? "none" : fields.joined(separator: ",")
     }
 
@@ -70,43 +72,26 @@ private final class CutoutLiveValidator {
     }
 
     private func probeFirstCandidate(from state: DevicePickerScanState) {
-        guard !didRequestProbe else {
-            return
+        guard !didRequestProbe else { return }
+        let row: DevicePickerRow?
+        if let targetFilter {
+            row = state.rows.first(where: {
+                $0.id == targetFilter || $0.title.localizedCaseInsensitiveContains(targetFilter)
+            })
+        } else {
+            row = state.rows.first(where: { $0.isProbeRecommended })
         }
-
-        guard let row = state.rows.first(where: {
-            $0.isProbeRecommended
-        }) else {
-            return
-        }
-
+        guard let row else { return }
         didRequestProbe = true
         let didProbe = core.probe(platformIdentifier: row.id)
-        appendDiagnostic("auto_probe=\(didProbe) id=\(row.id) title=\(row.title)")
+        writeRecord("auto_probe=\(didProbe) id=\(row.id) title=\(row.title)")
     }
 
     private func appendRecord(_ record: String) {
-        guard !record.hasPrefix("candidate=") else {
+        if record.hasPrefix("candidate=") {
             candidateRecordCount += 1
-            if candidateSamples.count < 16 {
-                candidateSamples.append(record)
-            }
-            return
+            guard candidateRecordCount <= 16 else { return }
         }
-
-        appendDiagnostic(record)
-    }
-
-    private func appendDiagnostic(_ record: String) {
-        guard records.count < 2_048 else {
-            return
-        }
-        records.append(record)
-    }
-
-    private func printRecords() {
-        print("candidate_records_seen=\(candidateRecordCount)")
-        candidateSamples.forEach { print($0) }
-        records.forEach { print($0) }
+        writeRecord(record)
     }
 }

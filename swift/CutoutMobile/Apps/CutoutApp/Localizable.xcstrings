@@ -865,130 +865,6 @@
     "settings.validation.description" : {
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Settings marked Needs validation are available for testing. Verify their behavior on the wheel; enabling this mode does not validate them." } } }
     },
-    "settings.aero.title" : {
-      "comment" : "Section title for captured NOSFET Aero binary settings writes.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Aero controls" } } }
-    },
-    "settings.aero.additional.title" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Wheel settings" } } }
-    },
-    "settings.aero.current_value" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Current value" } } }
-    },
-    "settings.aero.display_backlight.title" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Display backlight" } } }
-    },
-    "settings.aero.beeper_volume.title" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Beeper volume" } } }
-    },
-    "settings.aero.dynamic_assist.title" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Dynamic assist" } } }
-    },
-    "settings.aero.pedal_dip_compensation.title" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Pedal-dip compensation" } } }
-    },
-    "settings.aero.lateral_tilt_limit.title" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Lateral tilt limit" } } }
-    },
-    "settings.aero.voltage_correction.title" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Voltage correction" } } }
-    },
-    "settings.aero.max_charge_raw.title" : {
-      "comment" : "Label for the official NOSFET MxV raw maximum-charge control; do not present it as volts.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Max charge (raw)" } } }
-    },
-    "settings.aero.high_speed_mode.title" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "High-speed mode" } } }
-    },
-    "settings.aero.low_battery_mode.title" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Low-battery mode" } } }
-    },
-    "settings.aero.transport_mode.title" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Transportation mode" } } }
-    },
-    "settings.aero.riding_mode.title" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Riding mode" } } }
-    },
-    "settings.aero.riding_mode.hard" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Hard" } } }
-    },
-    "settings.aero.riding_mode.medium" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Medium" } } }
-    },
-    "settings.aero.riding_mode.soft" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Soft" } } }
-    },
-    "settings.aero.brake_overpressure.title" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Brake overpressure alarm" } } }
-    },
-    "settings.aero.gyro_calibration.title" : {
-      "comment" : "Button that starts or completes NOSFET Aero gyro calibration.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Calibrate gyro" } } }
-    },
-    "settings.aero.gyro_calibration.stop" : {
-      "comment" : "Button that stops an active NOSFET Aero gyro calibration.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Stop calibration" } } }
-    },
-    "settings.aero.gyro_calibration.idle" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Ready to start" } } }
-    },
-    "settings.aero.gyro_calibration.waiting" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Calibration in progress" } } }
-    },
-    "settings.aero.gyro_calibration.complete" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Calibration complete" } } }
-    },
-    "settings.aero.wheel_units.title" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Wheel display units" } } }
-    },
-    "settings.aero.wheel_units.metric" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Metric (km/h)" } } }
-    },
-    "settings.aero.wheel_units.imperial" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Imperial (mph)" } } }
-    },
-    "settings.aero.footer" : {
-      "comment" : "Safety note for NOSFET Aero settings writes.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Writes are available while parked or below 500 mm/s; verify each change on the wheel." } } }
-    },
-    "settings.aero.send" : {
-      "comment" : "Button that sends a selected NOSFET Aero setting.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Send" } } }
-    },
-    "settings.aero.tiltback.title" : {
-      "comment" : "NOSFET Aero tilt-back speed setting.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Tilt-back" } } }
-    },
-    "settings.aero.pwm.title" : {
-      "comment" : "NOSFET Aero PWT threshold expressed as PWM utilization.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Tilt-back PWM" } } }
-    },
-    "settings.aero.pwm.current" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Current tilt-back PWM" } } }
-    },
-    "settings.aero.pwm.disabled" : {
-      "comment" : "Readback showing PWM tilt-back is disabled; distinct from zero headroom.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Off" } } }
-    },
-    "settings.aero.pwm.off" : {
-      "comment" : "Disables the NOSFET Aero PWT alarm.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Disable PWM tilt-back" } } }
-    },
-    "settings.aero.pedal_hardness.title" : {
-      "comment" : "Numeric NOSFET Aero MD pedal hardness, separate from the hard/medium/soft presets.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Pedal hardness (MD)" } } }
-    },
-    "settings.aero.pedal_hardness.current" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Current pedal hardness" } } }
-    },
-    "settings.aero.alarm.title" : {
-      "comment" : "NOSFET Aero alarm speed setting.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Alarm speed" } } }
-    },
-    "settings.aero.angle.title" : {
-      "comment" : "NOSFET Aero ANG (vertical angle) adjustment setting.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "ANG (vertical angle)" } } }
-    },
     "settings.capabilities.title" : {
       "comment" : "Section title for settings that are not currently editable.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Other settings" } } }
@@ -1069,13 +945,25 @@
       "comment" : "Status for a setting command refused before transport.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Refused" } } }
     },
-    "settings.state.timed_out" : {
-      "comment" : "Status for a setting command that was not confirmed in time.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Timed out" } } }
-    },
     "settings.state.failed" : {
       "comment" : "Status for a setting command that failed.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Failed" } } }
+    },
+    "settings.transport.accepted" : {
+      "comment" : "Transport evidence for a setting request accepted by the Rust owner before a BLE write.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Accepted by app" } } }
+    },
+    "settings.transport.queued" : {
+      "comment" : "Transport evidence for a setting request queued for Bluetooth submission.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Queued for Bluetooth" } } }
+    },
+    "settings.transport.rejected" : {
+      "comment" : "Transport evidence for a setting request rejected before reaching the wheel.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Rejected before Bluetooth" } } }
+    },
+    "settings.transport.cancelled" : {
+      "comment" : "Transport evidence for a setting request cancelled from a host or native queue.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Cancelled" } } }
     },
     "settings.pedal_mode.title" : {
       "comment" : "Label for the EUC pedal mode setting.",
@@ -1140,30 +1028,6 @@
     "settings.speed_alarm_mode.pwm_tiltback" : {
       "comment" : "PWM tiltback speed alarm readback value.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "PWM tiltback" } } }
-    },
-    "settings.begode_max_speed.title" : {
-      "comment" : "Label for the Begode max-speed write control.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Max speed" } } }
-    },
-    "settings.begode_max_speed.footer" : {
-      "comment" : "Safety guidance for the Begode max-speed write control.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Change only while parked or at 500 mm/s or less." } } }
-    },
-    "settings.begode_beeper_volume.title" : {
-      "comment" : "Label for the Begode beeper-volume write control.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Beeper volume" } } }
-    },
-    "settings.begode_beeper_volume.footer" : {
-      "comment" : "Safety guidance for the Begode beeper-volume write control.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Change only while parked or at 500 mm/s or less." } } }
-    },
-    "settings.begode_led_mode.title" : {
-      "comment" : "Label for the Begode LED-mode write control.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "LED mode" } } }
-    },
-    "settings.begode_led_mode.footer" : {
-      "comment" : "Safety guidance for the Begode LED-mode write control.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Change only while parked or at 500 mm/s or less." } } }
     },
     "settings.acceleration_assist.title" : {
       "comment" : "Label for the EUC acceleration assist setting.",
@@ -2784,10 +2648,6 @@
     "ride_map.status.draft" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Ready to record" } } } },
     "ride_map.status.imported" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Imported" } } } },
     "ride_map.status.interrupted" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Interrupted" } } } },
-    "settings.aero.riding_mode.title" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Riding mode" } } } },
-    "settings.aero.riding_mode.hard" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Hard" } } } },
-    "settings.aero.riding_mode.medium" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Medium" } } } },
-    "settings.aero.riding_mode.soft" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Soft" } } } },
     "actions.gyro_calibration.help" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Keep the wheel upright and still. Prepare calibration, then start when the wheel reports ready." } } } },
     "actions.gyro_calibration.label" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Calibrate gyro" } } } },
     "actions.horn.help" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Sounds the wheel horn." } } } },
@@ -2831,7 +2691,7 @@
     "settings.display_units.label" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Display units" } } } },
     "settings.dynamic_assist.label" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Dynamic assist" } } } },
     "settings.headlight.label" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Headlight" } } } },
-    "settings.high_beam.label" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "High beam" } } } },
+    "settings.high_beam.label" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Headlight" } } } },
     "settings.high_speed_mode.label" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "High-speed mode" } } } },
     "settings.lateral_tilt_limit.label" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Lateral tilt limit" } } } },
     "settings.lighting_pattern.help" : {
@@ -2860,16 +2720,21 @@
     "settings.tiltback_speed.label" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Tilt-back speed" } } } },
     "settings.transport_mode.label" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Transport mode" } } } },
     "settings.voltage_correction.label" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Voltage correction" } } } },
-    "controls.current" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Current"}}}},
-    "controls.requested" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Requested"}}}},
-    "controls.new_value" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "New value"}}}},
-    "controls.choose" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Choose a value"}}}},
+    "controls.tune.title" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Settings"}}}},
+    "controls.empty" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "No settings are available for this wheel."}}}},
+    "controls.group.interface" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Lights & display"}}}},
+    "controls.group.limits" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Limits & alarms"}}}},
+    "controls.group.riding" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Ride feel"}}}},
+    "controls.group.modes" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Wheel modes"}}}},
+    "controls.group.diagnostics" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Reported diagnostics"}}}},
+    "controls.actions" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Wheel actions"}}}},
+    "controls.boolean.action" : {"comment": "Accessible command label: setting name, then On or Off.", "localizations": {"en": {"stringUnit": {"state": "translated", "value": "%@: %@"}}}},
     "controls.apply" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Apply"}}}},
-    "controls.read_only" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Read only"}}}},
-    "controls.unverified_setting" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Writing this setting has not been verified."}}}},
-    "controls.speed_steps" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Available values follow the wheel’s whole km/h steps, shown in the app’s speed units."}}}},
-    "controls.sent_unconfirmed" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Sent without confirmation"}}}},
-    "controls.prepare" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Prepare calibration"}}}},
+    "settings.value.wheel" : {"comment": "Value read from the connected wheel, or the unknown-value label when the wheel has not reported it.", "localizations": {"en": {"stringUnit": {"state": "translated", "value": "Wheel"}}}},
+    "settings.value.draft" : {"comment": "A local value edited by the user but not submitted.", "localizations": {"en": {"stringUnit": {"state": "translated", "value": "Draft"}}}},
+    "settings.value.requested" : {"comment": "A value submitted to the wheel whose readback is not yet confirmed.", "localizations": {"en": {"stringUnit": {"state": "translated", "value": "Requested"}}}},
+    "settings.value.replay" : {"comment": "A value originating from replay data rather than the connected wheel.", "localizations": {"en": {"stringUnit": {"state": "translated", "value": "Replay"}}}},
+    "controls.prepare" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Calibrate pedals"}}}},
     "controls.start" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Start calibration"}}}},
     "controls.waiting" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Waiting for the wheel"}}}},
     "controls.restart" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Restart the wheel before calibrating again"}}}},
@@ -2889,9 +2754,9 @@
     "controls.error.unavailable" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "This control is not available for this wheel."}}}},
     "controls.error.step" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Wait for the wheel’s next calibration step."}}}},
     "controls.error.send" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "The command could not be sent."}}}},
-    "controls.pwm_duty.value" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "%@%% PWM duty"}}}},
-    "controls.on" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "On" } } } },
-    "controls.reported_age" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Reported %lld s ago" } } } }
+    "controls.accessibility.requested" : { "comment" : "VoiceOver-only value for the selected command; does not claim wheel readback.", "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Requested" } } } },
+    "controls.accessibility.reported" : { "comment" : "VoiceOver-only value for a state reported by the wheel.", "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Reported by wheel" } } } },
+    "controls.on" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "On" } } } }
   },
   "version" : "1.0"
 }

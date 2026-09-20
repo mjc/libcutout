@@ -8,6 +8,23 @@ pub const SETTING_CONFIRMATION_TIMEOUT: Duration = Duration::from_milliseconds(2
 /// Compatibility name used by typed settings callers.
 pub const SETTING_WRITE_CONFIRMATION_TIMEOUT: Duration = SETTING_CONFIRMATION_TIMEOUT;
 
+/// How a submitted setting reaches a terminal success state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SettingCompletionStrategy {
+    /// Host transport submission is the strongest evidence available.
+    SubmissionOnly,
+    /// A fresh typed observation matching the requested value is required.
+    MatchingReadback,
+}
+
+impl SettingCompletionStrategy {
+    /// Whether this setting owns a matching-readback confirmation deadline.
+    #[must_use]
+    pub const fn supports_readback(self) -> bool {
+        matches!(self, Self::MatchingReadback)
+    }
+}
+
 /// Provenance for a setting value held by the state reducer.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SettingValueSource {
@@ -49,6 +66,25 @@ pub enum SettingCommandStatus {
     Failed,
 }
 
+/// Host transport evidence for the most recent setting request.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SettingTransportStatus {
+    /// The semantic request was accepted before a transport write was attempted.
+    Accepted,
+
+    /// The request is waiting in a host-side or native BLE queue.
+    Queued,
+
+    /// The host handed the bytes to the peripheral transport.
+    Submitted,
+
+    /// The request was rejected before it reached the peripheral transport.
+    Rejected,
+
+    /// The host or native queue cancelled the request before completion.
+    Cancelled,
+}
+
 /// A setting value paired with its provenance.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SettingValue<Value> {
@@ -74,8 +110,8 @@ pub enum SettingState<Value> {
         current: Option<SettingValue<Value>>,
         /// Requested value awaiting confirmation.
         requested: Value,
-        /// Host monotonic time at which the write was accepted.
-        submitted_at: MonotonicTimestamp,
+        /// Host handoff time; absent while managed transport is still waiting.
+        submitted_at: Option<MonotonicTimestamp>,
     },
 
     /// Readback confirmed the requested value.
@@ -151,8 +187,22 @@ where
         *self = Self::Pending {
             current,
             requested,
-            submitted_at,
+            submitted_at: Some(submitted_at),
         };
+    }
+
+    /// Waits for host handoff before allowing confirmation or starting its deadline.
+    pub fn await_transport(&mut self) {
+        if let Self::Pending { submitted_at, .. } = self {
+            *submitted_at = None;
+        }
+    }
+
+    /// Starts confirmation timing when the host hands the request to transport.
+    pub fn transport_submitted(&mut self, at: MonotonicTimestamp) {
+        if let Self::Pending { submitted_at, .. } = self {
+            *submitted_at = Some(at);
+        }
     }
 
     /// Confirms a matching live readback, returning whether it matched a pending request.
@@ -169,7 +219,7 @@ where
     ) -> bool {
         let Self::Pending {
             requested,
-            submitted_at,
+            submitted_at: Some(submitted_at),
             ..
         } = *self
         else {
@@ -206,7 +256,7 @@ where
                 current,
                 submitted_at,
                 ..
-            } if observed_at >= *submitted_at => {
+            } if submitted_at.is_none_or(|at| observed_at >= at) => {
                 *current = Some(SettingValue { value, source });
             }
             Self::Pending { .. } => {}
@@ -230,7 +280,11 @@ where
     ///
     /// Returns whether the state transitioned to timed out.
     pub fn timeout_if_elapsed(&mut self, now: MonotonicTimestamp, timeout: Duration) -> bool {
-        let Self::Pending { submitted_at, .. } = *self else {
+        let Self::Pending {
+            submitted_at: Some(submitted_at),
+            ..
+        } = *self
+        else {
             return false;
         };
         if now.saturating_duration_since(submitted_at) < timeout {
@@ -263,16 +317,20 @@ where
     pub fn command_status(
         self,
         now: MonotonicTimestamp,
-        confirmation_supported: bool,
+        completion: SettingCompletionStrategy,
     ) -> SettingCommandStatus {
         match self {
             Self::Unknown | Self::Current(_) => SettingCommandStatus::Idle,
-            Self::Pending { .. } if !confirmation_supported => {
+            Self::Pending {
+                submitted_at: None, ..
+            } => SettingCommandStatus::WaitingForConfirmation,
+            Self::Pending { .. } if !completion.supports_readback() => {
                 SettingCommandStatus::SentWithoutConfirmation
             }
-            Self::Pending { submitted_at, .. }
-                if now.saturating_duration_since(submitted_at) >= SETTING_CONFIRMATION_TIMEOUT =>
-            {
+            Self::Pending {
+                submitted_at: Some(submitted_at),
+                ..
+            } if now.saturating_duration_since(submitted_at) >= SETTING_CONFIRMATION_TIMEOUT => {
                 SettingCommandStatus::TimedOut
             }
             Self::Pending { .. } => SettingCommandStatus::WaitingForConfirmation,
@@ -327,21 +385,33 @@ mod tests {
     fn command_status_is_owned_by_rust_setting_state() {
         let mut state = SettingState::unknown();
         assert_eq!(
-            state.command_status(MonotonicTimestamp::new(0), true),
+            state.command_status(
+                MonotonicTimestamp::new(0),
+                SettingCompletionStrategy::MatchingReadback,
+            ),
             SettingCommandStatus::Idle
         );
 
         state.submit(LightState::On, MonotonicTimestamp::new(10));
         assert_eq!(
-            state.command_status(MonotonicTimestamp::new(10), true),
+            state.command_status(
+                MonotonicTimestamp::new(10),
+                SettingCompletionStrategy::MatchingReadback,
+            ),
             SettingCommandStatus::WaitingForConfirmation
         );
         assert_eq!(
-            state.command_status(MonotonicTimestamp::new(2_010), true),
+            state.command_status(
+                MonotonicTimestamp::new(2_010),
+                SettingCompletionStrategy::MatchingReadback,
+            ),
             SettingCommandStatus::TimedOut
         );
         assert_eq!(
-            state.command_status(MonotonicTimestamp::new(2_010), false),
+            state.command_status(
+                MonotonicTimestamp::new(2_010),
+                SettingCompletionStrategy::SubmissionOnly,
+            ),
             SettingCommandStatus::SentWithoutConfirmation
         );
     }
