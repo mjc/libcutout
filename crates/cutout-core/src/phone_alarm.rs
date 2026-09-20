@@ -327,6 +327,7 @@ struct PhoneAlarmChannelState {
     delivered_at: Option<MonotonicTimestamp>,
     failed_at: Option<MonotonicTimestamp>,
     pending_request_id: Option<u64>,
+    waiting_for_rearm: bool,
 }
 
 impl PhoneAlarmChannelState {
@@ -478,6 +479,9 @@ impl PhoneAlarmEvaluator {
         if state.pending_request_id.is_some() {
             return;
         }
+        if state.waiting_for_rearm {
+            return;
+        }
         let repeat_due = state
             .delivered_at
             .is_none_or(|delivered_at| now.saturating_duration_since(delivered_at) >= repeat_after);
@@ -522,6 +526,8 @@ impl PhoneAlarmEvaluator {
             duty.is_none_or(|duty| duty.as_permille().unsigned_abs() <= threshold.rearm_permille());
         if should_clear {
             state.clear();
+        } else {
+            state.waiting_for_rearm = true;
         }
     }
 
@@ -854,6 +860,31 @@ mod tests {
         );
         assert_eq!(
             evaluator.evaluate(policy(), pwm_evidence(810), at(4)).len(),
+            1
+        );
+    }
+
+    #[test]
+    fn pending_pwm_delivery_rearms_only_below_hysteresis() {
+        let mut evaluator = PhoneAlarmEvaluator::default();
+        let first = evaluator.evaluate(policy(), pwm_evidence(810), at(1));
+        assert_eq!(first.len(), 1);
+
+        let cancelled = evaluator.evaluate(policy(), pwm_evidence(790), at(2));
+        assert_eq!(cancelled.cancelled_request_ids(), &[first[0].id()]);
+        assert!(cancelled.is_empty());
+        assert!(
+            evaluator
+                .evaluate(policy(), pwm_evidence(810), at(3))
+                .is_empty()
+        );
+        assert!(
+            evaluator
+                .evaluate(policy(), pwm_evidence(740), at(4))
+                .is_empty()
+        );
+        assert_eq!(
+            evaluator.evaluate(policy(), pwm_evidence(810), at(5)).len(),
             1
         );
     }
