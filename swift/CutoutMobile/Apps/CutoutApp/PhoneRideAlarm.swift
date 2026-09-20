@@ -54,6 +54,7 @@ private final class UnavailablePhoneRideAlarmDelivery: PhoneRideAlarmDelivering 
 final class SystemPhoneRideAlarmDelivery: PhoneRideAlarmDelivering {
     private let center: UNUserNotificationCenter
     private let notificationDelegate: PhoneRideAlarmNotificationDelegate
+    private let notificationIdentifierPrefix = "phone-ride-alarm-\(UUID().uuidString)-"
 
     init(center: UNUserNotificationCenter = .current()) {
         self.center = center
@@ -84,7 +85,10 @@ final class SystemPhoneRideAlarmDelivery: PhoneRideAlarmDelivering {
         }
         try await center.add(
             UNNotificationRequest(
-                identifier: phoneRideAlarmIdentifier(request.id),
+                identifier: phoneRideAlarmIdentifier(
+                    request.id,
+                    prefix: notificationIdentifierPrefix
+                ),
                 content: content,
                 trigger: nil
             )
@@ -97,14 +101,16 @@ final class SystemPhoneRideAlarmDelivery: PhoneRideAlarmDelivering {
     }
 
     func cancel(requestIDs: [UInt64]) {
-        let identifiers = requestIDs.map(phoneRideAlarmIdentifier)
+        let identifiers = requestIDs.map {
+            phoneRideAlarmIdentifier($0, prefix: notificationIdentifierPrefix)
+        }
         center.removePendingNotificationRequests(withIdentifiers: identifiers)
         center.removeDeliveredNotifications(withIdentifiers: identifiers)
     }
 }
 
-private func phoneRideAlarmIdentifier(_ requestID: UInt64) -> String {
-    "phone-ride-alarm-\(requestID)"
+private func phoneRideAlarmIdentifier(_ requestID: UInt64, prefix: String) -> String {
+    "\(prefix)\(requestID)"
 }
 
 struct PhoneRideAlarmAlert: Equatable {
@@ -169,7 +175,13 @@ private final class PhoneRideAlarmNotificationDelegate: NSObject, UNUserNotifica
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
-        completionHandler([.banner, .sound])
+        guard notification.request.identifier.hasPrefix("phone-ride-alarm-") else {
+            completionHandler([])
+            return
+        }
+        let options: UNNotificationPresentationOptions =
+            notification.request.content.sound == nil ? [.banner] : [.banner, .sound]
+        completionHandler(options)
     }
 }
 

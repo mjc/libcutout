@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use thiserror::Error;
 
@@ -10,6 +11,9 @@ const PHONE_ALARM_REPEAT_AFTER: Duration = Duration::from_seconds(30);
 const DEFAULT_PWM_DUTY_PERCENT: u8 = 80;
 const MAX_PHONE_ALARM_DEVICES: usize = 256;
 const MAX_DEVICE_IDENTITY_BYTES: usize = 1_024;
+
+// Keep native delivery identities distinct when a phone-alarm evaluator is recreated.
+static NEXT_PHONE_ALARM_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 
 /// A phone-generated PWM alarm threshold expressed as consumed duty.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -342,7 +346,6 @@ pub struct PhoneAlarmEvaluator {
     pwm: PhoneAlarmChannelState,
     warning: PhoneAlarmChannelState,
     stop: PhoneAlarmChannelState,
-    next_request_id: u64,
 }
 
 impl Default for PhoneAlarmEvaluator {
@@ -351,7 +354,6 @@ impl Default for PhoneAlarmEvaluator {
             pwm: PhoneAlarmChannelState::default(),
             warning: PhoneAlarmChannelState::default(),
             stop: PhoneAlarmChannelState::default(),
-            next_request_id: 1,
         }
     }
 }
@@ -390,7 +392,6 @@ impl PhoneAlarmEvaluator {
             pwm_event,
             policy.repeat_after,
             now,
-            &mut self.next_request_id,
             &mut requests,
             &mut cancelled_request_ids,
         );
@@ -407,7 +408,6 @@ impl PhoneAlarmEvaluator {
             warning_event,
             policy.repeat_after,
             now,
-            &mut self.next_request_id,
             &mut requests,
             &mut cancelled_request_ids,
         );
@@ -422,7 +422,6 @@ impl PhoneAlarmEvaluator {
             stop_event,
             policy.repeat_after,
             now,
-            &mut self.next_request_id,
             &mut requests,
             &mut cancelled_request_ids,
         );
@@ -461,7 +460,6 @@ impl PhoneAlarmEvaluator {
         event: Option<PhoneAlarmEvent>,
         repeat_after: Duration,
         now: MonotonicTimestamp,
-        next_request_id: &mut u64,
         requests: &mut Vec<PhoneAlarmDeliveryRequest>,
         cancelled_request_ids: &mut Vec<u64>,
     ) {
@@ -492,8 +490,11 @@ impl PhoneAlarmEvaluator {
             return;
         }
 
-        let id = *next_request_id;
-        *next_request_id = next_request_id.wrapping_add(1).max(1);
+        let id = NEXT_PHONE_ALARM_REQUEST_ID
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
+                next.checked_add(1)
+            })
+            .expect("phone alarm request identity exhausted");
         state.pending_request_id = Some(id);
         requests.push(PhoneAlarmDeliveryRequest { id, event });
     }

@@ -167,7 +167,7 @@ private struct PhoneRideAlarmSettingsView: View {
                         Button(localizedAppText("phone_alarm.request_permission")) {
                             Task { await model.requestPhoneAlarmAuthorization() }
                         }
-                    case .denied, .permitted(alerts: false, sounds: false, quietly: _):
+                    case .denied, .permitted(alerts: false, sounds: _, quietly: _):
 #if canImport(UIKit)
                         Button(localizedAppText("phone_alarm.open_settings")) {
                             openURL(URL(string: UIApplication.openSettingsURLString)!)
