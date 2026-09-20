@@ -520,14 +520,17 @@ impl PhoneAlarmEvaluator {
         if event.is_some() {
             return;
         }
-        if let Some(id) = state.pending_request_id.take() {
+        let cancelled_pending = if let Some(id) = state.pending_request_id.take() {
             cancelled_request_ids.push(id);
-        }
+            true
+        } else {
+            false
+        };
         let should_clear =
             duty.is_none_or(|duty| duty.as_permille().unsigned_abs() <= threshold.rearm_permille());
         if should_clear {
             state.clear();
-        } else {
+        } else if cancelled_pending {
             state.waiting_for_rearm = true;
         }
     }
