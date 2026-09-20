@@ -19,6 +19,10 @@ pub struct DeviceSessionStep {
     pub outputs: Vec<SessionOutput>,
     /// First refusal from the protocol or unsupported command capability.
     pub error: Option<ControlRefusal>,
+    /// Retained BMS observations after applying this step.
+    pub bms_observation_summary: cutout_core::BmsObservationSummary,
+    /// Retained BMS temperatures after applying this step.
+    pub bms_temperature_summary: cutout_core::BmsTemperatureSummary,
 }
 
 impl DeviceSessionStep {
@@ -47,7 +51,12 @@ impl DeviceSessionStep {
                     reason: ControlRefusalReason::UnsupportedCommand,
                 })
             });
-        Self { outputs, error }
+        Self {
+            outputs,
+            error,
+            bms_observation_summary: host.session_state().telemetry().bms.observation_summary(),
+            bms_temperature_summary: host.session_state().telemetry().bms.temperature_summary(),
+        }
     }
 }
 
@@ -193,6 +202,8 @@ impl DeviceSession {
                 return DeviceSessionStep {
                     outputs: vec![SessionOutput::Event(DeviceEvent::ControlRefusal(refusal))],
                     error: Some(refusal),
+                    bms_observation_summary: cutout_core::BmsObservationSummary::default(),
+                    bms_temperature_summary: cutout_core::BmsTemperatureSummary::default(),
                 };
             }
         }
