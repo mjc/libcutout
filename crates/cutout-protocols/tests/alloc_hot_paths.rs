@@ -140,7 +140,7 @@ fn allocation_hot_paths_do_not_allocate() {
 }
 
 fn veteran_parser_owned_results_do_not_allocate() {
-    let mut veteran = ReadOnlySession::<NosfetAeroModel, false>::default();
+    let mut veteran = ReadOnlySession::<NosfetAeroModel>::default();
     let mut veteran_output = Vec::with_capacity(8);
     veteran.handle(
         SessionInput::LinkUp(LinkInfo {

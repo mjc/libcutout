@@ -104,9 +104,7 @@ impl ConcreteAeroBenignControlSession {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            host: HostSession::new(
-                StationarySettingsWriteSession::<NosfetAeroModel, false>::default(),
-            ),
+            host: HostSession::new(StationarySettingsWriteSession::<NosfetAeroModel>::default()),
             last_telemetry_ms: None,
         }
     }
@@ -159,7 +157,7 @@ impl ConcreteAeroBenignControlSession {
         let result = crate::DeviceSessionStep::drain(
             &mut self.host,
             input,
-            StationarySettingsWriteSession::<NosfetAeroModel, false>::capabilities(),
+            StationarySettingsWriteSession::<NosfetAeroModel>::capabilities(),
         );
         if matches!(
             input,
@@ -297,7 +295,7 @@ impl ConcreteFalconBenignControlSession {
         let result = crate::DeviceSessionStep::drain(
             &mut self.host,
             input,
-            StationarySettingsWriteSession::<BegodeFalconModel, true>::capabilities(),
+            StationarySettingsWriteSession::<BegodeFalconModel>::capabilities(),
         );
         if matches!(
             input,
@@ -380,7 +378,7 @@ impl VescReadOnlySession {
         crate::DeviceSessionStep::drain(
             &mut self.host,
             input,
-            ReadOnlySession::<VescGenericModel, true>::capabilities(),
+            ReadOnlySession::<VescGenericModel>::capabilities(),
         )
     }
 
@@ -413,7 +411,7 @@ impl Default for VescReadOnlySession {
 #[must_use]
 pub fn new_nosfet_aero_benign_control_session() -> ConcreteAeroBenignControlSession {
     ConcreteAeroBenignControlSession {
-        host: HostSession::new(StationarySettingsWriteSession::<NosfetAeroModel, false>::default()),
+        host: HostSession::new(StationarySettingsWriteSession::<NosfetAeroModel>::default()),
         last_telemetry_ms: None,
     }
 }

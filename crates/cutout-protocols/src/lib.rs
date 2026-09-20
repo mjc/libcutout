@@ -189,7 +189,7 @@ mod tests {
 
     #[test]
     fn nosfet_aero_model_session_exposes_read_only_capabilities() {
-        let capabilities = crate::ReadOnlySession::<crate::NosfetAeroModel, false>::capabilities();
+        let capabilities = crate::ReadOnlySession::<crate::NosfetAeroModel>::capabilities();
 
         assert_eq!(
             capabilities,
@@ -205,7 +205,7 @@ mod tests {
 
     #[test]
     fn nosfet_aero_model_session_requests_subscription_on_link_up() {
-        let mut session = crate::ReadOnlySession::<crate::NosfetAeroModel, false>::default();
+        let mut session = crate::ReadOnlySession::<crate::NosfetAeroModel>::default();
         let mut output = Vec::new();
 
         session.handle(
@@ -226,7 +226,7 @@ mod tests {
 
     #[test]
     fn begode_falcon_model_session_requests_subscription_on_link_up() {
-        let mut session = crate::ReadOnlySession::<crate::BegodeFalconModel, true>::default();
+        let mut session = crate::ReadOnlySession::<crate::BegodeFalconModel>::default();
         let mut output = Vec::new();
 
         session.handle(

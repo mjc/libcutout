@@ -1924,15 +1924,13 @@ fn push_encoded_read_request<M: SupportsReadRequests>(
 
 /// Generic read-only session shell for one statically-known model.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ReadOnlySession<M: ReadOnlyModelSpec, const ACCEPT_ANY_NOTIFICATION: bool = false> {
+pub struct ReadOnlySession<M: ReadOnlyModelSpec> {
     connected: bool,
     decoder: M::NotificationDecoder,
     model: PhantomData<fn() -> M>,
 }
 
-impl<M: ReadOnlyModelSpec, const ACCEPT_ANY_NOTIFICATION: bool> Default
-    for ReadOnlySession<M, ACCEPT_ANY_NOTIFICATION>
-{
+impl<M: ReadOnlyModelSpec> Default for ReadOnlySession<M> {
     fn default() -> Self {
         Self {
             connected: false,
@@ -1942,9 +1940,7 @@ impl<M: ReadOnlyModelSpec, const ACCEPT_ANY_NOTIFICATION: bool> Default
     }
 }
 
-impl<M: ReadOnlyModelSpec, const ACCEPT_ANY_NOTIFICATION: bool>
-    ReadOnlySession<M, ACCEPT_ANY_NOTIFICATION>
-{
+impl<M: ReadOnlyModelSpec> ReadOnlySession<M> {
     /// Creates a read-only session with an explicitly configured notification decoder.
     #[must_use]
     pub const fn with_decoder(decoder: M::NotificationDecoder) -> Self {
@@ -1980,20 +1976,15 @@ impl<M: ReadOnlyModelSpec, const ACCEPT_ANY_NOTIFICATION: bool>
     }
 }
 
-impl<M: ReadOnlyModelSpec, const ACCEPT_ANY_NOTIFICATION: bool> ProtocolSession
-    for ReadOnlySession<M, ACCEPT_ANY_NOTIFICATION>
-{
+impl<M: ReadOnlyModelSpec> ProtocolSession for ReadOnlySession<M> {
     fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
         handle_read_only_session::<M>(&mut self.connected, &mut self.decoder, input, output);
     }
 }
 
 /// Session shell that preserves model read behavior and admits allow-listed benign controls.
-pub struct BenignControlSession<
-    M: ReadOnlyModelSpec + SupportsBenignControls,
-    const ACCEPT_ANY_NOTIFICATION: bool = false,
-> {
-    read_only: ReadOnlySession<M, ACCEPT_ANY_NOTIFICATION>,
+pub struct BenignControlSession<M: ReadOnlyModelSpec + SupportsBenignControls> {
+    read_only: ReadOnlySession<M>,
     light_command_state: LightCommandState,
 }
 
@@ -2039,9 +2030,7 @@ pub(crate) struct SettingWriteAuthorization {
     arm: cutout_core::StationarySettingsArm,
     cancellation_generation: u64,
 }
-impl<M: ReadOnlyModelSpec + SupportsBenignControls, const ACCEPT_ANY_NOTIFICATION: bool> fmt::Debug
-    for BenignControlSession<M, ACCEPT_ANY_NOTIFICATION>
-{
+impl<M: ReadOnlyModelSpec + SupportsBenignControls> fmt::Debug for BenignControlSession<M> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("BenignControlSession")
@@ -2049,10 +2038,9 @@ impl<M: ReadOnlyModelSpec + SupportsBenignControls, const ACCEPT_ANY_NOTIFICATIO
     }
 }
 
-impl<M: ReadOnlyModelSpec + SupportsBenignControls, const ACCEPT_ANY_NOTIFICATION: bool> Clone
-    for BenignControlSession<M, ACCEPT_ANY_NOTIFICATION>
+impl<M: ReadOnlyModelSpec + SupportsBenignControls> Clone for BenignControlSession<M>
 where
-    ReadOnlySession<M, ACCEPT_ANY_NOTIFICATION>: Clone,
+    ReadOnlySession<M>: Clone,
 {
     fn clone(&self) -> Self {
         Self {
@@ -2062,9 +2050,7 @@ where
     }
 }
 
-impl<M: ReadOnlyModelSpec + SupportsBenignControls, const ACCEPT_ANY_NOTIFICATION: bool> Default
-    for BenignControlSession<M, ACCEPT_ANY_NOTIFICATION>
-{
+impl<M: ReadOnlyModelSpec + SupportsBenignControls> Default for BenignControlSession<M> {
     fn default() -> Self {
         Self {
             read_only: ReadOnlySession::default(),
@@ -2073,9 +2059,7 @@ impl<M: ReadOnlyModelSpec + SupportsBenignControls, const ACCEPT_ANY_NOTIFICATIO
     }
 }
 
-impl<M: ReadOnlyModelSpec + SupportsBenignControls, const ACCEPT_ANY_NOTIFICATION: bool>
-    BenignControlSession<M, ACCEPT_ANY_NOTIFICATION>
-{
+impl<M: ReadOnlyModelSpec + SupportsBenignControls> BenignControlSession<M> {
     /// Creates a benign-control session with an explicitly configured notification decoder.
     #[must_use]
     pub const fn with_decoder(decoder: M::NotificationDecoder) -> Self {
@@ -2098,9 +2082,7 @@ impl<M: ReadOnlyModelSpec + SupportsBenignControls, const ACCEPT_ANY_NOTIFICATIO
     }
 }
 
-impl<M: ReadOnlyModelSpec + SupportsBenignControls, const ACCEPT_ANY_NOTIFICATION: bool>
-    ProtocolSession for BenignControlSession<M, ACCEPT_ANY_NOTIFICATION>
-{
+impl<M: ReadOnlyModelSpec + SupportsBenignControls> ProtocolSession for BenignControlSession<M> {
     fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
         if matches!(input, SessionInput::LinkUp(_) | SessionInput::LinkDown) {
             self.light_command_state = LightCommandState::Unknown;
@@ -2149,9 +2131,8 @@ impl<M: ReadOnlyModelSpec + SupportsBenignControls, const ACCEPT_ANY_NOTIFICATIO
 /// Session shell for settings writes that require an explicit stationary arm.
 pub struct StationarySettingsWriteSession<
     M: ReadOnlyModelSpec + SupportsSettingsWrites + SupportsBenignControls,
-    const ACCEPT_ANY_NOTIFICATION: bool = false,
 > {
-    read_only: ReadOnlySession<M, ACCEPT_ANY_NOTIFICATION>,
+    read_only: ReadOnlySession<M>,
     arm: Option<cutout_core::StationarySettingsArm>,
     monotonic_ms: MonotonicTimestamp,
     pending_sequence: Option<PendingSettingsSequence>,
@@ -2159,10 +2140,8 @@ pub struct StationarySettingsWriteSession<
     settings_cancellation_generation: u64,
 }
 
-impl<
-    M: ReadOnlyModelSpec + SupportsSettingsWrites + SupportsBenignControls,
-    const ACCEPT_ANY_NOTIFICATION: bool,
-> fmt::Debug for StationarySettingsWriteSession<M, ACCEPT_ANY_NOTIFICATION>
+impl<M: ReadOnlyModelSpec + SupportsSettingsWrites + SupportsBenignControls> fmt::Debug
+    for StationarySettingsWriteSession<M>
 {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -2171,12 +2150,10 @@ impl<
     }
 }
 
-impl<
-    M: ReadOnlyModelSpec + SupportsSettingsWrites + SupportsBenignControls,
-    const ACCEPT_ANY_NOTIFICATION: bool,
-> Clone for StationarySettingsWriteSession<M, ACCEPT_ANY_NOTIFICATION>
+impl<M: ReadOnlyModelSpec + SupportsSettingsWrites + SupportsBenignControls> Clone
+    for StationarySettingsWriteSession<M>
 where
-    ReadOnlySession<M, ACCEPT_ANY_NOTIFICATION>: Clone,
+    ReadOnlySession<M>: Clone,
 {
     fn clone(&self) -> Self {
         Self {
@@ -2190,10 +2167,8 @@ where
     }
 }
 
-impl<
-    M: ReadOnlyModelSpec + SupportsSettingsWrites + SupportsBenignControls,
-    const ACCEPT_ANY_NOTIFICATION: bool,
-> Default for StationarySettingsWriteSession<M, ACCEPT_ANY_NOTIFICATION>
+impl<M: ReadOnlyModelSpec + SupportsSettingsWrites + SupportsBenignControls> Default
+    for StationarySettingsWriteSession<M>
 {
     fn default() -> Self {
         Self {
@@ -2207,10 +2182,8 @@ impl<
     }
 }
 
-impl<
-    M: ReadOnlyModelSpec + SupportsSettingsWrites + SupportsBenignControls,
-    const ACCEPT_ANY_NOTIFICATION: bool,
-> StationarySettingsWriteSession<M, ACCEPT_ANY_NOTIFICATION>
+impl<M: ReadOnlyModelSpec + SupportsSettingsWrites + SupportsBenignControls>
+    StationarySettingsWriteSession<M>
 {
     /// Creates a settings-write session with an explicitly configured decoder.
     #[must_use]
@@ -2488,10 +2461,8 @@ impl<
     }
 }
 
-impl<
-    M: ReadOnlyModelSpec + SupportsSettingsWrites + SupportsBenignControls,
-    const ACCEPT_ANY_NOTIFICATION: bool,
-> ProtocolSession for StationarySettingsWriteSession<M, ACCEPT_ANY_NOTIFICATION>
+impl<M: ReadOnlyModelSpec + SupportsSettingsWrites + SupportsBenignControls> ProtocolSession
+    for StationarySettingsWriteSession<M>
 {
     fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
         match input {
@@ -2986,7 +2957,7 @@ mod tests {
     }
 
     fn aero_output_for_notification(bytes: &[u8]) -> Vec<SessionOutput> {
-        let mut session = ReadOnlySession::<NosfetAeroModel, false>::default();
+        let mut session = ReadOnlySession::<NosfetAeroModel>::default();
         let mut output = Vec::new();
 
         session.handle(
@@ -3011,7 +2982,7 @@ mod tests {
     }
 
     fn aero_output_for_notification_chunks(chunks: &[&[u8]]) -> Vec<SessionOutput> {
-        let mut session = ReadOnlySession::<NosfetAeroModel, false>::default();
+        let mut session = ReadOnlySession::<NosfetAeroModel>::default();
         let mut output = Vec::new();
 
         session.handle(
@@ -3038,7 +3009,7 @@ mod tests {
     }
 
     fn falcon_output_for_notification_chunks(chunks: &[&[u8]]) -> Vec<SessionOutput> {
-        let mut session = ReadOnlySession::<BegodeFalconModel, true>::default();
+        let mut session = ReadOnlySession::<BegodeFalconModel>::default();
         let mut output = Vec::new();
 
         session.handle(
@@ -3063,7 +3034,7 @@ mod tests {
     }
 
     fn vesc_output_for_notification_chunks(chunks: &[&[u8]]) -> Vec<SessionOutput> {
-        let mut session = ReadOnlySession::<VescGenericModel, true>::default();
+        let mut session = ReadOnlySession::<VescGenericModel>::default();
         let mut output = Vec::new();
 
         session.handle(
@@ -3115,7 +3086,7 @@ mod tests {
     }
 
     fn read_only_responses_for_notification(bytes: &[u8]) -> Vec<ReadOnlyResponse> {
-        let mut session = ReadOnlySession::<NosfetAeroModel, false>::default();
+        let mut session = ReadOnlySession::<NosfetAeroModel>::default();
         let mut output = Vec::new();
 
         session.handle(
@@ -3138,7 +3109,7 @@ mod tests {
     }
 
     fn live_aero_telemetry() -> TelemetryDelta {
-        let mut session = ReadOnlySession::<NosfetAeroModel, false>::default();
+        let mut session = ReadOnlySession::<NosfetAeroModel>::default();
         let mut output = Vec::new();
 
         session.handle(
@@ -3188,7 +3159,7 @@ mod tests {
 
     #[test]
     fn begode_malformed_frame_emits_detailed_and_aggregate_diagnostics() {
-        let mut session = ReadOnlySession::<BegodeFalconModel, true>::default();
+        let mut session = ReadOnlySession::<BegodeFalconModel>::default();
         let mut output = Vec::new();
         session.handle(
             SessionInput::LinkUp(LinkInfo {
@@ -3352,7 +3323,7 @@ mod tests {
     #[test]
     fn begode_falcon_session_can_use_explicit_100v_pack_profile() {
         let live_a = live_begode_a_frame();
-        let mut session = ReadOnlySession::<BegodeFalconModel, true>::with_decoder(
+        let mut session = ReadOnlySession::<BegodeFalconModel>::with_decoder(
             BegodeNotificationDecoder::with_pack_voltage_profile(
                 BegodePackVoltageProfile::Begode100VFullCharge,
             ),
@@ -3425,7 +3396,7 @@ mod tests {
 
     #[test]
     fn generic_vesc_model_session_requests_subscription_on_link_up() {
-        let mut session = ReadOnlySession::<VescGenericModel, true>::default();
+        let mut session = ReadOnlySession::<VescGenericModel>::default();
         let mut output = Vec::new();
 
         session.handle(
@@ -3452,7 +3423,7 @@ mod tests {
 
     #[test]
     fn generic_vesc_session_writes_refloat_ids_motor_config_and_values_for_telemetry() {
-        let mut session = ReadOnlySession::<VescGenericModel, true>::default();
+        let mut session = ReadOnlySession::<VescGenericModel>::default();
         let mut output = Vec::new();
         session.handle(
             SessionInput::LinkUp(LinkInfo {
@@ -3495,7 +3466,7 @@ mod tests {
 
     #[test]
     fn generic_vesc_session_writes_stats_request_for_diagnostics() {
-        let mut session = ReadOnlySession::<VescGenericModel, true>::default();
+        let mut session = ReadOnlySession::<VescGenericModel>::default();
         let mut output = Vec::new();
         session.handle(
             SessionInput::LinkUp(LinkInfo {
@@ -3524,7 +3495,7 @@ mod tests {
 
     #[test]
     fn generic_vesc_session_rejects_actuation_without_writes() {
-        let mut session = ReadOnlySession::<VescGenericModel, true>::default();
+        let mut session = ReadOnlySession::<VescGenericModel>::default();
         let mut output = Vec::new();
 
         session.handle(
@@ -3786,7 +3757,7 @@ mod tests {
 
     #[test]
     fn generic_vesc_polling_recovers_missing_descriptors_and_paces_overlap() {
-        let mut session = ReadOnlySession::<VescGenericModel, true>::default();
+        let mut session = ReadOnlySession::<VescGenericModel>::default();
         let mut output = Vec::new();
         session.handle(
             SessionInput::LinkUp(LinkInfo {
@@ -3847,7 +3818,7 @@ mod tests {
 
     #[test]
     fn generic_vesc_delayed_replies_do_not_multiply_polling_and_reconnect_rediscovers() {
-        let mut session = ReadOnlySession::<VescGenericModel, true>::default();
+        let mut session = ReadOnlySession::<VescGenericModel>::default();
         let mut output = Vec::new();
         session.handle(
             SessionInput::LinkUp(LinkInfo {
@@ -3951,7 +3922,7 @@ mod tests {
 
     #[test]
     fn generic_vesc_session_repolls_refloat_after_a_missed_reply() {
-        let mut session = ReadOnlySession::<VescGenericModel, true>::default();
+        let mut session = ReadOnlySession::<VescGenericModel>::default();
         let mut output = Vec::new();
         session.handle(
             SessionInput::LinkUp(LinkInfo {
@@ -3988,7 +3959,7 @@ mod tests {
 
     #[test]
     fn generic_vesc_values_after_reconnect_do_not_cancel_refloat_recovery() {
-        let mut session = ReadOnlySession::<VescGenericModel, true>::default();
+        let mut session = ReadOnlySession::<VescGenericModel>::default();
         let mut output = Vec::new();
         session.handle(
             SessionInput::LinkUp(LinkInfo {
@@ -4167,7 +4138,7 @@ mod tests {
             GearRatioDenominator::new(1),
             cutout_core::Distance::from_millimetres(60),
         ));
-        let mut session = ReadOnlySession::<VescGenericModel, true>::with_decoder(decoder);
+        let mut session = ReadOnlySession::<VescGenericModel>::with_decoder(decoder);
         let mut output = Vec::new();
 
         session.handle(
@@ -4216,7 +4187,7 @@ mod tests {
         )
         .with_battery_profile(&SAMSUNG_50S_PROFILE, SeriesCount::new(10));
         let decoder = VescNotificationDecoder::with_board_profile(board_profile);
-        let mut session = ReadOnlySession::<VescGenericModel, true>::with_decoder(decoder);
+        let mut session = ReadOnlySession::<VescGenericModel>::with_decoder(decoder);
         let mut output = Vec::new();
 
         session.handle(
@@ -4479,7 +4450,7 @@ mod tests {
     fn begode_falcon_session_resets_imperial_unit_state_on_reconnect() {
         let live_b = live_begode_b_imperial_frame();
         let live_a = live_begode_a_frame();
-        let mut session = ReadOnlySession::<BegodeFalconModel, true>::default();
+        let mut session = ReadOnlySession::<BegodeFalconModel>::default();
         let mut output = Vec::new();
 
         session.handle(
@@ -4590,7 +4561,7 @@ mod tests {
 
     #[test]
     fn nosfet_aero_session_emits_fixed_header_read_only_responses_from_live_fixture_notification() {
-        let mut session = ReadOnlySession::<NosfetAeroModel, false>::default();
+        let mut session = ReadOnlySession::<NosfetAeroModel>::default();
         let mut output = Vec::new();
 
         session.handle(
@@ -5101,36 +5072,30 @@ mod tests {
     #[test]
     fn read_only_session_identity_comes_from_model_spec() {
         assert_eq!(
-            ReadOnlySession::<NosfetAeroModel, false>::manufacturer(),
+            ReadOnlySession::<NosfetAeroModel>::manufacturer(),
             Manufacturer::Nosfet
         );
         assert_eq!(
-            ReadOnlySession::<NosfetAeroModel, false>::protocol(),
+            ReadOnlySession::<NosfetAeroModel>::protocol(),
             ProtocolFamily::VeteranLeaperkimNosfet
         );
-        assert_eq!(
-            ReadOnlySession::<NosfetAeroModel, false>::model(),
-            "NOSFET Aero"
-        );
+        assert_eq!(ReadOnlySession::<NosfetAeroModel>::model(), "NOSFET Aero");
 
         assert_eq!(
-            ReadOnlySession::<BegodeFalconModel, true>::manufacturer(),
+            ReadOnlySession::<BegodeFalconModel>::manufacturer(),
             Manufacturer::Begode
         );
         assert_eq!(
-            ReadOnlySession::<BegodeFalconModel, true>::protocol(),
+            ReadOnlySession::<BegodeFalconModel>::protocol(),
             ProtocolFamily::BegodeGotway
         );
-        assert_eq!(
-            ReadOnlySession::<BegodeFalconModel, true>::model(),
-            "Falcon"
-        );
+        assert_eq!(ReadOnlySession::<BegodeFalconModel>::model(), "Falcon");
     }
 
     #[test]
     fn generic_read_only_session_uses_model_capabilities() {
         assert_eq!(
-            ReadOnlySession::<TestModel, false>::capabilities(),
+            ReadOnlySession::<TestModel>::capabilities(),
             Capabilities::from_supported_commands([CommandKind::RequestTelemetry])
         );
     }
@@ -5151,11 +5116,11 @@ mod tests {
     fn read_only_operation_traits_preserve_model_capabilities() {
         assert_eq!(
             <NosfetAeroModel as SupportsReadRequests>::READ_CAPABILITIES,
-            ReadOnlySession::<NosfetAeroModel, false>::capabilities()
+            ReadOnlySession::<NosfetAeroModel>::capabilities()
         );
         assert_eq!(
             <BegodeFalconModel as SupportsReadRequests>::READ_CAPABILITIES,
-            ReadOnlySession::<BegodeFalconModel, true>::capabilities()
+            ReadOnlySession::<BegodeFalconModel>::capabilities()
         );
     }
 
@@ -5221,7 +5186,7 @@ mod tests {
 
     #[test]
     fn aero_benign_control_session_refuses_unverified_generic_lights() {
-        let mut session = BenignControlSession::<NosfetAeroModel, false>::default();
+        let mut session = BenignControlSession::<NosfetAeroModel>::default();
         let mut output = Vec::new();
 
         session.handle(
@@ -5237,7 +5202,7 @@ mod tests {
 
     #[test]
     fn aero_session_latches_ascii_from_complete_packets_and_resets_on_reconnect() {
-        let mut session = BenignControlSession::<NosfetAeroModel, false>::default();
+        let mut session = BenignControlSession::<NosfetAeroModel>::default();
         let mut output = Vec::new();
         session.handle(
             SessionInput::LinkUp(LinkInfo {
@@ -5283,7 +5248,7 @@ mod tests {
 
     #[test]
     fn aero_session_ignores_tiny_complete_frames_when_selecting_command_mode() {
-        let mut session = BenignControlSession::<NosfetAeroModel, false>::default();
+        let mut session = BenignControlSession::<NosfetAeroModel>::default();
         let mut output = Vec::new();
         session.handle(
             SessionInput::LinkUp(LinkInfo {
@@ -5313,7 +5278,7 @@ mod tests {
 
     #[test]
     fn aero_stationary_settings_session_writes_documented_pedal_mode() {
-        let mut session = StationarySettingsWriteSession::<NosfetAeroModel, false>::default();
+        let mut session = StationarySettingsWriteSession::<NosfetAeroModel>::default();
         let mut output = Vec::new();
         session.arm(
             StationarySettingsPolicy {
@@ -5346,7 +5311,7 @@ mod tests {
 
     #[test]
     fn aero_stationary_settings_session_writes_documented_trip_reset() {
-        let mut session = StationarySettingsWriteSession::<NosfetAeroModel, false>::default();
+        let mut session = StationarySettingsWriteSession::<NosfetAeroModel>::default();
         let mut output = Vec::new();
         session.arm(
             StationarySettingsPolicy {
@@ -5430,7 +5395,7 @@ mod tests {
         ];
 
         for (command, magic, value_index, expected_value) in cases {
-            let mut session = StationarySettingsWriteSession::<NosfetAeroModel, false>::default();
+            let mut session = StationarySettingsWriteSession::<NosfetAeroModel>::default();
             let mut output = Vec::new();
             session.arm(
                 StationarySettingsPolicy {
@@ -5456,7 +5421,7 @@ mod tests {
 
     #[test]
     fn aero_lateral_tilt_session_sends_one_source_backed_frame() {
-        let mut session = StationarySettingsWriteSession::<NosfetAeroModel, false>::default();
+        let mut session = StationarySettingsWriteSession::<NosfetAeroModel>::default();
         let mut output = Vec::new();
         session.arm(
             StationarySettingsPolicy {
@@ -5500,7 +5465,7 @@ mod tests {
 
     #[test]
     fn aero_stationary_settings_session_schedules_single_high_beam_write() {
-        let mut session = StationarySettingsWriteSession::<NosfetAeroModel, false>::default();
+        let mut session = StationarySettingsWriteSession::<NosfetAeroModel>::default();
         let mut output = Vec::new();
         session.arm(
             StationarySettingsPolicy {
@@ -5546,7 +5511,7 @@ mod tests {
 
     #[test]
     fn falcon_stationary_settings_session_writes_documented_pedal_mode() {
-        let mut session = StationarySettingsWriteSession::<BegodeFalconModel, true>::default();
+        let mut session = StationarySettingsWriteSession::<BegodeFalconModel>::default();
         let mut output = Vec::new();
         session.arm(
             StationarySettingsPolicy {
@@ -5579,7 +5544,7 @@ mod tests {
 
     #[test]
     fn falcon_stationary_settings_session_writes_documented_roll_angle() {
-        let mut session = StationarySettingsWriteSession::<BegodeFalconModel, true>::default();
+        let mut session = StationarySettingsWriteSession::<BegodeFalconModel>::default();
         let mut output = Vec::new();
         session.arm(
             StationarySettingsPolicy {
@@ -5612,7 +5577,7 @@ mod tests {
 
     #[test]
     fn falcon_stationary_settings_session_writes_documented_speed_alarm_mode() {
-        let mut session = StationarySettingsWriteSession::<BegodeFalconModel, true>::default();
+        let mut session = StationarySettingsWriteSession::<BegodeFalconModel>::default();
         let mut output = Vec::new();
         session.arm(
             StationarySettingsPolicy {
@@ -5645,7 +5610,7 @@ mod tests {
 
     #[test]
     fn falcon_stationary_settings_session_schedules_w_sequence_on_ticks() {
-        let mut session = StationarySettingsWriteSession::<BegodeFalconModel, true>::default();
+        let mut session = StationarySettingsWriteSession::<BegodeFalconModel>::default();
         let mut output = Vec::new();
         session.arm(
             StationarySettingsPolicy {
@@ -5706,7 +5671,7 @@ mod tests {
 
     #[test]
     fn expired_stationary_arm_cancels_pending_sequence_without_writing() {
-        let mut session = StationarySettingsWriteSession::<BegodeFalconModel, true>::default();
+        let mut session = StationarySettingsWriteSession::<BegodeFalconModel>::default();
         let mut output = Vec::new();
         session.arm(
             StationarySettingsPolicy {
@@ -5759,7 +5724,7 @@ mod tests {
 
     #[test]
     fn renewing_an_arm_does_not_extend_a_pending_sequence_deadline() {
-        let mut session = StationarySettingsWriteSession::<NosfetAeroModel, false>::default();
+        let mut session = StationarySettingsWriteSession::<NosfetAeroModel>::default();
         let mut outputs = Vec::new();
         let policy = StationarySettingsPolicy {
             model: NosfetAeroModel::MODEL,
@@ -5797,7 +5762,7 @@ mod tests {
 
     #[test]
     fn moving_telemetry_cancels_pending_settings_frames() {
-        let mut session = StationarySettingsWriteSession::<NosfetAeroModel, false>::default();
+        let mut session = StationarySettingsWriteSession::<NosfetAeroModel>::default();
         let mut outputs = Vec::new();
         session.handle(
             SessionInput::LinkUp(LinkInfo {
@@ -5887,7 +5852,7 @@ mod tests {
 
     #[test]
     fn stationary_settings_session_requires_fresh_stationary_arm() {
-        let mut session = StationarySettingsWriteSession::<TestModel, false>::default();
+        let mut session = StationarySettingsWriteSession::<TestModel>::default();
         let mut output = Vec::new();
         let command = DeviceCommand::SetSetting {
             id: cutout_core::SettingId::RidingPreset,
@@ -5969,7 +5934,7 @@ mod tests {
 
     #[test]
     fn falcon_benign_control_session_writes_source_backed_light_state() {
-        let mut session = BenignControlSession::<BegodeFalconModel, true>::default();
+        let mut session = BenignControlSession::<BegodeFalconModel>::default();
         let mut output = Vec::new();
 
         session.handle(
@@ -5986,7 +5951,7 @@ mod tests {
 
     #[test]
     fn unverified_taillight_control_is_refused_without_writes() {
-        let mut session = BenignControlSession::<BegodeFalconModel, true>::default();
+        let mut session = BenignControlSession::<BegodeFalconModel>::default();
         let mut output = Vec::new();
 
         session.handle(
@@ -6008,7 +5973,7 @@ mod tests {
 
     #[test]
     fn unverified_acceleration_assist_is_refused_without_writes() {
-        let mut session = BenignControlSession::<NosfetAeroModel, false>::default();
+        let mut session = BenignControlSession::<NosfetAeroModel>::default();
         let mut output = Vec::new();
 
         session.handle(
@@ -6033,7 +5998,7 @@ mod tests {
 
     #[test]
     fn benign_control_session_preserves_read_requests_and_refuses_unsupported_controls() {
-        let mut session = BenignControlSession::<BegodeFalconModel, true>::default();
+        let mut session = BenignControlSession::<BegodeFalconModel>::default();
         let mut output = Vec::new();
 
         session.handle(
@@ -6056,7 +6021,7 @@ mod tests {
 
     #[test]
     fn falcon_read_only_session_writes_identity_request_bytes() {
-        let mut session = ReadOnlySession::<BegodeFalconModel, true>::default();
+        let mut session = ReadOnlySession::<BegodeFalconModel>::default();
         let mut output = Vec::new();
 
         session.handle(
@@ -6076,7 +6041,7 @@ mod tests {
 
     #[test]
     fn falcon_read_only_session_writes_firmware_request_bytes() {
-        let mut session = ReadOnlySession::<BegodeFalconModel, true>::default();
+        let mut session = ReadOnlySession::<BegodeFalconModel>::default();
         let mut output = Vec::new();
 
         session.handle(
@@ -6096,7 +6061,7 @@ mod tests {
 
     #[test]
     fn falcon_read_only_session_keeps_passive_requests_write_free() {
-        let mut session = ReadOnlySession::<BegodeFalconModel, true>::default();
+        let mut session = ReadOnlySession::<BegodeFalconModel>::default();
         let mut output = Vec::new();
 
         session.handle(
@@ -6123,7 +6088,7 @@ mod tests {
 
     #[test]
     fn generic_vesc_session_reports_unsupported_battery_readback_without_writes() {
-        let mut session = ReadOnlySession::<VescGenericModel, true>::default();
+        let mut session = ReadOnlySession::<VescGenericModel>::default();
         let mut output = Vec::new();
 
         session.handle(
@@ -6146,7 +6111,7 @@ mod tests {
 
     #[test]
     fn falcon_read_only_session_reports_unsupported_fault_history_without_writes() {
-        let mut session = ReadOnlySession::<BegodeFalconModel, true>::default();
+        let mut session = ReadOnlySession::<BegodeFalconModel>::default();
         let mut output = Vec::new();
 
         session.handle(
@@ -6169,7 +6134,7 @@ mod tests {
 
     #[test]
     fn aero_passive_fault_history_reports_unsupported_fault_history_without_writes() {
-        let mut session = ReadOnlySession::<NosfetAeroModel, false>::default();
+        let mut session = ReadOnlySession::<NosfetAeroModel>::default();
         let mut output = Vec::new();
 
         session.handle(
@@ -6192,7 +6157,7 @@ mod tests {
 
     #[test]
     fn read_only_session_reports_unavailable_semantic_readbacks_when_encoder_has_no_request() {
-        let mut session = ReadOnlySession::<SilentSemanticReadbackModel, false>::default();
+        let mut session = ReadOnlySession::<SilentSemanticReadbackModel>::default();
         let mut output = Vec::new();
 
         session.handle(
@@ -6231,7 +6196,7 @@ mod tests {
 
     #[test]
     fn aero_passive_settings_reports_unavailable_settings_without_writes() {
-        let mut session = ReadOnlySession::<NosfetAeroModel, false>::default();
+        let mut session = ReadOnlySession::<NosfetAeroModel>::default();
         let mut output = Vec::new();
 
         session.handle(
@@ -6254,7 +6219,7 @@ mod tests {
 
     #[test]
     fn aero_passive_battery_reports_unavailable_battery_without_writes() {
-        let mut session = ReadOnlySession::<NosfetAeroModel, false>::default();
+        let mut session = ReadOnlySession::<NosfetAeroModel>::default();
         let mut output = Vec::new();
 
         session.handle(
@@ -6277,7 +6242,7 @@ mod tests {
 
     #[test]
     fn read_only_session_never_emits_transport_for_unsupported_commands() {
-        let mut session = ReadOnlySession::<NosfetAeroModel, false>::default();
+        let mut session = ReadOnlySession::<NosfetAeroModel>::default();
         let mut output = Vec::new();
 
         session.handle(

@@ -447,7 +447,7 @@ mod tests {
             .submit_setting(
                 &token,
                 SettingId::PedalAngle,
-                DeviceSettingValue::Number(100),
+                DeviceSettingValue::Number(-12),
                 MonotonicTimestamp::new(5_004),
             )
             .unwrap();
@@ -470,7 +470,7 @@ mod tests {
             .submit_setting(
                 &token,
                 SettingId::PedalAngle,
-                DeviceSettingValue::Number(100),
+                DeviceSettingValue::Number(-12),
                 MonotonicTimestamp::new(6),
             )
             .unwrap();

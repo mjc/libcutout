@@ -234,7 +234,7 @@ fn pevcap_replay(args: &crate::cli::PevcapReplayArgs) -> Result<()> {
         replay_pevcap_stream_with_session(
             &args.input,
             args.input_format,
-            ReadOnlySession::<cutout_protocols::VescGenericModel, true>::default(),
+            ReadOnlySession::<cutout_protocols::VescGenericModel>::default(),
         )?
     } else {
         replay_pevcap_stream(
@@ -1701,7 +1701,7 @@ async fn aero_write(args: AeroWriteArgs) -> Result<()> {
         .summary
         .select_session_endpoints()
         .context("no writable and notification-capable Aero endpoints discovered")?;
-    let mut probe = ReadOnlySession::<cutout_protocols::NosfetAeroModel, true>::default();
+    let mut probe = ReadOnlySession::<cutout_protocols::NosfetAeroModel>::default();
     let probe_report = drive_session_with_channel_pair(
         &connection.peripheral,
         &mut probe,
@@ -1721,7 +1721,7 @@ async fn aero_write(args: AeroWriteArgs) -> Result<()> {
     print_session_endpoints(endpoints);
 
     let mut session =
-        StationarySettingsWriteSession::<cutout_protocols::NosfetAeroModel, true>::default();
+        StationarySettingsWriteSession::<cutout_protocols::NosfetAeroModel>::default();
     let arm = aero_write_arm_from_probe(&probe_report)?;
     session.arm(arm);
     let commands = aero_write_commands(command);
@@ -6208,7 +6208,7 @@ mod tests {
 
         let report = replay_pevcap_with_session(
             &capture,
-            ReadOnlySession::<cutout_protocols::VescGenericModel, true>::default(),
+            ReadOnlySession::<cutout_protocols::VescGenericModel>::default(),
         )
         .expect("VESC Refloat fixture should replay");
 
