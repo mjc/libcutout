@@ -51,6 +51,8 @@ pub mod settings_wire;
 pub use ffi::*;
 mod device_session;
 pub use device_session::*;
+mod raw_settings;
+pub use raw_settings::{RawSettingsPage, RawSettingsPageKey, RawSettingsSnapshot};
 mod device_connection;
 pub use device_connection::*;
 mod fixture;

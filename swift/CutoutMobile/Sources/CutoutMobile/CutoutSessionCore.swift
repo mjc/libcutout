@@ -377,7 +377,11 @@ private final class CutoutSessionTestOperationSink: CoreBluetoothOperationSink {
 
     func subscribe(channel _: BluetoothUuid) {}
 
-    func writeWithoutResponse(channel: BluetoothUuid, bytes: Data, onReceipt: @escaping (CoreBluetoothWriteDisposition) -> Void) -> CoreBluetoothWriteDisposition {
+    func writeWithoutResponse(channel: BluetoothUuid, bytes: Data, isCurrent: @escaping () -> Bool, onReceipt: @escaping (CoreBluetoothWriteDisposition) -> Void) -> CoreBluetoothWriteDisposition {
+        guard isCurrent() else {
+            onReceipt(.cancelled)
+            return .cancelled
+        }
         writes.append((channel, bytes))
         onReceipt(.submitted)
         return .submitted
@@ -501,6 +505,7 @@ public final class CutoutSessionCore: NSObject {
     private var isDetectingProtocol = false
     private var subscribedCharacteristics: [BluetoothUuid: CBCharacteristic] = [:]
     private let pendingWithoutResponseWrites = CoreBluetoothWriteQueue(capacity: 64)
+    private var nativeWriteID: UInt64 = 0
     private var pendingServiceDiscoveries = Set<CBUUID>()
     private var connectionGattInventory: [MobileGattFingerprintDto] = []
     private var suppressReconnect = false
@@ -2252,15 +2257,6 @@ public final class CutoutSessionCore: NSObject {
             )
             guard acceptCaptureWrite(accepted) else { return false }
             record("capture_queue_depth=\(captureBuilder?.writerStatus().queuedMessages ?? 0)")
-        case "write_without_response":
-            guard let builder = captureBuilder else { return true }
-            let accepted = builder.recordWriteWithoutResponse(
-                monotonicMs: MobileMonotonicMillisDto(milliseconds: captureElapsedMilliseconds()),
-                characteristic: channel.bytes,
-                bytes: bytes
-            )
-            guard acceptCaptureWrite(accepted) else { return false }
-            record("capture_queue_depth=\(captureBuilder?.writerStatus().queuedMessages ?? 0)")
         default:
             return false
         }
@@ -3086,7 +3082,7 @@ extension CutoutSessionCore: CoreBluetoothOperationSink {
         peripheral?.setNotifyValue(true, for: characteristic)
     }
 
-    public func writeWithoutResponse(channel: BluetoothUuid, bytes: Data, onReceipt: @escaping (CoreBluetoothWriteDisposition) -> Void) -> CoreBluetoothWriteDisposition {
+    public func writeWithoutResponse(channel: BluetoothUuid, bytes: Data, isCurrent: @escaping () -> Bool, onReceipt: @escaping (CoreBluetoothWriteDisposition) -> Void) -> CoreBluetoothWriteDisposition {
         observeDetectionProbeWrite(channel: channel, bytes: bytes)
         guard let characteristic = subscribedCharacteristics[channel] else {
             setPhase(.failed(.missingWriteChannel))
@@ -3102,11 +3098,37 @@ extension CutoutSessionCore: CoreBluetoothOperationSink {
             onReceipt(.rejected)
             return .rejected
         }
-        guard captureFrame(
-            direction: "write_without_response",
-            characteristic: channel.coreBluetoothUuid,
-            bytes: bytes
-        ) else {
+        guard isCurrent() else {
+            onReceipt(.cancelled)
+            return .cancelled
+        }
+        let (writeID, overflow) = nativeWriteID.addingReportingOverflow(1)
+        guard !overflow else {
+            onReceipt(.rejected)
+            return .rejected
+        }
+        nativeWriteID = writeID
+        // Keep all receipts attached to the capture that admitted this write,
+        // including a cancellation during connection replacement.
+        let builder = captureBuilder
+        let startedAt = captureStartedAt
+        let captureReceipt: (CoreBluetoothWriteDisposition) -> Bool = { [weak self] disposition in
+            guard let self, let builder else { return true }
+            let captured: MobilePevcapWriteDispositionDto
+            switch disposition {
+            case .queued: captured = .queued
+            case .submitted: captured = .submitted
+            case .rejected: captured = .rejected
+            case .cancelled: captured = .cancelled
+            }
+            return self.acceptCaptureWrite(builder.recordWriteWithoutResponseReceipt(
+                monotonicMs: MobileMonotonicMillisDto(milliseconds: startedAt.map { self.captureElapsedMilliseconds(since: $0) } ?? 0),
+                characteristic: channel.bytes, bytes: bytes, writeId: writeID,
+                disposition: captured
+            ))
+        }
+        // Record intent before invoking the native queue, never as submission.
+        guard captureReceipt(.queued) else {
             onReceipt(.rejected)
             return .rejected
         }
@@ -3114,11 +3136,16 @@ extension CutoutSessionCore: CoreBluetoothOperationSink {
             canSend: { [weak self] in
                 self?.peripheral === peripheral && peripheral.canSendWriteWithoutResponse
             },
+            isCurrent: { [weak self] in self?.peripheral === peripheral && isCurrent() },
             write: { [weak self] in
                 peripheral.writeValue(bytes, for: characteristic, type: .withoutResponse)
                 self?.record("write_without_response=\(channel.coreBluetoothUuid.uuidString) bytes=\(bytes.count)")
             },
-            onReceipt: onReceipt
+            onReceipt: { disposition in
+                // The queue emits .submitted only after writeValue has run.
+                if disposition != .queued { _ = captureReceipt(disposition) }
+                onReceipt(disposition)
+            }
         )
     }
 

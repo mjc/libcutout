@@ -46,20 +46,19 @@ Compilation rejects:
 - Literal commands that occupy a declared binary field or submenu entry point.
 - A dialect extension that collides with an inherited command.
 - A model selecting a dialect of a different base-protocol type.
-- A paired binary command whose primary or companion field collides with any
-  declared destination.
 
 Aliases for one physical operation must resolve to one canonical wire command,
-not declare duplicate destinations. Some Veteran settings are intentionally
-ordered frame pairs: lateral cutoff sends the `LkAp` field followed by an
-`LdAp` companion with discriminator `01 00`; both fields belong to one semantic
-setting and are declared together in the checked schema. Distinct
+not declare duplicate destinations. Aero lateral cutoff sends one 22-byte `LkAp`
+frame, matching the official NOSFET and EUC World setters; it does not require an
+`LdAp` companion. The unsupported paired layout and its collision-check fixture
+have been removed. See the [reference comparison](eucworld-aero-settings-re.md#lateral-correction-and-send-lifecycle-comparison-2026-09-20)
+for primary artifact paths and line references. Splitting that frame into 20+2
+bytes at the current link limit is transport chunking, not a second command. Distinct
 protocols/dialects may legitimately reuse bytes; there is no global ban on
 matching opcodes across unrelated devices. New wire-layout kinds require an
 exhaustive overlap rule and serializer.
 
-The compiler proves the declared mapping is internally non-colliding, including
-both destinations of a paired command. It cannot
+The compiler proves the declared mapping is internally non-colliding. It cannot
 prove that a source-derived command matches a wheel's firmware or that hardware
 applied it. Golden frames, fresh readback, and physical acceptance remain separate
 checks; an unsuccessful write must not remove a setting's readback capability.
@@ -112,7 +111,8 @@ The compiler tests compile the production schema checker in const contexts and
 require the specific collision diagnostic. They cover binary-bank collisions,
 padding aliases, literal opcodes, submenu widths, literal bypasses, inherited
 collisions, and valid distinct/inherited layouts. Existing encoder and session
-tests check complete frame bytes, CRCs, and timed transaction steps.
+tests check complete frame bytes, CRCs, and timed transaction steps. Lateral
+regressions require the exact single source-backed frame and no follow-up write.
 
 Further acceptance requires compile-fail cases for missing encoder/readback
 bindings and boundary tests for exact units, sentinels and inexact inputs across

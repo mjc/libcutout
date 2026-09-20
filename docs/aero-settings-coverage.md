@@ -11,7 +11,7 @@ write API.
 
 ## Implementation coverage, not acceptance
 
-Status reviewed 2026-09-18: this catalog describes software paths and source
+Status reviewed 2026-09-20: this catalog describes software paths and source
 evidence, not a completed settings implementation or a merge gate for PR #106.
 The [settings design review](settings-design-review.md) is the proposed repair
 baseline across all protocols. Veteran is the protocol, NOSFET its dialect,
@@ -36,43 +36,100 @@ known device into capture mode.
 | Setting | Rust / CLI / mobile / Tune | Live confirmation |
 | --- | --- | --- |
 | Headlight power | Implemented as the one canonical Aero lighting power control with direct Off/On values | A live NF2557 test physically confirmed both `SetLightON` and `SetLightOFF`; the wheel does not expose a decoded light-state readback |
-| Headlight intensity modes | Deferred; not part of the current headlight power contract | The AERO has multiple physical headlight modes, but no brightness-cycle wire command has been established from EUC World, DarknessBot, or the NF2557 capture; do not block the confirmed power control on this future capability |
+| Headlight intensity modes | Deferred; not part of the current headlight power contract | The AERO has multiple physical headlight modes, but no brightness-cycle wire command has been established from EUC World, DarknessBot, or the NF2557 capture. A constrained live `AA 55 14 02 16` candidate was captured as an outbound FFE1 write with no decoded acknowledgement and no distinguishable physical brightness effect; it remains unverified and is not product protocol support. |
 | Trip reset | Implemented, with reset lifecycle feedback | Transport submission is not confirmation |
-| Legacy hard / medium / soft | Implemented as the semantic riding preset | Generic family pedal readback does not establish Aero numeric MD state |
+| Legacy hard / medium / soft | Shared encoder retained, excluded from Aero | NOSFET's menu hides the preset picker when numeric hardness is available. NF2557 has numeric MD; these are alternatives, not independent controls. |
 | Speed limit / TLT stop speed (V) | Implemented by the semantic `SettingId::TiltbackSpeed` control | EUC World `vn_speed_limit` and the official `StopSpeedSettingActivity` share LdAp position 12; typed page-8 byte 52 readback; new writes still need device proof |
-| ALM speed alarm | Implemented | Typed telemetry field; matching readback still required |
+| ALM speed alarm | Implemented with an Aero-specific 55 km/h ceiling enforced before transport | Typed telemetry field and matching readback are present; a valid 54–55 km/h device application/readback still requires live proof |
 | Stop power / PWT PWM tilt-back threshold (U) | Implemented as a semantic 30–100% duty control, with an explicit `Disabled` value | EUC World `vn_safety_margin_limit` and the official `StopPowerSettingActivity` share LdAp position 13; page-8 byte 53 decodes both duty and wire-200 Off; capture reports 21% margin (wire value 79); new writes still need device proof |
-| ANG vertical angle | Implemented with the documented −8.0°…8.0° bound | No decoded setting readback |
+| ANG vertical angle | −8.0°…8.0°, written in 0.1° steps; observed values preserve 0.01° precision | Live build `2341c112f` decoded −1.00°. One request for −0.90° was followed by 145 fresh observations still at −1.00°. Readback works; changed-value application remains unresolved. |
 | MD numeric pedal hardness | Implemented as a distinct 0–100 percent command | Page-8 readback decoded; capture reports 50%; new writes still need device proof |
-| High-speed mode (N) | Implemented as a typed toggle | Page-8 byte 61 readback decoded; new writes still need device proof |
-| Low-battery mode (P) | Implemented as a typed toggle | Page-8 byte 60 readback decoded; new writes still need device proof |
-| Transportation mode (W/TRM) | Implemented as a typed toggle | Page-8 byte 57 readback decoded; new writes still need device proof |
-| ANG TLT gyro calibration | Implemented as a stationary source-backed toggle; page-8 byte 56 reports idle/waiting/complete | Official NOSFET app frame and state mapping are decoded; the simulator and Tune surface now stop a completed calibration with the same command; physical calibration effect still needs device proof |
-| Display backlight (J) | Implemented as a typed 0–100% control | Page-8 byte 55 reaches mobile state; live NF2557 testing confirmed the control works, with 0% meaning the display is off |
+| High-speed mode (N) | Shared Veteran encoder/readback exists, but it is excluded from the Aero product surface | EUC World's generic Veteran menu does not establish that NF2557 offers this as a real user setting; do not expose it for Aero |
+| Low-battery mode (P) | Shared Veteran encoder/readback exists; excluded from the Aero product surface | The NOSFET Aero manual specifies Always ON. A configuration beep does not establish a writable Aero mode. |
+| Transportation mode (W/TRM) | Shared Veteran encoder/readback exists, but it is excluded from the Aero product surface | It remains out of the current UI and live-test scope |
+| Display backlight (J) | Implemented as a typed 0–100% control; 0% means display off | Previously confirmed working by the user. The latest `2341c112f` request for 31% was followed by 21 fresh observations still at 30%; current delivery/application needs investigation. |
 | Beeper volume (F) | Implemented as a typed 0–100% control | Page-8 byte 63 reaches mobile state; new writes still need device proof |
 | Dynamic assist (L) | Implemented as a typed 0–100% control | Page-8 byte 66 reaches mobile state; new writes still need device proof |
 | Pedal-dip compensation (Q) | Implemented as a typed 0–100% control | Page-8 byte 68 reaches mobile state; new writes still need device proof |
 | Voltage correction (X) | Implemented as a typed signed −15…15 control in tenths of a percent (−1.5…1.5%) | Page-8 byte 59 reaches mobile state; new writes still need device proof |
-| Lateral cutoff (O) | Implemented as a typed 35–75° control; the checked Veteran/NOSFET encoder sends the required `LkAp` frame followed by the `LdAp` companion (`01 00`) as one sequence | Selector-2 byte 47 reaches mobile state; the earlier NF2557 capture sent only `LkAp` and stayed at 40°, so physical confirmation of the paired write remains open |
-| Modern binary riding mode (T) | Implemented as a distinct hard/medium/soft command | EUC World source-backed LkAp frames; new writes still need device proof |
+| Lateral cutoff (O) | Typed 35–75° control; EUC World setter O and NOSFET's official activity send one 22-byte `LkAp` frame | Selector-2 byte 47 reaches mobile state. The previously added `LdAp` companion was not supported by either inspected source; its removal requires a fresh changed-value/restoration test. |
+| Modern binary riding mode (T) | Shared source-backed command, not an Aero product control | The generic family menu does not override the official numeric-hardness/preset exclusion |
 | Brake overpressure alarm | Implemented as a typed 90–125% command | Official NOSFET source-backed LdAp frame and page-8 byte 65; new writes still need device proof |
 
-The production Tune catalog exposes all 18 source-backed editable settings
-without a validation-mode switch: four lights/display controls, five limits
-and alarms, five ride-feel controls, and four wheel modes. Source/hardware
+The production Tune catalog exposes 14 source-backed editable settings without
+a validation-mode switch: four lights/display controls, five limits and alarms,
+four ride-feel controls, and voltage correction. Source/hardware
 evidence remains distinct from ordinary command availability;
 the production descriptor does not claim a physical test. Rust owns the model,
 value-bound, fresh-speed, command sequencing, and lifecycle policy. Mobile
 setting requests now retain identity through native queueing and distinguish
-acceptance from host submission. Lower-level bindings, delayed multi-step
-actions, and rechecking authorization at delayed native handoff still need
-their broader contract work.
+acceptance from host submission. The native handoff repair rechecks the original
+Rust authorization immediately before writing, and preserves request identity
+through delayed setting stages. Delayed multi-step actions remain separate open
+contract work; this is not acceptance of all actions or physical settings.
 The low-level NOSFET/Falcon encoders now reject inexact speed values instead of
 truncating them. Swift submits typed values and
 renders state; it must not supply a second policy. Simulator state is synthetic
 evidence and must not become a live readback claim.
 
 ## Physical evidence and open acceptance
+
+### September 20 native handoff investigation
+
+Build `2341c112f` was tested through CutOut's existing phone connection using
+iPhone Mirroring, not a competing Mac Bluetooth connection. Pedal angle
+−1.00° → −0.90° and brightness 30% → 31% each produced exactly one intended
+outbound entry, but fresh CRC-valid observations remained at the original
+values for approximately 124 and 78 seconds respectively. Returning each
+editor to its current value cleared the draft; it did not send a restoration
+command. The [full live report](https://lific.mjc.lol/LIBCU/pages/31) preserves
+the measurements and distinguishes observed state from physical effect.
+
+Those old outbound capture entries were recorded **before** native queue
+submission. They do not prove that `CBPeripheral.writeValue` was called. The
+new capture metadata records a native write ID with typed queued, submitted,
+rejected or cancelled receipts. Submitted is recorded only after the native
+write call; it is still not wheel acknowledgement. Legacy captures without
+receipt metadata retain unknown submission evidence.
+
+The repair also prevents an expired, replaced or revoked setting from leaving
+the native queue later, and preserves request identity for later protocol
+stages. Neither defect has yet been proved to explain the two physical failures.
+A new approved deployment and controlled receipt/readback test must distinguish
+host-side loss from a device-side rejection before changing the reference-backed
+wire encoding. No retry loop or speculative alternate header is added.
+
+The reference comparison separately found that the lateral-tilt encoder's
+extra `LdAp/01 00` frame was not source-backed: EUC World and NOSFET each emit
+one `LkAp` frame for Aero. An earlier failed single-frame readback did not
+justify adding the second frame. The encoder and its parity tests now follow
+the reference's single-frame command; this does not establish physical success.
+
+### User retest of build `702a83423`
+
+The user accepted Tune layout/scrolling and display-brightness edit/Cancel/Apply.
+Pedal angle accepts a draft but remains Requested; Hard/Medium/Soft does the
+same, with no independently established physical effect. Low-battery mode beeps,
+briefly shows Pending, then clears it. These are user observations, not a captured
+request/readback matrix.
+
+The [NOSFET Aero manual, page 6](https://device.report/m/15c21f5faf7c4b946395bd8596be32a778817c729ce71cdcc1f10e7f53ae463f_optim.pdf#page=7)
+specifies low-battery mode as Always ON. The Aero profile therefore excludes
+that toggle and rejects either target even with validation authorization;
+shared wire decoding is retained without promoting it to an Aero capability.
+The same manual identifies MD as 0–100% pedal hardness. NOSFET Android 1.1.3
+explicitly hides Hard/Medium/Soft when numeric hardness is available, so the
+Aero catalog now exposes only numeric hardness. The shared legacy commands
+remain available to protocol research, not as Aero controls.
+
+The source investigation also found the missing ANG observation at selector
+0/4, signed bytes 67–68, in hundredths of a degree. The existing single `LkAp`
+angle command matches NOSFET/EUC World; no header change or companion is needed.
+The library now preserves hundredths, accepts only exact tenth-degree writes,
+and uses matching fresh readback for completion. A nearby reading cannot be
+rounded into confirmation. Historical zero readings establish decoding, not
+the effect of the user's latest write. The September 20 retest above establishes
+live readback but not successful changed-value application.
 
 ### September 18 Tune failure report
 
@@ -87,9 +144,11 @@ exact cause of every displayed error.
 
 The regression `nf2557_reported_tune_values_send_when_stopped_and_refuse_while_moving`
 replays complete stopped and moving packets from that capture. It checks the
-four reported values (55 km/h tilt-back, 80% PWM duty, 45° lateral limit, and
-56 km/h speed alarm), their command destinations and payload values, refusal
-without any write while moving, and a successful retry after stopping.
+four supported values (55 km/h tilt-back, 80% PWM duty, 45° lateral limit, and
+55 km/h speed alarm), their command destinations and payload values, refusal
+without any write while moving, and a successful retry after stopping. A
+separate session test rejects 56 km/h before it can replace an existing pending
+request or reach the wire.
 
 The repaired mobile path retains the typed protocol refusal instead of
 replacing it with the generic send error. Rejected drafts remain drafts; edits
@@ -112,9 +171,9 @@ restoration. Preserve positive reports without using them to close other paths:
 | Headlight power | The old binary `LkAp` frame was transmitted but had no physical effect on NF2557; the corrected literal commands turned the lamp on and off in a live test | Keep the exact command bytes and physical result as the acceptance evidence; no decoded light-state readback is expected |
 | Headlight intensity modes | Deferred because the reference app path does not currently establish a brightness-cycle command | Revisit only if EUC World or another source provides a verified command; do not treat `SetLightON` as a brightness selector |
 | Horn, reset trip, pedal angle | Horn and pedal angle remain unconfirmed; reset had no effect | A new app trip attempts the semantic trip-reset action automatically for any live device that exposes a trip meter; the current Aero encoding is the established `CLEARMETER` literal, while horn and pedal angle still need protocol/device evidence |
-| Lateral tilt and speed alarm | The earlier NF2557 lateral attempt transmitted only the `LkAp` half and stayed at 40° | The lateral encoder now emits the checked `LkAp` + `LdAp (01 00)` pair; deploy and verify both outbound frames plus selector-2 readback before closing this item; speed alarm remains separately open |
+| Lateral tilt and speed alarm | An earlier lateral request left the observation at 40°; a later 41° → 42° test did change readback | Recheck source-matching single-frame lateral submission, selector-2 readback, and restoration; the valid below-limit speed-alarm request remains separately open |
 | Brake alarm | Initially reported working without updating the wheel percentage; later 120 reported sent without confirmation | Establish desired effect and fresh reported percentage separately |
-| High-speed and low-battery modes | Beeped but were not confirmed | Sound is not state confirmation; verify mode observation and effect |
+| High-speed and low-battery modes | Historical shared-catalog attempts beeped without an established change | Excluded from the current Aero catalog; neither belongs in the current live checklist |
 | Calibration and transport mode | No acceptance established; user declined calibration | Remain open; no automatic action sweep |
 
 The user distinguished working beeper volume from nonworking “wheel volume.”
@@ -139,11 +198,10 @@ descriptor minima, guessed values and broad audible opt-ins are not safe cases.
 | Manufacturer setting or function | Current software status | Remaining evidence or rationale |
 | --- | --- | --- |
 | ANG % acceleration assist | Not a separate EUC World wheel write; the source-backed `vn_dynamic_assist` control is implemented above | Do not infer a second command from the manual label |
-| ANG TLT gyro re-centering | No corresponding `vn_*` wheel setter in EUC World 2.66.1; the manufacturer source-backed command is implemented above | Physical calibration effect still needs device proof |
-| ALM torque alarm | EUC World exposes current/torque alarms as app alarm preferences, not the Veteran wheel-settings path | No Aero wheel command established |
-| BRT automatic headlight | EUC World’s automatic-headlight controls are Inmotion (`in_*`) settings, not Veteran/NOSFET | No Aero wheel command established |
-| MxV charging ceiling | Raw page-8 readback is exposed as a diagnostic; no write command is available | The NF2557 fixture reports page-8 byte 64 as raw `46`. The official generic UI's `145.0 + raw / 10` V display conflicts with Aero's 126 V pack, so the mobile surface keeps this explicitly raw and read-only until an Aero-specific conversion and safe range are established |
-| CAL gyro calibration | Covered by the source-backed ANG TLT gyro command above; it remains a lifecycle rather than a scalar setting | Keep requested, reported, and physically confirmed states separate |
+| ANG TLT angle-tilt re-centering | The Aero manual identifies it, but EUC World 2.66.1 has no matching Veteran `vn_*` key or setter | It is neither pedal angle nor gyro calibration. A NOSFET-app trace or captured Aero button write is required before exposing it |
+| ALM torque alarm | The Aero manual identifies it, but EUC World 2.66.1 has no matching Veteran `vn_*` key or setter | No Aero wheel command is established; do not reuse another app's alarm preference |
+| MxV charging ceiling | EUC World maps `vn_charging_voltage_limit` to setter `G`, an Ld value field, and page-8 byte 64 | The generic 147.0–151.6 V UI domain and `145.0 + raw / 10` readback cannot describe a 126 V Aero. Keep MxV unavailable rather than presenting raw bytes or an invalid voltage until Aero-specific semantics are established |
+| CAL calibration | The Aero manual lists calibration separately from angle-tilt re-centering | Both are outside the current Aero UI/live-test scope; neither may be aliased to the other without source-backed command evidence |
 | Running lights / stealth | No corresponding Veteran/NOSFET entry exists in the inspected EUC World menu | Exact Aero commands remain unknown |
 | App-only persistence, scaling, logs, and firmware entries | `vn_headlight_persistent`, `vn_safety_margin_scaling`, `vn_download_event_log`, and firmware preferences do not mutate the wheel setting page | Kept outside the settings-write surface |
 | PWT disabled setting | EUC World maps its −1 Off choice to wire 200; Rust and the mobile Tune surface preserve this as an explicit `Disabled` write | Source-backed encoding is not a new physical acceptance result |

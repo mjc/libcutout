@@ -115,14 +115,7 @@ final class DeviceSessionTransport: @unchecked Sendable {
         guard !invalidated, waitingForSubscription == nil else { throw DeviceSettingSubmissionError.ConnectionUnavailable }
         defer { publishSettings(at: clock.now(), immediately: true) }
         let step = try state.submitSetting(token: token, id: id, value: value, monotonicMs: at.rawValue)
-        guard let requestID = state.settings().setting(for: id)?.requestId else {
-            throw DeviceSettingSubmissionError.ConnectionUnavailable
-        }
-        return try process(
-            step,
-            at: at,
-            settingRequest: (id, requestID)
-        )
+        return try process(step, at: at)
     }
 
     func submitAction(_ id: DeviceActionID, at: MonotonicMilliseconds) throws -> CoreBluetoothSessionStep {
@@ -199,8 +192,7 @@ final class DeviceSessionTransport: @unchecked Sendable {
     private func process(
         _ step: MobileDeviceSessionStepDto,
         at: MonotonicMilliseconds,
-        publishImmediately: Bool = true,
-        settingRequest: (id: DeviceSettingID, requestID: UInt64)? = nil
+        publishImmediately: Bool = true
     ) throws -> CoreBluetoothSessionStep {
         guard step.session.connection.token == token,
               state.verifiedConnectionAttemptIsCurrent(token: token) else {
@@ -214,42 +206,35 @@ final class DeviceSessionTransport: @unchecked Sendable {
         if let error = step.result.error { throw CutoutSessionError(error) }
         let actions = step.result.outputs.map(SessionAction.init)
         let operations = actions.flatMap(planner.plan(action:))
-        let chunkCount = operations.reduce(0) { count, operation in
-            if isWrite(operation) { return count + 1 }
-            return count
+        let settings = state.settings()
+        // One receipt per protocol stage; Rust aggregates stages of a delayed sequence.
+        // Resolve by operation identity on every step, including notification/tick outputs.
+        var pending: [PendingOperation] = []
+        for action in actions {
+            let planned = planner.plan(action: action)
+            let receipt: SettingWriteReceipt?
+            if action.kind == .write, let operationID = action.operationID,
+               let setting = settings.settings.first(where: { $0.requestId == operationID }) {
+                receipt = SettingWriteReceipt(id: setting.id, requestID: operationID,
+                                              operationID: operationID, chunkCount: planned.count)
+            } else {
+                receipt = nil
+            }
+            if let receipt, planned.isEmpty { recordSettingTransport(receipt) }
+            for (index, operation) in planned.enumerated() {
+                pending.append((operation, { [weak self] disposition in
+                    guard let self, !self.invalidated,
+                          self.state.verifiedConnectionAttemptIsCurrent(token: self.token) else { return }
+                    self.record(.writeReceipt(platformIdentifier: self.context.platformIdentifier,
+                                              operation: operation, disposition: disposition))
+                    if let receipt, receipt.chunks[index] == .queued {
+                        receipt.chunks[index] = disposition
+                        self.recordSettingTransport(receipt)
+                    }
+                }))
+            }
         }
-        let operationID = operations.compactMap { operationID(of: $0) }.first
-            ?? actions.first(where: { $0.kind == .write })?.operationID
-        let receipt = settingRequest.map {
-            SettingWriteReceipt(
-                id: $0.id,
-                requestID: $0.requestID,
-                operationID: operationID,
-                chunkCount: chunkCount
-            )
-        }
-        // Later tick outputs have no request identity; only attribute this submission's writes.
-        if let receipt, chunkCount == 0, actions.contains(where: { $0.kind == .write }) {
-            recordSettingTransport(receipt)
-        }
-        var chunkIndex = 0
-        execute(operations.map { operation in
-            let index = chunkIndex
-            if isWrite(operation) { chunkIndex += 1 }
-            return (operation, { [weak self] disposition in
-                guard let self, !self.invalidated,
-                      self.state.verifiedConnectionAttemptIsCurrent(token: self.token) else { return }
-                self.record(.writeReceipt(
-                    platformIdentifier: self.context.platformIdentifier,
-                    operation: operation,
-                    disposition: disposition
-                ))
-                if let receipt, receipt.chunks[index] == .queued {
-                    receipt.chunks[index] = disposition
-                    self.recordSettingTransport(receipt)
-                }
-            })
-        })
+        execute(pending)
         return CoreBluetoothSessionStep(
             operations: operations,
             snapshot: TelemetrySnapshot(step.telemetry, chargeEstimate: chargeEstimate),
@@ -270,7 +255,14 @@ final class DeviceSessionTransport: @unchecked Sendable {
             // An already-enabled characteristic can acknowledge synchronously.
             // Install the wait before asking the native sink to subscribe.
             if case .subscribe(let channel) = operation { waitingForSubscription = channel }
-            executor.execute(operation, onWriteReceipt: onReceipt)
+            executor.execute(operation, isCurrent: { [weak self] in
+                guard let self, !self.invalidated,
+                      self.state.verifiedConnectionAttemptIsCurrent(token: self.token) else { return false }
+                guard let operationID = self.operationID(of: operation) else { return true }
+                return self.state.settingTransportIsCurrent(
+                    token: self.token, operationId: operationID, monotonicMs: self.clock.now().rawValue
+                )
+            }, onWriteReceipt: onReceipt)
             record(.operation(platformIdentifier: context.platformIdentifier, operation: operation))
         }
     }
@@ -325,16 +317,24 @@ final class DeviceSessionTransport: @unchecked Sendable {
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now() + .milliseconds(100), repeating: .milliseconds(100))
         timer.setEventHandler { [weak self] in
-            guard let self else { return }
-            guard self.state.verifiedConnectionAttemptIsCurrent(token: self.token) else {
-                self.invalidate()
-                return
-            }
-            guard self.sink?.canSubmitWithoutResponse() == true else { return }
-            _ = try? self.handleTick(at: self.clock.now())
+            self?.handleTimer()
         }
         self.timer = timer
         timer.resume()
+    }
+
+    func handleTimer() {
+        guard !invalidated else { return }
+        guard state.verifiedConnectionAttemptIsCurrent(token: token) else {
+            invalidate()
+            return
+        }
+        // Confirmation and queue authorization deadlines advance even under backpressure.
+        let now = clock.now()
+        _ = state.tickSettingTransport(token: token, monotonicMs: now.rawValue)
+        publishSettings(at: now, immediately: false)
+        guard sink?.canSubmitWithoutResponse() == true else { return }
+        _ = try? handleTick(at: now)
     }
 
     private func publishSettings(at: MonotonicMilliseconds, immediately: Bool) {

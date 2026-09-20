@@ -9,9 +9,9 @@ use crate::{
     VescNotificationDecoder,
 };
 
-type AeroBenignControlHost = HostSession<StationarySettingsWriteSession<NosfetAeroModel, false>>;
-type FalconBenignControlHost = HostSession<StationarySettingsWriteSession<BegodeFalconModel, true>>;
-type VescReadOnlyHost = HostSession<ReadOnlySession<VescGenericModel, true>>;
+type AeroBenignControlHost = HostSession<StationarySettingsWriteSession<NosfetAeroModel>>;
+type FalconBenignControlHost = HostSession<StationarySettingsWriteSession<BegodeFalconModel>>;
+type VescReadOnlyHost = HostSession<ReadOnlySession<VescGenericModel>>;
 
 fn output_is_telemetry(output: &cutout_core::SessionOutput) -> bool {
     matches!(
@@ -77,6 +77,29 @@ pub struct ConcreteAeroBenignControlSession {
 }
 
 impl ConcreteAeroBenignControlSession {
+    /// Latest validated raw pages for this connection, without replaying observations.
+    #[must_use]
+    pub fn raw_settings_pages(&self) -> &[crate::RawSettingsPage] {
+        self.host.protocol_session().raw_settings_pages()
+    }
+
+    pub(crate) fn bind_setting_operation(
+        &mut self,
+        id: cutout_core::TransportOperationId,
+    ) -> (Option<crate::session::SettingWriteAuthorization>, usize) {
+        self.host.session_mut().bind_setting_operation(id)
+    }
+
+    pub(crate) fn setting_write_is_current(
+        &self,
+        authorization: crate::session::SettingWriteAuthorization,
+        at: MonotonicTimestamp,
+    ) -> bool {
+        self.host
+            .protocol_session()
+            .setting_write_is_current(authorization, at)
+    }
+
     /// Creates a telemetry session wrapper with allow-listed headlight control.
     #[must_use]
     pub fn new() -> Self {
@@ -104,7 +127,7 @@ impl ConcreteAeroBenignControlSession {
         {
             return false;
         }
-        arm_stationary_settings::<NosfetAeroModel, false>(
+        arm_stationary_settings::<NosfetAeroModel>(
             &mut self.host,
             state,
             speed_mm_per_second,
@@ -185,13 +208,28 @@ pub struct ConcreteFalconBenignControlSession {
 }
 
 impl ConcreteFalconBenignControlSession {
+    pub(crate) fn bind_setting_operation(
+        &mut self,
+        id: cutout_core::TransportOperationId,
+    ) -> (Option<crate::session::SettingWriteAuthorization>, usize) {
+        self.host.session_mut().bind_setting_operation(id)
+    }
+
+    pub(crate) fn setting_write_is_current(
+        &self,
+        authorization: crate::session::SettingWriteAuthorization,
+        at: MonotonicTimestamp,
+    ) -> bool {
+        self.host
+            .protocol_session()
+            .setting_write_is_current(authorization, at)
+    }
+
     /// Creates a telemetry session wrapper with allow-listed headlight control.
     #[must_use]
     pub fn new() -> Self {
         Self {
-            host: HostSession::new(
-                StationarySettingsWriteSession::<BegodeFalconModel, true>::default(),
-            ),
+            host: HostSession::new(StationarySettingsWriteSession::<BegodeFalconModel>::default()),
             last_telemetry_ms: None,
         }
     }
@@ -212,7 +250,7 @@ impl ConcreteFalconBenignControlSession {
         {
             return false;
         }
-        arm_stationary_settings::<BegodeFalconModel, true>(
+        arm_stationary_settings::<BegodeFalconModel>(
             &mut self.host,
             state,
             speed_mm_per_second,
@@ -311,7 +349,7 @@ impl VescReadOnlySession {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            host: HostSession::new(ReadOnlySession::<VescGenericModel, true>::default()),
+            host: HostSession::new(ReadOnlySession::<VescGenericModel>::default()),
         }
     }
 
@@ -319,7 +357,7 @@ impl VescReadOnlySession {
     #[must_use]
     pub fn with_board_profile(board_profile: VescBoardProfile) -> Self {
         Self {
-            host: HostSession::new(ReadOnlySession::<VescGenericModel, true>::with_decoder(
+            host: HostSession::new(ReadOnlySession::<VescGenericModel>::with_decoder(
                 VescNotificationDecoder::with_board_profile(board_profile),
             )),
         }
@@ -384,18 +422,15 @@ pub fn new_nosfet_aero_benign_control_session() -> ConcreteAeroBenignControlSess
 #[must_use]
 pub fn new_begode_falcon_benign_control_session() -> ConcreteFalconBenignControlSession {
     ConcreteFalconBenignControlSession {
-        host: HostSession::new(
-            StationarySettingsWriteSession::<BegodeFalconModel, true>::default(),
-        ),
+        host: HostSession::new(StationarySettingsWriteSession::<BegodeFalconModel>::default()),
         last_telemetry_ms: None,
     }
 }
 
 fn arm_stationary_settings<
     M: crate::ReadOnlyModelSpec + SupportsSettingsWrites + SupportsBenignControls,
-    const ACCEPT_ANY_NOTIFICATION: bool,
 >(
-    host: &mut HostSession<StationarySettingsWriteSession<M, ACCEPT_ANY_NOTIFICATION>>,
+    host: &mut HostSession<StationarySettingsWriteSession<M>>,
     state: RideOperatingStateDto,
     speed_mm_per_second: Option<i32>,
     monotonic_ms: u64,

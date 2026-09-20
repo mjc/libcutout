@@ -8,7 +8,8 @@ use crate::request_encoder::EncodedControlStep;
 use crate::request_encoder::request_payload as payload;
 
 mod schema;
-pub(crate) use schema::{BinaryField, Layout, Schema};
+use schema::BinaryField;
+pub(crate) use schema::{Layout, Schema};
 
 impl Schema {
     pub(crate) fn payload(&self, index: usize, value: u8) -> Option<WritePayload> {
@@ -27,22 +28,11 @@ impl Schema {
                 },
                 value,
             )),
-            Layout::FieldPair { .. } => None,
         }
     }
 
     pub(crate) fn steps(&self, index: usize, value: u8) -> Option<ArrayVec<EncodedControlStep, 5>> {
         let mut steps = ArrayVec::new();
-        if let Layout::FieldPair { primary, companion } = self.layout(index) {
-            for field in [primary, companion] {
-                steps.push(EncodedControlStep {
-                    delay_ms: 0,
-                    payload: field_payload(field, value),
-                    mode: WriteMode::WithoutResponse,
-                });
-            }
-            return Some(steps);
-        }
         let Layout::DecimalMenu { selector, digits } = self.layout(index) else {
             return None;
         };

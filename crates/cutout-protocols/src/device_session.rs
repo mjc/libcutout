@@ -92,6 +92,15 @@ enum DeviceSessionEngine {
 }
 
 impl DeviceSession {
+    /// Latest validated raw settings pages exposed without client protocol parsing.
+    #[must_use]
+    pub fn raw_settings_pages(&self) -> &[crate::RawSettingsPage] {
+        match &self.engine {
+            DeviceSessionEngine::Veteran(session) => session.raw_settings_pages(),
+            DeviceSessionEngine::Begode(_) | DeviceSessionEngine::Vesc(_) => &[],
+        }
+    }
+
     /// Constructs only from validated protocol evidence retained by the detector.
     #[must_use]
     pub fn from_detection(resolution: &DeviceDetectionResolution) -> Option<Self> {
@@ -222,6 +231,34 @@ impl DeviceSession {
             DeviceSessionEngine::Veteran(session) => session.diagnostics(),
             DeviceSessionEngine::Begode(session) => session.diagnostics(),
             DeviceSessionEngine::Vesc(session) => session.diagnostics(),
+        }
+    }
+
+    /// Associates delayed settings stages with their original transport operation.
+    pub(crate) fn bind_setting_operation(
+        &mut self,
+        id: cutout_core::TransportOperationId,
+    ) -> (Option<crate::session::SettingWriteAuthorization>, usize) {
+        match &mut self.engine {
+            DeviceSessionEngine::Veteran(session) => session.bind_setting_operation(id),
+            DeviceSessionEngine::Begode(session) => session.bind_setting_operation(id),
+            DeviceSessionEngine::Vesc(_) => (None, 0),
+        }
+    }
+
+    pub(crate) fn setting_write_is_current(
+        &self,
+        authorization: crate::session::SettingWriteAuthorization,
+        at: cutout_core::MonotonicTimestamp,
+    ) -> bool {
+        match &self.engine {
+            DeviceSessionEngine::Veteran(session) => {
+                session.setting_write_is_current(authorization, at)
+            }
+            DeviceSessionEngine::Begode(session) => {
+                session.setting_write_is_current(authorization, at)
+            }
+            DeviceSessionEngine::Vesc(_) => false,
         }
     }
 

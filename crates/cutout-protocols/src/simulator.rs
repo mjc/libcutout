@@ -186,7 +186,7 @@ pub struct AeroSimulatorWrite {
 /// hardware effects.
 #[derive(Clone, Debug)]
 pub struct AeroSettingsSimulator {
-    session: HostSession<StationarySettingsWriteSession<NosfetAeroModel, false>>,
+    session: HostSession<StationarySettingsWriteSession<NosfetAeroModel>>,
     readback: AeroSettingsReadback,
     writes: Vec<AeroSimulatorWrite>,
 }

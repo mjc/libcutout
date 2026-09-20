@@ -167,6 +167,11 @@ pub trait ReadOnlyNotificationDecoder {
     /// Resets model-specific parser state.
     fn reset(&mut self);
 
+    /// Latest validated raw pages retained by this decoder in the current session.
+    fn raw_settings_pages(&self) -> &[crate::RawSettingsPage] {
+        &[]
+    }
+
     /// Gives a decoder a chance to issue a bounded periodic read request.
     fn on_tick(&mut self, _monotonic_ms: MonotonicTimestamp, _output: &mut Vec<SessionOutput>) {}
 
@@ -232,6 +237,7 @@ impl ReadOnlyNotificationDecoder for NoopNotificationDecoder {
 pub struct VeteranNotificationDecoder {
     reassembler: VeteranFrameReassembler,
     command_mode: VeteranCommandModeDetector,
+    raw_settings: Option<Box<crate::raw_settings::RawSettingsPages>>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -247,6 +253,13 @@ impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
     fn reset(&mut self) {
         self.reassembler.reset();
         self.command_mode.reset();
+        self.raw_settings = None;
+    }
+
+    fn raw_settings_pages(&self) -> &[crate::RawSettingsPage] {
+        self.raw_settings
+            .as_deref()
+            .map_or(&[], crate::raw_settings::RawSettingsPages::pages)
     }
 
     fn control_encoding_context(&self) -> ControlEncodingContext {
@@ -266,6 +279,14 @@ impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
         for byte in bytes {
             match self.reassembler.feed_byte_result(*byte) {
                 Ok(VeteranFrameParseResult::Complete(frame)) => {
+                    // Selector 8 is the settings page. Telemetry/BMS pages are
+                    // decoded on every connection and must stay allocation-free;
+                    // their typed semantic readback is retained separately.
+                    if frame.as_slice().get(46) == Some(&8) {
+                        self.raw_settings
+                            .get_or_insert_with(Box::default)
+                            .observe_veteran(&frame, monotonic_ms);
+                    }
                     completed_frames = completed_frames.next();
                     buffered = false;
                     self.command_mode
@@ -1766,7 +1787,7 @@ impl SupportsReadRequests for VescGenericModel {
     }
 }
 
-fn handle_read_only_session<M: ReadOnlyModelSpec, const _ACCEPT_ANY_NOTIFICATION: bool>(
+fn handle_read_only_session<M: ReadOnlyModelSpec>(
     connected: &mut bool,
     decoder: &mut M::NotificationDecoder,
     input: SessionInput<'_>,
@@ -1799,9 +1820,7 @@ fn handle_read_only_session<M: ReadOnlyModelSpec, const _ACCEPT_ANY_NOTIFICATION
             monotonic_ms,
         } => {
             if *connected {
-                // The selected model owns one protocol notification channel.  The legacy const
-                // generic remains in the public session type for compatibility, but it must not
-                // let a selected decoder consume bytes from another protocol's characteristic.
+                // The selected model owns one protocol notification channel.
                 if channel == M::SUBSCRIBE_CHANNEL {
                     decoder.handle_notification(M::PROTOCOL, channel, bytes, monotonic_ms, output);
                 } else {
@@ -1905,7 +1924,7 @@ fn push_encoded_read_request<M: SupportsReadRequests>(
 
 /// Generic read-only session shell for one statically-known model.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ReadOnlySession<M: ReadOnlyModelSpec, const ACCEPT_ANY_NOTIFICATION: bool> {
+pub struct ReadOnlySession<M: ReadOnlyModelSpec, const ACCEPT_ANY_NOTIFICATION: bool = false> {
     connected: bool,
     decoder: M::NotificationDecoder,
     model: PhantomData<fn() -> M>,
@@ -1965,19 +1984,14 @@ impl<M: ReadOnlyModelSpec, const ACCEPT_ANY_NOTIFICATION: bool> ProtocolSession
     for ReadOnlySession<M, ACCEPT_ANY_NOTIFICATION>
 {
     fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
-        handle_read_only_session::<M, ACCEPT_ANY_NOTIFICATION>(
-            &mut self.connected,
-            &mut self.decoder,
-            input,
-            output,
-        );
+        handle_read_only_session::<M>(&mut self.connected, &mut self.decoder, input, output);
     }
 }
 
 /// Session shell that preserves model read behavior and admits allow-listed benign controls.
 pub struct BenignControlSession<
     M: ReadOnlyModelSpec + SupportsBenignControls,
-    const ACCEPT_ANY_NOTIFICATION: bool,
+    const ACCEPT_ANY_NOTIFICATION: bool = false,
 > {
     read_only: ReadOnlySession<M, ACCEPT_ANY_NOTIFICATION>,
     light_command_state: LightCommandState,
@@ -2017,6 +2031,13 @@ struct PendingSettingsSequence {
     remaining: ArrayVec<EncodedControlStep, 4>,
     next_at: MonotonicTimestamp,
     expires_at: MonotonicTimestamp,
+}
+
+/// Original authorization retained across native backpressure and later rearming.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct SettingWriteAuthorization {
+    arm: cutout_core::StationarySettingsArm,
+    cancellation_generation: u64,
 }
 impl<M: ReadOnlyModelSpec + SupportsBenignControls, const ACCEPT_ANY_NOTIFICATION: bool> fmt::Debug
     for BenignControlSession<M, ACCEPT_ANY_NOTIFICATION>
@@ -2128,13 +2149,14 @@ impl<M: ReadOnlyModelSpec + SupportsBenignControls, const ACCEPT_ANY_NOTIFICATIO
 /// Session shell for settings writes that require an explicit stationary arm.
 pub struct StationarySettingsWriteSession<
     M: ReadOnlyModelSpec + SupportsSettingsWrites + SupportsBenignControls,
-    const ACCEPT_ANY_NOTIFICATION: bool,
+    const ACCEPT_ANY_NOTIFICATION: bool = false,
 > {
     read_only: ReadOnlySession<M, ACCEPT_ANY_NOTIFICATION>,
     arm: Option<cutout_core::StationarySettingsArm>,
     monotonic_ms: MonotonicTimestamp,
     pending_sequence: Option<PendingSettingsSequence>,
     latest_settings_speed: Option<(cutout_core::Speed, MonotonicTimestamp)>,
+    settings_cancellation_generation: u64,
 }
 
 impl<
@@ -2163,6 +2185,7 @@ where
             monotonic_ms: self.monotonic_ms,
             pending_sequence: self.pending_sequence.clone(),
             latest_settings_speed: self.latest_settings_speed,
+            settings_cancellation_generation: self.settings_cancellation_generation,
         }
     }
 }
@@ -2179,6 +2202,7 @@ impl<
             monotonic_ms: MonotonicTimestamp::new(0),
             pending_sequence: None,
             latest_settings_speed: None,
+            settings_cancellation_generation: 0,
         }
     }
 }
@@ -2197,7 +2221,14 @@ impl<
             monotonic_ms: MonotonicTimestamp::new(0),
             pending_sequence: None,
             latest_settings_speed: None,
+            settings_cancellation_generation: 0,
         }
+    }
+
+    /// Latest raw settings pages from the validated notification decoder.
+    #[must_use]
+    pub fn raw_settings_pages(&self) -> &[crate::RawSettingsPage] {
+        self.read_only.decoder.raw_settings_pages()
     }
 
     /// Returns the read and stationary-settings commands this session can schedule.
@@ -2230,6 +2261,44 @@ impl<
     pub fn clear_arm(&mut self) {
         self.arm = None;
         self.pending_sequence = None;
+        self.settings_cancellation_generation =
+            self.settings_cancellation_generation.saturating_add(1);
+    }
+
+    pub(crate) fn bind_setting_operation(
+        &mut self,
+        operation_id: cutout_core::TransportOperationId,
+    ) -> (Option<SettingWriteAuthorization>, usize) {
+        let remaining = self.pending_sequence.as_mut().map_or(0, |pending| {
+            for step in &mut pending.remaining {
+                step.payload.set_operation_id(operation_id);
+            }
+            pending.remaining.len()
+        });
+        (
+            self.arm.map(|arm| SettingWriteAuthorization {
+                arm,
+                cancellation_generation: self.settings_cancellation_generation,
+            }),
+            remaining,
+        )
+    }
+
+    pub(crate) fn setting_write_is_current(
+        &self,
+        authorization: SettingWriteAuthorization,
+        at: MonotonicTimestamp,
+    ) -> bool {
+        authorization.cancellation_generation == self.settings_cancellation_generation
+            && self.arm.is_some()
+            && at >= authorization.arm.issued_at_ms()
+            && authorization.arm.is_valid_for(M::MODEL, at)
+            && self.fresh_settings_speed(at).is_some_and(|speed| {
+                speed.as_millimetres_per_second().unsigned_abs()
+                    <= M::MAX_SETTINGS_SPEED.map_or(0, |maximum| {
+                        maximum.as_millimetres_per_second().unsigned_abs()
+                    })
+            })
     }
 
     pub(crate) fn fresh_settings_speed(
@@ -3100,7 +3169,7 @@ mod tests {
         let mut decoder = NoopNotificationDecoder;
         let mut output = Vec::new();
 
-        handle_read_only_session::<TestModel, false>(
+        handle_read_only_session::<TestModel>(
             &mut connected,
             &mut decoder,
             SessionInput::LinkUp(LinkInfo {
@@ -3160,7 +3229,7 @@ mod tests {
         let mut decoder = NoopNotificationDecoder;
         let mut output = Vec::new();
 
-        handle_read_only_session::<TestModel, false>(
+        handle_read_only_session::<TestModel>(
             &mut connected,
             &mut decoder,
             SessionInput::Notification {
@@ -3190,7 +3259,7 @@ mod tests {
         let mut output = Vec::new();
         let wrong_channel = GattChannel::from_bytes([0xDD; 16]);
 
-        handle_read_only_session::<TestModel, false>(
+        handle_read_only_session::<TestModel>(
             &mut connected,
             &mut decoder,
             SessionInput::Notification {
@@ -3218,7 +3287,7 @@ mod tests {
         let mut decoder = NoopNotificationDecoder;
         let mut output = Vec::new();
 
-        handle_read_only_session::<TestModel, false>(
+        handle_read_only_session::<TestModel>(
             &mut connected,
             &mut decoder,
             SessionInput::Notification {
@@ -3234,8 +3303,8 @@ mod tests {
 
     #[test]
     fn read_only_session_shells_remain_small() {
-        assert!(size_of::<ReadOnlySession<BegodeFalconModel, true>>() <= 64);
-        assert!(size_of::<ReadOnlySession<NosfetAeroModel, false>>() <= 280);
+        assert!(size_of::<ReadOnlySession<BegodeFalconModel>>() <= 64);
+        assert!(size_of::<ReadOnlySession<NosfetAeroModel>>() <= 288);
     }
 
     #[test]
@@ -4812,6 +4881,7 @@ mod tests {
         let mut decoder = VeteranNotificationDecoder {
             reassembler: VeteranFrameReassembler::saturated_candidate_for_test(),
             command_mode: VeteranCommandModeDetector::default(),
+            ..VeteranNotificationDecoder::default()
         };
         let mut output = Vec::new();
 
@@ -5385,7 +5455,7 @@ mod tests {
     }
 
     #[test]
-    fn aero_lateral_tilt_session_sends_the_checked_frame_pair() {
+    fn aero_lateral_tilt_session_sends_one_source_backed_frame() {
         let mut session = StationarySettingsWriteSession::<NosfetAeroModel, false>::default();
         let mut output = Vec::new();
         session.arm(
@@ -5405,8 +5475,14 @@ mod tests {
         );
         assert!(matches!(
             output.as_slice(),
-            [SessionOutput::Transport(TransportAction::Write { bytes, .. })]
-                if bytes.as_slice().starts_with(b"LkAp\x16\x01\x80")
+            [SessionOutput::Transport(TransportAction::Write {
+                bytes,
+                mode: WriteMode::WithoutResponse,
+                ..
+            })]
+                if bytes.as_slice() == hex_literal::hex!(
+                    "4c6b41701601808080808080808080808037aef39e07"
+                )
         ));
 
         output.clear();
@@ -5416,10 +5492,9 @@ mod tests {
             },
             &mut output,
         );
-        assert!(output.iter().any(|item| matches!(
+        assert!(output.iter().all(|item| !matches!(
             item,
-            SessionOutput::Transport(TransportAction::Write { bytes, .. })
-                if bytes.as_slice().starts_with(b"LdAp\x16\x01\x00")
+            SessionOutput::Transport(TransportAction::Write { .. })
         )));
     }
 

@@ -17,10 +17,6 @@ pub(crate) enum Layout {
         bank: &'static [u8],
         offset: u8,
     },
-    FieldPair {
-        primary: BinaryField,
-        companion: BinaryField,
-    },
     Literal(&'static [u8]),
     DecimalMenu {
         selector: u8,
@@ -57,10 +53,6 @@ impl Schema {
                     bank,
                     offset,
                 }),
-                Layout::FieldPair { primary, companion } => {
-                    validate_field(primary);
-                    validate_field(companion);
-                }
                 Layout::Literal(bytes) => assert!(!bytes.is_empty()),
                 Layout::DecimalMenu { digits, .. } => assert!(digits == 1 || digits == 2),
             }
@@ -176,9 +168,6 @@ const fn layout_fields_overlap(layout: Layout, field: BinaryField) -> bool {
             },
             field,
         ),
-        Layout::FieldPair { primary, companion } => {
-            fields_overlap(primary, field) || fields_overlap(companion, field)
-        }
         _ => false,
     }
 }
@@ -207,23 +196,11 @@ const fn overlaps(a: Layout, b: Layout) -> bool {
                 offset,
             };
             match other {
-                Layout::Field { .. } | Layout::FieldPair { .. } => {
-                    layout_fields_overlap(other, field)
-                }
+                Layout::Field { .. } => layout_fields_overlap(other, field),
                 Layout::Literal(bytes) => field_overlaps_literal(field, bytes),
                 Layout::DecimalMenu { .. } => field.magic[0] == b'W',
             }
         }
-        (Layout::FieldPair { primary, companion }, other)
-        | (other, Layout::FieldPair { primary, companion }) => match other {
-            Layout::Field { .. } | Layout::FieldPair { .. } => {
-                layout_fields_overlap(other, primary) || layout_fields_overlap(other, companion)
-            }
-            Layout::Literal(bytes) => {
-                field_overlaps_literal(primary, bytes) || field_overlaps_literal(companion, bytes)
-            }
-            Layout::DecimalMenu { .. } => primary.magic[0] == b'W' || companion.magic[0] == b'W',
-        },
         (Layout::Literal(a), Layout::Literal(b)) => bytes_equal(a, b),
         (Layout::DecimalMenu { selector: a, .. }, Layout::DecimalMenu { selector: b, .. }) => {
             a == b

@@ -35,7 +35,7 @@ const FAKE_AUTHORING: CompleteModelAuthoring = ModelAuthoring::new()
 static FAKE_MODEL: ModelRegistryEntry = FAKE_AUTHORING.registry_entry();
 
 fn fake_session() -> RegisteredEucSession {
-    RegisteredEucSession::BegodeFalcon(BenignControlSession::<BegodeFalconModel, true>::default())
+    RegisteredEucSession::BegodeFalcon(BenignControlSession::<BegodeFalconModel>::default())
 }
 
 const FAKE_DEFINITION: RegisteredModelDefinition = RegisteredModelDefinition::new(
