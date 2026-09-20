@@ -1021,7 +1021,7 @@ public final class CutoutSessionCore: NSObject {
     private func finish(testScript: CutoutSessionTestScript, token: ConnectionAttemptToken) {
         guard rustSessionState.connectionAttemptIsCurrent(token: token) else { return }
         if testScript.identificationProbeFailure != nil || testScript.failsConnection {
-            _ = rustSessionState.connectionLinkDown(token: token)
+            connectionLinkDownOnBleQueue(token: token)
             _ = rustSessionState.connectionTransportFailed(token: token)
         }
         if let failure = testScript.identificationProbeFailure {
@@ -1162,7 +1162,7 @@ public final class CutoutSessionCore: NSObject {
         let reconnect = DispatchWorkItem { [weak self] in
             self?.onBleQueue {
                 guard let self, self.rustSessionState.connectionAttemptIsCurrent(token: token) else { return }
-                _ = self.rustSessionState.connectionLinkDown(token: token)
+                self.connectionLinkDownOnBleQueue(token: token)
                 self.testScriptUpdateWorkItem?.cancel()
                 guard let retryToken = self.rustSessionState.beginConnectionAttempt(
                     platformIdentifier: token.platformIdentifier, nowMs: self.clock.now().rawValue
@@ -1203,7 +1203,7 @@ public final class CutoutSessionCore: NSObject {
         let loss = DispatchWorkItem { [weak self] in
             self?.onBleQueue {
                 guard let self, self.rustSessionState.connectionAttemptIsCurrent(token: token) else { return }
-                _ = self.rustSessionState.connectionLinkDown(token: token)
+                self.connectionLinkDownOnBleQueue(token: token)
                 self.scanState = DevicePickerScanState(status: .bluetoothUnavailable, rows: [])
                 self.publishScanState()
                 self.setPhase(.bluetoothUnavailable(rawState: 4))
@@ -1294,6 +1294,14 @@ public final class CutoutSessionCore: NSObject {
         publishScanState()
         setPhase(.scanning)
         central?.scanForPeripherals(withServices: nil)
+    }
+
+    private func connectionLinkDownOnBleQueue(token: ConnectionAttemptToken) {
+        let phoneAlarmActions = rustSessionState.deactivatePhoneAlarmDevice()
+        if !phoneAlarmActions.schedule.isEmpty || !phoneAlarmActions.cancelRequestIds.isEmpty {
+            publishOnMain { self.onPhoneAlarmActionsAvailable?(phoneAlarmActions) }
+        }
+        _ = rustSessionState.connectionLinkDown(token: token)
     }
 
     public func now() -> MonotonicMilliseconds {
@@ -1665,7 +1673,7 @@ public final class CutoutSessionCore: NSObject {
         }
         let wasDetecting = connectionSnapshot.readiness == .pending
         liveOwner?.invalidate()
-        _ = rustSessionState.connectionLinkDown(token: attempt.token)
+        connectionLinkDownOnBleQueue(token: attempt.token)
         connectionDeadlineWorkItem?.cancel()
         publishConnectionSnapshot()
         if wasDetecting, !rustSessionState.shouldRetryIdentification() {
@@ -2741,7 +2749,7 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
         guard state == .poweredOn else {
             cancelPendingReconnect()
             if let token = connectionSnapshot.token {
-                _ = rustSessionState.connectionLinkDown(token: token)
+                connectionLinkDownOnBleQueue(token: token)
                 connectionDeadlineWorkItem?.cancel()
                 publishConnectionSnapshot()
             }
