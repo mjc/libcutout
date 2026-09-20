@@ -268,6 +268,27 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testMusicHistoryDefaultIsAppliedToEachNewRide() throws {
+        for policy in [MobileMusicHistoryPolicyDto.opaqueItem, .humanReadable] {
+            let suiteName = "CutoutAppMusicHistoryNewRide-\(UUID().uuidString)"
+            let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+            defer { defaults.removePersistentDomain(forName: suiteName) }
+            let policyStore = MusicHistoryPolicyStore(defaults: defaults)
+            let driver = SessionDriverSpy(rows: [])
+            let model = CutoutAppModel(
+                core: driver,
+                musicHistoryPolicyStore: policyStore
+            )
+
+            XCTAssertTrue(model.setMusicHistoryPolicy(policy))
+            XCTAssertEqual(policyStore.policy, policy)
+            XCTAssertTrue(model.startGpsOnlyRide())
+            XCTAssertEqual(model.musicHistoryPolicy, policy)
+            XCTAssertEqual(driver.rideMapState.currentMusicHistoryPolicy(), policy)
+        }
+    }
+
+    @MainActor
     func testForgetActiveMusicHistoryClearsLivePolicyAndTimeline() throws {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)
