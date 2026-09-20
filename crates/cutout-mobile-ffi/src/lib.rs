@@ -10,6 +10,8 @@ mod device_actions;
 pub use device_actions::*;
 mod device_settings;
 pub use device_settings::*;
+mod raw_settings;
+pub use raw_settings::*;
 
 use std::{
     collections::VecDeque,
@@ -10683,6 +10685,30 @@ fn write_line_to_file(file: &mut File, line: &str) -> Result<usize, String> {
         .map_err(|error| error.to_string())
 }
 
+/// Native transport disposition captured without implying wheel acknowledgement.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobilePevcapWriteDispositionDto {
+    /// Presented for native queue admission; acceptance is not confirmed.
+    Queued,
+    /// Submitted to the platform write API; delivery is not confirmed.
+    Submitted,
+    /// Rejected by the native transport sink.
+    Rejected,
+    /// Cancelled before platform submission.
+    Cancelled,
+}
+
+impl From<MobilePevcapWriteDispositionDto> for cutout_core::PevcapWriteDisposition {
+    fn from(disposition: MobilePevcapWriteDispositionDto) -> Self {
+        match disposition {
+            MobilePevcapWriteDispositionDto::Queued => Self::Queued,
+            MobilePevcapWriteDispositionDto::Submitted => Self::Submitted,
+            MobilePevcapWriteDispositionDto::Rejected => Self::Rejected,
+            MobilePevcapWriteDispositionDto::Cancelled => Self::Cancelled,
+        }
+    }
+}
+
 /// Mobile-facing builder for a PEVCAP capture export.
 #[derive(Debug, uniffi::Object)]
 pub struct MobilePevcapCaptureBuilder {
@@ -11002,6 +11028,34 @@ impl MobilePevcapCaptureBuilder {
             WriteMode::WithoutResponse,
             bytes,
         ))
+    }
+
+    /// Records a native write receipt through the bounded capture writer queue.
+    ///
+    /// The native sink allocates monotonically increasing IDs per connection and
+    /// reuses an ID for each disposition of the same write. This is not a wheel
+    /// acknowledgement. A true return means capture enqueue succeeded; use
+    /// `flush_writer` or `finish_writer` to wait for durability.
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn record_write_without_response_receipt(
+        &self,
+        monotonic_ms: MobileMonotonicMillisDto,
+        characteristic: Vec<u8>,
+        bytes: Vec<u8>,
+        write_id: u64,
+        disposition: MobilePevcapWriteDispositionDto,
+    ) -> bool {
+        let mut record = PevcapRecord::outbound_write(
+            monotonic_ms.into_core(),
+            mobile_gatt_channel(&characteristic),
+            WriteMode::WithoutResponse,
+            bytes,
+        );
+        record.write_receipt = Some(cutout_core::PevcapWriteReceipt {
+            write_id: cutout_core::PevcapNativeWriteId::new(write_id),
+            disposition: disposition.into(),
+        });
+        self.send_record(record)
     }
 
     /// Records inbound notification bytes.
@@ -17151,6 +17205,79 @@ mod tests {
         assert!(status.failed);
         assert!(status.last_error.is_some());
         fs::remove_dir(path).expect("failure fixture directory is removable");
+    }
+
+    #[test]
+    fn mobile_capture_write_receipts_are_durable_and_typed() {
+        use cutout_core::{PevcapDirection, PevcapWriteDisposition};
+
+        let path =
+            std::env::temp_dir().join(format!("cutout-write-receipts-{}.jsonl", Uuid::new_v4()));
+        let builder = MobilePevcapCaptureBuilder::new(
+            wc(1_700_000_000_000),
+            "ios-corebluetooth".into(),
+            None,
+        );
+        assert!(!builder.record_write_without_response_receipt(
+            ms(1),
+            vec![0x33; 16],
+            vec![1],
+            1,
+            MobilePevcapWriteDispositionDto::Queued,
+        ));
+        assert!(builder.start_writer(path.to_string_lossy().into_owned()));
+        assert!(builder.record_write_without_response(ms(1), vec![0x33; 16], vec![1]));
+        let outcomes = [
+            (
+                1,
+                MobilePevcapWriteDispositionDto::Queued,
+                PevcapWriteDisposition::Queued,
+            ),
+            (
+                1,
+                MobilePevcapWriteDispositionDto::Submitted,
+                PevcapWriteDisposition::Submitted,
+            ),
+            (
+                2,
+                MobilePevcapWriteDispositionDto::Rejected,
+                PevcapWriteDisposition::Rejected,
+            ),
+            (
+                3,
+                MobilePevcapWriteDispositionDto::Cancelled,
+                PevcapWriteDisposition::Cancelled,
+            ),
+        ];
+        for (write_id, disposition, _) in outcomes {
+            assert!(builder.record_write_without_response_receipt(
+                ms(7),
+                vec![0x33; 16],
+                vec![0x01, 0x23],
+                write_id,
+                disposition,
+            ));
+        }
+        assert!(builder.flush_writer());
+        let capture = PevcapCapture::decode(
+            &fs::read(&path).expect("durable capture"),
+            PevcapEncoding::Jsonl,
+        )
+        .expect("receipt capture decodes");
+        assert_eq!(capture.records.len(), 5);
+        assert!(capture.records[0].write_receipt.is_none());
+        for (record, (write_id, _, disposition)) in capture.records[1..].iter().zip(outcomes) {
+            assert_eq!(record.direction, PevcapDirection::Outbound);
+            assert_eq!(record.monotonic_ms, ms(7).into_core());
+            assert_eq!(record.characteristic, GattChannel::from_bytes([0x33; 16]));
+            assert_eq!(record.write_mode, Some(WriteMode::WithoutResponse));
+            assert_eq!(record.bytes.as_ref(), &[0x01, 0x23]);
+            let receipt = record.write_receipt.expect("typed receipt retained");
+            assert_eq!(receipt.write_id.get(), write_id);
+            assert_eq!(receipt.disposition, disposition);
+        }
+        assert!(builder.finish_writer());
+        fs::remove_file(path).expect("remove receipt fixture");
     }
 
     #[test]

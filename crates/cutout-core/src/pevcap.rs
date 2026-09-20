@@ -1633,6 +1633,55 @@ fn collect_bounded_strings<const N: usize>(
     Ok(collected)
 }
 
+/// Native write identity, allocated monotonically within one connection.
+///
+/// Receipts for the same write retain this ID; a new connection may restart it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize), serde(transparent))]
+pub struct PevcapNativeWriteId(u64);
+
+impl PevcapNativeWriteId {
+    /// Wraps the ID assigned by the native transport sink.
+    #[must_use]
+    pub const fn new(value: u64) -> Self {
+        Self(value)
+    }
+
+    /// Returns the connection-local native write ID.
+    #[must_use]
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+}
+
+/// Native transport disposition, never a wheel acknowledgement.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(Deserialize, Serialize),
+    serde(rename_all = "snake_case")
+)]
+pub enum PevcapWriteDisposition {
+    /// Presented for native queue admission; acceptance is not confirmed.
+    Queued,
+    /// Submitted to the platform write API; delivery is not confirmed.
+    Submitted,
+    /// Rejected by the native transport sink.
+    Rejected,
+    /// Cancelled before submission to the platform write API.
+    Cancelled,
+}
+
+/// Fixed-size receipt metadata correlated with an outbound native write.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
+pub struct PevcapWriteReceipt {
+    /// Native sink identity scoped to the current connection.
+    pub write_id: PevcapNativeWriteId,
+    /// Observed native transport outcome, not a wheel acknowledgement.
+    pub disposition: PevcapWriteDisposition,
+}
+
 /// Owned capture record for PEVCAP files.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PevcapRecord {
@@ -1656,6 +1705,10 @@ pub struct PevcapRecord {
 
     /// Optional request target metadata for outbound correlation.
     pub target: Option<RequestTarget>,
+
+    /// Optional native transport receipt for an outbound write.
+    /// Absence means unknown submission status, including in legacy captures.
+    pub write_receipt: Option<PevcapWriteReceipt>,
 
     /// Exact bytes captured for the record.
     pub bytes: Bytes,
@@ -1974,6 +2027,7 @@ impl PevcapRecord {
             write_mode: None,
             link_max_write_len: max_write_len,
             target: None,
+            write_receipt: None,
             bytes: Bytes::new(),
             telemetry: None,
             music: None,
@@ -1992,6 +2046,7 @@ impl PevcapRecord {
             write_mode: None,
             link_max_write_len: None,
             target: None,
+            write_receipt: None,
             bytes: Bytes::new(),
             telemetry: None,
             music: None,
@@ -2015,6 +2070,7 @@ impl PevcapRecord {
             write_mode: Some(write_mode),
             link_max_write_len: None,
             target: None,
+            write_receipt: None,
             bytes: bytes.into(),
             telemetry: None,
             music: None,
@@ -2053,6 +2109,7 @@ impl PevcapRecord {
             write_mode: None,
             link_max_write_len: None,
             target: None,
+            write_receipt: None,
             bytes: bytes.into(),
             telemetry: None,
             music: None,
@@ -3203,6 +3260,10 @@ pub enum PevcapRecordError {
     #[error("non-outbound PEVCAP record carried request target metadata")]
     UnexpectedTarget,
 
+    /// A non-outbound record carried native write receipt metadata.
+    #[error("non-outbound PEVCAP record carried native write receipt metadata")]
+    UnexpectedWriteReceipt,
+
     /// A non-inbound record carried music correlation metadata.
     #[error("non-inbound PEVCAP record carried music metadata")]
     UnexpectedMusic,
@@ -3645,6 +3706,8 @@ struct PevcapRecordJson {
     link_max_write_len: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     target: Option<PevcapRequestTargetJson>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    write_receipt: Option<PevcapWriteReceipt>,
     bytes: Bytes,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     telemetry: Option<RawTelemetryReadback>,
@@ -3769,6 +3832,7 @@ impl From<&PevcapRecord> for PevcapRecordJson {
             write_mode: record.write_mode.map(WriteModeJson::from),
             link_max_write_len: record.link_max_write_len.map(TransportWriteLimit::as_bytes),
             target: record.target.map(PevcapRequestTargetJson::from),
+            write_receipt: record.write_receipt,
             bytes: record.bytes.clone(),
             telemetry: record.telemetry.clone(),
             music: record.music.as_ref().map(PevcapMusicEventJson::from),
@@ -3794,6 +3858,7 @@ impl PevcapRecordJson {
             write_mode: self.write_mode.map(WriteModeJson::into_mode),
             link_max_write_len: self.link_max_write_len.map(TransportWriteLimit::from_bytes),
             target: self.target.map(PevcapRequestTargetJson::into_target),
+            write_receipt: self.write_receipt,
             bytes: self.bytes,
             telemetry: self.telemetry,
             music,
@@ -3802,6 +3867,10 @@ impl PevcapRecordJson {
     }
 
     fn validate(&self) -> Result<(), PevcapRecordError> {
+        if self.write_receipt.is_some() && !matches!(self.direction, PevcapDirectionJson::Outbound)
+        {
+            return Err(PevcapRecordError::UnexpectedWriteReceipt);
+        }
         match self.direction {
             PevcapDirectionJson::LinkUp | PevcapDirectionJson::LinkDown => {
                 if self.service.is_some() {
@@ -4819,6 +4888,158 @@ mod tests {
         assert_eq!(notification.service, Some(service));
         assert_eq!(notification.write_mode, None);
         assert_eq!(notification.bytes.as_ref(), &[0xde, 0xad, 0xbe, 0xef]);
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn pevcap_write_receipts_round_trip_all_dispositions() {
+        let mut capture = sample_pevcap_capture();
+        capture.records = [
+            PevcapWriteDisposition::Queued,
+            PevcapWriteDisposition::Submitted,
+            PevcapWriteDisposition::Rejected,
+            PevcapWriteDisposition::Cancelled,
+        ]
+        .into_iter()
+        .map(|disposition| {
+            let mut record = PevcapRecord::outbound_write(
+                ms(7),
+                GattChannel::from_bytes([0x33; 16]),
+                WriteMode::WithoutResponse,
+                Bytes::from_static(&[0x01, 0x23]),
+            );
+            record.write_receipt = Some(PevcapWriteReceipt {
+                write_id: PevcapNativeWriteId::new(u64::MAX),
+                disposition,
+            });
+            record
+        })
+        .collect();
+        for encoding in [PevcapEncoding::Jsonl, PevcapEncoding::Binary] {
+            let bytes = capture.encode(encoding).expect("receipt capture encodes");
+            let decoded = PevcapCapture::decode(&bytes, encoding).expect("receipts decode");
+            assert_eq!(decoded, capture);
+            let mut reader = PevcapReader::new(Cursor::new(bytes), encoding).expect("reader opens");
+            for expected in &capture.records {
+                assert_eq!(
+                    reader.next_record().expect("receipt streams"),
+                    Some(expected.clone())
+                );
+            }
+            assert_eq!(reader.next_record().expect("stream ends"), None);
+        }
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn pevcap_legacy_write_receipts_remain_unknown() {
+        let capture = sample_pevcap_capture();
+        assert!(
+            capture
+                .records
+                .iter()
+                .any(|record| record.direction == PevcapDirection::Outbound)
+        );
+        for encoding in [PevcapEncoding::Jsonl, PevcapEncoding::Binary] {
+            let bytes = capture.encode(encoding).expect("legacy capture encodes");
+            assert!(
+                !bytes
+                    .windows(b"write_receipt".len())
+                    .any(|window| window == b"write_receipt")
+            );
+            let decoded = PevcapCapture::decode(&bytes, encoding).expect("legacy capture decodes");
+            assert!(
+                decoded
+                    .records
+                    .iter()
+                    .all(|record| record.write_receipt.is_none())
+            );
+        }
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn pevcap_write_receipts_do_not_double_count_replay_or_comparison() {
+        let legacy = sample_pevcap_capture();
+        let expected = replay_outputs(&legacy, PevcapReplayMode::Whole);
+        let mut capture = legacy.clone();
+        for (write_id, disposition) in [
+            (1, PevcapWriteDisposition::Queued),
+            (1, PevcapWriteDisposition::Submitted),
+            (2, PevcapWriteDisposition::Queued),
+            (2, PevcapWriteDisposition::Rejected),
+            (3, PevcapWriteDisposition::Queued),
+            (3, PevcapWriteDisposition::Cancelled),
+        ] {
+            let mut record = legacy.records[0].clone();
+            record.write_receipt = Some(PevcapWriteReceipt {
+                write_id: PevcapNativeWriteId::new(write_id),
+                disposition,
+            });
+            capture.records.push(record);
+        }
+        assert_eq!(replay_outputs(&capture, PevcapReplayMode::Whole), expected);
+        assert_eq!(capture.replay_input_count(), legacy.replay_input_count());
+        let lengths = capture.arbitrary_notification_chunk_lengths();
+        assert_eq!(
+            capture
+                .compare_replay_chunks(RecordingSession::default, &lengths)
+                .unwrap(),
+            legacy
+                .compare_replay_chunks(RecordingSession::default, &lengths)
+                .unwrap(),
+        );
+        for encoding in [PevcapEncoding::Jsonl, PevcapEncoding::Binary] {
+            let bytes = capture.encode(encoding).unwrap();
+            let mut reader = PevcapReader::new(Cursor::new(&bytes), encoding).unwrap();
+            let mut host = HostSession::new(RecordingSession::default());
+            let mut outputs = Vec::new();
+            let stats = reader
+                .replay_into_host(PevcapReplayMode::Whole, &mut host, &mut outputs)
+                .unwrap();
+            assert_eq!(outputs, expected);
+            assert_eq!(stats.replay_input_count, legacy.replay_input_count());
+            let mut reader = PevcapReader::new(Cursor::new(&bytes), encoding).unwrap();
+            let (events, stats) = reader
+                .replay_semantic_events(PevcapReplayMode::Whole, RecordingSession::default())
+                .unwrap();
+            assert_eq!(
+                events.len(),
+                1,
+                "only the synthetic link-up is semantic output"
+            );
+            assert_eq!(stats.replay_input_count, legacy.replay_input_count());
+        }
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn pevcap_write_receipts_reject_non_outbound_metadata() {
+        for mut record in [
+            PevcapRecord::link_up(ms(1), None),
+            PevcapRecord::link_down(ms(2)),
+            PevcapRecord::inbound_notification(
+                ms(3),
+                GattChannel::from_bytes([0x33; 16]),
+                GattChannel::from_bytes([0x44; 16]),
+                Bytes::from_static(&[0x01]),
+            ),
+        ] {
+            record.write_receipt = Some(PevcapWriteReceipt {
+                write_id: PevcapNativeWriteId::new(1),
+                disposition: PevcapWriteDisposition::Submitted,
+            });
+            assert_eq!(
+                PevcapRecordJson::from(&record).try_into_record(),
+                Err(PevcapRecordError::UnexpectedWriteReceipt),
+            );
+            let mut capture = sample_pevcap_capture();
+            capture.records = vec![record];
+            for encoding in [PevcapEncoding::Jsonl, PevcapEncoding::Binary] {
+                let bytes = capture.encode(encoding).expect("malformed fixture encodes");
+                assert!(PevcapCapture::decode(&bytes, encoding).is_err());
+            }
+        }
     }
 
     #[test]

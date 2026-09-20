@@ -4946,7 +4946,7 @@ public protocol CoreBluetoothOperationSink: AnyObject {
     func subscribe(channel: BluetoothUuid)
     /// Reports admission synchronously and a final receipt when a queued write is submitted or rejected.
     /// All receipts run on the transport's queue.
-    func writeWithoutResponse(channel: BluetoothUuid, bytes: Data, onReceipt: @escaping (CoreBluetoothWriteDisposition) -> Void) -> CoreBluetoothWriteDisposition
+    func writeWithoutResponse(channel: BluetoothUuid, bytes: Data, isCurrent: @escaping () -> Bool, onReceipt: @escaping (CoreBluetoothWriteDisposition) -> Void) -> CoreBluetoothWriteDisposition
     func canSubmitWithoutResponse() -> Bool
     func disconnect()
     func peripheralIsReadyToSendWithoutResponse()
@@ -4970,6 +4970,10 @@ public extension CoreBluetoothOperationSink {
         writeWithoutResponse(channel: channel, bytes: bytes, onReceipt: { _ in })
     }
 
+    func writeWithoutResponse(channel: BluetoothUuid, bytes: Data, onReceipt: @escaping (CoreBluetoothWriteDisposition) -> Void) -> CoreBluetoothWriteDisposition {
+        writeWithoutResponse(channel: channel, bytes: bytes, isCurrent: { true }, onReceipt: onReceipt)
+    }
+
     func canSubmitWithoutResponse() -> Bool { true }
     func peripheralIsReadyToSendWithoutResponse() {}
     func clearPendingWithoutResponseWrites() {}
@@ -4978,15 +4982,20 @@ public extension CoreBluetoothOperationSink {
 /// Queue-confined pending native writes, including their eventual transport receipts.
 final class CoreBluetoothWriteQueue {
     private let capacity: Int
-    private var pending: [(write: () -> Void, receipt: (CoreBluetoothWriteDisposition) -> Void)] = []
+    private var pending: [(isCurrent: () -> Bool, write: () -> Void, receipt: (CoreBluetoothWriteDisposition) -> Void)] = []
 
     init(capacity: Int) { self.capacity = capacity }
 
     func submit(
         canSend: () -> Bool,
+        isCurrent: @escaping () -> Bool = { true },
         write: @escaping () -> Void,
         onReceipt: @escaping (CoreBluetoothWriteDisposition) -> Void
     ) -> CoreBluetoothWriteDisposition {
+        guard isCurrent() else {
+            onReceipt(.cancelled)
+            return .cancelled
+        }
         if pending.isEmpty, canSend() {
             write()
             onReceipt(.submitted)
@@ -4996,14 +5005,19 @@ final class CoreBluetoothWriteQueue {
             onReceipt(.rejected)
             return .rejected
         }
-        pending.append((write, onReceipt))
+        pending.append((isCurrent, write, onReceipt))
         onReceipt(.queued)
         flush(canSend: canSend)
         return .queued
     }
 
     func flush(canSend: () -> Bool) {
-        while !pending.isEmpty, canSend() {
+        while let first = pending.first {
+            guard first.isCurrent() else {
+                pending.removeFirst().receipt(.cancelled)
+                continue
+            }
+            guard canSend() else { return }
             let next = pending.removeFirst()
             next.write()
             next.receipt(.submitted)
@@ -5024,13 +5038,10 @@ public struct CoreBluetoothOperationExecutor {
         self.sink = sink
     }
 
-    public func execute(_ operations: [CoreBluetoothPlannedOperation]) {
-        operations.forEach { _ = execute($0) }
-    }
-
     @discardableResult
     public func execute(
         _ operation: CoreBluetoothPlannedOperation,
+        isCurrent: @escaping () -> Bool,
         onWriteReceipt: @escaping (CoreBluetoothWriteDisposition) -> Void = { _ in }
     ) -> CoreBluetoothWriteDisposition? {
         switch operation {
@@ -5042,13 +5053,13 @@ public struct CoreBluetoothOperationExecutor {
                 onWriteReceipt(.rejected)
                 return .rejected
             }
-            return sink.writeWithoutResponse(channel: channel, bytes: bytes, onReceipt: onWriteReceipt)
+            return sink.writeWithoutResponse(channel: channel, bytes: bytes, isCurrent: isCurrent, onReceipt: onWriteReceipt)
         case .writeWithoutResponseWithOperationID(let channel, let bytes, _):
             guard let sink else {
                 onWriteReceipt(.rejected)
                 return .rejected
             }
-            return sink.writeWithoutResponse(channel: channel, bytes: bytes, onReceipt: onWriteReceipt)
+            return sink.writeWithoutResponse(channel: channel, bytes: bytes, isCurrent: isCurrent, onReceipt: onWriteReceipt)
         case .disconnect:
             sink?.disconnect()
             return nil
@@ -5441,7 +5452,7 @@ public final class CoreBluetoothPeripheralOperationSink: CoreBluetoothOperationS
         peripheral.setNotifyValue(true, for: characteristic)
     }
 
-    public func writeWithoutResponse(channel: BluetoothUuid, bytes: Data, onReceipt: @escaping (CoreBluetoothWriteDisposition) -> Void) -> CoreBluetoothWriteDisposition {
+    public func writeWithoutResponse(channel: BluetoothUuid, bytes: Data, isCurrent: @escaping () -> Bool, onReceipt: @escaping (CoreBluetoothWriteDisposition) -> Void) -> CoreBluetoothWriteDisposition {
         guard let characteristic = peripheral.characteristic(for: channel) else {
             onReceipt(.rejected)
             return .rejected
@@ -5452,6 +5463,7 @@ public final class CoreBluetoothPeripheralOperationSink: CoreBluetoothOperationS
         }
         return pendingWithoutResponseWrites.submit(
             canSend: { peripheral.canSendWriteWithoutResponse },
+            isCurrent: isCurrent,
             write: { [peripheral] in
                 peripheral.writeValue(bytes, for: characteristic, type: .withoutResponse)
             },

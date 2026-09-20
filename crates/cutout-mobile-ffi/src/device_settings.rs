@@ -516,6 +516,33 @@ impl CutoutSessionStateHandle {
             .map_err(Into::into)
     }
 
+    /// Advances setting deadlines without generating native polling writes.
+    pub fn tick_setting_transport(
+        &self,
+        token: MobileConnectionAttemptTokenDto,
+        monotonic_ms: u64,
+    ) -> bool {
+        self.lock_inner().tick_setting_transport(
+            &token.into(),
+            cutout_core::MonotonicTimestamp::new(monotonic_ms),
+        )
+    }
+
+    /// Revalidates the Rust-owned setting authorization immediately before native submission.
+    #[must_use]
+    pub fn setting_transport_is_current(
+        &self,
+        token: MobileConnectionAttemptTokenDto,
+        operation_id: u64,
+        monotonic_ms: u64,
+    ) -> bool {
+        self.lock_inner().setting_transport_is_current(
+            &token.into(),
+            operation_id,
+            cutout_core::MonotonicTimestamp::new(monotonic_ms),
+        )
+    }
+
     /// Records host transport evidence for one accepted setting request.
     pub fn mark_setting_transport(
         &self,
@@ -527,10 +554,8 @@ impl CutoutSessionStateHandle {
     ) -> bool {
         let token = token.into();
         let mut inner = self.lock_inner();
-        if !inner.session_state().connection.is_verified(&token) {
-            return false;
-        }
-        inner.session_state_mut().settings.transport(
+        inner.mark_setting_transport(
+            &token,
             id.into(),
             request_id,
             status.into(),

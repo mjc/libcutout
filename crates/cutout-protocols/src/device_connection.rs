@@ -459,6 +459,8 @@ pub struct DeviceConnectionSession {
     last_input_at: MonotonicTimestamp,
     vesc_board_profile: Option<crate::VescBoardProfile>,
     validation_grant: Option<ValidationGrant>,
+    setting_operations:
+        std::collections::BTreeMap<cutout_core::SettingId, settings::SettingTransportOperation>,
 }
 
 impl DeviceConnectionSession {
@@ -648,6 +650,7 @@ impl DeviceConnectionSession {
         self.state
             .select_discovered_platform(platform_identifier.clone());
         self.state.settings = DeviceSettingsState::default();
+        self.setting_operations.clear();
         self.state.actions.disconnect();
         self.detector = DeviceDetectionSession::default();
         self.device = None;
@@ -685,6 +688,7 @@ impl DeviceConnectionSession {
     pub fn disconnect(&mut self) {
         self.state.connection.disconnect();
         self.state.settings.disconnect();
+        self.setting_operations.clear();
         self.state.actions.disconnect();
         self.device = None;
         self.validation_grant = None;
@@ -870,6 +874,18 @@ impl DeviceConnectionSession {
             telemetry,
             diagnostics,
         })
+    }
+
+    /// Reads bounded raw-page evidence with its current connection and model identity.
+    #[must_use]
+    pub fn raw_settings_snapshot(&self) -> crate::RawSettingsSnapshot {
+        crate::RawSettingsSnapshot {
+            session: self.snapshot(),
+            pages: self
+                .device
+                .as_ref()
+                .map_or_else(Vec::new, |device| device.raw_settings_pages().to_vec()),
+        }
     }
 
     /// Returns an immutable connection and identity snapshot.

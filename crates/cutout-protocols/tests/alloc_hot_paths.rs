@@ -98,12 +98,12 @@ fn assert_no_allocations(label: &str, action: impl FnOnce()) {
     );
 }
 
-fn linked_session<M>() -> (ReadOnlySession<M, false>, Vec<SessionOutput>)
+fn linked_session<M>() -> (ReadOnlySession<M>, Vec<SessionOutput>)
 where
     M: Default + ReadOnlyModelSpec,
-    ReadOnlySession<M, false>: ProtocolSession,
+    ReadOnlySession<M>: ProtocolSession,
 {
-    let mut session = ReadOnlySession::<M, false>::default();
+    let mut session = ReadOnlySession::<M>::default();
     let mut output = Vec::with_capacity(16);
     session.handle(
         SessionInput::LinkUp(LinkInfo {
@@ -140,7 +140,7 @@ fn allocation_hot_paths_do_not_allocate() {
 }
 
 fn veteran_parser_owned_results_do_not_allocate() {
-    let mut veteran = ReadOnlySession::<NosfetAeroModel, false>::default();
+    let mut veteran = ReadOnlySession::<NosfetAeroModel>::default();
     let mut veteran_output = Vec::with_capacity(8);
     veteran.handle(
         SessionInput::LinkUp(LinkInfo {

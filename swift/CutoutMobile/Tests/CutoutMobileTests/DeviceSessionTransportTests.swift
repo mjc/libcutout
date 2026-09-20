@@ -7,32 +7,40 @@ final class DeviceSessionTransportTests: XCTestCase {
     private let queue = DispatchQueue(label: "cutout.generic-transport.test")
     private let vescReply = Data([2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101, 114, 104, 97, 115, 104, 0, 38, 208, 3])
 
-    private func makeTransport(_ state: CutoutSessionStateHandle, token: ConnectionAttemptToken, sink: TransportSink, writeLimit: UInt16 = 20) -> DeviceSessionTransport {
+    private func makeTransport(_ state: CutoutSessionStateHandle, token: ConnectionAttemptToken, sink: TransportSink, writeLimit: UInt16 = 20, clock: MonotonicClock = MonotonicClock(now: { MonotonicMilliseconds(100) })) -> DeviceSessionTransport {
         DeviceSessionTransport(
             state: state, token: token,
             advertisement: CoreBluetoothAdvertisement(peripheralIdentifier: CoreBluetoothPeripheralIdentifier(token.platformIdentifier), localName: nil, advertisedServiceUuids: []),
             writeLimit: TransportWriteLimitBytes(writeLimit), operationSink: sink,
             queue: queue,
-            clock: MonotonicClock(now: { MonotonicMilliseconds(100) })
+            clock: clock
         )
     }
 
-    private func makeReadyTransport(writeLimit: UInt16 = 20) throws -> (CutoutSessionStateHandle, DeviceSessionTransport, TransportSink) {
+    private func makeReadyTransport(writeLimit: UInt16 = 20, clock: MonotonicClock = MonotonicClock(now: { MonotonicMilliseconds(100) }), falcon: Bool = false) throws -> (CutoutSessionStateHandle, DeviceSessionTransport, TransportSink) {
         let state = CutoutSessionStateHandle()
         let token = try XCTUnwrap(state.beginConnectionAttempt(platformIdentifier: "NF2557", nowMs: 0).token)
         _ = state.connectionLinkEstablished(token: token)
         var frame = Data(repeating: 0, count: 42)
         frame.replaceSubrange(0..<4, with: [0xdc, 0x5a, 0x5c, 38])
         frame.replaceSubrange(28..<30, with: [0xa7, 0xf8])
+        if falcon {
+            frame = Data([0x55, 0xaa, 0x17, 0x75, 0, 0, 0, 0x76, 0x02, 0xee, 0xfb, 0x64, 0xf4, 0x94, 0x14, 0x81, 0, 9, 0, 0x18, 0x5a, 0x5a, 0x5a, 0x5a])
+        }
         _ = state.observeConnectionNotification(token: token, bytes: frame)
+        if falcon {
+            _ = state.observeBegodeNameProbeForAttempt(token: token)
+            _ = state.observeConnectionNotification(token: token, bytes: Data("NAME=Falcon".utf8))
+        }
         _ = state.resolveDeviceSession(token: token, identificationComplete: false, nowMs: 1)
         let sink = TransportSink()
-        let transport = makeTransport(state, token: token, sink: sink, writeLimit: writeLimit)
+        let transport = makeTransport(state, token: token, sink: sink, writeLimit: writeLimit, clock: clock)
         _ = try transport.handleLinkUp(at: MonotonicMilliseconds(1))
         transport.handleNotificationStateUpdate(channel: .bluetooth16(0xffe1), isNotifying: true, error: nil)
         _ = try transport.handleNotification(bytes: frame, channel: .bluetooth16(0xffe1), at: MonotonicMilliseconds(2))
         sink.receipts.removeAll()
         sink.writes.removeAll()
+        sink.submittedWrites.removeAll()
         return (state, transport, sink)
     }
 
@@ -70,6 +78,84 @@ final class DeviceSessionTransportTests: XCTestCase {
         }
     }
 
+    func testQueuedSettingExpiresAtActualFlushWithoutWriting() throws {
+        try queue.sync {
+            var now: UInt64 = 100
+            let (state, transport, sink) = try makeReadyTransport(writeLimit: 64, clock: MonotonicClock(now: { MonotonicMilliseconds(now) }))
+            defer { transport.invalidate() }
+            sink.dispositions = [.queued]
+            _ = try transport.submitSetting(.displayBrightness, value: .number(value: 10), at: MonotonicMilliseconds(3))
+            now = 2_003
+            transport.handlePeripheralIsReadyToSendWithoutResponse()
+            XCTAssertTrue(sink.submittedWrites.isEmpty)
+            XCTAssertEqual(state.settings().setting(for: .displayBrightness)?.transport, .cancelled)
+        }
+    }
+
+    func testReplacedQueuedSettingCannotWriteButCurrentSiblingCan() throws {
+        try queue.sync {
+            let (state, transport, sink) = try makeReadyTransport(writeLimit: 64)
+            defer { transport.invalidate() }
+            sink.dispositions = [.queued, .queued, .queued]
+            _ = try transport.submitSetting(.displayBrightness, value: .number(value: 10), at: MonotonicMilliseconds(3))
+            _ = try transport.submitSetting(.pedalAngle, value: .number(value: 100), at: MonotonicMilliseconds(4))
+            _ = try transport.submitSetting(.displayBrightness, value: .number(value: 20), at: MonotonicMilliseconds(5))
+            let expected = Array(sink.writes.suffix(2))
+            transport.handlePeripheralIsReadyToSendWithoutResponse()
+            XCTAssertEqual(sink.submittedWrites, expected)
+            XCTAssertEqual(state.settings().setting(for: .displayBrightness)?.transport, .submitted)
+            XCTAssertEqual(state.settings().setting(for: .pedalAngle)?.transport, .submitted)
+        }
+    }
+
+    func testDeferredStageHasSameIdentityAndLateRejectionFailsSetting() throws {
+        try queue.sync {
+            let (state, transport, sink) = try makeReadyTransport(writeLimit: 64, falcon: true)
+            defer { transport.invalidate() }
+            let initial = try transport.submitSetting(.maximumSpeed, value: .number(value: 300), at: MonotonicMilliseconds(3))
+            let request = try XCTUnwrap(state.settings().setting(for: .maximumSpeed)?.requestId)
+            XCTAssertEqual(initial.actions.first(where: { $0.kind == .write })?.operationID, request)
+            XCTAssertEqual(state.settings().setting(for: .maximumSpeed)?.transport, .queued)
+            sink.dispositions = [.rejected]
+            let later = try transport.handleTick(at: MonotonicMilliseconds(103))
+            XCTAssertEqual(later.actions.first(where: { $0.kind == .write && $0.operationID == request })?.operationID, request)
+            XCTAssertEqual(state.settings().setting(for: .maximumSpeed)?.transport, .rejected)
+            XCTAssertEqual(state.settings().setting(for: .maximumSpeed)?.status, .failed)
+        }
+    }
+
+    func testBackpressureDoesNotSuspendSubmittedSettingTimeout() throws {
+        try queue.sync {
+            var now: UInt64 = 100
+            let (state, transport, sink) = try makeReadyTransport(writeLimit: 64, clock: MonotonicClock(now: { MonotonicMilliseconds(now) }))
+            defer { transport.invalidate() }
+            _ = try transport.submitSetting(.displayBrightness, value: .number(value: 10), at: MonotonicMilliseconds(3))
+            XCTAssertEqual(state.settings().setting(for: .displayBrightness)?.transport, .submitted)
+            let writes = sink.writes
+            sink.canSend = false
+            now = 2_100
+            transport.handleTimer()
+            XCTAssertEqual(state.settings().setting(for: .displayBrightness)?.status, .timedOut)
+            XCTAssertEqual(sink.writes, writes)
+        }
+    }
+
+    func testUncorrelatedActionUsesConnectionGuardAndRetiredAttemptCannotFlush() throws {
+        try queue.sync {
+            let (state, transport, sink) = try makeReadyTransport(writeLimit: 64)
+            defer { transport.invalidate() }
+            let action = try transport.submitAction(.horn, at: MonotonicMilliseconds(3))
+            XCTAssertTrue(action.actions.filter { $0.kind == .write }.allSatisfy { $0.operationID == nil })
+            XCTAssertFalse(sink.submittedWrites.isEmpty)
+            sink.dispositions = [.queued]
+            _ = try transport.submitSetting(.highBeam, value: .boolean(value: true), at: MonotonicMilliseconds(4))
+            let submitted = sink.submittedWrites
+            _ = state.beginConnectionAttempt(platformIdentifier: "B", nowMs: 5)
+            sink.peripheralIsReadyToSendWithoutResponse()
+            XCTAssertEqual(sink.submittedWrites, submitted)
+        }
+    }
+
     func testChunkReceiptsAggregateSettingTransportStatus() throws {
         try queue.sync {
             let cases: [([CoreBluetoothWriteDisposition], MobileSettingTransportStatusDto)] = [
@@ -83,7 +169,7 @@ final class DeviceSessionTransportTests: XCTestCase {
                 defer { transport.invalidate() }
                 sink.dispositions = dispositions
                 _ = try transport.submitSetting(.highBeam, value: .boolean(value: true), at: MonotonicMilliseconds(3))
-                XCTAssertGreaterThan(sink.writes.count, 1)
+                XCTAssertFalse(sink.writes.isEmpty)
                 XCTAssertEqual(state.settings().setting(for: .highBeam)?.transport, expected)
                 transport.handlePeripheralIsReadyToSendWithoutResponse()
                 let setting = try XCTUnwrap(state.settings().setting(for: .highBeam))
@@ -370,26 +456,42 @@ private final class TransportSink: CoreBluetoothOperationSink {
     var onSubscribe: ((BluetoothUuid) -> Void)?
     var dispositions: [CoreBluetoothWriteDisposition] = []
     var receipts: [(CoreBluetoothWriteDisposition) -> Void] = []
+    var submittedWrites: [Data] = []
+    var canSend = true
+    private var pending: [(Data, () -> Bool, (CoreBluetoothWriteDisposition) -> Void)] = []
+    func canSubmitWithoutResponse() -> Bool { canSend }
     func subscribe(channel: BluetoothUuid) {
         subscriptions.append(channel)
         onSubscribe?(channel)
     }
-    func writeWithoutResponse(channel: BluetoothUuid, bytes: Data, onReceipt: @escaping (CoreBluetoothWriteDisposition) -> Void) -> CoreBluetoothWriteDisposition {
+    func writeWithoutResponse(channel: BluetoothUuid, bytes: Data, isCurrent: @escaping () -> Bool, onReceipt: @escaping (CoreBluetoothWriteDisposition) -> Void) -> CoreBluetoothWriteDisposition {
+        guard isCurrent() else { onReceipt(.cancelled); return .cancelled }
         writes.append(bytes)
         receipts.append(onReceipt)
         let disposition = dispositions.isEmpty ? .submitted : dispositions.removeFirst()
+        if disposition == .queued { pending.append((bytes, isCurrent, onReceipt)) }
+        if disposition == .submitted { submittedWrites.append(bytes) }
         onReceipt(disposition)
         return disposition
     }
     func disconnect() {}
     func peripheralIsReadyToSendWithoutResponse() {
-        let pending = receipts
+        let queued = pending
+        pending.removeAll()
         receipts.removeAll()
-        pending.forEach { $0(.submitted) }
+        for (bytes, isCurrent, receipt) in queued {
+            if isCurrent() {
+                submittedWrites.append(bytes)
+                receipt(.submitted)
+            } else {
+                receipt(.cancelled)
+            }
+        }
     }
     func clearPendingWithoutResponseWrites() {
         clears += 1
         let pending = receipts
+        self.pending.removeAll()
         receipts.removeAll()
         pending.forEach { $0(.cancelled) }
     }

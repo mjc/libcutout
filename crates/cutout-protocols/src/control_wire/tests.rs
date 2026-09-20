@@ -86,16 +86,6 @@ fn colliding_protocol_destinations_fail_at_compile_time() {
         "#,
         ),
         (
-            "field pair companion",
-            r#"
-            Layout::FieldPair {
-                primary: BinaryField { magic: *b"LkAp", bank: &[1], offset: 17 },
-                companion: BinaryField { magic: *b"LdAp", bank: &[1, 0], offset: 17 }
-            },
-            Layout::Field { magic: *b"LdAp", bank: &[1, 0], offset: 17 }
-        "#,
-        ),
-        (
             "equivalent padding",
             r#"
             Layout::Field { magic: *b"LkAp", bank: &[1], offset: 17 },

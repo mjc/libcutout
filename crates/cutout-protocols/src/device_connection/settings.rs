@@ -30,7 +30,171 @@ pub struct DeviceSettingsSnapshot {
     pub settings: Vec<DeviceSettingSnapshot>,
 }
 
+#[derive(Debug)]
+pub(super) struct SettingTransportOperation {
+    request_id: u64,
+    accepted_at: MonotonicTimestamp,
+    receipt_at: MonotonicTimestamp,
+    authorization: Option<crate::session::SettingWriteAuthorization>,
+    remaining_receipts: usize,
+}
+
 impl DeviceConnectionSession {
+    /// Advances setting deadlines without producing protocol polling writes.
+    pub fn tick_setting_transport(
+        &mut self,
+        token: &ConnectionAttemptToken,
+        at: MonotonicTimestamp,
+    ) -> bool {
+        if !self.state.connection.is_verified(token) {
+            return false;
+        }
+        self.last_input_at = self.last_input_at.max(at);
+        self.state.settings.tick(self.last_input_at);
+        let expired: Vec<_> = self
+            .setting_operations
+            .iter()
+            .filter_map(|(&id, operation)| {
+                (!self.setting_transport_is_current(
+                    token,
+                    operation.request_id,
+                    self.last_input_at,
+                ))
+                .then_some((id, operation.request_id))
+            })
+            .collect();
+        for (id, request_id) in expired {
+            self.state.settings.transport(
+                id,
+                request_id,
+                cutout_core::SettingTransportStatus::Cancelled,
+                self.last_input_at,
+            );
+        }
+        true
+    }
+
+    /// Revalidates an unsent setting at the actual native write boundary.
+    /// This does not renew stationary authorization or acknowledge submission.
+    #[must_use]
+    pub fn setting_transport_is_current(
+        &self,
+        token: &ConnectionAttemptToken,
+        operation_id: u64,
+        at: MonotonicTimestamp,
+    ) -> bool {
+        if !self.state.connection.is_verified(token) {
+            return false;
+        }
+        let Some(device) = self.device.as_ref() else {
+            return false;
+        };
+        let Some((&id, operation)) = self
+            .setting_operations
+            .iter()
+            .find(|(_, operation)| operation.request_id == operation_id)
+        else {
+            return false;
+        };
+        if at < operation.accepted_at || operation.remaining_receipts == 0 {
+            return false;
+        }
+        let Some(setting) = self
+            .state
+            .settings
+            .snapshot(at)
+            .into_iter()
+            .find(|setting| setting.id == id)
+        else {
+            return false;
+        };
+        if setting.request_id != Some(operation_id)
+            || !matches!(
+                setting.transport,
+                Some(
+                    cutout_core::SettingTransportStatus::Accepted
+                        | cutout_core::SettingTransportStatus::Queued
+                )
+            )
+        {
+            return false;
+        }
+        let Some(value) = setting.requested else {
+            return false;
+        };
+        let Ok(command) = device
+            .control_profile()
+            .command(id, value, self.validation_authorized())
+        else {
+            return false;
+        };
+        if command.safety_class() == cutout_core::SafetyClass::StationaryOnly {
+            operation
+                .authorization
+                .is_some_and(|authorization| device.setting_write_is_current(authorization, at))
+        } else {
+            true
+        }
+    }
+
+    /// Records one fully submitted protocol stage, or a terminal native failure.
+    /// Native adapters aggregate chunks of each stage before reporting it.
+    pub fn mark_setting_transport(
+        &mut self,
+        token: &ConnectionAttemptToken,
+        id: SettingId,
+        request_id: u64,
+        status: cutout_core::SettingTransportStatus,
+        at: MonotonicTimestamp,
+    ) -> bool {
+        use cutout_core::SettingTransportStatus;
+        if !self.state.connection.is_verified(token) {
+            return false;
+        }
+        let Some(operation) = self.setting_operations.get_mut(&id) else {
+            return false;
+        };
+        if operation.request_id != request_id || at < operation.receipt_at {
+            return false;
+        }
+        let Some(setting) = self
+            .state
+            .settings
+            .snapshot(at)
+            .into_iter()
+            .find(|setting| setting.id == id)
+        else {
+            return false;
+        };
+        if !matches!(
+            setting.transport,
+            Some(SettingTransportStatus::Accepted | SettingTransportStatus::Queued)
+        ) {
+            return false;
+        }
+        if status == SettingTransportStatus::Submitted && operation.remaining_receipts > 1 {
+            operation.remaining_receipts -= 1;
+            operation.receipt_at = at;
+            if setting.transport == Some(SettingTransportStatus::Accepted) {
+                return self.state.settings.transport(
+                    id,
+                    request_id,
+                    SettingTransportStatus::Queued,
+                    at,
+                );
+            }
+            return true;
+        }
+        let accepted = self.state.settings.transport(id, request_id, status, at);
+        if accepted {
+            operation.receipt_at = at;
+            if status == SettingTransportStatus::Submitted {
+                operation.remaining_receipts = 0;
+            }
+        }
+        accepted
+    }
+
     /// Returns semantic controls available on the selected exact protocol model.
     #[must_use]
     pub fn settings_descriptors(&self) -> Vec<SettingDescriptor> {
@@ -131,6 +295,18 @@ impl DeviceConnectionSession {
             .state
             .settings
             .submission(id, value, outcome, completion, at);
+        let operation_id = cutout_core::TransportOperationId::new(request_id);
+        let (authorization, remaining) = if outcome
+            == cutout_core::SettingSubmissionOutcome::Accepted
+            && command.safety_class() == cutout_core::SafetyClass::StationaryOnly
+        {
+            self.device.as_mut().map_or((None, 0), |device| {
+                device.bind_setting_operation(operation_id)
+            })
+        } else {
+            (None, 0)
+        };
+        let mut immediate_writes = 0;
         for output in &mut step.result.outputs {
             let cutout_core::SessionOutput::Transport(cutout_core::TransportAction::Write {
                 bytes,
@@ -139,8 +315,19 @@ impl DeviceConnectionSession {
             else {
                 continue;
             };
-            bytes.set_operation_id(cutout_core::TransportOperationId::new(request_id));
+            bytes.set_operation_id(operation_id);
+            immediate_writes += 1;
         }
+        self.setting_operations.insert(
+            id,
+            SettingTransportOperation {
+                request_id,
+                accepted_at: at,
+                receipt_at: at,
+                authorization,
+                remaining_receipts: immediate_writes + remaining,
+            },
+        );
         Ok(step)
     }
 }
@@ -211,6 +398,254 @@ mod tests {
                 )
                 .unwrap();
         }
+    }
+
+    fn queued_brightness() -> (
+        DeviceConnectionSession,
+        ConnectionAttemptToken,
+        Vec<u8>,
+        u64,
+    ) {
+        let mut frame = vec![0; 42];
+        frame[..4].copy_from_slice(&[0xdc, 0x5a, 0x5c, 38]);
+        frame[28..30].copy_from_slice(&43_000_u16.to_be_bytes());
+        let (mut owner, token) = connected_nf2557(std::slice::from_ref(&frame));
+        owner.state.settings.require_managed_transport();
+        replay_nf2557(&mut owner, &token, std::slice::from_ref(&frame), 2);
+        let step = owner
+            .submit_setting(
+                &token,
+                SettingId::DisplayBrightness,
+                DeviceSettingValue::Number(10),
+                MonotonicTimestamp::new(3),
+            )
+            .unwrap();
+        assert!(step.result.error.is_none());
+        let request = owner
+            .settings_snapshot()
+            .settings
+            .into_iter()
+            .find(|setting| setting.id == SettingId::DisplayBrightness)
+            .unwrap()
+            .request_id
+            .unwrap();
+        (owner, token, frame, request)
+    }
+
+    #[test]
+    fn queued_setting_authorization_expires_without_rearming_or_a_tick() {
+        let (mut owner, token, frame, request) = queued_brightness();
+        assert!(owner.setting_transport_is_current(&token, request, MonotonicTimestamp::new(4)));
+        assert!(!owner.setting_transport_is_current(
+            &token,
+            request,
+            MonotonicTimestamp::new(2_003)
+        ));
+        // Fresh telemetry and a different setting must not extend the original arm.
+        replay_nf2557(&mut owner, &token, std::slice::from_ref(&frame), 5_003);
+        owner
+            .submit_setting(
+                &token,
+                SettingId::PedalAngle,
+                DeviceSettingValue::Number(-12),
+                MonotonicTimestamp::new(5_004),
+            )
+            .unwrap();
+        assert!(!owner.setting_transport_is_current(
+            &token,
+            request,
+            MonotonicTimestamp::new(5_004)
+        ));
+    }
+
+    #[test]
+    fn queued_setting_authorization_is_revoked_by_motion_even_after_rearming() {
+        let (mut owner, token, frame, request) = queued_brightness();
+        let mut moving = frame.clone();
+        moving[6..8].copy_from_slice(&34_u16.to_be_bytes());
+        replay_nf2557(&mut owner, &token, &[moving], 4);
+        assert!(!owner.setting_transport_is_current(&token, request, MonotonicTimestamp::new(4)));
+        replay_nf2557(&mut owner, &token, &[frame], 5);
+        owner
+            .submit_setting(
+                &token,
+                SettingId::PedalAngle,
+                DeviceSettingValue::Number(-12),
+                MonotonicTimestamp::new(6),
+            )
+            .unwrap();
+        assert!(!owner.setting_transport_is_current(&token, request, MonotonicTimestamp::new(6)));
+    }
+
+    #[test]
+    fn queued_setting_authorization_rejects_replaced_terminal_and_reconnected_requests() {
+        let (mut owner, token, _, request) = queued_brightness();
+        owner
+            .submit_setting(
+                &token,
+                SettingId::DisplayBrightness,
+                DeviceSettingValue::Number(20),
+                MonotonicTimestamp::new(4),
+            )
+            .unwrap();
+        assert!(!owner.setting_transport_is_current(&token, request, MonotonicTimestamp::new(4)));
+        let next = owner
+            .settings_snapshot()
+            .settings
+            .into_iter()
+            .find(|setting| setting.id == SettingId::DisplayBrightness)
+            .unwrap()
+            .request_id
+            .unwrap();
+        assert!(owner.setting_transport_is_current(&token, next, MonotonicTimestamp::new(4)));
+        assert!(owner.mark_setting_transport(
+            &token,
+            SettingId::DisplayBrightness,
+            next,
+            cutout_core::SettingTransportStatus::Cancelled,
+            MonotonicTimestamp::new(4)
+        ));
+        assert!(!owner.setting_transport_is_current(&token, next, MonotonicTimestamp::new(4)));
+        owner.begin_attempt("NF2557".into(), MonotonicTimestamp::new(5));
+        assert!(!owner.setting_transport_is_current(&token, next, MonotonicTimestamp::new(5)));
+    }
+
+    #[test]
+    fn delayed_setting_stages_keep_identity_and_start_confirmation_after_last_receipt() {
+        use cutout_core::SettingTransportStatus;
+        let mut owner = DeviceConnectionSession::default();
+        owner.begin_attempt("Falcon".into(), MonotonicTimestamp::new(0));
+        let token = owner.snapshot().connection.token.unwrap();
+        owner.state.connection.connected(&token);
+        let frame = hex_literal::hex!("55aa17750000007602eefb64f4941481000900185a5a5a5a");
+        let _ = owner.observe_for_attempt(
+            &token,
+            crate::DeviceDetectionEvent::Notification { bytes: &frame },
+        );
+        let _ = owner.observe_for_attempt(
+            &token,
+            crate::DeviceDetectionEvent::ProbeWrite {
+                probe: cutout_core::PendingProbe::BegodeName,
+            },
+        );
+        let _ = owner.observe_for_attempt(
+            &token,
+            crate::DeviceDetectionEvent::Notification {
+                bytes: b"NAME=Falcon",
+            },
+        );
+        owner.resolve(&token, false, MonotonicTimestamp::new(1));
+        owner.state.settings.require_managed_transport();
+        owner
+            .ingest(
+                &token,
+                &cutout_core::SessionInputDto::LinkUp {
+                    monotonic_ms: cutout_core::MonotonicMillisDto { milliseconds: 1 },
+                    max_write_len: None,
+                },
+            )
+            .unwrap();
+        owner
+            .ingest(
+                &token,
+                &cutout_core::SessionInputDto::Notification {
+                    monotonic_ms: cutout_core::MonotonicMillisDto { milliseconds: 2 },
+                    channel: crate::VETERAN_DATA_CHANNEL.as_bytes(),
+                    bytes: frame.to_vec(),
+                },
+            )
+            .unwrap();
+        let step = owner
+            .submit_setting(
+                &token,
+                SettingId::MaximumSpeed,
+                DeviceSettingValue::Number(300),
+                MonotonicTimestamp::new(4),
+            )
+            .unwrap();
+        assert!(step.result.error.is_none());
+        let first_id = step
+            .result
+            .outputs
+            .iter()
+            .find_map(|output| match output {
+                SessionOutput::Transport(TransportAction::Write { bytes, .. }) => {
+                    bytes.operation_id()
+                }
+                _ => None,
+            })
+            .unwrap();
+        let setting = owner
+            .settings_snapshot()
+            .settings
+            .into_iter()
+            .find(|setting| setting.id == SettingId::MaximumSpeed)
+            .unwrap();
+        let request = setting.request_id.unwrap();
+        assert!(owner.mark_setting_transport(
+            &token,
+            setting.id,
+            request,
+            SettingTransportStatus::Submitted,
+            MonotonicTimestamp::new(100)
+        ));
+        assert_eq!(
+            owner
+                .settings_snapshot()
+                .settings
+                .into_iter()
+                .find(|s| s.id == setting.id)
+                .unwrap()
+                .transport,
+            Some(SettingTransportStatus::Queued)
+        );
+        for (at, expected) in [(104, b'Y'), (304, b'3'), (504, b'0'), (704, b'b')] {
+            let tick = owner
+                .ingest(
+                    &token,
+                    &cutout_core::SessionInputDto::Tick {
+                        monotonic_ms: cutout_core::MonotonicMillisDto { milliseconds: at },
+                    },
+                )
+                .unwrap();
+            assert!(tick.result.outputs.iter().any(|output| matches!(output,
+            SessionOutput::Transport(TransportAction::Write { bytes, .. }) if bytes.operation_id() == Some(first_id) && bytes.as_slice() == [expected])));
+            assert!(owner.setting_transport_is_current(
+                &token,
+                request,
+                MonotonicTimestamp::new(at)
+            ));
+            assert!(owner.mark_setting_transport(
+                &token,
+                setting.id,
+                request,
+                SettingTransportStatus::Submitted,
+                MonotonicTimestamp::new(at)
+            ));
+        }
+        assert!(!owner.setting_transport_is_current(&token, request, MonotonicTimestamp::new(704)));
+        owner.tick_setting_transport(&token, MonotonicTimestamp::new(2_703));
+        assert_eq!(
+            owner
+                .settings_snapshot()
+                .settings
+                .into_iter()
+                .find(|s| s.id == setting.id)
+                .unwrap()
+                .status,
+            SettingCommandStatus::WaitingForConfirmation
+        );
+        owner.tick_setting_transport(&token, MonotonicTimestamp::new(2_704));
+        assert_eq!(
+            owner
+                .settings_snapshot()
+                .settings
+                .into_iter()
+                .find(|s| s.id == setting.id)
+                .unwrap()
+                .status,
+            SettingCommandStatus::TimedOut
+        );
     }
 
     #[test]

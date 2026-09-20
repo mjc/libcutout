@@ -284,7 +284,7 @@ impl NosfetDialect {
         Self::select_in_mode(command, mode)?.single(command)
     }
 
-    /// Encodes a Veteran setting whose accepted wire representation is an ordered frame pair.
+    /// Encodes a setting only when its checked layout declares a sequence.
     #[must_use]
     pub fn encode_settings_sequence(command: DeviceCommand) -> Option<EncodedControlSequence> {
         Self::select_in_mode(command, VeteranCommandMode::Binary)?.sequence(command)
@@ -988,6 +988,17 @@ mod tests {
             ),
             (
                 DeviceCommand::SetSetting {
+                    id: SettingId::LateralTiltLimit,
+                    value: DeviceSettingValue::Number(55),
+                },
+                *b"LkAp",
+                22,
+                &[
+                    0x01, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 55,
+                ][..],
+            ),
+            (
+                DeviceCommand::SetSetting {
                     id: SettingId::PedalAngle,
                     value: DeviceSettingValue::Number(-36),
                 },
@@ -1008,27 +1019,26 @@ mod tests {
             let expected_crc = crc32(&encoded.payload.as_slice()[..body_len]).to_be_bytes();
             assert_eq!(&encoded.payload.as_slice()[body_len..], &expected_crc);
         }
+    }
 
-        let lateral = NosfetDialect::encode_settings_sequence(DeviceCommand::SetSetting {
+    #[test]
+    fn aero_lateral_tilt_is_one_source_backed_frame_in_both_command_modes() {
+        // EUC World 2.66.1 uh/g0.O and NOSFET 1.1.3
+        // SetFallProtectionAngleActivity.sendCmd each submit one LkAp frame.
+        let command = DeviceCommand::SetSetting {
             id: SettingId::LateralTiltLimit,
             value: DeviceSettingValue::Number(55),
-        })
-        .expect("lateral tilt uses the checked paired representation");
-        assert_eq!(lateral.steps.len(), 2);
-        assert_eq!(
-            lateral.steps[0].payload.as_slice(),
-            hex_literal::hex!("4c6b41701601808080808080808080808037aef39e07")
-        );
-        assert_eq!(
-            lateral.steps[1].payload.as_slice(),
-            hex_literal::hex!("4c644170160100808080808080808080803708b6c232")
-        );
-        assert!(
-            lateral
-                .steps
-                .iter()
-                .all(|step| { step.mode == WriteMode::WithoutResponse && step.delay_ms == 0 })
-        );
+        };
+        for mode in [VeteranCommandMode::Ascii, VeteranCommandMode::Binary] {
+            let lateral = NosfetDialect::encode_in_mode(command, mode)
+                .expect("lateral tilt is a single binary field in either command mode");
+            assert_eq!(lateral.mode, WriteMode::WithoutResponse);
+            assert_eq!(
+                lateral.payload.as_slice(),
+                hex_literal::hex!("4c6b41701601808080808080808080808037aef39e07")
+            );
+        }
+        assert_eq!(NosfetDialect::encode_settings_sequence(command), None);
     }
 
     #[test]
@@ -1050,25 +1060,11 @@ mod tests {
         assert_eq!(&alarm.as_slice()[..7], b"LkAp\x11\x01\x80");
         assert_eq!(&tiltback.as_slice()[..7], b"LdAp\x11\x01\x02");
 
-        let lateral = NosfetDialect::encode_settings_sequence(DeviceCommand::SetSetting {
-            id: SettingId::LateralTiltLimit,
-            value: DeviceSettingValue::Number(55),
-        })
-        .expect("paired lateral setting encodes");
+        let lateral = encode(SettingId::LateralTiltLimit, DeviceSettingValue::Number(55));
         let transport = encode(SettingId::TransportMode, DeviceSettingValue::Boolean(true));
         // These share a value offset, but must address different command banks.
-        assert_ne!(
-            &lateral.steps[0].payload.as_slice()[..17],
-            &transport.as_slice()[..17]
-        );
-        assert_eq!(
-            &lateral.steps[0].payload.as_slice()[..7],
-            b"LkAp\x16\x01\x80"
-        );
-        assert_eq!(
-            &lateral.steps[1].payload.as_slice()[..7],
-            b"LdAp\x16\x01\x00"
-        );
+        assert_ne!(&lateral.as_slice()[..17], &transport.as_slice()[..17]);
+        assert_eq!(&lateral.as_slice()[..7], b"LkAp\x16\x01\x80");
         assert_eq!(&transport.as_slice()[..7], b"LdAp\x16\x01\x02");
     }
 
@@ -1148,6 +1144,13 @@ mod tests {
         let cases = [
             (
                 DeviceCommand::SetSetting {
+                    id: SettingId::LateralTiltLimit,
+                    value: DeviceSettingValue::Number(55),
+                },
+                hex_literal::hex!("4c6b41701601808080808080808080808037aef39e07").as_slice(),
+            ),
+            (
+                DeviceCommand::SetSetting {
                     id: SettingId::DisplayBrightness,
                     value: DeviceSettingValue::Number(50),
                 },
@@ -1197,20 +1200,6 @@ mod tests {
                 cutout_core::SafetyClass::StationaryOnly
             );
         }
-
-        let lateral = NosfetDialect::encode_settings_sequence(DeviceCommand::SetSetting {
-            id: SettingId::LateralTiltLimit,
-            value: DeviceSettingValue::Number(55),
-        })
-        .expect("source-backed paired lateral setting encodes");
-        assert_eq!(
-            lateral.steps[0].payload.as_slice(),
-            hex_literal::hex!("4c6b41701601808080808080808080808037aef39e07")
-        );
-        assert_eq!(
-            lateral.steps[1].payload.as_slice(),
-            hex_literal::hex!("4c644170160100808080808080808080803708b6c232")
-        );
     }
 
     #[test]

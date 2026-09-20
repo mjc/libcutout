@@ -121,10 +121,10 @@ include!(concat!(env!("OUT_DIR"), "/registry_models.rs"));
 #[derive(Clone, Debug)]
 pub enum RegisteredEucSession {
     /// NOSFET Aero telemetry session with allow-listed benign controls.
-    NosfetAero(BenignControlSession<NosfetAeroModel, false>),
+    NosfetAero(BenignControlSession<NosfetAeroModel>),
 
     /// Begode Falcon telemetry session with allow-listed benign controls.
-    BegodeFalcon(BenignControlSession<BegodeFalconModel, true>),
+    BegodeFalcon(BenignControlSession<BegodeFalconModel>),
 }
 
 impl ProtocolSession for RegisteredEucSession {
@@ -137,11 +137,11 @@ impl ProtocolSession for RegisteredEucSession {
 }
 
 pub(super) fn nosfet_aero_session() -> RegisteredEucSession {
-    RegisteredEucSession::NosfetAero(BenignControlSession::<NosfetAeroModel, false>::default())
+    RegisteredEucSession::NosfetAero(BenignControlSession::<NosfetAeroModel>::default())
 }
 
 pub(super) fn begode_falcon_session() -> RegisteredEucSession {
-    RegisteredEucSession::BegodeFalcon(BenignControlSession::<BegodeFalconModel, true>::default())
+    RegisteredEucSession::BegodeFalcon(BenignControlSession::<BegodeFalconModel>::default())
 }
 
 /// Constructs a registered Begode Falcon telemetry session with explicit pack-voltage evidence.
@@ -149,11 +149,9 @@ pub(super) fn begode_falcon_session() -> RegisteredEucSession {
 pub fn begode_falcon_session_with_voltage_profile(
     profile: BegodePackVoltageProfile,
 ) -> RegisteredEucSession {
-    RegisteredEucSession::BegodeFalcon(
-        BenignControlSession::<BegodeFalconModel, true>::with_decoder(
-            BegodeNotificationDecoder::with_pack_voltage_profile(profile),
-        ),
-    )
+    RegisteredEucSession::BegodeFalcon(BenignControlSession::<BegodeFalconModel>::with_decoder(
+        BegodeNotificationDecoder::with_pack_voltage_profile(profile),
+    ))
 }
 
 /// Finds a session registration by typed key without allocating.
