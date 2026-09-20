@@ -1298,9 +1298,7 @@ public final class CutoutSessionCore: NSObject {
 
     private func connectionLinkDownOnBleQueue(token: ConnectionAttemptToken) {
         let phoneAlarmActions = rustSessionState.deactivatePhoneAlarmDevice()
-        if !phoneAlarmActions.schedule.isEmpty || !phoneAlarmActions.cancelRequestIds.isEmpty {
-            publishOnMain { self.onPhoneAlarmActionsAvailable?(phoneAlarmActions) }
-        }
+        publishOnMain { self.onPhoneAlarmActionsAvailable?(phoneAlarmActions) }
         _ = rustSessionState.connectionLinkDown(token: token)
     }
 
