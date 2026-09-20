@@ -589,6 +589,10 @@ public final class SpotifyProviderAdapter: NSObject {
         self.session = session
         Self.storeSession(session)
         self.accessToken = session.accessToken
+        // Keep the short-lived App Remote credential as a fallback as well as
+        // the refreshable SDK session. This preserves an already-authorized
+        // account even if a future SDK/session archive cannot be restored.
+        Self.storeAccessToken(session.accessToken)
         authorizationNeedsUserAction = false
         guard onChange != nil else { return }
         connect(with: session.accessToken)

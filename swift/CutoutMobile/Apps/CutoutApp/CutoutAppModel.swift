@@ -1162,7 +1162,16 @@ final class CutoutAppModel {
         musicHistoryPolicy = defaultPolicy
         do {
             try musicCoordinator.setHistoryPolicy(defaultPolicy)
-            synchronizeMusicHistory(core.rideMapStateHandle?.currentMusicHistory())
+            // The policy store is the source of the default for a new ride.
+            // Do not derive it back from an empty history projection here:
+            // that projection describes retained events, not the user's
+            // preference, and can otherwise make the picker jump back to
+            // "Don't save music history" immediately after a new ride starts.
+            musicHistoryUnavailable = false
+            clearMusicErrors()
+            musicCoordinator.restoreHistoryPolicy(defaultPolicy)
+            musicTimelineEvents = musicCoordinator.recordedEvents
+            core.updateMusicCapturePolicy(defaultPolicy)
         } catch {
             rideMapLiveError = Self.mapRideMapError(error)
             guard let state = core.rideMapStateHandle,
