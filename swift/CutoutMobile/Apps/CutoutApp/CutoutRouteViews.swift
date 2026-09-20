@@ -165,6 +165,7 @@ struct EucPackRouteView: View {
     let packScreen: EucPackScreen
     let selectedGroupIndex: Int?
     let navigate: (CutoutAppRoute) -> Void
+    @State private var rootScreenID: PevScreenID?
 
     private let catalog = PevScreenCatalog.live
 
@@ -189,6 +190,17 @@ struct EucPackRouteView: View {
                 guard !packScreen.hasAvailableSelectedGroup(in: groupIndices) else { return }
                 navigate(.eucPack(.root))
             }
+            .onChange(of: model.bmsSnapshot?.availability, initial: true) { _, availability in
+                guard packScreen == .root else { return }
+                guard availability == .available, rootScreenID == nil,
+                      let snapshot = model.bmsSnapshot else {
+                    if availability == nil || availability == .unavailable || availability == .unsupported {
+                        rootScreenID = nil
+                    }
+                    return
+                }
+                rootScreenID = catalog.presentedBmsScreen(liveBmsSnapshot: snapshot).id
+            }
         }
     }
 
@@ -197,6 +209,9 @@ struct EucPackRouteView: View {
             catalog.screen(id: screenID).map {
                 catalog.presentedScreen(for: $0, liveBmsSnapshot: model.bmsSnapshot)
             }
+        } else if let rootScreenID,
+                  let rootScreen = catalog.screen(id: rootScreenID) {
+            catalog.presentedScreen(for: rootScreen, liveBmsSnapshot: model.bmsSnapshot)
         } else {
             catalog.presentedBmsScreen(liveBmsSnapshot: model.bmsSnapshot)
         }

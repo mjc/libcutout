@@ -32,13 +32,23 @@ pub struct ConcreteSessionStepResultDto {
 
 impl From<crate::DeviceSessionStep> for ConcreteSessionStepResultDto {
     fn from(value: crate::DeviceSessionStep) -> Self {
+        let crate::DeviceSessionStep {
+            outputs,
+            error,
+            bms_observation_summary,
+            bms_temperature_summary,
+        } = value;
+        let mut outputs: Vec<_> = outputs.into_iter().map(Into::into).collect();
+        decorate_battery_outputs(
+            &mut outputs,
+            &bms_observation_summary,
+            &bms_temperature_summary,
+        );
         Self {
-            outputs: value.outputs.into_iter().map(Into::into).collect(),
-            error: value
-                .error
-                .map(|refusal| ConcreteSessionErrorDto::CommandRefused {
-                    refusal: refusal.into(),
-                }),
+            outputs,
+            error: error.map(|refusal| ConcreteSessionErrorDto::CommandRefused {
+                refusal: refusal.into(),
+            }),
         }
     }
 }
@@ -498,51 +508,53 @@ fn drain_host_outputs<S>(host: &mut HostSession<S>) -> Vec<SessionOutputDto>
 where
     S: cutout_core::ProtocolSession,
 {
-    let mut summary = None;
-    let mut temperature_summary = None;
-    host.drain_outputs()
+    let summary = host.session_state().telemetry().bms.observation_summary();
+    let temperature_summary = host.session_state().telemetry().bms.temperature_summary();
+    let mut outputs: Vec<_> = host
+        .drain_outputs()
         .into_iter()
-        .map(|output| {
-            let mut output = SessionOutputDto::from(output);
-            if let SessionOutputDto::ReadOnly(response) = &mut output
-                && let cutout_core::ReadOnlyOutputPayload::Battery(readback) = &mut response.payload
-                && let Some(page) = &mut readback.page
-            {
-                page.observation_summary = summary
-                    .get_or_insert_with(|| {
-                        host.session_state().telemetry().bms.observation_summary()
-                    })
-                    .clone();
-                let temperatures = temperature_summary.get_or_insert_with(|| {
-                    host.session_state().telemetry().bms.temperature_summary()
-                });
-                if !temperatures.readings.is_empty() {
-                    page.temperature = temperatures
-                        .highest_temperature
-                        .map(cutout_core::Measured::reported)
-                        .map(Into::into);
-                    page.temperatures = temperatures
-                        .readings
-                        .iter()
-                        .copied()
-                        .map(cutout_core::Measured::reported)
-                        .map(Into::into)
-                        .map(Some)
-                        .collect();
-                }
+        .map(SessionOutputDto::from)
+        .collect();
+    decorate_battery_outputs(&mut outputs, &summary, &temperature_summary);
+    outputs
+}
+
+fn decorate_battery_outputs(
+    outputs: &mut [SessionOutputDto],
+    summary: &cutout_core::BmsObservationSummary,
+    temperatures: &cutout_core::BmsTemperatureSummary,
+) {
+    for output in outputs {
+        if let SessionOutputDto::ReadOnly(response) = output
+            && let cutout_core::ReadOnlyOutputPayload::Battery(readback) = &mut response.payload
+            && let Some(page) = &mut readback.page
+        {
+            page.observation_summary = summary.clone();
+            if !temperatures.readings.is_empty() {
+                page.temperature = temperatures
+                    .highest_temperature
+                    .map(cutout_core::Measured::reported)
+                    .map(Into::into);
+                page.temperatures = temperatures
+                    .readings
+                    .iter()
+                    .copied()
+                    .map(cutout_core::Measured::reported)
+                    .map(Into::into)
+                    .map(Some)
+                    .collect();
             }
-            output
-        })
-        .collect()
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use cutout_core::{
-        CommandKindDto, ControlRefusalDto, ControlRefusalReasonDto, DeviceCommandDto, LinkInfo,
-        MonotonicMillisDto, MonotonicTimestamp, ParserDiagnosticCountDto, RideOperatingStateDto,
-        SafetyClassDto, SessionEventDto, SessionInputDto, SessionOutputDto, TransportActionDto,
-        TransportWriteLimit, TransportWriteLimitDto,
+        Capabilities, CommandKindDto, ControlRefusalDto, ControlRefusalReasonDto, DeviceCommandDto,
+        LinkInfo, MonotonicMillisDto, MonotonicTimestamp, ParserDiagnosticCountDto,
+        RideOperatingStateDto, SafetyClassDto, SessionEventDto, SessionInputDto, SessionOutputDto,
+        TransportActionDto, TransportWriteLimit, TransportWriteLimitDto,
     };
 
     use crate::{BEGODE_DATA_CHANNEL, VESC_NOTIFY_CHANNEL, VETERAN_DATA_CHANNEL};
@@ -635,6 +647,73 @@ mod tests {
                 .voltage_spread
                 .map(cutout_core::VoltageDelta::as_millivolts),
             Some(20)
+        );
+    }
+
+    #[test]
+    fn mobile_step_bms_pages_carry_the_retained_core_summary() {
+        struct Pages;
+        impl cutout_core::ProtocolSession for Pages {
+            fn handle(
+                &mut self,
+                input: cutout_core::SessionInput<'_>,
+                output: &mut Vec<cutout_core::SessionOutput>,
+            ) {
+                let cutout_core::SessionInput::Tick { monotonic_ms } = input else {
+                    return;
+                };
+                let (selector, voltage) = if monotonic_ms.get() == 1 {
+                    (6, 4_200)
+                } else {
+                    (2, 4_180)
+                };
+                let readback = crate::decode_veteran_bms_page(
+                    cutout_core::ProtocolSelector::new(selector),
+                    (0..15)
+                        .map(|_| cutout_core::Voltage::from_millivolts(voltage))
+                        .collect(),
+                    cutout_core::BatteryInfo::default(),
+                    cutout_core::VerificationStatus::Unverified,
+                )
+                .expect("typed cell page");
+                output.push(cutout_core::SessionOutput::Event(
+                    cutout_core::DeviceEvent::ReadOnlyResponse(
+                        cutout_core::ReadOnlyResponse::Battery(readback),
+                    ),
+                ));
+            }
+        }
+
+        let mut host = cutout_core::HostSession::new(Pages);
+        host.tick(MonotonicTimestamp::new(1));
+        let _ = crate::DeviceSessionStep::drain(
+            &mut host,
+            &SessionInputDto::Tick {
+                monotonic_ms: ms(1),
+            },
+            Capabilities::default(),
+        );
+        host.tick(MonotonicTimestamp::new(2));
+        let step = crate::DeviceSessionStep::drain(
+            &mut host,
+            &SessionInputDto::Tick {
+                monotonic_ms: ms(2),
+            },
+            Capabilities::default(),
+        );
+        let result = super::ConcreteSessionStepResultDto::from(step);
+        let SessionOutputDto::ReadOnly(response) = &result.outputs[0] else {
+            panic!("battery output")
+        };
+        let cutout_core::ReadOnlyOutputPayload::Battery(readback) = &response.payload else {
+            panic!("battery readback")
+        };
+        assert_eq!(
+            readback
+                .page
+                .as_ref()
+                .map(|page| page.observation_summary.observed_count),
+            Some(30)
         );
     }
 
