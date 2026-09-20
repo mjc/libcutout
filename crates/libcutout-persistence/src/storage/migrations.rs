@@ -1,7 +1,7 @@
 use super::{MapPointId, SpatialRowId, StorageError};
 use rusqlite::{Connection, OptionalExtension, params};
 
-const CURRENT_SCHEMA_VERSION: i64 = 23;
+const CURRENT_SCHEMA_VERSION: i64 = 24;
 const APPLICATION_ID: i64 = 0x4355_544f;
 
 fn current_schema_pragmas() -> String {
@@ -44,6 +44,7 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         20 => migrate_v20_to_current(connection)?,
         21 => migrate_v21_to_current(connection)?,
         22 => migrate_v22_to_current(connection)?,
+        23 => migrate_v23_to_current(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -1142,6 +1143,20 @@ fn migrate_v22_to_current(connection: &mut Connection) -> Result<(), StorageErro
              updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms >= 0)
          );",
     )?;
+    transaction.execute_batch(
+        "CREATE TABLE IF NOT EXISTS phone_alarm_preferences (
+             device_identity TEXT PRIMARY KEY NOT NULL CHECK (length(device_identity) BETWEEN 1 AND 512),
+             enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+             pwm_duty_percent INTEGER NOT NULL CHECK (pwm_duty_percent BETWEEN 1 AND 100)
+         );",
+    )?;
+    transaction.execute_batch(&current_schema_pragmas())?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn migrate_v23_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction()?;
     transaction.execute_batch(
         "CREATE TABLE IF NOT EXISTS phone_alarm_preferences (
              device_identity TEXT PRIMARY KEY NOT NULL CHECK (length(device_identity) BETWEEN 1 AND 512),
