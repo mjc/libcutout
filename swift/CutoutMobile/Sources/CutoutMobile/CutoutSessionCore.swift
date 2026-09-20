@@ -568,13 +568,21 @@ public final class CutoutSessionCore: NSObject {
 
     /// Composes transport around a database handle opened off the main actor.
     public convenience init(rideMapState: MobileRideMapState) {
-        self.init(clock: MonotonicClock(), rideMapState: rideMapState)
+        self.init(
+            clock: MonotonicClock(),
+            rideMapState: rideMapState,
+            database: RustPersistenceStore.shared
+        )
     }
 
     public override convenience init() {
         let rideMapState = RustPersistenceStore.shared.map(MobileRideMapState.init(database:))
             ?? MobileRideMapState(storageUnavailable: "Rust ride database is unavailable")
-        self.init(clock: MonotonicClock(), rideMapState: rideMapState)
+        self.init(
+            clock: MonotonicClock(),
+            rideMapState: rideMapState,
+            database: RustPersistenceStore.shared
+        )
     }
 
 #if DEBUG
@@ -598,9 +606,12 @@ public final class CutoutSessionCore: NSObject {
         reconnectJitter: @escaping () -> Double = { Double.random(in: 0...1) },
         selectedDeviceStore: DevicePickerSelectionStore = DevicePickerSelectionStore(),
         wallClock: @escaping () -> Date = { Date() },
-        rideMapState: MobileRideMapState? = nil
+        rideMapState: MobileRideMapState? = nil,
+        database: RideDatabaseHandle? = nil
     ) {
-        let rustSessionState = CutoutSessionStateHandle()
+        let rustSessionState = database.map {
+            CutoutSessionStateHandle.withDatabase(database: $0)
+        } ?? CutoutSessionStateHandle()
         self.rustSessionState = rustSessionState
         let deviceDetectionSession = DeviceDetectionSession(sessionState: rustSessionState)
         self.deviceDetectionSession = deviceDetectionSession
@@ -623,9 +634,12 @@ public final class CutoutSessionCore: NSObject {
         clock: MonotonicClock,
         selectedDeviceStore: DevicePickerSelectionStore = DevicePickerSelectionStore(),
         wallClock: @escaping () -> Date = { Date() },
-        rideMapState: MobileRideMapState? = nil
+        rideMapState: MobileRideMapState? = nil,
+        database: RideDatabaseHandle? = nil
     ) {
-        let rustSessionState = CutoutSessionStateHandle()
+        let rustSessionState = database.map {
+            CutoutSessionStateHandle.withDatabase(database: $0)
+        } ?? CutoutSessionStateHandle()
         self.rustSessionState = rustSessionState
         let deviceDetectionSession = DeviceDetectionSession(sessionState: rustSessionState)
         self.deviceDetectionSession = deviceDetectionSession
