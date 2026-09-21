@@ -1,5 +1,3 @@
-#![allow(clippy::cast_possible_truncation)]
-
 use cutout_core::{
     DeviceCommand, DeviceSettingValue, Measured, ProtocolFamily, RawFieldValue, SettingId,
     SettingsEntry, SettingsReadback, ValueQuality, ValueSource, VerificationStatus,
@@ -60,18 +58,19 @@ fn pwm_readback_is_duty_and_readability_does_not_grant_a_write() {
         Some(ProtocolFamily::VeteranLeaperkimNosfet)
     );
     for duty in 0..=100 {
+        let duty_i32 = i32::try_from(duty).unwrap_or_else(|_| unreachable!("test duty is bounded"));
         assert_eq!(
             value(
                 &read(profile, AERO_FIELD_PWM_PERCENT, duty),
                 SettingId::PwmTiltback
             ),
-            Some(DeviceSettingValue::Number(duty as i32))
+            Some(DeviceSettingValue::Number(duty_i32))
         );
         assert_eq!(
             profile
                 .command(
                     SettingId::PwmTiltback,
-                    DeviceSettingValue::Number(duty as i32),
+                    DeviceSettingValue::Number(duty_i32),
                     true
                 )
                 .is_ok(),
@@ -226,12 +225,13 @@ fn packed_falcon_readback_keeps_semantic_choices_and_unknown_modes_distinct() {
 fn normalization_preserves_signed_fixed_point_and_original_evidence() {
     let profile = aero_control_profile();
     for raw in -15..=15 {
+        let raw_i32 = i32::try_from(raw).unwrap_or_else(|_| unreachable!("test value is bounded"));
         assert_eq!(
             value(
                 &read(profile, AERO_FIELD_VOLTAGE_CORRECTION_TENTHS_PERCENT, raw),
                 SettingId::VoltageCorrection
             ),
-            Some(DeviceSettingValue::Number(raw as i32))
+            Some(DeviceSettingValue::Number(raw_i32))
         );
     }
     let measured = Measured {

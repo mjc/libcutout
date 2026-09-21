@@ -202,11 +202,11 @@ fn push_veteran_frame(
             output.push(SessionOutput::Event(DeviceEvent::Telemetry(
                 telemetry.to_delta(monotonic_ms),
             )))?;
-            output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+            output.push(SessionOutput::Event(DeviceEvent::read_only_response(
                 telemetry.to_firmware_response(),
             )))?;
             for response in settings_responses {
-                output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                output.push(SessionOutput::Event(DeviceEvent::read_only_response(
                     response,
                 )))?;
             }
@@ -214,7 +214,7 @@ fn push_veteran_frame(
                 if evidence.kind != BatteryPageKind::Raw
                     && let Some(readback) = veteran_bms_readback(evidence)
                 {
-                    output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                    output.push(SessionOutput::Event(DeviceEvent::read_only_response(
                         ReadOnlyResponse::Battery(readback),
                     )))?;
                     return Ok(SemanticEventCount::from_events(3).saturating_add(settings_count));

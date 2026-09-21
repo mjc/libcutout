@@ -511,9 +511,64 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::too_many_lines)]
     fn delayed_setting_stages_keep_identity_and_start_confirmation_after_last_receipt() {
-        use cutout_core::SettingTransportStatus;
+        let (mut owner, token, first_id, setting, request) = delayed_setting_setup();
+        for (at, expected) in [(104, b'Y'), (304, b'3'), (504, b'0'), (704, b'b')] {
+            let tick = owner
+                .ingest(
+                    &token,
+                    &cutout_core::SessionInputDto::Tick {
+                        monotonic_ms: cutout_core::MonotonicMillisDto { milliseconds: at },
+                    },
+                )
+                .unwrap();
+            assert!(tick.result.outputs.iter().any(|output| matches!(output,
+            SessionOutput::Transport(TransportAction::Write { bytes, .. }) if bytes.operation_id() == Some(first_id) && bytes.as_slice() == [expected])));
+            assert!(owner.setting_transport_is_current(
+                &token,
+                request,
+                MonotonicTimestamp::new(at)
+            ));
+            assert!(owner.mark_setting_transport(
+                &token,
+                setting.id,
+                request,
+                cutout_core::SettingTransportStatus::Submitted,
+                MonotonicTimestamp::new(at)
+            ));
+        }
+        assert!(!owner.setting_transport_is_current(&token, request, MonotonicTimestamp::new(704)));
+        owner.tick_setting_transport(&token, MonotonicTimestamp::new(2_703));
+        assert_eq!(
+            owner
+                .settings_snapshot()
+                .settings
+                .into_iter()
+                .find(|s| s.id == setting.id)
+                .unwrap()
+                .status,
+            SettingCommandStatus::WaitingForConfirmation
+        );
+        owner.tick_setting_transport(&token, MonotonicTimestamp::new(2_704));
+        assert_eq!(
+            owner
+                .settings_snapshot()
+                .settings
+                .into_iter()
+                .find(|s| s.id == setting.id)
+                .unwrap()
+                .status,
+            SettingCommandStatus::TimedOut
+        );
+    }
+
+    fn delayed_setting_setup() -> (
+        DeviceConnectionSession,
+        ConnectionAttemptToken,
+        cutout_core::TransportOperationId,
+        DeviceSettingSnapshot,
+        u64,
+    ) {
         let mut owner = DeviceConnectionSession::default();
         owner.begin_attempt("Falcon".into(), MonotonicTimestamp::new(0));
         let token = owner.snapshot().connection.token.unwrap();
@@ -587,7 +642,7 @@ mod tests {
             &token,
             setting.id,
             request,
-            SettingTransportStatus::Submitted,
+            cutout_core::SettingTransportStatus::Submitted,
             MonotonicTimestamp::new(100)
         ));
         assert_eq!(
@@ -598,55 +653,9 @@ mod tests {
                 .find(|s| s.id == setting.id)
                 .unwrap()
                 .transport,
-            Some(SettingTransportStatus::Queued)
+            Some(cutout_core::SettingTransportStatus::Queued)
         );
-        for (at, expected) in [(104, b'Y'), (304, b'3'), (504, b'0'), (704, b'b')] {
-            let tick = owner
-                .ingest(
-                    &token,
-                    &cutout_core::SessionInputDto::Tick {
-                        monotonic_ms: cutout_core::MonotonicMillisDto { milliseconds: at },
-                    },
-                )
-                .unwrap();
-            assert!(tick.result.outputs.iter().any(|output| matches!(output,
-            SessionOutput::Transport(TransportAction::Write { bytes, .. }) if bytes.operation_id() == Some(first_id) && bytes.as_slice() == [expected])));
-            assert!(owner.setting_transport_is_current(
-                &token,
-                request,
-                MonotonicTimestamp::new(at)
-            ));
-            assert!(owner.mark_setting_transport(
-                &token,
-                setting.id,
-                request,
-                SettingTransportStatus::Submitted,
-                MonotonicTimestamp::new(at)
-            ));
-        }
-        assert!(!owner.setting_transport_is_current(&token, request, MonotonicTimestamp::new(704)));
-        owner.tick_setting_transport(&token, MonotonicTimestamp::new(2_703));
-        assert_eq!(
-            owner
-                .settings_snapshot()
-                .settings
-                .into_iter()
-                .find(|s| s.id == setting.id)
-                .unwrap()
-                .status,
-            SettingCommandStatus::WaitingForConfirmation
-        );
-        owner.tick_setting_transport(&token, MonotonicTimestamp::new(2_704));
-        assert_eq!(
-            owner
-                .settings_snapshot()
-                .settings
-                .into_iter()
-                .find(|s| s.id == setting.id)
-                .unwrap()
-                .status,
-            SettingCommandStatus::TimedOut
-        );
+        (owner, token, first_id, setting, request)
     }
 
     #[test]
@@ -949,7 +958,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::too_many_lines)]
     fn ordinary_aero_settings_emit_checked_frames_only_with_current_stationary_evidence() {
         let profile = crate::aero_control_profile();
         for descriptor in profile
@@ -962,7 +970,7 @@ mod tests {
                 crate::SettingControl::Number { minimum, .. } => {
                     DeviceSettingValue::Number(minimum)
                 }
-                crate::SettingControl::Choices(choices) => {
+                crate::SettingControl::Choices(ref choices) => {
                     DeviceSettingValue::Choice(choices[0].id)
                 }
                 crate::SettingControl::ReadOnly => unreachable!(),
@@ -1031,42 +1039,13 @@ mod tests {
                     "{id:?} speed={speed:?} age={age}"
                 );
                 if accepted {
-                    let command = profile.command(id, value, false).unwrap();
-                    let expected: Vec<_> = crate::NosfetDialect::encode_settings_sequence(command)
-                        .map(|sequence| {
-                            sequence
-                                .steps
-                                .into_iter()
-                                .map(|step| step.payload)
-                                .collect()
-                        })
-                        .or_else(|| {
-                            crate::NosfetDialect::encode(command)
-                                .map(|encoded| vec![encoded.payload])
-                        })
-                        .unwrap();
-                    assert_eq!(
-                        writes,
-                        expected
-                            .iter()
-                            .map(|payload| payload.as_slice().to_vec())
-                            .collect::<Vec<_>>(),
-                        "{id:?}"
-                    );
-                    let state = owner
-                        .settings_snapshot()
-                        .settings
-                        .into_iter()
-                        .find(|item| item.id == id)
-                        .unwrap();
-                    assert_eq!(state.requested, Some(value));
-                    assert_eq!(
-                        state.status,
-                        if descriptor.completion.supports_readback() {
-                            SettingCommandStatus::WaitingForConfirmation
-                        } else {
-                            SettingCommandStatus::SentWithoutConfirmation
-                        }
+                    assert_ordinary_aero_submission(
+                        &profile,
+                        &owner,
+                        &descriptor,
+                        id,
+                        value,
+                        &writes,
                     );
                 } else {
                     assert!(writes.is_empty(), "{id:?}");
@@ -1078,6 +1057,50 @@ mod tests {
                 );
             }
         }
+    }
+
+    fn assert_ordinary_aero_submission(
+        profile: &crate::DeviceControlProfile,
+        owner: &DeviceConnectionSession,
+        descriptor: &SettingDescriptor,
+        id: SettingId,
+        value: DeviceSettingValue,
+        writes: &[Vec<u8>],
+    ) {
+        let command = profile.command(id, value, false).unwrap();
+        let expected: Vec<_> = crate::NosfetDialect::encode_settings_sequence(command)
+            .map(|sequence| {
+                sequence
+                    .steps
+                    .into_iter()
+                    .map(|step| step.payload)
+                    .collect()
+            })
+            .or_else(|| crate::NosfetDialect::encode(command).map(|encoded| vec![encoded.payload]))
+            .unwrap();
+        assert_eq!(
+            writes,
+            expected
+                .iter()
+                .map(|payload| payload.as_slice().to_vec())
+                .collect::<Vec<_>>(),
+            "{id:?}"
+        );
+        let state = owner
+            .settings_snapshot()
+            .settings
+            .into_iter()
+            .find(|item| item.id == id)
+            .unwrap();
+        assert_eq!(state.requested, Some(value));
+        assert_eq!(
+            state.status,
+            if descriptor.completion.supports_readback() {
+                SettingCommandStatus::WaitingForConfirmation
+            } else {
+                SettingCommandStatus::SentWithoutConfirmation
+            }
+        );
     }
 
     #[test]

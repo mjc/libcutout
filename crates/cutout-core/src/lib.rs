@@ -8,7 +8,14 @@
 
 //! Core types and setup scaffolding for Cutout.
 
-use std::{cmp::Ordering, fmt, marker::PhantomData, ops::RangeInclusive};
+use std::{
+    cmp::Ordering,
+    collections::VecDeque,
+    fmt,
+    marker::PhantomData,
+    ops::{Deref, DerefMut, RangeInclusive},
+    sync::{Mutex, OnceLock, PoisonError},
+};
 
 use arrayvec::ArrayVec;
 use thiserror::Error;
@@ -1280,7 +1287,7 @@ impl ManufacturerKey {
     }
 }
 
-impl core::ops::Deref for ManufacturerKey {
+impl Deref for ManufacturerKey {
     type Target = str;
 
     fn deref(&self) -> &Self::Target {
@@ -1325,7 +1332,7 @@ impl ModelKey {
     }
 }
 
-impl core::ops::Deref for ModelKey {
+impl Deref for ModelKey {
     type Target = str;
 
     fn deref(&self) -> &Self::Target {
@@ -4938,10 +4945,8 @@ const fn saturating_u64_to_i32(value: u64) -> i32 {
     if value > i32::MAX as u64 {
         i32::MAX
     } else {
-        #[allow(clippy::cast_possible_truncation)]
-        {
-            value as i32
-        }
+        let bytes = value.to_le_bytes();
+        i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
     }
 }
 
@@ -4954,10 +4959,8 @@ const fn saturating_i64_to_i32(value: i64) -> i32 {
     } else if value < I32_MIN_I64 {
         i32::MIN
     } else {
-        #[allow(clippy::cast_possible_truncation)]
-        {
-            value as i32
-        }
+        let bytes = value.to_le_bytes();
+        i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
     }
 }
 
@@ -4967,10 +4970,8 @@ fn saturating_i128_to_i32(value: i128) -> i32 {
     } else if value < i128::from(i32::MIN) {
         i32::MIN
     } else {
-        #[allow(clippy::cast_possible_truncation)]
-        {
-            value as i32
-        }
+        let bytes = value.to_le_bytes();
+        i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
     }
 }
 
@@ -4980,10 +4981,10 @@ fn saturating_i128_to_i64(value: i128) -> i64 {
     } else if value < i128::from(i64::MIN) {
         i64::MIN
     } else {
-        #[allow(clippy::cast_possible_truncation)]
-        {
-            value as i64
-        }
+        let bytes = value.to_le_bytes();
+        i64::from_le_bytes([
+            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+        ])
     }
 }
 
@@ -7068,6 +7069,97 @@ pub enum ReadOnlyResponse {
     FaultHistory(FaultHistoryReadback),
 }
 
+static READ_ONLY_RESPONSE_POOL: OnceLock<Mutex<VecDeque<Box<ReadOnlyResponse>>>> = OnceLock::new();
+
+fn read_only_response_pool() -> &'static Mutex<VecDeque<Box<ReadOnlyResponse>>> {
+    READ_ONLY_RESPONSE_POOL.get_or_init(|| Mutex::new(VecDeque::new()))
+}
+
+/// Owned read-only response storage used by semantic device events.
+#[derive(Debug, Eq, PartialEq)]
+pub struct ReadOnlyResponseBox {
+    response: Box<ReadOnlyResponse>,
+}
+
+impl ReadOnlyResponseBox {
+    const POOL_SENTINELS: usize = 1;
+
+    /// Prepares reusable response storage for an allocation-free protocol hot path.
+    pub fn prepare_pool(capacity: usize) {
+        let mut pool = read_only_response_pool()
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let target = capacity.saturating_add(Self::POOL_SENTINELS);
+        while pool.len() < target {
+            pool.push_back(Box::new(ReadOnlyResponse::FaultHistory(
+                FaultHistoryReadback::unavailable(),
+            )));
+        }
+    }
+
+    /// Takes reusable storage when available and replaces its response value.
+    #[must_use]
+    pub fn new(response: ReadOnlyResponse) -> Self {
+        let mut pool = read_only_response_pool()
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if pool.len() > Self::POOL_SENTINELS
+            && let Some(mut storage) = pool.pop_back()
+        {
+            *storage = response;
+            return Self { response: storage };
+        }
+        drop(pool);
+        Self {
+            response: Box::new(response),
+        }
+    }
+}
+
+impl AsRef<ReadOnlyResponse> for ReadOnlyResponseBox {
+    fn as_ref(&self) -> &ReadOnlyResponse {
+        &self.response
+    }
+}
+
+impl AsMut<ReadOnlyResponse> for ReadOnlyResponseBox {
+    fn as_mut(&mut self) -> &mut ReadOnlyResponse {
+        &mut self.response
+    }
+}
+
+impl Deref for ReadOnlyResponseBox {
+    type Target = ReadOnlyResponse;
+
+    fn deref(&self) -> &Self::Target {
+        &self.response
+    }
+}
+
+impl DerefMut for ReadOnlyResponseBox {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.response
+    }
+}
+
+impl Clone for ReadOnlyResponseBox {
+    fn clone(&self) -> Self {
+        Self::new(self.response.as_ref().clone())
+    }
+}
+
+impl Drop for ReadOnlyResponseBox {
+    fn drop(&mut self) {
+        let mut pool = read_only_response_pool()
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if let Some(storage) = pool.pop_back() {
+            let returned = std::mem::replace(&mut self.response, storage);
+            pool.push_back(returned);
+        }
+    }
+}
+
 impl ReadOnlyResponse {
     /// Returns the command kind that requested this response.
     #[must_use]
@@ -7550,7 +7642,6 @@ pub enum TransportAction {
 
 /// Semantic event emitted by a protocol session.
 #[derive(Clone, Debug, Eq, PartialEq)]
-#[allow(clippy::large_enum_variant)]
 pub enum DeviceEvent {
     /// Link-up event accepted by the session.
     LinkUp(LinkInfo),
@@ -7568,7 +7659,7 @@ pub enum DeviceEvent {
     Telemetry(TelemetryDelta),
 
     /// Read-only response emitted by a protocol session.
-    ReadOnlyResponse(ReadOnlyResponse),
+    ReadOnlyResponse(ReadOnlyResponseBox),
 
     /// Control command refused before transport writes.
     ControlRefusal(ControlRefusal),
@@ -7580,9 +7671,16 @@ pub enum DeviceEvent {
     DiagnosticError(DiagnosticError),
 }
 
+impl DeviceEvent {
+    /// Constructs a read-only response event while keeping the large payload off the enum.
+    #[must_use]
+    pub fn read_only_response(response: ReadOnlyResponse) -> Self {
+        Self::ReadOnlyResponse(ReadOnlyResponseBox::new(response))
+    }
+}
+
 /// Output emitted by a protocol session for the host to drain.
 #[derive(Clone, Debug, Eq, PartialEq)]
-#[allow(clippy::large_enum_variant)]
 pub enum SessionOutput {
     /// Transport action to execute outside the protocol engine.
     Transport(TransportAction),
@@ -7748,9 +7846,8 @@ where
         self.session.handle(input, &mut self.output);
         if let Some(observed_at) = observed_at {
             for output in &mut self.output[start..] {
-                if let SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
-                    ReadOnlyResponse::Battery(readback),
-                )) = output
+                if let SessionOutput::Event(DeviceEvent::ReadOnlyResponse(response)) = output
+                    && let ReadOnlyResponse::Battery(readback) = response.as_mut()
                 {
                     *readback = readback.clone().with_observed_at(observed_at);
                     self.state.assign_bms_observation_event_sequence(readback);
@@ -9057,7 +9154,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::too_many_lines)]
     fn quantity_conversions_keep_unit_math_in_core() {
         assert_eq!(Speed::from_mph(10).as_millimetres_per_second(), 4_474);
         assert_eq!(Speed::from_millimetres_per_second(4_470).as_mph(), 10);
@@ -9123,7 +9219,10 @@ mod tests {
                 .as_watt_hours(),
             720
         );
+    }
 
+    #[test]
+    fn quantity_conversions_cover_current_and_battery_level() {
         assert_eq!(Current::from_amps(-12).as_milliamps(), -12_000);
         assert_eq!(Current::from_centiamps(-1_240).as_milliamps(), -12_400);
         assert_eq!(Current::from_deciamps(-124).as_milliamps(), -12_400);
@@ -10523,11 +10622,13 @@ mod tests {
         };
 
         assert_eq!(
-            DeviceEvent::ReadOnlyResponse(crate::ReadOnlyResponse::Firmware(firmware)),
-            DeviceEvent::ReadOnlyResponse(crate::ReadOnlyResponse::Firmware(crate::FirmwareInfo {
-                firmware_major: Some(Measured::reported(43)),
-                ..crate::FirmwareInfo::default()
-            }))
+            DeviceEvent::read_only_response(crate::ReadOnlyResponse::Firmware(firmware)),
+            DeviceEvent::read_only_response(crate::ReadOnlyResponse::Firmware(
+                crate::FirmwareInfo {
+                    firmware_major: Some(Measured::reported(43)),
+                    ..crate::FirmwareInfo::default()
+                },
+            ))
         );
     }
 
@@ -12139,7 +12240,7 @@ mod tests {
                     output.push(SessionOutput::Event(DeviceEvent::Telemetry(
                         TelemetryDelta::empty(ms(42)),
                     )));
-                    output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                    output.push(SessionOutput::Event(DeviceEvent::read_only_response(
                         crate::ReadOnlyResponse::Battery(crate::BatteryReadback::available(
                             crate::BatteryPagePayload::Raw(crate::BatteryRawPage::new(
                                 crate::BatteryPageMetadata::raw(

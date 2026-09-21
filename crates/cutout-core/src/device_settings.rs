@@ -263,11 +263,6 @@ impl DeviceSettingsState {
     }
 
     /// Records the outcome of this request, including failures before a write.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the process exhausts the request identity space.
-    #[allow(clippy::expect_used)]
     pub fn submission(
         &mut self,
         id: SettingId,
@@ -281,7 +276,7 @@ impl DeviceSettingsState {
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
                 next.checked_add(1)
             })
-            .expect("setting request identity exhausted");
+            .unwrap_or(u64::MAX);
         record.request_id = Some(request_id);
         record.transport_at = Some(submitted_at);
         record.completion = completion;

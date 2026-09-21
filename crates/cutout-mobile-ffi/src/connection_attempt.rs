@@ -182,6 +182,10 @@ impl CutoutSessionStateHandle {
     ///
     /// Returns `StaleConnection` when the token is no longer the current verified attempt, or a
     /// typed ride-map error when the map core cannot admit the connection.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "UniFFI owns the Arc argument at the binding boundary."
+    )]
     pub fn ensure_ride_recording_for_verified_connection(
         &self,
         ride_map: Arc<MobileRideMapCore>,
@@ -196,7 +200,7 @@ impl CutoutSessionStateHandle {
             .verified_attempt(&token)
             .ok_or(MobileRideMapCoreErrorDto::StaleConnection)?;
         ride_map.ensure_recording_for_vehicle_on_connection(
-            verified.platform_identifier().to_owned(),
+            verified.platform_identifier(),
             at_ms,
             verified.generation(),
         )

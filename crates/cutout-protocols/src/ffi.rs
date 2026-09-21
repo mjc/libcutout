@@ -598,7 +598,7 @@ mod tests {
                 )
                 .expect("typed cell page");
                 output.push(cutout_core::SessionOutput::Event(
-                    cutout_core::DeviceEvent::ReadOnlyResponse(
+                    cutout_core::DeviceEvent::read_only_response(
                         cutout_core::ReadOnlyResponse::Battery(readback),
                     ),
                 ));
@@ -677,7 +677,7 @@ mod tests {
                 )
                 .expect("typed cell page");
                 output.push(cutout_core::SessionOutput::Event(
-                    cutout_core::DeviceEvent::ReadOnlyResponse(
+                    cutout_core::DeviceEvent::read_only_response(
                         cutout_core::ReadOnlyResponse::Battery(readback),
                     ),
                 ));
@@ -744,7 +744,7 @@ mod tests {
                 )
                 .expect("typed cell page");
                 output.push(cutout_core::SessionOutput::Event(
-                    cutout_core::DeviceEvent::ReadOnlyResponse(
+                    cutout_core::DeviceEvent::read_only_response(
                         cutout_core::ReadOnlyResponse::Battery(readback),
                     ),
                 ));
@@ -807,7 +807,7 @@ mod tests {
                     )
                     .expect("typed cell page");
                     output.push(cutout_core::SessionOutput::Event(
-                        cutout_core::DeviceEvent::ReadOnlyResponse(
+                        cutout_core::DeviceEvent::read_only_response(
                             cutout_core::ReadOnlyResponse::Battery(readback),
                         ),
                     ));

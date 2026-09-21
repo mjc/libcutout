@@ -90,6 +90,10 @@ impl From<DeviceConnectionStep> for MobileDeviceSessionStepDto {
 #[uniffi::export]
 impl CutoutSessionStateHandle {
     /// Observes bytes only for the attempt that owned the native callback.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "UniFFI exports own byte buffers."
+    )]
     pub fn observe_connection_notification(
         &self,
         token: MobileConnectionAttemptTokenDto,
@@ -114,6 +118,10 @@ impl CutoutSessionStateHandle {
     }
 
     /// Retains the selected advertisement as a hint scoped to its attempt.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "UniFFI exports own optional byte buffers."
+    )]
     pub fn observe_connection_advertisement(
         &self,
         token: MobileConnectionAttemptTokenDto,
@@ -186,6 +194,10 @@ impl CutoutSessionStateHandle {
     }
 
     /// Decodes only for the currently verified attempt and pairs the resulting identity.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "UniFFI exports an owned input DTO."
+    )]
     pub fn ingest_device_session(
         &self,
         token: MobileConnectionAttemptTokenDto,
@@ -195,7 +207,7 @@ impl CutoutSessionStateHandle {
         let core_input = input.clone().into();
         let step = self.lock_inner().ingest(&token, &core_input);
         if let Some(step) = &step {
-            let telemetry = MobileTelemetrySnapshotDto::from(step.telemetry.clone());
+            let telemetry = MobileTelemetrySnapshotDto::from(step.telemetry);
             self.apply_phone_alarm_step(&input, &telemetry, true);
         }
         step.map(Into::into)

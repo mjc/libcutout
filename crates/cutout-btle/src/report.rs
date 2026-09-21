@@ -84,7 +84,6 @@ impl SessionBridgeReport {
 
 /// Timestamped semantic event emitted by the bridge.
 #[derive(Clone, Debug, Eq, PartialEq)]
-#[allow(clippy::large_enum_variant)]
 pub enum SessionBridgeEvent {
     /// Link-down event emitted by the protocol session after transport disconnect.
     LinkDown {
@@ -107,7 +106,7 @@ pub enum SessionBridgeEvent {
         monotonic_ms: MonotonicMs,
 
         /// Read-only response emitted by the protocol session.
-        response: ReadOnlyResponse,
+        response: Box<ReadOnlyResponse>,
     },
 
     /// Parser diagnostics emitted by the protocol session.
@@ -198,18 +197,20 @@ pub(crate) fn process_device_event(
         }
         DeviceEvent::ReadOnlyResponse(response) => {
             report.read_only_responses = report.read_only_responses.increment();
-            report.read_only_response_events.push(response.clone());
+            report
+                .read_only_response_events
+                .push(response.as_ref().clone());
             report.events.push(SessionBridgeEvent::ReadOnlyResponse {
                 monotonic_ms,
-                response: response.clone(),
+                response: Box::new(response.as_ref().clone()),
             });
-            match response {
+            match response.as_ref() {
                 ReadOnlyResponse::Firmware(firmware) => {
-                    report.firmware = Some(firmware);
+                    report.firmware = Some(*firmware);
                 }
                 ReadOnlyResponse::Settings(settings) => {
                     if settings.availability() == SettingsReadbackAvailability::Available {
-                        report.settings.push(settings);
+                        report.settings.push(*settings);
                     }
                 }
                 ReadOnlyResponse::Battery(_)

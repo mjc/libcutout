@@ -317,7 +317,7 @@ impl From<DeviceSettingSnapshot> for MobileSettingSnapshotDto {
             request_id: value.request_id,
             status: value.status.into(),
             transport: value.transport.map(Into::into),
-            age_ms: value.age.map(|age| age.as_milliseconds()),
+            age_ms: value.age.map(cutout_core::Duration::as_milliseconds),
             refusal: value
                 .refusal
                 .map(|reason| cutout_core::ControlRefusalReasonDto::from(reason).into()),
@@ -493,6 +493,10 @@ impl CutoutSessionStateHandle {
     }
 
     /// Submits one semantic value through the protocol owner.
+    ///
+    /// # Errors
+    ///
+    /// Returns the typed connection, validation, or protocol refusal.
     pub fn submit_setting(
         &self,
         token: MobileConnectionAttemptTokenDto,
@@ -675,6 +679,80 @@ mod tests {
 
     #[test]
     fn generic_settings_boundary_keeps_identity_refusals_and_requests_distinct() {
+        let (handle, token, descriptors, before, first_request_id) =
+            prepared_generic_settings_boundary();
+        assert!(!handle.mark_setting_transport(
+            token.clone(),
+            MobileSettingIdDto::HighBeam,
+            first_request_id + 1,
+            MobileSettingTransportStatusDto::Submitted,
+            2
+        ));
+        assert!(!handle.mark_setting_transport(
+            token.clone(),
+            MobileSettingIdDto::HighBeam,
+            first_request_id,
+            MobileSettingTransportStatusDto::Accepted,
+            2
+        ));
+        assert_eq!(handle.settings_snapshot(), before);
+        assert_eq!(
+            handle
+                .submit_setting(
+                    token.clone(),
+                    MobileSettingIdDto::HighBeam,
+                    MobileSettingValueDto::Number { value: 80 },
+                    3
+                )
+                .unwrap_err(),
+            MobileDeviceSettingRequestError::InvalidValue
+        );
+        assert_eq!(handle.settings_snapshot(), before);
+        assert_all_generic_writable_settings(&handle, &token, &descriptors);
+        assert!(!handle.settings_descriptors().validation_authorized);
+        let before_stale_callback = handle.settings_snapshot();
+        assert!(!handle.mark_setting_transport(
+            token.clone(),
+            MobileSettingIdDto::HighBeam,
+            first_request_id,
+            MobileSettingTransportStatusDto::Rejected,
+            3
+        ));
+        assert_eq!(handle.settings_snapshot(), before_stale_callback);
+        assert!(handle.authorize_device_controls(token.clone()));
+        assert!(handle.settings_descriptors().validation_authorized);
+        let next = handle.begin_connection_attempt("B".into(), 4);
+        assert!(!handle.mark_setting_transport(
+            token.clone(),
+            MobileSettingIdDto::HighBeam,
+            first_request_id,
+            MobileSettingTransportStatusDto::Submitted,
+            5
+        ));
+        assert_eq!(
+            handle
+                .submit_setting(
+                    token,
+                    MobileSettingIdDto::HighBeam,
+                    MobileSettingValueDto::Boolean { value: false },
+                    5
+                )
+                .unwrap_err(),
+            MobileDeviceSettingRequestError::ConnectionUnavailable
+        );
+        assert_eq!(handle.settings_descriptors().connection, next);
+        assert!(!handle.settings_descriptors().validation_authorized);
+        assert!(handle.settings_descriptors().descriptors.is_empty());
+        assert!(handle.settings_snapshot().settings.is_empty());
+    }
+
+    fn prepared_generic_settings_boundary() -> (
+        std::sync::Arc<CutoutSessionStateHandle>,
+        MobileConnectionAttemptTokenDto,
+        MobileSettingsDescriptorSnapshotDto,
+        MobileDeviceSettingsSnapshotDto,
+        u64,
+    ) {
         let handle = CutoutSessionStateHandle::new();
         let token = handle
             .begin_connection_attempt("A".into(), 0)
@@ -733,35 +811,15 @@ mod tests {
             headlight.status,
             MobileSettingStatusDto::WaitingForConfirmation
         );
-        assert!(headlight.request_id.is_some());
         let first_request_id = headlight.request_id.unwrap();
-        assert!(!handle.mark_setting_transport(
-            token.clone(),
-            MobileSettingIdDto::HighBeam,
-            first_request_id + 1,
-            MobileSettingTransportStatusDto::Submitted,
-            2
-        ));
-        assert!(!handle.mark_setting_transport(
-            token.clone(),
-            MobileSettingIdDto::HighBeam,
-            first_request_id,
-            MobileSettingTransportStatusDto::Accepted,
-            2
-        ));
-        assert_eq!(handle.settings_snapshot(), before);
-        assert_eq!(
-            handle
-                .submit_setting(
-                    token.clone(),
-                    MobileSettingIdDto::HighBeam,
-                    MobileSettingValueDto::Number { value: 80 },
-                    3
-                )
-                .unwrap_err(),
-            MobileDeviceSettingRequestError::InvalidValue
-        );
-        assert_eq!(handle.settings_snapshot(), before);
+        (handle, token, descriptors, before, first_request_id)
+    }
+
+    fn assert_all_generic_writable_settings(
+        handle: &CutoutSessionStateHandle,
+        token: &MobileConnectionAttemptTokenDto,
+        descriptors: &MobileSettingsDescriptorSnapshotDto,
+    ) {
         let writable: Vec<_> = descriptors
             .descriptors
             .iter()
@@ -787,10 +845,10 @@ mod tests {
                 .submit_setting(token.clone(), descriptor.id, value, 3)
                 .unwrap();
             assert!(step.result.error.is_none(), "{:?}", descriptor.id);
-            let settings = handle.settings_snapshot();
-            let setting = settings
+            let setting = handle
+                .settings_snapshot()
                 .settings
-                .iter()
+                .into_iter()
                 .find(|item| item.id == descriptor.id)
                 .unwrap();
             assert_eq!(setting.requested, Some(value));
@@ -820,41 +878,6 @@ mod tests {
                 }
             );
         }
-        assert!(!handle.settings_descriptors().validation_authorized);
-        let before_stale_callback = handle.settings_snapshot();
-        assert!(!handle.mark_setting_transport(
-            token.clone(),
-            MobileSettingIdDto::HighBeam,
-            first_request_id,
-            MobileSettingTransportStatusDto::Rejected,
-            3
-        ));
-        assert_eq!(handle.settings_snapshot(), before_stale_callback);
-        assert!(handle.authorize_device_controls(token.clone()));
-        assert!(handle.settings_descriptors().validation_authorized);
-        let next = handle.begin_connection_attempt("B".into(), 4);
-        assert!(!handle.mark_setting_transport(
-            token.clone(),
-            MobileSettingIdDto::HighBeam,
-            first_request_id,
-            MobileSettingTransportStatusDto::Submitted,
-            5
-        ));
-        assert_eq!(
-            handle
-                .submit_setting(
-                    token,
-                    MobileSettingIdDto::HighBeam,
-                    MobileSettingValueDto::Boolean { value: false },
-                    5
-                )
-                .unwrap_err(),
-            MobileDeviceSettingRequestError::ConnectionUnavailable
-        );
-        assert_eq!(handle.settings_descriptors().connection, next);
-        assert!(!handle.settings_descriptors().validation_authorized);
-        assert!(handle.settings_descriptors().descriptors.is_empty());
-        assert!(handle.settings_snapshot().settings.is_empty());
     }
 
     #[test]

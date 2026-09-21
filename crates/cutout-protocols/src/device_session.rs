@@ -439,10 +439,10 @@ mod tests {
             .outputs
             .iter()
             .find_map(|output| {
-                let SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
-                    cutout_core::ReadOnlyResponse::Settings(readback),
-                )) = output
-                else {
+                let SessionOutput::Event(DeviceEvent::ReadOnlyResponse(response)) = output else {
+                    return None;
+                };
+                let cutout_core::ReadOnlyResponse::Settings(readback) = response.as_ref() else {
                     return None;
                 };
                 readback

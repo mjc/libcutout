@@ -725,8 +725,10 @@ fn summarize_pevcap_replay(
             }
             SessionOutput::Event(DeviceEvent::ReadOnlyResponse(response)) => {
                 report.read_only_responses = report.read_only_responses.increment();
-                report.read_only_response_events.push(response.clone());
-                if let ReadOnlyResponse::Firmware(firmware) = response {
+                report
+                    .read_only_response_events
+                    .push(response.as_ref().clone());
+                if let ReadOnlyResponse::Firmware(firmware) = response.as_ref() {
                     report.firmware = Some(*firmware);
                 }
             }
@@ -1924,14 +1926,13 @@ fn aero_write_was_sent(report: &SessionBridgeReport) -> bool {
     report.protocol_writes.get() > 0 && report.writes.get() > 0
 }
 
-#[allow(clippy::too_many_lines)]
 fn parse_aero_write_command(setting: AeroSetting, value: &str) -> Result<DeviceCommand> {
     match setting {
         AeroSetting::Headlight => Ok(DeviceCommand::SetLights(parse_light_state(value)?)),
-        AeroSetting::HighBeam => semantic_setting(
+        AeroSetting::HighBeam => Ok(semantic_setting(
             SettingId::HighBeam,
             DeviceSettingValue::Boolean(parse_toggle(value)?),
-        ),
+        )),
         AeroSetting::RidingMode => semantic_choice(SettingId::RidingPreset, value, "riding mode"),
         AeroSetting::TiltbackSpeed => semantic_speed(SettingId::TiltbackSpeed, value, "tiltback"),
         AeroSetting::PedalHardness => semantic_range(
@@ -1940,18 +1941,19 @@ fn parse_aero_write_command(setting: AeroSetting, value: &str) -> Result<DeviceC
             0..=100,
             "MD hardness must be 0..=100 percent",
         ),
-        AeroSetting::Pwm if value == "off" => {
-            semantic_setting(SettingId::PwmTiltback, DeviceSettingValue::Disabled)
-        }
+        AeroSetting::Pwm if value == "off" => Ok(semantic_setting(
+            SettingId::PwmTiltback,
+            DeviceSettingValue::Disabled,
+        )),
         AeroSetting::Pwm => {
             let margin: i32 = value.parse().context("PWT margin must be 0..=70")?;
             if !(0..=70).contains(&margin) {
                 bail!("PWT margin must be 0..=70");
             }
-            semantic_setting(
+            Ok(semantic_setting(
                 SettingId::PwmTiltback,
                 DeviceSettingValue::Number(100 - margin),
-            )
+            ))
         }
         AeroSetting::AlarmSpeed => semantic_speed(SettingId::SpeedAlarmThreshold, value, "alarm"),
         AeroSetting::Angle => semantic_range(
@@ -2013,18 +2015,27 @@ fn parse_aero_write_command(setting: AeroSetting, value: &str) -> Result<DeviceC
             bail!("maximum charge raw value is read-only")
         }
         AeroSetting::WheelUnits => semantic_choice(SettingId::DisplayUnits, value, "wheel units"),
-        AeroSetting::HighSpeedMode => semantic_setting(
+        AeroSetting::HighSpeedMode
+        | AeroSetting::LowBatteryMode
+        | AeroSetting::TransportMode
+        | AeroSetting::TripReset => parse_aero_write_command_tail(setting, value),
+    }
+}
+
+fn parse_aero_write_command_tail(setting: AeroSetting, value: &str) -> Result<DeviceCommand> {
+    match setting {
+        AeroSetting::HighSpeedMode => Ok(semantic_setting(
             SettingId::HighSpeedMode,
             DeviceSettingValue::Boolean(parse_toggle(value)?),
-        ),
-        AeroSetting::LowBatteryMode => semantic_setting(
+        )),
+        AeroSetting::LowBatteryMode => Ok(semantic_setting(
             SettingId::LowBatteryMode,
             DeviceSettingValue::Boolean(parse_toggle(value)?),
-        ),
-        AeroSetting::TransportMode => semantic_setting(
+        )),
+        AeroSetting::TransportMode => Ok(semantic_setting(
             SettingId::TransportMode,
             DeviceSettingValue::Boolean(parse_toggle(value)?),
-        ),
+        )),
         AeroSetting::TripReset if value == "reset" => {
             Ok(DeviceCommand::InvokeAction(DeviceActionRequest {
                 id: DeviceActionId::ResetTripMeter,
@@ -2032,12 +2043,12 @@ fn parse_aero_write_command(setting: AeroSetting, value: &str) -> Result<DeviceC
             }))
         }
         AeroSetting::TripReset => bail!("trip-reset value must be reset"),
+        _ => unreachable!("tail parser received an unrelated Aero setting"),
     }
 }
 
-#[allow(clippy::unnecessary_wraps)]
-fn semantic_setting(id: SettingId, value: DeviceSettingValue) -> Result<DeviceCommand> {
-    Ok(DeviceCommand::SetSetting { id, value })
+fn semantic_setting(id: SettingId, value: DeviceSettingValue) -> DeviceCommand {
+    DeviceCommand::SetSetting { id, value }
 }
 
 fn semantic_range(
@@ -2050,7 +2061,7 @@ fn semantic_range(
     if !range.contains(&value) {
         bail!("{message}");
     }
-    semantic_setting(id, DeviceSettingValue::Number(value))
+    Ok(semantic_setting(id, DeviceSettingValue::Number(value)))
 }
 
 fn semantic_speed(id: SettingId, value: &str, label: &str) -> Result<DeviceCommand> {
@@ -2060,7 +2071,7 @@ fn semantic_speed(id: SettingId, value: &str, label: &str) -> Result<DeviceComma
     if !(10..=200).contains(&speed) {
         bail!("{label} speed must be 10..=200 km/h");
     }
-    semantic_setting(id, DeviceSettingValue::Number(speed * 10))
+    Ok(semantic_setting(id, DeviceSettingValue::Number(speed * 10)))
 }
 
 fn semantic_choice(id: SettingId, value: &str, label: &str) -> Result<DeviceCommand> {
@@ -2078,7 +2089,7 @@ fn semantic_choice(id: SettingId, value: &str, label: &str) -> Result<DeviceComm
             _ => bail!("{label} value must be hard, medium, or soft"),
         }
     };
-    semantic_setting(id, DeviceSettingValue::Choice(choice))
+    Ok(semantic_setting(id, DeviceSettingValue::Choice(choice)))
 }
 
 fn parse_toggle(value: &str) -> Result<bool> {
@@ -4569,56 +4580,9 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::too_many_lines)]
     fn cli_encodes_session_capture_to_pevcap_bytes() {
-        let summary = ConnectionSummary {
-            observation: PeripheralObservation {
-                identifier: "cb-uuid".to_owned(),
-                address: None,
-                name: Some("NF2557".to_owned()),
-                rssi: Some(rssi(-67)),
-                advertised_services: vec![Uuid::from_u128(
-                    0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb,
-                )]
-                .into(),
-                manufacturer_data: Vec::new().into(),
-            },
-            services: vec![ServiceSummary {
-                uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
-                primary: true,
-                characteristics: vec![cutout_btle::CharacteristicSummary {
-                    uuid: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
-                    service_uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
-                    properties: CharPropFlags::WRITE_WITHOUT_RESPONSE | CharPropFlags::NOTIFY,
-                }]
-                .into(),
-            }]
-            .into(),
-        };
-        let capture = SessionCapture {
-            records: vec![
-                SessionCaptureRecord::Link {
-                    monotonic_ms: MonotonicMs::new(0),
-                    max_write_len: Some(cutout_btle::NegotiatedWriteLimit::from_bytes(23)),
-                },
-                SessionCaptureRecord::Write {
-                    monotonic_ms: MonotonicMs::new(2),
-                    characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
-                    mode: WriteMode::WithoutResponse,
-                    bytes: CapturedBtlePacket::from_raw_bytes(bytes::Bytes::from_static(b"N")),
-                    provenance: WriteProvenance::Stable,
-                },
-                SessionCaptureRecord::Notification {
-                    monotonic_ms: MonotonicMs::new(3),
-                    characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
-                    service: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
-                    bytes: CapturedBtlePacket::from_raw_bytes(bytes::Bytes::from_static(
-                        b"NAME=NF2557",
-                    )),
-                },
-            ],
-            report: SessionBridgeReport::default(),
-        };
+        let summary = pevcap_test_summary();
+        let capture = pevcap_test_capture();
 
         let bytes = encode_session_capture_pevcap(
             &capture,
@@ -4675,6 +4639,60 @@ mod tests {
             Some(WriteMode::WithoutResponse)
         );
         assert_eq!(decoded.records[2].bytes.as_ref(), b"NAME=NF2557");
+    }
+
+    fn pevcap_test_summary() -> ConnectionSummary {
+        ConnectionSummary {
+            observation: PeripheralObservation {
+                identifier: "cb-uuid".to_owned(),
+                address: None,
+                name: Some("NF2557".to_owned()),
+                rssi: Some(rssi(-67)),
+                advertised_services: vec![Uuid::from_u128(
+                    0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb,
+                )]
+                .into(),
+                manufacturer_data: Vec::new().into(),
+            },
+            services: vec![ServiceSummary {
+                uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+                primary: true,
+                characteristics: vec![cutout_btle::CharacteristicSummary {
+                    uuid: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
+                    service_uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+                    properties: CharPropFlags::WRITE_WITHOUT_RESPONSE | CharPropFlags::NOTIFY,
+                }]
+                .into(),
+            }]
+            .into(),
+        }
+    }
+
+    fn pevcap_test_capture() -> SessionCapture {
+        SessionCapture {
+            records: vec![
+                SessionCaptureRecord::Link {
+                    monotonic_ms: MonotonicMs::new(0),
+                    max_write_len: Some(cutout_btle::NegotiatedWriteLimit::from_bytes(23)),
+                },
+                SessionCaptureRecord::Write {
+                    monotonic_ms: MonotonicMs::new(2),
+                    characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
+                    mode: WriteMode::WithoutResponse,
+                    bytes: CapturedBtlePacket::from_raw_bytes(bytes::Bytes::from_static(b"N")),
+                    provenance: WriteProvenance::Stable,
+                },
+                SessionCaptureRecord::Notification {
+                    monotonic_ms: MonotonicMs::new(3),
+                    characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
+                    service: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+                    bytes: CapturedBtlePacket::from_raw_bytes(bytes::Bytes::from_static(
+                        b"NAME=NF2557",
+                    )),
+                },
+            ],
+            report: SessionBridgeReport::default(),
+        }
     }
 
     #[test]
@@ -5341,7 +5359,7 @@ mod tests {
             ),
             cutout_core::BatteryInfo::default(),
         ));
-        let outputs = [SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+        let outputs = [SessionOutput::Event(DeviceEvent::read_only_response(
             response.clone(),
         ))];
 
@@ -6747,15 +6765,35 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::too_many_lines)]
     fn aero_setting_readback_matches_all_decoded_source_backed_fields() {
-        let entry = |id, value| cutout_core::SettingsEntry {
-            field: cutout_core::RawFieldValue::new(id, value),
-            source: ValueSource::Reported,
-            quality: ValueQuality::Known,
-            verification: VerificationStatus::HardwareVerified,
-        };
-        let cases = [
+        assert_aero_setting_readback_cases(aero_setting_readback_cases_one());
+        assert_aero_setting_readback_cases(aero_setting_readback_cases_two());
+    }
+
+    fn assert_aero_setting_readback_cases(
+        cases: impl IntoIterator<Item = (DeviceCommand, u16, i64)>,
+    ) {
+        for (command, field_id, value) in cases {
+            let readback = SettingsReadback::available([
+                Some(cutout_core::SettingsEntry {
+                    field: cutout_core::RawFieldValue::new(field_id, value),
+                    source: ValueSource::Reported,
+                    quality: ValueQuality::Known,
+                    verification: VerificationStatus::HardwareVerified,
+                }),
+                None,
+                None,
+                None,
+            ]);
+            assert_eq!(
+                aero_setting_readback_matches(command, &[readback]),
+                Some(true)
+            );
+        }
+    }
+
+    fn aero_setting_readback_cases_one() -> [(DeviceCommand, u16, i64); 8] {
+        [
             (
                 DeviceCommand::SetSetting {
                     id: SettingId::PwmTiltback,
@@ -6820,6 +6858,11 @@ mod tests {
                 0x0844,
                 33,
             ),
+        ]
+    }
+
+    fn aero_setting_readback_cases_two() -> [(DeviceCommand, u16, i64); 7] {
+        [
             (
                 DeviceCommand::SetSetting {
                     id: SettingId::LateralTiltLimit,
@@ -6876,16 +6919,7 @@ mod tests {
                 0x0839,
                 1,
             ),
-        ];
-
-        for (command, field_id, value) in cases {
-            let readback =
-                SettingsReadback::available([Some(entry(field_id, value)), None, None, None]);
-            assert_eq!(
-                aero_setting_readback_matches(command, &[readback]),
-                Some(true)
-            );
-        }
+        ]
     }
 
     #[test]

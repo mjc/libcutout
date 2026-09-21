@@ -137,7 +137,7 @@ fn push_begode_frame(
                 output.push(SessionOutput::Event(DeviceEvent::Telemetry(
                     summary.to_delta(monotonic_ms),
                 )))?;
-                output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                output.push(SessionOutput::Event(DeviceEvent::read_only_response(
                     summary.to_battery_response(),
                 )))?;
                 Ok(SemanticEventCount::from_events(2))
@@ -146,7 +146,7 @@ fn push_begode_frame(
         },
         0x02 | 0x03 => match BegodeBmsCellPage::decode(frame) {
             Ok(page) => {
-                output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                output.push(SessionOutput::Event(DeviceEvent::read_only_response(
                     page.to_battery_response(),
                 )))?;
                 Ok(SemanticEventCount::from_events(1))
@@ -159,10 +159,10 @@ fn push_begode_frame(
                 output.push(SessionOutput::Event(DeviceEvent::Telemetry(
                     context.live_b_to_delta(telemetry, monotonic_ms),
                 )))?;
-                output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                output.push(SessionOutput::Event(DeviceEvent::read_only_response(
                     context.live_b_to_settings_response(telemetry),
                 )))?;
-                output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                output.push(SessionOutput::Event(DeviceEvent::read_only_response(
                     telemetry.to_diagnostics_response(),
                 )))?;
                 Ok(SemanticEventCount::from_events(3))

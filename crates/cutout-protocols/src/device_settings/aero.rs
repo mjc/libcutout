@@ -5,7 +5,6 @@ use super::{
     choices, number, readback::SettingObservation, speed_control,
 };
 
-#[allow(clippy::too_many_lines)]
 pub(super) fn binding(id: SettingId) -> Option<SettingBinding> {
     let (control, observation, encoder) = match id {
         SettingId::HighBeam => (
@@ -77,6 +76,13 @@ pub(super) fn binding(id: SettingId) -> Option<SettingBinding> {
             ),
             SettingEncoderBinding::Nosfet,
         ),
+        _ => return binding_remaining(id),
+    };
+    Some(SettingBinding::new(control, observation, encoder))
+}
+
+fn binding_remaining(id: SettingId) -> Option<SettingBinding> {
+    let (control, observation, encoder) = match id {
         SettingId::DisplayUnits => (
             choices(&[
                 (0, "settings.choice.metric", true),

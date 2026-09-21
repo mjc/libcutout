@@ -2014,11 +2014,11 @@ impl From<SessionOutput> for SessionOutputDto {
         match output {
             SessionOutput::Transport(action) => Self::Transport(action.into()),
             SessionOutput::Event(DeviceEvent::ReadOnlyResponse(response)) => {
-                Self::ReadOnly(response.into())
+                Self::ReadOnly(response.as_ref().clone().into())
             }
             SessionOutput::Event(event) => match SessionEventDto::from_event(event) {
                 SessionEventProjection::Event(event) => Self::Event(event),
-                SessionEventProjection::ReadOnly(response) => Self::ReadOnly(response.into()),
+                SessionEventProjection::ReadOnly(response) => Self::ReadOnly((*response).into()),
             },
             SessionOutput::NotificationIngest(outcome) => Self::NotificationIngest(outcome.into()),
         }
@@ -2450,10 +2450,9 @@ pub enum SessionEventDto {
     DiagnosticError(DiagnosticErrorDto),
 }
 
-#[allow(clippy::large_enum_variant)]
 enum SessionEventProjection {
     Event(SessionEventDto),
-    ReadOnly(ReadOnlyResponse),
+    ReadOnly(Box<ReadOnlyResponse>),
 }
 
 impl SessionEventDto {
@@ -2479,7 +2478,9 @@ impl SessionEventDto {
             DeviceEvent::DiagnosticError(error) => {
                 SessionEventProjection::Event(Self::DiagnosticError(error.into()))
             }
-            DeviceEvent::ReadOnlyResponse(response) => SessionEventProjection::ReadOnly(response),
+            DeviceEvent::ReadOnlyResponse(response) => {
+                SessionEventProjection::ReadOnly(Box::new(response.as_ref().clone()))
+            }
         }
     }
 }
@@ -3228,19 +3229,20 @@ mod tests {
             monotonic_ms: MonotonicTimestamp::new(7),
             max_write_len: Some(write_len(182)),
         })));
-        let readback = SessionOutputDto::from(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
-            ReadOnlyResponse::Settings(SettingsReadback::available([
-                Some(SettingsEntry {
-                    field: RawFieldValue::new(0x0014, 30),
-                    source: ValueSource::Reported,
-                    quality: ValueQuality::Known,
-                    verification: VerificationStatus::HardwareVerified,
-                }),
-                None,
-                None,
-                None,
-            ])),
-        )));
+        let readback =
+            SessionOutputDto::from(SessionOutput::Event(DeviceEvent::read_only_response(
+                ReadOnlyResponse::Settings(SettingsReadback::available([
+                    Some(SettingsEntry {
+                        field: RawFieldValue::new(0x0014, 30),
+                        source: ValueSource::Reported,
+                        quality: ValueQuality::Known,
+                        verification: VerificationStatus::HardwareVerified,
+                    }),
+                    None,
+                    None,
+                    None,
+                ])),
+            )));
 
         assert_eq!(
             write,
