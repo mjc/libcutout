@@ -255,7 +255,7 @@ final class CutoutAppModel {
             phoneAlarmDeliveryError = nil
         } catch {
             syncPhoneAlarmPreferences()
-            phoneAlarmDeliveryError = error.localizedDescription
+            phoneAlarmDeliveryError = Self.phoneAlarmErrorText(error)
         }
     }
 
@@ -270,7 +270,7 @@ final class CutoutAppModel {
             phoneAlarmDeliveryError = nil
         } catch {
             syncPhoneAlarmPreferences()
-            phoneAlarmDeliveryError = error.localizedDescription
+            phoneAlarmDeliveryError = Self.phoneAlarmErrorText(error)
         }
     }
 
@@ -310,7 +310,7 @@ final class CutoutAppModel {
     private func syncPhoneAlarmPreferences() {
         if let error = core.rideSessionStateHandle.phoneAlarmActivationError() {
             phoneAlarmSettings = nil
-            phoneAlarmDeliveryError = error.localizedDescription
+            phoneAlarmDeliveryError = Self.phoneAlarmErrorText(error)
             return
         }
         phoneAlarmSettings = core.rideSessionStateHandle.phoneAlarmPreferences()
@@ -353,10 +353,26 @@ final class CutoutAppModel {
                     monotonicMilliseconds: core.now().rawValue
                 )
                 if accepted {
-                    phoneAlarmDeliveryError = error.localizedDescription
+                    phoneAlarmDeliveryError = Self.phoneAlarmErrorText(error)
                 }
             }
         }
+    }
+
+    static func phoneAlarmErrorText(_ error: any Error) -> String {
+        guard let error = error as? MobilePhoneAlarmError else {
+            return error.localizedDescription
+        }
+        let key = switch error {
+        case .NoActiveDevice: "phone_alarm.error.no_active_device"
+        case .InvalidDeviceIdentity: "phone_alarm.error.invalid_device_identity"
+        case .InvalidPwmDutyThreshold: "phone_alarm.error.invalid_pwm_duty"
+        case .InvalidPwmHeadroomThreshold: "phone_alarm.error.invalid_pwm_headroom"
+        case .TooManyDevices: "phone_alarm.error.too_many_devices"
+        case .DeviceIdentityChanged: "phone_alarm.error.device_changed"
+        case .StorageFailure: "phone_alarm.error.storage_failure"
+        }
+        return localizedAppText(key)
     }
 
     static func meaningfulDeviceName(_ candidate: String?, identity: String) -> String? {

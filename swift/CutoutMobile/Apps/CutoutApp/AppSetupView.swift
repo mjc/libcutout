@@ -99,7 +99,10 @@ private struct PhoneRideAlarmSettingsView: View {
         Form {
             if let settings = model.phoneAlarmSettings {
                 let deviceIdentity = settings.deviceIdentity
-                Section(model.phoneAlarmDeviceName ?? deviceIdentity) {
+                Section(
+                    model.phoneAlarmDeviceName
+                        ?? localizedAppText("ride_map.vehicle_name_unavailable")
+                ) {
                     Toggle(
                         localizedAppText("phone_alarm.enabled"),
                         isOn: Binding(

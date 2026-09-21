@@ -49,6 +49,23 @@ final class PhoneRideAlarmTests: XCTestCase {
     }
 
     @MainActor
+    func testPhoneAlarmErrorsUseLocalizedMessages() {
+        let expected: [(MobilePhoneAlarmError, String)] = [
+            (.NoActiveDevice, "No wheel is selected."),
+            (.InvalidDeviceIdentity, "The selected wheel identity is invalid."),
+            (.InvalidPwmDutyThreshold, "PWM duty must be between 1% and 100%."),
+            (.InvalidPwmHeadroomThreshold, "PWM headroom must be between 0% and 99%."),
+            (.TooManyDevices, "Too many phone alarm settings are saved."),
+            (.DeviceIdentityChanged, "The selected wheel changed. Try again."),
+            (.StorageFailure, "Phone alarm settings could not be saved."),
+        ]
+
+        for (error, message) in expected {
+            XCTAssertEqual(CutoutAppModel.phoneAlarmErrorText(error), message)
+        }
+    }
+
+    @MainActor
     func testPermissionCompletionCannotEnableAReplacementDevice() async throws {
         let fixture = CutoutUITestSessionFixture.autoCriticalVescLiveActivity
         let firstIdentity = fixture.candidate.platformIdentifier

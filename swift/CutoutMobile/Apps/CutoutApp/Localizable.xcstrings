@@ -107,6 +107,34 @@
       "comment" : "Toggle for phone-generated alarms.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Phone-generated alarms" } } }
     },
+    "phone_alarm.error.no_active_device" : {
+      "comment" : "Phone alarm settings error when no wheel is selected.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "No wheel is selected." } } }
+    },
+    "phone_alarm.error.invalid_device_identity" : {
+      "comment" : "Phone alarm settings error for an invalid wheel identity.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "The selected wheel identity is invalid." } } }
+    },
+    "phone_alarm.error.invalid_pwm_duty" : {
+      "comment" : "Phone alarm settings error for an invalid PWM duty threshold.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "PWM duty must be between 1%% and 100%%." } } }
+    },
+    "phone_alarm.error.invalid_pwm_headroom" : {
+      "comment" : "Phone alarm settings error for an invalid PWM headroom threshold.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "PWM headroom must be between 0%% and 99%%." } } }
+    },
+    "phone_alarm.error.too_many_devices" : {
+      "comment" : "Phone alarm settings error when the bounded wheel preference store is full.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Too many phone alarm settings are saved." } } }
+    },
+    "phone_alarm.error.device_changed" : {
+      "comment" : "Phone alarm settings error when the selected wheel changes during a write.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "The selected wheel changed. Try again." } } }
+    },
+    "phone_alarm.error.storage_failure" : {
+      "comment" : "Phone alarm settings error when durable storage fails.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Phone alarm settings could not be saved." } } }
+    },
     "phone_alarm.pwm_section" : {
       "comment" : "Settings section for PWM duty alarm threshold.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "PWM alarm threshold" } } }
