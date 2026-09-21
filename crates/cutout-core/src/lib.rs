@@ -7550,6 +7550,7 @@ pub enum TransportAction {
 
 /// Semantic event emitted by a protocol session.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub enum DeviceEvent {
     /// Link-up event accepted by the session.
     LinkUp(LinkInfo),
@@ -7581,6 +7582,7 @@ pub enum DeviceEvent {
 
 /// Output emitted by a protocol session for the host to drain.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub enum SessionOutput {
     /// Transport action to execute outside the protocol engine.
     Transport(TransportAction),
@@ -9225,7 +9227,7 @@ mod tests {
             ),
             Some(Speed::from_millimetres_per_second(i32::MAX))
         );
-        assert_eq!(BatteryLevel::from_percent(255).as_ratio(), 1.0);
+        assert!((BatteryLevel::from_percent(255).as_ratio() - 1.0).abs() < f64::EPSILON);
         assert_eq!(
             BatteryLevel::try_from_percent(100).map(BatteryLevel::as_percent),
             Some(100)

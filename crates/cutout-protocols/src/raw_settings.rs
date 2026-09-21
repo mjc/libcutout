@@ -315,9 +315,9 @@ mod tests {
             retained.status,
             SettingCommandStatus::WaitingForConfirmation
         );
-        let pages = owner.raw_settings_snapshot().pages;
-        assert_eq!(pages.len(), 1);
-        let retained8 = pages
+        let raw_pages = owner.raw_settings_snapshot().pages;
+        assert_eq!(raw_pages.len(), 1);
+        let retained8 = raw_pages
             .iter()
             .find(|page| page.key == RawSettingsPageKey::Veteran { selector: 8 })
             .unwrap();

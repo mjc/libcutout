@@ -8,6 +8,7 @@ use cutout_core::{
 };
 
 use crate::control_wire::{BegodeWire, NosfetWire, VeteranWire, WireCommand};
+#[allow(clippy::wildcard_imports)]
 use crate::settings_wire::*;
 use crate::{
     AeroProbe, FalconProbe, RefloatReadOnlyRequest, VescCanReadOnlyRequest, VescReadOnlyCodec,

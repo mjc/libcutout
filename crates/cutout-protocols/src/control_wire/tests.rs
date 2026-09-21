@@ -1,3 +1,5 @@
+#![allow(clippy::needless_raw_string_hashes)]
+
 use std::io::Write;
 use std::process::{Command, Output, Stdio};
 

@@ -7,6 +7,7 @@ use cutout_core::{
     WritePayload,
 };
 
+#[allow(clippy::wildcard_imports)]
 use crate::settings_wire::*;
 use crate::{
     NOSFET_AERO_REGISTRY_ENTRY, NosfetAeroModel, ProtocolModelSpec, StationarySettingsWriteSession,
@@ -40,7 +41,7 @@ pub struct AeroSettingsReadback {
     /// Current simulated voltage correction, when explicitly set.
     pub voltage_correction: Option<VeteranVoltageCorrection>,
 
-    /// Current official MxV raw maximum-charge value.
+    /// Current official `MxV` raw maximum-charge value.
     pub max_charge_voltage_raw: Option<VeteranMaxChargeVoltageRaw>,
 
     /// Current numeric MD pedal hardness, when the simulator has a value.
@@ -435,6 +436,7 @@ impl AeroSettingsSimulator {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     fn settings_readback(&self) -> SettingsReadback {
         SettingsReadback::available([
             self.readback.tiltback_speed.map(|value| {
@@ -782,8 +784,10 @@ mod tests {
 
     #[test]
     fn simulator_readback_event_includes_page_eight_settings() {
-        let mut initial = AeroSettingsReadback::default();
-        initial.max_charge_voltage_raw = VeteranMaxChargeVoltageRaw::new(46);
+        let initial = AeroSettingsReadback {
+            max_charge_voltage_raw: VeteranMaxChargeVoltageRaw::new(46),
+            ..Default::default()
+        };
         let mut simulator = AeroSettingsSimulator::new(initial);
         let now = MonotonicTimestamp::new(10);
         let commands = [

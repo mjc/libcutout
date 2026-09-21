@@ -37,6 +37,7 @@ impl ValidationGrant {
         }
     }
 
+    #[allow(clippy::trivially_copy_pass_by_ref)]
     fn matches(&self, token: &ConnectionAttemptToken) -> bool {
         self.generation == token.generation()
     }

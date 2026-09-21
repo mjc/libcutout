@@ -71,10 +71,14 @@ impl RideLifecycleState {
     ///
     /// Returns [`TransitionError::Invalid`] when the event is not valid for the current state.
     pub fn apply(self, event: RideEvent) -> Result<Self, TransitionError> {
-        self.transition(event).map(|transition| transition.next())
+        self.transition(event).map(ValidatedRideTransition::next)
     }
 
     /// Validates an event and retains the state it was validated against.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TransitionError::Invalid`] when the event is not valid for the current state.
     pub fn transition(self, event: RideEvent) -> Result<ValidatedRideTransition, TransitionError> {
         let next = match (self, event) {
             (Self::Draft, RideEvent::Start)

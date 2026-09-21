@@ -59,21 +59,21 @@ impl Schema {
 
 fn field_payload(field: BinaryField, value: u8) -> WritePayload {
     let mut frame = ArrayVec::<u8, 33>::new();
-    frame
-        .try_extend_from_slice(&field.magic)
-        .expect("binary field magic fits");
+    for &byte in &field.magic {
+        frame.push(byte);
+    }
     frame.push(field.offset + 5);
-    frame
-        .try_extend_from_slice(field.bank)
-        .expect("binary field bank fits");
+    for &byte in field.bank {
+        frame.push(byte);
+    }
     while frame.len() < usize::from(field.offset) {
         frame.push(0x80);
     }
     frame.push(value);
     let crc = crc32fast::hash(&frame).to_be_bytes();
-    frame
-        .try_extend_from_slice(&crc)
-        .expect("binary field CRC fits");
+    for &byte in &crc {
+        frame.push(byte);
+    }
     payload(&frame)
 }
 

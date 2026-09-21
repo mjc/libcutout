@@ -5,6 +5,7 @@ use super::{
     choices, number, readback::SettingObservation, speed_control,
 };
 
+#[allow(clippy::too_many_lines)]
 pub(super) fn binding(id: SettingId) -> Option<SettingBinding> {
     let (control, observation, encoder) = match id {
         SettingId::HighBeam => (

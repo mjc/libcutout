@@ -1,5 +1,17 @@
 //! Concrete `UniFFI` mobile binding surface for Cutout.
 
+#![allow(
+    clippy::assigning_clones,
+    clippy::clone_on_copy,
+    clippy::if_not_else,
+    clippy::map_unwrap_or,
+    clippy::match_same_arms,
+    clippy::missing_errors_doc,
+    clippy::needless_pass_by_value,
+    clippy::redundant_closure_for_method_calls,
+    clippy::too_many_lines
+)]
+
 mod rgb;
 pub use rgb::*;
 mod connection_attempt;
@@ -13651,7 +13663,7 @@ mod tests {
         assert!(core.is_ready());
         assert!(core.start_gps_only(1).is_ok());
         database.shutdown().expect("database shuts down");
-        let _ = std::fs::remove_file(path);
+        let _ = fs::remove_file(path);
     }
 
     #[test]
@@ -16521,33 +16533,6 @@ mod tests {
         }
     }
 
-    const fn reported_voltage(value: i32) -> VoltageReading {
-        VoltageReading {
-            value: Voltage { value },
-            source: MobileValueSourceDto::Reported,
-            quality: MobileValueQualityDto::Known,
-            verification: MobileVerificationStatusDto::SourceVerified,
-        }
-    }
-
-    const fn reported_battery_current(value: i32) -> BatteryCurrentReading {
-        BatteryCurrentReading {
-            value: BatteryCurrent { value },
-            source: MobileValueSourceDto::Reported,
-            quality: MobileValueQualityDto::Known,
-            verification: MobileVerificationStatusDto::SourceVerified,
-        }
-    }
-
-    const fn reported_phase_current(value: i32) -> PhaseCurrentReading {
-        PhaseCurrentReading {
-            value: PhaseCurrent { value },
-            source: MobileValueSourceDto::Reported,
-            quality: MobileValueQualityDto::Known,
-            verification: MobileVerificationStatusDto::SourceVerified,
-        }
-    }
-
     const fn notification_len(value: usize) -> NotificationByteLenDto {
         NotificationByteLenDto { bytes: value }
     }
@@ -16578,10 +16563,6 @@ mod tests {
 
     const fn mobile_event_count(value: u64) -> MobileSemanticEventCountDto {
         MobileSemanticEventCountDto { count: value }
-    }
-
-    const fn mobile_diag_count(value: u64) -> MobileParserDiagnosticCountDto {
-        MobileParserDiagnosticCountDto { count: value }
     }
 
     const fn mobile_write_len(value: u16) -> MobileTransportWriteLimitDto {
@@ -20065,7 +20046,7 @@ mod tests {
                 course_degrees: None,
                 course_accuracy_degrees: None,
             }];
-            let stale = state
+            let stale_points = state
                 .ingest_location_batch(
                     original.recording_token,
                     4_000,
@@ -20074,7 +20055,7 @@ mod tests {
                 )
                 .unwrap();
             assert!(
-                stale.is_empty(),
+                stale_points.is_empty(),
                 "old input generation cannot write to resumed or new ride"
             );
             assert_eq!(

@@ -263,6 +263,11 @@ impl DeviceSettingsState {
     }
 
     /// Records the outcome of this request, including failures before a write.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the process exhausts the request identity space.
+    #[allow(clippy::expect_used)]
     pub fn submission(
         &mut self,
         id: SettingId,
@@ -293,7 +298,9 @@ impl DeviceSettingsState {
         match outcome {
             SettingSubmissionOutcome::Accepted => {}
             SettingSubmissionOutcome::Refused(reason) => record.state.refuse(reason),
-            SettingSubmissionOutcome::Failed => record.state.fail(),
+            SettingSubmissionOutcome::Failed => {
+                record.state.fail();
+            }
         }
         request_id
     }
@@ -336,7 +343,7 @@ impl DeviceSettingsState {
         match status {
             SettingTransportStatus::Submitted => record.state.transport_submitted(at),
             SettingTransportStatus::Rejected | SettingTransportStatus::Cancelled => {
-                record.state.fail()
+                record.state.fail();
             }
             SettingTransportStatus::Queued => {}
             SettingTransportStatus::Accepted => unreachable!(),

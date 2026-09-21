@@ -966,6 +966,11 @@ impl RideMapRecorder {
     }
 
     /// Applies a transition validated against this recorder's current state.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TransitionError::Invalid`] when the transition does not match the recorder's
+    /// current state.
     pub fn apply_transition(
         &mut self,
         transition: ValidatedRideTransition,
@@ -974,6 +979,11 @@ impl RideMapRecorder {
     }
 
     /// Applies a transition at a monotonic timestamp.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TransitionError::Invalid`] when the transition does not match the recorder's
+    /// current state.
     pub fn apply_transition_at(
         &mut self,
         transition: ValidatedRideTransition,
@@ -1009,11 +1019,14 @@ impl RideMapRecorder {
         self.active_started_at_milliseconds = match (transition.previous(), state) {
             (
                 RideLifecycleState::Active,
-                RideLifecycleState::Paused | RideLifecycleState::Interrupted,
+                RideLifecycleState::Paused
+                | RideLifecycleState::Interrupted
+                | RideLifecycleState::Stopped,
             )
-            | (RideLifecycleState::Active, RideLifecycleState::Stopped)
-            | (RideLifecycleState::Paused, RideLifecycleState::Stopped)
-            | (RideLifecycleState::Interrupted, RideLifecycleState::Stopped) => None,
+            | (
+                RideLifecycleState::Paused | RideLifecycleState::Interrupted,
+                RideLifecycleState::Stopped,
+            ) => None,
             (
                 RideLifecycleState::Paused | RideLifecycleState::Interrupted,
                 RideLifecycleState::Active,

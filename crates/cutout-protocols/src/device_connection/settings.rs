@@ -511,6 +511,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn delayed_setting_stages_keep_identity_and_start_confirmation_after_last_receipt() {
         use cutout_core::SettingTransportStatus;
         let mut owner = DeviceConnectionSession::default();
@@ -948,6 +949,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn ordinary_aero_settings_emit_checked_frames_only_with_current_stationary_evidence() {
         let profile = crate::aero_control_profile();
         for descriptor in profile

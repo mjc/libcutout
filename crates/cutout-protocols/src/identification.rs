@@ -398,6 +398,7 @@ impl DeviceDetectionSession {
 
     /// Observes one ordered detection event into the Rust-owned session root.
     #[must_use]
+    #[allow(clippy::too_many_lines)]
     pub fn observe(
         &mut self,
         state: &mut CutoutSessionState,
@@ -825,12 +826,11 @@ impl ProtocolFamilyState {
 
     fn into_classification(self) -> ProtocolFamilyClassification {
         match self {
-            Self::Unknown | Self::Conflict => ProtocolFamilyClassification::Pending,
+            Self::Unknown | Self::Conflict | Self::Vesc => ProtocolFamilyClassification::Pending,
             Self::VeteranLeaperkimNosfet => {
                 ProtocolFamilyClassification::Known(DeviceFamily::NosfetAero)
             }
             Self::BegodeGotway => ProtocolFamilyClassification::Known(DeviceFamily::BegodeFalcon),
-            Self::Vesc => ProtocolFamilyClassification::Pending,
         }
     }
 }
@@ -1242,6 +1242,7 @@ fn ascii_eq_ignore_case(left: &[u8], right: &[u8]) -> bool {
 }
 
 #[cfg(test)]
+#[allow(unused_qualifications)]
 mod tests {
     use cutout_core::{
         Capabilities, Duration, GattChannel, GattFingerprint, GattRoles, ModelRegistryEntry,

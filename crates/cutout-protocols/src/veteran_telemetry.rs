@@ -791,7 +791,7 @@ pub const AERO_FIELD_HIGH_SPEED_MODE: u16 = 0x083d;
 /// Aero page-8 beeper volume, in percent.
 pub const AERO_FIELD_BEEPER_VOLUME_PERCENT: u16 = 0x083f;
 
-/// Aero page-8 maximum-charge voltage raw MxV value (official range 0..=70).
+/// Aero page-8 maximum-charge voltage raw `MxV` value (official range 0..=70).
 pub const AERO_FIELD_MAX_CHARGE_VOLTAGE_RAW: u16 = 0x0840;
 
 /// Aero page-8 dynamic assist, in percent.

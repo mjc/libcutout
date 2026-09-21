@@ -2956,7 +2956,7 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         )
     }
 
-    func testRideStateDoesNotClaimDerivedPowerForZeroCurrent() {
+    func testRideStateClaimsDerivedPowerForZeroCurrent() {
         let rideState = EucRideScreenState(
             phase: .live,
             displayState: RideDisplayState(
@@ -2967,7 +2967,7 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
             )
         )
 
-        XCTAssertEqual(rideState.visibleFieldCoverage.source(for: .power), .explicitlyUnavailable)
+        XCTAssertEqual(rideState.visibleFieldCoverage.source(for: .power), .derivedTelemetry)
     }
 
     func testDisplayStateProvidesDebugRowsForLiveValidation() {

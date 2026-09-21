@@ -534,7 +534,7 @@ final class PevScreenThemeTests: XCTestCase {
             power: Power(value: 0)
         )
         let zeroText = RideUnits.powerText(milliwatts: 0, fractionDigits: 2)
-        XCTAssertEqual(reportedZero.powerPresentation, .reported(Power(value: 0)))
+        XCTAssertEqual(reportedZero.powerPresentation, .calculatedPackCurrent(Power(value: 0)))
         XCTAssertEqual(
             reportedZero.powerPresentation.metricValue,
             .available(display: zeroText, accessibility: zeroText)

@@ -1112,7 +1112,7 @@ mod tests {
                     ..
                 } => {
                     let mut values: Vec<_> = (*minimum..=*maximum)
-                        .step_by(*step as usize)
+                        .step_by(usize::try_from(*step).unwrap_or(1))
                         .map(DeviceSettingValue::Number)
                         .collect();
                     if *can_disable {

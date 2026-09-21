@@ -2126,6 +2126,10 @@ impl RideDatabase {
     /// rolls back finalization instead of leaving recovery with a saved ride and no new session.
     /// Retrying after a committed transaction observes the replacement as the next recoverable
     /// ride after the next database acquisition, so recovery cannot duplicate it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] when the transaction or replacement validation fails.
     pub fn settle_recovered_ride(
         &self,
         ride_id: RideId,

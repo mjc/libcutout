@@ -1924,6 +1924,7 @@ fn aero_write_was_sent(report: &SessionBridgeReport) -> bool {
     report.protocol_writes.get() > 0 && report.writes.get() > 0
 }
 
+#[allow(clippy::too_many_lines)]
 fn parse_aero_write_command(setting: AeroSetting, value: &str) -> Result<DeviceCommand> {
     match setting {
         AeroSetting::Headlight => Ok(DeviceCommand::SetLights(parse_light_state(value)?)),
@@ -2034,6 +2035,7 @@ fn parse_aero_write_command(setting: AeroSetting, value: &str) -> Result<DeviceC
     }
 }
 
+#[allow(clippy::unnecessary_wraps)]
 fn semantic_setting(id: SettingId, value: DeviceSettingValue) -> Result<DeviceCommand> {
     Ok(DeviceCommand::SetSetting { id, value })
 }
@@ -6745,6 +6747,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn aero_setting_readback_matches_all_decoded_source_backed_fields() {
         let entry = |id, value| cutout_core::SettingsEntry {
             field: cutout_core::RawFieldValue::new(id, value),

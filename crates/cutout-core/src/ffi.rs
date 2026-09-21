@@ -2450,6 +2450,7 @@ pub enum SessionEventDto {
     DiagnosticError(DiagnosticErrorDto),
 }
 
+#[allow(clippy::large_enum_variant)]
 enum SessionEventProjection {
     Event(SessionEventDto),
     ReadOnly(ReadOnlyResponse),

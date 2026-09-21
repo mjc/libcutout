@@ -1,3 +1,5 @@
+#![allow(clippy::cast_possible_truncation)]
+
 use cutout_core::{
     DeviceCommand, DeviceSettingValue, Measured, ProtocolFamily, RawFieldValue, SettingId,
     SettingsEntry, SettingsReadback, ValueQuality, ValueSource, VerificationStatus,
