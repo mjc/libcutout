@@ -36,7 +36,7 @@ mod ride_write;
 mod service;
 mod worker;
 #[cfg(test)]
-pub(crate) use migrations::create_current_schema;
+pub(crate) use migrations::{CURRENT_SCHEMA_VERSION, create_current_schema};
 use migrations::{migrate, table_exists, verify_current_schema};
 use ride_write::{
     LocationWriteDecision, LocationWriteMode, RideWriteState, RideWriteStateParts,

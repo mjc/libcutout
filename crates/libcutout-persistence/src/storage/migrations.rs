@@ -1,7 +1,7 @@
 use super::{MapPointId, SpatialRowId, StorageError};
 use rusqlite::{Connection, OptionalExtension, params};
 
-const CURRENT_SCHEMA_VERSION: i64 = 24;
+pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 24;
 const APPLICATION_ID: i64 = 0x4355_544f;
 
 fn current_schema_pragmas() -> String {
