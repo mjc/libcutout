@@ -1393,6 +1393,7 @@ impl CutoutSessionStateHandle {
             .alarms
             .active_preferences_for(&device_identity)?;
         self.save_phone_alarm_preferences(
+            &device_identity,
             CorePhoneAlarmPreferences::new(enabled, current.duty_percent())
                 .map_err(MobilePhoneAlarmError::from)?,
         )
@@ -1410,6 +1411,7 @@ impl CutoutSessionStateHandle {
             .alarms
             .active_preferences_for(&device_identity)?;
         self.save_phone_alarm_preferences(
+            &device_identity,
             CorePhoneAlarmPreferences::new(current.enabled(), duty_percent)
                 .map_err(MobilePhoneAlarmError::from)?,
         )
@@ -1511,14 +1513,18 @@ impl CutoutSessionStateHandle {
 
     fn save_phone_alarm_preferences(
         &self,
+        device_identity: &str,
         preferences: CorePhoneAlarmPreferences,
     ) -> Result<MobilePhoneAlarmActionsDto, MobilePhoneAlarmError> {
         let mut state = self.lock_phone_alarm();
         let identity = state
             .alarms
             .active_identity()
-            .ok_or(MobilePhoneAlarmError::NoActiveDevice)?
-            .to_owned();
+            .ok_or(MobilePhoneAlarmError::NoActiveDevice)?;
+        if identity != device_identity {
+            return Err(MobilePhoneAlarmError::DeviceIdentityChanged);
+        }
+        let identity = identity.to_owned();
         if let Some(database) = &state.database {
             let record = persistence::PhoneAlarmPreferencesRecord::new(
                 preferences.enabled(),
@@ -13435,9 +13441,14 @@ impl VescReadOnlySession {
     pub fn ingest_checked(&self, input: MobileSessionInputDto) -> MobileSessionStepResultDto {
         let tracked_input = input.clone();
         let input = SessionInputDto::from(input);
-        let result = MobileSessionStepResultDto::from(self.lock_inner().ingest_checked(&input));
+        let (result, snapshot) = {
+            let mut inner = self.lock_inner();
+            let result = MobileSessionStepResultDto::from(inner.ingest_checked(&input));
+            let snapshot = MobileTelemetrySnapshotDto::from(inner.current_snapshot());
+            (result, snapshot)
+        };
         if let Some(session_state) = &self.session_state {
-            session_state.apply_phone_alarm_step(&tracked_input, &self.current_snapshot(), true);
+            session_state.apply_phone_alarm_step(&tracked_input, &snapshot, true);
         }
         result
     }
@@ -13506,6 +13517,27 @@ mod tests {
 
     fn test_mobile_ride_id(value: &str) -> MobileRideIdDto {
         mobile_ride_id_from_uuid(Uuid::parse_str(value).expect("test ride ID is a UUID"))
+    }
+
+    #[test]
+    fn phone_alarm_save_rejects_replaced_device_identity() {
+        let state = CutoutSessionStateHandle::new();
+        state
+            .activate_phone_alarm_device("wheel-a".to_owned())
+            .unwrap();
+        let preferences = CorePhoneAlarmPreferences::new(true, 80).unwrap();
+        state
+            .activate_phone_alarm_device("wheel-b".to_owned())
+            .unwrap();
+
+        assert_eq!(
+            state.save_phone_alarm_preferences("wheel-a", preferences),
+            Err(MobilePhoneAlarmError::DeviceIdentityChanged)
+        );
+        assert_eq!(
+            state.phone_alarm_preferences().unwrap().device_identity,
+            "wheel-b"
+        );
     }
 
     #[test]
