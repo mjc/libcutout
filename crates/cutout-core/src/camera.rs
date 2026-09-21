@@ -261,6 +261,28 @@ impl CameraProvenanceState {
 pub struct CameraSessionState {
     preview: CameraPreviewState,
     onboard_recording: CameraOnboardRecordingState,
+    generation: u64,
+    revision: u64,
+}
+
+/// Opaque identity for asynchronous work belonging to one camera lifecycle.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CameraSessionToken {
+    generation: u64,
+}
+
+impl CameraSessionToken {
+    /// Creates a token at a foreign-function boundary.
+    #[must_use]
+    pub const fn new(generation: u64) -> Self {
+        Self { generation }
+    }
+
+    /// Returns the lifecycle generation carried by this token.
+    #[must_use]
+    pub const fn generation(self) -> u64 {
+        self.generation
+    }
 }
 
 impl CameraSessionState {
@@ -276,17 +298,59 @@ impl CameraSessionState {
         self.onboard_recording
     }
 
+    /// Returns the current lifecycle generation.
+    #[must_use]
+    pub const fn generation(self) -> u64 {
+        self.generation
+    }
+
+    /// Returns the monotonic state revision.
+    #[must_use]
+    pub const fn revision(self) -> u64 {
+        self.revision
+    }
+
+    /// Captures an identity for asynchronous camera work.
+    #[must_use]
+    pub const fn token(self) -> CameraSessionToken {
+        CameraSessionToken {
+            generation: self.generation,
+        }
+    }
+
+    /// Returns whether asynchronous work still belongs to this lifecycle.
+    #[must_use]
+    pub const fn is_current(self, token: CameraSessionToken) -> bool {
+        self.generation == token.generation
+    }
+
+    /// Retires asynchronous work without changing presentation truth.
+    pub fn advance_generation(&mut self) {
+        self.generation = self.generation.wrapping_add(1);
+        self.revision = self.revision.wrapping_add(1);
+    }
+
+    /// Retires the lifecycle and returns camera state to its non-optimistic baseline.
+    pub fn invalidate(&mut self) {
+        self.advance_generation();
+        self.preview = CameraPreviewState::Stopped;
+        self.onboard_recording = CameraOnboardRecordingState::Unknown;
+    }
+
     /// Records a foreground preview observation without inferring recording state.
-    pub const fn observe_preview(&mut self, preview: CameraPreviewState) {
-        self.preview = preview;
+    pub fn observe_preview(&mut self, preview: CameraPreviewState) {
+        if self.preview != preview {
+            self.preview = preview;
+            self.revision = self.revision.wrapping_add(1);
+        }
     }
 
     /// Records authoritative onboard recording truth without changing preview state.
-    pub const fn observe_onboard_recording(
-        &mut self,
-        onboard_recording: CameraOnboardRecordingState,
-    ) {
-        self.onboard_recording = onboard_recording;
+    pub fn observe_onboard_recording(&mut self, onboard_recording: CameraOnboardRecordingState) {
+        if self.onboard_recording != onboard_recording {
+            self.onboard_recording = onboard_recording;
+            self.revision = self.revision.wrapping_add(1);
+        }
     }
 }
 
@@ -434,6 +498,40 @@ mod tests {
         assert_eq!(
             state.onboard_recording(),
             CameraOnboardRecordingState::Recording
+        );
+    }
+
+    #[test]
+    fn camera_session_tokens_retire_work_without_resetting_truth() {
+        let mut state = CameraSessionState::default();
+        let token = state.token();
+        let initial_revision = state.revision();
+
+        state.observe_onboard_recording(CameraOnboardRecordingState::Recording);
+        state.advance_generation();
+
+        assert!(!state.is_current(token));
+        assert_eq!(
+            state.onboard_recording(),
+            CameraOnboardRecordingState::Recording
+        );
+        assert!(state.revision() > initial_revision);
+    }
+
+    #[test]
+    fn invalidating_camera_session_resets_truth_and_retires_tokens() {
+        let mut state = CameraSessionState::default();
+        let token = state.token();
+        state.observe_preview(CameraPreviewState::Live);
+        state.observe_onboard_recording(CameraOnboardRecordingState::Recording);
+
+        state.invalidate();
+
+        assert!(!state.is_current(token));
+        assert_eq!(state.preview(), CameraPreviewState::Stopped);
+        assert_eq!(
+            state.onboard_recording(),
+            CameraOnboardRecordingState::Unknown
         );
     }
 }
