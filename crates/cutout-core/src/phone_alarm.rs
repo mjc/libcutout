@@ -263,14 +263,6 @@ impl PhoneAlarmActions {
     }
 }
 
-impl std::ops::Deref for PhoneAlarmActions {
-    type Target = [PhoneAlarmDeliveryRequest];
-
-    fn deref(&self) -> &Self::Target {
-        &self.scheduled
-    }
-}
-
 impl PhoneAlarmDeliveryRequest {
     /// Returns the evaluator-owned request identity.
     #[must_use]
@@ -341,21 +333,11 @@ impl PhoneAlarmChannelState {
 }
 
 /// Stateful transition, acknowledgement, and repeat gate for phone-generated alarms.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct PhoneAlarmEvaluator {
     pwm: PhoneAlarmChannelState,
     warning: PhoneAlarmChannelState,
     stop: PhoneAlarmChannelState,
-}
-
-impl Default for PhoneAlarmEvaluator {
-    fn default() -> Self {
-        Self {
-            pwm: PhoneAlarmChannelState::default(),
-            warning: PhoneAlarmChannelState::default(),
-            stop: PhoneAlarmChannelState::default(),
-        }
-    }
 }
 
 impl PhoneAlarmEvaluator {
@@ -490,11 +472,13 @@ impl PhoneAlarmEvaluator {
             return;
         }
 
-        let id = NEXT_PHONE_ALARM_REQUEST_ID
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
-                next.checked_add(1)
-            })
-            .expect("phone alarm request identity exhausted");
+        let Ok(id) = NEXT_PHONE_ALARM_REQUEST_ID.fetch_update(
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+            |next| next.checked_add(1),
+        ) else {
+            return;
+        };
         state.pending_request_id = Some(id);
         requests.push(PhoneAlarmDeliveryRequest { id, event });
     }
@@ -668,11 +652,12 @@ impl PhoneAlarmManager {
         &mut self,
         headroom_percent: u8,
     ) -> Result<(), PhoneAlarmManagerError> {
-        let Some(duty_percent) = 100_u8.checked_sub(headroom_percent) else {
+        if headroom_percent >= 100 {
             return Err(PhoneAlarmManagerError::InvalidPwmHeadroomThreshold(
                 headroom_percent,
             ));
-        };
+        }
+        let duty_percent = 100 - headroom_percent;
         self.set_duty_percent(duty_percent)
     }
 
@@ -826,27 +811,33 @@ mod tests {
     #[test]
     fn successful_delivery_starts_repeat_gate_without_pwm_chatter() {
         let mut evaluator = PhoneAlarmEvaluator::default();
-        let first = evaluator.evaluate(policy(), pwm_evidence(850), at(1_000))[0];
+        let first = evaluator
+            .evaluate(policy(), pwm_evidence(850), at(1_000))
+            .scheduled()[0];
         assert!(evaluator.complete_delivery(first.id, true, at(1_100)));
 
         assert!(
             evaluator
                 .evaluate(policy(), pwm_evidence(860), at(2_000))
+                .scheduled()
                 .is_empty()
         );
         assert!(
             evaluator
                 .evaluate(policy(), pwm_evidence(790), at(3_000))
+                .scheduled()
                 .is_empty()
         );
         assert!(
             evaluator
                 .evaluate(policy(), pwm_evidence(810), at(4_000))
+                .scheduled()
                 .is_empty()
         );
         assert_eq!(
             evaluator
                 .evaluate(policy(), pwm_evidence(810), at(11_100))
+                .scheduled()
                 .len(),
             1
         );
@@ -855,15 +846,21 @@ mod tests {
     #[test]
     fn pwm_rearms_only_below_hysteresis() {
         let mut evaluator = PhoneAlarmEvaluator::default();
-        let first = evaluator.evaluate(policy(), pwm_evidence(810), at(1))[0];
+        let first = evaluator
+            .evaluate(policy(), pwm_evidence(810), at(1))
+            .scheduled()[0];
         assert!(evaluator.complete_delivery(first.id, true, at(2)));
         assert!(
             evaluator
                 .evaluate(policy(), pwm_evidence(740), at(3))
+                .scheduled()
                 .is_empty()
         );
         assert_eq!(
-            evaluator.evaluate(policy(), pwm_evidence(810), at(4)).len(),
+            evaluator
+                .evaluate(policy(), pwm_evidence(810), at(4))
+                .scheduled()
+                .len(),
             1
         );
     }
@@ -872,23 +869,31 @@ mod tests {
     fn pending_pwm_delivery_rearms_only_below_hysteresis() {
         let mut evaluator = PhoneAlarmEvaluator::default();
         let first = evaluator.evaluate(policy(), pwm_evidence(810), at(1));
-        assert_eq!(first.len(), 1);
+        assert_eq!(first.scheduled().len(), 1);
 
         let cancelled = evaluator.evaluate(policy(), pwm_evidence(790), at(2));
-        assert_eq!(cancelled.cancelled_request_ids(), &[first[0].id()]);
-        assert!(cancelled.is_empty());
+        assert_eq!(
+            cancelled.cancelled_request_ids(),
+            &[first.scheduled()[0].id()]
+        );
+        assert!(cancelled.scheduled().is_empty());
         assert!(
             evaluator
                 .evaluate(policy(), pwm_evidence(810), at(3))
+                .scheduled()
                 .is_empty()
         );
         assert!(
             evaluator
                 .evaluate(policy(), pwm_evidence(740), at(4))
+                .scheduled()
                 .is_empty()
         );
         assert_eq!(
-            evaluator.evaluate(policy(), pwm_evidence(810), at(5)).len(),
+            evaluator
+                .evaluate(policy(), pwm_evidence(810), at(5))
+                .scheduled()
+                .len(),
             1
         );
     }
@@ -896,22 +901,24 @@ mod tests {
     #[test]
     fn disabled_stale_and_unavailable_evidence_invalidate_requests() {
         let mut evaluator = PhoneAlarmEvaluator::default();
-        let request = evaluator.evaluate(policy(), pwm_evidence(900), at(1))[0];
+        let request = evaluator
+            .evaluate(policy(), pwm_evidence(900), at(1))
+            .scheduled()[0];
 
-        assert!(
-            evaluator
-                .evaluate(policy(), PhoneAlarmEvidence::stale(), at(2))
-                .is_empty()
-        );
-        assert!(!evaluator.complete_delivery(request.id, true, at(3)));
+        let stale = evaluator.evaluate(policy(), PhoneAlarmEvidence::stale(), at(2));
+        assert!(stale.scheduled().is_empty());
+        assert_eq!(stale.cancelled_request_ids(), &[request.id()]);
+        assert!(!evaluator.complete_delivery(request.id(), true, at(3)));
         assert!(
             evaluator
                 .evaluate(PhoneAlarmPolicy::disabled(), pwm_evidence(900), at(4))
+                .scheduled()
                 .is_empty()
         );
         assert!(
             evaluator
                 .evaluate(policy(), PhoneAlarmEvidence::unavailable(), at(5))
+                .scheduled()
                 .is_empty()
         );
     }
@@ -927,18 +934,18 @@ mod tests {
 
         let requests = evaluator.evaluate(policy(), evidence, at(1_000));
 
-        assert_eq!(requests.len(), 3);
-        assert!(requests.iter().any(|request| matches!(
+        assert_eq!(requests.scheduled().len(), 3);
+        assert!(requests.scheduled().iter().any(|request| matches!(
             request.event,
             PhoneAlarmEvent::PwmDuty {
                 duty_percent: 85,
                 headroom_percent: 15
             }
         )));
-        assert!(requests.iter().any(|request| {
+        assert!(requests.scheduled().iter().any(|request| {
             request.event == PhoneAlarmEvent::ControllerWarning(RideWarning::MotorTemperature)
         }));
-        assert!(requests.iter().any(|request| {
+        assert!(requests.scheduled().iter().any(|request| {
             request.event == PhoneAlarmEvent::ControllerStop(RideStopReason::Pitch)
         }));
     }
@@ -947,19 +954,35 @@ mod tests {
     fn delivery_failure_retries_without_committing_repeat_gate() {
         let evidence = pwm_evidence(850);
         let mut evaluator = PhoneAlarmEvaluator::default();
-        let first = evaluator.evaluate(policy(), evidence, at(1_000))[0];
+        let first = evaluator
+            .evaluate(policy(), evidence, at(1_000))
+            .scheduled()[0];
 
         assert!(evaluator.complete_delivery(first.id, false, at(1_100)));
-        assert!(evaluator.evaluate(policy(), evidence, at(1_500)).is_empty());
-        let retry = evaluator.evaluate(policy(), evidence, at(2_100))[0];
+        assert!(
+            evaluator
+                .evaluate(policy(), evidence, at(1_500))
+                .scheduled()
+                .is_empty()
+        );
+        let retry = evaluator
+            .evaluate(policy(), evidence, at(2_100))
+            .scheduled()[0];
         assert_ne!(retry.id, first.id);
         assert!(evaluator.complete_delivery(retry.id, true, at(2_200)));
         assert!(
             evaluator
                 .evaluate(policy(), evidence, at(11_000))
+                .scheduled()
                 .is_empty()
         );
-        assert_eq!(evaluator.evaluate(policy(), evidence, at(12_200)).len(), 1);
+        assert_eq!(
+            evaluator
+                .evaluate(policy(), evidence, at(12_200))
+                .scheduled()
+                .len(),
+            1
+        );
     }
 
     #[test]
@@ -983,7 +1006,10 @@ mod tests {
         assert_eq!(manager.active_preferences().unwrap().duty_percent(), 100);
         manager.set_headroom_percent(99).unwrap();
         assert_eq!(manager.active_preferences().unwrap().duty_percent(), 1);
-        assert!(manager.set_headroom_percent(100).is_err());
+        assert_eq!(
+            manager.set_headroom_percent(100),
+            Err(PhoneAlarmManagerError::InvalidPwmHeadroomThreshold(100))
+        );
 
         manager.activate_device("wheel-a".to_owned()).unwrap();
         assert!(manager.active_preferences().unwrap().enabled());
