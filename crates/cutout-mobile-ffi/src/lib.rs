@@ -12,6 +12,8 @@ mod device_settings;
 pub use device_settings::*;
 mod raw_settings;
 pub use raw_settings::*;
+mod phone_alarm;
+pub use phone_alarm::*;
 
 use std::{
     collections::VecDeque,
@@ -43,21 +45,22 @@ use cutout_core::{
     DiscoveryElectricUnicycleModel as CoreDiscoveryElectricUnicycleModel,
     DiscoveryManufacturerDataSummary as CoreDiscoveryManufacturerDataSummary,
     DiscoveryObservation as CoreDiscoveryObservation, DistanceReadingDto, Duration as CoreDuration,
-    DutyCycleReadingDto, EffectiveResistance, FaultCode, FaultCodeDto, FaultHistoryAvailability,
-    FaultHistoryAvailabilityDto, FaultHistoryEntry, FaultHistoryEntryDto, FaultHistoryReadback,
-    FaultHistoryReadbackDto, FootpadContactStateDto, FootpadTelemetryDto, GattChannel,
-    GattFingerprint, GattRoles, IgnoredNotificationEvidenceDto, IgnoredNotificationReasonDto,
-    Measured, ModelRegistryEntry, MonotonicMillisDto, MonotonicTimestamp,
-    MusicProvider as CorePevcapMusicProvider, NotificationByteLenDto, NotificationEvidenceDto,
-    NotificationIngestOutcomeDto, ParserDiagnosticCountDto, ParserDiagnosticsDto,
-    ParserDroppedBytesDto, ParserErrorDto, ParserFrameLenDto, ParserGapEvidenceDto,
-    PayloadBodyLenDto, PevcapEncoding as CorePevcapEncoding, PevcapHeader, PevcapLocationSample,
-    PevcapMusicEvent, PevcapPhoneLocation, PevcapRecord, PevcapResolvedIdentity,
-    PhaseCurrentReadingDto, PowerReadingDto, ProtocolFamily, ProtocolFamilyDto,
-    RIDE_SESSION_STALE_AFTER, RawFieldValue, RawFieldValueDto, RawTelemetryReadback,
-    RawTelemetryReadbackDto, ReadOnlyOutputPayload, ReservedPayloadEvidenceDto,
-    RideOperatingModeDto, RideOperatingState as CoreRideOperatingState, RideOperatingStateDto,
-    RideSessionAppPresence as CoreRideSessionAppPresence,
+    DutyCycle as CoreDutyCycle, DutyCycleReadingDto, EffectiveResistance, FaultCode, FaultCodeDto,
+    FaultHistoryAvailability, FaultHistoryAvailabilityDto, FaultHistoryEntry, FaultHistoryEntryDto,
+    FaultHistoryReadback, FaultHistoryReadbackDto, FootpadContactStateDto, FootpadTelemetryDto,
+    GattChannel, GattFingerprint, GattRoles, IgnoredNotificationEvidenceDto,
+    IgnoredNotificationReasonDto, Measured, ModelRegistryEntry, MonotonicMillisDto,
+    MonotonicTimestamp, MusicProvider as CorePevcapMusicProvider, NotificationByteLenDto,
+    NotificationEvidenceDto, NotificationIngestOutcomeDto, ParserDiagnosticCountDto,
+    ParserDiagnosticsDto, ParserDroppedBytesDto, ParserErrorDto, ParserFrameLenDto,
+    ParserGapEvidenceDto, PayloadBodyLenDto, PevcapEncoding as CorePevcapEncoding, PevcapHeader,
+    PevcapLocationSample, PevcapMusicEvent, PevcapPhoneLocation, PevcapRecord,
+    PevcapResolvedIdentity, PhaseCurrentReadingDto, PhoneAlarmEvidence as CorePhoneAlarmEvidence,
+    PhoneAlarmManager as CorePhoneAlarmManager, PhoneAlarmPreferences as CorePhoneAlarmPreferences,
+    PowerReadingDto, ProtocolFamily, ProtocolFamilyDto, RIDE_SESSION_STALE_AFTER, RawFieldValue,
+    RawFieldValueDto, RawTelemetryReadback, RawTelemetryReadbackDto, ReadOnlyOutputPayload,
+    ReservedPayloadEvidenceDto, RideOperatingModeDto, RideOperatingState as CoreRideOperatingState,
+    RideOperatingStateDto, RideSessionAppPresence as CoreRideSessionAppPresence,
     RideSessionDecision as CoreRideSessionDecision, RideSessionEffect as CoreRideSessionEffect,
     RideSessionEndReason as CoreRideSessionEndReason,
     RideSessionIdentity as CoreRideSessionIdentity, RideSessionInput as CoreRideSessionInput,
@@ -769,9 +772,19 @@ impl From<DeviceConnectionIntentDto> for CoreDeviceConnectionIntent {
 #[derive(Debug, uniffi::Object)]
 pub struct CutoutSessionStateHandle {
     inner: Mutex<MobileSessionState>,
+    phone_alarm: Mutex<MobilePhoneAlarmState>,
 }
 
 type MobileSessionState = cutout_protocols::DeviceConnectionSession;
+
+#[derive(Debug, Default)]
+struct MobilePhoneAlarmState {
+    alarms: CorePhoneAlarmManager,
+    capability: MobilePhoneAlarmDeliveryCapabilityDto,
+    activation_error: Option<MobilePhoneAlarmError>,
+    actions: MobilePhoneAlarmActionsDto,
+    database: Option<persistence::RideDatabase>,
+}
 
 impl DiscoveryObservation {
     fn into_core(self) -> CoreDiscoveryObservation {
@@ -1180,6 +1193,24 @@ impl CutoutSessionStateHandle {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             inner: Mutex::new(MobileSessionState::default()),
+            phone_alarm: Mutex::new(MobilePhoneAlarmState::default()),
+        })
+    }
+
+    /// Creates session state backed by the Rust ride database service.
+    #[uniffi::constructor]
+    #[must_use]
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "UniFFI constructors own Arc values."
+    )]
+    pub fn with_database(database: Arc<RideDatabaseHandle>) -> Arc<Self> {
+        Arc::new(Self {
+            inner: Mutex::new(MobileSessionState::default()),
+            phone_alarm: Mutex::new(MobilePhoneAlarmState {
+                database: Some(database.inner.clone()),
+                ..MobilePhoneAlarmState::default()
+            }),
         })
     }
 
@@ -1194,6 +1225,11 @@ impl CutoutSessionStateHandle {
 
     /// Selects a discovered platform identifier for this session.
     pub fn select_discovered_platform(&self, platform_identifier: String) -> DiscoverySnapshot {
+        let activation_error = self.load_phone_alarm_device(&platform_identifier).err();
+        if activation_error.is_some() {
+            self.lock_phone_alarm().alarms.clear_active_device();
+        }
+        self.lock_phone_alarm().activation_error = activation_error;
         let mut state = self.lock_inner();
         state
             .session_state_mut()
@@ -1294,12 +1330,294 @@ impl CutoutSessionStateHandle {
     pub fn ride_session_snapshot(&self) -> MobileRideSessionSnapshotDto {
         (&self.lock_inner().session_state().ride_session).into()
     }
+
+    /// Returns the selected device's Rust-owned phone alarm preferences.
+    #[must_use]
+    pub fn phone_alarm_preferences(&self) -> Option<MobilePhoneAlarmPreferencesDto> {
+        let state = self.lock_phone_alarm();
+        let identity = state.alarms.active_identity()?.to_owned();
+        state
+            .alarms
+            .active_preferences()
+            .map(|preferences| MobilePhoneAlarmPreferencesDto::from_core(identity, preferences))
+    }
+
+    /// Returns the typed failure from loading alarm preferences for the selected device.
+    #[must_use]
+    pub fn phone_alarm_activation_error(&self) -> Option<MobilePhoneAlarmError> {
+        self.lock_phone_alarm().activation_error
+    }
+
+    /// Loads and activates phone alarm preferences for a saved or connected device.
+    #[allow(clippy::needless_pass_by_value, reason = "UniFFI exports own strings.")]
+    pub fn activate_phone_alarm_device(
+        &self,
+        device_identity: String,
+    ) -> Result<MobilePhoneAlarmPreferencesDto, MobilePhoneAlarmError> {
+        match self.load_phone_alarm_device(&device_identity) {
+            Ok(preferences) => {
+                self.lock_phone_alarm().activation_error = None;
+                Ok(MobilePhoneAlarmPreferencesDto::from_core(
+                    device_identity,
+                    preferences,
+                ))
+            }
+            Err(error) => {
+                let mut state = self.lock_phone_alarm();
+                state.alarms.clear_active_device();
+                state.activation_error = Some(error);
+                Err(error)
+            }
+        }
+    }
+
+    /// Clears the active phone-alarm device and cancels its native deliveries.
+    pub fn deactivate_phone_alarm_device(&self) -> MobilePhoneAlarmActionsDto {
+        let mut state = self.lock_phone_alarm();
+        state.alarms.clear_active_device();
+        state.activation_error = None;
+        let cancel_request_ids = state.alarms.take_cancelled_request_ids();
+        state.discard_queued_schedules(&cancel_request_ids);
+        MobilePhoneAlarmActionsDto::cancellations(cancel_request_ids)
+    }
+
+    /// Updates the selected device's phone alarm opt-in and persists it through Rust.
+    #[allow(clippy::needless_pass_by_value, reason = "UniFFI exports own strings.")]
+    pub fn set_phone_alarm_enabled(
+        &self,
+        device_identity: String,
+        enabled: bool,
+    ) -> Result<MobilePhoneAlarmActionsDto, MobilePhoneAlarmError> {
+        let current = self
+            .lock_phone_alarm()
+            .alarms
+            .active_preferences_for(&device_identity)?;
+        self.save_phone_alarm_preferences(
+            &device_identity,
+            CorePhoneAlarmPreferences::new(enabled, current.duty_percent())
+                .map_err(MobilePhoneAlarmError::from)?,
+        )
+    }
+
+    /// Updates the selected device's threshold as consumed PWM duty percent.
+    #[allow(clippy::needless_pass_by_value, reason = "UniFFI exports own strings.")]
+    pub fn set_phone_alarm_pwm_duty_percent(
+        &self,
+        device_identity: String,
+        duty_percent: u8,
+    ) -> Result<MobilePhoneAlarmActionsDto, MobilePhoneAlarmError> {
+        let current = self
+            .lock_phone_alarm()
+            .alarms
+            .active_preferences_for(&device_identity)?;
+        self.save_phone_alarm_preferences(
+            &device_identity,
+            CorePhoneAlarmPreferences::new(current.enabled(), duty_percent)
+                .map_err(MobilePhoneAlarmError::from)?,
+        )
+    }
+
+    /// Updates the selected device's threshold as unused PWM headroom percent.
+    pub fn set_phone_alarm_pwm_headroom_percent(
+        &self,
+        device_identity: String,
+        headroom_percent: u8,
+    ) -> Result<MobilePhoneAlarmActionsDto, MobilePhoneAlarmError> {
+        let Some(duty_percent) = 100_u8.checked_sub(headroom_percent) else {
+            return Err(MobilePhoneAlarmError::InvalidPwmHeadroomThreshold);
+        };
+        if duty_percent == 0 {
+            return Err(MobilePhoneAlarmError::InvalidPwmHeadroomThreshold);
+        }
+        self.set_phone_alarm_pwm_duty_percent(device_identity, duty_percent)
+    }
+
+    /// Updates native notification capability and returns deliveries invalidated by the change.
+    pub fn set_phone_alarm_delivery_capability(
+        &self,
+        capability: MobilePhoneAlarmDeliveryCapabilityDto,
+    ) -> MobilePhoneAlarmActionsDto {
+        let mut state = self.lock_phone_alarm();
+        let cancel_request_ids = if state.capability == capability {
+            Vec::new()
+        } else {
+            state.alarms.invalidate_deliveries()
+        };
+        state.discard_queued_schedules(&cancel_request_ids);
+        state.capability = capability;
+        MobilePhoneAlarmActionsDto::cancellations(cancel_request_ids)
+    }
+
+    /// Records whether native scheduling succeeded for one current alarm request.
+    #[must_use]
+    pub fn complete_phone_alarm_delivery(
+        &self,
+        request_id: u64,
+        delivered: bool,
+        monotonic_milliseconds: u64,
+    ) -> bool {
+        self.lock_phone_alarm().alarms.complete_delivery(
+            request_id,
+            delivered,
+            MonotonicTimestamp::new(monotonic_milliseconds),
+        )
+    }
+
+    /// Drains every alarm delivery and cancellation queued by session ingest.
+    pub fn drain_phone_alarm_actions(&self) -> MobilePhoneAlarmActionsDto {
+        let mut state = self.lock_phone_alarm();
+        let cancellations =
+            MobilePhoneAlarmActionsDto::cancellations(state.alarms.take_cancelled_request_ids());
+        state.enqueue_actions(cancellations);
+        std::mem::take(&mut state.actions)
+    }
 }
 
 impl CutoutSessionStateHandle {
     fn lock_inner(&self) -> MutexGuard<'_, MobileSessionState> {
         self.inner.lock().unwrap_or_else(PoisonError::into_inner)
     }
+
+    fn lock_phone_alarm(&self) -> MutexGuard<'_, MobilePhoneAlarmState> {
+        self.phone_alarm
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn load_phone_alarm_device(
+        &self,
+        identity: &str,
+    ) -> Result<CorePhoneAlarmPreferences, MobilePhoneAlarmError> {
+        let mut state = self.lock_phone_alarm();
+        let record = state
+            .database
+            .as_ref()
+            .map(|database| database.phone_alarm_preferences(identity))
+            .transpose()
+            .map_err(|_| MobilePhoneAlarmError::StorageFailure)?
+            .flatten();
+        if let Some(record) = record {
+            let preferences =
+                CorePhoneAlarmPreferences::new(record.enabled(), record.pwm_duty_percent())
+                    .map_err(MobilePhoneAlarmError::from)?;
+            state
+                .alarms
+                .restore_preferences(identity.to_owned(), preferences)
+                .map_err(MobilePhoneAlarmError::from)?;
+        }
+        state
+            .alarms
+            .activate_device(identity.to_owned())
+            .map_err(MobilePhoneAlarmError::from)
+    }
+
+    fn save_phone_alarm_preferences(
+        &self,
+        device_identity: &str,
+        preferences: CorePhoneAlarmPreferences,
+    ) -> Result<MobilePhoneAlarmActionsDto, MobilePhoneAlarmError> {
+        let mut state = self.lock_phone_alarm();
+        let identity = state
+            .alarms
+            .active_identity()
+            .ok_or(MobilePhoneAlarmError::NoActiveDevice)?;
+        if identity != device_identity {
+            return Err(MobilePhoneAlarmError::DeviceIdentityChanged);
+        }
+        let identity = identity.to_owned();
+        if let Some(database) = &state.database {
+            let record = persistence::PhoneAlarmPreferencesRecord::new(
+                preferences.enabled(),
+                preferences.duty_percent(),
+            )
+            .map_err(|_| MobilePhoneAlarmError::InvalidPwmDutyThreshold)?;
+            database
+                .save_phone_alarm_preferences(&identity, record)
+                .map_err(|_| MobilePhoneAlarmError::StorageFailure)?;
+        }
+        state
+            .alarms
+            .restore_preferences(identity, preferences)
+            .map_err(MobilePhoneAlarmError::from)?;
+        let cancel_request_ids = state.alarms.take_cancelled_request_ids();
+        state.discard_queued_schedules(&cancel_request_ids);
+        Ok(MobilePhoneAlarmActionsDto::cancellations(
+            cancel_request_ids,
+        ))
+    }
+
+    fn apply_phone_alarm_step(
+        &self,
+        input: &MobileSessionInputDto,
+        snapshot: &MobileTelemetrySnapshotDto,
+        include_controller_conditions: bool,
+    ) {
+        let mut state = self.lock_phone_alarm();
+        let actions = if state.capability.can_schedule {
+            let evidence = phone_alarm_evidence(input, snapshot, include_controller_conditions);
+            MobilePhoneAlarmActionsDto::from_core(
+                state
+                    .alarms
+                    .evaluate(evidence, input.monotonic_ms.into_core()),
+                state.capability.plays_sound,
+            )
+        } else {
+            MobilePhoneAlarmActionsDto::cancellations(state.alarms.invalidate_deliveries())
+        };
+        state.enqueue_actions(actions);
+    }
+}
+
+impl MobilePhoneAlarmState {
+    fn enqueue_actions(&mut self, mut actions: MobilePhoneAlarmActionsDto) {
+        self.discard_queued_schedules(&actions.cancel_request_ids);
+        self.actions.schedule.append(&mut actions.schedule);
+        for request_id in actions.cancel_request_ids {
+            if !self.actions.cancel_request_ids.contains(&request_id) {
+                self.actions.cancel_request_ids.push(request_id);
+            }
+        }
+    }
+
+    fn discard_queued_schedules(&mut self, request_ids: &[u64]) {
+        self.actions
+            .schedule
+            .retain(|request| !request_ids.contains(&request.id));
+    }
+}
+
+fn phone_alarm_evidence(
+    input: &MobileSessionInputDto,
+    snapshot: &MobileTelemetrySnapshotDto,
+    include_controller_conditions: bool,
+) -> CorePhoneAlarmEvidence {
+    if input.kind == MobileSessionInputKindDto::LinkDown {
+        return CorePhoneAlarmEvidence::unavailable();
+    }
+    let Some(observed_at) = snapshot.at_ms else {
+        return CorePhoneAlarmEvidence::unavailable();
+    };
+    if input
+        .monotonic_ms
+        .milliseconds
+        .saturating_sub(observed_at.milliseconds)
+        > RIDE_SESSION_STALE_AFTER.as_milliseconds()
+    {
+        return CorePhoneAlarmEvidence::stale();
+    }
+    CorePhoneAlarmEvidence::fresh(
+        snapshot
+            .pwm
+            .map(|duty| CoreDutyCycle::from_permille(duty.permille)),
+        include_controller_conditions
+            .then_some(snapshot.vesc_warning)
+            .flatten()
+            .map(Into::into),
+        include_controller_conditions
+            .then_some(snapshot.vesc_stop_reason)
+            .flatten()
+            .map(Into::into),
+    )
 }
 
 /// Device-detection resolution exposed across the `UniFFI` boundary.
@@ -13083,6 +13401,7 @@ pub enum VescBatteryCellModel {
 #[derive(Debug, uniffi::Object)]
 pub struct VescReadOnlySession {
     inner: Mutex<CoreVescReadOnlySession>,
+    session_state: Option<Arc<CutoutSessionStateHandle>>,
 }
 
 #[uniffi::export]
@@ -13091,26 +13410,47 @@ impl VescReadOnlySession {
     #[uniffi::constructor]
     #[must_use]
     pub fn new() -> Arc<Self> {
-        Arc::new(Self {
-            inner: Mutex::new(CoreVescReadOnlySession::new()),
-        })
+        Self::make(None, None)
+    }
+
+    /// Creates a generic VESC session sharing the app's Rust-owned session state.
+    #[uniffi::constructor]
+    #[must_use]
+    pub fn with_session_state(session_state: Arc<CutoutSessionStateHandle>) -> Arc<Self> {
+        Self::make(None, Some(session_state))
     }
 
     /// Creates a VESC read-only session with explicit board geometry and pack facts.
     #[uniffi::constructor]
     #[must_use]
     pub fn with_board_profile(board_profile: VescBoardProfile) -> Arc<Self> {
-        Arc::new(Self {
-            inner: Mutex::new(CoreVescReadOnlySession::with_board_profile(
-                board_profile.into(),
-            )),
-        })
+        Self::make(Some(board_profile), None)
+    }
+
+    /// Creates a profiled VESC session sharing the app's Rust-owned session state.
+    #[uniffi::constructor]
+    #[must_use]
+    pub fn with_board_profile_and_session_state(
+        board_profile: VescBoardProfile,
+        session_state: Arc<CutoutSessionStateHandle>,
+    ) -> Arc<Self> {
+        Self::make(Some(board_profile), Some(session_state))
     }
 
     /// Drives one input and returns owned outputs plus any stable error DTO.
     pub fn ingest_checked(&self, input: MobileSessionInputDto) -> MobileSessionStepResultDto {
+        let tracked_input = input.clone();
         let input = SessionInputDto::from(input);
-        MobileSessionStepResultDto::from(self.lock_inner().ingest_checked(&input))
+        let (result, snapshot) = {
+            let mut inner = self.lock_inner();
+            let result = MobileSessionStepResultDto::from(inner.ingest_checked(&input));
+            let snapshot = MobileTelemetrySnapshotDto::from(inner.current_snapshot());
+            (result, snapshot)
+        };
+        if let Some(session_state) = &self.session_state {
+            session_state.apply_phone_alarm_step(&tracked_input, &snapshot, true);
+        }
+        result
     }
 
     /// Drains owned output DTOs accumulated since the previous drain.
@@ -13134,6 +13474,19 @@ impl VescReadOnlySession {
 }
 
 impl VescReadOnlySession {
+    fn make(
+        board_profile: Option<VescBoardProfile>,
+        session_state: Option<Arc<CutoutSessionStateHandle>>,
+    ) -> Arc<Self> {
+        let inner = board_profile.map_or_else(CoreVescReadOnlySession::new, |profile| {
+            CoreVescReadOnlySession::with_board_profile(profile.into())
+        });
+        Arc::new(Self {
+            inner: Mutex::new(inner),
+            session_state,
+        })
+    }
+
     fn lock_inner(&self) -> MutexGuard<'_, CoreVescReadOnlySession> {
         self.inner.lock().unwrap_or_else(PoisonError::into_inner)
     }
@@ -13164,6 +13517,27 @@ mod tests {
 
     fn test_mobile_ride_id(value: &str) -> MobileRideIdDto {
         mobile_ride_id_from_uuid(Uuid::parse_str(value).expect("test ride ID is a UUID"))
+    }
+
+    #[test]
+    fn phone_alarm_save_rejects_replaced_device_identity() {
+        let state = CutoutSessionStateHandle::new();
+        state
+            .activate_phone_alarm_device("wheel-a".to_owned())
+            .unwrap();
+        let preferences = CorePhoneAlarmPreferences::new(true, 80).unwrap();
+        state
+            .activate_phone_alarm_device("wheel-b".to_owned())
+            .unwrap();
+
+        assert_eq!(
+            state.save_phone_alarm_preferences("wheel-a", preferences),
+            Err(MobilePhoneAlarmError::DeviceIdentityChanged)
+        );
+        assert_eq!(
+            state.phone_alarm_preferences().unwrap().device_identity,
+            "wheel-b"
+        );
     }
 
     #[test]

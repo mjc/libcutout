@@ -469,6 +469,7 @@ public final class CutoutSessionCore: NSObject {
     public var onCaptureEvent: ((CaptureEvent) -> Void)?
     public var onScanStateChange: ((DevicePickerScanState) -> Void)?
     public var onSettingsChange: ((DeviceSettings) -> Void)?
+    public var onPhoneAlarmActionsAvailable: ((MobilePhoneAlarmActionsDto) -> Void)?
     public var onFaultHistoryReadbackChange: ((FaultHistoryReadback?) -> Void)?
     public var onBmsSnapshotChange: ((BmsSnapshot?) -> Void)?
     public var onPhoneLocationSnapshotChange: ((MobilePhoneLocationSnapshotDto, MonotonicMilliseconds) -> Void)?
@@ -567,13 +568,21 @@ public final class CutoutSessionCore: NSObject {
 
     /// Composes transport around a database handle opened off the main actor.
     public convenience init(rideMapState: MobileRideMapState) {
-        self.init(clock: MonotonicClock(), rideMapState: rideMapState)
+        self.init(
+            clock: MonotonicClock(),
+            rideMapState: rideMapState,
+            database: RustPersistenceStore.shared
+        )
     }
 
     public override convenience init() {
         let rideMapState = RustPersistenceStore.shared.map(MobileRideMapState.init(database:))
             ?? MobileRideMapState(storageUnavailable: "Rust ride database is unavailable")
-        self.init(clock: MonotonicClock(), rideMapState: rideMapState)
+        self.init(
+            clock: MonotonicClock(),
+            rideMapState: rideMapState,
+            database: RustPersistenceStore.shared
+        )
     }
 
 #if DEBUG
@@ -597,9 +606,12 @@ public final class CutoutSessionCore: NSObject {
         reconnectJitter: @escaping () -> Double = { Double.random(in: 0...1) },
         selectedDeviceStore: DevicePickerSelectionStore = DevicePickerSelectionStore(),
         wallClock: @escaping () -> Date = { Date() },
-        rideMapState: MobileRideMapState? = nil
+        rideMapState: MobileRideMapState? = nil,
+        database: RideDatabaseHandle? = nil
     ) {
-        let rustSessionState = CutoutSessionStateHandle()
+        let rustSessionState = database.map {
+            CutoutSessionStateHandle.withDatabase(database: $0)
+        } ?? CutoutSessionStateHandle()
         self.rustSessionState = rustSessionState
         let deviceDetectionSession = DeviceDetectionSession(sessionState: rustSessionState)
         self.deviceDetectionSession = deviceDetectionSession
@@ -622,9 +634,12 @@ public final class CutoutSessionCore: NSObject {
         clock: MonotonicClock,
         selectedDeviceStore: DevicePickerSelectionStore = DevicePickerSelectionStore(),
         wallClock: @escaping () -> Date = { Date() },
-        rideMapState: MobileRideMapState? = nil
+        rideMapState: MobileRideMapState? = nil,
+        database: RideDatabaseHandle? = nil
     ) {
-        let rustSessionState = CutoutSessionStateHandle()
+        let rustSessionState = database.map {
+            CutoutSessionStateHandle.withDatabase(database: $0)
+        } ?? CutoutSessionStateHandle()
         self.rustSessionState = rustSessionState
         let deviceDetectionSession = DeviceDetectionSession(sessionState: rustSessionState)
         self.deviceDetectionSession = deviceDetectionSession
@@ -1006,7 +1021,7 @@ public final class CutoutSessionCore: NSObject {
     private func finish(testScript: CutoutSessionTestScript, token: ConnectionAttemptToken) {
         guard rustSessionState.connectionAttemptIsCurrent(token: token) else { return }
         if testScript.identificationProbeFailure != nil || testScript.failsConnection {
-            _ = rustSessionState.connectionLinkDown(token: token)
+            connectionLinkDownOnBleQueue(token: token)
             _ = rustSessionState.connectionTransportFailed(token: token)
         }
         if let failure = testScript.identificationProbeFailure {
@@ -1147,7 +1162,7 @@ public final class CutoutSessionCore: NSObject {
         let reconnect = DispatchWorkItem { [weak self] in
             self?.onBleQueue {
                 guard let self, self.rustSessionState.connectionAttemptIsCurrent(token: token) else { return }
-                _ = self.rustSessionState.connectionLinkDown(token: token)
+                self.connectionLinkDownOnBleQueue(token: token)
                 self.testScriptUpdateWorkItem?.cancel()
                 guard let retryToken = self.rustSessionState.beginConnectionAttempt(
                     platformIdentifier: token.platformIdentifier, nowMs: self.clock.now().rawValue
@@ -1188,7 +1203,7 @@ public final class CutoutSessionCore: NSObject {
         let loss = DispatchWorkItem { [weak self] in
             self?.onBleQueue {
                 guard let self, self.rustSessionState.connectionAttemptIsCurrent(token: token) else { return }
-                _ = self.rustSessionState.connectionLinkDown(token: token)
+                self.connectionLinkDownOnBleQueue(token: token)
                 self.scanState = DevicePickerScanState(status: .bluetoothUnavailable, rows: [])
                 self.publishScanState()
                 self.setPhase(.bluetoothUnavailable(rawState: 4))
@@ -1204,6 +1219,10 @@ public final class CutoutSessionCore: NSObject {
 
     private func disconnectAndScanOnBleQueue() {
         liveOwner?.invalidate()
+        let phoneAlarmActions = rustSessionState.deactivatePhoneAlarmDevice()
+        if !phoneAlarmActions.schedule.isEmpty || !phoneAlarmActions.cancelRequestIds.isEmpty {
+            publishOnMain { self.onPhoneAlarmActionsAvailable?(phoneAlarmActions) }
+        }
         _ = rustSessionState.disconnectConnectionAttempt()
         connectionDeadlineWorkItem?.cancel()
         connectionAttempt = nil
@@ -1277,6 +1296,12 @@ public final class CutoutSessionCore: NSObject {
         central?.scanForPeripherals(withServices: nil)
     }
 
+    private func connectionLinkDownOnBleQueue(token: ConnectionAttemptToken) {
+        let phoneAlarmActions = rustSessionState.deactivatePhoneAlarmDevice()
+        publishOnMain { self.onPhoneAlarmActionsAvailable?(phoneAlarmActions) }
+        _ = rustSessionState.connectionLinkDown(token: token)
+    }
+
     public func now() -> MonotonicMilliseconds {
         clock.now()
     }
@@ -1292,6 +1317,7 @@ public final class CutoutSessionCore: NSObject {
         if let snapshot = step.snapshot {
             hasObservedSpeedSnapshot = snapshot.speed?.value != nil
         }
+        publishPhoneAlarmActionsAvailable()
         setPhase(.subscribing)
     }
 
@@ -1310,6 +1336,7 @@ public final class CutoutSessionCore: NSObject {
         displayState = displayState.reducing(snapshot: snapshot, receivedAt: receivedAt)
         hasObservedSpeedSnapshot = hasObservedSpeedSnapshot || snapshot?.speed?.value != nil
         publishDisplayState()
+        publishPhoneAlarmActionsAvailable()
         setPhase(.live)
     }
 
@@ -1644,7 +1671,7 @@ public final class CutoutSessionCore: NSObject {
         }
         let wasDetecting = connectionSnapshot.readiness == .pending
         liveOwner?.invalidate()
-        _ = rustSessionState.connectionLinkDown(token: attempt.token)
+        connectionLinkDownOnBleQueue(token: attempt.token)
         connectionDeadlineWorkItem?.cancel()
         publishConnectionSnapshot()
         if wasDetecting, !rustSessionState.shouldRetryIdentification() {
@@ -1885,6 +1912,12 @@ public final class CutoutSessionCore: NSObject {
             guard let self, self.connectionSnapshot.revision == value.connection.revision else { return }
             self.onSettingsChange?(value)
         }
+    }
+
+    private func publishPhoneAlarmActionsAvailable() {
+        let actions = rustSessionState.drainPhoneAlarmActions()
+        guard !actions.schedule.isEmpty || !actions.cancelRequestIds.isEmpty else { return }
+        publishOnMain { self.onPhoneAlarmActionsAvailable?(actions) }
     }
 
     private func attachSettingsCallback() {
@@ -2714,7 +2747,7 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
         guard state == .poweredOn else {
             cancelPendingReconnect()
             if let token = connectionSnapshot.token {
-                _ = rustSessionState.connectionLinkDown(token: token)
+                connectionLinkDownOnBleQueue(token: token)
                 connectionDeadlineWorkItem?.cancel()
                 publishConnectionSnapshot()
             }

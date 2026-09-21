@@ -191,9 +191,14 @@ impl CutoutSessionStateHandle {
         token: MobileConnectionAttemptTokenDto,
         input: MobileSessionInputDto,
     ) -> Option<MobileDeviceSessionStepDto> {
-        self.lock_inner()
-            .ingest(&token.into(), &input.into())
-            .map(Into::into)
+        let token = token.into();
+        let core_input = input.clone().into();
+        let step = self.lock_inner().ingest(&token, &core_input);
+        if let Some(step) = &step {
+            let telemetry = MobileTelemetrySnapshotDto::from(step.telemetry.clone());
+            self.apply_phone_alarm_step(&input, &telemetry, true);
+        }
+        step.map(Into::into)
     }
 }
 

@@ -2399,7 +2399,9 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
             )
         )
 
-        XCTAssertFalse(core.pair(platformIdentifier: "ios-local-selected"))
+        _ = core.rideSessionStateHandle.selectDiscoveredPlatform(
+            platformIdentifier: "ios-local-selected"
+        )
         core.applyNotificationStep(
             CoreBluetoothSessionStep(
                 operations: [],

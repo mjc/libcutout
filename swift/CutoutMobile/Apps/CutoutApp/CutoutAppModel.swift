@@ -160,6 +160,9 @@ final class CutoutAppModel {
     private(set) var recordOnlyDeviceKind: String?
     private(set) var hasSavedDevice = false
     private(set) var settings: DeviceSettings?
+    private(set) var phoneAlarmSettings: MobilePhoneAlarmPreferencesDto?
+    private(set) var phoneAlarmAuthorization = PhoneRideAlarmAuthorization.unavailable
+    private(set) var phoneAlarmDeliveryError: String?
 
     var selectedRideTitle: String? {
         connectionState.selection?.title
@@ -211,6 +214,165 @@ final class CutoutAppModel {
             return name
         }
         return identity == rideMapVehicleIdentity ? rideMapVehicleName : nil
+    }
+
+    var phoneAlarmDeviceName: String? {
+        phoneAlarmSettings.flatMap { rideMapVehicleName(for: $0.deviceIdentity) }
+    }
+
+    var phoneAlarmAuthorizationText: String {
+        switch phoneAlarmAuthorization {
+        case .unavailable:
+            localizedAppText("phone_alarm.authorization.unavailable")
+        case .notDetermined:
+            localizedAppText("phone_alarm.authorization.not_determined")
+        case .denied:
+            localizedAppText("phone_alarm.authorization.denied")
+        case let .permitted(alerts, sounds, quietly):
+            if quietly {
+                localizedAppText("phone_alarm.authorization.quiet")
+            } else if alerts, sounds {
+                localizedAppText("phone_alarm.authorization.alerts_and_sound")
+            } else if alerts {
+                localizedAppText("phone_alarm.authorization.alerts_no_sound")
+            } else {
+                localizedAppText("phone_alarm.authorization.no_alerts")
+            }
+        }
+    }
+
+    func setPhoneAlarmsEnabled(_ enabled: Bool, deviceIdentity: String) async {
+        if enabled, !phoneAlarmAuthorization.capability.canSchedule {
+            await requestPhoneAlarmAuthorization()
+            guard phoneAlarmAuthorization.capability.canSchedule else { return }
+        }
+        do {
+            applyPhoneAlarmActions(try core.rideSessionStateHandle.setPhoneAlarmEnabled(
+                deviceIdentity: deviceIdentity,
+                enabled: enabled
+            ))
+            syncPhoneAlarmPreferences()
+            phoneAlarmDeliveryError = nil
+        } catch {
+            syncPhoneAlarmPreferences()
+            phoneAlarmDeliveryError = Self.phoneAlarmErrorText(error)
+        }
+    }
+
+    func setPhoneAlarmPwmDutyPercent(_ percent: Int, deviceIdentity: String) {
+        guard let percent = UInt8(exactly: percent) else { return }
+        do {
+            applyPhoneAlarmActions(try core.rideSessionStateHandle.setPhoneAlarmPwmDutyPercent(
+                deviceIdentity: deviceIdentity,
+                dutyPercent: percent
+            ))
+            syncPhoneAlarmPreferences()
+            phoneAlarmDeliveryError = nil
+        } catch {
+            syncPhoneAlarmPreferences()
+            phoneAlarmDeliveryError = Self.phoneAlarmErrorText(error)
+        }
+    }
+
+    func requestPhoneAlarmAuthorization() async {
+        phoneAlarmAuthorizationTask?.cancel()
+        phoneAlarmAuthorizationGeneration &+= 1
+        let generation = phoneAlarmAuthorizationGeneration
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let authorization = await phoneAlarmDelivery.requestAuthorization()
+            guard !Task.isCancelled, generation == phoneAlarmAuthorizationGeneration else { return }
+            applyPhoneAlarmAuthorization(authorization)
+        }
+        phoneAlarmAuthorizationTask = task
+        await task.value
+    }
+
+    func refreshPhoneAlarmAuthorization() {
+        phoneAlarmAuthorizationTask?.cancel()
+        phoneAlarmAuthorizationGeneration &+= 1
+        let generation = phoneAlarmAuthorizationGeneration
+        phoneAlarmAuthorizationTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let authorization = await phoneAlarmDelivery.authorizationStatus()
+            guard !Task.isCancelled, generation == phoneAlarmAuthorizationGeneration else { return }
+            applyPhoneAlarmAuthorization(authorization)
+        }
+    }
+
+    private func applyPhoneAlarmAuthorization(_ authorization: PhoneRideAlarmAuthorization) {
+        phoneAlarmAuthorization = authorization
+        applyPhoneAlarmActions(core.rideSessionStateHandle.setPhoneAlarmDeliveryCapability(
+            capability: authorization.capability
+        ))
+    }
+
+    private func syncPhoneAlarmPreferences() {
+        if let error = core.rideSessionStateHandle.phoneAlarmActivationError() {
+            phoneAlarmSettings = nil
+            phoneAlarmDeliveryError = Self.phoneAlarmErrorText(error)
+            return
+        }
+        phoneAlarmSettings = core.rideSessionStateHandle.phoneAlarmPreferences()
+        if phoneAlarmSettings != nil {
+            phoneAlarmDeliveryError = nil
+        }
+    }
+
+    private func drainPhoneAlarmActions() {
+        applyPhoneAlarmActions(core.rideSessionStateHandle.drainPhoneAlarmActions())
+    }
+
+    func applyPhoneAlarmActions(_ actions: MobilePhoneAlarmActionsDto) {
+        phoneAlarmDelivery.cancel(requestIDs: actions.cancelRequestIds)
+        actions.schedule.forEach(schedulePhoneAlarmDelivery)
+        if core.rideSessionStateHandle.phoneAlarmPreferences() == nil {
+            phoneAlarmSettings = nil
+        }
+    }
+
+    private func schedulePhoneAlarmDelivery(_ request: MobilePhoneAlarmDeliveryRequestDto) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                try await phoneAlarmDelivery.deliver(request)
+                let accepted = core.rideSessionStateHandle.completePhoneAlarmDelivery(
+                    requestId: request.id,
+                    delivered: true,
+                    monotonicMilliseconds: core.now().rawValue
+                )
+                if !accepted {
+                    phoneAlarmDelivery.cancel(requestIDs: [request.id])
+                } else {
+                    phoneAlarmDeliveryError = nil
+                }
+            } catch {
+                let accepted = core.rideSessionStateHandle.completePhoneAlarmDelivery(
+                    requestId: request.id,
+                    delivered: false,
+                    monotonicMilliseconds: core.now().rawValue
+                )
+                if accepted {
+                    phoneAlarmDeliveryError = Self.phoneAlarmErrorText(error)
+                }
+            }
+        }
+    }
+
+    static func phoneAlarmErrorText(_ error: any Error) -> String {
+        guard let error = error as? MobilePhoneAlarmError else {
+            return error.localizedDescription
+        }
+        let key = switch error {
+        case .NoActiveDevice: "phone_alarm.error.no_active_device"
+        case .InvalidDeviceIdentity: "phone_alarm.error.invalid_device_identity"
+        case .InvalidPwmDutyThreshold: "phone_alarm.error.invalid_pwm_duty"
+        case .InvalidPwmHeadroomThreshold: "phone_alarm.error.invalid_pwm_headroom"
+        case .TooManyDevices: "phone_alarm.error.too_many_devices"
+        case .DeviceIdentityChanged: "phone_alarm.error.device_changed"
+        case .StorageFailure: "phone_alarm.error.storage_failure"
+        }
+        return localizedAppText(key)
     }
 
     static func meaningfulDeviceName(_ candidate: String?, identity: String) -> String? {
@@ -277,6 +439,7 @@ final class CutoutAppModel {
     private let musicProviderSelectionStore: MusicProviderSelectionStore
     private let musicHistoryPolicyStore: MusicHistoryPolicyStore
     private let musicMonitoringPreferenceStore: MusicMonitoringPreferenceStore
+    private let phoneAlarmDelivery: any PhoneRideAlarmDelivering
     private let musicCoordinator: MusicIntegrationCoordinator
     private let musicProviderLifecycle: MobileMusicProviderLifecycle
     private let musicEffects: MusicProviderEffectExecutor
@@ -311,12 +474,14 @@ final class CutoutAppModel {
     private var rideMapHistoryViewportCancellation: MobileRideMapProjectionCancellation?
     private var rideMapHistoryContextTask: Task<Void, Never>?
     private var rideMapRestoreTask: Task<Void, Never>?
+    private var phoneAlarmAuthorizationTask: Task<Void, Never>?
     private var rideMapLiveProjectionTask: Task<Void, Never>?
     private var rideMapDurationTask: Task<Void, Never>?
     private var rideMapLiveProjectionCancellation: MobileLiveRideMapProjectionCancellation?
     private var rideMapDurableProjectionCancellation: MobileRideMapProjectionCancellation?
     private var rideMapLiveProjectionGeneration: UInt64 = 0
     private var rideMapLiveProjectionEnabled = false
+    private var phoneAlarmAuthorizationGeneration: UInt64 = 0
     private static let liveActivityUpdateIntervalMilliseconds: UInt64 = 1_000
 
     isolated deinit {
@@ -350,7 +515,8 @@ final class CutoutAppModel {
             liveActivityManager: LiveActivityRideActivityKitManager(),
             musicHistoryPolicyStore: MusicHistoryPolicyStore(),
             musicProviderSelectionStore: MusicProviderSelectionStore(),
-            musicMonitoringPreferenceStore: MusicMonitoringPreferenceStore()
+            musicMonitoringPreferenceStore: MusicMonitoringPreferenceStore(),
+            phoneAlarmDelivery: makePhoneRideAlarmDelivery()
         )
     }
 
@@ -368,7 +534,8 @@ final class CutoutAppModel {
             liveActivityManager: LiveActivityRideActivityKitManager(),
             musicHistoryPolicyStore: MusicHistoryPolicyStore(),
             musicProviderSelectionStore: MusicProviderSelectionStore(),
-            musicMonitoringPreferenceStore: MusicMonitoringPreferenceStore()
+            musicMonitoringPreferenceStore: MusicMonitoringPreferenceStore(),
+            phoneAlarmDelivery: makePhoneRideAlarmDelivery()
         )
     }
 
@@ -379,7 +546,8 @@ final class CutoutAppModel {
         liveActivityManager: any LiveActivityRideLifecycleManaging = LiveActivityRideActivityKitManager(),
         musicHistoryPolicyStore: MusicHistoryPolicyStore = MusicHistoryPolicyStore(),
         musicProviderSelectionStore: MusicProviderSelectionStore = MusicProviderSelectionStore(),
-        musicMonitoringPreferenceStore: MusicMonitoringPreferenceStore = MusicMonitoringPreferenceStore()
+        musicMonitoringPreferenceStore: MusicMonitoringPreferenceStore = MusicMonitoringPreferenceStore(),
+        phoneAlarmDelivery: any PhoneRideAlarmDelivering = makePhoneRideAlarmDelivery()
     ) {
         self.init(
             core: core,
@@ -389,7 +557,8 @@ final class CutoutAppModel {
             liveActivityManager: liveActivityManager,
             musicHistoryPolicyStore: musicHistoryPolicyStore,
             musicProviderSelectionStore: musicProviderSelectionStore,
-            musicMonitoringPreferenceStore: musicMonitoringPreferenceStore
+            musicMonitoringPreferenceStore: musicMonitoringPreferenceStore,
+            phoneAlarmDelivery: phoneAlarmDelivery
         )
     }
 
@@ -401,7 +570,8 @@ final class CutoutAppModel {
         liveActivityManager: any LiveActivityRideLifecycleManaging,
         musicHistoryPolicyStore: MusicHistoryPolicyStore,
         musicProviderSelectionStore: MusicProviderSelectionStore,
-        musicMonitoringPreferenceStore: MusicMonitoringPreferenceStore
+        musicMonitoringPreferenceStore: MusicMonitoringPreferenceStore,
+        phoneAlarmDelivery: any PhoneRideAlarmDelivering
     ) {
         let musicProviderLifecycle = MobileMusicProviderLifecycle()
         let musicEffects = MusicProviderEffectExecutor()
@@ -432,6 +602,7 @@ final class CutoutAppModel {
         self.isMusicPlayerHidden = musicPlayerVisibilityStore.isHidden
         self.musicProviderSelectionStore = musicProviderSelectionStore
         self.musicMonitoringPreferenceStore = musicMonitoringPreferenceStore
+        self.phoneAlarmDelivery = phoneAlarmDelivery
         self.selectedMusicProvider = musicProviderSelectionStore.provider
         self.musicHistoryPolicyStore = musicHistoryPolicyStore
         self.musicHistoryPolicy = musicHistoryPolicyStore.policy
@@ -466,6 +637,9 @@ final class CutoutAppModel {
             guard let self, self.phase == .live,
                   self.core.rideSessionStateHandle.connectionAttemptSnapshot().revision == snapshot.connection.revision else { return }
             self.settings = snapshot
+        }
+        self.core.onPhoneAlarmActionsAvailable = { [weak self] actions in
+            self?.applyPhoneAlarmActions(actions)
         }
         self.core.onFaultHistoryReadbackChange = { [weak self] faultHistoryReadback in
             self?.faultHistoryReadback = faultHistoryReadback
@@ -519,6 +693,9 @@ final class CutoutAppModel {
         self.core.onCaptureEvent = { [weak self] event in
             self?.applyCaptureEvent(event)
         }
+        syncPhoneAlarmPreferences()
+        drainPhoneAlarmActions()
+        refreshPhoneAlarmAuthorization()
     }
 
     @discardableResult
@@ -2345,6 +2522,8 @@ final class CutoutAppModel {
         phase = .discoveringServices
         let didPair = core.pair(platformIdentifier: platformIdentifier)
         if didPair {
+            syncPhoneAlarmPreferences()
+            drainPhoneAlarmActions()
             isRecordOnlyCapture = false
             captureLabel = nil
             recordOnlyDeviceKind = nil
@@ -2531,6 +2710,7 @@ final class CutoutAppModel {
     }
 
     func appDidBecomeActive() {
+        refreshPhoneAlarmAuthorization()
         if musicProviderLifecycle.resume() == .restored {
             beginMusicMonitoring()
         }
@@ -2573,6 +2753,8 @@ final class CutoutAppModel {
     }
 
     func disconnectTransport() {
+        applyPhoneAlarmActions(core.rideSessionStateHandle.deactivatePhoneAlarmDevice())
+        phoneAlarmSettings = nil
         endLiveActivity(reason: .disconnected)
         isRecordOnlyCapture = false
         activeCaptureLabels.removeAll()
