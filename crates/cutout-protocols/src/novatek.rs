@@ -519,6 +519,96 @@ impl NovatekConfiguration {
     }
 }
 
+/// Failure while establishing one validated R3V1 Novatek session.
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+pub enum NovatekSessionError {
+    /// The firmware identity did not prove the verified R3V1 profile.
+    #[error(transparent)]
+    Profile(#[from] NovatekProfileError),
+    /// The supplied command/status evidence was malformed or unbounded.
+    #[error(transparent)]
+    Configuration(#[from] NovatekConfigurationError),
+}
+
+/// Rust-owned validated Novatek R3V1 session evidence.
+///
+/// This object deliberately owns only protocol proof and the selected local
+/// origin. Apple/Android adapters remain responsible for URL loading and
+/// lifecycle effects, while command-target construction cannot reconstruct a
+/// weaker firmware/configuration proof per request.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NovatekR3V1Session {
+    origin: NovatekHttpOrigin,
+    profile: NovatekR3V1Profile,
+    configuration: NovatekConfiguration,
+}
+
+impl NovatekR3V1Session {
+    /// Establishes a session from one validated origin and bounded read-only evidence.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the firmware is outside R3V1 or the command/status
+    /// evidence contains a duplicate, zero, or excessive command identifier.
+    pub fn new(
+        origin: NovatekHttpOrigin,
+        firmware_version: &str,
+        configuration: impl IntoIterator<Item = (u16, u16)>,
+    ) -> Result<Self, NovatekSessionError> {
+        Ok(Self {
+            origin,
+            profile: NovatekR3V1Profile::parse(firmware_version)?,
+            configuration: NovatekConfiguration::from_status_pairs(configuration)?,
+        })
+    }
+
+    /// Returns the validated local HTTP origin.
+    #[must_use]
+    pub const fn origin(&self) -> NovatekHttpOrigin {
+        self.origin
+    }
+
+    /// Returns the verified firmware identity.
+    #[must_use]
+    pub fn firmware_version(&self) -> &str {
+        self.profile.firmware_version().as_str()
+    }
+
+    /// Returns the bounded command/status evidence retained by the session.
+    #[must_use]
+    pub fn configuration(&self) -> &NovatekConfiguration {
+        &self.configuration
+    }
+
+    /// Builds a recording target from the retained R3V1 and `3014` proofs.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`NovatekCapabilityError::NotAdvertised`] when the selected
+    /// recording command was not acknowledged by the retained configuration.
+    pub fn recording_command_target(
+        &self,
+        command: NovatekRecordingCommand,
+    ) -> Result<&'static str, NovatekCapabilityError> {
+        let capability = self.profile.recording_capability(&self.configuration)?;
+        Ok(command.request_target_for_capability(&capability))
+    }
+
+    /// Builds a still-capture target from the retained R3V1 and `3014` proofs.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`NovatekCapabilityError::NotAdvertised`] when still capture was
+    /// not acknowledged by the retained configuration.
+    pub fn still_capture_command_target(
+        &self,
+        command: NovatekStillCaptureCommand,
+    ) -> Result<&'static str, NovatekCapabilityError> {
+        let capability = self.profile.still_capture_capability(&self.configuration)?;
+        Ok(command.request_target_for_capability(&capability))
+    }
+}
+
 /// One bounded file record returned by Novatek command `3015`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NovatekMediaEntry {
@@ -1320,6 +1410,50 @@ mod tests {
         assert_eq!(
             NovatekStillCaptureCommand.request_target_for_capability(&capability),
             "/?custom=1&cmd=1001"
+        );
+    }
+
+    #[test]
+    fn validated_r3_session_retains_origin_and_reuses_capability_proofs() {
+        let origin = NovatekHttpOrigin::new("192.168.1.254".parse().unwrap(), 80)
+            .expect("camera origin is local");
+        let session = NovatekR3V1Session::new(origin, "R3V1.1_20240411", [(2001, 0), (1001, 0)])
+            .expect("captured R3V1 evidence establishes a session");
+
+        assert_eq!(session.origin(), origin);
+        assert_eq!(session.firmware_version(), "R3V1.1_20240411");
+        assert_eq!(session.configuration().statuses().len(), 2);
+        assert_eq!(
+            session
+                .recording_command_target(NovatekRecordingCommand::Start)
+                .expect("recording proof is retained"),
+            "/?custom=1&cmd=2001&str=1"
+        );
+        assert_eq!(
+            session
+                .still_capture_command_target(NovatekStillCaptureCommand)
+                .expect("still-capture proof is retained"),
+            "/?custom=1&cmd=1001"
+        );
+    }
+
+    #[test]
+    fn validated_r3_session_rejects_unverified_or_ambiguous_evidence() {
+        let origin = NovatekHttpOrigin::new("192.168.1.254".parse().unwrap(), 80)
+            .expect("camera origin is local");
+        assert_eq!(
+            NovatekR3V1Session::new(origin, "R3V2.0_20240411", [(2001, 0)]),
+            Err(NovatekSessionError::Profile(
+                NovatekProfileError::UnsupportedFirmware
+            ))
+        );
+        assert_eq!(
+            NovatekR3V1Session::new(origin, "R3V1.1_20240411", [(2001, 0), (2001, 7)]),
+            Err(NovatekSessionError::Configuration(
+                NovatekConfigurationError::DuplicateCommand {
+                    command_id: NovatekCommandId::RECORDING,
+                }
+            ))
         );
     }
 
