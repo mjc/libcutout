@@ -953,10 +953,9 @@ impl BegodeLiveATelemetry {
             motor_current: Some(source_reported(PhaseCurrent::from_milliamps(
                 self.phase_current.as_milliamps(),
             ))),
-            power: Some(source_calculated(Power::from_voltage_current(
-                self.voltage,
-                self.phase_current,
-            ))),
+            power: Some(source_estimated(
+                Power::from_voltage_phase_current_estimate(self.voltage, self.phase_current),
+            )),
             controller_temperature: Some(source_reported(self.imu_temperature)),
             pwm: Some(source_reported(DutyCycle::from_permille(
                 self.hardware_pwm.as_permille(),
@@ -1219,15 +1218,6 @@ const fn source_reported<T>(value: T) -> Measured<T> {
     }
 }
 
-const fn source_calculated<T>(value: T) -> Measured<T> {
-    Measured {
-        value,
-        source: ValueSource::Calculated,
-        quality: ValueQuality::Known,
-        verification: VerificationStatus::SourceVerified,
-    }
-}
-
 const fn source_estimated<T>(value: T) -> Measured<T> {
     Measured {
         value,
@@ -1378,7 +1368,7 @@ mod tests {
                 motor_current: Some(source_reported(cutout_core::PhaseCurrent::from_milliamps(
                     -11_800,
                 ))),
-                power: Some(source_calculated(cutout_core::Power::from_milliwatts(
+                power: Some(source_estimated(cutout_core::Power::from_milliwatts(
                     -1_062_885
                 ))),
                 controller_temperature: Some(source_reported(
@@ -2169,15 +2159,6 @@ mod tests {
         Measured {
             value,
             source: ValueSource::Reported,
-            quality: ValueQuality::Known,
-            verification: VerificationStatus::SourceVerified,
-        }
-    }
-
-    const fn source_calculated<T>(value: T) -> Measured<T> {
-        Measured {
-            value,
-            source: ValueSource::Calculated,
             quality: ValueQuality::Known,
             verification: VerificationStatus::SourceVerified,
         }

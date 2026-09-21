@@ -1276,7 +1276,11 @@ impl<'a> VescValuesReader<'a> {
     }
 
     fn read_f32(&mut self) -> Result<f32, VescCodecError> {
-        self.read_u32().map(f32::from_bits)
+        let value = self.read_u32().map(f32::from_bits)?;
+        value
+            .is_finite()
+            .then_some(value)
+            .ok_or(VescCodecError::DecodeFailed)
     }
 
     fn remaining(&self) -> &'a [u8] {
@@ -1932,6 +1936,20 @@ mod tests {
         assert_eq!(stats.current_avg.as_milliamps(), 5_000);
         assert_eq!(stats.peak_current.as_milliamps(), 6_000);
         assert_eq!(stats.count_time, Duration::from_seconds(11));
+    }
+
+    #[test]
+    fn rejects_non_finite_stats_float_fields_at_protocol_admission() {
+        for raw in [f32::NAN.to_bits(), f32::INFINITY.to_bits()] {
+            let mut payload = vec![VESC_COMM_GET_STATS];
+            payload.extend_from_slice(&VescStatsMask::POWER_AVG.bits().to_be_bytes());
+            payload.extend_from_slice(&raw.to_be_bytes());
+
+            assert!(matches!(
+                VescReadOnlyCodec::decode_reply(&frame_from_payload(&payload)),
+                Err(VescCodecError::DecodeFailed)
+            ));
+        }
     }
 
     #[test]

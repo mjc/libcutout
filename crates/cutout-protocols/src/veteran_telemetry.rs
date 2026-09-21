@@ -582,7 +582,7 @@ impl VeteranTelemetry {
                     .be_u16(ParserOffset::from_bytes(30))
                     .ok_or(VeteranTelemetryError::FrameTooShort)?,
             ),
-            pitch: Angle::from_deci_degrees(i32::from(
+            pitch: Angle::from_centi_degrees(i32::from(
                 cursor
                     .be_i16(ParserOffset::from_bytes(32))
                     .ok_or(VeteranTelemetryError::FrameTooShort)?,
@@ -600,7 +600,7 @@ impl VeteranTelemetry {
     /// Converts decoded telemetry into the transport-independent telemetry delta.
     #[must_use]
     pub fn to_delta(self, at_ms: MonotonicTimestamp) -> TelemetryDelta {
-        let power = Power::from_voltage_current(self.voltage, self.battery_current);
+        let power = Power::from_pack_voltage_current(self.voltage, self.battery_current);
         TelemetryDelta {
             speed: Some(Measured::reported(Speed::from_millimetres_per_second(
                 self.speed.as_millimetres_per_second(),
@@ -1828,7 +1828,8 @@ mod tests {
 
         assert_eq!(current.as_milliamps(), -1_700);
         assert_eq!(
-            Power::from_voltage_current(Voltage::from_millivolts(108_760), current).as_milliwatts(),
+            Power::from_pack_voltage_current(Voltage::from_millivolts(108_760), current)
+                .as_milliwatts(),
             -184_892
         );
     }

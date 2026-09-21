@@ -4961,6 +4961,32 @@ const fn saturating_i64_to_i32(value: i64) -> i32 {
     }
 }
 
+fn saturating_i128_to_i32(value: i128) -> i32 {
+    if value > i128::from(i32::MAX) {
+        i32::MAX
+    } else if value < i128::from(i32::MIN) {
+        i32::MIN
+    } else {
+        #[allow(clippy::cast_possible_truncation)]
+        {
+            value as i32
+        }
+    }
+}
+
+fn saturating_i128_to_i64(value: i128) -> i64 {
+    if value > i128::from(i64::MAX) {
+        i64::MAX
+    } else if value < i128::from(i64::MIN) {
+        i64::MIN
+    } else {
+        #[allow(clippy::cast_possible_truncation)]
+        {
+            value as i64
+        }
+    }
+}
+
 /// Divides two signed integers and rounds the quotient to the nearest integer.
 #[must_use]
 pub fn round_div_i32(numerator: i32, denominator: i32) -> i32 {
@@ -4980,18 +5006,14 @@ pub fn round_div_i32(numerator: i32, denominator: i32) -> i32 {
 }
 
 #[must_use]
-fn round_div_i64_to_i32(numerator: i64, denominator: i64) -> i32 {
+fn round_div_i128_to_i32(numerator: i128, denominator: i128) -> i32 {
     if denominator == 0 {
         return 0;
     }
 
-    let sign = if (numerator < 0) ^ (denominator < 0) {
-        -1
-    } else {
-        1
-    };
+    let negative = (numerator < 0) ^ (denominator < 0);
     let rounded = (numerator.abs() + denominator.abs() / 2) / denominator.abs();
-    saturating_i64_to_i32(rounded.saturating_mul(sign))
+    saturating_i128_to_i32(if negative { -rounded } else { rounded })
 }
 
 #[allow(
@@ -5248,25 +5270,11 @@ impl BatteryCurrent {
     pub fn as_amps(self) -> f32 {
         self.0.as_amps()
     }
-}
 
-impl core::ops::Deref for BatteryCurrent {
-    type Target = Current;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl From<Current> for BatteryCurrent {
-    fn from(value: Current) -> Self {
-        Self(value)
-    }
-}
-
-impl From<BatteryCurrent> for Current {
-    fn from(value: BatteryCurrent) -> Self {
-        value.0
+    /// Returns the magnitude while preserving the battery-current role.
+    #[must_use]
+    pub fn abs(self) -> Self {
+        Self::from_milliamps(self.as_milliamps().saturating_abs())
     }
 }
 
@@ -5324,25 +5332,11 @@ impl PhaseCurrent {
     pub fn as_amps(self) -> f32 {
         self.0.as_amps()
     }
-}
 
-impl core::ops::Deref for PhaseCurrent {
-    type Target = Current;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl From<Current> for PhaseCurrent {
-    fn from(value: Current) -> Self {
-        Self(value)
-    }
-}
-
-impl From<PhaseCurrent> for Current {
-    fn from(value: PhaseCurrent) -> Self {
-        value.0
+    /// Returns the magnitude while preserving the phase-current role.
+    #[must_use]
+    pub fn abs(self) -> Self {
+        Self::from_milliamps(self.as_milliamps().saturating_abs())
     }
 }
 
@@ -5459,25 +5453,11 @@ impl PeakCurrent {
     pub fn as_amps(self) -> f32 {
         self.0.as_amps()
     }
-}
 
-impl core::ops::Deref for PeakCurrent {
-    type Target = Current;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl From<Current> for PeakCurrent {
-    fn from(value: Current) -> Self {
-        Self(value)
-    }
-}
-
-impl From<PeakCurrent> for Current {
-    fn from(value: PeakCurrent) -> Self {
-        value.0
+    /// Returns the magnitude while preserving the peak-current role.
+    #[must_use]
+    pub fn abs(self) -> Self {
+        Self::from_milliamps(self.as_milliamps().saturating_abs())
     }
 }
 
@@ -5522,11 +5502,11 @@ impl RotationalSpeed {
             return None;
         }
 
-        let wheel_circumference_mm = i64::try_from(wheel_circumference.as_millimetres()).ok()?;
-        let numerator = i64::from(self.as_erpm()) * wheel_circumference_mm;
-        Some(Speed::from_millimetres_per_second(round_div_i64_to_i32(
+        let numerator =
+            i128::from(self.as_erpm()) * i128::from(wheel_circumference.as_millimetres());
+        Some(Speed::from_millimetres_per_second(round_div_i128_to_i32(
             numerator,
-            denominator,
+            i128::from(denominator),
         )))
     }
 }
@@ -5558,13 +5538,24 @@ impl Power {
         Self::from_unit_value(value)
     }
 
-    /// Calculates electrical power from voltage and current.
+    /// Calculates pack-side electrical power from voltage and battery current.
     #[must_use]
-    pub fn from_voltage_current(voltage: Voltage, current: impl Into<Current>) -> Self {
-        let current = current.into();
-        Self::from_milliwatts(
-            i64::from(voltage.as_millivolts()) * i64::from(current.as_milliamps()) / 1_000,
-        )
+    pub fn from_pack_voltage_current(voltage: Voltage, current: BatteryCurrent) -> Self {
+        let milliwatts =
+            i128::from(voltage.as_millivolts()) * i128::from(current.as_milliamps()) / 1_000;
+        Self::from_milliwatts(saturating_i128_to_i64(milliwatts))
+    }
+
+    /// Estimates electrical power from pack voltage and motor/phase current.
+    ///
+    /// Phase current and battery current are not interchangeable. Callers
+    /// must preserve that this result is an estimate based on an explicit,
+    /// protocol-specific assumption.
+    #[must_use]
+    pub fn from_voltage_phase_current_estimate(voltage: Voltage, current: PhaseCurrent) -> Self {
+        let milliwatts =
+            i128::from(voltage.as_millivolts()) * i128::from(current.as_milliamps()) / 1_000;
+        Self::from_milliwatts(saturating_i128_to_i64(milliwatts))
     }
 
     /// Returns this power in milliwatts.
@@ -6026,9 +6017,15 @@ impl Angle {
         Self::from_unit_value(value)
     }
 
-    /// Creates an angle from decidegrees.
+    /// Creates an angle from decidegrees (tenths of a degree).
     #[must_use]
     pub const fn from_deci_degrees(value: i32) -> Self {
+        Self::from_millidegrees(value.saturating_mul(100))
+    }
+
+    /// Creates an angle from centidegrees (hundredths of a degree).
+    #[must_use]
+    pub const fn from_centi_degrees(value: i32) -> Self {
         Self::from_millidegrees(value.saturating_mul(10))
     }
 
@@ -6131,7 +6128,8 @@ impl QuantityDisplayValue for DutyCycle {
 }
 
 /// Battery state-of-charge stored as a percentage.
-pub type BatteryLevel = Quantity<Ratio, PercentUnit, u8>;
+#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
+pub struct BatteryLevel(u8);
 
 /// Shared conversion surface for battery state-of-charge quantities.
 #[allow(clippy::wrong_self_convention)]
@@ -6144,10 +6142,20 @@ pub trait PercentQuantity {
 }
 
 impl BatteryLevel {
-    /// Creates a battery level from a percent value.
+    /// Creates a battery level from a percent value, clamping to `0..=100`.
     #[must_use]
     pub const fn from_percent(value: u8) -> Self {
-        Self::from_unit_value(value)
+        Self(if value > 100 { 100 } else { value })
+    }
+
+    /// Admits a backend percentage only when it is already in `0..=100`.
+    #[must_use]
+    pub const fn try_from_percent(value: u8) -> Option<Self> {
+        if value <= 100 {
+            Some(Self(value))
+        } else {
+            None
+        }
     }
 
     /// Creates a battery level from a signed percent value, clamping to the stored range.
@@ -6159,7 +6167,13 @@ impl BatteryLevel {
     /// Returns this battery level as a percent value.
     #[must_use]
     pub const fn as_percent(self) -> u8 {
-        self.unit_value()
+        self.0
+    }
+
+    /// Returns the stored percentage value.
+    #[must_use]
+    pub const fn get(self) -> u8 {
+        self.as_percent()
     }
 
     /// Returns this battery level as a unitless fraction in the range `0.0..=1.0`.
@@ -6171,32 +6185,18 @@ impl BatteryLevel {
     /// Linearly interpolates a battery level between two reference points.
     #[must_use]
     pub fn interpolate(low: Self, high: Self, value: i64, low_value: i64, high_value: i64) -> Self {
-        let value_span = high_value - low_value;
+        let value_span = i128::from(high_value) - i128::from(low_value);
         if value_span <= 0 {
             return low;
         }
 
-        let level_span = i32::from(high.as_percent()) - i32::from(low.as_percent());
-        let value_offset = value - low_value;
-        let numerator = value_offset.saturating_mul(i64::from(level_span));
-        let level = i32::from(low.as_percent())
-            + round_div_i32(
-                i32::try_from(numerator).unwrap_or_else(|_| {
-                    if numerator.is_negative() {
-                        i32::MIN
-                    } else {
-                        i32::MAX
-                    }
-                }),
-                i32::try_from(value_span).unwrap_or_else(|_| {
-                    if value_span.is_negative() {
-                        i32::MIN
-                    } else {
-                        i32::MAX
-                    }
-                }),
-            );
-        Self::from_percent_i32(level)
+        let level_span = i128::from(high.as_percent()) - i128::from(low.as_percent());
+        let value_offset = i128::from(value) - i128::from(low_value);
+        let numerator = value_offset * level_span;
+        let negative = (numerator < 0) ^ (value_span < 0);
+        let rounded = (numerator.abs() + value_span.abs() / 2) / value_span.abs();
+        let level = i128::from(low.as_percent()) + if negative { -rounded } else { rounded };
+        Self::from_percent_i32(saturating_i128_to_i32(level))
     }
 
     /// Evaluates a piecewise-linear battery curve over typed percentage points.
@@ -6229,11 +6229,17 @@ impl BatteryLevel {
 
 impl PercentQuantity for BatteryLevel {
     fn from_percent(value: u8) -> Self {
-        Self::from_unit_value(value)
+        Self::from_percent(value)
     }
 
     fn as_percent(self) -> u8 {
-        self.unit_value()
+        self.as_percent()
+    }
+}
+
+impl fmt::Display for BatteryLevel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.as_percent().fmt(f)
     }
 }
 
@@ -9146,6 +9152,17 @@ mod tests {
             50
         );
         assert_eq!(
+            BatteryLevel::interpolate(
+                BatteryLevel::from_percent(0),
+                BatteryLevel::from_percent(100),
+                50_000_000,
+                0,
+                100_000_000,
+            )
+            .as_percent(),
+            50
+        );
+        assert_eq!(
             BatteryLevel::from_piecewise_linear(
                 5_440,
                 &[
@@ -9173,7 +9190,7 @@ mod tests {
         assert_eq!(Duration::from_deciseconds(12).as_milliseconds(), 1_200);
 
         assert_eq!(Angle::from_degrees(69).as_millidegrees(), 69_000);
-        assert_eq!(Angle::from_deci_degrees(690).as_millidegrees(), 6_900);
+        assert_eq!(Angle::from_deci_degrees(690).as_millidegrees(), 69_000);
         assert_eq!(Angle::from_millidegrees(69_060).as_whole_degrees(), 69);
 
         assert_eq!(DutyCycle::from_decipermille(524).as_permille(), 52);
@@ -9182,17 +9199,38 @@ mod tests {
         assert_eq!(DutyCycle::from_centered_pwm(u16::MAX).as_permille(), 999);
 
         assert_eq!(
-            Power::from_voltage_current(Voltage::from_volts(53), Current::from_amps(-6)),
+            Power::from_pack_voltage_current(
+                Voltage::from_volts(53),
+                BatteryCurrent::from_amps(-6),
+            ),
             Power::from_watts(-318)
         );
         assert_eq!(
-            Power::from_voltage_current(
+            Power::from_pack_voltage_current(
                 Voltage::from_millivolts(i32::MAX),
-                Current::from_milliamps(i32::MAX),
+                BatteryCurrent::from_milliamps(i32::MAX),
             ),
             Power::from_milliwatts(4_611_686_014_132_420)
         );
         assert_eq!(DutyCycle::from_centipercent(755).as_permille(), 75);
+    }
+
+    #[test]
+    fn quantity_rounding_and_bounded_admission_handle_public_extremes() {
+        assert_eq!(
+            crate::RotationalSpeed::from_erpm(i32::MAX).as_speed(
+                u8::MAX,
+                u8::MAX,
+                Distance::from_millimetres(u64::MAX),
+            ),
+            Some(Speed::from_millimetres_per_second(i32::MAX))
+        );
+        assert_eq!(BatteryLevel::from_percent(255).as_ratio(), 1.0);
+        assert_eq!(
+            BatteryLevel::try_from_percent(100).map(BatteryLevel::as_percent),
+            Some(100)
+        );
+        assert_eq!(BatteryLevel::try_from_percent(101), None);
     }
 
     #[test]

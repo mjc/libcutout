@@ -3628,6 +3628,10 @@ pub enum MobileRiderPowerSourceDto {
     CalculatedPackCurrent,
     /// Reported directly by the active protocol.
     Reported,
+    /// Calculated by the domain from other measured values.
+    Calculated,
+    /// Estimated by the domain from incomplete evidence.
+    Estimated,
 }
 
 /// Typed temperature values for the projected thermal metric.
@@ -12503,6 +12507,16 @@ impl From<cutout_core::RiderDashboardMetricDescriptor> for MobileRiderDashboardM
                     }),
                     source: Some(MobileRiderPowerSourceDto::Reported),
                 },
+                cutout_core::RiderPowerValue::Measured(reading) => Self::Power {
+                    power: Some(Power {
+                        value: reading.value.as_milliwatts(),
+                    }),
+                    source: Some(match reading.source {
+                        ValueSource::Reported => MobileRiderPowerSourceDto::Reported,
+                        ValueSource::Calculated => MobileRiderPowerSourceDto::Calculated,
+                        ValueSource::Estimated => MobileRiderPowerSourceDto::Estimated,
+                    }),
+                },
                 cutout_core::RiderPowerValue::Unavailable => Self::Power {
                     power: None,
                     source: None,
@@ -13580,7 +13594,7 @@ mod tests {
                 },
                 MobileRiderDashboardMetricDescriptorDto::Power {
                     power: Some(Power { value: 0 }),
-                    source: Some(MobileRiderPowerSourceDto::Reported),
+                    source: Some(MobileRiderPowerSourceDto::CalculatedPackCurrent),
                 },
                 MobileRiderDashboardMetricDescriptorDto::Thermal {
                     readback: Some(MobileRiderThermalReadbackDto {
