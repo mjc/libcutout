@@ -7596,7 +7596,7 @@ impl MobileRideMapCoreInner {
 
     fn new(database: Option<Arc<RideDatabaseHandle>>) -> Self {
         let needs_restoration = database.is_some();
-        Self {
+        let mut state = Self {
             database,
             ride_id: None,
             revision: 0,
@@ -7617,7 +7617,7 @@ impl MobileRideMapCoreInner {
             } else {
                 MobileRideMapRestorationState::Ready
             },
-        }
+        };
         if let Some(database) = state.database.clone() {
             match database.inner.last_connected_device() {
                 Ok(platform_identifier) => {
