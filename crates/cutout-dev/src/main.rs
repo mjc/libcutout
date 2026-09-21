@@ -1808,9 +1808,7 @@ mod tests {
                 .write(true)
                 .open(root.join(SWIFT_FFI_LOCK))
                 .unwrap();
-            contender
-                .try_lock()
-                .expect("failed exec must release the lock");
+            wait_for_lock_release(&contender);
             return;
         }
         let root = tempfile::tempdir().unwrap();
@@ -1824,6 +1822,22 @@ mod tests {
             .output()
             .unwrap();
         assert!(result.status.success(), "{result:?}");
+    }
+
+    #[cfg(unix)]
+    fn wait_for_lock_release(contender: &fs::File) {
+        use std::time::{Duration, Instant};
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            match contender.try_lock() {
+                Ok(()) => return,
+                Err(fs::TryLockError::WouldBlock) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) => panic!("failed exec did not release the lock: {error}"),
+            }
+        }
     }
 
     #[cfg(unix)]
