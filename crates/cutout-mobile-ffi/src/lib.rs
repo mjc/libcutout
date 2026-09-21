@@ -2822,76 +2822,91 @@ impl From<TransportWriteLimitDto> for MobileTransportWriteLimitDto {
     }
 }
 
-/// Mobile notification payload length.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
-pub struct MobileNotificationByteLenDto {
-    /// Length in bytes.
-    pub bytes: u64,
-}
-
-impl From<NotificationByteLenDto> for MobileNotificationByteLenDto {
-    fn from(value: NotificationByteLenDto) -> Self {
-        Self {
-            bytes: value.bytes as u64,
+macro_rules! mobile_scalar_record {
+    (
+        $mobile:ident,
+        $core:ident,
+        $record_doc:literal,
+        $field_doc:literal,
+        $field:ident,
+        $mobile_ty:ty,
+        $convert:expr
+    ) => {
+        #[doc = $record_doc]
+        #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+        pub struct $mobile {
+            #[doc = $field_doc]
+            pub $field: $mobile_ty,
         }
-    }
-}
 
-/// Mobile protocol payload body length.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
-pub struct MobilePayloadBodyLenDto {
-    /// Length in bytes.
-    pub bytes: u64,
-}
-
-impl From<PayloadBodyLenDto> for MobilePayloadBodyLenDto {
-    fn from(value: PayloadBodyLenDto) -> Self {
-        Self {
-            bytes: value.bytes as u64,
+        impl From<$core> for $mobile {
+            fn from(value: $core) -> Self {
+                Self {
+                    $field: $convert(value.$field),
+                }
+            }
         }
-    }
+    };
 }
 
-/// Mobile semantic event count.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
-pub struct MobileSemanticEventCountDto {
-    /// Count of emitted semantic events.
-    pub count: u64,
+fn usize_to_u64(value: usize) -> u64 {
+    u64::try_from(value).expect("mobile DTO values must fit in u64")
 }
 
-impl From<SemanticEventCountDto> for MobileSemanticEventCountDto {
-    fn from(value: SemanticEventCountDto) -> Self {
-        Self {
-            count: value.count as u64,
-        }
-    }
-}
-
-/// Mobile dropped parser byte count.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
-pub struct MobileParserDroppedBytesDto {
-    /// Count of dropped bytes.
-    pub bytes: u64,
-}
-
-impl From<ParserDroppedBytesDto> for MobileParserDroppedBytesDto {
-    fn from(value: ParserDroppedBytesDto) -> Self {
-        Self { bytes: value.bytes }
-    }
-}
-
-/// Mobile parser diagnostic event count.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
-pub struct MobileParserDiagnosticCountDto {
-    /// Count of parser diagnostic events.
-    pub count: u64,
-}
-
-impl From<ParserDiagnosticCountDto> for MobileParserDiagnosticCountDto {
-    fn from(value: ParserDiagnosticCountDto) -> Self {
-        Self { count: value.count }
-    }
-}
+mobile_scalar_record!(
+    MobileNotificationByteLenDto,
+    NotificationByteLenDto,
+    "Mobile notification payload length.",
+    "Length in bytes.",
+    bytes,
+    u64,
+    usize_to_u64
+);
+mobile_scalar_record!(
+    MobilePayloadBodyLenDto,
+    PayloadBodyLenDto,
+    "Mobile protocol payload body length.",
+    "Length in bytes.",
+    bytes,
+    u64,
+    usize_to_u64
+);
+mobile_scalar_record!(
+    MobileSemanticEventCountDto,
+    SemanticEventCountDto,
+    "Mobile semantic event count.",
+    "Count of emitted semantic events.",
+    count,
+    u64,
+    usize_to_u64
+);
+mobile_scalar_record!(
+    MobileParserDroppedBytesDto,
+    ParserDroppedBytesDto,
+    "Mobile dropped parser byte count.",
+    "Count of dropped bytes.",
+    bytes,
+    u64,
+    core::convert::identity
+);
+mobile_scalar_record!(
+    MobileParserDiagnosticCountDto,
+    ParserDiagnosticCountDto,
+    "Mobile parser diagnostic event count.",
+    "Count of parser diagnostic events.",
+    count,
+    u64,
+    core::convert::identity
+);
+mobile_scalar_record!(
+    MobileParserFrameLenDto,
+    ParserFrameLenDto,
+    "Mobile parser frame length DTO.",
+    "Length in bytes.",
+    bytes,
+    u64,
+    usize_to_u64
+);
 
 /// Mobile output kind.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
@@ -3036,13 +3051,6 @@ pub struct MobileParserErrorDto {
 
     /// Timeout threshold in monotonic time.
     pub timeout_ms: Option<MobileMonotonicMillisDto>,
-}
-
-/// Mobile parser frame length DTO.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
-pub struct MobileParserFrameLenDto {
-    /// Length in bytes.
-    pub bytes: u64,
 }
 
 /// Mobile reserved payload evidence DTO.
@@ -12261,14 +12269,6 @@ impl From<IgnoredNotificationReasonDto> for MobileIgnoredNotificationReasonDto {
             IgnoredNotificationReasonDto::AcceptedButUnmapped => Self::AcceptedButUnmapped,
             IgnoredNotificationReasonDto::SeekingFrameBoundary => Self::SeekingFrameBoundary,
             IgnoredNotificationReasonDto::IntentionallyDropped => Self::IntentionallyDropped,
-        }
-    }
-}
-
-impl From<ParserFrameLenDto> for MobileParserFrameLenDto {
-    fn from(value: ParserFrameLenDto) -> Self {
-        Self {
-            bytes: value.bytes as u64,
         }
     }
 }
