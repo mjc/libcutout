@@ -20,7 +20,7 @@ pub enum RiderMetricValue<T> {
 /// Origin and value of the projected electrical power metric.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RiderPowerValue {
-    /// Power calculated from pack voltage and non-zero battery current.
+    /// Power calculated from pack voltage and battery current, including zero current.
     CalculatedPackCurrent(Power),
     /// Power reported directly by the active protocol.
     Reported(Power),

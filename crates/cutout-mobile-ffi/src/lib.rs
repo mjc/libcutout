@@ -3662,7 +3662,7 @@ pub struct MobileTelemetrySnapshotDto {
 /// Source of a projected live rider power value.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum MobileRiderPowerSourceDto {
-    /// Calculated from pack voltage and non-zero battery current.
+    /// Calculated from pack voltage and battery current, including zero current.
     CalculatedPackCurrent,
     /// Reported directly by the active protocol.
     Reported,

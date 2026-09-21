@@ -2365,6 +2365,10 @@
       "comment" : "Ride power tile fallback when power is calculated from pack voltage and current.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "calculated from pack current" } } }
     },
+    "ride.power.estimated" : {
+      "comment" : "Ride power tile fallback when power is estimated from available telemetry.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "estimated from telemetry" } } }
+    },
     "ride.power.live_telemetry" : {
       "comment" : "Ride power tile fallback when power is directly reported by live telemetry.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "live telemetry" } } }

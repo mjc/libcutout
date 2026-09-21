@@ -258,7 +258,7 @@ private func livePowerTile(
         fallback = switch source {
         case .calculatedPackCurrent: localizedAppText("ride.power.calculated_pack_current")
         case .calculated: localizedAppText("ride.power.calculated_pack_current")
-        case .estimated: localizedAppText("ride.power.calculated_pack_current")
+        case .estimated: localizedAppText("ride.power.estimated")
         case .reported: localizedAppText("ride.power.live_telemetry")
         }
     } else {
