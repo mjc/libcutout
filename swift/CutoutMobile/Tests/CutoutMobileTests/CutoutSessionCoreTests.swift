@@ -2149,14 +2149,25 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         core.observeDetectionProbeWrite(channel: channel, bytes: Data("N".utf8))
         core.observeDetectionNotification(channel: channel, bytes: Data("NAME=Falcon".utf8))
 
-        XCTAssertEqual(core.protocolIdentityCandidate?.displayName, "Typed Begode Falcon")
-        XCTAssertEqual(core.protocolIdentityCandidate?.detail, "Begode/Falcon confirmed by reported model Falcon")
+        XCTAssertEqual(core.protocolIdentityCandidate?.displayName, "Begode Falcon")
+        let detail = "Begode/Falcon confirmed by reported model Falcon; advertised as Typed Begode Falcon"
+        XCTAssertEqual(core.protocolIdentityCandidate?.detail, detail)
         XCTAssertEqual(core.protocolIdentityCandidate?.support.electricUnicycleModel, .falcon)
         XCTAssertEqual(
             observedCandidates.compactMap { $0?.detail },
-            ["Begode/Falcon confirmed by reported model Falcon"]
+            [detail]
         )
-        XCTAssertEqual(core.records.last, "protocol_identity=Begode/Falcon confirmed by reported model Falcon")
+        XCTAssertEqual(core.records.last, "protocol_identity=\(detail)")
+        XCTAssertEqual(core.scanState.rows.first?.title, "Begode Falcon")
+        XCTAssertEqual(core.scanState.rows.first?.id, "ios-local-falcon")
+        XCTAssertTrue(core.scanState.rows.first?.detail.contains("Typed Begode Falcon") == true)
+
+        core.observeAdvertisement(CoreBluetoothAdvertisement(
+            peripheralIdentifier: CoreBluetoothPeripheralIdentifier("ios-local-falcon"),
+            localName: "Typed Begode Falcon",
+            advertisedServiceUuids: [.bluetooth16(0xFFE0)]
+        ))
+        XCTAssertEqual(core.scanState.rows.first?.title, "Begode Falcon")
     }
 
     func testBegodeFirmwareProbeResponseUpdatesProtocolIdentityCandidate() {

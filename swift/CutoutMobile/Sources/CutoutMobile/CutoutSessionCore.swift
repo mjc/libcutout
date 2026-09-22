@@ -1400,6 +1400,10 @@ public final class CutoutSessionCore: NSObject {
             return
         }
         storedProtocolIdentityCandidate = nil
+        scanState = DevicePickerScanState(
+            status: scanState.status,
+            discoverySnapshot: rustSessionState.discoverySnapshot()
+        )
         publishProtocolIdentityCandidate()
     }
 
@@ -1902,8 +1906,19 @@ public final class CutoutSessionCore: NSObject {
     }
 
     private func publishScanState() {
+        if let candidate = storedProtocolIdentityCandidate {
+            let row = candidate.pickerRow
+            scanState = DevicePickerScanState(
+                status: scanState.status,
+                rows: scanState.rows.map { $0.id == row.id ? row : $0 }
+            )
+        }
         let value = scanState
-        publishOnMain { self.onScanStateChange?(value) }
+        let generation = connectionSnapshot.generation
+        publishOnMain {
+            guard self.connectionSnapshot.generation == generation else { return }
+            self.onScanStateChange?(value)
+        }
     }
 
 
@@ -1945,6 +1960,7 @@ public final class CutoutSessionCore: NSObject {
     }
 
     private func publishProtocolIdentityCandidate() {
+        publishScanState()
         let value = protocolIdentityCandidate
         let generation = connectionSnapshot.generation
         publishOnMain {

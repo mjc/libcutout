@@ -2196,7 +2196,17 @@ pub fn mobile_discovery_candidate_from_begode_identity_probe(
         malformed_probe_response,
     );
     let supported = support == DiscoveryCandidateSupport::Supported;
-    let detail = mobile_begode_identity_probe_detail(supported, &probe);
+    let mut detail = mobile_begode_identity_probe_detail(supported, &probe);
+    let display_name = if supported {
+        detail.push_str("; advertised as ");
+        detail.push_str(&display_name);
+        format!(
+            "{} {}",
+            BEGODE_FALCON_REGISTRY_ENTRY.manufacturer, BEGODE_FALCON_REGISTRY_ENTRY.model
+        )
+    } else {
+        display_name
+    };
 
     DiscoveryCandidate {
         platform_identifier,
@@ -2328,6 +2338,7 @@ pub fn mobile_discovery_candidate_from_detection_resolution(
         Some(MobileProtocolFamilyDto::BegodeGotway)
     ) && resolution.missing_probe_response.is_none()
         && resolution.malformed_probe_response.is_none()
+        && resolution.model_banner.is_none()
     {
         return DiscoveryCandidate {
             platform_identifier,
@@ -14631,6 +14642,25 @@ mod tests {
     }
 
     #[test]
+    fn scan_candidate_displays_reported_falcon_identity_after_family_detection() {
+        let session = CutoutSessionStateHandle::new();
+        session.observe_notification(
+            hex_literal::hex!("55aa19a60000003f0003ffecf92a0088000100185a5a5a5a").to_vec(),
+        );
+        session.observe_begode_name_probe();
+        let resolution = session.observe_notification(b"NAME:Falcon\r\n".to_vec());
+        let candidate = mobile_discovery_candidate_from_detection_resolution(
+            "scan-falcon".to_owned(),
+            "GotWay_002441".to_owned(),
+            resolution,
+        );
+        assert_eq!(candidate.display_name, "Begode Falcon");
+        assert_eq!(candidate.support, DiscoveryCandidateSupport::Supported);
+        assert!(candidate.detail.contains("GotWay_002441"));
+        assert_eq!(candidate.platform_identifier, "scan-falcon");
+    }
+
+    #[test]
     fn mobile_discovery_candidate_routes_reported_falcon_model_to_session() {
         let candidate = mobile_discovery_candidate_from_begode_identity_probe(
             "ios-local-falcon".to_owned(),
@@ -14648,7 +14678,7 @@ mod tests {
         );
 
         assert_eq!(candidate.platform_identifier, "ios-local-falcon");
-        assert_eq!(candidate.display_name, "GotWay_002441");
+        assert_eq!(candidate.display_name, "Begode Falcon");
         assert_eq!(candidate.product_category, "Electric unicycle");
         assert_eq!(
             candidate.evidence,
@@ -14656,7 +14686,7 @@ mod tests {
         );
         assert_eq!(
             candidate.detail,
-            "Begode/Falcon confirmed by reported model Falcon, code GW-FALCON, imu MPU6500, firmware 1.0.0, serial 012345, voltage hint 100800mV"
+            "Begode/Falcon confirmed by reported model Falcon, code GW-FALCON, imu MPU6500, firmware 1.0.0, serial 012345, voltage hint 100800mV; advertised as GotWay_002441"
         );
         assert!(candidate.is_picker_candidate);
         assert_eq!(candidate.support, DiscoveryCandidateSupport::Supported);
