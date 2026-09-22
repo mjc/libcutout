@@ -1932,19 +1932,15 @@ pub struct ReadOnlySession<M: ReadOnlyModelSpec> {
 
 impl<M: ReadOnlyModelSpec> Default for ReadOnlySession<M> {
     fn default() -> Self {
-        ReadOnlyResponseBox::prepare_pool(8);
-        Self {
-            connected: false,
-            decoder: M::NotificationDecoder::default(),
-            model: PhantomData,
-        }
+        Self::with_decoder(M::NotificationDecoder::default())
     }
 }
 
 impl<M: ReadOnlyModelSpec> ReadOnlySession<M> {
     /// Creates a read-only session with an explicitly configured notification decoder.
     #[must_use]
-    pub const fn with_decoder(decoder: M::NotificationDecoder) -> Self {
+    pub fn with_decoder(decoder: M::NotificationDecoder) -> Self {
+        ReadOnlyResponseBox::prepare_pool(8);
         Self {
             connected: false,
             decoder,
@@ -2063,7 +2059,7 @@ impl<M: ReadOnlyModelSpec + SupportsBenignControls> Default for BenignControlSes
 impl<M: ReadOnlyModelSpec + SupportsBenignControls> BenignControlSession<M> {
     /// Creates a benign-control session with an explicitly configured notification decoder.
     #[must_use]
-    pub const fn with_decoder(decoder: M::NotificationDecoder) -> Self {
+    pub fn with_decoder(decoder: M::NotificationDecoder) -> Self {
         Self {
             read_only: ReadOnlySession::with_decoder(decoder),
             light_command_state: LightCommandState::Unknown,
@@ -2188,7 +2184,7 @@ impl<M: ReadOnlyModelSpec + SupportsSettingsWrites + SupportsBenignControls>
 {
     /// Creates a settings-write session with an explicitly configured decoder.
     #[must_use]
-    pub const fn with_decoder(decoder: M::NotificationDecoder) -> Self {
+    pub fn with_decoder(decoder: M::NotificationDecoder) -> Self {
         Self {
             read_only: ReadOnlySession::with_decoder(decoder),
             arm: None,

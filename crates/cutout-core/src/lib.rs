@@ -7075,21 +7075,25 @@ fn read_only_response_pool() -> &'static Mutex<VecDeque<Box<ReadOnlyResponse>>> 
     READ_ONLY_RESPONSE_POOL.get_or_init(|| Mutex::new(VecDeque::new()))
 }
 
+fn empty_read_only_response() -> &'static ReadOnlyResponse {
+    static EMPTY_RESPONSE: OnceLock<ReadOnlyResponse> = OnceLock::new();
+    EMPTY_RESPONSE
+        .get_or_init(|| ReadOnlyResponse::FaultHistory(FaultHistoryReadback::unavailable()))
+}
+
 /// Owned read-only response storage used by semantic device events.
 #[derive(Debug, Eq, PartialEq)]
 pub struct ReadOnlyResponseBox {
-    response: Box<ReadOnlyResponse>,
+    response: Option<Box<ReadOnlyResponse>>,
 }
 
 impl ReadOnlyResponseBox {
-    const POOL_SENTINELS: usize = 1;
-
     /// Prepares reusable response storage for an allocation-free protocol hot path.
     pub fn prepare_pool(capacity: usize) {
         let mut pool = read_only_response_pool()
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        let target = capacity.saturating_add(Self::POOL_SENTINELS);
+        let target = capacity;
         while pool.len() < target {
             pool.push_back(Box::new(ReadOnlyResponse::FaultHistory(
                 FaultHistoryReadback::unavailable(),
@@ -7103,28 +7107,44 @@ impl ReadOnlyResponseBox {
         let mut pool = read_only_response_pool()
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        if pool.len() > Self::POOL_SENTINELS
-            && let Some(mut storage) = pool.pop_back()
-        {
+        let response = if let Some(mut storage) = pool.pop_back() {
             *storage = response;
-            return Self { response: storage };
-        }
-        drop(pool);
+            storage
+        } else {
+            Box::new(response)
+        };
         Self {
-            response: Box::new(response),
+            response: Some(response),
         }
+    }
+
+    /// Borrows the response while it is owned by this event.
+    #[must_use]
+    fn response_ref(&self) -> &ReadOnlyResponse {
+        match self.response.as_deref() {
+            Some(response) => response,
+            None => empty_read_only_response(),
+        }
+    }
+
+    /// Mutably borrows the response while it is owned by this event.
+    #[must_use]
+    fn response_mut(&mut self) -> &mut ReadOnlyResponse {
+        self.response
+            .get_or_insert_with(|| Box::new(empty_read_only_response().clone()))
+            .as_mut()
     }
 }
 
 impl AsRef<ReadOnlyResponse> for ReadOnlyResponseBox {
     fn as_ref(&self) -> &ReadOnlyResponse {
-        &self.response
+        self.response_ref()
     }
 }
 
 impl AsMut<ReadOnlyResponse> for ReadOnlyResponseBox {
     fn as_mut(&mut self) -> &mut ReadOnlyResponse {
-        &mut self.response
+        self.response_mut()
     }
 }
 
@@ -7132,30 +7152,29 @@ impl Deref for ReadOnlyResponseBox {
     type Target = ReadOnlyResponse;
 
     fn deref(&self) -> &Self::Target {
-        &self.response
+        self.response_ref()
     }
 }
 
 impl DerefMut for ReadOnlyResponseBox {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.response
+        self.response_mut()
     }
 }
 
 impl Clone for ReadOnlyResponseBox {
     fn clone(&self) -> Self {
-        Self::new(self.response.as_ref().clone())
+        Self::new(self.response_ref().clone())
     }
 }
 
 impl Drop for ReadOnlyResponseBox {
     fn drop(&mut self) {
-        let mut pool = read_only_response_pool()
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        if let Some(storage) = pool.pop_back() {
-            let returned = std::mem::replace(&mut self.response, storage);
-            pool.push_back(returned);
+        if let Some(response) = self.response.take() {
+            let mut pool = read_only_response_pool()
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            pool.push_back(response);
         }
     }
 }
