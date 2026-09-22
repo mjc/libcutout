@@ -37,6 +37,7 @@ enum CaptureRecordActionTone: Equatable, Sendable {
 
 struct CaptureUnknownDeviceSheet: View {
     let sections: DevicePickerSections
+    var captureStatusText: String? = nil
     let probe: (DevicePickerRow) -> Bool
     let recordOnly: (DevicePickerRow, String) -> Bool
     @Environment(\.dismiss) private var dismiss
@@ -56,6 +57,14 @@ struct CaptureUnknownDeviceSheet: View {
                     title: localizedAppText("picker.advanced_capture"),
                     subtitle: localizedAppText("picker.capture_kind.hint")
                 )
+
+                if let captureStatusText {
+                    Text(captureStatusText)
+                        .font(.footnote)
+                        .foregroundStyle(PevColors.muted)
+                        .textSelection(.enabled)
+                        .accessibilityIdentifier("device-picker.capture-details")
+                }
 
                 VStack(alignment: .leading, spacing: 8) {
                     PevDashboardSectionLabel(title: localizedAppText("picker.capture_kind.label"))

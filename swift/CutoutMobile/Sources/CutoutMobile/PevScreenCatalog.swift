@@ -483,6 +483,7 @@ public enum DevicePickerGlyphKind: Equatable, Hashable, Sendable {
 
 public struct DevicePickerRow: Equatable, Hashable, Sendable, Identifiable {
     public let id: String
+    public let advertisedName: String?
 
     public let title: String
     public let subtitle: String
@@ -504,9 +505,11 @@ public struct DevicePickerRow: Equatable, Hashable, Sendable, Identifiable {
         symbolName: String,
         glyphKind: DevicePickerGlyphKind? = nil,
         connectionRoute: DevicePickerConnectionRoute? = nil,
-        electricUnicycleModel: ElectricUnicycleModel? = nil
+        electricUnicycleModel: ElectricUnicycleModel? = nil,
+        advertisedName: String? = nil
     ) {
         self.id = id ?? title
+        self.advertisedName = advertisedName
         self.title = title
         self.subtitle = subtitle
         self.detail = detail
@@ -522,6 +525,11 @@ public struct DevicePickerRow: Equatable, Hashable, Sendable, Identifiable {
 public typealias PevPickerRow = DevicePickerRow
 
 public extension DevicePickerRow {
+    var secondaryIdentity: String? {
+        guard let advertisedName, !advertisedName.isEmpty, advertisedName != title else { return nil }
+        return advertisedName
+    }
+
     var isSupported: Bool {
         section == .supported
     }
@@ -683,6 +691,7 @@ private extension DevicePickerConnectionRoute {
 
 public struct DevicePickerDiscoveryCandidate: Equatable, Hashable, Sendable {
     public let platformIdentifier: String
+    public let advertisedName: String?
     public let displayName: String
     public let productCategory: String
     public let evidence: String
@@ -703,10 +712,12 @@ public struct DevicePickerDiscoveryCandidate: Equatable, Hashable, Sendable {
         symbolName: String,
         glyphKind: DevicePickerGlyphKind? = nil,
         rowState: DevicePickerRowState? = nil,
-        section: DevicePickerRowSection? = nil
+        section: DevicePickerRowSection? = nil,
+        advertisedName: String? = nil
     ) {
         let state = rowState ?? support.pickerRowState
         self.platformIdentifier = platformIdentifier
+        self.advertisedName = advertisedName
         self.displayName = displayName
         self.productCategory = productCategory
         self.evidence = evidence
@@ -723,10 +734,10 @@ public struct DevicePickerDiscoveryCandidate: Equatable, Hashable, Sendable {
             platformIdentifier: advertisement.peripheralIdentifier.rawValue,
             localName: advertisement.localName,
             advertisedServiceUuids: advertisement.advertisedServiceUuids.map(DiscoveryServiceUuid.init)
-        ))
+        ), advertisedName: advertisement.localName)
     }
 
-    public init(candidate: DiscoveryCandidate) {
+    public init(candidate: DiscoveryCandidate, advertisedName: String? = nil) {
         let support = DevicePickerCandidateSupport(candidate)
         self.init(
             platformIdentifier: candidate.platformIdentifier,
@@ -737,7 +748,8 @@ public struct DevicePickerDiscoveryCandidate: Equatable, Hashable, Sendable {
             support: support,
             symbolName: support.isSupported ? "circle.hexagongrid.circle" : "questionmark.circle",
             rowState: DevicePickerRowState(action: candidate.recommendedAction),
-            section: DevicePickerRowSection(section: candidate.section)
+            section: DevicePickerRowSection(section: candidate.section),
+            advertisedName: advertisedName
         )
     }
 
@@ -748,7 +760,7 @@ public struct DevicePickerDiscoveryCandidate: Equatable, Hashable, Sendable {
             advertisedServiceUuids: advertisement.advertisedServiceUuids.map(DiscoveryServiceUuid.init)
         )
         guard candidate.isPickerCandidate else { return nil }
-        return DevicePickerDiscoveryCandidate(candidate: candidate).pickerRow
+        return DevicePickerDiscoveryCandidate(candidate: candidate, advertisedName: advertisement.localName).pickerRow
     }
 
     public var pickerRow: DevicePickerRow {
@@ -762,7 +774,8 @@ public struct DevicePickerDiscoveryCandidate: Equatable, Hashable, Sendable {
             symbolName: symbolName,
             glyphKind: glyphKind,
             connectionRoute: support.connectionRoute,
-            electricUnicycleModel: support.electricUnicycleModel
+            electricUnicycleModel: support.electricUnicycleModel,
+            advertisedName: advertisedName
         )
     }
 }
@@ -846,8 +859,13 @@ public struct DevicePickerScanState: Equatable, Hashable, Sendable {
     public init(status: DevicePickerScanStatus, discoverySnapshot: DiscoverySnapshot) {
         self.init(
             status: status,
-            rows: discoverySnapshot.pickerCandidates.map {
-                DevicePickerDiscoveryCandidate(candidate: $0).pickerRow
+            rows: discoverySnapshot.pickerCandidates.map { candidate in
+                let observation = discoverySnapshot.observations.last {
+                    $0.platformIdentifier == candidate.platformIdentifier
+                }
+                return DevicePickerDiscoveryCandidate(
+                    candidate: candidate, advertisedName: observation?.advertisedNameText
+                ).pickerRow
             }
         )
     }

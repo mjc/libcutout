@@ -4,10 +4,8 @@ import SwiftUI
 struct DevicePickerView: View {
     let scanState: DevicePickerScanState?
     var connectionPhase: SessionConnectionPhase? = nil
-    let captureStatusText: String?
-    let hasSavedDevice: Bool
+    let captureStatus: CaptureStatus?
     let pair: (DevicePickerRow) -> Void
-    let forgetSavedDevice: () -> Void
     let probe: (DevicePickerRow) -> Bool
     let recordOnly: (DevicePickerRow, String) -> Bool
     let openSetup: () -> Void
@@ -27,7 +25,7 @@ struct DevicePickerView: View {
                 sectionTitle: localizedAppText("picker.section.setup"),
                 bottomPadding: 24,
                 allowsVerticalScroll: true,
-                contentSpacing: 10,
+                contentSpacing: 20,
                 horizontalPadding: 24,
                 showsHeader: false
             ) {
@@ -35,12 +33,14 @@ struct DevicePickerView: View {
                     PevDashboardBrand()
                     Spacer()
                     Button(action: openSetup) {
-                        Text(localizedAppText("picker.section.setup"))
+                        Image(systemName: "gearshape")
+                            .font(.title3)
                             .frame(minWidth: 44, minHeight: 44)
                     }
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(PevColors.primaryText)
                     .accessibilityIdentifier("device-picker.open-setup")
+                    .accessibilityLabel(localizedAppText("picker.section.setup"))
                     .accessibilityHint(localizedAppText("setup.open.hint"))
                 }
                 .accessibilityElement(children: .contain)
@@ -51,27 +51,25 @@ struct DevicePickerView: View {
                     subtitle: localizedAppText("picker.subtitle.nearby_devices")
                 )
 
-                PevDashboardScanningPill(
-                    title: connectionPresentation.title,
-                    isScanning: connectionPresentation.showsActivity,
-                    symbolName: connectionPresentation.symbolName
-                )
-                .padding(.top, 4)
+                HStack(spacing: 10) {
+                    if connectionPresentation.showsActivity {
+                        ProgressView()
+                            .tint(PevColors.yellow)
+                            .accessibilityHidden(true)
+                    } else if let symbol = connectionPresentation.symbolName {
+                        Image(systemName: symbol)
+                            .foregroundStyle(PevColors.yellow)
+                            .accessibilityHidden(true)
+                    }
+                    Text(connectionPresentation.title)
+                        .font(.subheadline)
+                        .foregroundStyle(PevColors.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityElement(children: .combine)
                 .id("device-picker.connection-status")
                 .accessibilityIdentifier("device-picker.connection-status")
-
-                if hasSavedDevice {
-                    Button("picker.saved_device.forget", role: .destructive, action: forgetSavedDevice)
-                        .frame(minHeight: 44)
-                        .accessibilityIdentifier("device-picker.forget-saved-device")
-                }
-
-                if let captureStatusText {
-                    PevStatusStrip(
-                        text: captureStatusText,
-                        accessibilityIdentifier: "device-picker.capture-status"
-                    )
-                }
 
                 VStack(alignment: .leading, spacing: 18) {
                     deviceSection(
@@ -80,7 +78,24 @@ struct DevicePickerView: View {
                         action: pair
                     )
 
-                    Button("picker.advanced_capture") { isAdvancedCapturePresented = true }
+                    if let captureStatus {
+                        Button { isAdvancedCapturePresented = true } label: {
+                            Label(
+                                captureStatus.pickerSummary,
+                                systemImage: captureStatus == .failed ? "exclamationmark.triangle" : "doc.text"
+                            )
+                            .font(.footnote)
+                            .foregroundStyle(captureStatus == .failed ? PevColors.red : PevColors.muted)
+                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                        }
+                        .accessibilityIdentifier("device-picker.capture-status")
+                    }
+
+                    Button { isAdvancedCapturePresented = true } label: {
+                        Label(localizedAppText("picker.advanced_capture"), systemImage: "waveform.path")
+                            .font(.subheadline)
+                            .foregroundStyle(PevColors.muted)
+                    }
                         .frame(maxWidth: .infinity, minHeight: 44)
                         .accessibilityIdentifier("device-picker.open-advanced-capture")
                 }
@@ -91,11 +106,14 @@ struct DevicePickerView: View {
             }
         }
         .foregroundStyle(PevColors.primaryText)
+        .buttonStyle(.plain)
+        .tint(PevColors.yellow)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("device-picker.screen")
         .sheet(isPresented: $isAdvancedCapturePresented) {
             CaptureUnknownDeviceSheet(
                 sections: sections,
+                captureStatusText: captureStatus?.displayText,
                 probe: probe,
                 recordOnly: recordOnly
             )
