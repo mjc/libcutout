@@ -115,25 +115,30 @@ reading from the stock settings word.
 Before the BMS admission correction, the rebuilt CLI replayed the first two captures with both one-byte and
 arbitrary fragmentation producing identical outputs. The passive capture
 produced 323 read-only responses; identity/firmware produced 310. This proves
-fragmentation equivalence, not correctness of every normalized field. With the
-admission correction, these original unannotated captures require explicit
-voltage evidence for CLI replay; their placeholder frames no longer supply it.
-Legacy captures can be replayed without rewriting their metadata by selecting
-the voltage profile explicitly at replay time:
+fragmentation equivalence, not correctness of every normalized field.
+The Falcon model definition supplies the source-verified 24S, 72–100.8 V battery
+configuration to both live sessions and replay. Absence of smart-BMS telemetry
+does not make this model metadata unknown. Legacy captures replay without
+rewriting their metadata or requiring a voltage option:
 
 ```sh
 cutout pevcap replay --input crates/cutout-cli/fixtures/pevcap/falcon-riding-60s.jsonl \
-  --input-format jsonl --profile falcon --falcon-voltage-profile 100v
+  --input-format jsonl --profile falcon
 ```
 
-`100v` selects the 100.8 V full-charge profile; `84v` selects 84 V. This is an
-operator-selected replay configuration, not new hardware evidence. A selection
-that conflicts with header evidence is rejected, including an already-conflicting
-header. The historical fixtures have not been relabeled with voltage evidence:
-their old inferred model and placeholder BMS voltage do not establish it.
-Corpus tests cover production streaming selection with explicit configuration
-as well as separate decoder/fragmentation checks. The riding capture also goes
-through CLI argument parsing and replay, and the test verifies it is not modified.
+Model configuration is not protocol-confirmed device identity. Contradictory
+header voltage evidence is rejected, not silently used to turn a stock Falcon
+into an unsupported 84 V variant. Placeholder BMS frames remain raw evidence
+only. Historical fixtures retain their original metadata.
+
+For models with multiple supported battery configurations, the model must define
+the choices and unresolved selection belongs in per-device settings—not a CLI
+flag. This change does not invent alternate Falcon packs or a battery selector
+for its one source-backed stock configuration.
+
+Corpus tests compare production streaming selection with ordinary registered
+sessions and separate fragmentation checks. The riding capture also goes through
+CLI argument parsing and replay, and the test verifies it is not modified.
 
 PWM deltas now distinguish unchanged, valid and explicitly invalid readings.
 Rejected Extra-frame PWM clears the accumulated value; Live A omission preserves
