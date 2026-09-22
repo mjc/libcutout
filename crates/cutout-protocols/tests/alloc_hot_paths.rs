@@ -8,7 +8,8 @@ use std::sync::{
 
 use cutout_core::{
     CommandKind, FaultHistoryReadback, LinkInfo, MonotonicTimestamp, ProtocolSession,
-    ReadOnlyResponse, ReadOnlyResponseBox, SessionInput, SessionOutput, TransportWriteLimit,
+    READ_ONLY_RESPONSE_POOL_CAPACITY, ReadOnlyResponse, ReadOnlyResponseBox, SessionInput,
+    SessionOutput, TransportWriteLimit,
 };
 use cutout_protocols::{
     BEGODE_DATA_CHANNEL, BEGODE_FRAME_LEN, BegodeFalconModel, BegodeFrameParseResult,
@@ -188,6 +189,23 @@ fn veteran_parser_owned_results_do_not_allocate() {
             veteran_output.clear();
         }
     });
+    let coalesced_aero_frames = [
+        LIVE_AERO_SELECTOR_0.as_slice(),
+        LIVE_AERO_SELECTOR_0.as_slice(),
+    ]
+    .concat();
+    assert_no_allocations("coalesced Aero frames", || {
+        veteran.handle(
+            SessionInput::Notification {
+                channel: VETERAN_DATA_CHANNEL,
+                bytes: &coalesced_aero_frames,
+                monotonic_ms: ms(36),
+            },
+            &mut veteran_output,
+        );
+        assert!(!veteran_output.is_empty());
+        veteran_output.clear();
+    });
 
     let mut reserved = LIVE_AERO_SELECTOR_0;
     reserved[60] = 8;
@@ -331,7 +349,7 @@ fn response_pool_does_not_retain_transient_burst_capacity() {
     let _guard = ALLOCATION_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    ReadOnlyResponseBox::prepare_pool(8);
+    ReadOnlyResponseBox::prepare_pool(READ_ONLY_RESPONSE_POOL_CAPACITY);
 
     let burst: Vec<_> = (0..32)
         .map(|_| {
@@ -342,9 +360,9 @@ fn response_pool_does_not_retain_transient_burst_capacity() {
         .collect();
     drop(burst);
 
-    let mut held = Vec::with_capacity(9);
+    let mut held = Vec::with_capacity(READ_ONLY_RESPONSE_POOL_CAPACITY + 1);
     reset_counts();
-    for _ in 0..9 {
+    for _ in 0..=READ_ONLY_RESPONSE_POOL_CAPACITY {
         held.push(ReadOnlyResponseBox::new(ReadOnlyResponse::FaultHistory(
             FaultHistoryReadback::unavailable(),
         )));

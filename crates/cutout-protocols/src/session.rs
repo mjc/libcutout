@@ -8,11 +8,11 @@ use cutout_core::{
     GattFingerprint, GattRoles, LightCommandState, Measured, ModelRegistryEntry,
     MonotonicTimestamp, NotificationByteLen, NotificationIngestOutcome, ParserDiagnostics,
     ParserError, ParserGapEvidence, PayloadBodyLen, PayloadClassifier, ProtocolFamily,
-    ProtocolSelector, ProtocolSession, Quantity, RawFieldValue, RawTelemetryReadback,
-    ReadOnlyResponse, ReadOnlyResponseBox, RequestedLightState, ReservedPayloadEvidence,
-    RetainedNotificationPayload, SafetyClass, SemanticEventCount, SeriesCount, SessionInput,
-    SessionOutput, Temperature, TransportAction, Unit, ValueQuality, VerificationStatus,
-    VerifiedValue, Voltage, WriteMode, WritePayload,
+    ProtocolSelector, ProtocolSession, Quantity, READ_ONLY_RESPONSE_POOL_CAPACITY, RawFieldValue,
+    RawTelemetryReadback, ReadOnlyResponse, ReadOnlyResponseBox, RequestedLightState,
+    ReservedPayloadEvidence, RetainedNotificationPayload, SafetyClass, SemanticEventCount,
+    SeriesCount, SessionInput, SessionOutput, Temperature, TransportAction, Unit, ValueQuality,
+    VerificationStatus, VerifiedValue, Voltage, WriteMode, WritePayload,
 };
 
 use crate::{
@@ -1940,7 +1940,7 @@ impl<M: ReadOnlyModelSpec> ReadOnlySession<M> {
     /// Creates a read-only session with an explicitly configured notification decoder.
     #[must_use]
     pub fn with_decoder(decoder: M::NotificationDecoder) -> Self {
-        ReadOnlyResponseBox::prepare_pool(8);
+        ReadOnlyResponseBox::prepare_pool(READ_ONLY_RESPONSE_POOL_CAPACITY);
         Self {
             connected: false,
             decoder,

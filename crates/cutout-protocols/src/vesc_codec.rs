@@ -1029,7 +1029,11 @@ impl VescReadOnlyStreamDecoder {
                         }
                         Err(_error) => {
                             saw_invalid_frame = true;
-                            self.read_position += 1;
+                            // `frame_len` already validated the complete frame,
+                            // including its terminator and CRC. The payload is
+                            // semantically invalid, so consume this frame before
+                            // looking for the next frame boundary.
+                            self.read_position += len;
                         }
                     }
                 }
@@ -1942,7 +1946,7 @@ mod tests {
     fn rejects_non_finite_stats_float_fields_at_protocol_admission() {
         for raw in [f32::NAN.to_bits(), f32::INFINITY.to_bits()] {
             let mut payload = vec![VESC_COMM_GET_STATS];
-            payload.extend_from_slice(&VescStatsMask::POWER_AVG.bits().to_be_bytes());
+            payload.extend_from_slice(&u32::from(VescStatsMask::POWER_AVG.bits()).to_be_bytes());
             payload.extend_from_slice(&raw.to_be_bytes());
 
             assert!(matches!(
@@ -2258,6 +2262,51 @@ mod tests {
     }
 
     #[test]
+    fn stream_decoder_consumes_semantically_invalid_frame_before_following_frame() {
+        let invalid = stats_power_avg_frame(f32::NAN);
+        let valid = stats_power_avg_frame(1.0);
+        let expected = VescReadOnlyCodec::decode_reply(&valid).expect("valid stats decode");
+        let mut decoder = VescReadOnlyStreamDecoder::new();
+
+        assert_eq!(
+            decoder.feed_result(&invalid),
+            Err(VescCodecError::DecodeFailed)
+        );
+        assert_eq!(
+            decoder
+                .feed_result(&valid)
+                .expect("following frame decodes")
+                .into_replies()
+                .as_slice(),
+            &[expected]
+        );
+    }
+
+    #[test]
+    fn stream_decoder_emits_following_frame_after_invalid_frame_in_same_feed() {
+        let invalid = stats_power_avg_frame(f32::INFINITY);
+        let valid = stats_power_avg_frame(1.0);
+        let expected = VescReadOnlyCodec::decode_reply(&valid).expect("valid stats decode");
+        let mut input = ArrayVec::<u8, VESC_MAX_FRAME_LEN>::new();
+        input
+            .try_extend_from_slice(&invalid)
+            .expect("invalid frame fits");
+        input
+            .try_extend_from_slice(&valid)
+            .expect("valid frame fits");
+        let mut decoder = VescReadOnlyStreamDecoder::new();
+
+        assert_eq!(
+            decoder
+                .feed_result(&input)
+                .expect("following frame decodes")
+                .into_replies()
+                .as_slice(),
+            &[expected]
+        );
+    }
+
+    #[test]
     fn stream_decoder_resynchronizes_after_noise_before_valid_frame() {
         let frame = selective_values_frame();
         let mut input = ArrayVec::<u8, 64>::new();
@@ -2353,6 +2402,17 @@ mod tests {
             160, 0, 0, 64, 192, 0, 0, 64, 224, 0, 0, 65, 0, 0, 0, 65, 16, 0, 0, 65, 32, 0, 0, 65,
             48, 0, 0, 213, 206, 3,
         ]
+    }
+
+    fn stats_power_avg_frame(value: f32) -> ArrayVec<u8, VESC_MAX_FRAME_LEN> {
+        let mut payload = ArrayVec::<u8, VESC_MAX_FRAME_LEN>::new();
+        payload.push(VESC_COMM_GET_STATS);
+        push_bytes(
+            &mut payload,
+            &u32::from(VescStatsMask::POWER_AVG.bits()).to_be_bytes(),
+        );
+        push_bytes(&mut payload, &value.to_bits().to_be_bytes());
+        frame_from_payload(&payload)
     }
 
     const LIVE_FULL_VALUES_CHUNK_0: [u8; 2] = hex_literal::hex!("024a");

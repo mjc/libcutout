@@ -7078,6 +7078,13 @@ struct ReadOnlyResponsePool {
     capacity: usize,
 }
 
+/// Retained response storage for the largest supported coalesced read-only batch.
+///
+/// The protocol layer can emit five responses per frame and process two
+/// coalesced frames before the caller clears its output. Additional responses
+/// held by a caller may allocate beyond this retained capacity.
+pub const READ_ONLY_RESPONSE_POOL_CAPACITY: usize = 10;
+
 static READ_ONLY_RESPONSE_POOL: OnceLock<Mutex<ReadOnlyResponsePool>> = OnceLock::new();
 
 fn read_only_response_pool() -> &'static Mutex<ReadOnlyResponsePool> {
@@ -7107,9 +7114,8 @@ impl ReadOnlyResponseBox {
         let mut pool = read_only_response_pool()
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        pool.capacity = capacity;
-        pool.storage.truncate(capacity);
-        while pool.storage.len() < capacity {
+        pool.capacity = pool.capacity.max(capacity);
+        while pool.storage.len() < pool.capacity {
             pool.storage
                 .push_back(Box::new(ReadOnlyResponse::FaultHistory(
                     FaultHistoryReadback::unavailable(),
