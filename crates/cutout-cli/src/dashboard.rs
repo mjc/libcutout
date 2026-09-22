@@ -2238,7 +2238,7 @@ fn format_bridge_event(event: &SessionBridgeEvent) -> (&'static str, String) {
             "info",
             format!(
                 "t={monotonic_ms}ms {}",
-                format_read_only_response(*response.clone())
+                format_read_only_response(response.as_ref().clone())
             ),
         ),
         SessionBridgeEvent::Diagnostics {
