@@ -84,6 +84,9 @@ connecting to Bluetooth hardware.
 
 By default the command auto-selects the replay profile from persisted PEVCAP
 identity metadata. Use --profile to override that metadata for verification.
+Falcon captures without explicit voltage evidence require --falcon-voltage-profile
+84v or 100v (the latter means 100.8 V full charge). This replay-only selection
+does not modify the capture and must agree with any header voltage evidence.
 Use --diagnostics-jsonl to emit stable diagnostic snapshot records for replay
 tooling.";
 const PEVCAP_IMPORT_LONG_ABOUT: &str = "\
@@ -635,6 +638,10 @@ pub(crate) struct PevcapReplayArgs {
     #[arg(long, value_enum, default_value_t = PevcapReplayProfile::Auto)]
     pub(crate) profile: PevcapReplayProfile,
 
+    /// Explicit Falcon voltage profile for replay; must agree with header evidence.
+    #[arg(long, value_enum)]
+    pub(crate) falcon_voltage_profile: Option<FalconReplayVoltageProfile>,
+
     /// Emit diagnostic snapshots as JSONL records after the replay summary.
     #[arg(long = "diagnostics-jsonl")]
     pub(crate) diagnostics_jsonl: bool,
@@ -642,6 +649,23 @@ pub(crate) struct PevcapReplayArgs {
     /// Emit read-only response DTOs as JSONL records after the replay summary.
     #[arg(long = "read-only-jsonl")]
     pub(crate) read_only_jsonl: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub(crate) enum FalconReplayVoltageProfile {
+    #[value(name = "84v")]
+    FullCharge84V,
+    #[value(name = "100v")]
+    FullCharge100V,
+}
+
+impl FalconReplayVoltageProfile {
+    pub(crate) const fn annotation(self) -> &'static str {
+        match self {
+            Self::FullCharge84V => "battery=84v-replay-selection",
+            Self::FullCharge100V => "battery=100v-replay-selection",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
@@ -1649,6 +1673,7 @@ mod tests {
                     input: PathBuf::from("session.pevcap"),
                     input_format: PevcapFormat::Binary,
                     profile: PevcapReplayProfile::Falcon,
+                    falcon_voltage_profile: None,
                     diagnostics_jsonl: false,
                     read_only_jsonl: false,
                 })
@@ -1676,6 +1701,7 @@ mod tests {
                     input: PathBuf::from("session.pevcap"),
                     input_format: PevcapFormat::Binary,
                     profile: PevcapReplayProfile::Auto,
+                    falcon_voltage_profile: None,
                     diagnostics_jsonl: false,
                     read_only_jsonl: false,
                 })
@@ -1705,6 +1731,7 @@ mod tests {
                     input: PathBuf::from("vesc.jsonl"),
                     input_format: PevcapFormat::Jsonl,
                     profile: PevcapReplayProfile::Vesc,
+                    falcon_voltage_profile: None,
                     diagnostics_jsonl: false,
                     read_only_jsonl: false,
                 })
@@ -1733,6 +1760,7 @@ mod tests {
                     input: PathBuf::from("session.pevcap"),
                     input_format: PevcapFormat::Jsonl,
                     profile: PevcapReplayProfile::Auto,
+                    falcon_voltage_profile: None,
                     diagnostics_jsonl: true,
                     read_only_jsonl: false,
                 })
@@ -1761,6 +1789,7 @@ mod tests {
                     input: PathBuf::from("session.pevcap"),
                     input_format: PevcapFormat::Jsonl,
                     profile: PevcapReplayProfile::Auto,
+                    falcon_voltage_profile: None,
                     diagnostics_jsonl: false,
                     read_only_jsonl: true,
                 })

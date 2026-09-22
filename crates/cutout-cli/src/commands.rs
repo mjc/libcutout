@@ -230,6 +230,9 @@ fn pevcap_replay(args: &crate::cli::PevcapReplayArgs) -> Result<()> {
                 .iter()
                 .any(|annotation| annotation == "route=vesc_onewheel"));
     let report = if replay_vesc {
+        if args.falcon_voltage_profile.is_some() {
+            bail!("--falcon-voltage-profile requires Falcon replay");
+        }
         replay_pevcap_stream_with_session(
             &args.input,
             args.input_format,
@@ -246,6 +249,7 @@ fn pevcap_replay(args: &crate::cli::PevcapReplayArgs) -> Result<()> {
                 PevcapReplayProfile::Falcon => SessionProfile::Falcon,
                 PevcapReplayProfile::Vesc => unreachable!("VESC replay handled above"),
             },
+            args.falcon_voltage_profile,
         )?
     };
     info!("{}", render_pevcap_replay_report(&report));
@@ -287,11 +291,13 @@ fn replay_pevcap_stream(
     format: PevcapFormat,
     header: &PevcapHeader,
     profile: SessionProfile,
+    voltage_override: Option<crate::cli::FalconReplayVoltageProfile>,
 ) -> Result<PevcapReplayReport> {
     let selected = selected_pevcap_replay_profile_from_header(header, profile)?;
     if selected.is_falcon() {
-        let voltage_profile = select_falcon_replay_voltage_profile_from_header(header);
-        let session = falcon_replay_session_from_header(header)?;
+        let voltage_profile =
+            select_falcon_replay_voltage_profile_from_header(header, voltage_override);
+        let session = falcon_replay_session_from_header(header, voltage_override)?;
         replay_pevcap_stream_with_session(path, format, session).map(|mut report| {
             report.capacity =
                 select_begode_pack_capacity_from_annotations(header.annotations.iter());
@@ -304,6 +310,9 @@ fn replay_pevcap_stream(
             report
         })
     } else {
+        if voltage_override.is_some() {
+            bail!("--falcon-voltage-profile requires Falcon replay");
+        }
         replay_pevcap_stream_with_session(
             path,
             format,
@@ -515,16 +524,21 @@ fn replay_pevcap_capture(
 
 #[cfg(test)]
 fn falcon_replay_session(capture: &PevcapCapture) -> Result<RegisteredEucSession> {
-    falcon_replay_session_from_header(&capture.header)
+    falcon_replay_session_from_header(&capture.header, None)
 }
 
-fn falcon_replay_session_from_header(header: &PevcapHeader) -> Result<RegisteredEucSession> {
-    match select_falcon_replay_voltage_profile_from_header(header) {
+fn falcon_replay_session_from_header(
+    header: &PevcapHeader,
+    voltage_override: Option<crate::cli::FalconReplayVoltageProfile>,
+) -> Result<RegisteredEucSession> {
+    match select_falcon_replay_voltage_profile_from_header(header, voltage_override) {
         BegodeVoltageProfileSelection::Selected(profile) => {
             Ok(begode_falcon_session_with_voltage_profile(profile))
         }
         BegodeVoltageProfileSelection::Missing => {
-            bail!("Falcon PEVCAP replay requires explicit Falcon battery voltage evidence")
+            bail!(
+                "Falcon PEVCAP replay requires explicit Falcon battery voltage evidence; supply --falcon-voltage-profile 84v or 100v"
+            )
         }
         BegodeVoltageProfileSelection::Conflicting => {
             bail!("Falcon PEVCAP replay has conflicting Falcon battery voltage evidence")
@@ -534,15 +548,22 @@ fn falcon_replay_session_from_header(header: &PevcapHeader) -> Result<Registered
 
 #[cfg(test)]
 fn select_falcon_replay_voltage_profile(capture: &PevcapCapture) -> BegodeVoltageProfileSelection {
-    select_falcon_replay_voltage_profile_from_header(&capture.header)
+    select_falcon_replay_voltage_profile_from_header(&capture.header, None)
 }
 
 fn select_falcon_replay_voltage_profile_from_header(
     header: &PevcapHeader,
+    voltage_override: Option<crate::cli::FalconReplayVoltageProfile>,
 ) -> BegodeVoltageProfileSelection {
     // Standard Falcon has no smart BMS. Placeholder summary frames cannot
     // supply battery-profile evidence, even when their voltage looks plausible.
-    select_begode_pack_voltage_profile_from_annotations(header.annotations.iter())
+    select_begode_pack_voltage_profile_from_annotations(
+        header
+            .annotations
+            .iter()
+            .map(String::as_str)
+            .chain(voltage_override.map(crate::cli::FalconReplayVoltageProfile::annotation)),
+    )
 }
 
 #[cfg(test)]
@@ -721,7 +742,7 @@ fn dashboard_state_from_aero_pevcap_stream(
     format: PevcapFormat,
 ) -> Result<DashboardState> {
     let (header, summary) = pevcap_stream_input_summary(path, format)?;
-    let report = replay_pevcap_stream(path, format, &header, SessionProfile::Aero)?;
+    let report = replay_pevcap_stream(path, format, &header, SessionProfile::Aero, None)?;
     dashboard_state_from_aero_pevcap_parts(&header, summary, report)
 }
 
@@ -6011,6 +6032,30 @@ mod tests {
     }
 
     #[test]
+    fn replay_voltage_selection_rejects_conflicts_instead_of_overriding_evidence() {
+        use crate::cli::FalconReplayVoltageProfile::{FullCharge84V, FullCharge100V};
+        for (annotations, selection, succeeds) in [
+            (vec![], FullCharge100V, true),
+            (vec!["battery=100v"], FullCharge100V, true),
+            (vec!["battery=84v"], FullCharge84V, true),
+            (vec!["battery=84v"], FullCharge100V, false),
+            (vec!["battery=100v"], FullCharge84V, false),
+            (vec!["battery=84v", "battery=100v"], FullCharge100V, false),
+        ] {
+            let capture = sample_falcon_live_a_replay_capture(&annotations);
+            let result = falcon_replay_session_from_header(&capture.header, Some(selection));
+            assert_eq!(result.is_ok(), succeeds);
+            if let Err(error) = result {
+                assert!(
+                    error
+                        .to_string()
+                        .contains("conflicting Falcon battery voltage evidence")
+                );
+            }
+        }
+    }
+
+    #[test]
     fn pevcap_replay_corpus_auto_selects_and_matches_chunk_modes() {
         for case in PEVCAP_REPLAY_CORPUS {
             let capture = PevcapCapture::decode(case.jsonl.as_bytes(), PevcapEncoding::Jsonl)
@@ -6056,6 +6101,23 @@ mod tests {
                     .construct(),
             )
             .unwrap_or_else(|error| panic!("{} should replay: {error}", case.name));
+
+            // Also exercise production streaming selection, independently of
+            // the explicitly configured fragmentation comparison above.
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(case.path);
+            let voltage = profile
+                .is_falcon()
+                .then_some(crate::cli::FalconReplayVoltageProfile::FullCharge100V);
+            let public_report = replay_pevcap_stream(
+                &path,
+                PevcapFormat::Jsonl,
+                &capture.header,
+                SessionProfile::Auto,
+                voltage,
+            )
+            .unwrap_or_else(|error| panic!("{} public replay selection: {error}", case.name));
+            assert_eq!(public_report.telemetry_snapshot, report.telemetry_snapshot);
+            assert_eq!(public_report.telemetry, report.telemetry);
 
             assert_eq!(profile, case.profile, "{} profile", case.name);
             assert!(
@@ -6117,6 +6179,57 @@ mod tests {
                 .map(|voltage| voltage.value.get()),
             Some(61_500)
         );
+    }
+
+    #[test]
+    fn pevcap_public_replay_accepts_explicit_falcon_voltage_without_rewriting_capture() {
+        use clap::Parser;
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("fixtures/pevcap/falcon-riding-60s.jsonl");
+        let before = fs::read(&path).unwrap();
+        let cli = Cli::try_parse_from([
+            "cutout",
+            "pevcap",
+            "replay",
+            "--input",
+            path.to_str().unwrap(),
+            "--input-format",
+            "jsonl",
+            "--profile",
+            "falcon",
+            "--falcon-voltage-profile",
+            "100v",
+        ])
+        .expect("explicit replay-time voltage is supported");
+        let Command::Pevcap(PevcapArgs {
+            command: PevcapCommand::Replay(args),
+        }) = cli.command
+        else {
+            panic!("expected replay arguments");
+        };
+        pevcap_replay(&args).expect("historical capture replays through the public selection path");
+        let mut auto = args.clone();
+        auto.profile = PevcapReplayProfile::Auto;
+        pevcap_replay(&auto).expect("auto protocol selection accepts explicit voltage");
+        let mut missing = args.clone();
+        missing.falcon_voltage_profile = None;
+        assert!(
+            pevcap_replay(&missing)
+                .unwrap_err()
+                .to_string()
+                .contains("--falcon-voltage-profile")
+        );
+        for profile in [PevcapReplayProfile::Aero, PevcapReplayProfile::Vesc] {
+            let mut wrong_protocol = args.clone();
+            wrong_protocol.profile = profile;
+            assert!(
+                pevcap_replay(&wrong_protocol)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("requires Falcon replay")
+            );
+        }
+        assert_eq!(fs::read(&path).unwrap(), before);
     }
 
     #[test]
@@ -6276,6 +6389,7 @@ mod tests {
 
     #[derive(Clone, Copy)]
     struct PevcapReplayCorpusCase {
+        path: &'static str,
         name: &'static str,
         jsonl: &'static str,
         profile: SelectedSessionProfile,
@@ -6286,6 +6400,7 @@ mod tests {
     const PEVCAP_REPLAY_CORPUS: &[PevcapReplayCorpusCase] = &[
         PevcapReplayCorpusCase {
             name: "aero-veteran-live",
+            path: "fixtures/pevcap/aero-veteran-live.jsonl",
             jsonl: include_str!("../fixtures/pevcap/aero-veteran-live.jsonl"),
             profile: selected_aero_session_profile(),
             minimum_chunk_plan_len: ReplayChunkPlanLen::new(5),
@@ -6293,6 +6408,7 @@ mod tests {
         },
         PevcapReplayCorpusCase {
             name: "nf2557-dashboard-verification",
+            path: "../cutout-protocols/fixtures/nosfet-aero/pevcap/nf2557-dashboard-verification-120s.pevcap.jsonl",
             jsonl: include_str!(
                 "../../cutout-protocols/fixtures/nosfet-aero/pevcap/nf2557-dashboard-verification-120s.pevcap.jsonl"
             ),
@@ -6302,6 +6418,7 @@ mod tests {
         },
         PevcapReplayCorpusCase {
             name: "falcon-begode-banner",
+            path: "fixtures/pevcap/falcon-begode-banner.jsonl",
             jsonl: include_str!("../fixtures/pevcap/falcon-begode-banner.jsonl"),
             profile: selected_falcon_session_profile(),
             minimum_chunk_plan_len: ReplayChunkPlanLen::new(4),

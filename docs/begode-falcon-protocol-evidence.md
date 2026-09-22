@@ -47,7 +47,7 @@ Offsets are zero-based within a 24-byte `55 aa ... 5a 5a 5a 5a` frame.
 | `07`, 2–3 | Signed battery current, hundredths of an amp | Preserve valid zero and sign; do not replace invalid/missing evidence with zero. |
 | `07`, 5 | Low nibble lateral tilt angle; high nibble field weakening | Source evidence only; generic setting bindings remain follow-up work. |
 | `07`, 6–7 | Signed whole degrees Celsius, motor temperature | Distinct from Live A controller-temperature scaling. |
-| `07`, 8–9 | Signed whole-percent PWM | Multiply by ten for permille with checked arithmetic; an unrepresentable reading is absent, not wrapped. |
+| `07`, 8–9 | Signed whole-percent PWM | Multiply by ten for permille with checked arithmetic; an unrepresentable reading invalidates the prior PWM, rather than wrapping or silently preserving it. |
 | `01`, 2–3 | PWM limit, whole percent, reference accepts 50–100 | Existing centipercent conversion needs correction. Hardware sample below contains 75. |
 | `01`, 6–7 | Pack voltage, tenths of a volt | Frame presence alone does not establish working smart-BMS evidence. |
 | `02` / `03`, 2–17 | Eight cell-voltage words per page | Bank and page ownership must be retained; all-zero placeholder pages do not establish healthy zero-volt cells. |
@@ -118,8 +118,26 @@ produced 323 read-only responses; identity/firmware produced 310. This proves
 fragmentation equivalence, not correctness of every normalized field. With the
 admission correction, these original unannotated captures require explicit
 voltage evidence for CLI replay; their placeholder frames no longer supply it.
-The checked-in riding-capture test uses an explicitly configured standard-Falcon
-session and verifies that BMS-shaped frames emit no battery measurements.
+Legacy captures can be replayed without rewriting their metadata by selecting
+the voltage profile explicitly at replay time:
+
+```sh
+cutout pevcap replay --input crates/cutout-cli/fixtures/pevcap/falcon-riding-60s.jsonl \
+  --input-format jsonl --profile falcon --falcon-voltage-profile 100v
+```
+
+`100v` selects the 100.8 V full-charge profile; `84v` selects 84 V. This is an
+operator-selected replay configuration, not new hardware evidence. A selection
+that conflicts with header evidence is rejected, including an already-conflicting
+header. The historical fixtures have not been relabeled with voltage evidence:
+their old inferred model and placeholder BMS voltage do not establish it.
+Corpus tests cover production streaming selection with explicit configuration
+as well as separate decoder/fragmentation checks. The riding capture also goes
+through CLI argument parsing and replay, and the test verifies it is not modified.
+
+PWM deltas now distinguish unchanged, valid and explicitly invalid readings.
+Rejected Extra-frame PWM clears the accumulated value; Live A omission preserves
+it. The distinction survives the core FFI delta projection and the CLI dashboard.
 
 The mobile discovery projection now uses `Begode Falcon` after a model reply,
 with the advertisement name retained in the detail text. Family-only, missing,
