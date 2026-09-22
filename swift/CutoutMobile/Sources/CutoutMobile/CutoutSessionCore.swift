@@ -439,14 +439,7 @@ public final class CutoutSessionCore: NSObject {
     public private(set) var hasObservedSpeedSnapshot = false
     private var storedScanState = DevicePickerScanState(status: .idle, rows: [])
     public var scanState: DevicePickerScanState {
-        onBleQueue {
-            guard let candidate = storedProtocolIdentityCandidate else { return storedScanState }
-            let row = candidate.pickerRow
-            return DevicePickerScanState(
-                status: storedScanState.status,
-                rows: storedScanState.rows.map { $0.id == row.id ? row : $0 }
-            )
-        }
+        onBleQueue { storedScanState }
     }
     public private(set) var faultHistoryReadback: FaultHistoryReadback?
     public private(set) var bmsSnapshot: BmsSnapshot?
@@ -1959,6 +1952,10 @@ public final class CutoutSessionCore: NSObject {
     }
 
     private func publishProtocolIdentityCandidate() {
+        storedScanState = DevicePickerScanState(
+            status: storedScanState.status,
+            discoverySnapshot: rustSessionState.discoverySnapshot()
+        )
         publishScanState()
         let value = protocolIdentityCandidate
         let generation = connectionSnapshot.generation

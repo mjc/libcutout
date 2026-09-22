@@ -2160,6 +2160,8 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
             )
         )
 
+        _ = core.rideSessionStateHandle.beginConnectionAttempt(platformIdentifier: "ios-local-falcon", nowMs: 0)
+
         core.observeDetectionProbeWrite(channel: channel, bytes: Data("N".utf8))
         core.observeDetectionNotification(channel: channel, bytes: Data("NAME=Falcon".utf8))
 
@@ -2187,7 +2189,7 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         core.disconnectAndScan()
         XCTAssertNil(core.protocolIdentityCandidate)
         XCTAssertEqual(core.scanState.rows.first?.id, "ios-local-falcon")
-        XCTAssertEqual(core.scanState.rows.first?.title, "Typed Begode Falcon")
+        XCTAssertEqual(core.scanState.rows.first?.title, "Begode Falcon")
     }
 
     func testBegodeFirmwareProbeResponseUpdatesProtocolIdentityCandidate() {

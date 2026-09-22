@@ -39,8 +39,8 @@ use cutout_core::{
     ChargeEstimateInput, ChargeEstimateResetReason, ChargeEstimateState,
     ChargeEstimateUnavailableReason, ChargeFlow, ChargeMode, ChargeModeDto, ChargeModeReadingDto,
     ChargeProfileIdentity, ChargeSessionIdentity, ChargeTimeEstimate, ControlRefusalReasonDto,
-    CutoutSessionState, DeviceConnectionIntent as CoreDeviceConnectionIntent,
-    DiscoveryCandidateSnapshot, DiscoveryCandidateSupport as CoreDiscoveryCandidateSupport,
+    DeviceConnectionIntent as CoreDeviceConnectionIntent, DiscoveryCandidateSnapshot,
+    DiscoveryCandidateSupport as CoreDiscoveryCandidateSupport,
     DiscoveryConnectionRoute as CoreDiscoveryConnectionRoute,
     DiscoveryElectricUnicycleModel as CoreDiscoveryElectricUnicycleModel,
     DiscoveryManufacturerDataSummary as CoreDiscoveryManufacturerDataSummary,
@@ -849,8 +849,8 @@ impl From<&CoreDiscoveryObservation> for DiscoveryObservationSnapshot {
 }
 
 impl DiscoverySnapshot {
-    fn from_state(state: &CutoutSessionState) -> Self {
-        let discovery = state.discovery();
+    fn from_owner(owner: &cutout_protocols::DeviceConnectionSession) -> Self {
+        let discovery = owner.session_state().discovery();
         Self {
             observations: discovery
                 .observations
@@ -858,9 +858,27 @@ impl DiscoverySnapshot {
                 .map(DiscoveryObservationSnapshot::from)
                 .collect(),
             picker_candidates: discovery
-                .picker_candidates()
-                .into_iter()
-                .map(DiscoveryCandidate::from)
+                .observations
+                .iter()
+                .filter_map(|observation| {
+                    if let Some(resolution) =
+                        owner.discovery_resolution(&observation.platform_identifier)
+                    {
+                        let candidate = mobile_discovery_candidate_from_detection_resolution(
+                            observation.platform_identifier.clone(),
+                            observation
+                                .advertised_name_text()
+                                .unwrap_or("Unknown Bluetooth device")
+                                .to_owned(),
+                            resolution.into(),
+                        );
+                        if candidate.is_picker_candidate {
+                            return Some(candidate);
+                        }
+                    }
+                    DiscoveryCandidateSnapshot::from_observation(observation)
+                        .map(DiscoveryCandidate::from)
+                })
                 .collect(),
             selected_platform_identifier: discovery.selected_platform_identifier.clone(),
         }
@@ -1234,7 +1252,7 @@ impl CutoutSessionStateHandle {
         state
             .session_state_mut()
             .observe_discovery(observation.into_core());
-        DiscoverySnapshot::from_state(state.session_state())
+        DiscoverySnapshot::from_owner(&state)
     }
 
     /// Selects a discovered platform identifier for this session.
@@ -1248,13 +1266,13 @@ impl CutoutSessionStateHandle {
         state
             .session_state_mut()
             .select_discovered_platform(platform_identifier);
-        DiscoverySnapshot::from_state(state.session_state())
+        DiscoverySnapshot::from_owner(&state)
     }
 
     /// Returns the current discovery snapshot.
     #[must_use]
     pub fn discovery_snapshot(&self) -> DiscoverySnapshot {
-        DiscoverySnapshot::from_state(self.lock_inner().session_state())
+        DiscoverySnapshot::from_owner(&self.lock_inner())
     }
 
     /// Projects retained unknown peripherals for an explicitly opened advanced capture list.
