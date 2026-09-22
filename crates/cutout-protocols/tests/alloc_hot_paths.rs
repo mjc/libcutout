@@ -7,8 +7,8 @@ use std::sync::{
 };
 
 use cutout_core::{
-    CommandKind, LinkInfo, MonotonicTimestamp, ProtocolSession, SessionInput, SessionOutput,
-    TransportWriteLimit,
+    CommandKind, FaultHistoryReadback, LinkInfo, MonotonicTimestamp, ProtocolSession,
+    ReadOnlyResponse, ReadOnlyResponseBox, SessionInput, SessionOutput, TransportWriteLimit,
 };
 use cutout_protocols::{
     BEGODE_DATA_CHANNEL, BEGODE_FRAME_LEN, BegodeFalconModel, BegodeFrameParseResult,
@@ -324,4 +324,31 @@ fn configured_sessions_initialize_response_pool() {
         assert!(!begode_output.is_empty());
         begode_output.clear();
     });
+}
+
+#[test]
+fn response_pool_does_not_retain_transient_burst_capacity() {
+    let _guard = ALLOCATION_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    ReadOnlyResponseBox::prepare_pool(8);
+
+    let burst: Vec<_> = (0..32)
+        .map(|_| {
+            ReadOnlyResponseBox::new(ReadOnlyResponse::FaultHistory(
+                FaultHistoryReadback::unavailable(),
+            ))
+        })
+        .collect();
+    drop(burst);
+
+    let mut held = Vec::with_capacity(9);
+    reset_counts();
+    for _ in 0..9 {
+        held.push(ReadOnlyResponseBox::new(ReadOnlyResponse::FaultHistory(
+            FaultHistoryReadback::unavailable(),
+        )));
+    }
+    assert_eq!(ALLOCATIONS.load(Ordering::SeqCst), 1);
+    assert_eq!(REALLOCATIONS.load(Ordering::SeqCst), 0);
 }

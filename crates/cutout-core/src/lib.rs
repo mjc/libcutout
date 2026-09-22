@@ -5007,14 +5007,19 @@ pub fn round_div_i32(numerator: i32, denominator: i32) -> i32 {
 }
 
 #[must_use]
-fn round_div_i128_to_i32(numerator: i128, denominator: i128) -> i32 {
+fn round_div_i128(numerator: i128, denominator: i128) -> i128 {
     if denominator == 0 {
         return 0;
     }
 
     let negative = (numerator < 0) ^ (denominator < 0);
     let rounded = (numerator.abs() + denominator.abs() / 2) / denominator.abs();
-    saturating_i128_to_i32(if negative { -rounded } else { rounded })
+    if negative { -rounded } else { rounded }
+}
+
+#[must_use]
+fn round_div_i128_to_i32(numerator: i128, denominator: i128) -> i32 {
+    saturating_i128_to_i32(round_div_i128(numerator, denominator))
 }
 
 #[allow(
@@ -6194,9 +6199,8 @@ impl BatteryLevel {
         let level_span = i128::from(high.as_percent()) - i128::from(low.as_percent());
         let value_offset = i128::from(value) - i128::from(low_value);
         let numerator = value_offset * level_span;
-        let negative = (numerator < 0) ^ (value_span < 0);
-        let rounded = (numerator.abs() + value_span.abs() / 2) / value_span.abs();
-        let level = i128::from(low.as_percent()) + if negative { -rounded } else { rounded };
+        let delta = round_div_i128(numerator, value_span);
+        let level = i128::from(low.as_percent()) + delta;
         Self::from_percent_i32(saturating_i128_to_i32(level))
     }
 
@@ -7069,10 +7073,20 @@ pub enum ReadOnlyResponse {
     FaultHistory(FaultHistoryReadback),
 }
 
-static READ_ONLY_RESPONSE_POOL: OnceLock<Mutex<VecDeque<Box<ReadOnlyResponse>>>> = OnceLock::new();
+struct ReadOnlyResponsePool {
+    storage: VecDeque<Box<ReadOnlyResponse>>,
+    capacity: usize,
+}
 
-fn read_only_response_pool() -> &'static Mutex<VecDeque<Box<ReadOnlyResponse>>> {
-    READ_ONLY_RESPONSE_POOL.get_or_init(|| Mutex::new(VecDeque::new()))
+static READ_ONLY_RESPONSE_POOL: OnceLock<Mutex<ReadOnlyResponsePool>> = OnceLock::new();
+
+fn read_only_response_pool() -> &'static Mutex<ReadOnlyResponsePool> {
+    READ_ONLY_RESPONSE_POOL.get_or_init(|| {
+        Mutex::new(ReadOnlyResponsePool {
+            storage: VecDeque::new(),
+            capacity: 0,
+        })
+    })
 }
 
 fn empty_read_only_response() -> &'static ReadOnlyResponse {
@@ -7093,11 +7107,13 @@ impl ReadOnlyResponseBox {
         let mut pool = read_only_response_pool()
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        let target = capacity;
-        while pool.len() < target {
-            pool.push_back(Box::new(ReadOnlyResponse::FaultHistory(
-                FaultHistoryReadback::unavailable(),
-            )));
+        pool.capacity = capacity;
+        pool.storage.truncate(capacity);
+        while pool.storage.len() < capacity {
+            pool.storage
+                .push_back(Box::new(ReadOnlyResponse::FaultHistory(
+                    FaultHistoryReadback::unavailable(),
+                )));
         }
     }
 
@@ -7107,7 +7123,7 @@ impl ReadOnlyResponseBox {
         let mut pool = read_only_response_pool()
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        let response = if let Some(mut storage) = pool.pop_back() {
+        let response = if let Some(mut storage) = pool.storage.pop_back() {
             *storage = response;
             storage
         } else {
@@ -7174,7 +7190,9 @@ impl Drop for ReadOnlyResponseBox {
             let mut pool = read_only_response_pool()
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner);
-            pool.push_back(response);
+            if pool.storage.len() < pool.capacity {
+                pool.storage.push_back(response);
+            }
         }
     }
 }
