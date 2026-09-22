@@ -415,131 +415,7 @@ impl DeviceDetectionSession {
                 self.refresh_resolution(state, None, None, current.protocol);
             }
             DeviceDetectionEvent::Notification { bytes } => {
-                // Always consume the complete notification. CoreBluetooth may coalesce multiple
-                // protocol frames into one callback, and stopping at the first frame loses the
-                // prefix of every later frame from the reassembler.
-                let mut veteran_frame = None;
-                let mut begode_frame = None;
-                let mut veteran_protocol_model = ProtocolModelIdentityEvidence::Missing;
-                for byte in bytes {
-                    if let Ok(VeteranFrameParseResult::Complete(frame)) =
-                        self.veteran_reassembler.feed_byte_result(*byte)
-                    {
-                        let observed_model = VeteranTelemetry::decode(&frame)
-                            .map_or(ProtocolModelIdentityEvidence::Missing, |telemetry| {
-                                telemetry.firmware.protocol_model_identity()
-                            });
-                        veteran_protocol_model =
-                            merge_protocol_model_evidence(veteran_protocol_model, observed_model);
-                        veteran_frame = Some(frame);
-                    }
-                    if let Ok(BegodeFrameParseResult::Complete(frame)) =
-                        self.begode_reassembler.feed_byte_result(*byte)
-                    {
-                        begode_frame = Some(*frame.as_slice());
-                    }
-                }
-                let vesc_reply = matches!(
-                    self.vesc_decoder.feed_result(bytes),
-                    Ok(VescReadOnlyStreamResult::Replies(ref replies)) if !replies.is_empty()
-                );
-                let bytes = veteran_frame.as_ref().map_or_else(
-                    || {
-                        begode_frame
-                            .as_ref()
-                            .map_or(bytes, |frame| frame.as_slice())
-                    },
-                    VeteranFrame::as_slice,
-                );
-                let observed_protocol = [
-                    veteran_frame
-                        .as_ref()
-                        .map(|_| ProtocolFamilyState::VeteranLeaperkimNosfet),
-                    begode_frame
-                        .as_ref()
-                        .map(|_| ProtocolFamilyState::BegodeGotway),
-                    vesc_reply.then_some(ProtocolFamilyState::Vesc),
-                ]
-                .into_iter()
-                .flatten()
-                .fold(current.protocol, ProtocolFamilyState::merge_observed);
-                if matches!(
-                    observed_protocol,
-                    ProtocolFamilyState::VeteranLeaperkimNosfet
-                        | ProtocolFamilyState::Vesc
-                        | ProtocolFamilyState::Conflict
-                ) {
-                    state.identity_mut().retire_pending_probes();
-                }
-                let mut decision =
-                    NotificationDecision::from_bytes(current.protocol, bytes, vesc_reply);
-                decision.protocol = observed_protocol;
-                if veteran_protocol_model != ProtocolModelIdentityEvidence::Missing {
-                    decision.protocol_model = veteran_protocol_model;
-                }
-                if observed_protocol == ProtocolFamilyState::Conflict {
-                    decision.protocol_model = ProtocolModelIdentityEvidence::Missing;
-                }
-                let malformed_model_banner = match (decision.banner_model, current.staged.model) {
-                    (IdentityBannerEvidence::Malformed, None) => {
-                        Some(ModelBanner::copy_from_slice(model_banner_bytes(bytes)))
-                    }
-                    _ => None,
-                };
-                let model_response = matches!(
-                    decision.banner_model,
-                    IdentityBannerEvidence::Model(_) | IdentityBannerEvidence::Malformed
-                );
-                if model_response {
-                    state
-                        .identity_mut()
-                        .observe_probe_response(PendingProbe::BegodeName);
-                }
-                if decision.firmware_banner {
-                    state
-                        .identity_mut()
-                        .observe_probe_response(PendingProbe::BegodeFirmware);
-                }
-                if decision.imu_banner {
-                    state
-                        .identity_mut()
-                        .observe_probe_response(PendingProbe::BegodeImu);
-                }
-                if model_response || decision.firmware_banner || decision.imu_banner {
-                    state.identity_mut().missing_probe_response = None;
-                }
-                state.identity_mut().malformed_probe_response =
-                    match (decision.banner_model, decision.malformed_probe) {
-                        (IdentityBannerEvidence::Malformed, probe) => probe,
-                        (IdentityBannerEvidence::Model(_), _) => None,
-                        (IdentityBannerEvidence::Missing, _) => {
-                            state.identity().malformed_probe_response
-                        }
-                    };
-                let banner_model = match (decision.banner_model, current.staged.model) {
-                    (IdentityBannerEvidence::Malformed, Some(_)) => None,
-                    _ => decision.banner_model_update(),
-                };
-                let protocol_model = match (
-                    decision.protocol == current.protocol,
-                    decision.protocol_model,
-                ) {
-                    (false, ProtocolModelIdentityEvidence::Missing) => {
-                        Some(ProtocolModelIdentityEvidence::Missing)
-                    }
-                    (_, ProtocolModelIdentityEvidence::Missing) => None,
-                    (_, protocol_model) => Some(protocol_model),
-                };
-                self.refresh_resolution(state, banner_model, protocol_model, decision.protocol);
-                if let Some(model_banner) = malformed_model_banner {
-                    state.identity_mut().model_banner = Some(model_banner);
-                }
-                if decision.firmware_banner {
-                    state.identity_mut().firmware_banner = Some(bytes.to_vec());
-                }
-                if decision.imu_banner {
-                    state.identity_mut().imu_banner = Some(bytes.to_vec());
-                }
+                self.observe_notification(state, bytes, &current);
             }
             DeviceDetectionEvent::ProbeWrite { probe } => {
                 state
@@ -552,6 +428,143 @@ impl DeviceDetectionSession {
         }
 
         self.resolution(state)
+    }
+
+    fn observe_notification(
+        &mut self,
+        state: &mut CutoutSessionState,
+        bytes: &[u8],
+        current: &DeviceDetectionResolution,
+    ) {
+        let mut veteran_frame = None;
+        let mut begode_frame = None;
+        let mut veteran_protocol_model = ProtocolModelIdentityEvidence::Missing;
+        for byte in bytes {
+            if let Ok(VeteranFrameParseResult::Complete(frame)) =
+                self.veteran_reassembler.feed_byte_result(*byte)
+            {
+                let observed_model = VeteranTelemetry::decode(&frame)
+                    .map_or(ProtocolModelIdentityEvidence::Missing, |telemetry| {
+                        telemetry.firmware.protocol_model_identity()
+                    });
+                veteran_protocol_model =
+                    merge_protocol_model_evidence(veteran_protocol_model, observed_model);
+                veteran_frame = Some(frame);
+            }
+            if let Ok(BegodeFrameParseResult::Complete(frame)) =
+                self.begode_reassembler.feed_byte_result(*byte)
+            {
+                begode_frame = Some(*frame.as_slice());
+            }
+        }
+        let vesc_reply = matches!(
+            self.vesc_decoder.feed_result(bytes),
+            Ok(VescReadOnlyStreamResult::Replies(ref replies)) if !replies.is_empty()
+        );
+        let bytes = veteran_frame.as_ref().map_or_else(
+            || {
+                begode_frame
+                    .as_ref()
+                    .map_or(bytes, |frame| frame.as_slice())
+            },
+            VeteranFrame::as_slice,
+        );
+        let observed_protocol = [
+            veteran_frame
+                .as_ref()
+                .map(|_| ProtocolFamilyState::VeteranLeaperkimNosfet),
+            begode_frame
+                .as_ref()
+                .map(|_| ProtocolFamilyState::BegodeGotway),
+            vesc_reply.then_some(ProtocolFamilyState::Vesc),
+        ]
+        .into_iter()
+        .flatten()
+        .fold(current.protocol, ProtocolFamilyState::merge_observed);
+        if matches!(
+            observed_protocol,
+            ProtocolFamilyState::VeteranLeaperkimNosfet
+                | ProtocolFamilyState::Vesc
+                | ProtocolFamilyState::Conflict
+        ) {
+            state.identity_mut().retire_pending_probes();
+        }
+        let mut decision = NotificationDecision::from_bytes(current.protocol, bytes, vesc_reply);
+        decision.protocol = observed_protocol;
+        if veteran_protocol_model != ProtocolModelIdentityEvidence::Missing {
+            decision.protocol_model = veteran_protocol_model;
+        }
+        if observed_protocol == ProtocolFamilyState::Conflict {
+            decision.protocol_model = ProtocolModelIdentityEvidence::Missing;
+        }
+        self.apply_notification_decision(state, bytes, current, decision);
+    }
+
+    fn apply_notification_decision(
+        &mut self,
+        state: &mut CutoutSessionState,
+        bytes: &[u8],
+        current: &DeviceDetectionResolution,
+        decision: NotificationDecision<'_>,
+    ) {
+        let malformed_model_banner = match (decision.banner_model, current.staged.model) {
+            (IdentityBannerEvidence::Malformed, None) => {
+                Some(ModelBanner::copy_from_slice(model_banner_bytes(bytes)))
+            }
+            _ => None,
+        };
+        let model_response = matches!(
+            decision.banner_model,
+            IdentityBannerEvidence::Model(_) | IdentityBannerEvidence::Malformed
+        );
+        if model_response {
+            state
+                .identity_mut()
+                .observe_probe_response(PendingProbe::BegodeName);
+        }
+        if decision.firmware_banner {
+            state
+                .identity_mut()
+                .observe_probe_response(PendingProbe::BegodeFirmware);
+        }
+        if decision.imu_banner {
+            state
+                .identity_mut()
+                .observe_probe_response(PendingProbe::BegodeImu);
+        }
+        if model_response || decision.firmware_banner || decision.imu_banner {
+            state.identity_mut().missing_probe_response = None;
+        }
+        state.identity_mut().malformed_probe_response =
+            match (decision.banner_model, decision.malformed_probe) {
+                (IdentityBannerEvidence::Malformed, probe) => probe,
+                (IdentityBannerEvidence::Model(_), _) => None,
+                (IdentityBannerEvidence::Missing, _) => state.identity().malformed_probe_response,
+            };
+        let banner_model = match (decision.banner_model, current.staged.model) {
+            (IdentityBannerEvidence::Malformed, Some(_)) => None,
+            _ => decision.banner_model_update(),
+        };
+        let protocol_model = match (
+            decision.protocol == current.protocol,
+            decision.protocol_model,
+        ) {
+            (false, ProtocolModelIdentityEvidence::Missing) => {
+                Some(ProtocolModelIdentityEvidence::Missing)
+            }
+            (_, ProtocolModelIdentityEvidence::Missing) => None,
+            (_, protocol_model) => Some(protocol_model),
+        };
+        self.refresh_resolution(state, banner_model, protocol_model, decision.protocol);
+        if let Some(model_banner) = malformed_model_banner {
+            state.identity_mut().model_banner = Some(model_banner);
+        }
+        if decision.firmware_banner {
+            state.identity_mut().firmware_banner = Some(bytes.to_vec());
+        }
+        if decision.imu_banner {
+            state.identity_mut().imu_banner = Some(bytes.to_vec());
+        }
     }
 
     /// Records one probe write with its host-supplied monotonic timestamp.
@@ -825,12 +838,11 @@ impl ProtocolFamilyState {
 
     fn into_classification(self) -> ProtocolFamilyClassification {
         match self {
-            Self::Unknown | Self::Conflict => ProtocolFamilyClassification::Pending,
+            Self::Unknown | Self::Conflict | Self::Vesc => ProtocolFamilyClassification::Pending,
             Self::VeteranLeaperkimNosfet => {
                 ProtocolFamilyClassification::Known(DeviceFamily::NosfetAero)
             }
             Self::BegodeGotway => ProtocolFamilyClassification::Known(DeviceFamily::BegodeFalcon),
-            Self::Vesc => ProtocolFamilyClassification::Pending,
         }
     }
 }
@@ -1242,6 +1254,7 @@ fn ascii_eq_ignore_case(left: &[u8], right: &[u8]) -> bool {
 }
 
 #[cfg(test)]
+#[allow(unused_qualifications)]
 mod tests {
     use cutout_core::{
         Capabilities, Duration, GattChannel, GattFingerprint, GattRoles, ModelRegistryEntry,

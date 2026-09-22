@@ -1477,17 +1477,19 @@ async fn drive_session_relays_notifications_back_into_session() {
         event,
         crate::SessionBridgeEvent::ReadOnlyResponse {
             monotonic_ms,
-            response: ReadOnlyResponse::Firmware(firmware),
+            response,
         } if *monotonic_ms == crate::MonotonicMs::new(2)
-            && firmware.firmware_major == Some(Measured::reported(43))
+            && matches!(response.as_ref(), ReadOnlyResponse::Firmware(firmware)
+                if firmware.firmware_major == Some(Measured::reported(43)))
     )));
     assert!(report.events.iter().any(|event| matches!(
         event,
         crate::SessionBridgeEvent::ReadOnlyResponse {
             monotonic_ms,
-            response: ReadOnlyResponse::Settings(settings),
+            response,
         } if *monotonic_ms == crate::MonotonicMs::new(2)
-            && settings.entries()[0].is_some()
+            && matches!(response.as_ref(), ReadOnlyResponse::Settings(settings)
+                if settings.entries()[0].is_some())
     )));
     assert!(report.events.iter().any(|event| matches!(
         event,
@@ -1523,7 +1525,7 @@ fn report_settings_summary_keeps_only_available_settings_readbacks() {
         .for_each(|(offset, settings)| {
             crate::report::process_device_event(
                 &mut report,
-                DeviceEvent::ReadOnlyResponse(ReadOnlyResponse::Settings(settings)),
+                DeviceEvent::read_only_response(ReadOnlyResponse::Settings(settings)),
                 crate::MonotonicMs::new(2 + offset as u64),
             );
         });
@@ -1542,9 +1544,10 @@ fn report_settings_summary_keeps_only_available_settings_readbacks() {
         event,
         crate::SessionBridgeEvent::ReadOnlyResponse {
             monotonic_ms,
-            response: ReadOnlyResponse::Settings(settings),
+            response,
         } if *monotonic_ms == crate::MonotonicMs::new(2)
-            && *settings == unavailable
+            && matches!(response.as_ref(), ReadOnlyResponse::Settings(settings)
+                if *settings == unavailable)
     )));
 }
 
@@ -2622,13 +2625,13 @@ impl ProtocolSession for BridgeSession {
                         ..TelemetryDelta::empty(ms(0))
                     },
                 )));
-                output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                output.push(SessionOutput::Event(DeviceEvent::read_only_response(
                     ReadOnlyResponse::Firmware(FirmwareInfo {
                         firmware_major: Some(Measured::reported(43)),
                         ..FirmwareInfo::default()
                     }),
                 )));
-                output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                output.push(SessionOutput::Event(DeviceEvent::read_only_response(
                     ReadOnlyResponse::Settings(SettingsReadback::available([
                         Some(SettingsEntry {
                             field: RawFieldValue::new(0x0014, 30),

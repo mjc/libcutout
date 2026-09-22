@@ -37,7 +37,7 @@ impl ValidationGrant {
         }
     }
 
-    fn matches(&self, token: &ConnectionAttemptToken) -> bool {
+    fn matches(self, token: &ConnectionAttemptToken) -> bool {
         self.generation == token.generation()
     }
 }
@@ -848,10 +848,10 @@ impl DeviceConnectionSession {
             let received_at = MonotonicTimestamp::new(monotonic_ms.milliseconds);
             let profile = device.control_profile();
             for output in &result.outputs {
-                let SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
-                    ReadOnlyResponse::Settings(readback),
-                )) = output
-                else {
+                let SessionOutput::Event(DeviceEvent::ReadOnlyResponse(response)) = output else {
+                    continue;
+                };
+                let ReadOnlyResponse::Settings(readback) = response else {
                     continue;
                 };
                 profile.apply_action_readback(&mut self.state.actions, *readback, received_at);

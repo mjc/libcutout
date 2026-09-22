@@ -20,10 +20,12 @@ pub enum RiderMetricValue<T> {
 /// Origin and value of the projected electrical power metric.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RiderPowerValue {
-    /// Power calculated from pack voltage and non-zero battery current.
+    /// Power calculated from pack voltage and battery current, including zero current.
     CalculatedPackCurrent(Power),
     /// Power reported directly by the active protocol.
     Reported(Power),
+    /// Power supplied with its original source and quality metadata.
+    Measured(Measured<Power>),
     /// No usable power value is available.
     Unavailable,
 }
@@ -153,17 +155,13 @@ fn power_value(
     battery_current: Option<Measured<BatteryCurrent>>,
     reported_power: Option<Measured<Power>>,
 ) -> RiderPowerValue {
-    if let (Some(voltage), Some(current)) = (voltage, battery_current)
-        && current.value.as_milliamps() != 0
-    {
-        return RiderPowerValue::CalculatedPackCurrent(Power::from_voltage_current(
+    if let (Some(voltage), Some(current)) = (voltage, battery_current) {
+        return RiderPowerValue::CalculatedPackCurrent(Power::from_pack_voltage_current(
             voltage.value,
             current.value,
         ));
     }
-    reported_power.map_or(RiderPowerValue::Unavailable, |reading| {
-        RiderPowerValue::Reported(reading.value)
-    })
+    reported_power.map_or(RiderPowerValue::Unavailable, RiderPowerValue::Measured)
 }
 
 fn thermal_value(
@@ -282,7 +280,7 @@ mod tests {
                     value: RiderMetricValue::Available(Voltage::from_millivolts(60_000)),
                 },
                 RiderDashboardMetricDescriptor::Power {
-                    value: RiderPowerValue::Reported(Power::from_milliwatts(0)),
+                    value: RiderPowerValue::CalculatedPackCurrent(Power::from_milliwatts(0)),
                 },
                 RiderDashboardMetricDescriptor::Thermal {
                     value: RiderMetricValue::Available(RiderThermalReadback {
@@ -327,6 +325,34 @@ mod tests {
             vec![RiderSafetyMetricDescriptor::PwmHeadroom {
                 value: RiderMetricValue::Available(550),
             }]
+        );
+    }
+
+    #[test]
+    fn projection_preserves_fallback_power_provenance() {
+        let calculated = Measured::calculated(Power::from_watts(3));
+        let estimated = Measured::estimated(Power::from_watts(2));
+
+        let calculated_projection = RiderDashboardProjection::from_input(RiderDashboardInput {
+            reported_power: Some(calculated),
+            ..empty_input()
+        });
+        let estimated_projection = RiderDashboardProjection::from_input(RiderDashboardInput {
+            reported_power: Some(estimated),
+            ..empty_input()
+        });
+
+        assert_eq!(
+            calculated_projection.dashboard_metrics[2],
+            RiderDashboardMetricDescriptor::Power {
+                value: RiderPowerValue::Measured(calculated),
+            }
+        );
+        assert_eq!(
+            estimated_projection.dashboard_metrics[2],
+            RiderDashboardMetricDescriptor::Power {
+                value: RiderPowerValue::Measured(estimated),
+            }
         );
     }
 

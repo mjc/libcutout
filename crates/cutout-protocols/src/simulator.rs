@@ -7,7 +7,14 @@ use cutout_core::{
     WritePayload,
 };
 
-use crate::settings_wire::*;
+use crate::settings_wire::{
+    VeteranAngleAdjustment, VeteranBeeperVolume, VeteranBrakeOverpressureAlarm,
+    VeteranDisplayBacklight, VeteranDynamicAssist, VeteranGyroCalibrationState,
+    VeteranHighSpeedMode, VeteranLateralTiltLimit, VeteranLowBatteryMode,
+    VeteranMaxChargeVoltageRaw, VeteranPedalDipCompensation, VeteranPedalHardness,
+    VeteranPwmPercent, VeteranPwmSetting, VeteranSpeedSetting, VeteranTransportMode,
+    VeteranVoltageCorrection, VeteranWheelUnits,
+};
 use crate::{
     NOSFET_AERO_REGISTRY_ENTRY, NosfetAeroModel, ProtocolModelSpec, StationarySettingsWriteSession,
     SupportsSettingsWrites,
@@ -40,7 +47,7 @@ pub struct AeroSettingsReadback {
     /// Current simulated voltage correction, when explicitly set.
     pub voltage_correction: Option<VeteranVoltageCorrection>,
 
-    /// Current official MxV raw maximum-charge value.
+    /// Current official `MxV` raw maximum-charge value.
     pub max_charge_voltage_raw: Option<VeteranMaxChargeVoltageRaw>,
 
     /// Current numeric MD pedal hardness, when the simulator has a value.
@@ -328,7 +335,7 @@ impl AeroSettingsSimulator {
             }
             _ => {}
         }
-        SessionOutput::Event(DeviceEvent::ReadOnlyResponse(ReadOnlyResponse::Settings(
+        SessionOutput::Event(DeviceEvent::read_only_response(ReadOnlyResponse::Settings(
             self.settings_readback(),
         )))
     }
@@ -436,116 +443,128 @@ impl AeroSettingsSimulator {
     }
 
     fn settings_readback(&self) -> SettingsReadback {
-        SettingsReadback::available([
-            self.readback.tiltback_speed.map(|value| {
+        SettingsReadback::available::<18>(std::array::from_fn(|index| self.settings_entry(index)))
+    }
+
+    fn settings_entry(&self, index: usize) -> Option<SettingsEntry> {
+        match index {
+            0 => self.readback.tiltback_speed.map(|value| {
                 settings_entry(
                     crate::VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH,
                     i64::from(value.kilometres_per_hour()) * 10,
                 )
             }),
-            self.readback.alarm_speed.map(|value| {
+            1 => self.readback.alarm_speed.map(|value| {
                 settings_entry(
                     crate::VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
                     i64::from(value.kilometres_per_hour()) * 10,
                 )
             }),
-            self.readback.pwm_percent.map(|value| {
+            2 => self.readback.pwm_percent.map(|value| {
                 settings_entry(
                     crate::AERO_FIELD_PWM_PERCENT,
                     i64::from(pwm_wire_value(value)),
                 )
             }),
-            self.readback.gyro_calibration_state.map(|value| {
+            3 => self.readback.gyro_calibration_state.map(|value| {
                 settings_entry(
                     crate::AERO_FIELD_GYRO_CALIBRATION_STATE,
                     i64::from(value.wire_value()),
                 )
             }),
-            self.readback.brake_overpressure_alarm.map(|value| {
+            4 => self.readback.brake_overpressure_alarm.map(|value| {
                 settings_entry(
                     crate::AERO_FIELD_BRAKE_OVERPRESSURE_ALARM_PERCENT,
                     i64::from(value.percent()),
                 )
             }),
-            self.readback.pedal_mode.map(|value| {
+            5 => self.readback.pedal_mode.map(|value| {
                 settings_entry(
                     crate::VETERAN_FIELD_PEDALS_MODE,
                     i64::from(pedal_mode_raw(value)),
                 )
             }),
-            self.readback.display_backlight.map(|value| {
+            6 => self.readback.display_backlight.map(|value| {
                 settings_entry(
                     crate::AERO_FIELD_DISPLAY_BACKLIGHT_PERCENT,
                     i64::from(value.percent()),
                 )
             }),
-            self.readback.beeper_volume.map(|value| {
+            7 => self.readback.beeper_volume.map(|value| {
                 settings_entry(
                     crate::AERO_FIELD_BEEPER_VOLUME_PERCENT,
                     i64::from(value.percent()),
                 )
             }),
-            self.readback.dynamic_assist.map(|value| {
+            8 => self.readback.dynamic_assist.map(|value| {
                 settings_entry(
                     crate::AERO_FIELD_DYNAMIC_ASSIST_PERCENT,
                     i64::from(value.percent()),
                 )
             }),
-            self.readback.pedal_dip_compensation.map(|value| {
+            9..=17 => self.settings_entry_late(index),
+            _ => None,
+        }
+    }
+
+    fn settings_entry_late(&self, index: usize) -> Option<SettingsEntry> {
+        match index {
+            9 => self.readback.pedal_dip_compensation.map(|value| {
                 settings_entry(
                     crate::AERO_FIELD_PEDAL_DIP_COMPENSATION_PERCENT,
                     i64::from(value.percent()),
                 )
             }),
-            self.readback.lateral_tilt_limit.map(|value| {
+            10 => self.readback.lateral_tilt_limit.map(|value| {
                 settings_entry(
                     crate::AERO_FIELD_LATERAL_TILT_LIMIT_DEGREES,
                     i64::from(value.degrees()),
                 )
             }),
-            self.readback.voltage_correction.map(|value| {
+            11 => self.readback.voltage_correction.map(|value| {
                 settings_entry(
                     crate::AERO_FIELD_VOLTAGE_CORRECTION_TENTHS_PERCENT,
                     i64::from(value.tenths_of_percent()),
                 )
             }),
-            self.readback.max_charge_voltage_raw.map(|value| {
+            12 => self.readback.max_charge_voltage_raw.map(|value| {
                 settings_entry(
                     crate::AERO_FIELD_MAX_CHARGE_VOLTAGE_RAW,
                     i64::from(value.raw()),
                 )
             }),
-            self.readback.pedal_hardness.map(|value| {
+            13 => self.readback.pedal_hardness.map(|value| {
                 settings_entry(
                     crate::AERO_FIELD_PEDAL_HARDNESS_PERCENT,
                     i64::from(value.percent()),
                 )
             }),
-            self.readback.wheel_units.map(|value| {
+            14 => self.readback.wheel_units.map(|value| {
                 settings_entry(
                     crate::AERO_FIELD_WHEEL_UNITS,
                     i64::from(value.display_mode()),
                 )
             }),
-            self.readback.high_speed_mode.map(|value| {
+            15 => self.readback.high_speed_mode.map(|value| {
                 settings_entry(
                     crate::AERO_FIELD_HIGH_SPEED_MODE,
                     i64::from(u8::from(value.enabled())),
                 )
             }),
-            self.readback.low_battery_mode.map(|value| {
+            16 => self.readback.low_battery_mode.map(|value| {
                 settings_entry(
                     crate::AERO_FIELD_LOW_BATTERY_MODE,
                     i64::from(u8::from(value.enabled())),
                 )
             }),
-            self.readback.transport_mode.map(|value| {
+            17 => self.readback.transport_mode.map(|value| {
                 settings_entry(
                     crate::AERO_FIELD_TRANSPORT_MODE,
                     i64::from(u8::from(value.enabled())),
                 )
             }),
-        ])
+            _ => None,
+        }
     }
 }
 
@@ -733,11 +752,10 @@ mod tests {
         assert!(outputs.iter().any(|output| {
             matches!(
                 output,
-                SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
-                    ReadOnlyResponse::Settings(settings)
-                )) if settings.entries().iter().flatten().any(|entry| {
-                    entry.field == RawFieldValue::new(crate::VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, 530)
-                })
+                SessionOutput::Event(DeviceEvent::ReadOnlyResponse(response))
+                    if matches!(response, ReadOnlyResponse::Settings(settings) if settings.entries().iter().flatten().any(|entry| {
+                        entry.field == RawFieldValue::new(crate::VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, 530)
+                    }))
             )
         }));
     }
@@ -754,9 +772,12 @@ mod tests {
         outputs.extend(simulator.tick(MonotonicTimestamp::new(17)));
 
         let settings = outputs.iter().find_map(|output| match output {
-            SessionOutput::Event(DeviceEvent::ReadOnlyResponse(ReadOnlyResponse::Settings(
-                settings,
-            ))) => Some(settings),
+            SessionOutput::Event(DeviceEvent::ReadOnlyResponse(response)) => {
+                let ReadOnlyResponse::Settings(settings) = response else {
+                    return None;
+                };
+                Some(settings)
+            }
             _ => None,
         });
         let settings = settings.expect("completed writes emit a settings event");
@@ -782,8 +803,10 @@ mod tests {
 
     #[test]
     fn simulator_readback_event_includes_page_eight_settings() {
-        let mut initial = AeroSettingsReadback::default();
-        initial.max_charge_voltage_raw = VeteranMaxChargeVoltageRaw::new(46);
+        let initial = AeroSettingsReadback {
+            max_charge_voltage_raw: VeteranMaxChargeVoltageRaw::new(46),
+            ..Default::default()
+        };
         let mut simulator = AeroSettingsSimulator::new(initial);
         let now = MonotonicTimestamp::new(10);
         let commands = [
@@ -852,9 +875,12 @@ mod tests {
             )
             .into_iter()
             .find_map(|output| match output {
-                SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
-                    ReadOnlyResponse::Settings(settings),
-                )) => Some(settings),
+                SessionOutput::Event(DeviceEvent::ReadOnlyResponse(response)) => {
+                    let ReadOnlyResponse::Settings(settings) = response else {
+                        return None;
+                    };
+                    Some(settings)
+                }
                 _ => None,
             })
             .expect("PWM writes emit a settings readback");
@@ -1013,7 +1039,8 @@ mod tests {
     fn is_settings_readback(output: &SessionOutput) -> bool {
         matches!(
             output,
-            SessionOutput::Event(DeviceEvent::ReadOnlyResponse(ReadOnlyResponse::Settings(_)))
+            SessionOutput::Event(DeviceEvent::ReadOnlyResponse(response))
+                if matches!(response, ReadOnlyResponse::Settings(_))
         )
     }
 

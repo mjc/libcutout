@@ -8,7 +8,14 @@ use cutout_core::{
 };
 
 use crate::control_wire::{BegodeWire, NosfetWire, VeteranWire, WireCommand};
-use crate::settings_wire::*;
+use crate::settings_wire::{
+    BegodeBeeperVolume, BegodeLedModeSetting, BegodeMaxSpeed, VeteranAngleAdjustment,
+    VeteranBeeperVolume, VeteranBrakeOverpressureAlarm, VeteranDisplayBacklight,
+    VeteranDynamicAssist, VeteranHighSpeedMode, VeteranLateralTiltLimit, VeteranLowBatteryMode,
+    VeteranPedalDipCompensation, VeteranPedalHardness, VeteranPwmPercent, VeteranPwmSetting,
+    VeteranRidingMode, VeteranSpeedSetting, VeteranTransportMode, VeteranVoltageCorrection,
+    VeteranWheelUnits,
+};
 use crate::{
     AeroProbe, FalconProbe, RefloatReadOnlyRequest, VescCanReadOnlyRequest, VescReadOnlyCodec,
     VescReadOnlyRequest,

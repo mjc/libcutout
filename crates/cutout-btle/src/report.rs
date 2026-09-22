@@ -106,7 +106,7 @@ pub enum SessionBridgeEvent {
         monotonic_ms: MonotonicMs,
 
         /// Read-only response emitted by the protocol session.
-        response: ReadOnlyResponse,
+        response: Box<ReadOnlyResponse>,
     },
 
     /// Parser diagnostics emitted by the protocol session.
@@ -200,7 +200,7 @@ pub(crate) fn process_device_event(
             report.read_only_response_events.push(response.clone());
             report.events.push(SessionBridgeEvent::ReadOnlyResponse {
                 monotonic_ms,
-                response: response.clone(),
+                response: Box::new(response.clone()),
             });
             match response {
                 ReadOnlyResponse::Firmware(firmware) => {

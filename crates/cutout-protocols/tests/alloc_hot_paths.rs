@@ -7,15 +7,15 @@ use std::sync::{
 };
 
 use cutout_core::{
-    CommandKind, LinkInfo, MonotonicTimestamp, ProtocolSession, SessionInput, SessionOutput,
-    TransportWriteLimit,
+    CommandKind, DeviceEvent, LinkInfo, MonotonicTimestamp, ProtocolSession, SessionInput,
+    SessionOutput, TransportWriteLimit,
 };
 use cutout_protocols::{
     BEGODE_DATA_CHANNEL, BEGODE_FRAME_LEN, BegodeFalconModel, BegodeFrameParseResult,
-    BegodeFrameReassembler, FalconRequestEncoder, NosfetAeroModel, ReadOnlyModelSpec,
-    ReadOnlySession, RefloatStreamDecoder, RefloatStreamResult, VESC_NOTIFY_CHANNEL,
-    VETERAN_DATA_CHANNEL, VescGenericModel, VescReadOnlyStreamDecoder, VescReadOnlyStreamResult,
-    VescRequestEncoder,
+    BegodeFrameReassembler, BegodeNotificationDecoder, BenignControlSession, FalconRequestEncoder,
+    NosfetAeroModel, ReadOnlyModelSpec, ReadOnlySession, RefloatStreamDecoder, RefloatStreamResult,
+    VESC_NOTIFY_CHANNEL, VETERAN_DATA_CHANNEL, VescGenericModel, VescNotificationDecoder,
+    VescReadOnlyStreamDecoder, VescReadOnlyStreamResult, VescRequestEncoder,
 };
 
 const REFLOAT_IDS_FRAME: &[u8] = &[
@@ -123,6 +123,7 @@ fn allocation_hot_paths_do_not_allocate() {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     veteran_parser_owned_results_do_not_allocate();
+    fragmented_coalesced_aero_responses_do_not_allocate();
     begode_parser_owned_results_do_not_allocate();
     vesc_parser_owned_results_do_not_allocate();
     assert_no_allocations("read request encoding", || {
@@ -174,7 +175,20 @@ fn veteran_parser_owned_results_do_not_allocate() {
         );
         veteran_output.clear();
     });
-
+    assert_no_allocations("Veteran sustained complete frames", || {
+        for at in 4..36 {
+            veteran.handle(
+                SessionInput::Notification {
+                    channel: VETERAN_DATA_CHANNEL,
+                    bytes: &LIVE_AERO_SELECTOR_0,
+                    monotonic_ms: ms(at),
+                },
+                &mut veteran_output,
+            );
+            assert!(!veteran_output.is_empty());
+            veteran_output.clear();
+        }
+    });
     let mut reserved = LIVE_AERO_SELECTOR_0;
     reserved[60] = 8;
     let (mut veteran, mut veteran_output) = linked_session::<NosfetAeroModel>();
@@ -203,6 +217,43 @@ fn veteran_parser_owned_results_do_not_allocate() {
             &mut veteran_output,
         );
         veteran_output.clear();
+    });
+}
+
+fn fragmented_coalesced_aero_responses_do_not_allocate() {
+    let (mut session, mut output) = linked_session::<NosfetAeroModel>();
+    output.reserve(32);
+    let frame = LIVE_AERO_SELECTOR_0.as_slice();
+    let split = frame.len() - 1;
+    let continuation = [&frame[split..], frame, frame].concat();
+    assert_no_allocations("partial frame plus coalesced Aero frames", || {
+        for iteration in 0..32 {
+            session.handle(
+                SessionInput::Notification {
+                    channel: VETERAN_DATA_CHANNEL,
+                    bytes: &frame[..split],
+                    monotonic_ms: ms(2 + iteration * 2),
+                },
+                &mut output,
+            );
+            output.clear();
+            session.handle(
+                SessionInput::Notification {
+                    channel: VETERAN_DATA_CHANNEL,
+                    bytes: &continuation,
+                    monotonic_ms: ms(3 + iteration * 2),
+                },
+                &mut output,
+            );
+            let responses = output
+                .iter()
+                .filter(|item| {
+                    matches!(item, SessionOutput::Event(DeviceEvent::ReadOnlyResponse(_)))
+                })
+                .count();
+            assert_eq!(responses, 15);
+            output.clear();
+        }
     });
 }
 
@@ -253,5 +304,61 @@ fn vesc_parser_owned_results_do_not_allocate() {
             &mut vesc_output,
         );
         vesc_output.clear();
+    });
+}
+
+#[test]
+fn configured_sessions_do_not_allocate() {
+    let _guard = ALLOCATION_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+
+    let mut vesc =
+        ReadOnlySession::<VescGenericModel>::with_decoder(VescNotificationDecoder::default());
+    let mut vesc_output = Vec::with_capacity(8);
+    vesc.handle(
+        SessionInput::LinkUp(LinkInfo {
+            monotonic_ms: ms(1),
+            max_write_len: Some(write_len(185)),
+        }),
+        &mut vesc_output,
+    );
+    vesc_output.clear();
+    assert_no_allocations("configured VESC notification session", || {
+        vesc.handle(
+            SessionInput::Notification {
+                channel: VESC_NOTIFY_CHANNEL,
+                bytes: &VESC_VALUES,
+                monotonic_ms: ms(2),
+            },
+            &mut vesc_output,
+        );
+        assert!(!vesc_output.is_empty());
+        vesc_output.clear();
+    });
+
+    let mut begode = BenignControlSession::<BegodeFalconModel>::with_decoder(
+        BegodeNotificationDecoder::default(),
+    );
+    let mut begode_output = Vec::with_capacity(8);
+    begode.handle(
+        SessionInput::LinkUp(LinkInfo {
+            monotonic_ms: ms(3),
+            max_write_len: Some(write_len(185)),
+        }),
+        &mut begode_output,
+    );
+    begode_output.clear();
+    assert_no_allocations("configured Begode notification session", || {
+        begode.handle(
+            SessionInput::Notification {
+                channel: BEGODE_DATA_CHANNEL,
+                bytes: &BEGODE_LIVE_A,
+                monotonic_ms: ms(4),
+            },
+            &mut begode_output,
+        );
+        assert!(!begode_output.is_empty());
+        begode_output.clear();
     });
 }

@@ -132,9 +132,11 @@ fn build_apple_client(root: &Path, tool: &str, args: &[String]) -> Result<()> {
 fn handoff_apple_client(build: &mut Command, lock: &fs::File) -> Result<()> {
     use std::os::unix::process::CommandExt;
 
-    let _inherited_lock = attach_lock_handle(build, lock)?;
+    let inherited_lock = attach_lock_handle(build, lock)?;
     // Replace this coordinator so signals to its PID reach the native tool.
-    Err(build.exec()).context("failed to build Apple client")
+    let error = build.exec();
+    drop(inherited_lock);
+    Err(error).context("failed to build Apple client")
 }
 
 #[cfg(not(unix))]
@@ -1806,9 +1808,7 @@ mod tests {
                 .write(true)
                 .open(root.join(SWIFT_FFI_LOCK))
                 .unwrap();
-            contender
-                .try_lock()
-                .expect("failed exec must release the lock");
+            wait_for_lock_release(&contender);
             return;
         }
         let root = tempfile::tempdir().unwrap();
@@ -1822,6 +1822,22 @@ mod tests {
             .output()
             .unwrap();
         assert!(result.status.success(), "{result:?}");
+    }
+
+    #[cfg(unix)]
+    fn wait_for_lock_release(contender: &fs::File) {
+        use std::time::{Duration, Instant};
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            match contender.try_lock() {
+                Ok(()) => return,
+                Err(fs::TryLockError::WouldBlock) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) => panic!("failed exec did not release the lock: {error}"),
+            }
+        }
     }
 
     #[cfg(unix)]
@@ -1937,11 +1953,10 @@ mod tests {
     fn ffi_child_keeps_lock_after_coordinator_is_killed() {
         use std::io::{BufRead, Write};
 
-        let root = env::var_os("CUTOUT_FFI_LOCK_TEST_ROOT")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| {
-                env::temp_dir().join(format!("cutout-ffi-orphan-{}", std::process::id()))
-            });
+        let root = env::var_os("CUTOUT_FFI_LOCK_TEST_ROOT").map_or_else(
+            || env::temp_dir().join(format!("cutout-ffi-orphan-{}", std::process::id())),
+            PathBuf::from,
+        );
         if env::var_os("CUTOUT_FFI_LOCK_TEST_CHILD").is_some() {
             let lock = lock_swift_ffi(&root).unwrap();
             let mut child = Command::new("sleep")
@@ -2011,11 +2026,10 @@ mod tests {
     fn native_child_keeps_lock_after_coordinator_is_killed() {
         use std::io::{BufRead, Write};
 
-        let root = env::var_os("CUTOUT_NATIVE_LOCK_TEST_ROOT")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| {
-                env::temp_dir().join(format!("cutout-native-orphan-{}", std::process::id()))
-            });
+        let root = env::var_os("CUTOUT_NATIVE_LOCK_TEST_ROOT").map_or_else(
+            || env::temp_dir().join(format!("cutout-native-orphan-{}", std::process::id())),
+            PathBuf::from,
+        );
         if env::var_os("CUTOUT_NATIVE_LOCK_TEST_CHILD").is_some() {
             let lock = lock_swift_ffi(&root).unwrap();
             let mut child = Command::new("sleep");

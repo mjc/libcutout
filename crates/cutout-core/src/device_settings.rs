@@ -276,7 +276,7 @@ impl DeviceSettingsState {
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
                 next.checked_add(1)
             })
-            .expect("setting request identity exhausted");
+            .unwrap_or(u64::MAX);
         record.request_id = Some(request_id);
         record.transport_at = Some(submitted_at);
         record.completion = completion;
@@ -293,7 +293,9 @@ impl DeviceSettingsState {
         match outcome {
             SettingSubmissionOutcome::Accepted => {}
             SettingSubmissionOutcome::Refused(reason) => record.state.refuse(reason),
-            SettingSubmissionOutcome::Failed => record.state.fail(),
+            SettingSubmissionOutcome::Failed => {
+                record.state.fail();
+            }
         }
         request_id
     }
@@ -336,7 +338,7 @@ impl DeviceSettingsState {
         match status {
             SettingTransportStatus::Submitted => record.state.transport_submitted(at),
             SettingTransportStatus::Rejected | SettingTransportStatus::Cancelled => {
-                record.state.fail()
+                record.state.fail();
             }
             SettingTransportStatus::Queued => {}
             SettingTransportStatus::Accepted => unreachable!(),

@@ -613,7 +613,7 @@ impl WheelPitchDeg {
     }
 
     fn get(self) -> i64 {
-        self.0.display_value()
+        i64::from(self.0.as_millidegrees() / 1_000)
     }
 
     const fn is_lifted_or_tilted(self) -> bool {
@@ -637,7 +637,7 @@ impl DisplayDutyCycle {
     }
 
     fn get(self) -> i64 {
-        self.0.display_value()
+        self.0.as_whole_percent()
     }
 }
 
@@ -675,7 +675,7 @@ impl DisplayPhaseCurrent {
     }
 
     fn get(self) -> i64 {
-        self.0.display_value()
+        i64::from(self.0.as_milliamps() / 1_000)
     }
 
     const fn is_idle(self) -> bool {
@@ -708,7 +708,7 @@ impl DisplayBatteryCurrent {
     }
 
     fn get(self) -> i64 {
-        self.0.display_value()
+        i64::from(self.0.as_milliamps() / 1_000)
     }
 
     const fn is_idle(self) -> bool {
@@ -777,7 +777,7 @@ impl DisplayPower {
     }
 
     fn from_voltage_current(voltage: Voltage, current: BatteryCurrent) -> Self {
-        Self::from_power(Power::from_voltage_current(voltage, current))
+        Self::from_power(Power::from_pack_voltage_current(voltage, current))
     }
 
     fn get(self) -> i64 {
@@ -1534,17 +1534,22 @@ impl TelemetryWindow {
             .last()
             .copied()
             .map(DisplayVoltage::from_voltage);
-        self.latest_battery_current = self
-            .current_samples
-            .last()
-            .copied()
-            .map(|current| DisplayBatteryCurrent::from_current(current.into()));
+        self.latest_battery_current = self.current_samples.last().copied().map(|current| {
+            DisplayBatteryCurrent::from_current(BatteryCurrent::from_milliamps(
+                current.as_milliamps(),
+            ))
+        });
         self.latest_power = self
             .voltage_samples
             .last()
             .copied()
             .zip(self.current_samples.last().copied())
-            .map(|(voltage, current)| DisplayPower::from_voltage_current(voltage, current.into()));
+            .map(|(voltage, current)| {
+                DisplayPower::from_voltage_current(
+                    voltage,
+                    BatteryCurrent::from_milliamps(current.as_milliamps()),
+                )
+            });
         self.latest_temperature = self
             .temperature_samples
             .last()
@@ -1610,17 +1615,22 @@ impl TelemetryWindow {
             .last()
             .copied()
             .map(DisplayVoltage::from_voltage);
-        self.latest_battery_current = self
-            .current_samples
-            .last()
-            .copied()
-            .map(|current| DisplayBatteryCurrent::from_current(current.into()));
+        self.latest_battery_current = self.current_samples.last().copied().map(|current| {
+            DisplayBatteryCurrent::from_current(BatteryCurrent::from_milliamps(
+                current.as_milliamps(),
+            ))
+        });
         self.latest_power = self
             .voltage_samples
             .last()
             .copied()
             .zip(self.current_samples.last().copied())
-            .map(|(voltage, current)| DisplayPower::from_voltage_current(voltage, current.into()));
+            .map(|(voltage, current)| {
+                DisplayPower::from_voltage_current(
+                    voltage,
+                    BatteryCurrent::from_milliamps(current.as_milliamps()),
+                )
+            });
         self.latest_temperature = self
             .temperature_samples
             .last()
@@ -1673,9 +1683,15 @@ impl TelemetryWindow {
             let current_value = current.value;
             let current = DisplayPhaseCurrent::from_current(current_value);
             self.latest_phase_current = Some(current);
-            push_sample(&mut self.current_samples, current_value.abs());
+            push_sample(
+                &mut self.current_samples,
+                Current::from_milliamps(current_value.as_milliamps().saturating_abs()),
+            );
         } else if let Some(current) = snapshot.battery_current {
-            push_sample(&mut self.current_samples, current.value.abs());
+            push_sample(
+                &mut self.current_samples,
+                Current::from_milliamps(current.value.as_milliamps().saturating_abs()),
+            );
         }
         if let Some(power) = snapshot.power {
             self.latest_power = Some(DisplayPower::from_power(power.value));
@@ -2222,7 +2238,7 @@ fn format_bridge_event(event: &SessionBridgeEvent) -> (&'static str, String) {
             "info",
             format!(
                 "t={monotonic_ms}ms {}",
-                format_read_only_response(response.clone())
+                format_read_only_response(response.as_ref().clone())
             ),
         ),
         SessionBridgeEvent::Diagnostics {
@@ -5542,7 +5558,7 @@ mod tests {
             read_only_response_events: vec![read_only_response.clone()],
             events: vec![SessionBridgeEvent::ReadOnlyResponse {
                 monotonic_ms: cutout_btle::MonotonicMs::new(7),
-                response: read_only_response,
+                response: Box::new(read_only_response),
             }],
             ..empty_session_bridge_report()
         };
@@ -5589,7 +5605,7 @@ mod tests {
             read_only_response_events: vec![read_only_response.clone()],
             events: vec![SessionBridgeEvent::ReadOnlyResponse {
                 monotonic_ms: cutout_btle::MonotonicMs::new(7),
-                response: read_only_response,
+                response: Box::new(read_only_response),
             }],
             ..empty_session_bridge_report()
         };
@@ -5755,7 +5771,7 @@ mod tests {
             read_only_response_events: vec![read_only_response.clone()],
             events: vec![SessionBridgeEvent::ReadOnlyResponse {
                 monotonic_ms: cutout_btle::MonotonicMs::new(7),
-                response: read_only_response,
+                response: Box::new(read_only_response),
             }],
             ..empty_session_bridge_report()
         };

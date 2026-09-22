@@ -42,12 +42,12 @@ fn compile_declarations(declarations: &str) -> Output {
 #[test]
 fn dialect_cannot_reuse_an_inherited_destination() {
     let output = compile_declarations(
-        r#"
+        r"
         const BASE_FIELDS: &[Layout] = &[Layout::DecimalMenu { selector: b'Y', digits: 2 }];
         const BASE: Schema = Schema::new(BASE_FIELDS);
         const EXTENSION: &[Layout] = &[Layout::DecimalMenu { selector: b'Y', digits: 1 }];
         const CHECK: Schema = Schema::extend(&BASE, EXTENSION);
-    "#,
+    ",
     );
     let error = String::from_utf8_lossy(&output.stderr);
     assert!(!output.status.success());
@@ -98,10 +98,10 @@ fn colliding_protocol_destinations_fail_at_compile_time() {
         ),
         (
             "menu selector despite different value widths",
-            r#"
+            r"
             Layout::DecimalMenu { selector: b'Y', digits: 1 },
             Layout::DecimalMenu { selector: b'Y', digits: 2 }
-        "#,
+        ",
         ),
         (
             "literal bypass of binary field",

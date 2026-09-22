@@ -1304,12 +1304,14 @@ public enum LightState: Equatable, Hashable, Sendable {
 
 public enum TelemetryPowerPresentation: Equatable, Hashable, Sendable {
     case calculatedPackCurrent(Power)
+    case calculated(Power)
+    case estimated(Power)
     case reported(Power)
     case unavailable
 
     public var power: Power? {
         switch self {
-        case let .calculatedPackCurrent(power), let .reported(power):
+        case let .calculatedPackCurrent(power), let .calculated(power), let .estimated(power), let .reported(power):
             power
         case .unavailable:
             nil
@@ -1525,6 +1527,8 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
             guard let power, let source else { return .unavailable }
             return switch source {
             case .calculatedPackCurrent: .calculatedPackCurrent(power)
+            case .calculated: .calculated(power)
+            case .estimated: .estimated(power)
             case .reported: .reported(power)
             }
         }

@@ -8,7 +8,12 @@
 
 //! Core types and setup scaffolding for Cutout.
 
-use std::{cmp::Ordering, fmt, marker::PhantomData, ops::RangeInclusive};
+use std::{
+    cmp::Ordering,
+    fmt,
+    marker::PhantomData,
+    ops::{Deref, RangeInclusive},
+};
 
 use arrayvec::ArrayVec;
 use thiserror::Error;
@@ -1280,7 +1285,7 @@ impl ManufacturerKey {
     }
 }
 
-impl core::ops::Deref for ManufacturerKey {
+impl Deref for ManufacturerKey {
     type Target = str;
 
     fn deref(&self) -> &Self::Target {
@@ -1325,7 +1330,7 @@ impl ModelKey {
     }
 }
 
-impl core::ops::Deref for ModelKey {
+impl Deref for ModelKey {
     type Target = str;
 
     fn deref(&self) -> &Self::Target {
@@ -4938,10 +4943,8 @@ const fn saturating_u64_to_i32(value: u64) -> i32 {
     if value > i32::MAX as u64 {
         i32::MAX
     } else {
-        #[allow(clippy::cast_possible_truncation)]
-        {
-            value as i32
-        }
+        let bytes = value.to_le_bytes();
+        i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
     }
 }
 
@@ -4954,10 +4957,32 @@ const fn saturating_i64_to_i32(value: i64) -> i32 {
     } else if value < I32_MIN_I64 {
         i32::MIN
     } else {
-        #[allow(clippy::cast_possible_truncation)]
-        {
-            value as i32
-        }
+        let bytes = value.to_le_bytes();
+        i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+    }
+}
+
+fn saturating_i128_to_i32(value: i128) -> i32 {
+    if value > i128::from(i32::MAX) {
+        i32::MAX
+    } else if value < i128::from(i32::MIN) {
+        i32::MIN
+    } else {
+        let bytes = value.to_le_bytes();
+        i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+    }
+}
+
+fn saturating_i128_to_i64(value: i128) -> i64 {
+    if value > i128::from(i64::MAX) {
+        i64::MAX
+    } else if value < i128::from(i64::MIN) {
+        i64::MIN
+    } else {
+        let bytes = value.to_le_bytes();
+        i64::from_le_bytes([
+            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+        ])
     }
 }
 
@@ -4980,18 +5005,19 @@ pub fn round_div_i32(numerator: i32, denominator: i32) -> i32 {
 }
 
 #[must_use]
-fn round_div_i64_to_i32(numerator: i64, denominator: i64) -> i32 {
+fn round_div_i128(numerator: i128, denominator: i128) -> i128 {
     if denominator == 0 {
         return 0;
     }
 
-    let sign = if (numerator < 0) ^ (denominator < 0) {
-        -1
-    } else {
-        1
-    };
+    let negative = (numerator < 0) ^ (denominator < 0);
     let rounded = (numerator.abs() + denominator.abs() / 2) / denominator.abs();
-    saturating_i64_to_i32(rounded.saturating_mul(sign))
+    if negative { -rounded } else { rounded }
+}
+
+#[must_use]
+fn round_div_i128_to_i32(numerator: i128, denominator: i128) -> i32 {
+    saturating_i128_to_i32(round_div_i128(numerator, denominator))
 }
 
 #[allow(
@@ -5248,25 +5274,11 @@ impl BatteryCurrent {
     pub fn as_amps(self) -> f32 {
         self.0.as_amps()
     }
-}
 
-impl core::ops::Deref for BatteryCurrent {
-    type Target = Current;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl From<Current> for BatteryCurrent {
-    fn from(value: Current) -> Self {
-        Self(value)
-    }
-}
-
-impl From<BatteryCurrent> for Current {
-    fn from(value: BatteryCurrent) -> Self {
-        value.0
+    /// Returns the magnitude while preserving the battery-current role.
+    #[must_use]
+    pub fn abs(self) -> Self {
+        Self::from_milliamps(self.as_milliamps().saturating_abs())
     }
 }
 
@@ -5324,25 +5336,11 @@ impl PhaseCurrent {
     pub fn as_amps(self) -> f32 {
         self.0.as_amps()
     }
-}
 
-impl core::ops::Deref for PhaseCurrent {
-    type Target = Current;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl From<Current> for PhaseCurrent {
-    fn from(value: Current) -> Self {
-        Self(value)
-    }
-}
-
-impl From<PhaseCurrent> for Current {
-    fn from(value: PhaseCurrent) -> Self {
-        value.0
+    /// Returns the magnitude while preserving the phase-current role.
+    #[must_use]
+    pub fn abs(self) -> Self {
+        Self::from_milliamps(self.as_milliamps().saturating_abs())
     }
 }
 
@@ -5459,25 +5457,11 @@ impl PeakCurrent {
     pub fn as_amps(self) -> f32 {
         self.0.as_amps()
     }
-}
 
-impl core::ops::Deref for PeakCurrent {
-    type Target = Current;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl From<Current> for PeakCurrent {
-    fn from(value: Current) -> Self {
-        Self(value)
-    }
-}
-
-impl From<PeakCurrent> for Current {
-    fn from(value: PeakCurrent) -> Self {
-        value.0
+    /// Returns the magnitude while preserving the peak-current role.
+    #[must_use]
+    pub fn abs(self) -> Self {
+        Self::from_milliamps(self.as_milliamps().saturating_abs())
     }
 }
 
@@ -5522,11 +5506,11 @@ impl RotationalSpeed {
             return None;
         }
 
-        let wheel_circumference_mm = i64::try_from(wheel_circumference.as_millimetres()).ok()?;
-        let numerator = i64::from(self.as_erpm()) * wheel_circumference_mm;
-        Some(Speed::from_millimetres_per_second(round_div_i64_to_i32(
+        let numerator =
+            i128::from(self.as_erpm()) * i128::from(wheel_circumference.as_millimetres());
+        Some(Speed::from_millimetres_per_second(round_div_i128_to_i32(
             numerator,
-            denominator,
+            i128::from(denominator),
         )))
     }
 }
@@ -5558,13 +5542,24 @@ impl Power {
         Self::from_unit_value(value)
     }
 
-    /// Calculates electrical power from voltage and current.
+    /// Calculates pack-side electrical power from voltage and battery current.
     #[must_use]
-    pub fn from_voltage_current(voltage: Voltage, current: impl Into<Current>) -> Self {
-        let current = current.into();
-        Self::from_milliwatts(
-            i64::from(voltage.as_millivolts()) * i64::from(current.as_milliamps()) / 1_000,
-        )
+    pub fn from_pack_voltage_current(voltage: Voltage, current: BatteryCurrent) -> Self {
+        let milliwatts =
+            i128::from(voltage.as_millivolts()) * i128::from(current.as_milliamps()) / 1_000;
+        Self::from_milliwatts(saturating_i128_to_i64(milliwatts))
+    }
+
+    /// Estimates electrical power from pack voltage and motor/phase current.
+    ///
+    /// Phase current and battery current are not interchangeable. Callers
+    /// must preserve that this result is an estimate based on an explicit,
+    /// protocol-specific assumption.
+    #[must_use]
+    pub fn from_voltage_phase_current_estimate(voltage: Voltage, current: PhaseCurrent) -> Self {
+        let milliwatts =
+            i128::from(voltage.as_millivolts()) * i128::from(current.as_milliamps()) / 1_000;
+        Self::from_milliwatts(saturating_i128_to_i64(milliwatts))
     }
 
     /// Returns this power in milliwatts.
@@ -6026,9 +6021,15 @@ impl Angle {
         Self::from_unit_value(value)
     }
 
-    /// Creates an angle from decidegrees.
+    /// Creates an angle from decidegrees (tenths of a degree).
     #[must_use]
     pub const fn from_deci_degrees(value: i32) -> Self {
+        Self::from_millidegrees(value.saturating_mul(100))
+    }
+
+    /// Creates an angle from centidegrees (hundredths of a degree).
+    #[must_use]
+    pub const fn from_centi_degrees(value: i32) -> Self {
         Self::from_millidegrees(value.saturating_mul(10))
     }
 
@@ -6131,7 +6132,8 @@ impl QuantityDisplayValue for DutyCycle {
 }
 
 /// Battery state-of-charge stored as a percentage.
-pub type BatteryLevel = Quantity<Ratio, PercentUnit, u8>;
+#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
+pub struct BatteryLevel(u8);
 
 /// Shared conversion surface for battery state-of-charge quantities.
 #[allow(clippy::wrong_self_convention)]
@@ -6144,10 +6146,20 @@ pub trait PercentQuantity {
 }
 
 impl BatteryLevel {
-    /// Creates a battery level from a percent value.
+    /// Creates a battery level from a percent value, clamping to `0..=100`.
     #[must_use]
     pub const fn from_percent(value: u8) -> Self {
-        Self::from_unit_value(value)
+        Self(if value > 100 { 100 } else { value })
+    }
+
+    /// Admits a backend percentage only when it is already in `0..=100`.
+    #[must_use]
+    pub const fn try_from_percent(value: u8) -> Option<Self> {
+        if value <= 100 {
+            Some(Self(value))
+        } else {
+            None
+        }
     }
 
     /// Creates a battery level from a signed percent value, clamping to the stored range.
@@ -6159,7 +6171,13 @@ impl BatteryLevel {
     /// Returns this battery level as a percent value.
     #[must_use]
     pub const fn as_percent(self) -> u8 {
-        self.unit_value()
+        self.0
+    }
+
+    /// Returns the stored percentage value.
+    #[must_use]
+    pub const fn get(self) -> u8 {
+        self.as_percent()
     }
 
     /// Returns this battery level as a unitless fraction in the range `0.0..=1.0`.
@@ -6171,32 +6189,17 @@ impl BatteryLevel {
     /// Linearly interpolates a battery level between two reference points.
     #[must_use]
     pub fn interpolate(low: Self, high: Self, value: i64, low_value: i64, high_value: i64) -> Self {
-        let value_span = high_value - low_value;
+        let value_span = i128::from(high_value) - i128::from(low_value);
         if value_span <= 0 {
             return low;
         }
 
-        let level_span = i32::from(high.as_percent()) - i32::from(low.as_percent());
-        let value_offset = value - low_value;
-        let numerator = value_offset.saturating_mul(i64::from(level_span));
-        let level = i32::from(low.as_percent())
-            + round_div_i32(
-                i32::try_from(numerator).unwrap_or_else(|_| {
-                    if numerator.is_negative() {
-                        i32::MIN
-                    } else {
-                        i32::MAX
-                    }
-                }),
-                i32::try_from(value_span).unwrap_or_else(|_| {
-                    if value_span.is_negative() {
-                        i32::MIN
-                    } else {
-                        i32::MAX
-                    }
-                }),
-            );
-        Self::from_percent_i32(level)
+        let level_span = i128::from(high.as_percent()) - i128::from(low.as_percent());
+        let value_offset = i128::from(value) - i128::from(low_value);
+        let numerator = value_offset * level_span;
+        let delta = round_div_i128(numerator, value_span);
+        let level = i128::from(low.as_percent()) + delta;
+        Self::from_percent_i32(saturating_i128_to_i32(level))
     }
 
     /// Evaluates a piecewise-linear battery curve over typed percentage points.
@@ -6229,11 +6232,17 @@ impl BatteryLevel {
 
 impl PercentQuantity for BatteryLevel {
     fn from_percent(value: u8) -> Self {
-        Self::from_unit_value(value)
+        Self::from_percent(value)
     }
 
     fn as_percent(self) -> u8 {
-        self.unit_value()
+        self.as_percent()
+    }
+}
+
+impl fmt::Display for BatteryLevel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.as_percent().fmt(f)
     }
 }
 
@@ -6851,6 +6860,39 @@ pub enum SettingsReadbackAvailability {
 /// Number of settings entries retained in a settings readback.
 const SETTINGS_READBACK_CAPACITY: usize = 18;
 
+// Flatten the nested RawFieldValue here so its alignment padding can be used
+// by the provenance fields. Keep the public SettingsEntry representation at
+// the API boundary, including sparse slots and full-width signed values.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct StoredSettingsEntry {
+    value: i64,
+    id: u16,
+    source: ValueSource,
+    quality: ValueQuality,
+    verification: VerificationStatus,
+}
+
+impl StoredSettingsEntry {
+    const fn from_entry(entry: SettingsEntry) -> Self {
+        Self {
+            value: entry.field.value,
+            id: entry.field.id,
+            source: entry.source,
+            quality: entry.quality,
+            verification: entry.verification,
+        }
+    }
+
+    const fn into_entry(self) -> SettingsEntry {
+        SettingsEntry {
+            field: RawFieldValue::new(self.id, self.value),
+            source: self.source,
+            quality: self.quality,
+            verification: self.verification,
+        }
+    }
+}
+
 /// Bounded settings readback response.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct SettingsReadback {
@@ -6858,7 +6900,7 @@ pub struct SettingsReadback {
     availability: SettingsReadbackAvailability,
 
     /// Settings entries.
-    entries: [Option<SettingsEntry>; SETTINGS_READBACK_CAPACITY],
+    entries: [Option<StoredSettingsEntry>; SETTINGS_READBACK_CAPACITY],
 }
 
 impl SettingsReadback {
@@ -6867,7 +6909,7 @@ impl SettingsReadback {
     pub fn available<const N: usize>(entries: [Option<SettingsEntry>; N]) -> Self {
         let mut slots = [None; SETTINGS_READBACK_CAPACITY];
         for (slot, entry) in slots.iter_mut().zip(entries) {
-            *slot = entry;
+            *slot = entry.map(StoredSettingsEntry::from_entry);
         }
         Self {
             availability: SettingsReadbackAvailability::Available,
@@ -6902,7 +6944,16 @@ impl SettingsReadback {
     /// Returns the bounded settings entries.
     #[must_use]
     pub const fn entries(self) -> [Option<SettingsEntry>; SETTINGS_READBACK_CAPACITY] {
-        self.entries
+        let mut entries = [None; SETTINGS_READBACK_CAPACITY];
+        let mut index = 0;
+        while index < SETTINGS_READBACK_CAPACITY {
+            entries[index] = match self.entries[index] {
+                Some(entry) => Some(entry.into_entry()),
+                None => None,
+            };
+            index += 1;
+        }
+        entries
     }
 }
 
@@ -7573,6 +7624,14 @@ pub enum DeviceEvent {
     DiagnosticError(DiagnosticError),
 }
 
+impl DeviceEvent {
+    /// Constructs a read-only response event.
+    #[must_use]
+    pub fn read_only_response(response: ReadOnlyResponse) -> Self {
+        Self::ReadOnlyResponse(response)
+    }
+}
+
 /// Output emitted by a protocol session for the host to drain.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SessionOutput {
@@ -7740,9 +7799,8 @@ where
         self.session.handle(input, &mut self.output);
         if let Some(observed_at) = observed_at {
             for output in &mut self.output[start..] {
-                if let SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
-                    ReadOnlyResponse::Battery(readback),
-                )) = output
+                if let SessionOutput::Event(DeviceEvent::ReadOnlyResponse(response)) = output
+                    && let ReadOnlyResponse::Battery(readback) = response
                 {
                     *readback = readback.clone().with_observed_at(observed_at);
                     self.state.assign_bms_observation_event_sequence(readback);
@@ -9049,7 +9107,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::too_many_lines)]
     fn quantity_conversions_keep_unit_math_in_core() {
         assert_eq!(Speed::from_mph(10).as_millimetres_per_second(), 4_474);
         assert_eq!(Speed::from_millimetres_per_second(4_470).as_mph(), 10);
@@ -9115,7 +9172,10 @@ mod tests {
                 .as_watt_hours(),
             720
         );
+    }
 
+    #[test]
+    fn quantity_conversions_cover_current_and_battery_level() {
         assert_eq!(Current::from_amps(-12).as_milliamps(), -12_000);
         assert_eq!(Current::from_centiamps(-1_240).as_milliamps(), -12_400);
         assert_eq!(Current::from_deciamps(-124).as_milliamps(), -12_400);
@@ -9141,6 +9201,17 @@ mod tests {
                 50,
                 0,
                 100,
+            )
+            .as_percent(),
+            50
+        );
+        assert_eq!(
+            BatteryLevel::interpolate(
+                BatteryLevel::from_percent(0),
+                BatteryLevel::from_percent(100),
+                50_000_000,
+                0,
+                100_000_000,
             )
             .as_percent(),
             50
@@ -9173,7 +9244,7 @@ mod tests {
         assert_eq!(Duration::from_deciseconds(12).as_milliseconds(), 1_200);
 
         assert_eq!(Angle::from_degrees(69).as_millidegrees(), 69_000);
-        assert_eq!(Angle::from_deci_degrees(690).as_millidegrees(), 6_900);
+        assert_eq!(Angle::from_deci_degrees(690).as_millidegrees(), 69_000);
         assert_eq!(Angle::from_millidegrees(69_060).as_whole_degrees(), 69);
 
         assert_eq!(DutyCycle::from_decipermille(524).as_permille(), 52);
@@ -9182,17 +9253,38 @@ mod tests {
         assert_eq!(DutyCycle::from_centered_pwm(u16::MAX).as_permille(), 999);
 
         assert_eq!(
-            Power::from_voltage_current(Voltage::from_volts(53), Current::from_amps(-6)),
+            Power::from_pack_voltage_current(
+                Voltage::from_volts(53),
+                BatteryCurrent::from_amps(-6),
+            ),
             Power::from_watts(-318)
         );
         assert_eq!(
-            Power::from_voltage_current(
+            Power::from_pack_voltage_current(
                 Voltage::from_millivolts(i32::MAX),
-                Current::from_milliamps(i32::MAX),
+                BatteryCurrent::from_milliamps(i32::MAX),
             ),
             Power::from_milliwatts(4_611_686_014_132_420)
         );
         assert_eq!(DutyCycle::from_centipercent(755).as_permille(), 75);
+    }
+
+    #[test]
+    fn quantity_rounding_and_bounded_admission_handle_public_extremes() {
+        assert_eq!(
+            crate::RotationalSpeed::from_erpm(i32::MAX).as_speed(
+                u8::MAX,
+                u8::MAX,
+                Distance::from_millimetres(u64::MAX),
+            ),
+            Some(Speed::from_millimetres_per_second(i32::MAX))
+        );
+        assert!((BatteryLevel::from_percent(255).as_ratio() - 1.0).abs() < f64::EPSILON);
+        assert_eq!(
+            BatteryLevel::try_from_percent(100).map(BatteryLevel::as_percent),
+            Some(100)
+        );
+        assert_eq!(BatteryLevel::try_from_percent(101), None);
     }
 
     #[test]
@@ -9591,6 +9683,54 @@ mod tests {
         let response = crate::SettingsReadback::available(entries);
 
         assert_eq!(response.entries()[17], Some(entry));
+    }
+
+    #[test]
+    fn settings_storage_preserves_sparse_slots_full_width_values_and_provenance() {
+        for source in [
+            ValueSource::Reported,
+            ValueSource::Calculated,
+            ValueSource::Estimated,
+        ] {
+            for quality in [ValueQuality::Known, ValueQuality::Inferred] {
+                for verification in [
+                    VerificationStatus::Unverified,
+                    VerificationStatus::Inferred,
+                    VerificationStatus::SourceVerified,
+                    VerificationStatus::HardwareVerified,
+                    VerificationStatus::SourceAndHardwareVerified,
+                ] {
+                    let mut entries = [None; 18];
+                    entries[0] = Some(crate::SettingsEntry {
+                        field: crate::RawFieldValue::new(0, i64::MIN),
+                        source,
+                        quality,
+                        verification,
+                    });
+                    entries[17] = Some(crate::SettingsEntry {
+                        field: crate::RawFieldValue::new(u16::MAX, i64::MAX),
+                        source,
+                        quality,
+                        verification,
+                    });
+                    assert_eq!(
+                        crate::SettingsReadback::available(entries).entries(),
+                        entries
+                    );
+                }
+            }
+        }
+        assert_eq!(crate::SettingsReadback::unavailable().entries(), [None; 18]);
+        assert_eq!(crate::SettingsReadback::unsupported().entries(), [None; 18]);
+    }
+
+    #[test]
+    fn inline_response_storage_stays_compact() {
+        assert!(size_of::<super::StoredSettingsEntry>() <= 16);
+        assert!(size_of::<crate::SettingsReadback>() <= 296);
+        assert!(size_of::<crate::ReadOnlyResponse>() <= 304);
+        assert!(size_of::<DeviceEvent>() <= 304);
+        assert!(size_of::<SessionOutput>() <= 304);
     }
 
     #[test]
@@ -10483,11 +10623,13 @@ mod tests {
         };
 
         assert_eq!(
-            DeviceEvent::ReadOnlyResponse(crate::ReadOnlyResponse::Firmware(firmware)),
-            DeviceEvent::ReadOnlyResponse(crate::ReadOnlyResponse::Firmware(crate::FirmwareInfo {
-                firmware_major: Some(Measured::reported(43)),
-                ..crate::FirmwareInfo::default()
-            }))
+            DeviceEvent::read_only_response(crate::ReadOnlyResponse::Firmware(firmware)),
+            DeviceEvent::read_only_response(crate::ReadOnlyResponse::Firmware(
+                crate::FirmwareInfo {
+                    firmware_major: Some(Measured::reported(43)),
+                    ..crate::FirmwareInfo::default()
+                },
+            ))
         );
     }
 
@@ -12099,7 +12241,7 @@ mod tests {
                     output.push(SessionOutput::Event(DeviceEvent::Telemetry(
                         TelemetryDelta::empty(ms(42)),
                     )));
-                    output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                    output.push(SessionOutput::Event(DeviceEvent::read_only_response(
                         crate::ReadOnlyResponse::Battery(crate::BatteryReadback::available(
                             crate::BatteryPagePayload::Raw(crate::BatteryRawPage::new(
                                 crate::BatteryPageMetadata::raw(

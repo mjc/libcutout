@@ -582,7 +582,7 @@ impl VeteranTelemetry {
                     .be_u16(ParserOffset::from_bytes(30))
                     .ok_or(VeteranTelemetryError::FrameTooShort)?,
             ),
-            pitch: Angle::from_deci_degrees(i32::from(
+            pitch: Angle::from_centi_degrees(i32::from(
                 cursor
                     .be_i16(ParserOffset::from_bytes(32))
                     .ok_or(VeteranTelemetryError::FrameTooShort)?,
@@ -600,7 +600,7 @@ impl VeteranTelemetry {
     /// Converts decoded telemetry into the transport-independent telemetry delta.
     #[must_use]
     pub fn to_delta(self, at_ms: MonotonicTimestamp) -> TelemetryDelta {
-        let power = Power::from_voltage_current(self.voltage, self.battery_current);
+        let power = Power::from_pack_voltage_current(self.voltage, self.battery_current);
         TelemetryDelta {
             speed: Some(Measured::reported(Speed::from_millimetres_per_second(
                 self.speed.as_millimetres_per_second(),
@@ -791,7 +791,7 @@ pub const AERO_FIELD_HIGH_SPEED_MODE: u16 = 0x083d;
 /// Aero page-8 beeper volume, in percent.
 pub const AERO_FIELD_BEEPER_VOLUME_PERCENT: u16 = 0x083f;
 
-/// Aero page-8 maximum-charge voltage raw MxV value (official range 0..=70).
+/// Aero page-8 maximum-charge voltage raw `MxV` value (official range 0..=70).
 pub const AERO_FIELD_MAX_CHARGE_VOLTAGE_RAW: u16 = 0x0840;
 
 /// Aero page-8 dynamic assist, in percent.
@@ -1828,7 +1828,8 @@ mod tests {
 
         assert_eq!(current.as_milliamps(), -1_700);
         assert_eq!(
-            Power::from_voltage_current(Voltage::from_millivolts(108_760), current).as_milliwatts(),
+            Power::from_pack_voltage_current(Voltage::from_millivolts(108_760), current)
+                .as_milliwatts(),
             -184_892
         );
     }

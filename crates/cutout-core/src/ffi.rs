@@ -2013,13 +2013,7 @@ impl From<SessionOutput> for SessionOutputDto {
     fn from(output: SessionOutput) -> Self {
         match output {
             SessionOutput::Transport(action) => Self::Transport(action.into()),
-            SessionOutput::Event(DeviceEvent::ReadOnlyResponse(response)) => {
-                Self::ReadOnly(response.into())
-            }
-            SessionOutput::Event(event) => match SessionEventDto::from_event(event) {
-                SessionEventProjection::Event(event) => Self::Event(event),
-                SessionEventProjection::ReadOnly(response) => Self::ReadOnly(response.into()),
-            },
+            SessionOutput::Event(event) => Self::from_event(event),
             SessionOutput::NotificationIngest(outcome) => Self::NotificationIngest(outcome.into()),
         }
     }
@@ -2450,35 +2444,28 @@ pub enum SessionEventDto {
     DiagnosticError(DiagnosticErrorDto),
 }
 
-enum SessionEventProjection {
-    Event(SessionEventDto),
-    ReadOnly(ReadOnlyResponse),
-}
-
-impl SessionEventDto {
-    fn from_event(event: DeviceEvent) -> SessionEventProjection {
+impl SessionOutputDto {
+    fn from_event(event: DeviceEvent) -> Self {
         match event {
-            DeviceEvent::LinkUp(link) => SessionEventProjection::Event(Self::LinkUp {
+            DeviceEvent::LinkUp(link) => Self::Event(SessionEventDto::LinkUp {
                 monotonic_ms: MonotonicMillisDto::from_core(link.monotonic_ms),
                 max_write_len: link.max_write_len.map(TransportWriteLimitDto::from_core),
             }),
-            DeviceEvent::LinkDown => SessionEventProjection::Event(Self::LinkDown),
-            DeviceEvent::Tick { monotonic_ms } => SessionEventProjection::Event(Self::Tick {
+            DeviceEvent::LinkDown => Self::Event(SessionEventDto::LinkDown),
+            DeviceEvent::Tick { monotonic_ms } => Self::Event(SessionEventDto::Tick {
                 monotonic_ms: MonotonicMillisDto::from_core(monotonic_ms),
             }),
-            DeviceEvent::Telemetry(delta) => {
-                SessionEventProjection::Event(Self::Telemetry(delta.into()))
-            }
+            DeviceEvent::Telemetry(delta) => Self::Event(SessionEventDto::Telemetry(delta.into())),
             DeviceEvent::ControlRefusal(refusal) => {
-                SessionEventProjection::Event(Self::ControlRefusal(refusal.into()))
+                Self::Event(SessionEventDto::ControlRefusal(refusal.into()))
             }
             DeviceEvent::Diagnostics(diagnostics) => {
-                SessionEventProjection::Event(Self::Diagnostics(diagnostics.into()))
+                Self::Event(SessionEventDto::Diagnostics(diagnostics.into()))
             }
             DeviceEvent::DiagnosticError(error) => {
-                SessionEventProjection::Event(Self::DiagnosticError(error.into()))
+                Self::Event(SessionEventDto::DiagnosticError(error.into()))
             }
-            DeviceEvent::ReadOnlyResponse(response) => SessionEventProjection::ReadOnly(response),
+            DeviceEvent::ReadOnlyResponse(response) => Self::ReadOnly(response.into()),
         }
     }
 }
@@ -2926,6 +2913,17 @@ mod tests {
         TransportWriteLimitDto { bytes: value }
     }
 
+    fn project_read_only_response(response: ReadOnlyResponse) -> ReadOnlyOutput {
+        let projected = SessionOutputDto::from(SessionOutput::Event(
+            DeviceEvent::ReadOnlyResponse(response.clone()),
+        ));
+        let SessionOutputDto::ReadOnly(output) = projected else {
+            panic!("read-only responses must remain top-level outputs");
+        };
+        assert_eq!(output, ReadOnlyOutput::from(response));
+        output
+    }
+
     #[test]
     fn read_only_battery_output_preserves_page_and_unknown_values() {
         let response = ReadOnlyResponse::Battery(BatteryReadback::available(
@@ -2949,7 +2947,7 @@ mod tests {
             )),
         ));
 
-        let output = ReadOnlyOutput::from(response);
+        let output = project_read_only_response(response);
 
         assert_eq!(output.command_kind, CommandKindDto::RequestBatteryInfo);
         let ReadOnlyOutputPayload::Battery(readback) = output.payload else {
@@ -2994,7 +2992,7 @@ mod tests {
     #[test]
     fn read_only_battery_output_preserves_unsupported_availability() {
         let output =
-            ReadOnlyOutput::from(ReadOnlyResponse::Battery(BatteryReadback::unsupported()));
+            project_read_only_response(ReadOnlyResponse::Battery(BatteryReadback::unsupported()));
 
         assert_eq!(output.command_kind, CommandKindDto::RequestBatteryInfo);
         let ReadOnlyOutputPayload::Battery(readback) = output.payload else {
@@ -3017,7 +3015,7 @@ mod tests {
             build_id: Some(RawFieldValue::new(0x002a, 99)),
         });
 
-        let output = ReadOnlyOutput::from(response);
+        let output = project_read_only_response(response);
 
         assert_eq!(output.command_kind, CommandKindDto::RequestFirmwareInfo);
         let ReadOnlyOutputPayload::Firmware(firmware) = output.payload else {
@@ -3055,7 +3053,7 @@ mod tests {
             None,
         ]));
 
-        let output = ReadOnlyOutput::from(response);
+        let output = project_read_only_response(response);
 
         assert_eq!(output.command_kind, CommandKindDto::RequestSettings);
         let ReadOnlyOutputPayload::Settings(settings) = output.payload else {
@@ -3079,7 +3077,7 @@ mod tests {
             Some(Measured::reported(Distance::from_millimetres(61_456_941))),
         );
 
-        let output = ReadOnlyOutput::from(ReadOnlyResponse::FaultHistory(readback));
+        let output = project_read_only_response(ReadOnlyResponse::FaultHistory(readback));
 
         assert_eq!(output.command_kind, CommandKindDto::RequestFaultHistory);
         let ReadOnlyOutputPayload::FaultHistory(dto) = output.payload else {
@@ -3114,7 +3112,7 @@ mod tests {
             ],
         });
 
-        let output = ReadOnlyOutput::from(response);
+        let output = project_read_only_response(response);
 
         assert_eq!(output.command_kind, CommandKindDto::RequestDiagnostics);
         let ReadOnlyOutputPayload::Diagnostics(diagnostics) = output.payload else {
@@ -3143,7 +3141,7 @@ mod tests {
             float_fields: arrayvec::ArrayVec::new(),
         });
 
-        let output = ReadOnlyOutput::from(response);
+        let output = project_read_only_response(response);
 
         assert_eq!(output.command_kind, CommandKindDto::RequestTelemetry);
         let ReadOnlyOutputPayload::RawTelemetry(raw) = output.payload else {
@@ -3227,19 +3225,20 @@ mod tests {
             monotonic_ms: MonotonicTimestamp::new(7),
             max_write_len: Some(write_len(182)),
         })));
-        let readback = SessionOutputDto::from(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
-            ReadOnlyResponse::Settings(SettingsReadback::available([
-                Some(SettingsEntry {
-                    field: RawFieldValue::new(0x0014, 30),
-                    source: ValueSource::Reported,
-                    quality: ValueQuality::Known,
-                    verification: VerificationStatus::HardwareVerified,
-                }),
-                None,
-                None,
-                None,
-            ])),
-        )));
+        let readback =
+            SessionOutputDto::from(SessionOutput::Event(DeviceEvent::read_only_response(
+                ReadOnlyResponse::Settings(SettingsReadback::available([
+                    Some(SettingsEntry {
+                        field: RawFieldValue::new(0x0014, 30),
+                        source: ValueSource::Reported,
+                        quality: ValueQuality::Known,
+                        verification: VerificationStatus::HardwareVerified,
+                    }),
+                    None,
+                    None,
+                    None,
+                ])),
+            )));
 
         assert_eq!(
             write,

@@ -1112,7 +1112,7 @@ fn push_vesc_reply(
             minor,
             test_version_number,
             ..
-        } => output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+        } => output.push(SessionOutput::Event(DeviceEvent::read_only_response(
             ReadOnlyResponse::Firmware(FirmwareInfo {
                 firmware_major: Some(Measured::reported(u16::from(*major))),
                 firmware_minor: Some(Measured::reported(u16::from(*minor))),
@@ -1124,12 +1124,12 @@ fn push_vesc_reply(
             output.push(SessionOutput::Event(DeviceEvent::Telemetry(
                 vesc_values_to_delta(values, monotonic_ms, board_profile),
             )));
-            output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+            output.push(SessionOutput::Event(DeviceEvent::read_only_response(
                 ReadOnlyResponse::RawTelemetry(vesc_values_to_raw_telemetry(values)),
             )));
         }
         VescReadOnlyReply::Stats(stats) => {
-            output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+            output.push(SessionOutput::Event(DeviceEvent::read_only_response(
                 ReadOnlyResponse::Diagnostics(vesc_stats_to_diagnostics(*stats)),
             )));
         }
@@ -1350,7 +1350,7 @@ fn push_begode_frame(
                 output.push(SessionOutput::Event(DeviceEvent::Telemetry(
                     summary.to_delta(monotonic_ms),
                 )));
-                output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                output.push(SessionOutput::Event(DeviceEvent::read_only_response(
                     summary.to_battery_response(),
                 )));
                 retain_known_frame(output);
@@ -1360,7 +1360,7 @@ fn push_begode_frame(
         },
         0x02 | 0x03 => match BegodeBmsCellPage::decode(frame) {
             Ok(page) => {
-                output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                output.push(SessionOutput::Event(DeviceEvent::read_only_response(
                     page.to_battery_response(),
                 )));
                 retain_known_frame(output);
@@ -1374,10 +1374,10 @@ fn push_begode_frame(
                 output.push(SessionOutput::Event(DeviceEvent::Telemetry(
                     context.live_b_to_delta(telemetry, monotonic_ms),
                 )));
-                output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                output.push(SessionOutput::Event(DeviceEvent::read_only_response(
                     context.live_b_to_settings_response(telemetry),
                 )));
-                output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                output.push(SessionOutput::Event(DeviceEvent::read_only_response(
                     telemetry.to_diagnostics_response(),
                 )));
                 retain_known_frame(output);
@@ -1441,18 +1441,18 @@ fn push_veteran_frame(
             output.push(SessionOutput::Event(DeviceEvent::Telemetry(
                 telemetry.to_delta(monotonic_ms),
             )));
-            output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+            output.push(SessionOutput::Event(DeviceEvent::read_only_response(
                 telemetry.to_firmware_response(),
             )));
             for response in settings_responses.into_iter().chain(aero_settings) {
-                output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                output.push(SessionOutput::Event(DeviceEvent::read_only_response(
                     response,
                 )));
             }
             if let Some(evidence) = VeteranBmsPageEvidence::from_frame(frame) {
                 if evidence.kind != BatteryPageKind::Raw {
                     if let Some(readback) = veteran_bms_readback(evidence) {
-                        output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                        output.push(SessionOutput::Event(DeviceEvent::read_only_response(
                             ReadOnlyResponse::Battery(readback),
                         )));
                         return SemanticEventCount::from_events(3).saturating_add(settings_count);
@@ -1844,17 +1844,17 @@ fn handle_read_only_session<M: ReadOnlyModelSpec>(
                 }
             }
             ReadOnlyCommandGate::Unsupported(CommandKind::RequestSettings) => {
-                output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                output.push(SessionOutput::Event(DeviceEvent::read_only_response(
                     ReadOnlyResponse::Settings(cutout_core::SettingsReadback::unsupported()),
                 )));
             }
             ReadOnlyCommandGate::Unsupported(CommandKind::RequestFaultHistory) => {
-                output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                output.push(SessionOutput::Event(DeviceEvent::read_only_response(
                     ReadOnlyResponse::FaultHistory(cutout_core::FaultHistoryReadback::unsupported()),
                 )));
             }
             ReadOnlyCommandGate::Unsupported(CommandKind::RequestBatteryInfo) => {
-                output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                output.push(SessionOutput::Event(DeviceEvent::read_only_response(
                     ReadOnlyResponse::Battery(BatteryReadback::unsupported()),
                 )));
             }
@@ -1900,12 +1900,12 @@ fn push_read_request<M: SupportsReadRequests>(kind: CommandKind, output: &mut Ve
         }
         Some(RequestDisposition::Passive { command, .. }) => output.extend(
             unavailable_readback_response(command)
-                .map(DeviceEvent::ReadOnlyResponse)
+                .map(DeviceEvent::read_only_response)
                 .map(SessionOutput::Event),
         ),
         None => output.extend(
             unavailable_readback_response(kind)
-                .map(DeviceEvent::ReadOnlyResponse)
+                .map(DeviceEvent::read_only_response)
                 .map(SessionOutput::Event),
         ),
     }
@@ -1932,11 +1932,7 @@ pub struct ReadOnlySession<M: ReadOnlyModelSpec> {
 
 impl<M: ReadOnlyModelSpec> Default for ReadOnlySession<M> {
     fn default() -> Self {
-        Self {
-            connected: false,
-            decoder: M::NotificationDecoder::default(),
-            model: PhantomData,
-        }
+        Self::with_decoder(M::NotificationDecoder::default())
     }
 }
 
@@ -3270,6 +3266,21 @@ mod tests {
         );
 
         assert!(output.is_empty());
+    }
+
+    #[test]
+    fn configured_session_constructors_remain_const() {
+        let read_only =
+            const { ReadOnlySession::<TestModel>::with_decoder(NoopNotificationDecoder) };
+        let benign =
+            const { BenignControlSession::<TestModel>::with_decoder(NoopNotificationDecoder) };
+        let settings = const {
+            StationarySettingsWriteSession::<TestModel>::with_decoder(NoopNotificationDecoder)
+        };
+
+        assert!(!read_only.connected);
+        assert!(!benign.read_only.connected);
+        assert!(!settings.read_only.connected);
     }
 
     #[test]
@@ -6080,7 +6091,7 @@ mod tests {
         );
         assert_eq!(
             output,
-            vec![SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+            vec![SessionOutput::Event(DeviceEvent::read_only_response(
                 ReadOnlyResponse::Battery(BatteryReadback::unavailable())
             ))]
         );
@@ -6103,7 +6114,7 @@ mod tests {
         );
         assert_eq!(
             output,
-            vec![SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+            vec![SessionOutput::Event(DeviceEvent::read_only_response(
                 ReadOnlyResponse::Battery(BatteryReadback::unsupported())
             ))]
         );
@@ -6126,7 +6137,7 @@ mod tests {
         );
         assert_eq!(
             output,
-            vec![SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+            vec![SessionOutput::Event(DeviceEvent::read_only_response(
                 ReadOnlyResponse::FaultHistory(cutout_core::FaultHistoryReadback::unsupported())
             ))]
         );
@@ -6149,7 +6160,7 @@ mod tests {
         );
         assert_eq!(
             output,
-            vec![SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+            vec![SessionOutput::Event(DeviceEvent::read_only_response(
                 ReadOnlyResponse::FaultHistory(cutout_core::FaultHistoryReadback::unsupported())
             ))]
         );
@@ -6181,13 +6192,13 @@ mod tests {
         assert_eq!(
             output,
             vec![
-                SessionOutput::Event(DeviceEvent::ReadOnlyResponse(ReadOnlyResponse::Battery(
+                SessionOutput::Event(DeviceEvent::read_only_response(ReadOnlyResponse::Battery(
                     BatteryReadback::unavailable()
                 ))),
-                SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                SessionOutput::Event(DeviceEvent::read_only_response(
                     ReadOnlyResponse::FaultHistory(cutout_core::FaultHistoryReadback::unavailable())
                 )),
-                SessionOutput::Event(DeviceEvent::ReadOnlyResponse(ReadOnlyResponse::Settings(
+                SessionOutput::Event(DeviceEvent::read_only_response(ReadOnlyResponse::Settings(
                     cutout_core::SettingsReadback::unavailable()
                 ))),
             ]
@@ -6211,7 +6222,7 @@ mod tests {
         );
         assert_eq!(
             output,
-            vec![SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+            vec![SessionOutput::Event(DeviceEvent::read_only_response(
                 ReadOnlyResponse::Settings(cutout_core::SettingsReadback::unavailable())
             ))]
         );
@@ -6234,7 +6245,7 @@ mod tests {
         );
         assert_eq!(
             output,
-            vec![SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+            vec![SessionOutput::Event(DeviceEvent::read_only_response(
                 ReadOnlyResponse::Battery(BatteryReadback::unavailable())
             ))]
         );
