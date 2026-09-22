@@ -214,11 +214,11 @@ pub enum BegodePackVoltageProfile {
     Begode100VFullCharge,
 }
 
-/// Explicit voltage profile for the current Begode Falcon hardware target.
+/// Stock voltage profile from the Begode Falcon model definition.
 ///
-/// This is not generic Falcon identity evidence and does not imply capacity.
+/// Selecting a configuration does not confirm device identity or pack capacity.
 pub const BEGODE_FALCON_TARGET_VOLTAGE_PROFILE: BegodePackVoltageProfile =
-    BegodePackVoltageProfile::Begode100VFullCharge;
+    crate::BegodeFalconModel::PACK_VOLTAGE_PROFILE;
 
 /// Explicit evidence used to select a Begode pack voltage profile.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -420,7 +420,7 @@ impl BegodePackVoltageProfile {
 
     /// Expected pack voltage range.
     #[must_use]
-    pub fn voltage_range(self) -> RangeInclusive<Voltage> {
+    pub const fn voltage_range(self) -> RangeInclusive<Voltage> {
         match self {
             Self::Begode84VFullCharge => {
                 Voltage::from_millivolts(60_000)..=Voltage::from_millivolts(84_000)
@@ -432,10 +432,7 @@ impl BegodePackVoltageProfile {
     }
 }
 
-/// Returns the explicit voltage profile for the current Begode Falcon target.
-///
-/// The generic registry entry remains battery-agnostic until live evidence
-/// selects a device-specific voltage/capacity profile.
+/// Returns the stock voltage profile owned by the Falcon model definition.
 #[must_use]
 pub const fn begode_falcon_target_voltage_profile() -> BegodePackVoltageProfile {
     BEGODE_FALCON_TARGET_VOLTAGE_PROFILE

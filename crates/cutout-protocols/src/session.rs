@@ -1678,6 +1678,13 @@ impl SupportsSettingsWrites for NosfetAeroModel {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct BegodeFalconModel;
 
+impl BegodeFalconModel {
+    /// Source-verified stock battery configuration, shared by live sessions and replay.
+    /// See the model table in `docs/begode-falcon-protocol-evidence.md`.
+    pub const PACK_VOLTAGE_PROFILE: BegodePackVoltageProfile =
+        BegodePackVoltageProfile::Begode100VFullCharge;
+}
+
 const BEGODE_FALCON_MODEL_GATT: [GattFingerprint; 1] = [GattFingerprint {
     service: BEGODE_SERVICE_CHANNEL,
     characteristic: BEGODE_DATA_CHANNEL,
@@ -1700,7 +1707,12 @@ impl RegisteredModelSpec for BegodeFalconModel {
         protocol_family: Self::PROTOCOL,
         advertised_name_hints: &["Falcon", "Begode", "Gotway"],
         wire_model_id: None,
-        battery: None,
+        battery: Some(BatterySpec {
+            series_cells: Self::PACK_VOLTAGE_PROFILE.series_cells(),
+            nominal_capacity: Self::PACK_VOLTAGE_PROFILE.nominal_capacity(),
+            voltage_range: Self::PACK_VOLTAGE_PROFILE.voltage_range(),
+            verification: VerificationStatus::SourceVerified,
+        }),
         bms: None,
         gatt: &BEGODE_FALCON_MODEL_GATT,
         capabilities: <Self as SupportsReadRequests>::READ_CAPABILITIES
