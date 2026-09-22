@@ -1220,7 +1220,8 @@ fn vesc_values_to_delta(
         pwm: values
             .present_fields
             .contains(VescValuesMask::DUTY_CYCLE)
-            .then_some(Measured::reported(values.duty_cycle)),
+            .then_some(Measured::reported(values.duty_cycle))
+            .into(),
         ..cutout_core::TelemetryDelta::empty(monotonic_ms)
     }
 }
@@ -3291,11 +3292,50 @@ mod tests {
     }
 
     #[test]
+    fn falcon_snapshot_distinguishes_omitted_invalid_and_valid_pwm() {
+        let live_a = live_begode_a_frame();
+        let mut snapshot = cutout_core::TelemetrySnapshot::default();
+        let frames = [40_i16, 3277, -3277, -20].map(|raw| {
+            let mut extra = live_begode_extra_frame();
+            extra[8..10].copy_from_slice(&raw.to_be_bytes());
+            extra
+        });
+        let notifications: Vec<&[u8]> = frames
+            .iter()
+            .flat_map(|extra| [extra.as_slice(), live_a.as_slice()])
+            .collect();
+        let deltas = falcon_telemetry_for_notifications(&notifications);
+        assert_eq!(deltas.len(), 8);
+        for (delta, expected) in deltas.into_iter().zip([
+            Some(400),
+            Some(400),
+            None,
+            None,
+            None,
+            None,
+            Some(-200),
+            Some(-200),
+        ]) {
+            snapshot.apply_delta(delta);
+            assert_eq!(
+                snapshot.pwm.map(|value| value.value.as_permille()),
+                expected
+            );
+            assert_eq!(snapshot.at_ms, Some(delta.at_ms));
+            let projected = cutout_core::TelemetryDeltaDto::from(delta);
+            assert_eq!(projected.pwm, delta.pwm.map(Into::into));
+        }
+    }
+
+    #[test]
     fn falcon_live_a_does_not_publish_firmware_settings_as_pwm() {
         let live_a = live_begode_a_frame();
         let telemetry = falcon_telemetry_for_notifications(&[&live_a]);
         assert_eq!(telemetry.len(), 1);
-        assert_eq!(telemetry[0].pwm, None);
+        assert_eq!(
+            telemetry[0].pwm,
+            cutout_core::TelemetryFieldUpdate::Unchanged
+        );
     }
 
     #[test]
@@ -3308,13 +3348,14 @@ mod tests {
             assert_eq!(telemetry.len(), 2);
             assert_eq!(
                 telemetry[0].pwm,
-                Some(Measured {
+                cutout_core::TelemetryFieldUpdate::Set(Measured {
                     verification: VerificationStatus::SourceVerified,
                     ..Measured::reported(cutout_core::DutyCycle::from_permille(percent * 10))
                 })
             );
             assert_eq!(
-                telemetry[1].pwm, None,
+                telemetry[1].pwm,
+                cutout_core::TelemetryFieldUpdate::Unchanged,
                 "Live A must not overwrite the dedicated PWM reading"
             );
         }
@@ -3638,7 +3679,9 @@ mod tests {
         );
         assert_eq!(
             delta.pwm,
-            Some(Measured::reported(cutout_core::DutyCycle::from_permille(0)))
+            cutout_core::TelemetryFieldUpdate::Set(Measured::reported(
+                cutout_core::DutyCycle::from_permille(0)
+            ))
         );
 
         let responses = read_only_response_events(&output);
@@ -4591,7 +4634,9 @@ mod tests {
         );
         assert_eq!(
             telemetry.pwm,
-            Some(Measured::reported(cutout_core::DutyCycle::from_permille(0)))
+            cutout_core::TelemetryFieldUpdate::Set(Measured::reported(
+                cutout_core::DutyCycle::from_permille(0)
+            ))
         );
         assert_eq!(
             telemetry.distance,

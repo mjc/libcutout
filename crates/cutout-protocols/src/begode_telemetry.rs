@@ -1159,7 +1159,11 @@ impl BegodeExtraTelemetry {
         TelemetryDelta {
             battery_current: Some(source_reported(self.battery_current)),
             motor_temperature: Some(source_reported(self.motor_temperature)),
-            pwm: self.true_pwm.map(source_reported),
+            pwm: self
+                .true_pwm
+                .map_or(cutout_core::TelemetryFieldUpdate::Invalid, |value| {
+                    cutout_core::TelemetryFieldUpdate::Set(source_reported(value))
+                }),
             ..TelemetryDelta::empty(at_ms)
         }
     }
@@ -1557,7 +1561,9 @@ mod tests {
         );
         assert_eq!(
             delta.pwm,
-            Some(source_reported(cutout_core::DutyCycle::from_permille(-400)))
+            cutout_core::TelemetryFieldUpdate::Set(source_reported(
+                cutout_core::DutyCycle::from_permille(-400)
+            ))
         );
     }
 
@@ -1573,7 +1579,10 @@ mod tests {
                     .to_delta(ms(7))
                     .pwm
                     .map(|reading| reading.value.as_permille()),
-                raw.checked_mul(10)
+                raw.checked_mul(10).map_or(
+                    cutout_core::TelemetryFieldUpdate::Invalid,
+                    cutout_core::TelemetryFieldUpdate::Set
+                )
             );
             assert_eq!(telemetry.battery_current.as_milliamps(), -1_000);
             assert_eq!(telemetry.motor_temperature.as_millicelsius(), 42_000);
@@ -1601,7 +1610,10 @@ mod tests {
                     i64::from(raw)
                 ))
             );
-            assert_eq!(telemetry.to_delta(ms(7)).pwm, None);
+            assert_eq!(
+                telemetry.to_delta(ms(7)).pwm,
+                cutout_core::TelemetryFieldUpdate::Unchanged
+            );
         }
     }
 

@@ -246,7 +246,8 @@ impl RefloatRealtimeData {
                 }),
             pwm: self
                 .value_with_legacy("duty_cycle", "motor.duty_cycle")
-                .map(|duty| Measured::reported(DutyCycle::from_permille(permille(duty)))),
+                .map(|duty| Measured::reported(DutyCycle::from_permille(permille(duty))))
+                .into(),
             pitch: self
                 .value_with_legacy("pitch", "imu.pitch")
                 .map(|degrees| Measured::reported(Angle::from_millidegrees(milliscale(degrees)))),
@@ -1349,7 +1350,10 @@ mod tests {
                 .map(|value| value.value.as_millicelsius()),
             Some(48_000)
         );
-        assert_eq!(delta.pwm.map(|value| value.value.as_permille()), Some(250));
+        assert_eq!(
+            delta.pwm.map(|value| value.value.as_permille()),
+            cutout_core::TelemetryFieldUpdate::Set(250)
+        );
         assert_eq!(
             delta.pitch.map(|value| value.value.as_millidegrees()),
             Some(4_000)

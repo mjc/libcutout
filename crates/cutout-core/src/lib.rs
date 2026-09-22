@@ -7128,6 +7128,37 @@ impl ReadOnlyResponse {
     }
 }
 
+/// A field update that distinguishes omission from rejected evidence.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum TelemetryFieldUpdate<T> {
+    /// This update says nothing about the field; retain its previous value.
+    #[default]
+    Unchanged,
+    /// Replace the field with a usable value.
+    Set(T),
+    /// The field was present but invalid; discard its previous value.
+    Invalid,
+}
+
+impl<T> TelemetryFieldUpdate<T> {
+    /// Converts the payload without losing omission or invalidation.
+    #[must_use]
+    pub fn map<U>(self, convert: impl FnOnce(T) -> U) -> TelemetryFieldUpdate<U> {
+        match self {
+            Self::Unchanged => TelemetryFieldUpdate::Unchanged,
+            Self::Set(value) => TelemetryFieldUpdate::Set(convert(value)),
+            Self::Invalid => TelemetryFieldUpdate::Invalid,
+        }
+    }
+}
+
+impl<T> From<Option<T>> for TelemetryFieldUpdate<T> {
+    /// An absent optional field is unchanged, not invalid.
+    fn from(value: Option<T>) -> Self {
+        value.map_or(Self::Unchanged, Self::Set)
+    }
+}
+
 /// Partial telemetry update from a protocol session.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TelemetryDelta {
@@ -7173,8 +7204,8 @@ pub struct TelemetryDelta {
     /// Battery temperature in millicelsius.
     pub battery_temperature: Option<Measured<Temperature>>,
 
-    /// PWM duty in permille.
-    pub pwm: Option<Measured<DutyCycle>>,
+    /// PWM duty update; omitted fields preserve, invalid fields clear the snapshot.
+    pub pwm: TelemetryFieldUpdate<Measured<DutyCycle>>,
 
     /// Total or trip distance in millimeters.
     pub distance: Option<Measured<Distance>>,
@@ -7220,7 +7251,7 @@ impl TelemetryDelta {
             controller_temperature: None,
             motor_temperature: None,
             battery_temperature: None,
-            pwm: None,
+            pwm: TelemetryFieldUpdate::Unchanged,
             distance: None,
             trip_distance: None,
             pitch: None,
@@ -7382,8 +7413,10 @@ impl TelemetrySnapshot {
         if delta.battery_temperature.is_some() {
             self.battery_temperature = delta.battery_temperature;
         }
-        if delta.pwm.is_some() {
-            self.pwm = delta.pwm;
+        match delta.pwm {
+            TelemetryFieldUpdate::Unchanged => {}
+            TelemetryFieldUpdate::Set(value) => self.pwm = Some(value),
+            TelemetryFieldUpdate::Invalid => self.pwm = None,
         }
         if delta.distance.is_some() {
             self.distance = delta.distance;

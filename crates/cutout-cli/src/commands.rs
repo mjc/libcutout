@@ -6318,7 +6318,7 @@ mod tests {
             battery_current: Some(battery_current(-1_700)),
             power: Some(power(-184_892)),
             controller_temperature: Some(temperature(33_270)),
-            pwm: Some(duty_cycle_permille(-1_000)),
+            pwm: cutout_core::TelemetryFieldUpdate::Set(duty_cycle_permille(-1_000)),
             distance: Some(distance(1_551_169_000)),
             pitch: Some(angle_mdeg(69_060)),
             battery_level_estimated: Some(level_estimated(47)),

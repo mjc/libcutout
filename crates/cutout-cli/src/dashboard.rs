@@ -1710,9 +1710,9 @@ impl TelemetryWindow {
         if let Some(pitch) = snapshot.pitch {
             self.latest_pitch = Some(WheelPitchDeg::from_angle(pitch.value));
         }
-        if let Some(pwm) = snapshot.pwm {
-            self.latest_pwm = Some(DisplayDutyCycle::from_duty_cycle(pwm.value));
-        }
+        self.latest_pwm = snapshot
+            .pwm
+            .map(|pwm| DisplayDutyCycle::from_duty_cycle(pwm.value));
         self.sync_points();
     }
 
@@ -2091,7 +2091,7 @@ impl fmt::Display for TelemetryDeltaLog {
                 "C",
             )?;
         }
-        if let Some(pwm) = delta.pwm {
+        if let cutout_core::TelemetryFieldUpdate::Set(pwm) = delta.pwm {
             fields.write(
                 "pwm",
                 DisplayDutyCycle::from_duty_cycle(pwm.value).get(),
@@ -4310,7 +4310,7 @@ mod tests {
             voltage: Some(voltage(108_760)),
             battery_current: Some(battery_current(0)),
             controller_temperature: Some(temperature(33_270)),
-            pwm: Some(duty_cycle_permille(0)),
+            pwm: cutout_core::TelemetryFieldUpdate::Set(duty_cycle_permille(0)),
             distance: Some(distance(1_551_169_000)),
             pitch: Some(angle_mdeg(69_060)),
             battery_level_estimated: Some(level_estimated(47)),
@@ -5234,6 +5234,24 @@ mod tests {
             log.to_string(),
             "t=4ms protocol known reserved family=VeteranLeaperkimNosfet selector=8 tag=none body_len=24 retained_bytes=1 verification=hardware_verified len=75"
         );
+    }
+
+    #[test]
+    fn dashboard_clears_invalidated_pwm_in_latest_snapshot() {
+        let mut state = DashboardState::empty();
+        let mut snapshot = TelemetrySnapshot::default();
+        snapshot.apply_delta(TelemetryDelta {
+            pwm: cutout_core::TelemetryFieldUpdate::Set(duty_cycle_permille(400)),
+            ..TelemetryDelta::empty(ms(1))
+        });
+        state.telemetry.apply_snapshot(snapshot);
+        assert!(state.telemetry.latest_pwm.is_some());
+        snapshot.apply_delta(TelemetryDelta {
+            pwm: cutout_core::TelemetryFieldUpdate::Invalid,
+            ..TelemetryDelta::empty(ms(2))
+        });
+        state.telemetry.apply_snapshot(snapshot);
+        assert!(state.telemetry.latest_pwm.is_none());
     }
 
     #[test]
