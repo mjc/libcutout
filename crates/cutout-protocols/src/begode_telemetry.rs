@@ -878,8 +878,12 @@ pub struct BegodeLiveATelemetry {
     /// Default MPU6050 IMU temperature.
     pub imu_temperature: Temperature,
 
-    /// Hardware PWM as a signed duty-cycle percentage.
-    pub hardware_pwm: DutyCycle,
+    /// Firmware-dependent word at bytes 14–15, retained without interpretation.
+    /// Stock firmware uses settings bits here; custom firmware may encode PWM.
+    pub firmware_word: u16,
+
+    /// Raw beeper volume at byte 17; the settings adapter admits levels 1–9.
+    pub beeper_volume: u8,
 
     /// Estimated battery percent derived from voltage.
     pub battery_level: BatteryLevel,
@@ -923,10 +927,8 @@ impl BegodeLiveATelemetry {
                 cursor,
                 ParserOffset::from_bytes(12),
             )),
-            hardware_pwm: DutyCycle::from_decipermille(be_i16(
-                cursor,
-                ParserOffset::from_bytes(14),
-            )),
+            firmware_word: be_u16(cursor, ParserOffset::from_bytes(14)),
+            beeper_volume: byte(cursor, ParserOffset::from_bytes(17)),
             battery_level: estimate_begode_battery_level(
                 wire_voltage.as_scaled_voltage(profile.scaler_milli()),
                 profile,
@@ -957,13 +959,25 @@ impl BegodeLiveATelemetry {
                 Power::from_voltage_phase_current_estimate(self.voltage, self.phase_current),
             )),
             controller_temperature: Some(source_reported(self.imu_temperature)),
-            pwm: Some(source_reported(DutyCycle::from_permille(
-                self.hardware_pwm.as_permille(),
-            ))),
             distance: Some(source_reported(unit_mode.distance(self.trip_distance_low))),
             battery_level_estimated: Some(source_estimated(self.battery_level)),
             ..TelemetryDelta::empty(at_ms)
         }
+    }
+
+    /// Retains the firmware-dependent word and beeper reading as raw settings evidence.
+    #[must_use]
+    pub fn to_settings_response(self) -> ReadOnlyResponse {
+        ReadOnlyResponse::Settings(SettingsReadback::available([
+            Some(settings_entry(
+                BEGODE_FIELD_FIRMWARE_WORD,
+                i64::from(self.firmware_word),
+            )),
+            Some(settings_entry(
+                BEGODE_FIELD_BEEPER_VOLUME,
+                i64::from(self.beeper_volume),
+            )),
+        ]))
     }
 }
 
@@ -1110,8 +1124,8 @@ pub struct BegodeExtraTelemetry {
     /// Motor temperature.
     pub motor_temperature: Temperature,
 
-    /// True PWM as a signed duty-cycle percentage.
-    pub true_pwm: DutyCycle,
+    /// Signed whole-percent PWM converted to permille, or absent if unrepresentable.
+    pub true_pwm: Option<DutyCycle>,
 }
 
 impl BegodeExtraTelemetry {
@@ -1133,7 +1147,9 @@ impl BegodeExtraTelemetry {
                 cursor,
                 ParserOffset::from_bytes(6),
             ))),
-            true_pwm: DutyCycle::from_decipermille(be_i16(cursor, ParserOffset::from_bytes(8))),
+            true_pwm: be_i16(cursor, ParserOffset::from_bytes(8))
+                .checked_mul(10)
+                .map(DutyCycle::from_permille),
         })
     }
 
@@ -1143,11 +1159,17 @@ impl BegodeExtraTelemetry {
         TelemetryDelta {
             battery_current: Some(source_reported(self.battery_current)),
             motor_temperature: Some(source_reported(self.motor_temperature)),
-            pwm: Some(source_reported(self.true_pwm)),
+            pwm: self.true_pwm.map(source_reported),
             ..TelemetryDelta::empty(at_ms)
         }
     }
 }
+
+/// Begode Live A raw field id for the firmware-dependent word at bytes 14–15.
+pub const BEGODE_FIELD_FIRMWARE_WORD: u16 = 0x000e;
+
+/// Begode Live A raw field id for the beeper volume level.
+pub const BEGODE_FIELD_BEEPER_VOLUME: u16 = 0x0011;
 
 /// Begode Live B raw field id for the settings bitfield.
 pub const BEGODE_FIELD_SETTINGS_BITS: u16 = 0x0406;
@@ -1309,7 +1331,8 @@ mod tests {
         assert_eq!(telemetry.trip_distance_low.as_millimetres(), 750_000);
         assert_eq!(telemetry.phase_current.as_milliamps(), -11_800);
         assert_eq!(telemetry.imu_temperature.as_millicelsius(), 27_930);
-        assert_eq!(telemetry.hardware_pwm.as_permille(), 0x1481 / 10);
+        assert_eq!(telemetry.firmware_word, 0x1481);
+        assert_eq!(telemetry.beeper_volume, 9);
         assert_eq!(telemetry.battery_level.get(), 50);
     }
 
@@ -1345,7 +1368,10 @@ mod tests {
 
         assert_eq!(telemetry.battery_current.as_milliamps(), -1_000);
         assert_eq!(telemetry.motor_temperature.as_millicelsius(), 42_000);
-        assert_eq!(telemetry.true_pwm.as_permille(), -4);
+        assert_eq!(
+            telemetry.true_pwm.map(cutout_core::DutyCycle::as_permille),
+            Some(-400)
+        );
     }
 
     #[test]
@@ -1374,7 +1400,6 @@ mod tests {
                 controller_temperature: Some(source_reported(
                     cutout_core::Temperature::from_millicelsius(27_930,)
                 )),
-                pwm: Some(source_reported(cutout_core::DutyCycle::from_permille(524))),
                 distance: Some(source_reported(cutout_core::Distance::from_millimetres(
                     750_000
                 ))),
@@ -1532,8 +1557,52 @@ mod tests {
         );
         assert_eq!(
             delta.pwm,
-            Some(source_reported(cutout_core::DutyCycle::from_permille(-4)))
+            Some(source_reported(cutout_core::DutyCycle::from_permille(-400)))
         );
+    }
+
+    #[test]
+    fn extra_pwm_conversion_never_wraps_or_saturates_into_a_reading() {
+        for raw in [i16::MIN, -3277, -3276, 0, 3276, 3277, i16::MAX] {
+            let mut bytes = EXTRA;
+            bytes[8..10].copy_from_slice(&raw.to_be_bytes());
+            let frame = BegodeFrame::try_from_slice(&bytes).unwrap();
+            let telemetry = BegodeExtraTelemetry::decode(&frame).unwrap();
+            assert_eq!(
+                telemetry
+                    .to_delta(ms(7))
+                    .pwm
+                    .map(|reading| reading.value.as_permille()),
+                raw.checked_mul(10)
+            );
+            assert_eq!(telemetry.battery_current.as_milliamps(), -1_000);
+            assert_eq!(telemetry.motor_temperature.as_millicelsius(), 42_000);
+        }
+    }
+
+    #[test]
+    fn live_a_settings_preserve_the_entire_firmware_word() {
+        for raw in [0_u16, 0x1481, 0x8000, u16::MAX] {
+            let mut bytes = LIVE_A;
+            bytes[14..16].copy_from_slice(&raw.to_be_bytes());
+            let frame = BegodeFrame::try_from_slice(&bytes).unwrap();
+            let telemetry = BegodeLiveATelemetry::decode(
+                &frame,
+                BegodePackVoltageProfile::Begode100VFullCharge,
+            )
+            .unwrap();
+            let ReadOnlyResponse::Settings(settings) = telemetry.to_settings_response() else {
+                panic!("expected settings");
+            };
+            assert_eq!(
+                settings.entries()[0],
+                Some(settings_entry(
+                    super::BEGODE_FIELD_FIRMWARE_WORD,
+                    i64::from(raw)
+                ))
+            );
+            assert_eq!(telemetry.to_delta(ms(7)).pwm, None);
+        }
     }
 
     #[test]
