@@ -1755,7 +1755,7 @@ impl MobileIdentificationProbeWriteDto {
 
 #[uniffi::export]
 impl CutoutSessionStateHandle {
-    /// Begins the complete ordered non-mutating identification query sequence.
+    /// Advances the protocol-owned sequence by at most one non-mutating query.
     pub fn begin_identification_probe_for_attempt_at(
         &self,
         token: MobileConnectionAttemptTokenDto,
@@ -14951,17 +14951,16 @@ mod tests {
     #[test]
     fn mobile_identification_probe_returns_bounded_typed_writes_and_tracks_them() {
         let session = CutoutSessionStateHandle::new();
+        session.observe_notification(
+            hex_literal::hex!("55aa17750538007602eefb64f4941481000900185a5a5a5a").to_vec(),
+        );
 
         let outcome = session.begin_identification_probe_at(1_000);
 
         assert_eq!(
             outcome,
             MobileIdentificationProbeOutcomeDto::Writes {
-                writes: vec![
-                    MobileIdentificationProbeWriteDto::begode(b"N"),
-                    MobileIdentificationProbeWriteDto::begode(b"V"),
-                    MobileIdentificationProbeWriteDto::begode(b"M"),
-                ],
+                writes: vec![MobileIdentificationProbeWriteDto::begode(b"N")],
             }
         );
         assert_eq!(session.next_begode_probe_expiry(2_000), Some(3_001));
@@ -14970,6 +14969,9 @@ mod tests {
     #[test]
     fn mobile_identification_probe_rejects_duplicate_without_resetting_deadline() {
         let session = CutoutSessionStateHandle::new();
+        session.observe_notification(
+            hex_literal::hex!("55aa17750538007602eefb64f4941481000900185a5a5a5a").to_vec(),
+        );
         let _ = session.begin_identification_probe_at(1_000);
 
         let duplicate = session.begin_identification_probe_at(1_500);
@@ -14982,7 +14984,7 @@ mod tests {
     }
 
     #[test]
-    fn mobile_identification_probe_runs_for_selected_ffe0_candidate() {
+    fn mobile_identification_probe_does_not_treat_aero_advertisement_as_begode() {
         let session = CutoutSessionStateHandle::new();
         let _ = session.observe_discovery(DiscoveryObservation {
             platform_identifier: "ios-local-aero".to_owned(),
@@ -14997,12 +14999,12 @@ mod tests {
 
         assert!(matches!(
             session.begin_identification_probe_at(1_000),
-            MobileIdentificationProbeOutcomeDto::Writes { .. }
+            MobileIdentificationProbeOutcomeDto::Unsupported
         ));
     }
 
     #[test]
-    fn mobile_identification_probe_returns_writes_for_selected_probe_candidate() {
+    fn mobile_identification_probe_waits_for_wire_evidence_on_shared_service() {
         let session = CutoutSessionStateHandle::new();
         let _ = session.observe_discovery(DiscoveryObservation {
             platform_identifier: "ios-local-unknown-euc".to_owned(),
@@ -15017,6 +15019,13 @@ mod tests {
 
         assert!(matches!(
             session.begin_identification_probe_at(1_000),
+            MobileIdentificationProbeOutcomeDto::Unsupported
+        ));
+        session.observe_notification(
+            hex_literal::hex!("55aa17750538007602eefb64f4941481000900185a5a5a5a").to_vec(),
+        );
+        assert!(matches!(
+            session.begin_identification_probe_at(1_001),
             MobileIdentificationProbeOutcomeDto::Writes { .. }
         ));
     }

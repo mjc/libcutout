@@ -2080,14 +2080,23 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
 
         transport.subscribe(using: sink)
         XCTAssertEqual(sink.events, [.subscribe])
+        XCTAssertEqual(transport.notificationsEnabled(at: MonotonicMilliseconds(1), using: sink), .unsupported)
+        XCTAssertEqual(sink.events, [.subscribe])
+        _ = transport.observeNotification(channel: .bluetooth16(0xffe1), bytes: Data([
+            0x55, 0xaa, 0x17, 0x75, 0x05, 0x38, 0x00, 0x76,
+            0x02, 0xee, 0xfb, 0x64, 0xf4, 0x94, 0x14, 0x81,
+            0x00, 0x09, 0x00, 0x18, 0x5a, 0x5a, 0x5a, 0x5a,
+        ]))
 
         let outcome = transport.notificationsEnabled(
             at: MonotonicMilliseconds(42),
             using: sink
         )
 
-        XCTAssertEqual(sink.events, [.subscribe, .write, .write, .write])
-        XCTAssertEqual(sink.writes, [Data("N".utf8), Data("V".utf8), Data("M".utf8)])
+        XCTAssertEqual(sink.events, [.subscribe, .write])
+        XCTAssertEqual(sink.writes, [Data("N".utf8)])
+        XCTAssertEqual(transport.notificationsEnabled(at: MonotonicMilliseconds(43), using: sink), .alreadyPending)
+        XCTAssertEqual(sink.writes.count, 1)
         guard case .writes = outcome else {
             return XCTFail("expected ordered probe writes")
         }
@@ -2097,6 +2106,11 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
             bytes: Data("NAME=Falcon".utf8)
         )
         XCTAssertEqual(resolution.modelBanner, Data("Falcon".utf8))
+        _ = transport.notificationsEnabled(at: MonotonicMilliseconds(100), using: sink)
+        XCTAssertEqual(sink.writes, [Data("N".utf8), Data("V".utf8)])
+        _ = transport.observeNotification(channel: .bluetooth16(0xffe1), bytes: Data("GW1621003".utf8))
+        _ = transport.notificationsEnabled(at: MonotonicMilliseconds(200), using: sink)
+        XCTAssertEqual(sink.writes, [Data("N".utf8), Data("V".utf8), Data("M".utf8)])
     }
 
     func testUnrelatedWriteReachesNormalTransportValidation() {

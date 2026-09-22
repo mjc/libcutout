@@ -3304,6 +3304,7 @@ extension CutoutSessionCore {
         guard channel.bluetooth16Value == 0xffe1 else {
             return current
         }
+        advanceIdentificationQueries()
         scheduleBegodeProbeExpiry()
         if current.modelBanner != nil, current.modelBanner != previous.modelBanner {
             annotateDetection("begode_probe_response=model")
@@ -3339,6 +3340,7 @@ extension CutoutSessionCore {
                 timeout: BegodeProbeResponsePolicy.timeoutAfter
             )
             publishMissingBegodeProbeResponses(expired)
+            advanceIdentificationQueries()
             scheduleBegodeProbeExpiry()
             if !expired.isEmpty, begodeProbeExpiryWorkItem == nil, let peripheral {
                 finishProtocolDetectionOrRecord(deviceDetectionSession.resolution, on: peripheral)
@@ -3350,6 +3352,13 @@ extension CutoutSessionCore {
         let missing = deviceDetectionSession.markBegodeProbeResponsesMissing()
         publishMissingBegodeProbeResponses(missing)
         clearPendingBegodeProbeResponses()
+    }
+
+    private func advanceIdentificationQueries() {
+        guard isDetectingProtocol || liveOwner != nil else { return }
+        // Rust owns family eligibility, ordering and pending-response state.
+        // Native code only executes the next admitted query on this attempt.
+        identificationProbeTransport.notificationsEnabled(at: clock.now(), using: self)
     }
 
     private func publishMissingBegodeProbeResponses(_ probes: [DeviceDetectionPendingProbe]) {
