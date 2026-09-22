@@ -442,7 +442,7 @@ mod tests {
                 let SessionOutput::Event(DeviceEvent::ReadOnlyResponse(response)) = output else {
                     return None;
                 };
-                let cutout_core::ReadOnlyResponse::Settings(readback) = response.as_ref() else {
+                let cutout_core::ReadOnlyResponse::Settings(readback) = response else {
                     return None;
                 };
                 readback

@@ -753,7 +753,7 @@ mod tests {
             matches!(
                 output,
                 SessionOutput::Event(DeviceEvent::ReadOnlyResponse(response))
-                    if matches!(response.as_ref(), ReadOnlyResponse::Settings(settings) if settings.entries().iter().flatten().any(|entry| {
+                    if matches!(response, ReadOnlyResponse::Settings(settings) if settings.entries().iter().flatten().any(|entry| {
                         entry.field == RawFieldValue::new(crate::VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, 530)
                     }))
             )
@@ -773,7 +773,7 @@ mod tests {
 
         let settings = outputs.iter().find_map(|output| match output {
             SessionOutput::Event(DeviceEvent::ReadOnlyResponse(response)) => {
-                let ReadOnlyResponse::Settings(settings) = response.as_ref() else {
+                let ReadOnlyResponse::Settings(settings) = response else {
                     return None;
                 };
                 Some(settings)
@@ -876,10 +876,10 @@ mod tests {
             .into_iter()
             .find_map(|output| match output {
                 SessionOutput::Event(DeviceEvent::ReadOnlyResponse(response)) => {
-                    let ReadOnlyResponse::Settings(settings) = response.as_ref() else {
+                    let ReadOnlyResponse::Settings(settings) = response else {
                         return None;
                     };
-                    Some(*settings)
+                    Some(settings)
                 }
                 _ => None,
             })
@@ -1040,7 +1040,7 @@ mod tests {
         matches!(
             output,
             SessionOutput::Event(DeviceEvent::ReadOnlyResponse(response))
-                if matches!(response.as_ref(), ReadOnlyResponse::Settings(_))
+                if matches!(response, ReadOnlyResponse::Settings(_))
         )
     }
 

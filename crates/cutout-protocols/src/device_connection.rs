@@ -851,7 +851,7 @@ impl DeviceConnectionSession {
                 let SessionOutput::Event(DeviceEvent::ReadOnlyResponse(response)) = output else {
                     continue;
                 };
-                let ReadOnlyResponse::Settings(readback) = response.as_ref() else {
+                let ReadOnlyResponse::Settings(readback) = response else {
                     continue;
                 };
                 profile.apply_action_readback(&mut self.state.actions, *readback, received_at);

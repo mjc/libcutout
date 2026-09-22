@@ -8,11 +8,11 @@ use cutout_core::{
     GattFingerprint, GattRoles, LightCommandState, Measured, ModelRegistryEntry,
     MonotonicTimestamp, NotificationByteLen, NotificationIngestOutcome, ParserDiagnostics,
     ParserError, ParserGapEvidence, PayloadBodyLen, PayloadClassifier, ProtocolFamily,
-    ProtocolSelector, ProtocolSession, Quantity, READ_ONLY_RESPONSE_POOL_CAPACITY, RawFieldValue,
-    RawTelemetryReadback, ReadOnlyResponse, ReadOnlyResponseBox, RequestedLightState,
-    ReservedPayloadEvidence, RetainedNotificationPayload, SafetyClass, SemanticEventCount,
-    SeriesCount, SessionInput, SessionOutput, Temperature, TransportAction, Unit, ValueQuality,
-    VerificationStatus, VerifiedValue, Voltage, WriteMode, WritePayload,
+    ProtocolSelector, ProtocolSession, Quantity, RawFieldValue, RawTelemetryReadback,
+    ReadOnlyResponse, RequestedLightState, ReservedPayloadEvidence, RetainedNotificationPayload,
+    SafetyClass, SemanticEventCount, SeriesCount, SessionInput, SessionOutput, Temperature,
+    TransportAction, Unit, ValueQuality, VerificationStatus, VerifiedValue, Voltage, WriteMode,
+    WritePayload,
 };
 
 use crate::{
@@ -1939,8 +1939,7 @@ impl<M: ReadOnlyModelSpec> Default for ReadOnlySession<M> {
 impl<M: ReadOnlyModelSpec> ReadOnlySession<M> {
     /// Creates a read-only session with an explicitly configured notification decoder.
     #[must_use]
-    pub fn with_decoder(decoder: M::NotificationDecoder) -> Self {
-        ReadOnlyResponseBox::prepare_pool(READ_ONLY_RESPONSE_POOL_CAPACITY);
+    pub const fn with_decoder(decoder: M::NotificationDecoder) -> Self {
         Self {
             connected: false,
             decoder,
@@ -2059,7 +2058,7 @@ impl<M: ReadOnlyModelSpec + SupportsBenignControls> Default for BenignControlSes
 impl<M: ReadOnlyModelSpec + SupportsBenignControls> BenignControlSession<M> {
     /// Creates a benign-control session with an explicitly configured notification decoder.
     #[must_use]
-    pub fn with_decoder(decoder: M::NotificationDecoder) -> Self {
+    pub const fn with_decoder(decoder: M::NotificationDecoder) -> Self {
         Self {
             read_only: ReadOnlySession::with_decoder(decoder),
             light_command_state: LightCommandState::Unknown,
@@ -2184,7 +2183,7 @@ impl<M: ReadOnlyModelSpec + SupportsSettingsWrites + SupportsBenignControls>
 {
     /// Creates a settings-write session with an explicitly configured decoder.
     #[must_use]
-    pub fn with_decoder(decoder: M::NotificationDecoder) -> Self {
+    pub const fn with_decoder(decoder: M::NotificationDecoder) -> Self {
         Self {
             read_only: ReadOnlySession::with_decoder(decoder),
             arm: None,
@@ -2871,7 +2870,7 @@ mod tests {
             .iter()
             .filter_map(|item| match item {
                 SessionOutput::Event(DeviceEvent::ReadOnlyResponse(response)) => {
-                    Some(response.as_ref().clone())
+                    Some(response.clone())
                 }
                 _ => None,
             })
@@ -3267,6 +3266,21 @@ mod tests {
         );
 
         assert!(output.is_empty());
+    }
+
+    #[test]
+    fn configured_session_constructors_remain_const() {
+        let read_only =
+            const { ReadOnlySession::<TestModel>::with_decoder(NoopNotificationDecoder) };
+        let benign =
+            const { BenignControlSession::<TestModel>::with_decoder(NoopNotificationDecoder) };
+        let settings = const {
+            StationarySettingsWriteSession::<TestModel>::with_decoder(NoopNotificationDecoder)
+        };
+
+        assert!(!read_only.connected);
+        assert!(!benign.read_only.connected);
+        assert!(!settings.read_only.connected);
     }
 
     #[test]

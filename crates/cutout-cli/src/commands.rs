@@ -725,10 +725,8 @@ fn summarize_pevcap_replay(
             }
             SessionOutput::Event(DeviceEvent::ReadOnlyResponse(response)) => {
                 report.read_only_responses = report.read_only_responses.increment();
-                report
-                    .read_only_response_events
-                    .push(response.as_ref().clone());
-                if let ReadOnlyResponse::Firmware(firmware) = response.as_ref() {
+                report.read_only_response_events.push(response.clone());
+                if let ReadOnlyResponse::Firmware(firmware) = response {
                     report.firmware = Some(*firmware);
                 }
             }

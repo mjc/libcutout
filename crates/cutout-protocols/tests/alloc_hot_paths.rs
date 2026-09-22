@@ -7,8 +7,7 @@ use std::sync::{
 };
 
 use cutout_core::{
-    CommandKind, FaultHistoryReadback, LinkInfo, MonotonicTimestamp, ProtocolSession,
-    READ_ONLY_RESPONSE_POOL_CAPACITY, ReadOnlyResponse, ReadOnlyResponseBox, SessionInput,
+    CommandKind, DeviceEvent, LinkInfo, MonotonicTimestamp, ProtocolSession, SessionInput,
     SessionOutput, TransportWriteLimit,
 };
 use cutout_protocols::{
@@ -124,6 +123,7 @@ fn allocation_hot_paths_do_not_allocate() {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     veteran_parser_owned_results_do_not_allocate();
+    fragmented_coalesced_aero_responses_do_not_allocate();
     begode_parser_owned_results_do_not_allocate();
     vesc_parser_owned_results_do_not_allocate();
     assert_no_allocations("read request encoding", || {
@@ -189,24 +189,6 @@ fn veteran_parser_owned_results_do_not_allocate() {
             veteran_output.clear();
         }
     });
-    let coalesced_aero_frames = [
-        LIVE_AERO_SELECTOR_0.as_slice(),
-        LIVE_AERO_SELECTOR_0.as_slice(),
-    ]
-    .concat();
-    assert_no_allocations("coalesced Aero frames", || {
-        veteran.handle(
-            SessionInput::Notification {
-                channel: VETERAN_DATA_CHANNEL,
-                bytes: &coalesced_aero_frames,
-                monotonic_ms: ms(36),
-            },
-            &mut veteran_output,
-        );
-        assert!(!veteran_output.is_empty());
-        veteran_output.clear();
-    });
-
     let mut reserved = LIVE_AERO_SELECTOR_0;
     reserved[60] = 8;
     let (mut veteran, mut veteran_output) = linked_session::<NosfetAeroModel>();
@@ -235,6 +217,43 @@ fn veteran_parser_owned_results_do_not_allocate() {
             &mut veteran_output,
         );
         veteran_output.clear();
+    });
+}
+
+fn fragmented_coalesced_aero_responses_do_not_allocate() {
+    let (mut session, mut output) = linked_session::<NosfetAeroModel>();
+    output.reserve(32);
+    let frame = LIVE_AERO_SELECTOR_0.as_slice();
+    let split = frame.len() - 1;
+    let continuation = [&frame[split..], frame, frame].concat();
+    assert_no_allocations("partial frame plus coalesced Aero frames", || {
+        for iteration in 0..32 {
+            session.handle(
+                SessionInput::Notification {
+                    channel: VETERAN_DATA_CHANNEL,
+                    bytes: &frame[..split],
+                    monotonic_ms: ms(2 + iteration * 2),
+                },
+                &mut output,
+            );
+            output.clear();
+            session.handle(
+                SessionInput::Notification {
+                    channel: VETERAN_DATA_CHANNEL,
+                    bytes: &continuation,
+                    monotonic_ms: ms(3 + iteration * 2),
+                },
+                &mut output,
+            );
+            let responses = output
+                .iter()
+                .filter(|item| {
+                    matches!(item, SessionOutput::Event(DeviceEvent::ReadOnlyResponse(_)))
+                })
+                .count();
+            assert_eq!(responses, 15);
+            output.clear();
+        }
     });
 }
 
@@ -289,7 +308,7 @@ fn vesc_parser_owned_results_do_not_allocate() {
 }
 
 #[test]
-fn configured_sessions_initialize_response_pool() {
+fn configured_sessions_do_not_allocate() {
     let _guard = ALLOCATION_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -342,31 +361,4 @@ fn configured_sessions_initialize_response_pool() {
         assert!(!begode_output.is_empty());
         begode_output.clear();
     });
-}
-
-#[test]
-fn response_pool_does_not_retain_transient_burst_capacity() {
-    let _guard = ALLOCATION_TEST_LOCK
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    ReadOnlyResponseBox::prepare_pool(READ_ONLY_RESPONSE_POOL_CAPACITY);
-
-    let burst: Vec<_> = (0..32)
-        .map(|_| {
-            ReadOnlyResponseBox::new(ReadOnlyResponse::FaultHistory(
-                FaultHistoryReadback::unavailable(),
-            ))
-        })
-        .collect();
-    drop(burst);
-
-    let mut held = Vec::with_capacity(READ_ONLY_RESPONSE_POOL_CAPACITY + 1);
-    reset_counts();
-    for _ in 0..=READ_ONLY_RESPONSE_POOL_CAPACITY {
-        held.push(ReadOnlyResponseBox::new(ReadOnlyResponse::FaultHistory(
-            FaultHistoryReadback::unavailable(),
-        )));
-    }
-    assert_eq!(ALLOCATIONS.load(Ordering::SeqCst), 1);
-    assert_eq!(REALLOCATIONS.load(Ordering::SeqCst), 0);
 }

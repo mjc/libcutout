@@ -10,11 +10,9 @@
 
 use std::{
     cmp::Ordering,
-    collections::VecDeque,
     fmt,
     marker::PhantomData,
-    ops::{Deref, DerefMut, RangeInclusive},
-    sync::{Mutex, OnceLock, PoisonError},
+    ops::{Deref, RangeInclusive},
 };
 
 use arrayvec::ArrayVec;
@@ -6862,6 +6860,39 @@ pub enum SettingsReadbackAvailability {
 /// Number of settings entries retained in a settings readback.
 const SETTINGS_READBACK_CAPACITY: usize = 18;
 
+// Flatten the nested RawFieldValue here so its alignment padding can be used
+// by the provenance fields. Keep the public SettingsEntry representation at
+// the API boundary, including sparse slots and full-width signed values.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct StoredSettingsEntry {
+    value: i64,
+    id: u16,
+    source: ValueSource,
+    quality: ValueQuality,
+    verification: VerificationStatus,
+}
+
+impl StoredSettingsEntry {
+    const fn from_entry(entry: SettingsEntry) -> Self {
+        Self {
+            value: entry.field.value,
+            id: entry.field.id,
+            source: entry.source,
+            quality: entry.quality,
+            verification: entry.verification,
+        }
+    }
+
+    const fn into_entry(self) -> SettingsEntry {
+        SettingsEntry {
+            field: RawFieldValue::new(self.id, self.value),
+            source: self.source,
+            quality: self.quality,
+            verification: self.verification,
+        }
+    }
+}
+
 /// Bounded settings readback response.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct SettingsReadback {
@@ -6869,7 +6900,7 @@ pub struct SettingsReadback {
     availability: SettingsReadbackAvailability,
 
     /// Settings entries.
-    entries: [Option<SettingsEntry>; SETTINGS_READBACK_CAPACITY],
+    entries: [Option<StoredSettingsEntry>; SETTINGS_READBACK_CAPACITY],
 }
 
 impl SettingsReadback {
@@ -6878,7 +6909,7 @@ impl SettingsReadback {
     pub fn available<const N: usize>(entries: [Option<SettingsEntry>; N]) -> Self {
         let mut slots = [None; SETTINGS_READBACK_CAPACITY];
         for (slot, entry) in slots.iter_mut().zip(entries) {
-            *slot = entry;
+            *slot = entry.map(StoredSettingsEntry::from_entry);
         }
         Self {
             availability: SettingsReadbackAvailability::Available,
@@ -6913,7 +6944,16 @@ impl SettingsReadback {
     /// Returns the bounded settings entries.
     #[must_use]
     pub const fn entries(self) -> [Option<SettingsEntry>; SETTINGS_READBACK_CAPACITY] {
-        self.entries
+        let mut entries = [None; SETTINGS_READBACK_CAPACITY];
+        let mut index = 0;
+        while index < SETTINGS_READBACK_CAPACITY {
+            entries[index] = match self.entries[index] {
+                Some(entry) => Some(entry.into_entry()),
+                None => None,
+            };
+            index += 1;
+        }
+        entries
     }
 }
 
@@ -7071,136 +7111,6 @@ pub enum ReadOnlyResponse {
 
     /// Fault-history readback response.
     FaultHistory(FaultHistoryReadback),
-}
-
-struct ReadOnlyResponsePool {
-    storage: VecDeque<Box<ReadOnlyResponse>>,
-    capacity: usize,
-}
-
-/// Retained response storage for the largest supported coalesced read-only batch.
-///
-/// The protocol layer can emit five responses per frame and process two
-/// coalesced frames before the caller clears its output. Additional responses
-/// held by a caller may allocate beyond this retained capacity.
-pub const READ_ONLY_RESPONSE_POOL_CAPACITY: usize = 10;
-
-static READ_ONLY_RESPONSE_POOL: OnceLock<Mutex<ReadOnlyResponsePool>> = OnceLock::new();
-
-fn read_only_response_pool() -> &'static Mutex<ReadOnlyResponsePool> {
-    READ_ONLY_RESPONSE_POOL.get_or_init(|| {
-        Mutex::new(ReadOnlyResponsePool {
-            storage: VecDeque::new(),
-            capacity: 0,
-        })
-    })
-}
-
-fn empty_read_only_response() -> &'static ReadOnlyResponse {
-    static EMPTY_RESPONSE: OnceLock<ReadOnlyResponse> = OnceLock::new();
-    EMPTY_RESPONSE
-        .get_or_init(|| ReadOnlyResponse::FaultHistory(FaultHistoryReadback::unavailable()))
-}
-
-/// Owned read-only response storage used by semantic device events.
-#[derive(Debug, Eq, PartialEq)]
-pub struct ReadOnlyResponseBox {
-    response: Option<Box<ReadOnlyResponse>>,
-}
-
-impl ReadOnlyResponseBox {
-    /// Prepares reusable response storage for an allocation-free protocol hot path.
-    pub fn prepare_pool(capacity: usize) {
-        let mut pool = read_only_response_pool()
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        pool.capacity = pool.capacity.max(capacity);
-        while pool.storage.len() < pool.capacity {
-            pool.storage
-                .push_back(Box::new(ReadOnlyResponse::FaultHistory(
-                    FaultHistoryReadback::unavailable(),
-                )));
-        }
-    }
-
-    /// Takes reusable storage when available and replaces its response value.
-    #[must_use]
-    pub fn new(response: ReadOnlyResponse) -> Self {
-        let mut pool = read_only_response_pool()
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        let response = if let Some(mut storage) = pool.storage.pop_back() {
-            *storage = response;
-            storage
-        } else {
-            Box::new(response)
-        };
-        Self {
-            response: Some(response),
-        }
-    }
-
-    /// Borrows the response while it is owned by this event.
-    #[must_use]
-    fn response_ref(&self) -> &ReadOnlyResponse {
-        match self.response.as_deref() {
-            Some(response) => response,
-            None => empty_read_only_response(),
-        }
-    }
-
-    /// Mutably borrows the response while it is owned by this event.
-    #[must_use]
-    fn response_mut(&mut self) -> &mut ReadOnlyResponse {
-        self.response
-            .get_or_insert_with(|| Box::new(empty_read_only_response().clone()))
-            .as_mut()
-    }
-}
-
-impl AsRef<ReadOnlyResponse> for ReadOnlyResponseBox {
-    fn as_ref(&self) -> &ReadOnlyResponse {
-        self.response_ref()
-    }
-}
-
-impl AsMut<ReadOnlyResponse> for ReadOnlyResponseBox {
-    fn as_mut(&mut self) -> &mut ReadOnlyResponse {
-        self.response_mut()
-    }
-}
-
-impl Deref for ReadOnlyResponseBox {
-    type Target = ReadOnlyResponse;
-
-    fn deref(&self) -> &Self::Target {
-        self.response_ref()
-    }
-}
-
-impl DerefMut for ReadOnlyResponseBox {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.response_mut()
-    }
-}
-
-impl Clone for ReadOnlyResponseBox {
-    fn clone(&self) -> Self {
-        Self::new(self.response_ref().clone())
-    }
-}
-
-impl Drop for ReadOnlyResponseBox {
-    fn drop(&mut self) {
-        if let Some(response) = self.response.take() {
-            let mut pool = read_only_response_pool()
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner);
-            if pool.storage.len() < pool.capacity {
-                pool.storage.push_back(response);
-            }
-        }
-    }
 }
 
 impl ReadOnlyResponse {
@@ -7702,7 +7612,7 @@ pub enum DeviceEvent {
     Telemetry(TelemetryDelta),
 
     /// Read-only response emitted by a protocol session.
-    ReadOnlyResponse(ReadOnlyResponseBox),
+    ReadOnlyResponse(ReadOnlyResponse),
 
     /// Control command refused before transport writes.
     ControlRefusal(ControlRefusal),
@@ -7715,10 +7625,10 @@ pub enum DeviceEvent {
 }
 
 impl DeviceEvent {
-    /// Constructs a read-only response event while keeping the large payload off the enum.
+    /// Constructs a read-only response event.
     #[must_use]
     pub fn read_only_response(response: ReadOnlyResponse) -> Self {
-        Self::ReadOnlyResponse(ReadOnlyResponseBox::new(response))
+        Self::ReadOnlyResponse(response)
     }
 }
 
@@ -7890,7 +7800,7 @@ where
         if let Some(observed_at) = observed_at {
             for output in &mut self.output[start..] {
                 if let SessionOutput::Event(DeviceEvent::ReadOnlyResponse(response)) = output
-                    && let ReadOnlyResponse::Battery(readback) = response.as_mut()
+                    && let ReadOnlyResponse::Battery(readback) = response
                 {
                     *readback = readback.clone().with_observed_at(observed_at);
                     self.state.assign_bms_observation_event_sequence(readback);
@@ -9773,6 +9683,54 @@ mod tests {
         let response = crate::SettingsReadback::available(entries);
 
         assert_eq!(response.entries()[17], Some(entry));
+    }
+
+    #[test]
+    fn settings_storage_preserves_sparse_slots_full_width_values_and_provenance() {
+        for source in [
+            ValueSource::Reported,
+            ValueSource::Calculated,
+            ValueSource::Estimated,
+        ] {
+            for quality in [ValueQuality::Known, ValueQuality::Inferred] {
+                for verification in [
+                    VerificationStatus::Unverified,
+                    VerificationStatus::Inferred,
+                    VerificationStatus::SourceVerified,
+                    VerificationStatus::HardwareVerified,
+                    VerificationStatus::SourceAndHardwareVerified,
+                ] {
+                    let mut entries = [None; 18];
+                    entries[0] = Some(crate::SettingsEntry {
+                        field: crate::RawFieldValue::new(0, i64::MIN),
+                        source,
+                        quality,
+                        verification,
+                    });
+                    entries[17] = Some(crate::SettingsEntry {
+                        field: crate::RawFieldValue::new(u16::MAX, i64::MAX),
+                        source,
+                        quality,
+                        verification,
+                    });
+                    assert_eq!(
+                        crate::SettingsReadback::available(entries).entries(),
+                        entries
+                    );
+                }
+            }
+        }
+        assert_eq!(crate::SettingsReadback::unavailable().entries(), [None; 18]);
+        assert_eq!(crate::SettingsReadback::unsupported().entries(), [None; 18]);
+    }
+
+    #[test]
+    fn inline_response_storage_stays_compact() {
+        assert!(size_of::<super::StoredSettingsEntry>() <= 16);
+        assert!(size_of::<crate::SettingsReadback>() <= 296);
+        assert!(size_of::<crate::ReadOnlyResponse>() <= 304);
+        assert!(size_of::<DeviceEvent>() <= 304);
+        assert!(size_of::<SessionOutput>() <= 304);
     }
 
     #[test]

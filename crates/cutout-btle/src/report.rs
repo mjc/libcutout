@@ -197,20 +197,18 @@ pub(crate) fn process_device_event(
         }
         DeviceEvent::ReadOnlyResponse(response) => {
             report.read_only_responses = report.read_only_responses.increment();
-            report
-                .read_only_response_events
-                .push(response.as_ref().clone());
+            report.read_only_response_events.push(response.clone());
             report.events.push(SessionBridgeEvent::ReadOnlyResponse {
                 monotonic_ms,
-                response: Box::new(response.as_ref().clone()),
+                response: Box::new(response.clone()),
             });
-            match response.as_ref() {
+            match response {
                 ReadOnlyResponse::Firmware(firmware) => {
-                    report.firmware = Some(*firmware);
+                    report.firmware = Some(firmware);
                 }
                 ReadOnlyResponse::Settings(settings) => {
                     if settings.availability() == SettingsReadbackAvailability::Available {
-                        report.settings.push(*settings);
+                        report.settings.push(settings);
                     }
                 }
                 ReadOnlyResponse::Battery(_)

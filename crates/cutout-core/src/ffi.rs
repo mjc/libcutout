@@ -2014,7 +2014,7 @@ impl From<SessionOutput> for SessionOutputDto {
         match output {
             SessionOutput::Transport(action) => Self::Transport(action.into()),
             SessionOutput::Event(DeviceEvent::ReadOnlyResponse(response)) => {
-                Self::ReadOnly(response.as_ref().clone().into())
+                Self::ReadOnly(response.into())
             }
             SessionOutput::Event(event) => match SessionEventDto::from_event(event) {
                 SessionEventProjection::Event(event) => Self::Event(event),
@@ -2479,7 +2479,7 @@ impl SessionEventDto {
                 SessionEventProjection::Event(Self::DiagnosticError(error.into()))
             }
             DeviceEvent::ReadOnlyResponse(response) => {
-                SessionEventProjection::ReadOnly(Box::new(response.as_ref().clone()))
+                SessionEventProjection::ReadOnly(Box::new(response))
             }
         }
     }
