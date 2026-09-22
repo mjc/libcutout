@@ -2168,6 +2168,12 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
             advertisedServiceUuids: [.bluetooth16(0xFFE0)]
         ))
         XCTAssertEqual(core.scanState.rows.first?.title, "Begode Falcon")
+        let projected = core.scanState
+        XCTAssertEqual(core.scanState, projected, "Reading scan state is a pure projection")
+        core.disconnectAndScan()
+        XCTAssertNil(core.protocolIdentityCandidate)
+        XCTAssertEqual(core.scanState.rows.first?.id, "ios-local-falcon")
+        XCTAssertEqual(core.scanState.rows.first?.title, "Typed Begode Falcon")
     }
 
     func testBegodeFirmwareProbeResponseUpdatesProtocolIdentityCandidate() {

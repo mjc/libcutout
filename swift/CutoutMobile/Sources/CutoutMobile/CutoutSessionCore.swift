@@ -437,7 +437,17 @@ public final class CutoutSessionCore: NSObject {
     public var records: [String] { diagnosticLog.values }
     public var droppedRecordCount: Int { diagnosticLog.droppedCount }
     public private(set) var hasObservedSpeedSnapshot = false
-    public private(set) var scanState = DevicePickerScanState(status: .idle, rows: [])
+    private var storedScanState = DevicePickerScanState(status: .idle, rows: [])
+    public var scanState: DevicePickerScanState {
+        onBleQueue {
+            guard let candidate = storedProtocolIdentityCandidate else { return storedScanState }
+            let row = candidate.pickerRow
+            return DevicePickerScanState(
+                status: storedScanState.status,
+                rows: storedScanState.rows.map { $0.id == row.id ? row : $0 }
+            )
+        }
+    }
     public private(set) var faultHistoryReadback: FaultHistoryReadback?
     public private(set) var bmsSnapshot: BmsSnapshot?
     public private(set) var phoneLocationSnapshot = MobilePhoneLocationSnapshotDto(latestSample: nil, gpsSpeed: nil)
@@ -690,7 +700,7 @@ public final class CutoutSessionCore: NSObject {
         onBleQueue {
             let advertisement = advertisement.withVescNordicUartFallbackName()
             let snapshot = rustSessionState.observeDiscovery(observation: DiscoveryObservation(advertisement))
-            scanState = DevicePickerScanState(status: .scanning, discoverySnapshot: snapshot)
+            storedScanState = DevicePickerScanState(status: .scanning, discoverySnapshot: snapshot)
             publishScanState()
         }
     }
@@ -945,17 +955,17 @@ public final class CutoutSessionCore: NSObject {
             case .scanning:
                 break
             case .unavailable:
-                scanState = DevicePickerScanState(status: .bluetoothUnavailable, rows: [])
+                storedScanState = DevicePickerScanState(status: .bluetoothUnavailable, rows: [])
                 publishScanState()
                 setPhase(.bluetoothUnavailable(rawState: 4))
                 return
             case .permissionDenied:
-                scanState = .permissionDenied
+                storedScanState = .permissionDenied
                 publishScanState()
                 setPhase(.bluetoothPermissionDenied)
                 return
             }
-            scanState = DevicePickerScanState(status: .idle, rows: [testScript.candidate.pickerRow])
+            storedScanState = DevicePickerScanState(status: .idle, rows: [testScript.candidate.pickerRow])
             publishScanState()
             setPhase(.scanning)
             if testScript.startsLive {
@@ -1204,7 +1214,7 @@ public final class CutoutSessionCore: NSObject {
             self?.onBleQueue {
                 guard let self, self.rustSessionState.connectionAttemptIsCurrent(token: token) else { return }
                 self.connectionLinkDownOnBleQueue(token: token)
-                self.scanState = DevicePickerScanState(status: .bluetoothUnavailable, rows: [])
+                self.storedScanState = DevicePickerScanState(status: .bluetoothUnavailable, rows: [])
                 self.publishScanState()
                 self.setPhase(.bluetoothUnavailable(rawState: 4))
             }
@@ -1284,12 +1294,12 @@ public final class CutoutSessionCore: NSObject {
 
         #if DEBUG
         if let testScript {
-            scanState = DevicePickerScanState(status: .idle, rows: [testScript.candidate.pickerRow])
+            storedScanState = DevicePickerScanState(status: .idle, rows: [testScript.candidate.pickerRow])
         } else {
-            scanState = DevicePickerScanState(status: .scanning, discoverySnapshot: rustSessionState.discoverySnapshot())
+            storedScanState = DevicePickerScanState(status: .scanning, discoverySnapshot: rustSessionState.discoverySnapshot())
         }
         #else
-        scanState = DevicePickerScanState(status: .scanning, discoverySnapshot: rustSessionState.discoverySnapshot())
+        storedScanState = DevicePickerScanState(status: .scanning, discoverySnapshot: rustSessionState.discoverySnapshot())
         #endif
         publishScanState()
         setPhase(.scanning)
@@ -1400,10 +1410,6 @@ public final class CutoutSessionCore: NSObject {
             return
         }
         storedProtocolIdentityCandidate = nil
-        scanState = DevicePickerScanState(
-            status: scanState.status,
-            discoverySnapshot: rustSessionState.discoverySnapshot()
-        )
         publishProtocolIdentityCandidate()
     }
 
@@ -1906,13 +1912,6 @@ public final class CutoutSessionCore: NSObject {
     }
 
     private func publishScanState() {
-        if let candidate = storedProtocolIdentityCandidate {
-            let row = candidate.pickerRow
-            scanState = DevicePickerScanState(
-                status: scanState.status,
-                rows: scanState.rows.map { $0.id == row.id ? row : $0 }
-            )
-        }
         let value = scanState
         let generation = connectionSnapshot.generation
         publishOnMain {
@@ -2767,7 +2766,7 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
                 connectionDeadlineWorkItem?.cancel()
                 publishConnectionSnapshot()
             }
-            scanState = state == .unauthorized
+            storedScanState = state == .unauthorized
                 ? .permissionDenied
                 : DevicePickerScanState(status: .bluetoothUnavailable, rows: [])
             publishScanState()
@@ -2808,7 +2807,7 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
                 break
             }
         }
-        scanState = DevicePickerScanState(
+        storedScanState = DevicePickerScanState(
             status: .scanning,
             discoverySnapshot: rustSessionState.discoverySnapshot()
         )
