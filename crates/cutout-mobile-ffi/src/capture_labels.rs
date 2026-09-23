@@ -1,0 +1,125 @@
+//! Mechanical mobile mappings for the shared capture annotation vocabulary.
+use cutout_core::{CaptureLabelState, CaptureLabelTransition, CaptureSessionLabel};
+use std::sync::{Arc, Mutex, PoisonError};
+
+macro_rules! capture_labels {
+    ($($name:ident),+ $(,)?) => {
+        /// Typed capture label. Display names belong to the native localization catalog.
+        #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+        pub enum MobileCaptureLabelDto { $( $name, )+ }
+        impl From<MobileCaptureLabelDto> for CaptureSessionLabel {
+            fn from(label: MobileCaptureLabelDto) -> Self {
+                match label { $( MobileCaptureLabelDto::$name => Self::$name, )+ }
+            }
+        }
+        impl From<CaptureSessionLabel> for MobileCaptureLabelDto {
+            fn from(label: CaptureSessionLabel) -> Self {
+                match label { $( CaptureSessionLabel::$name => Self::$name, )+ }
+            }
+        }
+    };
+}
+capture_labels!(
+    PoweredOnStationary,
+    RollingForward,
+    RollingBackward,
+    LiftedWheel,
+    Charging,
+    HeadlightToggled,
+    Horn,
+    RideModeChange,
+    AlarmChange,
+    BmsScreen,
+    DisconnectReconnect,
+    PowerCycle,
+    Ride,
+    Balancing,
+    LowBeamOn,
+    LowBeamOff,
+    HighBeamOn,
+    HighBeamOff,
+    PedalsHard,
+    PedalsMedium,
+    PedalsSoft,
+    ResetTrip,
+    SoftwareLock,
+    SoftwareUnlock,
+    TiltbackSpeed,
+    AlarmSpeed,
+    AngleAdjustment,
+    RideMode,
+    PwmPercent
+);
+
+/// Returns the stable annotation/localization key from the Rust vocabulary.
+#[uniffi::export]
+#[must_use]
+pub fn capture_label_slug(label: MobileCaptureLabelDto) -> String {
+    CaptureSessionLabel::from(label).slug().to_owned()
+}
+
+/// Tests observation exclusivity without duplicating policy in mobile code.
+#[uniffi::export]
+#[must_use]
+pub fn capture_labels_are_mutually_exclusive(
+    left: MobileCaptureLabelDto,
+    right: MobileCaptureLabelDto,
+) -> bool {
+    CaptureSessionLabel::from(left).is_mutually_exclusive(right.into())
+}
+
+/// Capture annotation interval state, independent of localization and view lifetime.
+#[derive(Debug, Default, uniffi::Object)]
+pub struct MobileCaptureLabels {
+    inner: Mutex<CaptureLabelState>,
+}
+
+#[uniffi::export]
+impl MobileCaptureLabels {
+    /// Creates an empty set of intervals for one capture presentation owner.
+    #[uniffi::constructor]
+    #[must_use]
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
+
+    /// Returns zero, one, or two ordered annotation values; duplicates are no-ops.
+    pub fn start(&self, label: MobileCaptureLabelDto) -> Vec<String> {
+        self.inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .start(label.into())
+            .map(CaptureLabelTransition::annotation_value)
+            .collect()
+    }
+
+    /// Returns an annotation only when the interval was active.
+    pub fn stop(&self, label: MobileCaptureLabelDto) -> Option<String> {
+        self.inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .stop(label.into())
+            .map(CaptureLabelTransition::annotation_value)
+    }
+
+    /// Current active labels in start order.
+    #[must_use]
+    pub fn active(&self) -> Vec<MobileCaptureLabelDto> {
+        self.inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .active()
+            .iter()
+            .copied()
+            .map(Into::into)
+            .collect()
+    }
+
+    /// Clears labels when their capture ends or a new capture starts.
+    pub fn clear(&self) {
+        self.inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clear();
+    }
+}

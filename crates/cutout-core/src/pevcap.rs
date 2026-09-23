@@ -151,11 +151,45 @@ pub enum CaptureSessionLabel {
 
     /// Device power-cycled around the capture.
     PowerCycle,
+    /// Riding interval.
+    Ride,
+    /// Balancing interval.
+    Balancing,
+    /// Low beam observed on.
+    LowBeamOn,
+    /// Low beam observed off.
+    LowBeamOff,
+    /// High beam observed on.
+    HighBeamOn,
+    /// High beam observed off.
+    HighBeamOff,
+    /// Hard pedal response observed.
+    PedalsHard,
+    /// Medium pedal response observed.
+    PedalsMedium,
+    /// Soft pedal response observed.
+    PedalsSoft,
+    /// Trip reset observed.
+    ResetTrip,
+    /// Software lock observed.
+    SoftwareLock,
+    /// Software unlock observed.
+    SoftwareUnlock,
+    /// Tiltback speed observation.
+    TiltbackSpeed,
+    /// Speed alarm observation.
+    AlarmSpeed,
+    /// Pedal angle adjustment observation.
+    AngleAdjustment,
+    /// Ride mode observation.
+    RideMode,
+    /// PWM observation.
+    PwmPercent,
 }
 
 impl CaptureSessionLabel {
     /// All standard capture labels in stable taxonomy order.
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 29] = [
         Self::PoweredOnStationary,
         Self::RollingForward,
         Self::RollingBackward,
@@ -168,6 +202,23 @@ impl CaptureSessionLabel {
         Self::BmsScreen,
         Self::DisconnectReconnect,
         Self::PowerCycle,
+        Self::Ride,
+        Self::Balancing,
+        Self::LowBeamOn,
+        Self::LowBeamOff,
+        Self::HighBeamOn,
+        Self::HighBeamOff,
+        Self::PedalsHard,
+        Self::PedalsMedium,
+        Self::PedalsSoft,
+        Self::ResetTrip,
+        Self::SoftwareLock,
+        Self::SoftwareUnlock,
+        Self::TiltbackSpeed,
+        Self::AlarmSpeed,
+        Self::AngleAdjustment,
+        Self::RideMode,
+        Self::PwmPercent,
     ];
 
     /// Stable lowercase slug used in PEVCAP annotations and Beads issue notes.
@@ -186,6 +237,23 @@ impl CaptureSessionLabel {
             Self::BmsScreen => "bms_screen",
             Self::DisconnectReconnect => "disconnect_reconnect",
             Self::PowerCycle => "power_cycle",
+            Self::Ride => "ride",
+            Self::Balancing => "balancing",
+            Self::LowBeamOn => "low_beam_on",
+            Self::LowBeamOff => "low_beam_off",
+            Self::HighBeamOn => "high_beam_on",
+            Self::HighBeamOff => "high_beam_off",
+            Self::PedalsHard => "pedals_hard",
+            Self::PedalsMedium => "pedals_medium",
+            Self::PedalsSoft => "pedals_soft",
+            Self::ResetTrip => "reset_trip",
+            Self::SoftwareLock => "software_lock",
+            Self::SoftwareUnlock => "software_unlock",
+            Self::TiltbackSpeed => "tiltback_speed",
+            Self::AlarmSpeed => "alarm_speed",
+            Self::AngleAdjustment => "angle_adjustment",
+            Self::RideMode => "ride_mode",
+            Self::PwmPercent => "pwm_percent",
         }
     }
 
@@ -193,6 +261,118 @@ impl CaptureSessionLabel {
     #[must_use]
     pub fn annotation(self) -> String {
         format!("{}={}", PEVCAP_CAPTURE_LABEL_ANNOTATION_KEY, self.slug())
+    }
+}
+
+#[cfg(test)]
+mod capture_label_transition_tests {
+    use super::*;
+
+    #[test]
+    fn exclusive_capture_labels_stop_before_starting_the_replacement() {
+        let mut labels = CaptureLabelState::default();
+        assert_eq!(labels.start(CaptureSessionLabel::LowBeamOn).count(), 1);
+        let changes: Vec<_> = labels.start(CaptureSessionLabel::LowBeamOff).collect();
+        assert_eq!(
+            changes,
+            [
+                CaptureLabelTransition::Stopped(CaptureSessionLabel::LowBeamOn),
+                CaptureLabelTransition::Started(CaptureSessionLabel::LowBeamOff),
+            ]
+        );
+        assert_eq!(labels.active(), &[CaptureSessionLabel::LowBeamOff]);
+        assert_eq!(labels.start(CaptureSessionLabel::LowBeamOff).count(), 0);
+        assert_eq!(labels.stop(CaptureSessionLabel::LowBeamOn), None);
+    }
+}
+
+/// One ordered boundary of a labeled capture interval.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CaptureLabelTransition {
+    /// The interval started.
+    Started(CaptureSessionLabel),
+    /// The interval stopped.
+    Stopped(CaptureSessionLabel),
+}
+
+impl CaptureLabelTransition {
+    /// Stable value of the existing `capture_label` annotation.
+    #[must_use]
+    pub fn annotation_value(self) -> String {
+        match self {
+            Self::Started(label) => format!("{}_start", label.slug()),
+            Self::Stopped(label) => format!("{}_stop", label.slug()),
+        }
+    }
+}
+
+/// Active annotation intervals. Duplicate actions are no-ops and mutually
+/// exclusive observations always end the old interval before starting the new one.
+#[derive(Clone, Debug, Default)]
+pub struct CaptureLabelState {
+    active: Vec<CaptureSessionLabel>,
+}
+
+impl CaptureLabelState {
+    /// Current labels in their start order; bounded by the finite label vocabulary.
+    #[must_use]
+    pub fn active(&self) -> &[CaptureSessionLabel] {
+        &self.active
+    }
+
+    /// Starts an interval and returns at most two ordered annotation boundaries.
+    pub fn start(
+        &mut self,
+        label: CaptureSessionLabel,
+    ) -> impl Iterator<Item = CaptureLabelTransition> + use<> {
+        let changes = if self.active.contains(&label) {
+            [None, None]
+        } else {
+            let previous = self
+                .active
+                .iter()
+                .copied()
+                .find(|&active| label.is_mutually_exclusive(active));
+            let stopped = previous.and_then(|previous| self.stop(previous));
+            self.active.push(label);
+            [stopped, Some(CaptureLabelTransition::Started(label))]
+        };
+        changes.into_iter().flatten()
+    }
+
+    /// Stops an active interval; repeated stops do not emit evidence.
+    pub fn stop(&mut self, label: CaptureSessionLabel) -> Option<CaptureLabelTransition> {
+        let index = self.active.iter().position(|&active| active == label)?;
+        self.active.remove(index);
+        Some(CaptureLabelTransition::Stopped(label))
+    }
+
+    /// Clears presentation intervals at the capture lifecycle boundary.
+    pub fn clear(&mut self) {
+        self.active.clear();
+    }
+}
+
+impl CaptureSessionLabel {
+    /// Whether two labels describe incompatible observations of the same feature.
+    #[must_use]
+    pub const fn is_mutually_exclusive(self, other: Self) -> bool {
+        matches!(
+            (self, other),
+            (
+                Self::LowBeamOn | Self::LowBeamOff,
+                Self::LowBeamOn | Self::LowBeamOff
+            ) | (
+                Self::HighBeamOn | Self::HighBeamOff,
+                Self::HighBeamOn | Self::HighBeamOff
+            ) | (
+                Self::PedalsHard | Self::PedalsMedium | Self::PedalsSoft,
+                Self::PedalsHard | Self::PedalsMedium | Self::PedalsSoft
+            ) | (
+                Self::SoftwareLock | Self::SoftwareUnlock,
+                Self::SoftwareLock | Self::SoftwareUnlock
+            )
+        )
     }
 }
 
@@ -4647,6 +4827,23 @@ mod tests {
                 "bms_screen",
                 "disconnect_reconnect",
                 "power_cycle",
+                "ride",
+                "balancing",
+                "low_beam_on",
+                "low_beam_off",
+                "high_beam_on",
+                "high_beam_off",
+                "pedals_hard",
+                "pedals_medium",
+                "pedals_soft",
+                "reset_trip",
+                "software_lock",
+                "software_unlock",
+                "tiltback_speed",
+                "alarm_speed",
+                "angle_adjustment",
+                "ride_mode",
+                "pwm_percent",
             ]
         );
     }
