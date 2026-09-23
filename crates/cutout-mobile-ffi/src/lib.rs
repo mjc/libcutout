@@ -2728,12 +2728,8 @@ fn mobile_begode_identity_probe_detail(
     if let Some(voltage_hint_mv) = probe.nominal_voltage_hint_mv {
         parts.push(format!("voltage hint {voltage_hint_mv}mV"));
     }
-    if let Some(missing_probe_response) = probe.missing_probe_response {
-        parts.push(format!("missing {missing_probe_response:?} response"));
-    }
-    if let Some(malformed_probe_response) = probe.malformed_probe_response {
-        parts.push(format!("malformed {malformed_probe_response:?} response"));
-    }
+    // Probe failures remain in technical evidence, not the device description:
+    // an unanswered identity query is not evidence of a hardware fault.
     if supported {
         if parts.is_empty() {
             "Begode/Falcon confirmed by protocol evidence".to_owned()
@@ -14222,6 +14218,85 @@ mod tests {
         assert_eq!(candidate.support, DiscoveryCandidateSupport::Supported);
         assert!(candidate.detail.contains("GotWay_002441"));
         assert_eq!(candidate.platform_identifier, "scan-falcon");
+    }
+
+    #[test]
+    fn falcon_imu_timeout_stays_in_evidence_not_device_description() {
+        let session = CutoutSessionStateHandle::new();
+        session.observe_begode_name_probe();
+        session.observe_notification(b"NAME:Falcon\r\n".to_vec());
+        session.observe_begode_imu_probe();
+        let resolution = session.observe_begode_imu_probe_timeout();
+        assert_eq!(
+            resolution.missing_probe_response,
+            Some(MobilePendingProbeDto::BegodeImu)
+        );
+        let candidate = mobile_discovery_candidate_from_detection_resolution(
+            "ios-local-falcon".to_owned(),
+            "GotWay_002441".to_owned(),
+            resolution,
+        );
+
+        assert_eq!(candidate.support, DiscoveryCandidateSupport::Supported);
+        assert_eq!(candidate.disabled_reason, None);
+        assert_eq!(
+            candidate.detail,
+            "Begode/Falcon confirmed by reported model Falcon; advertised as GotWay_002441"
+        );
+        assert!(
+            candidate
+                .evidence
+                .contains("missing_probe_response=BegodeImu")
+        );
+
+        let resolution = session.observe_notification(b"MPU6500".to_vec());
+        let candidate = mobile_discovery_candidate_from_detection_resolution(
+            "ios-local-falcon".to_owned(),
+            "GotWay_002441".to_owned(),
+            resolution,
+        );
+        assert!(candidate.detail.contains("imu MPU6500"));
+        assert!(!candidate.evidence.contains("missing_probe_response"));
+    }
+
+    #[test]
+    fn begode_probe_failures_stay_in_evidence_not_device_description() {
+        for reported_model in [None, Some("Falcon".to_owned())] {
+            let candidate = mobile_discovery_candidate_from_begode_identity_probe(
+                "ios-local-falcon".to_owned(),
+                "GotWay_002441".to_owned(),
+                MobileBegodeIdentityProbeDto {
+                    reported_model: reported_model.clone(),
+                    reported_code_name: None,
+                    reported_imu: None,
+                    reported_firmware_version: None,
+                    reported_serial: None,
+                    nominal_voltage_hint_mv: None,
+                    missing_probe_response: Some(MobilePendingProbeDto::BegodeFirmware),
+                    malformed_probe_response: Some(MobilePendingProbeDto::BegodeImu),
+                },
+            );
+            assert!(!candidate.detail.contains("missing"));
+            assert!(!candidate.detail.contains("malformed"));
+            assert!(
+                candidate
+                    .evidence
+                    .contains("missing_probe_response=BegodeFirmware")
+            );
+            assert!(
+                candidate
+                    .evidence
+                    .contains("malformed_probe_response=BegodeImu")
+            );
+            if reported_model.is_none() {
+                assert_eq!(
+                    candidate.support,
+                    DiscoveryCandidateSupport::UnknownRecordable
+                );
+                assert!(candidate.detail.contains("model not confirmed"));
+                assert!(candidate.connection_route.is_none());
+            }
+        }
     }
 
     #[test]
