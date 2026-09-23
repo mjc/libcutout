@@ -10,6 +10,11 @@
 
 mod storage;
 pub use storage::*;
+mod capture_writer;
+pub use capture_writer::{
+    CaptureArtifactId, CaptureMetadata, CaptureWriter, CaptureWriterMonitor, CaptureWriterStatus,
+    SavedCaptureArtifact,
+};
 
 #[cfg(test)]
 mod tests;
