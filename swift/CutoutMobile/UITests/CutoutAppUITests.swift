@@ -1178,6 +1178,10 @@ final class CutoutAppUITests: XCTestCase {
                 "Ride tab is clipped by the viewport: \(identifier) \(tab.frame)"
             )
         }
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "\(family.name) ride controls"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
     }
 
     func testVescLiveActivityAutoFixtureStartsAnAccessibleRide() throws {

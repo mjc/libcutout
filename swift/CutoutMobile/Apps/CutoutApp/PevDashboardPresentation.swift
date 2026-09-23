@@ -45,6 +45,16 @@ private func liveDashboardTile(
     telemetry: TelemetrySnapshot
 ) -> PevDashboardTile {
     switch descriptor {
+    case .batteryLevel(let reading):
+        let text = reading.map { RideUnits.percentText($0.value.value) }
+        return PevDashboardTile(
+            kind: .batteryLevel,
+            label: localizedAppText("ride.metric.battery"),
+            metricValue: text.map { .available(display: $0, accessibility: $0) } ?? .unavailable,
+            unit: RideUnits.percentUnit,
+            detail: reading?.source == .estimated ? localizedAppText("ride.detail.estimated") : "",
+            accent: .green
+        )
     case .chargeEstimate:
         return chargeEstimateTile(from: state)
     case .packVoltage(let voltage):
@@ -78,7 +88,7 @@ private func liveDashboardTile(
             label: localizedAppText("ride.metric.limp_home"),
             metricValue: .available(display: text, accessibility: text),
             unit: RideUnits.distanceUnit(forSpeedUnit: state.speedUnit),
-            detail: localizedAppText("ride.detail.typed_range_estimate"),
+            detail: localizedAppText("ride.detail.estimated"),
             accent: .cyan
         )
     }
@@ -215,9 +225,9 @@ func vescRideSubtitle(_ snapshot: VescRideSnapshot) -> String {
 
 func livePackVoltageDetail(_ detail: TelemetryPackVoltageDetail) -> String {
     switch detail {
-    case .unavailable: localizedAppText("ride.value.unavailable")
+    case .unavailable: ""
     case .voltageSag(let sag): voltageSagDetail(sag.detailReadback)
-    case .sagUnavailable: localizedAppText("ride.detail.sag_unavailable")
+    case .sagUnavailable: ""
     }
 }
 
@@ -225,21 +235,14 @@ func chargeEstimateTile(from state: EucRideScreenState) -> PevDashboardTile {
     let presentation = state.chargeEstimate.dashboardPresentation
     return PevDashboardTile(
         kind: .chargeEstimate, label: localizedAppText("ride.metric.charge"), metricValue: presentation.metricValue,
-        unit: "", detail: chargeEstimateDetail(presentation.detail), accent: .green)
-}
-
-func chargeEstimateDetail(_ detail: ChargeEstimateDashboardDetail) -> String {
-    switch detail {
-    case .voltageSag(let voltageSag, let estimateDetail):
-        localizedAppText(
-            "ride.charge.detail.with_voltage_sag", voltageSagDetail(voltageSag.detailReadback), estimateDetail)
-    case .standard(let estimateDetail): estimateDetail
-    }
+        unit: "",
+        detail: state.chargeEstimate.kind == .available ? localizedAppText("ride.detail.estimated") : "",
+        accent: .green)
 }
 
 func voltageSagDetail(_ readback: ChargeVoltageSagReadback) -> String {
     localizedAppText(
-        "ride.sag.detail", readback.voltage, readback.current, Int64(readback.effectiveResistanceMilliohms))
+        "ride.sag.detail", readback.voltage)
 }
 
 private func livePowerTile(
@@ -256,14 +259,12 @@ private func livePowerTile(
         )
         metricValue = .available(display: text, accessibility: text)
         fallback = switch source {
-        case .calculatedPackCurrent: localizedAppText("ride.power.calculated_pack_current")
-        case .calculated: localizedAppText("ride.power.calculated_pack_current")
-        case .estimated: localizedAppText("ride.power.estimated")
-        case .reported: localizedAppText("ride.power.live_telemetry")
+        case .calculatedPackCurrent, .calculated, .reported: ""
+        case .estimated: localizedAppText("ride.detail.estimated")
         }
     } else {
         metricValue = .unavailable
-        fallback = localizedAppText("ride.value.unavailable")
+        fallback = ""
     }
     return PevDashboardTile(
         kind: .power,
@@ -281,14 +282,13 @@ func powerFlowDetail(_ direction: PowerFlowDirection?, fallback: String) -> Stri
     case .zero: localizedAppText("telemetry.power_flow.zero")
     case .charging: localizedAppText("telemetry.power_flow.charging")
     case .regeneration: localizedAppText("telemetry.power_flow.regeneration")
-    case .negativeUnknown: localizedAppText("telemetry.power_flow.negative_unknown")
-    case nil: fallback
+    case .negativeUnknown, nil: fallback
     }
 }
 
 private func liveThermalDetail(readback: RiderThermalReadback?) -> String {
     let unit = RideUnits.temperatureUnit
-    guard let readback else { return localizedAppText("ride.value.unavailable") }
+    guard let readback else { return "" }
     let controller = readback.controller.map {
         RideUnits.temperatureText(millicelsius: $0.value, fractionDigits: 0)
     }
@@ -314,7 +314,7 @@ private func liveThermalDetail(readback: RiderThermalReadback?) -> String {
     case let (nil, nil, .some(battery)):
         return localizedAppText("ride.thermal.battery", battery, unit)
     case (nil, nil, nil):
-        return localizedAppText("ride.detail.typed_telemetry")
+        return ""
     }
 }
 

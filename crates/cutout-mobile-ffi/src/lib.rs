@@ -3715,6 +3715,10 @@ pub struct MobileRiderThermalReadbackDto {
 /// One Rust-selected metric in the main live rider dashboard.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum MobileRiderDashboardMetricDescriptorDto {
+    /// Battery percentage, preserving reported or estimated provenance.
+    BatteryLevel {
+        reading: Option<BatteryLevelReading>,
+    },
     /// Render the Rust-owned charge estimate state.
     ChargeEstimate,
     /// Pack voltage; `None` is explicit current unavailability.
@@ -3764,6 +3768,10 @@ pub struct MobileRiderDashboardProjectionDto {
 pub struct MobileRiderDashboardValuesDto {
     /// Current operating state.
     pub operating_state: RideOperatingState,
+    /// Battery percentage reported by the device.
+    pub battery_level_reported: Option<BatteryLevel>,
+    /// Battery percentage estimated by the protocol.
+    pub battery_level_estimated: Option<BatteryLevel>,
     /// Current pack voltage.
     pub voltage: Option<Voltage>,
     /// Current battery current.
@@ -12013,6 +12021,12 @@ pub fn mobile_rider_dashboard_projection_for_values(
 ) -> MobileRiderDashboardProjectionDto {
     cutout_core::RiderDashboardProjection::from_input(cutout_core::RiderDashboardInput {
         operating_state: core_ride_operating_state(values.operating_state),
+        battery_level_reported: values
+            .battery_level_reported
+            .map(|value| Measured::reported(CoreBatteryLevel::from_percent(value.value))),
+        battery_level_estimated: values
+            .battery_level_estimated
+            .map(|value| Measured::estimated(CoreBatteryLevel::from_percent(value.value))),
         voltage: values
             .voltage
             .map(|value| Measured::reported(cutout_core::Voltage::from_millivolts(value.value))),
@@ -12046,6 +12060,8 @@ fn core_rider_dashboard_input(
 ) -> cutout_core::RiderDashboardInput {
     cutout_core::RiderDashboardInput {
         operating_state: core_ride_operating_state(snapshot.operating_state),
+        battery_level_reported: snapshot.battery_level_reported.map(core_battery_level),
+        battery_level_estimated: snapshot.battery_level_estimated.map(core_battery_level),
         voltage: snapshot.voltage.map(core_measured_voltage),
         battery_current: snapshot.battery_current.map(core_measured_battery_current),
         reported_power: snapshot.power.map(|reading| {
@@ -12103,6 +12119,11 @@ impl From<cutout_core::RiderDashboardProjection> for MobileRiderDashboardProject
 impl From<cutout_core::RiderDashboardMetricDescriptor> for MobileRiderDashboardMetricDescriptorDto {
     fn from(descriptor: cutout_core::RiderDashboardMetricDescriptor) -> Self {
         match descriptor {
+            cutout_core::RiderDashboardMetricDescriptor::BatteryLevel { reading } => {
+                Self::BatteryLevel {
+                    reading: reading.map(mobile_battery_level),
+                }
+            }
             cutout_core::RiderDashboardMetricDescriptor::ChargeEstimate => Self::ChargeEstimate,
             cutout_core::RiderDashboardMetricDescriptor::PackVoltage { value } => {
                 Self::PackVoltage {
@@ -13191,6 +13212,7 @@ mod tests {
     #[test]
     fn production_snapshot_projects_supported_rider_metrics_through_mobile_ffi() {
         let core_snapshot = cutout_core::TelemetrySnapshot {
+            battery_level_estimated: Some(Measured::estimated(CoreBatteryLevel::from_percent(62))),
             voltage: Some(Measured::reported(CoreVoltage::from_millivolts(62_800))),
             battery_current: Some(Measured::reported(CoreBatteryCurrent::from_milliamps(0))),
             power: Some(Measured::reported(cutout_core::Power::from_milliwatts(0))),
@@ -13214,7 +13236,14 @@ mod tests {
         assert_eq!(
             projection.dashboard_metrics,
             vec![
-                MobileRiderDashboardMetricDescriptorDto::ChargeEstimate,
+                MobileRiderDashboardMetricDescriptorDto::BatteryLevel {
+                    reading: Some(BatteryLevelReading {
+                        value: BatteryLevel { value: 62 },
+                        source: MobileValueSourceDto::Estimated,
+                        quality: MobileValueQualityDto::Inferred,
+                        verification: MobileVerificationStatusDto::Inferred,
+                    }),
+                },
                 MobileRiderDashboardMetricDescriptorDto::PackVoltage {
                     voltage: Some(Voltage { value: 62_800 }),
                 },

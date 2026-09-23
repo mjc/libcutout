@@ -431,8 +431,8 @@
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Last update %@ ago" } } }
     },
     "euc.warning.live_telemetry_detail" : {
-      "comment" : "Ride warning detail explaining that current telemetry came from the typed Rust/FFI layer.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Live telemetry from typed Rust/FFI state" } } }
+      "comment" : "Status detail when the wheel is supplying current readings.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Receiving wheel data" } } }
     },
     "euc.warning.low_pwm_headroom" : {
       "comment" : "Safety warning detail when PWM headroom is low during riding.",
