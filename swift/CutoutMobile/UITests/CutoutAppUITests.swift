@@ -199,7 +199,7 @@ final class CutoutAppUITests: XCTestCase {
     func testPickerExposesAccessibleCaptureControls() {
         XCTAssertFalse(app.buttons["device-picker.capture-status"].exists)
         XCTAssertFalse(app.buttons["device-picker.open-advanced-capture"].exists)
-        let setup = openAdvancedCapture()
+        let setup = openCaptureSetup()
         let description = app.textFields["captures.description"]
         let start = app.buttons["captures.start"]
         XCTAssertTrue(description.waitForExistence(timeout: 5))
@@ -413,7 +413,7 @@ final class CutoutAppUITests: XCTestCase {
 
     func testCaptureAnnotationUsesOneStatefulAccessibleAction() {
         enterCapture()
-        app.descendants(matching: .any)["captures.labels"].tap()
+        app.buttons["captures.labels"].tap()
 
         let rideActions = app.buttons.matching(
             NSPredicate(format: "identifier BEGINSWITH %@", "capture.label.ride.")
@@ -432,7 +432,7 @@ final class CutoutAppUITests: XCTestCase {
 
     func testCaptureNavigationPreservesRecordingAndLabels() {
         enterCapture()
-        app.descendants(matching: .any)["captures.labels"].tap()
+        app.buttons["captures.labels"].tap()
         app.buttons["capture.label.ride.action"].tap()
         let back = app.navigationBars["Recording"].buttons["BackButton"]
         XCTAssertTrue(back.isHittable)
@@ -441,14 +441,32 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertFalse(app.buttons["captures.new"].isEnabled)
         app.buttons["captures.active"].tap()
         XCTAssertTrue(app.descendants(matching: .any)["capture.screen"].waitForExistence(timeout: 5))
-        app.descendants(matching: .any)["captures.labels"].tap()
+        app.buttons["captures.labels"].tap()
         XCTAssertEqual(app.buttons["capture.label.ride.action"].label, "Stop Ride")
         XCTAssertTrue(app.buttons["capture.stop"].isEnabled)
     }
 
+    func testCaptureLibraryDoneDismissesSetupWithoutEndingRecording() {
+        enterCapture()
+        let back = app.navigationBars["Recording"].buttons["BackButton"]
+        XCTAssertTrue(back.isHittable)
+        back.tap()
+        let done = app.buttons["setup.done"]
+        XCTAssertTrue(done.waitForExistence(timeout: 5))
+        XCTAssertTrue(done.isHittable)
+        done.tap()
+        XCTAssertTrue(app.buttons["device-picker.open-setup"].waitForExistence(timeout: 5))
+        app.buttons["device-picker.open-setup"].tap()
+        let captures = app.buttons["setup.captures"]
+        scrollElementFrameIntoViewport(captures, in: app.descendants(matching: .any)["setup.screen"], maxScrolls: 8)
+        captures.tap()
+        XCTAssertTrue(app.buttons["captures.active"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["captures.new"].isEnabled)
+    }
+
     func testCaptureExposesTypedWriterHealthDetails() {
         enterCapture()
-        app.descendants(matching: .any)["captures.technical"].tap()
+        app.buttons["captures.technical"].tap()
 
         for rowID in [
             "capture-elapsed",
@@ -470,30 +488,30 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertEqual(writer.value as? String, "Healthy")
     }
 
-    func testFinishCaptureReturnsToPickerAfterFinalizing() throws {
-        _ = try finishCaptureAndReturnToPicker()
+    func testFinishCaptureOpensSavedArtifactAndShareSheet() throws {
+        _ = try finishCaptureAndOpenArtifact()
         let share = app.buttons["captures.share"]
         XCTAssertTrue(share.isHittable)
         share.tap()
         XCTAssertTrue(app.otherElements["ActivityListView"].waitForExistence(timeout: 5), app.debugDescription)
     }
 
-    func testFinishCaptureReturnsToAccessiblePickerInLightAppearanceAtAccessibilityDynamicType() throws {
-        _ = try finishCaptureAndReturnToPicker()
+    func testFinishCaptureOpensAccessibleSavedArtifactInLightAppearanceAtAccessibilityDynamicType() throws {
+        _ = try finishCaptureAndOpenArtifact()
         try performVisibleLayoutAccessibilityAudit()
     }
 
-    func testFinishCaptureReturnsToAccessiblePickerInDarkAppearanceAtAccessibilityDynamicType() throws {
-        _ = try finishCaptureAndReturnToPicker()
+    func testFinishCaptureOpensAccessibleSavedArtifactInDarkAppearanceAtAccessibilityDynamicType() throws {
+        _ = try finishCaptureAndOpenArtifact()
         try performVisibleLayoutAccessibilityAudit()
     }
 
-    func testFinishCaptureReturnsToAccessiblePickerWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
-        _ = try finishCaptureAndReturnToPicker(usesLocalizedText: true)
+    func testFinishCaptureOpensAccessibleSavedArtifactWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
+        _ = try finishCaptureAndOpenArtifact(usesLocalizedText: true)
         try performVisibleLayoutAccessibilityAudit()
     }
 
-    private func finishCaptureAndReturnToPicker(usesLocalizedText: Bool = false) throws -> XCUIElement {
+    private func finishCaptureAndOpenArtifact(usesLocalizedText: Bool = false) throws -> XCUIElement {
         enterCapture()
         let finish = app.buttons["capture.stop"]
         XCTAssertTrue(finish.waitForExistence(timeout: 5))
@@ -592,7 +610,7 @@ final class CutoutAppUITests: XCTestCase {
 
     func testCaptureExclusivePedalModeLeavesOneActiveAccessibleAction() {
         enterCapture()
-        app.descendants(matching: .any)["captures.labels"].tap()
+        app.buttons["captures.labels"].tap()
 
         let screen = app.descendants(matching: .any)["capture.screen"]
         let hardPedals = app.buttons["capture.label.pedals_hard.action"]
@@ -989,20 +1007,20 @@ final class CutoutAppUITests: XCTestCase {
         try performVisibleLayoutAccessibilityAudit()
     }
 
-    func testAdvancedCaptureControlsRemainReachableAtAccessibilityDynamicType() throws {
-        try assertAdvancedCaptureControlsReachableAndAccessible()
+    func testCaptureSetupControlsRemainReachableAtAccessibilityDynamicType() throws {
+        try assertCaptureSetupAccessible()
     }
 
-    func testAdvancedCaptureControlsRemainReachableInLightAppearanceAtAccessibilityDynamicType() throws {
-        try assertAdvancedCaptureControlsReachableAndAccessible()
+    func testCaptureSetupControlsRemainReachableInLightAppearanceAtAccessibilityDynamicType() throws {
+        try assertCaptureSetupAccessible()
     }
 
-    func testAdvancedCaptureControlsRemainReachableInDarkAppearanceAtAccessibilityDynamicType() throws {
-        try assertAdvancedCaptureControlsReachableAndAccessible()
+    func testCaptureSetupControlsRemainReachableInDarkAppearanceAtAccessibilityDynamicType() throws {
+        try assertCaptureSetupAccessible()
     }
 
-    func testAdvancedCaptureKeyboardWorkflowRemainsReachableAtAccessibilityDynamicType() throws {
-        let setup = openAdvancedCapture()
+    func testCaptureSetupKeyboardWorkflowRemainsReachableAtAccessibilityDynamicType() throws {
+        let setup = openCaptureSetup()
         let description = app.textFields["captures.description"]
         XCTAssertTrue(description.waitForExistence(timeout: 5))
         description.tap()
@@ -1012,8 +1030,8 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(app.buttons["captures.start"].isHittable)
     }
 
-    func testAdvancedCaptureCancelReturnsToPickerAtAccessibilityDynamicType() {
-        _ = openAdvancedCapture()
+    func testCaptureSetupCancelReturnsToLibraryAtAccessibilityDynamicType() {
+        _ = openCaptureSetup()
         // Dismiss the new-capture sheet without touching the writer or transport.
         let cancel = app.buttons["captures.cancel"]
         XCTAssertTrue(cancel.isHittable)
@@ -1022,18 +1040,18 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(app.buttons["captures.new"].isEnabled)
     }
 
-    func testAdvancedCaptureControlsRemainReachableInRightToLeftLayout() throws {
-        try assertAdvancedCaptureControlsReachableAndAccessible(exercisesKeyboard: true)
+    func testCaptureSetupControlsRemainReachableInRightToLeftLayout() throws {
+        try assertCaptureSetupAccessible(exercisesKeyboard: true)
     }
 
-    func testAdvancedCaptureControlsRemainReachableInLandscapeAtAccessibilityDynamicType() throws {
-        try assertAdvancedCaptureControlsReachableAndAccessible(exercisesKeyboard: true)
+    func testCaptureSetupControlsRemainReachableInLandscapeAtAccessibilityDynamicType() throws {
+        try assertCaptureSetupAccessible(exercisesKeyboard: true)
     }
 
-    private func assertAdvancedCaptureControlsReachableAndAccessible(
+    private func assertCaptureSetupAccessible(
         exercisesKeyboard: Bool = false
     ) throws {
-        let setup = openAdvancedCapture()
+        let setup = openCaptureSetup()
         let description = app.textFields["captures.description"]
         XCTAssertTrue(description.waitForExistence(timeout: 5))
         if exercisesKeyboard {
@@ -1048,8 +1066,8 @@ final class CutoutAppUITests: XCTestCase {
         try performVisibleLayoutAccessibilityAudit()
     }
 
-    func testAdvancedCapturePassesAccessibilityAuditWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
-        try assertAdvancedCaptureControlsReachableAndAccessible()
+    func testCaptureSetupPassesAccessibilityAuditWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
+        try assertCaptureSetupAccessible()
     }
 
     func testVescUseOpensAnAccessibleLiveRide() throws {
@@ -3139,7 +3157,7 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     private func enterCapture() {
-        _ = openAdvancedCapture()
+        _ = openCaptureSetup()
         let start = app.buttons["captures.start"]
         XCTAssertTrue(start.waitForExistence(timeout: 5))
         XCTAssertTrue(start.isEnabled)
@@ -3190,7 +3208,7 @@ final class CutoutAppUITests: XCTestCase {
         guard exercisesLabels else {
             return
         }
-        app.descendants(matching: .any)["captures.labels"].tap()
+        app.buttons["captures.labels"].tap()
         let firstAnnotation = reachableCaptureAnnotation("ride", in: screen)
         XCTAssertTrue(firstAnnotation.isHittable)
         let firstAnnotationInitialLabel = firstAnnotation.label
@@ -3207,11 +3225,14 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertNotEqual(lastAnnotation.label, lastAnnotationInitialLabel)
     }
 
-    private func openAdvancedCapture() -> XCUIElement {
+    private func openCaptureSetup() -> XCUIElement {
         let setup = app.buttons["device-picker.open-setup"]
         XCTAssertTrue(setup.waitForExistence(timeout: 5))
         setup.tap()
         let captures = app.buttons["setup.captures"]
+        scrollElementFrameIntoViewport(
+            captures, in: app.descendants(matching: .any)["setup.screen"], maxScrolls: 8
+        )
         XCTAssertTrue(captures.waitForExistence(timeout: 5))
         captures.tap()
         app.buttons["captures.new"].tap()
@@ -3422,32 +3443,32 @@ final class CutoutAppUITests: XCTestCase {
                     "testCapturePassesAccessibilityAuditInRightToLeftLayout",
                 ],
                 "Bluetooth scan complete": [
-                    "testFinishCaptureReturnsToAccessiblePickerInDarkAppearanceAtAccessibilityDynamicType",
-                    "testFinishCaptureReturnsToAccessiblePickerInLightAppearanceAtAccessibilityDynamicType",
+                    "testFinishCaptureOpensAccessibleSavedArtifactInDarkAppearanceAtAccessibilityDynamicType",
+                    "testFinishCaptureOpensAccessibleSavedArtifactInLightAppearanceAtAccessibilityDynamicType",
                 ],
                 "Capture unknown device": [
-                    "testAdvancedCaptureControlsRemainReachableAtAccessibilityDynamicType",
-                    "testAdvancedCaptureControlsRemainReachableInLightAppearanceAtAccessibilityDynamicType",
+                    "testCaptureSetupControlsRemainReachableAtAccessibilityDynamicType",
+                    "testCaptureSetupControlsRemainReachableInLightAppearanceAtAccessibilityDynamicType",
                 ],
                 "Choose device": [
-                    "testFinishCaptureReturnsToAccessiblePickerInDarkAppearanceAtAccessibilityDynamicType",
-                    "testFinishCaptureReturnsToAccessiblePickerInLightAppearanceAtAccessibilityDynamicType",
+                    "testFinishCaptureOpensAccessibleSavedArtifactInDarkAppearanceAtAccessibilityDynamicType",
+                    "testFinishCaptureOpensAccessibleSavedArtifactInLightAppearanceAtAccessibilityDynamicType",
                     "testProductionPickerPassesAccessibilityAuditInDarkAppearanceAtAccessibilityDynamicType",
                     "testProductionPickerPassesAccessibilityAuditInLightAppearanceAtAccessibilityDynamicType",
                     "testProductionPickerPassesAccessibilityAuditInRightToLeftLayout",
                 ],
                 "Choose device Choose device": [
                     "testDisconnectKeepsSavedDeviceAccessibleWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType",
-                    "testFinishCaptureReturnsToAccessiblePickerWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType",
+                    "testFinishCaptureOpensAccessibleSavedArtifactWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType",
                     "testProductionPickerPassesAccessibilityAuditWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType",
                 ],
                 "CutOut · BMS CutOut · BMS": [
                     "testEucBmsPassesAccessibilityAuditWithPseudolocalizedTextAtAccessibilityDynamicTypeAndIncreasedContrast",
                 ],
                 "CutOut": [
-                    "testAdvancedCaptureControlsRemainReachableAtAccessibilityDynamicType",
-                    "testAdvancedCaptureControlsRemainReachableInDarkAppearanceAtAccessibilityDynamicType",
-                    "testAdvancedCaptureControlsRemainReachableInLightAppearanceAtAccessibilityDynamicType",
+                    "testCaptureSetupControlsRemainReachableAtAccessibilityDynamicType",
+                    "testCaptureSetupControlsRemainReachableInDarkAppearanceAtAccessibilityDynamicType",
+                    "testCaptureSetupControlsRemainReachableInLightAppearanceAtAccessibilityDynamicType",
                 ],
                 "Nearby Bluetooth devices": [
                     "testBluetoothPermissionDeniedPickerDoesNotOfferUseOrRideInDarkAppearanceAtAccessibilityDynamicType",
@@ -3455,13 +3476,13 @@ final class CutoutAppUITests: XCTestCase {
                     "testBluetoothPermissionDeniedPickerDoesNotOfferUseOrRideInRightToLeftLayout",
                     "testBluetoothUnavailablePickerDoesNotOfferUseOrRideInDarkAppearanceAtAccessibilityDynamicType",
                     "testBluetoothUnavailablePickerDoesNotOfferUseOrRideInRightToLeftLayout",
-                    "testFinishCaptureReturnsToAccessiblePickerInDarkAppearanceAtAccessibilityDynamicType",
-                    "testFinishCaptureReturnsToAccessiblePickerInLightAppearanceAtAccessibilityDynamicType",
+                    "testFinishCaptureOpensAccessibleSavedArtifactInDarkAppearanceAtAccessibilityDynamicType",
+                    "testFinishCaptureOpensAccessibleSavedArtifactInLightAppearanceAtAccessibilityDynamicType",
                     "testEucUseShowsConnectingBeforeRideInRightToLeftLayout",
                     "testVescUseShowsConnectingBeforeRideInRightToLeftLayout",
                 ],
                 "Nearby Bluetooth devices Nearby Bluetooth devices": [
-                    "testFinishCaptureReturnsToAccessiblePickerWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType",
+                    "testFinishCaptureOpensAccessibleSavedArtifactWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType",
                 ],
                 "Packets": [
                     "testBackgroundFlushRealWriterRemainsUsableAfterReactivatingCaptureAtAccessibilityDynamicType",
@@ -3538,7 +3559,7 @@ final class CutoutAppUITests: XCTestCase {
                issue.detailedDescription
                    == "This element appears to display text that should be represented using the accessibility API.",
                [
-                   "testAdvancedCaptureControlsRemainReachableInRightToLeftLayout",
+                   "testCaptureSetupControlsRemainReachableInRightToLeftLayout",
                    "testProductionSurfacesPassAccessibilityAudit",
                ].contains(where: self.name.contains),
                issue.element == nil {
@@ -3554,7 +3575,7 @@ final class CutoutAppUITests: XCTestCase {
                issue.element?.label
                    == "Enter the device family and model, for example EUC NOSFET Aeon Enter the device family and model, for example EUC NOSFET Aeon",
                self.name.contains(
-                   "testAdvancedCapturePassesAccessibilityAuditWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType"
+                   "testCaptureSetupPassesAccessibilityAuditWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType"
                ) {
                 // The same Xcode activity tree resolves this visual help copy
                 // as a StaticText accessibility element by its complete label.

@@ -152,8 +152,8 @@ final class CutoutAppModel {
     /// New route presentations should use the explicitly scoped error properties.
     var rideMapError: MobileRideMapError? { rideMapLiveError }
     private(set) var liveActivityError: LiveActivityRideLifecycleError?
-    let capture = CaptureFeatureModel()
-    private(set) var isRecordOnlyCapture = false
+    let capture: CaptureFeatureModel
+    var isRecordOnlyCapture: Bool { capture.isManualCapture }
     private(set) var hasSavedDevice = false
     private(set) var settings: DeviceSettings?
     private(set) var phoneAlarmSettings: MobilePhoneAlarmPreferencesDto?
@@ -580,6 +580,7 @@ final class CutoutAppModel {
 #endif
         self.permitsStoredDeviceAutoPairing = permitsStoredDeviceAutoPairing
         self.core = core
+        capture = CaptureFeatureModel(sessionState: core.rideSessionStateHandle)
         rideMapStorageError = core.rideMapStorageError
         rideMapAvailability = core.rideMapAvailability
         liveActivityCoordinator = LiveActivityRideLifecycleCoordinator(
@@ -2483,6 +2484,7 @@ final class CutoutAppModel {
     }
 
     func pair(platformIdentifier: String) -> Bool {
+        guard core.rideSessionStateHandle.captureLifecycleSnapshot().canPair else { return false }
         switch connectionState {
         case .connecting, .retrying, .connected:
             let isSameSelection = connectionState.selection?.platformIdentifier == platformIdentifier
@@ -2511,17 +2513,12 @@ final class CutoutAppModel {
         connectionState = .connecting(selection, phase: .discoveringServices)
         permitsStoredDeviceAutoPairing = true
         phase = .discoveringServices
-        let previousCaptureDevice = capture.device
-        let previousCaptureOrigin = capture.isUserInitiated
-        capture.device = CaptureDeviceIdentity(row: selectedRow)
-        capture.isUserInitiated = false
-        let didPair = core.pair(platformIdentifier: platformIdentifier)
+        let didPair = capture.requestStart(device: CaptureDeviceIdentity(row: selectedRow), description: nil) {
+            core.pair(platformIdentifier: platformIdentifier)
+        }
         if didPair {
             syncPhoneAlarmPreferences()
             drainPhoneAlarmActions()
-            isRecordOnlyCapture = false
-            capture.label = nil
-            capture.deviceKind = nil
             let displayName = Self.meaningfulDeviceName(
                 selectedRow.title,
                 identity: platformIdentifier
@@ -2547,8 +2544,6 @@ final class CutoutAppModel {
             liveActivityGlyph = liveActivityGlyph(for: selectedRow)
             syncLiveActivity()
         } else {
-            capture.device = previousCaptureDevice
-            capture.isUserInitiated = previousCaptureOrigin
             connectionState = .picker
             permitsStoredDeviceAutoPairing = false
             phase = .scanning
@@ -2561,56 +2556,26 @@ final class CutoutAppModel {
     }
 
     func recordOnly(platformIdentifier: String, deviceKind: String) -> Bool {
+        guard core.rideSessionStateHandle.captureLifecycleSnapshot().canStart else { return false }
         let trimmedKind = deviceKind.trimmingCharacters(in: .whitespacesAndNewlines)
         let annotationKind = trimmedKind
             .replacingOccurrences(of: "\n", with: " ")
             .replacingOccurrences(of: "\r", with: " ")
             .replacingOccurrences(of: "=", with: " ")
         let annotations = annotationKind.isEmpty ? [] : ["capture_description=\(annotationKind)"]
-        let previousCapture = (
-            status: capture.status,
-            progress: capture.progress,
-            isFinishing: capture.isFinishing,
-            activeLabels: capture.activeLabels,
-            labelState: capture.labelState,
-            fileName: capture.fileName,
-            latestGeneration: capture.latestGeneration,
-            activeGeneration: capture.activeGeneration,
-            notificationCount: capture.notificationCount,
-            label: capture.label,
-            deviceKind: capture.deviceKind,
-            device: capture.device,
-            isUserInitiated: capture.isUserInitiated
-        )
-        resetCaptureSession()
-        capture.device = devicePickerScanState?.rows.first { $0.id == platformIdentifier }.map(CaptureDeviceIdentity.init)
-        capture.isUserInitiated = true
-        let didStart = core.recordOnly(
-            platformIdentifier: platformIdentifier,
-            note: "user-initiated Bluetooth capture",
-            annotations: annotations
-        )
-        guard didStart else {
-            capture.status = previousCapture.status
-            capture.progress = previousCapture.progress
-            capture.isFinishing = previousCapture.isFinishing
-            capture.activeLabels = previousCapture.activeLabels
-            capture.labelState = previousCapture.labelState
-            capture.fileName = previousCapture.fileName
-            capture.latestGeneration = previousCapture.latestGeneration
-            capture.activeGeneration = previousCapture.activeGeneration
-            capture.notificationCount = previousCapture.notificationCount
-            capture.label = previousCapture.label
-            capture.deviceKind = previousCapture.deviceKind
-            capture.device = previousCapture.device
-            capture.isUserInitiated = previousCapture.isUserInitiated
-            return false
+        let device = devicePickerScanState?.rows.first { $0.id == platformIdentifier }.map(CaptureDeviceIdentity.init)
+        let didStart = capture.requestStart(device: device, description: annotationKind.isEmpty ? nil : annotationKind) {
+            core.recordOnly(
+                platformIdentifier: platformIdentifier,
+                note: "user-initiated Bluetooth capture",
+                annotations: annotations
+            )
         }
+        guard didStart else { return false }
+        capture.apply(.lifecycle(core.rideSessionStateHandle.captureLifecycleSnapshot()))
 
         connectionState = .picker
         permitsStoredDeviceAutoPairing = false
-        isRecordOnlyCapture = true
-        capture.deviceKind = annotationKind.isEmpty ? nil : annotationKind
         liveActivityIdentity = nil
         liveActivityGlyph = .electricUnicycle
         syncLiveActivity()
@@ -2621,10 +2586,6 @@ final class CutoutAppModel {
         pair(platformIdentifier: platformIdentifier)
     }
 
-    private func resetCaptureSession() {
-        capture.reset()
-    }
-
     func startCaptureLabel(_ label: CaptureQuickLabel) {
         capture.startLabel(label, annotate: core.annotateCapture(label:))
     }
@@ -2632,9 +2593,7 @@ final class CutoutAppModel {
     @discardableResult
     func flushCapture() async -> Bool {
         let didFlush = await core.flushCapture()
-        if !didFlush, capture.status?.isRecording == true {
-            capture.status = .failed
-        }
+        capture.apply(.lifecycle(core.rideSessionStateHandle.captureLifecycleSnapshot()))
         return didFlush
     }
 
@@ -2709,20 +2668,7 @@ final class CutoutAppModel {
 
     @discardableResult
     func finishCapture() async -> Bool {
-        guard isRecordOnlyCapture, !capture.isFinishing else { return false }
-        let generation = capture.activeGeneration
-        capture.isFinishing = true
-
-        let flushed = await core.flushCapture()
-        guard capture.activeGeneration == generation else { return false }
-        guard flushed else {
-            capture.status = .failed
-            capture.isFinishing = false
-            return false
-        }
-
-        disconnectTransport()
-        return true
+        await core.finishCapture()
     }
 
     func stopCaptureLabel(_ label: CaptureQuickLabel) {
@@ -2733,10 +2679,7 @@ final class CutoutAppModel {
         applyPhoneAlarmActions(core.rideSessionStateHandle.deactivatePhoneAlarmDevice())
         phoneAlarmSettings = nil
         endLiveActivity(reason: .disconnected)
-        isRecordOnlyCapture = false
         capture.clearLabels()
-        capture.label = nil
-        capture.deviceKind = nil
         connectionState = .picker
         phase = .scanning
         liveActivityIdentity = nil
@@ -2892,10 +2835,6 @@ final class CutoutAppModel {
                 // attempt must never silently turn a known wheel into the capture screen when
                 // protocol detection times out (for example while the wheel is powered off).
                 if let selection = connectionState.selection {
-                    isRecordOnlyCapture = false
-                    capture.deviceKind = nil
-                    capture.status = nil
-                    capture.progress = nil
                     connectionState = .failed(
                         selection,
                         .identificationFailed(.timedOut)
@@ -2905,10 +2844,7 @@ final class CutoutAppModel {
                     syncLiveActivity()
                     break
                 }
-                capture.deviceKind = core.protocolIdentityCandidate?.productCategory
-                    ?? connectionState.selection?.title
                 connectionState = .picker
-                isRecordOnlyCapture = true
                 liveActivityIdentity = nil
                 syncLiveActivity()
                 break

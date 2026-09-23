@@ -10,7 +10,7 @@ struct BluetoothCapturesView: View {
 
     var body: some View {
         List {
-            if model.capture.activeGeneration != nil || model.isRecordOnlyCapture {
+            if model.capture.activeGeneration != nil {
                 Section {
                     NavigationLink {
                         CaptureRouteView(model: model, finishCapture: finish)
@@ -39,7 +39,7 @@ struct BluetoothCapturesView: View {
                 .buttonStyle(.borderedProminent)
                 .tint(PevColors.yellow)
                 .foregroundStyle(.black)
-                .disabled(model.capture.activeGeneration != nil || model.isRecordOnlyCapture)
+                .disabled(!model.capture.lifecycle.canStart)
                 .accessibilityIdentifier("captures.new")
             }
 

@@ -16,6 +16,8 @@ mod phone_alarm;
 pub use phone_alarm::*;
 mod capture_labels;
 pub use capture_labels::*;
+mod capture_lifecycle;
+pub use capture_lifecycle::*;
 
 use std::{
     collections::VecDeque,
@@ -10759,9 +10761,9 @@ impl MobilePevcapCaptureBuilder {
     /// Returns `false` if the path already exists, preserving the existing capture.
     pub fn start_writer(&self, path: String) -> bool {
         let mut slot = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
-        if !matches!(*slot, CaptureWriterSlot::Ready) {
+        let CaptureWriterSlot::Ready = *slot else {
             return false;
-        }
+        };
         let metadata = self.metadata();
         let writer = match CaptureWriter::start(
             PathBuf::from(path),

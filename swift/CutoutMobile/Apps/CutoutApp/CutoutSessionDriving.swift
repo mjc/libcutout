@@ -37,6 +37,7 @@ protocol CutoutSessionDriving: AnyObject {
     func updateMusicCapturePolicy(_ policy: MobileMusicHistoryPolicyDto)
     func updateMusicCaptureObservation(_ observation: MobilePevcapMusicEventDto?)
     func flushCapture() async -> Bool
+    func finishCapture() async -> Bool
     func disconnectAndScan()
     func submitDeviceSetting(token: ConnectionAttemptToken, id: DeviceSettingID, value: DeviceSettingValue) throws
     func submitDeviceAction(token: ConnectionAttemptToken, id: DeviceActionID) throws

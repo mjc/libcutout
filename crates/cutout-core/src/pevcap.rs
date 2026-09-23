@@ -269,6 +269,50 @@ mod capture_label_transition_tests {
     use super::*;
 
     #[test]
+    fn capture_label_exclusivity_is_irreflexive_and_symmetric() {
+        for left in CaptureSessionLabel::ALL {
+            assert!(!left.is_mutually_exclusive(left), "{}", left.slug());
+            for right in CaptureSessionLabel::ALL {
+                assert_eq!(
+                    left.is_mutually_exclusive(right),
+                    right.is_mutually_exclusive(left)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn capture_label_closure_is_ordered_and_idempotent() {
+        let mut labels = CaptureLabelState::default();
+        labels.start(CaptureSessionLabel::Ride).for_each(drop);
+        labels.start(CaptureSessionLabel::Balancing).for_each(drop);
+        assert_eq!(
+            labels.close().collect::<Vec<_>>(),
+            [
+                CaptureLabelTransition::Stopped(CaptureSessionLabel::Ride),
+                CaptureLabelTransition::Stopped(CaptureSessionLabel::Balancing),
+            ]
+        );
+        assert_eq!(labels.close().count(), 0);
+        assert!(labels.active().is_empty());
+        for label in CaptureSessionLabel::ALL {
+            for boundary in [
+                CaptureLabelTransition::Started(label),
+                CaptureLabelTransition::Stopped(label),
+            ] {
+                assert_eq!(
+                    CaptureLabelTransition::from_annotation_value(&boundary.annotation_value()),
+                    Some(boundary)
+                );
+            }
+        }
+        assert_eq!(
+            CaptureLabelTransition::from_annotation_value("custom_start"),
+            None
+        );
+    }
+
+    #[test]
     fn exclusive_capture_labels_stop_before_starting_the_replacement() {
         let mut labels = CaptureLabelState::default();
         assert_eq!(labels.start(CaptureSessionLabel::LowBeamOn).count(), 1);
@@ -296,6 +340,24 @@ pub enum CaptureLabelTransition {
 }
 
 impl CaptureLabelTransition {
+    /// Parses an interval boundary using the existing capture-label vocabulary.
+    #[must_use]
+    pub fn from_annotation_value(value: &str) -> Option<Self> {
+        let (slug, starts) = if let Some(slug) = value.strip_suffix("_start") {
+            (slug, true)
+        } else {
+            (value.strip_suffix("_stop")?, false)
+        };
+        let label = CaptureSessionLabel::ALL
+            .into_iter()
+            .find(|label| label.slug() == slug)?;
+        Some(if starts {
+            Self::Started(label)
+        } else {
+            Self::Stopped(label)
+        })
+    }
+
     /// Stable value of the existing `capture_label` annotation.
     #[must_use]
     pub fn annotation_value(self) -> String {
@@ -347,32 +409,30 @@ impl CaptureLabelState {
         Some(CaptureLabelTransition::Stopped(label))
     }
 
-    /// Clears presentation intervals at the capture lifecycle boundary.
-    pub fn clear(&mut self) {
-        self.active.clear();
+    /// Closes every active interval in start order; repeated closure emits nothing.
+    pub fn close(&mut self) -> impl Iterator<Item = CaptureLabelTransition> + use<> {
+        std::mem::take(&mut self.active)
+            .into_iter()
+            .map(CaptureLabelTransition::Stopped)
     }
 }
 
 impl CaptureSessionLabel {
     /// Whether two labels describe incompatible observations of the same feature.
     #[must_use]
-    pub const fn is_mutually_exclusive(self, other: Self) -> bool {
-        matches!(
-            (self, other),
-            (
-                Self::LowBeamOn | Self::LowBeamOff,
-                Self::LowBeamOn | Self::LowBeamOff
-            ) | (
-                Self::HighBeamOn | Self::HighBeamOff,
-                Self::HighBeamOn | Self::HighBeamOff
-            ) | (
-                Self::PedalsHard | Self::PedalsMedium | Self::PedalsSoft,
-                Self::PedalsHard | Self::PedalsMedium | Self::PedalsSoft
-            ) | (
-                Self::SoftwareLock | Self::SoftwareUnlock,
-                Self::SoftwareLock | Self::SoftwareUnlock
-            )
-        )
+    pub fn is_mutually_exclusive(self, other: Self) -> bool {
+        match self {
+            Self::LowBeamOn => other == Self::LowBeamOff,
+            Self::LowBeamOff => other == Self::LowBeamOn,
+            Self::HighBeamOn => other == Self::HighBeamOff,
+            Self::HighBeamOff => other == Self::HighBeamOn,
+            Self::PedalsHard => [Self::PedalsMedium, Self::PedalsSoft].contains(&other),
+            Self::PedalsMedium => [Self::PedalsHard, Self::PedalsSoft].contains(&other),
+            Self::PedalsSoft => [Self::PedalsHard, Self::PedalsMedium].contains(&other),
+            Self::SoftwareLock => other == Self::SoftwareUnlock,
+            Self::SoftwareUnlock => other == Self::SoftwareLock,
+            _ => false,
+        }
     }
 }
 

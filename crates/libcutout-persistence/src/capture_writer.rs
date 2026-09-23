@@ -2,7 +2,8 @@
 //! This is the existing streaming writer, independent of any mobile binding or UI.
 
 use cutout_core::{
-    GattChannel, GattFingerprint, PevcapHeader, PevcapLocationSample, PevcapMusicEvent,
+    CaptureLabelState, CaptureLabelTransition, GattChannel, GattFingerprint,
+    PEVCAP_CAPTURE_LABEL_ANNOTATION_KEY, PevcapHeader, PevcapLocationSample, PevcapMusicEvent,
     PevcapRecord, PevcapResolvedIdentity, TransportWriteLimit, WallClockUnixTimestamp,
 };
 use std::{
@@ -168,8 +169,30 @@ enum CaptureWriterMessage {
     Location(PevcapLocationSample),
     Music(PevcapMusicEvent),
     Metadata(CaptureMetadata),
-    Flush(SyncSender<Result<(), String>>),
-    Finish(SyncSender<Result<(), String>>),
+    Barrier(CaptureBarrier, SyncSender<Result<(), String>>),
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum CaptureBarrier {
+    Flush,
+    Finish,
+}
+
+struct CaptureFlushState {
+    bytes_since_flush: u64,
+    last_flush: Instant,
+    last_sync: Instant,
+}
+
+impl Default for CaptureFlushState {
+    fn default() -> Self {
+        let now = Instant::now();
+        Self {
+            bytes_since_flush: 0,
+            last_flush: now,
+            last_sync: now,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -227,11 +250,9 @@ impl CaptureWriter {
         metadata: &CaptureMetadata,
     ) -> Result<Self, String> {
         let header = capture_header(wall_clock_start_unix_ms, platform_id, write_limit, metadata)?;
-        let file = OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&path)
-            .map_err(|error| error.to_string())?;
+        let file = sync_parent_directory_after(&path, || {
+            OpenOptions::new().create_new(true).write(true).open(&path)
+        })?;
         let (sender, receiver) = sync_channel(CAPTURE_WRITER_QUEUE_CAPACITY);
         let records = Arc::new(CaptureRecordPool::new(CAPTURE_WRITER_QUEUE_CAPACITY));
         let state = Arc::new(CaptureWriterState::default());
@@ -332,7 +353,7 @@ impl CaptureWriter {
     /// Returns queue, worker, or storage failure.
     pub fn flush(&self) -> Result<(), String> {
         let (sender, receiver) = sync_channel(0);
-        if !self.try_send(CaptureWriterMessage::Flush(sender)) {
+        if !self.try_send(CaptureWriterMessage::Barrier(CaptureBarrier::Flush, sender)) {
             return Err(self
                 .state
                 .status()
@@ -350,7 +371,10 @@ impl CaptureWriter {
     /// Returns queue, worker, or storage failure; no saved artifact is produced.
     pub fn finish(mut self) -> Result<SavedCaptureArtifact, String> {
         let (sender, receiver) = sync_channel(0);
-        if !self.try_send(CaptureWriterMessage::Finish(sender)) {
+        if !self.try_send(CaptureWriterMessage::Barrier(
+            CaptureBarrier::Finish,
+            sender,
+        )) {
             return Err(self
                 .state
                 .status()
@@ -464,14 +488,11 @@ fn write_capture_stream(
         .get_mut()
         .sync_data()
         .map_err(|error| error.to_string())?;
-    let mut bytes_since_flush = 0_u64;
-    let mut last_flush = Instant::now();
-    let mut last_sync = Instant::now();
+    let mut flush = CaptureFlushState::default();
     let mut pending_metadata = None;
 
     while let Ok(message) = receiver.recv() {
         state.queued_messages.fetch_sub(1, Ordering::AcqRel);
-        let finishes = matches!(&message, CaptureWriterMessage::Finish(_));
         let line = match message {
             CaptureWriterMessage::Record => Some(
                 records
@@ -492,71 +513,71 @@ fn write_capture_stream(
                 pending_metadata = Some(metadata);
                 None
             }
-            CaptureWriterMessage::Flush(reply) | CaptureWriterMessage::Finish(reply) => {
-                let result = rewrite_pending_capture_metadata(
+            CaptureWriterMessage::Barrier(kind, reply) => {
+                let result = flush_capture_barrier(
                     path,
                     &mut writer,
                     header,
                     &mut pending_metadata,
                     state,
-                )
-                .and_then(|rewrote_metadata| {
-                    if rewrote_metadata {
-                        bytes_since_flush = 0;
-                        last_flush = Instant::now();
-                        last_sync = last_flush;
-                        Ok(())
-                    } else {
-                        maybe_flush(
-                            &mut writer,
-                            &mut bytes_since_flush,
-                            &mut last_flush,
-                            &mut last_sync,
-                            true,
-                        )
-                    }
-                });
+                    &mut flush,
+                    kind,
+                );
                 reply_capture_writer_result(result, &reply)?;
-                if finishes {
+                if kind == CaptureBarrier::Finish {
                     return Ok(());
                 }
                 None
             }
         };
         if let Some(line) = line {
-            write_capture_event_line(
-                &mut writer,
-                &line,
-                state,
-                &mut bytes_since_flush,
-                &mut last_flush,
-                &mut last_sync,
-            )?;
+            write_capture_event_line(&mut writer, &line, state, &mut flush)?;
         }
     }
-    rewrite_pending_capture_metadata(path, &mut writer, header, &mut pending_metadata, state)?;
-    writer.flush().map_err(|error| error.to_string())?;
-    writer
-        .get_mut()
-        .sync_data()
-        .map_err(|error| error.to_string())
+    flush_capture_barrier(
+        path,
+        &mut writer,
+        header,
+        &mut pending_metadata,
+        state,
+        &mut flush,
+        CaptureBarrier::Finish,
+    )
+}
+
+fn flush_capture_barrier(
+    path: &Path,
+    writer: &mut BufWriter<File>,
+    header: &mut PevcapHeader,
+    pending_metadata: &mut Option<CaptureMetadata>,
+    state: &CaptureWriterState,
+    flush: &mut CaptureFlushState,
+    kind: CaptureBarrier,
+) -> Result<(), String> {
+    if kind == CaptureBarrier::Finish {
+        close_pending_capture_labels(header, pending_metadata)?;
+    }
+    if rewrite_pending_capture_metadata(path, writer, header, pending_metadata, state)? {
+        *flush = CaptureFlushState::default();
+        Ok(())
+    } else {
+        maybe_flush(writer, flush, true)
+    }
 }
 
 fn write_capture_event_line(
     writer: &mut BufWriter<File>,
     line: &str,
     state: &CaptureWriterState,
-    bytes_since_flush: &mut u64,
-    last_flush: &mut Instant,
-    last_sync: &mut Instant,
+    flush: &mut CaptureFlushState,
 ) -> Result<(), String> {
     let bytes = write_line(writer, line)? as u64;
     state.bytes_written.fetch_add(bytes, Ordering::AcqRel);
     state
         .physical_bytes_written
         .fetch_add(bytes, Ordering::AcqRel);
-    *bytes_since_flush = (*bytes_since_flush).saturating_add(bytes);
-    maybe_flush(writer, bytes_since_flush, last_flush, last_sync, false)
+    flush.bytes_since_flush = flush.bytes_since_flush.saturating_add(bytes);
+    maybe_flush(writer, flush, false)
 }
 
 fn reply_capture_writer_result(
@@ -591,6 +612,57 @@ fn rewrite_pending_capture_metadata(
     Ok(true)
 }
 
+/// Finalization owns interval closure, including transport loss and producer drop.
+/// A background flush is not an interval boundary. Never claim a saved artifact
+/// if its bounded header cannot retain the required closing evidence.
+fn close_pending_capture_labels(
+    header: &PevcapHeader,
+    pending_metadata: &mut Option<CaptureMetadata>,
+) -> Result<(), String> {
+    let annotations = pending_metadata
+        .as_ref()
+        .map_or(header.annotations.as_slice(), |metadata| {
+            metadata.annotations.as_slice()
+        });
+    let mut labels = CaptureLabelState::default();
+    for annotation in annotations {
+        let Some((key, value)) = annotation.split_once('=') else {
+            continue;
+        };
+        if key != PEVCAP_CAPTURE_LABEL_ANNOTATION_KEY {
+            continue;
+        }
+        match CaptureLabelTransition::from_annotation_value(value) {
+            Some(CaptureLabelTransition::Started(label)) => {
+                labels.start(label).for_each(drop);
+            }
+            Some(CaptureLabelTransition::Stopped(label)) => {
+                labels.stop(label);
+            }
+            None => {}
+        }
+    }
+    if labels.active().is_empty() {
+        return Ok(());
+    }
+    if annotations.len() + labels.active().len() > cutout_core::PEVCAP_MAX_ANNOTATIONS {
+        return Err("capture annotation capacity cannot retain closing label boundaries".into());
+    }
+    let metadata = pending_metadata.get_or_insert_with(|| CaptureMetadata {
+        advertised_services: header.advertised_services.to_vec(),
+        gatt_fingerprints: header.gatt_fingerprints.to_vec(),
+        resolved_identity: header.resolved_identity.clone(),
+        annotations: header.annotations.to_vec(),
+    });
+    metadata.annotations.extend(labels.close().map(|boundary| {
+        format!(
+            "{PEVCAP_CAPTURE_LABEL_ANNOTATION_KEY}={}",
+            boundary.annotation_value()
+        )
+    }));
+    Ok(())
+}
+
 fn write_line(writer: &mut BufWriter<File>, line: &str) -> Result<usize, String> {
     writer
         .write_all(line.as_bytes())
@@ -601,26 +673,24 @@ fn write_line(writer: &mut BufWriter<File>, line: &str) -> Result<usize, String>
 
 fn maybe_flush(
     writer: &mut BufWriter<File>,
-    bytes_since_flush: &mut u64,
-    last_flush: &mut Instant,
-    last_sync: &mut Instant,
+    flush: &mut CaptureFlushState,
     force_sync: bool,
 ) -> Result<(), String> {
     let now = Instant::now();
-    if *bytes_since_flush >= CAPTURE_WRITER_BUFFER_BYTES
-        || now.duration_since(*last_flush) >= CAPTURE_WRITER_FLUSH_INTERVAL
+    if flush.bytes_since_flush >= CAPTURE_WRITER_BUFFER_BYTES
+        || now.duration_since(flush.last_flush) >= CAPTURE_WRITER_FLUSH_INTERVAL
         || force_sync
     {
         writer.flush().map_err(|error| error.to_string())?;
-        *bytes_since_flush = 0;
-        *last_flush = now;
+        flush.bytes_since_flush = 0;
+        flush.last_flush = now;
     }
-    if force_sync || now.duration_since(*last_sync) >= CAPTURE_WRITER_SYNC_INTERVAL {
+    if force_sync || now.duration_since(flush.last_sync) >= CAPTURE_WRITER_SYNC_INTERVAL {
         writer
             .get_mut()
             .sync_data()
             .map_err(|error| error.to_string())?;
-        *last_sync = now;
+        flush.last_sync = now;
     }
     Ok(())
 }
@@ -656,7 +726,7 @@ fn rewrite_capture_header(
         std::io::copy(&mut reader, &mut output).map_err(|error| error.to_string())?;
     output.sync_data().map_err(|error| error.to_string())?;
     drop(output);
-    fs::rename(&temp_path, path).map_err(|error| error.to_string())?;
+    sync_parent_directory_after(path, || fs::rename(&temp_path, path))?;
     let file = OpenOptions::new()
         .append(true)
         .open(path)
@@ -672,9 +742,137 @@ fn write_line_to_file(file: &mut File, line: &str) -> Result<usize, String> {
         .map_err(|error| error.to_string())
 }
 
+/// File data sync does not persist creation or replacement of its directory entry.
+fn sync_parent_directory_after<T>(
+    path: &Path,
+    operation: impl FnOnce() -> std::io::Result<T>,
+) -> Result<T, String> {
+    let result = operation().map_err(|error| error.to_string())?;
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    File::open(parent)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|error| error.to_string())?;
+    Ok(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn directory_sync_accepts_relative_file_names_and_preserves_operation_errors() {
+        assert_eq!(
+            sync_parent_directory_after(Path::new("capture.jsonl"), || Ok(42)).unwrap(),
+            42
+        );
+        let error = sync_parent_directory_after(Path::new("capture.jsonl"), || {
+            Err::<(), _>(std::io::Error::other("creation rejected"))
+        })
+        .unwrap_err();
+        assert_eq!(error, "creation rejected");
+    }
+
+    #[test]
+    fn capture_with_no_room_for_label_closure_cannot_produce_a_saved_receipt() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("capture.jsonl");
+        let mut annotations = vec!["note=test".into(); cutout_core::PEVCAP_MAX_ANNOTATIONS - 1];
+        annotations.push("capture_label=ride_start".into());
+        let metadata = CaptureMetadata {
+            advertised_services: vec![],
+            gatt_fingerprints: vec![],
+            resolved_identity: None,
+            annotations,
+        };
+        let writer = CaptureWriter::start(
+            path.clone(),
+            WallClockUnixTimestamp::new(0),
+            "test",
+            None,
+            &metadata,
+        )
+        .unwrap();
+        let result = writer.finish();
+        assert!(result.unwrap_err().contains("closing label boundaries"));
+        assert!(path.exists(), "failed artifact remains recoverable");
+    }
+
+    #[test]
+    fn finalization_uses_latest_metadata_and_does_not_duplicate_closed_intervals() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("capture.jsonl");
+        let mut metadata = CaptureMetadata {
+            advertised_services: vec![],
+            gatt_fingerprints: vec![],
+            resolved_identity: None,
+            annotations: vec!["capture_label=ride_start".into()],
+        };
+        let writer = CaptureWriter::start(
+            path.clone(),
+            WallClockUnixTimestamp::new(0),
+            "test",
+            None,
+            &metadata,
+        )
+        .unwrap();
+        metadata.annotations.extend([
+            "capture_label=ride_stop".into(),
+            "capture_label=balancing_start".into(),
+        ]);
+        assert!(writer.update_metadata(metadata));
+        writer.finish().unwrap();
+        let capture = fs::read_to_string(path).unwrap();
+        assert_eq!(capture.matches("capture_label=ride_stop").count(), 1);
+        assert_eq!(capture.matches("capture_label=balancing_stop").count(), 1);
+    }
+
+    #[test]
+    fn directory_sync_failure_is_reported_after_successful_file_mutation() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("capture.jsonl");
+        let result = sync_parent_directory_after(&path, || {
+            let file = File::create(&path)?;
+            fs::remove_file(&path)?;
+            fs::remove_dir(directory.path())?;
+            Ok(file)
+        });
+        assert!(
+            result.is_err(),
+            "successful file creation must not mask directory-open failure"
+        );
+    }
+
+    #[test]
+    fn finishing_capture_closes_labels_but_background_flush_does_not() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("capture.jsonl");
+        let metadata = CaptureMetadata {
+            advertised_services: vec![],
+            gatt_fingerprints: vec![],
+            resolved_identity: None,
+            annotations: vec![
+                "capture_label=ride_start".into(),
+                "capture_label=balancing_start".into(),
+            ],
+        };
+        let writer = CaptureWriter::start(
+            path.clone(),
+            WallClockUnixTimestamp::new(0),
+            "test",
+            None,
+            &metadata,
+        )
+        .unwrap();
+        writer.flush().unwrap();
+        assert!(!fs::read_to_string(&path).unwrap().contains("ride_stop"));
+        let artifact = writer.finish().unwrap();
+        let capture = fs::read_to_string(artifact.path()).unwrap();
+        assert_eq!(capture.matches("capture_label=ride_stop").count(), 1);
+        assert_eq!(capture.matches("capture_label=balancing_stop").count(), 1);
+    }
     #[test]
     fn capture_writer_queue_overrun_is_nonblocking_and_instrumented() {
         let (sender, _receiver) = sync_channel(0);
@@ -689,7 +887,7 @@ mod tests {
         };
 
         let (reply, _result) = sync_channel(0);
-        assert!(!writer.try_send(CaptureWriterMessage::Flush(reply)));
+        assert!(!writer.try_send(CaptureWriterMessage::Barrier(CaptureBarrier::Flush, reply)));
         let status = state.status();
         assert_eq!(status.queued_messages, 0);
         assert_eq!(status.peak_queued_messages, 0);
@@ -715,7 +913,7 @@ mod tests {
         };
 
         let (reply, _result) = sync_channel(0);
-        assert!(writer.try_send(CaptureWriterMessage::Flush(reply)));
+        assert!(writer.try_send(CaptureWriterMessage::Barrier(CaptureBarrier::Flush, reply)));
         let status = state.status();
         assert_eq!(status.queued_messages, 1);
         assert_eq!(status.peak_queued_messages, 1);

@@ -61,6 +61,7 @@ struct AppSetupView: View {
                 switch destination {
                 case .captures:
                     BluetoothCapturesView(model: model)
+                        .toolbar { doneToolbar }
                 case .music:
                     MusicSettingsView(
                         nowPlaying: model.musicSettingsNowPlaying,

@@ -115,11 +115,39 @@ impl MobileCaptureLabels {
             .collect()
     }
 
-    /// Clears labels when their capture ends or a new capture starts.
-    pub fn clear(&self) {
+    /// Closes active intervals and returns their ordered stop annotations.
+    pub fn close_intervals(&self) -> Vec<String> {
         self.inner
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .clear();
+            .close()
+            .map(CaptureLabelTransition::annotation_value)
+            .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn capture_label_closure_returns_every_stop_through_ffi() {
+        let labels = MobileCaptureLabels::new();
+        assert_eq!(labels.start(MobileCaptureLabelDto::Ride), ["ride_start"]);
+        assert_eq!(
+            labels.start(MobileCaptureLabelDto::Balancing),
+            ["balancing_start"]
+        );
+        assert_eq!(labels.close_intervals(), ["ride_stop", "balancing_stop"]);
+        assert!(labels.active().is_empty());
+        assert!(labels.close_intervals().is_empty());
+        assert!(!capture_labels_are_mutually_exclusive(
+            MobileCaptureLabelDto::LowBeamOn,
+            MobileCaptureLabelDto::LowBeamOn
+        ));
+        assert!(capture_labels_are_mutually_exclusive(
+            MobileCaptureLabelDto::LowBeamOn,
+            MobileCaptureLabelDto::LowBeamOff
+        ));
     }
 }

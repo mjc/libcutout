@@ -895,6 +895,56 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertFalse(core.recordOnly(platformIdentifier: "ios-local-missing", note: "unknown wheel"))
     }
 
+    func testWriterCreationFailureRejectsRecordOnlyWithoutAnnouncingStarted() async throws {
+        let blockedDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try Data("not a directory".utf8).write(to: blockedDirectory)
+        defer { try? FileManager.default.removeItem(at: blockedDirectory) }
+        let core = CutoutSessionCore(testScript: CutoutSessionTestScript(
+            candidate: scriptedVescCandidate, telemetry: nil, connectionDelayMilliseconds: 0
+        ))
+        core.captureDirectoryForTesting = blockedDirectory
+        let failed = expectation(description: "writer constructor failure is published")
+        core.onCaptureEvent = { event in
+            if case .started = event { XCTFail("failed writer must never be announced as started") }
+            if case .failed = event { failed.fulfill() }
+        }
+
+        XCTAssertFalse(core.recordOnly(platformIdentifier: scriptedVescCandidate.platformIdentifier))
+        await fulfillment(of: [failed], timeout: 2)
+        XCTAssertFalse(core.isRecordOnlyConnection)
+        let state = core.rideSessionStateHandle.captureLifecycleSnapshot()
+        XCTAssertEqual(state.attempt?.stage, .failed)
+        XCTAssertTrue(state.canStart)
+        XCTAssertTrue(state.canPair)
+        let flushed = await core.flushCapture()
+        XCTAssertFalse(flushed)
+    }
+
+    func testNativePairingCannotReplaceManualCaptureWithoutAppGuard() async throws {
+        let core = CutoutSessionCore(testScript: CutoutSessionTestScript(
+            candidate: scriptedVescCandidate, telemetry: nil, connectionDelayMilliseconds: 0
+        ))
+        let started = expectation(description: "manual writer starts")
+        let finished = expectation(description: "manual writer completes")
+        var url: URL?
+        core.onCaptureEvent = { event in
+            if case let .started(_, fileURL) = event { url = fileURL; started.fulfill() }
+            if case .finished = event { finished.fulfill() }
+        }
+        XCTAssertTrue(core.recordOnly(platformIdentifier: scriptedVescCandidate.platformIdentifier))
+        await fulfillment(of: [started], timeout: 2)
+        let generation = core.rideSessionStateHandle.captureLifecycleSnapshot().attempt?.generation
+        XCTAssertFalse(core.pair(platformIdentifier: scriptedVescCandidate.platformIdentifier))
+        XCTAssertFalse(core.probe(platformIdentifier: scriptedVescCandidate.platformIdentifier))
+        XCTAssertEqual(core.rideSessionStateHandle.captureLifecycleSnapshot().attempt?.generation, generation)
+        XCTAssertTrue(core.isRecordOnlyConnection)
+        let flushed = await core.flushCapture()
+        XCTAssertTrue(flushed)
+        core.disconnectAndScan()
+        await fulfillment(of: [finished], timeout: 2)
+        if let url { try FileManager.default.removeItem(at: url) }
+    }
+
     func testSuccessfulScriptedRecordOnlyFlushUsesTheRealWriter() async throws {
         let started = expectation(description: "real capture writer starts")
         var captureURL: URL?

@@ -29,6 +29,8 @@ mod session_state;
 pub use session_state::*;
 mod connection_lifecycle;
 pub use connection_lifecycle::*;
+mod capture_lifecycle;
+pub use capture_lifecycle::*;
 mod ride_lifecycle;
 pub use ride_lifecycle::*;
 mod rider_dashboard;

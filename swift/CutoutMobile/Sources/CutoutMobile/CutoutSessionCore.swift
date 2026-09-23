@@ -95,12 +95,16 @@ public struct CaptureGeneration: Comparable, Hashable, Sendable {
 
     public static let legacy = Self(rawValue: 0)
 
+    public var dto: MobileCaptureGenerationDto { .init(value: rawValue) }
+
     public static func < (lhs: Self, rhs: Self) -> Bool {
         lhs.rawValue < rhs.rawValue
     }
 }
 
 public enum CaptureEvent: Equatable, Sendable {
+    /// Immutable lifecycle publication from the shared Rust session owner.
+    case lifecycle(MobileCaptureLifecycleSnapshotDto)
     case started(generation: CaptureGeneration, fileURL: URL)
     case notificationRecorded(generation: CaptureGeneration)
     case progress(generation: CaptureGeneration, CaptureProgress)
@@ -515,15 +519,24 @@ public final class CutoutSessionCore: NSObject {
     private var suppressReconnect = false
     private let reconnectController: ConnectionReconnectController
     private let reconnectJitter: () -> Double
-    private var captureStartedAt: MonotonicMilliseconds?
+    private struct CaptureWriterBinding {
+        let builder: MobilePevcapCaptureBuilder
+        let generation: CaptureGeneration
+        let fileURL: URL
+        let startedAt: MonotonicMilliseconds
+    }
+    private var captureWriter: CaptureWriterBinding?
+    private var captureStartedAt: MonotonicMilliseconds? { captureWriter?.startedAt }
     private var captureNotificationCount: UInt64 = 0
-    private var captureBuilder: MobilePevcapCaptureBuilder?
-    private var nextCaptureGeneration: UInt64 = 0
-    private var captureGeneration: CaptureGeneration?
+    private var captureBuilder: MobilePevcapCaptureBuilder? { captureWriter?.builder }
+    private var captureGeneration: CaptureGeneration? { captureWriter?.generation }
     private var musicCaptureContext = CaptureMusicContext()
     private var captureMusicHistoryPolicy = MobileMusicHistoryPolicyDto.disabled
-    private var captureFileURL: URL?
+    private var captureFileURL: URL? { captureWriter?.fileURL }
     private var captureProgressTimer: DispatchSourceTimer?
+#if DEBUG
+    var captureDirectoryForTesting: URL?
+#endif
     private var bmsStorageSessionIdentifier = UUID().uuidString
     private let deviceDetectionSession: DeviceDetectionSession
     private let identificationProbeTransport: IdentificationProbeTransportCoordinator
@@ -714,8 +727,7 @@ public final class CutoutSessionCore: NSObject {
             guard let peripheral = discoveredPeripherals[identifier], let advertisement else {
                 return false
             }
-            connectForProtocolDetection(to: peripheral, using: advertisement)
-            return true
+            return connectForProtocolDetection(to: peripheral, using: advertisement)
         }
     }
 
@@ -734,8 +746,7 @@ public final class CutoutSessionCore: NSObject {
             guard let peripheral = discoveredPeripherals[identifier],
                   let advertisement = snapshot.advertisement(platformIdentifier: platformIdentifier)
             else { return false }
-            connectForProtocolDetection(to: peripheral, using: advertisement)
-            return true
+            return connectForProtocolDetection(to: peripheral, using: advertisement)
         }
     }
 
@@ -757,8 +768,7 @@ public final class CutoutSessionCore: NSObject {
             else {
                 return false
             }
-            connectForProtocolDetection(to: peripheral, using: advertisement)
-            return true
+            return connectForProtocolDetection(to: peripheral, using: advertisement)
         }
     }
 
@@ -767,38 +777,19 @@ public final class CutoutSessionCore: NSObject {
 #if DEBUG
         if let testScript {
             guard platformIdentifier == testScript.candidate.platformIdentifier else { return false }
-            if testScript.flushCaptureSucceeds {
-                return onBleQueue {
-                    isRecordOnly = true
-                    guard startCapture(
-                        reason: note ?? "record-only",
-                        annotations: annotations,
-                        evidence: "simulator_fixture"
-                    ) else {
-                        isRecordOnly = false
-                        return false
-                    }
-                    guard captureBuilder != nil else {
-                        isRecordOnly = false
-                        return false
-                    }
-                    publishCaptureProgress()
-                    return true
+            return onBleQueue {
+                guard rustSessionState.captureLifecycleSnapshot().canStart else { return false }
+                isRecordOnly = true
+                guard startCapture(
+                    reason: note ?? "record-only", annotations: annotations,
+                    evidence: "simulator_fixture", origin: .manual
+                ) else {
+                    isRecordOnly = false
+                    return false
                 }
+                publishCaptureProgress()
+                return true
             }
-            let fileURL = URL(fileURLWithPath: "/tmp/ui-test.capture")
-            let generation = beginCaptureGeneration()
-            captureFileURL = fileURL
-            isRecordOnly = true
-            publishCaptureEvent(.started(generation: generation, fileURL: fileURL))
-            publishCaptureEvent(.progress(generation: generation, CaptureProgress(
-                elapsedMilliseconds: 63_000,
-                notificationCount: 42,
-                fileSizeBytes: 12_288,
-                queuedMessageCount: 0,
-                writerError: nil
-            )))
-            return true
         }
 #endif
         return onBleQueue {
@@ -810,8 +801,7 @@ public final class CutoutSessionCore: NSObject {
             else {
                 return false
             }
-            connectRecordOnly(to: peripheral, using: advertisement, note: note, annotations: annotations)
-            return true
+            return connectRecordOnly(to: peripheral, using: advertisement, note: note, annotations: annotations)
         }
     }
 
@@ -828,18 +818,13 @@ public final class CutoutSessionCore: NSObject {
     }
 
     public func flushCapture() async -> Bool {
-#if DEBUG
-        if let testScript, !testScript.flushCaptureSucceeds {
-            return false
-        }
-#endif
         if DispatchQueue.getSpecific(key: bleQueueKey) != nil {
-            return captureBuilder?.flushWriter() ?? false
+            return flushCaptureOnBleQueue()
         }
         let queuedAt = clock.now()
         return await withCheckedContinuation { continuation in
             let workItem = DispatchWorkItem(qos: .default, flags: .enforceQoS) { [self] in
-                let result = captureBuilder?.flushWriter() ?? false
+                let result = flushCaptureOnBleQueue()
                 let waitMilliseconds = clock.now().elapsed(since: queuedAt).rawValue
                 if waitMilliseconds > 0 {
                     record("ble_queue_wait_ms=\(waitMilliseconds)")
@@ -847,6 +832,42 @@ public final class CutoutSessionCore: NSObject {
                 continuation.resume(returning: result)
             }
             bleQueue.async(execute: workItem)
+        }
+    }
+
+    private func flushCaptureOnBleQueue() -> Bool {
+        guard let captureWriter else { return false }
+        let succeeded: Bool
+#if DEBUG
+        succeeded = testScript?.flushCaptureSucceeds == false ? false : captureWriter.builder.flushWriter()
+#else
+        succeeded = captureWriter.builder.flushWriter()
+#endif
+        if !succeeded {
+            _ = rustSessionState.captureWriterFailed(generation: captureWriter.generation.dto)
+            publishCaptureProgress()
+        }
+        return succeeded
+    }
+
+    /// Rust admits the save; native code performs the flush and releases only its owned transport.
+    public func finishCapture() async -> Bool {
+        guard let token = onBleQueue({
+            guard let generation = captureGeneration,
+                  let token = rustSessionState.beginCaptureFinish(generation: generation.dto)
+            else { return Optional<MobileCaptureFinishTokenDto>.none }
+            publishCaptureProgress()
+            return token
+        }) else { return false }
+        let succeeded = await flushCapture()
+        return onBleQueue {
+            guard rustSessionState.finishCaptureFlush(token: token, succeeded: succeeded) else {
+                publishCaptureProgress()
+                return false
+            }
+            // Admission and disconnect share the BLE queue turn: a replacement cannot interleave.
+            disconnectAndScanOnBleQueue()
+            return true
         }
     }
 
@@ -995,6 +1016,9 @@ public final class CutoutSessionCore: NSObject {
         if route == .electricUnicycle, selectedModel == nil {
             return false
         }
+
+        guard rustSessionState.captureLifecycleSnapshot().canPair else { return false }
+        finishCaptureAfterLinkDown()
 
         self.selectedRoute = route
         self.selectedModel = selectedModel
@@ -1242,20 +1266,7 @@ public final class CutoutSessionCore: NSObject {
         suppressReconnect = true
         cancelPendingReconnect()
         musicCaptureContext.reset()
-#if DEBUG
-        if testScript != nil, isRecordOnly, captureBuilder != nil {
-            finishCaptureAfterLinkDown()
-        } else if testScript != nil, isRecordOnly, let completedCaptureURL = captureFileURL {
-            captureFileURL = nil
-            let generation = captureGeneration ?? .legacy
-            captureGeneration = nil
-            publishCaptureEvent(.finished(generation: generation, fileURL: completedCaptureURL))
-        } else {
-            finishCaptureAfterLinkDown()
-        }
-#else
         finishCaptureAfterLinkDown()
-#endif
         isRecordOnly = false
         isDetectingProtocol = false
         selectedModel = nil
@@ -1552,7 +1563,8 @@ public final class CutoutSessionCore: NSObject {
         return true
     }
 
-    private func connectRecordOnly(to peripheral: CBPeripheral, using advertisement: CoreBluetoothAdvertisement, note: String?, annotations: [String]) {
+    private func connectRecordOnly(to peripheral: CBPeripheral, using advertisement: CoreBluetoothAdvertisement, note: String?, annotations: [String]) -> Bool {
+        guard rustSessionState.captureLifecycleSnapshot().canStart else { return false }
         cancelPendingReconnect()
         rustSessionState.setDeviceConnectionIntent(intent: .recordOnly)
         prepareConnectionAttempt(to: peripheral)
@@ -1570,21 +1582,28 @@ public final class CutoutSessionCore: NSObject {
             reason: "record-only",
             annotations: ["route=record_only"] + annotations + (note.map {
                 [pevcapAnnotation(key: "user_note", value: $0)]
-            } ?? [])
-        ) else { return }
+            } ?? []), origin: .manual
+        ) else {
+            isRecordOnly = false
+            return false
+        }
         clearFaultHistoryReadback()
         clearBmsSnapshot()
         clearProtocolIdentityCandidate()
         setPhase(.discoveringServices)
         central?.stopScan()
         startPreparedConnection()
+        return true
     }
 
+    @discardableResult
     private func connectForProtocolDetection(
         to peripheral: CBPeripheral,
         using advertisement: CoreBluetoothAdvertisement,
         intent: DeviceConnectionIntentDto = .use
-    ) {
+    ) -> Bool {
+        guard rustSessionState.captureLifecycleSnapshot().canPair else { return false }
+        finishCaptureAfterLinkDown()
         cancelPendingReconnect()
         rustSessionState.setDeviceConnectionIntent(intent: intent)
         prepareConnectionAttempt(to: peripheral)
@@ -1600,13 +1619,14 @@ public final class CutoutSessionCore: NSObject {
         deviceDetectionSession.reset()
         _ = deviceDetectionSession.observeAdvertisement(name: advertisement.localName.map { Data($0.utf8) })
         guard startCapture(reason: "protocol-detection", annotations: ["intent=manual_use"])
-        else { return }
+        else { return false }
         clearFaultHistoryReadback()
         clearBmsSnapshot()
         clearProtocolIdentityCandidate()
         setPhase(.discoveringServices)
         central?.stopScan()
         startPreparedConnection()
+        return true
     }
 
     private func makeDeviceTransport(
@@ -1977,24 +1997,20 @@ public final class CutoutSessionCore: NSObject {
     }
 
     private func publishCaptureEvent(_ event: CaptureEvent) {
-        publishOnMain { self.onCaptureEvent?(event) }
-    }
-
-    private func beginCaptureGeneration() -> CaptureGeneration {
-        nextCaptureGeneration = nextCaptureGeneration == .max ? 1 : nextCaptureGeneration + 1
-        let generation = CaptureGeneration(rawValue: nextCaptureGeneration)
-        captureGeneration = generation
-        return generation
+        let lifecycle = rustSessionState.captureLifecycleSnapshot()
+        publishOnMain {
+            self.onCaptureEvent?(.lifecycle(lifecycle))
+            self.onCaptureEvent?(event)
+        }
     }
 
     private func publishCaptureProgress() {
         guard let generation = captureGeneration else { return }
-        publishCaptureEvent(.progress(generation: generation, captureProgress()))
-    }
-
-    private func publishCaptureFailure() {
-        guard let generation = captureGeneration else { return }
-        publishCaptureEvent(.failed(generation: generation))
+        let progress = captureProgress()
+        if progress.writerError != nil {
+            _ = rustSessionState.captureWriterFailed(generation: generation.dto)
+        }
+        publishCaptureEvent(.progress(generation: generation, progress))
     }
 
     private func startRideMapWritePolling() {
@@ -2296,9 +2312,10 @@ public final class CutoutSessionCore: NSObject {
         case "notify":
             guard let serviceUuid = service.flatMap(BluetoothUuid.init(coreBluetoothUuid:)) else {
                 record("capture_error=notification_missing_service characteristic=\(characteristic.uuidString)")
-                publishCaptureFailure()
                 setPhase(.failed(.notificationFailed("missing service UUID for \(characteristic.uuidString)")))
-                finishCaptureWriter()
+                finishCaptureWriter(priorWriteSucceeded: false)
+                isRecordOnly = false
+                cancelFailedConnectionAttempt()
                 return false
             }
             guard let builder = captureBuilder else { return true }
@@ -2323,13 +2340,18 @@ public final class CutoutSessionCore: NSObject {
     private func startCapture(
         reason: String,
         annotations extraAnnotations: [String] = [],
-        evidence: String = "hardware_tested"
+        evidence: String = "hardware_tested",
+        origin: MobileCaptureOriginDto = .automatic
     ) -> Bool {
-        let generation = beginCaptureGeneration()
-        captureStartedAt = clock.now()
+        guard let identity = rustSessionState.beginCapture(origin: origin) else { return false }
+        let generation = CaptureGeneration(rawValue: identity.value)
+        let startedAt = clock.now()
         captureNotificationCount = 0
 
-        let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        var directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+#if DEBUG
+        directory = captureDirectoryForTesting ?? directory
+#endif
         let url = directory.appendingPathComponent("cutout-btle-capture-\(Int(Date().timeIntervalSince1970))-\(UUID().uuidString).jsonl")
         let builder = MobilePevcapCaptureBuilder(
             wallClockStartUnixMs: MobileWallClockUnixMillisDto(milliseconds: UInt64(Date().timeIntervalSince1970 * 1_000)),
@@ -2337,7 +2359,7 @@ public final class CutoutSessionCore: NSObject {
             writeLimit: MobileTransportWriteLimitDto(bytes: 23)
         )
         _ = builder.setMusicHistoryPolicy(policy: captureMusicHistoryPolicy)
-        _ = builder.setMusicCaptureStartMonotonicMs(monotonicMs: captureStartedAt?.rawValue ?? 0)
+        _ = builder.setMusicCaptureStartMonotonicMs(monotonicMs: startedAt.rawValue)
         (advertisement?.advertisedServiceUuids ?? []).forEach { service in
             _ = builder.addAdvertisedService(service: service.bytes)
         }
@@ -2348,21 +2370,20 @@ public final class CutoutSessionCore: NSObject {
             "capture_evidence=\(evidence)",
         ].forEach { _ = builder.addAnnotation(annotation: $0) }
         extraAnnotations.forEach { _ = builder.addAnnotation(annotation: sanitizedPevcapAnnotation($0)) }
-        captureBuilder = builder
-        captureFileURL = url
         _ = builder.setMusicContext(music: musicCaptureContext.current)
         guard builder.startWriter(path: url.path) else {
             failConnectionCapture()
             record("capture_error=writer_start_failed")
-            captureBuilder = nil
-            captureGeneration = nil
-            captureFileURL = nil
-            captureStartedAt = nil
+            _ = rustSessionState.captureWriterStartFailed(generation: identity)
             publishCaptureEvent(.failed(generation: generation))
             setPhase(.failed(.sessionFailed("capture writer failed to start")))
             cancelFailedConnectionAttempt()
             return false
         }
+        captureWriter = CaptureWriterBinding(
+            builder: builder, generation: generation, fileURL: url, startedAt: startedAt
+        )
+        _ = rustSessionState.captureWriterStarted(generation: identity)
         publishCaptureEvent(.started(generation: generation, fileURL: url))
         startCaptureProgressUpdates()
         musicCaptureContext.reset()
@@ -2403,9 +2424,14 @@ public final class CutoutSessionCore: NSObject {
         failConnectionCapture()
         let status = captureBuilder?.writerStatus()
         record("capture_error=writer_failed \(status?.lastError ?? "unknown")")
-        publishCaptureFailure()
+        if let generation = captureGeneration {
+            _ = rustSessionState.captureWriterFailed(generation: generation.dto)
+        }
+        publishCaptureProgress()
         setPhase(.failed(.sessionFailed("capture writer queue overrun")))
-        finishCaptureWriter()
+        finishCaptureWriter(priorWriteSucceeded: false)
+        isRecordOnly = false
+        cancelFailedConnectionAttempt()
         return false
     }
 
@@ -2420,23 +2446,21 @@ public final class CutoutSessionCore: NSObject {
         let linkDownAccepted = captureBuilder?.recordLinkDown(
             monotonicMs: MobileMonotonicMillisDto(milliseconds: captureElapsedMilliseconds())
         ) ?? false
-        finishCaptureWriter(publishesResult: true, priorWriteSucceeded: linkDownAccepted)
+        finishCaptureWriter(priorWriteSucceeded: linkDownAccepted)
     }
 
     private func finishCaptureWriter(
-        publishesResult: Bool = false,
         priorWriteSucceeded: Bool = true
     ) {
         musicCaptureContext.reset()
-        guard let builder = captureBuilder else { return }
+        guard let binding = captureWriter else { return }
+        let builder = binding.builder
         captureProgressTimer?.cancel()
         captureProgressTimer = nil
         publishCaptureProgress()
-        let completedCaptureGeneration = captureGeneration ?? .legacy
-        captureBuilder = nil
-        captureGeneration = nil
-        captureFileURL = nil
-        captureStartedAt = nil
+        let completedCaptureGeneration = binding.generation
+        _ = rustSessionState.retireCaptureWriter(generation: completedCaptureGeneration.dto)
+        captureWriter = nil
         musicCaptureContext.reset()
         let finish = DispatchWorkItem { [weak self] in
             #if DEBUG
@@ -2444,8 +2468,12 @@ public final class CutoutSessionCore: NSObject {
             #endif
             let writerSucceeded = builder.finishWriter()
             let artifact = writerSucceeded ? builder.completedArtifact() : nil
-            guard publishesResult, let self else { return }
+            guard let self else { return }
             self.onBleQueue {
+                _ = self.rustSessionState.completeCaptureWriter(
+                    generation: completedCaptureGeneration.dto,
+                    succeeded: priorWriteSucceeded && artifact != nil
+                )
                 if priorWriteSucceeded, let artifact {
                     self.publishCaptureEvent(
                         .finished(
@@ -2465,7 +2493,7 @@ public final class CutoutSessionCore: NSObject {
 #if DEBUG
     func finishCaptureForTesting(priorWriteSucceeded: Bool = true) {
         onBleQueue {
-            self.finishCaptureWriter(publishesResult: true, priorWriteSucceeded: priorWriteSucceeded)
+            self.finishCaptureWriter(priorWriteSucceeded: priorWriteSucceeded)
         }
     }
 #endif
