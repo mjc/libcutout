@@ -523,6 +523,7 @@ public final class CutoutSessionCore: NSObject {
     private var musicCaptureContext = CaptureMusicContext()
     private var captureMusicHistoryPolicy = MobileMusicHistoryPolicyDto.disabled
     private var captureFileURL: URL?
+    private var captureProgressTimer: DispatchSourceTimer?
     private var bmsStorageSessionIdentifier = UUID().uuidString
     private let deviceDetectionSession: DeviceDetectionSession
     private let identificationProbeTransport: IdentificationProbeTransportCoordinator
@@ -559,6 +560,7 @@ public final class CutoutSessionCore: NSObject {
         connectionDeadlineWorkItem?.cancel()
         protocolDetectionExpiryWorkItem?.cancel()
         rideMapWritePoller?.cancel()
+        captureProgressTimer?.cancel()
     }
 
     private lazy var locationManager: CLLocationManager = {
@@ -2349,7 +2351,6 @@ public final class CutoutSessionCore: NSObject {
         captureBuilder = builder
         captureFileURL = url
         _ = builder.setMusicContext(music: musicCaptureContext.current)
-        publishCaptureEvent(.started(generation: generation, fileURL: url))
         guard builder.startWriter(path: url.path) else {
             failConnectionCapture()
             record("capture_error=writer_start_failed")
@@ -2362,10 +2363,23 @@ public final class CutoutSessionCore: NSObject {
             cancelFailedConnectionAttempt()
             return false
         }
+        publishCaptureEvent(.started(generation: generation, fileURL: url))
+        startCaptureProgressUpdates()
         musicCaptureContext.reset()
         record("capture_file=\(url.path)")
         updateCaptureIdentity()
         return true
+    }
+
+    /// Refreshes the existing typed snapshot even while the Bluetooth link is quiet.
+    /// Scheduling is native; byte counts and writer health still come from Rust.
+    private func startCaptureProgressUpdates() {
+        captureProgressTimer?.cancel()
+        let timer = DispatchSource.makeTimerSource(queue: bleQueue)
+        timer.schedule(deadline: .now() + .seconds(1), repeating: .seconds(1))
+        timer.setEventHandler { [weak self] in self?.publishCaptureProgress() }
+        captureProgressTimer = timer
+        timer.resume()
     }
 
     private func cancelFailedConnectionAttempt() {
@@ -2415,7 +2429,9 @@ public final class CutoutSessionCore: NSObject {
     ) {
         musicCaptureContext.reset()
         guard let builder = captureBuilder else { return }
-        let completedCaptureURL = captureFileURL
+        captureProgressTimer?.cancel()
+        captureProgressTimer = nil
+        publishCaptureProgress()
         let completedCaptureGeneration = captureGeneration ?? .legacy
         captureBuilder = nil
         captureGeneration = nil
@@ -2427,12 +2443,15 @@ public final class CutoutSessionCore: NSObject {
             self?.captureFinishWriterGate?()
             #endif
             let writerSucceeded = builder.finishWriter()
-            let succeeded = priorWriteSucceeded && writerSucceeded
+            let artifact = writerSucceeded ? builder.completedArtifact() : nil
             guard publishesResult, let self else { return }
             self.onBleQueue {
-                if succeeded, let completedCaptureURL {
+                if priorWriteSucceeded, let artifact {
                     self.publishCaptureEvent(
-                        .finished(generation: completedCaptureGeneration, fileURL: completedCaptureURL)
+                        .finished(
+                            generation: completedCaptureGeneration,
+                            fileURL: URL(fileURLWithPath: artifact.path)
+                        )
                     )
                 } else {
                     self.record("capture_error=writer_finish_failed")

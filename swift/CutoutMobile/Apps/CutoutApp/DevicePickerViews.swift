@@ -4,12 +4,8 @@ import SwiftUI
 struct DevicePickerView: View {
     let scanState: DevicePickerScanState?
     var connectionPhase: SessionConnectionPhase? = nil
-    let captureStatus: CaptureStatus?
     let pair: (DevicePickerRow) -> Void
-    let probe: (DevicePickerRow) -> Bool
-    let recordOnly: (DevicePickerRow, String) -> Bool
     let openSetup: () -> Void
-    @State private var isAdvancedCapturePresented = false
 
     private var renderedScanState: DevicePickerScanState {
         scanState ?? DevicePickerScanState(status: .idle, rows: [])
@@ -78,26 +74,6 @@ struct DevicePickerView: View {
                         action: pair
                     )
 
-                    if let captureStatus {
-                        Button { isAdvancedCapturePresented = true } label: {
-                            Label(
-                                captureStatus.pickerSummary,
-                                systemImage: captureStatus == .failed ? "exclamationmark.triangle" : "doc.text"
-                            )
-                            .font(.footnote)
-                            .foregroundStyle(captureStatus == .failed ? PevColors.red : PevColors.muted)
-                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                        }
-                        .accessibilityIdentifier("device-picker.capture-status")
-                    }
-
-                    Button { isAdvancedCapturePresented = true } label: {
-                        Label(localizedAppText("picker.advanced_capture"), systemImage: "waveform.path")
-                            .font(.subheadline)
-                            .foregroundStyle(PevColors.muted)
-                    }
-                        .frame(maxWidth: .infinity, minHeight: 44)
-                        .accessibilityIdentifier("device-picker.open-advanced-capture")
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -110,14 +86,6 @@ struct DevicePickerView: View {
         .tint(PevColors.yellow)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("device-picker.screen")
-        .sheet(isPresented: $isAdvancedCapturePresented) {
-            CaptureUnknownDeviceSheet(
-                sections: sections,
-                captureStatusText: captureStatus?.displayText,
-                probe: probe,
-                recordOnly: recordOnly
-            )
-        }
     }
 
     @ViewBuilder

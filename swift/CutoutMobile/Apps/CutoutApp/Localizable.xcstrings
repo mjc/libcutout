@@ -1,6 +1,108 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "captures.title" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Bluetooth Captures" } } }
+    },
+    "captures.diagnostics" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Diagnostics" } } }
+    },
+    "captures.active" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Recording" } } }
+    },
+    "captures.new" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "New Capture" } } }
+    },
+    "captures.empty" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "No captures saved this session." } } }
+    },
+    "captures.recent" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "This Session" } } }
+    },
+    "captures.session_history" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Completed captures from this app session. Relaunch history is not available yet." } } }
+    },
+    "captures.automatic" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Automatic diagnostics" } } }
+    },
+    "captures.manual" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Manual capture" } } }
+    },
+    "captures.untitled" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Bluetooth device" } } }
+    },
+    "captures.source" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Source" } } }
+    },
+    "captures.incomplete" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Incomplete capture" } } }
+    },
+    "captures.saved" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Capture Saved" } } }
+    },
+    "captures.share" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Share Capture" } } }
+    },
+    "captures.file_unavailable" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Capture file is unavailable." } } }
+    },
+    "captures.privacy" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Captures may include device identifiers, location and listening history. Share only with someone you trust." } } }
+    },
+    "captures.technical" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Technical Details" } } }
+    },
+    "captures.choose_device" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Choose a Device" } } }
+    },
+    "captures.no_devices" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "No Devices Nearby" } } }
+    },
+    "captures.no_devices_hint" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Turn on your device and keep it nearby." } } }
+    },
+    "captures.read_only" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Records Bluetooth data without changing device settings." } } }
+    },
+    "captures.description" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Description (optional)" } } }
+    },
+    "captures.description_hint" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Add a short note about what you’re investigating." } } }
+    },
+    "captures.start" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Start Capture" } } }
+    },
+    "captures.start_failed" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Couldn’t start. The device may no longer be available. Go back and choose it again." } } }
+    },
+    "captures.labels" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Activity Labels" } } }
+    },
+    "captures.labels_hint" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Optional markers describe what you’re doing. They don’t send commands to the device." } } }
+    },
+    "captures.starting" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Starting…" } } }
+    },
+    "captures.saving" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Saving…" } } }
+    },
+    "captures.receiving" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Receiving Bluetooth data" } } }
+    },
+    "captures.waiting" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Waiting for Bluetooth data" } } }
+    },
+    "captures.save_failed" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Couldn’t save. Retry Stop & Save to finish the capture." } } }
+    },
+    "captures.automatic_hint" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Recorded automatically while connected. Disconnect the device to finish these diagnostics." } } }
+    },
+    "captures.leave_hint" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "You can leave this screen while recording continues." } } }
+    },
     "bms.pack.find_reading" : {
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Find reading number" } } }
     },
@@ -2752,7 +2854,7 @@
     },
     "capture.stop" : {
       "localizations" : {
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Finish capture" } }
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Stop & Save" } }
       }
     },
     "picker.saved_device.forget" : {

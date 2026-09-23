@@ -82,14 +82,7 @@ struct DevicePickerRouteView: View {
         DevicePickerView(
             scanState: model.devicePickerScanState,
             connectionPhase: model.phase,
-            captureStatus: model.captureStatus,
             pair: pair,
-            probe: { row in model.startProbe(platformIdentifier: row.id) },
-            recordOnly: { row, deviceKind in
-                guard model.recordOnly(platformIdentifier: row.id, deviceKind: deviceKind) else { return false }
-                navigate(model.isRecordOnlyCapture ? .capture : .eucRide)
-                return true
-            },
             openSetup: { isSetupPresented = true }
         )
         .sheet(isPresented: $isSetupPresented) {
@@ -150,13 +143,25 @@ struct CaptureRouteView: View {
     let finishCapture: () -> Void
 
     var body: some View {
+        if model.capture.activeGeneration == nil, model.capture.status != nil,
+           let artifact = model.capture.completed.first(where: { $0.id == model.capture.latestGeneration }) {
+            CaptureArtifactDetailView(artifact: artifact)
+        } else {
+            recording
+        }
+    }
+
+    private var recording: some View {
         CaptureRecordingScreen(
-            deviceKind: model.recordOnlyDeviceKind,
-            captureStatusText: model.captureStatusText,
-            captureStatusTone: model.captureStatus?.statusStripTone ?? .nominal,
-            captureProgress: model.captureProgress,
-            activeLabels: model.activeCaptureLabels,
-            isFinishing: model.isFinishingCapture,
+            deviceKind: model.capture.device?.title ?? model.capture.deviceKind,
+            advertisedName: model.capture.device?.advertisedName,
+            captureStatusText: model.capture.recordingSummary,
+            captureStatusTone: model.capture.status?.statusStripTone ?? .nominal,
+            captureProgress: model.capture.progress,
+            activeLabels: model.capture.activeLabels,
+            isFinishing: model.capture.isFinishing,
+            canFinish: model.isRecordOnlyCapture,
+            canAnnotate: model.capture.canAnnotate,
             finishCapture: finishCapture,
             startCaptureLabel: model.startCaptureLabel,
             stopCaptureLabel: model.stopCaptureLabel

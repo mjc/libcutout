@@ -5,17 +5,6 @@ import XCTest
 import CutoutMobileFFI
 
 final class CutoutAppRouteTests: XCTestCase {
-    func testPickerCaptureSummaryOmitsFilenamesAndCountersButKeepsFailuresVisible() {
-        let filename = "cutout-btle-capture-long-identifier.jsonl"
-        XCTAssertEqual(CaptureStatus.saved(fileName: filename).pickerSummary, "Capture saved")
-        XCTAssertEqual(
-            CaptureStatus.recording(label: "probe", notificationCount: 1500, fileName: filename).pickerSummary,
-            "Recording capture"
-        )
-        XCTAssertEqual(CaptureStatus.failed.pickerSummary, CaptureStatus.failed.displayText)
-        XCTAssertTrue(CaptureStatus.saved(fileName: filename).displayText.contains(filename))
-    }
-
     func testScreenRoutesMatchTopLevelSections() {
         XCTAssertEqual(CutoutAppRoute.route(for: .eucRide), .eucRide)
         XCTAssertEqual(CutoutAppRoute.route(for: .vescRide), .vescRide)
@@ -95,7 +84,7 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(localizedAppText("picker.section.detected_devices"), "Detected devices")
         XCTAssertEqual(localizedAppText("picker.section.record_only"), "Record only")
         XCTAssertEqual(localizedAppText("picker.capture_kind_required_hint"), "Enter a device kind above to enable capture")
-        XCTAssertEqual(localizedAppText("capture.stop"), "Finish capture")
+        XCTAssertEqual(localizedAppText("capture.stop"), "Stop & Save")
         XCTAssertEqual(localizedAppText("picker.use_action.hint"), "Connect to this device")
         XCTAssertEqual(localizedAppText("picker.error.device_no_longer_available"), "Device is no longer available")
         XCTAssertEqual(localizedAppText("app.command.no_connected_device"), "No connected device")
@@ -328,6 +317,7 @@ final class CutoutAppRouteTests: XCTestCase {
 
     func testConnectionLossKeepsStandaloneMapNavigation() {
         XCTAssertTrue(CutoutAppRoute.rideMap.preservesNavigationOnConnectionLoss)
+        XCTAssertTrue(CutoutAppRoute.capture.preservesNavigationOnConnectionLoss)
         XCTAssertTrue(CutoutAppRoute.rideMapDetail(rideID: "ride-1").preservesNavigationOnConnectionLoss)
         XCTAssertFalse(CutoutAppRoute.eucRide.preservesNavigationOnConnectionLoss)
     }
