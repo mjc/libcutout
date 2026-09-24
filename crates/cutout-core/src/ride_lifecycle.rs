@@ -331,7 +331,7 @@ impl RideSessionLifecycle {
     /// Returns the minimal marker for a ride that can still be reconciled after relaunch.
     #[must_use]
     pub fn marker(&self) -> Option<RideSessionMarker> {
-        if !self.phase.accepts_updates() {
+        if !self.phase.is_live() {
             return None;
         }
         self.identity.clone().map(RideSessionMarker::new)
@@ -1053,6 +1053,33 @@ mod tests {
                 &RideSessionPhase::Ending(RideSessionEndReason::AppReset)
             );
         }
+    }
+
+    #[test]
+    fn persisted_marker_survives_terminal_effect_until_activity_ends() {
+        let identity = RideSessionIdentity::new("vesc-1".to_owned(), Uuid::from_u128(12));
+        let started = RideSessionLifecycle::default().transition(RideSessionInput::Start {
+            identity: identity.clone(),
+        });
+        let active = started
+            .state()
+            .transition(RideSessionInput::ActivityStarted {
+                identity: identity.clone(),
+                activity_id: "activity-1".to_owned(),
+            });
+        let ending = active
+            .state()
+            .transition(RideSessionInput::UserDisconnected);
+
+        assert_eq!(
+            ending.state().marker(),
+            Some(RideSessionMarker::new(identity.clone()))
+        );
+
+        let ended = ending
+            .state()
+            .transition(RideSessionInput::ActivityEnded { identity });
+        assert_eq!(ended.state().marker(), None);
     }
 
     #[cfg(feature = "serde")]
