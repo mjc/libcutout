@@ -14,7 +14,6 @@ import uniffi.cutout_mobile_ffi.MobileNovatekHttpOriginDto
 import uniffi.cutout_mobile_ffi.MobileNovatekCommandDto
 import uniffi.cutout_mobile_ffi.MobileNovatekReadOnlySnapshotDto
 import uniffi.cutout_mobile_ffi.mobileParseNovatekReadOnlySnapshot
-import uniffi.cutout_mobile_ffi.mobileParseNovatekCommandOutcome
 import uniffi.cutout_mobile_ffi.mobileNovatekMediaDownloadTarget
 import uniffi.cutout_mobile_ffi.MobileGattFingerprintDto
 import uniffi.cutout_mobile_ffi.MobileGattRoleDto
@@ -158,19 +157,27 @@ fun main() {
                 media = emptyList(),
             ),
         )
-        check(
-            session.authorizeNovatekCommand(
-                cameraOrigin,
-                MobileNovatekCommandDto.START_RECORDING,
-            ).target ==
-                "/?custom=1&cmd=2001&str=1",
+        val startRequest = session.authorizeNovatekCommand(
+            cameraOrigin,
+            MobileNovatekCommandDto.START_RECORDING,
         )
+        check(startRequest.target == "/?custom=1&cmd=2001&str=1")
         check(
-            session.authorizeNovatekCommand(
-                cameraOrigin,
-                MobileNovatekCommandDto.STOP_RECORDING,
-            ).target ==
-                "/?custom=1&cmd=2001&str=0",
+            session.completeNovatekCommand(
+                startRequest,
+                "<Function><Cmd>2001</Cmd><Status>0</Status></Function>".encodeToByteArray(),
+            ) == MobileNovatekCommandOutcomeDto.ACKNOWLEDGED,
+        )
+        val stopRequest = session.authorizeNovatekCommand(
+            cameraOrigin,
+            MobileNovatekCommandDto.STOP_RECORDING,
+        )
+        check(stopRequest.target == "/?custom=1&cmd=2001&str=0")
+        check(
+            session.completeNovatekCommand(
+                stopRequest,
+                "<Function><Cmd>2001</Cmd><Status>7</Status></Function>".encodeToByteArray(),
+            ) == MobileNovatekCommandOutcomeDto.REFUSED,
         )
         val stillRequest = session.authorizeNovatekCommand(
             cameraOrigin,
@@ -183,29 +190,19 @@ fun main() {
                 "<Function><Cmd>1001</Cmd><Status>0</Status></Function>".encodeToByteArray(),
             ) == MobileNovatekCommandOutcomeDto.ACKNOWLEDGED,
         )
+        val unknownRequest = session.authorizeNovatekCommand(
+            cameraOrigin,
+            MobileNovatekCommandDto.STILL_CAPTURE,
+        )
+        check(
+            session.completeNovatekCommand(
+                unknownRequest,
+                "<Function><Cmd>1001</Cmd></Function>".encodeToByteArray(),
+            ) == MobileNovatekCommandOutcomeDto.UNKNOWN,
+        )
         session.invalidateCameraLifecycle()
         check(session.novatekSessionOrigin() == null)
     }
-    check(
-        mobileParseNovatekCommandOutcome(
-            response = "<Function><Cmd>2001</Cmd><Status>0</Status></Function>"
-                .encodeToByteArray(),
-            expectedCommandId = 2001u.toUShort(),
-        ) == MobileNovatekCommandOutcomeDto.ACKNOWLEDGED,
-    )
-    check(
-        mobileParseNovatekCommandOutcome(
-            response = "<Function><Cmd>2001</Cmd><Status>7</Status></Function>"
-                .encodeToByteArray(),
-            expectedCommandId = 2001u.toUShort(),
-        ) == MobileNovatekCommandOutcomeDto.REFUSED,
-    )
-    check(
-        mobileParseNovatekCommandOutcome(
-            response = "<Function><Cmd>2001</Cmd></Function>".encodeToByteArray(),
-            expectedCommandId = 2001u.toUShort(),
-        ) == MobileNovatekCommandOutcomeDto.UNKNOWN,
-    )
 }
 
 private fun checkCaptureHistoryBoundary() {
