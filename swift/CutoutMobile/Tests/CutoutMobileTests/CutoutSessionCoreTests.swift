@@ -1131,6 +1131,28 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(core.displayState.lastUpdate, receivedAt)
     }
 
+    func testRideMapStorageFailureDoesNotSuppressDisplayReduction() {
+        let core = CutoutSessionCore(
+            rideMapState: MobileRideMapState(storageUnavailable: "map database unavailable")
+        )
+        let snapshot = TelemetrySnapshot(
+            speed: speedValue(2_468),
+            operatingState: .riding,
+            voltage: voltageValue(50_400)
+        )
+
+        core.applyNotificationStep(
+            CoreBluetoothSessionStep(operations: [], snapshot: snapshot),
+            receivedAt: MonotonicMilliseconds(84)
+        )
+
+        XCTAssertEqual(core.phase, .live)
+        XCTAssertEqual(core.displayState.speed.millimetersPerSecond, 2_468)
+        XCTAssertEqual(core.displayState.telemetry?.voltage, Voltage(value: 50_400))
+        XCTAssertEqual(core.displayState.notificationCount, 1)
+        XCTAssertEqual(core.displayState.lastUpdate, MonotonicMilliseconds(84))
+    }
+
     func testApplyNotificationStepPublishesDisplayStateOnMainThread() {
         nonisolated(unsafe) let core = CutoutSessionCore()
         let published = expectation(description: "display state published")
