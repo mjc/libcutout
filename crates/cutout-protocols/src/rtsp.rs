@@ -102,6 +102,23 @@ pub struct VideoFrame {
     clock_rate_hz: VideoClockRate,
 }
 
+/// Named components of a validated encoded video frame for a mobile boundary.
+#[derive(Debug, Eq, PartialEq)]
+pub struct VideoFrameParts {
+    /// Encoded length-prefixed H.264 access-unit bytes.
+    pub data: Vec<u8>,
+    /// SPS/PPS NAL units discovered in the access unit.
+    pub parameter_sets: Vec<Vec<u8>>,
+    /// RTP packets lost before this frame.
+    pub loss: u16,
+    /// Whether this frame is a random-access point.
+    pub is_random_access_point: bool,
+    /// Presentation timestamp in the stream clock.
+    pub timestamp: i64,
+    /// Nonzero RTP clock rate associated with the timestamp.
+    pub clock_rate_hz: VideoClockRate,
+}
+
 /// A bounded RFC 6381 codec identifier advertised by an RTSP stream.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VideoCodec(ArrayString<MAX_VIDEO_CODEC_BYTES>);
@@ -297,15 +314,15 @@ impl VideoFrame {
 
     /// Splits the validated frame for a checked FFI DTO conversion.
     #[must_use]
-    pub fn into_parts(self) -> (Vec<u8>, Vec<Vec<u8>>, u16, bool, i64, VideoClockRate) {
-        (
-            self.data,
-            self.parameter_sets,
-            self.loss,
-            self.is_random_access_point,
-            self.timestamp,
-            self.clock_rate_hz,
-        )
+    pub fn into_parts(self) -> VideoFrameParts {
+        VideoFrameParts {
+            data: self.data,
+            parameter_sets: self.parameter_sets,
+            loss: self.loss,
+            is_random_access_point: self.is_random_access_point,
+            timestamp: self.timestamp,
+            clock_rate_hz: self.clock_rate_hz,
+        }
     }
 }
 
@@ -709,6 +726,25 @@ mod tests {
             [0, 0, 0, 1, 0x67, 0x01, 0, 0, 0, 1, 0x65]
         );
         fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn video_frame_parts_keep_named_timing_types_at_the_ffi_boundary() {
+        let frame = VideoFrame::new(
+            [0u8, 0, 0, 1, 0x65].to_vec(),
+            2,
+            true,
+            90_000,
+            VideoClockRate::new(90_000).unwrap(),
+        )
+        .unwrap();
+
+        let parts = frame.into_parts();
+
+        assert_eq!(parts.loss, 2);
+        assert!(parts.is_random_access_point);
+        assert_eq!(parts.timestamp, 90_000);
+        assert_eq!(parts.clock_rate_hz.get(), 90_000);
     }
 
     #[test]
