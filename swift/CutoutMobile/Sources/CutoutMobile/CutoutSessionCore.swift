@@ -640,6 +640,7 @@ public final class CutoutSessionCore: NSObject {
         self.wallClock = wallClock
         self.rideMapState = rideMapState
         self.testScript = testScript
+        self.captureDirectoryForTesting = testScript.map { _ in FileManager.default.temporaryDirectory }
         self.reconnectController = ConnectionReconnectController(scheduler: reconnectScheduler)
         self.reconnectJitter = reconnectJitter
         self.selectedDeviceStore = selectedDeviceStore

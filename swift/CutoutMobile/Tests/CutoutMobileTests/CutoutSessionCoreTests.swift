@@ -990,6 +990,8 @@ final class CutoutSessionCoreTests: XCTestCase {
         let core = CutoutSessionCore(testScript: CutoutSessionTestScript(
             candidate: scriptedVescCandidate, telemetry: nil, connectionDelayMilliseconds: 0
         ))
+        XCTAssertEqual(core.captureDirectoryForTesting, FileManager.default.temporaryDirectory)
+        XCTAssertNil(CutoutSessionCore(clock: MonotonicClock()).captureDirectoryForTesting)
         core.onCaptureEvent = { event in
             switch event {
             case let .started(generation, fileURL):
@@ -1009,6 +1011,10 @@ final class CutoutSessionCoreTests: XCTestCase {
         let generation = try XCTUnwrap(captureGeneration)
         let url = try XCTUnwrap(captureURL)
         defer { try? FileManager.default.removeItem(at: url) }
+        XCTAssertEqual(
+            url.deletingLastPathComponent().resolvingSymlinksInPath(),
+            FileManager.default.temporaryDirectory.resolvingSymlinksInPath()
+        )
         XCTAssertThrowsError(try core.changeCaptureLabel(
             generation: .init(rawValue: generation.rawValue + 1), action: .start(label: .lowBeamOn)
         ))
