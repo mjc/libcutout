@@ -82,9 +82,11 @@ impl RideDatabase {
             }
             return Ok(receipt);
         }
-        let preview = super::preflight_pevcap(artifact.path(), PevcapEncoding::Jsonl)?;
-        let reader = super::pevcap_reader(artifact.path(), PevcapEncoding::Jsonl)?;
-        let header = reader.header();
+        let preview = super::preflight_pevcap(artifact.path(), PevcapEncoding::Jsonl, None)?;
+        if preview.artifact_digest() != artifact.content_digest() {
+            return Err(StorageError::PevcapPreviewChanged);
+        }
+        let header = artifact.final_header();
         let recording = RecordedCapture {
             artifact_id: artifact.id(),
             origin,

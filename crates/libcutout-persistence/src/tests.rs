@@ -1,6 +1,7 @@
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+use crate::CaptureWriteOutcome;
 use cutout_core::{
     MonotonicTimestamp, PevcapCapture, PevcapEncoding, PevcapHeader, PevcapLocationSample,
     PevcapPhoneLocation, PevcapRecord, WallClockUnixTimestamp,
@@ -2314,7 +2315,10 @@ fn finished_recording_is_retained_without_deriving_a_ride() {
         },
     )
     .unwrap();
-    assert!(writer.try_send_record(pevcap_location_record(1, 40.0, Some(3.0))));
+    assert_eq!(
+        writer.try_send_record(pevcap_location_record(1, 40.0, Some(3.0))),
+        CaptureWriteOutcome::Accepted
+    );
     let artifact = writer.finish().unwrap();
     let bytes = std::fs::read(&source).unwrap();
     let database = RideDatabase::open(&path).unwrap();
@@ -2378,6 +2382,172 @@ fn finished_recording_is_retained_without_deriving_a_ride() {
     );
     database.shutdown().unwrap();
     std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn finished_capture_receipt_rejects_replacement_bytes_before_first_publication() {
+    let _guard = test_guard();
+    let directory = tempfile::tempdir().unwrap();
+    let database_path = directory.path().join("ride.sqlite");
+    let source = directory.path().join("recording.jsonl");
+    let writer = crate::CaptureWriter::start(
+        source.clone(),
+        WallClockUnixTimestamp::new(1234),
+        "wheel-a",
+        None,
+        &crate::CaptureMetadata {
+            advertised_services: vec![],
+            gatt_fingerprints: vec![],
+            resolved_identity: None,
+            annotations: vec![],
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        writer.try_send_record(PevcapRecord::link_up(MonotonicTimestamp::new(1), None)),
+        CaptureWriteOutcome::Accepted
+    );
+    let artifact = writer.finish().unwrap();
+    let replacement = PevcapCapture::new(
+        pevcap_header(),
+        vec![PevcapRecord::link_up(MonotonicTimestamp::new(2), None)],
+    );
+    std::fs::write(&source, replacement.to_jsonl().unwrap()).unwrap();
+
+    let database = RideDatabase::open(&database_path).unwrap();
+    assert!(matches!(
+        database.retain_finished_capture(
+            &artifact,
+            cutout_core::CaptureOrigin::Manual,
+            Some("GW-Falcon"),
+            WallClockUnixTimestamp::new(9999),
+        ),
+        Err(StorageError::PevcapPreviewChanged)
+    ));
+    assert!(
+        database
+            .list_pevcap_captures(None, QueryLimit::new(10).unwrap())
+            .unwrap()
+            .captures
+            .is_empty()
+    );
+    database.shutdown().unwrap();
+}
+
+#[test]
+fn recorded_capture_is_not_cut_off_at_the_import_duration_limit() {
+    let _guard = test_guard();
+    let directory = tempfile::tempdir().unwrap();
+    let database_path = directory.path().join("ride.sqlite");
+    let source = directory.path().join("recording.jsonl");
+    let writer = crate::CaptureWriter::start(
+        source.clone(),
+        WallClockUnixTimestamp::new(1234),
+        "wheel-a",
+        None,
+        &crate::CaptureMetadata {
+            advertised_services: vec![],
+            gatt_fingerprints: vec![],
+            resolved_identity: None,
+            annotations: vec![],
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        writer.try_send_record(PevcapRecord::link_up(MonotonicTimestamp::new(0), None)),
+        CaptureWriteOutcome::Accepted
+    );
+    assert_eq!(
+        writer.try_send_record(PevcapRecord::link_down(MonotonicTimestamp::new(
+            24 * 60 * 60 * 1_000 + 1,
+        ))),
+        CaptureWriteOutcome::Accepted
+    );
+    assert_eq!(
+        writer.try_send_record(PevcapRecord::link_down(MonotonicTimestamp::new(
+            24 * 60 * 60 * 1_000 + 2,
+        ))),
+        CaptureWriteOutcome::Accepted
+    );
+
+    let artifact = writer.finish().unwrap();
+    let database = RideDatabase::open(&database_path).unwrap();
+    let receipt = database
+        .retain_finished_capture(
+            &artifact,
+            cutout_core::CaptureOrigin::Manual,
+            None,
+            WallClockUnixTimestamp::new(9999),
+        )
+        .unwrap();
+    assert_eq!(receipt.record_count, 3);
+    database.shutdown().unwrap();
+}
+
+#[test]
+fn recorded_capture_locations_are_not_cut_off_at_the_import_duration_limit() {
+    let _guard = test_guard();
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("recording.jsonl");
+    let writer = crate::CaptureWriter::start(
+        source.clone(),
+        WallClockUnixTimestamp::new(1234),
+        "wheel-a",
+        None,
+        &crate::CaptureMetadata {
+            advertised_services: vec![],
+            gatt_fingerprints: vec![],
+            resolved_identity: None,
+            annotations: vec![],
+        },
+    )
+    .unwrap();
+    let attached_location = pevcap_phone_location(0, 40.0, Some(3.0));
+    assert_eq!(
+        writer.try_send_record(
+            PevcapRecord::link_up(MonotonicTimestamp::new(0), None)
+                .with_phone_location(attached_location)
+        ),
+        CaptureWriteOutcome::Accepted
+    );
+    let location = |monotonic_ms| {
+        PevcapLocationSample::new(
+            MonotonicTimestamp::new(monotonic_ms),
+            pevcap_phone_location(monotonic_ms, 40.0, Some(3.0)),
+            None,
+            None,
+        )
+        .unwrap()
+    };
+    assert_eq!(
+        writer.record_location(location(10_000)),
+        CaptureWriteOutcome::Accepted
+    );
+    assert_eq!(
+        writer.record_location(location(24 * 60 * 60 * 1_000 + 5_000)),
+        CaptureWriteOutcome::Accepted
+    );
+    assert_eq!(
+        writer.record_location(location(24 * 60 * 60 * 1_000 + 6_000)),
+        CaptureWriteOutcome::Accepted
+    );
+
+    let artifact = writer.finish().unwrap();
+    let database = RideDatabase::open(&directory.path().join("ride.sqlite")).unwrap();
+    let receipt = database
+        .retain_finished_capture(
+            &artifact,
+            cutout_core::CaptureOrigin::Manual,
+            None,
+            WallClockUnixTimestamp::new(9999),
+        )
+        .unwrap();
+    assert!(receipt.recording.is_some());
+    assert_eq!(
+        receipt.location_count, 0,
+        "recording publication is capture-only"
+    );
+    database.shutdown().unwrap();
 }
 
 #[test]

@@ -829,7 +829,9 @@ public final class CutoutSessionCore: NSObject {
     public func annotateCapture(key: String, value: String) -> Bool {
         onBleQueue {
             let annotation = pevcapAnnotation(key: key, value: value)
-            guard captureBuilder?.addAnnotation(annotation: annotation) == true else { return false }
+            guard let builder = captureBuilder else { return false }
+            let outcome = builder.addAnnotation(annotation: annotation)
+            guard acceptCaptureWrite(outcome) else { return false }
             record(annotation)
             return true
         }
@@ -1347,7 +1349,7 @@ public final class CutoutSessionCore: NSObject {
             maxWriteLen: peripheral.map {
                 MobileTransportWriteLimitDto(bytes: UInt16(clamping: $0.maximumWriteValueLength(for: .withoutResponse)))
             }
-        ) ?? false) else { return }
+        ) ?? .accepted) else { return }
         if let snapshot = step.snapshot {
             hasObservedSpeedSnapshot = snapshot.speed?.value != nil
         }
@@ -2437,8 +2439,25 @@ public final class CutoutSessionCore: NSObject {
         peripheral = nil
     }
 
+    private func acceptCaptureWrite(_ outcome: MobileCaptureWriteOutcomeDto) -> Bool {
+        switch outcome {
+        case .accepted:
+            return true
+        case .rejected:
+            return false
+        case .failed:
+            failCaptureWrite()
+            return false
+        }
+    }
+
     private func acceptCaptureWrite(_ accepted: Bool) -> Bool {
         guard !accepted else { return true }
+        failCaptureWrite()
+        return false
+    }
+
+    private func failCaptureWrite() {
         failConnectionCapture()
         let status = captureBuilder?.writerStatus()
         record("capture_error=writer_failed \(status?.lastError ?? "unknown")")
@@ -2450,7 +2469,6 @@ public final class CutoutSessionCore: NSObject {
         finishCaptureWriter(priorWriteSucceeded: false)
         isRecordOnly = false
         cancelFailedConnectionAttempt()
-        return false
     }
 
     private func failConnectionCapture() {
@@ -2461,10 +2479,10 @@ public final class CutoutSessionCore: NSObject {
 
     private func finishCaptureAfterLinkDown() {
         guard captureBuilder != nil else { return }
-        let linkDownAccepted = captureBuilder?.recordLinkDown(
+        let outcome = captureBuilder?.recordLinkDown(
             monotonicMs: MobileMonotonicMillisDto(milliseconds: captureElapsedMilliseconds())
-        ) ?? false
-        finishCaptureWriter(priorWriteSucceeded: linkDownAccepted)
+        ) ?? .accepted
+        finishCaptureWriter(priorWriteSucceeded: outcome == .accepted)
     }
 
     private func finishCaptureWriter(
@@ -2514,6 +2532,10 @@ public final class CutoutSessionCore: NSObject {
             self.finishCaptureWriter(priorWriteSucceeded: priorWriteSucceeded)
         }
     }
+
+    func acceptCaptureWriteOutcomeForTesting(_ outcome: MobileCaptureWriteOutcomeDto) -> Bool {
+        onBleQueue { acceptCaptureWrite(outcome) }
+    }
 #endif
 
     private func captureElapsedMilliseconds() -> UInt64 {
@@ -2538,7 +2560,7 @@ public final class CutoutSessionCore: NSObject {
             notificationCount: captureNotificationCount,
             fileSizeBytes: fileSizeBytes,
             queuedMessageCount: status?.queuedMessages ?? 0,
-            writerError: status?.lastError
+            writerError: status?.failed == true ? status?.lastError : nil
         )
     }
 
@@ -2550,14 +2572,14 @@ public final class CutoutSessionCore: NSObject {
             return
         }
         if let protocolIdentityCandidate {
-            _ = builder.addAnnotation(annotation: pevcapAnnotation(
+            guard acceptCaptureWrite(builder.addAnnotation(annotation: pevcapAnnotation(
                 key: "resolved_evidence",
                 value: protocolIdentityCandidate.evidence
-            ))
-            _ = builder.addAnnotation(annotation: pevcapAnnotation(
+            ))) else { return }
+            guard acceptCaptureWrite(builder.addAnnotation(annotation: pevcapAnnotation(
                 key: "resolved_detail",
                 value: protocolIdentityCandidate.detail
-            ))
+            ))) else { return }
         }
     }
 
