@@ -490,7 +490,7 @@ final class CutoutAppUITests: XCTestCase {
 
     func testFinishCaptureOpensSavedArtifactAndShareSheet() throws {
         _ = try finishCaptureAndOpenArtifact()
-        let share = app.buttons["captures.share"]
+        let share = app.descendants(matching: .any)["captures.share"]
         XCTAssertTrue(share.isHittable)
         share.tap()
         XCTAssertTrue(app.otherElements["ActivityListView"].waitForExistence(timeout: 5), app.debugDescription)
@@ -519,11 +519,12 @@ final class CutoutAppUITests: XCTestCase {
         finish.tap()
         let detail = app.descendants(matching: .any)["captures.detail"]
         XCTAssertTrue(detail.waitForExistence(timeout: 10), app.debugDescription)
-        XCTAssertTrue(app.buttons["captures.share"].exists)
+        let share = app.descendants(matching: .any)["captures.share"]
+        scrollElementFrameIntoViewport(share, in: detail, maxScrolls: 8)
         XCTAssertFalse(app.descendants(matching: .any)["capture.screen"].exists)
         retainCaptureScreenshot("Saved capture")
         XCTAssertFalse(app.buttons["device-picker.capture-status"].exists)
-        if usesLocalizedText { XCTAssertFalse(app.buttons["captures.share"].label.isEmpty) }
+        if usesLocalizedText { XCTAssertFalse(share.label.isEmpty) }
         return detail
     }
 
