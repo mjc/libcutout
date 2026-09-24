@@ -610,81 +610,85 @@ final class CutoutAppModel {
             rideMapVehicleNameCache[identity] = name
         }
         restoreRideMapState()
-        self.core.onDisplayStateChange = { [weak self] displayState in
-            self?.displayState = displayState
-            self?.syncLiveActivity()
-        }
-        self.core.onPhaseChange = { [weak self] phase in
-            guard let self else { return }
-            self.handlePhaseChange(phase)
-            self.syncLiveActivity()
-        }
-        self.core.onReconnectScheduled = { [weak self] retry in
-            self?.handleReconnectScheduled(retry)
-        }
-        self.core.onScanStateChange = { [weak self] scanState in
-            self?.handleScanStateChange(scanState)
-        }
-        self.core.onSettingsChange = { [weak self] snapshot in
-            guard let self, self.phase == .live,
-                  self.core.rideSessionStateHandle.connectionAttemptSnapshot().revision == snapshot.connection.revision else { return }
-            self.settings = snapshot
-        }
-        self.core.onPhoneAlarmActionsAvailable = { [weak self] actions in
-            self?.applyPhoneAlarmActions(actions)
-        }
-        self.core.onFaultHistoryReadbackChange = { [weak self] faultHistoryReadback in
-            self?.faultHistoryReadback = faultHistoryReadback
-        }
-        self.core.onBmsSnapshotChange = { [weak self] bmsSnapshot in
-            self?.bmsSnapshot = bmsSnapshot
-        }
-        self.core.onPhoneLocationSnapshotChange = { [weak self] snapshot, receivedAt in
-            self?.phoneLocationReadback = PhoneLocationReadback(snapshot: snapshot, receivedAt: receivedAt)
-        }
-        self.core.onRideMapDecisionChange = { [weak self] snapshot, decision in
-            self?.applyRideMapDecision(snapshot: snapshot, decision: decision)
-        }
-        self.core.onRideMapSnapshotChange = { [weak self] snapshot in
-            guard let self else { return }
-            guard self.acceptsRideMapSnapshot(snapshot) else { return }
-            if let previousRideID = self.rideMapSnapshot?.rideID,
-               previousRideID != snapshot.rideID
-            {
-                // A newer Rust snapshot can be an automatic replacement, not merely a new
-                // revision of the same ride. Invalidate both successful and failed projections
-                // from the previous ride before publishing the replacement.
-                self.invalidateLiveProjection(clearPoints: true)
-                self.rideMapLiveError = nil
-            }
-            self.rideMapSnapshot = snapshot
-            self.rideMapLiveTelemetryState = snapshot.telemetryState
-            self.updateRideMapDurationTicker()
-            if self.rideMapRestoreTask == nil {
-                self.restoreRideMapState()
-            }
-        }
-        self.core.onRideMapErrorChange = { [weak self] event in
-            guard let self,
-                  Self.shouldApplyRideMapError(
-                      context: event.context,
-                      currentSnapshot: self.rideMapSnapshot
-                  )
-            else { return }
-            self.rideMapLiveError = event.error
-        }
-        self.core.onRideMapAvailabilityChange = { [weak self] availability in
-            self?.rideMapAvailability = availability
-        }
-        self.core.onProtocolIdentityCandidateChange = { [weak self] candidate in
-            self?.applyProtocolIdentityCandidate(candidate)
-        }
-        self.core.onBluetoothRestorationResolved = { [weak self] platformIdentifier in
-            self?.handleBluetoothRestorationResolved(platformIdentifier)
-        }
-        self.core.onCaptureEvent = { [weak self] event in
-            self?.applyCaptureEvent(event)
-        }
+        CutoutSessionCallbackRegistrar(core: core).install(
+            .init(
+                displayState: { [weak self] displayState in
+                    self?.displayState = displayState
+                    self?.syncLiveActivity()
+                },
+                phase: { [weak self] phase in
+                    guard let self else { return }
+                    self.handlePhaseChange(phase)
+                    self.syncLiveActivity()
+                },
+                reconnectScheduled: { [weak self] retry in
+                    self?.handleReconnectScheduled(retry)
+                },
+                captureEvent: { [weak self] event in
+                    self?.applyCaptureEvent(event)
+                },
+                scanState: { [weak self] scanState in
+                    self?.handleScanStateChange(scanState)
+                },
+                settings: { [weak self] snapshot in
+                    guard let self, self.phase == .live,
+                          self.core.rideSessionStateHandle.connectionAttemptSnapshot().revision == snapshot.connection.revision else { return }
+                    self.settings = snapshot
+                },
+                faultHistory: { [weak self] faultHistoryReadback in
+                    self?.faultHistoryReadback = faultHistoryReadback
+                },
+                bmsSnapshot: { [weak self] bmsSnapshot in
+                    self?.bmsSnapshot = bmsSnapshot
+                },
+                phoneLocation: { [weak self] snapshot, receivedAt in
+                    self?.phoneLocationReadback = PhoneLocationReadback(snapshot: snapshot, receivedAt: receivedAt)
+                },
+                rideMapDecision: { [weak self] snapshot, decision in
+                    self?.applyRideMapDecision(snapshot: snapshot, decision: decision)
+                },
+                rideMapSnapshot: { [weak self] snapshot in
+                    guard let self else { return }
+                    guard self.acceptsRideMapSnapshot(snapshot) else { return }
+                    if let previousRideID = self.rideMapSnapshot?.rideID,
+                       previousRideID != snapshot.rideID
+                    {
+                        // A newer Rust snapshot can be an automatic replacement, not merely a new
+                        // revision of the same ride. Invalidate both successful and failed projections
+                        // from the previous ride before publishing the replacement.
+                        self.invalidateLiveProjection(clearPoints: true)
+                        self.rideMapLiveError = nil
+                    }
+                    self.rideMapSnapshot = snapshot
+                    self.rideMapLiveTelemetryState = snapshot.telemetryState
+                    self.updateRideMapDurationTicker()
+                    if self.rideMapRestoreTask == nil {
+                        self.restoreRideMapState()
+                    }
+                },
+                rideMapError: { [weak self] event in
+                    guard let self,
+                          Self.shouldApplyRideMapError(
+                              context: event.context,
+                              currentSnapshot: self.rideMapSnapshot
+                          )
+                    else { return }
+                    self.rideMapLiveError = event.error
+                },
+                rideMapAvailability: { [weak self] availability in
+                    self?.rideMapAvailability = availability
+                },
+                protocolIdentity: { [weak self] candidate in
+                    self?.applyProtocolIdentityCandidate(candidate)
+                },
+                bluetoothRestoration: { [weak self] platformIdentifier in
+                    self?.handleBluetoothRestorationResolved(platformIdentifier)
+                },
+                phoneAlarmActions: { [weak self] actions in
+                    self?.applyPhoneAlarmActions(actions)
+                }
+            )
+        )
         syncPhoneAlarmPreferences()
         drainPhoneAlarmActions()
         refreshPhoneAlarmAuthorization()

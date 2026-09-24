@@ -103,6 +103,34 @@ final class CutoutAppModelTests: XCTestCase {
         )
     }
 
+    @MainActor
+    func testSessionCallbacksHaveOneExplicitRegistrationOrder() {
+        let driver = SessionDriverSpy(rows: [])
+        _ = CutoutAppModel(core: driver)
+
+        XCTAssertEqual(
+            driver.callbackRegistrationEvents,
+            [
+                "displayState",
+                "phase",
+                "reconnectScheduled",
+                "scanState",
+                "settings",
+                "phoneAlarmActions",
+                "faultHistory",
+                "bmsSnapshot",
+                "phoneLocation",
+                "rideMapDecision",
+                "rideMapSnapshot",
+                "rideMapError",
+                "rideMapAvailability",
+                "protocolIdentity",
+                "bluetoothRestoration",
+                "captureEvent"
+            ]
+        )
+    }
+
 #if !os(iOS)
     @MainActor
     func testUnavailableMusicCommandPublishesVisibleFeedback() async {
@@ -3934,21 +3962,23 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     private var rideMapUnavailable: Bool
     var rideMapStateHandle: MobileRideMapState? { rideMapUnavailable ? nil : rideMapState }
     let rideMapAvailability: MobileRideMapAvailability = .ready
-    var onDisplayStateChange: ((RideDisplayState) -> Void)?
-    var onPhaseChange: ((SessionConnectionPhase) -> Void)?
-    var onReconnectScheduled: ((SessionConnectionRetry) -> Void)?
-    var onCaptureEvent: ((CaptureEvent) -> Void)?
-    var onScanStateChange: ((DevicePickerScanState) -> Void)?
-    var onSettingsChange: ((DeviceSettings) -> Void)?
-    var onFaultHistoryReadbackChange: ((FaultHistoryReadback?) -> Void)?
-    var onBmsSnapshotChange: ((BmsSnapshot?) -> Void)?
-    var onPhoneLocationSnapshotChange: ((MobilePhoneLocationSnapshotDto, MonotonicMilliseconds) -> Void)?
-    var onRideMapDecisionChange: ((MobileRideMapSnapshotDto, MobileRideMapDecisionDto) -> Void)?
-    var onRideMapSnapshotChange: ((MobileRideMapSnapshotDto) -> Void)?
-    var onRideMapErrorChange: ((MobileRideMapErrorEvent) -> Void)?
-    var onRideMapAvailabilityChange: ((MobileRideMapAvailability) -> Void)?
-    var onProtocolIdentityCandidateChange: ((DevicePickerDiscoveryCandidate?) -> Void)?
-    var onBluetoothRestorationResolved: ((String?) -> Void)?
+    var callbackRegistrationEvents = [String]()
+    var onPhoneAlarmActionsAvailable: ((MobilePhoneAlarmActionsDto) -> Void)? { didSet { recordCallbackRegistration("phoneAlarmActions") } }
+    var onDisplayStateChange: ((RideDisplayState) -> Void)? { didSet { recordCallbackRegistration("displayState") } }
+    var onPhaseChange: ((SessionConnectionPhase) -> Void)? { didSet { recordCallbackRegistration("phase") } }
+    var onReconnectScheduled: ((SessionConnectionRetry) -> Void)? { didSet { recordCallbackRegistration("reconnectScheduled") } }
+    var onCaptureEvent: ((CaptureEvent) -> Void)? { didSet { recordCallbackRegistration("captureEvent") } }
+    var onScanStateChange: ((DevicePickerScanState) -> Void)? { didSet { recordCallbackRegistration("scanState") } }
+    var onSettingsChange: ((DeviceSettings) -> Void)? { didSet { recordCallbackRegistration("settings") } }
+    var onFaultHistoryReadbackChange: ((FaultHistoryReadback?) -> Void)? { didSet { recordCallbackRegistration("faultHistory") } }
+    var onBmsSnapshotChange: ((BmsSnapshot?) -> Void)? { didSet { recordCallbackRegistration("bmsSnapshot") } }
+    var onPhoneLocationSnapshotChange: ((MobilePhoneLocationSnapshotDto, MonotonicMilliseconds) -> Void)? { didSet { recordCallbackRegistration("phoneLocation") } }
+    var onRideMapDecisionChange: ((MobileRideMapSnapshotDto, MobileRideMapDecisionDto) -> Void)? { didSet { recordCallbackRegistration("rideMapDecision") } }
+    var onRideMapSnapshotChange: ((MobileRideMapSnapshotDto) -> Void)? { didSet { recordCallbackRegistration("rideMapSnapshot") } }
+    var onRideMapErrorChange: ((MobileRideMapErrorEvent) -> Void)? { didSet { recordCallbackRegistration("rideMapError") } }
+    var onRideMapAvailabilityChange: ((MobileRideMapAvailability) -> Void)? { didSet { recordCallbackRegistration("rideMapAvailability") } }
+    var onProtocolIdentityCandidateChange: ((DevicePickerDiscoveryCandidate?) -> Void)? { didSet { recordCallbackRegistration("protocolIdentity") } }
+    var onBluetoothRestorationResolved: ((String?) -> Void)? { didSet { recordCallbackRegistration("bluetoothRestoration") } }
     var protocolIdentityCandidate: DevicePickerDiscoveryCandidate?
     var isRecordOnlyConnection = false
     var electricUnicycleModel: ElectricUnicycleModel?
@@ -3972,6 +4002,10 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     private(set) var resetRideMapLocationAdmissionCount = 0
     private(set) var rideLocationDemandStates = [MobileRideMapStateDto]()
     var nowValue: UInt64 = 0
+
+    private func recordCallbackRegistration(_ name: String) {
+        callbackRegistrationEvents.append(name)
+    }
 
     init(
         rows: [DevicePickerRow],
