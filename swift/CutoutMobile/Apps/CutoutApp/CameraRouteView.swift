@@ -1020,7 +1020,91 @@ private struct CameraTruthCard: View {
                     .accessibilityElement(children: .combine)
             }
 
-            if let requestRecording, presentation.connection == .connected {
+            CameraRecordingControls(
+                isConnected: presentation.connection == .connected,
+                recordingRequestKey: recordingRequestKey,
+                isRequestingRecording: isRequestingRecording,
+                supportsOnboardRecording: supportsOnboardRecording,
+                stillRequestKey: stillRequestKey,
+                isRequestingStill: isRequestingStill,
+                supportsStillCapture: supportsStillCapture,
+                requestRecording: requestRecording,
+                requestStillCapture: requestStillCapture
+            )
+
+            if let previewRenderer, showsPreviewSurface {
+                CameraPreviewSurface(renderer: previewRenderer)
+                    .accessibilityIdentifier("camera.preview.surface")
+            }
+
+            CameraPreviewControls(
+                hasPreviewSource: hasPreviewSource,
+                preview: presentation.preview,
+                savedFileURL: savedFileURL,
+                startPreview: startPreview,
+                savePreview: savePreview,
+                stopPreview: stopPreview
+            )
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(20)
+        .cameraSurface(tint: PevColors.purple)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("camera.truth.card")
+    }
+
+    private var previewText: String {
+        switch presentation.preview {
+        case .stopped: localizedAppText("camera.preview.stopped")
+        case .buffering: localizedAppText("camera.preview.buffering")
+        case .live: localizedAppText("camera.preview.live")
+        case .stale: localizedAppText("camera.preview.stale")
+        case .interrupted: localizedAppText("camera.preview.interrupted")
+        case .unavailable: localizedAppText("camera.preview.unavailable")
+        }
+    }
+
+    private var recordingText: String {
+        switch presentation.recording {
+        case .unknown: localizedAppText("camera.recording.unknown")
+        case .stopped: localizedAppText("camera.recording.stopped")
+        case .recording: localizedAppText("camera.recording.active")
+        }
+    }
+
+    private var storageText: String {
+        switch presentation.storage {
+        case .unknown: localizedAppText("camera.storage.unknown")
+        case .present: localizedAppText("camera.storage.present")
+        case .missing: localizedAppText("camera.storage.missing")
+        case .error: localizedAppText("camera.storage.error")
+        }
+    }
+
+    private var showsPreviewSurface: Bool {
+        switch presentation.preview {
+        case .stopped, .unavailable:
+            false
+        case .buffering, .live, .stale, .interrupted:
+            true
+        }
+    }
+}
+
+private struct CameraRecordingControls: View {
+    let isConnected: Bool
+    let recordingRequestKey: String?
+    let isRequestingRecording: Bool
+    let supportsOnboardRecording: Bool
+    let stillRequestKey: String?
+    let isRequestingStill: Bool
+    let supportsStillCapture: Bool
+    let requestRecording: ((Bool) -> Void)?
+    let requestStillCapture: (() -> Void)?
+
+    var body: some View {
+        if isConnected, let requestRecording {
+            VStack(alignment: .leading, spacing: 8) {
                 Divider()
                 if supportsOnboardRecording {
                     HStack {
@@ -1076,16 +1160,24 @@ private struct CameraTruthCard: View {
                     }
                 }
             }
+        }
+    }
+}
 
-            if let previewRenderer, showsPreviewSurface {
-                CameraPreviewSurface(renderer: previewRenderer)
-                    .accessibilityIdentifier("camera.preview.surface")
-            }
+private struct CameraPreviewControls: View {
+    let hasPreviewSource: Bool
+    let preview: CameraPreviewPresentation
+    let savedFileURL: URL?
+    let startPreview: (() -> Void)?
+    let savePreview: (() -> Void)?
+    let stopPreview: (() -> Void)?
 
-            if hasPreviewSource, let startPreview, let savePreview {
+    var body: some View {
+        if hasPreviewSource, let startPreview, let savePreview {
+            VStack(alignment: .leading, spacing: 8) {
                 Divider()
                 HStack {
-                    if presentation.preview == .stopped || presentation.preview == .interrupted {
+                    if preview == .stopped || preview == .interrupted {
                         Button(action: startPreview) {
                             Label(localizedAppText("camera.preview.start"), systemImage: "play.fill")
                         }
@@ -1126,48 +1218,6 @@ private struct CameraTruthCard: View {
                     }
                 }
             }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(20)
-        .cameraSurface(tint: PevColors.purple)
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("camera.truth.card")
-    }
-
-    private var previewText: String {
-        switch presentation.preview {
-        case .stopped: localizedAppText("camera.preview.stopped")
-        case .buffering: localizedAppText("camera.preview.buffering")
-        case .live: localizedAppText("camera.preview.live")
-        case .stale: localizedAppText("camera.preview.stale")
-        case .interrupted: localizedAppText("camera.preview.interrupted")
-        case .unavailable: localizedAppText("camera.preview.unavailable")
-        }
-    }
-
-    private var recordingText: String {
-        switch presentation.recording {
-        case .unknown: localizedAppText("camera.recording.unknown")
-        case .stopped: localizedAppText("camera.recording.stopped")
-        case .recording: localizedAppText("camera.recording.active")
-        }
-    }
-
-    private var storageText: String {
-        switch presentation.storage {
-        case .unknown: localizedAppText("camera.storage.unknown")
-        case .present: localizedAppText("camera.storage.present")
-        case .missing: localizedAppText("camera.storage.missing")
-        case .error: localizedAppText("camera.storage.error")
-        }
-    }
-
-    private var showsPreviewSurface: Bool {
-        switch presentation.preview {
-        case .stopped, .unavailable:
-            false
-        case .buffering, .live, .stale, .interrupted:
-            true
         }
     }
 }
