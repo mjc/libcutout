@@ -597,8 +597,11 @@ final class CutoutAppUITests: XCTestCase {
         let savedCapture = app.descendants(matching: .any)["device-picker.capture-status"]
         XCTAssertTrue(picker.waitForExistence(timeout: 5))
         XCTAssertTrue(savedCapture.waitForExistence(timeout: 5))
-        XCTAssertTrue(savedCapture.label.contains("cutout-btle-capture-"))
-        XCTAssertTrue(savedCapture.label.contains(".jsonl"))
+        savedCapture.tap()
+        let details = app.staticTexts["device-picker.capture-details"]
+        XCTAssertTrue(details.waitForExistence(timeout: 5))
+        XCTAssertTrue(details.label.contains("cutout-btle-capture-"))
+        XCTAssertTrue(details.label.contains(".jsonl"))
     }
 
     func testFinishCaptureFailureKeepsCaptureScreenAccessibleAtAccessibilityDynamicType() throws {

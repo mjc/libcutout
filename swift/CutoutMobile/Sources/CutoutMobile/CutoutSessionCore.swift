@@ -1952,10 +1952,12 @@ public final class CutoutSessionCore: NSObject {
     }
 
     private func publishProtocolIdentityCandidate() {
-        storedScanState = DevicePickerScanState(
-            status: storedScanState.status,
-            discoverySnapshot: rustSessionState.discoverySnapshot()
-        )
+        if testScript == nil {
+            storedScanState = DevicePickerScanState(
+                status: storedScanState.status,
+                discoverySnapshot: rustSessionState.discoverySnapshot()
+            )
+        }
         publishScanState()
         let value = protocolIdentityCandidate
         let generation = connectionSnapshot.generation

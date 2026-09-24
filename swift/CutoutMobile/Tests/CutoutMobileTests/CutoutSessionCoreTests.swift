@@ -406,6 +406,26 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(core.displayState.speed.millimetersPerSecond, 8_000)
     }
 
+    func testLiveScriptRetainsItsPickerRowAfterPublishingIdentity() {
+        let live = expectation(description: "scripted session reaches live")
+        let core = CutoutSessionCore(testScript: CutoutSessionTestScript(
+            candidate: scriptedVescCandidate,
+            telemetry: TelemetrySnapshot(speed: speedValue(8_000)),
+            startsLive: true,
+            connectionDelayMilliseconds: 0
+        ))
+        var publishedRows = [[DevicePickerRow]]()
+        core.onScanStateChange = { publishedRows.append($0.rows) }
+        core.onPhaseChange = { phase in
+            if phase == .live { live.fulfill() }
+        }
+
+        core.start()
+        wait(for: [live], timeout: 1)
+        XCTAssertEqual(core.scanState.rows, [scriptedVescCandidate.pickerRow])
+        XCTAssertTrue(publishedRows.allSatisfy { $0 == [scriptedVescCandidate.pickerRow] })
+    }
+
     #if DEBUG
     func testScriptedControlsUseProtocolEvidenceAndFenceReplacementRequests() throws {
         let live = expectation(description: "generic session reaches live twice")

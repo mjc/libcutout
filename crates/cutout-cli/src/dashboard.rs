@@ -25,8 +25,8 @@ use cutout_core::{
     ModelCatalog, NotificationByteLen, NotificationIngestOutcome, ParserDiagnostics,
     PercentQuantity, PevcapHeader, PhaseCurrent, Power, ProtocolFamily, Quantity,
     QuantityDisplayValue, RawTelemetryReadback, ReadOnlyResponse, SettingsEntry, SettingsReadback,
-    SettingsReadbackAvailability, SignalStrength, Speed, TelemetryDelta, TelemetrySnapshot,
-    Temperature, Unit, Voltage,
+    SettingsReadbackAvailability, SignalStrength, Speed, TelemetryDelta, TelemetryFieldUpdate,
+    TelemetrySnapshot, Temperature, Unit, Voltage,
 };
 use cutout_protocols::{
     MODEL_CATALOG, NOSFET_AERO_SESSION_KEY, VETERAN_FIELD_CHARGE_MODE, VeteranModelId,
@@ -1337,6 +1337,16 @@ impl DashboardState {
             self.push_log("trace", &format_unmapped_telemetry_event(report));
         }
         for event in &report.events {
+            if let SessionBridgeEvent::ProcessedTelemetry { delta, .. } = event {
+                match delta.pwm {
+                    TelemetryFieldUpdate::Unchanged => {}
+                    TelemetryFieldUpdate::Set(pwm) => {
+                        self.telemetry.latest_pwm =
+                            Some(DisplayDutyCycle::from_duty_cycle(pwm.value));
+                    }
+                    TelemetryFieldUpdate::Invalid => self.telemetry.latest_pwm = None,
+                }
+            }
             if let SessionBridgeEvent::NotificationIngest {
                 monotonic_ms,
                 outcome,
@@ -1710,9 +1720,9 @@ impl TelemetryWindow {
         if let Some(pitch) = snapshot.pitch {
             self.latest_pitch = Some(WheelPitchDeg::from_angle(pitch.value));
         }
-        self.latest_pwm = snapshot
-            .pwm
-            .map(|pwm| DisplayDutyCycle::from_duty_cycle(pwm.value));
+        if let Some(pwm) = snapshot.pwm {
+            self.latest_pwm = Some(DisplayDutyCycle::from_duty_cycle(pwm.value));
+        }
         self.sync_points();
     }
 
@@ -2091,7 +2101,7 @@ impl fmt::Display for TelemetryDeltaLog {
                 "C",
             )?;
         }
-        if let cutout_core::TelemetryFieldUpdate::Set(pwm) = delta.pwm {
+        if let TelemetryFieldUpdate::Set(pwm) = delta.pwm {
             fields.write(
                 "pwm",
                 DisplayDutyCycle::from_duty_cycle(pwm.value).get(),
@@ -4310,7 +4320,7 @@ mod tests {
             voltage: Some(voltage(108_760)),
             battery_current: Some(battery_current(0)),
             controller_temperature: Some(temperature(33_270)),
-            pwm: cutout_core::TelemetryFieldUpdate::Set(duty_cycle_permille(0)),
+            pwm: TelemetryFieldUpdate::Set(duty_cycle_permille(0)),
             distance: Some(distance(1_551_169_000)),
             pitch: Some(angle_mdeg(69_060)),
             battery_level_estimated: Some(level_estimated(47)),
@@ -5237,20 +5247,40 @@ mod tests {
     }
 
     #[test]
-    fn dashboard_clears_invalidated_pwm_in_latest_snapshot() {
+    fn dashboard_retains_omitted_pwm_and_clears_invalid_report() {
         let mut state = DashboardState::empty();
+        let mut report = empty_session_bridge_report();
+        report.telemetry = telemetry_events(1);
         let mut snapshot = TelemetrySnapshot::default();
-        snapshot.apply_delta(TelemetryDelta {
-            pwm: cutout_core::TelemetryFieldUpdate::Set(duty_cycle_permille(400)),
+        let set = TelemetryDelta {
+            pwm: TelemetryFieldUpdate::Set(duty_cycle_permille(400)),
             ..TelemetryDelta::empty(ms(1))
-        });
-        state.telemetry.apply_snapshot(snapshot);
+        };
+        snapshot.apply_delta(set);
+        report.telemetry_snapshot = snapshot;
+        report.events = vec![SessionBridgeEvent::ProcessedTelemetry {
+            monotonic_ms: cutout_btle::MonotonicMs::new(1),
+            delta: set,
+        }];
+        state.apply_session_report(&report);
         assert!(state.telemetry.latest_pwm.is_some());
-        snapshot.apply_delta(TelemetryDelta {
-            pwm: cutout_core::TelemetryFieldUpdate::Invalid,
-            ..TelemetryDelta::empty(ms(2))
-        });
-        state.telemetry.apply_snapshot(snapshot);
+
+        report.telemetry_snapshot = TelemetrySnapshot::default();
+        report.events = vec![SessionBridgeEvent::ProcessedTelemetry {
+            monotonic_ms: cutout_btle::MonotonicMs::new(2),
+            delta: TelemetryDelta::empty(ms(2)),
+        }];
+        state.apply_session_report(&report);
+        assert!(state.telemetry.latest_pwm.is_some());
+
+        report.events = vec![SessionBridgeEvent::ProcessedTelemetry {
+            monotonic_ms: cutout_btle::MonotonicMs::new(3),
+            delta: TelemetryDelta {
+                pwm: TelemetryFieldUpdate::Invalid,
+                ..TelemetryDelta::empty(ms(3))
+            },
+        }];
+        state.apply_session_report(&report);
         assert!(state.telemetry.latest_pwm.is_none());
     }
 
