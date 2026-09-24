@@ -2633,10 +2633,14 @@ final class CutoutAppModelTests: XCTestCase {
             case let .finished(generation, _), let .failed(generation):
                 if generation == firstGeneration {
                     firstTerminal.fulfill()
-                    XCTAssertEqual(
-                        model.capture.status,
-                        .recording(label: nil, notificationCount: 0, fileName: secondFileName)
-                    )
+                    if let secondFileName {
+                        XCTAssertEqual(
+                            model.capture.status,
+                            .recording(label: nil, notificationCount: 0, fileName: secondFileName)
+                        )
+                    } else {
+                        XCTFail("capture B should have started before capture A finalized")
+                    }
                 }
             case .notificationRecorded, .progress, .lifecycle:
                 break
@@ -2654,17 +2658,18 @@ final class CutoutAppModelTests: XCTestCase {
 
         XCTAssertTrue(core.recordOnly(platformIdentifier: fixture.candidate.platformIdentifier))
         await fulfillment(of: [secondStarted], timeout: 2)
+        let activeFileName = try XCTUnwrap(secondFileName)
         XCTAssertNotEqual(firstGeneration, secondGeneration)
         XCTAssertEqual(
             model.capture.status,
-            .recording(label: nil, notificationCount: 0, fileName: secondFileName)
+            .recording(label: nil, notificationCount: 0, fileName: activeFileName)
         )
 
         releaseFinish.signal()
         await fulfillment(of: [firstTerminal], timeout: 2)
         XCTAssertEqual(
             model.capture.status,
-            .recording(label: nil, notificationCount: 0, fileName: secondFileName)
+            .recording(label: nil, notificationCount: 0, fileName: activeFileName)
         )
         core.captureFinishWriterGate = nil
         core.disconnectAndScan()

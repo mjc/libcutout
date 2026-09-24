@@ -690,9 +690,7 @@ public final class CutoutSessionCore: NSObject {
 #endif
         connectionDeadlineWorkItem?.cancel()
         protocolDetectionExpiryWorkItem?.cancel()
-        rideMapWritePoller?.cancel()
         captureProgressTimer?.cancel()
-        displayPublisher.cancel()
     }
 
     /// Composes transport around a database handle opened off the main actor.
@@ -1444,6 +1442,7 @@ public final class CutoutSessionCore: NSObject {
         }
 #else
         finishCaptureAfterLinkDown()
+#endif
         isRecordOnly = false
         isDetectingProtocol = false
         selectedModel = nil
@@ -2128,10 +2127,6 @@ public final class CutoutSessionCore: NSObject {
         }
     }
 
-    private func beginCaptureGeneration() -> CaptureGeneration {
-        capturePresentation.begin()
-    }
-
     private func publishCaptureProgress() {
         guard let generation = captureGeneration else { return }
         let progress = captureProgress()
@@ -2294,6 +2289,7 @@ public final class CutoutSessionCore: NSObject {
     ) -> Bool {
         guard let identity = rustSessionState.beginCapture(origin: origin) else { return false }
         let generation = CaptureGeneration(rawValue: identity.value)
+        capturePresentation.begin(generation: generation)
         let startedAt = clock.now()
         captureNotificationCount = 0
 
