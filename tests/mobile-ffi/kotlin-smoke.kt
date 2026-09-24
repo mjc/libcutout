@@ -11,7 +11,7 @@ import uniffi.cutout_mobile_ffi.MobileNovatekMediaPathException
 import uniffi.cutout_mobile_ffi.MobileNovatekCommandStatusDto
 import uniffi.cutout_mobile_ffi.MobileNovatekCommandOutcomeDto
 import uniffi.cutout_mobile_ffi.MobileNovatekHttpOriginDto
-import uniffi.cutout_mobile_ffi.MobileNovatekRecordingCommandDto
+import uniffi.cutout_mobile_ffi.MobileNovatekCommandDto
 import uniffi.cutout_mobile_ffi.MobileNovatekReadOnlySnapshotDto
 import uniffi.cutout_mobile_ffi.mobileParseNovatekReadOnlySnapshot
 import uniffi.cutout_mobile_ffi.mobileParseNovatekCommandOutcome
@@ -134,11 +134,12 @@ fun main() {
     }
 
     CutoutSessionStateHandle().use { session ->
+        val cameraOrigin = MobileNovatekHttpOriginDto(
+            address = "192.168.1.254",
+            port = 80u.toUShort(),
+        )
         session.configureNovatekReadOnlySession(
-            origin = MobileNovatekHttpOriginDto(
-                address = "192.168.1.254",
-                port = 80u.toUShort(),
-            ),
+            origin = cameraOrigin,
             snapshot = MobileNovatekReadOnlySnapshotDto(
                 firmwareVersion = "R3V1.1_20240411",
                 movieRtspUri = "rtsp://192.168.1.254/movie",
@@ -158,18 +159,25 @@ fun main() {
             ),
         )
         check(
-            session.novatekRecordingCommandTarget(
-                MobileNovatekRecordingCommandDto.START,
-            ) ==
+            session.authorizeNovatekCommand(
+                cameraOrigin,
+                MobileNovatekCommandDto.START_RECORDING,
+            ).target ==
                 "/?custom=1&cmd=2001&str=1",
         )
         check(
-            session.novatekRecordingCommandTarget(
-                MobileNovatekRecordingCommandDto.STOP,
-            ) ==
+            session.authorizeNovatekCommand(
+                cameraOrigin,
+                MobileNovatekCommandDto.STOP_RECORDING,
+            ).target ==
                 "/?custom=1&cmd=2001&str=0",
         )
-        check(session.novatekStillCaptureCommandTarget() == "/?custom=1&cmd=1001")
+        check(
+            session.authorizeNovatekCommand(
+                cameraOrigin,
+                MobileNovatekCommandDto.STILL_CAPTURE,
+            ).target == "/?custom=1&cmd=1001",
+        )
         session.invalidateCameraLifecycle()
         check(session.novatekSessionOrigin() == null)
     }
