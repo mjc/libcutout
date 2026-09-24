@@ -1935,11 +1935,61 @@ impl From<DeviceConnectionIntentDto> for CoreDeviceConnectionIntent {
 pub struct CutoutSessionStateHandle {
     inner: Mutex<MobileSessionState>,
     phone_alarm: Mutex<MobilePhoneAlarmState>,
-    novatek_session: Mutex<Option<NovatekR3V1Session>>,
-    novatek_read_only_snapshot: Mutex<Option<MobileNovatekReadOnlySnapshotDto>>,
+    novatek_session: Mutex<NovatekCameraSessionState>,
 }
 
 type MobileSessionState = cutout_protocols::DeviceConnectionSession;
+
+#[derive(Debug)]
+struct RetainedNovatekSession {
+    profile: NovatekR3V1Session,
+    read_only_snapshot: Option<MobileNovatekReadOnlySnapshotDto>,
+}
+
+#[derive(Debug, Default)]
+struct NovatekCameraSessionState {
+    retained: Option<RetainedNovatekSession>,
+}
+
+impl NovatekCameraSessionState {
+    fn replace_profile(&mut self, profile: NovatekR3V1Session) {
+        self.retained = Some(RetainedNovatekSession {
+            profile,
+            read_only_snapshot: None,
+        });
+    }
+
+    fn replace_read_only(
+        &mut self,
+        profile: NovatekR3V1Session,
+        read_only_snapshot: MobileNovatekReadOnlySnapshotDto,
+    ) {
+        self.retained = Some(RetainedNovatekSession {
+            profile,
+            read_only_snapshot: Some(read_only_snapshot),
+        });
+    }
+
+    fn clear(&mut self) {
+        self.retained = None;
+    }
+
+    fn profile(&self) -> Option<&NovatekR3V1Session> {
+        self.retained.as_ref().map(|session| &session.profile)
+    }
+
+    fn media_is_current(&self, path: &str, size_bytes: u64) -> bool {
+        self.retained
+            .as_ref()
+            .and_then(|session| session.read_only_snapshot.as_ref())
+            .is_some_and(|snapshot| {
+                snapshot
+                    .media
+                    .iter()
+                    .any(|entry| entry.path == path && entry.size_bytes == size_bytes)
+            })
+    }
+}
 
 #[derive(Debug, Default)]
 struct MobilePhoneAlarmState {
@@ -2390,8 +2440,7 @@ impl CutoutSessionStateHandle {
         Arc::new(Self {
             inner: Mutex::new(MobileSessionState::default()),
             phone_alarm: Mutex::new(MobilePhoneAlarmState::default()),
-            novatek_session: Mutex::new(None),
-            novatek_read_only_snapshot: Mutex::new(None),
+            novatek_session: Mutex::new(NovatekCameraSessionState::default()),
         })
     }
 
@@ -2409,8 +2458,7 @@ impl CutoutSessionStateHandle {
                 database: Some(database.inner.clone()),
                 ..MobilePhoneAlarmState::default()
             }),
-            novatek_session: Mutex::new(None),
-            novatek_read_only_snapshot: Mutex::new(None),
+            novatek_session: Mutex::new(NovatekCameraSessionState::default()),
         })
     }
 
@@ -2484,14 +2532,10 @@ impl CutoutSessionStateHandle {
                 .into_iter()
                 .map(|status| (status.command_id, status.status)),
         )?;
-        *self
-            .novatek_session
+        self.novatek_session
             .lock()
-            .unwrap_or_else(PoisonError::into_inner) = Some(session);
-        *self
-            .novatek_read_only_snapshot
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) = None;
+            .unwrap_or_else(PoisonError::into_inner)
+            .replace_profile(session);
         Ok(())
     }
 
@@ -2518,43 +2562,29 @@ impl CutoutSessionStateHandle {
                 .iter()
                 .map(|status| (status.command_id, status.status)),
         )?;
-        *self
-            .novatek_session
+        self.novatek_session
             .lock()
-            .unwrap_or_else(PoisonError::into_inner) = Some(session);
-        *self
-            .novatek_read_only_snapshot
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) = Some(snapshot);
+            .unwrap_or_else(PoisonError::into_inner)
+            .replace_read_only(session, snapshot);
         Ok(())
     }
 
     /// Drops the retained Novatek proof and its command capabilities.
     pub fn clear_novatek_session(&self) {
-        *self
-            .novatek_session
+        self.novatek_session
             .lock()
-            .unwrap_or_else(PoisonError::into_inner) = None;
-        *self
-            .novatek_read_only_snapshot
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) = None;
+            .unwrap_or_else(PoisonError::into_inner)
+            .clear();
     }
 
     /// Returns whether Rust-retained media evidence matches one camera record.
     #[must_use]
     #[allow(clippy::needless_pass_by_value)]
     pub fn novatek_media_is_current(&self, path: String, size_bytes: u64) -> bool {
-        self.novatek_read_only_snapshot
+        self.novatek_session
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .as_ref()
-            .is_some_and(|snapshot| {
-                snapshot
-                    .media
-                    .iter()
-                    .any(|entry| entry.path == path && entry.size_bytes == size_bytes)
-            })
+            .media_is_current(&path, size_bytes)
     }
 
     /// Returns the retained validated Novatek origin, when configured.
@@ -2563,10 +2593,10 @@ impl CutoutSessionStateHandle {
         self.novatek_session
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .as_ref()
-            .map(|session| MobileNovatekHttpOriginDto {
-                address: session.origin().address().to_string(),
-                port: session.origin().port(),
+            .profile()
+            .map(|profile| MobileNovatekHttpOriginDto {
+                address: profile.origin().address().to_string(),
+                port: profile.origin().port(),
             })
     }
 
@@ -2583,7 +2613,7 @@ impl CutoutSessionStateHandle {
         self.novatek_session
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .as_ref()
+            .profile()
             .ok_or(MobileNovatekProfileError::CapabilityNotAdvertised)?
             .recording_command_target(command.into())
             .map(|target| target.as_str().to_owned())
@@ -2602,7 +2632,7 @@ impl CutoutSessionStateHandle {
         self.novatek_session
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .as_ref()
+            .profile()
             .ok_or(MobileNovatekProfileError::CapabilityNotAdvertised)?
             .still_capture_command_target(NovatekStillCaptureCommand)
             .map(|target| target.as_str().to_owned())
@@ -14898,6 +14928,60 @@ mod tests {
 
         handle.clear_novatek_session();
         assert!(!handle.novatek_media_is_current("A:\\Novatek\\Movie\\clip.TS".to_owned(), 42));
+    }
+
+    #[test]
+    fn novatek_session_state_replaces_profile_and_media_evidence_together() {
+        let mut state = NovatekCameraSessionState::default();
+        let snapshot = MobileNovatekReadOnlySnapshotDto {
+            firmware_version: "R3V1.1_20240411".to_owned(),
+            movie_rtsp_uri: "rtsp://192.168.1.254/xxx.mov".to_owned(),
+            photo_rtsp_uri: "rtsp://192.168.1.254/xxx.mov".to_owned(),
+            configuration: vec![MobileNovatekCommandStatusDto {
+                command_id: 2001,
+                status: 0,
+            }],
+            storage_present: true,
+            media: vec![MobileNovatekMediaEntryDto {
+                name: "clip.TS".to_owned(),
+                path: "A:\\Novatek\\Movie\\clip.TS".to_owned(),
+                size_bytes: 42,
+                timecode: 7,
+                time: "2025/01/01 00:00:00".to_owned(),
+                attributes: 32,
+            }],
+        };
+        let profile = build_novatek_session(
+            &MobileNovatekHttpOriginDto {
+                address: "192.168.1.254".to_owned(),
+                port: 80,
+            },
+            &snapshot.firmware_version,
+            snapshot
+                .configuration
+                .iter()
+                .map(|status| (status.command_id, status.status)),
+        )
+        .expect("read-only evidence establishes a valid profile");
+
+        state.replace_read_only(profile, snapshot);
+        assert!(state.media_is_current("A:\\Novatek\\Movie\\clip.TS", 42));
+
+        let profile = build_novatek_session(
+            &MobileNovatekHttpOriginDto {
+                address: "192.168.1.253".to_owned(),
+                port: 80,
+            },
+            "R3V1.1_20240411",
+            [(2001, 0)],
+        )
+        .expect("R3V1 profile may be retained without a media snapshot");
+        state.replace_profile(profile);
+
+        assert!(!state.media_is_current("A:\\Novatek\\Movie\\clip.TS", 42));
+        state.clear();
+        assert!(state.profile().is_none());
+        assert!(!state.media_is_current("A:\\Novatek\\Movie\\clip.TS", 42));
     }
 
     #[test]
