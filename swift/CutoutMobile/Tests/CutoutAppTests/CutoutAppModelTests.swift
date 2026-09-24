@@ -946,6 +946,78 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testHistorySelectionReplacementRejectsLateRouteProjection() async throws {
+        let driver = SessionDriverSpy(rows: [])
+        let state = driver.rideMapState
+
+        func saveRide(startingAt startMs: UInt64, latitude: Double) async throws -> String {
+            _ = try state.startGpsOnly(atMs: startMs)
+            _ = await Self.settle(state, try state.ingestLocation(
+                monotonicMs: startMs,
+                wallClockUnixMs: 1_700_000_000_000 + startMs,
+                latitudeDegrees: latitude,
+                longitudeDegrees: -104.9000,
+                horizontalAccuracyMeters: 5
+            ))
+            _ = await Self.settle(state, try state.ingestLocation(
+                monotonicMs: startMs + 1_000,
+                wallClockUnixMs: 1_700_000_001_000 + startMs,
+                latitudeDegrees: latitude + 0.0001,
+                longitudeDegrees: -104.9000,
+                horizontalAccuracyMeters: 5
+            ))
+            _ = try state.stop(atMs: startMs + 1_000)
+            return try state.save().rideID
+        }
+
+        let firstRideID = try await saveRide(startingAt: 100, latitude: 39.7000)
+        let secondRideID = try await saveRide(startingAt: 10_000, latitude: 39.7100)
+        let query = GatedRideHistoryQuery(base: state, failAfterRelease: false)
+        let model = CutoutAppModel(
+            core: driver,
+            rideHistoryQueryProvider: { query }
+        )
+        model.rideHistory.setDateFilter(.allTime)
+        await Self.waitUntil("initial selected history route") {
+            model.rideHistory.selectedRideID == secondRideID
+                && !model.rideHistory.routeLoading
+        }
+        let currentPoints = model.rideHistory.displayPoints
+        XCTAssertFalse(currentPoints.isEmpty)
+
+        query.armNextProjection()
+        model.rideHistory.selectFromHistoryList(firstRideID)
+        let staleProjectionStarted = await query.waitUntilGatedProjectionStarts()
+        XCTAssertTrue(staleProjectionStarted)
+
+        model.rideHistory.selectFromHistoryList(secondRideID)
+        await Self.waitUntil("replacement history route projection") {
+            model.rideHistory.selectedRideID == secondRideID
+                && model.rideHistory.detailProjectionRideID == secondRideID
+                && !model.rideHistory.routeLoading
+                && !model.rideHistory.detailRouteLoading
+        }
+        let replacementPoints = model.rideHistory.displayPoints
+        XCTAssertEqual(replacementPoints, currentPoints)
+
+        query.releaseGatedProjection()
+        let staleProjectionFinished = await query.waitUntilGatedProjectionFinishes()
+        XCTAssertTrue(staleProjectionFinished)
+        for _ in 0 ..< 20 {
+            await Task.yield()
+        }
+
+        XCTAssertEqual(model.rideHistory.selectedRideID, secondRideID)
+        XCTAssertEqual(model.rideHistory.detailProjectionRideID, secondRideID)
+        XCTAssertEqual(model.rideHistory.displayPoints, currentPoints)
+        XCTAssertEqual(model.rideHistory.detailDisplayPoints, replacementPoints)
+        XCTAssertFalse(model.rideHistory.routeLoading)
+        XCTAssertFalse(model.rideHistory.detailRouteLoading)
+        XCTAssertNil(model.rideHistory.routeError)
+        XCTAssertNil(model.rideHistory.detailRouteError)
+    }
+
+    @MainActor
     func testHistoryModelDeallocatesWhilePageQueryIsInFlight() async {
         let query = GatedRideHistoryQuery(
             base: MobileRideMapState(),
