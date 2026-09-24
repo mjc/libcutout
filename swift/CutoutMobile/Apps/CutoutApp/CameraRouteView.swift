@@ -4,9 +4,9 @@ import ImageIO
 import SwiftUI
 
 #if canImport(UIKit)
-import UIKit
+    import UIKit
 #elseif canImport(AppKit)
-import AppKit
+    import AppKit
 #endif
 
 struct CameraRouteContainerView: View {
@@ -83,37 +83,37 @@ struct CameraRouteContainerView: View {
             savePreview: { startPreview(saveTo: previewOutputURL()) },
             stopPreview: adapter.stopPreview
         )
-            .task {
-                adapter.setPreviewConfigurationHandler { configuration in
-                    try previewRenderer.configure(configuration)
+        .task {
+            adapter.setPreviewConfigurationHandler { configuration in
+                try previewRenderer.configure(configuration)
+            }
+            adapter.setPreviewFrameHandler { frame in
+                do {
+                    try await previewRenderer.enqueue(frame)
+                    return true
+                } catch CameraPreviewRendererError.missingParameterSets {
+                    // The RTSP stream may begin with inter frames. Keep
+                    // buffering until a random-access frame carries the
+                    // codec configuration instead of killing the session.
+                    return false
                 }
-                adapter.setPreviewFrameHandler { frame in
-                    do {
-                        try await previewRenderer.enqueue(frame)
-                        return true
-                    } catch CameraPreviewRendererError.missingParameterSets {
-                        // The RTSP stream may begin with inter frames. Keep
-                        // buffering until a random-access frame carries the
-                        // codec configuration instead of killing the session.
-                        return false
-                    }
-                }
+            }
+            adapter.start()
+        }
+        .onChange(of: adapter.savedPreviewFileURL) { _, url in
+            guard let url else { return }
+            annotateCapture?("camera_preview_file", url.lastPathComponent)
+        }
+        .onDisappear {
+            stopCameraWork()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .background {
+                stopCameraWork()
+            } else if phase == .active {
                 adapter.start()
             }
-            .onChange(of: adapter.savedPreviewFileURL) { _, url in
-                guard let url else { return }
-                annotateCapture?("camera_preview_file", url.lastPathComponent)
-            }
-            .onDisappear {
-                stopCameraWork()
-            }
-            .onChange(of: scenePhase) { _, phase in
-                if phase == .background {
-                    stopCameraWork()
-                } else if phase == .active {
-                    adapter.start()
-                }
-            }
+        }
     }
 
     private func readCamera() {
@@ -225,7 +225,9 @@ struct CameraRouteContainerView: View {
             } catch CameraCommandRequestError.originMismatch {
                 if generation == recordingGeneration { recordingRequestKey = "camera.error.origin_mismatch" }
             } catch {
-                if generation == recordingGeneration, !Task.isCancelled { recordingRequestKey = "camera.error.recording_request_failed" }
+                if generation == recordingGeneration, !Task.isCancelled {
+                    recordingRequestKey = "camera.error.recording_request_failed"
+                }
             }
         }
     }
@@ -270,13 +272,16 @@ struct CameraRouteContainerView: View {
             } catch CameraCommandRequestError.originMismatch {
                 if generation == stillGeneration { stillRequestKey = "camera.error.origin_mismatch" }
             } catch {
-                if generation == stillGeneration, !Task.isCancelled { stillRequestKey = "camera.error.still_request_failed" }
+                if generation == stillGeneration, !Task.isCancelled {
+                    stillRequestKey = "camera.error.still_request_failed"
+                }
             }
         }
     }
 
     private func previewOutputURL() -> URL {
-        let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+        let directory =
+            FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
         return directory.appendingPathComponent(
             "camera-preview-" + UUID().uuidString + ".h264"
@@ -331,8 +336,8 @@ private func cameraCommandOutcomeKey(
     }
 }
 
-private extension CameraCommandOutcome {
-    var annotationValue: String {
+extension CameraCommandOutcome {
+    fileprivate var annotationValue: String {
         switch self {
         case .acknowledged: "acknowledged"
         case .refused: "refused"
@@ -700,7 +705,8 @@ private struct CameraMediaEvidenceList: View {
                 }
             }
             if let downloadedMediaURL = model.downloadedMediaURL,
-               model.downloadedMediaPath == media.path {
+                model.downloadedMediaPath == media.path
+            {
                 HStack(spacing: 12) {
                     Text(localizedAppText("camera.evidence.media_saved"))
                         .font(.caption)
@@ -909,7 +915,9 @@ private struct CameraRecordingControls: View {
                     HStack {
                         Button(action: { requestRecording(true) }) {
                             Label(
-                                localizedAppText(isRequestingRecording ? "camera.recording.requesting" : "camera.recording.request_start"),
+                                localizedAppText(
+                                    isRequestingRecording
+                                        ? "camera.recording.requesting" : "camera.recording.request_start"),
                                 systemImage: isRequestingRecording ? "arrow.triangle.2.circlepath" : "record.circle"
                             )
                         }
@@ -940,7 +948,8 @@ private struct CameraRecordingControls: View {
                     if supportsStillCapture {
                         Button(action: requestStillCapture) {
                             Label(
-                                localizedAppText(isRequestingStill ? "camera.still.requesting" : "camera.still.request"),
+                                localizedAppText(
+                                    isRequestingStill ? "camera.still.requesting" : "camera.still.request"),
                                 systemImage: isRequestingStill ? "arrow.triangle.2.circlepath" : "camera.shutter.button"
                             )
                         }
@@ -1043,9 +1052,9 @@ private struct CameraTruthRow: View {
     }
 }
 
-private extension View {
+extension View {
     @ViewBuilder
-    func cameraSurface(tint: Color) -> some View {
+    fileprivate func cameraSurface(tint: Color) -> some View {
         if #available(iOS 26, macOS 26, *) {
             self.glassEffect(.regular.tint(tint.opacity(0.18)), in: .rect(cornerRadius: 24))
         } else {

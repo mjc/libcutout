@@ -16,6 +16,7 @@ public enum CameraReadOnlyRequestError: Error, Equatable, Sendable {
     case pathUnavailable
     case originMismatch
     case responseTooLarge
+    case unsupportedCapability
     case unexpectedHTTPStatus(Int)
 }
 
@@ -690,8 +691,8 @@ public final class CameraLocalNetworkAdapter {
 
     /// Fetches a camera-generated thumbnail for a media entry.
     ///
-    /// The caller must gate this request on `supportsMediaThumbnails`; the
-    /// captured R3 Pro profile currently does not advertise command `4001`.
+    /// Rust validates the retained media record and command `4001` capability
+    /// before returning the request target.
     /// The response is returned as-is so the platform UI can decode it without
     /// moving image types across the Rust boundary.
     public func fetchMediaThumbnail(
@@ -705,18 +706,17 @@ public final class CameraLocalNetworkAdapter {
         guard readOnlyOriginMatches(origin) else {
             throw CameraReadOnlyRequestError.originMismatch
         }
-        guard
-            sessionState.novatekMediaIsCurrent(
+        let target: String
+        do {
+            target = try sessionState.novatekMediaThumbnailTarget(
                 path: media.path,
                 sizeBytes: media.sizeBytes
             )
-        else {
+        } catch MobileNovatekThumbnailTargetError.CapabilityNotAdvertised {
+            throw CameraReadOnlyRequestError.unsupportedCapability
+        } catch MobileNovatekThumbnailTargetError.MediaNotCurrent {
             throw CameraReadOnlyRequestError.pathUnavailable
-        }
-        let target: String
-        do {
-            target = try mobileNovatekMediaThumbnailTarget(path: media.path)
-        } catch {
+        } catch MobileNovatekThumbnailTargetError.InvalidPath {
             throw CameraReadOnlyRequestError.invalidURL
         }
         let data = try await fetch(try requestURL(origin: origin, target: target))

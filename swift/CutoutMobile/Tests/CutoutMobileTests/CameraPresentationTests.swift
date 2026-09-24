@@ -150,9 +150,9 @@ final class CameraPresentationTests: XCTestCase {
         XCTAssertFalse(unavailable.supportsStillCapture)
     }
 
-    func testReadOnlyEvidenceOnlyAdvertisesMediaThumbnailsForCommand4001StatusZero() {
+    func testReadOnlyEvidenceUsesRustVerifiedThumbnailCapability() {
         let evidence = CameraReadOnlyEvidence(
-            firmwareVersion: "FW-1.0",
+            firmwareVersion: "R3V1.1_20240411",
             movieRTSPURI: "rtsp://192.168.1.254/live",
             photoRTSPURI: "rtsp://192.168.1.254/photo",
             configuration: [CameraCommandStatusEvidence(commandID: 4001, status: 0)],
@@ -162,7 +162,7 @@ final class CameraPresentationTests: XCTestCase {
 
         XCTAssertTrue(evidence.supportsMediaThumbnails)
         let unavailable = CameraReadOnlyEvidence(
-            firmwareVersion: "FW-1.0",
+            firmwareVersion: "R3V1.1_20240411",
             movieRTSPURI: "rtsp://192.168.1.254/live",
             photoRTSPURI: "rtsp://192.168.1.254/photo",
             configuration: [CameraCommandStatusEvidence(commandID: 4001, status: 1)],

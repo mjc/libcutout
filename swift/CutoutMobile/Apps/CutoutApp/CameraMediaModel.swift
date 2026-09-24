@@ -15,7 +15,8 @@ final class CameraMediaModel {
 
     @ObservationIgnored private let adapter: CameraLocalNetworkAdapter
     @ObservationIgnored private let annotateCapture: ((String, String) -> Void)?
-    @ObservationIgnored private let recordMediaReference: ((String, CameraSourceKind, CameraMediaEvidence, URL) -> Void)?
+    @ObservationIgnored private let recordMediaReference:
+        ((String, CameraSourceKind, CameraMediaEvidence, URL) -> Void)?
     @ObservationIgnored private let currentCaptureFileName: (() -> String?)?
     @ObservationIgnored private var mediaDownloadTask: Task<Void, Never>?
     @ObservationIgnored private var thumbnailTask: Task<Void, Never>?
@@ -133,8 +134,9 @@ final class CameraMediaModel {
                     return
                 }
                 if thumbnailDataByPath.count >= Self.maximumThumbnailEntries,
-                   thumbnailDataByPath[media.path] == nil,
-                   let oldestPath = thumbnailDataByPath.keys.first {
+                    thumbnailDataByPath[media.path] == nil,
+                    let oldestPath = thumbnailDataByPath.keys.first
+                {
                     thumbnailDataByPath.removeValue(forKey: oldestPath)
                 }
                 thumbnailDataByPath[media.path] = data
@@ -164,7 +166,8 @@ final class CameraMediaModel {
     }
 
     private func mediaOutputURL(for media: CameraMediaEvidence) -> URL {
-        let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+        let directory =
+            FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
         return directory.appendingPathComponent(
             "camera-media-" + UUID().uuidString + "-" + cameraMediaLocalFileComponent(media.name)
