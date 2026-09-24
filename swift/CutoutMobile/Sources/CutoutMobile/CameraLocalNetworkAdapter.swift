@@ -362,18 +362,15 @@ public final class CameraLocalNetworkAdapter {
         } catch MobileCameraPreviewError.OriginMismatch {
             throw CameraReadOnlyRequestError.originMismatch
         }
-        guard isCurrentPreview(token: token), !Task.isCancelled else {
-            session.stop()
-            throw CancellationError()
-        }
+        try requireCurrentPreview(
+            token: token,
+            session: session,
+            fileSink: nil
+        )
         let fileSink = try url.map {
             try MobileCameraPreviewFileSink.create(path: $0.path)
         }
-        guard isCurrentPreview(token: token), !Task.isCancelled else {
-            try? fileSink?.finish()
-            session.stop()
-            throw CancellationError()
-        }
+        try requireCurrentPreview(token: token, session: session, fileSink: fileSink)
         if let configuration = session.videoConfiguration() {
             do {
                 try previewConfigurationHandler?(configuration)
@@ -383,11 +380,7 @@ public final class CameraLocalNetworkAdapter {
                 throw error
             }
         }
-        guard isCurrentPreview(token: token), !Task.isCancelled else {
-            try? fileSink?.finish()
-            session.stop()
-            throw CancellationError()
-        }
+        try requireCurrentPreview(token: token, session: session, fileSink: fileSink)
         previewSession = session
         previewFileSink = fileSink
         previewFileState = CameraPreviewFileState(destination: url)
@@ -499,6 +492,18 @@ public final class CameraLocalNetworkAdapter {
 
     private func isCurrentPreview(token: MobileCameraSessionTokenDto) -> Bool {
         sessionState.cameraSessionTokenIsCurrent(token: token)
+    }
+
+    private func requireCurrentPreview(
+        token: MobileCameraSessionTokenDto,
+        session: MobileCameraPreviewSession,
+        fileSink: MobileCameraPreviewFileSink?
+    ) throws {
+        guard isCurrentPreview(token: token), !Task.isCancelled else {
+            try? fileSink?.finish()
+            session.stop()
+            throw CancellationError()
+        }
     }
 
     /// Stops the foreground preview lifecycle.
