@@ -542,11 +542,15 @@ public final class CutoutSessionCore: NSObject {
     private let identificationProbeTransport: IdentificationProbeTransportCoordinator
     private var begodeProbeExpiryWorkItem: DispatchWorkItem?
     private var protocolDetectionExpiryWorkItem: DispatchWorkItem?
-    private var pendingDisplayState: RideDisplayState?
-    private var pendingDisplayStateQueuedAt: MonotonicMilliseconds?
-    private var displayPublishWorkItem: DispatchWorkItem?
-    private var lastDisplayPublication: MonotonicMilliseconds?
-    private var lastPublishedWarningSeverity: EucRideWarningSeverity?
+    private lazy var displayPublisher = CutoutSessionDisplayPublisher(
+        clock: clock,
+        onDisplayStateChange: { [weak self] value in
+            self?.onDisplayStateChange?(value)
+        },
+        onRecord: { [weak self] message in
+            self?.onRecord?(message)
+        }
+    )
     private let rideMapState: MobileRideMapState?
     private let phoneLocationState = MobilePhoneLocationState()
     private var latestRideMapSnapshot: MobileRideMapSnapshotDto?
@@ -574,6 +578,7 @@ public final class CutoutSessionCore: NSObject {
         protocolDetectionExpiryWorkItem?.cancel()
         rideMapWritePoller?.cancel()
         captureProgressTimer?.cancel()
+        displayPublisher.cancel()
     }
 
     private lazy var locationManager: CLLocationManager = {
@@ -1896,54 +1901,7 @@ public final class CutoutSessionCore: NSObject {
     private func publishDisplayState() {
         let value = displayState
         let queuedAt = clock.now()
-        publishOnMain { self.publishDisplayStateOnMain(value, queuedAt: queuedAt) }
-    }
-
-    private func publishDisplayStateOnMain(
-        _ value: RideDisplayState,
-        queuedAt: MonotonicMilliseconds? = nil
-    ) {
-        pendingDisplayState = value
-        if let queuedAt {
-            pendingDisplayStateQueuedAt = queuedAt
-        }
-        let now = clock.now()
-        let intervalMilliseconds: UInt64 = 333
-        let elapsed = lastDisplayPublication.map {
-            now.elapsed(since: $0).rawValue
-        } ?? intervalMilliseconds
-        let warningSeverity = EucRideScreenState(
-            phase: .live,
-            displayState: value
-        ).warningState.severity
-        let warningChanged = lastPublishedWarningSeverity.map { $0 != warningSeverity } ?? false
-        guard elapsed >= intervalMilliseconds || warningChanged else {
-            guard displayPublishWorkItem == nil else { return }
-            let work = DispatchWorkItem { [weak self] in
-                guard let self else { return }
-                self.displayPublishWorkItem = nil
-                if let pending = self.pendingDisplayState {
-                    self.publishDisplayStateOnMain(pending)
-                }
-            }
-            displayPublishWorkItem = work
-            DispatchQueue.main.asyncAfter(
-                deadline: .now() + .milliseconds(Int(intervalMilliseconds - elapsed)),
-                execute: work
-            )
-            return
-        }
-        displayPublishWorkItem?.cancel()
-        displayPublishWorkItem = nil
-        pendingDisplayState = nil
-        let publicationDelayMilliseconds = pendingDisplayStateQueuedAt.map {
-            now.elapsed(since: $0).rawValue
-        } ?? 0
-        pendingDisplayStateQueuedAt = nil
-        lastDisplayPublication = now
-        lastPublishedWarningSeverity = warningSeverity
-        onDisplayStateChange?(value)
-        onRecord?("snapshot_publication_ms=\(publicationDelayMilliseconds)")
+        publishOnMain { self.displayPublisher.submit(value, queuedAt: queuedAt) }
     }
 
     private func publishScanState() {
