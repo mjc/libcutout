@@ -46,6 +46,7 @@
 		30000000000000000000001D /* Apps/CutoutApp/CaptureQuickLabel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000001D /* Apps/CutoutApp/CaptureQuickLabel.swift */; };
 		30000000000000000000001E /* Apps/CutoutApp/CutoutSessionDriving.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000001E /* Apps/CutoutApp/CutoutSessionDriving.swift */; };
 		300000000000000000000031 /* Apps/CutoutApp/CutoutSessionCallbackRegistrar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000031 /* Apps/CutoutApp/CutoutSessionCallbackRegistrar.swift */; };
+		300000000000000000000032 /* Apps/CutoutApp/RideHistoryModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000032 /* Apps/CutoutApp/RideHistoryModel.swift */; };
 		30000000000000000000001F /* Apps/CutoutApp/PevDashboardPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000001F /* Apps/CutoutApp/PevDashboardPresentation.swift */; };
 		300000000000000000000020 /* Apps/CutoutApp/AppLocalization.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000020 /* Apps/CutoutApp/AppLocalization.swift */; };
 		300000000000000000000021 /* Apps/CutoutApp/ConnectionPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000021 /* Apps/CutoutApp/ConnectionPresentation.swift */; };
@@ -150,6 +151,7 @@
 		40000000000000000000001D /* Apps/CutoutApp/CaptureQuickLabel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/CaptureQuickLabel.swift; sourceTree = SOURCE_ROOT; };
 		40000000000000000000001E /* Apps/CutoutApp/CutoutSessionDriving.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/CutoutSessionDriving.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000031 /* Apps/CutoutApp/CutoutSessionCallbackRegistrar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/CutoutSessionCallbackRegistrar.swift; sourceTree = SOURCE_ROOT; };
+		400000000000000000000032 /* Apps/CutoutApp/RideHistoryModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/RideHistoryModel.swift; sourceTree = SOURCE_ROOT; };
 		40000000000000000000001F /* Apps/CutoutApp/PevDashboardPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/PevDashboardPresentation.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000020 /* Apps/CutoutApp/AppLocalization.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/AppLocalization.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000021 /* Apps/CutoutApp/ConnectionPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/ConnectionPresentation.swift; sourceTree = SOURCE_ROOT; };
@@ -248,6 +250,7 @@
 				40000000000000000000001D /* Apps/CutoutApp/CaptureQuickLabel.swift */,
 				40000000000000000000001E /* Apps/CutoutApp/CutoutSessionDriving.swift */,
 				400000000000000000000031 /* Apps/CutoutApp/CutoutSessionCallbackRegistrar.swift */,
+				400000000000000000000032 /* Apps/CutoutApp/RideHistoryModel.swift */,
 				40000000000000000000001F /* Apps/CutoutApp/PevDashboardPresentation.swift */,
 				400000000000000000000020 /* Apps/CutoutApp/AppLocalization.swift */,
 				400000000000000000000021 /* Apps/CutoutApp/ConnectionPresentation.swift */,
@@ -496,6 +499,7 @@
 				30000000000000000000001D /* Apps/CutoutApp/CaptureQuickLabel.swift in Sources */,
 				30000000000000000000001E /* Apps/CutoutApp/CutoutSessionDriving.swift in Sources */,
 				300000000000000000000031 /* Apps/CutoutApp/CutoutSessionCallbackRegistrar.swift in Sources */,
+				300000000000000000000032 /* Apps/CutoutApp/RideHistoryModel.swift in Sources */,
 				30000000000000000000001F /* Apps/CutoutApp/PevDashboardPresentation.swift in Sources */,
 				300000000000000000000020 /* Apps/CutoutApp/AppLocalization.swift in Sources */,
 				300000000000000000000021 /* Apps/CutoutApp/ConnectionPresentation.swift in Sources */,

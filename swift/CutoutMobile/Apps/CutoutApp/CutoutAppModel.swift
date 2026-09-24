@@ -3,7 +3,7 @@ import CutoutMobileFFI
 import Foundation
 import Observation
 
-private func normalizedRideMapHistorySearchText(_ text: String) -> String? {
+func normalizedRideMapHistorySearchText(_ text: String) -> String? {
     let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
     return normalized.isEmpty ? nil : normalized
 }
@@ -36,7 +36,7 @@ private struct RideMapHistoryDetailViewportRequest: Sendable {
 @Observable
 final class CutoutAppModel {
 
-    private nonisolated static func runCancellableDetached<Success: Sendable>(
+    nonisolated static func runCancellableDetached<Success: Sendable>(
         priority: TaskPriority,
         operation: @escaping @Sendable () throws -> Success
     ) async throws -> Success {
@@ -91,9 +91,16 @@ final class CutoutAppModel {
     private(set) var rideMapLiveSegmentsOmittedByBudget = false
     private(set) var rideMapHistory = [MobileRideMapHistorySummaryDto]()
     private(set) var rideMapHistoryCanLoadMore = false
-    var rideMapHistorySearchText = ""
-    private(set) var rideMapHistoryDateFilter = RideMapHistoryDateFilter.last30Days
-    private(set) var rideMapHistoryVehicleFilter: String?
+    var rideMapHistorySearchText: String {
+        get { rideHistory.searchText }
+        set { rideHistory.searchText = newValue }
+    }
+    var rideMapHistoryDateFilter: RideMapHistoryDateFilter {
+        rideHistory.dateFilter
+    }
+    var rideMapHistoryVehicleFilter: String? {
+        rideHistory.vehicleFilter
+    }
     private(set) var rideMapHistoryDisplayPoints = [MobileRideMapRouteDisplayPoint]()
     private(set) var rideMapHistoryCameraRegion: MobileRideMapCameraRegion?
     private(set) var rideMapHistoryEndpointMetadata = MobileRideMapRouteEndpointMetadata.empty
@@ -428,6 +435,7 @@ final class CutoutAppModel {
     }
 
     private let core: any CutoutSessionDriving
+    private let rideHistory: RideHistoryModel
     private let liveActivityCoordinator: LiveActivityRideLifecycleCoordinator
     private let selectedDeviceStore: DevicePickerSelectionStore
     private let rideSessionMarkerStore: RideSessionMarkerStore
@@ -452,12 +460,7 @@ final class CutoutAppModel {
     private var permitsStoredDeviceAutoPairing = true
     private var rideSessionRestorationState = RideSessionRestorationState.complete
     private var restorationMarkerAtLaunch: Data?
-    private var rideMapHistoryCursor: MobileRideCursorDto?
-    private var rideMapHistoryQueryDateAfterMilliseconds: UInt64?
     private var rideMapVehicleNameCache = [String: String]()
-    private var rideMapHistoryLoadTask: Task<Void, Never>?
-    private var rideMapHistoryPageTask: Task<Void, Never>?
-    private var rideMapHistoryQueryGeneration: UInt64 = 0
     private var rideMapHistorySelectionTask: Task<Void, Never>?
     private var rideMapHistoryDetailLoadGeneration: UInt64 = 0
     private var rideMapHistorySelectionCancellation: MobileRideMapProjectionCancellation?
@@ -566,6 +569,7 @@ final class CutoutAppModel {
     ) {
         let musicProviderLifecycle = MobileMusicProviderLifecycle()
         let musicEffects = MusicProviderEffectExecutor()
+        self.rideHistory = RideHistoryModel(stateProvider: { core.rideMapStateHandle })
         self.musicProviderLifecycle = musicProviderLifecycle
         self.musicEffects = musicEffects
         self.spotifyMusicProvider = SpotifyProviderAdapter(
@@ -602,6 +606,15 @@ final class CutoutAppModel {
             rideMapState: core.rideMapStateHandle,
             lifecycle: musicProviderLifecycle
         )
+        self.rideHistory.onSelectionRequired = { [weak self] requestedRideID, error in
+            self?.applyRideHistoryQueryResult(
+                requestedRideID: requestedRideID,
+                error: error
+            )
+        }
+        self.rideHistory.onPageUpdated = { [weak self] in
+            self?.applyRideHistoryPageResult()
+        }
         self.musicTimelineEvents = musicCoordinator.recordedEvents
         hasSavedDevice = selectedDeviceStore.platformIdentifier != nil
         if let identity = selectedDeviceStore.platformIdentifier,
@@ -1485,12 +1498,17 @@ final class CutoutAppModel {
     }
 
     func loadRideMapHistory(selecting requestedRideID: String? = nil) {
-        rideMapHistoryLoadTask?.cancel()
-        rideMapHistoryPageTask?.cancel()
-        rideMapHistoryQueryGeneration &+= 1
-        let queryGeneration = rideMapHistoryQueryGeneration
-        // A reload changes the query that owns the selected route. Do not let an
-        // older route request repopulate points after the new page arrives.
+        prepareRideHistoryQuery()
+        if let rideMapStorageError {
+            let error = MobileRideMapError.storageError(rideMapStorageError)
+            rideHistory.setError(error)
+            applyRideMapHistoryLoadFailure(error)
+            return
+        }
+        rideHistory.load(selecting: requestedRideID)
+    }
+
+    private func prepareRideHistoryQuery() {
         invalidateRideMapHistoryProjectionWork()
         rideMapHistoryContextTask?.cancel()
         rideMapHistoryContextTask = nil
@@ -1506,99 +1524,54 @@ final class CutoutAppModel {
         rideMapHistoryDetailMusicTimelineUnavailable = false
         rideMapHistoryDetailMusicState = nil
         rideMapHistoryDetailMusicError = nil
-        rideMapHistoryQueryDateAfterMilliseconds = historyDateAfterMilliseconds
-        if let rideMapStorageError {
-            applyRideMapHistoryLoadFailure(.storageError(rideMapStorageError))
+    }
+
+    private func applyRideHistoryQueryResult(
+        requestedRideID: String?,
+        error: MobileRideMapError?
+    ) {
+        rideMapHistory = rideHistory.rides
+        rideMapHistoryVehicleIdentities = rideHistory.vehicleIdentities
+        rideMapHistoryVehicleNames = rideHistory.vehicleNames
+        rideMapVehicleNameCache.merge(
+            rideMapHistoryVehicleNames,
+            uniquingKeysWith: { _, incoming in incoming }
+        )
+        rideMapHistoryCanLoadMore = rideHistory.canLoadMore
+        rideMapHistoryLoading = rideHistory.isLoading
+        rideMapHistoryError = rideHistory.error
+
+        if let error, requestedRideID == nil {
+            applyRideMapHistoryLoadFailure(error)
             return
         }
-        guard let state = core.rideMapStateHandle else {
-            applyRideMapHistoryLoadFailure(.storageError("Rust ride database is unavailable"))
+
+        guard let selectedID = Self.preferredHistorySelection(
+            requestedID: requestedRideID,
+            currentID: selectedRideMapHistoryID,
+            summaries: rideMapHistory
+        ) else {
+            selectedRideMapHistoryID = nil
+            clearRideMapHistoryRouteProjection()
+            rideMapHistoryRouteLoading = false
+            rideMapHistoryRouteError = error
+            rideMapHistoryDetailRouteError = error
+            rideMapHistoryDetailRouteLoading = false
             return
         }
-        let filter = rideMapHistoryFilter
-        rideMapHistoryLoadTask = Task { [weak self] in
-            do {
-                let result = try await Self.runCancellableDetached(priority: .userInitiated) {
-                    let page = try state.storedHistoryPage(
-                        cursor: nil,
-                        limit: Self.rideMapLimits.historyPageLimit,
-                        filter: filter
-                    )
-                    let vehicleOptions = try state.storedHistoryVehicleOptions()
-                    var summaries = page.summaries
-                    if let requestedRideID,
-                       summaries.contains(where: { $0.rideID == requestedRideID }) == false,
-                       let requestedRide = try state.storedHistoryRide(rideID: requestedRideID)
-                    {
-                        let insertionIndex = summaries.firstIndex {
-                            $0.createdAtMilliseconds < requestedRide.createdAtMilliseconds
-                        } ?? summaries.endIndex
-                        summaries.insert(requestedRide, at: insertionIndex)
-                    }
-                    return (summaries, page.nextCursor, vehicleOptions)
-                }
-                guard let self,
-                      Self.shouldApplyHistoryQuery(
-                          generation: queryGeneration,
-                          currentGeneration: self.rideMapHistoryQueryGeneration,
-                          isCancelled: Task.isCancelled
-                      )
-                else { return }
-                self.rideMapHistoryLoadTask = nil
-                self.rideMapHistoryLoading = false
-                self.rideMapHistory = result.0
-                self.rideMapHistoryVehicleIdentities = Self.mergeRideMapHistoryVehicleIdentities(
-                    existing: result.2.map(\.platformIdentifier),
-                    incoming: result.0.flatMap { [$0.associatedVehicle, $0.candidateVehicle].compactMap { $0 } }
-                )
-                self.rideMapHistoryVehicleNames = Self.historyVehicleNames(
-                    result.2,
-                    summaries: result.0
-                )
-                self.rideMapVehicleNameCache.merge(
-                    self.rideMapHistoryVehicleNames,
-                    uniquingKeysWith: { _, incoming in incoming }
-                )
-                self.rideMapHistoryCursor = result.1
-                self.rideMapHistoryCanLoadMore = result.1 != nil
-                self.rideMapHistoryError = nil
-                let selectionError = Self.historySelectionError(
-                    requestedID: requestedRideID,
-                    summaryIDs: result.0.map(\.rideID)
-                )
-                let selectedID = Self.preferredHistorySelection(
-                    requestedID: requestedRideID,
-                    // Selection is mutable while the query is off-main. Read it only after
-                    // the result is admitted so a user selection made during the reload wins.
-                    currentID: self.selectedRideMapHistoryID,
-                    summaries: result.0
-                )
-                guard let selectedID else {
-                    self.selectedRideMapHistoryID = nil
-                    self.clearRideMapHistoryRouteProjection()
-                    self.rideMapHistoryRouteLoading = false
-                    self.rideMapHistoryRouteError = selectionError
-                    self.rideMapHistoryDetailRouteError = selectionError
-                    self.rideMapHistoryDetailRouteLoading = false
-                    return
-                }
-                self.selectRideMapHistory(selectedID)
-            } catch {
-                guard let self,
-                      Self.shouldApplyHistoryQuery(
-                          generation: queryGeneration,
-                          currentGeneration: self.rideMapHistoryQueryGeneration,
-                          isCancelled: Task.isCancelled
-                      )
-                else { return }
-                self.rideMapHistoryLoadTask = nil
-                // Preserve the last good page and selected route so a transient storage failure does
-                // not turn an otherwise usable history screen into an empty state. The error remains
-                // visible while the retained projection and identity keep the map and Retry action
-                // usable; explicit source invalidation clears the projection separately.
-                self.applyRideMapHistoryLoadFailure(Self.mapRideMapError(error))
-            }
-        }
+        selectRideMapHistory(selectedID)
+    }
+
+    private func applyRideHistoryPageResult() {
+        rideMapHistory = rideHistory.rides
+        rideMapHistoryVehicleIdentities = rideHistory.vehicleIdentities
+        rideMapHistoryVehicleNames = rideHistory.vehicleNames
+        rideMapVehicleNameCache.merge(
+            rideMapHistoryVehicleNames,
+            uniquingKeysWith: { _, incoming in incoming }
+        )
+        rideMapHistoryCanLoadMore = rideHistory.canLoadMore
+        rideMapHistoryError = rideHistory.error
     }
 
     private func applyRideMapHistoryLoadFailure(_ error: MobileRideMapError) {
@@ -1711,65 +1684,7 @@ final class CutoutAppModel {
     }
 
     func loadMoreRideMapHistory() {
-        guard rideMapHistoryCanLoadMore,
-              rideMapHistoryLoadTask == nil,
-              rideMapHistoryLoading == false
-        else { return }
-        rideMapHistoryPageTask?.cancel()
-        rideMapHistoryQueryGeneration &+= 1
-        let queryGeneration = rideMapHistoryQueryGeneration
-        guard let state = core.rideMapStateHandle else { return }
-        let cursor = rideMapHistoryCursor
-        let filter = rideMapHistoryFilter
-        rideMapHistoryPageTask = Task { [weak self] in
-            do {
-                let page = try await Self.runCancellableDetached(priority: .userInitiated) {
-                    try state.storedHistoryPage(
-                        cursor: cursor,
-                        limit: Self.rideMapLimits.historyPageLimit,
-                        filter: filter
-                    )
-                }
-                guard let self,
-                      Self.shouldApplyHistoryQuery(
-                          generation: queryGeneration,
-                          currentGeneration: self.rideMapHistoryQueryGeneration,
-                          isCancelled: Task.isCancelled
-                      )
-                else { return }
-                self.rideMapHistoryPageTask = nil
-                self.rideMapHistory = Self.appendingUniqueHistory(
-                    existing: self.rideMapHistory,
-                    incoming: page.summaries,
-                    id: \.rideID
-                )
-                self.rideMapHistoryVehicleIdentities = Self.mergeRideMapHistoryVehicleIdentities(
-                    existing: self.rideMapHistoryVehicleIdentities,
-                    incoming: page.summaries.flatMap { [$0.associatedVehicle, $0.candidateVehicle].compactMap { $0 } }
-                )
-                self.rideMapHistoryVehicleNames = Self.mergeRideMapHistoryVehicleNames(
-                    existing: self.rideMapHistoryVehicleNames,
-                    incoming: page.summaries
-                )
-                self.rideMapVehicleNameCache.merge(
-                    self.rideMapHistoryVehicleNames,
-                    uniquingKeysWith: { _, incoming in incoming }
-                )
-                self.rideMapHistoryCursor = page.nextCursor
-                self.rideMapHistoryCanLoadMore = page.nextCursor != nil
-                self.rideMapHistoryError = nil
-            } catch {
-                guard let self,
-                      Self.shouldApplyHistoryQuery(
-                          generation: queryGeneration,
-                          currentGeneration: self.rideMapHistoryQueryGeneration,
-                          isCancelled: Task.isCancelled
-                      )
-                else { return }
-                self.rideMapHistoryPageTask = nil
-                self.rideMapHistoryError = Self.mapRideMapError(error)
-            }
-        }
+        rideHistory.loadMore()
     }
 
     var filteredRideMapHistory: [MobileRideMapHistorySummaryDto] {
@@ -1778,13 +1693,13 @@ final class CutoutAppModel {
 
     func setRideMapHistoryDateFilter(_ filter: RideMapHistoryDateFilter) {
         guard rideMapHistoryDateFilter != filter else { return }
-        rideMapHistoryDateFilter = filter
+        rideHistory.setDateFilter(filter)
         loadRideMapHistory()
     }
 
     func setRideMapHistoryVehicleFilter(_ identity: String?) {
         guard rideMapHistoryVehicleFilter != identity else { return }
-        rideMapHistoryVehicleFilter = identity
+        rideHistory.setVehicleFilter(identity)
         loadRideMapHistory()
     }
 
@@ -1795,26 +1710,8 @@ final class CutoutAppModel {
     }
 
     func clearRideMapHistoryFilters() {
-        rideMapHistorySearchText = ""
-        rideMapHistoryDateFilter = .last30Days
-        rideMapHistoryVehicleFilter = nil
+        rideHistory.clearFilters()
         loadRideMapHistory()
-    }
-
-    private var historyDateAfterMilliseconds: UInt64? {
-        guard rideMapHistoryDateFilter == .last30Days else { return nil }
-        let now = Date().timeIntervalSince1970 * 1_000
-        guard now.isFinite, now > 0 else { return 0 }
-        let window = Double(Self.rideMapLimits.historyRecentWindowMilliseconds)
-        return UInt64(max(0, now - window))
-    }
-
-    private var rideMapHistoryFilter: MobileRideHistoryFilterDto {
-        MobileRideHistoryFilterDto(
-            createdAfterMilliseconds: rideMapHistoryQueryDateAfterMilliseconds ?? historyDateAfterMilliseconds,
-            vehicleIdentity: rideMapHistoryVehicleFilter,
-            searchText: normalizedRideMapHistorySearchText(rideMapHistorySearchText)
-        )
     }
 
     func selectRideMapHistory(_ rideID: String) {
@@ -2265,7 +2162,7 @@ final class CutoutAppModel {
         rideMapHistoryContextProjection = nil
         rideMapHistoryContextRoutes.removeAll(keepingCapacity: true)
         guard let state = core.rideMapStateHandle else { return }
-        let filter = rideMapHistoryFilter
+        let filter = rideHistory.filter
         let budget = MobileRideMapHistoryContextBudget.overview
         rideMapHistoryContextTask = Task { [weak self] in
             do {
