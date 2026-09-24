@@ -240,7 +240,7 @@ final class CutoutAppModel {
     var connectionStatusText: String { device.connectionStatusText }
 
     func annotateCapture(key: String, value: String) {
-        core.annotateCapture(key: key, value: value)
+        _ = core.annotateCapture(key: key, value: value)
     }
 
     /// Records a completed camera download against the capture identity that
