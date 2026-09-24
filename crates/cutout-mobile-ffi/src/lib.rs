@@ -10611,7 +10611,7 @@ pub struct MobilePevcapCaptureBuilder {
     advertised_services: Mutex<Vec<GattChannel>>,
     gatt_fingerprints: Mutex<Vec<GattFingerprint>>,
     resolved_identity: Mutex<Option<PevcapResolvedIdentity>>,
-    annotations: Mutex<Vec<String>>,
+    annotations: Mutex<cutout_core::CaptureAnnotations>,
     writer: Mutex<CaptureWriterSlot>,
     writer_state: Mutex<Option<CaptureWriterMonitor>>,
     music_history_policy: Mutex<CoreMusicHistoryPolicy>,
@@ -10658,6 +10658,53 @@ pub struct MobileSavedCaptureArtifactDto {
 }
 const PEVCAP_MUSIC_CONTEXT_FRESHNESS_MS: u64 = 5_000;
 
+impl MobilePevcapCaptureBuilder {
+    fn update_annotations(
+        &self,
+        recording_required: bool,
+        update: impl FnOnce(
+            &mut cutout_core::CaptureAnnotations,
+        ) -> Result<(), cutout_core::CaptureAnnotationCapacityReached>,
+    ) -> Result<Vec<MobileCaptureLabelDto>, MobileCaptureAnnotationError> {
+        // Lock order matches startup and metadata publication. Holding writer ownership
+        // across admission prevents finalization or another update from splitting a batch.
+        let writer = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
+        match &*writer {
+            CaptureWriterSlot::Recording(_) => {}
+            CaptureWriterSlot::Ready if !recording_required => {}
+            CaptureWriterSlot::Ready
+            | CaptureWriterSlot::Finalizing
+            | CaptureWriterSlot::Complete(_) => {
+                return Err(MobileCaptureAnnotationError::NotRecording);
+            }
+        }
+        let mut metadata = self.metadata();
+        let mut annotations = self
+            .annotations
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let mut candidate = annotations.clone();
+        update(&mut candidate).map_err(|_| MobileCaptureAnnotationError::CapacityReached)?;
+        let active = candidate
+            .active_labels()
+            .iter()
+            .copied()
+            .map(Into::into)
+            .collect();
+        if candidate.entries() == annotations.entries() {
+            return Ok(active);
+        }
+        metadata.annotations = candidate.entries().to_vec();
+        if let Some(writer) = writer.as_ref()
+            && !writer.update_metadata(metadata)
+        {
+            return Err(MobileCaptureAnnotationError::WriterFailed);
+        }
+        *annotations = candidate;
+        Ok(active)
+    }
+}
+
 fn pevcap_music_event_for_policy(
     music: &MobilePevcapMusicEventDto,
     policy: CoreMusicHistoryPolicy,
@@ -10698,7 +10745,7 @@ impl MobilePevcapCaptureBuilder {
             advertised_services: Mutex::new(Vec::new()),
             gatt_fingerprints: Mutex::new(Vec::new()),
             resolved_identity: Mutex::new(None),
-            annotations: Mutex::new(Vec::new()),
+            annotations: Mutex::new(cutout_core::CaptureAnnotations::default()),
             writer: Mutex::new(CaptureWriterSlot::Ready),
             writer_state: Mutex::new(None),
             music_history_policy: Mutex::new(CoreMusicHistoryPolicy::Disabled),
@@ -10743,17 +10790,25 @@ impl MobilePevcapCaptureBuilder {
         self.send_metadata_update()
     }
 
-    /// Adds a capture annotation, preserving key/value text exactly.
+    /// Adds a capture annotation, reserving space for every active label's closure.
+    /// Rejection leaves the prior metadata intact and returns `false`.
     pub fn add_annotation(&self, annotation: String) -> bool {
-        let mut annotations = self
-            .annotations
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        if annotations.len() < cutout_core::PEVCAP_MAX_ANNOTATIONS {
-            annotations.push(annotation);
-        }
-        drop(annotations);
-        self.send_metadata_update()
+        self.update_annotations(false, |annotations| annotations.try_append([annotation]))
+            .is_ok()
+    }
+
+    /// Records the whole label transition and returns the admitted active labels.
+    ///
+    /// # Errors
+    /// Rejects inactive writers, insufficient annotation space, and writer queue failures.
+    pub fn change_label(
+        &self,
+        action: MobileCaptureLabelActionDto,
+    ) -> Result<Vec<MobileCaptureLabelDto>, MobileCaptureAnnotationError> {
+        self.update_annotations(true, |annotations| match action {
+            MobileCaptureLabelActionDto::Start { label } => annotations.start(label.into()),
+            MobileCaptureLabelActionDto::Stop { label } => annotations.stop(label.into()),
+        })
     }
 
     /// Starts the Rust-owned streaming writer for a new JSONL capture.
@@ -11179,17 +11234,19 @@ impl MobilePevcapCaptureBuilder {
                 .annotations
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
-                .clone(),
+                .entries()
+                .to_vec(),
         }
     }
 
     fn send_metadata_update(&self) -> bool {
+        let writer = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
         let metadata = self.metadata();
-        self.writer
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .as_ref()
-            .is_none_or(|writer| writer.update_metadata(metadata))
+        match &*writer {
+            CaptureWriterSlot::Ready => true,
+            CaptureWriterSlot::Recording(writer) => writer.update_metadata(metadata),
+            CaptureWriterSlot::Finalizing | CaptureWriterSlot::Complete(_) => false,
+        }
     }
 
     fn send_record(&self, record: PevcapRecord) -> bool {
@@ -17222,6 +17279,40 @@ mod tests {
             clock_uncertainty_ms: 75,
             ride_sequence: Some(2),
         })));
+    }
+
+    #[test]
+    fn mobile_capture_annotation_admission_reserves_interval_closure() {
+        let path =
+            std::env::temp_dir().join(format!("capture-label-capacity-{}.jsonl", Uuid::new_v4()));
+        let builder = MobilePevcapCaptureBuilder::new(wc(1_700_000_000_000), "phone".into(), None);
+        for index in 0..cutout_core::PEVCAP_MAX_ANNOTATIONS - 2 {
+            assert!(builder.add_annotation(format!("note={index}")));
+        }
+        assert!(builder.start_writer(path.to_string_lossy().into_owned()));
+        assert!(builder.add_annotation("capture_label=ride_start".into()));
+        assert!(!builder.add_annotation("note=would_consume_closure".into()));
+        assert!(
+            builder.finish_writer(),
+            "rejected annotation must leave the capture savable"
+        );
+        assert!(!builder.add_annotation("note=after_finish".into()));
+        let capture =
+            PevcapCapture::decode(&fs::read(&path).unwrap(), PevcapEncoding::Jsonl).unwrap();
+        assert_eq!(
+            capture.header.annotations.last().unwrap(),
+            "capture_label=ride_stop"
+        );
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn mobile_capture_annotation_capacity_rejection_is_reported() {
+        let builder = MobilePevcapCaptureBuilder::new(wc(1_700_000_000_000), "phone".into(), None);
+        for index in 0..cutout_core::PEVCAP_MAX_ANNOTATIONS {
+            assert!(builder.add_annotation(format!("note={index}")));
+        }
+        assert!(!builder.add_annotation("note=overflow".into()));
     }
 
     #[test]

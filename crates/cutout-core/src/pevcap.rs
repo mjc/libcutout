@@ -376,6 +376,26 @@ pub struct CaptureLabelState {
 }
 
 impl CaptureLabelState {
+    /// Reconstructs open intervals from the ordered capture header evidence.
+    #[must_use]
+    pub fn from_annotations<'a>(annotations: impl IntoIterator<Item = &'a str>) -> Self {
+        let mut labels = Self::default();
+        for annotation in annotations {
+            let Some((PEVCAP_CAPTURE_LABEL_ANNOTATION_KEY, value)) = annotation.split_once('=')
+            else {
+                continue;
+            };
+            match CaptureLabelTransition::from_annotation_value(value) {
+                Some(CaptureLabelTransition::Started(label)) => labels.start(label).for_each(drop),
+                Some(CaptureLabelTransition::Stopped(label)) => {
+                    labels.stop(label);
+                }
+                None => {}
+            }
+        }
+        labels
+    }
+
     /// Current labels in their start order; bounded by the finite label vocabulary.
     #[must_use]
     pub fn active(&self) -> &[CaptureSessionLabel] {

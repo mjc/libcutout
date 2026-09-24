@@ -2,9 +2,9 @@
 //! This is the existing streaming writer, independent of any mobile binding or UI.
 
 use cutout_core::{
-    CaptureLabelState, CaptureLabelTransition, GattChannel, GattFingerprint,
-    PEVCAP_CAPTURE_LABEL_ANNOTATION_KEY, PevcapHeader, PevcapLocationSample, PevcapMusicEvent,
-    PevcapRecord, PevcapResolvedIdentity, TransportWriteLimit, WallClockUnixTimestamp,
+    CaptureLabelState, GattChannel, GattFingerprint, PEVCAP_CAPTURE_LABEL_ANNOTATION_KEY,
+    PevcapHeader, PevcapLocationSample, PevcapMusicEvent, PevcapRecord, PevcapResolvedIdentity,
+    TransportWriteLimit, WallClockUnixTimestamp,
 };
 use std::{
     collections::VecDeque,
@@ -624,24 +624,7 @@ fn close_pending_capture_labels(
         .map_or(header.annotations.as_slice(), |metadata| {
             metadata.annotations.as_slice()
         });
-    let mut labels = CaptureLabelState::default();
-    for annotation in annotations {
-        let Some((key, value)) = annotation.split_once('=') else {
-            continue;
-        };
-        if key != PEVCAP_CAPTURE_LABEL_ANNOTATION_KEY {
-            continue;
-        }
-        match CaptureLabelTransition::from_annotation_value(value) {
-            Some(CaptureLabelTransition::Started(label)) => {
-                labels.start(label).for_each(drop);
-            }
-            Some(CaptureLabelTransition::Stopped(label)) => {
-                labels.stop(label);
-            }
-            None => {}
-        }
-    }
+    let mut labels = CaptureLabelState::from_annotations(annotations.iter().map(String::as_str));
     if labels.active().is_empty() {
         return Ok(());
     }

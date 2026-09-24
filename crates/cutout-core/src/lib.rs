@@ -21,6 +21,8 @@ use uuid::Uuid;
 
 mod pevcap;
 pub use pevcap::*;
+mod capture_annotations;
+pub use capture_annotations::*;
 mod battery_page;
 pub use battery_page::*;
 mod ffi;

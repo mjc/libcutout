@@ -2,6 +2,29 @@
 use cutout_core::{CaptureLabelState, CaptureLabelTransition, CaptureSessionLabel};
 use std::sync::{Arc, Mutex, PoisonError};
 
+/// One requested change to the active writer's capture labels.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileCaptureLabelActionDto {
+    /// Start a label, closing any exclusive predecessor atomically.
+    Start { label: MobileCaptureLabelDto },
+    /// Stop a label that is currently active.
+    Stop { label: MobileCaptureLabelDto },
+}
+
+/// A label request was not recorded; prior admitted labels remain unchanged.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
+pub enum MobileCaptureAnnotationError {
+    /// This capture cannot fit the change and every required closing boundary.
+    #[error("capture annotation capacity reached")]
+    CapacityReached,
+    /// The requested capture no longer owns a recording writer.
+    #[error("capture is not recording")]
+    NotRecording,
+    /// The writer could not accept the metadata update.
+    #[error("capture writer rejected the annotation")]
+    WriterFailed,
+}
+
 macro_rules! capture_labels {
     ($($name:ident),+ $(,)?) => {
         /// Typed capture label. Display names belong to the native localization catalog.
