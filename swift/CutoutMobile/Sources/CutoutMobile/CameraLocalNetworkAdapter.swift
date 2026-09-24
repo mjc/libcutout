@@ -291,10 +291,9 @@ public final class CameraLocalNetworkAdapter {
         readOnlyEvidence = evidence
         sessionState.clearNovatekSession()
         if let origin {
-            try? sessionState.configureNovatekSession(
+            try? sessionState.configureNovatekReadOnlySession(
                 origin: origin,
-                firmwareVersion: evidence.firmwareVersion,
-                configuration: evidence.commandCapabilityConfiguration
+                snapshot: evidence.dto
             )
         }
         evidencePathObservationGeneration = pathObservationGeneration
@@ -620,9 +619,10 @@ public final class CameraLocalNetworkAdapter {
             throw CameraMediaDownloadError.originMismatch
         }
         guard
-            readOnlyEvidence?.media.contains(where: {
-                $0.path == media.path && $0.sizeBytes == media.sizeBytes
-            }) == true
+            sessionState.novatekMediaIsCurrent(
+                path: media.path,
+                sizeBytes: media.sizeBytes
+            )
         else {
             throw CameraMediaDownloadError.pathUnavailable
         }
@@ -722,9 +722,10 @@ public final class CameraLocalNetworkAdapter {
             throw CameraReadOnlyRequestError.originMismatch
         }
         guard
-            readOnlyEvidence?.media.contains(where: {
-                $0.path == media.path && $0.sizeBytes == media.sizeBytes
-            }) == true
+            sessionState.novatekMediaIsCurrent(
+                path: media.path,
+                sizeBytes: media.sizeBytes
+            )
         else {
             throw CameraReadOnlyRequestError.pathUnavailable
         }
