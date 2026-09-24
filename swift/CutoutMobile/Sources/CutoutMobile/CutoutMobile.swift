@@ -1434,6 +1434,8 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
         self.riderDashboardProjection = riderDashboardProjection
             ?? mobileRiderDashboardProjectionForValues(values: MobileRiderDashboardValuesDto(
                 operatingState: operatingState,
+                batteryLevelReported: batteryLevelReported,
+                batteryLevelEstimated: batteryLevelEstimated,
                 voltage: voltage,
                 batteryCurrent: batteryCurrent,
                 reportedPower: power,

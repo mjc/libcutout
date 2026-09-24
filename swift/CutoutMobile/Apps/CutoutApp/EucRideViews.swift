@@ -38,12 +38,9 @@ struct EucRideScreenView: View {
         return .eucRide
     }
 
-    private var warningCard: PevWarningCard? {
-        warningState.map { PevWarningCard(title: $0.title, detail: $0.detail) }
-    }
-
-    private var warningSeverity: EucRideWarningSeverity {
-        warningState?.severity ?? .reduceAcceleration
+    var warningCard: PevWarningCard? {
+        guard let warningState, warningState.severity != .normal else { return nil }
+        return PevWarningCard(title: warningState.title, detail: warningState.detail)
     }
 
     private var warningState: EucRideWarningState? {
@@ -79,35 +76,12 @@ struct EucRideScreenView: View {
             speedCaption: localizedAppText("euc.speed.caption"),
         ) {
             if let warningCard {
-                PevDashboardWarningCard(
-                    title: warningCard.title,
-                    detail: warningCard.detail,
-                    accent: eucWarningAccent(for: warningSeverity),
-                    detailColor: PevColors.primaryText,
-                    fill: PevColors.warningFill,
-                    stroke: PevColors.warningStroke
+                EucRideWarningSection(
+                    card: warningCard,
+                    severity: warningState?.severity ?? .unavailable
                 )
-                    .accessibilityIdentifier("euc.warning")
-                    .padding(.top, 14)
             }
-
-            VStack(spacing: 10) {
-                ForEach(safetyBars) { bar in
-                    PevDashboardProgressBar(
-                        label: bar.label,
-                        metricValue: bar.metricValue,
-                        progress: bar.progress
-                    )
-                }
-            }
-
-            PevDashboardGrid(columnSpacing: 12, spacing: 12) {
-                ForEach(dashboardTiles) { tile in
-                    PevDashboardMetricTile(tile, prominence: .dashboard)
-                }
-                PevDashboardMetricTile(gpsSpeedTile, prominence: .dashboard)
-            }
-            .padding(.top, 12)
+            EucRideReadingsSection(safetyBars: safetyBars, tiles: dashboardTiles, gpsSpeed: gpsSpeedTile)
         }
         .accessibilityElement(children: .contain)
         .onChange(of: warningState?.severity) { _, severity in
@@ -115,6 +89,49 @@ struct EucRideScreenView: View {
                 AccessibilityNotification.Announcement(announcement).post()
             }
         }
+    }
+}
+
+private struct EucRideWarningSection: View {
+    let card: PevWarningCard
+    let severity: EucRideWarningSeverity
+
+    var body: some View {
+        PevDashboardWarningCard(
+            title: card.title,
+            detail: card.detail,
+            accent: eucWarningAccent(for: severity),
+            detailColor: PevColors.primaryText,
+            fill: PevColors.warningFill,
+            stroke: PevColors.warningStroke
+        )
+        .accessibilityIdentifier("euc.warning")
+        .padding(.top, 14)
+    }
+}
+
+private struct EucRideReadingsSection: View {
+    let safetyBars: [PevSafetyBar]
+    let tiles: [PevDashboardTile]
+    let gpsSpeed: PevDashboardTile
+
+    var body: some View {
+        VStack(spacing: 10) {
+            ForEach(safetyBars) { bar in
+                PevDashboardProgressBar(
+                    label: bar.label,
+                    metricValue: bar.metricValue,
+                    progress: bar.progress
+                )
+            }
+        }
+        PevDashboardGrid(columnSpacing: 12, spacing: 12) {
+            ForEach(tiles) { tile in
+                PevDashboardMetricTile(tile, prominence: .dashboard)
+            }
+            PevDashboardMetricTile(gpsSpeed, prominence: .dashboard)
+        }
+        .padding(.top, 12)
     }
 }
 

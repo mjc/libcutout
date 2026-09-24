@@ -61,6 +61,34 @@ positive values use a decimal menu. Existing library menu termination and
 timing differ from this reference. No settings command was tested on hardware
 in this session; source inspection alone does not prove physical acceptance.
 
+## Ride metric admission audit
+
+The ride screen must distinguish missing producers from missing presentation wiring.
+The Rust rider projection now includes battery percentage from the existing
+normalized snapshot, preferring reported state of charge over an estimate while
+retaining its measurement metadata. A reported zero is not a missing reading.
+The standard Falcon uses the existing voltage-based estimate, not placeholder
+smart-BMS pages.
+
+| Ride metric | Existing producer or remaining requirement |
+| --- | --- |
+| Battery percentage | Live A voltage and the selected model's voltage scale feed the existing piecewise estimate. The ride projection previously omitted this produced value. |
+| Pack voltage | Live A unsigned voltage field and model scale. |
+| Electrical power | Pack voltage multiplied by Extra-frame battery current, not Live A phase current. Valid zero and negative values remain representable. |
+| Controller / motor temperature | Live A's current temperature interpretation and Extra-frame whole-degree motor temperature; IMU identification/formula qualification remains separate work. |
+| PWM headroom | Extra-frame PWM and operating state; idle is not a moving headroom measurement. |
+| Time until fully charged | The estimator already has model capacity, but requires trusted charging-state and flow evidence plus sufficient samples. It is not a ride-time battery percentage and is now offered only in charging state. |
+| Voltage sag | Requires fresh voltage/current history and a reference/load model; a single voltage reading cannot determine sag. |
+| Remaining distance | Requires a defined consumption/usable-energy producer; nominal capacity alone is not a riding-efficiency measurement. |
+| Cell voltages / battery temperature | No smart BMS on this standard Falcon; zero-filled pages do not establish measurements. |
+
+The inspected EUC World instruction listing preserves signed Extra-frame current
+at offset 2 with a 0.01 A scale. That agrees with the existing decoder; it does not
+by itself establish charger attachment or regenerative braking from a stationary
+negative sample. No current-sign inversion or verification upgrade was made for
+the ride UI cleanup. Technical provenance remains available in the typed snapshot;
+the ride summary does not print internal verification or implementation terminology.
+
 ## Standard-Falcon hardware captures
 
 Three separate macOS CLI connections used the observed FFE1 notify endpoint.

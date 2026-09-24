@@ -1,10 +1,6 @@
-private enum CaptureLabelExclusiveGroup {
-    case lowBeam
-    case highBeam
-    case pedalMode
-    case softwareLock
-}
+import CutoutMobileFFI
 
+/// Native display vocabulary; annotation strings and exclusivity are owned by Rust.
 enum CaptureQuickLabel: CaseIterable, Hashable, Identifiable {
     case ride
     case charge
@@ -28,74 +24,38 @@ enum CaptureQuickLabel: CaseIterable, Hashable, Identifiable {
 
     var id: String { annotationValue }
 
+    var domainLabel: MobileCaptureLabelDto {
+        switch self {
+        case .ride: .ride
+        case .charge: .charging
+        case .balance: .balancing
+        case .lowBeamOn: .lowBeamOn
+        case .lowBeamOff: .lowBeamOff
+        case .highBeamOn: .highBeamOn
+        case .highBeamOff: .highBeamOff
+        case .horn: .horn
+        case .pedalsHard: .pedalsHard
+        case .pedalsMedium: .pedalsMedium
+        case .pedalsSoft: .pedalsSoft
+        case .resetTrip: .resetTrip
+        case .softwareLock: .softwareLock
+        case .softwareUnlock: .softwareUnlock
+        case .tiltbackSpeed: .tiltbackSpeed
+        case .alarmSpeed: .alarmSpeed
+        case .angleAdjustment: .angleAdjustment
+        case .rideMode: .rideMode
+        case .pwmPercent: .pwmPercent
+        }
+    }
+
     func actionTitle(isActive: Bool) -> String {
         localizedAppText(isActive ? "capture.label.stop" : "capture.label.start", title)
     }
 
-    var title: String {
-        localizedAppText("capture.label.\(annotationValue)")
-    }
-
-    var annotationValue: String {
-        switch self {
-        case .ride:
-            "ride"
-        case .charge:
-            "charging"
-        case .balance:
-            "balancing"
-        case .lowBeamOn:
-            "low_beam_on"
-        case .lowBeamOff:
-            "low_beam_off"
-        case .highBeamOn:
-            "high_beam_on"
-        case .highBeamOff:
-            "high_beam_off"
-        case .horn:
-            "horn"
-        case .pedalsHard:
-            "pedals_hard"
-        case .pedalsMedium:
-            "pedals_medium"
-        case .pedalsSoft:
-            "pedals_soft"
-        case .resetTrip:
-            "reset_trip"
-        case .softwareLock:
-            "software_lock"
-        case .softwareUnlock:
-            "software_unlock"
-        case .tiltbackSpeed:
-            "tiltback_speed"
-        case .alarmSpeed:
-            "alarm_speed"
-        case .angleAdjustment:
-            "angle_adjustment"
-        case .rideMode:
-            "ride_mode"
-        case .pwmPercent:
-            "pwm_percent"
-        }
-    }
+    var title: String { localizedAppText("capture.label.\(annotationValue)") }
+    var annotationValue: String { captureLabelSlug(label: domainLabel) }
 
     func isMutuallyExclusive(with other: Self) -> Bool {
-        guard let exclusiveGroup else { return false }
-        return other.exclusiveGroup == exclusiveGroup
-    }
-
-    private var exclusiveGroup: CaptureLabelExclusiveGroup? {
-        switch self {
-        case .lowBeamOn, .lowBeamOff:
-            .lowBeam
-        case .highBeamOn, .highBeamOff:
-            .highBeam
-        case .pedalsHard, .pedalsMedium, .pedalsSoft:
-            .pedalMode
-        case .softwareLock, .softwareUnlock:
-            .softwareLock
-        default:
-            nil
-        }
+        captureLabelsAreMutuallyExclusive(left: domainLabel, right: other.domainLabel)
     }
 }

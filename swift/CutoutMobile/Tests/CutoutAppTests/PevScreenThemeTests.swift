@@ -457,7 +457,7 @@ final class PevScreenThemeTests: XCTestCase {
 
         XCTAssertEqual(
             liveDashboardTiles(from: state, telemetry: telemetry).map(\.kind),
-            [.chargeEstimate, .packVoltage, .power, .thermal]
+            [.batteryLevel, .packVoltage, .power, .thermal]
         )
         XCTAssertEqual(liveSafetyBars(for: state).map(\.id), [.pwmHeadroom])
     }
@@ -478,7 +478,7 @@ final class PevScreenThemeTests: XCTestCase {
         let tiles = liveDashboardTiles(from: state, telemetry: telemetry)
 
         XCTAssertEqual(tiles.map(\.kind), [
-            .chargeEstimate, .packVoltage, .power, .thermal, .limpHomeRange,
+            .batteryLevel, .packVoltage, .power, .thermal, .limpHomeRange,
         ])
         XCTAssertEqual(
             tiles.first { $0.kind == .power }?.metricValue,
@@ -488,6 +488,85 @@ final class PevScreenThemeTests: XCTestCase {
             liveSafetyBars(for: state).first?.metricValue,
             .available(display: "0%", accessibility: "0%")
         )
+    }
+
+    func testRideTilesDoNotDisplayInternalDiagnosticsOrDuplicateUnavailableDetails() {
+        for telemetry in [
+            TelemetrySnapshot(),
+            TelemetrySnapshot(
+                voltage: Voltage(value: 98_300),
+                batteryCurrent: BatteryCurrent(value: -1_220),
+                powerFlow: .negativeUnknown
+            ),
+        ] {
+            let state = EucRideScreenState(
+                phase: .live,
+                displayState: RideDisplayState(telemetry: telemetry)
+            )
+            let tiles = liveDashboardTiles(from: state, telemetry: telemetry)
+            XCTAssertTrue(tiles.allSatisfy { $0.detail.isEmpty }, "\(tiles.map(\.detail))")
+            XCTAssertEqual(tiles.first { $0.kind == .thermal }?.metricValue, .unavailable)
+            XCTAssertNil(tiles.first { $0.kind == .chargeEstimate })
+            if telemetry.voltage != nil {
+                XCTAssertEqual(
+                    tiles.first { $0.kind == .power }?.metricValue,
+                    .available(display: "-0.12", accessibility: "-0.12")
+                )
+                XCTAssertEqual(telemetry.powerFlow, .negativeUnknown)
+            }
+        }
+    }
+
+    func testRideBatteryUsesTheProducedEstimateAndPrefersReportedZero() throws {
+        let readings: [BatteryLevel?] = [nil, BatteryLevel(value: 0)]
+        for reported in readings {
+            let telemetry = TelemetrySnapshot(
+                batteryLevelReported: reported,
+                batteryLevelEstimated: BatteryLevel(value: 62)
+            )
+            let state = EucRideScreenState(phase: .live, displayState: RideDisplayState(telemetry: telemetry))
+            let tile = try XCTUnwrap(liveDashboardTiles(from: state, telemetry: telemetry).first)
+            XCTAssertEqual(tile.kind, .batteryLevel)
+            XCTAssertEqual(tile.label, "Battery")
+            XCTAssertEqual(tile.value, reported == nil ? "62" : "0")
+            XCTAssertEqual(tile.unit, "%")
+            XCTAssertEqual(tile.detail, reported == nil ? "Estimated" : "")
+        }
+    }
+
+    func testRideWarningCardIsReservedForSafetyAndConnectionProblems() {
+        for (pwm, now, shouldWarn) in [(500, UInt64(1_000), false), (990, 1_000, true), (500, 4_000, true)] {
+            let telemetry = TelemetrySnapshot(
+                at: MonotonicMilliseconds(1_000),
+                speed: Speed(value: 5_000),
+                operatingState: .riding,
+                pwm: DutyCycle(permille: Int16(pwm))
+            )
+            let view = EucRideScreenView(
+                rideState: EucRideScreenState(phase: .live, displayState: RideDisplayState(telemetry: telemetry)),
+                rideTitle: "Begode Falcon",
+                now: MonotonicMilliseconds(now),
+                captureStatusText: nil,
+                connectionStatusText: "Connected",
+                phoneLocationReadback: PhoneLocationReadback(
+                    snapshot: MobilePhoneLocationSnapshotDto(latestSample: nil, gpsSpeed: nil)
+                )
+            )
+            XCTAssertEqual(view.warningCard != nil, shouldWarn)
+        }
+    }
+
+    func testRideOnlyOffersTimeToFullWhileCharging() {
+        for operatingState in [RideOperatingState.riding, .parked, .standing, .unknown, .charging] {
+            let telemetry = TelemetrySnapshot(operatingState: operatingState)
+            let state = EucRideScreenState(phase: .live, displayState: RideDisplayState(telemetry: telemetry))
+            let tile = liveDashboardTiles(from: state, telemetry: telemetry).first { $0.kind == .chargeEstimate }
+            XCTAssertEqual(tile != nil, operatingState == .charging)
+            if let tile {
+                XCTAssertEqual(tile.label, "Time to full")
+                XCTAssertTrue(tile.detail.isEmpty)
+            }
+        }
     }
 
     func testTelemetrySnapshotUsesTypedLiveVoltageAndThermalMetrics() {
@@ -765,7 +844,7 @@ final class PevScreenThemeTests: XCTestCase {
         XCTAssertEqual(powerFlowDetail(.zero, fallback: "fallback"), "idle")
         XCTAssertEqual(powerFlowDetail(.charging, fallback: "fallback"), "charging input")
         XCTAssertEqual(powerFlowDetail(.regeneration, fallback: "fallback"), "regen")
-        XCTAssertEqual(powerFlowDetail(.negativeUnknown, fallback: "fallback"), "regen/discharge unverified")
+        XCTAssertEqual(powerFlowDetail(.negativeUnknown, fallback: "fallback"), "fallback")
         XCTAssertEqual(powerFlowDetail(nil, fallback: "fallback"), "fallback")
     }
 
@@ -774,7 +853,6 @@ final class PevScreenThemeTests: XCTestCase {
         XCTAssertEqual(localizedAppText("telemetry.power_flow.zero"), "idle")
         XCTAssertEqual(localizedAppText("telemetry.power_flow.charging"), "charging input")
         XCTAssertEqual(localizedAppText("telemetry.power_flow.regeneration"), "regen")
-        XCTAssertEqual(localizedAppText("telemetry.power_flow.negative_unknown"), "regen/discharge unverified")
     }
 
     func testSharedRideTilePresentationUsesTheAppCatalog() throws {

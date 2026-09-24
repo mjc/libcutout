@@ -1,6 +1,123 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "captures.label_not_recorded" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Label wasn't recorded" } } }
+    },
+    "captures.label_error_dismiss" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "OK" } } }
+    },
+    "captures.labels_full" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "No room for more labels in this recording. You can stop active labels and save, then start another capture." } } }
+    },
+    "captures.labels_not_recording" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "This recording has ended. Start a new capture to add labels." } } }
+    },
+    "captures.labels_failed" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Couldn't record this label. Try again or stop and save the capture." } } }
+    },
+    "captures.title" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Bluetooth Captures" } } }
+    },
+    "captures.diagnostics" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Diagnostics" } } }
+    },
+    "captures.active" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Recording" } } }
+    },
+    "captures.new" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "New Capture" } } }
+    },
+    "captures.empty" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "No captures saved this session." } } }
+    },
+    "captures.recent" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "This Session" } } }
+    },
+    "captures.session_history" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Completed captures from this app session. Relaunch history is not available yet." } } }
+    },
+    "captures.automatic" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Automatic diagnostics" } } }
+    },
+    "captures.manual" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Manual capture" } } }
+    },
+    "captures.untitled" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Bluetooth device" } } }
+    },
+    "captures.source" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Source" } } }
+    },
+    "captures.incomplete" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Incomplete capture" } } }
+    },
+    "captures.saved" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Capture Saved" } } }
+    },
+    "captures.share" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Share Capture" } } }
+    },
+    "captures.file_unavailable" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Capture file is unavailable." } } }
+    },
+    "captures.privacy" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Captures may include device identifiers, location and listening history. Share only with someone you trust." } } }
+    },
+    "captures.technical" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Technical Details" } } }
+    },
+    "captures.choose_device" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Choose a Device" } } }
+    },
+    "captures.no_devices" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "No Devices Nearby" } } }
+    },
+    "captures.no_devices_hint" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Turn on your device and keep it nearby." } } }
+    },
+    "captures.read_only" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Records Bluetooth data without changing device settings." } } }
+    },
+    "captures.description" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Description (optional)" } } }
+    },
+    "captures.description_hint" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Add a short note about what you’re investigating." } } }
+    },
+    "captures.start" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Start Capture" } } }
+    },
+    "captures.start_failed" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Couldn’t start. The device may no longer be available. Go back and choose it again." } } }
+    },
+    "captures.labels" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Activity Labels" } } }
+    },
+    "captures.labels_hint" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Optional markers describe what you’re doing. They don’t send commands to the device." } } }
+    },
+    "captures.starting" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Starting…" } } }
+    },
+    "captures.saving" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Saving…" } } }
+    },
+    "captures.receiving" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Receiving Bluetooth data" } } }
+    },
+    "captures.waiting" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Waiting for Bluetooth data" } } }
+    },
+    "captures.save_failed" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Couldn’t save. Retry Stop & Save to finish the capture." } } }
+    },
+    "captures.automatic_hint" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Recorded automatically while connected. Disconnect the device to finish these diagnostics." } } }
+    },
+    "captures.leave_hint" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "You can leave this screen while recording continues." } } }
+    },
     "bms.pack.find_reading" : {
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Find reading number" } } }
     },
@@ -2351,25 +2468,17 @@
       "comment" : "VoiceOver sentence fragment for unavailable Ride hero speed.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "unavailable" } } }
     },
-    "ride.charge.detail.with_voltage_sag" : {
-      "comment" : "Ride charge tile detail when voltage sag is available. The placeholders are the sag detail and the typed charge-estimate detail.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%1$@ · %2$@" } } }
-    },
-    "ride.detail.sag_unavailable" : {
-      "comment" : "Ride pack-voltage tile detail when sag is unavailable.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "sag unavailable" } } }
-    },
-    "ride.detail.typed_range_estimate" : {
-      "comment" : "Ride range tile detail identifying a typed range estimate.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "typed range estimate" } } }
-    },
-    "ride.detail.typed_telemetry" : {
-      "comment" : "Ride thermal tile fallback detail when no temperature telemetry is available.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "typed telemetry" } } }
+    "ride.detail.estimated" : {
+      "comment" : "Short qualifier for an estimated ride metric, rather than a directly measured value.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Estimated" } } }
     },
     "ride.metric.charge" : {
-      "comment" : "Ride dashboard tile label for charge.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "charge" } } }
+      "comment" : "Charging-only dashboard tile showing the estimated time until fully charged.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Time to full" } } }
+    },
+    "ride.metric.battery" : {
+      "comment" : "Ride dashboard battery percentage label.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Battery" } } }
     },
     "ride.metric.limp_home" : {
       "comment" : "Ride dashboard tile label for limp-home range.",
@@ -2387,18 +2496,6 @@
       "comment" : "Ride dashboard tile label for temperatures.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "thermal" } } }
     },
-    "ride.power.calculated_pack_current" : {
-      "comment" : "Ride power tile fallback when power is calculated from pack voltage and current.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "calculated from pack current" } } }
-    },
-    "ride.power.estimated" : {
-      "comment" : "Ride power tile fallback when power is estimated from available telemetry.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "estimated from telemetry" } } }
-    },
-    "ride.power.live_telemetry" : {
-      "comment" : "Ride power tile fallback when power is directly reported by live telemetry.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "live telemetry" } } }
-    },
     "ride.safety.pwm_headroom" : {
       "comment" : "Ride safety-bar label for PWM headroom.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "PWM headroom" } } }
@@ -2408,8 +2505,8 @@
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "sag-adjusted energy" } } }
     },
     "ride.sag.detail" : {
-      "comment" : "Ride pack-voltage sag detail. The placeholders are sag voltage, current, and effective resistance in milliohms.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%1$@ V sag at %2$@ A · %3$lld mΩ" } } }
+      "comment" : "Ride pack-voltage detail. The placeholder is the measured voltage drop in volts.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%@ V drop" } } }
     },
     "ride.thermal.all" : {
       "comment" : "Ride thermal tile detail. The placeholders are controller, motor, and battery temperatures, each followed by its unit.",
@@ -2454,10 +2551,6 @@
     "telemetry.power_flow.discharge" : {
       "comment" : "Telemetry tile detail when the vehicle is discharging.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "discharging" } } }
-    },
-    "telemetry.power_flow.negative_unknown" : {
-      "comment" : "Telemetry tile detail when a negative current direction cannot be verified as regeneration or discharge.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "regen/discharge unverified" } } }
     },
     "telemetry.power_flow.regeneration" : {
       "comment" : "Telemetry tile detail when the vehicle is regenerating power.",
@@ -2752,7 +2845,7 @@
     },
     "capture.stop" : {
       "localizations" : {
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Finish capture" } }
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Stop & Save" } }
       }
     },
     "picker.saved_device.forget" : {

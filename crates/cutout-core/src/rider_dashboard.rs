@@ -1,7 +1,8 @@
 //! Rust-owned projection of live rider metrics for mobile dashboards.
 
 use crate::{
-    BatteryCurrent, Distance, DutyCycle, Measured, Power, RideOperatingState, Temperature, Voltage,
+    BatteryCurrent, BatteryLevel, Distance, DutyCycle, Measured, Power, RideOperatingState,
+    Temperature, Voltage,
 };
 
 const PWM_IDLE_DEADBAND_PERMILLE: u16 = 20;
@@ -46,7 +47,12 @@ pub struct RiderThermalReadback {
 /// One metric included in the main live rider dashboard.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RiderDashboardMetricDescriptor {
-    /// Rust-owned charge estimator presentation.
+    /// Battery percentage with its original measurement provenance.
+    BatteryLevel {
+        /// Prefer a reported percentage, falling back to a produced estimate.
+        reading: Option<Measured<BatteryLevel>>,
+    },
+    /// Rust-owned time-to-full estimator, shown only while charging.
     ChargeEstimate,
     /// Pack voltage, including explicit current unavailability.
     PackVoltage {
@@ -85,6 +91,10 @@ pub enum RiderSafetyMetricDescriptor {
 pub struct RiderDashboardInput {
     /// Current operating state.
     pub operating_state: RideOperatingState,
+    /// Battery percentage reported by the device.
+    pub battery_level_reported: Option<Measured<BatteryLevel>>,
+    /// Battery percentage estimated by the protocol or energy model.
+    pub battery_level_estimated: Option<Measured<BatteryLevel>>,
     /// Latest pack voltage.
     pub voltage: Option<Measured<Voltage>>,
     /// Latest battery current.
@@ -117,7 +127,11 @@ impl RiderDashboardProjection {
     #[must_use]
     pub fn from_input(input: RiderDashboardInput) -> Self {
         let mut dashboard_metrics = vec![
-            RiderDashboardMetricDescriptor::ChargeEstimate,
+            RiderDashboardMetricDescriptor::BatteryLevel {
+                reading: input
+                    .battery_level_reported
+                    .or(input.battery_level_estimated),
+            },
             RiderDashboardMetricDescriptor::PackVoltage {
                 value: input
                     .voltage
@@ -136,6 +150,9 @@ impl RiderDashboardProjection {
                 ),
             },
         ];
+        if input.operating_state == RideOperatingState::Charging {
+            dashboard_metrics.insert(0, RiderDashboardMetricDescriptor::ChargeEstimate);
+        }
         if let Some(range) = input.limp_home_range {
             dashboard_metrics
                 .push(RiderDashboardMetricDescriptor::LimpHomeRange { value: range.value });
@@ -218,6 +235,8 @@ mod tests {
     fn empty_input() -> RiderDashboardInput {
         RiderDashboardInput {
             operating_state: RideOperatingState::Unknown,
+            battery_level_reported: None,
+            battery_level_estimated: None,
             voltage: None,
             battery_current: None,
             reported_power: None,
@@ -230,13 +249,57 @@ mod tests {
     }
 
     #[test]
+    fn battery_percentage_preserves_reported_zero_and_estimated_provenance() {
+        let estimated = Measured::estimated(BatteryLevel::from_percent(62));
+        let reported = Measured::reported(BatteryLevel::from_percent(0));
+        for (battery_level_reported, battery_level_estimated, expected) in [
+            (None, None, None),
+            (None, Some(estimated), Some(estimated)),
+            (Some(reported), Some(estimated), Some(reported)),
+        ] {
+            let projection = RiderDashboardProjection::from_input(RiderDashboardInput {
+                battery_level_reported,
+                battery_level_estimated,
+                ..empty_input()
+            });
+            assert_eq!(
+                projection.dashboard_metrics.first(),
+                Some(&RiderDashboardMetricDescriptor::BatteryLevel { reading: expected })
+            );
+        }
+    }
+
+    #[test]
+    fn charge_time_is_only_offered_while_charging() {
+        for operating_state in [
+            RideOperatingState::Unknown,
+            RideOperatingState::Parked,
+            RideOperatingState::Standing,
+            RideOperatingState::Riding,
+            RideOperatingState::Charging,
+        ] {
+            let projection = RiderDashboardProjection::from_input(RiderDashboardInput {
+                operating_state,
+                ..empty_input()
+            });
+            assert_eq!(
+                projection
+                    .dashboard_metrics
+                    .contains(&RiderDashboardMetricDescriptor::ChargeEstimate),
+                operating_state == RideOperatingState::Charging,
+                "{operating_state:?}"
+            );
+        }
+    }
+
+    #[test]
     fn projection_omits_metrics_without_a_producer() {
         let projection = RiderDashboardProjection::from_input(empty_input());
 
         assert_eq!(
             projection.dashboard_metrics,
             vec![
-                RiderDashboardMetricDescriptor::ChargeEstimate,
+                RiderDashboardMetricDescriptor::BatteryLevel { reading: None },
                 RiderDashboardMetricDescriptor::PackVoltage {
                     value: RiderMetricValue::Unavailable,
                 },
@@ -260,6 +323,8 @@ mod tests {
     fn projection_preserves_available_values_and_zero() {
         let projection = RiderDashboardProjection::from_input(RiderDashboardInput {
             operating_state: RideOperatingState::Riding,
+            battery_level_reported: None,
+            battery_level_estimated: None,
             voltage: Some(Measured::reported(Voltage::from_millivolts(60_000))),
             battery_current: Some(Measured::reported(BatteryCurrent::from_milliamps(0))),
             reported_power: Some(Measured::reported(Power::from_milliwatts(0))),
@@ -275,7 +340,7 @@ mod tests {
         assert_eq!(
             projection.dashboard_metrics,
             vec![
-                RiderDashboardMetricDescriptor::ChargeEstimate,
+                RiderDashboardMetricDescriptor::BatteryLevel { reading: None },
                 RiderDashboardMetricDescriptor::PackVoltage {
                     value: RiderMetricValue::Available(Voltage::from_millivolts(60_000)),
                 },

@@ -119,7 +119,7 @@ enum CutoutAppRoute: Hashable {
 
     var preservesNavigationOnConnectionLoss: Bool {
         switch self {
-        case .rideMap, .rideMapDetail, .lighting:
+        case .capture, .rideMap, .rideMapDetail, .lighting:
             true
         default:
             false

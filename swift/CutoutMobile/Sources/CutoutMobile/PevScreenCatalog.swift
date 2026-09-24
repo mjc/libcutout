@@ -75,6 +75,7 @@ public struct PevWarningCard: Equatable, Hashable, Sendable {
 }
 
 public enum PevDashboardTileKind: Equatable, Hashable, Sendable {
+    case batteryLevel
     case chargeEstimate
     case packVoltage
     case power

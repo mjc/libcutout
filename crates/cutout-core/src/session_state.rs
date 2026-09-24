@@ -17,6 +17,9 @@ pub struct CutoutSessionState {
     /// Attempt identity, deadline and protocol admission state.
     pub connection: crate::ConnectionAttemptLifecycle,
 
+    /// Writer-attempt and finish admission shared by capture and connection consumers.
+    pub capture: crate::CaptureSessionLifecycle,
+
     /// Logical ride and Live Activity lifecycle state.
     pub ride_session: RideSessionLifecycle,
 

@@ -12,6 +12,7 @@ struct AppSetupView: View {
     private enum Destination: Hashable {
         case music
         case phoneAlarms
+        case captures
     }
 
     init(model: CutoutAppModel, opensMusic: Bool = false) {
@@ -37,12 +38,19 @@ struct AppSetupView: View {
                     }
                     .accessibilityIdentifier("setup.music")
                 }
-                Section(localizedAppText("setup.device")) {
-                    Button(localizedAppText("picker.saved_device.forget"), role: .destructive) {
-                        model.forgetSavedDevice()
+                if model.hasSavedDevice {
+                    Section(localizedAppText("setup.device")) {
+                        Button(localizedAppText("picker.saved_device.forget"), role: .destructive) {
+                            model.forgetSavedDevice()
+                        }
+                        .accessibilityIdentifier("setup.forget-saved-device")
                     }
-                    .disabled(!model.hasSavedDevice)
-                    .accessibilityIdentifier("setup.forget-saved-device")
+                }
+                Section(localizedAppText("captures.diagnostics")) {
+                    NavigationLink(value: Destination.captures) {
+                        Label(localizedAppText("captures.title"), systemImage: "waveform.path")
+                    }
+                    .accessibilityIdentifier("setup.captures")
                 }
             }
             .formStyle(.grouped)
@@ -51,6 +59,9 @@ struct AppSetupView: View {
             .toolbar { doneToolbar }
             .navigationDestination(for: Destination.self) { destination in
                 switch destination {
+                case .captures:
+                    BluetoothCapturesView(model: model)
+                        .toolbar { doneToolbar }
                 case .music:
                     MusicSettingsView(
                         nowPlaying: model.musicSettingsNowPlaying,

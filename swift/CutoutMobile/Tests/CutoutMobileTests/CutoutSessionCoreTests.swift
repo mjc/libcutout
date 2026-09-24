@@ -895,6 +895,56 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertFalse(core.recordOnly(platformIdentifier: "ios-local-missing", note: "unknown wheel"))
     }
 
+    func testWriterCreationFailureRejectsRecordOnlyWithoutAnnouncingStarted() async throws {
+        let blockedDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try Data("not a directory".utf8).write(to: blockedDirectory)
+        defer { try? FileManager.default.removeItem(at: blockedDirectory) }
+        let core = CutoutSessionCore(testScript: CutoutSessionTestScript(
+            candidate: scriptedVescCandidate, telemetry: nil, connectionDelayMilliseconds: 0
+        ))
+        core.captureDirectoryForTesting = blockedDirectory
+        let failed = expectation(description: "writer constructor failure is published")
+        core.onCaptureEvent = { event in
+            if case .started = event { XCTFail("failed writer must never be announced as started") }
+            if case .failed = event { failed.fulfill() }
+        }
+
+        XCTAssertFalse(core.recordOnly(platformIdentifier: scriptedVescCandidate.platformIdentifier))
+        await fulfillment(of: [failed], timeout: 2)
+        XCTAssertFalse(core.isRecordOnlyConnection)
+        let state = core.rideSessionStateHandle.captureLifecycleSnapshot()
+        XCTAssertEqual(state.attempt?.stage, .failed)
+        XCTAssertTrue(state.canStart)
+        XCTAssertTrue(state.canPair)
+        let flushed = await core.flushCapture()
+        XCTAssertFalse(flushed)
+    }
+
+    func testNativePairingCannotReplaceManualCaptureWithoutAppGuard() async throws {
+        let core = CutoutSessionCore(testScript: CutoutSessionTestScript(
+            candidate: scriptedVescCandidate, telemetry: nil, connectionDelayMilliseconds: 0
+        ))
+        let started = expectation(description: "manual writer starts")
+        let finished = expectation(description: "manual writer completes")
+        var url: URL?
+        core.onCaptureEvent = { event in
+            if case let .started(_, fileURL) = event { url = fileURL; started.fulfill() }
+            if case .finished = event { finished.fulfill() }
+        }
+        XCTAssertTrue(core.recordOnly(platformIdentifier: scriptedVescCandidate.platformIdentifier))
+        await fulfillment(of: [started], timeout: 2)
+        let generation = core.rideSessionStateHandle.captureLifecycleSnapshot().attempt?.generation
+        XCTAssertFalse(core.pair(platformIdentifier: scriptedVescCandidate.platformIdentifier))
+        XCTAssertFalse(core.probe(platformIdentifier: scriptedVescCandidate.platformIdentifier))
+        XCTAssertEqual(core.rideSessionStateHandle.captureLifecycleSnapshot().attempt?.generation, generation)
+        XCTAssertTrue(core.isRecordOnlyConnection)
+        let flushed = await core.flushCapture()
+        XCTAssertTrue(flushed)
+        core.disconnectAndScan()
+        await fulfillment(of: [finished], timeout: 2)
+        if let url { try FileManager.default.removeItem(at: url) }
+    }
+
     func testSuccessfulScriptedRecordOnlyFlushUsesTheRealWriter() async throws {
         let started = expectation(description: "real capture writer starts")
         var captureURL: URL?
@@ -930,6 +980,57 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertFalse(capture.contains("capture_evidence=hardware_tested"))
 
         core.disconnectAndScan()
+    }
+
+    func testRejectedLabelReplacementKeepsRealCaptureSavable() async throws {
+        let started = expectation(description: "writer starts")
+        let finished = expectation(description: "writer durably completes")
+        var captureURL: URL?
+        var captureGeneration: CaptureGeneration?
+        let core = CutoutSessionCore(testScript: CutoutSessionTestScript(
+            candidate: scriptedVescCandidate, telemetry: nil, connectionDelayMilliseconds: 0
+        ))
+        XCTAssertEqual(core.captureDirectoryForTesting, FileManager.default.temporaryDirectory)
+        XCTAssertNil(CutoutSessionCore(clock: MonotonicClock()).captureDirectoryForTesting)
+        core.onCaptureEvent = { event in
+            switch event {
+            case let .started(generation, fileURL):
+                captureGeneration = generation
+                captureURL = fileURL
+                started.fulfill()
+            case .finished: finished.fulfill()
+            case .failed: XCTFail("Label rejection must not fail the capture")
+            default: break
+            }
+        }
+        XCTAssertTrue(core.recordOnly(
+            platformIdentifier: scriptedVescCandidate.platformIdentifier,
+            annotations: ["note=first", "note=second"]
+        ))
+        await fulfillment(of: [started], timeout: 2)
+        let generation = try XCTUnwrap(captureGeneration)
+        let url = try XCTUnwrap(captureURL)
+        defer { try? FileManager.default.removeItem(at: url) }
+        XCTAssertEqual(
+            url.deletingLastPathComponent().resolvingSymlinksInPath(),
+            FileManager.default.temporaryDirectory.resolvingSymlinksInPath()
+        )
+        XCTAssertThrowsError(try core.changeCaptureLabel(
+            generation: .init(rawValue: generation.rawValue + 1), action: .start(label: .lowBeamOn)
+        ))
+        XCTAssertEqual(try core.changeCaptureLabel(generation: generation, action: .start(label: .lowBeamOn)), [.lowBeamOn])
+        XCTAssertFalse(core.annotateCapture(key: "note", value: "no room"))
+        XCTAssertThrowsError(try core.changeCaptureLabel(generation: generation, action: .start(label: .lowBeamOff))) { error in
+            guard case MobileCaptureAnnotationError.CapacityReached = error else { return XCTFail("Unexpected error: \(error)") }
+        }
+        let saved = await core.finishCapture()
+        XCTAssertTrue(saved)
+        await fulfillment(of: [finished], timeout: 2)
+        let contents = try String(contentsOf: url, encoding: .utf8)
+        XCTAssertTrue(contents.contains("capture_label=low_beam_on_start"))
+        XCTAssertTrue(contents.contains("capture_label=low_beam_on_stop"))
+        XCTAssertFalse(contents.contains("low_beam_off"))
+        XCTAssertThrowsError(try core.changeCaptureLabel(generation: generation, action: .stop(label: .lowBeamOn)))
     }
 
     func testMusicObservationBeforeCaptureIsRetainedUntilWriterStarts() async {

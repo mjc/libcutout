@@ -2175,26 +2175,35 @@ async fn capture_reconnecting_session_retries_after_external_notification_stream
     assert_eq!(*session.link_downs.lock().expect("link downs"), 2);
     assert_eq!(*first.disconnects.lock().expect("first disconnects"), 0);
     assert_eq!(*second.disconnects.lock().expect("second disconnects"), 0);
-    assert!(capture.records.iter().any(|record| matches!(
-        record,
-        crate::SessionCaptureRecord::Notification {
-            monotonic_ms,
-            ..
-        } if *monotonic_ms == crate::MonotonicMs::new(2)
-    )));
-    assert!(capture.records.iter().any(|record| matches!(
-        record,
-        crate::SessionCaptureRecord::LinkDown {
-            monotonic_ms,
-        } if *monotonic_ms == crate::MonotonicMs::new(3)
-    )));
-    assert!(capture.records.iter().any(|record| matches!(
-        record,
-        crate::SessionCaptureRecord::Link {
-            monotonic_ms,
-            ..
-        } if *monotonic_ms == crate::MonotonicMs::new(4)
-    )));
+    let first_notification = capture
+        .records
+        .iter()
+        .find_map(|record| match record {
+            crate::SessionCaptureRecord::Notification { monotonic_ms, .. } => Some(*monotonic_ms),
+            _ => None,
+        })
+        .expect("first link records its notification");
+    let first_link_down = capture
+        .records
+        .iter()
+        .find_map(|record| match record {
+            crate::SessionCaptureRecord::LinkDown { monotonic_ms } => Some(*monotonic_ms),
+            _ => None,
+        })
+        .expect("first stream ending records link down");
+    let second_link = capture
+        .records
+        .iter()
+        .filter_map(|record| match record {
+            crate::SessionCaptureRecord::Link { monotonic_ms, .. } => Some(*monotonic_ms),
+            _ => None,
+        })
+        .nth(1)
+        .expect("reconnect records a second link");
+    // Real elapsed time may exceed the minimum event-order timestamps under load.
+    assert!(first_notification >= crate::MonotonicMs::new(2));
+    assert!(first_link_down > first_notification);
+    assert_eq!(second_link, first_link_down.next());
 }
 
 #[tokio::test]

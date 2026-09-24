@@ -39,70 +39,109 @@ func captureSessionDetailRows(progress: CaptureProgress) -> [PevDashboardKeyValu
 
 struct CaptureRecordingScreen: View {
     let deviceKind: String?
+    let advertisedName: String?
     let captureStatusText: String?
     let captureStatusTone: PevStatusStripTone
     let captureProgress: CaptureProgress?
     let activeLabels: Set<CaptureQuickLabel>
+    let annotationErrorText: String?
+    let dismissAnnotationError: () -> Void
     let isFinishing: Bool
+    let canFinish: Bool
+    let canAnnotate: Bool
     let finishCapture: () -> Void
     let startCaptureLabel: (CaptureQuickLabel) -> Void
     let stopCaptureLabel: (CaptureQuickLabel) -> Void
 
     var body: some View {
-        VStack(spacing: 0) {
-            PevDashboardScaffold(
-                sectionTitle: localizedAppText("capture.section.record"),
-                bottomPadding: 24,
-                allowsVerticalScroll: true,
-                contentSpacing: 16,
-                horizontalPadding: 18,
-                showsHeader: false
-            ) {
-                PevScreenTitleBlock(
-                    title: deviceKind ?? localizedAppText("capture.session"),
-                    subtitle: localizedAppText("capture.session")
-                )
-
-                PevStatusStrip(
-                    text: captureStatusText ?? localizedAppText("capture.status.recording_locally_without_file"),
-                    tone: captureStatusTone
-                )
-                .accessibilityIdentifier("capture.status")
-
-                if let captureProgress {
-                    PevDashboardKeyValueRows(rows: captureSessionDetailRows(progress: captureProgress))
+        List {
+            Section {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(deviceKind ?? localizedAppText("capture.session"))
+                        .font(.title2.weight(.semibold))
+                    if let advertisedName {
+                        Text(advertisedName).foregroundStyle(.secondary)
+                    }
+                    Text(captureProgress?.elapsedMetricValue.displayText ?? "—")
+                        .font(.largeTitle.monospacedDigit())
+                        .accessibilityLabel(localizedAppText("capture.detail.elapsed"))
+                        .accessibilityValue(captureProgress?.elapsedMetricValue.accessibilityText ?? "—")
+                    PevStatusStrip(
+                        text: captureStatusText ?? localizedAppText("captures.starting"),
+                        tone: captureStatusTone
+                    )
+                    .accessibilityIdentifier("capture.status")
                 }
-
-                CaptureLabelControls(
-                    activeLabels: activeLabels,
-                    startCaptureLabel: startCaptureLabel,
-                    stopCaptureLabel: stopCaptureLabel
-                )
+                .padding(.vertical, 8)
             }
 
-            stopCaptureButton
-                .padding(.horizontal, 18)
-                .padding(.vertical, 12)
-                .background(PevColors.pageBackground)
+            Section {
+                DisclosureGroup {
+                    CaptureLabelControls(
+                        activeLabels: activeLabels,
+                        startCaptureLabel: startCaptureLabel,
+                        stopCaptureLabel: stopCaptureLabel
+                    )
+                    .disabled(!canAnnotate)
+                } label: {
+                    Text(localizedAppText("captures.labels"))
+                        .accessibilityIdentifier("captures.labels")
+                }
+            } footer: {
+                Text(localizedAppText("captures.labels_hint"))
+            }
+
+            if let captureProgress {
+                Section {
+                    DisclosureGroup {
+                        PevDashboardKeyValueRows(rows: captureSessionDetailRows(progress: captureProgress))
+                    } label: {
+                        Text(localizedAppText("captures.technical"))
+                            .accessibilityIdentifier("captures.technical")
+                    }
+                }
+            }
+
         }
+        .safeAreaInset(edge: .bottom) {
+            VStack(spacing: 8) {
+                if canFinish {
+                    Button(action: finishCapture) {
+                        HStack {
+                            if isFinishing { ProgressView().tint(.black) }
+                            Text(localizedAppText(isFinishing ? "captures.saving" : "capture.stop"))
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(PevColors.yellow)
+                    .foregroundStyle(.black)
+                    .disabled(isFinishing)
+                    .accessibilityIdentifier("capture.stop")
+                } else {
+                    Text(localizedAppText("captures.automatic_hint")).foregroundStyle(.secondary)
+                }
+                Text(localizedAppText("captures.leave_hint"))
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(18)
+            .background(PevColors.pageBackground)
+        }
+        .scrollContentBackground(.hidden)
         .background(PevColors.pageBackground)
+        .navigationTitle(localizedAppText("captures.active"))
+        .tint(PevColors.yellow)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("capture.screen")
-    }
-
-    private var stopCaptureButton: some View {
-        Button(role: .destructive, action: finishCapture) {
-            Text(localizedAppText("capture.stop"))
-                .font(.callout.weight(.bold))
-                .foregroundStyle(.black)
-                .padding(.horizontal, 16)
-                .frame(minHeight: 44)
+        .alert(localizedAppText("captures.label_not_recorded"), isPresented: Binding(
+            get: { annotationErrorText != nil },
+            set: { if !$0 { dismissAnnotationError() } }
+        )) {
+            Button(localizedAppText("captures.label_error_dismiss"), role: .cancel, action: dismissAnnotationError)
+        } message: {
+            Text(annotationErrorText ?? "")
         }
-        .buttonStyle(.plain)
-        .frame(maxWidth: .infinity, minHeight: 44)
-        .background(Capsule().fill(CaptureActionButtonTone.finish.tint))
-        .disabled(isFinishing)
-        .accessibilityIdentifier("capture.stop")
     }
 }
 

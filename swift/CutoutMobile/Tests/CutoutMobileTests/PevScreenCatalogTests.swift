@@ -193,7 +193,7 @@ final class PevScreenCatalogTests: XCTestCase {
         XCTAssertEqual(pevLocalizedText("euc.warning.low_pwm_headroom"), "PWM headroom is low while riding")
         XCTAssertEqual(pevLocalizedText("euc.warning.telemetry_live"), "Telemetry live")
         XCTAssertEqual(pevLocalizedText("euc.warning.waiting_for_speed"), "Waiting for speed telemetry")
-        XCTAssertEqual(pevLocalizedText("euc.warning.live_telemetry_detail"), "Live telemetry from typed Rust/FFI state")
+        XCTAssertEqual(pevLocalizedText("euc.warning.live_telemetry_detail"), "Receiving wheel data")
         XCTAssertEqual(pevLocalizedText("euc.warning.waiting_for_telemetry"), "Waiting for telemetry")
         XCTAssertEqual(pevLocalizedText("euc.warning.subscribed_no_values"), "Subscribed; no ride values yet")
         XCTAssertEqual(pevLocalizedText("euc.warning.telemetry_unavailable"), "Telemetry unavailable")

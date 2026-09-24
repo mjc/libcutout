@@ -44,7 +44,7 @@ struct ContentView: View {
             }
             .navigationDestination(for: CutoutAppRoute.self) { destination in
                 destinationContent(for: destination)
-                    .navigationBarBackButtonHidden(true)
+                    .navigationBarBackButtonHidden(destination != .capture)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -57,7 +57,7 @@ struct ContentView: View {
         .onChange(of: route, initial: true) { _, route in
             focusedRoute = route
         }
-        .onChange(of: model.captureStatus) { _, status in
+        .onChange(of: model.capture.status) { _, status in
             if let announcement = status?.accessibilityAnnouncement {
                 AccessibilityNotification.Announcement(announcement).post()
             }
@@ -76,8 +76,6 @@ struct ContentView: View {
                 navigate(to: .devicePicker)
             case .returnToPicker:
                 break
-            case .openCapture where route == .devicePicker:
-                navigate(to: .capture)
             case let .openRide(connectionRoute) where route == .devicePicker:
                 navigate(to: CutoutAppRoute.route(for: connectionRoute))
             case .stay, .openCapture, .openRide:
@@ -171,8 +169,7 @@ struct ContentView: View {
 
     private func finishCaptureAndReturnToPicker() {
         Task { @MainActor in
-            guard await model.finishCapture() else { return }
-            navigate(to: .devicePicker)
+            _ = await model.finishCapture()
         }
     }
 

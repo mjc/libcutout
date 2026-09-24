@@ -21,6 +21,8 @@ use uuid::Uuid;
 
 mod pevcap;
 pub use pevcap::*;
+mod capture_annotations;
+pub use capture_annotations::*;
 mod battery_page;
 pub use battery_page::*;
 mod ffi;
@@ -29,6 +31,8 @@ mod session_state;
 pub use session_state::*;
 mod connection_lifecycle;
 pub use connection_lifecycle::*;
+mod capture_lifecycle;
+pub use capture_lifecycle::*;
 mod ride_lifecycle;
 pub use ride_lifecycle::*;
 mod rider_dashboard;
