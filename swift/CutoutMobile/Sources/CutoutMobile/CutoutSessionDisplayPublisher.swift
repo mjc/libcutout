@@ -1,10 +1,15 @@
 import Foundation
 
+protocol CutoutSessionDisplayPublishing: AnyObject {
+    func submit(_ state: RideDisplayState, queuedAt: MonotonicMilliseconds)
+    func cancel()
+}
+
 /// Publishes display snapshots on the main queue while keeping UI update pressure bounded.
 ///
 /// Rust remains the source of truth for the snapshot. This collaborator owns only the
 /// presentation-side coalescing, throttling, and publication diagnostics.
-final class CutoutSessionDisplayPublisher {
+final class CutoutSessionDisplayPublisher: CutoutSessionDisplayPublishing {
     private let clock: MonotonicClock
     private let intervalMilliseconds: UInt64
     private let onDisplayStateChange: (RideDisplayState) -> Void

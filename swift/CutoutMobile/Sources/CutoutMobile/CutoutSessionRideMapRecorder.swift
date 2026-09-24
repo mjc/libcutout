@@ -6,8 +6,31 @@ struct RideMapDecisionBatch {
     let decisions: [MobileRideMapDecisionDto]
 }
 
+protocol CutoutSessionRideMapRecording: AnyObject {
+    var stateHandle: MobileRideMapState? { get }
+    var initializationError: MobileRideMapError? { get }
+    var isReady: Bool { get }
+    func start(replayConnection: @escaping () -> Void)
+    func beginBmsStorageSession()
+    func observeConnection(
+        at receivedAt: MonotonicMilliseconds,
+        token: ConnectionAttemptToken,
+        isConnectionCurrent: @escaping () -> Bool,
+        connectionState: CutoutSessionStateHandle,
+        resetTripMeter: @escaping () -> Bool
+    )
+    func persistBmsSamples(_ observations: [BmsRawVoltageObservation], deviceIdentity: String?)
+    func ingestLocation(_ update: PhoneLocationUpdate)
+    func startGpsOnly(atMs: UInt64) throws -> MobileRideMapSnapshotDto
+    func pause(atMs: UInt64) throws -> MobileRideMapSnapshotDto
+    func resume(atMs: UInt64) throws -> MobileRideMapSnapshotDto
+    func stop(atMs: UInt64) throws -> MobileRideMapSnapshotDto
+    func save() throws -> MobileRideMapSnapshotDto
+    func discard() throws -> MobileRideMapSnapshotDto
+}
+
 /// Owns the Rust ride-map storage queue and its recording effects. Protocol truth remains in Core.
-final class CutoutSessionRideMapRecorder {
+final class CutoutSessionRideMapRecorder: CutoutSessionRideMapRecording {
     private let state: MobileRideMapState?
     private let clock: MonotonicClock
     private let wallClock: () -> Date

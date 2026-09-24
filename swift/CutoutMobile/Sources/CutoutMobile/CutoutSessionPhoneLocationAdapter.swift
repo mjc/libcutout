@@ -8,8 +8,18 @@ struct PhoneLocationUpdate {
     let samples: [MobilePhoneLocationSampleDto]
 }
 
+protocol CutoutSessionPhoneLocationAdapting: AnyObject {
+    var latestSample: MobilePhoneLocationSampleDto? { get }
+    var authorizationStatus: CLAuthorizationStatus { get }
+    func start()
+    func clear()
+    func updateDemand(_ demanded: Bool)
+    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager)
+    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation])
+}
+
 /// Owns Core Location lifetime and phone-sample admission. Ride-map persistence remains in Core.
-final class CutoutSessionPhoneLocationAdapter: NSObject, CLLocationManagerDelegate {
+final class CutoutSessionPhoneLocationAdapter: NSObject, CLLocationManagerDelegate, CutoutSessionPhoneLocationAdapting {
     private let clock: MonotonicClock
     private let wallClock: () -> Date
     private let onSnapshot: (MobilePhoneLocationSnapshotDto, MonotonicMilliseconds) -> Void

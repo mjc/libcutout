@@ -508,6 +508,9 @@ public final class CutoutSessionCore: NSObject {
     private let rustSessionState: CutoutSessionStateHandle
     private let selectedDeviceStore: DevicePickerSelectionStore
     private let injectedNotificationEffects: CutoutSessionNotificationEffects?
+    private let injectedDisplayPublisher: (any CutoutSessionDisplayPublishing)?
+    private let injectedPhoneLocationAdapter: (any CutoutSessionPhoneLocationAdapting)?
+    private let injectedRideMapRecorder: (any CutoutSessionRideMapRecording)?
     private var central: CBCentralManager?
     private var peripheral: CBPeripheral?
     private var connectionAttempt: CoreBluetoothConnectionAttempt?
@@ -585,15 +588,16 @@ public final class CutoutSessionCore: NSObject {
     private let identificationProbeTransport: IdentificationProbeTransportCoordinator
     private var begodeProbeExpiryWorkItem: DispatchWorkItem?
     private var protocolDetectionExpiryWorkItem: DispatchWorkItem?
-    private lazy var displayPublisher = CutoutSessionDisplayPublisher(
-        clock: clock,
-        onDisplayStateChange: { [weak self] value in
-            self?.onDisplayStateChange?(value)
-        },
-        onRecord: { [weak self] message in
-            self?.onRecord?(message)
-        }
-    )
+    private lazy var displayPublisher: any CutoutSessionDisplayPublishing =
+        injectedDisplayPublisher ?? CutoutSessionDisplayPublisher(
+            clock: clock,
+            onDisplayStateChange: { [weak self] value in
+                self?.onDisplayStateChange?(value)
+            },
+            onRecord: { [weak self] message in
+                self?.onRecord?(message)
+            }
+        )
     private lazy var notificationEffects: CutoutSessionNotificationEffects =
         injectedNotificationEffects ?? CutoutSessionNotificationEffects(
             applyActions: { [weak self] actions in
@@ -610,46 +614,48 @@ public final class CutoutSessionCore: NSObject {
             }
         )
     private let rideMapStateForInitialization: MobileRideMapState?
-    private lazy var rideMapRecorder = CutoutSessionRideMapRecorder(
-        state: rideMapStateForInitialization,
-        clock: clock,
-        wallClock: wallClock,
-        publishSnapshot: { [weak self] snapshot in
-            self?.publishRideMapSnapshot(snapshot)
-        },
-        publishDecisions: { [weak self] batch in
-            self?.publishRideMapDecisions(batch)
-        },
-        publishError: { [weak self] error, context in
-            self?.publishRideMapError(error, context: context)
-        },
-        publishAvailability: { [weak self] in
-            self?.publishRideMapAvailability()
-        },
-        recordDiagnostic: { [weak self] message in
-            self?.recordRideMapDiagnostic(message)
-        },
-        onLocationDemand: { [weak self] active in
-            self?.publishOnMain {
-                self?.phoneLocationAdapter.updateDemand(active)
+    private lazy var rideMapRecorder: any CutoutSessionRideMapRecording =
+        injectedRideMapRecorder ?? CutoutSessionRideMapRecorder(
+            state: rideMapStateForInitialization,
+            clock: clock,
+            wallClock: wallClock,
+            publishSnapshot: { [weak self] snapshot in
+                self?.publishRideMapSnapshot(snapshot)
+            },
+            publishDecisions: { [weak self] batch in
+                self?.publishRideMapDecisions(batch)
+            },
+            publishError: { [weak self] error, context in
+                self?.publishRideMapError(error, context: context)
+            },
+            publishAvailability: { [weak self] in
+                self?.publishRideMapAvailability()
+            },
+            recordDiagnostic: { [weak self] message in
+                self?.recordRideMapDiagnostic(message)
+            },
+            onLocationDemand: { [weak self] active in
+                self?.publishOnMain {
+                    self?.phoneLocationAdapter.updateDemand(active)
+                }
             }
-        }
-    )
-    private lazy var phoneLocationAdapter = CutoutSessionPhoneLocationAdapter(
-        clock: clock,
-        wallClock: wallClock,
-        onSnapshot: { [weak self] snapshot, receivedAt in
-            guard let self else { return }
-            self.phoneLocationSnapshot = snapshot
-            self.publishPhoneLocationSnapshot(receivedAt: receivedAt)
-        },
-        onLocationUpdate: { [weak self] update in
-            self?.handlePhoneLocationUpdate(update)
-        },
-        onAvailabilityChange: { [weak self] in
-            self?.publishRideMapAvailability()
-        }
-    )
+        )
+    private lazy var phoneLocationAdapter: any CutoutSessionPhoneLocationAdapting =
+        injectedPhoneLocationAdapter ?? CutoutSessionPhoneLocationAdapter(
+            clock: clock,
+            wallClock: wallClock,
+            onSnapshot: { [weak self] snapshot, receivedAt in
+                guard let self else { return }
+                self.phoneLocationSnapshot = snapshot
+                self.publishPhoneLocationSnapshot(receivedAt: receivedAt)
+            },
+            onLocationUpdate: { [weak self] update in
+                self?.handlePhoneLocationUpdate(update)
+            },
+            onAvailabilityChange: { [weak self] in
+                self?.publishRideMapAvailability()
+            }
+        )
     private lazy var rideMapPresentation = CutoutSessionRideMapPresentation(
         onSnapshot: { [weak self] snapshot in
             self?.publishOnMain { self?.onRideMapSnapshotChange?(snapshot) }
@@ -731,7 +737,10 @@ public final class CutoutSessionCore: NSObject {
         wallClock: @escaping () -> Date = { Date() },
         rideMapState: MobileRideMapState? = nil,
         database: RideDatabaseHandle? = nil,
-        notificationEffects: CutoutSessionNotificationEffects? = nil
+        notificationEffects: CutoutSessionNotificationEffects? = nil,
+        displayPublisher: (any CutoutSessionDisplayPublishing)? = nil,
+        phoneLocationAdapter: (any CutoutSessionPhoneLocationAdapting)? = nil,
+        rideMapRecorder: (any CutoutSessionRideMapRecording)? = nil
     ) {
         let rustSessionState = database.map {
             CutoutSessionStateHandle.withDatabase(database: $0)
@@ -751,6 +760,9 @@ public final class CutoutSessionCore: NSObject {
         self.reconnectJitter = reconnectJitter
         self.selectedDeviceStore = selectedDeviceStore
         self.injectedNotificationEffects = notificationEffects
+        self.injectedDisplayPublisher = displayPublisher
+        self.injectedPhoneLocationAdapter = phoneLocationAdapter
+        self.injectedRideMapRecorder = rideMapRecorder
         super.init()
         bleQueue.setSpecific(key: bleQueueKey, value: ())
     }
@@ -778,6 +790,9 @@ public final class CutoutSessionCore: NSObject {
         self.reconnectJitter = { Double.random(in: 0...1) }
         self.selectedDeviceStore = selectedDeviceStore
         self.injectedNotificationEffects = nil
+        self.injectedDisplayPublisher = nil
+        self.injectedPhoneLocationAdapter = nil
+        self.injectedRideMapRecorder = nil
         super.init()
         bleQueue.setSpecific(key: bleQueueKey, value: ())
     }
