@@ -279,6 +279,32 @@ pub struct NovatekRecordingCapability(NovatekR3V1Profile);
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NovatekStillCaptureCapability(NovatekR3V1Profile);
 
+/// A recording request target that can only be constructed from recording
+/// capability proof.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NovatekRecordingCommandTarget(&'static str);
+
+impl NovatekRecordingCommandTarget {
+    /// Returns the fixed relative request target for the validated command.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        self.0
+    }
+}
+
+/// A still-capture request target that can only be constructed from still
+/// capture capability proof.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NovatekStillCaptureCommandTarget(&'static str);
+
+impl NovatekStillCaptureCommandTarget {
+    /// Returns the fixed relative request target for the validated command.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        self.0
+    }
+}
+
 impl NovatekR3V1Profile {
     /// Parses a bounded firmware identity and retains it as an R3V1 profile
     /// proof. Command-specific capabilities are derived separately from the
@@ -589,7 +615,7 @@ impl NovatekR3V1Session {
     pub fn recording_command_target(
         &self,
         command: NovatekRecordingCommand,
-    ) -> Result<&'static str, NovatekCapabilityError> {
+    ) -> Result<NovatekRecordingCommandTarget, NovatekCapabilityError> {
         let capability = self.profile.recording_capability(&self.configuration)?;
         Ok(command.request_target_for_capability(&capability))
     }
@@ -603,7 +629,7 @@ impl NovatekR3V1Session {
     pub fn still_capture_command_target(
         &self,
         command: NovatekStillCaptureCommand,
-    ) -> Result<&'static str, NovatekCapabilityError> {
+    ) -> Result<NovatekStillCaptureCommandTarget, NovatekCapabilityError> {
         let capability = self.profile.still_capture_capability(&self.configuration)?;
         Ok(command.request_target_for_capability(&capability))
     }
@@ -1335,8 +1361,8 @@ impl NovatekStillCaptureCommand {
     pub const fn request_target_for_capability(
         self,
         _capability: &NovatekStillCaptureCapability,
-    ) -> &'static str {
-        "/?custom=1&cmd=1001"
+    ) -> NovatekStillCaptureCommandTarget {
+        NovatekStillCaptureCommandTarget("/?custom=1&cmd=1001")
     }
 }
 
@@ -1347,10 +1373,10 @@ impl NovatekRecordingCommand {
     pub const fn request_target_for_capability(
         self,
         _capability: &NovatekRecordingCapability,
-    ) -> &'static str {
+    ) -> NovatekRecordingCommandTarget {
         match self {
-            Self::Start => "/?custom=1&cmd=2001&str=1",
-            Self::Stop => "/?custom=1&cmd=2001&str=0",
+            Self::Start => NovatekRecordingCommandTarget("/?custom=1&cmd=2001&str=1"),
+            Self::Stop => NovatekRecordingCommandTarget("/?custom=1&cmd=2001&str=0"),
         }
     }
 }
@@ -1390,11 +1416,15 @@ mod tests {
             .recording_capability(&configuration)
             .expect("advertised recording capability");
         assert_eq!(
-            NovatekRecordingCommand::Start.request_target_for_capability(&capability),
+            NovatekRecordingCommand::Start
+                .request_target_for_capability(&capability)
+                .as_str(),
             "/?custom=1&cmd=2001&str=1"
         );
         assert_eq!(
-            NovatekRecordingCommand::Stop.request_target_for_capability(&capability),
+            NovatekRecordingCommand::Stop
+                .request_target_for_capability(&capability)
+                .as_str(),
             "/?custom=1&cmd=2001&str=0"
         );
     }
@@ -1408,7 +1438,9 @@ mod tests {
             .still_capture_capability(&configuration)
             .expect("advertised still capability");
         assert_eq!(
-            NovatekStillCaptureCommand.request_target_for_capability(&capability),
+            NovatekStillCaptureCommand
+                .request_target_for_capability(&capability)
+                .as_str(),
             "/?custom=1&cmd=1001"
         );
     }
@@ -1426,13 +1458,15 @@ mod tests {
         assert_eq!(
             session
                 .recording_command_target(NovatekRecordingCommand::Start)
-                .expect("recording proof is retained"),
+                .expect("recording proof is retained")
+                .as_str(),
             "/?custom=1&cmd=2001&str=1"
         );
         assert_eq!(
             session
                 .still_capture_command_target(NovatekStillCaptureCommand)
-                .expect("still-capture proof is retained"),
+                .expect("still-capture proof is retained")
+                .as_str(),
             "/?custom=1&cmd=1001"
         );
     }
