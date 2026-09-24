@@ -510,15 +510,14 @@ impl MobileCameraMediaProvenanceInput {
 
 impl From<VideoFrame> for MobileCameraVideoFrameDto {
     fn from(frame: VideoFrame) -> Self {
-        let (data, parameter_sets, loss, is_random_access_point, timestamp, clock_rate_hz) =
-            frame.into_parts();
+        let parts = frame.into_parts();
         Self {
-            data,
-            parameter_sets,
-            loss,
-            is_random_access_point,
-            timestamp,
-            clock_rate_hz: clock_rate_hz.get(),
+            data: parts.data,
+            parameter_sets: parts.parameter_sets,
+            loss: parts.loss,
+            is_random_access_point: parts.is_random_access_point,
+            timestamp: parts.timestamp,
+            clock_rate_hz: parts.clock_rate_hz.get(),
         }
     }
 }
