@@ -875,6 +875,32 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testHistoryModelDeallocatesWhilePageQueryIsInFlight() async {
+        let query = GatedRideHistoryQuery(
+            base: MobileRideMapState(),
+            failAfterRelease: false
+        )
+        query.armNextHistoryPage()
+        weak var weakModel: CutoutAppModel?
+        var model: CutoutAppModel? = CutoutAppModel(
+            core: SessionDriverSpy(rows: []),
+            rideHistoryQueryProvider: { query }
+        )
+
+        model?.loadRideMapHistory()
+        let pageStarted = await query.waitUntilGatedHistoryPageStarts()
+        XCTAssertTrue(pageStarted)
+
+        weakModel = model
+        model = nil
+        XCTAssertNil(weakModel)
+
+        query.releaseGatedHistoryPage()
+        let pageFinished = await query.waitUntilGatedHistoryPageFinishes()
+        XCTAssertTrue(pageFinished)
+    }
+
+    @MainActor
     func testHistoryRecentFilterUsesInjectedCurrentTime() async throws {
         let fixedNow = Date(timeIntervalSince1970: 1_700_000_000)
         let query = GatedRideHistoryQuery(
