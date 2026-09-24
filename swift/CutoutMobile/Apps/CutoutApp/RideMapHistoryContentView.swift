@@ -24,14 +24,14 @@ struct RideMapHistoryContentView: View {
     let historyError: MobileRideMapError?
     let routeError: MobileRideMapError?
     let selectedRideID: String?
-    let dateFilter: CutoutAppModel.RideMapHistoryDateFilter
+    let dateFilter: RideHistoryModel.DateFilter
     let vehicleFilter: String?
     let vehicleFilterOptions: [String]
     let select: (String) -> Void
     let load: () -> Void
     let loadMore: () -> Void
     let returnToLive: () -> Void
-    let setDateFilter: (CutoutAppModel.RideMapHistoryDateFilter) -> Void
+    let setDateFilter: (RideHistoryModel.DateFilter) -> Void
     let setVehicleFilter: (String?) -> Void
     let clearFilters: () -> Void
     let currentVehicleIdentity: String?
@@ -117,7 +117,7 @@ struct RideMapHistoryContentView: View {
     @MainActor
     static func hasActiveFilters(
         searchText: String,
-        dateFilter: CutoutAppModel.RideMapHistoryDateFilter,
+        dateFilter: RideHistoryModel.DateFilter,
         vehicleFilter: String?
     ) -> Bool {
         !normalizedSearchText(searchText).isEmpty

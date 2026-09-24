@@ -753,8 +753,8 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertFalse(model.pauseRideMap())
         XCTAssertEqual(model.rideMapError, .noActiveRide)
         XCTAssertEqual(model.rideMapLiveError, .noActiveRide)
-        XCTAssertNil(model.rideMapHistoryError)
-        XCTAssertNil(model.rideMapHistoryRouteError)
+        XCTAssertNil(model.rideHistory.error)
+        XCTAssertNil(model.rideHistory.routeError)
     }
 
     @MainActor
@@ -762,12 +762,12 @@ final class CutoutAppModelTests: XCTestCase {
         let driver = SessionDriverSpy(rows: [], rideMapUnavailable: true)
         let model = CutoutAppModel(core: driver)
 
-        model.loadRideMapHistory()
+        model.rideHistory.reload()
         await Task.yield()
 
-        XCTAssertEqual(model.rideMapHistoryError, .storageError("Rust ride database is unavailable"))
+        XCTAssertEqual(model.rideHistory.error, .storageError("Rust ride database is unavailable"))
         XCTAssertNil(model.rideMapLiveError)
-        XCTAssertFalse(model.rideMapHistoryLoading)
+        XCTAssertFalse(model.rideHistory.isLoading)
     }
 
     @MainActor
@@ -793,49 +793,49 @@ final class CutoutAppModelTests: XCTestCase {
         let rideID = try state.save().rideID
 
         let model = CutoutAppModel(core: driver)
-        model.setRideMapHistoryDateFilter(.allTime)
-        model.loadRideMapHistory(selecting: rideID)
+        model.rideHistory.setDateFilter(.allTime)
+        model.rideHistory.reload(selecting: rideID)
         await Self.waitUntil("selected history route before reload failure", maxTurns: 100_000) {
-            model.selectedRideMapHistoryID == rideID
-                && model.rideMapHistoryDisplayPoints.isEmpty == false
-                && !model.rideMapHistoryRouteLoading
+            model.rideHistory.selectedRideID == rideID
+                && model.rideHistory.displayPoints.isEmpty == false
+                && !model.rideHistory.routeLoading
         }
 
         driver.setRideMapUnavailable(true)
-        model.loadRideMapHistory(selecting: rideID)
+        model.rideHistory.reload(selecting: rideID)
         await Task.yield()
 
-        XCTAssertFalse(model.rideMapHistoryDisplayPoints.isEmpty)
-        XCTAssertEqual(model.selectedRideMapHistoryID, rideID)
-        XCTAssertEqual(model.rideMapHistoryDetailProjectionRideID, rideID)
+        XCTAssertFalse(model.rideHistory.displayPoints.isEmpty)
+        XCTAssertEqual(model.rideHistory.selectedRideID, rideID)
+        XCTAssertEqual(model.rideHistory.detailProjectionRideID, rideID)
         XCTAssertEqual(
-            model.rideMapHistoryRouteError,
+            model.rideHistory.routeError,
             .storageError("Rust ride database is unavailable")
         )
         XCTAssertEqual(
-            model.rideMapHistoryDetailRouteError,
+            model.rideHistory.detailRouteError,
             .storageError("Rust ride database is unavailable")
         )
 
         driver.setRideMapUnavailable(false)
-        model.loadRideMapHistory(selecting: rideID)
-        XCTAssertTrue(model.rideMapHistoryLoading)
-        XCTAssertEqual(model.selectedRideMapHistoryID, rideID)
+        model.rideHistory.reload(selecting: rideID)
+        XCTAssertTrue(model.rideHistory.isLoading)
+        XCTAssertEqual(model.rideHistory.selectedRideID, rideID)
         await Self.waitUntil("same-ride history retry restores route", maxTurns: 100_000) {
-            !model.rideMapHistoryLoading
-                && !model.rideMapHistoryRouteLoading
-                && !model.rideMapHistoryDetailRouteLoading
-                && model.rideMapHistoryRouteError == nil
-                && model.rideMapHistoryDetailRouteError == nil
-                && model.rideMapHistoryDetailProjectionRideID == rideID
+            !model.rideHistory.isLoading
+                && !model.rideHistory.routeLoading
+                && !model.rideHistory.detailRouteLoading
+                && model.rideHistory.routeError == nil
+                && model.rideHistory.detailRouteError == nil
+                && model.rideHistory.detailProjectionRideID == rideID
         }
 
-        XCTAssertEqual(model.selectedRideMapHistoryID, rideID)
-        XCTAssertFalse(model.rideMapHistoryDisplayPoints.isEmpty)
-        XCTAssertFalse(model.rideMapHistoryDetailDisplayPoints.isEmpty)
-        XCTAssertNil(model.rideMapHistoryError)
-        XCTAssertNil(model.rideMapHistoryRouteError)
-        XCTAssertNil(model.rideMapHistoryDetailRouteError)
+        XCTAssertEqual(model.rideHistory.selectedRideID, rideID)
+        XCTAssertFalse(model.rideHistory.displayPoints.isEmpty)
+        XCTAssertFalse(model.rideHistory.detailDisplayPoints.isEmpty)
+        XCTAssertNil(model.rideHistory.error)
+        XCTAssertNil(model.rideHistory.routeError)
+        XCTAssertNil(model.rideHistory.detailRouteError)
     }
 
     @MainActor
@@ -876,11 +876,11 @@ final class CutoutAppModelTests: XCTestCase {
         let replacementQueryStarted = await query.waitUntilHistoryPageFilter(rideID)
         XCTAssertTrue(replacementQueryStarted)
         await Self.waitUntil("matching history query after replacing filtered page") {
-            !model.rideMapHistoryLoading
-                && model.rideMapHistory.contains(where: { $0.rideID == rideID })
+            !model.rideHistory.isLoading
+                && model.rideHistory.rides.contains(where: { $0.rideID == rideID })
         }
-        let matchingRideIDs = model.rideMapHistory.map(\.rideID)
-        let selectedRideID = model.selectedRideMapHistoryID
+        let matchingRideIDs = model.rideHistory.rides.map(\.rideID)
+        let selectedRideID = model.rideHistory.selectedRideID
         XCTAssertEqual(matchingRideIDs, [rideID])
 
         query.releaseGatedHistoryPage()
@@ -890,11 +890,11 @@ final class CutoutAppModelTests: XCTestCase {
             await Task.yield()
         }
 
-        XCTAssertEqual(model.rideMapHistory.map(\.rideID), matchingRideIDs)
-        XCTAssertEqual(model.selectedRideMapHistoryID, selectedRideID)
-        XCTAssertFalse(model.rideMapHistoryLoading)
-        XCTAssertFalse(model.rideMapHistoryCanLoadMore)
-        XCTAssertNil(model.rideMapHistoryError)
+        XCTAssertEqual(model.rideHistory.rides.map(\.rideID), matchingRideIDs)
+        XCTAssertEqual(model.rideHistory.selectedRideID, selectedRideID)
+        XCTAssertFalse(model.rideHistory.isLoading)
+        XCTAssertFalse(model.rideHistory.canLoadMore)
+        XCTAssertNil(model.rideHistory.error)
     }
 
     @MainActor
@@ -1050,7 +1050,7 @@ final class CutoutAppModelTests: XCTestCase {
             rideHistoryQueryProvider: { query }
         )
 
-        model?.loadRideMapHistory()
+        model?.rideHistory.reload()
         let pageStarted = await query.waitUntilGatedHistoryPageStarts()
         XCTAssertTrue(pageStarted)
 
@@ -1076,9 +1076,9 @@ final class CutoutAppModelTests: XCTestCase {
             rideHistoryDateProvider: { fixedNow }
         )
 
-        model.loadRideMapHistory()
+        model.rideHistory.reload()
         await Self.waitUntil("history query with fixed current time") {
-            !model.rideMapHistoryLoading
+            !model.rideHistory.isLoading
         }
 
         let filters = query.historyPageFiltersSnapshot
@@ -1177,21 +1177,21 @@ final class CutoutAppModelTests: XCTestCase {
             XCTAssertTrue(model.saveRideMap())
             XCTAssertFalse(try driver.rideMapState.storedMusicHistory(rideID: rideID).events.isEmpty)
             await Self.waitUntil("music-history route before gated viewport") {
-                model.selectedRideMapHistoryID == rideID
-                    && !model.rideMapHistoryDetailMusicTimeline.isEmpty
-                    && !model.rideMapHistoryRouteLoading
+                model.rideHistory.selectedRideID == rideID
+                    && !model.rideHistory.detailMusicTimeline.isEmpty
+                    && !model.rideHistory.routeLoading
             }
-            XCTAssertEqual(model.selectedRideMapHistoryID, rideID)
-            XCTAssertFalse(model.rideMapHistoryRouteLoading)
-            XCTAssertFalse(model.rideMapHistoryDetailRouteLoading)
-            XCTAssertFalse(model.rideMapHistoryDetailMusicTimeline.isEmpty)
-            let historyPoints = model.rideMapHistoryDisplayPoints
-            let detailPoints = model.rideMapHistoryDetailDisplayPoints
+            XCTAssertEqual(model.rideHistory.selectedRideID, rideID)
+            XCTAssertFalse(model.rideHistory.routeLoading)
+            XCTAssertFalse(model.rideHistory.detailRouteLoading)
+            XCTAssertFalse(model.rideHistory.detailMusicTimeline.isEmpty)
+            let historyPoints = model.rideHistory.displayPoints
+            let detailPoints = model.rideHistory.detailDisplayPoints
             XCTAssertFalse(historyPoints.isEmpty)
             XCTAssertFalse(detailPoints.isEmpty)
 
             query.armNextProjection()
-            model.projectRideMapHistoryDetailViewport(MobileGeoBoundsDto(
+            model.rideHistory.projectDetailViewport(MobileGeoBoundsDto(
                 minimumLatitudeDegrees: 39.70009,
                 maximumLatitudeDegrees: 39.70011,
                 minimumLongitudeDegrees: -104.90001,
@@ -1201,13 +1201,13 @@ final class CutoutAppModelTests: XCTestCase {
             XCTAssertTrue(gatedProjectionStarted)
 
             XCTAssertTrue(model.forgetMusicHistory(for: rideID))
-            XCTAssertFalse(model.rideMapHistoryRouteLoading)
-            XCTAssertFalse(model.rideMapHistoryDetailRouteLoading)
-            XCTAssertEqual(model.rideMapHistoryDetailProjectionRideID, rideID)
-            XCTAssertEqual(model.rideMapHistoryDisplayPoints, historyPoints)
-            XCTAssertEqual(model.rideMapHistoryDetailDisplayPoints, detailPoints)
-            XCTAssertTrue(model.rideMapHistoryDetailMusicTimeline.isEmpty)
-            XCTAssertNil(model.rideMapHistoryDetailMusicState)
+            XCTAssertFalse(model.rideHistory.routeLoading)
+            XCTAssertFalse(model.rideHistory.detailRouteLoading)
+            XCTAssertEqual(model.rideHistory.detailProjectionRideID, rideID)
+            XCTAssertEqual(model.rideHistory.displayPoints, historyPoints)
+            XCTAssertEqual(model.rideHistory.detailDisplayPoints, detailPoints)
+            XCTAssertTrue(model.rideHistory.detailMusicTimeline.isEmpty)
+            XCTAssertNil(model.rideHistory.detailMusicState)
 
             query.releaseGatedProjection()
             let gatedProjectionFinished = await query.waitUntilGatedProjectionFinishes()
@@ -1215,14 +1215,14 @@ final class CutoutAppModelTests: XCTestCase {
             for _ in 0 ..< 20 {
                 await Task.yield()
             }
-            XCTAssertFalse(model.rideMapHistoryRouteLoading)
-            XCTAssertFalse(model.rideMapHistoryDetailRouteLoading)
-            XCTAssertNil(model.rideMapHistoryRouteError)
-            XCTAssertNil(model.rideMapHistoryDetailRouteError)
-            XCTAssertEqual(model.rideMapHistoryDisplayPoints, historyPoints)
-            XCTAssertEqual(model.rideMapHistoryDetailDisplayPoints, detailPoints)
-            XCTAssertTrue(model.rideMapHistoryDetailMusicTimeline.isEmpty)
-            XCTAssertNil(model.rideMapHistoryDetailMusicState)
+            XCTAssertFalse(model.rideHistory.routeLoading)
+            XCTAssertFalse(model.rideHistory.detailRouteLoading)
+            XCTAssertNil(model.rideHistory.routeError)
+            XCTAssertNil(model.rideHistory.detailRouteError)
+            XCTAssertEqual(model.rideHistory.displayPoints, historyPoints)
+            XCTAssertEqual(model.rideHistory.detailDisplayPoints, detailPoints)
+            XCTAssertTrue(model.rideHistory.detailMusicTimeline.isEmpty)
+            XCTAssertNil(model.rideHistory.detailMusicState)
         }
     }
 
@@ -1433,26 +1433,26 @@ final class CutoutAppModelTests: XCTestCase {
         let rideID = try state.save().rideID
 
         let model = CutoutAppModel(core: driver)
-        model.setRideMapHistoryDateFilter(.allTime)
-        model.loadRideMapHistory(selecting: rideID)
+        model.rideHistory.setDateFilter(.allTime)
+        model.rideHistory.reload(selecting: rideID)
         await Self.waitUntil("bounded history route preview", maxTurns: 100_000) {
-            model.selectedRideMapHistoryID == rideID
-                && model.rideMapHistoryDisplayPoints.count == 512
-                && !model.rideMapHistoryRouteLoading
+            model.rideHistory.selectedRideID == rideID
+                && model.rideHistory.displayPoints.count == 512
+                && !model.rideHistory.routeLoading
         }
 
-        XCTAssertTrue(model.rideMapHistoryPointsTruncated)
-        let initialCameraFitVersion = model.rideMapHistoryDetailCameraFitVersion
-        model.loadRoutePreviewMapHistory()
+        XCTAssertTrue(model.rideHistory.pointsTruncated)
+        let initialCameraFitVersion = model.rideHistory.detailCameraFitVersion
+        model.rideHistory.loadRoutePreview()
         await Self.waitUntil("largest bounded history route preview", maxTurns: 100_000) {
-            model.rideMapHistoryDisplayPoints.count == 4_097
-                && !model.rideMapHistoryRouteLoading
+            model.rideHistory.displayPoints.count == 4_097
+                && !model.rideHistory.routeLoading
         }
 
-        XCTAssertEqual(model.rideMapHistoryDisplayPoints.count, 4_097)
-        XCTAssertFalse(model.rideMapHistoryPointsTruncated)
+        XCTAssertEqual(model.rideHistory.displayPoints.count, 4_097)
+        XCTAssertFalse(model.rideHistory.pointsTruncated)
         XCTAssertNotEqual(
-            model.rideMapHistoryDetailCameraFitVersion,
+            model.rideHistory.detailCameraFitVersion,
             initialCameraFitVersion
         )
     }
@@ -1489,12 +1489,12 @@ final class CutoutAppModelTests: XCTestCase {
             core: driver,
             rideHistoryQueryProvider: { query }
         )
-        model.setRideMapHistoryDateFilter(.allTime)
-        model.loadRideMapHistory(selecting: selectedRideID)
+        model.rideHistory.setDateFilter(.allTime)
+        model.rideHistory.reload(selecting: selectedRideID)
 
         await Self.waitUntil("selected history route", maxTurns: 100_000) {
-            model.selectedRideMapHistoryID == selectedRideID
-                && !model.rideMapHistoryRouteLoading
+            model.rideHistory.selectedRideID == selectedRideID
+                && !model.rideHistory.routeLoading
         }
         XCTAssertEqual(query.supplementaryContextQueryCountSnapshot, 0)
     }
@@ -1522,110 +1522,110 @@ final class CutoutAppModelTests: XCTestCase {
         let rideID = try state.save().rideID
 
         let model = CutoutAppModel(core: driver)
-        model.setRideMapHistoryDateFilter(.allTime)
-        let initialHistoryProjectionVersion = model.rideMapHistoryProjectionVersion
-        let initialDetailProjectionVersion = model.rideMapHistoryDetailProjectionVersion
-        model.loadRideMapHistory(selecting: rideID)
+        model.rideHistory.setDateFilter(.allTime)
+        let initialHistoryProjectionVersion = model.rideHistory.projectionVersion
+        let initialDetailProjectionVersion = model.rideHistory.detailProjectionVersion
+        model.rideHistory.reload(selecting: rideID)
         await Self.waitUntil("history route selection", maxTurns: 100_000) {
-            model.selectedRideMapHistoryID == rideID
-                && model.rideMapHistoryDisplayPoints.isEmpty == false
+            model.rideHistory.selectedRideID == rideID
+                && model.rideHistory.displayPoints.isEmpty == false
         }
-        XCTAssertEqual(model.selectedRideMapHistoryID, rideID)
-        let historyPoints = model.rideMapHistoryDisplayPoints
+        XCTAssertEqual(model.rideHistory.selectedRideID, rideID)
+        let historyPoints = model.rideHistory.displayPoints
         XCTAssertEqual(historyPoints.count, 2)
-        XCTAssertEqual(model.rideMapHistoryDetailRoutePresence, .visible)
-        XCTAssertFalse(model.rideMapHistoryDetailDisplayPoints.isEmpty)
-        let selectedHistoryProjectionVersion = model.rideMapHistoryProjectionVersion
+        XCTAssertEqual(model.rideHistory.detailRoutePresence, .visible)
+        XCTAssertFalse(model.rideHistory.detailDisplayPoints.isEmpty)
+        let selectedHistoryProjectionVersion = model.rideHistory.projectionVersion
         XCTAssertGreaterThan(selectedHistoryProjectionVersion, initialHistoryProjectionVersion)
-        let selectedDetailProjectionVersion = model.rideMapHistoryDetailProjectionVersion
+        let selectedDetailProjectionVersion = model.rideHistory.detailProjectionVersion
         XCTAssertGreaterThan(selectedDetailProjectionVersion, initialDetailProjectionVersion)
 
-        model.projectRideMapHistoryDetailViewport(MobileGeoBoundsDto(
+        model.rideHistory.projectDetailViewport(MobileGeoBoundsDto(
             minimumLatitudeDegrees: 39.70009,
             maximumLatitudeDegrees: 39.70011,
             minimumLongitudeDegrees: -104.90001,
             maximumLongitudeDegrees: -104.89999
         ))
-        XCTAssertTrue(model.rideMapHistoryDetailRouteLoading)
+        XCTAssertTrue(model.rideHistory.detailRouteLoading)
         XCTAssertTrue(model.forgetMusicHistory(for: rideID))
-        XCTAssertFalse(model.rideMapHistoryDetailRouteLoading)
-        XCTAssertEqual(model.rideMapHistoryDetailProjectionRideID, rideID)
-        XCTAssertFalse(model.rideMapHistoryDetailDisplayPoints.isEmpty)
+        XCTAssertFalse(model.rideHistory.detailRouteLoading)
+        XCTAssertEqual(model.rideHistory.detailProjectionRideID, rideID)
+        XCTAssertFalse(model.rideHistory.detailDisplayPoints.isEmpty)
 
-        model.selectRideMapHistory(rideID)
+        model.rideHistory.selectFromHistoryList(rideID)
         await Self.waitUntil("same-shape history route reprojection", maxTurns: 100_000) {
-            model.rideMapHistoryProjectionVersion > selectedHistoryProjectionVersion
+            model.rideHistory.projectionVersion > selectedHistoryProjectionVersion
         }
-        XCTAssertEqual(model.rideMapHistoryDisplayPoints, historyPoints)
+        XCTAssertEqual(model.rideHistory.displayPoints, historyPoints)
 
-        model.projectRideMapHistoryDetailViewport(MobileGeoBoundsDto(
+        model.rideHistory.projectDetailViewport(MobileGeoBoundsDto(
             minimumLatitudeDegrees: 39.70009,
             maximumLatitudeDegrees: 39.70011,
             minimumLongitudeDegrees: -104.90001,
             maximumLongitudeDegrees: -104.89999
         ))
         await Self.waitUntil("detail viewport projection", maxTurns: 100_000) {
-            model.rideMapHistoryDetailDisplayPoints.count == 1
+            model.rideHistory.detailDisplayPoints.count == 1
         }
 
-        XCTAssertEqual(model.rideMapHistoryDetailDisplayPoints.count, 1)
-        XCTAssertEqual(model.rideMapHistoryDisplayPoints, historyPoints)
+        XCTAssertEqual(model.rideHistory.detailDisplayPoints.count, 1)
+        XCTAssertEqual(model.rideHistory.displayPoints, historyPoints)
         XCTAssertGreaterThan(
-            model.rideMapHistoryDetailProjectionVersion,
+            model.rideHistory.detailProjectionVersion,
             selectedDetailProjectionVersion
         )
 
-        model.projectRideMapHistoryDetailViewport(nil)
+        model.rideHistory.projectDetailViewport(nil)
         await Self.waitUntil("nil history detail viewport error") {
-            !model.rideMapHistoryDetailRouteLoading
-                && model.rideMapHistoryDetailRouteError == .invalidRouteProjection
+            !model.rideHistory.detailRouteLoading
+                && model.rideHistory.detailRouteError == .invalidRouteProjection
         }
-        XCTAssertTrue(model.rideMapHistoryDetailDisplayPoints.isEmpty)
-        XCTAssertEqual(model.rideMapHistoryDisplayPoints, historyPoints)
+        XCTAssertTrue(model.rideHistory.detailDisplayPoints.isEmpty)
+        XCTAssertEqual(model.rideHistory.displayPoints, historyPoints)
 
-        model.projectRideMapHistoryDetailViewport(MobileGeoBoundsDto(
+        model.rideHistory.projectDetailViewport(MobileGeoBoundsDto(
             minimumLatitudeDegrees: 40,
             maximumLatitudeDegrees: 39,
             minimumLongitudeDegrees: -104.90001,
             maximumLongitudeDegrees: -104.89999
         ))
         await Self.waitUntil("invalid history detail viewport error") {
-            model.rideMapHistoryDetailRouteError != nil
+            model.rideHistory.detailRouteError != nil
         }
-        XCTAssertNotNil(model.rideMapHistoryDetailRouteError)
-        XCTAssertNil(model.rideMapHistoryRouteError)
-        XCTAssertFalse(model.rideMapHistoryDetailRouteLoading)
+        XCTAssertNotNil(model.rideHistory.detailRouteError)
+        XCTAssertNil(model.rideHistory.routeError)
+        XCTAssertFalse(model.rideHistory.detailRouteLoading)
 
-        model.projectRideMapHistoryDetailViewport(MobileGeoBoundsDto(
+        model.rideHistory.projectDetailViewport(MobileGeoBoundsDto(
             minimumLatitudeDegrees: 40,
             maximumLatitudeDegrees: 41,
             minimumLongitudeDegrees: -104,
             maximumLongitudeDegrees: -103
         ))
         await Self.waitUntil("empty history detail viewport") {
-            !model.rideMapHistoryDetailRouteLoading
-                && model.rideMapHistoryDetailRouteError == nil
-                && model.rideMapHistoryDetailDisplayPoints.isEmpty
+            !model.rideHistory.detailRouteLoading
+                && model.rideHistory.detailRouteError == nil
+                && model.rideHistory.detailDisplayPoints.isEmpty
         }
-        XCTAssertEqual(model.rideMapHistoryDetailRoutePresence, .emptyViewport)
-        XCTAssertNil(model.rideMapHistoryDetailRouteError)
-        XCTAssertEqual(model.rideMapHistoryDetailProjectionRideID, rideID)
+        XCTAssertEqual(model.rideHistory.detailRoutePresence, .emptyViewport)
+        XCTAssertNil(model.rideHistory.detailRouteError)
+        XCTAssertEqual(model.rideHistory.detailProjectionRideID, rideID)
 
         driver.setRideMapUnavailable(true)
-        model.selectRideMapHistory(rideID)
+        model.rideHistory.selectFromHistoryList(rideID)
         await Self.waitUntil("same-ride selection failure") {
-            !model.rideMapHistoryRouteLoading
-                && model.rideMapHistoryRouteError != nil
+            !model.rideHistory.routeLoading
+                && model.rideHistory.routeError != nil
         }
-        XCTAssertTrue(model.rideMapHistoryDisplayPoints.isEmpty)
-        XCTAssertTrue(model.rideMapHistoryDetailDisplayPoints.isEmpty)
+        XCTAssertTrue(model.rideHistory.displayPoints.isEmpty)
+        XCTAssertTrue(model.rideHistory.detailDisplayPoints.isEmpty)
 
         driver.setRideMapUnavailable(false)
-        model.selectRideMapHistory(rideID)
-        XCTAssertTrue(model.rideMapHistoryRouteLoading)
+        model.rideHistory.selectFromHistoryList(rideID)
+        XCTAssertTrue(model.rideHistory.routeLoading)
         XCTAssertTrue(model.forgetMusicHistory(for: rideID))
-        XCTAssertFalse(model.rideMapHistoryRouteLoading)
-        XCTAssertFalse(model.rideMapHistoryDetailRouteLoading)
+        XCTAssertFalse(model.rideHistory.routeLoading)
+        XCTAssertFalse(model.rideHistory.detailRouteLoading)
     }
 
     @MainActor

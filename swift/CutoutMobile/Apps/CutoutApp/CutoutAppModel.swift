@@ -44,8 +44,6 @@ final class CutoutAppModel {
         case history
     }
 
-    typealias RideMapHistoryDateFilter = RideHistoryModel.DateFilter
-
     nonisolated private static var rideMapLimits: MobileRideMapLimits { .rustOwned }
 
     private(set) var displayState = RideDisplayState()
@@ -61,9 +59,6 @@ final class CutoutAppModel {
     private(set) var rideMapStorageError: String?
     private(set) var rideMapAvailability = MobileRideMapAvailability.checking
     private(set) var rideMapLiveError: MobileRideMapError?
-    var rideMapHistoryError: MobileRideMapError? { rideHistory.error }
-    var rideMapHistoryRouteError: MobileRideMapError? { rideHistory.routeError }
-    var rideMapHistoryDetailRouteError: MobileRideMapError? { rideHistory.detailRouteError }
     private(set) var rideMapLiveDisplayPoints = [MobileRideMapRouteDisplayPoint]()
     private(set) var rideMapLiveCameraRegion: MobileRideMapCameraRegion?
     private(set) var rideMapLiveEndpointMetadata = MobileRideMapRouteEndpointMetadata.empty
@@ -73,52 +68,8 @@ final class CutoutAppModel {
     private(set) var rideMapLiveProjectionVersion: UInt64 = 0
     private(set) var rideMapLivePointsTruncated = false
     private(set) var rideMapLiveSegmentsOmittedByBudget = false
-    var rideMapHistory: [MobileRideMapHistorySummaryDto] { rideHistory.rides }
-    var rideMapHistoryCanLoadMore: Bool { rideHistory.canLoadMore }
-    var rideMapHistorySearchText: String {
-        get { rideHistory.searchText }
-        set { rideHistory.searchText = newValue }
-    }
-    var rideMapHistoryDateFilter: RideMapHistoryDateFilter {
-        rideHistory.dateFilter
-    }
-    var rideMapHistoryVehicleFilter: String? {
-        rideHistory.vehicleFilter
-    }
-    var rideMapHistoryDisplayPoints: [MobileRideMapRouteDisplayPoint] { rideHistory.displayPoints }
-    var rideMapHistoryCameraRegion: MobileRideMapCameraRegion? { rideHistory.cameraRegion }
-    var rideMapHistoryEndpointMetadata: MobileRideMapRouteEndpointMetadata { rideHistory.endpointMetadata }
-    var rideMapHistorySegments: [MobileRideMapSegmentDisplayMetadata] { rideHistory.segments }
-    var rideMapHistoryBackgroundGapCount: UInt64 { rideHistory.backgroundGapCount }
-    var rideMapHistoryPointsTruncated: Bool { rideHistory.pointsTruncated }
-    var rideMapHistorySegmentsOmittedByBudget: Bool { rideHistory.segmentsOmittedByBudget }
-    var rideMapHistoryDetailDisplayPoints: [MobileRideMapRouteDisplayPoint] { rideHistory.detailDisplayPoints }
-    var rideMapHistoryDetailRoutePresence: MobileRideMapRoutePresence { rideHistory.detailRoutePresence }
-    var rideMapHistoryDetailMusicTimeline: [MobileMusicRideEventDto] { rideHistory.detailMusicTimeline }
-    var rideMapHistoryDetailMusicTimelineUnavailable: Bool { rideHistory.detailMusicTimelineUnavailable }
-    var rideMapHistoryDetailMusicState: MobileMusicHistoryStateDto? { rideHistory.detailMusicState }
-    var rideMapHistoryDetailMusicError: MobileRideMapError? { rideHistory.detailMusicError }
-    var rideMapHistoryDetailProjectionRideID: String? { rideHistory.detailProjectionRideID }
-    var rideMapHistoryDetailCameraRegion: MobileRideMapCameraRegion? { rideHistory.detailCameraRegion }
-    var rideMapHistoryDetailEndpointMetadata: MobileRideMapRouteEndpointMetadata { rideHistory.detailEndpointMetadata }
-    var rideMapHistoryDetailSegments: [MobileRideMapSegmentDisplayMetadata] { rideHistory.detailSegments }
-    var rideMapHistoryDetailBackgroundGapCount: UInt64 { rideHistory.detailBackgroundGapCount }
-    var rideMapHistoryDetailCameraFitVersion: UInt64 { rideHistory.detailCameraFitVersion }
-    var rideMapHistoryCameraFitVersion: UInt64 { rideHistory.cameraFitVersion }
-    var rideMapHistoryDetailPointsTruncated: Bool { rideHistory.detailPointsTruncated }
-    var rideMapHistoryDetailSourcePointsOmittedByBudget: Bool { rideHistory.detailSourcePointsOmittedByBudget }
-    var rideMapHistoryDetailSourceSegmentsOmittedByBudget: Bool { rideHistory.detailSourceSegmentsOmittedByBudget }
-    var rideMapHistoryDetailSegmentsOmittedByBudget: Bool { rideHistory.detailSegmentsOmittedByBudget }
-    var rideMapHistoryProjectionVersion: UInt64 { rideHistory.projectionVersion }
-    var rideMapHistoryDetailProjectionVersion: UInt64 { rideHistory.detailProjectionVersion }
-    var rideMapHistoryRouteLoading: Bool { rideHistory.routeLoading }
-    var rideMapHistoryDetailRouteLoading: Bool { rideHistory.detailRouteLoading }
-    var rideMapHistoryVehicleIdentities: [String] { rideHistory.vehicleIdentities }
-    var rideMapHistoryVehicleNames: [String: String] { rideHistory.vehicleNames }
-    var selectedRideMapHistoryID: String? { rideHistory.selectedRideID }
     private(set) var rideMapLastDecision: MobileRideMapDecisionDto?
     var rideMapMode = RideMapMode.live
-    var rideMapHistoryLoading: Bool { rideHistory.isLoading }
     private(set) var musicSettingsNowPlaying: MusicNowPlaying?
     var musicNowPlaying: MusicNowPlaying? {
         isMusicPlayerHidden ? nil : musicSettingsNowPlaying
@@ -188,7 +139,7 @@ final class CutoutAppModel {
 
     func rideMapVehicleName(for identity: String?) -> String? {
         guard let identity else { return nil }
-        if let name = rideMapHistoryVehicleNames[identity] {
+        if let name = rideHistory.vehicleNames[identity] {
             return name
         }
         if let name = rideMapVehicleNameCache[identity] {
@@ -1459,7 +1410,7 @@ final class CutoutAppModel {
         invalidateLiveProjection(clearPoints: false)
         clearMusicCaptureContext()
         musicTimelineEvents = musicCoordinator.recordedEvents
-        loadRideMapHistory()
+        reloadRideHistory()
         return true
     }
 
@@ -1472,12 +1423,12 @@ final class CutoutAppModel {
         clearMusicCaptureContext()
         musicTimelineEvents = musicCoordinator.recordedEvents
         rideHistory.clearRouteProjection()
-        loadRideMapHistory()
+        reloadRideHistory()
         return true
     }
 
-    func loadRideMapHistory(selecting requestedRideID: String? = nil) {
-        rideHistory.reload(selecting: requestedRideID)
+    private func reloadRideHistory() {
+        rideHistory.reload()
     }
 
     private func applyRideHistoryPageResult() {
@@ -1485,56 +1436,6 @@ final class CutoutAppModel {
             rideHistory.vehicleNames,
             uniquingKeysWith: { _, incoming in incoming }
         )
-    }
-
-    private func applyRideMapHistoryLoadFailure(_ error: MobileRideMapError) {
-        rideHistory.applyLoadFailure(error)
-    }
-
-    func loadMoreRideMapHistory() {
-        rideHistory.loadMore()
-    }
-
-    var filteredRideMapHistory: [MobileRideMapHistorySummaryDto] {
-        rideMapHistory
-    }
-
-    func setRideMapHistoryDateFilter(_ filter: RideMapHistoryDateFilter) {
-        rideHistory.setDateFilter(filter)
-    }
-
-    func setRideMapHistoryVehicleFilter(_ identity: String?) {
-        rideHistory.setVehicleFilter(identity)
-    }
-
-    func setRideMapHistorySearchText(_ text: String) {
-        guard rideMapHistorySearchText != text else { return }
-        rideMapHistorySearchText = text
-    }
-
-    func clearRideMapHistoryFilters() {
-        rideHistory.clearFilters()
-    }
-
-    func selectRideMapHistory(_ rideID: String) {
-        // Keep MapKit's first paint small. The explicit preview action below still requests the
-        // full Rust-bounded route after the user asks for it.
-        rideHistory.select(
-            rideID: rideID,
-            requestedPointLimit: Int(Self.rideMapLimits.historyContextPerRouteBudget)
-        )
-    }
-
-    func ensureRideMapHistorySelection(_ requestedRideID: String?) {
-        rideHistory.ensureSelection(requestedRideID: requestedRideID)
-    }
-
-    func projectRideMapHistoryDetailViewport(_ viewport: MobileGeoBoundsDto?) {
-        rideHistory.projectDetailViewport(viewport)
-    }
-
-    func loadRoutePreviewMapHistory() {
-        rideHistory.loadRoutePreview()
     }
 
     nonisolated static func mapRideMapError(_ error: Error) -> MobileRideMapError {
@@ -1569,7 +1470,7 @@ final class CutoutAppModel {
                     musicTimelineEvents = musicCoordinator.recordedEvents
                 }
             }
-            if selectedRideMapHistoryID == rideID {
+            if rideHistory.selectedRideID == rideID {
                 rideHistory.clearMusicMetadata()
             }
             return true

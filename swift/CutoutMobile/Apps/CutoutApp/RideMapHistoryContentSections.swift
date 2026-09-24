@@ -21,7 +21,7 @@ struct RideMapHistoryFilterBar: View {
     let dateTitle: String
     let vehicleTitle: String
     let vehicleOptions: [RideMapVehicleOption]
-    let setDateFilter: (CutoutAppModel.RideMapHistoryDateFilter) -> Void
+    let setDateFilter: (RideHistoryModel.DateFilter) -> Void
     let setVehicleFilter: (String?) -> Void
 
     var body: some View {
