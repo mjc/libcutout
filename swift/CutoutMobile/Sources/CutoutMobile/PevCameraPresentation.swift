@@ -217,12 +217,18 @@ public struct CameraMediaReference: Equatable, Sendable {
 
 /// Read-only Novatek evidence parsed by Rust before reaching the Swift UI.
 public struct CameraReadOnlyEvidence: Equatable, Sendable {
-    public let firmwareVersion: String
-    public let movieRTSPURI: String
-    public let photoRTSPURI: String
-    public let configuration: [CameraCommandStatusEvidence]
-    public let storagePresent: Bool
-    public let media: [CameraMediaEvidence]
+    private let snapshot: MobileNovatekReadOnlySnapshotDto
+
+    public var firmwareVersion: String { snapshot.firmwareVersion }
+    public var movieRTSPURI: String { snapshot.movieRtspUri }
+    public var photoRTSPURI: String { snapshot.photoRtspUri }
+    public var configuration: [CameraCommandStatusEvidence] {
+        snapshot.configuration.map(CameraCommandStatusEvidence.init)
+    }
+    public var storagePresent: Bool { snapshot.storagePresent }
+    public var media: [CameraMediaEvidence] {
+        snapshot.media.map(CameraMediaEvidence.init)
+    }
 
     /// Number of bounded media records returned by the camera.
     public var mediaCount: Int { media.count }
@@ -257,23 +263,11 @@ public struct CameraReadOnlyEvidence: Equatable, Sendable {
     /// The bounded `3014` status pairs used when proving a mutating command
     /// capability. The command target does not need to copy the media list.
     var commandCapabilityConfiguration: [MobileNovatekCommandStatusDto] {
-        configuration.map {
-            MobileNovatekCommandStatusDto(
-                commandId: $0.commandID,
-                status: $0.status
-            )
-        }
+        snapshot.configuration
     }
 
     public init(_ snapshot: MobileNovatekReadOnlySnapshotDto) {
-        self.init(
-            firmwareVersion: snapshot.firmwareVersion,
-            movieRTSPURI: snapshot.movieRtspUri,
-            photoRTSPURI: snapshot.photoRtspUri,
-            configuration: snapshot.configuration.map(CameraCommandStatusEvidence.init),
-            storagePresent: snapshot.storagePresent,
-            media: snapshot.media.map(CameraMediaEvidence.init)
-        )
+        self.snapshot = snapshot
     }
 
     public init(
@@ -284,12 +278,25 @@ public struct CameraReadOnlyEvidence: Equatable, Sendable {
         storagePresent: Bool,
         media: [CameraMediaEvidence]
     ) {
-        self.firmwareVersion = firmwareVersion
-        self.movieRTSPURI = movieRTSPURI
-        self.photoRTSPURI = photoRTSPURI
-        self.configuration = configuration
-        self.storagePresent = storagePresent
-        self.media = media
+        self.snapshot = MobileNovatekReadOnlySnapshotDto(
+            firmwareVersion: firmwareVersion,
+            movieRtspUri: movieRTSPURI,
+            photoRtspUri: photoRTSPURI,
+            configuration: configuration.map {
+                MobileNovatekCommandStatusDto(commandId: $0.commandID, status: $0.status)
+            },
+            storagePresent: storagePresent,
+            media: media.map {
+                MobileNovatekMediaEntryDto(
+                    name: $0.name,
+                    path: $0.path,
+                    sizeBytes: $0.sizeBytes,
+                    timecode: $0.timecode,
+                    time: $0.time,
+                    attributes: $0.attributes
+                )
+            }
+        )
     }
 
     private func advertises(commandID: UInt16) -> Bool {
