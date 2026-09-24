@@ -3,6 +3,17 @@ import CutoutMobileFFI
 import Foundation
 import Observation
 
+private struct RideHistoryDetailLoadRequest: Sendable {
+    let rideID: String
+    let generation: UInt64
+}
+
+private struct RideHistoryDetailViewportRequest: Sendable {
+    let rideID: String
+    let projectionRideID: String
+    let generation: UInt64
+}
+
 @MainActor
 @Observable
 final class RideHistoryModel {
@@ -16,6 +27,12 @@ final class RideHistoryModel {
     private var loadTask: Task<Void, Never>?
     private var pageTask: Task<Void, Never>?
     private var queryGeneration: UInt64 = 0
+    private var selectionTask: Task<Void, Never>?
+    private var detailLoadGeneration: UInt64 = 0
+    private var selectionCancellation: MobileRideMapProjectionCancellation?
+    private var viewportTask: Task<Void, Never>?
+    private var viewportCancellation: MobileRideMapProjectionCancellation?
+    private var contextTask: Task<Void, Never>?
 
     private(set) var error: MobileRideMapError?
     private(set) var rides = [MobileRideMapHistorySummaryDto]()
@@ -26,6 +43,40 @@ final class RideHistoryModel {
     private(set) var vehicleIdentities = [String]()
     private(set) var vehicleNames = [String: String]()
     private(set) var isLoading = false
+
+    private(set) var routeError: MobileRideMapError?
+    private(set) var detailRouteError: MobileRideMapError?
+    private(set) var displayPoints = [MobileRideMapRouteDisplayPoint]()
+    private(set) var cameraRegion: MobileRideMapCameraRegion?
+    private(set) var endpointMetadata = MobileRideMapRouteEndpointMetadata.empty
+    private(set) var segments = [MobileRideMapSegmentDisplayMetadata]()
+    private(set) var backgroundGapCount: UInt64 = 0
+    private(set) var pointsTruncated = false
+    private(set) var segmentsOmittedByBudget = false
+    private(set) var detailDisplayPoints = [MobileRideMapRouteDisplayPoint]()
+    private(set) var detailRoutePresence = MobileRideMapRoutePresence.emptyRide
+    private(set) var detailMusicTimeline = [MobileMusicRideEventDto]()
+    private(set) var detailMusicTimelineUnavailable = false
+    private(set) var detailMusicState: MobileMusicHistoryStateDto?
+    private(set) var detailMusicError: MobileRideMapError?
+    private(set) var detailProjectionRideID: String?
+    private(set) var detailCameraRegion: MobileRideMapCameraRegion?
+    private(set) var detailEndpointMetadata = MobileRideMapRouteEndpointMetadata.empty
+    private(set) var detailSegments = [MobileRideMapSegmentDisplayMetadata]()
+    private(set) var detailBackgroundGapCount: UInt64 = 0
+    private(set) var detailCameraFitVersion: UInt64 = 0
+    private(set) var cameraFitVersion: UInt64 = 0
+    private(set) var detailPointsTruncated = false
+    private(set) var detailSourcePointsOmittedByBudget = false
+    private(set) var detailSourceSegmentsOmittedByBudget = false
+    private(set) var detailSegmentsOmittedByBudget = false
+    private(set) var contextRoutes = [MobileRideMapHistoryContextRoute]()
+    private(set) var contextProjection: MobileRideMapHistoryContextProjection?
+    private(set) var projectionVersion: UInt64 = 0
+    private(set) var detailProjectionVersion: UInt64 = 0
+    private(set) var routeLoading = false
+    private(set) var detailRouteLoading = false
+    private(set) var selectedRideID: String?
 
     var onSelectionRequired: ((String?, MobileRideMapError?) -> Void)?
     var onPageUpdated: (() -> Void)?
@@ -38,9 +89,428 @@ final class RideHistoryModel {
         self.stateProvider = stateProvider
     }
 
+    func prepareForReload() {
+        invalidateProjectionWork()
+        contextTask?.cancel()
+        contextTask = nil
+        contextProjection = nil
+        contextRoutes.removeAll(keepingCapacity: true)
+        error = nil
+        routeError = nil
+        detailRouteError = nil
+        isLoading = true
+        routeLoading = false
+        detailRouteLoading = false
+        clearMusicMetadata()
+    }
+
+    func applyLoadFailure(_ error: MobileRideMapError) {
+        invalidateProjectionWork()
+        isLoading = false
+        self.error = error
+        routeLoading = false
+        routeError = error
+        detailRouteLoading = false
+        detailRouteError = error
+    }
+
+    func applyQueryResult(
+        requestedRideID: String?,
+        selectionError: MobileRideMapError?,
+        currentSelectedRideID: String?
+    ) {
+        if let selectionError, requestedRideID == nil {
+            applyLoadFailure(selectionError)
+            return
+        }
+        guard let selectedRideID = CutoutAppModel.preferredHistorySelection(
+            requestedID: requestedRideID,
+            currentID: currentSelectedRideID,
+            summaries: rides
+        ) else {
+            self.selectedRideID = nil
+            clearRouteProjection()
+            routeLoading = false
+            routeError = selectionError
+            detailRouteError = selectionError
+            detailRouteLoading = false
+            return
+        }
+        select(
+            rideID: selectedRideID,
+            requestedPointLimit: Int(Self.limits.historyContextPerRouteBudget)
+        )
+    }
+
+    func projectDetailViewport(_ viewport: MobileGeoBoundsDto?) {
+        guard let selectedRideID,
+              rides.contains(where: { $0.rideID == selectedRideID }),
+              let projectionRideID = detailProjectionRideID,
+              projectionRideID == selectedRideID
+        else {
+            return
+        }
+        let request = RideHistoryDetailViewportRequest(
+            rideID: selectedRideID,
+            projectionRideID: projectionRideID,
+            generation: detailLoadGeneration
+        )
+        viewportCancellation?.cancel()
+        viewportTask?.cancel()
+        detailRouteError = nil
+        detailRouteLoading = true
+        let cancellation = MobileRideMapProjectionCancellation()
+        viewportCancellation = cancellation
+        guard let viewport else {
+            detailRouteLoading = false
+            detailRouteError = .invalidRouteProjection
+            detailRoutePresence = .emptyRide
+            replaceDetailDisplayPoints([], truncated: false)
+            return
+        }
+        guard let state = stateProvider() else {
+            detailRouteLoading = false
+            detailRouteError = .storageError("Rust ride database is unavailable")
+            detailRoutePresence = .emptyRide
+            replaceDetailDisplayPoints([], truncated: false)
+            return
+        }
+        let budget = Self.limits.historyPreviewPointLimit
+        viewportTask = Task { [weak self] in
+            do {
+                let result = try await withTaskCancellationHandler(operation: {
+                    try await CutoutAppModel.runCancellableDetached(priority: .userInitiated) {
+                        try state.projectStoredPoints(
+                            rideID: request.rideID,
+                            budget: budget,
+                            viewport: viewport,
+                            cancellation: cancellation
+                        )
+                    }
+                }, onCancel: {
+                    cancellation.cancel()
+                })
+                guard let self,
+                      self.admits(request, isCancelled: Task.isCancelled)
+                else { return }
+                self.replaceDetailDisplayPoints(
+                    result.points,
+                    cameraRegion: result.canonicalCameraRegion ?? result.cameraRegion,
+                    endpointMetadata: result.endpointMetadata,
+                    segments: result.segments,
+                    backgroundGapCount: result.backgroundGapCount,
+                    truncated: CutoutAppModel.detailPointsAreTruncated(
+                        sourcePointsOmittedByBudget: self.detailSourcePointsOmittedByBudget,
+                        viewportPointsOmittedByBudget: result.pointsOmittedByBudget
+                    ),
+                    segmentsOmittedByBudget: CutoutAppModel.detailSegmentsAreOmitted(
+                        sourceSegmentsOmittedByBudget: self.detailSourceSegmentsOmittedByBudget,
+                        viewportSegmentsOmittedByBudget: result.segmentsOmittedByBudget
+                    )
+                )
+                self.detailRoutePresence = result.presence
+                self.detailRouteError = nil
+                self.detailRouteLoading = false
+            } catch {
+                guard let self,
+                      self.admits(request, isCancelled: Task.isCancelled)
+                else { return }
+                let mappedError = CutoutAppModel.mapRideMapError(error)
+                if mappedError == .cancelled { return }
+                self.detailRouteError = mappedError
+                self.detailRouteLoading = false
+                self.detailRoutePresence = .emptyRide
+                self.replaceDetailDisplayPoints([], truncated: false)
+            }
+        }
+    }
+
+    func loadRoutePreview() {
+        guard let selectedRideID else { return }
+        select(rideID: selectedRideID, requestedPointLimit: nil)
+    }
+
+    func select(rideID: String, requestedPointLimit: Int? = nil) {
+        guard rides.contains(where: { $0.rideID == rideID }) else {
+            routeLoading = false
+            routeError = nil
+            detailRouteLoading = false
+            detailRouteError = nil
+            clearMusicMetadata()
+            return
+        }
+        invalidateProjectionWork()
+        let request = RideHistoryDetailLoadRequest(
+            rideID: rideID,
+            generation: detailLoadGeneration
+        )
+        contextTask?.cancel()
+        contextTask = nil
+        contextProjection = nil
+        contextRoutes.removeAll(keepingCapacity: true)
+        let selectingDifferentRide = selectedRideID != rideID
+        if selectingDifferentRide {
+            clearRouteProjection()
+        }
+        selectedRideID = rideID
+        routeError = nil
+        detailRouteError = nil
+        clearMusicMetadata()
+        routeLoading = true
+        detailRouteLoading = true
+        guard let state = stateProvider() else {
+            replaceDisplayPoints([], truncated: false)
+            replaceDetailDisplayPoints([], truncated: false)
+            detailRoutePresence = .emptyRide
+            routeLoading = false
+            detailRouteLoading = false
+            routeError = .storageError("Rust ride database is unavailable")
+            detailRouteError = routeError
+            detailMusicError = routeError
+            return
+        }
+        let cancellation = MobileRideMapProjectionCancellation()
+        selectionCancellation = cancellation
+        let budget = UInt32(
+            min(
+                requestedPointLimit ?? Int(Self.limits.historyPreviewPointLimit),
+                Int(Self.limits.historyPreviewPointLimit)
+            )
+        )
+        selectionTask = Task { [weak self] in
+            do {
+                let result = try await withTaskCancellationHandler(operation: {
+                    try await CutoutAppModel.runCancellableDetached(priority: .userInitiated) {
+                        let projection = try state.projectStoredPoints(
+                            rideID: request.rideID,
+                            budget: budget,
+                            cancellation: cancellation
+                        )
+                        let musicHistory: MusicHistoryQueryResult
+                        do {
+                            let storedHistory = try state.storedMusicHistory(rideID: request.rideID)
+                            musicHistory = MusicHistoryQueryResult(
+                                events: storedHistory.events,
+                                state: storedHistory.historyState,
+                                error: nil
+                            )
+                        } catch {
+                            musicHistory = MusicHistoryQueryResult(
+                                events: [],
+                                state: nil,
+                                error: CutoutAppModel.mapRideMapError(error)
+                            )
+                        }
+                        return (projection, musicHistory)
+                    }
+                }, onCancel: {
+                    cancellation.cancel()
+                })
+                guard let self,
+                      self.admits(request, isCancelled: Task.isCancelled)
+                else { return }
+                let (projection, musicHistory) = result
+                self.cameraFitVersion &+= 1
+                self.detailCameraFitVersion &+= 1
+                self.routeError = nil
+                self.detailRouteError = nil
+                self.replaceDisplayPoints(
+                    projection.points,
+                    cameraRegion: projection.canonicalCameraRegion ?? projection.cameraRegion,
+                    endpointMetadata: projection.endpointMetadata,
+                    segments: projection.segments,
+                    backgroundGapCount: projection.backgroundGapCount,
+                    truncated: projection.pointsOmittedByBudget,
+                    segmentsOmittedByBudget: projection.segmentsOmittedByBudget
+                )
+                self.detailSourcePointsOmittedByBudget = projection.pointsOmittedByBudget
+                self.detailSourceSegmentsOmittedByBudget = projection.segmentsOmittedByBudget
+                self.detailMusicTimeline = musicHistory.events
+                self.detailMusicTimelineUnavailable = musicHistory.error != nil
+                self.detailMusicState = musicHistory.state
+                self.detailMusicError = musicHistory.error
+                self.detailProjectionRideID = request.rideID
+                self.detailRoutePresence = projection.presence
+                self.replaceDetailDisplayPoints(
+                    projection.points,
+                    cameraRegion: projection.canonicalCameraRegion ?? projection.cameraRegion,
+                    endpointMetadata: projection.endpointMetadata,
+                    segments: projection.segments,
+                    backgroundGapCount: projection.backgroundGapCount,
+                    truncated: projection.pointsOmittedByBudget,
+                    segmentsOmittedByBudget: CutoutAppModel.detailSegmentsAreOmitted(
+                        sourceSegmentsOmittedByBudget: self.detailSourceSegmentsOmittedByBudget,
+                        viewportSegmentsOmittedByBudget: projection.segmentsOmittedByBudget
+                    )
+                )
+                self.routeLoading = false
+                self.detailRouteLoading = false
+            } catch {
+                guard let self,
+                      self.admits(request, isCancelled: Task.isCancelled)
+                else { return }
+                let mappedError = CutoutAppModel.mapRideMapError(error)
+                self.routeError = mappedError
+                self.routeLoading = false
+                self.detailRouteError = mappedError
+                self.detailRouteLoading = false
+                self.detailMusicTimeline.removeAll(keepingCapacity: true)
+                self.detailMusicTimelineUnavailable = true
+                self.detailMusicState = nil
+                self.detailMusicError = mappedError
+                self.detailProjectionRideID = nil
+                self.detailRoutePresence = .emptyRide
+                self.replaceDisplayPoints([], truncated: false)
+                self.replaceDetailDisplayPoints([], truncated: false)
+            }
+        }
+    }
+
+    private func admits(
+        _ request: RideHistoryDetailLoadRequest,
+        isCancelled: Bool
+    ) -> Bool {
+        CutoutAppModel.shouldApplyHistoryDetailLoad(
+            rideID: request.rideID,
+            selectedRideID: selectedRideID,
+            loadGeneration: request.generation,
+            currentGeneration: detailLoadGeneration,
+            isCancelled: isCancelled
+        )
+    }
+
+    private func admits(
+        _ request: RideHistoryDetailViewportRequest,
+        isCancelled: Bool
+    ) -> Bool {
+        CutoutAppModel.shouldApplyHistoryDetailViewport(
+            rideID: request.rideID,
+            selectedRideID: selectedRideID,
+            expectedProjectionRideID: request.projectionRideID,
+            currentProjectionRideID: detailProjectionRideID,
+            loadGeneration: request.generation,
+            currentGeneration: detailLoadGeneration,
+            isCancelled: isCancelled
+        )
+    }
+
+    private func replaceDisplayPoints(
+        _ points: [MobileRideMapRouteDisplayPoint],
+        cameraRegion: MobileRideMapCameraRegion? = nil,
+        endpointMetadata: MobileRideMapRouteEndpointMetadata = .empty,
+        segments: [MobileRideMapSegmentDisplayMetadata] = [],
+        backgroundGapCount: UInt64 = 0,
+        truncated: Bool,
+        segmentsOmittedByBudget: Bool = false
+    ) {
+        displayPoints = points
+        self.cameraRegion = cameraRegion
+        self.endpointMetadata = endpointMetadata
+        self.segments = segments
+        self.backgroundGapCount = backgroundGapCount
+        pointsTruncated = truncated
+        self.segmentsOmittedByBudget = segmentsOmittedByBudget
+        projectionVersion &+= 1
+    }
+
+    private func replaceDetailDisplayPoints(
+        _ points: [MobileRideMapRouteDisplayPoint],
+        cameraRegion: MobileRideMapCameraRegion? = nil,
+        endpointMetadata: MobileRideMapRouteEndpointMetadata = .empty,
+        segments: [MobileRideMapSegmentDisplayMetadata] = [],
+        backgroundGapCount: UInt64 = 0,
+        truncated: Bool,
+        segmentsOmittedByBudget: Bool = false
+    ) {
+        detailDisplayPoints = points
+        detailCameraRegion = cameraRegion
+        detailEndpointMetadata = endpointMetadata
+        detailSegments = segments
+        detailBackgroundGapCount = backgroundGapCount
+        detailPointsTruncated = truncated
+        detailSegmentsOmittedByBudget = segmentsOmittedByBudget
+        detailProjectionVersion &+= 1
+    }
+
+    func clearRouteProjection() {
+        contextTask?.cancel()
+        contextTask = nil
+        contextProjection = nil
+        contextRoutes.removeAll(keepingCapacity: true)
+        replaceDisplayPoints([], truncated: false)
+        detailRoutePresence = .emptyRide
+        clearMusicMetadata()
+        detailProjectionRideID = nil
+        detailSourcePointsOmittedByBudget = false
+        detailSourceSegmentsOmittedByBudget = false
+        routeLoading = false
+        detailRouteLoading = false
+        routeError = nil
+        detailRouteError = nil
+        replaceDetailDisplayPoints([], truncated: false)
+    }
+
+    func invalidateProjectionWork() {
+        selectionTask?.cancel()
+        selectionCancellation?.cancel()
+        viewportCancellation?.cancel()
+        viewportTask?.cancel()
+        detailLoadGeneration &+= 1
+    }
+
+    func clearMusicMetadata() {
+        detailMusicTimeline.removeAll(keepingCapacity: true)
+        detailMusicTimelineUnavailable = false
+        detailMusicState = nil
+        detailMusicError = nil
+    }
+
+    func invalidateForMusicDeletion() {
+        invalidateProjectionWork()
+        detailRouteLoading = false
+    }
+
+    private func projectContext(for rideID: String) {
+        contextTask?.cancel()
+        contextProjection = nil
+        contextRoutes.removeAll(keepingCapacity: true)
+        guard let state = stateProvider() else { return }
+        let filter = self.filter
+        let budget = MobileRideMapHistoryContextBudget.overview
+        contextTask = Task { [weak self] in
+            do {
+                let projection = try await CutoutAppModel.runCancellableDetached(priority: .userInitiated) {
+                    try state.projectStoredHistoryContext(
+                        filter: filter,
+                        selectedRideID: rideID,
+                        budget: budget
+                    )
+                }
+                guard !Task.isCancelled,
+                      let self,
+                      self.selectedRideID == rideID
+                else { return }
+                self.contextProjection = projection
+                self.contextRoutes = projection.routes
+            } catch {
+                guard !Task.isCancelled,
+                      let self,
+                      self.selectedRideID == rideID
+                else { return }
+                self.contextProjection = nil
+                self.contextRoutes.removeAll(keepingCapacity: true)
+            }
+        }
+    }
+
     isolated deinit {
         loadTask?.cancel()
         pageTask?.cancel()
+        selectionTask?.cancel()
+        selectionCancellation?.cancel()
+        viewportTask?.cancel()
+        viewportCancellation?.cancel()
+        contextTask?.cancel()
     }
 
     func load(selecting requestedRideID: String? = nil) {
