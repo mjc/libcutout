@@ -30,13 +30,6 @@ protocol RideHistoryQuerying: Sendable {
         limit: UInt32,
         filter: MobileRideHistoryFilterDto?
     ) throws -> MobileRideMapHistoryPageDto
-    func projectStoredHistoryContext(
-        filter: MobileRideHistoryFilterDto,
-        selectedRideID: String?,
-        budget: MobileRideMapHistoryContextBudget,
-        viewport: MobileGeoBoundsDto?,
-        privacy: MobileRideMapRoutePrivacyPolicy
-    ) throws -> MobileRideMapHistoryContextProjection
 }
 
 extension MobileRideMapState: RideHistoryQuerying {}
@@ -71,7 +64,6 @@ final class RideHistoryModel {
     private var selectionCancellation: MobileRideMapProjectionCancellation?
     private var viewportTask: Task<Void, Never>?
     private var viewportCancellation: MobileRideMapProjectionCancellation?
-    private var contextTask: Task<Void, Never>?
 
     private(set) var error: MobileRideMapError?
     private(set) var rides = [MobileRideMapHistorySummaryDto]()
@@ -114,8 +106,6 @@ final class RideHistoryModel {
     private(set) var detailSourcePointsOmittedByBudget = false
     private(set) var detailSourceSegmentsOmittedByBudget = false
     private(set) var detailSegmentsOmittedByBudget = false
-    private(set) var contextRoutes = [MobileRideMapHistoryContextRoute]()
-    private(set) var contextProjection: MobileRideMapHistoryContextProjection?
     private(set) var projectionVersion: UInt64 = 0
     private(set) var detailProjectionVersion: UInt64 = 0
     private(set) var routeLoading = false
@@ -123,10 +113,6 @@ final class RideHistoryModel {
     private(set) var selectedRideID: String?
 
     var onPageUpdated: (() -> Void)?
-
-    var filter: MobileRideHistoryFilterDto {
-        historyFilter
-    }
 
     init(
         stateProvider: @escaping @MainActor () -> (any RideHistoryQuerying)?,
@@ -142,10 +128,6 @@ final class RideHistoryModel {
         searchTask?.cancel()
         searchTask = nil
         invalidateProjectionWork()
-        contextTask?.cancel()
-        contextTask = nil
-        contextProjection = nil
-        contextRoutes.removeAll(keepingCapacity: true)
         error = nil
         routeError = nil
         detailRouteError = nil
@@ -319,10 +301,6 @@ final class RideHistoryModel {
             rideID: rideID,
             generation: detailLoadGeneration
         )
-        contextTask?.cancel()
-        contextTask = nil
-        contextProjection = nil
-        contextRoutes.removeAll(keepingCapacity: true)
         let selectingDifferentRide = selectedRideID != rideID
         if selectingDifferentRide {
             clearRouteProjection()
@@ -510,10 +488,6 @@ final class RideHistoryModel {
     }
 
     func clearRouteProjection() {
-        contextTask?.cancel()
-        contextTask = nil
-        contextProjection = nil
-        contextRoutes.removeAll(keepingCapacity: true)
         replaceDisplayPoints([], truncated: false)
         detailRoutePresence = .emptyRide
         clearMusicMetadata()
@@ -548,41 +522,6 @@ final class RideHistoryModel {
         detailRouteLoading = false
     }
 
-    private func projectContext(for rideID: String) {
-        contextTask?.cancel()
-        contextProjection = nil
-        contextRoutes.removeAll(keepingCapacity: true)
-        guard let state = stateProvider() else { return }
-        let filter = self.filter
-        let budget = MobileRideMapHistoryContextBudget.overview
-        contextTask = Task { [weak self] in
-            do {
-                let projection = try await Self.runCancellableDetached(priority: .userInitiated) {
-                    try state.projectStoredHistoryContext(
-                        filter: filter,
-                        selectedRideID: rideID,
-                        budget: budget,
-                        viewport: nil,
-                        privacy: .precise
-                    )
-                }
-                guard !Task.isCancelled,
-                      let self,
-                      self.selectedRideID == rideID
-                else { return }
-                self.contextProjection = projection
-                self.contextRoutes = projection.routes
-            } catch {
-                guard !Task.isCancelled,
-                      let self,
-                      self.selectedRideID == rideID
-                else { return }
-                self.contextProjection = nil
-                self.contextRoutes.removeAll(keepingCapacity: true)
-            }
-        }
-    }
-
     isolated deinit {
         searchTask?.cancel()
         loadTask?.cancel()
@@ -591,7 +530,6 @@ final class RideHistoryModel {
         selectionCancellation?.cancel()
         viewportTask?.cancel()
         viewportCancellation?.cancel()
-        contextTask?.cancel()
     }
 
     private func load(selecting requestedRideID: String? = nil) {

@@ -1464,7 +1464,11 @@ final class CutoutAppModelTests: XCTestCase {
 
         _ = try await saveRide(startingAt: 100)
         let selectedRideID = try await saveRide(startingAt: 10_000)
-        let model = CutoutAppModel(core: driver)
+        let query = GatedRideHistoryQuery(base: state, failAfterRelease: false)
+        let model = CutoutAppModel(
+            core: driver,
+            rideHistoryQueryProvider: { query }
+        )
         model.setRideMapHistoryDateFilter(.allTime)
         model.loadRideMapHistory(selecting: selectedRideID)
 
@@ -1472,10 +1476,7 @@ final class CutoutAppModelTests: XCTestCase {
             model.selectedRideMapHistoryID == selectedRideID
                 && !model.rideMapHistoryRouteLoading
         }
-        try await Task.sleep(for: .milliseconds(100))
-
-        XCTAssertNil(model.rideMapHistoryContextProjection)
-        XCTAssertTrue(model.rideMapHistoryContextRoutes.isEmpty)
+        XCTAssertEqual(query.supplementaryContextQueryCountSnapshot, 0)
     }
 
     @MainActor
@@ -4676,6 +4677,13 @@ private final class GatedRideHistoryQuery: RideHistoryQuerying, @unchecked Senda
     private let historyPageRelease = DispatchSemaphore(value: 0)
     private let historyPageFinished = DispatchSemaphore(value: 0)
     private var historyPageFilters = [MobileRideHistoryFilterDto?]()
+    private var supplementaryContextQueryCount = 0
+
+    var supplementaryContextQueryCountSnapshot: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return supplementaryContextQueryCount
+    }
 
     init(base: MobileRideMapState, failAfterRelease: Bool) {
         self.base = base
@@ -4755,7 +4763,10 @@ private final class GatedRideHistoryQuery: RideHistoryQuerying, @unchecked Senda
         viewport: MobileGeoBoundsDto?,
         privacy: MobileRideMapRoutePrivacyPolicy
     ) throws -> MobileRideMapHistoryContextProjection {
-        try base.projectStoredHistoryContext(
+        lock.lock()
+        supplementaryContextQueryCount += 1
+        lock.unlock()
+        return try base.projectStoredHistoryContext(
             filter: filter,
             selectedRideID: selectedRideID,
             budget: budget,

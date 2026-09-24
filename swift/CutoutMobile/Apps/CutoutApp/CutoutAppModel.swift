@@ -109,8 +109,6 @@ final class CutoutAppModel {
     var rideMapHistoryDetailSourcePointsOmittedByBudget: Bool { rideHistory.detailSourcePointsOmittedByBudget }
     var rideMapHistoryDetailSourceSegmentsOmittedByBudget: Bool { rideHistory.detailSourceSegmentsOmittedByBudget }
     var rideMapHistoryDetailSegmentsOmittedByBudget: Bool { rideHistory.detailSegmentsOmittedByBudget }
-    var rideMapHistoryContextRoutes: [MobileRideMapHistoryContextRoute] { rideHistory.contextRoutes }
-    var rideMapHistoryContextProjection: MobileRideMapHistoryContextProjection? { rideHistory.contextProjection }
     var rideMapHistoryProjectionVersion: UInt64 { rideHistory.projectionVersion }
     var rideMapHistoryDetailProjectionVersion: UInt64 { rideHistory.detailProjectionVersion }
     var rideMapHistoryRouteLoading: Bool { rideHistory.routeLoading }

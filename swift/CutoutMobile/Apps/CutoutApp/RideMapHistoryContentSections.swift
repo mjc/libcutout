@@ -77,7 +77,6 @@ struct RideMapHistoryRouteSection: View {
     let endpointMetadata: MobileRideMapRouteEndpointMetadata
     let cameraRegion: MobileRideMapCameraRegion?
     let segments: [MobileRideMapSegmentDisplayMetadata]
-    let contextRoutes: [MobileRideMapHistoryContextRoute]
     let cameraFitVersion: UInt64
     let state: RideMapHistoryRouteState
     let pointsTruncated: Bool
@@ -99,7 +98,7 @@ struct RideMapHistoryRouteSection: View {
                     endpointMetadata: endpointMetadata,
                     cameraRegion: cameraRegion,
                     segments: segments,
-                    contextRoutes: contextRoutes,
+                    contextRoutes: [],
                     fitsRouteOnChange: true,
                     cameraFitID: RideMapCanvasView.cameraFitID(
                         routeID: routeID,

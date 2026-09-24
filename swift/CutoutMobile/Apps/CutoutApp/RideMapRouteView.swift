@@ -142,7 +142,6 @@ struct RideMapRouteView: View {
             cameraRegion: history.cameraRegion,
             endpointMetadata: history.endpointMetadata,
             segments: history.segments,
-            contextRoutes: history.contextRoutes,
             cameraFitVersion: history.cameraFitVersion,
             projectionVersion: history.projectionVersion,
             pointsTruncated: history.pointsTruncated,
