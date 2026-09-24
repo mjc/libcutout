@@ -435,7 +435,7 @@ private final class WeakCutoutSessionCoreReference: @unchecked Sendable {
 public final class CutoutSessionCore: NSObject {
     public var rideSessionStateHandle: CutoutSessionStateHandle { rustSessionState }
     public var connectionSnapshot: ConnectionSnapshot { rustSessionState.connectionAttemptSnapshot() }
-    public var rideMapStateHandle: MobileRideMapState? { rideMapState }
+    public var rideMapStateHandle: MobileRideMapState? { rideMapRecorder.stateHandle }
     public private(set) var displayState = RideDisplayState()
     public private(set) var phase = SessionConnectionPhase.starting
     public var records: [String] { diagnosticLog.values }
@@ -493,8 +493,6 @@ public final class CutoutSessionCore: NSObject {
     private var diagnosticLog = BoundedDiagnosticLog(capacity: 2_048)
     private let bleQueue = DispatchQueue(label: "io.cutout.corebluetooth")
     private let bleQueueKey = DispatchSpecificKey<Void>()
-    private let rideMapQueue = DispatchQueue(label: "io.cutout.ridemap", qos: .utility)
-    private let rideMapQueueKey = DispatchSpecificKey<Void>()
     private let rustSessionState: CutoutSessionStateHandle
     private let selectedDeviceStore: DevicePickerSelectionStore
     private var central: CBCentralManager?
@@ -554,7 +552,32 @@ public final class CutoutSessionCore: NSObject {
             self?.onRecord?(message)
         }
     )
-    private let rideMapState: MobileRideMapState?
+    private let rideMapStateForInitialization: MobileRideMapState?
+    private lazy var rideMapRecorder = CutoutSessionRideMapRecorder(
+        state: rideMapStateForInitialization,
+        clock: clock,
+        wallClock: wallClock,
+        publishSnapshot: { [weak self] snapshot in
+            self?.publishRideMapSnapshot(snapshot)
+        },
+        publishDecisions: { [weak self] batch in
+            self?.publishRideMapDecisions(batch)
+        },
+        publishError: { [weak self] error, context in
+            self?.publishRideMapError(error, context: context)
+        },
+        publishAvailability: { [weak self] in
+            self?.publishRideMapAvailability()
+        },
+        recordDiagnostic: { [weak self] message in
+            self?.recordRideMapDiagnostic(message)
+        },
+        onLocationDemand: { [weak self] active in
+            self?.publishOnMain {
+                self?.phoneLocationAdapter.updateDemand(active)
+            }
+        }
+    )
     private lazy var phoneLocationAdapter = CutoutSessionPhoneLocationAdapter(
         clock: clock,
         wallClock: wallClock,
@@ -587,8 +610,6 @@ public final class CutoutSessionCore: NSObject {
             self?.updateRideLocationDemand(for: state)
         }
     )
-    private var rideMapWritePoller: DispatchSourceTimer?
-    private var rideMapRestorationStarted = false
     private var didResolveBluetoothRestoration = false
 #if DEBUG
     private let testScript: CutoutSessionTestScript?
@@ -665,7 +686,7 @@ public final class CutoutSessionCore: NSObject {
         )
         self.clock = clock
         self.wallClock = wallClock
-        self.rideMapState = rideMapState
+        self.rideMapStateForInitialization = rideMapState
         self.testScript = testScript
         self.captureDirectoryForTesting = testScript.map { _ in FileManager.default.temporaryDirectory }
         self.reconnectController = ConnectionReconnectController(scheduler: reconnectScheduler)
@@ -673,7 +694,6 @@ public final class CutoutSessionCore: NSObject {
         self.selectedDeviceStore = selectedDeviceStore
         super.init()
         bleQueue.setSpecific(key: bleQueueKey, value: ())
-        rideMapQueue.setSpecific(key: rideMapQueueKey, value: ())
     }
 #else
     init(
@@ -694,20 +714,23 @@ public final class CutoutSessionCore: NSObject {
         )
         self.clock = clock
         self.wallClock = wallClock
-        self.rideMapState = rideMapState
+        self.rideMapStateForInitialization = rideMapState
         self.reconnectController = ConnectionReconnectController(scheduler: MainQueueReconnectScheduler())
         self.reconnectJitter = { Double.random(in: 0...1) }
         self.selectedDeviceStore = selectedDeviceStore
         super.init()
         bleQueue.setSpecific(key: bleQueueKey, value: ())
-        rideMapQueue.setSpecific(key: rideMapQueueKey, value: ())
     }
 #endif
 
     public func start() {
-        startRideMapWritePolling()
+        rideMapRecorder.start { [weak self] in
+            guard let self else { return }
+            self.onBleQueue {
+                self.observeRideMapConnection(at: self.clock.now())
+            }
+        }
         publishRideMapAvailability()
-        startRideMapRestoration()
 #if DEBUG
         if let testScript {
             publishOnMain { self.onBluetoothRestorationResolved?(nil) }
@@ -1714,7 +1737,7 @@ public final class CutoutSessionCore: NSObject {
         guard liveOwner == nil, let advertisement, let token = connectionSnapshot.token,
               rustSessionState.verifiedConnectionAttemptIsCurrent(token: token) else { return }
         do {
-            beginBmsStorageSession()
+            rideMapRecorder.beginBmsStorageSession()
             let owner = makeDeviceTransport(
                 token: token,
                 advertisement: advertisement,
@@ -2031,184 +2054,33 @@ public final class CutoutSessionCore: NSObject {
         capturePresentation.publishFailure()
     }
 
-    private func startRideMapWritePolling() {
-        let queue = rideMapQueue
-        let reference = WeakCutoutSessionCoreReference(self)
-        queue.async {
-            guard let self = reference.value, self.rideMapWritePoller == nil else { return }
-            let timer = DispatchSource.makeTimerSource(queue: queue)
-            timer.schedule(
-                deadline: .now() + .milliseconds(100),
-                repeating: .milliseconds(100),
-                leeway: .milliseconds(25)
-            )
-            timer.setEventHandler { [reference] in
-                reference.value?.drainRideMapWrites()
-            }
-            self.rideMapWritePoller = timer
-            timer.resume()
-        }
-    }
-
-    private func startRideMapRestoration() {
-        let queue = rideMapQueue
-        let reference = WeakCutoutSessionCoreReference(self)
-        queue.async {
-            guard let self = reference.value,
-                  !self.rideMapRestorationStarted
-            else { return }
-            self.rideMapRestorationStarted = true
-            guard let rideMapState = self.rideMapState else {
-                self.publishRideMapAvailability()
-                return
-            }
-            do {
-                let snapshot = try rideMapState.restore(atMs: self.clock.now().rawValue)
-                if let snapshot {
-                    self.publishRideMapSnapshot(snapshot)
-                }
-                self.publishRideMapAvailability()
-                self.synchronizeRideMapLocationDemand()
-                // A verified connection can complete while restoration is pending. Replay the
-                // current BLE admission after readiness so that auto-start and reassociation do
-                // not depend on a second notification arriving from the peripheral.
-                self.onBleQueue { [weak self] in
-                    guard let self else { return }
-                    self.observeRideMapConnection(at: self.clock.now())
-                }
-            } catch let error as MobileRideMapError {
-                self.rideMapRestorationStarted = false
-                self.publishRideMapError(
-                    error,
-                    context: MobileRideMapErrorContext(snapshot: nil)
-                )
-                self.publishRideMapAvailability()
-            } catch {
-                self.rideMapRestorationStarted = false
-                let mapped = MobileRideMapError.storageError(String(describing: error))
-                self.publishRideMapError(
-                    mapped,
-                    context: MobileRideMapErrorContext(snapshot: nil)
-                )
-                self.publishRideMapAvailability()
-            }
-        }
-    }
-
-    private func drainRideMapWrites() {
-        guard let rideMapState,
-              rideMapState.initializationError == nil,
-              rideMapState.isReady
-        else { return }
-        guard rideMapState.hasPendingLocationWrites
-            || rideMapState.currentSnapshot(atMs: clock.now().rawValue)?.state.isOpen == true
-        else {
-            return
-        }
-        publishRideMapDecisions(rideMapState.pollLocationWrites())
-    }
-
     private func observeRideMapConnection(at receivedAt: MonotonicMilliseconds) {
-        guard let rideMapState,
-              rideMapState.initializationError == nil,
-              rideMapState.isReady
-        else {
-            return
-        }
-
         let snapshot = connectionSnapshot
         guard let token = snapshot.token else { return }
-        let connectionGeneration = token.generation
-        let queue = rideMapQueue
-        let reference = WeakCutoutSessionCoreReference(self)
-        queue.async {
-            guard let self = reference.value,
-                  self.connectionSnapshot.generation == connectionGeneration
-            else { return }
-            do {
-                let previousRideID = rideMapState
-                    .currentSnapshot(atMs: receivedAt.rawValue)?.rideID
-                let snapshot = try rideMapState.ensureRecordingForVerifiedConnection(
-                    connectionState: self.rustSessionState,
-                    token: token,
-                    atMs: receivedAt.rawValue,
-                )
-                if snapshot != nil {
-                    // Admission returns the current ride for repeated notifications too.
-                    // Only reset when Rust created a different ride, so reconnects and
-                    // telemetry notifications cannot clear the same trip repeatedly.
-                    if snapshot?.rideID != previousRideID {
-                        _ = self.resetTripMeterForNewRide()
-                    }
-                    _ = try rideMapState.observeTelemetry(atMs: receivedAt.rawValue)
-                    if let snapshot = rideMapState.currentSnapshot(atMs: receivedAt.rawValue) {
-                        self.publishRideMapSnapshot(snapshot)
-                    }
-                }
-                self.synchronizeRideMapLocationDemand()
-            } catch let error as MobileRideMapError where error == .staleConnection {
-                return
-            } catch let error as MobileRideMapError {
-                // Admission can create or replace the ride while this queue is awaiting Rust.
-                // Capture the context at the failure boundary so a first auto-start and a
-                // terminal-ride replacement cannot publish an unscoped error that the app
-                // model incorrectly rejects as stale.
-                let snapshot = rideMapState.currentSnapshot(atMs: receivedAt.rawValue)
-                // Publish the authoritative post-admission snapshot before its scoped error.
-                // The model rejects ride-scoped errors until it has seen that ride; ordering the
-                // pair makes the stale-work invariant hold for first starts and replacements.
-                if let snapshot {
-                    self.publishRideMapSnapshot(snapshot)
-                }
-                let errorContext = MobileRideMapErrorContext(snapshot: snapshot)
-                self.publishRideMapError(error, context: errorContext)
-                self.recordRideMapDiagnostic("ride_map_connection_error=\(error)")
-            } catch {
-                self.recordRideMapDiagnostic("ride_map_connection_error=\(error)")
+        rideMapRecorder.observeConnection(
+            at: receivedAt,
+            token: token,
+            isConnectionCurrent: { [weak self] in
+                self?.connectionSnapshot.generation == snapshot.generation
+            },
+            connectionState: rustSessionState,
+            resetTripMeter: { [weak self] in
+                self?.resetTripMeterForNewRide() ?? false
             }
-        }
+        )
     }
 
     private func persistBmsSamples(_ observations: [BmsRawVoltageObservation]) {
-        guard let rideMapState,
-              rideMapState.initializationError == nil,
-              rideMapState.isReady,
-              let deviceIdentity = protocolIdentityCandidate?.platformIdentifier
-                ?? peripheral?.identifier.uuidString,
-              let wallClockMilliseconds = unixMilliseconds(for: wallClock())
-        else {
-            return
-        }
-        let samples = bmsStorageSamples(
-            observations: observations,
-            wallClockMilliseconds: wallClockMilliseconds,
-            sessionIdentifier: bmsStorageSessionIdentifier
+        rideMapRecorder.persistBmsSamples(
+            observations,
+            deviceIdentity: protocolIdentityCandidate?.platformIdentifier
+                ?? peripheral?.identifier.uuidString
         )
-        guard !samples.isEmpty else { return }
-
-        let queue = rideMapQueue
-        let reference = WeakCutoutSessionCoreReference(self)
-        queue.async {
-            guard let self = reference.value else { return }
-            do {
-                try rideMapState.recordBmsVoltageSamples(
-                    deviceIdentity: deviceIdentity,
-                    samples: samples
-                )
-            } catch {
-                self.recordRideMapDiagnostic("bms_storage_error=\(error)")
-            }
-        }
     }
 
-    private func beginBmsStorageSession() {
-        bmsStorageSessionIdentifier = UUID().uuidString
-    }
-    private func publishRideMapDecisions(_ decisions: [MobileRideMapDecisionDto]) {
-        guard let rideMapState else { return }
-        let snapshot = rideMapState.currentSnapshot(atMs: clock.now().rawValue)
-            ?? rideMapPresentation.latestSnapshot
-        for decision in decisions {
+    private func publishRideMapDecisions(_ batch: RideMapDecisionBatch) {
+        let snapshot = batch.snapshot ?? rideMapPresentation.latestSnapshot
+        for decision in batch.decisions {
             switch decision {
             case let .storageError(message):
                 publishRideMapError(
@@ -2236,9 +2108,9 @@ public final class CutoutSessionCore: NSObject {
 
     private func publishRideMapAvailability() {
         let availability: MobileRideMapAvailability
-        if rideMapState?.initializationError != nil {
+        if rideMapRecorder.initializationError != nil {
             availability = .storageUnavailable
-        } else if rideMapState?.isReady == false {
+        } else if rideMapRecorder.isReady == false {
             availability = .checking
         } else if !CLLocationManager.locationServicesEnabled() {
             availability = .servicesDisabled
@@ -2257,16 +2129,6 @@ public final class CutoutSessionCore: NSObject {
             }
         }
         rideMapPresentation.publishAvailability(availability)
-    }
-
-    private func synchronizeRideMapLocationDemand() {
-        let shouldReceiveLocations = onRideMapQueue {
-            rideMapState?.currentSnapshot(atMs: clock.now().rawValue)?.state == .active
-        }
-        onBleQueue {
-            self.phoneLocationAdapter.updateDemand(shouldReceiveLocations)
-            return
-        }
     }
 
     /// Records one bounded music observation independently of BLE frame arrival.
@@ -3694,86 +3556,31 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
     }
 
     private func handlePhoneLocationUpdate(_ update: PhoneLocationUpdate) {
-        guard let rideMapState,
-              let receiptWallClockUnixMs = unixMilliseconds(for: update.receiptWallClock)
-        else { return }
-
-        let recordingToken = rideMapState
-            .currentSnapshot(atMs: update.receiptMonotonic.rawValue)?
-            .recordingToken
-        let errorContext = MobileRideMapErrorContext(recordingToken: recordingToken)
-
-        let queue = rideMapQueue
-        let reference = WeakCutoutSessionCoreReference(self)
-        queue.async {
-            guard let self = reference.value else { return }
-            do {
-                let decisions = try rideMapState.ingestLocationBatch(
-                    recordingToken: recordingToken,
-                    receiptMonotonicMs: update.receiptMonotonic.rawValue,
-                    receiptWallClockUnixMs: receiptWallClockUnixMs,
-                    samples: update.samples
-                )
-                self.publishRideMapDecisions(decisions)
-            } catch let error as MobileRideMapError {
-                self.publishRideMapError(error, context: errorContext)
-                self.recordRideMapDiagnostic("ride_map_ingest_error=\(error)")
-            } catch {
-                self.recordRideMapDiagnostic("ride_map_ingest_error=\(error)")
-            }
-        }
-    }
-
-    private func onRideMapQueue<T>(_ operation: () throws -> T) rethrows -> T {
-        if DispatchQueue.getSpecific(key: rideMapQueueKey) != nil {
-            return try operation()
-        }
-        return try rideMapQueue.sync(execute: operation)
-    }
-
-    private func requireRideMapStateForCommand() throws -> MobileRideMapState {
-        guard let rideMapState else {
-            throw MobileRideMapError.storageError("Rust ride database is unavailable")
-        }
-        return rideMapState
+        rideMapRecorder.ingestLocation(update)
     }
 
     public func startRideMapGpsOnly(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
-        let snapshot = try onRideMapQueue {
-            try requireRideMapStateForCommand().startGpsOnly(atMs: atMs)
-        }
-        synchronizeRideMapLocationDemand()
-        return snapshot
+        try rideMapRecorder.startGpsOnly(atMs: atMs)
     }
 
     public func pauseRideMap(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
-        let snapshot = try onRideMapQueue { try requireRideMapStateForCommand().pause(atMs: atMs) }
-        synchronizeRideMapLocationDemand()
-        return snapshot
+        try rideMapRecorder.pause(atMs: atMs)
     }
 
     public func resumeRideMap(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
-        let snapshot = try onRideMapQueue { try requireRideMapStateForCommand().resume(atMs: atMs) }
-        synchronizeRideMapLocationDemand()
-        return snapshot
+        try rideMapRecorder.resume(atMs: atMs)
     }
 
     public func stopRideMap(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
-        let snapshot = try onRideMapQueue { try requireRideMapStateForCommand().stop(atMs: atMs) }
-        synchronizeRideMapLocationDemand()
-        return snapshot
+        try rideMapRecorder.stop(atMs: atMs)
     }
 
     public func saveRideMap() throws -> MobileRideMapSnapshotDto {
-        let snapshot = try onRideMapQueue { try requireRideMapStateForCommand().save() }
-        synchronizeRideMapLocationDemand()
-        return snapshot
+        try rideMapRecorder.save()
     }
 
     public func discardRideMap() throws -> MobileRideMapSnapshotDto {
-        let snapshot = try onRideMapQueue { try requireRideMapStateForCommand().discard() }
-        synchronizeRideMapLocationDemand()
-        return snapshot
+        try rideMapRecorder.discard()
     }
 
     /// Clears the Rust-owned location context before starting a new capture.
@@ -3782,7 +3589,7 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
     }
 }
 
-private func unixMilliseconds(for date: Date) -> UInt64? {
+func unixMilliseconds(for date: Date) -> UInt64? {
     let milliseconds = date.timeIntervalSince1970 * 1_000
     guard milliseconds.isFinite, milliseconds >= 0, milliseconds < Double(UInt64.max) else { return nil }
     return UInt64(milliseconds.rounded(.down))
