@@ -425,7 +425,7 @@ public final class CameraLocalNetworkAdapter {
                 }
                 if !Task.isCancelled {
                     let terminated = await MainActor.run {
-                        self?.terminatePreviewAfterTaskEnd(
+                        self?.terminatePreviewAfterTask(
                             token: token,
                             session: session,
                             fileSink: fileSink
@@ -442,7 +442,7 @@ public final class CameraLocalNetworkAdapter {
             } catch {
                 if !Task.isCancelled {
                     let terminated = await MainActor.run {
-                        self?.terminatePreviewAfterTaskFailure(
+                        self?.terminatePreviewAfterTask(
                             token: token,
                             session: session,
                             fileSink: fileSink
@@ -482,22 +482,7 @@ public final class CameraLocalNetworkAdapter {
         reducePreviewEvent(.interrupted)
     }
 
-    private func terminatePreviewAfterTaskFailure(
-        token: MobileCameraSessionTokenDto,
-        session: MobileCameraPreviewSession,
-        fileSink: MobileCameraPreviewFileSink?
-    ) -> Bool {
-        guard isCurrentPreview(token: token) else { return false }
-        session.stop()
-        try? fileSink?.finish()
-        previewSession = nil
-        previewFileSink = nil
-        previewTask = nil
-        reducePreviewEvent(.interrupted)
-        return true
-    }
-
-    private func terminatePreviewAfterTaskEnd(
+    private func terminatePreviewAfterTask(
         token: MobileCameraSessionTokenDto,
         session: MobileCameraPreviewSession,
         fileSink: MobileCameraPreviewFileSink?
