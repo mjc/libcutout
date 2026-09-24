@@ -155,7 +155,10 @@ final class CutoutAppModel {
     let capture: CaptureFeatureModel
     var isRecordOnlyCapture: Bool { capture.isManualCapture }
     private(set) var hasSavedDevice = false
-    private(set) var deviceControlsSnapshot: DeviceControlsSnapshot?
+    private(set) var settings: DeviceSettings?
+    private(set) var phoneAlarmSettings: MobilePhoneAlarmPreferencesDto?
+    private(set) var phoneAlarmAuthorization = PhoneRideAlarmAuthorization.unavailable
+    private(set) var phoneAlarmDeliveryError: String?
     private(set) var cameraMediaReferences: [CameraMediaReference] = []
     private static let maximumCameraMediaReferences = 64
 
