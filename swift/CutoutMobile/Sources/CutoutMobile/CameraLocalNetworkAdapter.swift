@@ -839,8 +839,8 @@ public final class CameraLocalNetworkAdapter {
         guard !commandInFlight else {
             throw CameraCommandRequestError.inFlight
         }
-        let requestToken = sessionState.cameraSessionToken()
         let url = try requestURL(origin: request.origin, target: request.target)
+        let requestToken = sessionState.cameraSessionToken()
         commandInFlight = true
         defer { commandInFlight = false }
 
@@ -862,10 +862,9 @@ public final class CameraLocalNetworkAdapter {
         }
 
         do {
-            return try mobileParseNovatekCommandOutcome(
-                response: response,
-                expectedCommandId: request.expectedCommandId
-            ).cameraOutcome
+            return try sessionState.completeNovatekCommand(request: request, response: response).cameraOutcome
+        } catch MobileNovatekCommandCompletionError.StaleSession {
+            throw CameraCommandRequestError.pathUnavailable
         } catch {
             return .unknown
         }

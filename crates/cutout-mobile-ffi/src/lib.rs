@@ -783,6 +783,15 @@ pub enum MobileNovatekCommandDto {
     StillCapture,
 }
 
+impl MobileNovatekCommandDto {
+    const fn expected_response_command_id(self) -> u16 {
+        match self {
+            Self::StartRecording | Self::StopRecording => 2001,
+            Self::StillCapture => 1001,
+        }
+    }
+}
+
 /// A camera command target authorized against one retained camera origin.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileNovatekCommandRequestDto {
@@ -790,8 +799,10 @@ pub struct MobileNovatekCommandRequestDto {
     pub origin: MobileNovatekHttpOriginDto,
     /// Origin-relative command target.
     pub target: String,
-    /// Response command identifier required by Rust's parser.
-    pub expected_command_id: u16,
+    /// Semantic command authorized by the retained profile.
+    pub command: MobileNovatekCommandDto,
+    /// Retained-session generation that authorized this request.
+    pub session_generation: u64,
 }
 
 /// Failure while authorizing a Novatek mutation against retained evidence.
@@ -803,6 +814,14 @@ pub enum MobileNovatekCommandAuthorizationError {
     /// The requested origin differs from the origin that supplied retained evidence.
     #[error("Novatek command origin differs from retained evidence")]
     OriginMismatch,
+}
+
+/// Failure while completing a command after its retained session changed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
+pub enum MobileNovatekCommandCompletionError {
+    /// The command was authorized by a session that has since been replaced or cleared.
+    #[error("Novatek command belongs to a stale camera session")]
+    StaleSession,
 }
 
 /// Outcome reported by a bounded Novatek command response.
@@ -1880,7 +1899,17 @@ struct RetainedNovatekSession {
 
 #[derive(Debug, Default)]
 struct NovatekCameraSessionState {
+    generation: NovatekSessionGeneration,
     retained: Option<RetainedNovatekSession>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct NovatekSessionGeneration(u64);
+
+impl NovatekSessionGeneration {
+    fn advance(&mut self) {
+        self.0 = self.0.wrapping_add(1);
+    }
 }
 
 impl NovatekCameraSessionState {
@@ -1889,6 +1918,7 @@ impl NovatekCameraSessionState {
         profile: NovatekR3V1Session,
         read_only_snapshot: MobileNovatekReadOnlySnapshotDto,
     ) {
+        self.generation.advance();
         self.retained = Some(RetainedNovatekSession {
             profile,
             read_only_snapshot,
@@ -1896,6 +1926,7 @@ impl NovatekCameraSessionState {
     }
 
     fn clear(&mut self) {
+        self.generation.advance();
         self.retained = None;
     }
 
@@ -1919,33 +1950,44 @@ impl NovatekCameraSessionState {
             return Err(MobileNovatekCommandAuthorizationError::OriginMismatch);
         }
 
-        let (target, expected_command_id) = match command {
-            MobileNovatekCommandDto::StartRecording => (
-                profile
-                    .recording_command_target(NovatekRecordingCommand::Start)
-                    .map(|target| target.as_str().to_owned()),
-                2001,
-            ),
-            MobileNovatekCommandDto::StopRecording => (
-                profile
-                    .recording_command_target(NovatekRecordingCommand::Stop)
-                    .map(|target| target.as_str().to_owned()),
-                2001,
-            ),
-            MobileNovatekCommandDto::StillCapture => (
-                profile
-                    .still_capture_command_target(NovatekStillCaptureCommand)
-                    .map(|target| target.as_str().to_owned()),
-                1001,
-            ),
+        let target = match command {
+            MobileNovatekCommandDto::StartRecording => profile
+                .recording_command_target(NovatekRecordingCommand::Start)
+                .map(|target| target.as_str().to_owned()),
+            MobileNovatekCommandDto::StopRecording => profile
+                .recording_command_target(NovatekRecordingCommand::Stop)
+                .map(|target| target.as_str().to_owned()),
+            MobileNovatekCommandDto::StillCapture => profile
+                .still_capture_command_target(NovatekStillCaptureCommand)
+                .map(|target| target.as_str().to_owned()),
         };
         let target = target.map_err(|_| MobileNovatekCommandAuthorizationError::Unsupported)?;
 
         Ok(MobileNovatekCommandRequestDto {
             origin,
             target,
-            expected_command_id,
+            command,
+            session_generation: self.generation.0,
         })
+    }
+
+    fn complete_command(
+        &self,
+        request: &MobileNovatekCommandRequestDto,
+        response: Vec<u8>,
+    ) -> Result<MobileNovatekCommandOutcomeDto, MobileNovatekCommandCompletionError> {
+        let Ok(current_request) = self.authorize_command(&request.origin, request.command) else {
+            return Err(MobileNovatekCommandCompletionError::StaleSession);
+        };
+        if current_request != *request {
+            return Err(MobileNovatekCommandCompletionError::StaleSession);
+        }
+
+        Ok(mobile_parse_novatek_command_outcome(
+            response,
+            request.command.expected_response_command_id(),
+        )
+        .unwrap_or(MobileNovatekCommandOutcomeDto::Unknown))
     }
 
     fn media_is_current(&self, path: &str, size_bytes: u64) -> bool {
@@ -2597,6 +2639,27 @@ impl CutoutSessionStateHandle {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .authorize_command(&requested_origin, command)
+    }
+
+    /// Completes a command only if its authorizing Novatek session is current.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MobileNovatekCommandCompletionError::StaleSession`] when the
+    /// retained session changed before the response arrived.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "UniFFI exports owned boundary values"
+    )]
+    pub fn complete_novatek_command(
+        &self,
+        request: MobileNovatekCommandRequestDto,
+        response: Vec<u8>,
+    ) -> Result<MobileNovatekCommandOutcomeDto, MobileNovatekCommandCompletionError> {
+        self.novatek_session
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .complete_command(&request, response)
     }
 
     /// Captures an identity for asynchronous camera work.
@@ -14823,15 +14886,16 @@ mod tests {
                     port: 80,
                 },
                 target: "/?custom=1&cmd=2001&str=1".to_owned(),
-                expected_command_id: 2001,
+                command: MobileNovatekCommandDto::StartRecording,
+                session_generation: 1,
             }
         );
         let stop = request(MobileNovatekCommandDto::StopRecording);
         assert_eq!(stop.target, "/?custom=1&cmd=2001&str=0");
-        assert_eq!(stop.expected_command_id, 2001);
+        assert_eq!(stop.command, MobileNovatekCommandDto::StopRecording);
         let still = request(MobileNovatekCommandDto::StillCapture);
         assert_eq!(still.target, "/?custom=1&cmd=1001");
-        assert_eq!(still.expected_command_id, 1001);
+        assert_eq!(still.command, MobileNovatekCommandDto::StillCapture);
         assert_eq!(
             handle.authorize_novatek_command(
                 MobileNovatekHttpOriginDto {
@@ -14853,6 +14917,54 @@ mod tests {
                 MobileNovatekCommandDto::StillCapture,
             ),
             Err(MobileNovatekCommandAuthorizationError::Unsupported)
+        );
+    }
+
+    #[test]
+    fn camera_session_state_handle_rejects_command_response_from_replaced_session() {
+        let handle = CutoutSessionStateHandle::new();
+        configure_test_novatek_session(&handle, &[(1001, 0)]);
+        let request = handle
+            .authorize_novatek_command(
+                MobileNovatekHttpOriginDto {
+                    address: "192.168.1.254".to_owned(),
+                    port: 80,
+                },
+                MobileNovatekCommandDto::StillCapture,
+            )
+            .expect("still capture is advertised");
+
+        configure_test_novatek_session(&handle, &[(1001, 0)]);
+
+        assert_eq!(
+            handle.complete_novatek_command(
+                request,
+                br"<Function><Cmd>1001</Cmd><Status>0</Status></Function>".to_vec(),
+            ),
+            Err(MobileNovatekCommandCompletionError::StaleSession)
+        );
+    }
+
+    #[test]
+    fn camera_session_state_handle_parses_response_for_authorized_command() {
+        let handle = CutoutSessionStateHandle::new();
+        configure_test_novatek_session(&handle, &[(1001, 0)]);
+        let request = handle
+            .authorize_novatek_command(
+                MobileNovatekHttpOriginDto {
+                    address: "192.168.1.254".to_owned(),
+                    port: 80,
+                },
+                MobileNovatekCommandDto::StillCapture,
+            )
+            .expect("still capture is advertised");
+
+        assert_eq!(
+            handle.complete_novatek_command(
+                request,
+                br"<Function><Cmd>1001</Cmd><Status>7</Status></Function>".to_vec(),
+            ),
+            Ok(MobileNovatekCommandOutcomeDto::Refused)
         );
     }
 

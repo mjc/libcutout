@@ -905,6 +905,57 @@ final class CameraLocalNetworkAdapterTests: XCTestCase {
     }
 
     @MainActor
+    func testCameraCommandCannotPublishResponseAfterReadOnlySessionReplacement() async {
+        let adapter = CameraLocalNetworkAdapter()
+        adapter.apply(
+            readOnlyEvidence: cameraEvidence(advertisedCommandIDs: [1001, 2001]),
+            origin: testCameraOrigin
+        )
+
+        do {
+            _ = try await adapter.requestStillCapture(
+                address: "192.168.1.254",
+                port: 80
+            ) { _ in
+                await adapter.apply(
+                    readOnlyEvidence: cameraEvidence(advertisedCommandIDs: [1001, 2001]),
+                    origin: testCameraOrigin
+                )
+                return Data("<Function><Cmd>1001</Cmd><Status>0</Status></Function>".utf8)
+            }
+            XCTFail("a response authorized by a replaced read-only session must not be published")
+        } catch let error as CameraCommandRequestError {
+            XCTAssertEqual(error, .pathUnavailable)
+        } catch {
+            XCTFail("unexpected error: \(error)")
+        }
+    }
+
+    @MainActor
+    func testCameraCommandCannotPublishResponseAfterPreviewStops() async {
+        let adapter = CameraLocalNetworkAdapter()
+        adapter.apply(
+            readOnlyEvidence: cameraEvidence(advertisedCommandIDs: [1001, 2001]),
+            origin: testCameraOrigin
+        )
+
+        do {
+            _ = try await adapter.requestStillCapture(
+                address: "192.168.1.254",
+                port: 80
+            ) { _ in
+                await adapter.stopPreview()
+                return Data("<Function><Cmd>1001</Cmd><Status>0</Status></Function>".utf8)
+            }
+            XCTFail("a command response fetched after preview stops must not be published")
+        } catch let error as CameraCommandRequestError {
+            XCTAssertEqual(error, .pathUnavailable)
+        } catch {
+            XCTFail("unexpected error: \(error)")
+        }
+    }
+
+    @MainActor
     func testCameraCommandRejectsASecondRequestWhileTheFirstIsInFlight() async throws {
         let adapter = CameraLocalNetworkAdapter()
         let gate = CameraCommandGate()

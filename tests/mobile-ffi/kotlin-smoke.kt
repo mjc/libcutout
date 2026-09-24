@@ -172,11 +172,16 @@ fun main() {
             ).target ==
                 "/?custom=1&cmd=2001&str=0",
         )
+        val stillRequest = session.authorizeNovatekCommand(
+            cameraOrigin,
+            MobileNovatekCommandDto.STILL_CAPTURE,
+        )
+        check(stillRequest.target == "/?custom=1&cmd=1001")
         check(
-            session.authorizeNovatekCommand(
-                cameraOrigin,
-                MobileNovatekCommandDto.STILL_CAPTURE,
-            ).target == "/?custom=1&cmd=1001",
+            session.completeNovatekCommand(
+                stillRequest,
+                "<Function><Cmd>1001</Cmd><Status>0</Status></Function>".encodeToByteArray(),
+            ) == MobileNovatekCommandOutcomeDto.ACKNOWLEDGED,
         )
         session.invalidateCameraLifecycle()
         check(session.novatekSessionOrigin() == null)
