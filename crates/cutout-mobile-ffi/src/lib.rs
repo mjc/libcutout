@@ -319,6 +319,8 @@ pub struct MobileCameraVideoConfigurationDto {
     pub height: u32,
     /// Codec-specific decoder configuration, such as H.264 `avcC` bytes.
     pub extra_data: Vec<u8>,
+    /// SPS/PPS NAL units extracted from the codec configuration.
+    pub parameter_sets: Vec<Vec<u8>>,
 }
 
 /// Failure returned by the mobile RTSP preview object.
@@ -537,6 +539,8 @@ impl From<&RetinaVideoConfiguration> for MobileCameraVideoConfigurationDto {
             width: dimensions.width(),
             height: dimensions.height(),
             extra_data: configuration.extra_data().to_owned(),
+            parameter_sets: cutout_protocols::parse_avcc_parameter_sets(configuration.extra_data())
+                .unwrap_or_default(),
         }
     }
 }

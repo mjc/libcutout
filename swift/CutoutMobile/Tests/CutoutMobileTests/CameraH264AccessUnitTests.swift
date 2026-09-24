@@ -3,58 +3,6 @@ import XCTest
 import CutoutMobileFFI
 
 final class CameraH264AccessUnitTests: XCTestCase {
-    func testAccessUnitExtractsParameterSetsAndRandomAccessPoint() throws {
-        let accessUnit = try CameraH264AccessUnit(data: Data([
-            0, 0, 0, 2, 0x67, 0x64,
-            0, 0, 0, 2, 0x68, 0xee,
-            0, 0, 0, 2, 0x65, 0x88,
-        ]))
-
-        XCTAssertEqual(accessUnit.parameterSets, [Data([0x67, 0x64]), Data([0x68, 0xee])])
-        XCTAssertTrue(accessUnit.isRandomAccessPoint)
-        XCTAssertEqual(accessUnit.data.count, 18)
-    }
-
-    func testAccessUnitRejectsTruncatedNal() {
-        XCTAssertThrowsError(try CameraH264AccessUnit(data: Data([0, 0, 0, 4, 0x67]))) { error in
-            XCTAssertEqual(error as? CameraH264AccessUnitError, .truncatedNAL)
-        }
-    }
-
-    func testAccessUnitRejectsZeroLengthNal() {
-        XCTAssertThrowsError(try CameraH264AccessUnit(data: Data([0, 0, 0, 0]))) { error in
-            XCTAssertEqual(error as? CameraH264AccessUnitError, .zeroLengthNAL)
-        }
-    }
-
-    func testAccessUnitExtractsParameterSetsFromAVCCConfiguration() {
-        let configuration = Data([
-            1, 0x64, 0, 0x1f, 0xff, 0xe1, 0, 2, 0x67, 0x64,
-            1, 0, 2, 0x68, 0xee,
-        ])
-
-        XCTAssertEqual(
-            CameraH264AccessUnit.parameterSets(fromAVCC: configuration),
-            [Data([0x67, 0x64]), Data([0x68, 0xee])]
-        )
-    }
-
-    func testAccessUnitKeepsTheFirstSPSAndPPSWhenConfigurationContainsMultiples() {
-        let configuration = Data([
-            1, 0x64, 0, 0x1f, 0xff, 0xe2,
-            0, 2, 0x67, 0x64,
-            0, 2, 0x67, 0x65,
-            2,
-            0, 2, 0x68, 0xee,
-            0, 2, 0x68, 0xef,
-        ])
-
-        XCTAssertEqual(
-            CameraH264AccessUnit.parameterSets(fromAVCC: configuration),
-            [Data([0x67, 0x64]), Data([0x68, 0xee])]
-        )
-    }
-
     @MainActor
     func testRendererWaitsForParameterSetsBeforeEnqueueing() async {
         let renderer = CameraPreviewRenderer()

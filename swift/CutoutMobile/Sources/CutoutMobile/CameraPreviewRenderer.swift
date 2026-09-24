@@ -37,12 +37,10 @@ public final class CameraPreviewRenderer {
     /// Installs the bounded H.264 decoder configuration advertised by RTSP
     /// SDP before the first access unit arrives.
     public func configure(_ configuration: MobileCameraVideoConfigurationDto) throws {
-        guard !configuration.extraData.isEmpty,
-              let parameterSets = CameraH264AccessUnit.parameterSets(fromAVCC: configuration.extraData)
-        else {
+        guard configuration.parameterSets.count == 2 else {
             throw CameraPreviewRendererError.missingParameterSets
         }
-        formatDescription = try makeFormatDescription(parameterSets: parameterSets)
+        formatDescription = try makeFormatDescription(parameterSets: configuration.parameterSets)
     }
 
     /// Enqueues one AVCC H.264 frame for native platform decoding.
