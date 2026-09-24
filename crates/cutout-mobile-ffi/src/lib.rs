@@ -945,6 +945,20 @@ impl From<NovatekSessionError> for MobileNovatekSessionError {
     }
 }
 
+fn build_novatek_session(
+    origin: &MobileNovatekHttpOriginDto,
+    firmware_version: &str,
+    configuration: impl IntoIterator<Item = (u16, u16)>,
+) -> Result<NovatekR3V1Session, MobileNovatekSessionError> {
+    let address = origin
+        .address
+        .parse::<Ipv4Addr>()
+        .map_err(|_| MobileNovatekSessionError::InvalidOrigin)?;
+    let origin = NovatekHttpOrigin::new(address, origin.port)
+        .map_err(|_| MobileNovatekSessionError::InvalidOrigin)?;
+    NovatekR3V1Session::new(origin, firmware_version, configuration).map_err(Into::into)
+}
+
 /// Rust-owned validated R3V1 Novatek session evidence.
 #[derive(Debug, uniffi::Object)]
 pub struct MobileNovatekSession {
@@ -969,14 +983,8 @@ impl MobileNovatekSession {
         firmware_version: String,
         configuration: Vec<MobileNovatekCommandStatusDto>,
     ) -> Result<Arc<Self>, MobileNovatekSessionError> {
-        let address = origin
-            .address
-            .parse::<Ipv4Addr>()
-            .map_err(|_| MobileNovatekSessionError::InvalidOrigin)?;
-        let origin = NovatekHttpOrigin::new(address, origin.port)
-            .map_err(|_| MobileNovatekSessionError::InvalidOrigin)?;
-        let inner = NovatekR3V1Session::new(
-            origin,
+        let inner = build_novatek_session(
+            &origin,
             &firmware_version,
             configuration
                 .into_iter()
@@ -1934,6 +1942,7 @@ impl From<DeviceConnectionIntentDto> for CoreDeviceConnectionIntent {
 pub struct CutoutSessionStateHandle {
     inner: Mutex<MobileSessionState>,
     phone_alarm: Mutex<MobilePhoneAlarmState>,
+    novatek_session: Mutex<Option<NovatekR3V1Session>>,
 }
 
 type MobileSessionState = cutout_protocols::DeviceConnectionSession;
@@ -2388,6 +2397,7 @@ impl CutoutSessionStateHandle {
         Arc::new(Self {
             inner: Mutex::new(MobileSessionState::default()),
             phone_alarm: Mutex::new(MobilePhoneAlarmState::default()),
+            novatek_session: Mutex::new(None),
         })
     }
 
@@ -2405,6 +2415,7 @@ impl CutoutSessionStateHandle {
                 database: Some(database.inner.clone()),
                 ..MobilePhoneAlarmState::default()
             }),
+            novatek_session: Mutex::new(None),
         })
     }
 
@@ -2455,6 +2466,95 @@ impl CutoutSessionStateHandle {
         self.lock_inner().session_state().camera().to_owned().into()
     }
 
+    /// Replaces the Rust-owned validated R3V1 session evidence.
+    ///
+    /// The caller must invalidate the previous camera lifecycle before
+    /// configuring a new origin; this method only stages the validated proof.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the origin, firmware gate, or command capability
+    /// evidence does not establish a valid R3V1 session.
+    pub fn configure_novatek_session(
+        &self,
+        origin: MobileNovatekHttpOriginDto,
+        firmware_version: String,
+        configuration: Vec<MobileNovatekCommandStatusDto>,
+    ) -> Result<(), MobileNovatekSessionError> {
+        let session = build_novatek_session(
+            &origin,
+            &firmware_version,
+            configuration
+                .into_iter()
+                .map(|status| (status.command_id, status.status)),
+        )?;
+        *self
+            .novatek_session
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(session);
+        Ok(())
+    }
+
+    /// Drops the retained Novatek proof and its command capabilities.
+    pub fn clear_novatek_session(&self) {
+        *self
+            .novatek_session
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = None;
+    }
+
+    /// Returns the retained validated Novatek origin, when configured.
+    #[must_use]
+    pub fn novatek_session_origin(&self) -> Option<MobileNovatekHttpOriginDto> {
+        self.novatek_session
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .map(|session| MobileNovatekHttpOriginDto {
+                address: session.origin().address().to_string(),
+                port: session.origin().port(),
+            })
+    }
+
+    /// Builds a recording target from the retained Novatek proof.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no validated Novatek session is retained or when
+    /// the requested command is not advertised by that session.
+    pub fn novatek_recording_command_target(
+        &self,
+        command: MobileNovatekRecordingCommandDto,
+    ) -> Result<String, MobileNovatekProfileError> {
+        self.novatek_session
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .ok_or(MobileNovatekProfileError::CapabilityNotAdvertised)?
+            .recording_command_target(command.into())
+            .map(str::to_owned)
+            .map_err(Into::into)
+    }
+
+    /// Builds a still-capture target from the retained Novatek proof.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no validated Novatek session is retained or when
+    /// still capture is not advertised by that session.
+    pub fn novatek_still_capture_command_target(
+        &self,
+    ) -> Result<String, MobileNovatekProfileError> {
+        self.novatek_session
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .ok_or(MobileNovatekProfileError::CapabilityNotAdvertised)?
+            .still_capture_command_target(NovatekStillCaptureCommand)
+            .map(str::to_owned)
+            .map_err(Into::into)
+    }
+
     /// Captures an identity for asynchronous camera work.
     #[must_use]
     pub fn camera_session_token(&self) -> MobileCameraSessionTokenDto {
@@ -2484,6 +2584,7 @@ impl CutoutSessionStateHandle {
             .session_state_mut()
             .camera_mut()
             .invalidate();
+        self.clear_novatek_session();
     }
 
     /// Records a foreground preview observation without changing recording truth.
@@ -18661,6 +18762,58 @@ mod tests {
                 .still_capture_command_target()
                 .expect("still capability is retained"),
             "/?custom=1&cmd=1001"
+        );
+    }
+
+    #[test]
+    fn camera_session_state_handle_owns_novatek_proof_until_lifecycle_invalidation() {
+        let handle = CutoutSessionStateHandle::new();
+        handle
+            .configure_novatek_session(
+                MobileNovatekHttpOriginDto {
+                    address: "192.168.1.254".to_owned(),
+                    port: 80,
+                },
+                "R3V1.1_20240411".to_owned(),
+                vec![
+                    MobileNovatekCommandStatusDto {
+                        command_id: 2001,
+                        status: 0,
+                    },
+                    MobileNovatekCommandStatusDto {
+                        command_id: 1001,
+                        status: 0,
+                    },
+                ],
+            )
+            .expect("validated R3V1 evidence establishes the session");
+
+        assert_eq!(
+            handle.novatek_session_origin(),
+            Some(MobileNovatekHttpOriginDto {
+                address: "192.168.1.254".to_owned(),
+                port: 80,
+            })
+        );
+        assert_eq!(
+            handle
+                .novatek_recording_command_target(MobileNovatekRecordingCommandDto::Start)
+                .expect("recording capability is retained"),
+            "/?custom=1&cmd=2001&str=1"
+        );
+        assert_eq!(
+            handle
+                .novatek_still_capture_command_target()
+                .expect("still capability is retained"),
+            "/?custom=1&cmd=1001"
+        );
+
+        handle.invalidate_camera_lifecycle();
+
+        assert_eq!(handle.novatek_session_origin(), None);
+        assert_eq!(
+            handle.novatek_still_capture_command_target(),
+            Err(MobileNovatekProfileError::CapabilityNotAdvertised)
         );
     }
 
