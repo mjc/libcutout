@@ -1,6 +1,7 @@
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+use crate::CaptureWriteOutcome;
 use cutout_core::{
     MonotonicTimestamp, PevcapCapture, PevcapEncoding, PevcapHeader, PevcapLocationSample,
     PevcapPhoneLocation, PevcapRecord, WallClockUnixTimestamp,
@@ -2314,7 +2315,10 @@ fn finished_recording_is_retained_without_deriving_a_ride() {
         },
     )
     .unwrap();
-    assert!(writer.try_send_record(pevcap_location_record(1, 40.0, Some(3.0))));
+    assert_eq!(
+        writer.try_send_record(pevcap_location_record(1, 40.0, Some(3.0))),
+        CaptureWriteOutcome::Accepted
+    );
     let artifact = writer.finish().unwrap();
     let bytes = std::fs::read(&source).unwrap();
     let database = RideDatabase::open(&path).unwrap();
@@ -2381,6 +2385,56 @@ fn finished_recording_is_retained_without_deriving_a_ride() {
 }
 
 #[test]
+fn finished_capture_receipt_rejects_replacement_bytes_before_first_publication() {
+    let _guard = test_guard();
+    let directory = tempfile::tempdir().unwrap();
+    let database_path = directory.path().join("ride.sqlite");
+    let source = directory.path().join("recording.jsonl");
+    let writer = crate::CaptureWriter::start(
+        source.clone(),
+        WallClockUnixTimestamp::new(1234),
+        "wheel-a",
+        None,
+        &crate::CaptureMetadata {
+            advertised_services: vec![],
+            gatt_fingerprints: vec![],
+            resolved_identity: None,
+            annotations: vec![],
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        writer.try_send_record(PevcapRecord::link_up(MonotonicTimestamp::new(1), None)),
+        CaptureWriteOutcome::Accepted
+    );
+    let artifact = writer.finish().unwrap();
+    let replacement = PevcapCapture::new(
+        pevcap_header(),
+        vec![PevcapRecord::link_up(MonotonicTimestamp::new(2), None)],
+    );
+    std::fs::write(&source, replacement.to_jsonl().unwrap()).unwrap();
+
+    let database = RideDatabase::open(&database_path).unwrap();
+    assert!(matches!(
+        database.retain_finished_capture(
+            &artifact,
+            cutout_core::CaptureOrigin::Manual,
+            Some("GW-Falcon"),
+            WallClockUnixTimestamp::new(9999),
+        ),
+        Err(StorageError::PevcapPreviewChanged)
+    ));
+    assert!(
+        database
+            .list_pevcap_captures(None, QueryLimit::new(10).unwrap())
+            .unwrap()
+            .captures
+            .is_empty()
+    );
+    database.shutdown().unwrap();
+}
+
+#[test]
 fn capture_writer_stops_before_its_recording_exceeds_the_retention_duration() {
     let _guard = test_guard();
     let directory = tempfile::tempdir().unwrap();
@@ -2399,16 +2453,34 @@ fn capture_writer_stops_before_its_recording_exceeds_the_retention_duration() {
         },
     )
     .unwrap();
-    assert!(writer.try_send_record(PevcapRecord::link_up(MonotonicTimestamp::new(0), None)));
-    assert!(
+    assert_eq!(
+        writer.try_send_record(PevcapRecord::link_up(MonotonicTimestamp::new(0), None)),
+        CaptureWriteOutcome::Accepted
+    );
+    assert_eq!(
         writer.try_send_record(PevcapRecord::link_down(MonotonicTimestamp::new(
             24 * 60 * 60 * 1_000 + 1,
-        )))
+        ))),
+        CaptureWriteOutcome::Accepted
+    );
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !writer.monitor().status().limit_reached && Instant::now() < deadline {
+        std::thread::yield_now();
+    }
+    assert!(
+        writer.monitor().status().limit_reached,
+        "writer reaches duration limit"
+    );
+    assert_eq!(
+        writer.try_send_record(PevcapRecord::link_down(MonotonicTimestamp::new(
+            24 * 60 * 60 * 1_000 + 2,
+        ))),
+        CaptureWriteOutcome::LimitReached
     );
 
     let artifact = writer.finish().unwrap();
     assert!(!artifact.status().failed);
-    assert_eq!(artifact.status().dropped_messages, 1);
+    assert_eq!(artifact.status().dropped_messages, 2);
     assert!(artifact.status().last_error.is_some());
 
     let database = RideDatabase::open(&database_path).unwrap();
@@ -2438,11 +2510,12 @@ fn capture_writer_counts_record_attached_locations_in_retention_duration() {
     )
     .unwrap();
     let attached_location = pevcap_phone_location(0, 40.0, Some(3.0));
-    assert!(
+    assert_eq!(
         writer.try_send_record(
             PevcapRecord::link_up(MonotonicTimestamp::new(0), None)
                 .with_phone_location(attached_location)
-        )
+        ),
+        CaptureWriteOutcome::Accepted
     );
     let location = |monotonic_ms| {
         PevcapLocationSample::new(
@@ -2453,11 +2526,29 @@ fn capture_writer_counts_record_attached_locations_in_retention_duration() {
         )
         .unwrap()
     };
-    assert!(writer.record_location(location(10_000)));
-    assert!(writer.record_location(location(24 * 60 * 60 * 1_000 + 5_000)));
+    assert_eq!(
+        writer.record_location(location(10_000)),
+        CaptureWriteOutcome::Accepted
+    );
+    assert_eq!(
+        writer.record_location(location(24 * 60 * 60 * 1_000 + 5_000)),
+        CaptureWriteOutcome::Accepted
+    );
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !writer.monitor().status().limit_reached && Instant::now() < deadline {
+        std::thread::yield_now();
+    }
+    assert!(
+        writer.monitor().status().limit_reached,
+        "writer reaches duration limit"
+    );
+    assert_eq!(
+        writer.record_location(location(24 * 60 * 60 * 1_000 + 6_000)),
+        CaptureWriteOutcome::LimitReached
+    );
 
     let artifact = writer.finish().unwrap();
-    assert_eq!(artifact.status().dropped_messages, 1);
+    assert_eq!(artifact.status().dropped_messages, 2);
 
     let database = RideDatabase::open(&directory.path().join("ride.sqlite")).unwrap();
     assert!(

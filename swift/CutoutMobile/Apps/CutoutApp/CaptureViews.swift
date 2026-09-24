@@ -8,7 +8,7 @@ func captureSessionDetailRows(progress: CaptureProgress) -> [PevDashboardKeyValu
     case .failed:
         localizedAppText("capture.detail.writer.failed")
     }
-    return [
+    var rows = [
         PevDashboardKeyValueRow(
             id: "capture-elapsed",
             label: localizedAppText("capture.detail.elapsed"),
@@ -35,6 +35,14 @@ func captureSessionDetailRows(progress: CaptureProgress) -> [PevDashboardKeyValu
             metricValue: progress.writerHealth.metricValue(display: writerHealth)
         ),
     ]
+    if let reason = progress.writerLimitReason {
+        rows.append(PevDashboardKeyValueRow(
+            id: "capture-limit",
+            label: localizedAppText("capture.detail.limit"),
+            metricValue: .available(display: reason, accessibility: reason)
+        ))
+    }
+    return rows
 }
 
 struct CaptureRecordingScreen: View {

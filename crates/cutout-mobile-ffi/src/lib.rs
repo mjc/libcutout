@@ -35,7 +35,8 @@ use std::{
 };
 
 use persistence::{
-    CaptureMetadata, CaptureWriter, CaptureWriterMonitor, CaptureWriterStatus, SavedCaptureArtifact,
+    CaptureMetadata, CaptureWriteOutcome, CaptureWriter, CaptureWriterMonitor, CaptureWriterStatus,
+    SavedCaptureArtifact,
 };
 
 use cutout_core::{
@@ -10558,7 +10559,7 @@ pub struct MobileCaptureWriterStatusDto {
     pub queued_messages: u64,
     /// Highest number of accepted messages waiting to be written.
     pub peak_queued_messages: u64,
-    /// Messages rejected because the queue was full or closed.
+    /// Messages rejected because the queue was full, closed, or past a retention limit.
     pub dropped_messages: u64,
     /// Bytes written to the capture file.
     pub bytes_written: u64,
@@ -10566,8 +10567,33 @@ pub struct MobileCaptureWriterStatusDto {
     pub physical_bytes_written: u64,
     /// Whether the writer has encountered an unrecoverable error.
     pub failed: bool,
-    /// Last writer error, if one exists.
+    /// Whether capture stopped normally because a configured retention limit was reached.
+    pub limit_reached: bool,
+    /// Last writer error or retention-limit reason, if one exists.
     pub last_error: Option<String>,
+}
+
+/// Result of submitting one event to the bounded capture writer.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileCaptureWriteOutcomeDto {
+    /// The event was accepted by the capture queue.
+    Accepted,
+    /// The event was rejected by capture metadata admission; the writer remains usable.
+    Rejected,
+    /// A retention limit ended the capture; its accepted prefix can be finalized.
+    LimitReached,
+    /// Queue admission or the writer failed.
+    Failed,
+}
+
+impl From<CaptureWriteOutcome> for MobileCaptureWriteOutcomeDto {
+    fn from(outcome: CaptureWriteOutcome) -> Self {
+        match outcome {
+            CaptureWriteOutcome::Accepted => Self::Accepted,
+            CaptureWriteOutcome::LimitReached => Self::LimitReached,
+            CaptureWriteOutcome::Failed => Self::Failed,
+        }
+    }
 }
 
 impl From<CaptureWriterStatus> for MobileCaptureWriterStatusDto {
@@ -10579,6 +10605,7 @@ impl From<CaptureWriterStatus> for MobileCaptureWriterStatusDto {
             bytes_written: status.bytes_written,
             physical_bytes_written: status.physical_bytes_written,
             failed: status.failed,
+            limit_reached: status.limit_reached,
             last_error: status.last_error,
         }
     }
@@ -10633,7 +10660,7 @@ enum CaptureWriterSlot {
     Ready,
     Recording(CaptureWriter),
     Finalizing,
-    Complete(Result<SavedCaptureArtifact, String>),
+    Complete(Result<Box<SavedCaptureArtifact>, String>),
 }
 
 impl CaptureWriterSlot {
@@ -10641,6 +10668,16 @@ impl CaptureWriterSlot {
         match self {
             Self::Recording(writer) => Some(writer),
             Self::Ready | Self::Finalizing | Self::Complete(_) => None,
+        }
+    }
+
+    fn stopped_write_outcome(&self) -> Option<MobileCaptureWriteOutcomeDto> {
+        match self {
+            Self::Complete(Ok(artifact)) if artifact.status().limit_reached => {
+                Some(MobileCaptureWriteOutcomeDto::LimitReached)
+            }
+            Self::Finalizing | Self::Complete(_) => Some(MobileCaptureWriteOutcomeDto::Failed),
+            Self::Ready | Self::Recording(_) => None,
         }
     }
 }
@@ -10681,6 +10718,11 @@ impl MobilePevcapCaptureBuilder {
             CaptureWriterSlot::Ready
             | CaptureWriterSlot::Finalizing
             | CaptureWriterSlot::Complete(_) => {
+                if let Some(outcome) = writer.stopped_write_outcome()
+                    && outcome == MobileCaptureWriteOutcomeDto::LimitReached
+                {
+                    return Err(MobileCaptureAnnotationError::CaptureLimitReached);
+                }
                 return Err(MobileCaptureAnnotationError::NotRecording);
             }
         }
@@ -10701,10 +10743,16 @@ impl MobilePevcapCaptureBuilder {
             return Ok(active);
         }
         metadata.annotations = candidate.entries().to_vec();
-        if let Some(writer) = writer.as_ref()
-            && !writer.update_metadata(metadata)
-        {
-            return Err(MobileCaptureAnnotationError::WriterFailed);
+        if let Some(writer) = writer.as_ref() {
+            match writer.update_metadata(metadata) {
+                CaptureWriteOutcome::Accepted => {}
+                CaptureWriteOutcome::LimitReached => {
+                    return Err(MobileCaptureAnnotationError::CaptureLimitReached);
+                }
+                CaptureWriteOutcome::Failed => {
+                    return Err(MobileCaptureAnnotationError::WriterFailed);
+                }
+            }
         }
         *annotations = candidate;
         Ok(active)
@@ -10762,7 +10810,7 @@ impl MobilePevcapCaptureBuilder {
 
     /// Adds an advertised service UUID observed by the mobile BLE stack.
     #[allow(clippy::needless_pass_by_value)]
-    pub fn add_advertised_service(&self, service: Vec<u8>) -> bool {
+    pub fn add_advertised_service(&self, service: Vec<u8>) -> MobileCaptureWriteOutcomeDto {
         let mut services = self
             .advertised_services
             .lock()
@@ -10775,7 +10823,10 @@ impl MobilePevcapCaptureBuilder {
     }
 
     /// Adds an observed GATT service/characteristic fingerprint.
-    pub fn add_gatt_fingerprint(&self, fingerprint: MobileGattFingerprintDto) -> bool {
+    pub fn add_gatt_fingerprint(
+        &self,
+        fingerprint: MobileGattFingerprintDto,
+    ) -> MobileCaptureWriteOutcomeDto {
         let mut fingerprints = self
             .gatt_fingerprints
             .lock()
@@ -10788,7 +10839,10 @@ impl MobilePevcapCaptureBuilder {
     }
 
     /// Sets the resolved model/firmware identity for the capture.
-    pub fn set_resolved_identity(&self, identity: MobileResolvedIdentityDto) -> bool {
+    pub fn set_resolved_identity(
+        &self,
+        identity: MobileResolvedIdentityDto,
+    ) -> MobileCaptureWriteOutcomeDto {
         *self
             .resolved_identity
             .lock()
@@ -10797,10 +10851,18 @@ impl MobilePevcapCaptureBuilder {
     }
 
     /// Adds a capture annotation, reserving space for every active label's closure.
-    /// Rejection leaves the prior metadata intact and returns `false`.
-    pub fn add_annotation(&self, annotation: String) -> bool {
-        self.update_annotations(false, |annotations| annotations.try_append([annotation]))
-            .is_ok()
+    /// Rejection leaves the prior metadata intact.
+    pub fn add_annotation(&self, annotation: String) -> MobileCaptureWriteOutcomeDto {
+        match self.update_annotations(false, |annotations| annotations.try_append([annotation])) {
+            Ok(_) => MobileCaptureWriteOutcomeDto::Accepted,
+            Err(MobileCaptureAnnotationError::CaptureLimitReached) => {
+                MobileCaptureWriteOutcomeDto::LimitReached
+            }
+            Err(MobileCaptureAnnotationError::CapacityReached) => {
+                MobileCaptureWriteOutcomeDto::Rejected
+            }
+            Err(_) => MobileCaptureWriteOutcomeDto::Failed,
+        }
     }
 
     /// Records the whole label transition and returns the admitted active labels.
@@ -10872,7 +10934,7 @@ impl MobilePevcapCaptureBuilder {
                 _ => unreachable!("recording state was checked while holding the lock"),
             }
         };
-        let result = writer.finish();
+        let result = writer.finish().map(Box::new);
         let succeeded = result.is_ok();
         *self.writer.lock().unwrap_or_else(PoisonError::into_inner) =
             CaptureWriterSlot::Complete(result);
@@ -10978,24 +11040,34 @@ impl MobilePevcapCaptureBuilder {
 
     /// Records an independent music observation immediately. Unlike the
     /// compatibility context API, this does not wait for a BLE frame.
-    pub fn record_music_event(&self, music: MobilePevcapMusicEventDto) -> bool {
+    pub fn record_music_event(
+        &self,
+        music: MobilePevcapMusicEventDto,
+    ) -> MobileCaptureWriteOutcomeDto {
+        if let Some(outcome) = self.stopped_write_outcome() {
+            return outcome;
+        }
         let policy = *self
             .music_history_policy
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
         let Some(music) = self.relative_music_event(music) else {
-            return false;
+            return MobileCaptureWriteOutcomeDto::Failed;
         };
         let event = match pevcap_music_event_for_policy(&music, policy) {
             Ok(Some(event)) => event,
-            Ok(None) => return true,
-            Err(_) => return false,
+            Ok(None) => return MobileCaptureWriteOutcomeDto::Accepted,
+            Err(_) => return MobileCaptureWriteOutcomeDto::Failed,
         };
-        self.writer
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .as_ref()
-            .is_some_and(|writer| writer.record_music(event))
+        let writer = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
+        writer.as_ref().map_or_else(
+            || {
+                writer
+                    .stopped_write_outcome()
+                    .unwrap_or(MobileCaptureWriteOutcomeDto::Failed)
+            },
+            |writer| writer.record_music(event).into(),
+        )
     }
 
     /// Returns bounded writer queue instrumentation.
@@ -11023,7 +11095,7 @@ impl MobilePevcapCaptureBuilder {
         &self,
         monotonic_ms: MobileMonotonicMillisDto,
         max_write_len: Option<MobileTransportWriteLimitDto>,
-    ) -> bool {
+    ) -> MobileCaptureWriteOutcomeDto {
         self.send_record(PevcapRecord::link_up(
             monotonic_ms.into_core(),
             max_write_len.map(|value| TransportWriteLimit::from_bytes(value.bytes)),
@@ -11031,7 +11103,10 @@ impl MobilePevcapCaptureBuilder {
     }
 
     /// Records a link-down lifecycle event.
-    pub fn record_link_down(&self, monotonic_ms: MobileMonotonicMillisDto) -> bool {
+    pub fn record_link_down(
+        &self,
+        monotonic_ms: MobileMonotonicMillisDto,
+    ) -> MobileCaptureWriteOutcomeDto {
         self.send_record(PevcapRecord::link_down(monotonic_ms.into_core()))
     }
 
@@ -11042,7 +11117,7 @@ impl MobilePevcapCaptureBuilder {
         monotonic_ms: MobileMonotonicMillisDto,
         characteristic: Vec<u8>,
         bytes: Vec<u8>,
-    ) -> bool {
+    ) -> MobileCaptureWriteOutcomeDto {
         self.send_record(PevcapRecord::outbound_write(
             monotonic_ms.into_core(),
             mobile_gatt_channel(&characteristic),
@@ -11065,7 +11140,7 @@ impl MobilePevcapCaptureBuilder {
         bytes: Vec<u8>,
         write_id: u64,
         disposition: MobilePevcapWriteDispositionDto,
-    ) -> bool {
+    ) -> MobileCaptureWriteOutcomeDto {
         let mut record = PevcapRecord::outbound_write(
             monotonic_ms.into_core(),
             mobile_gatt_channel(&characteristic),
@@ -11087,7 +11162,7 @@ impl MobilePevcapCaptureBuilder {
         characteristic: Vec<u8>,
         service: Vec<u8>,
         bytes: Vec<u8>,
-    ) -> bool {
+    ) -> MobileCaptureWriteOutcomeDto {
         self.send_record(PevcapRecord::inbound_notification(
             monotonic_ms.into_core(),
             mobile_gatt_channel(&characteristic),
@@ -11106,7 +11181,7 @@ impl MobilePevcapCaptureBuilder {
         bytes: Vec<u8>,
         telemetry: Option<MobileRawTelemetryReadbackDto>,
         phone_location: Option<MobilePhoneLocationSampleDto>,
-    ) -> bool {
+    ) -> MobileCaptureWriteOutcomeDto {
         self.record_notification_with_context_and_music(
             monotonic_ms,
             characteristic,
@@ -11134,7 +11209,7 @@ impl MobilePevcapCaptureBuilder {
         telemetry: Option<MobileRawTelemetryReadbackDto>,
         phone_location: Option<MobilePhoneLocationSampleDto>,
         music: Option<MobilePevcapMusicEventDto>,
-    ) -> bool {
+    ) -> MobileCaptureWriteOutcomeDto {
         let mut record = PevcapRecord::inbound_notification(
             monotonic_ms.into_core(),
             mobile_gatt_channel(&characteristic),
@@ -11166,9 +11241,12 @@ impl MobilePevcapCaptureBuilder {
         sample: MobilePhoneLocationSampleDto,
         simulated: Option<bool>,
         produced_by_accessory: Option<bool>,
-    ) -> bool {
+    ) -> MobileCaptureWriteOutcomeDto {
+        if let Some(outcome) = self.stopped_write_outcome() {
+            return outcome;
+        }
         let Some(sample) = sample.canonical() else {
-            return false;
+            return MobileCaptureWriteOutcomeDto::Failed;
         };
         let Ok(location) = PevcapLocationSample::new(
             receipt_monotonic_ms.into_core(),
@@ -11176,7 +11254,7 @@ impl MobilePevcapCaptureBuilder {
             simulated,
             produced_by_accessory,
         ) else {
-            return false;
+            return MobileCaptureWriteOutcomeDto::Failed;
         };
         self.send_location(location)
     }
@@ -11245,30 +11323,45 @@ impl MobilePevcapCaptureBuilder {
         }
     }
 
-    fn send_metadata_update(&self) -> bool {
+    fn send_metadata_update(&self) -> MobileCaptureWriteOutcomeDto {
         let writer = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
         let metadata = self.metadata();
         match &*writer {
-            CaptureWriterSlot::Ready => true,
-            CaptureWriterSlot::Recording(writer) => writer.update_metadata(metadata),
-            CaptureWriterSlot::Finalizing | CaptureWriterSlot::Complete(_) => false,
+            CaptureWriterSlot::Ready => MobileCaptureWriteOutcomeDto::Accepted,
+            CaptureWriterSlot::Recording(writer) => writer.update_metadata(metadata).into(),
+            CaptureWriterSlot::Finalizing | CaptureWriterSlot::Complete(_) => writer
+                .stopped_write_outcome()
+                .unwrap_or(MobileCaptureWriteOutcomeDto::Failed),
         }
     }
 
-    fn send_record(&self, record: PevcapRecord) -> bool {
+    fn stopped_write_outcome(&self) -> Option<MobileCaptureWriteOutcomeDto> {
         self.writer
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .as_ref()
-            .is_some_and(|writer| writer.try_send_record(record))
+            .stopped_write_outcome()
     }
 
-    fn send_location(&self, location: PevcapLocationSample) -> bool {
-        self.writer
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .as_ref()
-            .is_some_and(|writer| writer.record_location(location))
+    fn send_record(&self, record: PevcapRecord) -> MobileCaptureWriteOutcomeDto {
+        let slot = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
+        slot.as_ref().map_or_else(
+            || {
+                slot.stopped_write_outcome()
+                    .unwrap_or(MobileCaptureWriteOutcomeDto::Failed)
+            },
+            |writer| writer.try_send_record(record).into(),
+        )
+    }
+
+    fn send_location(&self, location: PevcapLocationSample) -> MobileCaptureWriteOutcomeDto {
+        let slot = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
+        slot.as_ref().map_or_else(
+            || {
+                slot.stopped_write_outcome()
+                    .unwrap_or(MobileCaptureWriteOutcomeDto::Failed)
+            },
+            |writer| writer.record_location(location).into(),
+        )
     }
 }
 
@@ -16797,49 +16890,73 @@ mod tests {
             0x00, 0x00, 0xff, 0xe1, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0x80, 0x5f, 0x9b,
             0x34, 0xfb,
         ];
-        assert!(builder.add_advertised_service(service.clone()));
-        assert!(builder.add_gatt_fingerprint(MobileGattFingerprintDto {
-            service,
-            characteristic,
-            roles: vec![MobileGattRoleDto::Notify],
-            verification: MobileVerificationStatusDto::SourceVerified,
-        }));
-        assert!(builder.set_resolved_identity(MobileResolvedIdentityDto {
-            protocol_family: Some(MobileProtocolFamilyDto::Vesc),
-            model: Some(MobileVerifiedStringDto {
-                value: "VESC Refloat".into(),
-                verification: MobileVerificationStatusDto::Inferred,
+        assert_eq!(
+            builder.add_advertised_service(service.clone()),
+            MobileCaptureWriteOutcomeDto::Accepted
+        );
+        assert_eq!(
+            builder.add_gatt_fingerprint(MobileGattFingerprintDto {
+                service,
+                characteristic,
+                roles: vec![MobileGattRoleDto::Notify],
+                verification: MobileVerificationStatusDto::SourceVerified,
             }),
-            firmware: None,
-        }));
-        assert!(builder.record_location_sample(
-            ms(7),
-            capture_phone_location_fixture(),
-            Some(false),
-            Some(true)
-        ));
+            MobileCaptureWriteOutcomeDto::Accepted
+        );
+        assert_eq!(
+            builder.set_resolved_identity(MobileResolvedIdentityDto {
+                protocol_family: Some(MobileProtocolFamilyDto::Vesc),
+                model: Some(MobileVerifiedStringDto {
+                    value: "VESC Refloat".into(),
+                    verification: MobileVerificationStatusDto::Inferred,
+                }),
+                firmware: None,
+            }),
+            MobileCaptureWriteOutcomeDto::Accepted
+        );
+        assert_eq!(
+            builder.record_location_sample(
+                ms(7),
+                capture_phone_location_fixture(),
+                Some(false),
+                Some(true)
+            ),
+            MobileCaptureWriteOutcomeDto::Accepted
+        );
         let mut invalid_location = capture_phone_location_fixture();
         invalid_location.latitude_degrees = f64::NAN;
-        assert!(!builder.record_location_sample(ms(7), invalid_location, None, None));
-        assert!(builder.record_notification_with_context(
-            ms(8),
-            vec![0; 16],
-            vec![1; 16],
-            vec![0xaa, 0xbb],
-            Some(MobileRawTelemetryReadbackDto {
-                fields: vec![MobileRawFieldValueDto {
-                    id: 0x8001,
-                    value: 989
-                }],
-                float_fields: vec![MobileRawFloatFieldValueDto {
-                    id: 0x8100,
-                    value_bits: 0x3f80_0001,
-                }],
-            }),
-            Some(capture_phone_location_fixture()),
-        ));
-        assert!(builder.record_link_down(ms(9)));
-        assert!(builder.add_annotation("route=vesc".into()));
+        assert_eq!(
+            builder.record_location_sample(ms(7), invalid_location, None, None),
+            MobileCaptureWriteOutcomeDto::Failed
+        );
+        assert_eq!(
+            builder.record_notification_with_context(
+                ms(8),
+                vec![0; 16],
+                vec![1; 16],
+                vec![0xaa, 0xbb],
+                Some(MobileRawTelemetryReadbackDto {
+                    fields: vec![MobileRawFieldValueDto {
+                        id: 0x8001,
+                        value: 989
+                    }],
+                    float_fields: vec![MobileRawFloatFieldValueDto {
+                        id: 0x8100,
+                        value_bits: 0x3f80_0001,
+                    }],
+                }),
+                Some(capture_phone_location_fixture()),
+            ),
+            MobileCaptureWriteOutcomeDto::Accepted
+        );
+        assert_eq!(
+            builder.record_link_down(ms(9)),
+            MobileCaptureWriteOutcomeDto::Accepted
+        );
+        assert_eq!(
+            builder.add_annotation("route=vesc".into()),
+            MobileCaptureWriteOutcomeDto::Accepted
+        );
         assert!(builder.flush_writer());
         assert!(builder.finish_writer());
         let status = builder.writer_status();
@@ -16916,22 +17033,28 @@ mod tests {
             ride_sequence: Some(9),
         })));
         assert!(builder.start_writer(path.to_string_lossy().into_owned()));
-        assert!(builder.record_notification_with_context(
-            ms(42),
-            vec![0; 16],
-            vec![1; 16],
-            vec![0xde, 0xad],
-            None,
-            None,
-        ));
-        assert!(builder.record_notification_with_context(
-            ms(43),
-            vec![0; 16],
-            vec![1; 16],
-            vec![0xbe, 0xef],
-            None,
-            None,
-        ));
+        assert_eq!(
+            builder.record_notification_with_context(
+                ms(42),
+                vec![0; 16],
+                vec![1; 16],
+                vec![0xde, 0xad],
+                None,
+                None,
+            ),
+            MobileCaptureWriteOutcomeDto::Accepted
+        );
+        assert_eq!(
+            builder.record_notification_with_context(
+                ms(43),
+                vec![0; 16],
+                vec![1; 16],
+                vec![0xbe, 0xef],
+                None,
+                None,
+            ),
+            MobileCaptureWriteOutcomeDto::Accepted
+        );
         assert!(builder.finish_writer());
 
         let bytes = fs::read(&path).expect("music capture exists");
@@ -16980,22 +17103,28 @@ mod tests {
             ride_sequence: Some(2),
         })));
         assert!(builder.start_writer(path.to_string_lossy().into_owned()));
-        assert!(builder.record_notification_with_context(
-            ms(102),
-            vec![0; 16],
-            vec![1; 16],
-            vec![1],
-            None,
-            None,
-        ));
-        assert!(builder.record_notification_with_context(
-            ms(103),
-            vec![0; 16],
-            vec![1; 16],
-            vec![2],
-            None,
-            None,
-        ));
+        assert_eq!(
+            builder.record_notification_with_context(
+                ms(102),
+                vec![0; 16],
+                vec![1; 16],
+                vec![1],
+                None,
+                None,
+            ),
+            MobileCaptureWriteOutcomeDto::Accepted
+        );
+        assert_eq!(
+            builder.record_notification_with_context(
+                ms(103),
+                vec![0; 16],
+                vec![1; 16],
+                vec![2],
+                None,
+                None,
+            ),
+            MobileCaptureWriteOutcomeDto::Accepted
+        );
         assert!(builder.finish_writer());
         let capture = PevcapCapture::decode(
             &fs::read(&path).expect("music capture exists"),
@@ -17051,22 +17180,25 @@ mod tests {
         );
         assert!(builder.set_music_history_policy(MobileMusicHistoryPolicyDto::HumanReadable));
         assert!(builder.start_writer(path.to_string_lossy().into_owned()));
-        assert!(builder.record_notification_with_context_and_music(
-            ms(1),
-            vec![0; 16],
-            vec![1; 16],
-            vec![0xab],
-            None,
-            None,
-            Some(MobilePevcapMusicEventDto {
-                provider: MobileMusicProviderDto::AppleMusic,
-                track_id: String::new(),
-                monotonic_at_ms: 1,
-                wall_clock_unix_ms: 1_700_000_000_001,
-                clock_uncertainty_ms: 1,
-                ride_sequence: None,
-            }),
-        ));
+        assert_eq!(
+            builder.record_notification_with_context_and_music(
+                ms(1),
+                vec![0; 16],
+                vec![1; 16],
+                vec![0xab],
+                None,
+                None,
+                Some(MobilePevcapMusicEventDto {
+                    provider: MobileMusicProviderDto::AppleMusic,
+                    track_id: String::new(),
+                    monotonic_at_ms: 1,
+                    wall_clock_unix_ms: 1_700_000_000_001,
+                    clock_uncertainty_ms: 1,
+                    ride_sequence: None,
+                }),
+            ),
+            MobileCaptureWriteOutcomeDto::Accepted
+        );
         assert!(builder.finish_writer());
         let capture = PevcapCapture::decode(
             &fs::read(&path).expect("capture exists"),
@@ -17095,14 +17227,17 @@ mod tests {
         assert!(builder.set_music_history_policy(MobileMusicHistoryPolicyDto::HumanReadable));
         assert!(builder.start_writer(path.to_string_lossy().into_owned()));
         for (index, track_id) in ["track-1", "track-2"].into_iter().enumerate() {
-            assert!(builder.record_music_event(MobilePevcapMusicEventDto {
-                provider: MobileMusicProviderDto::Spotify,
-                track_id: track_id.into(),
-                monotonic_at_ms: 100 + index as u64,
-                wall_clock_unix_ms: 1_700_000_000_100 + index as u64,
-                clock_uncertainty_ms: 1,
-                ride_sequence: Some(index as u64),
-            }));
+            assert_eq!(
+                builder.record_music_event(MobilePevcapMusicEventDto {
+                    provider: MobileMusicProviderDto::Spotify,
+                    track_id: track_id.into(),
+                    monotonic_at_ms: 100 + index as u64,
+                    wall_clock_unix_ms: 1_700_000_000_100 + index as u64,
+                    clock_uncertainty_ms: 1,
+                    ride_sequence: Some(index as u64),
+                }),
+                MobileCaptureWriteOutcomeDto::Accepted
+            );
         }
         assert!(builder.finish_writer());
         let capture = PevcapCapture::decode(
@@ -17140,30 +17275,36 @@ mod tests {
             ride_sequence: Some(1),
         })));
         assert!(builder.start_writer(path.to_string_lossy().into_owned()));
-        assert!(builder.record_notification_with_context_and_music(
-            ms(42),
-            vec![0; 16],
-            vec![1; 16],
-            vec![0xde, 0xad],
-            None,
-            None,
-            Some(MobilePevcapMusicEventDto {
-                provider: MobileMusicProviderDto::AppleMusic,
-                track_id: "explicit-song".into(),
-                monotonic_at_ms: 18,
-                wall_clock_unix_ms: 1_700_000_000_018,
-                clock_uncertainty_ms: 75,
-                ride_sequence: Some(2),
-            }),
-        ));
-        assert!(builder.record_notification_with_context(
-            ms(43),
-            vec![0; 16],
-            vec![1; 16],
-            vec![0xbe, 0xef],
-            None,
-            None,
-        ));
+        assert_eq!(
+            builder.record_notification_with_context_and_music(
+                ms(42),
+                vec![0; 16],
+                vec![1; 16],
+                vec![0xde, 0xad],
+                None,
+                None,
+                Some(MobilePevcapMusicEventDto {
+                    provider: MobileMusicProviderDto::AppleMusic,
+                    track_id: "explicit-song".into(),
+                    monotonic_at_ms: 18,
+                    wall_clock_unix_ms: 1_700_000_000_018,
+                    clock_uncertainty_ms: 75,
+                    ride_sequence: Some(2),
+                }),
+            ),
+            MobileCaptureWriteOutcomeDto::Accepted
+        );
+        assert_eq!(
+            builder.record_notification_with_context(
+                ms(43),
+                vec![0; 16],
+                vec![1; 16],
+                vec![0xbe, 0xef],
+                None,
+                None,
+            ),
+            MobileCaptureWriteOutcomeDto::Accepted
+        );
         assert!(builder.finish_writer());
 
         let bytes = fs::read(&path).expect("music capture exists");
@@ -17206,30 +17347,36 @@ mod tests {
             ride_sequence: Some(1),
         })));
         assert!(builder.start_writer(path.to_string_lossy().into_owned()));
-        assert!(builder.record_notification_with_context_and_music(
-            ms(42),
-            vec![0; 16],
-            vec![1; 16],
-            vec![0xde, 0xad],
-            None,
-            None,
-            Some(MobilePevcapMusicEventDto {
-                provider: MobileMusicProviderDto::AppleMusic,
-                track_id: String::new(),
-                monotonic_at_ms: 18,
-                wall_clock_unix_ms: 1_700_000_000_018,
-                clock_uncertainty_ms: 75,
-                ride_sequence: Some(2),
-            }),
-        ));
-        assert!(builder.record_notification_with_context(
-            ms(43),
-            vec![0; 16],
-            vec![1; 16],
-            vec![0xbe, 0xef],
-            None,
-            None,
-        ));
+        assert_eq!(
+            builder.record_notification_with_context_and_music(
+                ms(42),
+                vec![0; 16],
+                vec![1; 16],
+                vec![0xde, 0xad],
+                None,
+                None,
+                Some(MobilePevcapMusicEventDto {
+                    provider: MobileMusicProviderDto::AppleMusic,
+                    track_id: String::new(),
+                    monotonic_at_ms: 18,
+                    wall_clock_unix_ms: 1_700_000_000_018,
+                    clock_uncertainty_ms: 75,
+                    ride_sequence: Some(2),
+                }),
+            ),
+            MobileCaptureWriteOutcomeDto::Accepted
+        );
+        assert_eq!(
+            builder.record_notification_with_context(
+                ms(43),
+                vec![0; 16],
+                vec![1; 16],
+                vec![0xbe, 0xef],
+                None,
+                None,
+            ),
+            MobileCaptureWriteOutcomeDto::Accepted
+        );
         assert!(builder.finish_writer());
 
         let bytes = fs::read(&path).expect("music capture exists");
@@ -17272,16 +17419,28 @@ mod tests {
             std::env::temp_dir().join(format!("capture-label-capacity-{}.jsonl", Uuid::new_v4()));
         let builder = MobilePevcapCaptureBuilder::new(wc(1_700_000_000_000), "phone".into(), None);
         for index in 0..cutout_core::PEVCAP_MAX_ANNOTATIONS - 2 {
-            assert!(builder.add_annotation(format!("note={index}")));
+            assert_eq!(
+                builder.add_annotation(format!("note={index}")),
+                MobileCaptureWriteOutcomeDto::Accepted
+            );
         }
         assert!(builder.start_writer(path.to_string_lossy().into_owned()));
-        assert!(builder.add_annotation("capture_label=ride_start".into()));
-        assert!(!builder.add_annotation("note=would_consume_closure".into()));
+        assert_eq!(
+            builder.add_annotation("capture_label=ride_start".into()),
+            MobileCaptureWriteOutcomeDto::Accepted
+        );
+        assert_eq!(
+            builder.add_annotation("note=would_consume_closure".into()),
+            MobileCaptureWriteOutcomeDto::Rejected
+        );
         assert!(
             builder.finish_writer(),
             "rejected annotation must leave the capture savable"
         );
-        assert!(!builder.add_annotation("note=after_finish".into()));
+        assert_eq!(
+            builder.add_annotation("note=after_finish".into()),
+            MobileCaptureWriteOutcomeDto::Failed
+        );
         let capture =
             PevcapCapture::decode(&fs::read(&path).unwrap(), PevcapEncoding::Jsonl).unwrap();
         assert_eq!(
@@ -17295,9 +17454,15 @@ mod tests {
     fn mobile_capture_annotation_capacity_rejection_is_reported() {
         let builder = MobilePevcapCaptureBuilder::new(wc(1_700_000_000_000), "phone".into(), None);
         for index in 0..cutout_core::PEVCAP_MAX_ANNOTATIONS {
-            assert!(builder.add_annotation(format!("note={index}")));
+            assert_eq!(
+                builder.add_annotation(format!("note={index}")),
+                MobileCaptureWriteOutcomeDto::Accepted
+            );
         }
-        assert!(!builder.add_annotation("note=overflow".into()));
+        assert_eq!(
+            builder.add_annotation("note=overflow".into()),
+            MobileCaptureWriteOutcomeDto::Rejected
+        );
     }
 
     #[test]
@@ -17310,7 +17475,10 @@ mod tests {
             let first =
                 MobilePevcapCaptureBuilder::new(wc(1_700_000_000_000), "first-device".into(), None);
             assert!(first.start_writer(path.to_string_lossy().into_owned()));
-            assert!(first.record_link_up(ms(1), None));
+            assert_eq!(
+                first.record_link_up(ms(1), None),
+                MobileCaptureWriteOutcomeDto::Accepted
+            );
             assert!(first.flush_writer());
             if finish_first {
                 assert!(first.finish_writer());
@@ -17331,7 +17499,10 @@ mod tests {
                 original
             );
             if !finish_first {
-                assert!(first.record_link_down(ms(2)));
+                assert_eq!(
+                    first.record_link_down(ms(2)),
+                    MobileCaptureWriteOutcomeDto::Accepted
+                );
                 assert!(first.finish_writer());
             }
             let bytes = fs::read(&path).expect("original capture remains readable");
@@ -17430,7 +17601,10 @@ mod tests {
         assert!(builder.start_writer(first.to_string_lossy().into_owned()));
         assert!(!builder.start_writer(second.to_string_lossy().into_owned()));
         assert!(!second.exists());
-        assert!(builder.record_link_down(ms(100)));
+        assert_eq!(
+            builder.record_link_down(ms(100)),
+            MobileCaptureWriteOutcomeDto::Accepted
+        );
         assert!(builder.flush_writer());
         assert!(
             builder.completed_artifact().is_none(),
@@ -17446,12 +17620,71 @@ mod tests {
         assert!(builder.finish_writer(), "completed finish is idempotent");
         assert_eq!(builder.completed_artifact(), Some(artifact));
         assert!(!builder.start_writer(second.to_string_lossy().into_owned()));
-        assert!(!builder.record_link_down(ms(101)));
+        assert_eq!(
+            builder.record_link_down(ms(101)),
+            MobileCaptureWriteOutcomeDto::Failed
+        );
         let capture =
             PevcapCapture::decode(&fs::read(&first).expect("capture"), PevcapEncoding::Jsonl)
                 .expect("complete capture");
         assert_eq!(capture.records.len(), 1);
         fs::remove_file(first).expect("remove capture fixture");
+    }
+
+    #[test]
+    fn retention_limit_is_a_successful_mobile_capture_outcome() {
+        let path = std::env::temp_dir().join(format!("capture-limit-{}.jsonl", Uuid::new_v4()));
+        let builder = MobilePevcapCaptureBuilder::new(wc(1234), "wheel-a".into(), None);
+        assert!(builder.start_writer(path.to_string_lossy().into_owned()));
+        assert_eq!(
+            builder.record_link_up(ms(0), None),
+            MobileCaptureWriteOutcomeDto::Accepted
+        );
+        assert_eq!(
+            builder.record_link_down(ms(24 * 60 * 60 * 1_000 + 1)),
+            MobileCaptureWriteOutcomeDto::Accepted
+        );
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !builder.writer_status().limit_reached && Instant::now() < deadline {
+            thread::yield_now();
+        }
+        assert!(builder.writer_status().limit_reached);
+        assert_eq!(
+            builder.record_link_down(ms(24 * 60 * 60 * 1_000 + 2)),
+            MobileCaptureWriteOutcomeDto::LimitReached
+        );
+
+        assert!(builder.finish_writer());
+        let status = builder.writer_status();
+        assert!(!status.failed);
+        assert!(status.limit_reached);
+        let artifact = builder
+            .completed_artifact()
+            .expect("the accepted prefix has a completion receipt");
+        assert!(artifact.status.limit_reached);
+        assert_eq!(
+            builder.add_annotation("note=after_limit".into()),
+            MobileCaptureWriteOutcomeDto::LimitReached
+        );
+        assert_eq!(
+            builder.record_notification_with_context(
+                ms(24 * 60 * 60 * 1_000 + 3),
+                vec![0; 16],
+                vec![1; 16],
+                vec![0xaa],
+                None,
+                None,
+            ),
+            MobileCaptureWriteOutcomeDto::LimitReached,
+            "submissions after prefix finalization must not become writer failures"
+        );
+        let capture = PevcapCapture::decode(
+            &fs::read(&path).expect("retained capture exists"),
+            PevcapEncoding::Jsonl,
+        )
+        .expect("retained prefix remains valid PEVCAP");
+        assert_eq!(capture.records.len(), 1);
+        fs::remove_file(path).expect("remove limit fixture");
     }
 
     #[test]
@@ -17470,7 +17703,10 @@ mod tests {
         );
 
         assert!(builder.start_writer(path.to_string_lossy().into_owned()));
-        assert!(builder.record_link_up(ms(1), None));
+        assert_eq!(
+            builder.record_link_up(ms(1), None),
+            MobileCaptureWriteOutcomeDto::Accepted
+        );
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
             let status = builder.writer_status();
@@ -17484,7 +17720,10 @@ mod tests {
         fs::remove_file(&path).expect("open capture pathname is removable");
         fs::create_dir(&path).expect("directory replaces capture pathname");
 
-        assert!(builder.add_annotation("force=header-rewrite".into()));
+        assert_eq!(
+            builder.add_annotation("force=header-rewrite".into()),
+            MobileCaptureWriteOutcomeDto::Accepted
+        );
         assert!(!builder.finish_writer());
         let status = builder.writer_status();
         assert!(status.failed);
@@ -17503,15 +17742,21 @@ mod tests {
             "ios-corebluetooth".into(),
             None,
         );
-        assert!(!builder.record_write_without_response_receipt(
-            ms(1),
-            vec![0x33; 16],
-            vec![1],
-            1,
-            MobilePevcapWriteDispositionDto::Queued,
-        ));
+        assert_eq!(
+            builder.record_write_without_response_receipt(
+                ms(1),
+                vec![0x33; 16],
+                vec![1],
+                1,
+                MobilePevcapWriteDispositionDto::Queued,
+            ),
+            MobileCaptureWriteOutcomeDto::Failed
+        );
         assert!(builder.start_writer(path.to_string_lossy().into_owned()));
-        assert!(builder.record_write_without_response(ms(1), vec![0x33; 16], vec![1]));
+        assert_eq!(
+            builder.record_write_without_response(ms(1), vec![0x33; 16], vec![1]),
+            MobileCaptureWriteOutcomeDto::Accepted
+        );
         let outcomes = [
             (
                 1,
@@ -17535,13 +17780,16 @@ mod tests {
             ),
         ];
         for (write_id, disposition, _) in outcomes {
-            assert!(builder.record_write_without_response_receipt(
-                ms(7),
-                vec![0x33; 16],
-                vec![0x01, 0x23],
-                write_id,
-                disposition,
-            ));
+            assert_eq!(
+                builder.record_write_without_response_receipt(
+                    ms(7),
+                    vec![0x33; 16],
+                    vec![0x01, 0x23],
+                    write_id,
+                    disposition,
+                ),
+                MobileCaptureWriteOutcomeDto::Accepted
+            );
         }
         assert!(builder.flush_writer());
         let capture = PevcapCapture::decode(
@@ -17584,15 +17832,21 @@ mod tests {
             while builder.writer_status().queued_messages >= 64 {
                 thread::yield_now();
             }
-            assert!(builder.record_notification(
-                ms(index),
-                vec![0xe1; 16],
-                vec![0xe0; 16],
-                vec![0xaa; 160],
-            ));
+            assert_eq!(
+                builder.record_notification(
+                    ms(index),
+                    vec![0xe1; 16],
+                    vec![0xe0; 16],
+                    vec![0xaa; 160],
+                ),
+                MobileCaptureWriteOutcomeDto::Accepted
+            );
         }
         for index in 0..cutout_core::PEVCAP_MAX_ANNOTATIONS {
-            assert!(builder.add_annotation(format!("synthetic=late-{index}")));
+            assert_eq!(
+                builder.add_annotation(format!("synthetic=late-{index}")),
+                MobileCaptureWriteOutcomeDto::Accepted
+            );
         }
         assert!(builder.finish_writer());
         let status = builder.writer_status();
@@ -17632,8 +17886,14 @@ mod tests {
             None,
         );
         assert!(builder.start_writer(path.to_string_lossy().into_owned()));
-        assert!(builder.record_link_up(ms(1), None));
-        assert!(builder.add_annotation("durability=background".into()));
+        assert_eq!(
+            builder.record_link_up(ms(1), None),
+            MobileCaptureWriteOutcomeDto::Accepted
+        );
+        assert_eq!(
+            builder.add_annotation("durability=background".into()),
+            MobileCaptureWriteOutcomeDto::Accepted
+        );
 
         assert!(builder.flush_writer());
         assert_eq!(builder.writer_status().queued_messages, 0);
@@ -17682,14 +17942,20 @@ mod tests {
                 while builder.writer_status().queued_messages >= 64 {
                     thread::yield_now();
                 }
-                assert!(builder.record_notification(
-                    ms(index * 1_000 / NOTIFICATIONS_PER_SECOND),
-                    characteristic.clone(),
-                    service.clone(),
-                    payload.clone(),
-                ));
+                assert_eq!(
+                    builder.record_notification(
+                        ms(index * 1_000 / NOTIFICATIONS_PER_SECOND),
+                        characteristic.clone(),
+                        service.clone(),
+                        payload.clone(),
+                    ),
+                    MobileCaptureWriteOutcomeDto::Accepted
+                );
                 if index == record_count / 2 {
-                    assert!(builder.add_annotation("synthetic=midpoint".into()));
+                    assert_eq!(
+                        builder.add_annotation("synthetic=midpoint".into()),
+                        MobileCaptureWriteOutcomeDto::Accepted
+                    );
                 }
             }
             assert!(builder.finish_writer());
@@ -18245,12 +18511,15 @@ mod tests {
             None,
         );
         assert!(builder.start_writer(artifact_path.to_string_lossy().into_owned()));
-        assert!(builder.record_location_sample(
-            ms(7),
-            capture_phone_location_fixture(),
-            Some(false),
-            Some(true),
-        ));
+        assert_eq!(
+            builder.record_location_sample(
+                ms(7),
+                capture_phone_location_fixture(),
+                Some(false),
+                Some(true),
+            ),
+            MobileCaptureWriteOutcomeDto::Accepted
+        );
         assert!(builder.finish_writer());
 
         let database = open_ride_database(database_path.to_string_lossy().into_owned()).unwrap();

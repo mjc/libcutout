@@ -23,6 +23,9 @@ pub enum MobileCaptureAnnotationError {
     /// The writer could not accept the metadata update.
     #[error("capture writer rejected the annotation")]
     WriterFailed,
+    /// The active capture has already reached a configured retention limit.
+    #[error("capture retention limit reached")]
+    CaptureLimitReached,
 }
 
 macro_rules! capture_labels {

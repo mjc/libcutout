@@ -7,10 +7,11 @@ use cutout_core::{
     PevcapHeader, PevcapLocationSample, PevcapMusicEvent, PevcapRecord, PevcapResolvedIdentity,
     TransportWriteLimit, WallClockUnixTimestamp,
 };
+use sha2::{Digest, Sha256};
 use std::{
     collections::VecDeque,
     fs::{self, File, OpenOptions},
-    io::{BufRead, BufReader, BufWriter, Write},
+    io::{BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex, PoisonError,
@@ -32,6 +33,17 @@ impl std::fmt::Display for CaptureArtifactId {
     }
 }
 
+/// Outcome of a non-blocking write to the capture queue.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CaptureWriteOutcome {
+    /// The event was accepted by the bounded queue.
+    Accepted,
+    /// The recording reached a configured retention limit; its accepted prefix can be finished.
+    LimitReached,
+    /// The queue or writer failed and the event was not accepted.
+    Failed,
+}
+
 impl CaptureArtifactId {
     pub(crate) const fn from_uuid(value: Uuid) -> Self {
         Self(value)
@@ -44,6 +56,8 @@ pub struct SavedCaptureArtifact {
     id: CaptureArtifactId,
     path: PathBuf,
     status: CaptureWriterStatus,
+    content_digest: String,
+    final_header: PevcapHeader,
 }
 
 impl SavedCaptureArtifact {
@@ -61,6 +75,14 @@ impl SavedCaptureArtifact {
     #[must_use]
     pub const fn status(&self) -> &CaptureWriterStatus {
         &self.status
+    }
+
+    pub(crate) fn content_digest(&self) -> &str {
+        &self.content_digest
+    }
+
+    pub(crate) const fn final_header(&self) -> &PevcapHeader {
+        &self.final_header
     }
 }
 
@@ -103,6 +125,8 @@ pub struct CaptureWriterStatus {
     pub physical_bytes_written: u64,
     /// Whether the writer has encountered an unrecoverable error.
     pub failed: bool,
+    /// Whether capture stopped normally because a configured retention limit was reached.
+    pub limit_reached: bool,
     /// Last writer error or the limit that stopped data recording, if either exists.
     pub last_error: Option<String>,
 }
@@ -164,6 +188,7 @@ impl CaptureWriterState {
             bytes_written: self.bytes_written.load(Ordering::Acquire),
             physical_bytes_written: self.physical_bytes_written.load(Ordering::Acquire),
             failed: self.failed.load(Ordering::Acquire),
+            limit_reached: self.limit_reached.load(Ordering::Acquire),
             last_error: self
                 .last_error
                 .lock()
@@ -191,7 +216,18 @@ enum CaptureWriterMessage {
     Location(PevcapLocationSample),
     Music(PevcapMusicEvent),
     Metadata(CaptureMetadata),
-    Barrier(CaptureBarrier, SyncSender<Result<(), String>>),
+    Barrier(
+        CaptureBarrier,
+        SyncSender<Result<CaptureWriterBarrierResult, String>>,
+    ),
+}
+
+enum CaptureWriterBarrierResult {
+    Flushed,
+    Finished {
+        content_digest: String,
+        final_header: Box<PevcapHeader>,
+    },
 }
 
 impl CaptureWriterMessage {
@@ -382,7 +418,11 @@ impl CaptureWriter {
                 )
             })?;
         let file = sync_parent_directory_after(&path, || {
-            OpenOptions::new().create_new(true).write(true).open(&path)
+            OpenOptions::new()
+                .create_new(true)
+                .read(true)
+                .write(true)
+                .open(&path)
         })?;
         let (sender, receiver) = sync_channel(CAPTURE_WRITER_QUEUE_CAPACITY);
         let records = Arc::new(CaptureRecordPool::new(CAPTURE_WRITER_QUEUE_CAPACITY));
@@ -414,10 +454,10 @@ impl CaptureWriter {
         })
     }
 
-    fn try_send(&self, message: CaptureWriterMessage) -> bool {
+    fn try_send(&self, message: CaptureWriterMessage) -> CaptureWriteOutcome {
         if self.state.limit_reached.load(Ordering::Acquire) && message.is_capture_data() {
             self.state.dropped_messages.fetch_add(1, Ordering::AcqRel);
-            return false;
+            return CaptureWriteOutcome::LimitReached;
         }
         let queued_messages = self.state.queued_messages.fetch_add(1, Ordering::AcqRel) + 1;
         match self.sender.try_send(message) {
@@ -425,28 +465,28 @@ impl CaptureWriter {
                 self.state
                     .peak_queued_messages
                     .fetch_max(queued_messages, Ordering::AcqRel);
-                true
+                CaptureWriteOutcome::Accepted
             }
             Err(TrySendError::Full(_)) => {
                 self.state.queued_messages.fetch_sub(1, Ordering::AcqRel);
                 self.state.dropped_messages.fetch_add(1, Ordering::AcqRel);
                 self.state.fail("capture writer queue is full");
-                false
+                CaptureWriteOutcome::Failed
             }
             Err(TrySendError::Disconnected(_)) => {
                 self.state.queued_messages.fetch_sub(1, Ordering::AcqRel);
                 self.state.dropped_messages.fetch_add(1, Ordering::AcqRel);
                 self.state.fail("capture writer stopped");
-                false
+                CaptureWriteOutcome::Failed
             }
         }
     }
 
     /// Admits a transport record without waiting for disk I/O.
-    pub fn try_send_record(&self, record: PevcapRecord) -> bool {
+    pub fn try_send_record(&self, record: PevcapRecord) -> CaptureWriteOutcome {
         if self.state.limit_reached.load(Ordering::Acquire) {
             self.state.dropped_messages.fetch_add(1, Ordering::AcqRel);
-            return false;
+            return CaptureWriteOutcome::LimitReached;
         }
         let mut records = self
             .records
@@ -456,7 +496,7 @@ impl CaptureWriter {
         if records.len() == records.capacity() {
             self.state.dropped_messages.fetch_add(1, Ordering::AcqRel);
             self.state.fail("capture writer queue is full");
-            return false;
+            return CaptureWriteOutcome::Failed;
         }
         records.push_back(record);
         let queued_messages = self.state.queued_messages.fetch_add(1, Ordering::AcqRel) + 1;
@@ -465,21 +505,21 @@ impl CaptureWriter {
                 self.state
                     .peak_queued_messages
                     .fetch_max(queued_messages, Ordering::AcqRel);
-                true
+                CaptureWriteOutcome::Accepted
             }
             Err(TrySendError::Full(CaptureWriterMessage::Record)) => {
                 records.pop_back();
                 self.state.queued_messages.fetch_sub(1, Ordering::AcqRel);
                 self.state.dropped_messages.fetch_add(1, Ordering::AcqRel);
                 self.state.fail("capture writer queue is full");
-                false
+                CaptureWriteOutcome::Failed
             }
             Err(TrySendError::Disconnected(CaptureWriterMessage::Record)) => {
                 records.pop_back();
                 self.state.queued_messages.fetch_sub(1, Ordering::AcqRel);
                 self.state.dropped_messages.fetch_add(1, Ordering::AcqRel);
                 self.state.fail("capture writer stopped");
-                false
+                CaptureWriteOutcome::Failed
             }
             Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) => {
                 unreachable!("record send returned a different message")
@@ -493,16 +533,24 @@ impl CaptureWriter {
     /// Returns queue, worker, or storage failure.
     pub fn flush(&self) -> Result<(), String> {
         let (sender, receiver) = sync_channel(0);
-        if !self.try_send(CaptureWriterMessage::Barrier(CaptureBarrier::Flush, sender)) {
+        if self.try_send(CaptureWriterMessage::Barrier(CaptureBarrier::Flush, sender))
+            != CaptureWriteOutcome::Accepted
+        {
             return Err(self
                 .state
                 .status()
                 .last_error
                 .unwrap_or_else(|| "capture writer flush failed".into()));
         }
-        receiver
+        match receiver
             .recv()
-            .map_err(|_| "capture writer stopped before flush".to_string())?
+            .map_err(|_| "capture writer stopped before flush".to_string())??
+        {
+            CaptureWriterBarrierResult::Flushed => Ok(()),
+            CaptureWriterBarrierResult::Finished { .. } => {
+                Err("capture writer finished before flush".into())
+            }
+        }
     }
 
     /// Consumes the active writer and returns evidence of successful durable completion.
@@ -511,24 +559,33 @@ impl CaptureWriter {
     /// Returns queue, worker, or storage failure; no saved artifact is produced.
     pub fn finish(mut self) -> Result<SavedCaptureArtifact, String> {
         let (sender, receiver) = sync_channel(0);
-        if !self.try_send(CaptureWriterMessage::Barrier(
+        if self.try_send(CaptureWriterMessage::Barrier(
             CaptureBarrier::Finish,
             sender,
-        )) {
+        )) != CaptureWriteOutcome::Accepted
+        {
             return Err(self
                 .state
                 .status()
                 .last_error
                 .unwrap_or_else(|| "capture writer finish failed".into()));
         }
-        let result = receiver
+        let completion = receiver
             .recv()
             .map_err(|_| "capture writer stopped before finish".to_string())?;
         if let Some(join) = self.join.take() {
             join.join()
                 .map_err(|_| "capture writer thread panicked".to_string())?;
         }
-        result?;
+        let (content_digest, final_header) = match completion? {
+            CaptureWriterBarrierResult::Finished {
+                content_digest,
+                final_header,
+            } => (content_digest, final_header),
+            CaptureWriterBarrierResult::Flushed => {
+                return Err("capture writer flushed instead of finishing".into());
+            }
+        };
         let status = self.state.status();
         if status.failed {
             return Err(status
@@ -539,6 +596,8 @@ impl CaptureWriter {
             id: self.artifact_id,
             path: self.path,
             status,
+            content_digest,
+            final_header: *final_header,
         })
     }
 
@@ -550,19 +609,19 @@ impl CaptureWriter {
 
     /// Admits a metadata update without waiting for disk I/O.
     #[must_use]
-    pub fn update_metadata(&self, metadata: CaptureMetadata) -> bool {
+    pub fn update_metadata(&self, metadata: CaptureMetadata) -> CaptureWriteOutcome {
         self.try_send(CaptureWriterMessage::Metadata(metadata))
     }
 
     /// Admits a location observation without waiting for disk I/O.
     #[must_use]
-    pub fn record_location(&self, location: PevcapLocationSample) -> bool {
+    pub fn record_location(&self, location: PevcapLocationSample) -> CaptureWriteOutcome {
         self.try_send(CaptureWriterMessage::Location(location))
     }
 
     /// Admits an already privacy-filtered music event without waiting for disk I/O.
     #[must_use]
-    pub fn record_music(&self, music: PevcapMusicEvent) -> bool {
+    pub fn record_music(&self, music: PevcapMusicEvent) -> CaptureWriteOutcome {
         self.try_send(CaptureWriterMessage::Music(music))
     }
 }
@@ -680,7 +739,17 @@ fn write_capture_stream(
                     &mut flush,
                     &mut usage,
                     kind,
-                );
+                )
+                .and_then(|()| match kind {
+                    CaptureBarrier::Flush => Ok(CaptureWriterBarrierResult::Flushed),
+                    CaptureBarrier::Finish => {
+                        let content_digest = digest_open_file(writer.get_mut())?;
+                        Ok(CaptureWriterBarrierResult::Finished {
+                            content_digest,
+                            final_header: Box::new(header.clone()),
+                        })
+                    }
+                });
                 reply_capture_writer_result(result, &reply)?;
                 if kind == CaptureBarrier::Finish {
                     return Ok(());
@@ -717,8 +786,13 @@ fn flush_capture_barrier(
     usage: &mut CaptureLimitUsage<'_>,
     kind: CaptureBarrier,
 ) -> Result<(), String> {
-    let closing_labels = if kind == CaptureBarrier::Finish {
-        close_pending_capture_labels(header, pending_metadata)?
+    let must_persist_label_closure = if kind == CaptureBarrier::Finish {
+        let had_open_labels =
+            !CaptureLabelState::from_annotations(header.annotations.iter().map(String::as_str))
+                .active()
+                .is_empty();
+        close_pending_capture_labels(header, pending_metadata)?;
+        had_open_labels
     } else {
         false
     };
@@ -728,7 +802,7 @@ fn flush_capture_barrier(
         header,
         pending_metadata,
         usage,
-        closing_labels,
+        must_persist_label_closure,
     )? {
         *flush = CaptureFlushState::default();
         Ok(())
@@ -753,12 +827,29 @@ fn write_capture_event_line(
 }
 
 fn reply_capture_writer_result(
-    result: Result<(), String>,
-    reply: &SyncSender<Result<(), String>>,
+    result: Result<CaptureWriterBarrierResult, String>,
+    reply: &SyncSender<Result<CaptureWriterBarrierResult, String>>,
 ) -> Result<(), String> {
     let failure = result.as_ref().err().cloned();
     let _ = reply.send(result);
     failure.map_or(Ok(()), Err)
+}
+
+fn digest_open_file(file: &mut File) -> Result<String, String> {
+    file.seek(SeekFrom::Start(0))
+        .map_err(|error| error.to_string())?;
+    let mut digest = Sha256::new();
+    let mut buffer = vec![0_u8; 64 * 1024];
+    loop {
+        let read = file.read(&mut buffer).map_err(|error| error.to_string())?;
+        if read == 0 {
+            break;
+        }
+        digest.update(&buffer[..read]);
+    }
+    file.seek(SeekFrom::End(0))
+        .map_err(|error| error.to_string())?;
+    Ok(hex::encode(digest.finalize()))
 }
 
 fn rewrite_pending_capture_metadata(
@@ -767,7 +858,7 @@ fn rewrite_pending_capture_metadata(
     header: &mut PevcapHeader,
     pending_metadata: &mut Option<CaptureMetadata>,
     usage: &mut CaptureLimitUsage<'_>,
-    closing_labels: bool,
+    must_persist_label_closure: bool,
 ) -> Result<bool, String> {
     let Some(metadata) = pending_metadata.take() else {
         return Ok(false);
@@ -785,7 +876,7 @@ fn rewrite_pending_capture_metadata(
         .saturating_add(1);
     let header_bytes = u64::try_from(header_bytes).unwrap_or(u64::MAX);
     if let Err(error) = usage.replace_header(header_bytes) {
-        if closing_labels {
+        if must_persist_label_closure {
             return Err(format!(
                 "final capture metadata exceeds {} limit: {} > {}",
                 error.resource, error.actual, error.limit
@@ -899,6 +990,7 @@ fn rewrite_capture_header(
     drop(output);
     sync_parent_directory_after(path, || fs::rename(&temp_path, path))?;
     let file = OpenOptions::new()
+        .read(true)
         .append(true)
         .open(path)
         .map_err(|error| error.to_string())?;
@@ -1005,6 +1097,49 @@ mod tests {
     }
 
     #[test]
+    fn finish_fails_when_pending_metadata_closes_a_persisted_label_over_budget() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("capture.jsonl");
+        let metadata = CaptureMetadata {
+            advertised_services: vec![],
+            gatt_fingerprints: vec![],
+            resolved_identity: None,
+            annotations: vec!["capture_label=ride_start".into()],
+        };
+        let header =
+            capture_header(WallClockUnixTimestamp::new(0), "test", None, &metadata).unwrap();
+        let header_bytes = u64::try_from(header.to_jsonl_line().unwrap().len() + 1).unwrap();
+        let writer = CaptureWriter::start_with_limits(
+            path.clone(),
+            WallClockUnixTimestamp::new(0),
+            "test",
+            None,
+            &metadata,
+            PevcapLimits {
+                artifact_bytes: header_bytes,
+                records: 10,
+                duration_milliseconds: 10,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            writer.update_metadata(CaptureMetadata {
+                annotations: vec![
+                    "capture_label=ride_start".into(),
+                    "capture_label=ride_stop".into(),
+                ],
+                ..metadata
+            }),
+            CaptureWriteOutcome::Accepted
+        );
+
+        let error = writer.finish().unwrap_err();
+
+        assert!(error.contains("artifact bytes limit"));
+        assert!(path.exists(), "failed artifact remains recoverable");
+    }
+
+    #[test]
     fn finalization_uses_latest_metadata_and_does_not_duplicate_closed_intervals() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("capture.jsonl");
@@ -1026,7 +1161,10 @@ mod tests {
             "capture_label=ride_stop".into(),
             "capture_label=balancing_start".into(),
         ]);
-        assert!(writer.update_metadata(metadata));
+        assert_eq!(
+            writer.update_metadata(metadata),
+            CaptureWriteOutcome::Accepted
+        );
         writer.finish().unwrap();
         let capture = fs::read_to_string(path).unwrap();
         assert_eq!(capture.matches("capture_label=ride_stop").count(), 1);
@@ -1100,10 +1238,13 @@ mod tests {
             },
         )
         .unwrap();
-        assert!(writer.try_send_record(PevcapRecord::link_up(
-            cutout_core::MonotonicTimestamp::new(0),
-            None,
-        )));
+        assert_eq!(
+            writer.try_send_record(PevcapRecord::link_up(
+                cutout_core::MonotonicTimestamp::new(0),
+                None,
+            )),
+            CaptureWriteOutcome::Accepted
+        );
         let _ = writer.try_send_record(PevcapRecord::link_down(
             cutout_core::MonotonicTimestamp::new(1),
         ));
@@ -1156,7 +1297,10 @@ mod tests {
             annotations: vec!["note=too-large-for-the-configured-budget".into()],
             ..metadata
         };
-        assert!(writer.update_metadata(expanded_metadata));
+        assert_eq!(
+            writer.update_metadata(expanded_metadata),
+            CaptureWriteOutcome::Accepted
+        );
 
         let artifact = writer.finish().unwrap();
         assert!(!artifact.status().failed);
@@ -1178,7 +1322,10 @@ mod tests {
         };
 
         let (reply, _result) = sync_channel(0);
-        assert!(!writer.try_send(CaptureWriterMessage::Barrier(CaptureBarrier::Flush, reply)));
+        assert_eq!(
+            writer.try_send(CaptureWriterMessage::Barrier(CaptureBarrier::Flush, reply)),
+            CaptureWriteOutcome::Failed
+        );
         let status = state.status();
         assert_eq!(status.queued_messages, 0);
         assert_eq!(status.peak_queued_messages, 0);
@@ -1204,7 +1351,10 @@ mod tests {
         };
 
         let (reply, _result) = sync_channel(0);
-        assert!(writer.try_send(CaptureWriterMessage::Barrier(CaptureBarrier::Flush, reply)));
+        assert_eq!(
+            writer.try_send(CaptureWriterMessage::Barrier(CaptureBarrier::Flush, reply)),
+            CaptureWriteOutcome::Accepted
+        );
         let status = state.status();
         assert_eq!(status.queued_messages, 1);
         assert_eq!(status.peak_queued_messages, 1);
