@@ -59,8 +59,10 @@ final class RideHistoryModel {
 
     private let stateProvider: @MainActor () -> (any RideHistoryQuerying)?
     private let dateProvider: @MainActor () -> Date
+    private let storageErrorProvider: @MainActor () -> String?
     private var cursor: MobileRideCursorDto?
     private var queryDateAfterMilliseconds: UInt64?
+    private var searchTask: Task<Void, Never>?
     private var loadTask: Task<Void, Never>?
     private var pageTask: Task<Void, Never>?
     private var queryGeneration: UInt64 = 0
@@ -74,7 +76,12 @@ final class RideHistoryModel {
     private(set) var error: MobileRideMapError?
     private(set) var rides = [MobileRideMapHistorySummaryDto]()
     private(set) var canLoadMore = false
-    var searchText = ""
+    var searchText = "" {
+        didSet {
+            guard searchText != oldValue else { return }
+            scheduleSearchReload()
+        }
+    }
     private(set) var dateFilter = DateFilter.last30Days
     private(set) var vehicleFilter: String?
     private(set) var vehicleIdentities = [String]()
@@ -123,13 +130,17 @@ final class RideHistoryModel {
 
     init(
         stateProvider: @escaping @MainActor () -> (any RideHistoryQuerying)?,
-        dateProvider: @escaping @MainActor () -> Date = { Date() }
+        dateProvider: @escaping @MainActor () -> Date = { Date() },
+        storageErrorProvider: @escaping @MainActor () -> String? = { nil }
     ) {
         self.stateProvider = stateProvider
         self.dateProvider = dateProvider
+        self.storageErrorProvider = storageErrorProvider
     }
 
     func prepareForReload() {
+        searchTask?.cancel()
+        searchTask = nil
         invalidateProjectionWork()
         contextTask?.cancel()
         contextTask = nil
@@ -142,6 +153,15 @@ final class RideHistoryModel {
         routeLoading = false
         detailRouteLoading = false
         clearMusicMetadata()
+    }
+
+    func reload(selecting requestedRideID: String? = nil) {
+        prepareForReload()
+        if let storageError = storageErrorProvider() {
+            applyLoadFailure(.storageError(storageError))
+            return
+        }
+        load(selecting: requestedRideID)
     }
 
     func applyLoadFailure(_ error: MobileRideMapError) {
@@ -181,12 +201,19 @@ final class RideHistoryModel {
         )
     }
 
-    func ensureSelection(requestedRideID: String?) -> SelectionAction {
-        Self.selectionAction(
+    func ensureSelection(requestedRideID: String?) {
+        switch Self.selectionAction(
             requestedID: requestedRideID,
             currentID: selectedRideID,
             summaries: rides
-        )
+        ) {
+        case .none:
+            return
+        case let .load(rideID):
+            reload(selecting: rideID)
+        case let .select(rideID):
+            selectFromHistoryList(rideID)
+        }
     }
 
     func projectDetailViewport(_ viewport: MobileGeoBoundsDto?) {
@@ -557,6 +584,7 @@ final class RideHistoryModel {
     }
 
     isolated deinit {
+        searchTask?.cancel()
         loadTask?.cancel()
         pageTask?.cancel()
         selectionTask?.cancel()
@@ -566,7 +594,7 @@ final class RideHistoryModel {
         contextTask?.cancel()
     }
 
-    func load(selecting requestedRideID: String? = nil) {
+    private func load(selecting requestedRideID: String? = nil) {
         loadTask?.cancel()
         pageTask?.cancel()
         queryGeneration &+= 1
@@ -691,21 +719,52 @@ final class RideHistoryModel {
     }
 
     func setDateFilter(_ filter: DateFilter) {
+        guard dateFilter != filter else { return }
         dateFilter = filter
+        reload()
     }
 
     func setVehicleFilter(_ identity: String?) {
+        guard vehicleFilter != identity else { return }
         vehicleFilter = identity
+        reload()
     }
 
     func clearFilters() {
+        let searchChanged = !searchText.isEmpty
+        let filtersChanged = dateFilter != .last30Days || vehicleFilter != nil
+        guard searchChanged || filtersChanged else { return }
         searchText = ""
         dateFilter = .last30Days
         vehicleFilter = nil
+        if !searchChanged {
+            reload()
+        }
+    }
+
+    func selectFromHistoryList(_ rideID: String) {
+        select(rideID: rideID, requestedPointLimit: Int(Self.limits.historyContextPerRouteBudget))
     }
 
     func setError(_ error: MobileRideMapError?) {
         self.error = error
+    }
+
+    private func scheduleSearchReload() {
+        searchTask?.cancel()
+        let delay = Self.searchDebounce(for: searchText)
+        searchTask = Task { [weak self] in
+            if delay != .zero {
+                do {
+                    try await Task.sleep(for: delay)
+                } catch {
+                    return
+                }
+            }
+            guard !Task.isCancelled, let self else { return }
+            self.searchTask = nil
+            self.reload()
+        }
     }
 
     private func finishLoad(
@@ -871,7 +930,11 @@ final class RideHistoryModel {
         !isCancelled && generation == currentGeneration
     }
 
-    private static func normalizedSearchText(_ text: String) -> String? {
+    static func searchDebounce(for searchText: String) -> Duration {
+        normalizedSearchText(searchText) == nil ? .zero : .milliseconds(250)
+    }
+
+    static func normalizedSearchText(_ text: String) -> String? {
         let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
         return normalized.isEmpty ? nil : normalized
     }

@@ -127,13 +127,8 @@ struct RideMapHistoryContentView: View {
     }
 
     @MainActor
-    static func searchDebounce(for searchText: String) -> Duration {
-        normalizedSearchText(searchText).isEmpty ? .zero : .milliseconds(250)
-    }
-
-    @MainActor
     static func normalizedSearchText(_ searchText: String) -> String {
-        searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        RideHistoryModel.normalizedSearchText(searchText) ?? ""
     }
 
     var body: some View {
@@ -219,7 +214,6 @@ struct RideMapHistoryContentView: View {
                 }
             }
         }
-        .task(id: searchText) { await reloadHistory(for: searchText) }
         .searchable(text: $searchText)
         .safeAreaInset(edge: .bottom, spacing: 0) {
             Color.clear.frame(height: 92)
@@ -252,16 +246,4 @@ struct RideMapHistoryContentView: View {
         )
     }
 
-    private func reloadHistory(for searchText: String) async {
-        let debounce = Self.searchDebounce(for: searchText)
-        if debounce != .zero {
-            do {
-                try await Task.sleep(for: debounce)
-            } catch {
-                return
-            }
-        }
-        guard !Task.isCancelled else { return }
-        load()
-    }
 }

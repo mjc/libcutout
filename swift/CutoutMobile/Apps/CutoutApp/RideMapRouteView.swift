@@ -17,6 +17,7 @@ final class RideMapPresentationState {
 
 struct RideMapRouteView: View {
     @Bindable var model: CutoutAppModel
+    @Bindable var history: RideHistoryModel
     @Bindable var presentation: RideMapPresentationState
     private let openHistory: ((String) -> Void)?
     private let closeDetail: (() -> Void)?
@@ -43,6 +44,7 @@ struct RideMapRouteView: View {
         back: (() -> Void)? = nil
     ) {
         self._model = Bindable(wrappedValue: model)
+        self._history = Bindable(wrappedValue: model.rideHistory)
         self._presentation = Bindable(wrappedValue: presentation)
         self.openHistory = openHistory
         self.closeDetail = closeDetail
@@ -133,39 +135,39 @@ struct RideMapRouteView: View {
         RideMapHistoryContentView(
             isRecording: model.isRideMapRecording,
             isPaused: model.rideMapSnapshot?.state == .paused,
-            rides: model.filteredRideMapHistory,
-            searchText: $model.rideMapHistorySearchText,
-            canLoadMore: model.rideMapHistoryCanLoadMore,
-            displayPoints: model.rideMapHistoryDisplayPoints,
-            cameraRegion: model.rideMapHistoryCameraRegion,
-            endpointMetadata: model.rideMapHistoryEndpointMetadata,
-            segments: model.rideMapHistorySegments,
-            contextRoutes: model.rideMapHistoryContextRoutes,
-            cameraFitVersion: model.rideMapHistoryCameraFitVersion,
-            projectionVersion: model.rideMapHistoryProjectionVersion,
-            pointsTruncated: model.rideMapHistoryPointsTruncated,
-            segmentsOmittedByBudget: model.rideMapHistorySegmentsOmittedByBudget,
-            isLoading: model.rideMapHistoryLoading,
-            isRouteLoading: model.rideMapHistoryRouteLoading,
-            historyError: model.rideMapHistoryError,
-            routeError: model.rideMapHistoryRouteError,
-            selectedRideID: model.selectedRideMapHistoryID,
-            dateFilter: model.rideMapHistoryDateFilter,
-            vehicleFilter: model.rideMapHistoryVehicleFilter,
-            vehicleFilterOptions: model.rideMapHistoryVehicleIdentities,
+            rides: history.rides,
+            searchText: $history.searchText,
+            canLoadMore: history.canLoadMore,
+            displayPoints: history.displayPoints,
+            cameraRegion: history.cameraRegion,
+            endpointMetadata: history.endpointMetadata,
+            segments: history.segments,
+            contextRoutes: history.contextRoutes,
+            cameraFitVersion: history.cameraFitVersion,
+            projectionVersion: history.projectionVersion,
+            pointsTruncated: history.pointsTruncated,
+            segmentsOmittedByBudget: history.segmentsOmittedByBudget,
+            isLoading: history.isLoading,
+            isRouteLoading: history.routeLoading,
+            historyError: history.error,
+            routeError: history.routeError,
+            selectedRideID: history.selectedRideID,
+            dateFilter: history.dateFilter,
+            vehicleFilter: history.vehicleFilter,
+            vehicleFilterOptions: history.vehicleIdentities,
             select: { rideID in
                 model.rideMapMode = .history
-                model.selectRideMapHistory(rideID)
+                history.selectFromHistoryList(rideID)
                 openHistory?(rideID)
             },
-            load: { model.loadRideMapHistory(selecting: model.selectedRideMapHistoryID) },
-            loadMore: { model.loadMoreRideMapHistory() },
+            load: { history.reload(selecting: history.selectedRideID) },
+            loadMore: { history.loadMore() },
             returnToLive: {
                 model.rideMapMode = .live
             },
-            setDateFilter: { model.setRideMapHistoryDateFilter($0) },
-            setVehicleFilter: { model.setRideMapHistoryVehicleFilter($0) },
-            clearFilters: { model.clearRideMapHistoryFilters() },
+            setDateFilter: { history.setDateFilter($0) },
+            setVehicleFilter: { history.setVehicleFilter($0) },
+            clearFilters: { history.clearFilters() },
             currentVehicleIdentity: model.rideMapVehicleIdentity,
             currentVehicleName: model.rideMapVehicleName,
             vehicleName: model.rideMapVehicleName(for:),
@@ -183,36 +185,36 @@ struct RideMapRouteView: View {
         if let initialHistoryID {
             RideMapHistoryDetailView(
                 initialHistoryID: initialHistoryID,
-                rides: model.rideMapHistory,
-                displayPoints: model.rideMapHistoryDetailDisplayPoints,
-                routePresence: model.rideMapHistoryDetailRoutePresence,
+                rides: history.rides,
+                displayPoints: history.detailDisplayPoints,
+                routePresence: history.detailRoutePresence,
                 music: RideMapHistoryMusicDetail(
                     rideID: initialHistoryID,
-                    events: model.rideMapHistoryDetailMusicTimeline,
-                    timelineUnavailable: model.rideMapHistoryDetailMusicTimelineUnavailable,
-                    state: model.rideMapHistoryDetailMusicState,
-                    error: model.rideMapHistoryDetailMusicError,
+                    events: history.detailMusicTimeline,
+                    timelineUnavailable: history.detailMusicTimelineUnavailable,
+                    state: history.detailMusicState,
+                    error: history.detailMusicError,
                     forgetMusicHistory: { model.forgetMusicHistory(for: $0) }
                 ),
-                projectionRideID: model.rideMapHistoryDetailProjectionRideID,
-                cameraRegion: model.rideMapHistoryDetailCameraRegion,
-                endpointMetadata: model.rideMapHistoryDetailEndpointMetadata,
-                segments: model.rideMapHistoryDetailSegments,
-                projectionVersion: model.rideMapHistoryDetailProjectionVersion,
-                cameraFitVersion: model.rideMapHistoryDetailCameraFitVersion,
-                pointsTruncated: model.rideMapHistoryDetailPointsTruncated,
-                segmentsOmittedByBudget: model.rideMapHistoryDetailSegmentsOmittedByBudget,
-                canonicalBackgroundGapCount: model.rideMapHistoryDetailBackgroundGapCount,
-                historyError: model.rideMapHistoryError,
-                routeError: model.rideMapHistoryDetailRouteError,
-                isLoading: model.rideMapHistoryDetailRouteLoading,
-                selectedHistoryID: model.selectedRideMapHistoryID,
-                ensureSelection: { model.ensureRideMapHistorySelection($0) },
-                retry: { model.loadRideMapHistory(selecting: initialHistoryID) },
-                loadRoutePreview: { model.loadRoutePreviewMapHistory() },
+                projectionRideID: history.detailProjectionRideID,
+                cameraRegion: history.detailCameraRegion,
+                endpointMetadata: history.detailEndpointMetadata,
+                segments: history.detailSegments,
+                projectionVersion: history.detailProjectionVersion,
+                cameraFitVersion: history.detailCameraFitVersion,
+                pointsTruncated: history.detailPointsTruncated,
+                segmentsOmittedByBudget: history.detailSegmentsOmittedByBudget,
+                canonicalBackgroundGapCount: history.detailBackgroundGapCount,
+                historyError: history.error,
+                routeError: history.detailRouteError,
+                isLoading: history.detailRouteLoading,
+                selectedHistoryID: history.selectedRideID,
+                ensureSelection: { history.ensureSelection(requestedRideID: $0) },
+                retry: { history.reload(selecting: initialHistoryID) },
+                loadRoutePreview: { history.loadRoutePreview() },
                 vehicleName: model.rideMapVehicleName(for:),
                 cameraDidChange: { region in
-                    model.projectRideMapHistoryDetailViewport(RideMapCanvasView.geoBounds(for: region))
+                    history.projectDetailViewport(RideMapCanvasView.geoBounds(for: region))
                 },
                 mapPosition: $presentation.detailMapPosition,
                 isApplyingCamera: $presentation.detailIsApplyingCamera,

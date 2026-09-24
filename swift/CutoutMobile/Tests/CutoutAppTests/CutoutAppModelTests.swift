@@ -846,12 +846,15 @@ final class CutoutAppModelTests: XCTestCase {
             rideHistoryQueryProvider: { query }
         )
 
-        model.setRideMapHistorySearchText("no-match-\(UUID().uuidString)")
+        let unmatchedSearch = "no-match-\(UUID().uuidString)"
+        model.rideHistory.searchText = unmatchedSearch
         let gatedPageStarted = await query.waitUntilGatedHistoryPageStarts()
         XCTAssertTrue(gatedPageStarted)
         XCTAssertFalse(query.gatedHistoryPageRideIDsSnapshot.contains(rideID))
 
-        model.setRideMapHistorySearchText(rideID)
+        model.rideHistory.searchText = rideID
+        let replacementQueryStarted = await query.waitUntilHistoryPageFilter(rideID)
+        XCTAssertTrue(replacementQueryStarted)
         await Self.waitUntil("matching history query after replacing filtered page") {
             !model.rideMapHistoryLoading
                 && model.rideMapHistory.contains(where: { $0.rideID == rideID })
@@ -4665,6 +4668,17 @@ private final class GatedRideHistoryQuery: RideHistoryQuerying, @unchecked Senda
         lock.lock()
         defer { lock.unlock() }
         return historyPageFilters
+    }
+
+    func waitUntilHistoryPageFilter(_ searchText: String) async -> Bool {
+        let deadline = ContinuousClock.now + .seconds(5)
+        while ContinuousClock.now < deadline {
+            if historyPageFiltersSnapshot.contains(where: { $0?.searchText == searchText }) {
+                return true
+            }
+            try? await Task.sleep(for: .milliseconds(1))
+        }
+        return false
     }
 
     @MainActor

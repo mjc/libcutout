@@ -419,7 +419,7 @@ final class CutoutAppModel {
     }
 
     private let core: any CutoutSessionDriving
-    private let rideHistory: RideHistoryModel
+    let rideHistory: RideHistoryModel
     private let liveActivityCoordinator: LiveActivityRideLifecycleCoordinator
     private let selectedDeviceStore: DevicePickerSelectionStore
     private let rideSessionMarkerStore: RideSessionMarkerStore
@@ -557,7 +557,8 @@ final class CutoutAppModel {
         let musicEffects = MusicProviderEffectExecutor()
         self.rideHistory = RideHistoryModel(
             stateProvider: rideHistoryQueryProvider ?? { core.rideMapStateHandle },
-            dateProvider: rideHistoryDateProvider
+            dateProvider: rideHistoryDateProvider,
+            storageErrorProvider: { core.rideMapStorageError }
         )
         self.musicProviderLifecycle = musicProviderLifecycle
         self.musicEffects = musicEffects
@@ -1478,18 +1479,7 @@ final class CutoutAppModel {
     }
 
     func loadRideMapHistory(selecting requestedRideID: String? = nil) {
-        prepareRideHistoryQuery()
-        if let rideMapStorageError {
-            let error = MobileRideMapError.storageError(rideMapStorageError)
-            rideHistory.setError(error)
-            applyRideMapHistoryLoadFailure(error)
-            return
-        }
-        rideHistory.load(selecting: requestedRideID)
-    }
-
-    private func prepareRideHistoryQuery() {
-        rideHistory.prepareForReload()
+        rideHistory.reload(selecting: requestedRideID)
     }
 
     private func applyRideHistoryPageResult() {
@@ -1512,26 +1502,20 @@ final class CutoutAppModel {
     }
 
     func setRideMapHistoryDateFilter(_ filter: RideMapHistoryDateFilter) {
-        guard rideMapHistoryDateFilter != filter else { return }
         rideHistory.setDateFilter(filter)
-        loadRideMapHistory()
     }
 
     func setRideMapHistoryVehicleFilter(_ identity: String?) {
-        guard rideMapHistoryVehicleFilter != identity else { return }
         rideHistory.setVehicleFilter(identity)
-        loadRideMapHistory()
     }
 
     func setRideMapHistorySearchText(_ text: String) {
         guard rideMapHistorySearchText != text else { return }
         rideMapHistorySearchText = text
-        loadRideMapHistory()
     }
 
     func clearRideMapHistoryFilters() {
         rideHistory.clearFilters()
-        loadRideMapHistory()
     }
 
     func selectRideMapHistory(_ rideID: String) {
@@ -1544,14 +1528,7 @@ final class CutoutAppModel {
     }
 
     func ensureRideMapHistorySelection(_ requestedRideID: String?) {
-        switch rideHistory.ensureSelection(requestedRideID: requestedRideID) {
-        case .none:
-            return
-        case let .load(rideID):
-            loadRideMapHistory(selecting: rideID)
-        case let .select(rideID):
-            selectRideMapHistory(rideID)
-        }
+        rideHistory.ensureSelection(requestedRideID: requestedRideID)
     }
 
     func projectRideMapHistoryDetailViewport(_ viewport: MobileGeoBoundsDto?) {
