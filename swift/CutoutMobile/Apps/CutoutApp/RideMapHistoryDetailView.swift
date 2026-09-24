@@ -255,21 +255,15 @@ struct RideMapHistoryDetailView: View {
     }
 
     private func distanceText(for summary: MobileRideMapSummaryDto) -> String {
-        Measurement(value: summary.distanceMeters, unit: UnitLength.meters)
-            .formatted(.measurement(width: .abbreviated, usage: .road))
+        RideMapMetricFormatting.distanceText(for: summary)
     }
 
     private func durationText(for summary: MobileRideMapSummaryDto) -> String {
-        Duration.seconds(Double(summary.durationMilliseconds) / 1_000)
-            .formatted(.units(allowed: [.hours, .minutes, .seconds], width: .abbreviated))
+        RideMapMetricFormatting.durationText(for: summary)
     }
 
     private func recordedAtText(for milliseconds: UInt64) -> String {
-        guard milliseconds > 0 else {
-            return localizedAppText("ride_map.untitled_ride")
-        }
-        return Date(timeIntervalSince1970: Double(milliseconds) / 1_000)
-            .formatted(.dateTime.month(.abbreviated).day().year().hour().minute())
+        RideMapMetricFormatting.recordedAtText(for: milliseconds)
     }
 
     private func vehicleLabel(for ride: MobileRideMapHistorySummaryDto) -> String {
@@ -291,6 +285,6 @@ struct RideMapHistoryDetailView: View {
         let duration = durationText(for: ride.summary)
         let title = localizedAppText("ride_map.detail_title")
         return
-            "\(title)\n\(distance) · \(duration) · \(RideMapHistoryListView.pointCountText(ride.summary.pointCount))"
+            "\(title)\n\(distance) · \(duration) · \(RideMapMetricFormatting.pointCountText(ride.summary.pointCount))"
     }
 }

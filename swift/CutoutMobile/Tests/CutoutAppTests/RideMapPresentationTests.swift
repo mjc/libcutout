@@ -119,6 +119,30 @@ final class RideMapPresentationTests: XCTestCase {
         XCTAssertEqual(RideMapHistoryListView.pointCountText(2), "2 points")
     }
 
+    func testRideMapMetricFormattingKeepsSharedProjectionContracts() {
+        let summary = MobileRideMapSummaryDto(
+            pointCount: 2,
+            distanceMeters: 1_234.5,
+            durationMilliseconds: 61_000
+        )
+
+        XCTAssertEqual(
+            RideMapMetricFormatting.distanceText(for: summary),
+            Measurement(value: summary.distanceMeters, unit: UnitLength.meters)
+                .formatted(.measurement(width: .abbreviated, usage: .road))
+        )
+        XCTAssertEqual(
+            RideMapMetricFormatting.durationText(for: summary),
+            Duration.seconds(Double(summary.durationMilliseconds) / 1_000)
+                .formatted(.units(allowed: [.hours, .minutes, .seconds], width: .abbreviated))
+        )
+        XCTAssertEqual(RideMapMetricFormatting.pointCountText(summary.pointCount), "2 points")
+        XCTAssertEqual(
+            RideMapMetricFormatting.recordedAtText(for: 0),
+            localizedAppText("ride_map.untitled_ride")
+        )
+    }
+
     func testHistorySelectionAccessibilityTextIsLocalized() {
         XCTAssertEqual(
             RideMapHistoryListView.selectionAccessibilityValue(isSelected: true),

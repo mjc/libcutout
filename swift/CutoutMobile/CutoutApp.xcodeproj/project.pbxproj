@@ -64,6 +64,7 @@
 		30000000000000000000002E /* Apps/CutoutApp/RideMapHistoryContentSections.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000002E /* Apps/CutoutApp/RideMapHistoryContentSections.swift */; };
 		30000000000000000000002F /* Apps/CutoutApp/RideMapHistoryDetailSections.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000002F /* Apps/CutoutApp/RideMapHistoryDetailSections.swift */; };
 		300000000000000000000030 /* Apps/CutoutApp/RideMapHistoryStyling.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000030 /* Apps/CutoutApp/RideMapHistoryStyling.swift */; };
+		300000000000000000000033 /* Apps/CutoutApp/RideMapMetricFormatting.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000033 /* Apps/CutoutApp/RideMapMetricFormatting.swift */; };
 		300000000000000000000041 /* Apps/CutoutApp/AppSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000041 /* Apps/CutoutApp/AppSetupView.swift */; };
 		300000000000000000000042 /* Apps/CutoutApp/PhoneRideAlarm.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000042 /* Apps/CutoutApp/PhoneRideAlarm.swift */; };
 		300000000000000000000044 /* Apps/CutoutApp/PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000044 /* Apps/CutoutApp/PrivacyInfo.xcprivacy */; };
@@ -169,6 +170,7 @@
 		40000000000000000000002E /* Apps/CutoutApp/RideMapHistoryContentSections.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/RideMapHistoryContentSections.swift; sourceTree = SOURCE_ROOT; };
 		40000000000000000000002F /* Apps/CutoutApp/RideMapHistoryDetailSections.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/RideMapHistoryDetailSections.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000030 /* Apps/CutoutApp/RideMapHistoryStyling.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/RideMapHistoryStyling.swift; sourceTree = SOURCE_ROOT; };
+		400000000000000000000033 /* Apps/CutoutApp/RideMapMetricFormatting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/RideMapMetricFormatting.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000041 /* Apps/CutoutApp/AppSetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/AppSetupView.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000042 /* Apps/CutoutApp/PhoneRideAlarm.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/PhoneRideAlarm.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000044 /* Apps/CutoutApp/PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Apps/CutoutApp/PrivacyInfo.xcprivacy; sourceTree = SOURCE_ROOT; };
@@ -247,6 +249,7 @@
 				40000000000000000000002E /* Apps/CutoutApp/RideMapHistoryContentSections.swift */,
 				40000000000000000000002F /* Apps/CutoutApp/RideMapHistoryDetailSections.swift */,
 				400000000000000000000030 /* Apps/CutoutApp/RideMapHistoryStyling.swift */,
+				400000000000000000000033 /* Apps/CutoutApp/RideMapMetricFormatting.swift */,
 				40000000000000000000001D /* Apps/CutoutApp/CaptureQuickLabel.swift */,
 				40000000000000000000001E /* Apps/CutoutApp/CutoutSessionDriving.swift */,
 				400000000000000000000031 /* Apps/CutoutApp/CutoutSessionCallbackRegistrar.swift */,
@@ -496,6 +499,7 @@
 				30000000000000000000002E /* Apps/CutoutApp/RideMapHistoryContentSections.swift in Sources */,
 				30000000000000000000002F /* Apps/CutoutApp/RideMapHistoryDetailSections.swift in Sources */,
 				300000000000000000000030 /* Apps/CutoutApp/RideMapHistoryStyling.swift in Sources */,
+				300000000000000000000033 /* Apps/CutoutApp/RideMapMetricFormatting.swift in Sources */,
 				30000000000000000000001D /* Apps/CutoutApp/CaptureQuickLabel.swift in Sources */,
 				30000000000000000000001E /* Apps/CutoutApp/CutoutSessionDriving.swift in Sources */,
 				300000000000000000000031 /* Apps/CutoutApp/CutoutSessionCallbackRegistrar.swift in Sources */,

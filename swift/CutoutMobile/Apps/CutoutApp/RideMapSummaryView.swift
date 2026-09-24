@@ -88,13 +88,11 @@ struct RideMapSummaryView: View {
     }
 
     private func distanceText(for snapshot: MobileRideMapSnapshotDto) -> String {
-        Measurement(value: snapshot.summary.distanceMeters, unit: UnitLength.meters)
-            .formatted(.measurement(width: .abbreviated, usage: .road))
+        RideMapMetricFormatting.distanceText(for: snapshot.summary)
     }
 
     private func durationText(for snapshot: MobileRideMapSnapshotDto) -> String {
-        Duration.seconds(Double(snapshot.summary.durationMilliseconds) / 1_000)
-            .formatted(.units(allowed: [.hours, .minutes, .seconds], width: .abbreviated))
+        RideMapMetricFormatting.durationText(for: snapshot.summary)
     }
 
     private func indicatorColor(for state: IndicatorState) -> Color {
