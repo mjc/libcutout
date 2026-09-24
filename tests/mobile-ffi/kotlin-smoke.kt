@@ -1,11 +1,8 @@
 import java.io.File
-import uniffi.cutout_mobile_ffi.AeroBenignControlSession
 import uniffi.cutout_mobile_ffi.CutoutSessionStateHandle
-import uniffi.cutout_mobile_ffi.FalconBenignControlSession
 import uniffi.cutout_mobile_ffi.MobileCameraClockUncertaintyDto
 import uniffi.cutout_mobile_ffi.MobileCameraMediaProvenanceInput
 import uniffi.cutout_mobile_ffi.MobileCameraPreviewStateDto
-import uniffi.cutout_mobile_ffi.MobileCommandDto
 import uniffi.cutout_mobile_ffi.MobileCameraPreviewEventDto
 import uniffi.cutout_mobile_ffi.MobileCameraPreviewFileSink
 import uniffi.cutout_mobile_ffi.MobileCameraSourceKindDto
@@ -14,12 +11,11 @@ import uniffi.cutout_mobile_ffi.MobileNovatekMediaPathException
 import uniffi.cutout_mobile_ffi.MobileNovatekCommandStatusDto
 import uniffi.cutout_mobile_ffi.MobileNovatekCommandOutcomeDto
 import uniffi.cutout_mobile_ffi.MobileNovatekHttpOriginDto
-import uniffi.cutout_mobile_ffi.MobileNovatekSession
+import uniffi.cutout_mobile_ffi.MobileNovatekRecordingCommandDto
+import uniffi.cutout_mobile_ffi.MobileNovatekReadOnlySnapshotDto
 import uniffi.cutout_mobile_ffi.mobileParseNovatekReadOnlySnapshot
 import uniffi.cutout_mobile_ffi.mobileParseNovatekCommandOutcome
 import uniffi.cutout_mobile_ffi.mobileNovatekMediaDownloadTarget
-import uniffi.cutout_mobile_ffi.MobileNovatekRecordingCommandDto
-import uniffi.cutout_mobile_ffi.MobileFalconProfileDto
 import uniffi.cutout_mobile_ffi.MobileGattFingerprintDto
 import uniffi.cutout_mobile_ffi.MobileGattRoleDto
 import uniffi.cutout_mobile_ffi.MobileMonotonicMillisDto
@@ -137,32 +133,45 @@ fun main() {
     } catch (_: MobileNovatekMediaPathException.InvalidPath) {
     }
 
-    MobileNovatekSession(
-        origin = MobileNovatekHttpOriginDto(
-            address = "192.168.1.254",
-            port = 80u.toUShort(),
-        ),
-        firmwareVersion = "R3V1.1_20240411",
-        configuration = listOf(
-            MobileNovatekCommandStatusDto(
-                commandId = 2001u.toUShort(),
-                status = 0u.toUShort(),
+    CutoutSessionStateHandle().use { session ->
+        session.configureNovatekReadOnlySession(
+            origin = MobileNovatekHttpOriginDto(
+                address = "192.168.1.254",
+                port = 80u.toUShort(),
             ),
-            MobileNovatekCommandStatusDto(
-                commandId = 1001u.toUShort(),
-                status = 0u.toUShort(),
+            snapshot = MobileNovatekReadOnlySnapshotDto(
+                firmwareVersion = "R3V1.1_20240411",
+                movieRtspUri = "rtsp://192.168.1.254/movie",
+                photoRtspUri = "rtsp://192.168.1.254/photo",
+                configuration = listOf(
+                    MobileNovatekCommandStatusDto(
+                        commandId = 2001u.toUShort(),
+                        status = 0u.toUShort(),
+                    ),
+                    MobileNovatekCommandStatusDto(
+                        commandId = 1001u.toUShort(),
+                        status = 0u.toUShort(),
+                    ),
+                ),
+                storagePresent = true,
+                media = emptyList(),
             ),
-        ),
-    ).use { session ->
+        )
         check(
-            session.recordingCommandTarget(MobileNovatekRecordingCommandDto.START) ==
+            session.novatekRecordingCommandTarget(
+                MobileNovatekRecordingCommandDto.START,
+            ) ==
                 "/?custom=1&cmd=2001&str=1",
         )
         check(
-            session.recordingCommandTarget(MobileNovatekRecordingCommandDto.STOP) ==
+            session.novatekRecordingCommandTarget(
+                MobileNovatekRecordingCommandDto.STOP,
+            ) ==
                 "/?custom=1&cmd=2001&str=0",
         )
-        check(session.stillCaptureCommandTarget() == "/?custom=1&cmd=1001")
+        check(session.novatekStillCaptureCommandTarget() == "/?custom=1&cmd=1001")
+        session.invalidateCameraLifecycle()
+        check(session.novatekSessionOrigin() == null)
     }
     check(
         mobileParseNovatekCommandOutcome(

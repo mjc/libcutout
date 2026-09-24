@@ -1,5 +1,6 @@
 import CutoutMobile
 import XCTest
+
 @testable import CutoutApp
 
 @MainActor
@@ -130,7 +131,7 @@ final class CameraDiscoveryModelTests: XCTestCase {
         line: UInt = #line,
         condition: () -> Bool
     ) async {
-        for _ in 0 ..< 100 where !condition() {
+        for _ in 0..<100 where !condition() {
             await Task.yield()
         }
         XCTAssertTrue(condition(), file: file, line: line)
