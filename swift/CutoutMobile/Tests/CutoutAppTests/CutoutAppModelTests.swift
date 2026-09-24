@@ -1405,8 +1405,7 @@ final class CutoutAppModelTests: XCTestCase {
 
     @MainActor
     func testHistoryRoutePreviewActionLoadsTheLargestBoundedPreview() async throws {
-        let driver = SessionDriverSpy(rows: [])
-        let state = driver.rideMapState
+        let state = MobileRideMapState()
         _ = try state.startGpsOnly(atMs: 100)
         for index in 0 ... 4_096 {
             _ = await Self.settle(state, try state.ingestLocation(
@@ -1420,27 +1419,27 @@ final class CutoutAppModelTests: XCTestCase {
         _ = try state.stop(atMs: 4_096_100)
         let rideID = try state.save().rideID
 
-        let model = CutoutAppModel(core: driver)
-        model.rideHistory.setDateFilter(.allTime)
-        model.rideHistory.reload(selecting: rideID)
+        let model = RideHistoryModel(stateProvider: { state })
+        model.setDateFilter(.allTime)
+        model.reload(selecting: rideID)
         await Self.waitUntil("bounded history route preview", maxTurns: 100_000) {
-            model.rideHistory.selectedRideID == rideID
-                && model.rideHistory.displayPoints.count == 512
-                && !model.rideHistory.routeLoading
+            model.selectedRideID == rideID
+                && model.displayPoints.count == 512
+                && !model.routeLoading
         }
 
-        XCTAssertTrue(model.rideHistory.pointsTruncated)
-        let initialCameraFitVersion = model.rideHistory.detailCameraFitVersion
-        model.rideHistory.loadRoutePreview()
+        XCTAssertTrue(model.pointsTruncated)
+        let initialCameraFitVersion = model.detailCameraFitVersion
+        model.loadRoutePreview()
         await Self.waitUntil("largest bounded history route preview", maxTurns: 100_000) {
-            model.rideHistory.displayPoints.count == 4_097
-                && !model.rideHistory.routeLoading
+            model.displayPoints.count == 4_097
+                && !model.routeLoading
         }
 
-        XCTAssertEqual(model.rideHistory.displayPoints.count, 4_097)
-        XCTAssertFalse(model.rideHistory.pointsTruncated)
+        XCTAssertEqual(model.displayPoints.count, 4_097)
+        XCTAssertFalse(model.pointsTruncated)
         XCTAssertNotEqual(
-            model.rideHistory.detailCameraFitVersion,
+            model.detailCameraFitVersion,
             initialCameraFitVersion
         )
     }
