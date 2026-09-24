@@ -814,6 +814,110 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testMusicDeletionRejectsLateHistoryViewportSuccessAndFailure() async throws {
+        for failAfterRelease in [false, true] {
+            let driver = SessionDriverSpy(rows: [])
+            let query = GatedRideHistoryQuery(
+                base: driver.rideMapState,
+                failAfterRelease: failAfterRelease
+            )
+            let model = CutoutAppModel(
+                core: driver,
+                rideHistoryQueryProvider: { query }
+            )
+            XCTAssertTrue(model.startGpsOnlyRide())
+            XCTAssertTrue(model.setMusicHistoryPolicy(.humanReadable))
+            _ = await Self.settle(driver.rideMapState, try driver.rideMapState.ingestLocation(
+                monotonicMs: 100,
+                wallClockUnixMs: 1_700_000_000_100,
+                latitudeDegrees: 39.7000,
+                longitudeDegrees: -104.9000,
+                horizontalAccuracyMeters: 5
+            ))
+            _ = await Self.settle(driver.rideMapState, try driver.rideMapState.ingestLocation(
+                monotonicMs: 1_100,
+                wallClockUnixMs: 1_700_000_001_100,
+                latitudeDegrees: 39.7001,
+                longitudeDegrees: -104.9000,
+                horizontalAccuracyMeters: 5
+            ))
+            let snapshot = MobileMusicSnapshotDto(
+                provider: .appleMusic,
+                sessionId: "session",
+                state: .playing,
+                item: MobileMusicItemDto(identifier: "track-1", title: "Song", artist: "Artist"),
+                positionMilliseconds: nil,
+                durationMilliseconds: nil,
+                observedAtMs: 1,
+                capabilities: MobileMusicCapabilitiesDto(
+                    previous: false,
+                    play: false,
+                    pause: true,
+                    next: true,
+                    openProvider: true
+                )
+            )
+            XCTAssertTrue(model.ingestMusicObservation(
+                MusicProviderObservation(snapshot: snapshot),
+                wallClockAtMs: 1_700_000_000_500,
+                clockUncertaintyMs: 5
+            ))
+            let rideID = try XCTUnwrap(model.rideMapSnapshot?.rideID)
+            XCTAssertFalse(driver.rideMapState.currentMusicEvents().isEmpty)
+            XCTAssertTrue(model.stopRideMap())
+            XCTAssertTrue(model.saveRideMap())
+            XCTAssertFalse(try driver.rideMapState.storedMusicHistory(rideID: rideID).events.isEmpty)
+            await Self.waitUntil("music-history route before gated viewport") {
+                model.selectedRideMapHistoryID == rideID
+                    && !model.rideMapHistoryDetailMusicTimeline.isEmpty
+                    && !model.rideMapHistoryRouteLoading
+            }
+            XCTAssertEqual(model.selectedRideMapHistoryID, rideID)
+            XCTAssertFalse(model.rideMapHistoryRouteLoading)
+            XCTAssertFalse(model.rideMapHistoryDetailRouteLoading)
+            XCTAssertFalse(model.rideMapHistoryDetailMusicTimeline.isEmpty)
+            let historyPoints = model.rideMapHistoryDisplayPoints
+            let detailPoints = model.rideMapHistoryDetailDisplayPoints
+            XCTAssertFalse(historyPoints.isEmpty)
+            XCTAssertFalse(detailPoints.isEmpty)
+
+            query.armNextProjection()
+            model.projectRideMapHistoryDetailViewport(MobileGeoBoundsDto(
+                minimumLatitudeDegrees: 39.70009,
+                maximumLatitudeDegrees: 39.70011,
+                minimumLongitudeDegrees: -104.90001,
+                maximumLongitudeDegrees: -104.89999
+            ))
+            let gatedProjectionStarted = await query.waitUntilGatedProjectionStarts()
+            XCTAssertTrue(gatedProjectionStarted)
+
+            XCTAssertTrue(model.forgetMusicHistory(for: rideID))
+            XCTAssertFalse(model.rideMapHistoryRouteLoading)
+            XCTAssertFalse(model.rideMapHistoryDetailRouteLoading)
+            XCTAssertEqual(model.rideMapHistoryDetailProjectionRideID, rideID)
+            XCTAssertEqual(model.rideMapHistoryDisplayPoints, historyPoints)
+            XCTAssertEqual(model.rideMapHistoryDetailDisplayPoints, detailPoints)
+            XCTAssertTrue(model.rideMapHistoryDetailMusicTimeline.isEmpty)
+            XCTAssertNil(model.rideMapHistoryDetailMusicState)
+
+            query.releaseGatedProjection()
+            let gatedProjectionFinished = await query.waitUntilGatedProjectionFinishes()
+            XCTAssertTrue(gatedProjectionFinished)
+            for _ in 0 ..< 20 {
+                await Task.yield()
+            }
+            XCTAssertFalse(model.rideMapHistoryRouteLoading)
+            XCTAssertFalse(model.rideMapHistoryDetailRouteLoading)
+            XCTAssertNil(model.rideMapHistoryRouteError)
+            XCTAssertNil(model.rideMapHistoryDetailRouteError)
+            XCTAssertEqual(model.rideMapHistoryDisplayPoints, historyPoints)
+            XCTAssertEqual(model.rideMapHistoryDetailDisplayPoints, detailPoints)
+            XCTAssertTrue(model.rideMapHistoryDetailMusicTimeline.isEmpty)
+            XCTAssertNil(model.rideMapHistoryDetailMusicState)
+        }
+    }
+
+    @MainActor
     func testHistoryQueryGenerationRejectsLateReloadOrPageResults() {
         XCTAssertTrue(
             RideHistoryModel.shouldApplyHistoryQuery(
@@ -4265,5 +4369,114 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     }
     func now() -> MonotonicMilliseconds {
         MonotonicMilliseconds(nowValue)
+    }
+}
+
+private final class GatedRideHistoryQuery: RideHistoryQuerying, @unchecked Sendable {
+    private let base: MobileRideMapState
+    private let failAfterRelease: Bool
+    private let lock = NSLock()
+    private var shouldGateNextProjection = false
+    private let projectionStarted = DispatchSemaphore(value: 0)
+    private let projectionRelease = DispatchSemaphore(value: 0)
+    private let projectionFinished = DispatchSemaphore(value: 0)
+
+    init(base: MobileRideMapState, failAfterRelease: Bool) {
+        self.base = base
+        self.failAfterRelease = failAfterRelease
+    }
+
+    func projectStoredPoints(
+        rideID: String,
+        budget: UInt32,
+        viewport: MobileGeoBoundsDto?,
+        privacy: MobileRideMapRoutePrivacyPolicy,
+        cancellation: MobileRideMapProjectionCancellation?
+    ) throws -> MobileRideMapRouteProjection {
+        lock.lock()
+        let shouldGate = shouldGateNextProjection
+        shouldGateNextProjection = false
+        lock.unlock()
+        let result = Result {
+            try base.projectStoredPoints(
+                rideID: rideID,
+                budget: budget,
+                viewport: viewport,
+                privacy: privacy,
+                cancellation: cancellation
+            )
+        }
+        if shouldGate {
+            projectionStarted.signal()
+            projectionRelease.wait()
+            defer { projectionFinished.signal() }
+            if failAfterRelease {
+                throw MobileRideMapError.storageError("late gated viewport failure")
+            }
+        }
+        return try result.get()
+    }
+
+    func storedMusicHistory(rideID: String) throws -> MobileMusicHistoryDto {
+        try base.storedMusicHistory(rideID: rideID)
+    }
+
+    func storedHistoryVehicleOptions() throws -> [MobileRideMapHistoryVehicleOptionDto] {
+        try base.storedHistoryVehicleOptions()
+    }
+
+    func storedHistoryRide(rideID: String) throws -> MobileRideMapHistorySummaryDto? {
+        try base.storedHistoryRide(rideID: rideID)
+    }
+
+    func storedHistoryPage(
+        cursor: MobileRideCursorDto?,
+        limit: UInt32,
+        filter: MobileRideHistoryFilterDto?
+    ) throws -> MobileRideMapHistoryPageDto {
+        try base.storedHistoryPage(cursor: cursor, limit: limit, filter: filter)
+    }
+
+    func projectStoredHistoryContext(
+        filter: MobileRideHistoryFilterDto,
+        selectedRideID: String?,
+        budget: MobileRideMapHistoryContextBudget,
+        viewport: MobileGeoBoundsDto?,
+        privacy: MobileRideMapRoutePrivacyPolicy
+    ) throws -> MobileRideMapHistoryContextProjection {
+        try base.projectStoredHistoryContext(
+            filter: filter,
+            selectedRideID: selectedRideID,
+            budget: budget,
+            viewport: viewport,
+            privacy: privacy
+        )
+    }
+
+    func waitUntilGatedProjectionStarts() async -> Bool {
+        await waitForSignal(projectionStarted)
+    }
+
+    func armNextProjection() {
+        lock.lock()
+        shouldGateNextProjection = true
+        lock.unlock()
+    }
+
+    func releaseGatedProjection() {
+        projectionRelease.signal()
+    }
+
+    func waitUntilGatedProjectionFinishes() async -> Bool {
+        await waitForSignal(projectionFinished)
+    }
+
+    @MainActor
+    private func waitForSignal(_ semaphore: DispatchSemaphore) async -> Bool {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global().async {
+                continuation.resume(returning: semaphore.wait(timeout: .now() + 5) == .success)
+            }
+        }
     }
 }

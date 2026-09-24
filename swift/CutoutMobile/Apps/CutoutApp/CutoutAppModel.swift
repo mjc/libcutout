@@ -16,6 +16,8 @@ struct MusicHistoryQueryResult: Equatable, Sendable {
     let error: MobileRideMapError?
 }
 
+typealias RideHistoryQueryProvider = @MainActor () -> (any RideHistoryQuerying)?
+
 @MainActor
 @Observable
 final class CutoutAppModel {
@@ -485,7 +487,8 @@ final class CutoutAppModel {
             musicHistoryPolicyStore: MusicHistoryPolicyStore(),
             musicProviderSelectionStore: MusicProviderSelectionStore(),
             musicMonitoringPreferenceStore: MusicMonitoringPreferenceStore(),
-            phoneAlarmDelivery: makePhoneRideAlarmDelivery()
+            phoneAlarmDelivery: makePhoneRideAlarmDelivery(),
+            rideHistoryQueryProvider: nil
         )
     }
 
@@ -504,7 +507,8 @@ final class CutoutAppModel {
             musicHistoryPolicyStore: MusicHistoryPolicyStore(),
             musicProviderSelectionStore: MusicProviderSelectionStore(),
             musicMonitoringPreferenceStore: MusicMonitoringPreferenceStore(),
-            phoneAlarmDelivery: makePhoneRideAlarmDelivery()
+            phoneAlarmDelivery: makePhoneRideAlarmDelivery(),
+            rideHistoryQueryProvider: nil
         )
     }
 
@@ -516,7 +520,8 @@ final class CutoutAppModel {
         musicHistoryPolicyStore: MusicHistoryPolicyStore = MusicHistoryPolicyStore(),
         musicProviderSelectionStore: MusicProviderSelectionStore = MusicProviderSelectionStore(),
         musicMonitoringPreferenceStore: MusicMonitoringPreferenceStore = MusicMonitoringPreferenceStore(),
-        phoneAlarmDelivery: any PhoneRideAlarmDelivering = makePhoneRideAlarmDelivery()
+        phoneAlarmDelivery: any PhoneRideAlarmDelivering = makePhoneRideAlarmDelivery(),
+        rideHistoryQueryProvider: RideHistoryQueryProvider? = nil
     ) {
         self.init(
             core: core,
@@ -527,7 +532,8 @@ final class CutoutAppModel {
             musicHistoryPolicyStore: musicHistoryPolicyStore,
             musicProviderSelectionStore: musicProviderSelectionStore,
             musicMonitoringPreferenceStore: musicMonitoringPreferenceStore,
-            phoneAlarmDelivery: phoneAlarmDelivery
+            phoneAlarmDelivery: phoneAlarmDelivery,
+            rideHistoryQueryProvider: rideHistoryQueryProvider
         )
     }
 
@@ -540,11 +546,14 @@ final class CutoutAppModel {
         musicHistoryPolicyStore: MusicHistoryPolicyStore,
         musicProviderSelectionStore: MusicProviderSelectionStore,
         musicMonitoringPreferenceStore: MusicMonitoringPreferenceStore,
-        phoneAlarmDelivery: any PhoneRideAlarmDelivering
+        phoneAlarmDelivery: any PhoneRideAlarmDelivering,
+        rideHistoryQueryProvider: RideHistoryQueryProvider?
     ) {
         let musicProviderLifecycle = MobileMusicProviderLifecycle()
         let musicEffects = MusicProviderEffectExecutor()
-        self.rideHistory = RideHistoryModel(stateProvider: { core.rideMapStateHandle })
+        self.rideHistory = RideHistoryModel(
+            stateProvider: rideHistoryQueryProvider ?? { core.rideMapStateHandle }
+        )
         self.musicProviderLifecycle = musicProviderLifecycle
         self.musicEffects = musicEffects
         self.spotifyMusicProvider = SpotifyProviderAdapter(

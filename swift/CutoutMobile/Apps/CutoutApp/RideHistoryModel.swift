@@ -14,6 +14,33 @@ private struct RideHistoryDetailViewportRequest: Sendable {
     let generation: UInt64
 }
 
+protocol RideHistoryQuerying: Sendable {
+    func projectStoredPoints(
+        rideID: String,
+        budget: UInt32,
+        viewport: MobileGeoBoundsDto?,
+        privacy: MobileRideMapRoutePrivacyPolicy,
+        cancellation: MobileRideMapProjectionCancellation?
+    ) throws -> MobileRideMapRouteProjection
+    func storedMusicHistory(rideID: String) throws -> MobileMusicHistoryDto
+    func storedHistoryVehicleOptions() throws -> [MobileRideMapHistoryVehicleOptionDto]
+    func storedHistoryRide(rideID: String) throws -> MobileRideMapHistorySummaryDto?
+    func storedHistoryPage(
+        cursor: MobileRideCursorDto?,
+        limit: UInt32,
+        filter: MobileRideHistoryFilterDto?
+    ) throws -> MobileRideMapHistoryPageDto
+    func projectStoredHistoryContext(
+        filter: MobileRideHistoryFilterDto,
+        selectedRideID: String?,
+        budget: MobileRideMapHistoryContextBudget,
+        viewport: MobileGeoBoundsDto?,
+        privacy: MobileRideMapRoutePrivacyPolicy
+    ) throws -> MobileRideMapHistoryContextProjection
+}
+
+extension MobileRideMapState: RideHistoryQuerying {}
+
 @MainActor
 @Observable
 final class RideHistoryModel {
@@ -30,7 +57,7 @@ final class RideHistoryModel {
 
     nonisolated private static var limits: MobileRideMapLimits { .rustOwned }
 
-    private let stateProvider: @MainActor () -> MobileRideMapState?
+    private let stateProvider: @MainActor () -> (any RideHistoryQuerying)?
     private var cursor: MobileRideCursorDto?
     private var queryDateAfterMilliseconds: UInt64?
     private var loadTask: Task<Void, Never>?
@@ -93,7 +120,7 @@ final class RideHistoryModel {
         historyFilter
     }
 
-    init(stateProvider: @escaping @MainActor () -> MobileRideMapState?) {
+    init(stateProvider: @escaping @MainActor () -> (any RideHistoryQuerying)?) {
         self.stateProvider = stateProvider
     }
 
@@ -199,6 +226,7 @@ final class RideHistoryModel {
                             rideID: request.rideID,
                             budget: budget,
                             viewport: viewport,
+                            privacy: .precise,
                             cancellation: cancellation
                         )
                     }
@@ -299,6 +327,8 @@ final class RideHistoryModel {
                         let projection = try state.projectStoredPoints(
                             rideID: request.rideID,
                             budget: budget,
+                            viewport: nil,
+                            privacy: .precise,
                             cancellation: cancellation
                         )
                         let musicHistory: MusicHistoryQueryResult
@@ -499,7 +529,9 @@ final class RideHistoryModel {
                     try state.projectStoredHistoryContext(
                         filter: filter,
                         selectedRideID: rideID,
-                        budget: budget
+                        budget: budget,
+                        viewport: nil,
+                        privacy: .precise
                     )
                 }
                 guard !Task.isCancelled,
