@@ -1,8 +1,8 @@
 import AVFoundation
 import CoreMedia
+import CutoutMobileFFI
 import Foundation
 import SwiftUI
-import CutoutMobileFFI
 
 /// Failure while turning one encoded camera frame into a displayable sample.
 public enum CameraPreviewRendererError: Error, Equatable, Sendable {
@@ -56,18 +56,20 @@ public final class CameraPreviewRenderer {
             throw CameraPreviewRendererError.missingParameterSets
         }
         guard frame.timestamp >= 0,
-              frame.clockRateHz > 0,
-              let timescale = CMTimeScale(exactly: frame.clockRateHz)
+            frame.clockRateHz > 0,
+            let timescale = CMTimeScale(exactly: frame.clockRateHz)
         else {
             throw CameraPreviewRendererError.invalidTiming
         }
 
         let timestamp = CMTime(value: frame.timestamp, timescale: timescale)
-        guard let sampleBuffer = makeSampleBuffer(
-            data: frame.data,
-            timestamp: timestamp,
-            formatDescription: formatDescription
-        ) else {
+        guard
+            let sampleBuffer = makeSampleBuffer(
+                data: frame.data,
+                timestamp: timestamp,
+                formatDescription: formatDescription
+            )
+        else {
             throw CameraPreviewRendererError.sampleBuffer
         }
         if !hasStartedTimeline {
@@ -119,18 +121,19 @@ public final class CameraPreviewRenderer {
         formatDescription: CMVideoFormatDescription
     ) -> CMSampleBuffer? {
         var blockBuffer: CMBlockBuffer?
-        guard CMBlockBufferCreateWithMemoryBlock(
-            allocator: kCFAllocatorDefault,
-            memoryBlock: nil,
-            blockLength: data.count,
-            blockAllocator: kCFAllocatorDefault,
-            customBlockSource: nil,
-            offsetToData: 0,
-            dataLength: data.count,
-            flags: 0,
-            blockBufferOut: &blockBuffer
-        ) == kCMBlockBufferNoErr,
-        let blockBuffer
+        guard
+            CMBlockBufferCreateWithMemoryBlock(
+                allocator: kCFAllocatorDefault,
+                memoryBlock: nil,
+                blockLength: data.count,
+                blockAllocator: kCFAllocatorDefault,
+                customBlockSource: nil,
+                offsetToData: 0,
+                dataLength: data.count,
+                flags: 0,
+                blockBufferOut: &blockBuffer
+            ) == kCMBlockBufferNoErr,
+            let blockBuffer
         else {
             return nil
         }
@@ -188,62 +191,62 @@ public struct CameraPreviewSurface: View {
 }
 
 #if canImport(UIKit)
-import UIKit
+    import UIKit
 
-@MainActor
-private struct CameraPreviewLayerView: UIViewRepresentable {
-    let renderer: CameraPreviewRenderer
+    @MainActor
+    private struct CameraPreviewLayerView: UIViewRepresentable {
+        let renderer: CameraPreviewRenderer
 
-    func makeUIView(context: Context) -> UIView {
-        let view = CameraPreviewUIKitView()
-        view.backgroundColor = .black
-        view.displayLayer = renderer.displayLayer
-        view.layer.addSublayer(renderer.displayLayer)
-        return view
+        func makeUIView(context: Context) -> UIView {
+            let view = CameraPreviewUIKitView()
+            view.backgroundColor = .black
+            view.displayLayer = renderer.displayLayer
+            view.layer.addSublayer(renderer.displayLayer)
+            return view
+        }
+
+        func updateUIView(_ view: UIView, context: Context) {
+            renderer.displayLayer.frame = view.bounds
+        }
     }
 
-    func updateUIView(_ view: UIView, context: Context) {
-        renderer.displayLayer.frame = view.bounds
-    }
-}
+    @MainActor
+    private final class CameraPreviewUIKitView: UIView {
+        weak var displayLayer: AVSampleBufferDisplayLayer?
 
-@MainActor
-private final class CameraPreviewUIKitView: UIView {
-    weak var displayLayer: AVSampleBufferDisplayLayer?
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        displayLayer?.frame = bounds
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            displayLayer?.frame = bounds
+        }
     }
-}
 #elseif canImport(AppKit)
-import AppKit
+    import AppKit
 
-@MainActor
-private struct CameraPreviewLayerView: NSViewRepresentable {
-    let renderer: CameraPreviewRenderer
+    @MainActor
+    private struct CameraPreviewLayerView: NSViewRepresentable {
+        let renderer: CameraPreviewRenderer
 
-    func makeNSView(context: Context) -> NSView {
-        let view = CameraPreviewAppKitView()
-        view.wantsLayer = true
-        view.layer?.backgroundColor = NSColor.black.cgColor
-        view.displayLayer = renderer.displayLayer
-        view.layer?.addSublayer(renderer.displayLayer)
-        return view
+        func makeNSView(context: Context) -> NSView {
+            let view = CameraPreviewAppKitView()
+            view.wantsLayer = true
+            view.layer?.backgroundColor = NSColor.black.cgColor
+            view.displayLayer = renderer.displayLayer
+            view.layer?.addSublayer(renderer.displayLayer)
+            return view
+        }
+
+        func updateNSView(_ view: NSView, context: Context) {
+            renderer.displayLayer.frame = view.bounds
+        }
     }
 
-    func updateNSView(_ view: NSView, context: Context) {
-        renderer.displayLayer.frame = view.bounds
-    }
-}
+    @MainActor
+    private final class CameraPreviewAppKitView: NSView {
+        weak var displayLayer: AVSampleBufferDisplayLayer?
 
-@MainActor
-private final class CameraPreviewAppKitView: NSView {
-    weak var displayLayer: AVSampleBufferDisplayLayer?
-
-    override func layout() {
-        super.layout()
-        displayLayer?.frame = bounds
+        override func layout() {
+            super.layout()
+            displayLayer?.frame = bounds
+        }
     }
-}
 #endif

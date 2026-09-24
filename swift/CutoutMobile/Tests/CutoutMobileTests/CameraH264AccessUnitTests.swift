@@ -1,6 +1,7 @@
-import XCTest
-@testable import CutoutMobile
 import CutoutMobileFFI
+import XCTest
+
+@testable import CutoutMobile
 
 final class CameraPreviewRendererTests: XCTestCase {
     @MainActor

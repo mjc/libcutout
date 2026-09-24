@@ -406,12 +406,12 @@ fn parse_length_prefixed_access_unit(data: &[u8]) -> Result<Vec<&[u8]>, &'static
 /// Extracts the first SPS and PPS NAL units from an H.264 `avcC` record.
 #[must_use]
 pub fn parse_avcc_parameter_sets(data: &[u8]) -> Option<Vec<Vec<u8>>> {
-    if data.len() < 7 || data[0] != 1 {
+    if data.first().copied()? != 1 {
         return None;
     }
 
     let mut cursor = 6;
-    let sps_count = usize::from(data[5] & 0x1f);
+    let sps_count = usize::from(*data.get(5)? & 0x1f);
     let sps = read_avcc_parameter_set(data, &mut cursor, sps_count)?;
     let pps_count = usize::from(*data.get(cursor)?);
     cursor += 1;
