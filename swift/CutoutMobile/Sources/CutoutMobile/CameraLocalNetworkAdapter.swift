@@ -227,7 +227,6 @@ public final class CameraLocalNetworkAdapter {
     private var commandInFlight = false
     private var pathObservationGeneration: UInt64 = 0
     private var evidencePathObservationGeneration: UInt64 = 0
-    private var readOnlyOrigin: MobileNovatekHttpOriginDto?
     private let monitorQueue = DispatchQueue(label: "org.cutout.camera-local-network")
 
     public init(
@@ -239,7 +238,6 @@ public final class CameraLocalNetworkAdapter {
         self.savedPreviewFileURL = nil
         self.sessionState = sessionState
         self.previewFrameHandler = nil
-        self.readOnlyOrigin = nil
     }
 
     /// Starts observing the Wi-Fi path without adding a timeout or scanner.
@@ -266,7 +264,6 @@ public final class CameraLocalNetworkAdapter {
         monitor?.cancel()
         monitor = nil
         readOnlyEvidence = nil
-        readOnlyOrigin = nil
         presentation = .initial
     }
 
@@ -282,7 +279,6 @@ public final class CameraLocalNetworkAdapter {
         guard evidence.isR3ProProfile else {
             invalidateCameraLifecycle()
             readOnlyEvidence = nil
-            readOnlyOrigin = nil
             presentation.connection = .unsupported
             presentation.profileName = nil
             presentation.storage = .unknown
@@ -290,7 +286,6 @@ public final class CameraLocalNetworkAdapter {
             return
         }
         readOnlyEvidence = evidence
-        readOnlyOrigin = origin
         sessionState.clearNovatekSession()
         if let origin {
             try? sessionState.configureNovatekSession(
@@ -354,7 +349,7 @@ public final class CameraLocalNetworkAdapter {
         stopPreview()
         let token = sessionState.cameraSessionToken()
         let session: MobileCameraPreviewSession
-        guard let readOnlyOrigin else {
+        guard let readOnlyOrigin = sessionState.novatekSessionOrigin() else {
             throw CameraReadOnlyRequestError.pathUnavailable
         }
         if let expectedAddress, expectedAddress != readOnlyOrigin.address {
@@ -959,7 +954,6 @@ public final class CameraLocalNetworkAdapter {
     private func clearReadOnlyEvidence() {
         invalidateCameraLifecycle()
         readOnlyEvidence = nil
-        readOnlyOrigin = nil
         presentation.connection = .notConfigured
         presentation.profileName = nil
         presentation.storage = .unknown
@@ -976,8 +970,8 @@ public final class CameraLocalNetworkAdapter {
     }
 
     private func readOnlyOriginMatches(_ origin: MobileNovatekHttpOriginDto) -> Bool {
-        guard let readOnlyOrigin else { return false }
-        return readOnlyOrigin.address == origin.address && readOnlyOrigin.port == origin.port
+        guard let retainedOrigin = sessionState.novatekSessionOrigin() else { return false }
+        return retainedOrigin == origin
     }
 
     private func requestURL(
