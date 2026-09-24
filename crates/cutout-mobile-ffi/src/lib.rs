@@ -1028,7 +1028,7 @@ impl MobileNovatekSession {
     ) -> Result<String, MobileNovatekProfileError> {
         self.inner
             .recording_command_target(command.into())
-            .map(str::to_owned)
+            .map(|target| target.as_str().to_owned())
             .map_err(Into::into)
     }
 
@@ -1041,7 +1041,7 @@ impl MobileNovatekSession {
     pub fn still_capture_command_target(&self) -> Result<String, MobileNovatekProfileError> {
         self.inner
             .still_capture_command_target(NovatekStillCaptureCommand)
-            .map(str::to_owned)
+            .map(|target| target.as_str().to_owned())
             .map_err(Into::into)
     }
 }
@@ -2587,7 +2587,7 @@ impl CutoutSessionStateHandle {
             .as_ref()
             .ok_or(MobileNovatekProfileError::CapabilityNotAdvertised)?
             .recording_command_target(command.into())
-            .map(str::to_owned)
+            .map(|target| target.as_str().to_owned())
             .map_err(Into::into)
     }
 
@@ -2606,7 +2606,7 @@ impl CutoutSessionStateHandle {
             .as_ref()
             .ok_or(MobileNovatekProfileError::CapabilityNotAdvertised)?
             .still_capture_command_target(NovatekStillCaptureCommand)
-            .map(str::to_owned)
+            .map(|target| target.as_str().to_owned())
             .map_err(Into::into)
     }
 
