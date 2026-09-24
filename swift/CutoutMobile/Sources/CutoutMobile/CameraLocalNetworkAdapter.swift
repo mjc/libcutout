@@ -774,22 +774,10 @@ public final class CameraLocalNetworkAdapter {
         start: Bool,
         fetch: @escaping CameraReadOnlyFetcher
     ) async throws -> CameraCommandOutcome {
-        let origin = try commandContext(address: address, port: port)
-        let command: MobileNovatekRecordingCommandDto = start ? .start : .stop
-        let target: String
-        do {
-            target = try sessionState.novatekRecordingCommandTarget(command: command)
-        } catch {
-            throw CameraCommandRequestError.unsupported
-        }
-        return try await requestCommand(
-            url: requestURL(
-                origin: origin,
-                target: target
-            ),
-            expectedCommandID: 2001,
-            fetch: fetch
-        )
+        let origin = try mobileValidateNovatekHttpOrigin(address: address, port: port)
+        let command: MobileNovatekCommandDto = start ? .startRecording : .stopRecording
+        let request = try authorizeCommand(origin: origin, command: command)
+        return try await requestCommand(request: request, fetch: fetch)
     }
 
     /// Sends an onboard-recording request through Apple's URL-loading stack.
@@ -821,21 +809,9 @@ public final class CameraLocalNetworkAdapter {
         port: UInt16,
         fetch: @escaping CameraReadOnlyFetcher
     ) async throws -> CameraCommandOutcome {
-        let origin = try commandContext(address: address, port: port)
-        let target: String
-        do {
-            target = try sessionState.novatekStillCaptureCommandTarget()
-        } catch {
-            throw CameraCommandRequestError.unsupported
-        }
-        return try await requestCommand(
-            url: requestURL(
-                origin: origin,
-                target: target
-            ),
-            expectedCommandID: 1001,
-            fetch: fetch
-        )
+        let origin = try mobileValidateNovatekHttpOrigin(address: address, port: port)
+        let request = try authorizeCommand(origin: origin, command: .stillCapture)
+        return try await requestCommand(request: request, fetch: fetch)
     }
 
     /// Sends a still-capture request through Apple's URL-loading stack.
@@ -857,14 +833,14 @@ public final class CameraLocalNetworkAdapter {
     }
 
     private func requestCommand(
-        url: URL,
-        expectedCommandID: UInt16,
+        request: MobileNovatekCommandRequestDto,
         fetch: @escaping CameraReadOnlyFetcher
     ) async throws -> CameraCommandOutcome {
         guard !commandInFlight else {
             throw CameraCommandRequestError.inFlight
         }
         let requestToken = sessionState.cameraSessionToken()
+        let url = try requestURL(origin: request.origin, target: request.target)
         commandInFlight = true
         defer { commandInFlight = false }
 
@@ -888,25 +864,27 @@ public final class CameraLocalNetworkAdapter {
         do {
             return try mobileParseNovatekCommandOutcome(
                 response: response,
-                expectedCommandId: expectedCommandID
+                expectedCommandId: request.expectedCommandId
             ).cameraOutcome
         } catch {
             return .unknown
         }
     }
 
-    private func commandContext(
-        address: String,
-        port: UInt16
-    ) throws -> MobileNovatekHttpOriginDto {
-        let origin = try mobileValidateNovatekHttpOrigin(address: address, port: port)
-        guard let sessionOrigin = sessionState.novatekSessionOrigin() else {
+    private func authorizeCommand(
+        origin: MobileNovatekHttpOriginDto,
+        command: MobileNovatekCommandDto
+    ) throws -> MobileNovatekCommandRequestDto {
+        do {
+            return try sessionState.authorizeNovatekCommand(
+                requestedOrigin: origin,
+                command: command
+            )
+        } catch MobileNovatekCommandAuthorizationError.OriginMismatch {
+            throw CameraCommandRequestError.originMismatch
+        } catch {
             throw CameraCommandRequestError.unsupported
         }
-        guard sessionOrigin == origin else {
-            throw CameraCommandRequestError.originMismatch
-        }
-        return origin
     }
 
     func apply(pathStatus: CameraLocalNetworkPathStatus, usesWiFi: Bool) {
