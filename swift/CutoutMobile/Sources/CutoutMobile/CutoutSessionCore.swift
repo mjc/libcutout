@@ -311,6 +311,14 @@ public enum CutoutSessionTestInitialBluetoothState: Sendable {
 public struct CutoutSessionTestScript {
     public let candidate: DevicePickerDiscoveryCandidate
     public let protocolNotifications: [Data]
+    /// Optional notifications used only to establish protocol identity before
+    /// the live notification replay begins.
+    public let protocolDetectionNotifications: [Data]?
+    /// Applies the decoded notification steps to the production display path.
+    /// Most UI fixtures provide a separate presentation snapshot; this opt-in
+    /// keeps those fixtures deterministic while allowing raw replay tests to
+    /// prove the real parser-to-dashboard boundary.
+    public let appliesProtocolNotificationSteps: Bool
     public let protocolNotificationIntervalMilliseconds: UInt64?
     public let telemetry: TelemetrySnapshot?
     public let telemetryUpdate: TelemetrySnapshot?
@@ -334,6 +342,8 @@ public struct CutoutSessionTestScript {
         candidate: DevicePickerDiscoveryCandidate,
         telemetry: TelemetrySnapshot?,
         protocolNotifications: [Data] = [],
+        protocolDetectionNotifications: [Data]? = nil,
+        appliesProtocolNotificationSteps: Bool = false,
         protocolNotificationIntervalMilliseconds: UInt64? = nil,
         telemetryUpdate: TelemetrySnapshot? = nil,
         telemetryUpdateDelayMilliseconds: UInt64 = 0,
@@ -354,6 +364,8 @@ public struct CutoutSessionTestScript {
     ) {
         self.candidate = candidate
         self.protocolNotifications = protocolNotifications
+        self.protocolDetectionNotifications = protocolDetectionNotifications
+        self.appliesProtocolNotificationSteps = appliesProtocolNotificationSteps
         self.protocolNotificationIntervalMilliseconds = protocolNotificationIntervalMilliseconds
         self.telemetry = telemetry
         self.telemetryUpdate = telemetryUpdate
@@ -1166,7 +1178,7 @@ public final class CutoutSessionCore: NSObject {
             return
         }
         _ = rustSessionState.connectionLinkEstablished(token: token)
-        for bytes in testScript.protocolNotifications {
+        for bytes in testScript.protocolDetectionNotifications ?? testScript.protocolNotifications {
             _ = rustSessionState.observeConnectionNotification(token: token, bytes: bytes)
         }
         _ = rustSessionState.resolveDeviceSession(
@@ -1190,8 +1202,20 @@ public final class CutoutSessionCore: NSObject {
                     return channel
                 }
                 if let channel = channels.first {
-                    for bytes in testScript.protocolNotifications {
-                        _ = try owner.handleNotification(bytes: bytes, channel: channel, at: clock.now())
+                    let replayStartedAt = clock.now()
+                    let replayInterval = testScript.protocolNotificationIntervalMilliseconds ?? 1
+                    for (index, bytes) in testScript.protocolNotifications.enumerated() {
+                        let receivedAt = MonotonicMilliseconds(
+                            replayStartedAt.rawValue + UInt64(index) * replayInterval
+                        )
+                        let step = try owner.handleNotification(
+                            bytes: bytes,
+                            channel: channel,
+                            at: receivedAt
+                        )
+                        if testScript.appliesProtocolNotificationSteps {
+                            applyNotificationStep(step, receivedAt: receivedAt)
+                        }
                     }
                     repeatTestProtocolNotifications(testScript, token: token, channel: channel)
                 }
@@ -1199,6 +1223,15 @@ public final class CutoutSessionCore: NSObject {
                 setPhase(.failed(.sessionFailed(error.sessionMessage)))
                 return
             }
+        }
+        if testScript.appliesProtocolNotificationSteps {
+            if testScript.protocolNotifications.isEmpty {
+                setPhase(.live)
+            }
+            scheduleTestTelemetryUpdateIfNeeded(testScript, token: token)
+            scheduleTestReconnectIfNeeded(testScript, token: token)
+            scheduleTestBluetoothLossIfNeeded(testScript, token: token)
+            return
         }
         emit(testScript: testScript, token: token)
     }

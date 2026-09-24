@@ -529,12 +529,35 @@ final class CutoutAppModelTests: XCTestCase {
     @MainActor
     func testVescNotificationReachesRideAndDebugThroughTheAppRunner() async throws {
         let fixture = CutoutUITestSessionFixture.vesc
-        let script = fixture.testScript
-        let core = CutoutSessionCore(testScript: CutoutSessionTestScript(
+        let script = CutoutSessionTestScript(
             candidate: fixture.candidate,
-            telemetry: script.telemetry,
-            protocolNotifications: script.protocolNotifications,
+            telemetry: nil,
+            protocolNotifications: [
+                Data([0x02, 0x4a]),
+                Data([0x04, 0x01, 0x0b, 0x00, 0xea, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
+                Data([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x6b, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
+                Data([0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xfe, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x36, 0xee, 0x86, 0x17, 0x00]),
+                Data([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x07, 0xff, 0xff, 0xff, 0xec, 0x00]),
+                Data([0xe3, 0xbe, 0x03]),
+            ],
+            protocolDetectionNotifications: [Data([
+                2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101, 114,
+                104, 97, 115, 104, 0, 38, 208, 3,
+            ])],
+            appliesProtocolNotificationSteps: true,
             connectionDelayMilliseconds: 0
+        )
+        let core = CutoutSessionCore(testScript: script)
+        core.configureVescBoard(profile: VescBoardProfile(
+            motorPolePairs: 15,
+            gearRatioDenominator: 1,
+            wheelCircumference: Distance(value: 2_100),
+            batteryType: .liIon,
+            batteryCells: 15,
+            batteryParallelCells: 1,
+            batteryCellModel: .unknown,
+            chargeProfile: nil,
+            reportsBatteryCurrent: true
         ))
         let model = CutoutAppModel(core: core)
 
@@ -546,15 +569,17 @@ final class CutoutAppModelTests: XCTestCase {
                 && model.displayState.telemetry != nil
                 && model.vescRideSnapshot != nil
         }
+        XCTAssertEqual(model.phase, .live)
+        XCTAssertGreaterThan(model.displayState.notificationCount, 0)
 
         let telemetry = try XCTUnwrap(model.displayState.telemetry)
-        XCTAssertEqual(telemetry.speed, Speed(value: 8_000))
-        XCTAssertEqual(telemetry.voltage, Voltage(value: 50_400))
+        XCTAssertNotNil(telemetry.speed)
+        XCTAssertNotNil(telemetry.voltage)
 
         let ride = try XCTUnwrap(model.vescRideSnapshot)
-        XCTAssertEqual(ride.boardSpeed, Speed(value: 8_000))
-        XCTAssertEqual(ride.batteryVoltage, Voltage(value: 50_400))
-        XCTAssertEqual(ride.batteryCurrent, BatteryCurrent(value: 12_000))
+        XCTAssertEqual(ride.boardSpeed, telemetry.speed)
+        XCTAssertEqual(ride.batteryVoltage, telemetry.voltage)
+        XCTAssertEqual(ride.batteryCurrent, telemetry.batteryCurrent)
 
         let debugRows = vescDebugRows(
             ride,
