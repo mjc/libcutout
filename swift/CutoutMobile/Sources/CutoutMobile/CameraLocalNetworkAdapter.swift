@@ -840,7 +840,6 @@ public final class CameraLocalNetworkAdapter {
             throw CameraCommandRequestError.inFlight
         }
         let url = try requestURL(origin: request.origin, target: request.target)
-        let requestToken = sessionState.cameraSessionToken()
         commandInFlight = true
         defer { commandInFlight = false }
 
@@ -855,10 +854,6 @@ public final class CameraLocalNetworkAdapter {
             throw error
         } catch {
             return .failed
-        }
-
-        guard isCurrentCameraRequest(requestToken) else {
-            throw CameraCommandRequestError.pathUnavailable
         }
 
         do {

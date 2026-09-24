@@ -446,6 +446,9 @@ fn read_avcc_parameter_set(data: &[u8], cursor: &mut usize, count: usize) -> Opt
         *cursor += 2;
         let end = (*cursor).checked_add(length)?;
         let nal = data.get(*cursor..end)?;
+        if nal.is_empty() {
+            return None;
+        }
         first.get_or_insert_with(|| nal.to_vec());
         *cursor = end;
     }
@@ -775,6 +778,21 @@ mod tests {
     fn avcc_configuration_rejects_truncated_parameter_sets() {
         assert_eq!(
             parse_avcc_parameter_sets(&[1, 0, 0, 0, 0, 1, 0, 2, 0x67]),
+            None
+        );
+    }
+
+    #[test]
+    fn avcc_configuration_rejects_empty_sps_or_pps() {
+        let empty_sequence_parameter_set = [1, 100, 0, 31, 0xff, 0xe1, 0, 0, 1, 0, 2, 0x68, 0];
+        let empty_picture_parameter_set = [1, 100, 0, 31, 0xff, 0xe1, 0, 2, 0x67, 1, 0, 0];
+
+        assert_eq!(
+            parse_avcc_parameter_sets(&empty_sequence_parameter_set),
+            None
+        );
+        assert_eq!(
+            parse_avcc_parameter_sets(&empty_picture_parameter_set),
             None
         );
     }

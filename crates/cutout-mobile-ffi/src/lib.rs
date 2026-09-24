@@ -803,6 +803,8 @@ pub struct MobileNovatekCommandRequestDto {
     pub command: MobileNovatekCommandDto,
     /// Retained-session generation that authorized this request.
     pub session_generation: u64,
+    /// Camera lifecycle identity that authorized this request.
+    pub camera_session_token: MobileCameraSessionTokenDto,
 }
 
 /// Failure while authorizing a Novatek mutation against retained evidence.
@@ -1195,16 +1197,11 @@ pub fn mobile_parse_novatek_read_only_snapshot(
 ///
 /// Returns [`MobileNovatekParseError::InvalidResponse`] when the response is
 /// not valid bounded UTF-8 or contains a malformed status value.
-#[uniffi::export]
-#[allow(
-    clippy::needless_pass_by_value,
-    reason = "UniFFI exports owned byte buffers"
-)]
-pub fn mobile_parse_novatek_command_outcome(
-    response: Vec<u8>,
+fn parse_novatek_command_outcome(
+    response: &[u8],
     expected_command_id: u16,
 ) -> Result<MobileNovatekCommandOutcomeDto, MobileNovatekParseError> {
-    let outcome = cutout_protocols::parse_command_response_for_id(&response, expected_command_id)
+    let outcome = cutout_protocols::parse_command_response_for_id(response, expected_command_id)
         .map_err(|_| MobileNovatekParseError::InvalidResponse)?;
     Ok(match outcome {
         NovatekCommandOutcome::Acknowledged => MobileNovatekCommandOutcomeDto::Acknowledged,
@@ -1968,26 +1965,30 @@ impl NovatekCameraSessionState {
             target,
             command,
             session_generation: self.generation.0,
+            camera_session_token: MobileCameraSessionTokenDto { generation: 0 },
         })
     }
 
     fn complete_command(
         &self,
         request: &MobileNovatekCommandRequestDto,
-        response: Vec<u8>,
+        response: &[u8],
     ) -> Result<MobileNovatekCommandOutcomeDto, MobileNovatekCommandCompletionError> {
         let Ok(current_request) = self.authorize_command(&request.origin, request.command) else {
             return Err(MobileNovatekCommandCompletionError::StaleSession);
         };
-        if current_request != *request {
+        if current_request.origin != request.origin
+            || current_request.target != request.target
+            || current_request.command != request.command
+            || current_request.session_generation != request.session_generation
+        {
             return Err(MobileNovatekCommandCompletionError::StaleSession);
         }
 
-        Ok(mobile_parse_novatek_command_outcome(
-            response,
-            request.command.expected_response_command_id(),
+        Ok(
+            parse_novatek_command_outcome(response, request.command.expected_response_command_id())
+                .unwrap_or(MobileNovatekCommandOutcomeDto::Unknown),
         )
-        .unwrap_or(MobileNovatekCommandOutcomeDto::Unknown))
     }
 
     fn media_is_current(&self, path: &str, size_bytes: u64) -> bool {
@@ -2635,10 +2636,14 @@ impl CutoutSessionStateHandle {
         requested_origin: MobileNovatekHttpOriginDto,
         command: MobileNovatekCommandDto,
     ) -> Result<MobileNovatekCommandRequestDto, MobileNovatekCommandAuthorizationError> {
-        self.novatek_session
+        let inner = self.lock_inner();
+        let mut request = self
+            .novatek_session
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .authorize_command(&requested_origin, command)
+            .authorize_command(&requested_origin, command)?;
+        request.camera_session_token = inner.session_state().camera().token().into();
+        Ok(request)
     }
 
     /// Completes a command only if its authorizing Novatek session is current.
@@ -2656,10 +2661,14 @@ impl CutoutSessionStateHandle {
         request: MobileNovatekCommandRequestDto,
         response: Vec<u8>,
     ) -> Result<MobileNovatekCommandOutcomeDto, MobileNovatekCommandCompletionError> {
+        let inner = self.lock_inner();
+        if request.camera_session_token != inner.session_state().camera().token().into() {
+            return Err(MobileNovatekCommandCompletionError::StaleSession);
+        }
         self.novatek_session
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .complete_command(&request, response)
+            .complete_command(&request, &response)
     }
 
     /// Captures an identity for asynchronous camera work.
@@ -2687,11 +2696,12 @@ impl CutoutSessionStateHandle {
 
     /// Retires the camera lifecycle and returns it to its non-optimistic baseline.
     pub fn invalidate_camera_lifecycle(&self) {
-        self.lock_inner()
-            .session_state_mut()
-            .camera_mut()
-            .invalidate();
-        self.clear_novatek_session();
+        let mut inner = self.lock_inner();
+        inner.session_state_mut().camera_mut().invalidate();
+        self.novatek_session
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clear();
     }
 
     /// Records a foreground preview observation without changing recording truth.
@@ -14888,6 +14898,7 @@ mod tests {
                 target: "/?custom=1&cmd=2001&str=1".to_owned(),
                 command: MobileNovatekCommandDto::StartRecording,
                 session_generation: 1,
+                camera_session_token: MobileCameraSessionTokenDto { generation: 0 },
             }
         );
         let stop = request(MobileNovatekCommandDto::StopRecording);
@@ -14935,6 +14946,31 @@ mod tests {
             .expect("still capture is advertised");
 
         configure_test_novatek_session(&handle, &[(1001, 0)]);
+
+        assert_eq!(
+            handle.complete_novatek_command(
+                request,
+                br"<Function><Cmd>1001</Cmd><Status>0</Status></Function>".to_vec(),
+            ),
+            Err(MobileNovatekCommandCompletionError::StaleSession)
+        );
+    }
+
+    #[test]
+    fn camera_session_state_handle_rejects_command_response_after_lifecycle_advance() {
+        let handle = CutoutSessionStateHandle::new();
+        configure_test_novatek_session(&handle, &[(1001, 0)]);
+        let request = handle
+            .authorize_novatek_command(
+                MobileNovatekHttpOriginDto {
+                    address: "192.168.1.254".to_owned(),
+                    port: 80,
+                },
+                MobileNovatekCommandDto::StillCapture,
+            )
+            .expect("still capture is advertised");
+
+        handle.advance_camera_generation();
 
         assert_eq!(
             handle.complete_novatek_command(
@@ -15153,31 +15189,28 @@ mod tests {
     }
 
     #[test]
-    fn novatek_command_outcome_ffi_preserves_ack_refusal_and_unknown() {
+    fn novatek_command_outcome_parser_preserves_ack_refusal_and_unknown() {
         assert_eq!(
-            mobile_parse_novatek_command_outcome(
-                br"<Function><Cmd>2001</Cmd><Status>0</Status></Function>".to_vec(),
+            parse_novatek_command_outcome(
+                br"<Function><Cmd>2001</Cmd><Status>0</Status></Function>",
                 2001,
             ),
             Ok(MobileNovatekCommandOutcomeDto::Acknowledged)
         );
         assert_eq!(
-            mobile_parse_novatek_command_outcome(
-                br"<Function><Cmd>2001</Cmd><Status>7</Status></Function>".to_vec(),
+            parse_novatek_command_outcome(
+                br"<Function><Cmd>2001</Cmd><Status>7</Status></Function>",
                 2001,
             ),
             Ok(MobileNovatekCommandOutcomeDto::Refused)
         );
         assert_eq!(
-            mobile_parse_novatek_command_outcome(
-                br"<Function><Cmd>2001</Cmd></Function>".to_vec(),
-                2001,
-            ),
+            parse_novatek_command_outcome(br"<Function><Cmd>2001</Cmd></Function>", 2001,),
             Ok(MobileNovatekCommandOutcomeDto::Unknown)
         );
         assert_eq!(
-            mobile_parse_novatek_command_outcome(
-                br"<Function><Cmd>3024</Cmd><Status>0</Status></Function>".to_vec(),
+            parse_novatek_command_outcome(
+                br"<Function><Cmd>3024</Cmd><Status>0</Status></Function>",
                 2001,
             ),
             Err(MobileNovatekParseError::InvalidResponse)
