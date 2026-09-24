@@ -16,26 +16,15 @@ struct CameraRouteContainerView: View {
     let currentCaptureFileName: (() -> String?)?
     @State private var adapter = CameraLocalNetworkAdapter()
     @State private var previewRenderer = CameraPreviewRenderer()
+    @State private var mediaModel: CameraMediaModel
     @State private var address = "192.168.1.254"
     @State private var port = "80"
     @State private var isReading = false
     @State private var readErrorKey: String?
-    @State private var downloadedMediaURL: URL?
-    @State private var downloadedMediaPath: String?
-    @State private var downloadingMediaPath: String?
-    @State private var mediaDownloadTask: Task<Void, Never>?
-    @State private var mediaErrorKey: String?
-    @State private var thumbnailTask: Task<Void, Never>?
-    @State private var thumbnailGeneration: UInt64 = 0
-    @State private var thumbnailDataByPath: [String: Data] = [:]
-    private static let maximumThumbnailEntries = 32
-    @State private var thumbnailPathInFlight: String?
-    @State private var thumbnailErrorKey: String?
     @State private var recordingRequestKey: String?
     @State private var isRequestingRecording = false
     @State private var stillRequestKey: String?
     @State private var isRequestingStill = false
-    @State private var mediaDownloadGeneration: UInt64 = 0
     @State private var readTask: Task<Void, Never>?
     @State private var previewStartTask: Task<Void, Never>?
     @State private var recordingTask: Task<Void, Never>?
@@ -56,7 +45,16 @@ struct CameraRouteContainerView: View {
         self.annotateCapture = annotateCapture
         self.recordMediaReference = recordMediaReference
         self.currentCaptureFileName = currentCaptureFileName
-        _adapter = State(initialValue: CameraLocalNetworkAdapter(sessionState: sessionState))
+        let adapter = CameraLocalNetworkAdapter(sessionState: sessionState)
+        _adapter = State(initialValue: adapter)
+        _mediaModel = State(
+            initialValue: CameraMediaModel(
+                adapter: adapter,
+                annotateCapture: annotateCapture,
+                recordMediaReference: recordMediaReference,
+                currentCaptureFileName: currentCaptureFileName
+            )
+        )
     }
 
     var body: some View {
@@ -65,20 +63,11 @@ struct CameraRouteContainerView: View {
             presentation: adapter.presentation,
             readOnlyEvidence: adapter.readOnlyEvidence,
             movieRTSPURI: adapter.readOnlyEvidence?.movieRTSPURI,
+            mediaModel: mediaModel,
             address: $address,
             port: $port,
             isReading: isReading,
             readErrorKey: readErrorKey,
-            downloadedMediaURL: downloadedMediaURL,
-            downloadedMediaPath: downloadedMediaPath,
-            downloadingMediaPath: downloadingMediaPath,
-            mediaErrorKey: mediaErrorKey,
-            cancelDownload: cancelMediaDownload,
-            thumbnailDataByPath: thumbnailDataByPath,
-            thumbnailPathInFlight: thumbnailPathInFlight,
-            thumbnailErrorKey: thumbnailErrorKey,
-            supportsMediaThumbnails: adapter.readOnlyEvidence?.supportsMediaThumbnails ?? false,
-            fetchThumbnail: fetchThumbnail,
             recordingRequestKey: recordingRequestKey,
             isRequestingRecording: isRequestingRecording,
             supportsOnboardRecording: adapter.readOnlyEvidence?.supportsOnboardRecording ?? false,
@@ -88,7 +77,6 @@ struct CameraRouteContainerView: View {
             savedFileURL: adapter.savedPreviewFileURL,
             previewRenderer: previewRenderer,
             loadEvidence: readCamera,
-            downloadMedia: downloadMedia,
             requestRecording: requestRecording,
             requestStillCapture: requestStillCapture,
             startPreview: { startPreview(saveTo: nil) },
@@ -136,11 +124,7 @@ struct CameraRouteContainerView: View {
 
         isReading = true
         readErrorKey = nil
-        thumbnailGeneration &+= 1
-        thumbnailTask?.cancel()
-        thumbnailTask = nil
-        thumbnailPathInFlight = nil
-        thumbnailDataByPath.removeAll(keepingCapacity: true)
+        mediaModel.prepareForEvidenceRefresh()
         readTask?.cancel()
         readGeneration &+= 1
         let generation = readGeneration
@@ -191,114 +175,6 @@ struct CameraRouteContainerView: View {
                 readErrorKey = "camera.error.origin_mismatch"
             } catch {
                 if !Task.isCancelled { readErrorKey = "camera.error.read_failed" }
-            }
-        }
-    }
-
-    private func downloadMedia(_ media: CameraMediaEvidence) {
-        guard let portNumber = UInt16(port) else {
-            mediaErrorKey = "camera.error.invalid_port"
-            return
-        }
-
-        let destination = mediaOutputURL(for: media)
-        let captureFileName = currentCaptureFileName?()
-        mediaDownloadTask?.cancel()
-        mediaDownloadGeneration &+= 1
-        let generation = mediaDownloadGeneration
-        downloadingMediaPath = media.path
-        downloadedMediaURL = nil
-        downloadedMediaPath = nil
-        mediaErrorKey = nil
-        mediaDownloadTask = Task { @MainActor in
-            defer {
-                if generation == mediaDownloadGeneration {
-                    downloadingMediaPath = nil
-                    mediaDownloadTask = nil
-                }
-            }
-            do {
-                try await adapter.downloadMedia(
-                    address: address,
-                    port: portNumber,
-                    media: media,
-                    to: destination
-                )
-                guard generation == mediaDownloadGeneration else { return }
-                downloadedMediaURL = destination
-                downloadedMediaPath = media.path
-                annotateCapture?("camera_media_file", media.name)
-                if let captureFileName {
-                    recordMediaReference?(captureFileName, .novatekR3Pro, media, destination)
-                }
-            } catch is CancellationError {
-                // Cancellation is an expected user action, not a transfer error.
-            } catch let error as URLError where error.code == .cancelled {
-                // URLSession reports cancellation as URLError on some OSes.
-            } catch CameraMediaDownloadError.originMismatch {
-                if generation == mediaDownloadGeneration {
-                    mediaErrorKey = "camera.error.origin_mismatch"
-                }
-            } catch {
-                if generation == mediaDownloadGeneration {
-                    mediaErrorKey = "camera.error.media_download_failed"
-                }
-            }
-        }
-    }
-
-    private func cancelMediaDownload() {
-        mediaDownloadGeneration &+= 1
-        mediaDownloadTask?.cancel()
-        mediaDownloadTask = nil
-        downloadingMediaPath = nil
-    }
-
-    private func fetchThumbnail(_ media: CameraMediaEvidence) {
-        guard let portNumber = UInt16(port) else {
-            thumbnailErrorKey = "camera.error.invalid_port"
-            return
-        }
-
-        thumbnailGeneration &+= 1
-        let generation = thumbnailGeneration
-        thumbnailTask?.cancel()
-        thumbnailPathInFlight = media.path
-        thumbnailErrorKey = nil
-        thumbnailTask = Task { @MainActor in
-            defer {
-                if generation == thumbnailGeneration {
-                    thumbnailPathInFlight = nil
-                    thumbnailTask = nil
-                }
-            }
-            do {
-                let data = try await adapter.fetchMediaThumbnail(
-                    address: address,
-                    port: portNumber,
-                    media: media
-                )
-                guard generation == thumbnailGeneration else { return }
-                guard !data.isEmpty else {
-                    thumbnailErrorKey = "camera.error.thumbnail_empty"
-                    return
-                }
-                if thumbnailDataByPath.count >= Self.maximumThumbnailEntries,
-                   thumbnailDataByPath[media.path] == nil,
-                   let oldestPath = thumbnailDataByPath.keys.first {
-                    thumbnailDataByPath.removeValue(forKey: oldestPath)
-                }
-                thumbnailDataByPath[media.path] = data
-            } catch is CancellationError {
-                // Cancellation is an expected user action.
-            } catch CameraReadOnlyRequestError.originMismatch {
-                if generation == thumbnailGeneration {
-                    thumbnailErrorKey = "camera.error.origin_mismatch"
-                }
-            } catch {
-                if generation == thumbnailGeneration {
-                    thumbnailErrorKey = "camera.error.thumbnail_failed"
-                }
             }
         }
     }
@@ -407,14 +283,6 @@ struct CameraRouteContainerView: View {
         )
     }
 
-    private func mediaOutputURL(for media: CameraMediaEvidence) -> URL {
-        let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
-            ?? FileManager.default.temporaryDirectory
-        return directory.appendingPathComponent(
-            "camera-media-" + UUID().uuidString + "-" + cameraMediaLocalFileComponent(media.name)
-        )
-    }
-
     private func stopCameraWork() {
         readGeneration &+= 1
         recordingGeneration &+= 1
@@ -430,14 +298,7 @@ struct CameraRouteContainerView: View {
         isReading = false
         isRequestingRecording = false
         isRequestingStill = false
-        mediaDownloadGeneration &+= 1
-        thumbnailGeneration &+= 1
-        mediaDownloadTask?.cancel()
-        thumbnailTask?.cancel()
-        mediaDownloadTask = nil
-        thumbnailTask = nil
-        downloadingMediaPath = nil
-        thumbnailPathInFlight = nil
+        mediaModel.cancelOutstandingWork()
         adapter.stop()
         previewRenderer.reset()
     }
@@ -487,21 +348,12 @@ struct CameraRouteView: View {
     let presentation: CameraPresentation
     let readOnlyEvidence: CameraReadOnlyEvidence?
     let movieRTSPURI: String?
+    let mediaModel: CameraMediaModel
     let hasPreviewSource: Bool
     @Binding var address: String
     @Binding var port: String
     let isReading: Bool
     let readErrorKey: String?
-    let downloadedMediaURL: URL?
-    let downloadedMediaPath: String?
-    let downloadingMediaPath: String?
-    let mediaErrorKey: String?
-    let cancelDownload: (() -> Void)?
-    let thumbnailDataByPath: [String: Data]
-    let thumbnailPathInFlight: String?
-    let thumbnailErrorKey: String?
-    let supportsMediaThumbnails: Bool
-    let fetchThumbnail: ((CameraMediaEvidence) -> Void)?
     let recordingRequestKey: String?
     let isRequestingRecording: Bool
     let supportsOnboardRecording: Bool
@@ -511,7 +363,6 @@ struct CameraRouteView: View {
     let savedFileURL: URL?
     let previewRenderer: CameraPreviewRenderer?
     let loadEvidence: (() -> Void)?
-    let downloadMedia: ((CameraMediaEvidence) -> Void)?
     let requestRecording: ((Bool) -> Void)?
     let requestStillCapture: (() -> Void)?
     let startPreview: (() -> Void)?
@@ -523,20 +374,11 @@ struct CameraRouteView: View {
         presentation: CameraPresentation = .initial,
         readOnlyEvidence: CameraReadOnlyEvidence? = nil,
         movieRTSPURI: String? = nil,
+        mediaModel: CameraMediaModel = CameraMediaModel(),
         address: Binding<String> = .constant("192.168.1.254"),
         port: Binding<String> = .constant("80"),
         isReading: Bool = false,
         readErrorKey: String? = nil,
-        downloadedMediaURL: URL? = nil,
-        downloadedMediaPath: String? = nil,
-        downloadingMediaPath: String? = nil,
-        mediaErrorKey: String? = nil,
-        cancelDownload: (() -> Void)? = nil,
-        thumbnailDataByPath: [String: Data] = [:],
-        thumbnailPathInFlight: String? = nil,
-        thumbnailErrorKey: String? = nil,
-        supportsMediaThumbnails: Bool = false,
-        fetchThumbnail: ((CameraMediaEvidence) -> Void)? = nil,
         recordingRequestKey: String? = nil,
         isRequestingRecording: Bool = false,
         supportsOnboardRecording: Bool = false,
@@ -546,7 +388,6 @@ struct CameraRouteView: View {
         savedFileURL: URL? = nil,
         previewRenderer: CameraPreviewRenderer? = nil,
         loadEvidence: (() -> Void)? = nil,
-        downloadMedia: ((CameraMediaEvidence) -> Void)? = nil,
         requestRecording: ((Bool) -> Void)? = nil,
         requestStillCapture: (() -> Void)? = nil,
         startPreview: (() -> Void)? = nil,
@@ -557,21 +398,12 @@ struct CameraRouteView: View {
         self.presentation = presentation
         self.readOnlyEvidence = readOnlyEvidence
         self.movieRTSPURI = movieRTSPURI
+        self.mediaModel = mediaModel
         self.hasPreviewSource = movieRTSPURI != nil
         self._address = address
         self._port = port
         self.isReading = isReading
         self.readErrorKey = readErrorKey
-        self.downloadedMediaURL = downloadedMediaURL
-        self.downloadedMediaPath = downloadedMediaPath
-        self.downloadingMediaPath = downloadingMediaPath
-        self.mediaErrorKey = mediaErrorKey
-        self.cancelDownload = cancelDownload
-        self.thumbnailDataByPath = thumbnailDataByPath
-        self.thumbnailPathInFlight = thumbnailPathInFlight
-        self.thumbnailErrorKey = thumbnailErrorKey
-        self.supportsMediaThumbnails = supportsMediaThumbnails
-        self.fetchThumbnail = fetchThumbnail
         self.recordingRequestKey = recordingRequestKey
         self.isRequestingRecording = isRequestingRecording
         self.supportsOnboardRecording = supportsOnboardRecording
@@ -581,7 +413,6 @@ struct CameraRouteView: View {
         self.savedFileURL = savedFileURL
         self.previewRenderer = previewRenderer
         self.loadEvidence = loadEvidence
-        self.downloadMedia = downloadMedia
         self.requestRecording = requestRecording
         self.requestStillCapture = requestStillCapture
         self.startPreview = startPreview
@@ -621,22 +452,12 @@ struct CameraRouteView: View {
             presentation: presentation,
             readOnlyEvidence: readOnlyEvidence,
             movieRTSPURI: movieRTSPURI,
+            mediaModel: mediaModel,
             address: $address,
             port: $port,
             isReading: isReading,
             readErrorKey: readErrorKey,
-            downloadedMediaURL: downloadedMediaURL,
-            downloadedMediaPath: downloadedMediaPath,
-            downloadingMediaPath: downloadingMediaPath,
-            mediaErrorKey: mediaErrorKey,
-            cancelDownload: cancelDownload,
-            thumbnailDataByPath: thumbnailDataByPath,
-            thumbnailPathInFlight: thumbnailPathInFlight,
-            thumbnailErrorKey: thumbnailErrorKey,
-            supportsMediaThumbnails: supportsMediaThumbnails,
-            fetchThumbnail: fetchThumbnail,
-            loadEvidence: loadEvidence,
-            downloadMedia: downloadMedia
+            loadEvidence: loadEvidence
         )
         CameraTruthCard(
             presentation: presentation,
@@ -663,22 +484,12 @@ private struct CameraStatusCard: View {
     let presentation: CameraPresentation
     let readOnlyEvidence: CameraReadOnlyEvidence?
     let movieRTSPURI: String?
+    let mediaModel: CameraMediaModel
     @Binding var address: String
     @Binding var port: String
     let isReading: Bool
     let readErrorKey: String?
-    let downloadedMediaURL: URL?
-    let downloadedMediaPath: String?
-    let downloadingMediaPath: String?
-    let mediaErrorKey: String?
-    let cancelDownload: (() -> Void)?
-    let thumbnailDataByPath: [String: Data]
-    let thumbnailPathInFlight: String?
-    let thumbnailErrorKey: String?
-    let supportsMediaThumbnails: Bool
-    let fetchThumbnail: ((CameraMediaEvidence) -> Void)?
     let loadEvidence: (() -> Void)?
-    let downloadMedia: ((CameraMediaEvidence) -> Void)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -715,17 +526,10 @@ private struct CameraStatusCard: View {
                 )
                 CameraMediaEvidenceList(
                     media: readOnlyEvidence.media,
-                    downloadedMediaURL: downloadedMediaURL,
-                    downloadedMediaPath: downloadedMediaPath,
-                    downloadingMediaPath: downloadingMediaPath,
-                    mediaErrorKey: mediaErrorKey,
-                    cancelDownload: cancelDownload,
-                    thumbnailDataByPath: thumbnailDataByPath,
-                    thumbnailPathInFlight: thumbnailPathInFlight,
-                    thumbnailErrorKey: thumbnailErrorKey,
-                    supportsMediaThumbnails: supportsMediaThumbnails,
-                    fetchThumbnail: fetchThumbnail,
-                    downloadMedia: downloadMedia
+                    address: address,
+                    port: port,
+                    supportsMediaThumbnails: readOnlyEvidence.supportsMediaThumbnails,
+                    model: mediaModel
                 )
             }
 
@@ -805,17 +609,10 @@ private struct CameraMediaEvidenceList: View {
     @State private var page = 1
 
     let media: [CameraMediaEvidence]
-    let downloadedMediaURL: URL?
-    let downloadedMediaPath: String?
-    let downloadingMediaPath: String?
-    let mediaErrorKey: String?
-    let cancelDownload: (() -> Void)?
-    let thumbnailDataByPath: [String: Data]
-    let thumbnailPathInFlight: String?
-    let thumbnailErrorKey: String?
+    let address: String
+    let port: String
     let supportsMediaThumbnails: Bool
-    let fetchThumbnail: ((CameraMediaEvidence) -> Void)?
-    let downloadMedia: ((CameraMediaEvidence) -> Void)?
+    let model: CameraMediaModel
 
     var body: some View {
         Group {
@@ -848,12 +645,12 @@ private struct CameraMediaEvidenceList: View {
                     .foregroundStyle(PevColors.muted)
             }
 
-            if let mediaErrorKey {
+            if let mediaErrorKey = model.mediaErrorKey {
                 Text(localizedAppText(mediaErrorKey))
                     .font(.footnote)
                     .foregroundStyle(.red)
             }
-            if let thumbnailErrorKey {
+            if let thumbnailErrorKey = model.thumbnailErrorKey {
                 Text(localizedAppText(thumbnailErrorKey))
                     .font(.footnote)
                     .foregroundStyle(.red)
@@ -876,23 +673,23 @@ private struct CameraMediaEvidenceList: View {
                         .foregroundStyle(PevColors.muted)
                 }
                 Spacer(minLength: 8)
-                if downloadingMediaPath == media.path {
+                if model.downloadingMediaPath == media.path {
                     HStack(spacing: 8) {
                         ProgressView()
                             .controlSize(.small)
-                        if let cancelDownload {
-                            Button(action: cancelDownload) {
-                                Label(
-                                    localizedAppText("camera.evidence.media_cancel"),
-                                    systemImage: "xmark.circle"
-                                )
-                            }
-                            .buttonStyle(.bordered)
-                            .accessibilityIdentifier("camera.media.cancel.\(media.name)")
+                        Button(action: model.cancelMediaDownload) {
+                            Label(
+                                localizedAppText("camera.evidence.media_cancel"),
+                                systemImage: "xmark.circle"
+                            )
                         }
+                        .buttonStyle(.bordered)
+                        .accessibilityIdentifier("camera.media.cancel.\(media.name)")
                     }
-                } else if let downloadMedia {
-                    Button(action: { downloadMedia(media) }) {
+                } else {
+                    Button {
+                        model.downloadMedia(media, address: address, port: port)
+                    } label: {
                         Label(
                             localizedAppText("camera.evidence.media_download"),
                             systemImage: "arrow.down.circle"
@@ -902,8 +699,8 @@ private struct CameraMediaEvidenceList: View {
                     .accessibilityIdentifier("camera.media.download.\(media.name)")
                 }
             }
-            if let downloadedMediaURL,
-               downloadedMediaPath == media.path {
+            if let downloadedMediaURL = model.downloadedMediaURL,
+               model.downloadedMediaPath == media.path {
                 HStack(spacing: 12) {
                     Text(localizedAppText("camera.evidence.media_saved"))
                         .font(.caption)
@@ -918,24 +715,26 @@ private struct CameraMediaEvidenceList: View {
                     .accessibilityIdentifier("camera.media.export.\(media.name)")
                 }
             }
-            if supportsMediaThumbnails, let fetchThumbnail {
+            if supportsMediaThumbnails {
                 HStack(spacing: 10) {
-                    if let data = thumbnailDataByPath[media.path] {
+                    if let data = model.thumbnailDataByPath[media.path] {
                         CameraThumbnailView(data: data)
                             .accessibilityLabel(localizedAppText("camera.evidence.thumbnail"))
                     }
-                    if thumbnailPathInFlight == media.path {
+                    if model.thumbnailPathInFlight == media.path {
                         ProgressView()
                             .controlSize(.small)
                     } else {
-                        Button(action: { fetchThumbnail(media) }) {
+                        Button {
+                            model.fetchThumbnail(media, address: address, port: port)
+                        } label: {
                             Label(
                                 localizedAppText("camera.evidence.thumbnail_request"),
                                 systemImage: "photo"
                             )
                         }
                         .buttonStyle(.bordered)
-                        .disabled(thumbnailPathInFlight != nil)
+                        .disabled(model.thumbnailPathInFlight != nil)
                         .accessibilityIdentifier("camera.media.thumbnail.\(media.name)")
                     }
                 }
