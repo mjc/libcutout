@@ -146,7 +146,10 @@ impl BegodeBmsCellPage {
     /// not `0x02` or `0x03`.
     pub fn decode(frame: &BegodeFrame) -> Result<Self, BegodeBmsPageError> {
         let tag = frame.tag();
-        if !matches!(tag.get(), 0x02 | 0x03) {
+        if !(match tag.get() {
+            0x02 | 0x03 => true,
+            _ => false,
+        }) {
             return Err(BegodeBmsPageError::UnexpectedFrameTag {
                 expected: 0x02,
                 actual: tag_byte(tag),

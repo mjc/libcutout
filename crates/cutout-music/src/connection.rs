@@ -84,12 +84,12 @@ impl MusicConnection {
     /// Whether this identity owns an established provider connection.
     #[must_use]
     pub fn is_established(&self, connection_id: EstablishedConnectionId) -> bool {
-        matches!(
-            self.state,
+        match self.state {
             MusicConnectionState::Connected {
-                connection_id: current
-            } if current == connection_id
-        )
+                connection_id: current,
+            } if current == connection_id => true,
+            _ => false,
+        }
     }
 
     /// Classifies a callback without changing attempt or connection state.
@@ -226,13 +226,13 @@ impl MusicConnection {
         attempt_id: ConnectionAttemptId,
         now_ms: u64,
     ) -> Option<EstablishedConnectionId> {
-        if !matches!(
-            self.state,
+        if !(match self.state {
             MusicConnectionState::Connecting {
                 attempt_id: current,
                 ..
-            } if current == attempt_id
-        ) || self.classify_at(attempt_id, now_ms) == MusicConnectionCallback::Stale
+            } if current == attempt_id => true,
+            _ => false,
+        }) || self.classify_at(attempt_id, now_ms) == MusicConnectionCallback::Stale
         {
             return None;
         }

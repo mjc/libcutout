@@ -144,16 +144,16 @@ enum NosfetCommand {
 
 fn nosfet_command(command: DeviceCommand) -> Option<NosfetCommand> {
     let DeviceCommand::SetSetting { id, value } = command else {
-        if let DeviceCommand::InvokeAction(request) = command
-            && request.id == DeviceActionId::GyroCalibration
-            && matches!(
-                request.step,
-                DeviceActionStep::Invoke
+        if let DeviceCommand::InvokeAction(request) = command {
+            if request.id == DeviceActionId::GyroCalibration {
+                match request.step {
+                    DeviceActionStep::Invoke
                     | DeviceActionStep::PrepareGyroCalibration
-                    | DeviceActionStep::StartGyroCalibration
-            )
-        {
-            return Some(NosfetCommand::GyroCalibration);
+                    | DeviceActionStep::StartGyroCalibration => {
+                        return Some(NosfetCommand::GyroCalibration);
+                    }
+                }
+            }
         }
         return None;
     };

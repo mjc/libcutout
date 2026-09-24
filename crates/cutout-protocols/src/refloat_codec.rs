@@ -526,11 +526,12 @@ impl RefloatStreamDecoder {
     fn take_next_frame(
         &mut self,
     ) -> Result<Option<ArrayVec<u8, REFLOAT_MAX_FRAME_LEN>>, RefloatCodecError> {
-        while self
-            .buffer
-            .first()
-            .is_some_and(|byte| !matches!(*byte, FRAME_START_SHORT | FRAME_START_LONG))
-        {
+        while self.buffer.first().is_some_and(|byte| {
+            !(match *byte {
+                FRAME_START_SHORT | FRAME_START_LONG => true,
+                _ => false,
+            })
+        }) {
             self.buffer.remove(0);
         }
 
@@ -664,12 +665,12 @@ impl RefloatStreamDecoder {
 }
 
 const fn is_foreign_frame(error: RefloatCodecError) -> bool {
-    matches!(
-        error,
+    match error {
         RefloatCodecError::UnexpectedVescCommand
-            | RefloatCodecError::UnexpectedPackageInterface
-            | RefloatCodecError::UnsupportedCommand
-    )
+        | RefloatCodecError::UnexpectedPackageInterface
+        | RefloatCodecError::UnsupportedCommand => true,
+        _ => false,
+    }
 }
 
 /// Encodes a Refloat read-only request as a complete VESC UART frame.

@@ -43,10 +43,77 @@ pub enum RideEvent {
 }
 
 impl RideLifecycleState {
+    /// Whether this recording still owns a live sampling session, including a pause.
+    #[must_use]
+    pub const fn is_recording(self) -> bool {
+        match self {
+            Self::Active | Self::Paused => true,
+            Self::Draft
+            | Self::Stopped
+            | Self::Interrupted
+            | Self::Discarded
+            | Self::Saved
+            | Self::Imported => false,
+        }
+    }
+
+    const fn is_discardable(self) -> bool {
+        match self {
+            Self::Stopped | Self::Interrupted => true,
+            Self::Draft
+            | Self::Active
+            | Self::Paused
+            | Self::Discarded
+            | Self::Saved
+            | Self::Imported => false,
+        }
+    }
+
+    const fn only_allows_new_recording(self) -> bool {
+        match self {
+            Self::Saved | Self::Discarded => true,
+            Self::Draft
+            | Self::Active
+            | Self::Paused
+            | Self::Stopped
+            | Self::Interrupted
+            | Self::Imported => false,
+        }
+    }
+
+    /// Whether a completed or intentionally ended recording has known route bounds.
+    #[must_use]
+    pub const fn has_recorded_bounds(self) -> bool {
+        match self {
+            Self::Stopped | Self::Interrupted | Self::Discarded | Self::Saved | Self::Imported => {
+                true
+            }
+            Self::Draft | Self::Active | Self::Paused => false,
+        }
+    }
+
+    /// Whether a connection may replace this ride with a new GPS-only recording.
+    #[must_use]
+    pub const fn allows_auto_recording_replacement(self) -> bool {
+        match self {
+            Self::Interrupted | Self::Saved | Self::Discarded => true,
+            Self::Draft | Self::Active | Self::Paused | Self::Stopped | Self::Imported => false,
+        }
+    }
+
+    /// Whether a live ride has reached a completed or interrupted state.
+    #[must_use]
+    pub const fn is_terminal(self) -> bool {
+        match self {
+            Self::Stopped | Self::Interrupted | Self::Discarded | Self::Saved => true,
+            Self::Draft | Self::Active | Self::Paused | Self::Imported => false,
+        }
+    }
+
     /// Actions offered for the current recording; Start creates a separate new ride.
     #[must_use]
     pub fn recording_actions(self) -> Vec<RideEvent> {
-        if matches!(self, Self::Saved | Self::Discarded) {
+        if self.only_allows_new_recording() {
             return vec![RideEvent::Start];
         }
         [
@@ -59,9 +126,7 @@ impl RideLifecycleState {
         ]
         .into_iter()
         .filter(|event| self.apply(*event).is_ok())
-        .filter(|event| {
-            *event != RideEvent::Discard || matches!(self, Self::Stopped | Self::Interrupted)
-        })
+        .filter(|event| *event != RideEvent::Discard || self.is_discardable())
         .collect()
     }
 

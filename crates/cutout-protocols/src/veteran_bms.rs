@@ -155,10 +155,10 @@ impl VeteranBmsCellPage {
     /// a cell page or [`VeteranBmsPageError::PageBodyTooShort`] when the body
     /// cannot contain the documented absolute cell offset and 15 values.
     pub fn from_body(selector: ProtocolSelector, body: &[u8]) -> Result<Self, VeteranBmsPageError> {
-        if !matches!(
-            classify_veteran_bms_selector(selector),
-            BatteryPageKind::CellVoltage
-        ) {
+        if !(match classify_veteran_bms_selector(selector) {
+            BatteryPageKind::CellVoltage => true,
+            _ => false,
+        }) {
             return Err(VeteranBmsPageError::InvalidCellCount {
                 selector: selector.get(),
                 observed: 0,
@@ -209,7 +209,7 @@ impl VeteranBmsTemperaturePage {
     /// other than 3/7, or [`VeteranBmsPageError::PageBodyTooShort`] when the
     /// body cannot contain the documented values.
     pub fn from_body(selector: ProtocolSelector, body: &[u8]) -> Result<Self, VeteranBmsPageError> {
-        if !matches!(selector.get(), 3 | 7) {
+        if selector.get() != 3 && selector.get() != 7 {
             return Err(VeteranBmsPageError::InvalidTemperaturePage {
                 selector: selector.get(),
             });
@@ -258,7 +258,10 @@ impl VeteranBmsMetadataPage {
     /// than 0/4, or [`VeteranBmsPageError::PageBodyTooShort`] when the body
     /// cannot contain both current values.
     pub fn from_body(selector: ProtocolSelector, body: &[u8]) -> Result<Self, VeteranBmsPageError> {
-        if !matches!(selector.get(), 0 | 4) {
+        if !(match selector.get() {
+            0 | 4 => true,
+            _ => false,
+        }) {
             return Err(VeteranBmsPageError::InvalidMetadataPage {
                 selector: selector.get(),
             });
@@ -355,7 +358,10 @@ pub fn decode_veteran_bms_page(
     verification: VerificationStatus,
 ) -> Result<BatteryReadback, VeteranBmsPageError> {
     let kind = classify_veteran_bms_selector(selector);
-    if matches!(kind, BatteryPageKind::CellVoltage) {
+    if match kind {
+        BatteryPageKind::CellVoltage => true,
+        _ => false,
+    } {
         let observed = u8::try_from(cell_voltages.len()).unwrap_or(u8::MAX);
         if observed != VETERAN_BMS_CELL_VALUES_PER_PAGE {
             return Err(VeteranBmsPageError::InvalidCellCount {

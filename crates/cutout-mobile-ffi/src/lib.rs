@@ -1,3 +1,5 @@
+#![cfg_attr(test, allow(clippy::disallowed_macros))]
+
 //! Concrete `UniFFI` mobile binding surface for Cutout.
 
 mod rgb;
@@ -2317,10 +2319,10 @@ pub fn mobile_discovery_candidate_from_detection_resolution(
         );
     }
 
-    if matches!(
-        resolution.protocol_family.as_ref(),
-        Some(MobileProtocolFamilyDto::VeteranLeaperkimNosfet)
-    ) {
+    if match resolution.protocol_family.as_ref() {
+        Some(MobileProtocolFamilyDto::VeteranLeaperkimNosfet) => true,
+        _ => false,
+    } {
         return DiscoveryCandidate {
             platform_identifier,
             display_name,
@@ -2337,10 +2339,10 @@ pub fn mobile_discovery_candidate_from_detection_resolution(
         };
     }
 
-    if matches!(
-        resolution.protocol_family.as_ref(),
-        Some(MobileProtocolFamilyDto::Vesc)
-    ) {
+    if match resolution.protocol_family.as_ref() {
+        Some(MobileProtocolFamilyDto::Vesc) => true,
+        _ => false,
+    } {
         return DiscoveryCandidate {
             platform_identifier,
             display_name,
@@ -2357,10 +2359,10 @@ pub fn mobile_discovery_candidate_from_detection_resolution(
         };
     }
 
-    if matches!(
-        resolution.protocol_family.as_ref(),
-        Some(MobileProtocolFamilyDto::BegodeGotway)
-    ) && resolution.missing_probe_response.is_none()
+    if (match resolution.protocol_family.as_ref() {
+        Some(MobileProtocolFamilyDto::BegodeGotway) => true,
+        _ => false,
+    }) && resolution.missing_probe_response.is_none()
         && resolution.malformed_probe_response.is_none()
         && resolution.model_banner.is_none()
     {
@@ -5242,6 +5244,8 @@ pub struct MobilePevcapImportPreviewDto {
 /// Durable result of importing one PEVCAP artifact.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobilePevcapImportReceiptDto {
+    /// Recording provenance, absent for externally imported captures.
+    pub recording: Option<MobileRecordedCaptureDto>,
     /// Rust-created ride UUID, when route locations were present.
     pub ride_id: Option<MobileRideIdDto>,
     /// SHA-256 digest of the source artifact.
@@ -5338,6 +5342,12 @@ pub struct MobileMapPointPageDto {
 /// Stable error categories for the Rust-owned ride database boundary.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
 pub enum MobileRideDatabaseError {
+    /// The writer has not produced a successful durable completion receipt.
+    #[error("capture writer has not finished successfully")]
+    CaptureNotFinished,
+    /// Recording identity conflicts with retained capture provenance.
+    #[error("capture identity conflicts with retained provenance")]
+    CaptureIdentityConflict,
     /// The database path cannot be opened.
     #[error("invalid database path")]
     InvalidPath,
@@ -5430,6 +5440,9 @@ pub enum MobileRideDatabaseError {
 )]
 fn map_ride_database_error(error: persistence::StorageError) -> MobileRideDatabaseError {
     match error {
+        persistence::StorageError::CaptureIdentityConflict => {
+            MobileRideDatabaseError::CaptureIdentityConflict
+        }
         persistence::StorageError::InvalidPath => MobileRideDatabaseError::InvalidPath,
         persistence::StorageError::AlreadyOpenForDifferentPath => {
             MobileRideDatabaseError::AlreadyOpenForDifferentPath
@@ -5911,6 +5924,7 @@ fn mobile_pevcap_receipt(
     receipt: persistence::PevcapImportReceipt,
 ) -> MobilePevcapImportReceiptDto {
     MobilePevcapImportReceiptDto {
+        recording: receipt.recording.map(Into::into),
         ride_id: receipt.ride_id.map(mobile_ride_id),
         artifact_digest: receipt.artifact_digest,
         managed_artifact_path: receipt.managed_artifact_path.to_string_lossy().into_owned(),
@@ -8053,14 +8067,7 @@ impl MobileRideMapCoreInner {
             summary: self.summary(),
             segment_count: self.recorder.segment_count().as_u64(),
             associated_vehicle: self.recorder.associated_vehicle().map(str::to_owned),
-            recorded_bounds_available: matches!(
-                state,
-                MobileRideLifecycleStateDto::Stopped
-                    | MobileRideLifecycleStateDto::Interrupted
-                    | MobileRideLifecycleStateDto::Discarded
-                    | MobileRideLifecycleStateDto::Saved
-                    | MobileRideLifecycleStateDto::Imported
-            ),
+            recorded_bounds_available: map_ride_lifecycle_state(state).has_recorded_bounds(),
         }
     }
 
@@ -8116,13 +8123,13 @@ impl MobileRideMapCoreInner {
         existing_id: Option<MobileRideIdDto>,
     ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
         if self.recorder.state().is_some_and(|current| {
-            !matches!(
-                current,
+            !(match current {
                 ride_maps::RideLifecycleState::Stopped
-                    | ride_maps::RideLifecycleState::Interrupted
-                    | ride_maps::RideLifecycleState::Saved
-                    | ride_maps::RideLifecycleState::Discarded
-            )
+                | ride_maps::RideLifecycleState::Interrupted
+                | ride_maps::RideLifecycleState::Saved
+                | ride_maps::RideLifecycleState::Discarded => true,
+                _ => false,
+            })
         }) {
             return Err(MobileRideMapCoreErrorDto::AlreadyRecording);
         }
@@ -8170,12 +8177,11 @@ fn apply_connection_recording_policy(
         .recorder
         .associated_vehicle()
         .or_else(|| state.recorder.candidate_vehicle());
-    let current_ride_belongs_to_another_vehicle = state.recorder.state().is_some_and(|lifecycle| {
-        matches!(
-            lifecycle,
-            ride_maps::RideLifecycleState::Active | ride_maps::RideLifecycleState::Paused
-        ) && current_vehicle.is_some_and(|vehicle| vehicle != platform_identifier)
-    });
+    let current_ride_belongs_to_another_vehicle = state
+        .recorder
+        .state()
+        .is_some_and(ride_maps::RideLifecycleState::is_recording)
+        && current_vehicle.is_some_and(|vehicle| vehicle != platform_identifier);
     if current_ride_belongs_to_another_vehicle {
         state.transition_inner_at(MobileRideEventDto::Stop, at_ms)?;
         state.transition_inner_at(MobileRideEventDto::Save, at_ms)?;
@@ -8197,14 +8203,11 @@ fn apply_connection_recording_policy(
             state.recoverable_updated_at_milliseconds = None;
         }
     }
-    if state.recorder.state().is_none_or(|current| {
-        matches!(
-            current,
-            ride_maps::RideLifecycleState::Interrupted
-                | ride_maps::RideLifecycleState::Saved
-                | ride_maps::RideLifecycleState::Discarded
-        )
-    }) {
+    if state
+        .recorder
+        .state()
+        .is_none_or(ride_maps::RideLifecycleState::allows_auto_recording_replacement)
+    {
         state.start_gps_only(at_ms)?;
     }
     Ok(())
@@ -8224,10 +8227,7 @@ fn map_ride_lifecycle_state(state: MobileRideLifecycleStateDto) -> ride_maps::Ri
 }
 
 fn music_history_is_recordable(state: Option<ride_maps::RideLifecycleState>) -> bool {
-    matches!(
-        state,
-        Some(ride_maps::RideLifecycleState::Active | ride_maps::RideLifecycleState::Paused)
-    )
+    state.is_some_and(ride_maps::RideLifecycleState::is_recording)
 }
 
 fn map_ride_telemetry_state(
@@ -8439,12 +8439,10 @@ impl MobileRideMapCore {
             };
         }
         if connection_generation.is_some()
-            && !state.recorder.state().is_some_and(|lifecycle| {
-                matches!(
-                    lifecycle,
-                    ride_maps::RideLifecycleState::Active | ride_maps::RideLifecycleState::Paused
-                )
-            })
+            && !state
+                .recorder
+                .state()
+                .is_some_and(ride_maps::RideLifecycleState::is_recording)
         {
             // A verified connection observing a terminal ride is not a new admission event. Keep
             // the terminal snapshot visible, but leave the generation available for the next
@@ -8488,11 +8486,11 @@ impl MobileRideMapCore {
             .state()
             .ok_or(MobileRideMapCoreErrorDto::NoActiveRide)?;
         if let Some(generation) = connection_generation
-            && matches!(
-                association,
+            && (match association {
                 ride_maps::VehicleAssociation::Associated
-                    | ride_maps::VehicleAssociation::AlreadyAssociated
-            )
+                | ride_maps::VehicleAssociation::AlreadyAssociated => true,
+                _ => false,
+            })
         {
             // Lifecycle admission is consumed by generation, but association remains retryable
             // after transient outcomes such as TimestampOutOfOrder. Only a confirmed or already
@@ -9313,13 +9311,13 @@ impl MobileRideMapCoreInner {
         at_milliseconds: u64,
     ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
         let epoch_offset = if event == MobileRideEventDto::Resume
-            && matches!(
-                self.recorder.state(),
+            && (match self.recorder.state() {
                 Some(
                     ride_maps::RideLifecycleState::Interrupted
-                        | ride_maps::RideLifecycleState::Paused
-                )
-            ) {
+                    | ride_maps::RideLifecycleState::Paused,
+                ) => true,
+                _ => false,
+            }) {
             self.recorder
                 .recording_timing()
                 .last_monotonic_milliseconds()
@@ -12715,30 +12713,9 @@ fn core_charge_flow(
         value: flow,
         source: charge_mode.source,
         quality: charge_mode.quality,
-        verification: combine_verification(charge_mode.verification, charge_flow_verification),
-    }
-}
-
-fn combine_verification(left: VerificationStatus, right: VerificationStatus) -> VerificationStatus {
-    let source_verified = matches!(
-        left,
-        VerificationStatus::SourceVerified | VerificationStatus::SourceAndHardwareVerified
-    ) && matches!(
-        right,
-        VerificationStatus::SourceVerified | VerificationStatus::SourceAndHardwareVerified
-    );
-    let hardware_verified = matches!(
-        left,
-        VerificationStatus::HardwareVerified | VerificationStatus::SourceAndHardwareVerified
-    ) && matches!(
-        right,
-        VerificationStatus::HardwareVerified | VerificationStatus::SourceAndHardwareVerified
-    );
-    match (source_verified, hardware_verified) {
-        (true, true) => VerificationStatus::SourceAndHardwareVerified,
-        (true, false) => VerificationStatus::SourceVerified,
-        (false, true) => VerificationStatus::HardwareVerified,
-        (false, false) => VerificationStatus::Unverified,
+        verification: charge_mode
+            .verification
+            .intersection(charge_flow_verification),
     }
 }
 
@@ -17391,6 +17368,58 @@ mod tests {
         let builder = MobilePevcapCaptureBuilder::new(wc(1_700_000_000_000), "phone".into(), None);
         assert!(!builder.finish_writer());
         assert!(builder.completed_artifact().is_none());
+    }
+
+    #[test]
+    fn capture_publication_requires_consumed_writer_receipt() {
+        let _guard = RIDE_DATABASE_TEST_LOCK.lock().unwrap();
+        let directory = std::env::temp_dir().join(format!("cutout-publication-{}", Uuid::new_v4()));
+        fs::create_dir(&directory).unwrap();
+        let database =
+            open_ride_database(directory.join("ride.sqlite").to_string_lossy().into_owned())
+                .unwrap();
+        let builder = MobilePevcapCaptureBuilder::new(wc(1234), "wheel-a".into(), None);
+        let retain = || {
+            database.retain_finished_capture(
+                Arc::clone(&builder),
+                MobileCaptureOriginDto::Manual,
+                Some("GW-Falcon".into()),
+                wc(9999),
+            )
+        };
+        assert_eq!(retain(), Err(MobileRideDatabaseError::CaptureNotFinished));
+        let source = directory.join("capture.jsonl");
+        assert!(builder.start_writer(source.to_string_lossy().into_owned()));
+        assert!(builder.flush_writer());
+        assert_eq!(retain(), Err(MobileRideDatabaseError::CaptureNotFinished));
+        let failed = MobilePevcapCaptureBuilder::new(wc(1234), "wheel-b".into(), None);
+        assert!(!failed.start_writer(source.to_string_lossy().into_owned()));
+        assert_eq!(
+            database.retain_finished_capture(
+                failed,
+                MobileCaptureOriginDto::Manual,
+                None,
+                wc(9999)
+            ),
+            Err(MobileRideDatabaseError::CaptureNotFinished)
+        );
+        assert!(builder.finish_writer());
+        let receipt = retain().unwrap();
+        assert_eq!(receipt.ride_id, None);
+        assert!(source.exists());
+        fs::remove_file(source).unwrap();
+        fs::remove_file(&receipt.managed_artifact_path).unwrap();
+        assert!(retain().unwrap().duplicate);
+        let history = database.list_pevcap_captures(None, 1).unwrap();
+        let recording = history.captures[0].recording.as_ref().unwrap();
+        assert_eq!(receipt.recording.as_ref(), Some(recording));
+        assert_eq!(
+            recording.artifact_id,
+            builder.completed_artifact().unwrap().id
+        );
+        assert_eq!(recording.advertised_name.as_deref(), Some("GW-Falcon"));
+        database.shutdown().unwrap();
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]

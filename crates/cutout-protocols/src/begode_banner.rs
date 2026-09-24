@@ -67,7 +67,10 @@ impl BegodeFirmwarePrefix {
     /// Returns whether this firmware family exposes an authoritative hardware PWM field.
     #[must_use]
     pub const fn uses_hardware_pwm(self) -> bool {
-        matches!(self, Self::Freestyl3r | Self::SmirnoV)
+        match self {
+            Self::Freestyl3r | Self::SmirnoV => true,
+            _ => false,
+        }
     }
 }
 
@@ -166,7 +169,10 @@ fn parse_imu_banner(text: &str) -> Option<BegodeBanner<'_>> {
 }
 
 const fn is_banner_ascii(byte: u8) -> bool {
-    matches!(byte, b'\n' | b'\r' | b'\t' | 0x20..=0x7e)
+    match byte {
+        b'\n' | b'\r' | b'\t' | 0x20..=0x7e => true,
+        _ => false,
+    }
 }
 
 #[cfg(test)]

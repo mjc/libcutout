@@ -1,3 +1,5 @@
+#![cfg_attr(test, allow(clippy::disallowed_macros))]
+
 use cutout_mobile_ffi::{
     MobileMusicPlaybackStateDto, MobileMusicProviderLifecycle, MobileMusicProviderMonitorRequest,
     MobileMusicProviderMonitorResume, MobileMusicProviderMonitorStart, music_callback_path_matches,

@@ -593,10 +593,10 @@ const fn pwm_wire_value(value: VeteranPwmSetting) -> u8 {
 }
 
 fn has_transport_write(output: &SessionOutput) -> bool {
-    matches!(
-        output,
-        SessionOutput::Transport(TransportAction::Write { .. })
-    )
+    match output {
+        SessionOutput::Transport(TransportAction::Write { .. }) => true,
+        _ => false,
+    }
 }
 
 fn simulator_write(output: &SessionOutput) -> Option<AeroSimulatorWrite> {

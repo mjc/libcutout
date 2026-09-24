@@ -221,10 +221,10 @@ impl SettingBinding {
     }
 
     fn completion(&self) -> SettingCompletionStrategy {
-        if matches!(
-            self.observation,
-            SettingObservationBinding::MatchingField(_)
-        ) {
+        if match self.observation {
+            SettingObservationBinding::MatchingField(_) => true,
+            _ => false,
+        } {
             SettingCompletionStrategy::MatchingReadback
         } else {
             SettingCompletionStrategy::SubmissionOnly

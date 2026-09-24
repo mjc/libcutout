@@ -1,3 +1,5 @@
+#![cfg_attr(test, allow(clippy::disallowed_macros))]
+
 use cutout_core::{
     DeviceCommand, DeviceSettingValue, Measured, ProtocolFamily, RawFieldValue, SettingId,
     SettingsEntry, SettingsReadback, ValueQuality, ValueSource, VerificationStatus,

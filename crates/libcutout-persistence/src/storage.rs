@@ -33,6 +33,8 @@ use uuid::Uuid;
 mod capture_data;
 mod capture_history;
 pub use capture_history::{PevcapCaptureCursor, PevcapCapturePage, StoredPevcapCapture};
+mod recorded_capture;
+pub use recorded_capture::RecordedCapture;
 mod migrations;
 mod ride_write;
 mod service;
@@ -1050,6 +1052,8 @@ impl PevcapImportPreview {
 /// Durable result of one PEVCAP artifact import.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PevcapImportReceipt {
+    /// Recording provenance when publication came from a completed local writer.
+    pub recording: Option<RecordedCapture>,
     /// Canonical ride created for the artifact, when route locations were present.
     pub ride_id: Option<RideId>,
     /// SHA-256 digest of the source artifact, as lowercase hexadecimal.
@@ -1360,6 +1364,9 @@ impl SqliteCapabilities {
 /// Errors from the Rust-owned ride database service.
 #[derive(Debug, Error)]
 pub enum StorageError {
+    /// A recording identity or byte digest already belongs to different provenance.
+    #[error("capture identity conflicts with retained provenance")]
+    CaptureIdentityConflict,
     /// The database path could not be used.
     #[error("invalid database path")]
     InvalidPath,
@@ -2688,20 +2695,26 @@ impl RideDatabase {
         preview: &PevcapImportPreview,
         created_at_ms: u64,
     ) -> Result<PevcapImportReceipt, StorageError> {
+        self.confirm_pevcap_publication(preview, created_at_ms, &CapturePublication::Import)
+    }
+
+    fn confirm_pevcap_publication(
+        &self,
+        preview: &PevcapImportPreview,
+        created_at_ms: u64,
+        publication: &CapturePublication,
+    ) -> Result<PevcapImportReceipt, StorageError> {
         verify_pevcap_preview_source(preview)?;
         if let Some(receipt) = self.request(|reply| Command::PevcapImportLookup {
             digest: preview.artifact_digest.clone(),
             reply,
         })? {
-            validate_existing_pevcap_confirmation(self.path.as_ref(), &receipt, preview)?;
-            capture_data::store(self, preview, preview.source_path())?;
-            self.request(|reply| Command::PublishCaptureData {
-                digest: preview.artifact_digest.clone(),
-                reply,
-            })?;
-            return Ok(receipt);
+            return self.confirm_existing_pevcap(preview, receipt, publication);
         }
-        let outcome = NewPevcapImportOutcome::try_from(preview.outcome)?;
+        let outcome = match publication {
+            CapturePublication::Recording(_) => NewPevcapImportOutcome::CaptureOnly,
+            CapturePublication::Import => NewPevcapImportOutcome::try_from(preview.outcome)?,
+        };
 
         let managed = prepare_managed_pevcap(self.path.as_ref(), preview)?;
         let begin = match self.request(|reply| Command::BeginPevcapImport {
@@ -2722,13 +2735,7 @@ impl RideDatabase {
         let PevcapBegin::Started { ride_id } = begin else {
             return match begin {
                 PevcapBegin::Duplicate(receipt) => {
-                    validate_existing_pevcap_confirmation(self.path.as_ref(), &receipt, preview)?;
-                    capture_data::store(self, preview, preview.source_path())?;
-                    self.request(|reply| Command::PublishCaptureData {
-                        digest: preview.artifact_digest.clone(),
-                        reply,
-                    })?;
-                    Ok(receipt)
+                    self.confirm_existing_pevcap(preview, receipt, publication)
                 }
                 PevcapBegin::Started { .. } => unreachable!(),
             };
@@ -2748,19 +2755,22 @@ impl RideDatabase {
                 0
             };
             self.request(|reply| Command::FinishPevcapImport {
-                digest: preview.artifact_digest.clone(),
-                ride_id,
-                managed_path: managed.path.clone(),
-                outcome,
-                artifact_size: preview.artifact_size,
-                record_count: preview.record_count,
-                location_count,
-                duration_milliseconds: preview.duration_milliseconds,
-                imported_at_ms: created_at_ms,
+                completion: PevcapImportCompletion {
+                    digest: preview.artifact_digest.clone(),
+                    ride_id,
+                    managed_path: managed.path.clone(),
+                    outcome,
+                    artifact_size: preview.artifact_size,
+                    record_count: preview.record_count,
+                    location_count,
+                    duration_milliseconds: preview.duration_milliseconds,
+                    imported_at_ms: created_at_ms,
+                    publication: publication.clone(),
+                },
                 reply,
             })
         })();
-        if matches!(result.as_ref(), Err(StorageError::ResponseDropped)) {
+        if let Err(StorageError::ResponseDropped) = &result {
             // The finish transaction may have committed before its reply was lost. Reconcile the
             // durable receipt before cleanup; deleting the managed artifact in that case would
             // leave a successful import pointing at missing bytes.
@@ -2769,6 +2779,7 @@ impl RideDatabase {
                 reply,
             }) {
                 Ok(Some(receipt)) => {
+                    publication.validate_duplicate(&receipt)?;
                     validate_existing_pevcap_confirmation(self.path.as_ref(), &receipt, preview)?;
                     return Ok(PevcapImportReceipt {
                         duplicate: false,
@@ -2790,6 +2801,22 @@ impl RideDatabase {
             }
         }
         result
+    }
+
+    fn confirm_existing_pevcap(
+        &self,
+        preview: &PevcapImportPreview,
+        receipt: PevcapImportReceipt,
+        publication: &CapturePublication,
+    ) -> Result<PevcapImportReceipt, StorageError> {
+        publication.validate_duplicate(&receipt)?;
+        validate_existing_pevcap_confirmation(self.path.as_ref(), &receipt, preview)?;
+        capture_data::store(self, preview, preview.source_path())?;
+        self.request(|reply| Command::PublishCaptureData {
+            digest: preview.artifact_digest.clone(),
+            reply,
+        })?;
+        Ok(receipt)
     }
 
     /// Reads one bounded chunk of an imported capture's original bytes from SQLite.
@@ -3513,11 +3540,9 @@ fn projection_sqlite<T>(
     cancellation: Option<&RouteProjectionCancellation>,
 ) -> Result<T, StorageError> {
     result.map_err(|error| {
-        if matches!(
-            &error,
-            rusqlite::Error::SqliteFailure(failure, _)
-                if failure.code == ErrorCode::OperationInterrupted
-        ) {
+        if let rusqlite::Error::SqliteFailure(failure, _) = &error
+            && failure.code == ErrorCode::OperationInterrupted
+        {
             if cancellation.is_some_and(RouteProjectionCancellation::is_expired) {
                 StorageError::DeadlineExceeded
             } else if cancellation.is_some_and(RouteProjectionCancellation::is_cancelled) {
@@ -3541,7 +3566,47 @@ struct ManagedArtifact {
     created: bool,
 }
 
+#[derive(Clone)]
+enum CapturePublication {
+    Import,
+    Recording(RecordedCapture),
+}
+
+impl CapturePublication {
+    fn recording(&self) -> Option<&RecordedCapture> {
+        match self {
+            Self::Import => None,
+            Self::Recording(recording) => Some(recording),
+        }
+    }
+
+    fn validate_duplicate(&self, receipt: &PevcapImportReceipt) -> Result<(), StorageError> {
+        match self {
+            Self::Import => Ok(()),
+            Self::Recording(recording) if receipt.recording.as_ref() == Some(recording) => Ok(()),
+            Self::Recording(_) => Err(StorageError::CaptureIdentityConflict),
+        }
+    }
+}
+
+struct PevcapImportCompletion {
+    digest: String,
+    ride_id: Option<RideId>,
+    managed_path: PathBuf,
+    outcome: NewPevcapImportOutcome,
+    artifact_size: u64,
+    record_count: u64,
+    location_count: u64,
+    duration_milliseconds: u64,
+    imported_at_ms: u64,
+    publication: CapturePublication,
+}
+
 enum Command {
+    RecordedCaptureLookup {
+        id: crate::CaptureArtifactId,
+        reply: Reply<Option<PevcapImportReceipt>>,
+    },
     ListPevcapCaptures {
         cursor: Option<PevcapCaptureCursor>,
         limit: QueryLimit,
@@ -3756,15 +3821,7 @@ enum Command {
         reply: Reply<u64>,
     },
     FinishPevcapImport {
-        digest: String,
-        ride_id: Option<RideId>,
-        managed_path: PathBuf,
-        outcome: NewPevcapImportOutcome,
-        artifact_size: u64,
-        record_count: u64,
-        location_count: u64,
-        duration_milliseconds: u64,
-        imported_at_ms: u64,
+        completion: PevcapImportCompletion,
         reply: Reply<PevcapImportReceipt>,
     },
     AbortPevcapImport {
@@ -5020,10 +5077,20 @@ fn validate_existing_pevcap_confirmation(
     )?;
     let managed_preview = preflight_pevcap(&receipt.managed_artifact_path, preview.encoding())
         .map_err(|_| StorageError::PevcapPreviewChanged)?;
+    let outcome_matches = match &receipt.recording {
+        Some(_) => {
+            receipt.location_count == 0
+                && receipt.ride_id.is_none()
+                && receipt.outcome == PevcapImportOutcome::CaptureOnly
+        }
+        None => {
+            receipt.location_count == managed_preview.location_count
+                && receipt.outcome == managed_preview.outcome
+        }
+    };
     if receipt.artifact_digest != managed_preview.artifact_digest
         || receipt.record_count != managed_preview.record_count
-        || receipt.location_count != managed_preview.location_count
-        || receipt.outcome != managed_preview.outcome
+        || !outcome_matches
         || managed_preview.artifact_digest != preview.artifact_digest
         || managed_preview.artifact_size != preview.artifact_size
         || managed_preview.record_count != preview.record_count
@@ -5195,8 +5262,10 @@ fn append_pevcap_location(
         coordinate.longitude().as_i32(),
     );
     if *last_emitted_key == Some(location_key)
-        || (matches!(origin, PevcapLocationOrigin::Attached)
-            && *last_attached_key == Some(location_key))
+        || ((match origin {
+            PevcapLocationOrigin::Attached => true,
+            PevcapLocationOrigin::Independent => false,
+        }) && *last_attached_key == Some(location_key))
     {
         return Ok(());
     }
@@ -5228,7 +5297,10 @@ fn append_pevcap_location(
             point.segment_start_reason()
         });
     *last_emitted_key = Some(location_key);
-    if matches!(origin, PevcapLocationOrigin::Attached) {
+    if match origin {
+        PevcapLocationOrigin::Attached => true,
+        PevcapLocationOrigin::Independent => false,
+    } {
         *last_attached_key = Some(location_key);
     }
     batch.push(PevcapRoutePoint {
@@ -5293,6 +5365,7 @@ fn pevcap_import_receipt(
         })
         .transpose()?;
     Ok(Some(PevcapImportReceipt {
+        recording: recorded_capture::lookup(connection, digest)?,
         ride_id,
         artifact_digest: digest.to_owned(),
         managed_artifact_path: PathBuf::from(path),
@@ -5382,19 +5455,22 @@ fn append_pevcap_location_batch(
     Ok(accepted)
 }
 
-#[allow(clippy::too_many_arguments)]
 fn finish_pevcap_import(
     connection: &mut Connection,
-    digest: &str,
-    ride_id: Option<RideId>,
-    managed_path: &Path,
-    outcome: NewPevcapImportOutcome,
-    artifact_size: u64,
-    record_count: u64,
-    location_count: u64,
-    duration_milliseconds: u64,
-    imported_at_ms: u64,
+    completion: &PevcapImportCompletion,
 ) -> Result<PevcapImportReceipt, StorageError> {
+    let PevcapImportCompletion {
+        digest,
+        ride_id,
+        managed_path,
+        outcome,
+        artifact_size,
+        record_count,
+        location_count,
+        duration_milliseconds,
+        imported_at_ms,
+        publication,
+    } = completion;
     let transaction = connection.transaction()?;
     let work_exists: bool = transaction.query_row(
         "SELECT EXISTS(SELECT 1 FROM pevcap_import_work
@@ -5408,9 +5484,9 @@ fn finish_pevcap_import(
     if let Some(ride_id) = ride_id {
         transition_ride(
             &transaction,
-            ride_id,
+            *ride_id,
             RideEvent::Import,
-            imported_at_ms,
+            *imported_at_ms,
             None,
         )?;
         transaction.execute(
@@ -5435,18 +5511,22 @@ fn finish_pevcap_import(
         ],
     )?;
     capture_data::publish(&transaction, digest)?;
+    if let Some(recording) = publication.recording() {
+        recorded_capture::insert(&transaction, digest, recording)?;
+    }
     transaction.execute(
         "DELETE FROM pevcap_import_work WHERE artifact_digest = ?1",
         [digest],
     )?;
     transaction.commit()?;
     Ok(PevcapImportReceipt {
-        ride_id,
+        recording: publication.recording().cloned(),
+        ride_id: *ride_id,
         artifact_digest: digest.to_owned(),
         managed_artifact_path: managed_path.to_owned(),
         outcome: outcome.as_public(),
-        record_count,
-        location_count,
+        record_count: *record_count,
+        location_count: *location_count,
         duplicate: false,
     })
 }
@@ -5790,18 +5870,8 @@ fn save_music_history_policy(
 ) -> Result<(), StorageError> {
     let transaction = connection.transaction()?;
     let lifecycle = load_ride_write_state(&transaction, ride_id)?.lifecycle();
-    let live_lifecycle = matches!(
-        lifecycle,
-        RideLifecycleState::Active | RideLifecycleState::Paused
-    );
-    let historical_redaction = policy == MusicHistoryPolicy::OpaqueItem
-        && matches!(
-            lifecycle,
-            RideLifecycleState::Stopped
-                | RideLifecycleState::Interrupted
-                | RideLifecycleState::Saved
-                | RideLifecycleState::Discarded
-        );
+    let live_lifecycle = lifecycle.is_recording();
+    let historical_redaction = policy == MusicHistoryPolicy::OpaqueItem && lifecycle.is_terminal();
     if !live_lifecycle && !historical_redaction {
         return Err(StorageError::InvalidRideState(lifecycle));
     }
@@ -5815,10 +5885,10 @@ fn save_music_history_policy(
             .optional()?;
         let monotonic_redaction = existing.is_some_and(|(stored, deleted)| {
             !deleted
-                && matches!(
-                    parse_policy(&stored),
-                    Ok(MusicHistoryPolicy::HumanReadable | MusicHistoryPolicy::OpaqueItem)
-                )
+                && (match parse_policy(&stored) {
+                    Ok(MusicHistoryPolicy::HumanReadable | MusicHistoryPolicy::OpaqueItem) => true,
+                    _ => false,
+                })
         });
         if !monotonic_redaction {
             return Err(StorageError::MusicPolicyConflict);
@@ -5910,10 +5980,7 @@ fn save_music_event(
 ) -> Result<(), StorageError> {
     let transaction = connection.transaction()?;
     let lifecycle = load_ride_write_state(&transaction, ride_id)?.lifecycle();
-    if !matches!(
-        lifecycle,
-        RideLifecycleState::Active | RideLifecycleState::Paused
-    ) {
+    if !lifecycle.is_recording() {
         return Err(StorageError::InvalidRideState(lifecycle));
     }
     insert_music_event(&transaction, ride_id, policy, sequence, event)?;

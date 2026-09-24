@@ -2295,6 +2295,293 @@ fn malformed_pevcap_import_does_not_publish_an_orphan_ride() {
 }
 
 #[test]
+fn finished_recording_is_retained_without_deriving_a_ride() {
+    let _guard = test_guard();
+    let directory = std::env::temp_dir().join(format!("cutout-recording-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir(&directory).unwrap();
+    let path = directory.join("ride.sqlite");
+    let source = directory.join("recording.jsonl");
+    let writer = crate::CaptureWriter::start(
+        source.clone(),
+        WallClockUnixTimestamp::new(1234),
+        "wheel-a",
+        None,
+        &crate::CaptureMetadata {
+            advertised_services: vec![],
+            gatt_fingerprints: vec![],
+            resolved_identity: None,
+            annotations: vec![],
+        },
+    )
+    .unwrap();
+    assert!(writer.try_send_record(pevcap_location_record(1, 40.0, Some(3.0))));
+    let artifact = writer.finish().unwrap();
+    let bytes = std::fs::read(&source).unwrap();
+    let database = RideDatabase::open(&path).unwrap();
+    let receipt = database
+        .retain_finished_capture(
+            &artifact,
+            cutout_core::CaptureOrigin::Manual,
+            Some("GW-Falcon"),
+            WallClockUnixTimestamp::new(9999),
+        )
+        .unwrap();
+    assert_eq!(receipt.ride_id, None);
+    assert_eq!(receipt.location_count, 0);
+    assert_eq!(receipt.outcome, PevcapImportOutcome::CaptureOnly);
+    assert!(
+        database
+            .list_rides(None, QueryLimit::new(10).unwrap())
+            .unwrap()
+            .rides()
+            .is_empty()
+    );
+    let preview = database
+        .preflight_pevcap(&source, PevcapEncoding::Jsonl)
+        .unwrap();
+    assert_eq!(preview.outcome(), PevcapImportOutcome::AlreadyImported);
+    assert!(
+        database
+            .confirm_pevcap_import(&preview, 10000)
+            .unwrap()
+            .duplicate
+    );
+    database.shutdown().unwrap();
+    std::fs::remove_file(source).unwrap();
+    std::fs::remove_file(&receipt.managed_artifact_path).unwrap();
+    let database = RideDatabase::open(&path).unwrap();
+    let retry = database
+        .retain_finished_capture(
+            &artifact,
+            cutout_core::CaptureOrigin::Manual,
+            Some("GW-Falcon"),
+            WallClockUnixTimestamp::new(10001),
+        )
+        .unwrap();
+    assert!(retry.duplicate);
+    assert_eq!(retry.artifact_digest, receipt.artifact_digest);
+    let page = database
+        .list_pevcap_captures(None, QueryLimit::new(10).unwrap())
+        .unwrap();
+    assert_eq!(page.captures.len(), 1);
+    let recording = page.captures[0].recording.as_ref().unwrap();
+    assert_eq!(recording.artifact_id, artifact.id());
+    assert_eq!(recording.origin, cutout_core::CaptureOrigin::Manual);
+    assert_eq!(recording.advertised_name.as_deref(), Some("GW-Falcon"));
+    assert_eq!(recording.platform_identifier, "wheel-a");
+    assert_eq!(recording.started_at, WallClockUnixTimestamp::new(1234));
+    assert_eq!(
+        database
+            .pevcap_capture_chunk(&receipt.artifact_digest, 0)
+            .unwrap(),
+        Some(bytes)
+    );
+    database.shutdown().unwrap();
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn recording_publication_rolls_back_and_reconciles_lost_reply() {
+    let _guard = test_guard();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("ride.sqlite");
+    let source = directory.path().join("recording.jsonl");
+    let artifact = crate::CaptureWriter::start(
+        source.clone(),
+        WallClockUnixTimestamp::new(1234),
+        "wheel-a",
+        None,
+        &crate::CaptureMetadata {
+            advertised_services: vec![],
+            gatt_fingerprints: vec![],
+            annotations: vec![],
+            resolved_identity: Some(cutout_core::PevcapResolvedIdentity {
+                protocol_family: Some(cutout_core::ProtocolFamily::BegodeGotway),
+                model: Some(cutout_core::VerifiedValue {
+                    value: "Falcon".into(),
+                    verification: cutout_core::VerificationStatus::SourceVerified,
+                }),
+                firmware: None,
+            }),
+        },
+    )
+    .unwrap()
+    .finish()
+    .unwrap();
+    let bytes = std::fs::read(&source).unwrap();
+    let database = RideDatabase::open(&path).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch(
+            "CREATE TRIGGER reject_recording BEFORE INSERT ON pevcap_recordings
+        BEGIN SELECT RAISE(ABORT, 'injected recording publication failure'); END;",
+        )
+        .unwrap();
+    let retain = || {
+        database.retain_finished_capture(
+            &artifact,
+            cutout_core::CaptureOrigin::Automatic,
+            Some("GW-Falcon"),
+            WallClockUnixTimestamp::new(9999),
+        )
+    };
+    match retain() {
+        Err(StorageError::Sqlite(_)) => {}
+        other => panic!("expected injected transaction failure, got {other:?}"),
+    }
+    assert_eq!(std::fs::read(&source).unwrap(), bytes);
+    for table in [
+        "pevcap_imports",
+        "pevcap_import_work",
+        "pevcap_captures",
+        "pevcap_capture_chunks",
+        "pevcap_recordings",
+        "rides",
+    ] {
+        let count: u64 = connection
+            .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 0, "rollback and cleanup must leave {table} empty");
+    }
+    connection
+        .execute_batch("DROP TRIGGER reject_recording;")
+        .unwrap();
+    RideDatabase::fail_next_pevcap_finish_response_for_test();
+    let receipt = retain().unwrap();
+    assert!(!receipt.duplicate);
+    let recording = receipt.recording.as_ref().unwrap();
+    assert_eq!(recording.model.as_ref().unwrap().value, "Falcon");
+    assert_eq!(
+        recording.model.as_ref().unwrap().verification,
+        cutout_core::VerificationStatus::SourceVerified
+    );
+    std::fs::remove_file(&source).unwrap();
+    assert!(retain().unwrap().duplicate);
+    for (origin, name) in [
+        (cutout_core::CaptureOrigin::Manual, Some("GW-Falcon")),
+        (cutout_core::CaptureOrigin::Automatic, Some("another wheel")),
+    ] {
+        let result = database.retain_finished_capture(
+            &artifact,
+            origin,
+            name,
+            WallClockUnixTimestamp::new(10000),
+        );
+        let Err(StorageError::CaptureIdentityConflict) = result else {
+            panic!("expected identity conflict, got {result:?}");
+        };
+    }
+    assert_eq!(retain().unwrap().recording, receipt.recording);
+    database.shutdown().unwrap();
+}
+
+#[test]
+fn recording_schema_migrates_from_25_without_changing_existing_capture() {
+    let _guard = test_guard();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("ride.sqlite");
+    let source = directory.path().join("capture.jsonl");
+    std::fs::write(
+        &source,
+        PevcapCapture::new(pevcap_header(), vec![])
+            .to_jsonl()
+            .unwrap(),
+    )
+    .unwrap();
+    let database = RideDatabase::open(&path).unwrap();
+    let preview = database
+        .preflight_pevcap(&source, PevcapEncoding::Jsonl)
+        .unwrap();
+    let receipt = database.confirm_pevcap_import(&preview, 1234).unwrap();
+    database.shutdown().unwrap();
+    let connection = Connection::open(&path).unwrap();
+    let schema = || {
+        connection
+            .query_row::<String, _, _>(
+                "SELECT sql FROM sqlite_schema WHERE name = 'pevcap_recordings'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap()
+    };
+    let fresh_schema = schema();
+    connection
+        .execute_batch("DROP TABLE pevcap_recordings; PRAGMA user_version = 25;")
+        .unwrap();
+    let database = RideDatabase::open(&path).unwrap();
+    assert_eq!(schema(), fresh_schema);
+    let history = database
+        .list_pevcap_captures(None, QueryLimit::new(1).unwrap())
+        .unwrap();
+    assert_eq!(history.captures[0].artifact_digest, receipt.artifact_digest);
+    assert_eq!(history.captures[0].recording, None);
+    assert_eq!(
+        database
+            .pevcap_capture_chunk(&receipt.artifact_digest, 0)
+            .unwrap(),
+        Some(std::fs::read(source).unwrap())
+    );
+    database.shutdown().unwrap();
+}
+
+#[test]
+fn recording_digest_collision_preserves_the_first_writer_identity() {
+    let _guard = test_guard();
+    let directory = tempfile::tempdir().unwrap();
+    let finish = |name| {
+        crate::CaptureWriter::start(
+            directory.path().join(name),
+            WallClockUnixTimestamp::new(1234),
+            "wheel-a",
+            None,
+            &crate::CaptureMetadata {
+                advertised_services: vec![],
+                gatt_fingerprints: vec![],
+                resolved_identity: None,
+                annotations: vec![],
+            },
+        )
+        .unwrap()
+        .finish()
+        .unwrap()
+    };
+    let first = finish("first.jsonl");
+    let second = finish("second.jsonl");
+    assert_ne!(first.id(), second.id());
+    assert_eq!(
+        std::fs::read(first.path()).unwrap(),
+        std::fs::read(second.path()).unwrap()
+    );
+    let database = RideDatabase::open(&directory.path().join("ride.sqlite")).unwrap();
+    let retain = |artifact| {
+        database.retain_finished_capture(
+            artifact,
+            cutout_core::CaptureOrigin::Manual,
+            None,
+            WallClockUnixTimestamp::new(9999),
+        )
+    };
+    let receipt = retain(&first).unwrap();
+    let result = retain(&second);
+    let Err(StorageError::CaptureIdentityConflict) = result else {
+        panic!("expected conflicting writer identity, got {result:?}");
+    };
+    assert!(second.path().exists());
+    assert_eq!(retain(&first).unwrap().recording, receipt.recording);
+    assert_eq!(
+        database
+            .list_pevcap_captures(None, QueryLimit::new(10).unwrap())
+            .unwrap()
+            .captures
+            .len(),
+        1
+    );
+    database.shutdown().unwrap();
+}
+
+#[test]
 fn stored_capture_history_index_is_identical_after_schema_24_migration() {
     let _guard = test_guard();
     let directory =

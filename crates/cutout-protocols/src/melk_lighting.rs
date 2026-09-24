@@ -547,7 +547,10 @@ impl MelkLightingProfile {
             return false;
         };
         model.eq_ignore_ascii_case(b"MELK-OC21")
-            && matches!(bytes.get(9), None | Some(b' ' | b'\t'))
+            && (match bytes.get(9) {
+                None | Some(b' ' | b'\t') => true,
+                _ => false,
+            })
     }
 
     /// Returns the Rust-owned reference effect grouping for mobile clients.

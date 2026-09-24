@@ -301,12 +301,7 @@ impl DeviceActionsState {
 fn usable_action_progress(progress: Measured<DeviceActionProgress>) -> bool {
     progress.source == crate::ValueSource::Reported
         && progress.quality == crate::ValueQuality::Known
-        && matches!(
-            progress.verification,
-            crate::VerificationStatus::SourceVerified
-                | crate::VerificationStatus::HardwareVerified
-                | crate::VerificationStatus::SourceAndHardwareVerified
-        )
+        && progress.verification.is_trusted()
 }
 
 #[cfg(test)]

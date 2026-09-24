@@ -915,10 +915,11 @@ impl ReadOnlyDashboardState {
             ReadOnlyResponse::Battery(readback) => {
                 if let Some(payload) = readback.page() {
                     let page = payload.page();
-                    if matches!(
-                        page.kind,
-                        cutout_core::BatteryPageKind::Raw | cutout_core::BatteryPageKind::Metadata
-                    ) {
+                    if match page.kind {
+                        cutout_core::BatteryPageKind::Raw
+                        | cutout_core::BatteryPageKind::Metadata => true,
+                        _ => false,
+                    } {
                         self.unknown_raw_pages = self.unknown_raw_pages.increment();
                     }
                     if BmsTemperatureValues(payload).has_values() {
@@ -1797,12 +1798,14 @@ struct BmsTemperatureValues<'a>(&'a BatteryPagePayload);
 
 impl BmsTemperatureValues<'_> {
     fn has_values(&self) -> bool {
-        matches!(self.0, BatteryPagePayload::Temperature(_))
-            && self
-                .0
-                .temperatures()
-                .into_iter()
-                .any(|value| value.is_some())
+        (match self.0 {
+            BatteryPagePayload::Temperature(_) => true,
+            _ => false,
+        }) && self
+            .0
+            .temperatures()
+            .into_iter()
+            .any(|value| value.is_some())
     }
 }
 

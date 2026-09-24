@@ -77,7 +77,10 @@ impl ChargeFlow {
     /// Returns whether this is a canonical charging direction.
     #[must_use]
     pub const fn is_charging(self) -> bool {
-        matches!(self, Self::Charging)
+        match self {
+            Self::Charging => true,
+            _ => false,
+        }
     }
 }
 
@@ -1180,10 +1183,10 @@ fn calculate_estimate(
         .map_err(|_| ChargeEstimateError::ArithmeticOverflow)?;
 
     let mut widen_permille: u64 = 50;
-    if matches!(
-        input.battery_level,
-        BatteryLevelBasis::ProfileEstimated { .. }
-    ) {
+    if match input.battery_level {
+        BatteryLevelBasis::ProfileEstimated { .. } => true,
+        _ => false,
+    } {
         widen_permille = widen_permille.saturating_add(200);
     }
     if input.usable_capacity.source == CapacitySource::Estimated {
@@ -1260,22 +1263,6 @@ fn scaled_duration(value: u128, factor_permille: u64) -> Result<Duration, Charge
     u64::try_from(scaled)
         .map(Duration::from_milliseconds)
         .map_err(|_| ChargeEstimateError::ArithmeticOverflow)
-}
-
-impl VerificationStatus {
-    fn is_trusted(self) -> bool {
-        matches!(
-            self,
-            Self::SourceVerified | Self::HardwareVerified | Self::SourceAndHardwareVerified
-        )
-    }
-
-    fn is_hardware_verified(self) -> bool {
-        matches!(
-            self,
-            Self::HardwareVerified | Self::SourceAndHardwareVerified
-        )
-    }
 }
 
 #[cfg(test)]

@@ -137,9 +137,7 @@ impl MusicArtworkRequest {
     /// Admits at most three requests until the track or connection is reset.
     #[must_use]
     pub fn begin(&mut self) -> Option<ArtworkRequestId> {
-        if matches!(self.state, ArtworkRequestState::Pending(_))
-            || self.attempts >= MAX_ARTWORK_ATTEMPTS
-        {
+        if !self.can_retry() {
             return None;
         }
         let id = self.last_id.next()?;
@@ -166,7 +164,10 @@ impl MusicArtworkRequest {
     /// Whether another attempt remains after a failure or deadline.
     #[must_use]
     pub fn can_retry(&self) -> bool {
-        matches!(self.state, ArtworkRequestState::Available) && self.attempts < MAX_ARTWORK_ATTEMPTS
+        match self.state {
+            ArtworkRequestState::Available => self.attempts < MAX_ARTWORK_ATTEMPTS,
+            ArtworkRequestState::Pending(_) => false,
+        }
     }
 
     /// Starts a new track or connection budget without reusing callback IDs.

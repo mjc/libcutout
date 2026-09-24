@@ -1,3 +1,5 @@
+#![cfg_attr(test, allow(clippy::disallowed_macros))]
+
 use cutout_mobile_ffi::*;
 use std::sync::{Arc, Mutex, MutexGuard};
 static DATABASE_LOCK: Mutex<()> = Mutex::new(());

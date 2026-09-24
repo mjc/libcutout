@@ -63,6 +63,9 @@ impl DatabaseWorker<'_> {
         let spatial_schema = &mut self.spatial_schema;
         let worker_alive = self.worker_alive;
         match command {
+            Command::RecordedCaptureLookup { id, reply } => {
+                let _ = reply.send(super::recorded_capture::receipt_for_id(connection, id));
+            }
             Command::ListPevcapCaptures {
                 cursor,
                 limit,
@@ -381,30 +384,8 @@ impl DatabaseWorker<'_> {
             } => {
                 let _ = reply.send(append_pevcap_location_batch(connection, ride_id, &samples));
             }
-            Command::FinishPevcapImport {
-                digest,
-                ride_id,
-                managed_path,
-                outcome,
-                artifact_size,
-                record_count,
-                location_count,
-                duration_milliseconds,
-                imported_at_ms,
-                reply,
-            } => {
-                let result = finish_pevcap_import(
-                    connection,
-                    &digest,
-                    ride_id,
-                    &managed_path,
-                    outcome,
-                    artifact_size,
-                    record_count,
-                    location_count,
-                    duration_milliseconds,
-                    imported_at_ms,
-                );
+            Command::FinishPevcapImport { completion, reply } => {
+                let result = finish_pevcap_import(connection, &completion);
                 #[cfg(test)]
                 if DROP_NEXT_PEVCAP_FINISH_RESPONSE.swap(false, Ordering::AcqRel) {
                     drop(reply);

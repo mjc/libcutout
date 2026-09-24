@@ -63,10 +63,12 @@ fn main() {
     assert_eq!(entry.registration.parser, Some(FAKE_PARSER_KEY));
     assert_eq!(registration.key, FAKE_SESSION_KEY);
     assert_eq!(registration.model.model, "Structured Fixture Wheel");
-    assert!(matches!(
-        registration.construct(),
-        RegisteredEucSession::BegodeFalcon(_)
-    ));
+    assert!(
+        (match registration.construct() {
+            RegisteredEucSession::BegodeFalcon(_) => true,
+            RegisteredEucSession::NosfetAero(_) => false,
+        })
+    );
     println!(
         "structured model definition ready: {} / {}",
         entry.registry.manufacturer, entry.registry.model

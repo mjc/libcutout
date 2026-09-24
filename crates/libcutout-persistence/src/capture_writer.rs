@@ -31,6 +31,12 @@ impl std::fmt::Display for CaptureArtifactId {
     }
 }
 
+impl CaptureArtifactId {
+    pub(crate) const fn from_uuid(value: Uuid) -> Self {
+        Self(value)
+    }
+}
+
 /// Evidence produced only after a consumed writer has durably completed.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SavedCaptureArtifact {

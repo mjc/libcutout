@@ -237,7 +237,10 @@ enum MusicObservationOwnership {
 
 impl MusicObservationOwnership {
     const fn has_gap(self) -> bool {
-        matches!(self, Self::Active)
+        match self {
+            Self::Active => true,
+            Self::Idle => false,
+        }
     }
 }
 
@@ -381,10 +384,11 @@ impl MusicProviderLifecycle {
     ) -> Option<MusicDeadlineEffect<MonitorId>> {
         if self.monitor_generation.classify(generation) == CallbackEpochMatch::Stale
             || self.connection.recovery_exhausted_at(now_ms)
-            || matches!(
-                work_state,
-                MusicProviderWorkState::RequiresUserAction | MusicProviderWorkState::Unavailable
-            )
+            || (match work_state {
+                MusicProviderWorkState::RequiresUserAction
+                | MusicProviderWorkState::Unavailable => true,
+                _ => false,
+            })
         {
             return None;
         }
@@ -718,7 +722,7 @@ impl MusicProviderLifecycle {
         let pending = self
             .transport
             .begin(owner, command, MonotonicTimestamp::new(now_ms))?;
-        if matches!(command, MusicCommand::Previous | MusicCommand::Next) {
+        if command.is_skip() {
             self.observations
                 .issue_skip(pending.request_id, pending.started_at);
         }
@@ -765,7 +769,7 @@ impl MusicProviderLifecycle {
         let Some(pending) = self.transport.finish(provider_generation, request_id) else {
             return MusicTransportCompletion::Stale;
         };
-        if matches!(pending.command, MusicCommand::Previous | MusicCommand::Next) {
+        if pending.command.is_skip() {
             let skip_outcome = if outcome == MusicTransportOutcome::Accepted {
                 SkipCommandOutcome::Accepted
             } else {
@@ -864,13 +868,13 @@ impl MusicProviderLifecycle {
         let Some(pending) = self.transport.pending() else {
             return MusicTransportCompletion::Stale;
         };
-        if !matches!(
-            pending.owner,
+        if !(match pending.owner {
             MusicTransportOwner::Connection {
                 connection_id: current,
                 ..
-            } if current == connection_id
-        ) {
+            } if current == connection_id => true,
+            _ => false,
+        }) {
             return MusicTransportCompletion::Stale;
         }
         self.finish_transport_unchecked(

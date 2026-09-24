@@ -883,7 +883,7 @@ impl<R: Read> PevcapReader<R> {
     /// Returns [`PevcapStreamError`] when the next record is malformed, the
     /// stream is truncated, or an underlying read fails.
     pub fn next_record(&mut self) -> Result<Option<PevcapRecord>, PevcapStreamError> {
-        if matches!(&self.state, PevcapReaderState::Binary { .. }) {
+        if let PevcapReaderState::Binary { .. } = &self.state {
             return self.next_binary_record();
         }
 
@@ -963,7 +963,7 @@ impl<R: Read> PevcapReader<R> {
     /// Returns [`PevcapStreamError`] when the next event is malformed, the stream is truncated,
     /// or an underlying read fails.
     pub fn next_event(&mut self) -> Result<Option<PevcapEvent>, PevcapStreamError> {
-        if matches!(&self.state, PevcapReaderState::Binary { .. }) {
+        if let PevcapReaderState::Binary { .. } = &self.state {
             return self.next_binary_event();
         }
 
@@ -4127,7 +4127,11 @@ impl PevcapRecordJson {
     }
 
     fn validate(&self) -> Result<(), PevcapRecordError> {
-        if self.write_receipt.is_some() && !matches!(self.direction, PevcapDirectionJson::Outbound)
+        if self.write_receipt.is_some()
+            && !(match self.direction {
+                PevcapDirectionJson::Outbound => true,
+                _ => false,
+            })
         {
             return Err(PevcapRecordError::UnexpectedWriteReceipt);
         }
@@ -4148,8 +4152,10 @@ impl PevcapRecordJson {
                 if !self.bytes.is_empty() {
                     return Err(PevcapRecordError::UnexpectedLinkBytes);
                 }
-                if matches!(self.direction, PevcapDirectionJson::LinkDown)
-                    && self.link_max_write_len.is_some()
+                if (match self.direction {
+                    PevcapDirectionJson::LinkDown => true,
+                    _ => false,
+                }) && self.link_max_write_len.is_some()
                 {
                     return Err(PevcapRecordError::UnexpectedLinkMaxWriteLen);
                 }

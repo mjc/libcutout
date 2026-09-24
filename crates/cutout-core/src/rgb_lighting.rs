@@ -582,7 +582,7 @@ impl TryFrom<WireRecord> for RgbLightingAccessoryRecord {
 impl From<RgbLightingRequestedState> for WireState {
     fn from(state: RgbLightingRequestedState) -> Self {
         Self {
-            power_on: matches!(state.power(), crate::LightingPowerState::On),
+            power_on: state.power() == crate::LightingPowerState::On,
             red: state.color().red(),
             green: state.color().green(),
             blue: state.color().blue(),
