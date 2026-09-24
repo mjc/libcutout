@@ -3,11 +3,6 @@ import CutoutMobileFFI
 import Foundation
 import Observation
 
-func normalizedRideMapHistorySearchText(_ text: String) -> String? {
-    let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
-    return normalized.isEmpty ? nil : normalized
-}
-
 private enum RideSessionRestorationState {
     case complete
     case awaitingBluetooth
@@ -46,10 +41,7 @@ final class CutoutAppModel {
         case history
     }
 
-    enum RideMapHistoryDateFilter: String {
-        case last30Days
-        case allTime
-    }
+    typealias RideMapHistoryDateFilter = RideHistoryModel.DateFilter
 
     nonisolated private static var rideMapLimits: MobileRideMapLimits { .rustOwned }
 

@@ -17,7 +17,10 @@ private struct RideHistoryDetailViewportRequest: Sendable {
 @MainActor
 @Observable
 final class RideHistoryModel {
-    typealias DateFilter = CutoutAppModel.RideMapHistoryDateFilter
+    enum DateFilter: String {
+        case last30Days
+        case allTime
+    }
 
     nonisolated private static var limits: MobileRideMapLimits { .rustOwned }
 
@@ -121,7 +124,7 @@ final class RideHistoryModel {
             applyLoadFailure(selectionError)
             return
         }
-        guard let selectedRideID = CutoutAppModel.preferredHistorySelection(
+        guard let selectedRideID = Self.preferredHistorySelection(
             requestedID: requestedRideID,
             currentID: self.selectedRideID,
             summaries: rides
@@ -177,7 +180,7 @@ final class RideHistoryModel {
         viewportTask = Task { [weak self] in
             do {
                 let result = try await withTaskCancellationHandler(operation: {
-                    try await CutoutAppModel.runCancellableDetached(priority: .userInitiated) {
+                    try await Self.runCancellableDetached(priority: .userInitiated) {
                         try state.projectStoredPoints(
                             rideID: request.rideID,
                             budget: budget,
@@ -197,11 +200,11 @@ final class RideHistoryModel {
                     endpointMetadata: result.endpointMetadata,
                     segments: result.segments,
                     backgroundGapCount: result.backgroundGapCount,
-                    truncated: CutoutAppModel.detailPointsAreTruncated(
+                    truncated: Self.detailPointsAreTruncated(
                         sourcePointsOmittedByBudget: self.detailSourcePointsOmittedByBudget,
                         viewportPointsOmittedByBudget: result.pointsOmittedByBudget
                     ),
-                    segmentsOmittedByBudget: CutoutAppModel.detailSegmentsAreOmitted(
+                    segmentsOmittedByBudget: Self.detailSegmentsAreOmitted(
                         sourceSegmentsOmittedByBudget: self.detailSourceSegmentsOmittedByBudget,
                         viewportSegmentsOmittedByBudget: result.segmentsOmittedByBudget
                     )
@@ -213,7 +216,7 @@ final class RideHistoryModel {
                 guard let self,
                       self.admits(request, isCancelled: Task.isCancelled)
                 else { return }
-                let mappedError = CutoutAppModel.mapRideMapError(error)
+                let mappedError = Self.mapError(error)
                 if mappedError == .cancelled { return }
                 self.detailRouteError = mappedError
                 self.detailRouteLoading = false
@@ -278,7 +281,7 @@ final class RideHistoryModel {
         selectionTask = Task { [weak self] in
             do {
                 let result = try await withTaskCancellationHandler(operation: {
-                    try await CutoutAppModel.runCancellableDetached(priority: .userInitiated) {
+                    try await Self.runCancellableDetached(priority: .userInitiated) {
                         let projection = try state.projectStoredPoints(
                             rideID: request.rideID,
                             budget: budget,
@@ -296,7 +299,7 @@ final class RideHistoryModel {
                             musicHistory = MusicHistoryQueryResult(
                                 events: [],
                                 state: nil,
-                                error: CutoutAppModel.mapRideMapError(error)
+                                error: Self.mapError(error)
                             )
                         }
                         return (projection, musicHistory)
@@ -336,7 +339,7 @@ final class RideHistoryModel {
                     segments: projection.segments,
                     backgroundGapCount: projection.backgroundGapCount,
                     truncated: projection.pointsOmittedByBudget,
-                    segmentsOmittedByBudget: CutoutAppModel.detailSegmentsAreOmitted(
+                    segmentsOmittedByBudget: Self.detailSegmentsAreOmitted(
                         sourceSegmentsOmittedByBudget: self.detailSourceSegmentsOmittedByBudget,
                         viewportSegmentsOmittedByBudget: projection.segmentsOmittedByBudget
                     )
@@ -347,7 +350,7 @@ final class RideHistoryModel {
                 guard let self,
                       self.admits(request, isCancelled: Task.isCancelled)
                 else { return }
-                let mappedError = CutoutAppModel.mapRideMapError(error)
+                let mappedError = Self.mapError(error)
                 self.routeError = mappedError
                 self.routeLoading = false
                 self.detailRouteError = mappedError
@@ -368,7 +371,7 @@ final class RideHistoryModel {
         _ request: RideHistoryDetailLoadRequest,
         isCancelled: Bool
     ) -> Bool {
-        CutoutAppModel.shouldApplyHistoryDetailLoad(
+        Self.shouldApplyHistoryDetailLoad(
             rideID: request.rideID,
             selectedRideID: selectedRideID,
             loadGeneration: request.generation,
@@ -381,7 +384,7 @@ final class RideHistoryModel {
         _ request: RideHistoryDetailViewportRequest,
         isCancelled: Bool
     ) -> Bool {
-        CutoutAppModel.shouldApplyHistoryDetailViewport(
+        Self.shouldApplyHistoryDetailViewport(
             rideID: request.rideID,
             selectedRideID: selectedRideID,
             expectedProjectionRideID: request.projectionRideID,
@@ -477,7 +480,7 @@ final class RideHistoryModel {
         let budget = MobileRideMapHistoryContextBudget.overview
         contextTask = Task { [weak self] in
             do {
-                let projection = try await CutoutAppModel.runCancellableDetached(priority: .userInitiated) {
+                let projection = try await Self.runCancellableDetached(priority: .userInitiated) {
                     try state.projectStoredHistoryContext(
                         filter: filter,
                         selectedRideID: rideID,
@@ -531,7 +534,7 @@ final class RideHistoryModel {
         let filter = historyFilter
         loadTask = Task { [weak self] in
             do {
-                let result = try await CutoutAppModel.runCancellableDetached(priority: .userInitiated) {
+                let result = try await Self.runCancellableDetached(priority: .userInitiated) {
                     let page = try state.storedHistoryPage(
                         cursor: nil,
                         limit: Self.limits.historyPageLimit,
@@ -597,7 +600,7 @@ final class RideHistoryModel {
         let filter = historyFilter
         pageTask = Task { [weak self] in
             do {
-                let page = try await CutoutAppModel.runCancellableDetached(priority: .userInitiated) {
+                let page = try await Self.runCancellableDetached(priority: .userInitiated) {
                     try state.storedHistoryPage(
                         cursor: cursor,
                         limit: Self.limits.historyPageLimit,
@@ -680,7 +683,7 @@ final class RideHistoryModel {
         MobileRideHistoryFilterDto(
             createdAfterMilliseconds: queryDateAfterMilliseconds ?? historyDateAfterMilliseconds,
             vehicleIdentity: vehicleFilter,
-            searchText: normalizedRideMapHistorySearchText(searchText)
+            searchText: Self.normalizedSearchText(searchText)
         )
     }
 
@@ -738,7 +741,81 @@ final class RideHistoryModel {
         existing.merging(incoming) { _, incoming in incoming }
     }
 
-    private static func mapError(_ error: Error) -> MobileRideMapError {
+    private static func preferredHistorySelection(
+        requestedID: String?,
+        currentID: String?,
+        summaries: [MobileRideMapHistorySummaryDto]
+    ) -> String? {
+        if let requestedID {
+            return summaries.first(where: { $0.rideID == requestedID })?.rideID
+        }
+        return summaries.first(where: { $0.rideID == currentID })?.rideID
+            ?? summaries.first?.rideID
+    }
+
+    private static func detailPointsAreTruncated(
+        sourcePointsOmittedByBudget: Bool,
+        viewportPointsOmittedByBudget: Bool
+    ) -> Bool {
+        sourcePointsOmittedByBudget || viewportPointsOmittedByBudget
+    }
+
+    private static func detailSegmentsAreOmitted(
+        sourceSegmentsOmittedByBudget: Bool,
+        viewportSegmentsOmittedByBudget: Bool
+    ) -> Bool {
+        sourceSegmentsOmittedByBudget || viewportSegmentsOmittedByBudget
+    }
+
+    private static func shouldApplyHistoryDetailLoad(
+        rideID: String,
+        selectedRideID: String?,
+        loadGeneration: UInt64,
+        currentGeneration: UInt64,
+        isCancelled: Bool
+    ) -> Bool {
+        !isCancelled && loadGeneration == currentGeneration && selectedRideID == rideID
+    }
+
+    private static func shouldApplyHistoryDetailViewport(
+        rideID: String,
+        selectedRideID: String?,
+        expectedProjectionRideID: String?,
+        currentProjectionRideID: String?,
+        loadGeneration: UInt64,
+        currentGeneration: UInt64,
+        isCancelled: Bool
+    ) -> Bool {
+        !isCancelled
+            && loadGeneration == currentGeneration
+            && selectedRideID == rideID
+            && expectedProjectionRideID == rideID
+            && currentProjectionRideID == expectedProjectionRideID
+    }
+
+    private static func normalizedSearchText(_ text: String) -> String? {
+        let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return normalized.isEmpty ? nil : normalized
+    }
+
+    private nonisolated static func runCancellableDetached<Success: Sendable>(
+        priority: TaskPriority,
+        operation: @escaping @Sendable () throws -> Success
+    ) async throws -> Success {
+        let task = Task.detached(priority: priority) {
+            try Task.checkCancellation()
+            let result = try operation()
+            try Task.checkCancellation()
+            return result
+        }
+        return try await withTaskCancellationHandler(operation: {
+            try await task.value
+        }, onCancel: {
+            task.cancel()
+        })
+    }
+
+    nonisolated private static func mapError(_ error: Error) -> MobileRideMapError {
         if let error = error as? MobileRideMapError { return error }
         return .storageError(String(describing: error))
     }
