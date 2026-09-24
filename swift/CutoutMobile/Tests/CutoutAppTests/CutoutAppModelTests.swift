@@ -878,6 +878,74 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testHistoryReloadRejectsLateCursorPageResult() async throws {
+        let driver = SessionDriverSpy(rows: [])
+        let state = driver.rideMapState
+        let pageLimit = Int(MobileRideMapLimits.rustOwned.historyPageLimit)
+        for index in 0 ... pageLimit {
+            let startMs = UInt64(index + 1) * 10_000
+            _ = try state.startGpsOnly(atMs: startMs)
+            _ = await Self.settle(state, try state.ingestLocation(
+                monotonicMs: startMs,
+                wallClockUnixMs: 1_700_000_000_000 + startMs,
+                latitudeDegrees: 39.7000,
+                longitudeDegrees: -104.9000,
+                horizontalAccuracyMeters: 5
+            ))
+            _ = await Self.settle(state, try state.ingestLocation(
+                monotonicMs: startMs + 1_000,
+                wallClockUnixMs: 1_700_000_001_000 + startMs,
+                latitudeDegrees: 39.7001,
+                longitudeDegrees: -104.9000,
+                horizontalAccuracyMeters: 5
+            ))
+            _ = try state.stop(atMs: startMs + 1_000)
+            _ = try state.save()
+        }
+
+        let query = GatedRideHistoryQuery(base: state, failAfterRelease: false)
+        let model = CutoutAppModel(
+            core: driver,
+            rideHistoryQueryProvider: { query }
+        )
+        model.rideHistory.setDateFilter(.allTime)
+        await Self.waitUntil("first Rust history page") {
+            !model.rideHistory.isLoading && model.rideHistory.canLoadMore
+        }
+        let firstPageRideIDs = model.rideHistory.rides.map(\.rideID)
+        XCTAssertEqual(firstPageRideIDs.count, pageLimit)
+        XCTAssertEqual(query.historyPageCursorPresenceSnapshot, [false])
+
+        query.armNextHistoryPage()
+        model.rideHistory.loadMore()
+        let cursorPageStarted = await query.waitUntilGatedHistoryPageStarts()
+        XCTAssertTrue(cursorPageStarted)
+        XCTAssertEqual(query.historyPageCursorPresenceSnapshot, [false, true])
+        XCTAssertTrue(
+            Set(firstPageRideIDs).isDisjoint(with: query.gatedHistoryPageRideIDsSnapshot)
+        )
+
+        model.rideHistory.reload()
+        await Self.waitUntil("reloaded first Rust history page") {
+            !model.rideHistory.isLoading
+                && model.rideHistory.rides.map(\.rideID) == firstPageRideIDs
+        }
+        XCTAssertTrue(model.rideHistory.canLoadMore)
+
+        query.releaseGatedHistoryPage()
+        let stalePageFinished = await query.waitUntilGatedHistoryPageFinishes()
+        XCTAssertTrue(stalePageFinished)
+        for _ in 0 ..< 20 {
+            await Task.yield()
+        }
+
+        XCTAssertEqual(model.rideHistory.rides.map(\.rideID), firstPageRideIDs)
+        XCTAssertTrue(model.rideHistory.canLoadMore)
+        XCTAssertNil(model.rideHistory.error)
+        XCTAssertEqual(query.historyPageCursorPresenceSnapshot, [false, true, false])
+    }
+
+    @MainActor
     func testHistoryModelDeallocatesWhilePageQueryIsInFlight() async {
         let query = GatedRideHistoryQuery(
             base: MobileRideMapState(),
@@ -4531,6 +4599,7 @@ private final class GatedRideHistoryQuery: RideHistoryQuerying, @unchecked Senda
     private let projectionFinished = DispatchSemaphore(value: 0)
     private var shouldGateNextHistoryPage = false
     private var gatedHistoryPageRideIDs = [String]()
+    private var historyPageCursorPresence = [Bool]()
     private let historyPageStarted = DispatchSemaphore(value: 0)
     private let historyPageRelease = DispatchSemaphore(value: 0)
     private let historyPageFinished = DispatchSemaphore(value: 0)
@@ -4592,6 +4661,7 @@ private final class GatedRideHistoryQuery: RideHistoryQuerying, @unchecked Senda
         let page = try base.storedHistoryPage(cursor: cursor, limit: limit, filter: filter)
         lock.lock()
         historyPageFilters.append(filter)
+        historyPageCursorPresence.append(cursor != nil)
         let shouldGate = shouldGateNextHistoryPage
         shouldGateNextHistoryPage = false
         if shouldGate {
@@ -4668,6 +4738,12 @@ private final class GatedRideHistoryQuery: RideHistoryQuerying, @unchecked Senda
         lock.lock()
         defer { lock.unlock() }
         return historyPageFilters
+    }
+
+    var historyPageCursorPresenceSnapshot: [Bool] {
+        lock.lock()
+        defer { lock.unlock() }
+        return historyPageCursorPresence
     }
 
     func waitUntilHistoryPageFilter(_ searchText: String) async -> Bool {
