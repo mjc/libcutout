@@ -530,6 +530,9 @@ public final class CutoutSessionCore: NSObject {
     private var captureNotificationCount: UInt64 = 0
     private var captureBuilder: MobilePevcapCaptureBuilder? { captureWriter?.builder }
     private var captureGeneration: CaptureGeneration? { captureWriter?.generation }
+    private lazy var capturePresentation = CutoutSessionCapturePresentation { [weak self] event in
+        self?.publishCaptureEvent(event)
+    }
     private var musicCaptureContext = CaptureMusicContext()
     private var captureMusicHistoryPolicy = MobileMusicHistoryPolicyDto.disabled
     private var captureFileURL: URL? { captureWriter?.fileURL }
@@ -1291,6 +1294,17 @@ public final class CutoutSessionCore: NSObject {
         suppressReconnect = true
         cancelPendingReconnect()
         musicCaptureContext.reset()
+#if DEBUG
+        if testScript != nil, isRecordOnly, captureBuilder != nil {
+            finishCaptureAfterLinkDown()
+        } else if testScript != nil, isRecordOnly, let completedCaptureURL = captureFileURL {
+            let generation = captureGeneration ?? .legacy
+            capturePresentation.end()
+            publishCaptureEvent(.finished(generation: generation, fileURL: completedCaptureURL))
+        } else {
+            finishCaptureAfterLinkDown()
+        }
+#else
         finishCaptureAfterLinkDown()
         isRecordOnly = false
         isDetectingProtocol = false
@@ -1982,13 +1996,21 @@ public final class CutoutSessionCore: NSObject {
         }
     }
 
+    private func beginCaptureGeneration() -> CaptureGeneration {
+        capturePresentation.begin()
+    }
+
     private func publishCaptureProgress() {
         guard let generation = captureGeneration else { return }
         let progress = captureProgress()
         if progress.writerError != nil {
             _ = rustSessionState.captureWriterFailed(generation: generation.dto)
         }
-        publishCaptureEvent(.progress(generation: generation, progress))
+        capturePresentation.publishProgress(progress)
+    }
+
+    private func publishCaptureFailure() {
+        capturePresentation.publishFailure()
     }
 
     private func startRideMapWritePolling() {
@@ -2353,6 +2375,7 @@ public final class CutoutSessionCore: NSObject {
             failConnectionCapture()
             record("capture_error=writer_start_failed")
             _ = rustSessionState.captureWriterStartFailed(generation: identity)
+            capturePresentation.end()
             publishCaptureEvent(.failed(generation: generation))
             setPhase(.failed(.sessionFailed("capture writer failed to start")))
             cancelFailedConnectionAttempt()
@@ -2455,6 +2478,7 @@ public final class CutoutSessionCore: NSObject {
         let completedCaptureGeneration = binding.generation
         _ = rustSessionState.retireCaptureWriter(generation: completedCaptureGeneration.dto)
         captureWriter = nil
+        capturePresentation.end()
         musicCaptureContext.reset()
         let finish = DispatchWorkItem { [weak self] in
             #if DEBUG
