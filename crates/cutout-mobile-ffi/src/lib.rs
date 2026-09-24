@@ -952,99 +952,6 @@ fn build_novatek_session(
     NovatekR3V1Session::new(origin, firmware_version, configuration).map_err(Into::into)
 }
 
-/// Rust-owned validated R3V1 Novatek session evidence.
-#[derive(Debug, uniffi::Object)]
-pub struct MobileNovatekSession {
-    inner: NovatekR3V1Session,
-}
-
-#[uniffi::export]
-impl MobileNovatekSession {
-    /// Establishes one session from a validated local origin and read-only evidence.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the origin, firmware gate, or bounded `3014`
-    /// configuration evidence is invalid.
-    #[uniffi::constructor]
-    #[allow(
-        clippy::needless_pass_by_value,
-        reason = "UniFFI constructors own boundary DTOs and strings"
-    )]
-    pub fn new(
-        origin: MobileNovatekHttpOriginDto,
-        firmware_version: String,
-        configuration: Vec<MobileNovatekCommandStatusDto>,
-    ) -> Result<Arc<Self>, MobileNovatekSessionError> {
-        let inner = build_novatek_session(
-            &origin,
-            &firmware_version,
-            configuration
-                .into_iter()
-                .map(|status| (status.command_id, status.status)),
-        )?;
-        Ok(Arc::new(Self { inner }))
-    }
-
-    /// Returns the retained validated local origin.
-    #[must_use]
-    pub fn origin(&self) -> MobileNovatekHttpOriginDto {
-        MobileNovatekHttpOriginDto {
-            address: self.inner.origin().address().to_string(),
-            port: self.inner.origin().port(),
-        }
-    }
-
-    /// Returns the retained verified firmware identity.
-    #[must_use]
-    pub fn firmware_version(&self) -> String {
-        self.inner.firmware_version().to_owned()
-    }
-
-    /// Returns the bounded `3014` command/status evidence retained by Rust.
-    #[must_use]
-    pub fn configuration(&self) -> Vec<MobileNovatekCommandStatusDto> {
-        self.inner
-            .configuration()
-            .statuses()
-            .iter()
-            .map(|status| MobileNovatekCommandStatusDto {
-                command_id: status.command_id().get(),
-                status: status.status().get(),
-            })
-            .collect()
-    }
-
-    /// Builds a recording target from the retained firmware and capability proofs.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`MobileNovatekProfileError::CapabilityNotAdvertised`] when the
-    /// retained configuration does not acknowledge command `2001`.
-    pub fn recording_command_target(
-        &self,
-        command: MobileNovatekRecordingCommandDto,
-    ) -> Result<String, MobileNovatekProfileError> {
-        self.inner
-            .recording_command_target(command.into())
-            .map(|target| target.as_str().to_owned())
-            .map_err(Into::into)
-    }
-
-    /// Builds a still-capture target from the retained firmware and capability proofs.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`MobileNovatekProfileError::CapabilityNotAdvertised`] when the
-    /// retained configuration does not acknowledge command `1001`.
-    pub fn still_capture_command_target(&self) -> Result<String, MobileNovatekProfileError> {
-        self.inner
-            .still_capture_command_target(NovatekStillCaptureCommand)
-            .map(|target| target.as_str().to_owned())
-            .map_err(Into::into)
-    }
-}
-
 /// Failure returned when validating a mobile-supplied Novatek origin.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
 pub enum MobileNovatekOriginError {
@@ -1953,7 +1860,7 @@ type MobileSessionState = cutout_protocols::DeviceConnectionSession;
 #[derive(Debug)]
 struct RetainedNovatekSession {
     profile: NovatekR3V1Session,
-    read_only_snapshot: Option<MobileNovatekReadOnlySnapshotDto>,
+    read_only_snapshot: MobileNovatekReadOnlySnapshotDto,
 }
 
 #[derive(Debug, Default)]
@@ -1962,13 +1869,6 @@ struct NovatekCameraSessionState {
 }
 
 impl NovatekCameraSessionState {
-    fn replace_profile(&mut self, profile: NovatekR3V1Session) {
-        self.retained = Some(RetainedNovatekSession {
-            profile,
-            read_only_snapshot: None,
-        });
-    }
-
     fn replace_read_only(
         &mut self,
         profile: NovatekR3V1Session,
@@ -1976,7 +1876,7 @@ impl NovatekCameraSessionState {
     ) {
         self.retained = Some(RetainedNovatekSession {
             profile,
-            read_only_snapshot: Some(read_only_snapshot),
+            read_only_snapshot,
         });
     }
 
@@ -1989,15 +1889,13 @@ impl NovatekCameraSessionState {
     }
 
     fn media_is_current(&self, path: &str, size_bytes: u64) -> bool {
-        self.retained
-            .as_ref()
-            .and_then(|session| session.read_only_snapshot.as_ref())
-            .is_some_and(|snapshot| {
-                snapshot
-                    .media
-                    .iter()
-                    .any(|entry| entry.path == path && entry.size_bytes == size_bytes)
-            })
+        self.retained.as_ref().is_some_and(|session| {
+            session
+                .read_only_snapshot
+                .media
+                .iter()
+                .any(|entry| entry.path == path && entry.size_bytes == size_bytes)
+        })
     }
 
     fn media_thumbnail_target(
@@ -2539,36 +2437,6 @@ impl CutoutSessionStateHandle {
     #[must_use]
     pub fn camera_snapshot(&self) -> MobileCameraSnapshotDto {
         self.lock_inner().session_state().camera().to_owned().into()
-    }
-
-    /// Replaces the Rust-owned validated R3V1 session evidence.
-    ///
-    /// The caller must invalidate the previous camera lifecycle before
-    /// configuring a new origin; this method only stages the validated proof.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the origin, firmware gate, or command capability
-    /// evidence does not establish a valid R3V1 session.
-    #[allow(clippy::needless_pass_by_value)]
-    pub fn configure_novatek_session(
-        &self,
-        origin: MobileNovatekHttpOriginDto,
-        firmware_version: String,
-        configuration: Vec<MobileNovatekCommandStatusDto>,
-    ) -> Result<(), MobileNovatekSessionError> {
-        let session = build_novatek_session(
-            &origin,
-            &firmware_version,
-            configuration
-                .into_iter()
-                .map(|status| (status.command_id, status.status)),
-        )?;
-        self.novatek_session
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .replace_profile(session);
-        Ok(())
     }
 
     /// Replaces the retained Novatek proof and complete bounded read-only snapshot.
@@ -14853,44 +14721,6 @@ mod tests {
     }
 
     #[test]
-    fn novatek_session_retains_validated_origin_and_capability_evidence() {
-        let session = MobileNovatekSession::new(
-            MobileNovatekHttpOriginDto {
-                address: "192.168.1.254".to_owned(),
-                port: 80,
-            },
-            "R3V1.1_20240411".to_owned(),
-            vec![
-                MobileNovatekCommandStatusDto {
-                    command_id: 2001,
-                    status: 0,
-                },
-                MobileNovatekCommandStatusDto {
-                    command_id: 1001,
-                    status: 0,
-                },
-            ],
-        )
-        .expect("validated R3V1 evidence establishes the session");
-
-        assert_eq!(session.origin().address, "192.168.1.254");
-        assert_eq!(session.firmware_version(), "R3V1.1_20240411");
-        assert_eq!(session.configuration().len(), 2);
-        assert_eq!(
-            session
-                .recording_command_target(MobileNovatekRecordingCommandDto::Start)
-                .expect("recording capability is retained"),
-            "/?custom=1&cmd=2001&str=1"
-        );
-        assert_eq!(
-            session
-                .still_capture_command_target()
-                .expect("still capability is retained"),
-            "/?custom=1&cmd=1001"
-        );
-    }
-
-    #[test]
     fn mobile_thumbnail_availability_uses_rust_owned_profile_and_status_rules() {
         let evidence = |firmware_version: &str, status: u16| {
             mobile_novatek_media_thumbnails_supported(
@@ -14924,22 +14754,28 @@ mod tests {
     fn camera_session_state_handle_owns_novatek_proof_until_lifecycle_invalidation() {
         let handle = CutoutSessionStateHandle::new();
         handle
-            .configure_novatek_session(
+            .configure_novatek_read_only_session(
                 MobileNovatekHttpOriginDto {
                     address: "192.168.1.254".to_owned(),
                     port: 80,
                 },
-                "R3V1.1_20240411".to_owned(),
-                vec![
-                    MobileNovatekCommandStatusDto {
-                        command_id: 2001,
-                        status: 0,
-                    },
-                    MobileNovatekCommandStatusDto {
-                        command_id: 1001,
-                        status: 0,
-                    },
-                ],
+                MobileNovatekReadOnlySnapshotDto {
+                    firmware_version: "R3V1.1_20240411".to_owned(),
+                    movie_rtsp_uri: "rtsp://192.168.1.254/movie".to_owned(),
+                    photo_rtsp_uri: "rtsp://192.168.1.254/photo".to_owned(),
+                    configuration: vec![
+                        MobileNovatekCommandStatusDto {
+                            command_id: 2001,
+                            status: 0,
+                        },
+                        MobileNovatekCommandStatusDto {
+                            command_id: 1001,
+                            status: 0,
+                        },
+                    ],
+                    storage_present: true,
+                    media: Vec::new(),
+                },
             )
             .expect("validated R3V1 evidence establishes the session");
 
@@ -15102,18 +14938,6 @@ mod tests {
         state.replace_read_only(profile, snapshot);
         assert!(state.media_is_current("A:\\Novatek\\Movie\\clip.TS", 42));
 
-        let profile = build_novatek_session(
-            &MobileNovatekHttpOriginDto {
-                address: "192.168.1.253".to_owned(),
-                port: 80,
-            },
-            "R3V1.1_20240411",
-            [(2001, 0)],
-        )
-        .expect("R3V1 profile may be retained without a media snapshot");
-        state.replace_profile(profile);
-
-        assert!(!state.media_is_current("A:\\Novatek\\Movie\\clip.TS", 42));
         state.clear();
         assert!(state.profile().is_none());
         assert!(!state.media_is_current("A:\\Novatek\\Movie\\clip.TS", 42));
