@@ -555,7 +555,21 @@ public final class CutoutSessionCore: NSObject {
         }
     )
     private let rideMapState: MobileRideMapState?
-    private let phoneLocationState = MobilePhoneLocationState()
+    private lazy var phoneLocationAdapter = CutoutSessionPhoneLocationAdapter(
+        clock: clock,
+        wallClock: wallClock,
+        onSnapshot: { [weak self] snapshot, receivedAt in
+            guard let self else { return }
+            self.phoneLocationSnapshot = snapshot
+            self.publishPhoneLocationSnapshot(receivedAt: receivedAt)
+        },
+        onLocationUpdate: { [weak self] update in
+            self?.handlePhoneLocationUpdate(update)
+        },
+        onAvailabilityChange: { [weak self] in
+            self?.publishRideMapAvailability()
+        }
+    )
     private lazy var rideMapPresentation = CutoutSessionRideMapPresentation(
         onSnapshot: { [weak self] snapshot in
             self?.publishOnMain { self?.onRideMapSnapshotChange?(snapshot) }
@@ -575,9 +589,6 @@ public final class CutoutSessionCore: NSObject {
     )
     private var rideMapWritePoller: DispatchSourceTimer?
     private var rideMapRestorationStarted = false
-    private var didRequestWhenInUseLocationAuthorization = false
-    private var locationUpdatesDemanded = false
-    private var locationManagerUpdatesStarted = false
     private var didResolveBluetoothRestoration = false
 #if DEBUG
     private let testScript: CutoutSessionTestScript?
@@ -599,14 +610,6 @@ public final class CutoutSessionCore: NSObject {
         captureProgressTimer?.cancel()
         displayPublisher.cancel()
     }
-
-    private lazy var locationManager: CLLocationManager = {
-        let manager = CLLocationManager()
-        manager.delegate = self
-        manager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
-        manager.activityType = .fitness
-        return manager
-    }()
 
     /// Composes transport around a database handle opened off the main actor.
     public convenience init(rideMapState: MobileRideMapState) {
@@ -712,7 +715,7 @@ public final class CutoutSessionCore: NSObject {
             return
         }
 #endif
-        _ = locationManager
+        phoneLocationAdapter.start()
         return onBleQueue {
             guard central == nil else {
                 return
@@ -1975,9 +1978,8 @@ public final class CutoutSessionCore: NSObject {
         publishOnMain { self.onBmsSnapshotChange?(value) }
     }
 
-    private func publishPhoneLocationSnapshot() {
+    private func publishPhoneLocationSnapshot(receivedAt: MonotonicMilliseconds) {
         let value = phoneLocationSnapshot
-        let receivedAt = clock.now()
         publishOnMain { self.onPhoneLocationSnapshotChange?(value, receivedAt) }
     }
 
@@ -2241,7 +2243,7 @@ public final class CutoutSessionCore: NSObject {
         } else if !CLLocationManager.locationServicesEnabled() {
             availability = .servicesDisabled
         } else {
-            switch locationManager.authorizationStatus {
+            switch phoneLocationAdapter.authorizationStatus {
             case .notDetermined:
                 availability = .permissionRequired
             case .authorizedAlways, .authorizedWhenInUse:
@@ -2262,26 +2264,8 @@ public final class CutoutSessionCore: NSObject {
             rideMapState?.currentSnapshot(atMs: clock.now().rawValue)?.state == .active
         }
         onBleQueue {
-            guard shouldReceiveLocations else {
-                locationManager.stopUpdatingLocation()
-                return
-            }
-            guard CLLocationManager.locationServicesEnabled() else {
-                locationManager.stopUpdatingLocation()
-                return
-            }
-            switch locationManager.authorizationStatus {
-            case .authorizedAlways, .authorizedWhenInUse:
-                locationManager.startUpdatingLocation()
-            case .notDetermined:
-                guard !didRequestWhenInUseLocationAuthorization else { return }
-                didRequestWhenInUseLocationAuthorization = true
-                locationManager.requestWhenInUseAuthorization()
-            case .denied, .restricted:
-                locationManager.stopUpdatingLocation()
-            @unknown default:
-                locationManager.stopUpdatingLocation()
-            }
+            self.phoneLocationAdapter.updateDemand(shouldReceiveLocations)
+            return
         }
     }
 
@@ -2331,7 +2315,7 @@ public final class CutoutSessionCore: NSObject {
                 return false
             }
             guard let builder = captureBuilder else { return true }
-            let location = phoneLocationState.currentSnapshot().latestSample
+            let location = phoneLocationAdapter.latestSample
             let accepted = builder.recordNotificationWithContext(
                 monotonicMs: MobileMonotonicMillisDto(milliseconds: captureElapsedMilliseconds()),
                 characteristic: channel.bytes,
@@ -3694,71 +3678,28 @@ extension CutoutSessionCore {
 extension CutoutSessionCore: CLLocationManagerDelegate {
     public func updateRideLocationDemand(for state: MobileRideMapStateDto) {
         publishOnMain {
-            self.locationUpdatesDemanded = state == .active
-            self.updateLocationManagerDemand()
+            self.phoneLocationAdapter.updateDemand(state == .active)
         }
     }
 
-    private func updateLocationManagerDemand() {
-#if os(iOS)
-        locationManager.allowsBackgroundLocationUpdates = locationUpdatesDemanded
-#endif
-
-        guard locationUpdatesDemanded else {
-            if locationManagerUpdatesStarted {
-                locationManager.stopUpdatingLocation()
-                locationManagerUpdatesStarted = false
-            }
-            return
-        }
-
-        guard CLLocationManager.locationServicesEnabled() else {
-            publishRideMapAvailability()
-            return
-        }
-
-        switch locationManager.authorizationStatus {
-        case .notDetermined:
-            locationManager.requestWhenInUseAuthorization()
-        case .authorizedAlways:
-            locationManager.startUpdatingLocation()
-            locationManagerUpdatesStarted = true
-        case .authorizedWhenInUse:
-            locationManager.startUpdatingLocation()
-            locationManagerUpdatesStarted = true
-        case .denied, .restricted:
-            publishRideMapAvailability()
-        @unknown default:
-            publishRideMapAvailability()
-        }
+    public func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        phoneLocationAdapter.locationManagerDidChangeAuthorization(manager)
     }
 
-    public func locationManagerDidChangeAuthorization(_: CLLocationManager) {
-        // Authorization changes are presentation state even when no ride currently demands
-        // updates. Publish first so granting permission clears a stale warning immediately.
-        publishRideMapAvailability()
-        updateLocationManagerDemand()
+    public func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        phoneLocationAdapter.locationManager(
+            manager,
+            didUpdateLocations: locations
+        )
     }
 
-    public func locationManager(_: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        guard !locations.isEmpty else { return }
-
-        let receiptMonotonicMs = clock.now().rawValue
-        let receiptWallClock = wallClock()
-        let samples = locations.compactMap(MobilePhoneLocationSampleDto.init(location:))
-        guard !samples.isEmpty else { return }
-
-        for sample in samples {
-            phoneLocationSnapshot = phoneLocationState.ingest(sample: sample)
-        }
-        publishPhoneLocationSnapshot()
-
+    private func handlePhoneLocationUpdate(_ update: PhoneLocationUpdate) {
         guard let rideMapState,
-              let receiptWallClockUnixMs = unixMilliseconds(for: receiptWallClock)
+              let receiptWallClockUnixMs = unixMilliseconds(for: update.receiptWallClock)
         else { return }
 
         let recordingToken = rideMapState
-            .currentSnapshot(atMs: receiptMonotonicMs)?
+            .currentSnapshot(atMs: update.receiptMonotonic.rawValue)?
             .recordingToken
         let errorContext = MobileRideMapErrorContext(recordingToken: recordingToken)
 
@@ -3769,9 +3710,9 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
             do {
                 let decisions = try rideMapState.ingestLocationBatch(
                     recordingToken: recordingToken,
-                    receiptMonotonicMs: receiptMonotonicMs,
+                    receiptMonotonicMs: update.receiptMonotonic.rawValue,
                     receiptWallClockUnixMs: receiptWallClockUnixMs,
-                    samples: samples
+                    samples: update.samples
                 )
                 self.publishRideMapDecisions(decisions)
             } catch let error as MobileRideMapError {
@@ -3837,36 +3778,7 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
 
     /// Clears the Rust-owned location context before starting a new capture.
     public func resetRideMapLocationAdmission() {
-        phoneLocationState.clear()
-    }
-}
-
-private extension MobilePhoneLocationSampleDto {
-    init?(location: CLLocation) {
-        let timestamp = location.timestamp.timeIntervalSince1970 * 1_000
-        guard timestamp.isFinite, timestamp > 0, timestamp < Double(UInt64.max) else { return nil }
-        let coordinate = location.coordinate
-        guard coordinate.latitude.isFinite,
-              coordinate.longitude.isFinite,
-              location.altitude.isFinite
-        else { return nil }
-
-        self.init(
-            wallClockUnixMs: UInt64(timestamp.rounded(.down)),
-            latitudeDegrees: coordinate.latitude,
-            longitudeDegrees: coordinate.longitude,
-            altitudeMeters: location.altitude,
-            horizontalAccuracyMeters: Self.nonNegativeFinite(location.horizontalAccuracy),
-            verticalAccuracyMeters: Self.nonNegativeFinite(location.verticalAccuracy),
-            speedMetersPerSecond: Self.nonNegativeFinite(location.speed),
-            speedAccuracyMetersPerSecond: Self.nonNegativeFinite(location.speedAccuracy),
-            courseDegrees: Self.nonNegativeFinite(location.course),
-            courseAccuracyDegrees: Self.nonNegativeFinite(location.courseAccuracy)
-        )
-    }
-
-    private static func nonNegativeFinite(_ value: CLLocationDistance) -> Double? {
-        value.isFinite && value >= 0 ? value : nil
+        phoneLocationAdapter.clear()
     }
 }
 
