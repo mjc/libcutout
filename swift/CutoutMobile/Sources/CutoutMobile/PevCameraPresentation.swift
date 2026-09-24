@@ -257,7 +257,10 @@ public struct CameraReadOnlyEvidence: Equatable, Sendable {
 
     /// Whether read-only configuration evidence advertises thumbnail requests.
     public var supportsMediaThumbnails: Bool {
-        advertises(commandID: 4001)
+        mobileNovatekMediaThumbnailsSupported(
+            firmwareVersion: snapshot.firmwareVersion,
+            configuration: snapshot.configuration
+        )
     }
 
     public init(_ snapshot: MobileNovatekReadOnlySnapshotDto) {
@@ -265,6 +268,10 @@ public struct CameraReadOnlyEvidence: Equatable, Sendable {
     }
 
     var dto: MobileNovatekReadOnlySnapshotDto { snapshot }
+
+    private func advertises(commandID: UInt16) -> Bool {
+        configuration.contains { $0.commandID == commandID && $0.status == 0 }
+    }
 
     public init(
         firmwareVersion: String,
@@ -295,9 +302,6 @@ public struct CameraReadOnlyEvidence: Equatable, Sendable {
         )
     }
 
-    private func advertises(commandID: UInt16) -> Bool {
-        configuration.contains { $0.commandID == commandID && $0.status == 0 }
-    }
 }
 
 /// Presentation-only camera state supplied by the Apple local-network adapter.

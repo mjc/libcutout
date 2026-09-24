@@ -553,7 +553,37 @@ final class CameraLocalNetworkAdapterTests: XCTestCase {
     }
 
     @MainActor
-    func testMediaThumbnailUsesSourceBackedTargetWithoutMovingImageTypesAcrossFFI() async throws {
+    func testMediaThumbnailRequiresAdvertisedCommandBeforeFetching() async {
+        let media = CameraMediaEvidence(
+            name: "clip.TS",
+            path: #"A:\Novatek\Movie\clip.TS"#,
+            sizeBytes: 4,
+            timecode: 7,
+            time: "2025/01/01 00:00:00",
+            attributes: 32
+        )
+        let adapter = CameraLocalNetworkAdapter()
+        adapter.apply(readOnlyEvidence: cameraEvidence(advertisedCommandIDs: []), origin: testCameraOrigin)
+
+        do {
+            _ = try await adapter.fetchMediaThumbnail(
+                address: "192.168.1.254",
+                port: 80,
+                media: media
+            ) { _ in
+                XCTFail("unadvertised thumbnail command must not reach the fetcher")
+                return Data()
+            }
+            XCTFail("unadvertised thumbnail command must be rejected")
+        } catch let error as CameraReadOnlyRequestError {
+            XCTAssertEqual(error, .unsupportedCapability)
+        } catch {
+            XCTFail("unexpected error: \(error)")
+        }
+    }
+
+    @MainActor
+    func testMediaThumbnailUsesRustAuthorizedTargetForAdvertisedCommand() async throws {
         let media = CameraMediaEvidence(
             name: "clip.TS",
             path: #"A:\Novatek\Movie\clip.TS"#,
@@ -564,7 +594,7 @@ final class CameraLocalNetworkAdapterTests: XCTestCase {
         )
         let requestedURL = DownloadURLCapture()
         let adapter = CameraLocalNetworkAdapter()
-        adapter.apply(readOnlyEvidence: cameraEvidence(advertisedCommandIDs: []), origin: testCameraOrigin)
+        adapter.apply(readOnlyEvidence: cameraEvidence(advertisedCommandIDs: [4001]), origin: testCameraOrigin)
 
         let thumbnail = try await adapter.fetchMediaThumbnail(
             address: "192.168.1.254",
@@ -584,7 +614,7 @@ final class CameraLocalNetworkAdapterTests: XCTestCase {
     @MainActor
     func testMediaThumbnailCannotPublishAfterWiFiLoss() async {
         let adapter = CameraLocalNetworkAdapter()
-        adapter.apply(readOnlyEvidence: cameraEvidence(advertisedCommandIDs: []), origin: testCameraOrigin)
+        adapter.apply(readOnlyEvidence: cameraEvidence(advertisedCommandIDs: [4001]), origin: testCameraOrigin)
         let media = CameraMediaEvidence(
             name: "clip.TS",
             path: #"A:\Novatek\Movie\clip.TS"#,
@@ -614,7 +644,7 @@ final class CameraLocalNetworkAdapterTests: XCTestCase {
     @MainActor
     func testMediaThumbnailRejectsAnOversizedResponse() async {
         let adapter = CameraLocalNetworkAdapter()
-        adapter.apply(readOnlyEvidence: cameraEvidence(advertisedCommandIDs: []), origin: testCameraOrigin)
+        adapter.apply(readOnlyEvidence: cameraEvidence(advertisedCommandIDs: [4001]), origin: testCameraOrigin)
         let media = CameraMediaEvidence(
             name: "clip.TS",
             path: #"A:\Novatek\Movie\clip.TS"#,

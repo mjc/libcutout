@@ -106,15 +106,15 @@ use cutout_protocols::{
     BEGODE_DATA_CHANNEL, BEGODE_FALCON_REGISTRY_ENTRY, ConcreteSessionErrorDto,
     ConcreteSessionStepResultDto, DeviceDetectionEvent, DeviceDetectionResolution, DeviceFamily,
     H264FileSink, IdentityBannerEvidence, NOSFET_AERO_REGISTRY_ENTRY, NovatekCapabilityError,
-    NovatekCommandOutcome, NovatekConfigurationError, NovatekHttpOrigin, NovatekMediaPathError,
-    NovatekOriginError, NovatekProfileError, NovatekR3V1Session, NovatekReadCommand,
-    NovatekRecordingCommand, NovatekSessionError, NovatekStillCaptureCommand,
-    NovatekStoragePresence, PendingProbe, ProtocolFamilyClassification, ProtocolFamilyState,
-    ProtocolModelIdentityEvidence, RtspError, RtspPreviewSession, StagedIdentityInput,
-    StagedIdentityOutcome, VescBatteryType as CoreVescBatteryType,
-    VescBoardProfile as CoreVescBoardProfile, VescReadOnlySession as CoreVescReadOnlySession,
-    VideoClockRate, VideoConfiguration, VideoFrame, closest_known_model, identify_known_model,
-    is_r3_pro_firmware, parse_read_only_snapshot,
+    NovatekCommandOutcome, NovatekConfiguration, NovatekConfigurationError, NovatekHttpOrigin,
+    NovatekMediaPathError, NovatekMediaThumbnailError, NovatekOriginError, NovatekProfileError,
+    NovatekR3V1Profile, NovatekR3V1Session, NovatekReadCommand, NovatekRecordingCommand,
+    NovatekSessionError, NovatekStillCaptureCommand, NovatekStoragePresence, PendingProbe,
+    ProtocolFamilyClassification, ProtocolFamilyState, ProtocolModelIdentityEvidence, RtspError,
+    RtspPreviewSession, StagedIdentityInput, StagedIdentityOutcome,
+    VescBatteryType as CoreVescBatteryType, VescBoardProfile as CoreVescBoardProfile,
+    VescReadOnlySession as CoreVescReadOnlySession, VideoClockRate, VideoConfiguration, VideoFrame,
+    closest_known_model, identify_known_model, is_r3_pro_firmware, parse_read_only_snapshot,
 };
 use cutout_ride_maps as ride_maps;
 use libcutout_persistence as persistence;
@@ -1067,6 +1067,44 @@ pub enum MobileNovatekMediaPathError {
     InvalidPath,
 }
 
+/// Failure while building an authorized media-thumbnail target.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
+pub enum MobileNovatekThumbnailTargetError {
+    /// The retained R3V1 configuration does not advertise command `4001`.
+    #[error("media thumbnails are not advertised")]
+    CapabilityNotAdvertised,
+    /// The media record is not present in the current retained read-only snapshot.
+    #[error("media evidence is no longer current")]
+    MediaNotCurrent,
+    /// The camera-reported path is not a safe thumbnail path.
+    #[error("invalid Novatek media path")]
+    InvalidPath,
+}
+
+/// Returns whether verified R3V1 evidence acknowledges thumbnail command `4001`.
+#[uniffi::export]
+#[must_use]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "UniFFI exports owned boundary values"
+)]
+pub fn mobile_novatek_media_thumbnails_supported(
+    firmware_version: String,
+    configuration: Vec<MobileNovatekCommandStatusDto>,
+) -> bool {
+    let Ok(profile) = NovatekR3V1Profile::parse(&firmware_version) else {
+        return false;
+    };
+    let Ok(configuration) = NovatekConfiguration::from_status_pairs(
+        configuration
+            .into_iter()
+            .map(|status| (status.command_id, status.status)),
+    ) else {
+        return false;
+    };
+    profile.media_thumbnail_capability(&configuration).is_ok()
+}
+
 /// Validated local Novatek HTTP origin returned to a mobile client.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileNovatekHttpOriginDto {
@@ -1103,34 +1141,6 @@ pub fn mobile_novatek_media_download_target(
     path: String,
 ) -> Result<String, MobileNovatekMediaPathError> {
     cutout_protocols::media_download_target(&path)
-        .map(|target| target.as_str().to_owned())
-        .map_err(|error| match error {
-            NovatekMediaPathError::InvalidRoot
-            | NovatekMediaPathError::UnsafeComponent
-            | NovatekMediaPathError::ValueTooLong { .. } => {
-                MobileNovatekMediaPathError::InvalidPath
-            }
-        })
-}
-
-/// Maps a validated camera media path to its source-backed thumbnail target.
-///
-/// No network request is made by this helper. The caller must gate the
-/// command on read-only configuration evidence before fetching it.
-///
-/// # Errors
-///
-/// Returns [`MobileNovatekMediaPathError::InvalidPath`] when the path is not a
-/// bounded, camera-rooted Novatek path.
-#[uniffi::export]
-#[allow(
-    clippy::needless_pass_by_value,
-    reason = "UniFFI exports owned strings"
-)]
-pub fn mobile_novatek_media_thumbnail_target(
-    path: String,
-) -> Result<String, MobileNovatekMediaPathError> {
-    cutout_protocols::media_thumbnail_target(&path)
         .map(|target| target.as_str().to_owned())
         .map_err(|error| match error {
             NovatekMediaPathError::InvalidRoot
@@ -1989,6 +1999,28 @@ impl NovatekCameraSessionState {
                     .any(|entry| entry.path == path && entry.size_bytes == size_bytes)
             })
     }
+
+    fn media_thumbnail_target(
+        &self,
+        path: &str,
+        size_bytes: u64,
+    ) -> Result<String, MobileNovatekThumbnailTargetError> {
+        if !self.media_is_current(path, size_bytes) {
+            return Err(MobileNovatekThumbnailTargetError::MediaNotCurrent);
+        }
+        self.profile()
+            .ok_or(MobileNovatekThumbnailTargetError::CapabilityNotAdvertised)?
+            .media_thumbnail_target(path)
+            .map(|target| target.as_str().to_owned())
+            .map_err(|error| match error {
+                NovatekMediaThumbnailError::Capability(_) => {
+                    MobileNovatekThumbnailTargetError::CapabilityNotAdvertised
+                }
+                NovatekMediaThumbnailError::Path(_) => {
+                    MobileNovatekThumbnailTargetError::InvalidPath
+                }
+            })
+    }
 }
 
 #[derive(Debug, Default)]
@@ -2585,6 +2617,24 @@ impl CutoutSessionStateHandle {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .media_is_current(&path, size_bytes)
+    }
+
+    /// Builds a thumbnail target only from current Rust-retained R3V1 evidence.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the media is stale, command `4001` is not
+    /// advertised, or the camera path is invalid.
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn novatek_media_thumbnail_target(
+        &self,
+        path: String,
+        size_bytes: u64,
+    ) -> Result<String, MobileNovatekThumbnailTargetError> {
+        self.novatek_session
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .media_thumbnail_target(&path, size_bytes)
     }
 
     /// Returns the retained validated Novatek origin, when configured.
@@ -14841,6 +14891,36 @@ mod tests {
     }
 
     #[test]
+    fn mobile_thumbnail_availability_uses_rust_owned_profile_and_status_rules() {
+        let evidence = |firmware_version: &str, status: u16| {
+            mobile_novatek_media_thumbnails_supported(
+                firmware_version.to_owned(),
+                vec![MobileNovatekCommandStatusDto {
+                    command_id: 4001,
+                    status,
+                }],
+            )
+        };
+
+        assert!(evidence("R3V1.1_20240411", 0));
+        assert!(!evidence("R3V1.1_20240411", 7));
+        assert!(!evidence("R3V2.0_20240411", 0));
+        assert!(!mobile_novatek_media_thumbnails_supported(
+            "R3V1.1_20240411".to_owned(),
+            vec![
+                MobileNovatekCommandStatusDto {
+                    command_id: 4001,
+                    status: 0,
+                },
+                MobileNovatekCommandStatusDto {
+                    command_id: 4001,
+                    status: 0,
+                },
+            ],
+        ));
+    }
+
+    #[test]
     fn camera_session_state_handle_owns_novatek_proof_until_lifecycle_invalidation() {
         let handle = CutoutSessionStateHandle::new();
         handle
@@ -14928,6 +15008,61 @@ mod tests {
 
         handle.clear_novatek_session();
         assert!(!handle.novatek_media_is_current("A:\\Novatek\\Movie\\clip.TS".to_owned(), 42));
+    }
+
+    #[test]
+    fn camera_session_state_thumbnail_target_requires_current_media_and_capability() {
+        let handle = CutoutSessionStateHandle::new();
+        let origin = MobileNovatekHttpOriginDto {
+            address: "192.168.1.254".to_owned(),
+            port: 80,
+        };
+        let snapshot = |status| MobileNovatekReadOnlySnapshotDto {
+            firmware_version: "R3V1.1_20240411".to_owned(),
+            movie_rtsp_uri: "rtsp://192.168.1.254/xxx.mov".to_owned(),
+            photo_rtsp_uri: "rtsp://192.168.1.254/xxx.mov".to_owned(),
+            configuration: vec![MobileNovatekCommandStatusDto {
+                command_id: 4001,
+                status,
+            }],
+            storage_present: true,
+            media: vec![MobileNovatekMediaEntryDto {
+                name: "clip.TS".to_owned(),
+                path: "A:\\Novatek\\Movie\\clip.TS".to_owned(),
+                size_bytes: 42,
+                timecode: 7,
+                time: "2025/01/01 00:00:00".to_owned(),
+                attributes: 32,
+            }],
+        };
+
+        handle
+            .configure_novatek_read_only_session(origin.clone(), snapshot(7))
+            .expect("bounded R3V1 evidence is retained");
+        assert_eq!(
+            handle.novatek_media_thumbnail_target("A:\\Novatek\\Movie\\clip.TS".to_owned(), 42),
+            Err(MobileNovatekThumbnailTargetError::CapabilityNotAdvertised)
+        );
+
+        handle
+            .configure_novatek_read_only_session(origin.clone(), snapshot(0))
+            .expect("acknowledged thumbnail capability is retained");
+        assert_eq!(
+            handle
+                .novatek_media_thumbnail_target("A:\\Novatek\\Movie\\clip.TS".to_owned(), 42,)
+                .expect("current media and command proof produce a target"),
+            "/Novatek/Movie/clip.TS?custom=1&cmd=4001"
+        );
+        assert_eq!(
+            handle.novatek_media_thumbnail_target("A:\\Novatek\\Movie\\clip.TS".to_owned(), 43),
+            Err(MobileNovatekThumbnailTargetError::MediaNotCurrent)
+        );
+
+        handle.clear_novatek_session();
+        assert_eq!(
+            handle.novatek_media_thumbnail_target("A:\\Novatek\\Movie\\clip.TS".to_owned(), 42),
+            Err(MobileNovatekThumbnailTargetError::MediaNotCurrent)
+        );
     }
 
     #[test]

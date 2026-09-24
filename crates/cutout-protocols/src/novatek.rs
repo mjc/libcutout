@@ -139,6 +139,17 @@ pub enum NovatekCapabilityError {
     },
 }
 
+/// Failure while constructing a thumbnail target from retained profile proof.
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+pub enum NovatekMediaThumbnailError {
+    /// The read-only configuration did not advertise command `4001`.
+    #[error(transparent)]
+    Capability(#[from] NovatekCapabilityError),
+    /// The supplied camera media path is invalid.
+    #[error(transparent)]
+    Path(#[from] NovatekMediaPathError),
+}
+
 /// Failure while constructing bounded command/status evidence at an adapter
 /// boundary.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
@@ -198,6 +209,9 @@ impl NovatekCommandId {
 
     /// Command identifier used by the verified still-capture capability proof.
     pub const STILL_CAPTURE: Self = Self(NonZeroU16::new(1001).unwrap());
+
+    /// Command identifier used by the verified media-thumbnail capability.
+    pub const MEDIA_THUMBNAIL: Self = Self(NonZeroU16::new(4001).unwrap());
 
     /// Creates a command identifier, rejecting the reserved zero value.
     #[must_use]
@@ -279,6 +293,10 @@ pub struct NovatekRecordingCapability(NovatekR3V1Profile);
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NovatekStillCaptureCapability(NovatekR3V1Profile);
 
+/// Proof that verified R3V1 read-only evidence advertises thumbnails.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NovatekMediaThumbnailCapability(NovatekR3V1Profile);
+
 /// A recording request target that can only be constructed from recording
 /// capability proof.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -358,6 +376,24 @@ impl NovatekR3V1Profile {
         .then(|| NovatekStillCaptureCapability(self.clone()))
         .ok_or(NovatekCapabilityError::NotAdvertised {
             command_id: NovatekCommandId::STILL_CAPTURE,
+        })
+    }
+
+    /// Proves that read-only configuration advertises media thumbnails.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`NovatekCapabilityError::NotAdvertised`] unless command `4001`
+    /// has an acknowledged status.
+    pub fn media_thumbnail_capability(
+        &self,
+        configuration: &NovatekConfiguration,
+    ) -> Result<NovatekMediaThumbnailCapability, NovatekCapabilityError> {
+        (configuration.status_for_command_id(NovatekCommandId::MEDIA_THUMBNAIL)
+            == Some(NovatekStatusCode::ACKNOWLEDGED))
+        .then(|| NovatekMediaThumbnailCapability(self.clone()))
+        .ok_or(NovatekCapabilityError::NotAdvertised {
+            command_id: NovatekCommandId::MEDIA_THUMBNAIL,
         })
     }
 
@@ -633,6 +669,31 @@ impl NovatekR3V1Session {
         let capability = self.profile.still_capture_capability(&self.configuration)?;
         Ok(command.request_target_for_capability(&capability))
     }
+
+    /// Builds a thumbnail target from retained R3V1, `3014`, and media-path proof.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`NovatekMediaThumbnailError::Capability`] when command `4001`
+    /// was not acknowledged, or [`NovatekMediaThumbnailError::Path`] when the
+    /// camera-reported media path is invalid.
+    pub fn media_thumbnail_target(
+        &self,
+        path: &str,
+    ) -> Result<NovatekMediaThumbnailTarget, NovatekMediaThumbnailError> {
+        self.profile
+            .media_thumbnail_capability(&self.configuration)?
+            .request_target(path)
+            .map_err(Into::into)
+    }
+
+    /// Whether this retained session advertises the thumbnail command.
+    #[must_use]
+    pub fn supports_media_thumbnails(&self) -> bool {
+        self.profile
+            .media_thumbnail_capability(&self.configuration)
+            .is_ok()
+    }
 }
 
 /// One bounded file record returned by Novatek command `3015`.
@@ -671,6 +732,21 @@ impl NovatekMediaThumbnailTarget {
     #[must_use]
     pub fn as_str(&self) -> &str {
         self.0.as_str()
+    }
+}
+
+impl NovatekMediaThumbnailCapability {
+    /// Builds a thumbnail request target from the acknowledged capability.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`NovatekMediaPathError`] when the camera-reported path is
+    /// invalid or exceeds the target bound.
+    pub fn request_target(
+        &self,
+        path: &str,
+    ) -> Result<NovatekMediaThumbnailTarget, NovatekMediaPathError> {
+        media_thumbnail_target(path)
     }
 }
 
@@ -1536,6 +1612,37 @@ mod tests {
                 command_id: NovatekCommandId::STILL_CAPTURE,
             })
         );
+    }
+
+    #[test]
+    fn thumbnail_target_requires_acknowledged_r3v1_capability() {
+        let origin = NovatekHttpOrigin::new("192.168.1.254".parse().unwrap(), 80)
+            .expect("camera origin is local");
+        let advertised = NovatekR3V1Session::new(origin, "R3V1.1_20240411", [(4001, 0)])
+            .expect("verified profile retains configuration");
+
+        assert!(advertised.supports_media_thumbnails());
+        assert_eq!(
+            advertised
+                .media_thumbnail_target(r"A:\Novatek\Movie\clip.TS")
+                .expect("advertised capability permits a safe media target")
+                .as_str(),
+            "/Novatek/Movie/clip.TS?custom=1&cmd=4001"
+        );
+
+        for statuses in [Vec::new(), vec![(4001, 7)]] {
+            let unsupported = NovatekR3V1Session::new(origin, "R3V1.1_20240411", statuses)
+                .expect("verified profile retains bounded configuration");
+            assert!(!unsupported.supports_media_thumbnails());
+            assert_eq!(
+                unsupported.media_thumbnail_target(r"A:\Novatek\Movie\clip.TS"),
+                Err(NovatekMediaThumbnailError::Capability(
+                    NovatekCapabilityError::NotAdvertised {
+                        command_id: NovatekCommandId::MEDIA_THUMBNAIL,
+                    }
+                ))
+            );
+        }
     }
 
     #[test]
