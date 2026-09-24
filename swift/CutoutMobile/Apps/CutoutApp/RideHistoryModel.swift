@@ -482,6 +482,7 @@ final class RideHistoryModel {
 
     func invalidateForMusicDeletion() {
         invalidateProjectionWork()
+        routeLoading = false
         detailRouteLoading = false
     }
 

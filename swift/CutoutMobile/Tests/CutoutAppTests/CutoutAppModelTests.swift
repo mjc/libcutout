@@ -1205,6 +1205,13 @@ final class CutoutAppModelTests: XCTestCase {
         }
         XCTAssertTrue(model.rideMapHistoryDisplayPoints.isEmpty)
         XCTAssertTrue(model.rideMapHistoryDetailDisplayPoints.isEmpty)
+
+        driver.setRideMapUnavailable(false)
+        model.selectRideMapHistory(rideID)
+        XCTAssertTrue(model.rideMapHistoryRouteLoading)
+        XCTAssertTrue(model.forgetMusicHistory(for: rideID))
+        XCTAssertFalse(model.rideMapHistoryRouteLoading)
+        XCTAssertFalse(model.rideMapHistoryDetailRouteLoading)
     }
 
     @MainActor
