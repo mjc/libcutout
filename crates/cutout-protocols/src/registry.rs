@@ -424,8 +424,15 @@ mod tests {
     }
 
     #[test]
-    fn begode_falcon_registry_entry_does_not_select_battery_from_model_name() {
-        assert_eq!(BEGODE_FALCON_REGISTRY_ENTRY.battery, None);
+    fn begode_falcon_registry_entry_owns_source_verified_battery_configuration() {
+        let battery = BEGODE_FALCON_REGISTRY_ENTRY.battery.as_ref().unwrap();
+        assert_eq!(battery.series_cells, cutout_core::SeriesCount::new(24));
+        assert_eq!(
+            battery.voltage_range,
+            Voltage::from_millivolts(72_000)..=Voltage::from_millivolts(100_800)
+        );
+        assert_eq!(battery.verification, VerificationStatus::SourceVerified);
+        assert_eq!(BEGODE_FALCON_REGISTRY_ENTRY.bms, None);
         assert_eq!(
             BEGODE_FALCON_REGISTRY_ENTRY,
             <BegodeFalconModel as RegisteredModelSpec>::REGISTRY_ENTRY

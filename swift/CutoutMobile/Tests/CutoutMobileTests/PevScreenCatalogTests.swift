@@ -4,6 +4,46 @@ import SwiftUI
 @testable import CutoutMobile
 
 final class PevScreenCatalogTests: XCTestCase {
+    func testPickerKeepsAdvertisementNamesSeparateFromDetectionDiagnostics() {
+        let identifiers = ["falcon-first", "falcon-second"]
+        let names = ["GotWay_002441", "GotWay_009876"]
+        let candidates = identifiers.map { identifier in
+            DiscoveryCandidate(
+                platformIdentifier: identifier, displayName: "Begode Falcon",
+                productCategory: "Electric unicycle", evidence: "model=Falcon, code=GW1621003",
+                detail: "Confirmed by reported model Falcon", isPickerCandidate: true,
+                support: .supported, recommendedAction: .use, section: .supported,
+                connectionRoute: .electricUnicycle, electricUnicycleModel: .falcon,
+                disabledReason: nil
+            )
+        }
+        let observations = zip(identifiers, names).map { identifier, name in
+            DiscoveryObservationSnapshot(
+                platformIdentifier: identifier, advertisedName: Data(name.utf8),
+                advertisedNameText: name, advertisedServiceUuids: [], manufacturerData: [], rssiDbm: nil
+            )
+        }
+        let state = DevicePickerScanState(status: .scanning, discoverySnapshot: DiscoverySnapshot(
+            observations: Array(observations.reversed()), pickerCandidates: candidates, selectedPlatformIdentifier: nil
+        ))
+
+        XCTAssertEqual(state.rows.map(\.id), identifiers)
+        XCTAssertEqual(state.rows.map(\.title), ["Begode Falcon", "Begode Falcon"])
+        XCTAssertEqual(state.rows.map(\.advertisedName), names)
+        XCTAssertEqual(state.rows.map(\.secondaryIdentity), names)
+        XCTAssertTrue(state.rows[0].subtitle.contains("GW1621003"))
+        XCTAssertTrue(state.rows[0].detail.contains("Confirmed"))
+    }
+
+    func testPickerDoesNotRepeatAnAdvertisementThatIsAlreadyTheTitle() {
+        let row = DevicePickerRow(
+            id: "device", title: "GotWay_002441", subtitle: "FFE0/FFE1 transport hint",
+            detail: "Probe required", state: .probeRecommended(action: "Use"),
+            symbolName: "circle", advertisedName: "GotWay_002441"
+        )
+        XCTAssertNil(row.secondaryIdentity)
+    }
+
     func testAdaptiveDashboardGridWidensOnlyForAccessibilityTextSizes() {
         XCTAssertEqual(
             PevDashboardGrid<EmptyView>.adaptiveMinimumColumnWidth(

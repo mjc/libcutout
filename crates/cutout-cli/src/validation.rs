@@ -31,16 +31,16 @@ const VALIDATION_ROWS: &[ValidationRow] = &[
     },
     ValidationRow {
         device: "Begode Falcon",
-        firmware: "unknown",
-        variant_scope: "100.8V target hardware; registry selection gated on app/BMS voltage evidence",
-        capture_id: "pending capture",
-        bms_status: "source-backed 0x01/0x02/0x03 decoder; concrete Falcon BMS layout unverified",
-        tested_fields: "identity probe, firmware probe, typed capacity/layout annotations",
+        firmware: "GW1621003",
+        variant_scope: "100.8V target hardware; registry selection gated on explicit voltage evidence",
+        capture_id: "falcon-evidence-2026-09-22 (private; hashes in protocol evidence notes)",
+        bms_status: "no smart BMS; 0x01/0x02/0x03 placeholder frames retained raw",
+        tested_fields: "NAME:Falcon, GW1621003, passive telemetry framing, beeper readback, typed capacity/layout annotations",
         inferred_fields: "telemetry family; nominal_capacity_mah/reported_wh and cell_model/series_cells/parallel_count only when annotated",
-        unverified_fields: "registry battery, concrete Falcon BMS layout, controls, frame mapping",
+        unverified_fields: "registry battery, controls, telemetry semantics under load, iOS acceptance; Pro not hardware-tested",
         controls: "read-only probe only",
-        minimum_evidence: "capture advertisement, GATT, PEVCAP replay, protocol frames, app/BMS/label/Bluetooth evidence",
-        acceptance: "inferred",
+        minimum_evidence: "capture advertisement, GATT, PEVCAP replay, protocol frames, app/label/Bluetooth evidence",
+        acceptance: "hardware-capture-only",
     },
     ValidationRow {
         device: "Refloat",
@@ -163,10 +163,14 @@ mod tests {
         assert!(report.contains("typed capacity/layout annotations"));
         assert!(report.contains("nominal_capacity_mah/reported_wh"));
         assert!(report.contains("cell_model/series_cells/parallel_count"));
-        assert!(report.contains("concrete Falcon BMS layout unverified"));
-        assert!(report.contains("app/BMS/label/Bluetooth evidence"));
-        assert!(report.contains("Begode Falcon | unknown | 100.8V target hardware"));
-        assert!(report.contains("Begode Falcon | unknown | 100.8V target hardware; registry selection gated on app/BMS voltage evidence | pending capture | source-backed 0x01/0x02/0x03 decoder; concrete Falcon BMS layout unverified"));
-        assert!(!report.contains("Begode Falcon | unknown | 100.8V target hardware; registry selection gated on app/BMS voltage evidence | pending capture | source-backed 0x01/0x02/0x03 decoder; concrete Falcon BMS layout unverified | identity probe, firmware probe | telemetry family | battery, controls, frame mapping | read-only probe only | capture advertisement, GATT, PEVCAP replay, and protocol frames | hardware-tested"));
+        let falcon = report
+            .lines()
+            .find(|line| line.starts_with("Begode Falcon |"))
+            .expect("Falcon row exists");
+        assert!(falcon.contains("GW1621003"));
+        assert!(falcon.contains("no smart BMS"));
+        assert!(falcon.contains("placeholder frames retained raw"));
+        assert!(falcon.contains("Pro not hardware-tested"));
+        assert!(falcon.ends_with("| hardware-capture-only"));
     }
 }

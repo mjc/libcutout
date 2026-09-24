@@ -243,6 +243,171 @@ mod tests {
     }
 
     #[test]
+    fn falcon_detection_admits_reported_model_with_its_settings_profile() {
+        let handle = CutoutSessionStateHandle::new();
+        let token = handle
+            .begin_connection_attempt("falcon-a".into(), 0)
+            .token
+            .unwrap();
+        handle.connection_link_established(token.clone());
+        handle.observe_connection_advertisement(token.clone(), Some(b"GotWay_002441".to_vec()));
+        // Fragment boundaries from the physical Falcon's connection capture.
+        let notifications: &[&[u8]] = &[
+            &[
+                90, 90, 90, 90, 85, 170, 0, 75, 0, 0, 3, 214, 0, 0, 0, 0, 19, 136, 0, 0,
+            ],
+            &[
+                0, 0, 1, 3, 90, 90, 90, 90, 85, 170, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            ],
+            &[
+                0, 0, 0, 0, 0, 0, 3, 3, 90, 90, 90, 90, 85, 170, 0, 0, 0, 0, 73, 1,
+            ],
+            &[
+                24, 223, 0, 45, 0, 0, 0, 0, 0, 18, 4, 24, 90, 90, 90, 90, 85, 170, 255, 219,
+            ],
+            &[
+                0, 147, 0, 30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7, 24, 90, 90, 90, 90,
+            ],
+        ];
+        for bytes in notifications {
+            handle.observe_connection_notification(token.clone(), bytes.to_vec());
+            let pending = handle.resolve_device_session(token.clone(), false, 1_500);
+            assert_eq!(
+                pending.connection.readiness,
+                crate::MobileConnectionReadinessDto::Pending
+            );
+        }
+        handle.observe_begode_name_probe_for_attempt_at(token.clone(), 1_500);
+        let still_detecting = handle.resolve_device_session(token.clone(), true, 2_000);
+        assert_eq!(
+            still_detecting.connection.readiness,
+            crate::MobileConnectionReadinessDto::Pending,
+            "a native completion callback cannot bypass an outstanding model query"
+        );
+        handle.observe_connection_notification(token.clone(), b"NAME:Falcon\r\n".to_vec());
+        let candidate =
+            handle.connection_admission_candidate("falcon-a".into(), "GotWay_002441".into(), false);
+        assert_eq!(
+            candidate.support,
+            crate::DiscoveryCandidateSupport::Supported
+        );
+        let resolved = handle.resolve_device_session(token, true, 2_333);
+        assert_eq!(resolved.identity.unwrap().model.as_deref(), Some("Falcon"));
+        assert!(handle.settings().default_charge_profile.is_some());
+        assert!(!handle.settings().setting_descriptors.is_empty());
+    }
+
+    #[test]
+    fn discovery_retains_each_detected_falcon_across_disconnect_and_advertisement_refresh() {
+        let handle = CutoutSessionStateHandle::new();
+        for (id, name) in [("A", "GotWay_002441"), ("B", "GotWay_002442")] {
+            let observation = crate::DiscoveryObservation {
+                platform_identifier: id.into(),
+                advertised_name: Some(name.as_bytes().to_vec()),
+                advertised_service_uuids: vec![],
+                manufacturer_data: vec![],
+                rssi_dbm: Some(-60),
+            };
+            handle.observe_discovery(observation.clone());
+            let token = handle.begin_connection_attempt(id.into(), 0).token.unwrap();
+            handle.connection_link_established(token.clone());
+            let mut frame = vec![0; 24];
+            frame[..2].copy_from_slice(&[0x55, 0xaa]);
+            frame[18..].copy_from_slice(&[0, 0x18, 0x5a, 0x5a, 0x5a, 0x5a]);
+            handle.observe_connection_notification(token.clone(), frame);
+            handle.observe_connection_notification(token, b"NAME:Falcon\r\n".to_vec());
+            handle.disconnect_connection_attempt();
+            handle.observe_discovery(observation);
+        }
+        let snapshot = handle.discovery_snapshot();
+        assert_eq!(snapshot.picker_candidates.len(), 2);
+        for (id, name) in [("A", "GotWay_002441"), ("B", "GotWay_002442")] {
+            let row = snapshot
+                .picker_candidates
+                .iter()
+                .find(|row| row.platform_identifier == id)
+                .unwrap();
+            assert_eq!(row.display_name, "Begode Falcon");
+            assert!(row.detail.contains(name));
+            assert_eq!(
+                row.electric_unicycle_model,
+                Some(crate::DiscoveryElectricUnicycleModel::Falcon)
+            );
+        }
+        // Retained discovery evidence is not admission evidence for a new connection.
+        let token = handle
+            .begin_connection_attempt("A".into(), 1)
+            .token
+            .unwrap();
+        let pending = handle.resolve_device_session(token, false, 2);
+        assert!(pending.identity.is_none());
+    }
+
+    #[test]
+    fn picker_selection_cannot_reassign_another_connections_detected_identity() {
+        let handle = CutoutSessionStateHandle::new();
+        for id in ["A", "B"] {
+            handle.observe_discovery(crate::DiscoveryObservation {
+                platform_identifier: id.into(),
+                advertised_name: Some(id.as_bytes().to_vec()),
+                advertised_service_uuids: vec![],
+                manufacturer_data: vec![],
+                rssi_dbm: None,
+            });
+        }
+        let token = handle
+            .begin_connection_attempt("A".into(), 0)
+            .token
+            .unwrap();
+        handle.observe_connection_notification(token, b"NAME:Falcon\r\n".to_vec());
+        handle.select_discovered_platform("B".into());
+        let snapshot = handle.discovery_snapshot();
+        assert_eq!(snapshot.picker_candidates.len(), 1);
+        assert_eq!(snapshot.picker_candidates[0].platform_identifier, "A");
+        handle.begin_connection_attempt("B".into(), 1);
+        assert_eq!(
+            handle.discovery_snapshot().picker_candidates[0].platform_identifier,
+            "A"
+        );
+    }
+
+    #[test]
+    fn discovery_preserves_detection_when_transport_ends_or_conflicts() {
+        for conflicting_reply in [None, Some(VESC_REPLY)] {
+            let handle = CutoutSessionStateHandle::new();
+            handle.observe_discovery(crate::DiscoveryObservation {
+                platform_identifier: "A".into(),
+                advertised_name: Some(b"GotWay_002441".to_vec()),
+                advertised_service_uuids: vec![],
+                manufacturer_data: vec![],
+                rssi_dbm: None,
+            });
+            let token = handle
+                .begin_connection_attempt("A".into(), 0)
+                .token
+                .unwrap();
+            handle.connection_link_established(token.clone());
+            let mut frame = vec![0; 24];
+            frame[..2].copy_from_slice(&[0x55, 0xaa]);
+            frame[18..].copy_from_slice(&[0, 0x18, 0x5a, 0x5a, 0x5a, 0x5a]);
+            handle.observe_connection_notification(token.clone(), frame);
+            handle.observe_connection_notification(token.clone(), b"NAME:Falcon\r\n".to_vec());
+            handle.resolve_device_session(token.clone(), false, 1);
+            let expected = if let Some(bytes) = conflicting_reply {
+                handle.observe_connection_notification(token, bytes.to_vec());
+                crate::DiscoveryCandidateSupport::Conflicting
+            } else {
+                handle.connection_link_down(token);
+                crate::DiscoveryCandidateSupport::Supported
+            };
+            let candidates = handle.discovery_snapshot().picker_candidates;
+            assert_eq!(candidates.len(), 1);
+            assert_eq!(candidates[0].support, expected);
+            assert!(handle.device_session_snapshot().identity.is_none());
+        }
+    }
+
+    #[test]
     fn expired_attempt_cannot_promote_from_late_protocol_reply() {
         let handle = CutoutSessionStateHandle::new();
         let attempt = handle

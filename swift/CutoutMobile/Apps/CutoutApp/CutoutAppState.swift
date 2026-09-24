@@ -34,6 +34,17 @@ enum CaptureStatus: Equatable {
         }
     }
 
+    var pickerSummary: String {
+        switch self {
+        case .recordingLocally, .recording, .labelStarted, .labelStopped:
+            localizedAppText("picker.capture.recording")
+        case .saved:
+            localizedAppText("picker.capture.saved")
+        case .failed:
+            displayText
+        }
+    }
+
     var accessibilityAnnouncement: String? {
         switch self {
         case let .labelStarted(label, _, _):

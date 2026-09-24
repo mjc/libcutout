@@ -406,6 +406,26 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(core.displayState.speed.millimetersPerSecond, 8_000)
     }
 
+    func testLiveScriptRetainsItsPickerRowAfterPublishingIdentity() {
+        let live = expectation(description: "scripted session reaches live")
+        let core = CutoutSessionCore(testScript: CutoutSessionTestScript(
+            candidate: scriptedVescCandidate,
+            telemetry: TelemetrySnapshot(speed: speedValue(8_000)),
+            startsLive: true,
+            connectionDelayMilliseconds: 0
+        ))
+        var publishedRows = [[DevicePickerRow]]()
+        core.onScanStateChange = { publishedRows.append($0.rows) }
+        core.onPhaseChange = { phase in
+            if phase == .live { live.fulfill() }
+        }
+
+        core.start()
+        wait(for: [live], timeout: 1)
+        XCTAssertEqual(core.scanState.rows, [scriptedVescCandidate.pickerRow])
+        XCTAssertTrue(publishedRows.allSatisfy { $0 == [scriptedVescCandidate.pickerRow] })
+    }
+
     #if DEBUG
     func testScriptedControlsUseProtocolEvidenceAndFenceReplacementRequests() throws {
         let live = expectation(description: "generic session reaches live twice")
@@ -2080,14 +2100,23 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
 
         transport.subscribe(using: sink)
         XCTAssertEqual(sink.events, [.subscribe])
+        XCTAssertEqual(transport.notificationsEnabled(at: MonotonicMilliseconds(1), using: sink), .unsupported)
+        XCTAssertEqual(sink.events, [.subscribe])
+        _ = transport.observeNotification(channel: .bluetooth16(0xffe1), bytes: Data([
+            0x55, 0xaa, 0x17, 0x75, 0x05, 0x38, 0x00, 0x76,
+            0x02, 0xee, 0xfb, 0x64, 0xf4, 0x94, 0x14, 0x81,
+            0x00, 0x09, 0x00, 0x18, 0x5a, 0x5a, 0x5a, 0x5a,
+        ]))
 
         let outcome = transport.notificationsEnabled(
             at: MonotonicMilliseconds(42),
             using: sink
         )
 
-        XCTAssertEqual(sink.events, [.subscribe, .write, .write, .write])
-        XCTAssertEqual(sink.writes, [Data("N".utf8), Data("V".utf8), Data("M".utf8)])
+        XCTAssertEqual(sink.events, [.subscribe, .write])
+        XCTAssertEqual(sink.writes, [Data("N".utf8)])
+        XCTAssertEqual(transport.notificationsEnabled(at: MonotonicMilliseconds(43), using: sink), .alreadyPending)
+        XCTAssertEqual(sink.writes.count, 1)
         guard case .writes = outcome else {
             return XCTFail("expected ordered probe writes")
         }
@@ -2097,6 +2126,11 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
             bytes: Data("NAME=Falcon".utf8)
         )
         XCTAssertEqual(resolution.modelBanner, Data("Falcon".utf8))
+        _ = transport.notificationsEnabled(at: MonotonicMilliseconds(100), using: sink)
+        XCTAssertEqual(sink.writes, [Data("N".utf8), Data("V".utf8)])
+        _ = transport.observeNotification(channel: .bluetooth16(0xffe1), bytes: Data("GW1621003".utf8))
+        _ = transport.notificationsEnabled(at: MonotonicMilliseconds(200), using: sink)
+        XCTAssertEqual(sink.writes, [Data("N".utf8), Data("V".utf8), Data("M".utf8)])
     }
 
     func testUnrelatedWriteReachesNormalTransportValidation() {
@@ -2146,17 +2180,36 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
             )
         )
 
+        _ = core.rideSessionStateHandle.beginConnectionAttempt(platformIdentifier: "ios-local-falcon", nowMs: 0)
+
         core.observeDetectionProbeWrite(channel: channel, bytes: Data("N".utf8))
         core.observeDetectionNotification(channel: channel, bytes: Data("NAME=Falcon".utf8))
 
-        XCTAssertEqual(core.protocolIdentityCandidate?.displayName, "Typed Begode Falcon")
-        XCTAssertEqual(core.protocolIdentityCandidate?.detail, "Begode/Falcon confirmed by reported model Falcon")
+        XCTAssertEqual(core.protocolIdentityCandidate?.displayName, "Begode Falcon")
+        let detail = "Begode/Falcon confirmed by reported model Falcon; advertised as Typed Begode Falcon"
+        XCTAssertEqual(core.protocolIdentityCandidate?.detail, detail)
         XCTAssertEqual(core.protocolIdentityCandidate?.support.electricUnicycleModel, .falcon)
         XCTAssertEqual(
             observedCandidates.compactMap { $0?.detail },
-            ["Begode/Falcon confirmed by reported model Falcon"]
+            [detail]
         )
-        XCTAssertEqual(core.records.last, "protocol_identity=Begode/Falcon confirmed by reported model Falcon")
+        XCTAssertEqual(core.records.last, "protocol_identity=\(detail)")
+        XCTAssertEqual(core.scanState.rows.first?.title, "Begode Falcon")
+        XCTAssertEqual(core.scanState.rows.first?.id, "ios-local-falcon")
+        XCTAssertTrue(core.scanState.rows.first?.detail.contains("Typed Begode Falcon") == true)
+
+        core.observeAdvertisement(CoreBluetoothAdvertisement(
+            peripheralIdentifier: CoreBluetoothPeripheralIdentifier("ios-local-falcon"),
+            localName: "Typed Begode Falcon",
+            advertisedServiceUuids: [.bluetooth16(0xFFE0)]
+        ))
+        XCTAssertEqual(core.scanState.rows.first?.title, "Begode Falcon")
+        let projected = core.scanState
+        XCTAssertEqual(core.scanState, projected, "Reading scan state is a pure projection")
+        core.disconnectAndScan()
+        XCTAssertNil(core.protocolIdentityCandidate)
+        XCTAssertEqual(core.scanState.rows.first?.id, "ios-local-falcon")
+        XCTAssertEqual(core.scanState.rows.first?.title, "Begode Falcon")
     }
 
     func testBegodeFirmwareProbeResponseUpdatesProtocolIdentityCandidate() {

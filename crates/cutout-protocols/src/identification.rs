@@ -20,13 +20,13 @@ use crate::{
 /// Protocol-owned result of requesting identification queries.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum IdentificationProbePlan {
-    /// Available transport evidence does not support these queries, or stronger
-    /// protocol evidence has made the family-specific queries inappropriate.
+    /// No query is eligible: family evidence is missing/incompatible, or the
+    /// bounded sequence has completed.
     Unsupported,
     /// A previous query is still awaiting its response.
     AlreadyPending,
-    /// Ordered read-only writes selected by protocol policy.
-    Writes([crate::EncodedIdentificationProbe; 3]),
+    /// One read-only query. The next query waits for this response or timeout.
+    Writes([crate::EncodedIdentificationProbe; 1]),
 }
 
 /// Confidence level for staged model identification.
@@ -182,6 +182,7 @@ pub struct DeviceDetectionSession {
     begode_reassembler: BegodeFrameReassembler,
     veteran_reassembler: VeteranFrameReassembler,
     vesc_decoder: VescReadOnlyStreamDecoder,
+    next_begode_query: usize,
 }
 
 /// Raw firmware-banner bytes retained as probe-response provenance.
@@ -343,19 +344,14 @@ struct NotificationDecision<'a> {
 }
 
 impl DeviceDetectionSession {
-    /// Selects and records the non-mutating query sequence from transport evidence.
+    /// Advances the bounded query sequence after the preceding response or timeout.
     pub fn begin_identification_probes(
         &mut self,
         state: &mut CutoutSessionState,
         at: MonotonicTimestamp,
     ) -> IdentificationProbePlan {
         let current = self.resolution(state);
-        if matches!(
-            current.protocol,
-            ProtocolFamilyState::VeteranLeaperkimNosfet
-                | ProtocolFamilyState::Vesc
-                | ProtocolFamilyState::Conflict
-        ) {
+        if current.protocol != ProtocolFamilyState::BegodeGotway {
             return IdentificationProbePlan::Unsupported;
         }
         if let Some(selected) = state.discovery().selected_platform_identifier.as_deref() {
@@ -380,10 +376,11 @@ impl DeviceDetectionSession {
             return IdentificationProbePlan::AlreadyPending;
         }
         let probes = crate::begode_identification_probes();
-        for probe in &probes {
-            let _ = self.observe_probe_write_at(state, probe.probe, at);
-        }
-        IdentificationProbePlan::Writes(probes)
+        let Some(probe) = probes.into_iter().nth(self.next_begode_query) else {
+            return IdentificationProbePlan::Unsupported;
+        };
+        let _ = self.observe_probe_write_at(state, probe.probe, at);
+        IdentificationProbePlan::Writes([probe])
     }
 
     /// Creates an empty caller-owned detection session.
@@ -393,6 +390,7 @@ impl DeviceDetectionSession {
             begode_reassembler: BegodeFrameReassembler::default(),
             veteran_reassembler: VeteranFrameReassembler::default(),
             vesc_decoder: VescReadOnlyStreamDecoder::default(),
+            next_begode_query: 0,
         }
     }
 
@@ -418,9 +416,7 @@ impl DeviceDetectionSession {
                 self.observe_notification(state, bytes, &current);
             }
             DeviceDetectionEvent::ProbeWrite { probe } => {
-                state
-                    .identity_mut()
-                    .observe_probe_write(probe, MonotonicTimestamp::default());
+                let _ = self.observe_probe_write_at(state, probe, MonotonicTimestamp::default());
             }
             DeviceDetectionEvent::ProbeTimeout { probe } => {
                 let _ = state.identity_mut().observe_probe_timeout(probe);
@@ -575,6 +571,12 @@ impl DeviceDetectionSession {
         probe: PendingProbe,
         started_at: MonotonicTimestamp,
     ) -> DeviceDetectionResolution {
+        if let Some(index) = crate::begode_identification_probes()
+            .iter()
+            .position(|candidate| candidate.probe == probe)
+        {
+            self.next_begode_query = self.next_begode_query.max(index + 1);
+        }
         state.identity_mut().observe_probe_write(probe, started_at);
         self.resolution(state)
     }
@@ -1325,6 +1327,144 @@ mod tests {
     }
 
     #[test]
+    fn identification_queries_wait_for_family_and_each_previous_reply() {
+        let mut session = DeviceDetectionSession::new();
+        let begin = |session: &mut DeviceDetectionSession, at| {
+            session
+                .detector
+                .begin_identification_probes(&mut session.root, MonotonicTimestamp::new(at))
+        };
+        assert_eq!(
+            begin(&mut session, 0),
+            crate::IdentificationProbePlan::Unsupported
+        );
+        session.observe(DeviceDetectionEvent::Notification {
+            bytes: &BEGODE_LIVE_A_FRAME,
+        });
+        for (at, payload, reply) in [
+            (1, b"N".as_slice(), b"NAME:Falcon\r\n".as_slice()),
+            (100, b"V".as_slice(), b"GW1621003".as_slice()),
+            (200, b"M".as_slice(), b"MPU6500".as_slice()),
+        ] {
+            let crate::IdentificationProbePlan::Writes(writes) = begin(&mut session, at) else {
+                panic!("expected next query")
+            };
+            assert_eq!(writes.len(), 1);
+            assert_eq!(writes[0].payload.as_slice(), payload);
+            assert_eq!(
+                begin(&mut session, at + 1),
+                crate::IdentificationProbePlan::AlreadyPending
+            );
+            session.observe(DeviceDetectionEvent::Notification { bytes: reply });
+        }
+        assert_eq!(
+            begin(&mut session, 300),
+            crate::IdentificationProbePlan::Unsupported
+        );
+        assert_eq!(
+            session.resolution().staged.model,
+            Some(&BEGODE_FALCON_REGISTRY_ENTRY)
+        );
+    }
+
+    #[test]
+    fn direct_begode_probe_write_advances_the_shared_query_cursor() {
+        let mut session = DeviceDetectionSession::new();
+        session.observe(DeviceDetectionEvent::Notification {
+            bytes: &BEGODE_LIVE_A_FRAME,
+        });
+        let _ = session.detector.observe_probe_write_at(
+            &mut session.root,
+            PendingProbe::BegodeName,
+            MonotonicTimestamp::new(1),
+        );
+        assert_eq!(
+            session
+                .detector
+                .begin_identification_probes(&mut session.root, MonotonicTimestamp::new(2)),
+            crate::IdentificationProbePlan::AlreadyPending
+        );
+        session.observe(DeviceDetectionEvent::Notification {
+            bytes: b"NAME:Falcon\r\n",
+        });
+        let crate::IdentificationProbePlan::Writes(writes) = session
+            .detector
+            .begin_identification_probes(&mut session.root, MonotonicTimestamp::new(3))
+        else {
+            panic!("expected firmware query after direct name query")
+        };
+        assert_eq!(writes[0].probe, PendingProbe::BegodeFirmware);
+    }
+
+    #[test]
+    fn identification_timeouts_advance_once_and_conflicts_stop_remaining_queries() {
+        let mut session = DeviceDetectionSession::new();
+        session.observe(DeviceDetectionEvent::Notification {
+            bytes: &BEGODE_LIVE_A_FRAME,
+        });
+        for (at, expected) in [(0, b"N"), (2_001, b"V"), (4_002, b"M")] {
+            let crate::IdentificationProbePlan::Writes(writes) = session
+                .detector
+                .begin_identification_probes(&mut session.root, MonotonicTimestamp::new(at))
+            else {
+                panic!("expected one query after preceding timeout")
+            };
+            assert_eq!(writes[0].payload.as_slice(), expected);
+            let timeout = Duration::from_milliseconds(2_000);
+            assert!(
+                session
+                    .detector
+                    .expire_pending_probes(
+                        &mut session.root,
+                        MonotonicTimestamp::new(at + 2_000),
+                        timeout
+                    )
+                    .is_empty()
+            );
+            assert_eq!(
+                session
+                    .detector
+                    .expire_pending_probes(
+                        &mut session.root,
+                        MonotonicTimestamp::new(at + 2_001),
+                        timeout
+                    )
+                    .len(),
+                1
+            );
+        }
+        assert_eq!(
+            session
+                .detector
+                .begin_identification_probes(&mut session.root, MonotonicTimestamp::new(6_003)),
+            crate::IdentificationProbePlan::Unsupported
+        );
+
+        session.detector = ProtocolDetectionSession::new();
+        assert!(matches!(
+            session
+                .detector
+                .begin_identification_probes(&mut session.root, MonotonicTimestamp::new(7_000)),
+            crate::IdentificationProbePlan::Writes(_)
+        ));
+        session.observe(DeviceDetectionEvent::Notification {
+            bytes: &synthetic_veteran_frame_with_model_id(43),
+        });
+        assert_eq!(
+            session
+                .detector
+                .begin_identification_probes(&mut session.root, MonotonicTimestamp::new(7_001)),
+            crate::IdentificationProbePlan::Unsupported
+        );
+        assert_eq!(
+            session
+                .detector
+                .next_probe_expiry(&session.root, Duration::from_milliseconds(2_000)),
+            None
+        );
+    }
+
+    #[test]
     fn advertised_name_and_shared_gatt_are_hints_only() {
         let resolution = identify_model(
             &StagedIdentityInput {
@@ -1671,6 +1811,9 @@ mod tests {
         assert_eq!(update.protocol, ProtocolFamilyState::Unknown);
         assert_eq!(update.staged.model, None);
         session.root.select_discovered_platform("selected".into());
+        session.observe(DeviceDetectionEvent::Notification {
+            bytes: &BEGODE_LIVE_A_FRAME,
+        });
         assert!(matches!(
             session
                 .detector

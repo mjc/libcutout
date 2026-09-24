@@ -39,8 +39,8 @@ use cutout_core::{
     ChargeEstimateInput, ChargeEstimateResetReason, ChargeEstimateState,
     ChargeEstimateUnavailableReason, ChargeFlow, ChargeMode, ChargeModeDto, ChargeModeReadingDto,
     ChargeProfileIdentity, ChargeSessionIdentity, ChargeTimeEstimate, ControlRefusalReasonDto,
-    CutoutSessionState, DeviceConnectionIntent as CoreDeviceConnectionIntent,
-    DiscoveryCandidateSnapshot, DiscoveryCandidateSupport as CoreDiscoveryCandidateSupport,
+    DeviceConnectionIntent as CoreDeviceConnectionIntent, DiscoveryCandidateSnapshot,
+    DiscoveryCandidateSupport as CoreDiscoveryCandidateSupport,
     DiscoveryConnectionRoute as CoreDiscoveryConnectionRoute,
     DiscoveryElectricUnicycleModel as CoreDiscoveryElectricUnicycleModel,
     DiscoveryManufacturerDataSummary as CoreDiscoveryManufacturerDataSummary,
@@ -849,8 +849,8 @@ impl From<&CoreDiscoveryObservation> for DiscoveryObservationSnapshot {
 }
 
 impl DiscoverySnapshot {
-    fn from_state(state: &CutoutSessionState) -> Self {
-        let discovery = state.discovery();
+    fn from_owner(owner: &cutout_protocols::DeviceConnectionSession) -> Self {
+        let discovery = owner.session_state().discovery();
         Self {
             observations: discovery
                 .observations
@@ -858,9 +858,27 @@ impl DiscoverySnapshot {
                 .map(DiscoveryObservationSnapshot::from)
                 .collect(),
             picker_candidates: discovery
-                .picker_candidates()
-                .into_iter()
-                .map(DiscoveryCandidate::from)
+                .observations
+                .iter()
+                .filter_map(|observation| {
+                    if let Some(resolution) =
+                        owner.discovery_resolution(&observation.platform_identifier)
+                    {
+                        let candidate = mobile_discovery_candidate_from_detection_resolution(
+                            observation.platform_identifier.clone(),
+                            observation
+                                .advertised_name_text()
+                                .unwrap_or("Unknown Bluetooth device")
+                                .to_owned(),
+                            resolution.into(),
+                        );
+                        if candidate.is_picker_candidate {
+                            return Some(candidate);
+                        }
+                    }
+                    DiscoveryCandidateSnapshot::from_observation(observation)
+                        .map(DiscoveryCandidate::from)
+                })
                 .collect(),
             selected_platform_identifier: discovery.selected_platform_identifier.clone(),
         }
@@ -1234,7 +1252,7 @@ impl CutoutSessionStateHandle {
         state
             .session_state_mut()
             .observe_discovery(observation.into_core());
-        DiscoverySnapshot::from_state(state.session_state())
+        DiscoverySnapshot::from_owner(&state)
     }
 
     /// Selects a discovered platform identifier for this session.
@@ -1248,13 +1266,13 @@ impl CutoutSessionStateHandle {
         state
             .session_state_mut()
             .select_discovered_platform(platform_identifier);
-        DiscoverySnapshot::from_state(state.session_state())
+        DiscoverySnapshot::from_owner(&state)
     }
 
     /// Returns the current discovery snapshot.
     #[must_use]
     pub fn discovery_snapshot(&self) -> DiscoverySnapshot {
-        DiscoverySnapshot::from_state(self.lock_inner().session_state())
+        DiscoverySnapshot::from_owner(&self.lock_inner())
     }
 
     /// Projects retained unknown peripherals for an explicitly opened advanced capture list.
@@ -1755,7 +1773,7 @@ impl MobileIdentificationProbeWriteDto {
 
 #[uniffi::export]
 impl CutoutSessionStateHandle {
-    /// Begins the complete ordered non-mutating identification query sequence.
+    /// Advances the protocol-owned sequence by at most one non-mutating query.
     pub fn begin_identification_probe_for_attempt_at(
         &self,
         token: MobileConnectionAttemptTokenDto,
@@ -2196,7 +2214,17 @@ pub fn mobile_discovery_candidate_from_begode_identity_probe(
         malformed_probe_response,
     );
     let supported = support == DiscoveryCandidateSupport::Supported;
-    let detail = mobile_begode_identity_probe_detail(supported, &probe);
+    let mut detail = mobile_begode_identity_probe_detail(supported, &probe);
+    let display_name = if supported {
+        detail.push_str("; advertised as ");
+        detail.push_str(&display_name);
+        format!(
+            "{} {}",
+            BEGODE_FALCON_REGISTRY_ENTRY.manufacturer, BEGODE_FALCON_REGISTRY_ENTRY.model
+        )
+    } else {
+        display_name
+    };
 
     DiscoveryCandidate {
         platform_identifier,
@@ -2328,6 +2356,7 @@ pub fn mobile_discovery_candidate_from_detection_resolution(
         Some(MobileProtocolFamilyDto::BegodeGotway)
     ) && resolution.missing_probe_response.is_none()
         && resolution.malformed_probe_response.is_none()
+        && resolution.model_banner.is_none()
     {
         return DiscoveryCandidate {
             platform_identifier,
@@ -14631,6 +14660,25 @@ mod tests {
     }
 
     #[test]
+    fn scan_candidate_displays_reported_falcon_identity_after_family_detection() {
+        let session = CutoutSessionStateHandle::new();
+        session.observe_notification(
+            hex_literal::hex!("55aa19a60000003f0003ffecf92a0088000100185a5a5a5a").to_vec(),
+        );
+        session.observe_begode_name_probe();
+        let resolution = session.observe_notification(b"NAME:Falcon\r\n".to_vec());
+        let candidate = mobile_discovery_candidate_from_detection_resolution(
+            "scan-falcon".to_owned(),
+            "GotWay_002441".to_owned(),
+            resolution,
+        );
+        assert_eq!(candidate.display_name, "Begode Falcon");
+        assert_eq!(candidate.support, DiscoveryCandidateSupport::Supported);
+        assert!(candidate.detail.contains("GotWay_002441"));
+        assert_eq!(candidate.platform_identifier, "scan-falcon");
+    }
+
+    #[test]
     fn mobile_discovery_candidate_routes_reported_falcon_model_to_session() {
         let candidate = mobile_discovery_candidate_from_begode_identity_probe(
             "ios-local-falcon".to_owned(),
@@ -14648,7 +14696,7 @@ mod tests {
         );
 
         assert_eq!(candidate.platform_identifier, "ios-local-falcon");
-        assert_eq!(candidate.display_name, "GotWay_002441");
+        assert_eq!(candidate.display_name, "Begode Falcon");
         assert_eq!(candidate.product_category, "Electric unicycle");
         assert_eq!(
             candidate.evidence,
@@ -14656,7 +14704,7 @@ mod tests {
         );
         assert_eq!(
             candidate.detail,
-            "Begode/Falcon confirmed by reported model Falcon, code GW-FALCON, imu MPU6500, firmware 1.0.0, serial 012345, voltage hint 100800mV"
+            "Begode/Falcon confirmed by reported model Falcon, code GW-FALCON, imu MPU6500, firmware 1.0.0, serial 012345, voltage hint 100800mV; advertised as GotWay_002441"
         );
         assert!(candidate.is_picker_candidate);
         assert_eq!(candidate.support, DiscoveryCandidateSupport::Supported);
@@ -14921,17 +14969,16 @@ mod tests {
     #[test]
     fn mobile_identification_probe_returns_bounded_typed_writes_and_tracks_them() {
         let session = CutoutSessionStateHandle::new();
+        session.observe_notification(
+            hex_literal::hex!("55aa17750538007602eefb64f4941481000900185a5a5a5a").to_vec(),
+        );
 
         let outcome = session.begin_identification_probe_at(1_000);
 
         assert_eq!(
             outcome,
             MobileIdentificationProbeOutcomeDto::Writes {
-                writes: vec![
-                    MobileIdentificationProbeWriteDto::begode(b"N"),
-                    MobileIdentificationProbeWriteDto::begode(b"V"),
-                    MobileIdentificationProbeWriteDto::begode(b"M"),
-                ],
+                writes: vec![MobileIdentificationProbeWriteDto::begode(b"N")],
             }
         );
         assert_eq!(session.next_begode_probe_expiry(2_000), Some(3_001));
@@ -14940,6 +14987,9 @@ mod tests {
     #[test]
     fn mobile_identification_probe_rejects_duplicate_without_resetting_deadline() {
         let session = CutoutSessionStateHandle::new();
+        session.observe_notification(
+            hex_literal::hex!("55aa17750538007602eefb64f4941481000900185a5a5a5a").to_vec(),
+        );
         let _ = session.begin_identification_probe_at(1_000);
 
         let duplicate = session.begin_identification_probe_at(1_500);
@@ -14952,7 +15002,7 @@ mod tests {
     }
 
     #[test]
-    fn mobile_identification_probe_runs_for_selected_ffe0_candidate() {
+    fn mobile_identification_probe_does_not_treat_aero_advertisement_as_begode() {
         let session = CutoutSessionStateHandle::new();
         let _ = session.observe_discovery(DiscoveryObservation {
             platform_identifier: "ios-local-aero".to_owned(),
@@ -14967,12 +15017,12 @@ mod tests {
 
         assert!(matches!(
             session.begin_identification_probe_at(1_000),
-            MobileIdentificationProbeOutcomeDto::Writes { .. }
+            MobileIdentificationProbeOutcomeDto::Unsupported
         ));
     }
 
     #[test]
-    fn mobile_identification_probe_returns_writes_for_selected_probe_candidate() {
+    fn mobile_identification_probe_waits_for_wire_evidence_on_shared_service() {
         let session = CutoutSessionStateHandle::new();
         let _ = session.observe_discovery(DiscoveryObservation {
             platform_identifier: "ios-local-unknown-euc".to_owned(),
@@ -14987,6 +15037,13 @@ mod tests {
 
         assert!(matches!(
             session.begin_identification_probe_at(1_000),
+            MobileIdentificationProbeOutcomeDto::Unsupported
+        ));
+        session.observe_notification(
+            hex_literal::hex!("55aa17750538007602eefb64f4941481000900185a5a5a5a").to_vec(),
+        );
+        assert!(matches!(
+            session.begin_identification_probe_at(1_001),
             MobileIdentificationProbeOutcomeDto::Writes { .. }
         ));
     }

@@ -3,6 +3,11 @@ import CutoutMobileFFI
 @testable import CutoutMobile
 
 final class DeviceDetectionSessionTests: XCTestCase {
+    private let begodeLiveFrame = Data([
+        0x55, 0xaa, 0x17, 0x75, 0x05, 0x38, 0x00, 0x76,
+        0x02, 0xee, 0xfb, 0x64, 0xf4, 0x94, 0x14, 0x81,
+        0x00, 0x09, 0x00, 0x18, 0x5a, 0x5a, 0x5a, 0x5a,
+    ])
     private func syntheticVeteranFrameWithModelId43() -> Data {
         var bytes = Array(repeating: UInt8(0), count: 42)
         bytes.replaceSubrange(0..<4, with: [0xdc, 0x5a, 0x5c, 38])
@@ -19,7 +24,7 @@ final class DeviceDetectionSessionTests: XCTestCase {
         XCTAssertNil(resolution.protocolFamily)
     }
 
-    func testDefaultSessionUsesStandaloneGattEvidenceForIdentification() {
+    func testDefaultSessionWaitsForProtocolEvidenceBeforeIdentificationWrites() {
         let session = DeviceDetectionSession()
         _ = session.observeGatt(fingerprints: [
             DeviceDetectionGattFingerprint(
@@ -30,10 +35,12 @@ final class DeviceDetectionSessionTests: XCTestCase {
             ),
         ])
 
+        XCTAssertEqual(session.beginIdentificationProbe(at: MonotonicMilliseconds(999)), .unsupported)
+        _ = session.observeNotification(bytes: begodeLiveFrame)
         guard case let .writes(writes) = session.beginIdentificationProbe(at: MonotonicMilliseconds(1_000)) else {
-            return XCTFail("standalone GATT evidence should enable identification probes")
+            return XCTFail("Begode wire evidence should enable identification probes")
         }
-        XCTAssertEqual(writes.count, 3)
+        XCTAssertEqual(writes.count, 1)
     }
 
     func testBegodeNameProbeRetainsModelBannerBytes() {
@@ -43,6 +50,24 @@ final class DeviceDetectionSessionTests: XCTestCase {
         let resolution = session.observeNotification(bytes: Data("NAME=Falcon".utf8))
 
         XCTAssertEqual(resolution.modelBanner, Data("Falcon".utf8))
+    }
+
+    func testTwoReportedFalconsKeepAdvertisementNamesAndDistinctPickerIdentity() {
+        let rows = [("falcon-00A1", "GotWay_002441"), ("falcon-00B2", "GotWay_002442")].map { identifier, name in
+            let session = DeviceDetectionSession()
+            _ = session.observeNotification(bytes: begodeLiveFrame)
+            _ = session.observeBegodeNameProbe()
+            let resolution = session.observeNotification(bytes: Data("NAME:Falcon\r\n".utf8))
+            return DevicePickerDiscoveryCandidate(candidate: resolution.discoveryCandidate(
+                platformIdentifier: identifier, displayName: name
+            )).pickerRow
+        }
+        XCTAssertEqual(rows.map(\.title), ["Begode Falcon", "Begode Falcon"])
+        XCTAssertEqual(rows.map(\.id), ["falcon-00A1", "falcon-00B2"])
+        XCTAssertTrue(rows[0].detail.contains("GotWay_002441"))
+        XCTAssertFalse(rows[0].detail.contains("GotWay_002442"))
+        XCTAssertTrue(rows[1].detail.contains("GotWay_002442"))
+        XCTAssertNotEqual(rows[0].useActionAccessibilityLabel, rows[1].useActionAccessibilityLabel)
     }
 
     func testProbeDispositionPromotesOnlyRustResolvedModels() {
@@ -157,12 +182,14 @@ final class DeviceDetectionSessionTests: XCTestCase {
         _ = vescState.beginConnectionAttempt(platformIdentifier: "ios-local-vesc", nowMs: 1_000).token
 
         let aeroSession = DeviceDetectionSession(sessionState: aeroState)
+        XCTAssertEqual(aeroSession.beginIdentificationProbe(at: MonotonicMilliseconds(1_000)), .unsupported)
+        _ = aeroSession.observeNotification(bytes: begodeLiveFrame)
         guard case let .writes(writes) = aeroSession
             .beginIdentificationProbe(at: MonotonicMilliseconds(1_000))
         else {
-            return XCTFail("FFE0 transport evidence should schedule protocol probes")
+            return XCTFail("Begode protocol evidence should schedule one query")
         }
-        XCTAssertEqual(writes.count, 3)
+        XCTAssertEqual(writes.count, 1)
         XCTAssertEqual(
             DeviceDetectionSession(sessionState: vescState)
                 .beginIdentificationProbe(at: MonotonicMilliseconds(1_000)),

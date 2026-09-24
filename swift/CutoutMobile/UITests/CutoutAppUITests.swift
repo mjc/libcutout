@@ -238,6 +238,33 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertFalse(advancedCapture.waitForExistence(timeout: 2))
     }
 
+    func testPickerKeepsDetectionEvidenceBehindDeviceDetails() throws {
+        try assertPickerDeviceDetails()
+    }
+
+    func testPickerKeepsDetectionEvidenceBehindDeviceDetailsAtAccessibilityDynamicType() throws {
+        try assertPickerDeviceDetails()
+        try performVisibleLayoutAccessibilityAudit()
+    }
+
+    private func assertPickerDeviceDetails() throws {
+        let connect = app.buttons["device-picker.use.ui-test-vesc"]
+        XCTAssertTrue(connect.waitForExistence(timeout: 5))
+        XCTAssertTrue(connect.isHittable)
+        XCTAssertGreaterThanOrEqual(connect.frame.height, 44)
+        XCTAssertFalse(app.staticTexts["Deterministic accessibility test device"].exists)
+        XCTAssertFalse(app.staticTexts["VESC Onewheel - UI test fixture"].exists)
+        let details = app.buttons["device-picker.details.ui-test-vesc"]
+        XCTAssertTrue(details.isHittable)
+        XCTAssertGreaterThanOrEqual(details.frame.height, 44)
+        details.tap()
+        XCTAssertTrue(app.staticTexts["Deterministic accessibility test device"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["VESC Onewheel - UI test fixture"].exists)
+        app.buttons["device-picker.device-details.done"].tap()
+        XCTAssertTrue(connect.waitForExistence(timeout: 5))
+        XCTAssertTrue(connect.isHittable)
+    }
+
     func testProbeActionDoesNotFallThroughToRecordOnly() {
         disconnectIfConnected()
         let useButton = app.buttons["device-picker.use.ui-test-probe"]
@@ -245,7 +272,8 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(useButton.waitForExistence(timeout: 5), app.debugDescription)
         XCTAssertTrue(useButton.isEnabled)
         XCTAssertTrue(useButton.isHittable)
-        XCTAssertEqual(useButton.label, "Use Unknown EUC, device ROBE")
+        XCTAssertEqual(useButton.label, "Connect to Unknown EUC")
+        XCTAssertEqual(useButton.value as? String, "ROBE")
 
         useButton.tap()
 
@@ -305,7 +333,8 @@ final class CutoutAppUITests: XCTestCase {
         let useButton = app.buttons["device-picker.use.ui-test-vesc"]
 
         XCTAssertTrue(useButton.waitForExistence(timeout: 5))
-        XCTAssertEqual(useButton.label, "Use Refloat VESC, device VESC")
+        XCTAssertEqual(useButton.label, "Connect to Refloat VESC")
+        XCTAssertEqual(useButton.value as? String, "VESC")
         XCTAssertGreaterThanOrEqual(useButton.frame.height, 92)
     }
 
@@ -455,6 +484,11 @@ final class CutoutAppUITests: XCTestCase {
 
     func testFinishCaptureReturnsToPickerAfterFinalizing() throws {
         _ = try finishCaptureAndReturnToPicker()
+        app.buttons["device-picker.capture-status"].tap()
+        let details = app.staticTexts["device-picker.capture-details"]
+        XCTAssertTrue(details.waitForExistence(timeout: 5))
+        XCTAssertTrue(details.label.contains("cutout-btle-capture-"))
+        XCTAssertTrue(details.label.contains(".jsonl"))
     }
 
     func testFinishCaptureReturnsToAccessiblePickerInLightAppearanceAtAccessibilityDynamicType() throws {
@@ -490,14 +524,12 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(savedCapture.waitForExistence(timeout: 5))
         XCTAssertTrue(savedCapture.isHittable, "The saved-capture result must be visible without scrolling")
         XCTAssertFalse(savedCapture.label.isEmpty)
-        XCTAssertTrue(savedCapture.label.contains("cutout-btle-capture-"))
-        XCTAssertTrue(savedCapture.label.contains(".jsonl"))
+        XCTAssertFalse(savedCapture.label.contains("cutout-btle-capture-"))
+        XCTAssertFalse(savedCapture.label.contains(".jsonl"))
         if usesLocalizedText {
-            let filenameStart = try XCTUnwrap(savedCapture.label.range(of: "cutout-btle-capture-"))
-            let filename = String(savedCapture.label[filenameStart.lowerBound...])
-            XCTAssertNotEqual(savedCapture.label, "Saved capture: \(filename)")
+            XCTAssertNotEqual(savedCapture.label, "Capture saved")
         } else {
-            XCTAssertTrue(savedCapture.label.hasPrefix("Saved capture:"))
+            XCTAssertEqual(savedCapture.label, "Capture saved")
         }
         XCTAssertFalse(app.descendants(matching: .any)["capture.screen"].isHittable)
         return picker
@@ -565,8 +597,11 @@ final class CutoutAppUITests: XCTestCase {
         let savedCapture = app.descendants(matching: .any)["device-picker.capture-status"]
         XCTAssertTrue(picker.waitForExistence(timeout: 5))
         XCTAssertTrue(savedCapture.waitForExistence(timeout: 5))
-        XCTAssertTrue(savedCapture.label.contains("cutout-btle-capture-"))
-        XCTAssertTrue(savedCapture.label.contains(".jsonl"))
+        savedCapture.tap()
+        let details = app.staticTexts["device-picker.capture-details"]
+        XCTAssertTrue(details.waitForExistence(timeout: 5))
+        XCTAssertTrue(details.label.contains("cutout-btle-capture-"))
+        XCTAssertTrue(details.label.contains(".jsonl"))
     }
 
     func testFinishCaptureFailureKeepsCaptureScreenAccessibleAtAccessibilityDynamicType() throws {
@@ -661,14 +696,14 @@ final class CutoutAppUITests: XCTestCase {
     func testDisconnectKeepsSavedDeviceUntilExplicitForget() throws {
         let forget = try disconnectAndRequireSavedDevice()
         forget.tap()
-        XCTAssertTrue(forget.waitForNonExistence(timeout: 5))
+        XCTAssertFalse(forget.isEnabled)
     }
 
     func testDisconnectKeepsSavedDeviceAccessibleWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
         let forget = try disconnectAndRequireSavedDevice()
         try performVisibleLayoutAccessibilityAudit()
         forget.tap()
-        XCTAssertTrue(forget.waitForNonExistence(timeout: 5))
+        XCTAssertFalse(forget.isEnabled)
     }
 
     private func disconnectAndRequireSavedDevice() throws -> XCUIElement {
@@ -691,7 +726,9 @@ final class CutoutAppUITests: XCTestCase {
             picker.waitForExistence(timeout: 5),
             "Disconnect did not return to the picker:\n\(app.debugDescription)"
         )
-        let forget = app.buttons["device-picker.forget-saved-device"]
+        XCTAssertFalse(app.buttons["device-picker.forget-saved-device"].exists)
+        app.buttons["device-picker.open-setup"].tap()
+        let forget = app.buttons["setup.forget-saved-device"]
         XCTAssertTrue(forget.waitForExistence(timeout: 5))
         if name.contains("Pseudolocalized") {
             XCTAssertFalse(forget.label.isEmpty)
@@ -3280,7 +3317,7 @@ final class CutoutAppUITests: XCTestCase {
             XCTAssertTrue(useButton.waitForExistence(timeout: 5))
             XCTAssertNotEqual(
                 useButton.label,
-                "Use Refloat VESC, device VESC",
+                "Connect to Refloat VESC",
                 "The pseudolocalized launch did not expand catalog-backed picker copy"
             )
         }

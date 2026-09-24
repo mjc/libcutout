@@ -2,46 +2,54 @@ import CutoutMobile
 import SwiftUI
 
 struct PickerDeviceRow: View {
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-
     let row: DevicePickerRow
     var action: (() -> Void)? = nil
+    @State private var showsDetails = false
 
     var body: some View {
-        if let action, row.state.isSupported || row.isProbeRecommended {
-            Button(action: action) {
-                rowContent
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("device-picker.use.\(row.id)")
-            .accessibilityLabel(row.useActionAccessibilityLabel)
-            .accessibilityHint(localizedAppText("picker.use_action.hint"))
-        } else {
-            rowContent
-                .accessibilityElement(children: .combine)
-        }
-    }
-
-    private var rowContent: some View {
-        Group {
-            if dynamicTypeSize.isAccessibilitySize {
-                VStack(alignment: .leading, spacing: 12) {
-                    deviceSummary
-                    statusPill
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .top, spacing: 14) {
+                deviceSummary
+                if action != nil {
+                    Button { showsDetails = true } label: {
+                        Image(systemName: "info.circle")
+                            .font(.title3)
+                            .foregroundStyle(PevColors.muted)
+                            .frame(minWidth: 44, minHeight: 44)
+                    }
+                    .accessibilityLabel(localizedAppText("picker.details_for_device", row.title))
+                    .accessibilityIdentifier("device-picker.details.\(row.id)")
                 }
+            }
+            if let action, row.state.isSupported || row.isProbeRecommended {
+                Button(action: action) {
+                    Text(localizedAppText("picker.connect"))
+                        .font(.headline)
+                        .foregroundStyle(.black)
+                        .frame(maxWidth: .infinity, minHeight: 46)
+                        .background(PevColors.yellow, in: RoundedRectangle(cornerRadius: 14))
+                }
+                .accessibilityIdentifier("device-picker.use.\(row.id)")
+                .accessibilityLabel(localizedAppText("picker.connect_device", row.title))
+                .accessibilityValue(row.secondaryIdentity ?? String(row.id.suffix(4).uppercased()))
+                .accessibilityHint(localizedAppText("picker.use_action.hint"))
             } else {
-                HStack(spacing: 14) {
-                    deviceSummary
-                    Spacer(minLength: 6)
-                    statusPill
-                }
+                Text(row.subtitle)
+                    .font(.subheadline)
+                    .foregroundStyle(row.secondaryTextColor)
+                Text(row.detail)
+                    .font(.subheadline)
+                    .foregroundStyle(row.secondaryTextColor)
+                PevDashboardStatusPill(devicePickerState: row.state)
             }
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 14)
-        .frame(minHeight: 92)
-        .frame(maxWidth: .infinity)
-        .background(PevDashboardCardBackground(cornerRadius: 26))
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(PevDashboardCardBackground(cornerRadius: 24))
+        .buttonStyle(.plain)
+        .sheet(isPresented: $showsDetails) {
+            PickerDeviceDetails(row: row)
+        }
     }
 
     private var deviceSummary: some View {
@@ -52,25 +60,52 @@ struct PickerDeviceRow: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(row.title)
-                    .font(.title3.weight(.bold))
+                    .font(.title3.weight(.semibold))
                     .foregroundStyle(row.titleColor)
-                Text(row.subtitle)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(row.secondaryTextColor)
-                Text(row.detail)
-                    .font(.subheadline.weight(.bold))
-                    .foregroundStyle(row.secondaryTextColor)
+                if let identity = row.secondaryIdentity {
+                    Text(identity)
+                        .font(.subheadline)
+                        .foregroundStyle(PevColors.muted)
+                        .accessibilityIdentifier("device-picker.identity.\(row.id)")
+                }
             }
+            .fixedSize(horizontal: false, vertical: true)
             .layoutPriority(1)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
     }
+}
 
-    private var statusPill: some View {
-        PevDashboardStatusPill(
-            devicePickerState: row.isProbeRecommended && action != nil
-                ? .supported(action: localizedAppText("picker.row.action.use"))
-                : row.state
-        )
+private struct PickerDeviceDetails: View {
+    let row: DevicePickerRow
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    if let name = row.advertisedName {
+                        LabeledContent(localizedAppText("picker.advertised_name"), value: name)
+                    }
+                    LabeledContent(localizedAppText("picker.device_identifier"), value: row.id)
+                }
+                Section(localizedAppText("picker.detection_details")) {
+                    Text(row.subtitle)
+                    Text(row.detail)
+                }
+            }
+            .textSelection(.enabled)
+            .navigationTitle(row.title)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(localizedAppText("picker.capture_kind.done")) { dismiss() }
+                        .accessibilityIdentifier("device-picker.device-details.done")
+                }
+            }
+        }
+        .tint(PevColors.yellow)
+        .accessibilityIdentifier("device-picker.device-details")
     }
 }
 

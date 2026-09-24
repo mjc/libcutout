@@ -16,15 +16,14 @@ use cutout_core::{
 };
 
 use crate::{
-    AeroProbe, AeroRequestEncoder, BEGODE_DATA_CHANNEL, BEGODE_SERVICE_CHANNEL, BegodeBmsCellPage,
-    BegodeBmsPageError, BegodeBmsSummary, BegodeFrame, BegodeFrameError, BegodeFrameParseResult,
-    BegodeFrameReassembler, BegodeLiveATelemetry, BegodeLiveBTelemetry, BegodePackVoltageProfile,
-    BegodeTelemetryContext, BegodeTelemetryError, EncodedControlStep, EncodedRequest,
-    FalconDialect, FalconProbe, FalconRequestEncoder, NosfetDialect, RefloatCodecError,
-    RefloatReadOnlyRequest, RefloatReply, RefloatStreamDecoder, RefloatStreamResult,
-    RequestDisposition, VESC_COMM_CUSTOM_APP_DATA, VESC_MAX_FRAME_LEN, VESC_NOTIFY_CHANNEL,
-    VESC_WRITE_CHANNEL, VETERAN_DATA_CHANNEL, VETERAN_SERVICE_CHANNEL, VescBoardProfile,
-    VescCodecError, VescReadOnlyCodec, VescReadOnlyReply, VescReadOnlyRequest,
+    AeroProbe, AeroRequestEncoder, BEGODE_DATA_CHANNEL, BEGODE_SERVICE_CHANNEL, BegodeFrame,
+    BegodeFrameError, BegodeFrameParseResult, BegodeFrameReassembler, BegodeLiveATelemetry,
+    BegodeLiveBTelemetry, BegodePackVoltageProfile, BegodeTelemetryContext, BegodeTelemetryError,
+    EncodedControlStep, EncodedRequest, FalconDialect, FalconProbe, FalconRequestEncoder,
+    NosfetDialect, RefloatCodecError, RefloatReadOnlyRequest, RefloatReply, RefloatStreamDecoder,
+    RefloatStreamResult, RequestDisposition, VESC_COMM_CUSTOM_APP_DATA, VESC_MAX_FRAME_LEN,
+    VESC_NOTIFY_CHANNEL, VESC_WRITE_CHANNEL, VETERAN_DATA_CHANNEL, VETERAN_SERVICE_CHANNEL,
+    VescBoardProfile, VescCodecError, VescReadOnlyCodec, VescReadOnlyReply, VescReadOnlyRequest,
     VescReadOnlyStreamDecoder, VescReadOnlyStreamResult, VescRequestEncoder, VescStatsMask,
     VescStatsTelemetry, VescValuesMask, VescValuesTelemetry, VeteranBmsCellPage,
     VeteranBmsMetadataPage, VeteranBmsPageEvidence, VeteranBmsTemperaturePage, VeteranCommandMode,
@@ -497,9 +496,11 @@ impl ReadOnlyNotificationDecoder for BegodeNotificationDecoder {
         output: &mut Vec<SessionOutput>,
     ) {
         let mut event_count = SemanticEventCount::default();
+        let mut completed_frame = false;
         for byte in bytes {
             match self.reassembler.feed_byte_result_at(*byte, monotonic_ms) {
                 Ok(BegodeFrameParseResult::Complete(frame)) => {
+                    completed_frame = true;
                     event_count = event_count.saturating_add(push_begode_frame(
                         family,
                         channel,
@@ -527,6 +528,11 @@ impl ReadOnlyNotificationDecoder for BegodeNotificationDecoder {
             }
         }
 
+        // Complete unsupported frames already emitted their retained evidence;
+        // they are not waiting for another notification to finish a frame.
+        if completed_frame && event_count.as_events() == 0 {
+            return;
+        }
         output.push(SessionOutput::NotificationIngest(
             if event_count.as_events() > 0 {
                 NotificationIngestOutcome::semantic_events(
@@ -1214,7 +1220,8 @@ fn vesc_values_to_delta(
         pwm: values
             .present_fields
             .contains(VescValuesMask::DUTY_CYCLE)
-            .then_some(Measured::reported(values.duty_cycle)),
+            .then_some(Measured::reported(values.duty_cycle))
+            .into(),
         ..cutout_core::TelemetryDelta::empty(monotonic_ms)
     }
 }
@@ -1340,34 +1347,21 @@ fn push_begode_frame(
                 output.push(SessionOutput::Event(DeviceEvent::Telemetry(
                     context.live_a_to_delta(telemetry, monotonic_ms),
                 )));
-                retain_known_frame(output);
-                SemanticEventCount::from_events(1)
-            }
-            Err(error) => push_begode_telemetry_error(error, output),
-        },
-        0x01 => match BegodeBmsSummary::decode(frame) {
-            Ok(summary) => {
-                output.push(SessionOutput::Event(DeviceEvent::Telemetry(
-                    summary.to_delta(monotonic_ms),
-                )));
                 output.push(SessionOutput::Event(DeviceEvent::read_only_response(
-                    summary.to_battery_response(),
+                    telemetry.to_settings_response(),
                 )));
                 retain_known_frame(output);
                 SemanticEventCount::from_events(2)
             }
-            Err(error) => push_begode_bms_error(error, output),
+            Err(error) => push_begode_telemetry_error(error, output),
         },
-        0x02 | 0x03 => match BegodeBmsCellPage::decode(frame) {
-            Ok(page) => {
-                output.push(SessionOutput::Event(DeviceEvent::read_only_response(
-                    page.to_battery_response(),
-                )));
-                retain_known_frame(output);
-                SemanticEventCount::from_events(1)
-            }
-            Err(error) => push_begode_bms_error(error, output),
-        },
+        0x01..=0x03 => {
+            // Standard Falcon has no smart BMS, but emits these frame tags
+            // with placeholder data. Keep the bytes, not battery measurements.
+            // The standalone BMS codecs remain available for supported models.
+            retain_known_frame(output);
+            SemanticEventCount::default()
+        }
         0x04 => match BegodeLiveBTelemetry::decode(frame) {
             Ok(telemetry) => {
                 context.observe_live_b(telemetry);
@@ -1408,18 +1402,6 @@ fn push_begode_telemetry_error(
 ) -> SemanticEventCount {
     match error {
         BegodeTelemetryError::UnexpectedFrameTag { .. } => {
-            push_parser_error(ParserError::MalformedFrame, output);
-            SemanticEventCount::from_events(2)
-        }
-    }
-}
-
-fn push_begode_bms_error(
-    error: BegodeBmsPageError,
-    output: &mut Vec<SessionOutput>,
-) -> SemanticEventCount {
-    match error {
-        BegodeBmsPageError::UnexpectedFrameTag { .. } => {
             push_parser_error(ParserError::MalformedFrame, output);
             SemanticEventCount::from_events(2)
         }
@@ -1696,6 +1678,13 @@ impl SupportsSettingsWrites for NosfetAeroModel {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct BegodeFalconModel;
 
+impl BegodeFalconModel {
+    /// Source-verified stock battery configuration, shared by live sessions and replay.
+    /// See the model table in `docs/begode-falcon-protocol-evidence.md`.
+    pub const PACK_VOLTAGE_PROFILE: BegodePackVoltageProfile =
+        BegodePackVoltageProfile::Begode100VFullCharge;
+}
+
 const BEGODE_FALCON_MODEL_GATT: [GattFingerprint; 1] = [GattFingerprint {
     service: BEGODE_SERVICE_CHANNEL,
     characteristic: BEGODE_DATA_CHANNEL,
@@ -1718,7 +1707,12 @@ impl RegisteredModelSpec for BegodeFalconModel {
         protocol_family: Self::PROTOCOL,
         advertised_name_hints: &["Falcon", "Begode", "Gotway"],
         wire_model_id: None,
-        battery: None,
+        battery: Some(BatterySpec {
+            series_cells: Self::PACK_VOLTAGE_PROFILE.series_cells(),
+            nominal_capacity: Self::PACK_VOLTAGE_PROFILE.nominal_capacity(),
+            voltage_range: Self::PACK_VOLTAGE_PROFILE.voltage_range(),
+            verification: VerificationStatus::SourceVerified,
+        }),
         bms: None,
         gatt: &BEGODE_FALCON_MODEL_GATT,
         capabilities: <Self as SupportsReadRequests>::READ_CAPABILITIES
@@ -3310,6 +3304,106 @@ mod tests {
     }
 
     #[test]
+    fn falcon_snapshot_distinguishes_omitted_invalid_and_valid_pwm() {
+        let live_a = live_begode_a_frame();
+        let mut snapshot = cutout_core::TelemetrySnapshot::default();
+        let frames = [40_i16, 3277, -3277, -20].map(|raw| {
+            let mut extra = live_begode_extra_frame();
+            extra[8..10].copy_from_slice(&raw.to_be_bytes());
+            extra
+        });
+        let notifications: Vec<&[u8]> = frames
+            .iter()
+            .flat_map(|extra| [extra.as_slice(), live_a.as_slice()])
+            .collect();
+        let deltas = falcon_telemetry_for_notifications(&notifications);
+        assert_eq!(deltas.len(), 8);
+        for (delta, expected) in deltas.into_iter().zip([
+            Some(400),
+            Some(400),
+            None,
+            None,
+            None,
+            None,
+            Some(-200),
+            Some(-200),
+        ]) {
+            snapshot.apply_delta(delta);
+            assert_eq!(
+                snapshot.pwm.map(|value| value.value.as_permille()),
+                expected
+            );
+            assert_eq!(snapshot.at_ms, Some(delta.at_ms));
+            let projected = cutout_core::TelemetryDeltaDto::from(delta);
+            assert_eq!(projected.pwm, delta.pwm.map(Into::into));
+        }
+    }
+
+    #[test]
+    fn falcon_live_a_does_not_publish_firmware_settings_as_pwm() {
+        let live_a = live_begode_a_frame();
+        let telemetry = falcon_telemetry_for_notifications(&[&live_a]);
+        assert_eq!(telemetry.len(), 1);
+        assert_eq!(
+            telemetry[0].pwm,
+            cutout_core::TelemetryFieldUpdate::Unchanged
+        );
+    }
+
+    #[test]
+    fn falcon_extra_pwm_uses_whole_percent_wire_units() {
+        for percent in [-100_i16, -40, 0, 40, 100] {
+            let mut extra = live_begode_extra_frame();
+            extra[8..10].copy_from_slice(&percent.to_be_bytes());
+            let live_a = live_begode_a_frame();
+            let telemetry = falcon_telemetry_for_notifications(&[&extra, &live_a]);
+            assert_eq!(telemetry.len(), 2);
+            assert_eq!(
+                telemetry[0].pwm,
+                cutout_core::TelemetryFieldUpdate::Set(Measured {
+                    verification: VerificationStatus::SourceVerified,
+                    ..Measured::reported(cutout_core::DutyCycle::from_permille(percent * 10))
+                })
+            );
+            assert_eq!(
+                telemetry[1].pwm,
+                cutout_core::TelemetryFieldUpdate::Unchanged,
+                "Live A must not overwrite the dedicated PWM reading"
+            );
+        }
+    }
+
+    #[test]
+    fn falcon_live_a_binds_beeper_readback_without_inventing_a_value() {
+        for level in [0_u8, 1, 9, 10, 255] {
+            let mut live_a = live_begode_a_frame();
+            live_a[17] = level;
+            let output = falcon_output_for_notification_chunks(&[&live_a]);
+            let observations: Vec<_> = read_only_response_events(&output)
+                .into_iter()
+                .filter_map(|response| match response {
+                    ReadOnlyResponse::Settings(settings) => Some(settings),
+                    _ => None,
+                })
+                .flat_map(|settings| {
+                    crate::device_settings::falcon_control_profile().normalize_readback(settings)
+                })
+                .filter(|observation| observation.id == cutout_core::SettingId::BeeperVolumeLevel)
+                .collect();
+            assert_eq!(
+                observations.len(),
+                1,
+                "present raw field must survive admission"
+            );
+            let expected = (1..=9).contains(&level).then(|| Measured {
+                verification: VerificationStatus::SourceVerified,
+                ..Measured::reported(cutout_core::DeviceSettingValue::Number(i32::from(level)))
+            });
+            assert_eq!(observations[0].value, expected);
+        }
+    }
+
+    #[test]
     fn begode_falcon_live_a_retains_complete_frame_evidence() {
         let live_a = live_begode_a_frame();
         let output = falcon_output_for_notification_chunks(&[live_a.as_slice()]);
@@ -3324,7 +3418,7 @@ mod tests {
                     BEGODE_DATA_CHANNEL,
                     NotificationByteLen::from_bytes(live_a.len()),
                     ms(42),
-                    SemanticEventCount::from_events(1),
+                    SemanticEventCount::from_events(2),
                 ),
             ]
         );
@@ -3597,7 +3691,9 @@ mod tests {
         );
         assert_eq!(
             delta.pwm,
-            Some(Measured::reported(cutout_core::DutyCycle::from_permille(0)))
+            cutout_core::TelemetryFieldUpdate::Set(Measured::reported(
+                cutout_core::DutyCycle::from_permille(0)
+            ))
         );
 
         let responses = read_only_response_events(&output);
@@ -4379,10 +4475,29 @@ mod tests {
     }
 
     #[test]
-    fn begode_falcon_fragmented_bms_summary_preserves_read_only_responses() {
-        let summary = live_begode_bms_summary_frame();
-
-        assert_falcon_fragmented_read_only_responses_match(summary.as_slice());
+    fn standard_falcon_retains_bms_shaped_frames_without_publishing_measurements() {
+        let frames = [
+            hex_literal::hex!("55aa004b000003d90000000013880000000001005a5a5a5a"),
+            hex_literal::hex!("55aa0000000000000000000000000000000002005a5a5a5a"),
+            hex_literal::hex!("55aa0000000000000000000000000000000003005a5a5a5a"),
+            live_begode_bms_summary_frame(),
+            live_begode_bms_cell_page_frame(),
+        ];
+        for frame in frames {
+            for split in 1..frame.len() {
+                let output =
+                    falcon_output_for_notification_chunks(&[&frame[..split], &frame[split..]]);
+                assert!(telemetry_events(&output).is_empty());
+                assert!(read_only_response_events(&output).is_empty());
+                assert!(
+                    notification_ingest_outcomes(&output).contains(&begode_frame_gap(
+                        &frame,
+                        u16::from(frame[18]),
+                        ms(43)
+                    ),)
+                );
+            }
+        }
     }
 
     #[test]
@@ -4393,25 +4508,10 @@ mod tests {
 
         assert_eq!(
             outcomes,
-            vec![
-                begode_frame_gap(summary.as_slice(), 0x01, ms(42)),
-                NotificationIngestOutcome::semantic_events(
-                    ProtocolFamily::BegodeGotway,
-                    BEGODE_DATA_CHANNEL,
-                    NotificationByteLen::from_bytes(summary.len()),
-                    ms(42),
-                    SemanticEventCount::from_events(2),
-                ),
-            ]
+            vec![begode_frame_gap(summary.as_slice(), 0x01, ms(42))]
         );
-        assert!(!read_only_response_events(&output).is_empty());
-    }
-
-    #[test]
-    fn begode_falcon_fragmented_bms_cell_page_preserves_read_only_responses() {
-        let cell_page = live_begode_bms_cell_page_frame();
-
-        assert_falcon_fragmented_read_only_responses_match(cell_page.as_slice());
+        assert!(read_only_response_events(&output).is_empty());
+        assert!(telemetry_events(&output).is_empty());
     }
 
     #[test]
@@ -4422,18 +4522,10 @@ mod tests {
 
         assert_eq!(
             outcomes,
-            vec![
-                begode_frame_gap(cell_page.as_slice(), 0x02, ms(42)),
-                NotificationIngestOutcome::semantic_events(
-                    ProtocolFamily::BegodeGotway,
-                    BEGODE_DATA_CHANNEL,
-                    NotificationByteLen::from_bytes(cell_page.len()),
-                    ms(42),
-                    SemanticEventCount::from_events(1),
-                ),
-            ]
+            vec![begode_frame_gap(cell_page.as_slice(), 0x02, ms(42))]
         );
-        assert!(!read_only_response_events(&output).is_empty());
+        assert!(read_only_response_events(&output).is_empty());
+        assert!(telemetry_events(&output).is_empty());
     }
 
     #[test]
@@ -4554,7 +4646,9 @@ mod tests {
         );
         assert_eq!(
             telemetry.pwm,
-            Some(Measured::reported(cutout_core::DutyCycle::from_permille(0)))
+            cutout_core::TelemetryFieldUpdate::Set(Measured::reported(
+                cutout_core::DutyCycle::from_permille(0)
+            ))
         );
         assert_eq!(
             telemetry.distance,

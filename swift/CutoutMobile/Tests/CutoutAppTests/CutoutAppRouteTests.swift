@@ -5,6 +5,17 @@ import XCTest
 import CutoutMobileFFI
 
 final class CutoutAppRouteTests: XCTestCase {
+    func testPickerCaptureSummaryOmitsFilenamesAndCountersButKeepsFailuresVisible() {
+        let filename = "cutout-btle-capture-long-identifier.jsonl"
+        XCTAssertEqual(CaptureStatus.saved(fileName: filename).pickerSummary, "Capture saved")
+        XCTAssertEqual(
+            CaptureStatus.recording(label: "probe", notificationCount: 1500, fileName: filename).pickerSummary,
+            "Recording capture"
+        )
+        XCTAssertEqual(CaptureStatus.failed.pickerSummary, CaptureStatus.failed.displayText)
+        XCTAssertTrue(CaptureStatus.saved(fileName: filename).displayText.contains(filename))
+    }
+
     func testScreenRoutesMatchTopLevelSections() {
         XCTAssertEqual(CutoutAppRoute.route(for: .eucRide), .eucRide)
         XCTAssertEqual(CutoutAppRoute.route(for: .vescRide), .vescRide)

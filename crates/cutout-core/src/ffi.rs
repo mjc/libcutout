@@ -2509,8 +2509,8 @@ pub struct TelemetryDeltaDto {
     /// Battery temperature in millicelsius.
     pub battery_temperature: Option<TemperatureReadingDto>,
 
-    /// PWM duty in permille.
-    pub pwm: Option<DutyCycleReadingDto>,
+    /// PWM update, preserving explicit invalidation across the projection.
+    pub pwm: crate::TelemetryFieldUpdate<DutyCycleReadingDto>,
 
     /// Total or trip distance in millimeters.
     pub distance: Option<DistanceReadingDto>,

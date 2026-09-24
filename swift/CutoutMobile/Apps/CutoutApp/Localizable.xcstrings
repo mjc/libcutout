@@ -2213,6 +2213,32 @@
       "comment" : "Device picker title and its VoiceOver route label.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Choose device" } } }
     },
+    "picker.connect" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Connect" } } }
+    },
+    "picker.connect_device" : {
+      "comment" : "Accessible connect action. Placeholder is the device name.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Connect to %@" } } }
+    },
+    "picker.details_for_device" : {
+      "comment" : "Accessible information action. Placeholder is the device name.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Details for %@" } } }
+    },
+    "picker.advertised_name" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Bluetooth name" } } }
+    },
+    "picker.device_identifier" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Device identifier" } } }
+    },
+    "picker.detection_details" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Detection details" } } }
+    },
+    "picker.capture.saved" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Capture saved" } } }
+    },
+    "picker.capture.recording" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Recording capture" } } }
+    },
     "picker.advanced_capture" : {
       "comment" : "Button and sheet title for the optional unknown-device capture workflow.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Capture unknown device" } } }

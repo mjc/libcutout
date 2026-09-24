@@ -454,6 +454,8 @@ pub struct DeviceConnectionSession {
     state: CutoutSessionState,
     /// Incremental detector retaining validated wire evidence.
     detector: DeviceDetectionSession,
+    /// Prior wire evidence for picker presentation, never used to admit a new attempt.
+    detected_devices: std::collections::BTreeMap<String, DeviceDetectionResolution>,
     /// Protocol-selected decoder, never selected by native model dispatch.
     device: Option<DeviceSession>,
     last_input_at: MonotonicTimestamp,
@@ -479,6 +481,40 @@ impl DeviceConnectionSession {
     #[must_use]
     pub fn detector(&self) -> &DeviceDetectionSession {
         &self.detector
+    }
+
+    /// Retains per-peripheral detection independently from refreshed advertisements.
+    /// A new connection must still establish its own wire identity before admission.
+    #[must_use]
+    pub fn discovery_resolution(
+        &self,
+        platform_identifier: &str,
+    ) -> Option<DeviceDetectionResolution> {
+        if self
+            .state
+            .connection
+            .snapshot()
+            .token
+            .as_ref()
+            .is_some_and(|token| token.platform_identifier() == platform_identifier)
+        {
+            let resolution = self.detector.resolution(&self.state);
+            if resolution.protocol != crate::ProtocolFamilyState::Unknown
+                || resolution.model_banner.is_some()
+            {
+                return Some(resolution);
+            }
+        }
+        self.detected_devices.get(platform_identifier).cloned()
+    }
+
+    fn retain_detection(&mut self) {
+        if let Some(token) = self.state.connection.snapshot().token.as_ref()
+            && let Some(resolution) = self.discovery_resolution(token.platform_identifier())
+        {
+            self.detected_devices
+                .insert(token.platform_identifier().to_owned(), resolution);
+        }
     }
 
     /// Replaces detector evidence when starting a new identification pass.
@@ -643,6 +679,7 @@ impl DeviceConnectionSession {
 
     /// Replaces all device-scoped state before native work for the new attempt.
     pub fn begin_attempt(&mut self, platform_identifier: String, at: MonotonicTimestamp) {
+        self.retain_detection();
         self.last_input_at = at;
         self.vesc_board_profile = None;
         self.validation_grant = None;
@@ -686,6 +723,7 @@ impl DeviceConnectionSession {
 
     /// Ends the attempt before native cancellation or explicit selection replacement.
     pub fn disconnect(&mut self) {
+        self.retain_detection();
         self.state.connection.disconnect();
         self.state.settings.disconnect();
         self.setting_operations.clear();
@@ -743,6 +781,20 @@ impl DeviceConnectionSession {
             return None;
         }
         let resolution = self.detector.observe(&mut self.state, event);
+        // Retain accepted evidence before a terminal transition retires its token.
+        // Repeated telemetry with unchanged identity does not replace stored evidence.
+        if resolution.protocol != crate::ProtocolFamilyState::Unknown
+            || resolution.model_banner.is_some()
+        {
+            if let Some(previous) = self.detected_devices.get_mut(token.platform_identifier()) {
+                if *previous != resolution {
+                    previous.clone_from(&resolution);
+                }
+            } else {
+                self.detected_devices
+                    .insert(token.platform_identifier().to_owned(), resolution.clone());
+            }
+        }
         if resolution.protocol == crate::ProtocolFamilyState::Conflict
             && self.state.connection.snapshot().readiness == ConnectionReadiness::Verified
         {
@@ -765,6 +817,16 @@ impl DeviceConnectionSession {
             return;
         }
         let resolution = self.detector.resolution(&self.state);
+        // Native transport completion cannot retire an unanswered identity query.
+        // An exact model may be admitted while optional firmware/IMU queries continue.
+        if resolution.staged.model.is_none()
+            && self
+                .detector
+                .next_probe_expiry(&self.state, cutout_core::Duration::from_milliseconds(0))
+                .is_some()
+        {
+            return;
+        }
         if let Some(device) =
             DeviceSession::from_detection_with_vesc_profile(&resolution, self.vesc_board_profile)
         {

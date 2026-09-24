@@ -84,6 +84,8 @@ connecting to Bluetooth hardware.
 
 By default the command auto-selects the replay profile from persisted PEVCAP
 identity metadata. Use --profile to override that metadata for verification.
+The selected model supplies its battery configuration, as it does for live use.
+Replay does not modify captured identity or battery evidence.
 Use --diagnostics-jsonl to emit stable diagnostic snapshot records for replay
 tooling.";
 const PEVCAP_IMPORT_LONG_ABOUT: &str = "\

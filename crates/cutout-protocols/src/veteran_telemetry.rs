@@ -610,7 +610,7 @@ impl VeteranTelemetry {
             charge_mode: Some(Measured::reported(self.charge_mode)),
             power: Some(Measured::calculated(power)),
             controller_temperature: Some(Measured::reported(self.mosfet_temperature)),
-            pwm: Some(Measured::reported(self.hardware_pwm)),
+            pwm: cutout_core::TelemetryFieldUpdate::Set(Measured::reported(self.hardware_pwm)),
             distance: Some(Measured::reported(Distance::from_millimetres(
                 self.total_distance.as_millimetres(),
             ))),
@@ -1533,7 +1533,7 @@ mod tests {
         );
         assert_eq!(
             delta.pwm,
-            Some(Measured::reported(DutyCycle::from_permille(0)))
+            cutout_core::TelemetryFieldUpdate::Set(Measured::reported(DutyCycle::from_permille(0)))
         );
         assert_eq!(
             delta.distance,

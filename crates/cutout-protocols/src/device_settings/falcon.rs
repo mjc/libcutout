@@ -21,7 +21,7 @@ pub(super) fn binding(id: SettingId) -> Option<SettingBinding> {
         ),
         SettingId::BeeperVolumeLevel => (
             number(1, 9, 0, SettingUnit::Level),
-            SettingObservationBinding::None,
+            SettingObservationBinding::MatchingField(crate::BEGODE_FIELD_BEEPER_VOLUME),
             SettingEncoderBinding::Falcon,
         ),
         SettingId::PowerOffDelay => (
@@ -86,6 +86,12 @@ pub(super) fn normalize_readback(entry: SettingsEntry, observations: &mut Vec<Se
 
     let raw = entry.field.value;
     match entry.field.id {
+        crate::BEGODE_FIELD_BEEPER_VOLUME => super::readback::push(
+            observations,
+            entry,
+            SettingId::BeeperVolumeLevel,
+            semantic_value(SettingId::BeeperVolumeLevel, raw),
+        ),
         BEGODE_FIELD_POWER_OFF_TIMER_MINUTES => super::readback::push(
             observations,
             entry,

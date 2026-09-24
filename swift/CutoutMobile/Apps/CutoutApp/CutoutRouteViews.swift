@@ -82,10 +82,8 @@ struct DevicePickerRouteView: View {
         DevicePickerView(
             scanState: model.devicePickerScanState,
             connectionPhase: model.phase,
-            captureStatusText: model.captureStatusText,
-            hasSavedDevice: model.hasSavedDevice,
+            captureStatus: model.captureStatus,
             pair: pair,
-            forgetSavedDevice: model.forgetSavedDevice,
             probe: { row in model.startProbe(platformIdentifier: row.id) },
             recordOnly: { row, deviceKind in
                 guard model.recordOnly(platformIdentifier: row.id, deviceKind: deviceKind) else { return false }
@@ -104,6 +102,8 @@ struct DevicePickerRouteView: View {
                 } label: {
                     Label(localizedAppText("navigation.section.lighting"), systemImage: "lightbulb.2")
                         .frame(maxWidth: .infinity, minHeight: 44)
+                        .padding(.vertical, 6)
+                        .background(PevDashboardCardBackground(cornerRadius: 18))
                 }
                 .accessibilityIdentifier("device-picker.open-lighting")
                 Button {
@@ -111,10 +111,14 @@ struct DevicePickerRouteView: View {
                 } label: {
                     Label(localizedAppText("tab.map"), systemImage: "map")
                         .frame(maxWidth: .infinity, minHeight: 44)
+                        .padding(.vertical, 6)
+                        .background(PevDashboardCardBackground(cornerRadius: 18))
                 }
                 .accessibilityIdentifier("device-picker.open-map")
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.plain)
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(PevColors.yellow)
             .padding(.horizontal, 24)
             .padding(.bottom, 8)
         }

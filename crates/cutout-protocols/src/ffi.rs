@@ -1128,7 +1128,7 @@ mod tests {
     }
 
     #[test]
-    fn concrete_falcon_bms_summary_preserves_metadata_temperature_in_mobile_projection() {
+    fn concrete_falcon_does_not_project_placeholder_bms_temperature() {
         let mut session = new_begode_falcon_benign_control_session();
         session.ingest(&SessionInputDto::LinkUp {
             monotonic_ms: ms(1),
@@ -1156,7 +1156,8 @@ mod tests {
                 _ => None,
             });
 
-        assert_eq!(temperature, Some(25_000));
+        assert_eq!(temperature, None);
+        assert_eq!(session.current_snapshot().battery_temperature, None);
     }
 
     #[test]
