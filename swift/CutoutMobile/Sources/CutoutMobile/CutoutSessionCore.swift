@@ -553,6 +553,9 @@ public final class CutoutSessionCore: NSObject {
     private var pendingServiceDiscoveries = Set<CBUUID>()
     private var connectionGattInventory: [MobileGattFingerprintDto] = []
     private var suppressReconnect = false
+    private var isIngestingLiveNotification = false
+    private var deferredCaptureFailureMessage: String?
+    private var deferredCaptureFailureIsNotification = false
     private let reconnectController: ConnectionReconnectController
     private let reconnectJitter: () -> Double
     private struct CaptureWriterBinding {
@@ -2229,10 +2232,10 @@ public final class CutoutSessionCore: NSObject {
         case "notify":
             guard let serviceUuid = service.flatMap(BluetoothUuid.init(coreBluetoothUuid:)) else {
                 record("capture_error=notification_missing_service characteristic=\(characteristic.uuidString)")
-                setPhase(.failed(.notificationFailed("missing service UUID for \(characteristic.uuidString)")))
-                finishCaptureWriter(priorWriteSucceeded: false)
-                isRecordOnly = false
-                cancelFailedConnectionAttempt()
+                failCaptureWriter(
+                    message: "missing service UUID for \(characteristic.uuidString)",
+                    notificationFailure: true
+                )
                 return false
             }
             guard let builder = captureBuilder else { return true }
@@ -2356,14 +2359,51 @@ public final class CutoutSessionCore: NSObject {
     }
 
     private func failCaptureWrite() {
-        failConnectionCapture()
         let status = captureBuilder?.writerStatus()
         record("capture_error=writer_failed \(status?.lastError ?? "unknown")")
+        failCaptureWriter(message: "capture writer queue overrun")
+    }
+
+    private func failCaptureWriter(message: String, notificationFailure: Bool = false) {
+        if isIngestingLiveNotification {
+            deferredCaptureFailureMessage = message
+            deferredCaptureFailureIsNotification = notificationFailure
+            return
+        }
+        failConnectionCapture()
+        publishCaptureFailure()
+        setPhase(
+            .failed(
+                notificationFailure
+                    ? .notificationFailed(message)
+                    : .sessionFailed(message)
+            )
+        )
         if let generation = captureGeneration {
             _ = rustSessionState.captureWriterFailed(generation: generation.dto)
         }
-        publishCaptureProgress()
-        setPhase(.failed(.sessionFailed("capture writer queue overrun")))
+        finishCaptureWriter(priorWriteSucceeded: false)
+        isRecordOnly = false
+        cancelFailedConnectionAttempt()
+    }
+
+    private func finishDeferredCaptureFailure() {
+        guard let message = deferredCaptureFailureMessage else { return }
+        deferredCaptureFailureMessage = nil
+        let notificationFailure = deferredCaptureFailureIsNotification
+        deferredCaptureFailureIsNotification = false
+        failConnectionCapture()
+        if let generation = captureGeneration {
+            _ = rustSessionState.captureWriterFailed(generation: generation.dto)
+        }
+        publishCaptureFailure()
+        setPhase(
+            .failed(
+                notificationFailure
+                    ? .notificationFailed(message)
+                    : .sessionFailed(message)
+            )
+        )
         finishCaptureWriter(priorWriteSucceeded: false)
         isRecordOnly = false
         cancelFailedConnectionAttempt()
@@ -3005,6 +3045,11 @@ extension CutoutSessionCore: CBPeripheralDelegate {
         guard let liveOwner else {
             return
         }
+        isIngestingLiveNotification = true
+        defer {
+            isIngestingLiveNotification = false
+            finishDeferredCaptureFailure()
+        }
         do {
             let receivedAt = clock.now()
             let ingestStartedAt = receivedAt
@@ -3017,13 +3062,13 @@ extension CutoutSessionCore: CBPeripheralDelegate {
             let ingestMilliseconds = ingestFinishedAt.rawValue >= ingestStartedAt.rawValue
                 ? ingestFinishedAt.rawValue - ingestStartedAt.rawValue
                 : 0
-            guard captureFrame(
+            let captureAccepted = captureFrame(
                 direction: "notify",
                 characteristic: characteristic.uuid,
                 service: characteristic.service?.uuid,
                 bytes: value,
                 telemetry: step.actions.compactMap(\.rawTelemetry).last
-            ) else { return }
+            )
             record("notification=\(characteristic.uuid.uuidString) bytes=\(value.count)")
             captureNotificationCount += 1
             publishCaptureProgress()
@@ -3034,6 +3079,9 @@ extension CutoutSessionCore: CBPeripheralDelegate {
             record("notification_ingest_ms=\(ingestMilliseconds)")
             record("rust_decode_ms=\(ingestMilliseconds)")
             applyNotificationStep(step, receivedAt: receivedAt)
+            if !captureAccepted {
+                record("display_reduction_preserved_after_capture_failure=true")
+            }
         } catch {
             record("notification_ingest_error=\(error)")
             setPhase(.failed(.notificationIngestFailed(error.sessionMessage)))
