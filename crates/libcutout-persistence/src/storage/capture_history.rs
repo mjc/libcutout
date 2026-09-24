@@ -53,6 +53,8 @@ impl PevcapCaptureCursor {
 /// No file path is exposed: historical managed copies may no longer exist.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StoredPevcapCapture {
+    /// Finished-writer provenance, absent for externally imported captures.
+    pub recording: Option<super::RecordedCapture>,
     /// SHA-256 identity of the original byte stream.
     pub artifact_digest: String,
     /// Encoding of the retained original bytes.
@@ -116,7 +118,7 @@ pub(super) fn list(
     };
     let mut captures = Vec::with_capacity(count + 1);
     while let Some(row) = rows.next()? {
-        captures.push(read_capture(row)?);
+        captures.push(read_capture(connection, row)?);
     }
     let has_more = captures.len() > count;
     captures.truncate(count);
@@ -136,7 +138,10 @@ pub(super) fn list(
     })
 }
 
-fn read_capture(row: &Row<'_>) -> Result<StoredPevcapCapture, StorageError> {
+fn read_capture(
+    connection: &Connection,
+    row: &Row<'_>,
+) -> Result<StoredPevcapCapture, StorageError> {
     let artifact_digest: String = row.get(0)?;
     let imported_at_milliseconds = row.get(3)?;
     PevcapCaptureCursor::new(imported_at_milliseconds, &artifact_digest).map_err(|_| {
@@ -168,6 +173,7 @@ fn read_capture(row: &Row<'_>) -> Result<StoredPevcapCapture, StorageError> {
         })
         .transpose()?;
     Ok(StoredPevcapCapture {
+        recording: super::recorded_capture::lookup(connection, &artifact_digest)?,
         artifact_digest,
         encoding,
         artifact_size: row.get(2)?,

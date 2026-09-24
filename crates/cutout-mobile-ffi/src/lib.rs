@@ -5242,6 +5242,8 @@ pub struct MobilePevcapImportPreviewDto {
 /// Durable result of importing one PEVCAP artifact.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobilePevcapImportReceiptDto {
+    /// Recording provenance, absent for externally imported captures.
+    pub recording: Option<MobileRecordedCaptureDto>,
     /// Rust-created ride UUID, when route locations were present.
     pub ride_id: Option<MobileRideIdDto>,
     /// SHA-256 digest of the source artifact.
@@ -5338,6 +5340,12 @@ pub struct MobileMapPointPageDto {
 /// Stable error categories for the Rust-owned ride database boundary.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
 pub enum MobileRideDatabaseError {
+    /// The writer has not produced a successful durable completion receipt.
+    #[error("capture writer has not finished successfully")]
+    CaptureNotFinished,
+    /// Recording identity conflicts with retained capture provenance.
+    #[error("capture identity conflicts with retained provenance")]
+    CaptureIdentityConflict,
     /// The database path cannot be opened.
     #[error("invalid database path")]
     InvalidPath,
@@ -5430,6 +5438,9 @@ pub enum MobileRideDatabaseError {
 )]
 fn map_ride_database_error(error: persistence::StorageError) -> MobileRideDatabaseError {
     match error {
+        persistence::StorageError::CaptureIdentityConflict => {
+            MobileRideDatabaseError::CaptureIdentityConflict
+        }
         persistence::StorageError::InvalidPath => MobileRideDatabaseError::InvalidPath,
         persistence::StorageError::AlreadyOpenForDifferentPath => {
             MobileRideDatabaseError::AlreadyOpenForDifferentPath
@@ -5911,6 +5922,7 @@ fn mobile_pevcap_receipt(
     receipt: persistence::PevcapImportReceipt,
 ) -> MobilePevcapImportReceiptDto {
     MobilePevcapImportReceiptDto {
+        recording: receipt.recording.map(Into::into),
         ride_id: receipt.ride_id.map(mobile_ride_id),
         artifact_digest: receipt.artifact_digest,
         managed_artifact_path: receipt.managed_artifact_path.to_string_lossy().into_owned(),
@@ -17391,6 +17403,58 @@ mod tests {
         let builder = MobilePevcapCaptureBuilder::new(wc(1_700_000_000_000), "phone".into(), None);
         assert!(!builder.finish_writer());
         assert!(builder.completed_artifact().is_none());
+    }
+
+    #[test]
+    fn capture_publication_requires_consumed_writer_receipt() {
+        let _guard = RIDE_DATABASE_TEST_LOCK.lock().unwrap();
+        let directory = std::env::temp_dir().join(format!("cutout-publication-{}", Uuid::new_v4()));
+        fs::create_dir(&directory).unwrap();
+        let database =
+            open_ride_database(directory.join("ride.sqlite").to_string_lossy().into_owned())
+                .unwrap();
+        let builder = MobilePevcapCaptureBuilder::new(wc(1234), "wheel-a".into(), None);
+        let retain = || {
+            database.retain_finished_capture(
+                Arc::clone(&builder),
+                MobileCaptureOriginDto::Manual,
+                Some("GW-Falcon".into()),
+                wc(9999),
+            )
+        };
+        assert_eq!(retain(), Err(MobileRideDatabaseError::CaptureNotFinished));
+        let source = directory.join("capture.jsonl");
+        assert!(builder.start_writer(source.to_string_lossy().into_owned()));
+        assert!(builder.flush_writer());
+        assert_eq!(retain(), Err(MobileRideDatabaseError::CaptureNotFinished));
+        let failed = MobilePevcapCaptureBuilder::new(wc(1234), "wheel-b".into(), None);
+        assert!(!failed.start_writer(source.to_string_lossy().into_owned()));
+        assert_eq!(
+            database.retain_finished_capture(
+                failed,
+                MobileCaptureOriginDto::Manual,
+                None,
+                wc(9999)
+            ),
+            Err(MobileRideDatabaseError::CaptureNotFinished)
+        );
+        assert!(builder.finish_writer());
+        let receipt = retain().unwrap();
+        assert_eq!(receipt.ride_id, None);
+        assert!(source.exists());
+        fs::remove_file(source).unwrap();
+        fs::remove_file(&receipt.managed_artifact_path).unwrap();
+        assert!(retain().unwrap().duplicate);
+        let history = database.list_pevcap_captures(None, 1).unwrap();
+        let recording = history.captures[0].recording.as_ref().unwrap();
+        assert_eq!(receipt.recording.as_ref(), Some(recording));
+        assert_eq!(
+            recording.artifact_id,
+            builder.completed_artifact().unwrap().id
+        );
+        assert_eq!(recording.advertised_name.as_deref(), Some("GW-Falcon"));
+        database.shutdown().unwrap();
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]

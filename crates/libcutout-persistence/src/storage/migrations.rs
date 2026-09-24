@@ -1,7 +1,7 @@
 use super::{MapPointId, SpatialRowId, StorageError};
 use rusqlite::{Connection, OptionalExtension, params};
 
-pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 25;
+pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 26;
 const APPLICATION_ID: i64 = 0x4355_544f;
 
 fn current_schema_pragmas() -> String {
@@ -46,6 +46,7 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         22 => migrate_v22_to_current(connection)?,
         23 => migrate_v23_to_current(connection)?,
         24 => migrate_v24_to_current(connection)?,
+        25 => migrate_v25_to_current(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -300,6 +301,7 @@ pub(crate) fn create_current_schema(connection: &Connection) -> Result<(), Stora
     )?;
     connection.execute_batch(super::capture_data::SCHEMA)?;
     connection.execute_batch(super::capture_history::HISTORY_INDEX)?;
+    connection.execute_batch(super::recorded_capture::SCHEMA)?;
     Ok(())
 }
 
@@ -1174,6 +1176,14 @@ fn migrate_v23_to_current(connection: &mut Connection) -> Result<(), StorageErro
 fn migrate_v24_to_current(connection: &mut Connection) -> Result<(), StorageError> {
     let transaction = connection.transaction()?;
     transaction.execute_batch(super::capture_history::HISTORY_INDEX)?;
+    transaction.execute_batch("PRAGMA user_version = 25;")?;
+    transaction.commit()?;
+    migrate_v25_to_current(connection)
+}
+
+fn migrate_v25_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction()?;
+    transaction.execute_batch(super::recorded_capture::SCHEMA)?;
     transaction.execute_batch(&current_schema_pragmas())?;
     transaction.commit()?;
     Ok(())
@@ -1211,6 +1221,7 @@ pub(super) fn verify_current_schema(connection: &Connection) -> Result<(), Stora
         "pevcap_import_work",
         "pevcap_captures",
         "pevcap_capture_chunks",
+        "pevcap_recordings",
         "trails",
         "trail_segments",
         "trail_segment_spatial_keys",
