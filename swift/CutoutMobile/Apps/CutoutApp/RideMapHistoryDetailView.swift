@@ -101,9 +101,11 @@ struct RideMapHistoryDetailView: View {
         fallback: String
     ) -> String {
         let identity = associatedVehicle ?? candidateVehicle
-        return identity.flatMap(resolve)
-            .flatMap { $0.isEmpty ? nil : $0 }
-            ?? (identity == nil ? fallback : localizedAppText("ride_map.vehicle_name_unavailable"))
+        return RideMapMetricFormatting.vehicleLabel(
+            identity: identity,
+            resolve: resolve,
+            noIdentityFallback: fallback
+        )
     }
 
     static func averageSpeedText(

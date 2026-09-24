@@ -242,12 +242,14 @@ struct RideMapHistoryContentView: View {
         currentName: String?,
         resolve: (String) -> String?
     ) -> String {
-        resolve(identity)
-            .flatMap { $0.isEmpty ? nil : $0 }
-            ?? (identity == currentIdentity
-                ? currentName.flatMap { $0.isEmpty ? nil : $0 }
-                : nil)
-            ?? localizedAppText("ride_map.vehicle_name_unavailable")
+        RideMapMetricFormatting.vehicleLabel(
+            identity: identity,
+            resolve: { resolvedIdentity in
+                resolve(resolvedIdentity)
+                    ?? (resolvedIdentity == currentIdentity ? currentName : nil)
+            },
+            noIdentityFallback: localizedAppText("ride_map.vehicle_name_unavailable")
+        )
     }
 
     private func reloadHistory(for searchText: String) async {

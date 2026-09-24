@@ -2,6 +2,20 @@ import CutoutMobile
 import Foundation
 
 enum RideMapMetricFormatting {
+    @MainActor
+    static func vehicleLabel(
+        identity: String?,
+        resolve: (String) -> String?,
+        noIdentityFallback: String
+    ) -> String {
+        guard let identity else {
+            return noIdentityFallback
+        }
+        return resolve(identity)
+            .flatMap { $0.isEmpty ? nil : $0 }
+            ?? localizedAppText("ride_map.vehicle_name_unavailable")
+    }
+
     static func distanceText(for summary: MobileRideMapSummaryDto) -> String {
         Measurement(value: summary.distanceMeters, unit: UnitLength.meters)
             .formatted(.measurement(width: .abbreviated, usage: .road))

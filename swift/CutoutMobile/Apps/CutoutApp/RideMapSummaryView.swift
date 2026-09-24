@@ -50,9 +50,11 @@ struct RideMapSummaryView: View {
 
     @MainActor
     static func vehicleLabel(for identity: String?) -> String {
-        identity == nil
-            ? localizedAppText("ride_map.gps_only")
-            : localizedAppText("ride_map.vehicle_name_unavailable")
+        RideMapMetricFormatting.vehicleLabel(
+            identity: identity,
+            resolve: { _ in nil },
+            noIdentityFallback: localizedAppText("ride_map.gps_only")
+        )
     }
 
     var body: some View {

@@ -119,6 +119,33 @@ final class RideMapPresentationTests: XCTestCase {
         XCTAssertEqual(RideMapHistoryListView.pointCountText(2), "2 points")
     }
 
+    func testRideMapVehicleLabelProjectionKeepsIdentityFallbackPolicy() {
+        XCTAssertEqual(
+            RideMapMetricFormatting.vehicleLabel(
+                identity: nil,
+                resolve: { _ in "ignored" },
+                noIdentityFallback: "GPS-only"
+            ),
+            "GPS-only"
+        )
+        XCTAssertEqual(
+            RideMapMetricFormatting.vehicleLabel(
+                identity: "vehicle",
+                resolve: { _ in "" },
+                noIdentityFallback: "GPS-only"
+            ),
+            localizedAppText("ride_map.vehicle_name_unavailable")
+        )
+        XCTAssertEqual(
+            RideMapMetricFormatting.vehicleLabel(
+                identity: "vehicle",
+                resolve: { _ in "Floatwheel" },
+                noIdentityFallback: "GPS-only"
+            ),
+            "Floatwheel"
+        )
+    }
+
     func testRideMapMetricFormattingKeepsSharedProjectionContracts() {
         let summary = MobileRideMapSummaryDto(
             pointCount: 2,
