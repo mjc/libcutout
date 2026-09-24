@@ -77,3 +77,45 @@ impl TimestampRange {
         }
     }
 }
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct PevcapUsage {
+    record_count: u64,
+    record_times: TimestampRange,
+    location_count: u64,
+    location_times: TimestampRange,
+}
+
+impl PevcapUsage {
+    pub(crate) fn include_record(&mut self, timestamp: u64, has_phone_location: bool) {
+        self.record_count = self.record_count.saturating_add(1);
+        self.record_times.include(timestamp);
+        if has_phone_location {
+            self.include_location(timestamp);
+        }
+    }
+
+    pub(crate) fn include_location(&mut self, timestamp: u64) {
+        self.location_count = self.location_count.saturating_add(1);
+        self.location_times.include(timestamp);
+    }
+
+    pub(crate) const fn record_count(self) -> u64 {
+        self.record_count
+    }
+
+    pub(crate) fn check(self, limits: PevcapLimits) -> Result<u64, LimitExceeded> {
+        limits.check_records(self.record_count)?;
+        let record_duration = self.record_times.duration_milliseconds();
+        let location_duration = self.location_times.duration_milliseconds();
+        limits.check_duration(record_duration)?;
+        limits.check_duration(location_duration)?;
+        let duration = if self.location_count == 0 {
+            record_duration
+        } else {
+            location_duration
+        };
+        limits.check_duration(duration)?;
+        Ok(duration)
+    }
+}

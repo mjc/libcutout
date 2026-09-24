@@ -1,7 +1,7 @@
 //! Bounded PEVCAP file writer and durable completion evidence.
 //! This is the existing streaming writer, independent of any mobile binding or UI.
 
-use crate::pevcap_limits::{LimitExceeded, PevcapLimits, TimestampRange};
+use crate::pevcap_limits::{LimitExceeded, PevcapLimits, PevcapUsage};
 use cutout_core::{
     CaptureLabelState, GattChannel, GattFingerprint, PEVCAP_CAPTURE_LABEL_ANNOTATION_KEY,
     PevcapHeader, PevcapLocationSample, PevcapMusicEvent, PevcapRecord, PevcapResolvedIdentity,
@@ -230,10 +230,7 @@ struct CaptureLimitUsage<'a> {
     limits: PevcapLimits,
     header_bytes: u64,
     event_bytes: u64,
-    record_count: u64,
-    location_count: u64,
-    record_times: TimestampRange,
-    location_times: TimestampRange,
+    pevcap_usage: PevcapUsage,
 }
 
 impl<'a> CaptureLimitUsage<'a> {
@@ -243,10 +240,7 @@ impl<'a> CaptureLimitUsage<'a> {
             limits,
             header_bytes,
             event_bytes: 0,
-            record_count: 0,
-            location_count: 0,
-            record_times: TimestampRange::default(),
-            location_times: TimestampRange::default(),
+            pevcap_usage: PevcapUsage::default(),
         }
     }
 
@@ -263,42 +257,22 @@ impl<'a> CaptureLimitUsage<'a> {
     fn admit_event(
         &mut self,
         line_bytes: u64,
-        record_at: Option<u64>,
+        record_at: Option<(u64, bool)>,
         location_at: Option<u64>,
     ) -> Result<(), LimitExceeded> {
         let event_bytes = self.event_bytes.saturating_add(line_bytes);
         self.limits
             .check_artifact_bytes(self.header_bytes.saturating_add(event_bytes))?;
-        let record_count = self
-            .record_count
-            .saturating_add(u64::from(record_at.is_some()));
-        self.limits.check_records(record_count)?;
-        let mut record_times = self.record_times;
-        if let Some(timestamp) = record_at {
-            record_times.include(timestamp);
+        let mut pevcap_usage = self.pevcap_usage;
+        if let Some((timestamp, has_phone_location)) = record_at {
+            pevcap_usage.include_record(timestamp, has_phone_location);
         }
-        let mut location_times = self.location_times;
         if let Some(timestamp) = location_at {
-            location_times.include(timestamp);
+            pevcap_usage.include_location(timestamp);
         }
-        let location_count = self
-            .location_count
-            .saturating_add(u64::from(location_at.is_some()));
-        let duration = if location_count > 0 {
-            location_times.duration_milliseconds()
-        } else {
-            record_times.duration_milliseconds()
-        };
-        self.limits.check_duration(duration)?;
-        self.limits
-            .check_duration(record_times.duration_milliseconds())?;
-        self.limits
-            .check_duration(location_times.duration_milliseconds())?;
+        pevcap_usage.check(self.limits)?;
         self.event_bytes = event_bytes;
-        self.record_count = record_count;
-        self.location_count = location_count;
-        self.record_times = record_times;
-        self.location_times = location_times;
+        self.pevcap_usage = pevcap_usage;
         Ok(())
     }
 
@@ -674,7 +648,10 @@ fn write_capture_stream(
                     .ok_or_else(|| "capture record slot was empty".to_string())?;
                 Some((
                     record.to_jsonl_line().map_err(|error| error.to_string())?,
-                    Some(record.monotonic_ms.as_milliseconds()),
+                    Some((
+                        record.monotonic_ms.as_milliseconds(),
+                        record.phone_location.is_some(),
+                    )),
                     None,
                 ))
             }
@@ -740,10 +717,19 @@ fn flush_capture_barrier(
     usage: &mut CaptureLimitUsage<'_>,
     kind: CaptureBarrier,
 ) -> Result<(), String> {
-    if kind == CaptureBarrier::Finish {
-        close_pending_capture_labels(header, pending_metadata)?;
-    }
-    if rewrite_pending_capture_metadata(path, writer, header, pending_metadata, usage)? {
+    let closing_labels = if kind == CaptureBarrier::Finish {
+        close_pending_capture_labels(header, pending_metadata)?
+    } else {
+        false
+    };
+    if rewrite_pending_capture_metadata(
+        path,
+        writer,
+        header,
+        pending_metadata,
+        usage,
+        closing_labels,
+    )? {
         *flush = CaptureFlushState::default();
         Ok(())
     } else {
@@ -781,6 +767,7 @@ fn rewrite_pending_capture_metadata(
     header: &mut PevcapHeader,
     pending_metadata: &mut Option<CaptureMetadata>,
     usage: &mut CaptureLimitUsage<'_>,
+    closing_labels: bool,
 ) -> Result<bool, String> {
     let Some(metadata) = pending_metadata.take() else {
         return Ok(false);
@@ -798,6 +785,12 @@ fn rewrite_pending_capture_metadata(
         .saturating_add(1);
     let header_bytes = u64::try_from(header_bytes).unwrap_or(u64::MAX);
     if let Err(error) = usage.replace_header(header_bytes) {
+        if closing_labels {
+            return Err(format!(
+                "final capture metadata exceeds {} limit: {} > {}",
+                error.resource, error.actual, error.limit
+            ));
+        }
         usage.stop_at_limit(error);
         return Ok(false);
     }
@@ -813,7 +806,7 @@ fn rewrite_pending_capture_metadata(
 fn close_pending_capture_labels(
     header: &PevcapHeader,
     pending_metadata: &mut Option<CaptureMetadata>,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     let annotations = pending_metadata
         .as_ref()
         .map_or(header.annotations.as_slice(), |metadata| {
@@ -821,7 +814,7 @@ fn close_pending_capture_labels(
         });
     let mut labels = CaptureLabelState::from_annotations(annotations.iter().map(String::as_str));
     if labels.active().is_empty() {
-        return Ok(());
+        return Ok(false);
     }
     if annotations.len() + labels.active().len() > cutout_core::PEVCAP_MAX_ANNOTATIONS {
         return Err("capture annotation capacity cannot retain closing label boundaries".into());
@@ -838,7 +831,7 @@ fn close_pending_capture_labels(
             boundary.annotation_value()
         )
     }));
-    Ok(())
+    Ok(true)
 }
 
 fn write_line(writer: &mut BufWriter<File>, line: &str) -> Result<usize, String> {
@@ -975,6 +968,39 @@ mod tests {
         .unwrap();
         let result = writer.finish();
         assert!(result.unwrap_err().contains("closing label boundaries"));
+        assert!(path.exists(), "failed artifact remains recoverable");
+    }
+
+    #[test]
+    fn finish_fails_when_closing_labels_exceed_the_artifact_byte_limit() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("capture.jsonl");
+        let metadata = CaptureMetadata {
+            advertised_services: vec![],
+            gatt_fingerprints: vec![],
+            resolved_identity: None,
+            annotations: vec!["capture_label=ride_start".into()],
+        };
+        let header =
+            capture_header(WallClockUnixTimestamp::new(0), "test", None, &metadata).unwrap();
+        let header_bytes = u64::try_from(header.to_jsonl_line().unwrap().len() + 1).unwrap();
+        let writer = CaptureWriter::start_with_limits(
+            path.clone(),
+            WallClockUnixTimestamp::new(0),
+            "test",
+            None,
+            &metadata,
+            PevcapLimits {
+                artifact_bytes: header_bytes,
+                records: 10,
+                duration_milliseconds: 10,
+            },
+        )
+        .unwrap();
+
+        let error = writer.finish().unwrap_err();
+
+        assert!(error.contains("artifact bytes limit"));
         assert!(path.exists(), "failed artifact remains recoverable");
     }
 

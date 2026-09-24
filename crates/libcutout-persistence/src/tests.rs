@@ -2420,6 +2420,55 @@ fn capture_writer_stops_before_its_recording_exceeds_the_retention_duration() {
 }
 
 #[test]
+fn capture_writer_counts_record_attached_locations_in_retention_duration() {
+    let _guard = test_guard();
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("recording.jsonl");
+    let writer = crate::CaptureWriter::start(
+        source.clone(),
+        WallClockUnixTimestamp::new(1234),
+        "wheel-a",
+        None,
+        &crate::CaptureMetadata {
+            advertised_services: vec![],
+            gatt_fingerprints: vec![],
+            resolved_identity: None,
+            annotations: vec![],
+        },
+    )
+    .unwrap();
+    let attached_location = pevcap_phone_location(0, 40.0, Some(3.0));
+    assert!(
+        writer.try_send_record(
+            PevcapRecord::link_up(MonotonicTimestamp::new(0), None)
+                .with_phone_location(attached_location)
+        )
+    );
+    let location = |monotonic_ms| {
+        PevcapLocationSample::new(
+            MonotonicTimestamp::new(monotonic_ms),
+            pevcap_phone_location(monotonic_ms, 40.0, Some(3.0)),
+            None,
+            None,
+        )
+        .unwrap()
+    };
+    assert!(writer.record_location(location(10_000)));
+    assert!(writer.record_location(location(24 * 60 * 60 * 1_000 + 5_000)));
+
+    let artifact = writer.finish().unwrap();
+    assert_eq!(artifact.status().dropped_messages, 1);
+
+    let database = RideDatabase::open(&directory.path().join("ride.sqlite")).unwrap();
+    assert!(
+        database
+            .preflight_pevcap(&source, PevcapEncoding::Jsonl)
+            .is_ok()
+    );
+    database.shutdown().unwrap();
+}
+
+#[test]
 fn recording_publication_rolls_back_and_reconciles_lost_reply() {
     let _guard = test_guard();
     let directory = tempfile::tempdir().unwrap();

@@ -1,4 +1,4 @@
-use crate::pevcap_limits::{LimitExceeded, PevcapLimits, TimestampRange, check_limit};
+use crate::pevcap_limits::{LimitExceeded, PevcapLimits, PevcapUsage, check_limit};
 use cutout_core::{PevcapEncoding, PevcapEvent, PevcapPhoneLocation, PevcapReader};
 use cutout_music::{
     MusicEventTiming, MusicHistoryPolicy, MusicHistoryState, MusicProvider, MusicRideEvent,
@@ -4869,36 +4869,28 @@ fn preflight_pevcap(
     let file = File::open(&path)?;
     let mut reader = PevcapReader::new(BufReader::new(file), encoding)
         .map_err(|error| StorageError::PevcapImport(error.to_string()))?;
-    let mut record_count = 0_u64;
-    let mut record_times = TimestampRange::default();
+    let mut pevcap_usage = PevcapUsage::default();
     while let Some(event) = reader
         .next_event()
         .map_err(|error| StorageError::PevcapImport(error.to_string()))?
     {
         if let PevcapEvent::Record(record) = event {
-            record_count = record_count.saturating_add(1);
-            check_limit_result(PevcapLimits::DEFAULT.check_records(record_count))?;
-            record_times.include(record.monotonic_ms.as_milliseconds());
+            pevcap_usage.include_record(
+                record.monotonic_ms.as_milliseconds(),
+                record.phone_location.is_some(),
+            );
+            check_limit_result(pevcap_usage.check(PevcapLimits::DEFAULT))?;
         }
     }
-    let mut location_times = TimestampRange::default();
     let location_count = stream_pevcap_location_batches(&path, encoding, |samples| {
         for point in &samples {
             let milliseconds = point.sample.monotonic_milliseconds().as_u64();
-            location_times.include(milliseconds);
+            pevcap_usage.include_location(milliseconds);
         }
         Ok(u64::try_from(samples.len()).unwrap_or(u64::MAX))
     })?;
-    let duration_milliseconds = if location_count == 0 {
-        record_times.duration_milliseconds()
-    } else {
-        location_times.duration_milliseconds()
-    };
-    check_limit_result(PevcapLimits::DEFAULT.check_duration(duration_milliseconds))?;
-    check_limit_result(PevcapLimits::DEFAULT.check_duration(record_times.duration_milliseconds()))?;
-    check_limit_result(
-        PevcapLimits::DEFAULT.check_duration(location_times.duration_milliseconds()),
-    )?;
+    let duration_milliseconds = check_limit_result(pevcap_usage.check(PevcapLimits::DEFAULT))?;
+    let record_count = pevcap_usage.record_count();
     let outcome = if location_count == 0 {
         PevcapImportOutcome::CaptureOnly
     } else {
@@ -4922,7 +4914,7 @@ fn preflight_pevcap(
     })
 }
 
-fn check_limit_result(result: Result<(), LimitExceeded>) -> Result<(), StorageError> {
+fn check_limit_result<T>(result: Result<T, LimitExceeded>) -> Result<T, StorageError> {
     result.map_err(|error| StorageError::PevcapLimitExceeded {
         resource: error.resource,
         limit: error.limit,
