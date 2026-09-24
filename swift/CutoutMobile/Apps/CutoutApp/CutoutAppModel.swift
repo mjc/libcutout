@@ -589,12 +589,6 @@ final class CutoutAppModel {
             rideMapState: core.rideMapStateHandle,
             lifecycle: musicProviderLifecycle
         )
-        self.rideHistory.onSelectionRequired = { [weak self] requestedRideID, error in
-            self?.applyRideHistoryQueryResult(
-                requestedRideID: requestedRideID,
-                error: error
-            )
-        }
         self.rideHistory.onPageUpdated = { [weak self] in
             self?.applyRideHistoryPageResult()
         }
@@ -1490,21 +1484,6 @@ final class CutoutAppModel {
 
     private func prepareRideHistoryQuery() {
         rideHistory.prepareForReload()
-    }
-
-    private func applyRideHistoryQueryResult(
-        requestedRideID: String?,
-        error: MobileRideMapError?
-    ) {
-        rideMapVehicleNameCache.merge(
-            rideHistory.vehicleNames,
-            uniquingKeysWith: { _, incoming in incoming }
-        )
-        rideHistory.applyQueryResult(
-            requestedRideID: requestedRideID,
-            selectionError: error,
-            currentSelectedRideID: selectedRideMapHistoryID
-        )
     }
 
     private func applyRideHistoryPageResult() {

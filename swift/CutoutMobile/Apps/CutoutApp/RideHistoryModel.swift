@@ -78,7 +78,6 @@ final class RideHistoryModel {
     private(set) var detailRouteLoading = false
     private(set) var selectedRideID: String?
 
-    var onSelectionRequired: ((String?, MobileRideMapError?) -> Void)?
     var onPageUpdated: (() -> Void)?
 
     var filter: MobileRideHistoryFilterDto {
@@ -116,8 +115,7 @@ final class RideHistoryModel {
 
     func applyQueryResult(
         requestedRideID: String?,
-        selectionError: MobileRideMapError?,
-        currentSelectedRideID: String?
+        selectionError: MobileRideMapError?
     ) {
         if let selectionError, requestedRideID == nil {
             applyLoadFailure(selectionError)
@@ -125,7 +123,7 @@ final class RideHistoryModel {
         }
         guard let selectedRideID = CutoutAppModel.preferredHistorySelection(
             requestedID: requestedRideID,
-            currentID: currentSelectedRideID,
+            currentID: self.selectedRideID,
             summaries: rides
         ) else {
             self.selectedRideID = nil
@@ -525,7 +523,6 @@ final class RideHistoryModel {
         guard let state = stateProvider() else {
             finishLoad(
                 generation: generation,
-                requestedRideID: requestedRideID,
                 error: .storageError("Rust ride database is unavailable")
             )
             return
@@ -567,9 +564,13 @@ final class RideHistoryModel {
                 self.cursor = result.1
                 self.canLoadMore = result.1 != nil
                 self.error = nil
-                self.onSelectionRequired?(
-                    requestedRideID,
-                    Self.selectionError(requestedID: requestedRideID, summaries: result.0)
+                self.onPageUpdated?()
+                self.applyQueryResult(
+                    requestedRideID: requestedRideID,
+                    selectionError: Self.selectionError(
+                        requestedID: requestedRideID,
+                        summaries: result.0
+                    )
                 )
             } catch {
                 guard let self,
@@ -577,7 +578,6 @@ final class RideHistoryModel {
                 else { return }
                 self.finishLoad(
                     generation: generation,
-                    requestedRideID: requestedRideID,
                     error: Self.mapError(error)
                 )
             }
@@ -655,14 +655,13 @@ final class RideHistoryModel {
 
     private func finishLoad(
         generation: UInt64,
-        requestedRideID: String?,
         error: MobileRideMapError
     ) {
         guard accepts(generation: generation, isCancelled: false) else { return }
         loadTask = nil
         isLoading = false
         self.error = error
-        onSelectionRequired?(nil, error)
+        applyLoadFailure(error)
     }
 
     private func accepts(generation: UInt64, isCancelled: Bool) -> Bool {
