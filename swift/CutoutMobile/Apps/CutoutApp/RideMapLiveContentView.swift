@@ -284,9 +284,11 @@ private struct RideMapLiveStatusView: View {
     }
 
     private var recordingPillText: String {
-        let source = snapshot?.associatedVehicle == nil
-            ? localizedAppText("ride_map.gps_only")
-            : vehicleName ?? localizedAppText("ride_map.vehicle_name_unavailable")
+        let source = RideMapMetricFormatting.vehicleLabel(
+            identity: snapshot?.associatedVehicle,
+            resolve: { _ in vehicleName },
+            noIdentityFallback: localizedAppText("ride_map.gps_only")
+        )
         return "\(localizedAppText("ride_map.status.recording")) · \(source)"
     }
 }
