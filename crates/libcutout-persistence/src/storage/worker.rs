@@ -63,6 +63,13 @@ impl DatabaseWorker<'_> {
         let spatial_schema = &mut self.spatial_schema;
         let worker_alive = self.worker_alive;
         match command {
+            Command::ListPevcapCaptures {
+                cursor,
+                limit,
+                reply,
+            } => {
+                let _ = reply.send(super::capture_history::list(connection, cursor, limit));
+            }
             Command::BeginCaptureData {
                 digest,
                 encoding,
