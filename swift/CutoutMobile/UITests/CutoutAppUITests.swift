@@ -640,16 +640,13 @@ final class CutoutAppUITests: XCTestCase {
         let screen = app.descendants(matching: .any)["capture.screen"]
         let hardPedals = app.buttons["capture.label.pedals_hard.action"]
         let softPedals = app.buttons["capture.label.pedals_soft.action"]
+        let finish = app.buttons["capture.stop"]
 
-        for _ in 0..<6 where !hardPedals.isHittable {
-            screen.swipeUp()
-        }
-        XCTAssertTrue(hardPedals.isHittable)
-        XCTAssertTrue(softPedals.isHittable)
-
+        scrollElementFrameIntoViewport(hardPedals, in: screen, maxScrolls: 8, occludedBy: finish)
         hardPedals.tap()
         XCTAssertEqual(hardPedals.label, "Stop Pedals hard")
 
+        scrollElementFrameIntoViewport(softPedals, in: screen, maxScrolls: 8, occludedBy: finish)
         softPedals.tap()
         XCTAssertEqual(hardPedals.label, "Start Pedals hard")
         XCTAssertEqual(softPedals.label, "Stop Pedals soft")
