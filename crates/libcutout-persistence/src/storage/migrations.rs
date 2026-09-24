@@ -1,7 +1,7 @@
 use super::{MapPointId, SpatialRowId, StorageError};
 use rusqlite::{Connection, OptionalExtension, params};
 
-pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 24;
+pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 25;
 const APPLICATION_ID: i64 = 0x4355_544f;
 
 fn current_schema_pragmas() -> String {
@@ -45,6 +45,7 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         21 => migrate_v21_to_current(connection)?,
         22 => migrate_v22_to_current(connection)?,
         23 => migrate_v23_to_current(connection)?,
+        24 => migrate_v24_to_current(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -298,6 +299,7 @@ pub(crate) fn create_current_schema(connection: &Connection) -> Result<(), Stora
         ",
     )?;
     connection.execute_batch(super::capture_data::SCHEMA)?;
+    connection.execute_batch(super::capture_history::HISTORY_INDEX)?;
     Ok(())
 }
 
@@ -1150,9 +1152,9 @@ fn migrate_v22_to_current(connection: &mut Connection) -> Result<(), StorageErro
              pwm_duty_percent INTEGER NOT NULL CHECK (pwm_duty_percent BETWEEN 1 AND 100)
          );",
     )?;
-    transaction.execute_batch(&current_schema_pragmas())?;
+    transaction.execute_batch("PRAGMA user_version = 24;")?;
     transaction.commit()?;
-    Ok(())
+    migrate_v24_to_current(connection)
 }
 
 fn migrate_v23_to_current(connection: &mut Connection) -> Result<(), StorageError> {
@@ -1164,6 +1166,14 @@ fn migrate_v23_to_current(connection: &mut Connection) -> Result<(), StorageErro
              pwm_duty_percent INTEGER NOT NULL CHECK (pwm_duty_percent BETWEEN 1 AND 100)
          );",
     )?;
+    transaction.execute_batch("PRAGMA user_version = 24;")?;
+    transaction.commit()?;
+    migrate_v24_to_current(connection)
+}
+
+fn migrate_v24_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction()?;
+    transaction.execute_batch(super::capture_history::HISTORY_INDEX)?;
     transaction.execute_batch(&current_schema_pragmas())?;
     transaction.commit()?;
     Ok(())

@@ -31,6 +31,8 @@ use thiserror::Error;
 use uuid::Uuid;
 
 mod capture_data;
+mod capture_history;
+pub use capture_history::{PevcapCaptureCursor, PevcapCapturePage, StoredPevcapCapture};
 mod migrations;
 mod ride_write;
 mod service;
@@ -1382,6 +1384,9 @@ pub enum StorageError {
     /// A growing query was not bounded by a supported limit.
     #[error("invalid query limit {0}; expected 1..={MAX_QUERY_LIMIT}")]
     InvalidQueryLimit(u32),
+    /// A capture-history cursor has an invalid digest or unrepresentable import timestamp.
+    #[error("invalid PEVCAP capture history cursor")]
+    InvalidPevcapCaptureCursor,
     /// A history context budget exceeded one of the Rust-owned limits.
     #[error("invalid history context budget for {field}: {value}")]
     InvalidHistoryContextBudget {
@@ -2805,6 +2810,27 @@ impl RideDatabase {
         })
     }
 
+    /// Lists published SQLite-backed captures in descending import-time/digest order.
+    ///
+    /// This includes captures without GPS or a ride. Staged bytes and legacy file-only
+    /// receipts are excluded. Reading history never opens an external capture file.
+    /// Cursors do not freeze a snapshot: newly imported entries ahead of a cursor appear
+    /// when the first page is refreshed, not while continuing an older page.
+    ///
+    /// # Errors
+    /// Returns [`StorageError`] when the worker or stored metadata cannot be read.
+    pub fn list_pevcap_captures(
+        &self,
+        cursor: Option<PevcapCaptureCursor>,
+        limit: QueryLimit,
+    ) -> Result<PevcapCapturePage, StorageError> {
+        self.request(|reply| Command::ListPevcapCaptures {
+            cursor,
+            limit,
+            reply,
+        })
+    }
+
     /// Creates an empty canonical trail definition.
     ///
     /// # Errors
@@ -3516,6 +3542,11 @@ struct ManagedArtifact {
 }
 
 enum Command {
+    ListPevcapCaptures {
+        cursor: Option<PevcapCaptureCursor>,
+        limit: QueryLimit,
+        reply: Reply<PevcapCapturePage>,
+    },
     BeginCaptureData {
         digest: String,
         encoding: PevcapEncoding,

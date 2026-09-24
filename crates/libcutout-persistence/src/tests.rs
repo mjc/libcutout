@@ -164,7 +164,7 @@ fn pre_music_v16_migration_preserves_existing_capture_tables() {
         connection
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        24
+        crate::storage::CURRENT_SCHEMA_VERSION
     );
     for table in ["pevcap_captures", "pevcap_capture_chunks"] {
         assert!(
@@ -2295,6 +2295,113 @@ fn malformed_pevcap_import_does_not_publish_an_orphan_ride() {
 }
 
 #[test]
+fn stored_capture_history_index_is_identical_after_schema_24_migration() {
+    let _guard = test_guard();
+    let directory =
+        std::env::temp_dir().join(format!("cutout-history-migration-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir(&directory).unwrap();
+    let path = directory.join("ride.sqlite");
+    RideDatabase::open(&path).unwrap().shutdown().unwrap();
+    let connection = Connection::open(&path).unwrap();
+    let fresh_sql: String = connection
+        .query_row(
+            "SELECT sql FROM sqlite_schema WHERE name = 'pevcap_imports_history'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("fresh schema has the capture history index");
+    connection
+        .execute_batch("DROP INDEX pevcap_imports_history; PRAGMA user_version = 24;")
+        .unwrap();
+    drop(connection);
+    RideDatabase::open(&path).unwrap().shutdown().unwrap();
+    let connection = Connection::open(&path).unwrap();
+    let migrated_sql: String = connection
+        .query_row(
+            "SELECT sql FROM sqlite_schema WHERE name = 'pevcap_imports_history'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("migration adds the capture history index");
+    assert_eq!(fresh_sql, migrated_sql);
+    let version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, crate::storage::CURRENT_SCHEMA_VERSION);
+    drop(connection);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn stored_capture_history_survives_restart_and_missing_files() {
+    let _guard = test_guard();
+    let directory = std::env::temp_dir().join(format!("cutout-history-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir(&directory).unwrap();
+    let path = directory.join("ride.sqlite");
+    let source = directory.join("source.pevcap");
+    let database = RideDatabase::open(&path).unwrap();
+    let mut expected = Vec::new();
+    for (ordinal, encoding) in [PevcapEncoding::Jsonl, PevcapEncoding::Binary]
+        .into_iter()
+        .enumerate()
+    {
+        let record = if ordinal == 0 {
+            PevcapRecord::link_up(MonotonicTimestamp::new(1), None)
+        } else {
+            pevcap_location_record(1, 40.0, Some(3.0))
+        };
+        let bytes = PevcapCapture::new(pevcap_header(), vec![record])
+            .encode(encoding)
+            .unwrap();
+        std::fs::write(&source, &bytes).unwrap();
+        let preview = database.preflight_pevcap(&source, encoding).unwrap();
+        let receipt = database.confirm_pevcap_import(&preview, 1234).unwrap();
+        expected.push((receipt.artifact_digest, encoding, bytes, receipt.ride_id));
+        std::fs::remove_file(receipt.managed_artifact_path).unwrap();
+    }
+    std::fs::remove_file(&source).unwrap();
+    database.shutdown().unwrap();
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch("DROP INDEX pevcap_imports_history; PRAGMA user_version = 24;")
+        .unwrap();
+    drop(connection);
+    let database = RideDatabase::open(&path).unwrap();
+    expected.sort_by(|left, right| right.0.cmp(&left.0));
+    let mut cursor = None;
+    for (index, (digest, encoding, bytes, ride_id)) in expected.into_iter().enumerate() {
+        let page = database
+            .list_pevcap_captures(cursor, QueryLimit::new(1).unwrap())
+            .unwrap();
+        assert_eq!(page.captures.len(), 1);
+        let capture = &page.captures[0];
+        assert_eq!(capture.artifact_digest, digest);
+        assert_eq!(capture.encoding, encoding);
+        assert_eq!(capture.imported_at_milliseconds, 1234);
+        assert_eq!(capture.artifact_size, u64::try_from(bytes.len()).unwrap());
+        assert_eq!(capture.record_count, 1);
+        assert_eq!(capture.ride_id, ride_id);
+        assert_eq!(capture.location_count, u64::from(ride_id.is_some()));
+        assert_eq!(
+            database.pevcap_capture_chunk(&digest, 0).unwrap(),
+            Some(bytes)
+        );
+        assert_eq!(page.next_cursor.is_some(), index == 0);
+        cursor = page.next_cursor;
+    }
+    assert_eq!(
+        database
+            .list_rides(None, QueryLimit::new(10).unwrap())
+            .unwrap()
+            .rides()
+            .len(),
+        1
+    );
+    database.shutdown().unwrap();
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
 fn capture_only_bytes_survive_without_external_files() {
     let _guard = test_guard();
     for encoding in [PevcapEncoding::Jsonl, PevcapEncoding::Binary] {
@@ -2989,7 +3096,7 @@ fn legacy_schema_versions_migrate_to_the_current_schema() {
         let current_version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(current_version, 24);
+        assert_eq!(current_version, crate::storage::CURRENT_SCHEMA_VERSION);
         let music_tables: i64 = connection
             .query_row(
                 "SELECT COUNT(*) FROM sqlite_schema
@@ -3329,7 +3436,7 @@ fn version_20_database_with_v21_bms_shape_runs_the_remaining_migrations() {
         connection
             .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
             .unwrap(),
-        24
+        crate::storage::CURRENT_SCHEMA_VERSION
     );
     assert!(
         connection

@@ -18,6 +18,8 @@ mod capture_labels;
 pub use capture_labels::*;
 mod capture_lifecycle;
 pub use capture_lifecycle::*;
+mod capture_history;
+pub use capture_history::*;
 
 use std::{
     collections::VecDeque,
@@ -5357,6 +5359,9 @@ pub enum MobileRideDatabaseError {
     /// A growing query was not bounded by a supported limit.
     #[error("invalid query limit")]
     InvalidQueryLimit,
+    /// The capture-history cursor has a malformed digest or timestamp.
+    #[error("invalid PEVCAP capture history cursor")]
+    InvalidPevcapCaptureCursor,
     /// Geographic query bounds were non-finite, out of range, or reversed.
     #[error("invalid geographic bounds")]
     InvalidGeographicBounds,
@@ -5440,6 +5445,9 @@ fn map_ride_database_error(error: persistence::StorageError) -> MobileRideDataba
         }
         persistence::StorageError::InvalidQueryLimit(_) => {
             MobileRideDatabaseError::InvalidQueryLimit
+        }
+        persistence::StorageError::InvalidPevcapCaptureCursor => {
+            MobileRideDatabaseError::InvalidPevcapCaptureCursor
         }
         persistence::StorageError::InvalidGeographicBounds => {
             MobileRideDatabaseError::InvalidGeographicBounds
@@ -18111,6 +18119,82 @@ mod tests {
         let _ = fs::remove_dir(managed_path.parent().unwrap());
         let _ = fs::remove_file(database_path);
         let _ = fs::remove_file(artifact_path);
+    }
+
+    #[test]
+    fn mobile_capture_history_survives_reopen_and_checks_bounds() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let directory =
+            std::env::temp_dir().join(format!("cutout-mobile-history-{}", Uuid::new_v4()));
+        fs::create_dir(&directory).unwrap();
+        let path = directory.join("ride.sqlite").to_string_lossy().into_owned();
+        let source = directory.join("source.jsonl");
+        let header = PevcapHeader::new(
+            WallClockUnixTimestamp::new(123),
+            "darwin",
+            None,
+            &[],
+            &[],
+            None,
+            None,
+            "test",
+            [0; 32],
+            &[],
+        )
+        .unwrap();
+        let database = open_ride_database(path.clone()).unwrap();
+        let mut digests = Vec::new();
+        for at in [1, 2] {
+            let bytes = PevcapCapture::new(
+                header.clone(),
+                vec![PevcapRecord::link_up(MonotonicTimestamp::new(at), None)],
+            )
+            .to_jsonl()
+            .unwrap();
+            fs::write(&source, bytes).unwrap();
+            let preview = database
+                .preflight_pevcap(
+                    source.to_string_lossy().into_owned(),
+                    MobilePevcapEncodingDto::Jsonl,
+                )
+                .unwrap();
+            let receipt = database.confirm_pevcap_import(preview, 1234).unwrap();
+            digests.push(receipt.artifact_digest);
+            fs::remove_file(receipt.managed_artifact_path).unwrap();
+        }
+        database.shutdown().unwrap();
+        fs::remove_file(source).unwrap();
+        let database = open_ride_database(path).unwrap();
+        let first = database.list_pevcap_captures(None, 1).unwrap();
+        let second = database.list_pevcap_captures(first.next_cursor, 1).unwrap();
+        assert_eq!(first.captures.len(), 1);
+        assert_eq!(second.captures.len(), 1);
+        assert_eq!(second.next_cursor, None);
+        digests.sort_by(|left, right| right.cmp(left));
+        assert_eq!(first.captures[0].artifact_digest, digests[0]);
+        assert_eq!(second.captures[0].artifact_digest, digests[1]);
+        assert_eq!(first.captures[0].imported_at_milliseconds, 1234);
+        assert_eq!(first.captures[0].ride_id, None);
+        for limit in [0, u32::MAX] {
+            assert_eq!(
+                database.list_pevcap_captures(None, limit),
+                Err(MobileRideDatabaseError::InvalidQueryLimit)
+            );
+        }
+        for (at, digest) in [(1234, "bad".to_owned()), (u64::MAX, digests[0].clone())] {
+            let cursor = MobilePevcapCaptureCursorDto {
+                imported_at_milliseconds: at,
+                artifact_digest: digest,
+            };
+            assert_eq!(
+                database.list_pevcap_captures(Some(cursor), 1),
+                Err(MobileRideDatabaseError::InvalidPevcapCaptureCursor)
+            );
+        }
+        database.shutdown().unwrap();
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
