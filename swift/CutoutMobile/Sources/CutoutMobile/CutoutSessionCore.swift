@@ -42,22 +42,19 @@ public struct CaptureProgress: Equatable, Sendable {
     public let fileSizeBytes: UInt64
     public let queuedMessageCount: UInt64
     public let writerError: String?
-    public let writerLimitReason: String?
 
     public init(
         elapsedMilliseconds: UInt64,
         notificationCount: UInt64,
         fileSizeBytes: UInt64,
         queuedMessageCount: UInt64,
-        writerError: String?,
-        writerLimitReason: String? = nil
+        writerError: String?
     ) {
         self.elapsedMilliseconds = elapsedMilliseconds
         self.notificationCount = notificationCount
         self.fileSizeBytes = fileSizeBytes
         self.queuedMessageCount = queuedMessageCount
         self.writerError = writerError
-        self.writerLimitReason = writerLimitReason
     }
 
     public var writerHealth: CaptureWriterHealth {
@@ -834,10 +831,6 @@ public final class CutoutSessionCore: NSObject {
             let annotation = pevcapAnnotation(key: key, value: value)
             guard let builder = captureBuilder else { return false }
             let outcome = builder.addAnnotation(annotation: annotation)
-            if outcome == .limitReached {
-                _ = acceptCaptureWrite(outcome)
-                return false
-            }
             guard acceptCaptureWrite(outcome) else { return false }
             record(annotation)
             return true
@@ -2452,9 +2445,6 @@ public final class CutoutSessionCore: NSObject {
             return true
         case .rejected:
             return false
-        case .limitReached:
-            finishCaptureWriter(priorWriteSucceeded: true)
-            return true
         case .failed:
             failCaptureWrite()
             return false
@@ -2492,11 +2482,7 @@ public final class CutoutSessionCore: NSObject {
         let outcome = captureBuilder?.recordLinkDown(
             monotonicMs: MobileMonotonicMillisDto(milliseconds: captureElapsedMilliseconds())
         ) ?? .accepted
-        if outcome == .limitReached {
-            _ = acceptCaptureWrite(outcome)
-        } else {
-            finishCaptureWriter(priorWriteSucceeded: outcome == .accepted)
-        }
+        finishCaptureWriter(priorWriteSucceeded: outcome == .accepted)
     }
 
     private func finishCaptureWriter(
@@ -2574,8 +2560,7 @@ public final class CutoutSessionCore: NSObject {
             notificationCount: captureNotificationCount,
             fileSizeBytes: fileSizeBytes,
             queuedMessageCount: status?.queuedMessages ?? 0,
-            writerError: status?.failed == true ? status?.lastError : nil,
-            writerLimitReason: status?.limitReached == true ? status?.lastError : nil
+            writerError: status?.failed == true ? status?.lastError : nil
         )
     }
 

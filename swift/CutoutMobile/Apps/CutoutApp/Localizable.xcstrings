@@ -1862,14 +1862,6 @@
       "comment" : "Capture session writer health state when the underlying writer has no error.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Healthy" } } }
     },
-    "capture.detail.limit" : {
-      "comment" : "Capture session detail label for a recording stopped at a retention limit.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Capture limit" } } }
-    },
-    "captures.labels_limit_reached" : {
-      "comment" : "Capture label operation message when the recording reached a retention limit.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Recording limit reached" } } }
-    },
     "capture.section.record" : {
       "comment" : "Capture screen section title.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Record" } } }

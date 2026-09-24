@@ -2658,7 +2658,7 @@ impl RideDatabase {
         path: &Path,
         encoding: PevcapEncoding,
     ) -> Result<PevcapImportPreview, StorageError> {
-        let mut preview = preflight_pevcap(path, encoding)?;
+        let mut preview = preflight_pevcap(path, encoding, Some(PevcapLimits::IMPORT))?;
         if self
             .request(|reply| Command::PevcapImportLookup {
                 digest: preview.artifact_digest.clone(),
@@ -4856,6 +4856,7 @@ fn verify_pevcap_preview_source(preview: &PevcapImportPreview) -> Result<(), Sto
 fn preflight_pevcap(
     path: &Path,
     encoding: PevcapEncoding,
+    limits: Option<PevcapLimits>,
 ) -> Result<PevcapImportPreview, StorageError> {
     let path = path.canonicalize().map_err(|_| StorageError::InvalidPath)?;
     let metadata = path.metadata()?;
@@ -4863,7 +4864,9 @@ fn preflight_pevcap(
         return Err(StorageError::InvalidPath);
     }
     let artifact_size = metadata.len();
-    check_limit_result(PevcapLimits::DEFAULT.check_artifact_bytes(artifact_size))?;
+    if let Some(limits) = limits {
+        check_limit_result(limits.check_artifact_bytes(artifact_size))?;
+    }
     let artifact_digest = artifact_digest(&path)?;
 
     let file = File::open(&path)?;
@@ -4879,7 +4882,9 @@ fn preflight_pevcap(
                 record.monotonic_ms.as_milliseconds(),
                 record.phone_location.is_some(),
             );
-            check_limit_result(pevcap_usage.check(PevcapLimits::DEFAULT))?;
+            if let Some(limits) = limits {
+                check_limit_result(pevcap_usage.check(limits))?;
+            }
         }
     }
     let location_count = stream_pevcap_location_batches(&path, encoding, |samples| {
@@ -4889,7 +4894,10 @@ fn preflight_pevcap(
         }
         Ok(u64::try_from(samples.len()).unwrap_or(u64::MAX))
     })?;
-    let duration_milliseconds = check_limit_result(pevcap_usage.check(PevcapLimits::DEFAULT))?;
+    if let Some(limits) = limits {
+        check_limit_result(pevcap_usage.check(limits))?;
+    }
+    let duration_milliseconds = pevcap_usage.duration_milliseconds();
     let record_count = pevcap_usage.record_count();
     let outcome = if location_count == 0 {
         PevcapImportOutcome::CaptureOnly
@@ -5054,8 +5062,10 @@ fn validate_existing_pevcap_confirmation(
         preview.artifact_digest(),
         preview.artifact_size(),
     )?;
-    let managed_preview = preflight_pevcap(&receipt.managed_artifact_path, preview.encoding())
-        .map_err(|_| StorageError::PevcapPreviewChanged)?;
+    let limits = receipt.recording.is_none().then_some(PevcapLimits::IMPORT);
+    let managed_preview =
+        preflight_pevcap(&receipt.managed_artifact_path, preview.encoding(), limits)
+            .map_err(|_| StorageError::PevcapPreviewChanged)?;
     let outcome_matches = match &receipt.recording {
         Some(_) => {
             receipt.location_count == 0

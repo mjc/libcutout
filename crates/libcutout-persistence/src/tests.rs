@@ -2435,7 +2435,7 @@ fn finished_capture_receipt_rejects_replacement_bytes_before_first_publication()
 }
 
 #[test]
-fn capture_writer_stops_before_its_recording_exceeds_the_retention_duration() {
+fn recorded_capture_is_not_cut_off_at_the_import_duration_limit() {
     let _guard = test_guard();
     let directory = tempfile::tempdir().unwrap();
     let database_path = directory.path().join("ride.sqlite");
@@ -2463,36 +2463,29 @@ fn capture_writer_stops_before_its_recording_exceeds_the_retention_duration() {
         ))),
         CaptureWriteOutcome::Accepted
     );
-    let deadline = Instant::now() + Duration::from_secs(2);
-    while !writer.monitor().status().limit_reached && Instant::now() < deadline {
-        std::thread::yield_now();
-    }
-    assert!(
-        writer.monitor().status().limit_reached,
-        "writer reaches duration limit"
-    );
     assert_eq!(
         writer.try_send_record(PevcapRecord::link_down(MonotonicTimestamp::new(
             24 * 60 * 60 * 1_000 + 2,
         ))),
-        CaptureWriteOutcome::LimitReached
+        CaptureWriteOutcome::Accepted
     );
 
     let artifact = writer.finish().unwrap();
-    assert!(!artifact.status().failed);
-    assert_eq!(artifact.status().dropped_messages, 2);
-    assert!(artifact.status().last_error.is_some());
-
     let database = RideDatabase::open(&database_path).unwrap();
-    let preview = database
-        .preflight_pevcap(&source, PevcapEncoding::Jsonl)
+    let receipt = database
+        .retain_finished_capture(
+            &artifact,
+            cutout_core::CaptureOrigin::Manual,
+            None,
+            WallClockUnixTimestamp::new(9999),
+        )
         .unwrap();
-    assert_eq!(preview.record_count(), 1);
+    assert_eq!(receipt.record_count, 3);
     database.shutdown().unwrap();
 }
 
 #[test]
-fn capture_writer_counts_record_attached_locations_in_retention_duration() {
+fn recorded_capture_locations_are_not_cut_off_at_the_import_duration_limit() {
     let _guard = test_guard();
     let directory = tempfile::tempdir().unwrap();
     let source = directory.path().join("recording.jsonl");
@@ -2534,27 +2527,25 @@ fn capture_writer_counts_record_attached_locations_in_retention_duration() {
         writer.record_location(location(24 * 60 * 60 * 1_000 + 5_000)),
         CaptureWriteOutcome::Accepted
     );
-    let deadline = Instant::now() + Duration::from_secs(2);
-    while !writer.monitor().status().limit_reached && Instant::now() < deadline {
-        std::thread::yield_now();
-    }
-    assert!(
-        writer.monitor().status().limit_reached,
-        "writer reaches duration limit"
-    );
     assert_eq!(
         writer.record_location(location(24 * 60 * 60 * 1_000 + 6_000)),
-        CaptureWriteOutcome::LimitReached
+        CaptureWriteOutcome::Accepted
     );
 
     let artifact = writer.finish().unwrap();
-    assert_eq!(artifact.status().dropped_messages, 2);
-
     let database = RideDatabase::open(&directory.path().join("ride.sqlite")).unwrap();
-    assert!(
-        database
-            .preflight_pevcap(&source, PevcapEncoding::Jsonl)
-            .is_ok()
+    let receipt = database
+        .retain_finished_capture(
+            &artifact,
+            cutout_core::CaptureOrigin::Manual,
+            None,
+            WallClockUnixTimestamp::new(9999),
+        )
+        .unwrap();
+    assert!(receipt.recording.is_some());
+    assert_eq!(
+        receipt.location_count, 0,
+        "recording publication is capture-only"
     );
     database.shutdown().unwrap();
 }

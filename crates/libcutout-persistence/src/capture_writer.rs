@@ -1,7 +1,6 @@
 //! Bounded PEVCAP file writer and durable completion evidence.
 //! This is the existing streaming writer, independent of any mobile binding or UI.
 
-use crate::pevcap_limits::{LimitExceeded, PevcapLimits, PevcapUsage};
 use cutout_core::{
     CaptureLabelState, GattChannel, GattFingerprint, PEVCAP_CAPTURE_LABEL_ANNOTATION_KEY,
     PevcapHeader, PevcapLocationSample, PevcapMusicEvent, PevcapRecord, PevcapResolvedIdentity,
@@ -38,8 +37,6 @@ impl std::fmt::Display for CaptureArtifactId {
 pub enum CaptureWriteOutcome {
     /// The event was accepted by the bounded queue.
     Accepted,
-    /// The recording reached a configured retention limit; its accepted prefix can be finished.
-    LimitReached,
     /// The queue or writer failed and the event was not accepted.
     Failed,
 }
@@ -117,7 +114,7 @@ pub struct CaptureWriterStatus {
     pub queued_messages: u64,
     /// Highest number of accepted messages waiting to be written.
     pub peak_queued_messages: u64,
-    /// Messages rejected because the queue was full or closed, or a capture limit was reached.
+    /// Messages rejected because the queue was full or closed.
     pub dropped_messages: u64,
     /// Bytes written to the capture file.
     pub bytes_written: u64,
@@ -125,9 +122,7 @@ pub struct CaptureWriterStatus {
     pub physical_bytes_written: u64,
     /// Whether the writer has encountered an unrecoverable error.
     pub failed: bool,
-    /// Whether capture stopped normally because a configured retention limit was reached.
-    pub limit_reached: bool,
-    /// Last writer error or the limit that stopped data recording, if either exists.
+    /// Last writer error, if one exists.
     pub last_error: Option<String>,
 }
 
@@ -138,7 +133,6 @@ struct CaptureWriterState {
     dropped_messages: AtomicU64,
     bytes_written: AtomicU64,
     physical_bytes_written: AtomicU64,
-    limit_reached: AtomicBool,
     failed: AtomicBool,
     last_error: Mutex<Option<String>>,
 }
@@ -151,7 +145,6 @@ impl Default for CaptureWriterState {
             dropped_messages: AtomicU64::new(0),
             bytes_written: AtomicU64::new(0),
             physical_bytes_written: AtomicU64::new(0),
-            limit_reached: AtomicBool::new(false),
             failed: AtomicBool::new(false),
             last_error: Mutex::new(None),
         }
@@ -159,19 +152,6 @@ impl Default for CaptureWriterState {
 }
 
 impl CaptureWriterState {
-    fn stop_at_limit(&self, error: LimitExceeded) {
-        if !self.limit_reached.swap(true, Ordering::AcqRel) {
-            self.dropped_messages.fetch_add(1, Ordering::AcqRel);
-            *self
-                .last_error
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner) = Some(format!(
-                "capture stopped at {} limit: {} > {}",
-                error.resource, error.actual, error.limit
-            ));
-        }
-    }
-
     fn fail(&self, error: impl Into<String>) {
         self.failed.store(true, Ordering::Release);
         *self
@@ -188,7 +168,6 @@ impl CaptureWriterState {
             bytes_written: self.bytes_written.load(Ordering::Acquire),
             physical_bytes_written: self.physical_bytes_written.load(Ordering::Acquire),
             failed: self.failed.load(Ordering::Acquire),
-            limit_reached: self.limit_reached.load(Ordering::Acquire),
             last_error: self
                 .last_error
                 .lock()
@@ -230,25 +209,6 @@ enum CaptureWriterBarrierResult {
     },
 }
 
-impl CaptureWriterMessage {
-    fn is_capture_data(&self) -> bool {
-        match self {
-            Self::Record | Self::Location(_) | Self::Music(_) => true,
-            Self::Metadata(_) | Self::Barrier(_, _) => false,
-        }
-    }
-}
-
-fn is_record_message(message: &CaptureWriterMessage) -> bool {
-    match message {
-        CaptureWriterMessage::Record => true,
-        CaptureWriterMessage::Location(_)
-        | CaptureWriterMessage::Music(_)
-        | CaptureWriterMessage::Metadata(_)
-        | CaptureWriterMessage::Barrier(_, _) => false,
-    }
-}
-
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum CaptureBarrier {
     Flush,
@@ -259,65 +219,6 @@ struct CaptureFlushState {
     bytes_since_flush: u64,
     last_flush: Instant,
     last_sync: Instant,
-}
-
-struct CaptureLimitUsage<'a> {
-    state: &'a CaptureWriterState,
-    limits: PevcapLimits,
-    header_bytes: u64,
-    event_bytes: u64,
-    pevcap_usage: PevcapUsage,
-}
-
-impl<'a> CaptureLimitUsage<'a> {
-    fn new(header_bytes: u64, limits: PevcapLimits, state: &'a CaptureWriterState) -> Self {
-        Self {
-            state,
-            limits,
-            header_bytes,
-            event_bytes: 0,
-            pevcap_usage: PevcapUsage::default(),
-        }
-    }
-
-    fn stop_at_limit(&self, error: LimitExceeded) {
-        self.state.stop_at_limit(error);
-    }
-
-    fn record_header_rewrite(&self, bytes: u64) {
-        self.state
-            .physical_bytes_written
-            .fetch_add(bytes, Ordering::AcqRel);
-    }
-
-    fn admit_event(
-        &mut self,
-        line_bytes: u64,
-        record_at: Option<(u64, bool)>,
-        location_at: Option<u64>,
-    ) -> Result<(), LimitExceeded> {
-        let event_bytes = self.event_bytes.saturating_add(line_bytes);
-        self.limits
-            .check_artifact_bytes(self.header_bytes.saturating_add(event_bytes))?;
-        let mut pevcap_usage = self.pevcap_usage;
-        if let Some((timestamp, has_phone_location)) = record_at {
-            pevcap_usage.include_record(timestamp, has_phone_location);
-        }
-        if let Some(timestamp) = location_at {
-            pevcap_usage.include_location(timestamp);
-        }
-        pevcap_usage.check(self.limits)?;
-        self.event_bytes = event_bytes;
-        self.pevcap_usage = pevcap_usage;
-        Ok(())
-    }
-
-    fn replace_header(&mut self, header_bytes: u64) -> Result<(), LimitExceeded> {
-        self.limits
-            .check_artifact_bytes(self.event_bytes.saturating_add(header_bytes))?;
-        self.header_bytes = header_bytes;
-        Ok(())
-    }
 }
 
 impl Default for CaptureFlushState {
@@ -385,38 +286,7 @@ impl CaptureWriter {
         write_limit: Option<TransportWriteLimit>,
         metadata: &CaptureMetadata,
     ) -> Result<Self, String> {
-        Self::start_with_limits(
-            path,
-            wall_clock_start_unix_ms,
-            platform_id,
-            write_limit,
-            metadata,
-            PevcapLimits::DEFAULT,
-        )
-    }
-
-    fn start_with_limits(
-        path: PathBuf,
-        wall_clock_start_unix_ms: WallClockUnixTimestamp,
-        platform_id: &str,
-        write_limit: Option<TransportWriteLimit>,
-        metadata: &CaptureMetadata,
-        limits: PevcapLimits,
-    ) -> Result<Self, String> {
         let header = capture_header(wall_clock_start_unix_ms, platform_id, write_limit, metadata)?;
-        let header_bytes = header
-            .to_jsonl_line()
-            .map_err(|error| error.to_string())?
-            .len()
-            .saturating_add(1);
-        limits
-            .check_artifact_bytes(u64::try_from(header_bytes).unwrap_or(u64::MAX))
-            .map_err(|error| {
-                format!(
-                    "capture header exceeds {} limit: {} > {}",
-                    error.resource, error.actual, error.limit
-                )
-            })?;
         let file = sync_parent_directory_after(&path, || {
             OpenOptions::new()
                 .create_new(true)
@@ -440,7 +310,6 @@ impl CaptureWriter {
                     &receiver,
                     &thread_records,
                     &thread_state,
-                    limits,
                 );
             })
             .map_err(|error| error.to_string())?;
@@ -455,10 +324,6 @@ impl CaptureWriter {
     }
 
     fn try_send(&self, message: CaptureWriterMessage) -> CaptureWriteOutcome {
-        if self.state.limit_reached.load(Ordering::Acquire) && message.is_capture_data() {
-            self.state.dropped_messages.fetch_add(1, Ordering::AcqRel);
-            return CaptureWriteOutcome::LimitReached;
-        }
         let queued_messages = self.state.queued_messages.fetch_add(1, Ordering::AcqRel) + 1;
         match self.sender.try_send(message) {
             Ok(()) => {
@@ -484,10 +349,6 @@ impl CaptureWriter {
 
     /// Admits a transport record without waiting for disk I/O.
     pub fn try_send_record(&self, record: PevcapRecord) -> CaptureWriteOutcome {
-        if self.state.limit_reached.load(Ordering::Acquire) {
-            self.state.dropped_messages.fetch_add(1, Ordering::AcqRel);
-            return CaptureWriteOutcome::LimitReached;
-        }
         let mut records = self
             .records
             .records
@@ -659,9 +520,8 @@ fn run_capture_writer(
     receiver: &Receiver<CaptureWriterMessage>,
     records: &CaptureRecordPool,
     state: &CaptureWriterState,
-    limits: PevcapLimits,
 ) {
-    let result = write_capture_stream(path, file, &mut header, receiver, records, state, limits);
+    let result = write_capture_stream(path, file, &mut header, receiver, records, state);
     if let Err(error) = result {
         state.fail(error);
     }
@@ -674,12 +534,10 @@ fn write_capture_stream(
     receiver: &Receiver<CaptureWriterMessage>,
     records: &CaptureRecordPool,
     state: &CaptureWriterState,
-    limits: PevcapLimits,
 ) -> Result<(), String> {
     let mut writer = BufWriter::new(file);
     let header_line = header.to_jsonl_line().map_err(|error| error.to_string())?;
     let header_bytes = write_line(&mut writer, &header_line)?;
-    let mut usage = CaptureLimitUsage::new(header_bytes as u64, limits, state);
     state
         .physical_bytes_written
         .fetch_add(header_bytes as u64, Ordering::AcqRel);
@@ -693,13 +551,6 @@ fn write_capture_stream(
 
     while let Ok(message) = receiver.recv() {
         state.queued_messages.fetch_sub(1, Ordering::AcqRel);
-        if state.limit_reached.load(Ordering::Acquire) && message.is_capture_data() {
-            if is_record_message(&message) {
-                records.take();
-            }
-            state.dropped_messages.fetch_add(1, Ordering::AcqRel);
-            continue;
-        }
         let line = match message {
             CaptureWriterMessage::Record => {
                 let record = records
@@ -737,7 +588,7 @@ fn write_capture_stream(
                     header,
                     &mut pending_metadata,
                     &mut flush,
-                    &mut usage,
+                    state,
                     kind,
                 )
                 .and_then(|()| match kind {
@@ -757,13 +608,8 @@ fn write_capture_stream(
                 None
             }
         };
-        if let Some((line, record_at, location_at)) = line {
-            let line_bytes = u64::try_from(line.len().saturating_add(1)).unwrap_or(u64::MAX);
-            if let Err(error) = usage.admit_event(line_bytes, record_at, location_at) {
-                usage.stop_at_limit(error);
-            } else {
-                write_capture_event_line(&mut writer, &line, state, &mut flush)?;
-            }
+        if let Some((line, _, _)) = line {
+            write_capture_event_line(&mut writer, &line, state, &mut flush)?;
         }
     }
     flush_capture_barrier(
@@ -772,7 +618,7 @@ fn write_capture_stream(
         header,
         &mut pending_metadata,
         &mut flush,
-        &mut usage,
+        state,
         CaptureBarrier::Finish,
     )
 }
@@ -783,27 +629,13 @@ fn flush_capture_barrier(
     header: &mut PevcapHeader,
     pending_metadata: &mut Option<CaptureMetadata>,
     flush: &mut CaptureFlushState,
-    usage: &mut CaptureLimitUsage<'_>,
+    state: &CaptureWriterState,
     kind: CaptureBarrier,
 ) -> Result<(), String> {
-    let must_persist_label_closure = if kind == CaptureBarrier::Finish {
-        let had_open_labels =
-            !CaptureLabelState::from_annotations(header.annotations.iter().map(String::as_str))
-                .active()
-                .is_empty();
+    if kind == CaptureBarrier::Finish {
         close_pending_capture_labels(header, pending_metadata)?;
-        had_open_labels
-    } else {
-        false
-    };
-    if rewrite_pending_capture_metadata(
-        path,
-        writer,
-        header,
-        pending_metadata,
-        usage,
-        must_persist_label_closure,
-    )? {
+    }
+    if rewrite_pending_capture_metadata(path, writer, header, pending_metadata, state)? {
         *flush = CaptureFlushState::default();
         Ok(())
     } else {
@@ -857,8 +689,7 @@ fn rewrite_pending_capture_metadata(
     writer: &mut BufWriter<File>,
     header: &mut PevcapHeader,
     pending_metadata: &mut Option<CaptureMetadata>,
-    usage: &mut CaptureLimitUsage<'_>,
-    must_persist_label_closure: bool,
+    state: &CaptureWriterState,
 ) -> Result<bool, String> {
     let Some(metadata) = pending_metadata.take() else {
         return Ok(false);
@@ -869,31 +700,16 @@ fn rewrite_pending_capture_metadata(
         header.write_limit,
         &metadata,
     )?;
-    let header_bytes = new_header
-        .to_jsonl_line()
-        .map_err(|error| error.to_string())?
-        .len()
-        .saturating_add(1);
-    let header_bytes = u64::try_from(header_bytes).unwrap_or(u64::MAX);
-    if let Err(error) = usage.replace_header(header_bytes) {
-        if must_persist_label_closure {
-            return Err(format!(
-                "final capture metadata exceeds {} limit: {} > {}",
-                error.resource, error.actual, error.limit
-            ));
-        }
-        usage.stop_at_limit(error);
-        return Ok(false);
-    }
     *header = new_header;
     let bytes = rewrite_capture_header(path, writer, header)?;
-    usage.record_header_rewrite(bytes);
+    state
+        .physical_bytes_written
+        .fetch_add(bytes, Ordering::AcqRel);
     Ok(true)
 }
 
 /// Finalization owns interval closure, including transport loss and producer drop.
-/// A background flush is not an interval boundary. Never claim a saved artifact
-/// if its bounded header cannot retain the required closing evidence.
+/// A background flush is not an interval boundary.
 fn close_pending_capture_labels(
     header: &PevcapHeader,
     pending_metadata: &mut Option<CaptureMetadata>,
@@ -1064,82 +880,6 @@ mod tests {
     }
 
     #[test]
-    fn finish_fails_when_closing_labels_exceed_the_artifact_byte_limit() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("capture.jsonl");
-        let metadata = CaptureMetadata {
-            advertised_services: vec![],
-            gatt_fingerprints: vec![],
-            resolved_identity: None,
-            annotations: vec!["capture_label=ride_start".into()],
-        };
-        let header =
-            capture_header(WallClockUnixTimestamp::new(0), "test", None, &metadata).unwrap();
-        let header_bytes = u64::try_from(header.to_jsonl_line().unwrap().len() + 1).unwrap();
-        let writer = CaptureWriter::start_with_limits(
-            path.clone(),
-            WallClockUnixTimestamp::new(0),
-            "test",
-            None,
-            &metadata,
-            PevcapLimits {
-                artifact_bytes: header_bytes,
-                records: 10,
-                duration_milliseconds: 10,
-            },
-        )
-        .unwrap();
-
-        let error = writer.finish().unwrap_err();
-
-        assert!(error.contains("artifact bytes limit"));
-        assert!(path.exists(), "failed artifact remains recoverable");
-    }
-
-    #[test]
-    fn finish_fails_when_pending_metadata_closes_a_persisted_label_over_budget() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("capture.jsonl");
-        let metadata = CaptureMetadata {
-            advertised_services: vec![],
-            gatt_fingerprints: vec![],
-            resolved_identity: None,
-            annotations: vec!["capture_label=ride_start".into()],
-        };
-        let header =
-            capture_header(WallClockUnixTimestamp::new(0), "test", None, &metadata).unwrap();
-        let header_bytes = u64::try_from(header.to_jsonl_line().unwrap().len() + 1).unwrap();
-        let writer = CaptureWriter::start_with_limits(
-            path.clone(),
-            WallClockUnixTimestamp::new(0),
-            "test",
-            None,
-            &metadata,
-            PevcapLimits {
-                artifact_bytes: header_bytes,
-                records: 10,
-                duration_milliseconds: 10,
-            },
-        )
-        .unwrap();
-        assert_eq!(
-            writer.update_metadata(CaptureMetadata {
-                annotations: vec![
-                    "capture_label=ride_start".into(),
-                    "capture_label=ride_stop".into(),
-                ],
-                ..metadata
-            }),
-            CaptureWriteOutcome::Accepted
-        );
-
-        let error = writer.finish().unwrap_err();
-
-        assert!(error.contains("artifact bytes limit"));
-        assert!(path.exists(), "failed artifact remains recoverable");
-    }
-
-    #[test]
     fn finalization_uses_latest_metadata_and_does_not_duplicate_closed_intervals() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("capture.jsonl");
@@ -1214,98 +954,6 @@ mod tests {
         let capture = fs::read_to_string(artifact.path()).unwrap();
         assert_eq!(capture.matches("capture_label=ride_stop").count(), 1);
         assert_eq!(capture.matches("capture_label=balancing_stop").count(), 1);
-    }
-
-    #[test]
-    fn writer_limit_keeps_a_valid_prefix_when_record_count_is_reached() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("capture.jsonl");
-        let metadata = CaptureMetadata {
-            advertised_services: vec![],
-            gatt_fingerprints: vec![],
-            resolved_identity: None,
-            annotations: vec![],
-        };
-        let writer = CaptureWriter::start_with_limits(
-            path.clone(),
-            WallClockUnixTimestamp::new(0),
-            "test",
-            None,
-            &metadata,
-            PevcapLimits {
-                records: 1,
-                ..PevcapLimits::DEFAULT
-            },
-        )
-        .unwrap();
-        assert_eq!(
-            writer.try_send_record(PevcapRecord::link_up(
-                cutout_core::MonotonicTimestamp::new(0),
-                None,
-            )),
-            CaptureWriteOutcome::Accepted
-        );
-        let _ = writer.try_send_record(PevcapRecord::link_down(
-            cutout_core::MonotonicTimestamp::new(1),
-        ));
-
-        let artifact = writer.finish().unwrap();
-        let capture = fs::read_to_string(artifact.path()).unwrap();
-        assert!(!artifact.status().failed);
-        assert_eq!(artifact.status().dropped_messages, 1);
-        assert_eq!(
-            capture
-                .lines()
-                .filter(|line| line.contains("\"kind\":\"record\""))
-                .count(),
-            1
-        );
-    }
-
-    #[test]
-    fn writer_limit_includes_rewritten_header_bytes() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("capture.jsonl");
-        let metadata = CaptureMetadata {
-            advertised_services: vec![],
-            gatt_fingerprints: vec![],
-            resolved_identity: None,
-            annotations: vec![],
-        };
-        let header_bytes = u64::try_from(
-            capture_header(WallClockUnixTimestamp::new(0), "test", None, &metadata)
-                .unwrap()
-                .to_jsonl_line()
-                .unwrap()
-                .len()
-                + 1,
-        )
-        .unwrap();
-        let writer = CaptureWriter::start_with_limits(
-            path.clone(),
-            WallClockUnixTimestamp::new(0),
-            "test",
-            None,
-            &metadata,
-            PevcapLimits {
-                artifact_bytes: header_bytes,
-                ..PevcapLimits::DEFAULT
-            },
-        )
-        .unwrap();
-        let expanded_metadata = CaptureMetadata {
-            annotations: vec!["note=too-large-for-the-configured-budget".into()],
-            ..metadata
-        };
-        assert_eq!(
-            writer.update_metadata(expanded_metadata),
-            CaptureWriteOutcome::Accepted
-        );
-
-        let artifact = writer.finish().unwrap();
-        assert!(!artifact.status().failed);
-        assert_eq!(artifact.status().dropped_messages, 1);
-        assert_eq!(fs::metadata(artifact.path()).unwrap().len(), header_bytes);
     }
 
     #[test]

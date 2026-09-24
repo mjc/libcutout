@@ -982,41 +982,6 @@ final class CutoutSessionCoreTests: XCTestCase {
         core.disconnectAndScan()
     }
 
-    func testCaptureLimitFinalizesPrefixWithoutFailingSession() async throws {
-        let core = CutoutSessionCore(testScript: CutoutSessionTestScript(
-            candidate: scriptedVescCandidate,
-            telemetry: nil,
-            connectionDelayMilliseconds: 0
-        ))
-        let started = expectation(description: "capture writer starts")
-        let finished = expectation(description: "limited capture prefix finishes")
-        var fileURL: URL?
-        core.onCaptureEvent = { event in
-            switch event {
-            case let .started(_, url):
-                fileURL = url
-                started.fulfill()
-            case .finished:
-                finished.fulfill()
-            case .failed:
-                XCTFail("A retention limit should save the accepted prefix")
-            default:
-                break
-            }
-        }
-
-        XCTAssertTrue(core.recordOnly(platformIdentifier: scriptedVescCandidate.platformIdentifier))
-        await fulfillment(of: [started], timeout: 2)
-        let phaseBeforeLimit = core.phase
-
-        XCTAssertTrue(core.acceptCaptureWriteOutcomeForTesting(.limitReached))
-        XCTAssertEqual(core.phase, phaseBeforeLimit)
-        XCTAssertTrue(core.isRecordOnlyConnection)
-        await fulfillment(of: [finished], timeout: 3)
-
-        if let fileURL { try FileManager.default.removeItem(at: fileURL) }
-    }
-
     func testRejectedLabelReplacementKeepsRealCaptureSavable() async throws {
         let started = expectation(description: "writer starts")
         let finished = expectation(description: "writer durably completes")

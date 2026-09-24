@@ -1,4 +1,4 @@
-//! Shared resource bounds for recordings admitted by the writer and retention preflight.
+//! Resource bounds for externally supplied PEVCAP imports, never live recordings.
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct PevcapLimits {
@@ -8,7 +8,8 @@ pub(crate) struct PevcapLimits {
 }
 
 impl PevcapLimits {
-    pub(crate) const DEFAULT: Self = Self {
+    /// Bounds for caller-supplied artifacts, which may be malformed or hostile.
+    pub(crate) const IMPORT: Self = Self {
         artifact_bytes: 512 * 1024 * 1024,
         records: 10_000_000,
         duration_milliseconds: 24 * 60 * 60 * 1_000,
@@ -24,12 +25,6 @@ impl PevcapLimits {
 
     pub(crate) fn check_duration(self, actual: u64) -> Result<(), LimitExceeded> {
         check_limit("duration milliseconds", self.duration_milliseconds, actual)
-    }
-}
-
-impl Default for PevcapLimits {
-    fn default() -> Self {
-        Self::DEFAULT
     }
 }
 
@@ -110,12 +105,16 @@ impl PevcapUsage {
         let location_duration = self.location_times.duration_milliseconds();
         limits.check_duration(record_duration)?;
         limits.check_duration(location_duration)?;
-        let duration = if self.location_count == 0 {
+        limits.check_duration(self.duration_milliseconds())?;
+        Ok(self.duration_milliseconds())
+    }
+
+    pub(crate) const fn duration_milliseconds(self) -> u64 {
+        let record_duration = self.record_times.duration_milliseconds();
+        if self.location_count == 0 {
             record_duration
         } else {
-            location_duration
-        };
-        limits.check_duration(duration)?;
-        Ok(duration)
+            self.location_times.duration_milliseconds()
+        }
     }
 }

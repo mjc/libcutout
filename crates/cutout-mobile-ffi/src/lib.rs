@@ -10567,9 +10567,7 @@ pub struct MobileCaptureWriterStatusDto {
     pub physical_bytes_written: u64,
     /// Whether the writer has encountered an unrecoverable error.
     pub failed: bool,
-    /// Whether capture stopped normally because a configured retention limit was reached.
-    pub limit_reached: bool,
-    /// Last writer error or retention-limit reason, if one exists.
+    /// Last writer error, if one exists.
     pub last_error: Option<String>,
 }
 
@@ -10580,8 +10578,6 @@ pub enum MobileCaptureWriteOutcomeDto {
     Accepted,
     /// The event was rejected by capture metadata admission; the writer remains usable.
     Rejected,
-    /// A retention limit ended the capture; its accepted prefix can be finalized.
-    LimitReached,
     /// Queue admission or the writer failed.
     Failed,
 }
@@ -10590,7 +10586,6 @@ impl From<CaptureWriteOutcome> for MobileCaptureWriteOutcomeDto {
     fn from(outcome: CaptureWriteOutcome) -> Self {
         match outcome {
             CaptureWriteOutcome::Accepted => Self::Accepted,
-            CaptureWriteOutcome::LimitReached => Self::LimitReached,
             CaptureWriteOutcome::Failed => Self::Failed,
         }
     }
@@ -10605,7 +10600,6 @@ impl From<CaptureWriterStatus> for MobileCaptureWriterStatusDto {
             bytes_written: status.bytes_written,
             physical_bytes_written: status.physical_bytes_written,
             failed: status.failed,
-            limit_reached: status.limit_reached,
             last_error: status.last_error,
         }
     }
@@ -10673,9 +10667,6 @@ impl CaptureWriterSlot {
 
     fn stopped_write_outcome(&self) -> Option<MobileCaptureWriteOutcomeDto> {
         match self {
-            Self::Complete(Ok(artifact)) if artifact.status().limit_reached => {
-                Some(MobileCaptureWriteOutcomeDto::LimitReached)
-            }
             Self::Finalizing | Self::Complete(_) => Some(MobileCaptureWriteOutcomeDto::Failed),
             Self::Ready | Self::Recording(_) => None,
         }
@@ -10718,11 +10709,6 @@ impl MobilePevcapCaptureBuilder {
             CaptureWriterSlot::Ready
             | CaptureWriterSlot::Finalizing
             | CaptureWriterSlot::Complete(_) => {
-                if let Some(outcome) = writer.stopped_write_outcome()
-                    && outcome == MobileCaptureWriteOutcomeDto::LimitReached
-                {
-                    return Err(MobileCaptureAnnotationError::CaptureLimitReached);
-                }
                 return Err(MobileCaptureAnnotationError::NotRecording);
             }
         }
@@ -10746,9 +10732,6 @@ impl MobilePevcapCaptureBuilder {
         if let Some(writer) = writer.as_ref() {
             match writer.update_metadata(metadata) {
                 CaptureWriteOutcome::Accepted => {}
-                CaptureWriteOutcome::LimitReached => {
-                    return Err(MobileCaptureAnnotationError::CaptureLimitReached);
-                }
                 CaptureWriteOutcome::Failed => {
                     return Err(MobileCaptureAnnotationError::WriterFailed);
                 }
@@ -10855,9 +10838,6 @@ impl MobilePevcapCaptureBuilder {
     pub fn add_annotation(&self, annotation: String) -> MobileCaptureWriteOutcomeDto {
         match self.update_annotations(false, |annotations| annotations.try_append([annotation])) {
             Ok(_) => MobileCaptureWriteOutcomeDto::Accepted,
-            Err(MobileCaptureAnnotationError::CaptureLimitReached) => {
-                MobileCaptureWriteOutcomeDto::LimitReached
-            }
             Err(MobileCaptureAnnotationError::CapacityReached) => {
                 MobileCaptureWriteOutcomeDto::Rejected
             }
@@ -17632,8 +17612,8 @@ mod tests {
     }
 
     #[test]
-    fn retention_limit_is_a_successful_mobile_capture_outcome() {
-        let path = std::env::temp_dir().join(format!("capture-limit-{}.jsonl", Uuid::new_v4()));
+    fn mobile_capture_keeps_recording_past_a_day() {
+        let path = std::env::temp_dir().join(format!("capture-long-{}.jsonl", Uuid::new_v4()));
         let builder = MobilePevcapCaptureBuilder::new(wc(1234), "wheel-a".into(), None);
         assert!(builder.start_writer(path.to_string_lossy().into_owned()));
         assert_eq!(
@@ -17644,47 +17624,24 @@ mod tests {
             builder.record_link_down(ms(24 * 60 * 60 * 1_000 + 1)),
             MobileCaptureWriteOutcomeDto::Accepted
         );
-        let deadline = Instant::now() + Duration::from_secs(2);
-        while !builder.writer_status().limit_reached && Instant::now() < deadline {
-            thread::yield_now();
-        }
-        assert!(builder.writer_status().limit_reached);
         assert_eq!(
             builder.record_link_down(ms(24 * 60 * 60 * 1_000 + 2)),
-            MobileCaptureWriteOutcomeDto::LimitReached
+            MobileCaptureWriteOutcomeDto::Accepted
         );
 
         assert!(builder.finish_writer());
         let status = builder.writer_status();
         assert!(!status.failed);
-        assert!(status.limit_reached);
-        let artifact = builder
+        let _artifact = builder
             .completed_artifact()
-            .expect("the accepted prefix has a completion receipt");
-        assert!(artifact.status.limit_reached);
-        assert_eq!(
-            builder.add_annotation("note=after_limit".into()),
-            MobileCaptureWriteOutcomeDto::LimitReached
-        );
-        assert_eq!(
-            builder.record_notification_with_context(
-                ms(24 * 60 * 60 * 1_000 + 3),
-                vec![0; 16],
-                vec![1; 16],
-                vec![0xaa],
-                None,
-                None,
-            ),
-            MobileCaptureWriteOutcomeDto::LimitReached,
-            "submissions after prefix finalization must not become writer failures"
-        );
+            .expect("durable completion receipt");
         let capture = PevcapCapture::decode(
             &fs::read(&path).expect("retained capture exists"),
             PevcapEncoding::Jsonl,
         )
-        .expect("retained prefix remains valid PEVCAP");
-        assert_eq!(capture.records.len(), 1);
-        fs::remove_file(path).expect("remove limit fixture");
+        .expect("complete capture remains valid PEVCAP");
+        assert_eq!(capture.records.len(), 3);
+        fs::remove_file(path).expect("remove long-capture fixture");
     }
 
     #[test]

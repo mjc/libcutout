@@ -170,7 +170,6 @@ final class CaptureFeatureModel {
         case .CapacityReached: localizedAppText("captures.labels_full")
         case .NotRecording: localizedAppText("captures.labels_not_recording")
         case .WriterFailed: localizedAppText("captures.labels_failed")
-        case .CaptureLimitReached: localizedAppText("captures.labels_limit_reached")
         case nil: nil
         }
     }
