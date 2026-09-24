@@ -4,9 +4,9 @@ import ImageIO
 import SwiftUI
 
 #if canImport(UIKit)
-    import UIKit
+import UIKit
 #elseif canImport(AppKit)
-    import AppKit
+import AppKit
 #endif
 
 struct CameraRouteContainerView: View {
@@ -95,37 +95,37 @@ struct CameraRouteContainerView: View {
             savePreview: { startPreview(saveTo: previewOutputURL()) },
             stopPreview: adapter.stopPreview
         )
-        .task {
-            adapter.setPreviewConfigurationHandler { configuration in
-                try previewRenderer.configure(configuration)
-            }
-            adapter.setPreviewFrameHandler { frame in
-                do {
-                    try await previewRenderer.enqueue(frame)
-                    return true
-                } catch CameraPreviewRendererError.missingParameterSets {
-                    // The RTSP stream may begin with inter frames. Keep
-                    // buffering until a random-access frame carries the
-                    // codec configuration instead of killing the session.
-                    return false
+            .task {
+                adapter.setPreviewConfigurationHandler { configuration in
+                    try previewRenderer.configure(configuration)
                 }
-            }
-            adapter.start()
-        }
-        .onChange(of: adapter.savedPreviewFileURL) { _, url in
-            guard let url else { return }
-            annotateCapture?("camera_preview_file", url.lastPathComponent)
-        }
-        .onDisappear {
-            stopCameraWork()
-        }
-        .onChange(of: scenePhase) { _, phase in
-            if phase == .background {
-                stopCameraWork()
-            } else if phase == .active {
+                adapter.setPreviewFrameHandler { frame in
+                    do {
+                        try await previewRenderer.enqueue(frame)
+                        return true
+                    } catch CameraPreviewRendererError.missingParameterSets {
+                        // The RTSP stream may begin with inter frames. Keep
+                        // buffering until a random-access frame carries the
+                        // codec configuration instead of killing the session.
+                        return false
+                    }
+                }
                 adapter.start()
             }
-        }
+            .onChange(of: adapter.savedPreviewFileURL) { _, url in
+                guard let url else { return }
+                annotateCapture?("camera_preview_file", url.lastPathComponent)
+            }
+            .onDisappear {
+                stopCameraWork()
+            }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .background {
+                    stopCameraWork()
+                } else if phase == .active {
+                    adapter.start()
+                }
+            }
     }
 
     private func readCamera() {
@@ -284,9 +284,8 @@ struct CameraRouteContainerView: View {
                     return
                 }
                 if thumbnailDataByPath.count >= Self.maximumThumbnailEntries,
-                    thumbnailDataByPath[media.path] == nil,
-                    let oldestPath = thumbnailDataByPath.keys.first
-                {
+                   thumbnailDataByPath[media.path] == nil,
+                   let oldestPath = thumbnailDataByPath.keys.first {
                     thumbnailDataByPath.removeValue(forKey: oldestPath)
                 }
                 thumbnailDataByPath[media.path] = data
@@ -350,9 +349,7 @@ struct CameraRouteContainerView: View {
             } catch CameraCommandRequestError.originMismatch {
                 if generation == recordingGeneration { recordingRequestKey = "camera.error.origin_mismatch" }
             } catch {
-                if generation == recordingGeneration, !Task.isCancelled {
-                    recordingRequestKey = "camera.error.recording_request_failed"
-                }
+                if generation == recordingGeneration, !Task.isCancelled { recordingRequestKey = "camera.error.recording_request_failed" }
             }
         }
     }
@@ -397,16 +394,13 @@ struct CameraRouteContainerView: View {
             } catch CameraCommandRequestError.originMismatch {
                 if generation == stillGeneration { stillRequestKey = "camera.error.origin_mismatch" }
             } catch {
-                if generation == stillGeneration, !Task.isCancelled {
-                    stillRequestKey = "camera.error.still_request_failed"
-                }
+                if generation == stillGeneration, !Task.isCancelled { stillRequestKey = "camera.error.still_request_failed" }
             }
         }
     }
 
     private func previewOutputURL() -> URL {
-        let directory =
-            FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+        let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
         return directory.appendingPathComponent(
             "camera-preview-" + UUID().uuidString + ".h264"
@@ -414,8 +408,7 @@ struct CameraRouteContainerView: View {
     }
 
     private func mediaOutputURL(for media: CameraMediaEvidence) -> URL {
-        let directory =
-            FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+        let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
         return directory.appendingPathComponent(
             "camera-media-" + UUID().uuidString + "-" + cameraMediaLocalFileComponent(media.name)
@@ -477,8 +470,8 @@ private func cameraCommandOutcomeKey(
     }
 }
 
-extension CameraCommandOutcome {
-    fileprivate var annotationValue: String {
+private extension CameraCommandOutcome {
+    var annotationValue: String {
         switch self {
         case .acknowledged: "acknowledged"
         case .refused: "refused"
@@ -667,8 +660,6 @@ struct CameraRouteView: View {
 }
 
 private struct CameraStatusCard: View {
-    private static let mediaPageSize = 100
-    @State private var mediaPage = 1
     let presentation: CameraPresentation
     let readOnlyEvidence: CameraReadOnlyEvidence?
     let movieRTSPURI: String?
@@ -722,121 +713,20 @@ private struct CameraStatusCard: View {
                     value: String(readOnlyEvidence.mediaCount),
                     systemImage: "film.stack"
                 )
-                if !readOnlyEvidence.media.isEmpty {
-                    Divider()
-                    Text(localizedAppText("camera.evidence.media_title"))
-                        .font(.subheadline.weight(.semibold))
-                    LazyVStack(alignment: .leading, spacing: 12) {
-                        ForEach(
-                            Array(readOnlyEvidence.media.prefix(mediaPage * Self.mediaPageSize).enumerated()),
-                            id: \.offset
-                        ) { _, media in
-                            HStack(alignment: .top, spacing: 10) {
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(media.name)
-                                        .font(.subheadline.monospaced())
-                                        .lineLimit(1)
-                                    Text(media.time)
-                                        .font(.caption)
-                                        .foregroundStyle(PevColors.muted)
-                                }
-                                Spacer(minLength: 8)
-                                if downloadingMediaPath == media.path {
-                                    HStack(spacing: 8) {
-                                        ProgressView()
-                                            .controlSize(.small)
-                                        if let cancelDownload {
-                                            Button(action: cancelDownload) {
-                                                Label(
-                                                    localizedAppText("camera.evidence.media_cancel"),
-                                                    systemImage: "xmark.circle"
-                                                )
-                                            }
-                                            .buttonStyle(.bordered)
-                                            .accessibilityIdentifier("camera.media.cancel.\(media.name)")
-                                        }
-                                    }
-                                } else if let downloadMedia {
-                                    Button(action: { downloadMedia(media) }) {
-                                        Label(
-                                            localizedAppText("camera.evidence.media_download"),
-                                            systemImage: "arrow.down.circle"
-                                        )
-                                    }
-                                    .buttonStyle(.bordered)
-                                    .accessibilityIdentifier("camera.media.download.\(media.name)")
-                                }
-                            }
-                            if let downloadedMediaURL,
-                                downloadedMediaPath == media.path
-                            {
-                                HStack(spacing: 12) {
-                                    Text(localizedAppText("camera.evidence.media_saved"))
-                                        .font(.caption)
-                                        .foregroundStyle(PevColors.muted)
-                                    ShareLink(item: downloadedMediaURL) {
-                                        Label(
-                                            localizedAppText("camera.evidence.media_export"),
-                                            systemImage: "square.and.arrow.up"
-                                        )
-                                    }
-                                    .buttonStyle(.bordered)
-                                    .accessibilityIdentifier("camera.media.export.\(media.name)")
-                                }
-                            }
-                            if supportsMediaThumbnails, let fetchThumbnail {
-                                HStack(spacing: 10) {
-                                    if let data = thumbnailDataByPath[media.path] {
-                                        CameraThumbnailView(data: data)
-                                            .accessibilityLabel(localizedAppText("camera.evidence.thumbnail"))
-                                    }
-                                    if thumbnailPathInFlight == media.path {
-                                        ProgressView()
-                                            .controlSize(.small)
-                                    } else {
-                                        Button(action: { fetchThumbnail(media) }) {
-                                            Label(
-                                                localizedAppText("camera.evidence.thumbnail_request"),
-                                                systemImage: "photo"
-                                            )
-                                        }
-                                        .buttonStyle(.bordered)
-                                        .disabled(thumbnailPathInFlight != nil)
-                                        .accessibilityIdentifier("camera.media.thumbnail.\(media.name)")
-                                    }
-                                }
-                            }
-                        }
-                        if mediaPage * Self.mediaPageSize < readOnlyEvidence.media.count {
-                            Button {
-                                mediaPage += 1
-                            } label: {
-                                Label(
-                                    localizedAppText("camera.evidence.media_load_more"),
-                                    systemImage: "ellipsis"
-                                )
-                            }
-                            .buttonStyle(.bordered)
-                        }
-                    }
-                    Text(localizedAppText("camera.evidence.media_local_only"))
-                        .font(.footnote)
-                        .foregroundStyle(PevColors.muted)
-                } else {
-                    Text(localizedAppText("camera.evidence.metadata_only"))
-                        .font(.footnote)
-                        .foregroundStyle(PevColors.muted)
-                }
-                if let mediaErrorKey {
-                    Text(localizedAppText(mediaErrorKey))
-                        .font(.footnote)
-                        .foregroundStyle(.red)
-                }
-                if let thumbnailErrorKey {
-                    Text(localizedAppText(thumbnailErrorKey))
-                        .font(.footnote)
-                        .foregroundStyle(.red)
-                }
+                CameraMediaEvidenceList(
+                    media: readOnlyEvidence.media,
+                    downloadedMediaURL: downloadedMediaURL,
+                    downloadedMediaPath: downloadedMediaPath,
+                    downloadingMediaPath: downloadingMediaPath,
+                    mediaErrorKey: mediaErrorKey,
+                    cancelDownload: cancelDownload,
+                    thumbnailDataByPath: thumbnailDataByPath,
+                    thumbnailPathInFlight: thumbnailPathInFlight,
+                    thumbnailErrorKey: thumbnailErrorKey,
+                    supportsMediaThumbnails: supportsMediaThumbnails,
+                    fetchThumbnail: fetchThumbnail,
+                    downloadMedia: downloadMedia
+                )
             }
 
             if let loadEvidence {
@@ -906,6 +796,150 @@ private struct CameraStatusCard: View {
             localizedAppText("camera.connection.detail.connected")
         case .unsupported:
             localizedAppText("camera.connection.detail.unsupported")
+        }
+    }
+}
+
+private struct CameraMediaEvidenceList: View {
+    private static let pageSize = 100
+    @State private var page = 1
+
+    let media: [CameraMediaEvidence]
+    let downloadedMediaURL: URL?
+    let downloadedMediaPath: String?
+    let downloadingMediaPath: String?
+    let mediaErrorKey: String?
+    let cancelDownload: (() -> Void)?
+    let thumbnailDataByPath: [String: Data]
+    let thumbnailPathInFlight: String?
+    let thumbnailErrorKey: String?
+    let supportsMediaThumbnails: Bool
+    let fetchThumbnail: ((CameraMediaEvidence) -> Void)?
+    let downloadMedia: ((CameraMediaEvidence) -> Void)?
+
+    var body: some View {
+        Group {
+            if media.isEmpty {
+                Text(localizedAppText("camera.evidence.metadata_only"))
+                    .font(.footnote)
+                    .foregroundStyle(PevColors.muted)
+            } else {
+                Divider()
+                Text(localizedAppText("camera.evidence.media_title"))
+                    .font(.subheadline.weight(.semibold))
+                LazyVStack(alignment: .leading, spacing: 12) {
+                    ForEach(media.prefix(page * Self.pageSize)) { media in
+                        mediaRow(media)
+                    }
+                    if page * Self.pageSize < media.count {
+                        Button {
+                            page += 1
+                        } label: {
+                            Label(
+                                localizedAppText("camera.evidence.media_load_more"),
+                                systemImage: "ellipsis"
+                            )
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                }
+                Text(localizedAppText("camera.evidence.media_local_only"))
+                    .font(.footnote)
+                    .foregroundStyle(PevColors.muted)
+            }
+
+            if let mediaErrorKey {
+                Text(localizedAppText(mediaErrorKey))
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+            }
+            if let thumbnailErrorKey {
+                Text(localizedAppText(thumbnailErrorKey))
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+            }
+        }
+        .onChange(of: media) { _, _ in
+            page = 1
+        }
+    }
+
+    private func mediaRow(_ media: CameraMediaEvidence) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 10) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(media.name)
+                        .font(.subheadline.monospaced())
+                        .lineLimit(1)
+                    Text(media.time)
+                        .font(.caption)
+                        .foregroundStyle(PevColors.muted)
+                }
+                Spacer(minLength: 8)
+                if downloadingMediaPath == media.path {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .controlSize(.small)
+                        if let cancelDownload {
+                            Button(action: cancelDownload) {
+                                Label(
+                                    localizedAppText("camera.evidence.media_cancel"),
+                                    systemImage: "xmark.circle"
+                                )
+                            }
+                            .buttonStyle(.bordered)
+                            .accessibilityIdentifier("camera.media.cancel.\(media.name)")
+                        }
+                    }
+                } else if let downloadMedia {
+                    Button(action: { downloadMedia(media) }) {
+                        Label(
+                            localizedAppText("camera.evidence.media_download"),
+                            systemImage: "arrow.down.circle"
+                        )
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("camera.media.download.\(media.name)")
+                }
+            }
+            if let downloadedMediaURL,
+               downloadedMediaPath == media.path {
+                HStack(spacing: 12) {
+                    Text(localizedAppText("camera.evidence.media_saved"))
+                        .font(.caption)
+                        .foregroundStyle(PevColors.muted)
+                    ShareLink(item: downloadedMediaURL) {
+                        Label(
+                            localizedAppText("camera.evidence.media_export"),
+                            systemImage: "square.and.arrow.up"
+                        )
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("camera.media.export.\(media.name)")
+                }
+            }
+            if supportsMediaThumbnails, let fetchThumbnail {
+                HStack(spacing: 10) {
+                    if let data = thumbnailDataByPath[media.path] {
+                        CameraThumbnailView(data: data)
+                            .accessibilityLabel(localizedAppText("camera.evidence.thumbnail"))
+                    }
+                    if thumbnailPathInFlight == media.path {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Button(action: { fetchThumbnail(media) }) {
+                            Label(
+                                localizedAppText("camera.evidence.thumbnail_request"),
+                                systemImage: "photo"
+                            )
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(thumbnailPathInFlight != nil)
+                        .accessibilityIdentifier("camera.media.thumbnail.\(media.name)")
+                    }
+                }
+            }
         }
     }
 }
@@ -992,9 +1026,7 @@ private struct CameraTruthCard: View {
                     HStack {
                         Button(action: { requestRecording(true) }) {
                             Label(
-                                localizedAppText(
-                                    isRequestingRecording
-                                        ? "camera.recording.requesting" : "camera.recording.request_start"),
+                                localizedAppText(isRequestingRecording ? "camera.recording.requesting" : "camera.recording.request_start"),
                                 systemImage: isRequestingRecording ? "arrow.triangle.2.circlepath" : "record.circle"
                             )
                         }
@@ -1025,8 +1057,7 @@ private struct CameraTruthCard: View {
                     if supportsStillCapture {
                         Button(action: requestStillCapture) {
                             Label(
-                                localizedAppText(
-                                    isRequestingStill ? "camera.still.requesting" : "camera.still.request"),
+                                localizedAppText(isRequestingStill ? "camera.still.requesting" : "camera.still.request"),
                                 systemImage: isRequestingStill ? "arrow.triangle.2.circlepath" : "camera.shutter.button"
                             )
                         }
@@ -1163,9 +1194,9 @@ private struct CameraTruthRow: View {
     }
 }
 
-extension View {
+private extension View {
     @ViewBuilder
-    fileprivate func cameraSurface(tint: Color) -> some View {
+    func cameraSurface(tint: Color) -> some View {
         if #available(iOS 26, macOS 26, *) {
             self.glassEffect(.regular.tint(tint.opacity(0.18)), in: .rect(cornerRadius: 24))
         } else {
