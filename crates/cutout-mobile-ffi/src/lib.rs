@@ -105,16 +105,16 @@ use cutout_music::{
 use cutout_protocols::{
     BEGODE_DATA_CHANNEL, BEGODE_FALCON_REGISTRY_ENTRY, ConcreteSessionErrorDto,
     ConcreteSessionStepResultDto, DeviceDetectionEvent, DeviceDetectionResolution, DeviceFamily,
-    IdentityBannerEvidence, NOSFET_AERO_REGISTRY_ENTRY, NovatekCapabilityError,
+    H264FileSink, IdentityBannerEvidence, NOSFET_AERO_REGISTRY_ENTRY, NovatekCapabilityError,
     NovatekCommandOutcome, NovatekConfigurationError, NovatekHttpOrigin, NovatekMediaPathError,
     NovatekOriginError, NovatekProfileError, NovatekR3V1Session, NovatekReadCommand,
     NovatekRecordingCommand, NovatekSessionError, NovatekStillCaptureCommand,
     NovatekStoragePresence, PendingProbe, ProtocolFamilyClassification, ProtocolFamilyState,
-    ProtocolModelIdentityEvidence, RetinaH264FileSink, RetinaRtspError, RetinaRtspPreviewSession,
-    RetinaVideoClockRate, RetinaVideoConfiguration, RetinaVideoFrame, StagedIdentityInput,
+    ProtocolModelIdentityEvidence, RtspError, RtspPreviewSession, StagedIdentityInput,
     StagedIdentityOutcome, VescBatteryType as CoreVescBatteryType,
     VescBoardProfile as CoreVescBoardProfile, VescReadOnlySession as CoreVescReadOnlySession,
-    closest_known_model, identify_known_model, is_r3_pro_firmware, parse_read_only_snapshot,
+    VideoClockRate, VideoConfiguration, VideoFrame, closest_known_model, identify_known_model,
+    is_r3_pro_firmware, parse_read_only_snapshot,
 };
 use cutout_ride_maps as ride_maps;
 use libcutout_persistence as persistence;
@@ -285,7 +285,7 @@ pub enum MobileCameraPreviewEventDto {
     Unavailable,
 }
 
-/// One encoded video access unit returned by the Retina preview session.
+/// One encoded video access unit returned by the RTSP preview session.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileCameraVideoFrameDto {
     /// Encoded frame bytes in the source codec format.
@@ -336,29 +336,29 @@ pub enum MobileCameraPreviewError {
     /// The preview object has already been stopped or ended.
     #[error("RTSP preview is not running")]
     NotRunning,
-    /// Retina failed while negotiating or consuming the session.
+    /// RTSP failed while negotiating or consuming the session.
     #[error("RTSP session failed")]
     Session,
 }
 
-impl From<RetinaRtspError> for MobileCameraPreviewError {
-    fn from(error: RetinaRtspError) -> Self {
+impl From<RtspError> for MobileCameraPreviewError {
+    fn from(error: RtspError) -> Self {
         match error {
-            RetinaRtspError::InvalidUri => Self::InvalidUri,
-            RetinaRtspError::NonLocalUri => Self::NonLocalUri,
-            RetinaRtspError::OriginMismatch => Self::OriginMismatch,
-            RetinaRtspError::UnsupportedVideoCodec => Self::UnsupportedVideoCodec,
-            RetinaRtspError::VideoFrameTooLarge { .. } => Self::VideoFrameTooLarge,
-            RetinaRtspError::Session(_) => Self::Session,
+            RtspError::InvalidUri => Self::InvalidUri,
+            RtspError::NonLocalUri => Self::NonLocalUri,
+            RtspError::OriginMismatch => Self::OriginMismatch,
+            RtspError::UnsupportedVideoCodec => Self::UnsupportedVideoCodec,
+            RtspError::VideoFrameTooLarge { .. } => Self::VideoFrameTooLarge,
+            RtspError::Session(_) => Self::Session,
         }
     }
 }
 
-/// Async mobile RTSP preview session backed by the Rust Retina transport.
+/// Async mobile RTSP preview session backed by the Rust RTSP transport.
 #[derive(Debug, uniffi::Object)]
 pub struct MobileCameraPreviewSession {
-    inner: Mutex<Option<RetinaRtspPreviewSession>>,
-    video_configuration: Mutex<Option<RetinaVideoConfiguration>>,
+    inner: Mutex<Option<RtspPreviewSession>>,
+    video_configuration: Mutex<Option<VideoConfiguration>>,
     stop: Arc<Notify>,
     stopped: AtomicBool,
     generation: AtomicU64,
@@ -508,8 +508,8 @@ impl MobileCameraMediaProvenanceInput {
     }
 }
 
-impl From<RetinaVideoFrame> for MobileCameraVideoFrameDto {
-    fn from(frame: RetinaVideoFrame) -> Self {
+impl From<VideoFrame> for MobileCameraVideoFrameDto {
+    fn from(frame: VideoFrame) -> Self {
         let (data, parameter_sets, loss, is_random_access_point, timestamp, clock_rate_hz) =
             frame.into_parts();
         Self {
@@ -523,8 +523,8 @@ impl From<RetinaVideoFrame> for MobileCameraVideoFrameDto {
     }
 }
 
-impl From<&RetinaVideoConfiguration> for MobileCameraVideoConfigurationDto {
-    fn from(configuration: &RetinaVideoConfiguration) -> Self {
+impl From<&VideoConfiguration> for MobileCameraVideoConfigurationDto {
+    fn from(configuration: &VideoConfiguration) -> Self {
         let dimensions = configuration.dimensions();
         Self {
             codec: configuration.codec().as_str().to_owned(),
@@ -537,10 +537,10 @@ impl From<&RetinaVideoConfiguration> for MobileCameraVideoConfigurationDto {
 }
 
 impl MobileCameraVideoFrameDto {
-    fn into_retina_frame(self) -> Result<RetinaVideoFrame, MobileCameraPreviewFileError> {
-        let clock_rate_hz = RetinaVideoClockRate::new(self.clock_rate_hz)
+    fn into_video_frame(self) -> Result<VideoFrame, MobileCameraPreviewFileError> {
+        let clock_rate_hz = VideoClockRate::new(self.clock_rate_hz)
             .ok_or(MobileCameraPreviewFileError::InvalidFrame)?;
-        RetinaVideoFrame::new(
+        VideoFrame::new(
             self.data,
             self.loss,
             self.is_random_access_point,
@@ -558,7 +558,7 @@ impl MobileCameraPreviewSession {
     /// # Errors
     ///
     /// Returns [`MobileCameraPreviewError::NotRunning`] after [`Self::stop`]
-    /// or a transport/depacketization failure from Retina.
+    /// or a transport/depacketization failure from RTSP.
     pub async fn next_video_frame(
         &self,
     ) -> Result<Option<MobileCameraVideoFrameDto>, MobileCameraPreviewError> {
@@ -629,7 +629,7 @@ impl MobileCameraPreviewSession {
 }
 
 fn mobile_camera_preview_from_session(
-    session: RetinaRtspPreviewSession,
+    session: RtspPreviewSession,
 ) -> Arc<MobileCameraPreviewSession> {
     let video_configuration = session.video_configuration().cloned();
     Arc::new(MobileCameraPreviewSession {
@@ -660,14 +660,14 @@ pub async fn mobile_camera_preview_connect_for_origin(
     let expected_address = expected_address
         .parse::<Ipv4Addr>()
         .map_err(|_| MobileCameraPreviewError::NonLocalUri)?;
-    let session = RetinaRtspPreviewSession::connect_for_origin(&uri, expected_address).await?;
+    let session = RtspPreviewSession::connect_for_origin(&uri, expected_address).await?;
     Ok(mobile_camera_preview_from_session(session))
 }
 
 /// Mobile-facing Annex-B H.264 file sink for encoded preview frames.
 #[derive(Debug, uniffi::Object)]
 pub struct MobileCameraPreviewFileSink {
-    inner: Mutex<Option<RetinaH264FileSink>>,
+    inner: Mutex<Option<H264FileSink>>,
 }
 
 /// Failure while creating or writing an encoded preview file.
@@ -679,7 +679,7 @@ pub enum MobileCameraPreviewFileError {
     /// The supplied frame was not a valid bounded preview frame.
     #[error("invalid preview frame")]
     InvalidFrame,
-    /// A valid frame could not be written or was not valid Retina H.264 data.
+    /// A valid frame could not be written or was not valid RTSP H.264 data.
     #[error("could not write preview frame")]
     Write,
     /// The sink has already been finished.
@@ -697,8 +697,7 @@ impl MobileCameraPreviewFileSink {
     /// cannot be opened.
     #[uniffi::constructor]
     pub fn create(path: String) -> Result<Arc<Self>, MobileCameraPreviewFileError> {
-        let sink =
-            RetinaH264FileSink::create(path).map_err(|_| MobileCameraPreviewFileError::Create)?;
+        let sink = H264FileSink::create(path).map_err(|_| MobileCameraPreviewFileError::Create)?;
         Ok(Arc::new(Self {
             inner: Mutex::new(Some(sink)),
         }))
@@ -720,7 +719,7 @@ impl MobileCameraPreviewFileSink {
         let sink = inner
             .as_mut()
             .ok_or(MobileCameraPreviewFileError::Finished)?;
-        let frame = frame.into_retina_frame()?;
+        let frame = frame.into_video_frame()?;
         sink.write_frame(&frame)
             .map_err(|_| MobileCameraPreviewFileError::Write)
     }
@@ -14695,7 +14694,7 @@ mod tests {
             clock_rate_hz: 0,
         };
         assert_eq!(
-            invalid_clock_rate.into_retina_frame(),
+            invalid_clock_rate.into_video_frame(),
             Err(MobileCameraPreviewFileError::InvalidFrame)
         );
 
@@ -14708,7 +14707,7 @@ mod tests {
             clock_rate_hz: 90_000,
         };
         assert_eq!(
-            oversized.into_retina_frame(),
+            oversized.into_video_frame(),
             Err(MobileCameraPreviewFileError::InvalidFrame)
         );
     }

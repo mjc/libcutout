@@ -314,7 +314,7 @@ public final class CameraLocalNetworkAdapter {
 
     /// Negotiates a local RTSP session and begins consuming encoded frames.
     ///
-    /// The Retina session performs URI and local-origin validation before this
+    /// The RTSP session performs URI and local-origin validation before this
     /// adapter publishes buffering state. Encoded frame bytes are offered to
     /// the installed handler and optional file sink without changing state
     /// ownership.
