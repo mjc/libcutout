@@ -1153,6 +1153,37 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(core.displayState.lastUpdate, MonotonicMilliseconds(84))
     }
 
+    func testNotificationEffectsRunBeforeDisplayPublicationInOneCanonicalOrder() {
+        var events = [String]()
+        let effects = CutoutSessionNotificationEffects(
+            applyActions: { _ in events.append("actions") },
+            observeRideMapConnection: { _ in events.append("map") },
+            persistBmsSamples: { _ in events.append("bms") },
+            reduceDisplayState: { state, snapshot, receivedAt in
+                events.append("display")
+                return state.reducing(snapshot: snapshot, receivedAt: receivedAt)
+            }
+        )
+        let core = CutoutSessionCore(
+            clock: MonotonicClock(now: { MonotonicMilliseconds(100) }),
+            notificationEffects: effects
+        )
+
+        core.applyNotificationStep(
+            CoreBluetoothSessionStep(
+                operations: [],
+                snapshot: TelemetrySnapshot(speed: speedValue(1_234)),
+                actions: [.event()]
+            ),
+            receivedAt: MonotonicMilliseconds(42)
+        )
+
+        XCTAssertEqual(events, ["actions", "map", "bms", "display"])
+        XCTAssertEqual(core.displayState.speed.millimetersPerSecond, 1_234)
+        XCTAssertEqual(core.displayState.notificationCount, 1)
+        XCTAssertEqual(core.displayState.lastUpdate, MonotonicMilliseconds(42))
+    }
+
     func testApplyNotificationStepPublishesDisplayStateOnMainThread() {
         nonisolated(unsafe) let core = CutoutSessionCore()
         let published = expectation(description: "display state published")

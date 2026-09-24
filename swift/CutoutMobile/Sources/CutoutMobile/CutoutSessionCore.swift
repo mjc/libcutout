@@ -507,6 +507,7 @@ public final class CutoutSessionCore: NSObject {
     private let bleQueueKey = DispatchSpecificKey<Void>()
     private let rustSessionState: CutoutSessionStateHandle
     private let selectedDeviceStore: DevicePickerSelectionStore
+    private let injectedNotificationEffects: CutoutSessionNotificationEffects?
     private var central: CBCentralManager?
     private var peripheral: CBPeripheral?
     private var connectionAttempt: CoreBluetoothConnectionAttempt?
@@ -593,6 +594,21 @@ public final class CutoutSessionCore: NSObject {
             self?.onRecord?(message)
         }
     )
+    private lazy var notificationEffects: CutoutSessionNotificationEffects =
+        injectedNotificationEffects ?? CutoutSessionNotificationEffects(
+            applyActions: { [weak self] actions in
+                actions.forEach { self?.applySessionAction($0) }
+            },
+            observeRideMapConnection: { [weak self] receivedAt in
+                self?.observeRideMapConnection(at: receivedAt)
+            },
+            persistBmsSamples: { [weak self] observations in
+                self?.persistBmsSamples(observations)
+            },
+            reduceDisplayState: { state, snapshot, receivedAt in
+                state.reducing(snapshot: snapshot, receivedAt: receivedAt)
+            }
+        )
     private let rideMapStateForInitialization: MobileRideMapState?
     private lazy var rideMapRecorder = CutoutSessionRideMapRecorder(
         state: rideMapStateForInitialization,
@@ -714,7 +730,8 @@ public final class CutoutSessionCore: NSObject {
         selectedDeviceStore: DevicePickerSelectionStore = DevicePickerSelectionStore(),
         wallClock: @escaping () -> Date = { Date() },
         rideMapState: MobileRideMapState? = nil,
-        database: RideDatabaseHandle? = nil
+        database: RideDatabaseHandle? = nil,
+        notificationEffects: CutoutSessionNotificationEffects? = nil
     ) {
         let rustSessionState = database.map {
             CutoutSessionStateHandle.withDatabase(database: $0)
@@ -733,6 +750,7 @@ public final class CutoutSessionCore: NSObject {
         self.reconnectController = ConnectionReconnectController(scheduler: reconnectScheduler)
         self.reconnectJitter = reconnectJitter
         self.selectedDeviceStore = selectedDeviceStore
+        self.injectedNotificationEffects = notificationEffects
         super.init()
         bleQueue.setSpecific(key: bleQueueKey, value: ())
     }
@@ -759,6 +777,7 @@ public final class CutoutSessionCore: NSObject {
         self.reconnectController = ConnectionReconnectController(scheduler: MainQueueReconnectScheduler())
         self.reconnectJitter = { Double.random(in: 0...1) }
         self.selectedDeviceStore = selectedDeviceStore
+        self.injectedNotificationEffects = nil
         super.init()
         bleQueue.setSpecific(key: bleQueueKey, value: ())
     }
@@ -1483,11 +1502,11 @@ public final class CutoutSessionCore: NSObject {
         let bmsObservations = step.actions.compactMap { action in
             action.kind == .bmsSnapshot ? action.bmsSnapshot : nil
         }.flatMap(\.rawObservations)
-        step.actions.forEach(applySessionAction)
-        observeRideMapConnection(at: receivedAt)
-        persistBmsSamples(bmsObservations)
+        notificationEffects.applyActions(step.actions)
+        notificationEffects.observeRideMapConnection(receivedAt)
+        notificationEffects.persistBmsSamples(bmsObservations)
         let snapshot = step.snapshot
-        displayState = displayState.reducing(snapshot: snapshot, receivedAt: receivedAt)
+        displayState = notificationEffects.reduceDisplayState(displayState, snapshot, receivedAt)
         hasObservedSpeedSnapshot = hasObservedSpeedSnapshot || snapshot?.speed?.value != nil
         publishDisplayState()
         publishPhoneAlarmActionsAvailable()
