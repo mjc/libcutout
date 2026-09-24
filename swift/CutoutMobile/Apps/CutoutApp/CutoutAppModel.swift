@@ -17,6 +17,7 @@ struct MusicHistoryQueryResult: Equatable, Sendable {
 }
 
 typealias RideHistoryQueryProvider = @MainActor () -> (any RideHistoryQuerying)?
+typealias RideHistoryDateProvider = @MainActor () -> Date
 
 @MainActor
 @Observable
@@ -521,7 +522,8 @@ final class CutoutAppModel {
         musicProviderSelectionStore: MusicProviderSelectionStore = MusicProviderSelectionStore(),
         musicMonitoringPreferenceStore: MusicMonitoringPreferenceStore = MusicMonitoringPreferenceStore(),
         phoneAlarmDelivery: any PhoneRideAlarmDelivering = makePhoneRideAlarmDelivery(),
-        rideHistoryQueryProvider: RideHistoryQueryProvider? = nil
+        rideHistoryQueryProvider: RideHistoryQueryProvider? = nil,
+        rideHistoryDateProvider: @escaping RideHistoryDateProvider = { Date() }
     ) {
         self.init(
             core: core,
@@ -533,7 +535,8 @@ final class CutoutAppModel {
             musicProviderSelectionStore: musicProviderSelectionStore,
             musicMonitoringPreferenceStore: musicMonitoringPreferenceStore,
             phoneAlarmDelivery: phoneAlarmDelivery,
-            rideHistoryQueryProvider: rideHistoryQueryProvider
+            rideHistoryQueryProvider: rideHistoryQueryProvider,
+            rideHistoryDateProvider: rideHistoryDateProvider
         )
     }
 
@@ -547,12 +550,14 @@ final class CutoutAppModel {
         musicProviderSelectionStore: MusicProviderSelectionStore,
         musicMonitoringPreferenceStore: MusicMonitoringPreferenceStore,
         phoneAlarmDelivery: any PhoneRideAlarmDelivering,
-        rideHistoryQueryProvider: RideHistoryQueryProvider?
+        rideHistoryQueryProvider: RideHistoryQueryProvider?,
+        rideHistoryDateProvider: @escaping RideHistoryDateProvider = { Date() }
     ) {
         let musicProviderLifecycle = MobileMusicProviderLifecycle()
         let musicEffects = MusicProviderEffectExecutor()
         self.rideHistory = RideHistoryModel(
-            stateProvider: rideHistoryQueryProvider ?? { core.rideMapStateHandle }
+            stateProvider: rideHistoryQueryProvider ?? { core.rideMapStateHandle },
+            dateProvider: rideHistoryDateProvider
         )
         self.musicProviderLifecycle = musicProviderLifecycle
         self.musicEffects = musicEffects

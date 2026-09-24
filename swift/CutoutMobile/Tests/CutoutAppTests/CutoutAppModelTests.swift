@@ -819,6 +819,90 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testHistorySearchChangeRejectsLatePriorPageResult() async throws {
+        let driver = SessionDriverSpy(rows: [])
+        let state = driver.rideMapState
+        _ = try state.startGpsOnly(atMs: 100)
+        _ = await Self.settle(state, try state.ingestLocation(
+            monotonicMs: 100,
+            wallClockUnixMs: 1_700_000_000_100,
+            latitudeDegrees: 39.7000,
+            longitudeDegrees: -104.9000,
+            horizontalAccuracyMeters: 5
+        ))
+        _ = await Self.settle(state, try state.ingestLocation(
+            monotonicMs: 1_100,
+            wallClockUnixMs: 1_700_000_001_100,
+            latitudeDegrees: 39.7001,
+            longitudeDegrees: -104.9000,
+            horizontalAccuracyMeters: 5
+        ))
+        _ = try state.stop(atMs: 1_100)
+        let rideID = try state.save().rideID
+        let query = GatedRideHistoryQuery(base: state, failAfterRelease: false)
+        query.armNextHistoryPage()
+        let model = CutoutAppModel(
+            core: driver,
+            rideHistoryQueryProvider: { query }
+        )
+
+        model.setRideMapHistorySearchText("no-match-\(UUID().uuidString)")
+        let gatedPageStarted = await query.waitUntilGatedHistoryPageStarts()
+        XCTAssertTrue(gatedPageStarted)
+        XCTAssertFalse(query.gatedHistoryPageRideIDsSnapshot.contains(rideID))
+
+        model.setRideMapHistorySearchText(rideID)
+        await Self.waitUntil("matching history query after replacing filtered page") {
+            !model.rideMapHistoryLoading
+                && model.rideMapHistory.contains(where: { $0.rideID == rideID })
+        }
+        let matchingRideIDs = model.rideMapHistory.map(\.rideID)
+        let selectedRideID = model.selectedRideMapHistoryID
+        XCTAssertEqual(matchingRideIDs, [rideID])
+
+        query.releaseGatedHistoryPage()
+        let gatedPageFinished = await query.waitUntilGatedHistoryPageFinishes()
+        XCTAssertTrue(gatedPageFinished)
+        for _ in 0 ..< 20 {
+            await Task.yield()
+        }
+
+        XCTAssertEqual(model.rideMapHistory.map(\.rideID), matchingRideIDs)
+        XCTAssertEqual(model.selectedRideMapHistoryID, selectedRideID)
+        XCTAssertFalse(model.rideMapHistoryLoading)
+        XCTAssertFalse(model.rideMapHistoryCanLoadMore)
+        XCTAssertNil(model.rideMapHistoryError)
+    }
+
+    @MainActor
+    func testHistoryRecentFilterUsesInjectedCurrentTime() async throws {
+        let fixedNow = Date(timeIntervalSince1970: 1_700_000_000)
+        let query = GatedRideHistoryQuery(
+            base: MobileRideMapState(),
+            failAfterRelease: false
+        )
+        let model = CutoutAppModel(
+            core: SessionDriverSpy(rows: []),
+            rideHistoryQueryProvider: { query },
+            rideHistoryDateProvider: { fixedNow }
+        )
+
+        model.loadRideMapHistory()
+        await Self.waitUntil("history query with fixed current time") {
+            !model.rideMapHistoryLoading
+        }
+
+        let filters = query.historyPageFiltersSnapshot
+        XCTAssertEqual(filters.count, 1)
+        let filter = try XCTUnwrap(filters[0])
+        let nowMilliseconds = UInt64(fixedNow.timeIntervalSince1970 * 1_000)
+        let expectedCutoff = nowMilliseconds - MobileRideMapLimits.rustOwned.historyRecentWindowMilliseconds
+        XCTAssertEqual(filter.createdAfterMilliseconds, expectedCutoff)
+        XCTAssertNil(filter.vehicleIdentity)
+        XCTAssertNil(filter.searchText)
+    }
+
+    @MainActor
     func testHistoryDetailLoadGenerationRejectsDeletedOrReplacedSelection() {
         XCTAssertTrue(
             RideHistoryModel.shouldApplyHistoryDetailLoad(
@@ -4416,6 +4500,12 @@ private final class GatedRideHistoryQuery: RideHistoryQuerying, @unchecked Senda
     private let projectionStarted = DispatchSemaphore(value: 0)
     private let projectionRelease = DispatchSemaphore(value: 0)
     private let projectionFinished = DispatchSemaphore(value: 0)
+    private var shouldGateNextHistoryPage = false
+    private var gatedHistoryPageRideIDs = [String]()
+    private let historyPageStarted = DispatchSemaphore(value: 0)
+    private let historyPageRelease = DispatchSemaphore(value: 0)
+    private let historyPageFinished = DispatchSemaphore(value: 0)
+    private var historyPageFilters = [MobileRideHistoryFilterDto?]()
 
     init(base: MobileRideMapState, failAfterRelease: Bool) {
         self.base = base
@@ -4470,7 +4560,21 @@ private final class GatedRideHistoryQuery: RideHistoryQuerying, @unchecked Senda
         limit: UInt32,
         filter: MobileRideHistoryFilterDto?
     ) throws -> MobileRideMapHistoryPageDto {
-        try base.storedHistoryPage(cursor: cursor, limit: limit, filter: filter)
+        let page = try base.storedHistoryPage(cursor: cursor, limit: limit, filter: filter)
+        lock.lock()
+        historyPageFilters.append(filter)
+        let shouldGate = shouldGateNextHistoryPage
+        shouldGateNextHistoryPage = false
+        if shouldGate {
+            gatedHistoryPageRideIDs = page.summaries.map(\.rideID)
+        }
+        lock.unlock()
+        if shouldGate {
+            historyPageStarted.signal()
+            historyPageRelease.wait()
+            historyPageFinished.signal()
+        }
+        return page
     }
 
     func projectStoredHistoryContext(
@@ -4505,6 +4609,36 @@ private final class GatedRideHistoryQuery: RideHistoryQuerying, @unchecked Senda
 
     func waitUntilGatedProjectionFinishes() async -> Bool {
         await waitForSignal(projectionFinished)
+    }
+
+    func waitUntilGatedHistoryPageStarts() async -> Bool {
+        await waitForSignal(historyPageStarted)
+    }
+
+    func armNextHistoryPage() {
+        lock.lock()
+        shouldGateNextHistoryPage = true
+        lock.unlock()
+    }
+
+    func releaseGatedHistoryPage() {
+        historyPageRelease.signal()
+    }
+
+    func waitUntilGatedHistoryPageFinishes() async -> Bool {
+        await waitForSignal(historyPageFinished)
+    }
+
+    var gatedHistoryPageRideIDsSnapshot: [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return gatedHistoryPageRideIDs
+    }
+
+    var historyPageFiltersSnapshot: [MobileRideHistoryFilterDto?] {
+        lock.lock()
+        defer { lock.unlock() }
+        return historyPageFilters
     }
 
     @MainActor

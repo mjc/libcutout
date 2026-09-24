@@ -58,6 +58,7 @@ final class RideHistoryModel {
     nonisolated private static var limits: MobileRideMapLimits { .rustOwned }
 
     private let stateProvider: @MainActor () -> (any RideHistoryQuerying)?
+    private let dateProvider: @MainActor () -> Date
     private var cursor: MobileRideCursorDto?
     private var queryDateAfterMilliseconds: UInt64?
     private var loadTask: Task<Void, Never>?
@@ -120,8 +121,12 @@ final class RideHistoryModel {
         historyFilter
     }
 
-    init(stateProvider: @escaping @MainActor () -> (any RideHistoryQuerying)?) {
+    init(
+        stateProvider: @escaping @MainActor () -> (any RideHistoryQuerying)?,
+        dateProvider: @escaping @MainActor () -> Date = { Date() }
+    ) {
         self.stateProvider = stateProvider
+        self.dateProvider = dateProvider
     }
 
     func prepareForReload() {
@@ -724,10 +729,10 @@ final class RideHistoryModel {
 
     private var historyDateAfterMilliseconds: UInt64? {
         guard dateFilter == .last30Days else { return nil }
-        let now = Date().timeIntervalSince1970 * 1_000
-        guard now.isFinite, now > 0 else { return 0 }
+        let milliseconds = dateProvider().timeIntervalSince1970 * 1_000
+        guard milliseconds.isFinite, milliseconds > 0 else { return 0 }
         let window = Double(Self.limits.historyRecentWindowMilliseconds)
-        return UInt64(max(0, now - window))
+        return UInt64(max(0, milliseconds - window))
     }
 
     private var historyFilter: MobileRideHistoryFilterDto {
