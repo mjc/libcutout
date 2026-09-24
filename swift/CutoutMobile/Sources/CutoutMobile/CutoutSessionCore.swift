@@ -1467,12 +1467,7 @@ public final class CutoutSessionCore: NSObject {
 
     func applyLinkUpStep(_ step: CoreBluetoothSessionStep) {
         record("link_operations=\(step.operations.map(String.init(describing:)).joined(separator: ","))")
-        guard acceptCaptureWrite(captureBuilder?.recordLinkUp(
-            monotonicMs: MobileMonotonicMillisDto(milliseconds: captureElapsedMilliseconds()),
-            maxWriteLen: peripheral.map {
-                MobileTransportWriteLimitDto(bytes: UInt16(clamping: $0.maximumWriteValueLength(for: .withoutResponse)))
-            }
-        ) ?? .accepted) else { return }
+        guard recordCaptureLinkUp() else { return }
         if let snapshot = step.snapshot {
             hasObservedSpeedSnapshot = snapshot.speed?.value != nil
         }
@@ -2423,6 +2418,17 @@ public final class CutoutSessionCore: NSObject {
         finishCaptureWriter(priorWriteSucceeded: outcome == .accepted)
     }
 
+    @discardableResult
+    private func recordCaptureLinkUp() -> Bool {
+        guard let builder = captureBuilder else { return true }
+        return acceptCaptureWrite(builder.recordLinkUp(
+            monotonicMs: MobileMonotonicMillisDto(milliseconds: captureElapsedMilliseconds()),
+            maxWriteLen: peripheral.map {
+                MobileTransportWriteLimitDto(bytes: UInt16(clamping: $0.maximumWriteValueLength(for: .withoutResponse)))
+            }
+        ))
+    }
+
     private func finishCaptureWriter(
         priorWriteSucceeded: Bool = true
     ) {
@@ -2883,10 +2889,7 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
         setPhase(.discoveringServices)
         peripheral.delegate = attempt
         if isRecordOnly || isDetectingProtocol {
-            _ = captureBuilder?.recordLinkUp(
-                monotonicMs: MobileMonotonicMillisDto(milliseconds: captureElapsedMilliseconds()),
-                maxWriteLen: MobileTransportWriteLimitDto(bytes: UInt16(clamping: peripheral.maximumWriteValueLength(for: .withoutResponse)))
-            )
+            guard recordCaptureLinkUp() else { return }
         }
         peripheral.discoverServices(discoveryServiceUuidsForSelectedRoute)
     }
