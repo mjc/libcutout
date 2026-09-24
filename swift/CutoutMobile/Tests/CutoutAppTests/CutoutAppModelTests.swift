@@ -840,8 +840,7 @@ final class CutoutAppModelTests: XCTestCase {
 
     @MainActor
     func testHistorySearchChangeRejectsLatePriorPageResult() async throws {
-        let driver = SessionDriverSpy(rows: [])
-        let state = driver.rideMapState
+        let state = MobileRideMapState()
         _ = try state.startGpsOnly(atMs: 100)
         _ = await Self.settle(state, try state.ingestLocation(
             monotonicMs: 100,
@@ -861,26 +860,23 @@ final class CutoutAppModelTests: XCTestCase {
         let rideID = try state.save().rideID
         let query = GatedRideHistoryQuery(base: state, failAfterRelease: false)
         query.armNextHistoryPage()
-        let model = CutoutAppModel(
-            core: driver,
-            rideHistoryQueryProvider: { query }
-        )
+        let model = RideHistoryModel(stateProvider: { query })
 
         let unmatchedSearch = "no-match-\(UUID().uuidString)"
-        model.rideHistory.searchText = unmatchedSearch
+        model.searchText = unmatchedSearch
         let gatedPageStarted = await query.waitUntilGatedHistoryPageStarts()
         XCTAssertTrue(gatedPageStarted)
         XCTAssertFalse(query.gatedHistoryPageRideIDsSnapshot.contains(rideID))
 
-        model.rideHistory.searchText = rideID
+        model.searchText = rideID
         let replacementQueryStarted = await query.waitUntilHistoryPageFilter(rideID)
         XCTAssertTrue(replacementQueryStarted)
         await Self.waitUntil("matching history query after replacing filtered page") {
-            !model.rideHistory.isLoading
-                && model.rideHistory.rides.contains(where: { $0.rideID == rideID })
+            !model.isLoading
+                && model.rides.contains(where: { $0.rideID == rideID })
         }
-        let matchingRideIDs = model.rideHistory.rides.map(\.rideID)
-        let selectedRideID = model.rideHistory.selectedRideID
+        let matchingRideIDs = model.rides.map(\.rideID)
+        let selectedRideID = model.selectedRideID
         XCTAssertEqual(matchingRideIDs, [rideID])
 
         query.releaseGatedHistoryPage()
@@ -890,17 +886,16 @@ final class CutoutAppModelTests: XCTestCase {
             await Task.yield()
         }
 
-        XCTAssertEqual(model.rideHistory.rides.map(\.rideID), matchingRideIDs)
-        XCTAssertEqual(model.rideHistory.selectedRideID, selectedRideID)
-        XCTAssertFalse(model.rideHistory.isLoading)
-        XCTAssertFalse(model.rideHistory.canLoadMore)
-        XCTAssertNil(model.rideHistory.error)
+        XCTAssertEqual(model.rides.map(\.rideID), matchingRideIDs)
+        XCTAssertEqual(model.selectedRideID, selectedRideID)
+        XCTAssertFalse(model.isLoading)
+        XCTAssertFalse(model.canLoadMore)
+        XCTAssertNil(model.error)
     }
 
     @MainActor
     func testHistoryReloadRejectsLateCursorPageResult() async throws {
-        let driver = SessionDriverSpy(rows: [])
-        let state = driver.rideMapState
+        let state = MobileRideMapState()
         let pageLimit = Int(MobileRideMapLimits.rustOwned.historyPageLimit)
         for index in 0 ... pageLimit {
             let startMs = UInt64(index + 1) * 10_000
@@ -924,20 +919,17 @@ final class CutoutAppModelTests: XCTestCase {
         }
 
         let query = GatedRideHistoryQuery(base: state, failAfterRelease: false)
-        let model = CutoutAppModel(
-            core: driver,
-            rideHistoryQueryProvider: { query }
-        )
-        model.rideHistory.setDateFilter(.allTime)
+        let model = RideHistoryModel(stateProvider: { query })
+        model.setDateFilter(.allTime)
         await Self.waitUntil("first Rust history page") {
-            !model.rideHistory.isLoading && model.rideHistory.canLoadMore
+            !model.isLoading && model.canLoadMore
         }
-        let firstPageRideIDs = model.rideHistory.rides.map(\.rideID)
+        let firstPageRideIDs = model.rides.map(\.rideID)
         XCTAssertEqual(firstPageRideIDs.count, pageLimit)
         XCTAssertEqual(query.historyPageCursorPresenceSnapshot, [false])
 
         query.armNextHistoryPage()
-        model.rideHistory.loadMore()
+        model.loadMore()
         let cursorPageStarted = await query.waitUntilGatedHistoryPageStarts()
         XCTAssertTrue(cursorPageStarted)
         XCTAssertEqual(query.historyPageCursorPresenceSnapshot, [false, true])
@@ -945,12 +937,12 @@ final class CutoutAppModelTests: XCTestCase {
             Set(firstPageRideIDs).isDisjoint(with: query.gatedHistoryPageRideIDsSnapshot)
         )
 
-        model.rideHistory.reload()
+        model.reload()
         await Self.waitUntil("reloaded first Rust history page") {
-            !model.rideHistory.isLoading
-                && model.rideHistory.rides.map(\.rideID) == firstPageRideIDs
+            !model.isLoading
+                && model.rides.map(\.rideID) == firstPageRideIDs
         }
-        XCTAssertTrue(model.rideHistory.canLoadMore)
+        XCTAssertTrue(model.canLoadMore)
 
         query.releaseGatedHistoryPage()
         let stalePageFinished = await query.waitUntilGatedHistoryPageFinishes()
@@ -959,16 +951,15 @@ final class CutoutAppModelTests: XCTestCase {
             await Task.yield()
         }
 
-        XCTAssertEqual(model.rideHistory.rides.map(\.rideID), firstPageRideIDs)
-        XCTAssertTrue(model.rideHistory.canLoadMore)
-        XCTAssertNil(model.rideHistory.error)
+        XCTAssertEqual(model.rides.map(\.rideID), firstPageRideIDs)
+        XCTAssertTrue(model.canLoadMore)
+        XCTAssertNil(model.error)
         XCTAssertEqual(query.historyPageCursorPresenceSnapshot, [false, true, false])
     }
 
     @MainActor
     func testHistorySelectionReplacementRejectsLateRouteProjection() async throws {
-        let driver = SessionDriverSpy(rows: [])
-        let state = driver.rideMapState
+        let state = MobileRideMapState()
 
         func saveRide(startingAt startMs: UInt64, latitude: Double) async throws -> String {
             _ = try state.startGpsOnly(atMs: startMs)
@@ -993,31 +984,28 @@ final class CutoutAppModelTests: XCTestCase {
         let firstRideID = try await saveRide(startingAt: 100, latitude: 39.7000)
         let secondRideID = try await saveRide(startingAt: 10_000, latitude: 39.7100)
         let query = GatedRideHistoryQuery(base: state, failAfterRelease: false)
-        let model = CutoutAppModel(
-            core: driver,
-            rideHistoryQueryProvider: { query }
-        )
-        model.rideHistory.setDateFilter(.allTime)
+        let model = RideHistoryModel(stateProvider: { query })
+        model.setDateFilter(.allTime)
         await Self.waitUntil("initial selected history route") {
-            model.rideHistory.selectedRideID == secondRideID
-                && !model.rideHistory.routeLoading
+            model.selectedRideID == secondRideID
+                && !model.routeLoading
         }
-        let currentPoints = model.rideHistory.displayPoints
+        let currentPoints = model.displayPoints
         XCTAssertFalse(currentPoints.isEmpty)
 
         query.armNextProjection()
-        model.rideHistory.selectFromHistoryList(firstRideID)
+        model.selectFromHistoryList(firstRideID)
         let staleProjectionStarted = await query.waitUntilGatedProjectionStarts()
         XCTAssertTrue(staleProjectionStarted)
 
-        model.rideHistory.selectFromHistoryList(secondRideID)
+        model.selectFromHistoryList(secondRideID)
         await Self.waitUntil("replacement history route projection") {
-            model.rideHistory.selectedRideID == secondRideID
-                && model.rideHistory.detailProjectionRideID == secondRideID
-                && !model.rideHistory.routeLoading
-                && !model.rideHistory.detailRouteLoading
+            model.selectedRideID == secondRideID
+                && model.detailProjectionRideID == secondRideID
+                && !model.routeLoading
+                && !model.detailRouteLoading
         }
-        let replacementPoints = model.rideHistory.displayPoints
+        let replacementPoints = model.displayPoints
         XCTAssertEqual(replacementPoints, currentPoints)
 
         query.releaseGatedProjection()
@@ -1027,14 +1015,14 @@ final class CutoutAppModelTests: XCTestCase {
             await Task.yield()
         }
 
-        XCTAssertEqual(model.rideHistory.selectedRideID, secondRideID)
-        XCTAssertEqual(model.rideHistory.detailProjectionRideID, secondRideID)
-        XCTAssertEqual(model.rideHistory.displayPoints, currentPoints)
-        XCTAssertEqual(model.rideHistory.detailDisplayPoints, replacementPoints)
-        XCTAssertFalse(model.rideHistory.routeLoading)
-        XCTAssertFalse(model.rideHistory.detailRouteLoading)
-        XCTAssertNil(model.rideHistory.routeError)
-        XCTAssertNil(model.rideHistory.detailRouteError)
+        XCTAssertEqual(model.selectedRideID, secondRideID)
+        XCTAssertEqual(model.detailProjectionRideID, secondRideID)
+        XCTAssertEqual(model.displayPoints, currentPoints)
+        XCTAssertEqual(model.detailDisplayPoints, replacementPoints)
+        XCTAssertFalse(model.routeLoading)
+        XCTAssertFalse(model.detailRouteLoading)
+        XCTAssertNil(model.routeError)
+        XCTAssertNil(model.detailRouteError)
     }
 
     @MainActor
@@ -1044,13 +1032,10 @@ final class CutoutAppModelTests: XCTestCase {
             failAfterRelease: false
         )
         query.armNextHistoryPage()
-        weak var weakModel: CutoutAppModel?
-        var model: CutoutAppModel? = CutoutAppModel(
-            core: SessionDriverSpy(rows: []),
-            rideHistoryQueryProvider: { query }
-        )
+        weak var weakModel: RideHistoryModel?
+        var model: RideHistoryModel? = RideHistoryModel(stateProvider: { query })
 
-        model?.rideHistory.reload()
+        model?.reload()
         let pageStarted = await query.waitUntilGatedHistoryPageStarts()
         XCTAssertTrue(pageStarted)
 
@@ -1070,15 +1055,14 @@ final class CutoutAppModelTests: XCTestCase {
             base: MobileRideMapState(),
             failAfterRelease: false
         )
-        let model = CutoutAppModel(
-            core: SessionDriverSpy(rows: []),
-            rideHistoryQueryProvider: { query },
-            rideHistoryDateProvider: { fixedNow }
+        let model = RideHistoryModel(
+            stateProvider: { query },
+            dateProvider: { fixedNow }
         )
 
-        model.rideHistory.reload()
+        model.reload()
         await Self.waitUntil("history query with fixed current time") {
-            !model.rideHistory.isLoading
+            !model.isLoading
         }
 
         let filters = query.historyPageFiltersSnapshot
