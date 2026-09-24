@@ -16,6 +16,24 @@ final class CutoutAppModelTests: XCTestCase {
         writerError: nil
     )
 
+    private static func historySummary(_ rideID: String) -> MobileRideMapHistorySummaryDto {
+        MobileRideMapHistorySummaryDto(
+            rideID: rideID,
+            state: .saved,
+            summary: MobileRideMapSummaryDto(
+                pointCount: 0,
+                distanceMeters: 0,
+                durationMilliseconds: 0
+            ),
+            segmentCount: 0,
+            createdAtMilliseconds: 0,
+            candidateVehicle: nil,
+            associatedVehicle: nil,
+            associatedVehicleName: nil,
+            telemetryState: .associatedNoTelemetry
+        )
+    }
+
     // CutoutAppTests cannot import CutoutMobileTests; keep the target-local
     // durable-write waiter paired with the equivalent mobile-test helper.
     private static func settle(
@@ -767,7 +785,7 @@ final class CutoutAppModelTests: XCTestCase {
     @MainActor
     func testHistoryDetailLoadGenerationRejectsDeletedOrReplacedSelection() {
         XCTAssertTrue(
-            CutoutAppModel.shouldApplyHistoryDetailLoad(
+            RideHistoryModel.shouldApplyHistoryDetailLoad(
                 rideID: "ride-a",
                 selectedRideID: "ride-a",
                 loadGeneration: 3,
@@ -776,7 +794,7 @@ final class CutoutAppModelTests: XCTestCase {
             )
         )
         XCTAssertFalse(
-            CutoutAppModel.shouldApplyHistoryDetailLoad(
+            RideHistoryModel.shouldApplyHistoryDetailLoad(
                 rideID: "ride-a",
                 selectedRideID: "ride-a",
                 loadGeneration: 3,
@@ -785,7 +803,7 @@ final class CutoutAppModelTests: XCTestCase {
             )
         )
         XCTAssertFalse(
-            CutoutAppModel.shouldApplyHistoryDetailLoad(
+            RideHistoryModel.shouldApplyHistoryDetailLoad(
                 rideID: "ride-a",
                 selectedRideID: "ride-b",
                 loadGeneration: 3,
@@ -798,21 +816,21 @@ final class CutoutAppModelTests: XCTestCase {
     @MainActor
     func testHistoryQueryGenerationRejectsLateReloadOrPageResults() {
         XCTAssertTrue(
-            CutoutAppModel.shouldApplyHistoryQuery(
+            RideHistoryModel.shouldApplyHistoryQuery(
                 generation: 7,
                 currentGeneration: 7,
                 isCancelled: false
             )
         )
         XCTAssertFalse(
-            CutoutAppModel.shouldApplyHistoryQuery(
+            RideHistoryModel.shouldApplyHistoryQuery(
                 generation: 7,
                 currentGeneration: 8,
                 isCancelled: false
             )
         )
         XCTAssertFalse(
-            CutoutAppModel.shouldApplyHistoryQuery(
+            RideHistoryModel.shouldApplyHistoryQuery(
                 generation: 7,
                 currentGeneration: 7,
                 isCancelled: true
@@ -823,7 +841,7 @@ final class CutoutAppModelTests: XCTestCase {
     @MainActor
     func testLateHistoryDetailViewportCannotRestoreInvalidatedProjection() {
         XCTAssertTrue(
-            CutoutAppModel.shouldApplyHistoryDetailViewport(
+            RideHistoryModel.shouldApplyHistoryDetailViewport(
                 rideID: "ride-a",
                 selectedRideID: "ride-a",
                 expectedProjectionRideID: "ride-a",
@@ -834,7 +852,7 @@ final class CutoutAppModelTests: XCTestCase {
             )
         )
         XCTAssertFalse(
-            CutoutAppModel.shouldApplyHistoryDetailViewport(
+            RideHistoryModel.shouldApplyHistoryDetailViewport(
                 rideID: "ride-a",
                 selectedRideID: "ride-a",
                 expectedProjectionRideID: "ride-a",
@@ -845,7 +863,7 @@ final class CutoutAppModelTests: XCTestCase {
             )
         )
         XCTAssertFalse(
-            CutoutAppModel.shouldApplyHistoryDetailViewport(
+            RideHistoryModel.shouldApplyHistoryDetailViewport(
                 rideID: "ride-a",
                 selectedRideID: "ride-a",
                 expectedProjectionRideID: "ride-a",
@@ -904,47 +922,47 @@ final class CutoutAppModelTests: XCTestCase {
     @MainActor
     func testHistoryReloadPreservesTheSelectedRideWhenItStillMatches() {
         XCTAssertEqual(
-            CutoutAppModel.preferredHistorySelection(
+            RideHistoryModel.preferredHistorySelection(
                 requestedID: nil,
                 currentID: "ride-2",
-                summaryIDs: ["ride-1", "ride-2"]
+                summaries: ["ride-1", "ride-2"].map(Self.historySummary)
             ),
             "ride-2"
         )
         XCTAssertEqual(
-            CutoutAppModel.preferredHistorySelection(
+            RideHistoryModel.preferredHistorySelection(
                 requestedID: "ride-3",
                 currentID: "ride-2",
-                summaryIDs: ["ride-1", "ride-3"]
+                summaries: ["ride-1", "ride-3"].map(Self.historySummary)
             ),
             "ride-3"
         )
         XCTAssertEqual(
-            CutoutAppModel.preferredHistorySelection(
+            RideHistoryModel.preferredHistorySelection(
                 requestedID: nil,
                 currentID: "ride-missing",
-                summaryIDs: ["ride-1", "ride-2"]
+                summaries: ["ride-1", "ride-2"].map(Self.historySummary)
             ),
             "ride-1"
         )
         XCTAssertNil(
-            CutoutAppModel.preferredHistorySelection(
+            RideHistoryModel.preferredHistorySelection(
                 requestedID: "ride-missing",
                 currentID: "ride-2",
-                summaryIDs: ["ride-1", "ride-2"]
+                summaries: ["ride-1", "ride-2"].map(Self.historySummary)
             )
         )
         XCTAssertEqual(
-            CutoutAppModel.historySelectionError(
+            RideHistoryModel.selectionError(
                 requestedID: "ride-missing",
-                summaryIDs: ["ride-1", "ride-2"]
+                summaries: ["ride-1", "ride-2"].map(Self.historySummary)
             ),
             .rideNotFound
         )
         XCTAssertNil(
-            CutoutAppModel.historySelectionError(
+            RideHistoryModel.selectionError(
                 requestedID: "ride-2",
-                summaryIDs: ["ride-1", "ride-2"]
+                summaries: ["ride-1", "ride-2"].map(Self.historySummary)
             )
         )
     }
@@ -952,12 +970,11 @@ final class CutoutAppModelTests: XCTestCase {
     @MainActor
     func testHistoryPageAppendDoesNotDuplicateExistingRides() {
         XCTAssertEqual(
-            CutoutAppModel.appendingUniqueHistory(
-                existing: ["ride-1", "ride-2"],
-                incoming: ["ride-2", "ride-3", "ride-1", "ride-4"],
-                id: { $0 }
+            RideHistoryModel.appendingUniqueHistory(
+                existing: ["ride-1", "ride-2"].map(Self.historySummary),
+                incoming: ["ride-2", "ride-3", "ride-1", "ride-4"].map(Self.historySummary)
             ),
-            ["ride-1", "ride-2", "ride-3", "ride-4"]
+            ["ride-1", "ride-2", "ride-3", "ride-4"].map(Self.historySummary)
         )
     }
 
@@ -1303,19 +1320,19 @@ final class CutoutAppModelTests: XCTestCase {
     @MainActor
     func testDetailViewportPreservesSourceBudgetOmission() {
         XCTAssertTrue(
-            CutoutAppModel.detailPointsAreTruncated(
+            RideHistoryModel.detailPointsAreTruncated(
                 sourcePointsOmittedByBudget: true,
                 viewportPointsOmittedByBudget: false
             )
         )
         XCTAssertTrue(
-            CutoutAppModel.detailPointsAreTruncated(
+            RideHistoryModel.detailPointsAreTruncated(
                 sourcePointsOmittedByBudget: false,
                 viewportPointsOmittedByBudget: true
             )
         )
         XCTAssertFalse(
-            CutoutAppModel.detailPointsAreTruncated(
+            RideHistoryModel.detailPointsAreTruncated(
                 sourcePointsOmittedByBudget: false,
                 viewportPointsOmittedByBudget: false
             )
@@ -1325,19 +1342,19 @@ final class CutoutAppModelTests: XCTestCase {
     @MainActor
     func testDetailViewportPreservesSourceSegmentBudgetOmission() {
         XCTAssertTrue(
-            CutoutAppModel.detailSegmentsAreOmitted(
+            RideHistoryModel.detailSegmentsAreOmitted(
                 sourceSegmentsOmittedByBudget: true,
                 viewportSegmentsOmittedByBudget: false
             )
         )
         XCTAssertTrue(
-            CutoutAppModel.detailSegmentsAreOmitted(
+            RideHistoryModel.detailSegmentsAreOmitted(
                 sourceSegmentsOmittedByBudget: false,
                 viewportSegmentsOmittedByBudget: true
             )
         )
         XCTAssertFalse(
-            CutoutAppModel.detailSegmentsAreOmitted(
+            RideHistoryModel.detailSegmentsAreOmitted(
                 sourceSegmentsOmittedByBudget: false,
                 viewportSegmentsOmittedByBudget: false
             )
@@ -3178,7 +3195,7 @@ final class CutoutAppModelTests: XCTestCase {
             ),
         ]
 
-        let names = CutoutAppModel.historyVehicleNames(
+        let names = RideHistoryModel.vehicleNames(
             options,
             summaries: [summary]
         )
@@ -3187,7 +3204,7 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(names["corebluetooth-new"], "NF2557")
         XCTAssertEqual(summary.vehicleDisplayName, "NF2557")
         XCTAssertEqual(
-            CutoutAppModel.mergeRideMapHistoryVehicleIdentities(
+            RideHistoryModel.mergeVehicleIdentities(
                 existing: options.map(\.platformIdentifier),
                 incoming: []
             ),

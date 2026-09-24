@@ -668,7 +668,11 @@ final class RideHistoryModel {
     }
 
     private func accepts(generation: UInt64, isCancelled: Bool) -> Bool {
-        !isCancelled && generation == queryGeneration
+        Self.shouldApplyHistoryQuery(
+            generation: generation,
+            currentGeneration: queryGeneration,
+            isCancelled: isCancelled
+        )
     }
 
     private var historyDateAfterMilliseconds: UInt64? {
@@ -687,7 +691,7 @@ final class RideHistoryModel {
         )
     }
 
-    private static func selectionError(
+    static func selectionError(
         requestedID: String?,
         summaries: [MobileRideMapHistorySummaryDto]
     ) -> MobileRideMapError? {
@@ -697,7 +701,7 @@ final class RideHistoryModel {
         return .rideNotFound
     }
 
-    private static func appendingUniqueHistory(
+    static func appendingUniqueHistory(
         existing: [MobileRideMapHistorySummaryDto],
         incoming: [MobileRideMapHistorySummaryDto]
     ) -> [MobileRideMapHistorySummaryDto] {
@@ -705,11 +709,11 @@ final class RideHistoryModel {
         return existing + incoming.filter { seen.insert($0.rideID).inserted }
     }
 
-    private static func mergeVehicleIdentities(existing: [String], incoming: [String]) -> [String] {
+    static func mergeVehicleIdentities(existing: [String], incoming: [String]) -> [String] {
         Array(Set(existing + incoming)).sorted()
     }
 
-    private static func vehicleNames(
+    static func vehicleNames(
         _ options: [MobileRideMapHistoryVehicleOptionDto],
         summaries: [MobileRideMapHistorySummaryDto]
     ) -> [String: String] {
@@ -741,7 +745,7 @@ final class RideHistoryModel {
         existing.merging(incoming) { _, incoming in incoming }
     }
 
-    private static func preferredHistorySelection(
+    static func preferredHistorySelection(
         requestedID: String?,
         currentID: String?,
         summaries: [MobileRideMapHistorySummaryDto]
@@ -753,21 +757,21 @@ final class RideHistoryModel {
             ?? summaries.first?.rideID
     }
 
-    private static func detailPointsAreTruncated(
+    static func detailPointsAreTruncated(
         sourcePointsOmittedByBudget: Bool,
         viewportPointsOmittedByBudget: Bool
     ) -> Bool {
         sourcePointsOmittedByBudget || viewportPointsOmittedByBudget
     }
 
-    private static func detailSegmentsAreOmitted(
+    static func detailSegmentsAreOmitted(
         sourceSegmentsOmittedByBudget: Bool,
         viewportSegmentsOmittedByBudget: Bool
     ) -> Bool {
         sourceSegmentsOmittedByBudget || viewportSegmentsOmittedByBudget
     }
 
-    private static func shouldApplyHistoryDetailLoad(
+    static func shouldApplyHistoryDetailLoad(
         rideID: String,
         selectedRideID: String?,
         loadGeneration: UInt64,
@@ -777,7 +781,7 @@ final class RideHistoryModel {
         !isCancelled && loadGeneration == currentGeneration && selectedRideID == rideID
     }
 
-    private static func shouldApplyHistoryDetailViewport(
+    static func shouldApplyHistoryDetailViewport(
         rideID: String,
         selectedRideID: String?,
         expectedProjectionRideID: String?,
@@ -791,6 +795,14 @@ final class RideHistoryModel {
             && selectedRideID == rideID
             && expectedProjectionRideID == rideID
             && currentProjectionRideID == expectedProjectionRideID
+    }
+
+    static func shouldApplyHistoryQuery(
+        generation: UInt64,
+        currentGeneration: UInt64,
+        isCancelled: Bool
+    ) -> Bool {
+        !isCancelled && generation == currentGeneration
     }
 
     private static func normalizedSearchText(_ text: String) -> String? {
