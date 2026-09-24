@@ -784,7 +784,9 @@ pub fn media_download_target(
             || component.chars().any(|character| {
                 character.is_ascii_control()
                     || character.is_ascii_whitespace()
-                    || matches!(character, '?' | '#' | '%')
+                    || character == '?'
+                    || character == '#'
+                    || character == '%'
             })
             || component.contains('/')
         {

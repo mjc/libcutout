@@ -2551,7 +2551,7 @@ final class CutoutAppModelTests: XCTestCase {
         model.recordCameraMediaReference(media: media, localURL: localURL)
         XCTAssertTrue(model.cameraMediaReferences.isEmpty)
 
-        model.applyCaptureEvent(.started(fileURL: URL(fileURLWithPath: "/tmp/ride.jsonl")))
+        model.deliverCaptureEvent(.started(fileURL: URL(fileURLWithPath: "/tmp/ride.jsonl")))
         model.recordCameraMediaReference(source: .rtsp, media: media, localURL: localURL)
         model.recordCameraMediaReference(media: media, localURL: localURL)
 
@@ -2561,7 +2561,7 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(model.cameraMediaReferences[0].clockUncertainty, .unknown)
         XCTAssertEqual(model.cameraSessionStateHandle.cameraMediaProvenance().count, 1)
 
-        model.applyCaptureEvent(.finished(fileURL: URL(fileURLWithPath: "/tmp/ride.jsonl")))
+        model.deliverCaptureEvent(.finished(fileURL: URL(fileURLWithPath: "/tmp/ride.jsonl")))
         model.recordCameraMediaReference(media: media, localURL: localURL)
         let lateMedia = CameraMediaEvidence(
             name: "late.TS",
@@ -2575,7 +2575,7 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(model.cameraMediaReferences.count, 1)
         XCTAssertEqual(model.cameraSessionStateHandle.cameraMediaProvenance().count, 1)
 
-        model.applyCaptureEvent(.started(fileURL: URL(fileURLWithPath: "/tmp/next-ride.jsonl")))
+        model.deliverCaptureEvent(.started(fileURL: URL(fileURLWithPath: "/tmp/next-ride.jsonl")))
         XCTAssertTrue(model.cameraSessionStateHandle.cameraMediaProvenance().isEmpty)
         XCTAssertTrue(model.cameraMediaReferences.isEmpty)
 
@@ -4120,6 +4120,12 @@ private final class SessionDriverSpy: CutoutSessionDriving {
         }
         return captureLabelState.active()
     }
+
+    func annotateCapture(key: String, value: String) -> Bool {
+        captureAnnotations.append("\(key)=\(value)")
+        return true
+    }
+
     func updateMusicCapturePolicy(_: MobileMusicHistoryPolicyDto) {}
     func updateMusicCaptureObservation(_: MobilePevcapMusicEventDto?) {}
     func flushCapture() async -> Bool {

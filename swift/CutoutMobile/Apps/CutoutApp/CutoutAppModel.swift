@@ -165,7 +165,7 @@ final class CutoutAppModel {
     /// Supplies the active capture identity to the camera route without
     /// giving the view ownership of capture state.
     var currentCameraCaptureFileName: () -> String? {
-        { [weak self] in self?.captureFileName }
+        { [weak self] in self?.capture.fileName }
     }
 
     /// Exposes the Rust-owned camera/session state to the camera route.
@@ -441,7 +441,7 @@ final class CutoutAppModel {
     }
 
     func annotateCapture(key: String, value: String) {
-        core.annotateCapture(key: key, value: value)
+        _ = core.annotateCapture(key: key, value: value)
     }
 
     /// Records a completed camera download against the capture identity that
@@ -453,8 +453,8 @@ final class CutoutAppModel {
         localURL: URL
     ) {
         guard !captureFileName.isEmpty else { return }
-        guard activeCaptureGeneration != nil else { return }
-        guard captureFileName == self.captureFileName else { return }
+        guard capture.activeGeneration != nil else { return }
+        guard captureFileName == capture.fileName else { return }
         guard !cameraMediaReferences.contains(where: {
             $0.rideCaptureFileName == captureFileName
                 && $0.cameraPath == media.path
@@ -495,7 +495,7 @@ final class CutoutAppModel {
         media: CameraMediaEvidence,
         localURL: URL
     ) {
-        guard let captureFileName else { return }
+        guard let captureFileName = capture.fileName else { return }
         recordCameraMediaReference(
             captureFileName: captureFileName,
             source: source,

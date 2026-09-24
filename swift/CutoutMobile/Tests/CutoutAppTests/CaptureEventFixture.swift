@@ -77,6 +77,6 @@ extension CaptureFeatureModel {
 @MainActor
 extension CutoutAppModel {
     func deliverCaptureEvent(_ event: CaptureEvent) {
-        capture.deliverCaptureEvent(event)
+        deliverCaptureFixture(event, owner: cameraSessionStateHandle, publish: applyCaptureEvent)
     }
 }
