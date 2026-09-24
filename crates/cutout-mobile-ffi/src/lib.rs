@@ -1937,6 +1937,7 @@ pub struct CutoutSessionStateHandle {
     inner: Mutex<MobileSessionState>,
     phone_alarm: Mutex<MobilePhoneAlarmState>,
     novatek_session: Mutex<Option<NovatekR3V1Session>>,
+    novatek_read_only_snapshot: Mutex<Option<MobileNovatekReadOnlySnapshotDto>>,
 }
 
 type MobileSessionState = cutout_protocols::DeviceConnectionSession;
@@ -2391,6 +2392,7 @@ impl CutoutSessionStateHandle {
             inner: Mutex::new(MobileSessionState::default()),
             phone_alarm: Mutex::new(MobilePhoneAlarmState::default()),
             novatek_session: Mutex::new(None),
+            novatek_read_only_snapshot: Mutex::new(None),
         })
     }
 
@@ -2409,6 +2411,7 @@ impl CutoutSessionStateHandle {
                 ..MobilePhoneAlarmState::default()
             }),
             novatek_session: Mutex::new(None),
+            novatek_read_only_snapshot: Mutex::new(None),
         })
     }
 
@@ -2486,6 +2489,44 @@ impl CutoutSessionStateHandle {
             .novatek_session
             .lock()
             .unwrap_or_else(PoisonError::into_inner) = Some(session);
+        *self
+            .novatek_read_only_snapshot
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = None;
+        Ok(())
+    }
+
+    /// Replaces the retained Novatek proof and complete bounded read-only snapshot.
+    ///
+    /// The snapshot is retained by Rust so command and media authorization do
+    /// not depend on a second Swift-owned copy of protocol evidence.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the origin, firmware, or command evidence fails
+    /// the verified R3V1 session checks.
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn configure_novatek_read_only_session(
+        &self,
+        origin: MobileNovatekHttpOriginDto,
+        snapshot: MobileNovatekReadOnlySnapshotDto,
+    ) -> Result<(), MobileNovatekSessionError> {
+        let session = build_novatek_session(
+            &origin,
+            &snapshot.firmware_version,
+            snapshot
+                .configuration
+                .iter()
+                .map(|status| (status.command_id, status.status)),
+        )?;
+        *self
+            .novatek_session
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(session);
+        *self
+            .novatek_read_only_snapshot
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(snapshot);
         Ok(())
     }
 
@@ -2495,6 +2536,26 @@ impl CutoutSessionStateHandle {
             .novatek_session
             .lock()
             .unwrap_or_else(PoisonError::into_inner) = None;
+        *self
+            .novatek_read_only_snapshot
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = None;
+    }
+
+    /// Returns whether Rust-retained media evidence matches one camera record.
+    #[must_use]
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn novatek_media_is_current(&self, path: String, size_bytes: u64) -> bool {
+        self.novatek_read_only_snapshot
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .is_some_and(|snapshot| {
+                snapshot
+                    .media
+                    .iter()
+                    .any(|entry| entry.path == path && entry.size_bytes == size_bytes)
+            })
     }
 
     /// Returns the retained validated Novatek origin, when configured.
@@ -14800,6 +14861,44 @@ mod tests {
             handle.novatek_still_capture_command_target(),
             Err(MobileNovatekProfileError::CapabilityNotAdvertised)
         );
+    }
+
+    #[test]
+    fn camera_session_state_handle_owns_read_only_media_evidence() {
+        let handle = CutoutSessionStateHandle::new();
+        let snapshot = MobileNovatekReadOnlySnapshotDto {
+            firmware_version: "R3V1.1_20240411".to_owned(),
+            movie_rtsp_uri: "rtsp://192.168.1.254/xxx.mov".to_owned(),
+            photo_rtsp_uri: "rtsp://192.168.1.254/xxx.mov".to_owned(),
+            configuration: vec![MobileNovatekCommandStatusDto {
+                command_id: 2001,
+                status: 0,
+            }],
+            storage_present: true,
+            media: vec![MobileNovatekMediaEntryDto {
+                name: "clip.TS".to_owned(),
+                path: "A:\\Novatek\\Movie\\clip.TS".to_owned(),
+                size_bytes: 42,
+                timecode: 7,
+                time: "2025/01/01 00:00:00".to_owned(),
+                attributes: 32,
+            }],
+        };
+        handle
+            .configure_novatek_read_only_session(
+                MobileNovatekHttpOriginDto {
+                    address: "192.168.1.254".to_owned(),
+                    port: 80,
+                },
+                snapshot.clone(),
+            )
+            .expect("validated read-only evidence establishes the session");
+
+        assert!(handle.novatek_media_is_current("A:\\Novatek\\Movie\\clip.TS".to_owned(), 42));
+        assert!(!handle.novatek_media_is_current("A:\\Novatek\\Movie\\other.TS".to_owned(), 42));
+
+        handle.clear_novatek_session();
+        assert!(!handle.novatek_media_is_current("A:\\Novatek\\Movie\\clip.TS".to_owned(), 42));
     }
 
     #[test]
