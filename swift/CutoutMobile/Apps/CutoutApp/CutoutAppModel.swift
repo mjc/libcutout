@@ -2587,7 +2587,7 @@ final class CutoutAppModel {
     }
 
     func startCaptureLabel(_ label: CaptureQuickLabel) {
-        capture.startLabel(label, annotate: core.annotateCapture(label:))
+        capture.startLabel(label, record: core.changeCaptureLabel(generation:action:))
     }
 
     @discardableResult
@@ -2672,7 +2672,7 @@ final class CutoutAppModel {
     }
 
     func stopCaptureLabel(_ label: CaptureQuickLabel) {
-        capture.stopLabel(label, annotate: core.annotateCapture(label:))
+        capture.stopLabel(label, record: core.changeCaptureLabel(generation:action:))
     }
 
     func disconnectTransport() {

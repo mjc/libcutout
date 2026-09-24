@@ -446,6 +446,30 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(app.buttons["capture.stop"].isEnabled)
     }
 
+    func testCaptureLabelCapacityPreservesActiveLabelsAndCanSave() {
+        enterCapture()
+        app.buttons["captures.labels"].tap()
+        let screen = app.descendants(matching: .any)["capture.screen"]
+        let ride = app.buttons["capture.label.ride.action"]
+        let balance = app.buttons["capture.label.balancing.action"]
+        let charging = app.buttons["capture.label.charging.action"]
+        scrollElementFrameIntoViewport(ride, in: screen, maxScrolls: 8)
+        ride.tap()
+        scrollElementFrameIntoViewport(balance, in: screen, maxScrolls: 8)
+        balance.tap()
+        scrollElementFrameIntoViewport(charging, in: screen, maxScrolls: 8)
+        charging.tap()
+        let rejection = app.alerts["Label wasn't recorded"]
+        XCTAssertTrue(rejection.waitForExistence(timeout: 5))
+        rejection.buttons["OK"].tap()
+        XCTAssertEqual(ride.label, "Stop Ride")
+        XCTAssertEqual(balance.label, "Stop Balance")
+        XCTAssertEqual(charging.label, "Start Charge")
+        app.buttons["capture.stop"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["captures.detail"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.alerts["Label wasn't recorded"].exists)
+    }
+
     func testCaptureLibraryDoneDismissesSetupWithoutEndingRecording() {
         enterCapture()
         let back = app.navigationBars["Recording"].buttons["BackButton"]

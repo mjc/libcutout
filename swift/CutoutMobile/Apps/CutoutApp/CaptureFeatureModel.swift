@@ -46,7 +46,7 @@ final class CaptureFeatureModel {
     private var presentedGeneration: CaptureGeneration?
     private(set) var progress: CaptureProgress?
     private(set) var activeLabels = Set<CaptureQuickLabel>()
-    private var labelState = MobileCaptureLabels()
+    private(set) var annotationError: MobileCaptureAnnotationError?
     private(set) var deviceKind: String?
     private(set) var device: CaptureDeviceIdentity?
     private(set) var isUserInitiated = false
@@ -121,7 +121,7 @@ final class CaptureFeatureModel {
     private func resetRecordingPresentation() {
         recordingStatus = nil
         progress = nil
-        labelState = MobileCaptureLabels()
+        annotationError = nil
         activeLabels.removeAll()
         fileName = nil
         notificationCount = 0
@@ -131,33 +131,57 @@ final class CaptureFeatureModel {
         isUserInitiated = false
     }
 
-    func startLabel(_ next: CaptureQuickLabel, annotate: (String) -> Void) {
-        guard canAnnotate else { return }
-        let changes = labelState.start(label: next.domainLabel)
-        guard !changes.isEmpty else { return }
-        changes.forEach(annotate)
-        refreshLabels()
+    func startLabel(
+        _ next: CaptureQuickLabel,
+        record: (CaptureGeneration, MobileCaptureLabelActionDto) throws -> [MobileCaptureLabelDto]
+    ) {
+        guard !activeLabels.contains(next), changeLabel(.start(label: next.domainLabel), record: record) else { return }
         label = next.title
         recordingStatus = .labelStarted(label: next.title, notificationCount: notificationCount, fileName: fileName)
     }
 
-    func stopLabel(_ previous: CaptureQuickLabel, annotate: (String) -> Void) {
-        guard canAnnotate, let change = labelState.stop(label: previous.domainLabel) else { return }
-        annotate(change)
-        refreshLabels()
+    func stopLabel(
+        _ previous: CaptureQuickLabel,
+        record: (CaptureGeneration, MobileCaptureLabelActionDto) throws -> [MobileCaptureLabelDto]
+    ) {
+        guard activeLabels.contains(previous), changeLabel(.stop(label: previous.domainLabel), record: record) else { return }
         label = previous.title
         recordingStatus = .labelStopped(label: previous.title, notificationCount: notificationCount, fileName: fileName)
     }
 
-    func clearLabels() {
-        // The writer closes persisted intervals at finalization. This resets only the projection.
-        labelState = MobileCaptureLabels()
-        refreshLabels()
+    private func changeLabel(
+        _ action: MobileCaptureLabelActionDto,
+        record: (CaptureGeneration, MobileCaptureLabelActionDto) throws -> [MobileCaptureLabelDto]
+    ) -> Bool {
+        guard canAnnotate, let generation = activeGeneration else { return false }
+        do {
+            let active = try record(generation, action)
+            activeLabels = Set(CaptureQuickLabel.allCases.filter { active.contains($0.domainLabel) })
+            annotationError = nil
+            return true
+        } catch {
+            annotationError = error as? MobileCaptureAnnotationError ?? .WriterFailed
+            return false
+        }
     }
 
-    private func refreshLabels() {
-        let active = labelState.active()
-        activeLabels = Set(CaptureQuickLabel.allCases.filter { active.contains($0.domainLabel) })
+    var annotationErrorText: String? {
+        switch annotationError {
+        case .CapacityReached: localizedAppText("captures.labels_full")
+        case .NotRecording: localizedAppText("captures.labels_not_recording")
+        case .WriterFailed: localizedAppText("captures.labels_failed")
+        case nil: nil
+        }
+    }
+
+    func dismissAnnotationError() {
+        annotationError = nil
+    }
+
+    func clearLabels() {
+        // The writer closes persisted intervals at finalization. This resets only the projection.
+        activeLabels.removeAll()
+        annotationError = nil
     }
 
     func apply(_ event: CaptureEvent) {

@@ -159,6 +159,8 @@ struct CaptureRouteView: View {
             captureStatusTone: model.capture.status?.statusStripTone ?? .nominal,
             captureProgress: model.capture.progress,
             activeLabels: model.capture.activeLabels,
+            annotationErrorText: model.capture.annotationErrorText,
+            dismissAnnotationError: model.capture.dismissAnnotationError,
             isFinishing: model.capture.isFinishing,
             canFinish: model.isRecordOnlyCapture,
             canAnnotate: model.capture.canAnnotate,

@@ -982,6 +982,51 @@ final class CutoutSessionCoreTests: XCTestCase {
         core.disconnectAndScan()
     }
 
+    func testRejectedLabelReplacementKeepsRealCaptureSavable() async throws {
+        let started = expectation(description: "writer starts")
+        let finished = expectation(description: "writer durably completes")
+        var captureURL: URL?
+        var captureGeneration: CaptureGeneration?
+        let core = CutoutSessionCore(testScript: CutoutSessionTestScript(
+            candidate: scriptedVescCandidate, telemetry: nil, connectionDelayMilliseconds: 0
+        ))
+        core.onCaptureEvent = { event in
+            switch event {
+            case let .started(generation, fileURL):
+                captureGeneration = generation
+                captureURL = fileURL
+                started.fulfill()
+            case .finished: finished.fulfill()
+            case .failed: XCTFail("Label rejection must not fail the capture")
+            default: break
+            }
+        }
+        XCTAssertTrue(core.recordOnly(
+            platformIdentifier: scriptedVescCandidate.platformIdentifier,
+            annotations: ["note=first", "note=second"]
+        ))
+        await fulfillment(of: [started], timeout: 2)
+        let generation = try XCTUnwrap(captureGeneration)
+        let url = try XCTUnwrap(captureURL)
+        defer { try? FileManager.default.removeItem(at: url) }
+        XCTAssertThrowsError(try core.changeCaptureLabel(
+            generation: .init(rawValue: generation.rawValue + 1), action: .start(label: .lowBeamOn)
+        ))
+        XCTAssertEqual(try core.changeCaptureLabel(generation: generation, action: .start(label: .lowBeamOn)), [.lowBeamOn])
+        XCTAssertFalse(core.annotateCapture(key: "note", value: "no room"))
+        XCTAssertThrowsError(try core.changeCaptureLabel(generation: generation, action: .start(label: .lowBeamOff))) { error in
+            guard case MobileCaptureAnnotationError.CapacityReached = error else { return XCTFail("Unexpected error: \(error)") }
+        }
+        let saved = await core.finishCapture()
+        XCTAssertTrue(saved)
+        await fulfillment(of: [finished], timeout: 2)
+        let contents = try String(contentsOf: url, encoding: .utf8)
+        XCTAssertTrue(contents.contains("capture_label=low_beam_on_start"))
+        XCTAssertTrue(contents.contains("capture_label=low_beam_on_stop"))
+        XCTAssertFalse(contents.contains("low_beam_off"))
+        XCTAssertThrowsError(try core.changeCaptureLabel(generation: generation, action: .stop(label: .lowBeamOn)))
+    }
+
     func testMusicObservationBeforeCaptureIsRetainedUntilWriterStarts() async {
         let started = expectation(description: "real capture writer starts")
         let core = CutoutSessionCore(testScript: CutoutSessionTestScript(

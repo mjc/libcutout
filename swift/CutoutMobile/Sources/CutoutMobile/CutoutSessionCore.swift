@@ -805,15 +805,32 @@ public final class CutoutSessionCore: NSObject {
         }
     }
 
-    public func annotateCapture(label: String) {
+    @discardableResult
+    public func annotateCapture(label: String) -> Bool {
         annotateCapture(key: "capture_label", value: label)
     }
 
-    public func annotateCapture(key: String, value: String) {
+    /// Applies a complete label transition to the writer that owns this generation.
+    public func changeCaptureLabel(
+        generation: CaptureGeneration, action: MobileCaptureLabelActionDto
+    ) throws -> [MobileCaptureLabelDto] {
+        try onBleQueue {
+            Result {
+                guard let binding = captureWriter, binding.generation == generation else {
+                    throw MobileCaptureAnnotationError.NotRecording
+                }
+                return try binding.builder.changeLabel(action: action)
+            }
+        }.get()
+    }
+
+    @discardableResult
+    public func annotateCapture(key: String, value: String) -> Bool {
         onBleQueue {
             let annotation = pevcapAnnotation(key: key, value: value)
-            _ = captureBuilder?.addAnnotation(annotation: annotation)
+            guard captureBuilder?.addAnnotation(annotation: annotation) == true else { return false }
             record(annotation)
+            return true
         }
     }
 

@@ -2881,7 +2881,7 @@ final class CutoutAppModelTests: XCTestCase {
 
     @MainActor
     func testRejectedRecordOnlyCapturePreservesTheExistingSession() {
-        let model = CutoutAppModel()
+        let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
         let priorCapture = URL(fileURLWithPath: "/tmp/prior.cutout")
         let priorProgress = Self.priorCaptureProgress
 
@@ -2898,7 +2898,7 @@ final class CutoutAppModelTests: XCTestCase {
 
     @MainActor
     func testCaptureLabelActionsIgnoreInvalidRepeatedTransitions() {
-        let model = CutoutAppModel()
+        let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
 
         model.stopCaptureLabel(.ride)
         XCTAssertNil(model.captureStatusText)
@@ -4040,10 +4040,23 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     func emitCaptureEvent(_ event: CaptureEvent) {
         deliverCaptureFixture(event, owner: rideSessionStateHandle, origin: .manual) { onCaptureEvent?($0) }
     }
-    func annotateCapture(label: String) {
-        captureAnnotations.append(label)
+    private var captureLabelState = MobileCaptureLabels()
+    private var captureLabelGeneration: CaptureGeneration?
+    func changeCaptureLabel(generation: CaptureGeneration, action: MobileCaptureLabelActionDto) throws -> [MobileCaptureLabelDto] {
+        guard rideSessionStateHandle.captureLifecycleSnapshot().attempt?.generation.value == generation.rawValue else {
+            throw MobileCaptureAnnotationError.NotRecording
+        }
+        if captureLabelGeneration != generation {
+            captureLabelGeneration = generation
+            captureLabelState = MobileCaptureLabels()
+        }
+        switch action {
+        case let .start(label): captureAnnotations += captureLabelState.start(label: label)
+        case let .stop(label):
+            if let annotation = captureLabelState.stop(label: label) { captureAnnotations.append(annotation) }
+        }
+        return captureLabelState.active()
     }
-    func annotateCapture(key _: String, value _: String) {}
     func updateMusicCapturePolicy(_: MobileMusicHistoryPolicyDto) {}
     func updateMusicCaptureObservation(_: MobilePevcapMusicEventDto?) {}
     func flushCapture() async -> Bool {

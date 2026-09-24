@@ -44,6 +44,8 @@ struct CaptureRecordingScreen: View {
     let captureStatusTone: PevStatusStripTone
     let captureProgress: CaptureProgress?
     let activeLabels: Set<CaptureQuickLabel>
+    let annotationErrorText: String?
+    let dismissAnnotationError: () -> Void
     let isFinishing: Bool
     let canFinish: Bool
     let canAnnotate: Bool
@@ -132,6 +134,14 @@ struct CaptureRecordingScreen: View {
         .tint(PevColors.yellow)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("capture.screen")
+        .alert(localizedAppText("captures.label_not_recorded"), isPresented: Binding(
+            get: { annotationErrorText != nil },
+            set: { if !$0 { dismissAnnotationError() } }
+        )) {
+            Button(localizedAppText("captures.label_error_dismiss"), role: .cancel, action: dismissAnnotationError)
+        } message: {
+            Text(annotationErrorText ?? "")
+        }
     }
 }
 

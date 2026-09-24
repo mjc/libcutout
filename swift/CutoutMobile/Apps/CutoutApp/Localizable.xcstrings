@@ -1,6 +1,21 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "captures.label_not_recorded" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Label wasn't recorded" } } }
+    },
+    "captures.label_error_dismiss" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "OK" } } }
+    },
+    "captures.labels_full" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "No room for more labels in this recording. You can stop active labels and save, then start another capture." } } }
+    },
+    "captures.labels_not_recording" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "This recording has ended. Start a new capture to add labels." } } }
+    },
+    "captures.labels_failed" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Couldn't record this label. Try again or stop and save the capture." } } }
+    },
     "captures.title" : {
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Bluetooth Captures" } } }
     },

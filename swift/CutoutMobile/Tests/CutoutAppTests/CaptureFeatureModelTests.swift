@@ -6,6 +6,31 @@ import CutoutMobileFFI
 
 @MainActor
 final class CaptureFeatureModelTests: XCTestCase {
+    func testRejectedLabelKeepsAcceptedStateAndErrorSurvivesProgress() {
+        let capture = CaptureFeatureModel()
+        capture.deliverCaptureEvent(.started(fileURL: URL(fileURLWithPath: "/tmp/labels.jsonl")), origin: .manual)
+        let generation = capture.activeGeneration
+        capture.startLabel(.lowBeamOn, record: { requestedGeneration, _ in
+            XCTAssertEqual(requestedGeneration, generation)
+            return [.lowBeamOn]
+        })
+        capture.startLabel(.lowBeamOff, record: { _, _ in throw MobileCaptureAnnotationError.CapacityReached })
+        XCTAssertEqual(capture.activeLabels, [.lowBeamOn])
+        XCTAssertNotNil(capture.annotationErrorText)
+        XCTAssertTrue(capture.canAnnotate, "Stopping the accepted interval must remain available")
+        for tick in 1...3 {
+            capture.deliverCaptureEvent(.progress(CaptureProgress(
+                elapsedMilliseconds: UInt64(tick * 1000), notificationCount: UInt64(tick),
+                fileSizeBytes: 300, queuedMessageCount: 0, writerError: nil
+            )))
+            XCTAssertNotNil(capture.annotationErrorText)
+        }
+        XCTAssertEqual(capture.recordingSummary, "Receiving Bluetooth data")
+        capture.stopLabel(.lowBeamOn, record: { _, _ in [] })
+        XCTAssertTrue(capture.activeLabels.isEmpty)
+        XCTAssertNil(capture.annotationErrorText)
+    }
+
     func testWriterStartFailureWithoutStartedIsVisible() {
         let capture = CaptureFeatureModel()
         let generation = capture.sessionState.beginCapture(origin: .manual)!
@@ -19,14 +44,14 @@ final class CaptureFeatureModelTests: XCTestCase {
 
     func testLabelsAreNotAcceptedBeforeTheWriterStartsOrAfterItCompletes() {
         let capture = CaptureFeatureModel()
-        var annotations: [String] = []
-        capture.startLabel(.ride, annotate: { annotations.append($0) })
-        XCTAssertTrue(annotations.isEmpty)
+        var requests = 0
+        capture.startLabel(.ride, record: { _, _ in requests += 1; return [.ride] })
+        XCTAssertEqual(requests, 0)
         let url = URL(fileURLWithPath: "/tmp/labels.jsonl")
         capture.deliverCaptureEvent(.started(fileURL: url))
         capture.deliverCaptureEvent(.finished(fileURL: url))
-        capture.startLabel(.ride, annotate: { annotations.append($0) })
-        XCTAssertTrue(annotations.isEmpty)
+        capture.startLabel(.ride, record: { _, _ in requests += 1; return [.ride] })
+        XCTAssertEqual(requests, 0)
         XCTAssertTrue(capture.activeLabels.isEmpty)
         XCTAssertEqual(capture.status, .saved(fileName: "labels.jsonl"))
     }
@@ -117,7 +142,7 @@ final class CaptureFeatureModelTests: XCTestCase {
         capture.deliverCaptureEvent(.started(fileURL: URL(fileURLWithPath: "/tmp/private-name.jsonl")), origin: .manual)
         XCTAssertEqual(capture.recordingSummary, "Waiting for Bluetooth data")
         capture.deliverCaptureEvent(.notificationRecorded)
-        capture.startLabel(.ride, annotate: { _ in })
+        capture.startLabel(.ride, record: { _, _ in [.ride] })
         XCTAssertEqual(capture.recordingSummary, "Receiving Bluetooth data")
         capture.beginSavingFixture()
         XCTAssertEqual(capture.recordingSummary, "Saving…")
@@ -161,7 +186,7 @@ final class CaptureFeatureModelTests: XCTestCase {
     func testNewGenerationResetsProgressLabelsAndFinishAdmission() {
         let capture = CaptureFeatureModel()
         capture.deliverCaptureEvent(.started(generation: .init(rawValue: 1), fileURL: URL(fileURLWithPath: "/tmp/a")), origin: .manual)
-        capture.startLabel(.ride, annotate: { _ in })
+        capture.startLabel(.ride, record: { _, _ in [.ride] })
         capture.beginSavingFixture()
         capture.deliverCaptureEvent(.started(generation: .init(rawValue: 2), fileURL: URL(fileURLWithPath: "/tmp/b")))
         XCTAssertNil(capture.progress)
