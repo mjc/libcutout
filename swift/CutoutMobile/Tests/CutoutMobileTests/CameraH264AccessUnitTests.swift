@@ -2,7 +2,7 @@ import XCTest
 @testable import CutoutMobile
 import CutoutMobileFFI
 
-final class CameraH264AccessUnitTests: XCTestCase {
+final class CameraPreviewRendererTests: XCTestCase {
     @MainActor
     func testRendererWaitsForParameterSetsBeforeEnqueueing() async {
         let renderer = CameraPreviewRenderer()
