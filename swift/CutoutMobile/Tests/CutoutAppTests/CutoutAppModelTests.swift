@@ -527,6 +527,53 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testVescNotificationReachesRideAndDebugThroughTheAppRunner() async throws {
+        let fixture = CutoutUITestSessionFixture.vesc
+        let script = fixture.testScript
+        let core = CutoutSessionCore(testScript: CutoutSessionTestScript(
+            candidate: fixture.candidate,
+            telemetry: script.telemetry,
+            protocolNotifications: script.protocolNotifications,
+            connectionDelayMilliseconds: 0
+        ))
+        let model = CutoutAppModel(core: core)
+
+        model.start()
+        XCTAssertTrue(model.pair(platformIdentifier: fixture.candidate.platformIdentifier))
+        await Self.waitUntil("VESC notification reaches app projections") {
+            model.phase == .live
+                && model.displayState.notificationCount > 0
+                && model.displayState.telemetry != nil
+                && model.vescRideSnapshot != nil
+        }
+
+        let telemetry = try XCTUnwrap(model.displayState.telemetry)
+        XCTAssertEqual(telemetry.speed, Speed(value: 8_000))
+        XCTAssertEqual(telemetry.voltage, Voltage(value: 50_400))
+
+        let ride = try XCTUnwrap(model.vescRideSnapshot)
+        XCTAssertEqual(ride.boardSpeed, Speed(value: 8_000))
+        XCTAssertEqual(ride.batteryVoltage, Voltage(value: 50_400))
+        XCTAssertEqual(ride.batteryCurrent, BatteryCurrent(value: 12_000))
+
+        let debugRows = vescDebugRows(
+            ride,
+            phase: model.phase,
+            notificationCount: model.displayState.notificationCount
+        )
+        let voltageRow = try XCTUnwrap(debugRows.first { $0.id == "voltage" })
+        let batteryCurrentRow = try XCTUnwrap(debugRows.first { $0.id == "battery-current" })
+        if case .available = voltageRow.metricValue {
+        } else {
+            XCTFail("VESC debug voltage must be populated")
+        }
+        if case .available = batteryCurrentRow.metricValue {
+        } else {
+            XCTFail("VESC debug battery current must be populated")
+        }
+    }
+
+    @MainActor
     func testAvailableBmsRouteDoesNotObserveRideTelemetry() {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)
