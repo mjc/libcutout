@@ -16,20 +16,13 @@ struct CameraRouteContainerView: View {
     let currentCaptureFileName: (() -> String?)?
     @State private var adapter = CameraLocalNetworkAdapter()
     @State private var previewRenderer = CameraPreviewRenderer()
+    @State private var controlModel: CameraControlModel
     @State private var mediaModel: CameraMediaModel
     @State private var discoveryModel: CameraDiscoveryModel
     @State private var address = "192.168.1.254"
     @State private var port = "80"
     @State private var previewErrorKey: String?
-    @State private var recordingRequestKey: String?
-    @State private var isRequestingRecording = false
-    @State private var stillRequestKey: String?
-    @State private var isRequestingStill = false
     @State private var previewStartTask: Task<Void, Never>?
-    @State private var recordingTask: Task<Void, Never>?
-    @State private var stillTask: Task<Void, Never>?
-    @State private var recordingGeneration: UInt64 = 0
-    @State private var stillGeneration: UInt64 = 0
     @Environment(\.scenePhase) private var scenePhase
 
     init(
@@ -45,6 +38,9 @@ struct CameraRouteContainerView: View {
         self.currentCaptureFileName = currentCaptureFileName
         let adapter = CameraLocalNetworkAdapter(sessionState: sessionState)
         _adapter = State(initialValue: adapter)
+        _controlModel = State(
+            initialValue: CameraControlModel(adapter: adapter, annotateCapture: annotateCapture)
+        )
         let mediaModel = CameraMediaModel(
             adapter: adapter,
             annotateCapture: annotateCapture,
@@ -72,11 +68,11 @@ struct CameraRouteContainerView: View {
             port: $port,
             isReading: discoveryModel.isReading,
             readErrorKey: discoveryModel.readErrorKey ?? previewErrorKey,
-            recordingRequestKey: recordingRequestKey,
-            isRequestingRecording: isRequestingRecording,
+            recordingRequestKey: controlModel.recordingRequestKey,
+            isRequestingRecording: controlModel.isRequestingRecording,
             supportsOnboardRecording: adapter.readOnlyEvidence?.supportsOnboardRecording ?? false,
-            stillRequestKey: stillRequestKey,
-            isRequestingStill: isRequestingStill,
+            stillRequestKey: controlModel.stillRequestKey,
+            isRequestingStill: controlModel.isRequestingStill,
             supportsStillCapture: adapter.readOnlyEvidence?.supportsStillCapture ?? false,
             savedFileURL: adapter.savedPreviewFileURL,
             previewRenderer: previewRenderer,
@@ -84,8 +80,8 @@ struct CameraRouteContainerView: View {
                 previewErrorKey = nil
                 _ = discoveryModel.load(address: address, port: port)
             },
-            requestRecording: requestRecording,
-            requestStillCapture: requestStillCapture,
+            requestRecording: { controlModel.requestRecording(address: address, port: port, start: $0) },
+            requestStillCapture: { controlModel.requestStillCapture(address: address, port: port) },
             startPreview: { startPreview(saveTo: nil) },
             savePreview: { startPreview(saveTo: previewOutputURL()) },
             stopPreview: adapter.stopPreview
@@ -149,102 +145,6 @@ struct CameraRouteContainerView: View {
         }
     }
 
-    private func requestRecording(start: Bool) {
-        guard let portNumber = UInt16(port) else {
-            recordingRequestKey = "camera.error.invalid_port"
-            return
-        }
-
-        isRequestingRecording = true
-        recordingRequestKey = nil
-        recordingTask?.cancel()
-        recordingGeneration &+= 1
-        let generation = recordingGeneration
-        recordingTask = Task { @MainActor in
-            defer {
-                if generation == recordingGeneration {
-                    isRequestingRecording = false
-                    recordingTask = nil
-                }
-            }
-            do {
-                let outcome = try await adapter.requestOnboardRecording(
-                    address: address,
-                    port: portNumber,
-                    start: start
-                )
-                guard generation == recordingGeneration, !Task.isCancelled else { return }
-                recordingRequestKey = cameraCommandOutcomeKey(
-                    outcome,
-                    acknowledged: start
-                        ? "camera.recording.request_start_sent"
-                        : "camera.recording.request_stop_sent"
-                )
-                annotateCapture?(
-                    "camera_recording_request",
-                    "\(start ? "start" : "stop"):\(outcome.annotationValue)"
-                )
-            } catch is CancellationError {
-                // Cancellation is an expected lifecycle event.
-            } catch CameraCommandRequestError.pathUnavailable {
-                if generation == recordingGeneration { recordingRequestKey = "camera.connection.detail.wifi_required" }
-            } catch CameraCommandRequestError.unsupported {
-                if generation == recordingGeneration { recordingRequestKey = "camera.recording.unavailable" }
-            } catch CameraCommandRequestError.inFlight {
-                if generation == recordingGeneration { recordingRequestKey = "camera.command.busy" }
-            } catch CameraCommandRequestError.originMismatch {
-                if generation == recordingGeneration { recordingRequestKey = "camera.error.origin_mismatch" }
-            } catch {
-                if generation == recordingGeneration, !Task.isCancelled { recordingRequestKey = "camera.error.recording_request_failed" }
-            }
-        }
-    }
-
-    private func requestStillCapture() {
-        guard let portNumber = UInt16(port) else {
-            stillRequestKey = "camera.error.invalid_port"
-            return
-        }
-
-        isRequestingStill = true
-        stillRequestKey = nil
-        stillTask?.cancel()
-        stillGeneration &+= 1
-        let generation = stillGeneration
-        stillTask = Task { @MainActor in
-            defer {
-                if generation == stillGeneration {
-                    isRequestingStill = false
-                    stillTask = nil
-                }
-            }
-            do {
-                let outcome = try await adapter.requestStillCapture(
-                    address: address,
-                    port: portNumber
-                )
-                guard generation == stillGeneration, !Task.isCancelled else { return }
-                stillRequestKey = cameraCommandOutcomeKey(
-                    outcome,
-                    acknowledged: "camera.still.request_sent"
-                )
-                annotateCapture?("camera_still_request", outcome.annotationValue)
-            } catch is CancellationError {
-                // Cancellation is an expected lifecycle event.
-            } catch CameraCommandRequestError.pathUnavailable {
-                if generation == stillGeneration { stillRequestKey = "camera.connection.detail.wifi_required" }
-            } catch CameraCommandRequestError.unsupported {
-                if generation == stillGeneration { stillRequestKey = "camera.still.unavailable" }
-            } catch CameraCommandRequestError.inFlight {
-                if generation == stillGeneration { stillRequestKey = "camera.command.busy" }
-            } catch CameraCommandRequestError.originMismatch {
-                if generation == stillGeneration { stillRequestKey = "camera.error.origin_mismatch" }
-            } catch {
-                if generation == stillGeneration, !Task.isCancelled { stillRequestKey = "camera.error.still_request_failed" }
-            }
-        }
-    }
-
     private func previewOutputURL() -> URL {
         let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
@@ -254,17 +154,10 @@ struct CameraRouteContainerView: View {
     }
 
     private func stopCameraWork() {
-        recordingGeneration &+= 1
-        stillGeneration &+= 1
         discoveryModel.cancel()
         previewStartTask?.cancel()
-        recordingTask?.cancel()
-        stillTask?.cancel()
         previewStartTask = nil
-        recordingTask = nil
-        stillTask = nil
-        isRequestingRecording = false
-        isRequestingStill = false
+        controlModel.cancelOutstandingWork()
         mediaModel.cancelOutstandingWork()
         adapter.stop()
         previewRenderer.reset()
@@ -278,36 +171,6 @@ func cameraMediaLocalFileComponent(_ name: String) -> String {
         .joined()
         .trimmingCharacters(in: .whitespacesAndNewlines)
     return sanitized.isEmpty || sanitized == "." || sanitized == ".." ? "media" : sanitized
-}
-
-private func cameraCommandOutcomeKey(
-    _ outcome: CameraCommandOutcome,
-    acknowledged: String
-) -> String {
-    switch outcome {
-    case .acknowledged:
-        acknowledged
-    case .refused:
-        "camera.command.refused"
-    case .timedOut:
-        "camera.command.timed_out"
-    case .unknown:
-        "camera.command.unknown"
-    case .failed:
-        "camera.command.failed"
-    }
-}
-
-private extension CameraCommandOutcome {
-    var annotationValue: String {
-        switch self {
-        case .acknowledged: "acknowledged"
-        case .refused: "refused"
-        case .timedOut: "timed_out"
-        case .unknown: "unknown"
-        case .failed: "failed"
-        }
-    }
 }
 
 struct CameraRouteView: View {
