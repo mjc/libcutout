@@ -2381,6 +2381,45 @@ fn finished_recording_is_retained_without_deriving_a_ride() {
 }
 
 #[test]
+fn capture_writer_stops_before_its_recording_exceeds_the_retention_duration() {
+    let _guard = test_guard();
+    let directory = tempfile::tempdir().unwrap();
+    let database_path = directory.path().join("ride.sqlite");
+    let source = directory.path().join("recording.jsonl");
+    let writer = crate::CaptureWriter::start(
+        source.clone(),
+        WallClockUnixTimestamp::new(1234),
+        "wheel-a",
+        None,
+        &crate::CaptureMetadata {
+            advertised_services: vec![],
+            gatt_fingerprints: vec![],
+            resolved_identity: None,
+            annotations: vec![],
+        },
+    )
+    .unwrap();
+    assert!(writer.try_send_record(PevcapRecord::link_up(MonotonicTimestamp::new(0), None)));
+    assert!(
+        writer.try_send_record(PevcapRecord::link_down(MonotonicTimestamp::new(
+            24 * 60 * 60 * 1_000 + 1,
+        )))
+    );
+
+    let artifact = writer.finish().unwrap();
+    assert!(!artifact.status().failed);
+    assert_eq!(artifact.status().dropped_messages, 1);
+    assert!(artifact.status().last_error.is_some());
+
+    let database = RideDatabase::open(&database_path).unwrap();
+    let preview = database
+        .preflight_pevcap(&source, PevcapEncoding::Jsonl)
+        .unwrap();
+    assert_eq!(preview.record_count(), 1);
+    database.shutdown().unwrap();
+}
+
+#[test]
 fn recording_publication_rolls_back_and_reconciles_lost_reply() {
     let _guard = test_guard();
     let directory = tempfile::tempdir().unwrap();

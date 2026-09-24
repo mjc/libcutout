@@ -9,13 +9,14 @@
 
 //! Rust-owned `SQLite` persistence for rides, maps, and mobile state.
 
-mod storage;
-pub use storage::*;
 mod capture_writer;
+mod pevcap_limits;
+mod storage;
 pub use capture_writer::{
     CaptureArtifactId, CaptureMetadata, CaptureWriter, CaptureWriterMonitor, CaptureWriterStatus,
     SavedCaptureArtifact,
 };
+pub use storage::*;
 
 #[cfg(test)]
 mod tests;
