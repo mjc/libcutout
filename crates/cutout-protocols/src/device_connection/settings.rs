@@ -109,13 +109,13 @@ impl DeviceConnectionSession {
             return false;
         };
         if setting.request_id != Some(operation_id)
-            || !matches!(
-                setting.transport,
+            || !(match setting.transport {
                 Some(
                     cutout_core::SettingTransportStatus::Accepted
-                        | cutout_core::SettingTransportStatus::Queued
-                )
-            )
+                    | cutout_core::SettingTransportStatus::Queued,
+                ) => true,
+                _ => false,
+            })
         {
             return false;
         }
@@ -166,10 +166,10 @@ impl DeviceConnectionSession {
         else {
             return false;
         };
-        if !matches!(
-            setting.transport,
-            Some(SettingTransportStatus::Accepted | SettingTransportStatus::Queued)
-        ) {
+        if !(match setting.transport {
+            Some(SettingTransportStatus::Accepted | SettingTransportStatus::Queued) => true,
+            _ => false,
+        }) {
             return false;
         }
         if status == SettingTransportStatus::Submitted && operation.remaining_receipts > 1 {

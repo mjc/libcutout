@@ -288,7 +288,10 @@ pub enum WriteProvenance {
 
 impl WriteProvenance {
     pub(crate) const fn is_provisional(self) -> bool {
-        matches!(self, Self::Provisional)
+        match self {
+            Self::Provisional => true,
+            Self::Stable => false,
+        }
     }
 }
 

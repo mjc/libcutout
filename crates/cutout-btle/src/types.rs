@@ -210,13 +210,16 @@ impl ConnectionSummary {
     pub fn battery_level_characteristic(&self) -> Option<&CharacteristicSummary> {
         self.services
             .iter()
-            .find(|service| matches!(service.gatt_uuid(), GattUuid::StandardBatteryService(_)))
+            .find(|service| match service.gatt_uuid() {
+                GattUuid::StandardBatteryService(_) => true,
+                _ => false,
+            })
             .and_then(|service| {
                 service.characteristics.iter().find(|characteristic| {
-                    matches!(
-                        characteristic.gatt_uuid(),
-                        GattUuid::StandardBatteryLevelCharacteristic(_)
-                    ) && characteristic.can_read()
+                    (match characteristic.gatt_uuid() {
+                        GattUuid::StandardBatteryLevelCharacteristic(_) => true,
+                        _ => false,
+                    }) && characteristic.can_read()
                 })
             })
     }

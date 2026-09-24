@@ -74,7 +74,10 @@ impl CapturedBtlePacket {
     /// Returns true when the capture boundary classified the bytes as malformed.
     #[must_use]
     pub const fn is_malformed(&self) -> bool {
-        matches!(self, Self::Malformed(_))
+        match self {
+            Self::Malformed(_) => true,
+            Self::AttributeValue(_) => false,
+        }
     }
 
     /// Reconstructs the original raw bytes as a cheap shared buffer clone.

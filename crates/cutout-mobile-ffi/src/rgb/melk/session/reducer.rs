@@ -108,7 +108,10 @@ impl SessionReducer {
     }
 
     fn transition(&mut self, state: MobileMelkLightingSessionStateDto) {
-        if matches!(state, MobileMelkLightingSessionStateDto::Ready) {
+        if match state {
+            MobileMelkLightingSessionStateDto::Ready => true,
+            _ => false,
+        } {
             self.reconnect_attempt = 0;
         } else {
             if self.command_status == 1 {
@@ -129,7 +132,10 @@ impl SessionReducer {
     fn reset_initialization(&mut self) {
         self.initialization.clear();
         self.notification_ready = false;
-        if matches!(self.timer, Some(MobileMelkLightingTimerDto::Initialization)) {
+        if match self.timer {
+            Some(MobileMelkLightingTimerDto::Initialization) => true,
+            _ => false,
+        } {
             self.timer = None;
         }
     }
@@ -317,7 +323,10 @@ impl SessionReducer {
     fn drain_initialization(&mut self, can_send: bool) {
         if !can_send
             || !self.notification_ready
-            || !matches!(self.state, MobileMelkLightingSessionStateDto::Discovering)
+            || !(match self.state {
+                MobileMelkLightingSessionStateDto::Discovering => true,
+                _ => false,
+            })
             || self.timer.is_some()
         {
             return;
@@ -346,7 +355,10 @@ impl SessionReducer {
 
     pub(crate) fn drain_writes(&mut self, can_send: bool) {
         if !can_send
-            || !matches!(self.state, MobileMelkLightingSessionStateDto::Ready)
+            || !(match self.state {
+                MobileMelkLightingSessionStateDto::Ready => true,
+                _ => false,
+            })
             || self.timer.is_some()
         {
             return;
@@ -508,10 +520,10 @@ impl SessionReducer {
                 }
             }
             MobileMelkLightingSessionEventDto::ConnectTimeout => {
-                if matches!(
-                    self.timer,
-                    Some(MobileMelkLightingTimerDto::ConnectionAttempt)
-                ) {
+                if match self.timer {
+                    Some(MobileMelkLightingTimerDto::ConnectionAttempt) => true,
+                    _ => false,
+                } {
                     self.connection_timed_out();
                 }
             }
@@ -687,7 +699,10 @@ impl SessionReducer {
     }
 
     pub(crate) fn is_ready(&self) -> bool {
-        matches!(self.state, MobileMelkLightingSessionStateDto::Ready)
+        match self.state {
+            MobileMelkLightingSessionStateDto::Ready => true,
+            _ => false,
+        }
     }
 }
 

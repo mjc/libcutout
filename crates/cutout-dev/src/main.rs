@@ -1,3 +1,5 @@
+#![cfg_attr(test, allow(clippy::disallowed_macros))]
+
 use std::{
     collections::{BTreeMap, BTreeSet},
     env,
@@ -116,9 +118,10 @@ fn parse_cli(args: &[String]) -> Result<DevCommand> {
 
 fn build_apple_client(root: &Path, tool: &str, args: &[String]) -> Result<()> {
     ensure!(
-        !args
-            .iter()
-            .any(|arg| matches!(arg.as_str(), "--skip-build" | "test-without-building")),
+        !args.iter().any(|arg| match arg.as_str() {
+            "--skip-build" | "test-without-building" => true,
+            _ => false,
+        }),
         "the FFI build pipeline requires a build; skip-build cannot verify the executable"
     );
     let lock = lock_swift_ffi(root)?;
@@ -217,13 +220,13 @@ fn run_aero_settings_simulator() -> Result<()> {
     );
 
     for (index, command) in commands.into_iter().enumerate() {
-        let high_beam = matches!(
-            command,
+        let high_beam = match command {
             DeviceCommand::SetSetting {
                 id: SettingId::HighBeam,
                 ..
-            }
-        );
+            } => true,
+            _ => false,
+        };
         let before = simulator.writes().len();
         let monotonic_ms =
             10 + u64::try_from(index).context("scenario index fits in a timestamp")?;
@@ -1168,10 +1171,10 @@ fn trim_generated_sources(package: &Path) -> Result<()> {
             let path = entry.path();
             if path.is_dir() {
                 pending.push(path);
-            } else if matches!(
-                path.extension().and_then(OsStr::to_str),
-                Some("swift" | "h")
-            ) || path.file_name() == Some(OsStr::new("module.modulemap"))
+            } else if (match path.extension().and_then(OsStr::to_str) {
+                Some("swift" | "h") => true,
+                _ => false,
+            }) || path.file_name() == Some(OsStr::new("module.modulemap"))
             {
                 let text = fs::read_to_string(&path)?;
                 let trimmed = text

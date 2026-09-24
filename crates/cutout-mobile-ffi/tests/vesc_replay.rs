@@ -1,3 +1,5 @@
+#![cfg_attr(test, allow(clippy::disallowed_macros))]
+
 use cutout_mobile_ffi::{
     MobileMonotonicMillisDto, MobileSessionInputDto, MobileSessionInputKindDto,
     MobileTransportWriteLimitDto, VescReadOnlySession,

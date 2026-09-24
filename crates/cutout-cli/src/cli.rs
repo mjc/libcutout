@@ -178,7 +178,10 @@ pub(crate) enum Command {
 impl Cli {
     #[must_use]
     pub fn is_dashboard_mode(&self) -> bool {
-        matches!(self.command, Command::Dashboard(_))
+        match self.command {
+            Command::Dashboard(_) => true,
+            _ => false,
+        }
     }
 }
 

@@ -3540,11 +3540,9 @@ fn projection_sqlite<T>(
     cancellation: Option<&RouteProjectionCancellation>,
 ) -> Result<T, StorageError> {
     result.map_err(|error| {
-        if matches!(
-            &error,
-            rusqlite::Error::SqliteFailure(failure, _)
-                if failure.code == ErrorCode::OperationInterrupted
-        ) {
+        if let rusqlite::Error::SqliteFailure(failure, _) = &error
+            && failure.code == ErrorCode::OperationInterrupted
+        {
             if cancellation.is_some_and(RouteProjectionCancellation::is_expired) {
                 StorageError::DeadlineExceeded
             } else if cancellation.is_some_and(RouteProjectionCancellation::is_cancelled) {
@@ -5264,8 +5262,10 @@ fn append_pevcap_location(
         coordinate.longitude().as_i32(),
     );
     if *last_emitted_key == Some(location_key)
-        || (matches!(origin, PevcapLocationOrigin::Attached)
-            && *last_attached_key == Some(location_key))
+        || ((match origin {
+            PevcapLocationOrigin::Attached => true,
+            PevcapLocationOrigin::Independent => false,
+        }) && *last_attached_key == Some(location_key))
     {
         return Ok(());
     }
@@ -5297,7 +5297,10 @@ fn append_pevcap_location(
             point.segment_start_reason()
         });
     *last_emitted_key = Some(location_key);
-    if matches!(origin, PevcapLocationOrigin::Attached) {
+    if match origin {
+        PevcapLocationOrigin::Attached => true,
+        PevcapLocationOrigin::Independent => false,
+    } {
         *last_attached_key = Some(location_key);
     }
     batch.push(PevcapRoutePoint {
@@ -5867,18 +5870,8 @@ fn save_music_history_policy(
 ) -> Result<(), StorageError> {
     let transaction = connection.transaction()?;
     let lifecycle = load_ride_write_state(&transaction, ride_id)?.lifecycle();
-    let live_lifecycle = matches!(
-        lifecycle,
-        RideLifecycleState::Active | RideLifecycleState::Paused
-    );
-    let historical_redaction = policy == MusicHistoryPolicy::OpaqueItem
-        && matches!(
-            lifecycle,
-            RideLifecycleState::Stopped
-                | RideLifecycleState::Interrupted
-                | RideLifecycleState::Saved
-                | RideLifecycleState::Discarded
-        );
+    let live_lifecycle = lifecycle.is_recording();
+    let historical_redaction = policy == MusicHistoryPolicy::OpaqueItem && lifecycle.is_terminal();
     if !live_lifecycle && !historical_redaction {
         return Err(StorageError::InvalidRideState(lifecycle));
     }
@@ -5892,10 +5885,10 @@ fn save_music_history_policy(
             .optional()?;
         let monotonic_redaction = existing.is_some_and(|(stored, deleted)| {
             !deleted
-                && matches!(
-                    parse_policy(&stored),
-                    Ok(MusicHistoryPolicy::HumanReadable | MusicHistoryPolicy::OpaqueItem)
-                )
+                && (match parse_policy(&stored) {
+                    Ok(MusicHistoryPolicy::HumanReadable | MusicHistoryPolicy::OpaqueItem) => true,
+                    _ => false,
+                })
         });
         if !monotonic_redaction {
             return Err(StorageError::MusicPolicyConflict);
@@ -5987,10 +5980,7 @@ fn save_music_event(
 ) -> Result<(), StorageError> {
     let transaction = connection.transaction()?;
     let lifecycle = load_ride_write_state(&transaction, ride_id)?.lifecycle();
-    if !matches!(
-        lifecycle,
-        RideLifecycleState::Active | RideLifecycleState::Paused
-    ) {
+    if !lifecycle.is_recording() {
         return Err(StorageError::InvalidRideState(lifecycle));
     }
     insert_music_event(&transaction, ride_id, policy, sequence, event)?;

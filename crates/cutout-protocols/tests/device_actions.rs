@@ -1,3 +1,5 @@
+#![cfg_attr(test, allow(clippy::disallowed_macros))]
+
 use cutout_core::{
     DeviceActionId, DeviceActionProgress, DeviceActionRequest, DeviceActionStatus,
     DeviceActionStep, DeviceActionsState, DeviceCommand, MonotonicTimestamp, RawFieldValue,

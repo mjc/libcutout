@@ -298,7 +298,12 @@ impl MusicObservationTracker {
         let Some(current) = self.pending_history.front() else {
             return MusicHistoryTransitionAcknowledgement::Stale;
         };
-        if current.id != id || !matches!(current.kind, PendingHistoryKind::Confirmed(_)) {
+        if current.id != id
+            || !(match current.kind {
+                PendingHistoryKind::Confirmed(_) => true,
+                PendingHistoryKind::AwaitingSkip { .. } => false,
+            })
+        {
             return MusicHistoryTransitionAcknowledgement::Stale;
         }
         self.pending_history.pop_front();
@@ -409,15 +414,17 @@ impl MusicObservationTracker {
         transport_id: TransportRequestId,
         outcome: SkipCommandOutcome,
     ) {
-        let Some(index) = self.pending_history.iter().position(|pending| {
-            matches!(
-                pending.kind,
+        let Some(index) = self
+            .pending_history
+            .iter()
+            .position(|pending| match pending.kind {
                 PendingHistoryKind::AwaitingSkip {
                     transport_id: current,
                     ..
-                } if current == transport_id
-            )
-        }) else {
+                } if current == transport_id => true,
+                _ => false,
+            })
+        else {
             return;
         };
         let replacement = match self.pending_history[index].kind {
@@ -459,14 +466,14 @@ fn classify_transition(
             .is_none_or(|previous| previous.state() != MusicPlaybackState::Disconnected)
             .then_some(MusicRideEventKind::ProviderDisconnected);
     }
-    if matches!(
-        current.state(),
+    if match current.state() {
         MusicPlaybackState::Buffering
-            | MusicPlaybackState::Interrupted
-            | MusicPlaybackState::Unauthorized
-            | MusicPlaybackState::Unavailable
-            | MusicPlaybackState::Stale
-    ) {
+        | MusicPlaybackState::Interrupted
+        | MusicPlaybackState::Unauthorized
+        | MusicPlaybackState::Unavailable
+        | MusicPlaybackState::Stale => true,
+        _ => false,
+    } {
         return None;
     }
     let Some(previous) = previous else {
@@ -513,14 +520,14 @@ fn classify_transition(
 }
 
 const fn is_terminal_state(state: MusicPlaybackState) -> bool {
-    matches!(
-        state,
+    match state {
         MusicPlaybackState::Stopped
-            | MusicPlaybackState::Unauthorized
-            | MusicPlaybackState::Unavailable
-            | MusicPlaybackState::Disconnected
-            | MusicPlaybackState::Stale
-    )
+        | MusicPlaybackState::Unauthorized
+        | MusicPlaybackState::Unavailable
+        | MusicPlaybackState::Disconnected
+        | MusicPlaybackState::Stale => true,
+        _ => false,
+    }
 }
 
 #[cfg(test)]

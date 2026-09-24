@@ -453,10 +453,10 @@ impl DeviceDetectionSession {
                 begode_frame = Some(*frame.as_slice());
             }
         }
-        let vesc_reply = matches!(
-            self.vesc_decoder.feed_result(bytes),
-            Ok(VescReadOnlyStreamResult::Replies(ref replies)) if !replies.is_empty()
-        );
+        let vesc_reply = match self.vesc_decoder.feed_result(bytes) {
+            Ok(VescReadOnlyStreamResult::Replies(ref replies)) if !replies.is_empty() => true,
+            _ => false,
+        };
         let bytes = veteran_frame.as_ref().map_or_else(
             || {
                 begode_frame
@@ -477,12 +477,12 @@ impl DeviceDetectionSession {
         .into_iter()
         .flatten()
         .fold(current.protocol, ProtocolFamilyState::merge_observed);
-        if matches!(
-            observed_protocol,
+        if match observed_protocol {
             ProtocolFamilyState::VeteranLeaperkimNosfet
-                | ProtocolFamilyState::Vesc
-                | ProtocolFamilyState::Conflict
-        ) {
+            | ProtocolFamilyState::Vesc
+            | ProtocolFamilyState::Conflict => true,
+            _ => false,
+        } {
             state.identity_mut().retire_pending_probes();
         }
         let mut decision = NotificationDecision::from_bytes(current.protocol, bytes, vesc_reply);
@@ -509,10 +509,10 @@ impl DeviceDetectionSession {
             }
             _ => None,
         };
-        let model_response = matches!(
-            decision.banner_model,
-            IdentityBannerEvidence::Model(_) | IdentityBannerEvidence::Malformed
-        );
+        let model_response = match decision.banner_model {
+            IdentityBannerEvidence::Model(_) | IdentityBannerEvidence::Malformed => true,
+            IdentityBannerEvidence::Missing => false,
+        };
         if model_response {
             state
                 .identity_mut()
@@ -759,11 +759,14 @@ impl<'a> NotificationDecision<'a> {
             | BegodeBannerParse::NonAscii
             | BegodeBannerParse::UnknownText => IdentityBannerEvidence::Missing,
         };
-        let firmware_banner = matches!(
-            banner,
-            BegodeBannerParse::Banner(BegodeBanner::Firmware { .. })
-        );
-        let imu_banner = matches!(banner, BegodeBannerParse::Banner(BegodeBanner::Imu(_)));
+        let firmware_banner = match banner {
+            BegodeBannerParse::Banner(BegodeBanner::Firmware { .. }) => true,
+            _ => false,
+        };
+        let imu_banner = match banner {
+            BegodeBannerParse::Banner(BegodeBanner::Imu(_)) => true,
+            _ => false,
+        };
         let malformed_probe = match banner_model {
             IdentityBannerEvidence::Malformed => Some(PendingProbe::BegodeName),
             IdentityBannerEvidence::Missing | IdentityBannerEvidence::Model(_) => None,

@@ -14,10 +14,10 @@ type FalconBenignControlHost = HostSession<StationarySettingsWriteSession<Begode
 type VescReadOnlyHost = HostSession<ReadOnlySession<VescGenericModel>>;
 
 fn output_is_telemetry(output: &cutout_core::SessionOutput) -> bool {
-    matches!(
-        output,
-        cutout_core::SessionOutput::Event(cutout_core::DeviceEvent::Telemetry(_))
-    )
+    match output {
+        cutout_core::SessionOutput::Event(cutout_core::DeviceEvent::Telemetry(_)) => true,
+        _ => false,
+    }
 }
 
 /// Owned result of one concrete mobile session step.
@@ -126,10 +126,10 @@ impl ConcreteAeroBenignControlSession {
         speed_mm_per_second: Option<i32>,
         monotonic_ms: u64,
     ) -> bool {
-        if matches!(
-            state,
-            RideOperatingStateDto::Standing | RideOperatingStateDto::Riding
-        ) && self
+        if (match state {
+            RideOperatingStateDto::Standing | RideOperatingStateDto::Riding => true,
+            _ => false,
+        }) && self
             .last_telemetry_ms
             .is_some_and(|observed| monotonic_ms.saturating_sub(observed) > 5_000)
         {
@@ -169,10 +169,10 @@ impl ConcreteAeroBenignControlSession {
             input,
             StationarySettingsWriteSession::<NosfetAeroModel>::capabilities(),
         );
-        if matches!(
-            input,
-            SessionInputDto::LinkUp { .. } | SessionInputDto::LinkDown
-        ) {
+        if match input {
+            SessionInputDto::LinkUp { .. } | SessionInputDto::LinkDown => true,
+            _ => false,
+        } {
             self.last_telemetry_ms = None;
         }
         if let SessionInputDto::Notification { monotonic_ms, .. } = input {
@@ -249,10 +249,10 @@ impl ConcreteFalconBenignControlSession {
         speed_mm_per_second: Option<i32>,
         monotonic_ms: u64,
     ) -> bool {
-        if matches!(
-            state,
-            RideOperatingStateDto::Standing | RideOperatingStateDto::Riding
-        ) && self
+        if (match state {
+            RideOperatingStateDto::Standing | RideOperatingStateDto::Riding => true,
+            _ => false,
+        }) && self
             .last_telemetry_ms
             .is_some_and(|observed| monotonic_ms.saturating_sub(observed) > 5_000)
         {
@@ -307,10 +307,10 @@ impl ConcreteFalconBenignControlSession {
             input,
             StationarySettingsWriteSession::<BegodeFalconModel>::capabilities(),
         );
-        if matches!(
-            input,
-            SessionInputDto::LinkUp { .. } | SessionInputDto::LinkDown
-        ) {
+        if match input {
+            SessionInputDto::LinkUp { .. } | SessionInputDto::LinkDown => true,
+            _ => false,
+        } {
             self.last_telemetry_ms = None;
         }
         if let SessionInputDto::Notification { monotonic_ms, .. } = input {

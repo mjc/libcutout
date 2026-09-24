@@ -612,7 +612,10 @@ impl VescNotificationDecoder {
             .is_some_and(|profile| profile.reports_battery_current);
         let mut info_received = false;
         let result = self.refloat_stream.feed_result(bytes, |reply| {
-            if matches!(reply, RefloatReply::Info(_)) {
+            if match reply {
+                RefloatReply::Info(_) => true,
+                _ => false,
+            } {
                 info_received = true;
             }
             push_refloat_reply(reply, monotonic_ms, reports_battery_current, output);
@@ -708,7 +711,10 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
             self.handle_notification_chunk(family, channel, bytes, monotonic_ms, output);
             return;
         }
-        if !matches!(bytes.first(), Some(2 | 3)) {
+        if !(match bytes.first() {
+            Some(2 | 3) => true,
+            _ => false,
+        }) {
             if let Some(start) = bytes.iter().position(|byte| *byte == 2 || *byte == 3) {
                 let Some(candidate) = bytes.get(start..) else {
                     return;
@@ -918,7 +924,11 @@ impl VescNotificationDecoder {
                     }
                     is_generic
                 }
-                None if matches!(bytes.first(), Some(2 | 3)) => {
+                None if (match bytes.first() {
+                    Some(2 | 3) => true,
+                    _ => false,
+                }) =>
+                {
                     if self.generic_prefix.try_extend_from_slice(bytes).is_err() {
                         self.reject_oversized_generic_notification(output);
                         return;
@@ -2074,7 +2084,10 @@ impl<M: ReadOnlyModelSpec + SupportsBenignControls> BenignControlSession<M> {
 
 impl<M: ReadOnlyModelSpec + SupportsBenignControls> ProtocolSession for BenignControlSession<M> {
     fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
-        if matches!(input, SessionInput::LinkUp(_) | SessionInput::LinkDown) {
+        if match input {
+            SessionInput::LinkUp(_) | SessionInput::LinkDown => true,
+            _ => false,
+        } {
             self.light_command_state = LightCommandState::Unknown;
         }
         let SessionInput::Command(command) = input else {

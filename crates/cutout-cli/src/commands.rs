@@ -222,12 +222,16 @@ fn pevcap_replay(args: &crate::cli::PevcapReplayArgs) -> Result<()> {
     let header = pevcap_reader(&args.input, args.input_format)?
         .header()
         .clone();
-    let replay_vesc = matches!(args.profile, PevcapReplayProfile::Vesc)
-        || (matches!(args.profile, PevcapReplayProfile::Auto)
-            && header
-                .annotations
-                .iter()
-                .any(|annotation| annotation == "route=vesc_onewheel"));
+    let replay_vesc = (match args.profile {
+        PevcapReplayProfile::Vesc => true,
+        _ => false,
+    }) || ((match args.profile {
+        PevcapReplayProfile::Auto => true,
+        _ => false,
+    }) && header
+        .annotations
+        .iter()
+        .any(|annotation| annotation == "route=vesc_onewheel"));
     let report = if replay_vesc {
         replay_pevcap_stream_with_session(
             &args.input,
@@ -750,10 +754,10 @@ fn dashboard_state_from_aero_pevcap_parts(
         if let Some(firmware) = &identity.firmware {
             state.device.firmware.clone_from(&firmware.value);
         }
-        if matches!(
-            identity.protocol_family,
-            Some(ProtocolFamily::VeteranLeaperkimNosfet)
-        ) {
+        if match identity.protocol_family {
+            Some(ProtocolFamily::VeteranLeaperkimNosfet) => true,
+            _ => false,
+        } {
             "NOSFET".clone_into(&mut state.device.make);
         }
     }
@@ -1853,7 +1857,12 @@ fn parse_aero_write_command(setting: AeroSetting, value: &str) -> Result<DeviceC
             -80..=80,
             "angle must be -80..=80 tenths",
         ),
-        AeroSetting::GyroCalibration if matches!(value, "start" | "calibrate") => {
+        AeroSetting::GyroCalibration
+            if (match value {
+                "start" | "calibrate" => true,
+                _ => false,
+            }) =>
+        {
             Ok(DeviceCommand::InvokeAction(DeviceActionRequest {
                 id: DeviceActionId::GyroCalibration,
                 step: DeviceActionStep::PrepareGyroCalibration,
@@ -2518,7 +2527,10 @@ fn auto_session_resolution() -> Result<SessionResolution> {
 }
 
 fn require_explicit_live_profile(profile: SessionProfile) -> Result<()> {
-    if matches!(profile, SessionProfile::Auto) {
+    if match profile {
+        SessionProfile::Auto => true,
+        _ => false,
+    } {
         bail!(
             "live EUC sessions require protocol identity evidence; pass --profile aero or --profile falcon"
         );
@@ -3046,19 +3058,12 @@ fn print_vesc_replies_jsonl(
 }
 
 fn vesc_reply_matches(command: DeviceCommand, reply: &VescReadOnlyReply) -> bool {
-    matches!(
-        (command, reply),
-        (
-            DeviceCommand::RequestFirmwareInfo,
-            VescReadOnlyReply::FirmwareInfo { .. }
-        ) | (
-            DeviceCommand::RequestTelemetry,
-            VescReadOnlyReply::Values(_)
-        ) | (
-            DeviceCommand::RequestDiagnostics,
-            VescReadOnlyReply::Stats(_)
-        )
-    )
+    match (command, reply) {
+        (DeviceCommand::RequestFirmwareInfo, VescReadOnlyReply::FirmwareInfo { .. })
+        | (DeviceCommand::RequestTelemetry, VescReadOnlyReply::Values(_))
+        | (DeviceCommand::RequestDiagnostics, VescReadOnlyReply::Stats(_)) => true,
+        _ => false,
+    }
 }
 
 fn print_vesc_reply_summary(reply: &VescReadOnlyReply) {
@@ -3192,18 +3197,12 @@ fn print_refloat_replies_jsonl(
 }
 
 fn refloat_reply_matches(command: DeviceCommand, reply: &RefloatReply<'_>) -> bool {
-    matches!(
-        (command, reply),
+    match (command, reply) {
         (DeviceCommand::RequestIdentity, RefloatReply::Info(_))
-            | (
-                DeviceCommand::RequestDiagnostics,
-                RefloatReply::RealtimeFieldIds(_)
-            )
-            | (
-                DeviceCommand::RequestTelemetry,
-                RefloatReply::RealtimeData(_)
-            )
-    )
+        | (DeviceCommand::RequestDiagnostics, RefloatReply::RealtimeFieldIds(_))
+        | (DeviceCommand::RequestTelemetry, RefloatReply::RealtimeData(_)) => true,
+        _ => false,
+    }
 }
 
 fn print_refloat_reply_summary(reply: RefloatReply<'_>) {

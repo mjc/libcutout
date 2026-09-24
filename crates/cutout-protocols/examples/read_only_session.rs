@@ -18,10 +18,10 @@ fn main() {
         &mut output,
     );
 
-    assert!(output.iter().any(|item| matches!(
-        item,
-        SessionOutput::Transport(TransportAction::Subscribe { .. })
-    )));
+    assert!(output.iter().any(|item| match item {
+        SessionOutput::Transport(TransportAction::Subscribe { .. }) => true,
+        _ => false,
+    }));
     println!(
         "read-only session produced {} transport action(s)",
         output.len()

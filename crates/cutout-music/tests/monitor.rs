@@ -1,3 +1,5 @@
+#![cfg_attr(test, allow(clippy::disallowed_macros))]
+
 use cutout_music::{MusicMonitor, MusicMonitorRequest, MusicMonitorResume, MusicMonitorStart};
 
 #[test]

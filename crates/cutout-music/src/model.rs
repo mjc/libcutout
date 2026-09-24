@@ -98,6 +98,13 @@ impl MusicCapabilities {
 }
 
 impl MusicCommand {
+    pub(crate) const fn is_skip(self) -> bool {
+        match self {
+            Self::Previous | Self::Next => true,
+            Self::Play | Self::Pause | Self::OpenProvider => false,
+        }
+    }
+
     const fn bit(self) -> u8 {
         match self {
             Self::Previous => 1 << 0,

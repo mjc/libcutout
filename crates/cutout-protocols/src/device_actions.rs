@@ -177,16 +177,14 @@ impl DeviceControlProfile {
 }
 
 const fn valid_action_step(request: DeviceActionRequest) -> bool {
-    matches!(
-        (request.id, request.step),
-        (
-            DeviceActionId::Horn | DeviceActionId::ResetTripMeter,
-            DeviceActionStep::Invoke
-        ) | (
+    match (request.id, request.step) {
+        (DeviceActionId::Horn | DeviceActionId::ResetTripMeter, DeviceActionStep::Invoke)
+        | (
             DeviceActionId::GyroCalibration,
-            DeviceActionStep::PrepareGyroCalibration | DeviceActionStep::StartGyroCalibration
-        )
-    )
+            DeviceActionStep::PrepareGyroCalibration | DeviceActionStep::StartGyroCalibration,
+        ) => true,
+        _ => false,
+    }
 }
 
 fn normalize_gyro_progress(entry: SettingsEntry) -> ActionObservation {

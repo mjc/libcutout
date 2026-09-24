@@ -389,7 +389,11 @@ impl VeteranModelProfile {
             voltage_range,
             capabilities: VeteranModelCapabilities::new(
                 raw_model_id >= 2,
-                raw_model_id >= 5 || matches!(raw_model_id, 4 | 7 | 42..=44),
+                raw_model_id >= 5
+                    || (match raw_model_id {
+                        4 | 7 | 42..=44 => true,
+                        _ => false,
+                    }),
                 raw_model_id >= 3,
             ),
             bms_layout: None,
@@ -422,7 +426,11 @@ impl VeteranModelProfile {
             voltage_range: battery_profile_pack_range(battery_profile, series_cells),
             capabilities: VeteranModelCapabilities::new(
                 raw_model_id >= 2,
-                raw_model_id >= 5 || matches!(raw_model_id, 4 | 7 | 42..=44),
+                raw_model_id >= 5
+                    || (match raw_model_id {
+                        4 | 7 | 42..=44 => true,
+                        _ => false,
+                    }),
                 raw_model_id >= 3,
             ),
             bms_layout: bms_layout_for_geometry(series_cells, parallel_packs),

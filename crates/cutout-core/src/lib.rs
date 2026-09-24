@@ -1,3 +1,4 @@
+#![cfg_attr(test, allow(clippy::disallowed_macros))]
 #![forbid(unsafe_code)]
 #![deny(rustdoc::broken_intra_doc_links)]
 #![warn(missing_docs)]
@@ -773,9 +774,9 @@ impl DangerousActuationPolicy {
         monotonic_ms: MonotonicTimestamp,
         arm: Option<DangerousActuationArm>,
     ) -> Result<CommandMetadata, DangerousActuationRefusal> {
-        if !matches!(command.safety_class(), SafetyClass::Actuation) {
+        let SafetyClass::Actuation = command.safety_class() else {
             return Err(DangerousActuationRefusal::WrongSafetyClass);
-        }
+        };
 
         let Some(arm) = arm else {
             return Err(DangerousActuationRefusal::MissingArm);
@@ -879,7 +880,7 @@ impl StationarySettingsPolicy {
             return None;
         }
         self.arm(state, monotonic_ms).or_else(|| {
-            if !matches!(state, RideOperatingState::Riding) {
+            if state != RideOperatingState::Riding {
                 return None;
             }
             let speed = speed?;
@@ -1011,6 +1012,49 @@ pub enum VerificationStatus {
 
     /// Verified against both source-attributed documentation and hardware.
     SourceAndHardwareVerified,
+}
+
+impl VerificationStatus {
+    /// Whether protocol documentation or hardware verifies this value.
+    #[must_use]
+    pub const fn is_trusted(self) -> bool {
+        match self {
+            Self::Unverified | Self::Inferred => false,
+            Self::SourceVerified | Self::HardwareVerified | Self::SourceAndHardwareVerified => true,
+        }
+    }
+
+    /// Whether source-attributed documentation verifies this value.
+    #[must_use]
+    pub const fn is_source_verified(self) -> bool {
+        match self {
+            Self::SourceVerified | Self::SourceAndHardwareVerified => true,
+            Self::Unverified | Self::Inferred | Self::HardwareVerified => false,
+        }
+    }
+
+    /// Whether hardware evidence verifies this value.
+    #[must_use]
+    pub const fn is_hardware_verified(self) -> bool {
+        match self {
+            Self::HardwareVerified | Self::SourceAndHardwareVerified => true,
+            Self::Unverified | Self::Inferred | Self::SourceVerified => false,
+        }
+    }
+
+    /// Retains only verification shared by both inputs to a calculation.
+    #[must_use]
+    pub const fn intersection(self, other: Self) -> Self {
+        match (
+            self.is_source_verified() && other.is_source_verified(),
+            self.is_hardware_verified() && other.is_hardware_verified(),
+        ) {
+            (true, true) => Self::SourceAndHardwareVerified,
+            (true, false) => Self::SourceVerified,
+            (false, true) => Self::HardwareVerified,
+            (false, false) => Self::Unverified,
+        }
+    }
 }
 
 /// A registry value plus its verification state.
@@ -4239,7 +4283,10 @@ impl PollRequest {
     /// read-only.
     pub const fn to_queued_request(self) -> Result<QueuedRequest, PollingPlanError> {
         let safety_class = self.kind.safety_class();
-        if matches!(safety_class, SafetyClass::ReadOnly) {
+        if match safety_class {
+            SafetyClass::ReadOnly => true,
+            _ => false,
+        } {
             Ok(QueuedRequest::with_urgency(
                 RequestKey::new(self.kind),
                 self.policy,
@@ -6432,7 +6479,10 @@ impl ChargeMode {
     /// Returns true when charging is active.
     #[must_use]
     pub const fn is_active(self) -> bool {
-        matches!(self, Self::Charging)
+        match self {
+            Self::Charging => true,
+            Self::NotCharging => false,
+        }
     }
 }
 
@@ -7559,7 +7609,10 @@ impl WritePayload {
     /// Returns whether this payload uses the common inline representation.
     #[must_use]
     pub const fn is_inline(&self) -> bool {
-        matches!(self.storage, WritePayloadStorage::Inline(_))
+        match self.storage {
+            WritePayloadStorage::Inline(_) => true,
+            WritePayloadStorage::Large(_) => false,
+        }
     }
 
     /// Returns the host correlation identity assigned to this write, if any.

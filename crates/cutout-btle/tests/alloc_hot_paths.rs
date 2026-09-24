@@ -1,3 +1,4 @@
+#![cfg_attr(test, allow(clippy::disallowed_macros))]
 #![allow(unsafe_code)]
 
 use std::alloc::{GlobalAlloc, Layout, System};

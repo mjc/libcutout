@@ -183,13 +183,13 @@ impl RideWriteState {
                 .map(MonotonicMilliseconds::as_u64);
             paused_duration_ms = timing.paused_duration_milliseconds().as_u64();
             completed_duration_ms = timing.completed_duration_milliseconds().as_u64();
-        } else if matches!(
-            (self.lifecycle, lifecycle),
+        } else if match (self.lifecycle, lifecycle) {
             (
                 RideLifecycleState::Paused,
                 RideLifecycleState::Stopped | RideLifecycleState::Interrupted,
-            )
-        ) {
+            ) => true,
+            _ => false,
+        } {
             // Without a monotonic timestamp, preserve the known timing and close the terminal
             // state rather than retaining a pause that can never be resumed.
             paused_at_ms = None;
@@ -257,15 +257,19 @@ impl RideWriteState {
     const fn accepts_location(self, mode: LocationWriteMode) -> bool {
         match mode {
             LocationWriteMode::Live => {
-                matches!(self.source, RideSource::Live)
-                    && matches!(
-                        self.lifecycle,
-                        RideLifecycleState::Active | RideLifecycleState::Paused
-                    )
+                (match self.source {
+                    RideSource::Live => true,
+                    RideSource::PevcapImport => false,
+                }) && self.lifecycle.is_recording()
             }
             LocationWriteMode::PevcapImport => {
-                matches!(self.source, RideSource::PevcapImport)
-                    && matches!(self.lifecycle, RideLifecycleState::Draft)
+                (match self.source {
+                    RideSource::PevcapImport => true,
+                    RideSource::Live => false,
+                }) && (match self.lifecycle {
+                    RideLifecycleState::Draft => true,
+                    _ => false,
+                })
             }
         }
     }

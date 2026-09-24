@@ -672,10 +672,10 @@ impl RideMapRecorder {
         let last_monotonic_milliseconds = points.last().map_or(created_at_milliseconds, |point| {
             point.sample().monotonic_milliseconds()
         });
-        let completed_duration_milliseconds = if matches!(
-            state,
-            RideLifecycleState::Active | RideLifecycleState::Paused
-        ) {
+        let completed_duration_milliseconds = if match state {
+            RideLifecycleState::Active | RideLifecycleState::Paused => true,
+            _ => false,
+        } {
             RideDurationMilliseconds::new(0)
         } else {
             RideDurationMilliseconds::new(
@@ -920,15 +920,16 @@ impl RideMapRecorder {
         at_milliseconds: MonotonicMilliseconds,
         candidate_vehicle: Option<VehicleIdentity>,
     ) -> Result<(), TransitionError> {
-        if !matches!(
-            self.state,
-            None | Some(
+        if !(match self.state {
+            None
+            | Some(
                 RideLifecycleState::Stopped
-                    | RideLifecycleState::Interrupted
-                    | RideLifecycleState::Saved
-                    | RideLifecycleState::Discarded,
-            )
-        ) {
+                | RideLifecycleState::Interrupted
+                | RideLifecycleState::Saved
+                | RideLifecycleState::Discarded,
+            ) => true,
+            _ => false,
+        }) {
             return Err(TransitionError::Invalid);
         }
         self.state = Some(RideLifecycleState::Active);
@@ -1006,10 +1007,10 @@ impl RideMapRecorder {
         self.paused_at_milliseconds = timing.paused_at_milliseconds();
         self.paused_duration_milliseconds = timing.paused_duration_milliseconds();
         self.completed_duration_milliseconds = timing.completed_duration_milliseconds();
-        if matches!(
-            self.state,
-            Some(RideLifecycleState::Paused | RideLifecycleState::Interrupted)
-        ) && state == RideLifecycleState::Active
+        if (match self.state {
+            Some(RideLifecycleState::Paused | RideLifecycleState::Interrupted) => true,
+            _ => false,
+        }) && state == RideLifecycleState::Active
             && !self.segment_started
             && !self.points.is_empty()
         {
@@ -1045,10 +1046,10 @@ impl RideMapRecorder {
         platform_identifier: &VehicleIdentity,
         at_milliseconds: MonotonicMilliseconds,
     ) -> VehicleAssociation {
-        if !matches!(
-            self.state,
-            Some(RideLifecycleState::Active | RideLifecycleState::Paused)
-        ) {
+        if !(match self.state {
+            Some(RideLifecycleState::Active | RideLifecycleState::Paused) => true,
+            _ => false,
+        }) {
             return VehicleAssociation::RideNotOpen;
         }
         if at_milliseconds < self.last_monotonic_milliseconds {
@@ -1078,10 +1079,10 @@ impl RideMapRecorder {
         &mut self,
         at_milliseconds: MonotonicMilliseconds,
     ) -> TelemetryObservation {
-        if !matches!(
-            self.state,
-            Some(RideLifecycleState::Active | RideLifecycleState::Paused)
-        ) {
+        if !(match self.state {
+            Some(RideLifecycleState::Active | RideLifecycleState::Paused) => true,
+            _ => false,
+        }) {
             return TelemetryObservation::RideNotOpen;
         }
         let Some(associated_at) = self.associated_at_milliseconds else {
@@ -1175,16 +1176,16 @@ impl RideMapRecorder {
     /// queued; the lifecycle check here prevents a stale completion from mutating a discarded
     /// or otherwise closed projection.
     pub fn record_admitted_sample(&mut self, admitted_sample: AdmittedLocationSample) -> bool {
-        if !matches!(
-            self.state,
+        if !(match self.state {
             Some(
                 RideLifecycleState::Active
-                    | RideLifecycleState::Paused
-                    | RideLifecycleState::Interrupted
-                    | RideLifecycleState::Stopped
-                    | RideLifecycleState::Saved
-            )
-        ) {
+                | RideLifecycleState::Paused
+                | RideLifecycleState::Interrupted
+                | RideLifecycleState::Stopped
+                | RideLifecycleState::Saved,
+            ) => true,
+            _ => false,
+        }) {
             return false;
         }
         let sample = admitted_sample.sample();

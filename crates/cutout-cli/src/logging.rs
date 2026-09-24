@@ -222,10 +222,10 @@ fn directive_requests_debug_file(directive: &str) -> bool {
     let level = directive
         .rsplit_once('=')
         .map_or(directive, |(_target, level)| level);
-    matches!(
-        level.trim().to_ascii_lowercase().as_str(),
-        "debug" | "trace"
-    )
+    match level.trim().to_ascii_lowercase().as_str() {
+        "debug" | "trace" => true,
+        _ => false,
+    }
 }
 
 pub(crate) const DASHBOARD_RECENT_EVENT_TARGET: &str = "cutout_cli::dashboard_recent_events";

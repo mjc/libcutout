@@ -1,3 +1,5 @@
+#![cfg_attr(test, allow(clippy::disallowed_macros))]
+
 use clap::Parser;
 use cutout_cli::{Cli, init_logging, install_dashboard_signal_restore, run};
 use std::process::ExitCode;

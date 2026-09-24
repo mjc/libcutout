@@ -21,7 +21,10 @@ impl SettingCompletionStrategy {
     /// Whether this setting owns a matching-readback confirmation deadline.
     #[must_use]
     pub const fn supports_readback(self) -> bool {
-        matches!(self, Self::MatchingReadback)
+        match self {
+            Self::MatchingReadback => true,
+            Self::SubmissionOnly => false,
+        }
     }
 }
 

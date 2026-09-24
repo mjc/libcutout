@@ -278,30 +278,36 @@ pub enum MusicRideEventKind {
 
 impl MusicRideEventKind {
     const fn is_occurrence(self) -> bool {
-        matches!(
-            self,
-            Self::Skip | Self::ItemChanged | Self::ProviderDisconnected
-        )
+        match self {
+            Self::Skip | Self::ItemChanged | Self::ProviderDisconnected => true,
+            _ => false,
+        }
     }
 
     /// Returns whether this transition is valid for the provider state that produced it.
     #[must_use]
     pub const fn valid_for_state(self, state: MusicPlaybackState) -> bool {
         match self {
-            Self::Play | Self::Pause => matches!(
-                state,
+            Self::Play | Self::Pause => match state {
                 MusicPlaybackState::Playing
-                    | MusicPlaybackState::Paused
-                    | MusicPlaybackState::Buffering
-            ),
-            Self::Stopped => matches!(state, MusicPlaybackState::Stopped),
-            Self::ProviderDisconnected => matches!(state, MusicPlaybackState::Disconnected),
-            Self::Skip | Self::ItemChanged => matches!(
-                state,
+                | MusicPlaybackState::Paused
+                | MusicPlaybackState::Buffering => true,
+                _ => false,
+            },
+            Self::Stopped => match state {
+                MusicPlaybackState::Stopped => true,
+                _ => false,
+            },
+            Self::ProviderDisconnected => match state {
+                MusicPlaybackState::Disconnected => true,
+                _ => false,
+            },
+            Self::Skip | Self::ItemChanged => match state {
                 MusicPlaybackState::Playing
-                    | MusicPlaybackState::Paused
-                    | MusicPlaybackState::Stopped
-            ),
+                | MusicPlaybackState::Paused
+                | MusicPlaybackState::Stopped => true,
+                _ => false,
+            },
         }
     }
 }

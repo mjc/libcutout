@@ -43,10 +43,10 @@ impl CutoutSessionState {
     /// Whether unresolved identification should retry the selected connection.
     #[must_use]
     pub const fn should_retry_identification(&self) -> bool {
-        matches!(
-            self.device_connection_intent,
-            DeviceConnectionIntent::Reconnect
-        )
+        match self.device_connection_intent {
+            DeviceConnectionIntent::Reconnect => true,
+            _ => false,
+        }
     }
 
     /// Returns the current identity state without cloning the whole root.
@@ -351,9 +351,10 @@ impl ModelBanner {
             .map(str::trim)
             .filter(|model| !model.is_empty())
             .filter(|model| {
-                model
-                    .bytes()
-                    .all(|byte| matches!(byte, b'\n' | b'\r' | b'\t' | 0x20..=0x7e))
+                model.bytes().all(|byte| match byte {
+                    b'\n' | b'\r' | b'\t' | 0x20..=0x7e => true,
+                    _ => false,
+                })
             })
     }
 }
@@ -758,10 +759,10 @@ pub struct BmsTelemetryState {
 impl BmsTelemetryState {
     fn assign_observation_event_sequence(&mut self, readback: &mut BatteryReadback) {
         if readback.observed_at().is_none()
-            || !matches!(
-                readback.page(),
-                Some(crate::BatteryPagePayload::CellVoltage(_))
-            )
+            || !(match readback.page() {
+                Some(crate::BatteryPagePayload::CellVoltage(_)) => true,
+                _ => false,
+            })
             || readback.observation_event_sequence().is_some()
         {
             return;
@@ -804,8 +805,10 @@ impl BmsTelemetryState {
                 .is_none_or(|existing_page| !same_bms_page(existing_page.page(), identity))
         });
         self.pages.push(readback.clone());
-        if matches!(page, crate::BatteryPagePayload::CellVoltage(_))
-            && readback.observed_at().is_some()
+        if (match page {
+            crate::BatteryPagePayload::CellVoltage(_) => true,
+            _ => false,
+        }) && readback.observed_at().is_some()
         {
             let matching_history_count = self
                 .observation_history
@@ -829,11 +832,9 @@ impl BmsTelemetryState {
             let page_count = self
                 .pages
                 .iter()
-                .filter(|readback| {
-                    matches!(
-                        readback.page(),
-                        Some(crate::BatteryPagePayload::CellVoltage(_))
-                    )
+                .filter(|readback| match readback.page() {
+                    Some(crate::BatteryPagePayload::CellVoltage(_)) => true,
+                    _ => false,
                 })
                 .count();
             debug_assert!(

@@ -94,6 +94,7 @@ in
     exec = "true";
     after = [
       "project:test"
+      "test:rust-lint-policy"
       "test:kotlin-bindings-smoke"
     ]
     ++ lib.optionals pkgs.stdenv.isDarwin [
@@ -103,6 +104,8 @@ in
   };
 
   tasks."project:dependency-policy".exec = "cargo deny --locked check";
+
+  tasks."test:rust-lint-policy".exec = "bash tests/fixtures/macro-policy/run.sh";
 
   tasks."project:quality-gate" = {
     # Run formatting after the other checks so it cannot edit their inputs.

@@ -4,7 +4,10 @@
 /// Scheme and host matching remain the platform URL parser's responsibility.
 #[must_use]
 pub fn music_callback_path_matches(expected: &str, actual: &str) -> bool {
-    expected == actual || (matches!(expected, "" | "/") && matches!(actual, "" | "/"))
+    match (expected, actual) {
+        ("" | "/", "" | "/") => true,
+        _ => expected == actual,
+    }
 }
 
 /// What a foreground provider monitor may do when it starts.
@@ -111,7 +114,10 @@ impl MusicMonitor {
     /// Whether the platform scene permits foreground observation.
     #[must_use]
     pub const fn is_scene_active(&self) -> bool {
-        matches!(self.scene, MonitorScene::Active)
+        match self.scene {
+            MonitorScene::Active => true,
+            MonitorScene::Suspended => false,
+        }
     }
 
     /// Returns the start that would be admitted without consuming the intent.

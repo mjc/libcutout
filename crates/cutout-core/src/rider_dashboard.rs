@@ -208,10 +208,10 @@ fn pwm_headroom(
     let Some(pwm) = pwm else {
         return RiderMetricValue::Unavailable;
     };
-    if !matches!(
-        operating_state,
-        RideOperatingState::Riding | RideOperatingState::Standing
-    ) {
+    if !(match operating_state {
+        RideOperatingState::Riding | RideOperatingState::Standing => true,
+        _ => false,
+    }) {
         return RiderMetricValue::NotApplicable;
     }
 

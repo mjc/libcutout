@@ -175,6 +175,26 @@ pub enum RideSessionPhase {
     Ended(RideSessionEndReason),
 }
 
+impl RideSessionPhase {
+    /// Whether this session still owns work, including terminal effects.
+    const fn is_live(&self) -> bool {
+        match self {
+            Self::Idle | Self::Ended(_) => false,
+            Self::Starting | Self::Active | Self::Reconnecting | Self::Stale | Self::Ending(_) => {
+                true
+            }
+        }
+    }
+
+    /// Whether transport and activity updates can still advance this session.
+    const fn accepts_updates(&self) -> bool {
+        match self {
+            Self::Starting | Self::Active | Self::Reconnecting | Self::Stale => true,
+            Self::Idle | Self::Ending(_) | Self::Ended(_) => false,
+        }
+    }
+}
+
 /// Current state of the `ActivityKit` projection for the logical ride.
 #[non_exhaustive]
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -311,10 +331,7 @@ impl RideSessionLifecycle {
     /// Returns the minimal marker for a ride that can still be reconciled after relaunch.
     #[must_use]
     pub fn marker(&self) -> Option<RideSessionMarker> {
-        if matches!(
-            self.phase,
-            RideSessionPhase::Idle | RideSessionPhase::Ending(_) | RideSessionPhase::Ended(_)
-        ) {
+        if !self.phase.accepts_updates() {
             return None;
         }
         self.identity.clone().map(RideSessionMarker::new)
@@ -421,21 +438,11 @@ impl RideSessionLifecycle {
     }
 
     fn start(&self, identity: RideSessionIdentity) -> RideSessionDecision {
-        if self.identity.as_ref() == Some(&identity)
-            && !matches!(
-                self.phase,
-                RideSessionPhase::Idle | RideSessionPhase::Ended(_)
-            )
-        {
+        if self.identity.as_ref() == Some(&identity) && self.phase.is_live() {
             return self.decision(RideSessionEffect::None);
         }
 
-        if let Some(current_identity) = self.identity.clone().filter(|_| {
-            !matches!(
-                self.phase,
-                RideSessionPhase::Idle | RideSessionPhase::Ended(_)
-            )
-        }) {
+        if let Some(current_identity) = self.identity.clone().filter(|_| self.phase.is_live()) {
             let mut state = self.clone();
             state.phase = RideSessionPhase::Ending(RideSessionEndReason::ReplacedByNewSession);
             state.pending_identity = Some(identity);
@@ -467,9 +474,7 @@ impl RideSessionLifecycle {
         identity: &RideSessionIdentity,
         activity_id: String,
     ) -> RideSessionDecision {
-        if self.identity.as_ref() != Some(identity)
-            || !matches!(self.phase, RideSessionPhase::Starting)
-        {
+        if self.identity.as_ref() != Some(identity) || self.phase != RideSessionPhase::Starting {
             return self.decision(RideSessionEffect::None);
         }
         let mut state = self.clone();
@@ -508,12 +513,7 @@ impl RideSessionLifecycle {
     }
 
     fn activity_unavailable(&self, identity: &RideSessionIdentity) -> RideSessionDecision {
-        if self.identity.as_ref() != Some(identity)
-            || matches!(
-                self.phase,
-                RideSessionPhase::Idle | RideSessionPhase::Ended(_)
-            )
-        {
+        if self.identity.as_ref() != Some(identity) || !self.phase.is_live() {
             return self.decision(RideSessionEffect::None);
         }
         let mut state = self.clone();
@@ -525,10 +525,7 @@ impl RideSessionLifecycle {
         let Some(identity) = self.identity.clone() else {
             return self.decision(RideSessionEffect::None);
         };
-        if matches!(
-            self.phase,
-            RideSessionPhase::Idle | RideSessionPhase::Ending(_) | RideSessionPhase::Ended(_)
-        ) {
+        if !self.phase.accepts_updates() {
             return self.decision(RideSessionEffect::None);
         }
         if self.app_presence == RideSessionAppPresence::Background {
@@ -552,10 +549,7 @@ impl RideSessionLifecycle {
         let Some(identity) = self.identity.clone() else {
             return self.decision(RideSessionEffect::None);
         };
-        if matches!(
-            self.phase,
-            RideSessionPhase::Idle | RideSessionPhase::Ending(_) | RideSessionPhase::Ended(_)
-        ) {
+        if !self.phase.accepts_updates() {
             return self.decision(RideSessionEffect::None);
         }
         let mut state = self.clone();
@@ -575,12 +569,9 @@ impl RideSessionLifecycle {
     }
 
     fn bluetooth_connected(&self) -> RideSessionDecision {
-        if !matches!(
-            self.phase,
-            RideSessionPhase::Reconnecting | RideSessionPhase::Stale
-        ) {
+        let (RideSessionPhase::Reconnecting | RideSessionPhase::Stale) = self.phase else {
             return self.decision(RideSessionEffect::None);
-        }
+        };
         let mut state = self.clone();
         state.phase = RideSessionPhase::Active;
         RideSessionDecision::new(state, RideSessionEffect::None)
@@ -590,10 +581,7 @@ impl RideSessionLifecycle {
         let Some(identity) = self.identity.clone() else {
             return self.decision(RideSessionEffect::None);
         };
-        if matches!(
-            self.phase,
-            RideSessionPhase::Idle | RideSessionPhase::Ending(_) | RideSessionPhase::Ended(_)
-        ) {
+        if !self.phase.accepts_updates() {
             return self.decision(RideSessionEffect::None);
         }
         let mut state = self.clone();
@@ -624,13 +612,9 @@ impl RideSessionLifecycle {
         else {
             return self.decision(RideSessionEffect::None);
         };
-        if matches!(
-            self.phase,
-            RideSessionPhase::Idle
-                | RideSessionPhase::Stale
-                | RideSessionPhase::Ending(_)
-                | RideSessionPhase::Ended(_)
-        ) || now.saturating_duration_since(last_telemetry_at) < stale_after
+        if !self.phase.accepts_updates()
+            || self.phase == RideSessionPhase::Stale
+            || now.saturating_duration_since(last_telemetry_at) < stale_after
         {
             return self.decision(RideSessionEffect::None);
         }
@@ -653,10 +637,7 @@ impl RideSessionLifecycle {
         let Some(identity) = self.identity.clone() else {
             return self.decision(RideSessionEffect::None);
         };
-        if matches!(
-            self.phase,
-            RideSessionPhase::Idle | RideSessionPhase::Ended(_)
-        ) {
+        if !self.phase.is_live() {
             return self.decision(RideSessionEffect::None);
         }
         if let RideSessionPhase::Ending(existing_reason) = self.phase {

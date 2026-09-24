@@ -9,7 +9,7 @@ static NEXT_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 use crate::{
     ControlRefusalReason, Duration, Measured, MonotonicTimestamp, SETTING_CONFIRMATION_TIMEOUT,
     SettingCommandStatus, SettingCompletionStrategy, SettingState, SettingTransportStatus,
-    SettingValue, SettingValueSource, ValueQuality, ValueSource, VerificationStatus,
+    SettingValue, SettingValueSource, ValueQuality, ValueSource,
 };
 
 /// Stable semantic identity, independent of protocol fields or model names.
@@ -210,7 +210,13 @@ impl DeviceSettingsState {
         if record
             .observed_at
             .is_some_and(|latest| observed_at < latest)
-            || matches!(record.state, SettingState::Pending { submitted_at: Some(at), .. } if observed_at < at)
+            || (match record.state {
+                SettingState::Pending {
+                    submitted_at: Some(at),
+                    ..
+                } if observed_at < at => true,
+                _ => false,
+            })
         {
             return;
         }
@@ -236,7 +242,13 @@ impl DeviceSettingsState {
         if record
             .observed_at
             .is_some_and(|latest| observed_at < latest)
-            || matches!(record.state, SettingState::Pending { submitted_at: Some(at), .. } if observed_at < at)
+            || (match record.state {
+                SettingState::Pending {
+                    submitted_at: Some(at),
+                    ..
+                } if observed_at < at => true,
+                _ => false,
+            })
         {
             return;
         }
@@ -244,12 +256,7 @@ impl DeviceSettingsState {
             && evidence.is_none_or(|evidence| {
                 evidence.source == ValueSource::Reported
                     && evidence.quality == ValueQuality::Known
-                    && matches!(
-                        evidence.verification,
-                        VerificationStatus::SourceVerified
-                            | VerificationStatus::HardwareVerified
-                            | VerificationStatus::SourceAndHardwareVerified
-                    )
+                    && evidence.verification.is_trusted()
             });
         if (!record.completion.supports_readback() || !usable_confirmation)
             && let SettingState::Pending { current, .. } = &mut record.state
@@ -314,22 +321,26 @@ impl DeviceSettingsState {
         };
         if record.request_id != Some(request_id)
             || record.transport_at.is_some_and(|latest| at < latest)
-            || !matches!(record.state, SettingState::Pending { .. })
-            || !matches!(
-                (record.transport, status),
+            || !(match record.state {
+                SettingState::Pending { .. } => true,
+                _ => false,
+            })
+            || !(match (record.transport, status) {
                 (
                     Some(SettingTransportStatus::Accepted),
                     SettingTransportStatus::Queued
-                        | SettingTransportStatus::Submitted
-                        | SettingTransportStatus::Rejected
-                        | SettingTransportStatus::Cancelled
-                ) | (
+                    | SettingTransportStatus::Submitted
+                    | SettingTransportStatus::Rejected
+                    | SettingTransportStatus::Cancelled,
+                )
+                | (
                     Some(SettingTransportStatus::Queued),
                     SettingTransportStatus::Submitted
-                        | SettingTransportStatus::Rejected
-                        | SettingTransportStatus::Cancelled
-                )
-            )
+                    | SettingTransportStatus::Rejected
+                    | SettingTransportStatus::Cancelled,
+                ) => true,
+                _ => false,
+            })
         {
             return false;
         }
