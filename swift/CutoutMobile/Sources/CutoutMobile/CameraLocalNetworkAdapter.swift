@@ -607,9 +607,6 @@ public final class CameraLocalNetworkAdapter {
     ) async throws {
         let requestToken = sessionState.cameraSessionToken()
         let origin = try mobileValidateNovatekHttpOrigin(address: address, port: port)
-        guard readOnlyEvidence != nil else {
-            throw CameraMediaDownloadError.pathUnavailable
-        }
         guard readOnlyOriginMatches(origin) else {
             throw CameraMediaDownloadError.originMismatch
         }
@@ -708,9 +705,6 @@ public final class CameraLocalNetworkAdapter {
     ) async throws -> Data {
         let requestToken = sessionState.cameraSessionToken()
         let origin = try mobileValidateNovatekHttpOrigin(address: address, port: port)
-        guard readOnlyEvidence != nil else {
-            throw CameraReadOnlyRequestError.pathUnavailable
-        }
         guard readOnlyOriginMatches(origin) else {
             throw CameraReadOnlyRequestError.originMismatch
         }
