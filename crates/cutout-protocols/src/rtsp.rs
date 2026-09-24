@@ -1,4 +1,4 @@
-//! Retina-backed RTSP preview transport for camera sources.
+//! RTSP preview transport for camera sources.
 
 use std::{
     fs::File,
@@ -20,15 +20,15 @@ use thiserror::Error;
 use url::Url;
 
 /// Maximum encoded H.264 access-unit size accepted from an RTSP camera.
-const RETINA_MAX_VIDEO_FRAME_BYTES: usize = 8 * 1024 * 1024;
-const RETINA_MAX_VIDEO_CONFIGURATION_BYTES: usize = 64 * 1024;
-const RETINA_MAX_VIDEO_CODEC_BYTES: usize = 64;
-const RETINA_RTSP_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
-const RETINA_RTSP_IDLE_TIMEOUT: Duration = Duration::from_secs(15);
+const MAX_VIDEO_FRAME_BYTES: usize = 8 * 1024 * 1024;
+const MAX_VIDEO_CONFIGURATION_BYTES: usize = 64 * 1024;
+const MAX_VIDEO_CODEC_BYTES: usize = 64;
+const RTSP_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+const RTSP_IDLE_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// Failure while creating or consuming a Retina RTSP preview session.
+/// Failure while creating or consuming an RTSP preview session.
 #[derive(Debug, Error)]
-pub enum RetinaRtspError {
+pub enum RtspError {
     /// The supplied URI was not an RTSP URL.
     #[error("invalid RTSP URI")]
     InvalidUri,
@@ -41,7 +41,7 @@ pub enum RetinaRtspError {
     /// The server's SDP did not advertise an H.264 video stream.
     #[error("RTSP session has no H.264 video stream")]
     UnsupportedVideoCodec,
-    /// Retina could not establish or negotiate the session.
+    /// RTSP could not establish or negotiate the session.
     #[error("RTSP session error: {0}")]
     Session(String),
     /// A decoded access unit exceeded the mobile preview memory budget.
@@ -54,9 +54,9 @@ pub enum RetinaRtspError {
 
 /// A nonzero RTP clock rate associated with an encoded video frame.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct RetinaVideoClockRate(NonZeroU32);
+pub struct VideoClockRate(NonZeroU32);
 
-impl RetinaVideoClockRate {
+impl VideoClockRate {
     /// Creates a clock rate, rejecting zero because it cannot be a time scale.
     #[must_use]
     pub const fn new(value: u32) -> Option<Self> {
@@ -79,7 +79,7 @@ impl RetinaVideoClockRate {
 
 /// Failure while constructing a bounded encoded video frame.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
-pub enum RetinaVideoFrameError {
+pub enum VideoFrameError {
     /// The encoded access unit was not a complete length-prefixed H.264 unit.
     #[error("RTSP video frame is not a valid H.264 access unit")]
     InvalidAccessUnit,
@@ -91,22 +91,22 @@ pub enum RetinaVideoFrameError {
     },
 }
 
-/// One bounded encoded video access unit emitted by a Retina preview session.
+/// One bounded encoded video access unit emitted by a RTSP preview session.
 #[derive(Debug, Eq, PartialEq)]
-pub struct RetinaVideoFrame {
+pub struct VideoFrame {
     data: Vec<u8>,
     parameter_sets: Vec<Vec<u8>>,
     loss: u16,
     is_random_access_point: bool,
     timestamp: i64,
-    clock_rate_hz: RetinaVideoClockRate,
+    clock_rate_hz: VideoClockRate,
 }
 
 /// A bounded RFC 6381 codec identifier advertised by an RTSP stream.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RetinaVideoCodec(ArrayString<RETINA_MAX_VIDEO_CODEC_BYTES>);
+pub struct VideoCodec(ArrayString<MAX_VIDEO_CODEC_BYTES>);
 
-impl RetinaVideoCodec {
+impl VideoCodec {
     /// Retains a codec identifier only when it fits the descriptor bound.
     #[must_use]
     pub fn new(value: &str) -> Option<Self> {
@@ -122,12 +122,12 @@ impl RetinaVideoCodec {
 
 /// Nonzero coded dimensions advertised by an RTSP video stream.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct RetinaVideoDimensions {
+pub struct VideoDimensions {
     width: NonZeroU32,
     height: NonZeroU32,
 }
 
-impl RetinaVideoDimensions {
+impl VideoDimensions {
     /// Creates dimensions, rejecting a missing coded width or height.
     #[must_use]
     pub const fn new(width: u32, height: u32) -> Option<Self> {
@@ -152,7 +152,7 @@ impl RetinaVideoDimensions {
 
 /// Failure while constructing a bounded RTSP video configuration.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
-pub enum RetinaVideoConfigurationError {
+pub enum VideoConfigurationError {
     /// The stream advertised a zero coded dimension.
     #[error("RTSP video dimensions must be nonzero")]
     InvalidDimensions,
@@ -166,31 +166,31 @@ pub enum RetinaVideoConfigurationError {
 
 /// Codec configuration advertised by the RTSP video stream.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RetinaVideoConfiguration {
-    codec: RetinaVideoCodec,
-    dimensions: RetinaVideoDimensions,
+pub struct VideoConfiguration {
+    codec: VideoCodec,
+    dimensions: VideoDimensions,
     extra_data: Vec<u8>,
 }
 
-impl RetinaVideoConfiguration {
+impl VideoConfiguration {
     /// Creates a bounded codec configuration from stream metadata.
     ///
     /// # Errors
     ///
-    /// Returns [`RetinaVideoConfigurationError::InvalidDimensions`] for a zero
-    /// coded width or height, or [`RetinaVideoConfigurationError::ExtraDataTooLarge`]
+    /// Returns [`VideoConfigurationError::InvalidDimensions`] for a zero
+    /// coded width or height, or [`VideoConfigurationError::ExtraDataTooLarge`]
     /// when codec-specific data exceeds the fixed boundary.
     pub fn new(
-        codec: RetinaVideoCodec,
+        codec: VideoCodec,
         width: u32,
         height: u32,
         extra_data: Vec<u8>,
-    ) -> Result<Self, RetinaVideoConfigurationError> {
-        let dimensions = RetinaVideoDimensions::new(width, height)
-            .ok_or(RetinaVideoConfigurationError::InvalidDimensions)?;
-        if extra_data.len() > RETINA_MAX_VIDEO_CONFIGURATION_BYTES {
-            return Err(RetinaVideoConfigurationError::ExtraDataTooLarge {
-                max: RETINA_MAX_VIDEO_CONFIGURATION_BYTES,
+    ) -> Result<Self, VideoConfigurationError> {
+        let dimensions = VideoDimensions::new(width, height)
+            .ok_or(VideoConfigurationError::InvalidDimensions)?;
+        if extra_data.len() > MAX_VIDEO_CONFIGURATION_BYTES {
+            return Err(VideoConfigurationError::ExtraDataTooLarge {
+                max: MAX_VIDEO_CONFIGURATION_BYTES,
             });
         }
         Ok(Self {
@@ -202,13 +202,13 @@ impl RetinaVideoConfiguration {
 
     /// Returns the bounded RFC 6381 codec identifier.
     #[must_use]
-    pub fn codec(&self) -> &RetinaVideoCodec {
+    pub fn codec(&self) -> &VideoCodec {
         &self.codec
     }
 
     /// Returns the nonzero coded dimensions.
     #[must_use]
-    pub const fn dimensions(&self) -> RetinaVideoDimensions {
+    pub const fn dimensions(&self) -> VideoDimensions {
         self.dimensions
     }
 
@@ -219,27 +219,27 @@ impl RetinaVideoConfiguration {
     }
 }
 
-impl RetinaVideoFrame {
+impl VideoFrame {
     /// Creates one encoded video access unit with its stream timing.
     ///
     /// # Errors
     ///
-    /// Returns [`RetinaVideoFrameError::TooLarge`] when the encoded access
+    /// Returns [`VideoFrameError::TooLarge`] when the encoded access
     /// unit exceeds the fixed transport boundary.
     pub fn new(
         data: Vec<u8>,
         loss: u16,
         is_random_access_point: bool,
         timestamp: i64,
-        clock_rate_hz: RetinaVideoClockRate,
-    ) -> Result<Self, RetinaVideoFrameError> {
-        if data.len() > RETINA_MAX_VIDEO_FRAME_BYTES {
-            return Err(RetinaVideoFrameError::TooLarge {
-                max: RETINA_MAX_VIDEO_FRAME_BYTES,
+        clock_rate_hz: VideoClockRate,
+    ) -> Result<Self, VideoFrameError> {
+        if data.len() > MAX_VIDEO_FRAME_BYTES {
+            return Err(VideoFrameError::TooLarge {
+                max: MAX_VIDEO_FRAME_BYTES,
             });
         }
         let nals = parse_length_prefixed_access_unit(&data)
-            .map_err(|_| RetinaVideoFrameError::InvalidAccessUnit)?;
+            .map_err(|_| VideoFrameError::InvalidAccessUnit)?;
         let sps = nals
             .iter()
             .find(|nal| nal.first().is_some_and(|header| header & 0x1f == 7))
@@ -291,13 +291,13 @@ impl RetinaVideoFrame {
 
     /// Returns the nonzero stream clock rate.
     #[must_use]
-    pub const fn clock_rate_hz(&self) -> RetinaVideoClockRate {
+    pub const fn clock_rate_hz(&self) -> VideoClockRate {
         self.clock_rate_hz
     }
 
     /// Splits the validated frame for a checked FFI DTO conversion.
     #[must_use]
-    pub fn into_parts(self) -> (Vec<u8>, Vec<Vec<u8>>, u16, bool, i64, RetinaVideoClockRate) {
+    pub fn into_parts(self) -> (Vec<u8>, Vec<Vec<u8>>, u16, bool, i64, VideoClockRate) {
         (
             self.data,
             self.parameter_sets,
@@ -309,27 +309,27 @@ impl RetinaVideoFrame {
     }
 }
 
-/// A file sink for Retina's H.264 access units.
+/// A file sink for RTSP's H.264 access units.
 ///
 /// The output is an Annex-B H.264 elementary stream. It is intentionally not
 /// an MP4/MOV container: callers can hand the resulting file to a decoder or
 /// muxer that understands H.264 elementary streams, while the transport layer
 /// remains independent of platform media frameworks.
-pub struct RetinaH264FileSink {
+pub struct H264FileSink {
     writer: BufWriter<File>,
     frame_count: u64,
 }
 
-impl std::fmt::Debug for RetinaH264FileSink {
+impl std::fmt::Debug for H264FileSink {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
-            .debug_struct("RetinaH264FileSink")
+            .debug_struct("H264FileSink")
             .field("frame_count", &self.frame_count)
             .finish_non_exhaustive()
     }
 }
 
-impl RetinaH264FileSink {
+impl H264FileSink {
     /// Creates or truncates an Annex-B H.264 output file.
     ///
     /// # Errors
@@ -342,16 +342,16 @@ impl RetinaH264FileSink {
         })
     }
 
-    /// Writes one Retina H.264 access unit to the output file.
+    /// Writes one RTSP H.264 access unit to the output file.
     ///
-    /// Retina emits each NAL unit with a four-byte big-endian length prefix;
+    /// RTSP emits each NAL unit with a four-byte big-endian length prefix;
     /// this sink replaces those prefixes with Annex-B start codes.
     ///
     /// # Errors
     ///
     /// Returns [`io::ErrorKind::InvalidData`] for malformed length-prefixed
     /// data, or the underlying filesystem error when writing.
-    pub fn write_frame(&mut self, frame: &RetinaVideoFrame) -> io::Result<()> {
+    pub fn write_frame(&mut self, frame: &VideoFrame) -> io::Result<()> {
         let data = frame.data();
         let nals = parse_length_prefixed_access_unit(data).map_err(invalid_data)?;
 
@@ -452,27 +452,27 @@ fn invalid_data(message: &'static str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message)
 }
 
-/// A running Retina RTSP session restricted to the first advertised video stream.
+/// A running RTSP RTSP session restricted to the first advertised video stream.
 ///
 /// The session owns the transport and ends when dropped. It deliberately does
 /// not impose an application timeout: callers stop it by dropping the session
 /// or cancelling the task that is awaiting [`Self::next_video_frame`].
-pub struct RetinaRtspPreviewSession {
+pub struct RtspPreviewSession {
     demuxed: client::Demuxed,
     video_stream_id: usize,
-    video_configuration: Option<RetinaVideoConfiguration>,
+    video_configuration: Option<VideoConfiguration>,
 }
 
-impl std::fmt::Debug for RetinaRtspPreviewSession {
+impl std::fmt::Debug for RtspPreviewSession {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
-            .debug_struct("RetinaRtspPreviewSession")
+            .debug_struct("RtspPreviewSession")
             .field("video_stream_id", &self.video_stream_id)
             .finish_non_exhaustive()
     }
 }
 
-impl RetinaRtspPreviewSession {
+impl RtspPreviewSession {
     /// Connects only when the RTSP host matches the selected camera origin.
     ///
     /// The live-view URI is camera-reported input. Binding it to the origin
@@ -487,63 +487,63 @@ impl RetinaRtspPreviewSession {
     pub async fn connect_for_origin(
         uri: &str,
         expected_address: Ipv4Addr,
-    ) -> Result<Self, RetinaRtspError> {
+    ) -> Result<Self, RtspError> {
         Self::connect_inner(uri, expected_address).await
     }
 
-    async fn connect_inner(uri: &str, expected_address: Ipv4Addr) -> Result<Self, RetinaRtspError> {
+    async fn connect_inner(uri: &str, expected_address: Ipv4Addr) -> Result<Self, RtspError> {
         tokio::time::timeout(
-            RETINA_RTSP_HANDSHAKE_TIMEOUT,
+            RTSP_HANDSHAKE_TIMEOUT,
             Self::connect_inner_unbounded(uri, expected_address),
         )
         .await
-        .map_err(|_| RetinaRtspError::Session("RTSP handshake timed out".to_owned()))?
+        .map_err(|_| RtspError::Session("RTSP handshake timed out".to_owned()))?
     }
 
     async fn connect_inner_unbounded(
         uri: &str,
         expected_address: Ipv4Addr,
-    ) -> Result<Self, RetinaRtspError> {
-        let url = Url::parse(uri).map_err(|_| RetinaRtspError::InvalidUri)?;
+    ) -> Result<Self, RtspError> {
+        let url = Url::parse(uri).map_err(|_| RtspError::InvalidUri)?;
         if url.scheme() != "rtsp"
             || url.host_str().is_none()
             || !url.username().is_empty()
             || url.password().is_some()
         {
-            return Err(RetinaRtspError::InvalidUri);
+            return Err(RtspError::InvalidUri);
         }
         let host = url
             .host_str()
             .and_then(|host| host.parse::<Ipv4Addr>().ok())
-            .ok_or(RetinaRtspError::NonLocalUri)?;
+            .ok_or(RtspError::NonLocalUri)?;
         if expected_address != host {
-            return Err(RetinaRtspError::OriginMismatch);
+            return Err(RtspError::OriginMismatch);
         }
         NovatekHttpOrigin::new(host, url.port().unwrap_or(554))
-            .map_err(|_| RetinaRtspError::NonLocalUri)?;
+            .map_err(|_| RtspError::NonLocalUri)?;
 
         let mut described = client::Session::describe(url, client::SessionOptions::default())
             .await
-            .map_err(|error| RetinaRtspError::Session(error.to_string()))?;
+            .map_err(|error| RtspError::Session(error.to_string()))?;
         let video_stream_id = described
             .streams()
             .iter()
             .position(|stream| stream.media() == "video" && stream.encoding_name() == "h264")
-            .ok_or(RetinaRtspError::UnsupportedVideoCodec)?;
+            .ok_or(RtspError::UnsupportedVideoCodec)?;
         described
             .setup(
                 video_stream_id,
                 client::SetupOptions::default().transport(client::Transport::default()),
             )
             .await
-            .map_err(|error| RetinaRtspError::Session(error.to_string()))?;
+            .map_err(|error| RtspError::Session(error.to_string()))?;
         let playing = described
             .play(client::PlayOptions::default())
             .await
-            .map_err(|error| RetinaRtspError::Session(error.to_string()))?;
+            .map_err(|error| RtspError::Session(error.to_string()))?;
         let demuxed = playing
             .demuxed()
-            .map_err(|error| RetinaRtspError::Session(error.to_string()))?;
+            .map_err(|error| RtspError::Session(error.to_string()))?;
 
         let video_configuration =
             video_configuration_for_stream(demuxed.streams().get(video_stream_id));
@@ -558,7 +558,7 @@ impl RetinaRtspPreviewSession {
     /// Returns codec configuration advertised by SDP, when available and
     /// within the fixed boundary budget.
     #[must_use]
-    pub fn video_configuration(&self) -> Option<&RetinaVideoConfiguration> {
+    pub fn video_configuration(&self) -> Option<&VideoConfiguration> {
         self.video_configuration.as_ref()
     }
 
@@ -566,13 +566,13 @@ impl RetinaRtspPreviewSession {
     ///
     /// # Errors
     ///
-    /// Returns a Retina error when the transport or depacketizer fails.
-    pub async fn next_video_frame(&mut self) -> Result<Option<RetinaVideoFrame>, RetinaRtspError> {
-        while let Some(item) = tokio::time::timeout(RETINA_RTSP_IDLE_TIMEOUT, self.demuxed.next())
+    /// Returns a RTSP error when the transport or depacketizer fails.
+    pub async fn next_video_frame(&mut self) -> Result<Option<VideoFrame>, RtspError> {
+        while let Some(item) = tokio::time::timeout(RTSP_IDLE_TIMEOUT, self.demuxed.next())
             .await
-            .map_err(|_| RetinaRtspError::Session("RTSP stream idle timeout".to_owned()))?
+            .map_err(|_| RtspError::Session("RTSP stream idle timeout".to_owned()))?
         {
-            match item.map_err(|error| RetinaRtspError::Session(error.to_string()))? {
+            match item.map_err(|error| RtspError::Session(error.to_string()))? {
                 CodecItem::VideoFrame(frame) if frame.stream_id() == self.video_stream_id => {
                     if frame.has_new_parameters() {
                         self.video_configuration = video_configuration_for_stream(
@@ -583,9 +583,9 @@ impl RetinaRtspPreviewSession {
                     let is_random_access_point = frame.is_random_access_point();
                     let timestamp = frame.timestamp();
                     let data = frame.into_data();
-                    let clock_rate_hz = RetinaVideoClockRate::from_nonzero(timestamp.clock_rate());
+                    let clock_rate_hz = VideoClockRate::from_nonzero(timestamp.clock_rate());
                     return Ok(Some(
-                        RetinaVideoFrame::new(
+                        VideoFrame::new(
                             data,
                             loss,
                             is_random_access_point,
@@ -593,11 +593,11 @@ impl RetinaRtspPreviewSession {
                             clock_rate_hz,
                         )
                         .map_err(|error| match error {
-                            RetinaVideoFrameError::TooLarge { max } => {
-                                RetinaRtspError::VideoFrameTooLarge { max }
+                            VideoFrameError::TooLarge { max } => {
+                                RtspError::VideoFrameTooLarge { max }
                             }
-                            RetinaVideoFrameError::InvalidAccessUnit => {
-                                RetinaRtspError::Session("invalid H.264 access unit".to_owned())
+                            VideoFrameError::InvalidAccessUnit => {
+                                RtspError::Session("invalid H.264 access unit".to_owned())
                             }
                         })?,
                     ));
@@ -609,16 +609,14 @@ impl RetinaRtspPreviewSession {
     }
 }
 
-fn video_configuration_for_stream(
-    stream: Option<&client::Stream>,
-) -> Option<RetinaVideoConfiguration> {
+fn video_configuration_for_stream(stream: Option<&client::Stream>) -> Option<VideoConfiguration> {
     stream
         .and_then(client::Stream::parameters)
         .and_then(|parameters| match parameters {
-            ParametersRef::Video(parameters) => RetinaVideoCodec::new(parameters.rfc6381_codec())
+            ParametersRef::Video(parameters) => VideoCodec::new(parameters.rfc6381_codec())
                 .and_then(|codec| {
                     let (width, height) = parameters.pixel_dimensions();
-                    RetinaVideoConfiguration::new(
+                    VideoConfiguration::new(
                         codec,
                         width,
                         height,
@@ -638,71 +636,71 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn rtsp_session_rejects_non_rtsp_or_authorityless_uris_before_network_io() {
         assert!(matches!(
-            RetinaRtspPreviewSession::connect_for_origin(
+            RtspPreviewSession::connect_for_origin(
                 "http://192.168.1.254/xxx.mov",
                 Ipv4Addr::new(192, 168, 1, 254),
             )
             .await,
-            Err(RetinaRtspError::InvalidUri)
+            Err(RtspError::InvalidUri)
         ));
         assert!(matches!(
-            RetinaRtspPreviewSession::connect_for_origin(
+            RtspPreviewSession::connect_for_origin(
                 "rtsp:///xxx.mov",
                 Ipv4Addr::new(192, 168, 1, 254),
             )
             .await,
-            Err(RetinaRtspError::InvalidUri)
+            Err(RtspError::InvalidUri)
         ));
         assert!(matches!(
-            RetinaRtspPreviewSession::connect_for_origin(
+            RtspPreviewSession::connect_for_origin(
                 "rtsp://example.com/xxx.mov",
                 Ipv4Addr::new(192, 168, 1, 254),
             )
             .await,
-            Err(RetinaRtspError::NonLocalUri)
+            Err(RtspError::NonLocalUri)
         ));
     }
 
     #[tokio::test(flavor = "current_thread")]
     async fn rtsp_session_rejects_a_uri_from_a_different_local_origin_before_network_io() {
         assert!(matches!(
-            RetinaRtspPreviewSession::connect_for_origin(
+            RtspPreviewSession::connect_for_origin(
                 "rtsp://192.168.1.253/xxx.mov",
                 Ipv4Addr::new(192, 168, 1, 254),
             )
             .await,
-            Err(RetinaRtspError::OriginMismatch)
+            Err(RtspError::OriginMismatch)
         ));
     }
 
     #[tokio::test(flavor = "current_thread")]
     async fn rtsp_session_rejects_uri_userinfo_before_network_io() {
         assert!(matches!(
-            RetinaRtspPreviewSession::connect_for_origin(
+            RtspPreviewSession::connect_for_origin(
                 "rtsp://camera-user:camera-password@192.168.1.254/xxx.mov",
                 Ipv4Addr::new(192, 168, 1, 254),
             )
             .await,
-            Err(RetinaRtspError::InvalidUri)
+            Err(RtspError::InvalidUri)
         ));
     }
 
     #[test]
     fn h264_file_sink_writes_annex_b_access_units() {
-        let path = std::env::temp_dir().join(format!("cutout-retina-{}.h264", std::process::id()));
-        let frame = RetinaVideoFrame::new(
+        let path = std::env::temp_dir().join(format!("cutout-camera-{}.h264", std::process::id()));
+        let frame = VideoFrame::new(
             [0u8, 0, 0, 2, 0x67, 0x01, 0, 0, 0, 1, 0x65].to_vec(),
             0,
             true,
             90_000,
-            RetinaVideoClockRate::new(90_000).unwrap(),
+            VideoClockRate::new(90_000).unwrap(),
         )
         .unwrap();
         assert_eq!(frame.timestamp(), 90_000);
         assert_eq!(frame.clock_rate_hz().get(), 90_000);
         assert_eq!(frame.parameter_sets(), &[vec![0x67, 0x01]]);
 
-        let mut sink = RetinaH264FileSink::create(&path).unwrap();
+        let mut sink = H264FileSink::create(&path).unwrap();
         sink.write_frame(&frame).unwrap();
         sink.finish().unwrap();
 
@@ -715,14 +713,14 @@ mod tests {
 
     #[test]
     fn h264_frame_rejects_truncated_length_prefix() {
-        let frame = RetinaVideoFrame::new(
+        let frame = VideoFrame::new(
             vec![0, 0, 0],
             0,
             false,
             0,
-            RetinaVideoClockRate::new(90_000).unwrap(),
+            VideoClockRate::new(90_000).unwrap(),
         );
-        assert_eq!(frame, Err(RetinaVideoFrameError::InvalidAccessUnit));
+        assert_eq!(frame, Err(VideoFrameError::InvalidAccessUnit));
     }
 
     #[test]
@@ -747,51 +745,40 @@ mod tests {
 
     #[test]
     fn rtsp_codec_identifier_is_bounded() {
-        let codec = "c".repeat(RETINA_MAX_VIDEO_CODEC_BYTES);
-        assert_eq!(RetinaVideoCodec::new(&codec).unwrap().as_str(), codec);
-        assert!(RetinaVideoCodec::new(&format!("{codec}c")).is_none());
+        let codec = "c".repeat(MAX_VIDEO_CODEC_BYTES);
+        assert_eq!(VideoCodec::new(&codec).unwrap().as_str(), codec);
+        assert!(VideoCodec::new(&format!("{codec}c")).is_none());
     }
 
     #[test]
     fn rtsp_video_clock_rate_rejects_zero() {
-        assert!(RetinaVideoClockRate::new(0).is_none());
+        assert!(VideoClockRate::new(0).is_none());
     }
 
     #[test]
     fn rtsp_video_frame_constructor_rejects_oversized_data() {
-        let data = vec![0; RETINA_MAX_VIDEO_FRAME_BYTES + 1];
+        let data = vec![0; MAX_VIDEO_FRAME_BYTES + 1];
         assert_eq!(
-            RetinaVideoFrame::new(
-                data,
-                0,
-                false,
-                0,
-                RetinaVideoClockRate::new(90_000).unwrap(),
-            ),
-            Err(RetinaVideoFrameError::TooLarge {
-                max: RETINA_MAX_VIDEO_FRAME_BYTES,
+            VideoFrame::new(data, 0, false, 0, VideoClockRate::new(90_000).unwrap(),),
+            Err(VideoFrameError::TooLarge {
+                max: MAX_VIDEO_FRAME_BYTES,
             })
         );
     }
 
     #[test]
     fn rtsp_video_configuration_rejects_invalid_metadata() {
-        let codec = RetinaVideoCodec::new("avc1.4D401E").unwrap();
+        let codec = VideoCodec::new("avc1.4D401E").unwrap();
         assert_eq!(
-            RetinaVideoConfiguration::new(codec, 0, 480, vec![1, 2, 3]),
-            Err(RetinaVideoConfigurationError::InvalidDimensions)
+            VideoConfiguration::new(codec, 0, 480, vec![1, 2, 3]),
+            Err(VideoConfigurationError::InvalidDimensions)
         );
 
-        let codec = RetinaVideoCodec::new("avc1.4D401E").unwrap();
+        let codec = VideoCodec::new("avc1.4D401E").unwrap();
         assert_eq!(
-            RetinaVideoConfiguration::new(
-                codec,
-                848,
-                480,
-                vec![0; RETINA_MAX_VIDEO_CONFIGURATION_BYTES + 1],
-            ),
-            Err(RetinaVideoConfigurationError::ExtraDataTooLarge {
-                max: RETINA_MAX_VIDEO_CONFIGURATION_BYTES,
+            VideoConfiguration::new(codec, 848, 480, vec![0; MAX_VIDEO_CONFIGURATION_BYTES + 1],),
+            Err(VideoConfigurationError::ExtraDataTooLarge {
+                max: MAX_VIDEO_CONFIGURATION_BYTES,
             })
         );
     }
