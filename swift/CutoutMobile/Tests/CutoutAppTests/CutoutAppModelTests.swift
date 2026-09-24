@@ -965,6 +965,30 @@ final class CutoutAppModelTests: XCTestCase {
                 summaries: ["ride-1", "ride-2"].map(Self.historySummary)
             )
         )
+        XCTAssertEqual(
+            RideHistoryModel.selectionAction(
+                requestedID: "ride-2",
+                currentID: nil,
+                summaries: ["ride-1", "ride-2"].map(Self.historySummary)
+            ),
+            .select("ride-2")
+        )
+        XCTAssertEqual(
+            RideHistoryModel.selectionAction(
+                requestedID: "ride-missing",
+                currentID: nil,
+                summaries: ["ride-1", "ride-2"].map(Self.historySummary)
+            ),
+            .load("ride-missing")
+        )
+        XCTAssertEqual(
+            RideHistoryModel.selectionAction(
+                requestedID: nil,
+                currentID: nil,
+                summaries: []
+            ),
+            .load(nil)
+        )
     }
 
     @MainActor

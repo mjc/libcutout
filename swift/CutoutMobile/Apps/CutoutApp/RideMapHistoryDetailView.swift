@@ -57,8 +57,7 @@ struct RideMapHistoryDetailView: View {
     let routeError: MobileRideMapError?
     let isLoading: Bool
     let selectedHistoryID: String?
-    let select: (String) -> Void
-    let load: () -> Void
+    let ensureSelection: (String?) -> Void
     let retry: () -> Void
     let loadRoutePreview: () -> Void
     let vehicleName: (String?) -> String?
@@ -131,20 +130,6 @@ struct RideMapHistoryDetailView: View {
     static func mapHeight(for availableHeight: CGFloat) -> CGFloat {
         guard availableHeight > 0 else { return 0 }
         return min(availableHeight, min(max(availableHeight * 0.58, 240), 520))
-    }
-
-    @MainActor
-    static func shouldSelectHistory(
-        initialHistoryID: String?,
-        selectedHistoryID: String?,
-        availableHistoryIDs: [String]
-    ) -> Bool {
-        guard let initialHistoryID,
-            availableHistoryIDs.contains(initialHistoryID)
-        else {
-            return false
-        }
-        return selectedHistoryID != initialHistoryID
     }
 
     static func routeID(for historyID: String?, cameraFitVersion: UInt64 = 0) -> String {
@@ -231,29 +216,10 @@ struct RideMapHistoryDetailView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .task(id: selectionTaskID, loadSelectionIfNeeded)
+        .task(id: selectionTaskID) {
+            ensureSelection(initialHistoryID)
+        }
         .accessibilityIdentifier("ride-map.detail")
-    }
-
-    private func loadSelectionIfNeeded() {
-        guard let initialHistoryID else {
-            if rides.isEmpty { load() }
-            return
-        }
-        if rides.contains(where: { $0.rideID == initialHistoryID }) {
-            guard
-                Self.shouldSelectHistory(
-                    initialHistoryID: initialHistoryID,
-                    selectedHistoryID: selectedHistoryID,
-                    availableHistoryIDs: rides.map(\.rideID)
-                )
-            else {
-                return
-            }
-            select(initialHistoryID)
-        } else {
-            load()
-        }
     }
 
     private func distanceText(for summary: MobileRideMapSummaryDto) -> String {

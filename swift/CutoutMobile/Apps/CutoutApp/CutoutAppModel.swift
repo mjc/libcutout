@@ -1529,6 +1529,17 @@ final class CutoutAppModel {
         )
     }
 
+    func ensureRideMapHistorySelection(_ requestedRideID: String?) {
+        switch rideHistory.ensureSelection(requestedRideID: requestedRideID) {
+        case .none:
+            return
+        case let .load(rideID):
+            loadRideMapHistory(selecting: rideID)
+        case let .select(rideID):
+            selectRideMapHistory(rideID)
+        }
+    }
+
     func projectRideMapHistoryDetailViewport(_ viewport: MobileGeoBoundsDto?) {
         rideHistory.projectDetailViewport(viewport)
     }

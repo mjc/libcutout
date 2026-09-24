@@ -22,6 +22,12 @@ final class RideHistoryModel {
         case allTime
     }
 
+    enum SelectionAction: Equatable {
+        case none
+        case load(String?)
+        case select(String)
+    }
+
     nonisolated private static var limits: MobileRideMapLimits { .rustOwned }
 
     private let stateProvider: @MainActor () -> MobileRideMapState?
@@ -140,6 +146,14 @@ final class RideHistoryModel {
         select(
             rideID: selectedRideID,
             requestedPointLimit: Int(Self.limits.historyContextPerRouteBudget)
+        )
+    }
+
+    func ensureSelection(requestedRideID: String?) -> SelectionAction {
+        Self.selectionAction(
+            requestedID: requestedRideID,
+            currentID: selectedRideID,
+            summaries: rides
         )
     }
 
@@ -755,6 +769,20 @@ final class RideHistoryModel {
         }
         return summaries.first(where: { $0.rideID == currentID })?.rideID
             ?? summaries.first?.rideID
+    }
+
+    static func selectionAction(
+        requestedID: String?,
+        currentID: String?,
+        summaries: [MobileRideMapHistorySummaryDto]
+    ) -> SelectionAction {
+        guard let requestedID else {
+            return summaries.isEmpty ? .load(nil) : .none
+        }
+        guard summaries.contains(where: { $0.rideID == requestedID }) else {
+            return .load(requestedID)
+        }
+        return currentID == requestedID ? .none : .select(requestedID)
     }
 
     static func detailPointsAreTruncated(
