@@ -1,8 +1,9 @@
 # Shared VESC replay contract
 
 `vesc-replay-v1.json` is a test-only, Rust-owned corpus. The mobile-FFI integration
-test and Swift `VescSharedReplayTests` read this exact file; neither production
-code nor generated UniFFI bindings read fixtures.
+test and `CutoutAppModelTests.testVescNotificationReachesRideAndDebugThroughTheAppRunner`
+read this exact file; neither production code nor generated UniFFI bindings read
+fixtures.
 
 Version 1 records canonical 16-byte service/channel UUIDs, ordered raw notification
 bytes, strictly increasing host monotonic milliseconds, expected Rust parser
@@ -11,13 +12,12 @@ means the snapshot has no value, not zero. Each notification is bounded to 1024
 bytes. Values are independently chosen physical quantities encoded according to
 the source revisions in `provenance`; this corpus is synthetic, not hardware proof.
 
-The Swift consumer runs the live owner/runner/FFI path and applies its results to
-`CutoutSessionCore`, checking subscription readiness, snapshots, notification
-counts, receive records, and capture context. It uses source-relative file access
-for the repository's macOS Swift package tests; this is not an iOS bundled resource.
-The Rust consumer additionally checks exact ingest outcome and receive metadata.
-Swift `SessionAction` currently discards the detailed ingest DTO, so the Swift
-consumer can only assert that an ingest action survives that conversion.
+The Swift app-model consumer replays the fixture notification bytes through the
+test session runner and verifies the final fixture speed and voltage reach the
+app telemetry snapshot, Ride projection, and Debug projection. It uses
+source-relative file access for the repository's macOS Swift package tests; this
+is not an iOS bundled resource. The Rust integration test additionally checks
+exact ingest outcome and receive metadata.
 
 This advances LIBCU-602 without completing its entire acceptance matrix. Remaining:
 every split boundary, warning and finite-only float16 cases at the Swift boundary,

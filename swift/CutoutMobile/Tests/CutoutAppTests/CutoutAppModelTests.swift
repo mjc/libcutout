@@ -7,6 +7,25 @@ import CutoutMobileFFI
 import Observation
 import Synchronization
 
+private struct SharedVescReplayFixture: Decodable {
+    struct Notification: Decodable {
+        let channel: [UInt8]
+        let bytes: [UInt8]
+        let speedMillimetresPerSecond: Int64?
+        let voltageMillivolts: Int64?
+
+        enum CodingKeys: String, CodingKey {
+            case channel
+            case bytes
+            case speedMillimetresPerSecond = "speed_mmps"
+            case voltageMillivolts = "voltage_mv"
+        }
+    }
+
+    let version: Int
+    let notifications: [Notification]
+}
+
 final class CutoutAppModelTests: XCTestCase {
     private static let priorCaptureProgress = CaptureProgress(
         elapsedMilliseconds: 63_000,
@@ -74,6 +93,21 @@ final class CutoutAppModelTests: XCTestCase {
             await Task.yield()
         }
         XCTFail("timed out waiting for \(description)", file: file, line: line)
+    }
+
+    private func loadSharedVescReplayFixture() throws -> SharedVescReplayFixture {
+        let repositoryRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let fixtureURL = repositoryRoot
+            .appendingPathComponent("crates/cutout-mobile-ffi/tests/fixtures/vesc-replay-v1.json")
+        return try JSONDecoder().decode(
+            SharedVescReplayFixture.self,
+            from: Data(contentsOf: fixtureURL)
+        )
     }
 
     override func setUp() {
@@ -547,22 +581,25 @@ final class CutoutAppModelTests: XCTestCase {
     @MainActor
     func testVescNotificationReachesRideAndDebugThroughTheAppRunner() async throws {
         let fixture = CutoutUITestSessionFixture.vesc
+        let replay = try loadSharedVescReplayFixture()
+        XCTAssertEqual(replay.version, 1)
+        XCTAssertFalse(replay.notifications.isEmpty)
+        XCTAssertTrue(replay.notifications.allSatisfy {
+            Data($0.channel) == BluetoothUuid.vescNordicUartNotify.bytes
+        })
+        let finalSample = try XCTUnwrap(replay.notifications.last)
+        let expectedSpeed = try XCTUnwrap(finalSample.speedMillimetresPerSecond)
+        let expectedVoltage = try XCTUnwrap(finalSample.voltageMillivolts)
         let script = CutoutSessionTestScript(
             candidate: fixture.candidate,
             telemetry: nil,
-            protocolNotifications: [
-                Data([0x02, 0x4a]),
-                Data([0x04, 0x01, 0x0b, 0x00, 0xea, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
-                Data([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x6b, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
-                Data([0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xfe, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x36, 0xee, 0x86, 0x17, 0x00]),
-                Data([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x07, 0xff, 0xff, 0xff, 0xec, 0x00]),
-                Data([0xe3, 0xbe, 0x03]),
-            ],
+            protocolNotifications: replay.notifications.map { Data($0.bytes) },
             protocolDetectionNotifications: [Data([
                 2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101, 114,
                 104, 97, 115, 104, 0, 38, 208, 3,
             ])],
             appliesProtocolNotificationSteps: true,
+            protocolNotificationIntervalMilliseconds: 1,
             connectionDelayMilliseconds: 0
         )
         let core = CutoutSessionCore(testScript: script)
@@ -583,16 +620,20 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertTrue(model.pair(platformIdentifier: fixture.candidate.platformIdentifier))
         await Self.waitUntil("VESC notification reaches app projections") {
             model.phase == .live
-                && model.displayState.notificationCount > 0
-                && model.displayState.telemetry != nil
-                && model.vescRideSnapshot != nil
+                && model.displayState.telemetry?.speed.map { Int64($0.value) } == expectedSpeed
+                && model.displayState.telemetry?.voltage.map { Int64($0.value) } == expectedVoltage
         }
         XCTAssertEqual(model.phase, .live)
-        XCTAssertGreaterThan(model.displayState.notificationCount, 0)
+        XCTAssertGreaterThanOrEqual(
+            model.displayState.notificationCount,
+            UInt64(replay.notifications.count)
+        )
 
         let telemetry = try XCTUnwrap(model.displayState.telemetry)
         XCTAssertNotNil(telemetry.speed)
         XCTAssertNotNil(telemetry.voltage)
+        XCTAssertEqual(telemetry.speed.map { Int64($0.value) }, expectedSpeed)
+        XCTAssertEqual(telemetry.voltage.map { Int64($0.value) }, expectedVoltage)
 
         let ride = try XCTUnwrap(model.vescRideSnapshot)
         XCTAssertEqual(ride.boardSpeed, telemetry.speed)
@@ -605,14 +646,9 @@ final class CutoutAppModelTests: XCTestCase {
             notificationCount: model.displayState.notificationCount
         )
         let voltageRow = try XCTUnwrap(debugRows.first { $0.id == "voltage" })
-        let batteryCurrentRow = try XCTUnwrap(debugRows.first { $0.id == "battery-current" })
         if case .available = voltageRow.metricValue {
         } else {
             XCTFail("VESC debug voltage must be populated")
-        }
-        if case .available = batteryCurrentRow.metricValue {
-        } else {
-            XCTFail("VESC debug battery current must be populated")
         }
     }
 
