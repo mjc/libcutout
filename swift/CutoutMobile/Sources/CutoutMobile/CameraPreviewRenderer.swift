@@ -1,8 +1,8 @@
 import AVFoundation
 import CoreMedia
-import CutoutMobileFFI
 import Foundation
 import SwiftUI
+import CutoutMobileFFI
 
 /// Failure while turning one encoded camera frame into a displayable sample.
 public enum CameraPreviewRendererError: Error, Equatable, Sendable {
@@ -37,10 +37,10 @@ public final class CameraPreviewRenderer {
     /// Installs the bounded H.264 decoder configuration advertised by RTSP
     /// SDP before the first access unit arrives.
     public func configure(_ configuration: MobileCameraVideoConfigurationDto) throws {
-        guard let parameterSets = CameraH264AccessUnit.parameterSets(fromAVCC: configuration.extraData) else {
+        guard configuration.parameterSets.count == 2 else {
             throw CameraPreviewRendererError.missingParameterSets
         }
-        formatDescription = try makeFormatDescription(parameterSets: parameterSets)
+        formatDescription = try makeFormatDescription(parameterSets: configuration.parameterSets)
     }
 
     /// Enqueues one AVCC H.264 frame for native platform decoding.
@@ -49,28 +49,25 @@ public final class CameraPreviewRenderer {
     /// description. Frames received before that point are rejected rather
     /// than displayed with guessed dimensions or codec state.
     public func enqueue(_ frame: MobileCameraVideoFrameDto) async throws {
-        let accessUnit = try CameraH264AccessUnit(data: frame.data)
-        if accessUnit.parameterSets.count == 2 {
-            formatDescription = try makeFormatDescription(parameterSets: accessUnit.parameterSets)
+        if frame.parameterSets.count == 2 {
+            formatDescription = try makeFormatDescription(parameterSets: frame.parameterSets)
         }
         guard let formatDescription else {
             throw CameraPreviewRendererError.missingParameterSets
         }
         guard frame.timestamp >= 0,
-            frame.clockRateHz > 0,
-            let timescale = CMTimeScale(exactly: frame.clockRateHz)
+              frame.clockRateHz > 0,
+              let timescale = CMTimeScale(exactly: frame.clockRateHz)
         else {
             throw CameraPreviewRendererError.invalidTiming
         }
 
         let timestamp = CMTime(value: frame.timestamp, timescale: timescale)
-        guard
-            let sampleBuffer = makeSampleBuffer(
-                data: accessUnit.data,
-                timestamp: timestamp,
-                formatDescription: formatDescription
-            )
-        else {
+        guard let sampleBuffer = makeSampleBuffer(
+            data: frame.data,
+            timestamp: timestamp,
+            formatDescription: formatDescription
+        ) else {
             throw CameraPreviewRendererError.sampleBuffer
         }
         if !hasStartedTimeline {
@@ -122,19 +119,18 @@ public final class CameraPreviewRenderer {
         formatDescription: CMVideoFormatDescription
     ) -> CMSampleBuffer? {
         var blockBuffer: CMBlockBuffer?
-        guard
-            CMBlockBufferCreateWithMemoryBlock(
-                allocator: kCFAllocatorDefault,
-                memoryBlock: nil,
-                blockLength: data.count,
-                blockAllocator: kCFAllocatorDefault,
-                customBlockSource: nil,
-                offsetToData: 0,
-                dataLength: data.count,
-                flags: 0,
-                blockBufferOut: &blockBuffer
-            ) == kCMBlockBufferNoErr,
-            let blockBuffer
+        guard CMBlockBufferCreateWithMemoryBlock(
+            allocator: kCFAllocatorDefault,
+            memoryBlock: nil,
+            blockLength: data.count,
+            blockAllocator: kCFAllocatorDefault,
+            customBlockSource: nil,
+            offsetToData: 0,
+            dataLength: data.count,
+            flags: 0,
+            blockBufferOut: &blockBuffer
+        ) == kCMBlockBufferNoErr,
+        let blockBuffer
         else {
             return nil
         }
@@ -192,62 +188,62 @@ public struct CameraPreviewSurface: View {
 }
 
 #if canImport(UIKit)
-    import UIKit
+import UIKit
 
-    @MainActor
-    private struct CameraPreviewLayerView: UIViewRepresentable {
-        let renderer: CameraPreviewRenderer
+@MainActor
+private struct CameraPreviewLayerView: UIViewRepresentable {
+    let renderer: CameraPreviewRenderer
 
-        func makeUIView(context: Context) -> UIView {
-            let view = CameraPreviewUIKitView()
-            view.backgroundColor = .black
-            view.displayLayer = renderer.displayLayer
-            view.layer.addSublayer(renderer.displayLayer)
-            return view
-        }
-
-        func updateUIView(_ view: UIView, context: Context) {
-            renderer.displayLayer.frame = view.bounds
-        }
+    func makeUIView(context: Context) -> UIView {
+        let view = CameraPreviewUIKitView()
+        view.backgroundColor = .black
+        view.displayLayer = renderer.displayLayer
+        view.layer.addSublayer(renderer.displayLayer)
+        return view
     }
 
-    @MainActor
-    private final class CameraPreviewUIKitView: UIView {
-        weak var displayLayer: AVSampleBufferDisplayLayer?
-
-        override func layoutSubviews() {
-            super.layoutSubviews()
-            displayLayer?.frame = bounds
-        }
+    func updateUIView(_ view: UIView, context: Context) {
+        renderer.displayLayer.frame = view.bounds
     }
+}
+
+@MainActor
+private final class CameraPreviewUIKitView: UIView {
+    weak var displayLayer: AVSampleBufferDisplayLayer?
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        displayLayer?.frame = bounds
+    }
+}
 #elseif canImport(AppKit)
-    import AppKit
+import AppKit
 
-    @MainActor
-    private struct CameraPreviewLayerView: NSViewRepresentable {
-        let renderer: CameraPreviewRenderer
+@MainActor
+private struct CameraPreviewLayerView: NSViewRepresentable {
+    let renderer: CameraPreviewRenderer
 
-        func makeNSView(context: Context) -> NSView {
-            let view = CameraPreviewAppKitView()
-            view.wantsLayer = true
-            view.layer?.backgroundColor = NSColor.black.cgColor
-            view.displayLayer = renderer.displayLayer
-            view.layer?.addSublayer(renderer.displayLayer)
-            return view
-        }
-
-        func updateNSView(_ view: NSView, context: Context) {
-            renderer.displayLayer.frame = view.bounds
-        }
+    func makeNSView(context: Context) -> NSView {
+        let view = CameraPreviewAppKitView()
+        view.wantsLayer = true
+        view.layer?.backgroundColor = NSColor.black.cgColor
+        view.displayLayer = renderer.displayLayer
+        view.layer?.addSublayer(renderer.displayLayer)
+        return view
     }
 
-    @MainActor
-    private final class CameraPreviewAppKitView: NSView {
-        weak var displayLayer: AVSampleBufferDisplayLayer?
-
-        override func layout() {
-            super.layout()
-            displayLayer?.frame = bounds
-        }
+    func updateNSView(_ view: NSView, context: Context) {
+        renderer.displayLayer.frame = view.bounds
     }
+}
+
+@MainActor
+private final class CameraPreviewAppKitView: NSView {
+    weak var displayLayer: AVSampleBufferDisplayLayer?
+
+    override func layout() {
+        super.layout()
+        displayLayer?.frame = bounds
+    }
+}
 #endif

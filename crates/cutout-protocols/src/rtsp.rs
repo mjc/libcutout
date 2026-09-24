@@ -403,6 +403,38 @@ fn parse_length_prefixed_access_unit(data: &[u8]) -> Result<Vec<&[u8]>, &'static
     Ok(nals)
 }
 
+/// Extracts the first SPS and PPS NAL units from an H.264 `avcC` record.
+#[must_use]
+pub fn parse_avcc_parameter_sets(data: &[u8]) -> Option<Vec<Vec<u8>>> {
+    if data.len() < 7 || data[0] != 1 {
+        return None;
+    }
+
+    let mut cursor = 6;
+    let sps_count = usize::from(data[5] & 0x1f);
+    let sps = read_avcc_parameter_set(data, &mut cursor, sps_count)?;
+    let pps_count = usize::from(*data.get(cursor)?);
+    cursor += 1;
+    let pps = read_avcc_parameter_set(data, &mut cursor, pps_count)?;
+    Some(vec![sps, pps])
+}
+
+fn read_avcc_parameter_set(data: &[u8], cursor: &mut usize, count: usize) -> Option<Vec<u8>> {
+    let mut first = None;
+    for _ in 0..count {
+        let length = usize::from(u16::from_be_bytes([
+            *data.get(*cursor)?,
+            *data.get(*cursor + 1)?,
+        ]));
+        *cursor += 2;
+        let end = (*cursor).checked_add(length)?;
+        let nal = data.get(*cursor..end)?;
+        first.get_or_insert_with(|| nal.to_vec());
+        *cursor = end;
+    }
+    first
+}
+
 fn read_nal_length(data: &[u8], cursor: usize) -> io::Result<usize> {
     let prefix_end = cursor
         .checked_add(4)
@@ -691,6 +723,26 @@ mod tests {
             RetinaVideoClockRate::new(90_000).unwrap(),
         );
         assert_eq!(frame, Err(RetinaVideoFrameError::InvalidAccessUnit));
+    }
+
+    #[test]
+    fn avcc_configuration_extracts_first_sps_and_pps() {
+        let configuration = [
+            1, 0x64, 0, 0x1f, 0xff, 0xe2, 0, 2, 0x67, 0x64, 0, 2, 0x67, 0x65, 2, 0, 2, 0x68, 0xee,
+            0, 2, 0x68, 0xef,
+        ];
+        assert_eq!(
+            parse_avcc_parameter_sets(&configuration),
+            Some(vec![vec![0x67, 0x64], vec![0x68, 0xee]])
+        );
+    }
+
+    #[test]
+    fn avcc_configuration_rejects_truncated_parameter_sets() {
+        assert_eq!(
+            parse_avcc_parameter_sets(&[1, 0, 0, 0, 0, 1, 0, 2, 0x67]),
+            None
+        );
     }
 
     #[test]

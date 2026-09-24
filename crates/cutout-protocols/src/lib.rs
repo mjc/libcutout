@@ -96,7 +96,7 @@ mod rtsp;
 pub use rtsp::{
     RetinaH264FileSink, RetinaRtspError, RetinaRtspPreviewSession, RetinaVideoClockRate,
     RetinaVideoCodec, RetinaVideoConfiguration, RetinaVideoConfigurationError,
-    RetinaVideoDimensions, RetinaVideoFrame, RetinaVideoFrameError,
+    RetinaVideoDimensions, RetinaVideoFrame, RetinaVideoFrameError, parse_avcc_parameter_sets,
 };
 mod probe;
 pub use probe::{AeroProbe, FalconProbe, ProtocolProbe};
