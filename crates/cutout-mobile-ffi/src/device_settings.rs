@@ -316,6 +316,7 @@ impl From<DeviceSettingSnapshot> for MobileSettingSnapshotDto {
             requested: value.requested.map(Into::into),
             request_id: value.request_id,
             status: value.status.into(),
+            transport: value.transport.map(Into::into),
             age_ms: value.age.map(cutout_core::Quantity::as_milliseconds),
             refusal: value
                 .refusal

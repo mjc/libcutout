@@ -2013,7 +2013,10 @@ impl From<SessionOutput> for SessionOutputDto {
     fn from(output: SessionOutput) -> Self {
         match output {
             SessionOutput::Transport(action) => Self::Transport(action.into()),
-            SessionOutput::Event(event) => Self::from_event(event),
+            SessionOutput::Event(event) => match SessionEventDto::from_event(event) {
+                SessionEventProjection::Event(event) => Self::Event(event),
+                SessionEventProjection::ReadOnly(response) => Self::ReadOnly(response.into()),
+            },
             SessionOutput::NotificationIngest(outcome) => Self::NotificationIngest(outcome.into()),
         }
     }
@@ -2456,25 +2459,29 @@ enum SessionEventProjection {
 impl SessionEventDto {
     fn from_event(event: DeviceEvent) -> SessionEventProjection {
         match event {
-            DeviceEvent::LinkUp(link) => Self::Event(SessionEventDto::LinkUp {
+            DeviceEvent::LinkUp(link) => SessionEventProjection::Event(SessionEventDto::LinkUp {
                 monotonic_ms: MonotonicMillisDto::from_core(link.monotonic_ms),
                 max_write_len: link.max_write_len.map(TransportWriteLimitDto::from_core),
             }),
-            DeviceEvent::LinkDown => Self::Event(SessionEventDto::LinkDown),
-            DeviceEvent::Tick { monotonic_ms } => Self::Event(SessionEventDto::Tick {
-                monotonic_ms: MonotonicMillisDto::from_core(monotonic_ms),
-            }),
-            DeviceEvent::Telemetry(delta) => Self::Event(SessionEventDto::Telemetry(delta.into())),
+            DeviceEvent::LinkDown => SessionEventProjection::Event(SessionEventDto::LinkDown),
+            DeviceEvent::Tick { monotonic_ms } => {
+                SessionEventProjection::Event(SessionEventDto::Tick {
+                    monotonic_ms: MonotonicMillisDto::from_core(monotonic_ms),
+                })
+            }
+            DeviceEvent::Telemetry(delta) => {
+                SessionEventProjection::Event(SessionEventDto::Telemetry(delta.into()))
+            }
             DeviceEvent::ControlRefusal(refusal) => {
-                Self::Event(SessionEventDto::ControlRefusal(refusal.into()))
+                SessionEventProjection::Event(SessionEventDto::ControlRefusal(refusal.into()))
             }
             DeviceEvent::Diagnostics(diagnostics) => {
-                Self::Event(SessionEventDto::Diagnostics(diagnostics.into()))
+                SessionEventProjection::Event(SessionEventDto::Diagnostics(diagnostics.into()))
             }
             DeviceEvent::DiagnosticError(error) => {
-                Self::Event(SessionEventDto::DiagnosticError(error.into()))
+                SessionEventProjection::Event(SessionEventDto::DiagnosticError(error.into()))
             }
-            DeviceEvent::ReadOnlyResponse(response) => Self::ReadOnly(response.into()),
+            DeviceEvent::ReadOnlyResponse(response) => SessionEventProjection::ReadOnly(response),
         }
     }
 }

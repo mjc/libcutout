@@ -284,18 +284,25 @@ impl NosfetDialect {
 
     /// Encodes using the connection-selected Veteran command representation.
     #[must_use]
-    #[allow(
-        clippy::needless_return,
-        clippy::too_many_lines,
-        clippy::match_same_arms
-    )]
-    pub fn encode_in_mode(command: DeviceCommand, mode: AeroCommandMode) -> Option<EncodedControl> {
-        if let Some(payload) = aero_mode_control_payload(command, mode) {
-            return Some(EncodedControl {
-                command: command.kind(),
-                payload,
-                mode: WriteMode::WithoutResponse,
-            });
+    pub fn encode_in_mode(
+        command: DeviceCommand,
+        mode: VeteranCommandMode,
+    ) -> Option<EncodedControl> {
+        Self::select_in_mode(command, mode)?.single(command)
+    }
+
+    /// Encodes a setting only when its checked layout declares a sequence.
+    #[must_use]
+    pub fn encode_settings_sequence(command: DeviceCommand) -> Option<EncodedControlSequence> {
+        Self::select_in_mode(command, VeteranCommandMode::Binary)?.sequence(command)
+    }
+
+    fn select_in_mode(
+        command: DeviceCommand,
+        mode: VeteranCommandMode,
+    ) -> Option<crate::control_wire::Selection<crate::VeteranProtocol>> {
+        if let Some(selection) = veteran_mode_control_payload(command, mode) {
+            return Some(selection);
         }
         Some(match nosfet_command(command)? {
             NosfetCommand::DisplayBacklight(value) => {
