@@ -816,6 +816,26 @@ final class CutoutAppModelTests: XCTestCase {
             model.rideMapHistoryDetailRouteError,
             .storageError("Rust ride database is unavailable")
         )
+
+        driver.setRideMapUnavailable(false)
+        model.loadRideMapHistory(selecting: rideID)
+        XCTAssertTrue(model.rideMapHistoryLoading)
+        XCTAssertEqual(model.selectedRideMapHistoryID, rideID)
+        await Self.waitUntil("same-ride history retry restores route", maxTurns: 100_000) {
+            !model.rideMapHistoryLoading
+                && !model.rideMapHistoryRouteLoading
+                && !model.rideMapHistoryDetailRouteLoading
+                && model.rideMapHistoryRouteError == nil
+                && model.rideMapHistoryDetailRouteError == nil
+                && model.rideMapHistoryDetailProjectionRideID == rideID
+        }
+
+        XCTAssertEqual(model.selectedRideMapHistoryID, rideID)
+        XCTAssertFalse(model.rideMapHistoryDisplayPoints.isEmpty)
+        XCTAssertFalse(model.rideMapHistoryDetailDisplayPoints.isEmpty)
+        XCTAssertNil(model.rideMapHistoryError)
+        XCTAssertNil(model.rideMapHistoryRouteError)
+        XCTAssertNil(model.rideMapHistoryDetailRouteError)
     }
 
     @MainActor
