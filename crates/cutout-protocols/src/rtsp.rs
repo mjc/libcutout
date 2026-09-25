@@ -651,7 +651,46 @@ fn video_configuration_for_stream(stream: Option<&client::Stream>) -> Option<Vid
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
+    use std::{
+        fs,
+        io::{Read, Write},
+        net::{Shutdown, TcpListener},
+        thread,
+    };
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn rtsp_session_rejects_a_truncated_describe_body() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("local listener binds");
+        let address = listener.local_addr().expect("listener has a local address");
+        let server = thread::spawn(move || {
+            let (mut connection, _) = listener.accept().expect("client connects");
+            let mut request = [0; 1024];
+            let request_len = connection.read(&mut request).expect("client sends request");
+            let request = std::str::from_utf8(&request[..request_len]).expect("request is UTF-8");
+            let cseq = request
+                .lines()
+                .find_map(|line| line.strip_prefix("CSeq: "))
+                .expect("request has a CSeq");
+            assert!(request.starts_with("DESCRIBE "));
+            connection
+                .write_all(
+                    format!("RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nContent-Type: application/sdp\r\nContent-Length: 64\r\n\r\nv=0\r\n").as_bytes(),
+                )
+                .expect("server sends partial response");
+            connection
+                .shutdown(Shutdown::Both)
+                .expect("server closes response");
+        });
+
+        let result = RtspPreviewSession::connect_for_origin(
+            &format!("rtsp://{address}/stream"),
+            Ipv4Addr::LOCALHOST,
+        )
+        .await;
+
+        assert!(matches!(result, Err(RtspError::Session(_))));
+        server.join().expect("fake RTSP server completes");
+    }
 
     #[tokio::test(flavor = "current_thread")]
     async fn rtsp_session_rejects_non_rtsp_or_authorityless_uris_before_network_io() {
