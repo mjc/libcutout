@@ -135,7 +135,7 @@ final class MusicFeatureModel {
         updateCapturePolicy(policy)
     }
 
-    func applyHistoryForNewRide() -> Bool {
+    func applyHistoryForNewRide() -> MobileRideMapError? {
         updateCaptureObservation(nil)
         let defaultPolicy = historyPolicyStore.policy
         historyPolicy = defaultPolicy
@@ -146,18 +146,19 @@ final class MusicFeatureModel {
             coordinator.restoreHistoryPolicy(defaultPolicy)
             timelineEvents = coordinator.recordedEvents
             updateCapturePolicy(defaultPolicy)
-            return true
+            return nil
         } catch {
-            setRideHistoryError(CutoutAppModel.mapRideMapError(error))
+            let mappedError = CutoutAppModel.mapRideMapError(error)
+            setRideHistoryError(mappedError)
             guard rideMapState?.currentSnapshot() != nil else {
                 historyPolicy = .disabled
                 historyUnavailable = false
                 coordinator.restoreHistoryPolicy(.disabled)
                 timelineEvents = []
-                return false
+                return mappedError
             }
             synchronizeHistory(rideMapState?.currentMusicHistory())
-            return true
+            return mappedError
         }
     }
 

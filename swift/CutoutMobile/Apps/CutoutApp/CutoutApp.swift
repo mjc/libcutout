@@ -118,7 +118,7 @@ struct CutoutApp: App {
             opened.start(sceneIsActive: scenePhase == .active)
             lighting.startIfRemembered()
             if let pendingMusicURL {
-                _ = opened.handleMusicURL(pendingMusicURL)
+                _ = opened.music.handleProviderURL(pendingMusicURL)
                 self.pendingMusicURL = nil
             }
         } catch is CancellationError {
