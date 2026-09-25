@@ -2229,17 +2229,15 @@ public final class CutoutSessionCore: NSObject {
 
     @MainActor
     private func publishRideMapDecisions(_ batch: RideMapDecisionBatch) {
-        let snapshot = batch.snapshot ?? rideMapPresentation.latestSnapshot
-        for decision in batch.decisions {
-            switch decision {
+        for outcome in batch.outcomes {
+            switch outcome.decision {
             case let .storageError(message):
                 publishRideMapError(
                     .storageError(message),
-                    context: MobileRideMapErrorContext(snapshot: snapshot)
+                    context: MobileRideMapErrorContext(snapshot: outcome.snapshot)
                 )
             default:
-                guard let snapshot else { continue }
-                rideMapPresentation.publishDecision(decision, for: snapshot)
+                rideMapPresentation.publishDecision(outcome.decision, for: outcome.snapshot)
             }
         }
     }

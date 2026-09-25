@@ -2,8 +2,7 @@ import CutoutMobileFFI
 import Foundation
 
 struct RideMapDecisionBatch: Sendable {
-    let snapshot: MobileRideMapSnapshotDto?
-    let decisions: [MobileRideMapDecisionDto]
+    let outcomes: [MobileRideMapOutcomeDto]
 }
 
 protocol CutoutSessionRideMapRecording: AnyObject {
@@ -205,13 +204,13 @@ actor CutoutSessionRideMapRecorder: CutoutSessionRideMapRecording {
                     .recordingToken
                 let errorContext = MobileRideMapErrorContext(recordingToken: recordingToken)
                 do {
-                    let decisions = try state.ingestLocationBatch(
+                    let outcomes = try state.ingestLocationBatchOutcomes(
                         recordingToken: recordingToken,
                         receiptMonotonicMs: update.receiptMonotonic.rawValue,
                         receiptWallClockUnixMs: receiptWallClockUnixMs,
                         samples: update.samples
                     )
-                    recorder.publishDecisionBatch(decisions)
+                    recorder.publishDecisionBatch(outcomes)
                 } catch let error as MobileRideMapError {
                     recorder.publishError(error, errorContext)
                     recorder.recordDiagnostic("ride_map_ingest_error=\(error)")
@@ -275,7 +274,7 @@ actor CutoutSessionRideMapRecorder: CutoutSessionRideMapRecording {
             state.hasPendingLocationWrites
                 || state.currentSnapshot(atMs: clock.now().rawValue)?.state.isOpen == true
         else { return }
-        publishDecisionBatch(state.pollLocationWrites())
+        publishDecisionBatch(state.pollLocationWriteOutcomes(atMs: clock.now().rawValue))
     }
 
     private func drainBmsVoltageWrites() {
@@ -287,12 +286,9 @@ actor CutoutSessionRideMapRecorder: CutoutSessionRideMapRecording {
         }
     }
 
-    private func publishDecisionBatch(_ decisions: [MobileRideMapDecisionDto]) {
-        publishDecisions(
-            RideMapDecisionBatch(
-                snapshot: state?.currentSnapshot(atMs: clock.now().rawValue),
-                decisions: decisions
-            ))
+    private func publishDecisionBatch(_ outcomes: [MobileRideMapOutcomeDto]) {
+        guard !outcomes.isEmpty else { return }
+        publishDecisions(RideMapDecisionBatch(outcomes: outcomes))
     }
 
     private func synchronizeLocationDemand() {

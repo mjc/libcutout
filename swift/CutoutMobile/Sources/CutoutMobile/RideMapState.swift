@@ -723,6 +723,26 @@ public enum MobileRideMapDecisionDto: Equatable, Hashable, Sendable {
     case storageError(message: String)
 }
 
+/// A Rust decision paired with the exact ride projection produced under the same lock.
+public struct MobileRideMapOutcomeDto: Equatable, Hashable, Sendable {
+    public let requestID: UInt64?
+    public let rideID: String
+    public let decision: MobileRideMapDecisionDto
+    public let snapshot: MobileRideMapSnapshotDto
+
+    public init(
+        requestID: UInt64?,
+        rideID: String,
+        decision: MobileRideMapDecisionDto,
+        snapshot: MobileRideMapSnapshotDto
+    ) {
+        self.requestID = requestID
+        self.rideID = rideID
+        self.decision = decision
+        self.snapshot = snapshot
+    }
+}
+
 /// Swift keeps only presentation DTOs and the canonical history handle. Rust owns all active
 /// lifecycle, association, admission, locking, and live-route projection state. The FFI core
 /// serializes every mutation, so this adapter is safe to call from the BLE and location queues.
@@ -1062,6 +1082,22 @@ public final class MobileRideMapState: @unchecked Sendable {
         }
     }
 
+    public func ingestLocationBatchOutcomes(
+        recordingToken: MobileRideMapRecordingTokenDto?,
+        receiptMonotonicMs: UInt64,
+        receiptWallClockUnixMs: UInt64,
+        samples: [MobilePhoneLocationSampleDto]
+    ) throws -> [MobileRideMapOutcomeDto] {
+        try withCore {
+            try $0.ingestLocationBatchWithOutcomes(
+                recording: recordingToken,
+                receiptMonotonicMs: receiptMonotonicMs,
+                receiptWallClockUnixMs: receiptWallClockUnixMs,
+                samples: samples
+            ).map(mapOutcome)
+        }
+    }
+
     /// Drains durable outcomes without waiting for the SQLite worker.
     ///
     /// A pending location is not part of the durable route until this method returns its accepted
@@ -1072,6 +1108,11 @@ public final class MobileRideMapState: @unchecked Sendable {
             return [.storageError(message: message)]
         }
         return core.pollLocationWrites().map(map)
+    }
+
+    public func pollLocationWriteOutcomes(atMs: UInt64) -> [MobileRideMapOutcomeDto] {
+        guard let core else { return [] }
+        return core.pollLocationWriteOutcomes(atMilliseconds: atMs).map(mapOutcome)
     }
     public var hasPendingLocationWrites: Bool {
         core?.hasPendingLocationWrites() ?? false
@@ -1306,6 +1347,15 @@ public final class MobileRideMapState: @unchecked Sendable {
             segmentCount: snapshot.segmentCount,
             associatedVehicle: snapshot.associatedVehicle,
             recordedBoundsAvailable: snapshot.recordedBoundsAvailable
+        )
+    }
+
+    private func mapOutcome(_ outcome: MobileRideMapCoreOutcomeDto) -> MobileRideMapOutcomeDto {
+        MobileRideMapOutcomeDto(
+            requestID: outcome.requestId,
+            rideID: outcome.rideId,
+            decision: map(outcome.decision),
+            snapshot: mapSnapshot(outcome.snapshot)
         )
     }
 

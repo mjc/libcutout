@@ -21,6 +21,46 @@ final class RideMapStateTests: XCTestCase {
         XCTAssertNil(stopped.recordingToken)
     }
 
+    func testLocationBatchOutcomeCarriesItsMatchingSnapshot() throws {
+        let state = MobileRideMapState()
+        let started = try state.startGpsOnly(atMs: 100)
+        defer {
+            _ = try? state.stop(atMs: 2_000)
+            _ = try? state.discard()
+        }
+        let sample = MobilePhoneLocationSampleDto(
+            wallClockUnixMs: 1_700_000_001_000,
+            latitudeDegrees: 39.7392,
+            longitudeDegrees: -104.9903,
+            altitudeMeters: 1_600,
+            horizontalAccuracyMeters: 4,
+            verticalAccuracyMeters: nil,
+            speedMetersPerSecond: nil,
+            speedAccuracyMetersPerSecond: nil,
+            courseDegrees: nil,
+            courseAccuracyDegrees: nil
+        )
+
+        let outcomes = try state.ingestLocationBatchOutcomes(
+            recordingToken: started.recordingToken,
+            receiptMonotonicMs: 1_000,
+            receiptWallClockUnixMs: 1_700_000_001_000,
+            samples: [sample]
+        )
+
+        let pending = try XCTUnwrap(outcomes.first)
+        XCTAssertEqual(outcomes.count, 1)
+        XCTAssertNotNil(pending.requestID)
+        XCTAssertEqual(pending.rideID, started.rideID)
+        XCTAssertEqual(pending.snapshot.rideID, started.rideID)
+        XCTAssertEqual(pending.snapshot.revision, started.revision)
+        XCTAssertEqual(pending.snapshot.summary.pointCount, 0)
+        guard case .pending = pending.decision else {
+            return XCTFail("durable route admission should initially be pending, got \(pending.decision)")
+        }
+
+    }
+
     func testMusicHistoryProjectsRustRetentionAndObservationTime() throws {
         let state = MobileRideMapState()
         XCTAssertNil(state.currentMusicHistory())
