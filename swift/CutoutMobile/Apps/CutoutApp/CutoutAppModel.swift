@@ -738,77 +738,19 @@ final class CutoutAppModel {
     }
 
     func dismissMusicPlayer() {
-        musicPlayerVisibilityStore.setHidden(true)
-        isMusicPlayerHidden = true
-        musicProviderLifecycle.clearPendingCommandCorrelation()
+        music.dismissPlayer()
     }
 
     func restoreMusicPlayer() {
-        musicPlayerVisibilityStore.setHidden(false)
-        isMusicPlayerHidden = false
-        musicSettingsNowPlaying = projectedMusicNowPlaying()
-        musicMonitoringPreferenceStore.setEnabled(true)
-        musicProviderLifecycle.requestMonitor(request: .observe)
-        beginMusicMonitoring()
+        music.restorePlayer()
     }
 
     func selectMusicProvider(_ provider: MobileMusicProviderDto) {
-        let previousProvider = selectedMusicProvider
-        musicCoordinator.resetProviderCorrelation()
-        musicProviderLifecycle.invalidateCommandFeedback()
-        musicCommandFeedback = nil
-        selectedMusicProvider = provider
-        musicSettingsNowPlaying = projectedMusicNowPlaying()
-        musicProviderSelectionStore.set(provider)
-        musicMonitoringPreferenceStore.setEnabled(true)
-        updateMusicMonitoring(from: previousProvider, to: provider)
-    }
-
-    private func updateMusicMonitoring(
-        from previousProvider: MobileMusicProviderDto,
-        to provider: MobileMusicProviderDto
-    ) {
-        switch provider.monitoringMode {
-        case .unavailable:
-            let suspension = MobileMusicProviderSuspension(
-                observationGap: false,
-                cancelledTransportRequestId: musicProviderLifecycle.cancelMonitor().requestId
-            )
-#if canImport(MediaPlayer) && os(iOS)
-            appleMusicProvider.applySuspension(suspension)
-#endif
-            spotifyMusicProvider.applySuspension(suspension)
-            stopMusicMonitoring()
-        case .appleMusicSystemPlayer where previousProvider != provider:
-            musicProviderLifecycle.requestMonitor(request: .observe)
-            beginMusicMonitoring()
-        case .appleMusicSystemPlayer:
-            break
-        case .spotifyAppRemote where previousProvider != provider:
-            musicProviderLifecycle.requestMonitor(request: .observe)
-            beginMusicMonitoring()
-        case .spotifyAppRemote:
-            break
-        }
+        music.selectProvider(provider)
     }
 
     func refreshMusicSnapshot() {
-#if canImport(MediaPlayer) && os(iOS)
-        let observedAtMs = core.now().rawValue
-        let observation: MusicProviderObservation
-        switch selectedMusicProvider.monitoringMode {
-        case .appleMusicSystemPlayer:
-            appleMusicProvider.refreshObservation(observedAtMs: observedAtMs)
-            return
-        case .spotifyAppRemote:
-            observation = spotifyMusicProvider.observation(observedAtMs: observedAtMs)
-        case .unavailable:
-            observation = MusicProviderObservation(
-                snapshot: spotifyMusicProvider.unavailableSnapshot(observedAtMs: observedAtMs)
-            )
-        }
-        _ = ingestMusicObservation(observation)
-#endif
+        music.refreshSnapshot()
     }
 
     @discardableResult
@@ -852,218 +794,30 @@ final class CutoutAppModel {
         music.setHistoryPolicy(policy)
     }
 
-#if canImport(MediaPlayer) && os(iOS)
-    @MainActor
-    private static func monitorMusic(
-        provider: MobileMusicProviderDto,
-        generation: MobileMusicMonitorId,
-        allowAuthorization: Bool,
-        lifecycle: MobileMusicProviderLifecycle,
-        appleMusicProvider: AppleMusicProviderAdapter,
-        spotifyMusicProvider: SpotifyProviderAdapter,
-        isCurrent: @escaping @MainActor () -> Bool,
-        observedAtMs: @escaping @MainActor () -> UInt64?,
-        record: @escaping @MainActor (MusicProviderObservation) -> Void,
-        refresh: @escaping @MainActor () -> Void
-    ) async {
-        guard isCurrent() else { return }
-#if canImport(SpotifyiOS) && os(iOS)
-        if provider.monitoringMode == .spotifyAppRemote {
-            let started = spotifyMusicProvider.startMonitoring(allowAuthorization: allowAuthorization) {
-                guard isCurrent() else { return }
-                // Both SDK callbacks and polling must use the session's monotonic clock.
-                refresh()
-            }
-            guard started else { return }
-            defer {
-                if isCurrent() {
-                    spotifyMusicProvider.stopMonitoring()
-                }
-            }
-            while !Task.isCancelled && isCurrent() {
-                spotifyMusicProvider.ensureConnection()
-                guard let nowMs = observedAtMs(),
-                      let poll = lifecycle.nextMonitorPoll(
-                          generation: generation,
-                          workState: spotifyMusicProvider.monitoringWorkState,
-                          nowMs: nowMs
-                      ) else { return }
-                spotifyMusicProvider.refreshPlayerState()
-                guard await MusicProviderEffectExecutor.wait(
-                    until: poll.deadlineMs,
-                    nowMs: { observedAtMs() ?? poll.deadlineMs }
-                ) else { return }
-            }
-            return
-        }
-#endif
-        guard provider.monitoringMode == .appleMusicSystemPlayer else {
-            guard !Task.isCancelled, isCurrent(), let observedAtMs = observedAtMs()
-            else { return }
-            record(
-                MusicProviderObservation.unavailable(
-                    provider: provider,
-                    sessionId: "music-unavailable",
-                    observedAtMs: observedAtMs
-                )
-            )
-            return
-        }
-        guard await appleMusicProvider.requestAuthorization(allowPrompt: allowAuthorization) else {
-            guard !Task.isCancelled, isCurrent(), let observedAtMs = observedAtMs()
-            else { return }
-            record(MusicProviderObservation(
-                snapshot: appleMusicProvider.unauthorizedSnapshot(observedAtMs: observedAtMs)
-            ))
-            return
-        }
-        guard !Task.isCancelled, isCurrent() else { return }
-        await appleMusicProvider.startMonitoring(
-            observedAtMs: { observedAtMs() ?? 0 },
-            onObservation: { observation in
-                guard isCurrent() else { return }
-                record(observation)
-            }
-        )
-        guard !Task.isCancelled, isCurrent() else { return }
-        defer {
-            if isCurrent() {
-                appleMusicProvider.stopMonitoring()
-            }
-        }
-        while !Task.isCancelled {
-            guard isCurrent(), let currentObservedAtMs = observedAtMs() else { return }
-            guard let poll = lifecycle.nextMonitorPoll(
-                generation: generation,
-                workState: .active,
-                nowMs: currentObservedAtMs
-            ) else { return }
-            appleMusicProvider.refreshObservation(observedAtMs: currentObservedAtMs)
-            guard await MusicProviderEffectExecutor.wait(
-                until: poll.deadlineMs,
-                nowMs: { observedAtMs() ?? poll.deadlineMs }
-            ) else { return }
-        }
-    }
-#endif
-
-    private func finishMusicMonitoring(generation: MobileMusicMonitorId) {
-        guard musicProviderLifecycle.finishMonitor(generation: generation) == .current else { return }
-#if canImport(MediaPlayer) && os(iOS)
-        appleMusicProvider.stopMonitoring()
-#endif
-#if canImport(SpotifyiOS) && os(iOS)
-        spotifyMusicProvider.stopMonitoring()
-#endif
-    }
-
-    private func unavailableMusicObservation(observedAtMs: UInt64) -> MusicProviderObservation {
-        MusicProviderObservation.unavailable(
-            provider: selectedMusicProvider,
-            sessionId: "music-unavailable",
-            observedAtMs: observedAtMs
-        )
-    }
-
     private func stopMusicMonitoring() {
-        musicEffects.cancelAll(in: .monitor)
-#if canImport(MediaPlayer) && os(iOS)
-        appleMusicProvider.stopMonitoring()
-#endif
-#if canImport(SpotifyiOS) && os(iOS)
-        spotifyMusicProvider.stopMonitoring()
-#endif
+        music.stopMonitoring()
     }
 
     /// Forwards a Spotify App Remote authorization callback from the scene.
     @discardableResult
     func handleMusicURL(_ url: URL) -> Bool {
-#if canImport(SpotifyiOS) && os(iOS)
-        guard selectedMusicProvider == .spotify else { return false }
-        let handled = spotifyMusicProvider.handleCallback(url)
-#if DEBUG
-        print("spotify_callback handled=\(handled) scheme=\(url.scheme ?? "-") host=\(url.host ?? "-") path=\(url.path)")
-#endif
-        return handled
-#else
-        _ = url
-        return false
-#endif
+        music.handleProviderURL(url)
     }
 
     private func beginMusicMonitoring() {
-        // Invalidate before stopping the old provider; stopping can resume a
-        // cancelled command continuation synchronously.
-        musicProviderLifecycle.invalidateCommandFeedback()
-        musicCommandFeedback = nil
-        guard let effect = musicProviderLifecycle.beginMonitor() else {
-#if DEBUG
-            print("music_monitor_skipped inactive_or_not_requested")
-#endif
-            return
-        }
-#if os(iOS) && canImport(MediaPlayer)
-        if let nowPlaying = musicSettingsNowPlaying {
-            musicSettingsNowPlaying = nowPlaying.staleProjection
-        }
-        stopMusicMonitoring()
-        let generation = effect.generation
-        let provider = selectedMusicProvider
-        let appleMusicProvider = self.appleMusicProvider
-        let spotifyMusicProvider = self.spotifyMusicProvider
-        musicEffects.run(.monitor(generation)) { [weak self, appleMusicProvider, spotifyMusicProvider] in
-            guard let self else { return }
-            await Self.monitorMusic(
-                provider: provider,
-                generation: generation,
-                allowAuthorization: effect.start == .authorize,
-                lifecycle: self.musicProviderLifecycle,
-                appleMusicProvider: appleMusicProvider,
-                spotifyMusicProvider: spotifyMusicProvider,
-                isCurrent: { [weak self] in
-                    guard let self else { return false }
-                    return self.musicProviderLifecycle.classifyMonitor(generation: generation) == .current
-                        && self.selectedMusicProvider == provider
-                },
-                observedAtMs: { [weak self] in
-                    self?.core.now().rawValue
-                },
-                record: { [weak self] observation in
-                    guard let self else { return }
-                    _ = self.ingestMusicObservation(observation)
-                },
-                refresh: { [weak self] in
-                    self?.refreshMusicSnapshot()
-                }
-            )
-            self.finishMusicMonitoring(generation: generation)
-        }
-#else
-        _ = ingestMusicObservation(unavailableMusicObservation(observedAtMs: core.now().rawValue))
-        _ = musicProviderLifecycle.finishMonitor(generation: effect.generation)
-#endif
+        music.beginMonitoring()
     }
 
     func connectMusic() {
 #if DEBUG
         print("music_connect_requested provider=\(selectedMusicProvider) scene_active=\(musicProviderLifecycle.isSceneActive())")
 #endif
-        musicMonitoringPreferenceStore.setEnabled(true)
-        // This is an explicit foreground user action. If the previous scene
-        // lifecycle suspended monitoring, resume it before starting the new
-        // provider session instead of silently dropping the tap.
-        _ = musicProviderLifecycle.resume()
-        musicProviderLifecycle.requestMonitor(request: .authorize)
-        beginMusicMonitoring()
+        music.connect()
     }
 
     /// Reauthorization is a separate, explicit account action, never recovery policy.
     func authorizeSpotify() {
-#if canImport(SpotifyiOS) && os(iOS)
-        guard selectedMusicProvider == .spotify else { return }
-        spotifyMusicProvider.clearAuthorization()
-        connectMusic()
-#endif
+        music.authorizeSpotify()
     }
 
     private func restoreRideMapState() {
@@ -1124,16 +878,7 @@ final class CutoutAppModel {
         restorationMarkerAtLaunch = rideSessionMarkerStore.marker
         rideSessionRestorationState = .awaitingBluetooth
         core.start()
-        guard musicMonitoringPreferenceStore.isEnabled else { return }
-        musicProviderLifecycle.requestMonitor(request: .observe)
-        guard sceneIsActive else {
-            // Preserve the requested monitoring intent, but establish the current scene state
-            // before any provider work starts. A startup that completes in the background must
-            // wait for the next active transition instead of briefly starting and then stopping.
-            _ = musicProviderLifecycle.suspend()
-            return
-        }
-        beginMusicMonitoring()
+        music.start(sceneIsActive: sceneIsActive)
     }
 
     @discardableResult
@@ -1582,36 +1327,7 @@ final class CutoutAppModel {
     }
 
     func appDidEnterBackground() {
-        let suspension = musicProviderLifecycle.suspend()
-#if canImport(MediaPlayer) && os(iOS)
-        appleMusicProvider.applySuspension(suspension)
-#endif
-        spotifyMusicProvider.applySuspension(suspension)
-        if suspension.observationGap {
-            let observedAtMs = core.now().rawValue
-            _ = ingestMusicObservation(MusicProviderObservation(
-                snapshot: MobileMusicSnapshotDto(
-                    provider: selectedMusicProvider,
-                    sessionId: "music-observation-gap",
-                    state: .disconnected,
-                    item: musicCoordinator.nowPlaying?.item,
-                    positionMilliseconds: nil,
-                    durationMilliseconds: nil,
-                    observedAtMs: observedAtMs,
-                    capabilities: .init(
-                        previous: false,
-                        play: false,
-                        pause: false,
-                        next: false,
-                        openProvider: true
-                    )
-                )
-            ))
-        }
-        stopMusicMonitoring()
-        if let nowPlaying = musicCoordinator.nowPlaying {
-            musicSettingsNowPlaying = nowPlaying.staleProjection
-        }
+        music.sceneDidEnterBackground()
         guard let snapshot = currentLiveActivitySnapshot() else {
             guard isRecordOnlyCapture else { return }
             let capture = self.capture
@@ -1635,7 +1351,7 @@ final class CutoutAppModel {
 
     func appDidBecomeActive() {
         refreshPhoneAlarmAuthorization()
-        if musicProviderLifecycle.resume() == .restored {
+        if music.sceneDidBecomeActive() {
             beginMusicMonitoring()
         }
         guard let snapshot = currentLiveActivitySnapshot() else { return }
