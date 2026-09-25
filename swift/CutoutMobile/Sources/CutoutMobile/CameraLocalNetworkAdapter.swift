@@ -135,6 +135,22 @@ private func cameraDownload(
     let session = cameraSession(maximumDownloadBytes: Int64(clamping: maximumBytes))
     defer { invalidateCameraSession(session) }
     let (downloadedURL, response) = try await session.download(from: url)
+    return try moveCameraDownloadFile(
+        downloadedURL,
+        response: response,
+        origin: origin,
+        maximumBytes: maximumBytes
+    )
+}
+
+func moveCameraDownloadFile(
+    _ downloadedURL: URL,
+    response: URLResponse,
+    origin: MobileNovatekHttpOriginDto,
+    maximumBytes: UInt64
+) throws -> URL {
+    defer { try? FileManager.default.removeItem(at: downloadedURL) }
+
     guard cameraURLMatchesOrigin(response.url, origin: origin) else {
         throw CameraMediaDownloadError.originMismatch
     }
