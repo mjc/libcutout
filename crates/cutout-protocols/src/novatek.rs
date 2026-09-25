@@ -1330,14 +1330,9 @@ fn require_xml_root(xml: &str, root: &'static str) -> Result<(), NovatekResponse
     } else {
         xml
     };
-    let open = match root {
-        "Function" => "<Function>",
-        "LIST" => "<LIST>",
-        _ => return Err(NovatekResponseError::MalformedXml),
-    };
-    let close = match root {
-        "Function" => "</Function>",
-        "LIST" => "</LIST>",
+    let (open, close) = match root {
+        "Function" => ("<Function>", "</Function>"),
+        "LIST" => ("<LIST>", "</LIST>"),
         _ => return Err(NovatekResponseError::MalformedXml),
     };
     let body = xml
@@ -1348,6 +1343,53 @@ fn require_xml_root(xml: &str, root: &'static str) -> Result<(), NovatekResponse
         .get(close_start + close.len()..)
         .ok_or(NovatekResponseError::MalformedXml)?;
     if trailing.trim().is_empty() {
+        require_matching_xml_tags(xml)
+    } else {
+        Err(NovatekResponseError::MalformedXml)
+    }
+}
+
+fn require_matching_xml_tags(xml: &str) -> Result<(), NovatekResponseError> {
+    let mut open_tags = Vec::new();
+    let mut cursor = 0;
+    while let Some(offset) = xml.get(cursor..).and_then(|remaining| remaining.find('<')) {
+        let start = cursor + offset;
+        let end = xml
+            .get(start + 1..)
+            .and_then(|remaining| remaining.find('>').map(|index| start + 1 + index))
+            .ok_or(NovatekResponseError::MalformedXml)?;
+        let tag = xml
+            .get(start + 1..end)
+            .ok_or(NovatekResponseError::MalformedXml)?;
+        let (is_closing, tag) = match tag.strip_prefix('/') {
+            Some(tag) => (true, tag),
+            None => (false, tag),
+        };
+        if is_closing && tag.ends_with('/') {
+            return Err(NovatekResponseError::MalformedXml);
+        }
+        let (name, is_empty) = match tag.strip_suffix('/') {
+            Some(name) if !is_closing => (name, true),
+            _ => (tag, false),
+        };
+        if name.is_empty()
+            || !name.bytes().all(|byte| match byte {
+                b'_' | b'-' | b':' => true,
+                _ => byte.is_ascii_alphanumeric(),
+            })
+        {
+            return Err(NovatekResponseError::MalformedXml);
+        }
+        if is_closing {
+            if open_tags.pop() != Some(name) {
+                return Err(NovatekResponseError::MalformedXml);
+            }
+        } else if !is_empty {
+            open_tags.push(name);
+        }
+        cursor = end + 1;
+    }
+    if open_tags.is_empty() {
         Ok(())
     } else {
         Err(NovatekResponseError::MalformedXml)
@@ -1742,10 +1784,16 @@ mod tests {
     }
 
     #[test]
-    fn response_parsers_reject_truncated_or_trailing_xml_documents() {
+    fn response_parsers_reject_incomplete_or_malformed_xml_documents() {
         let command = br"<Function><Cmd>2001</Cmd><Status>0</Status>";
         assert_eq!(
             parse_command_response(command, command_id(2001)),
+            Err(NovatekResponseError::MalformedXml)
+        );
+
+        let mismatched_tags = br"<Function><Cmd>2001</Cmd><Status>0</Status></Cmd></Function>";
+        assert_eq!(
+            parse_command_response(mismatched_tags, command_id(2001)),
             Err(NovatekResponseError::MalformedXml)
         );
 
