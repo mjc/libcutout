@@ -31,6 +31,7 @@ public enum MobileRideMapError: Error, Equatable, Hashable, Sendable {
     case noActiveRide
     case invalidTransition
     case invalidLocation
+    case locationBatchTooLarge
     case invalidVehicleIdentity
     case staleConnection
     case invalidRouteProjection
@@ -1615,6 +1616,7 @@ public final class MobileRideMapState: @unchecked Sendable {
         case .NoActiveRide: return .noActiveRide
         case .InvalidTransition: return .invalidTransition
         case .InvalidLocation: return .invalidLocation
+        case .LocationBatchTooLarge: return .locationBatchTooLarge
         case .InvalidVehicleIdentity: return .invalidVehicleIdentity
         case .StaleConnection: return .staleConnection
         case .InvalidRouteProjection: return .invalidRouteProjection

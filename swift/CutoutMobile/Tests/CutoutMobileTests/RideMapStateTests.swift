@@ -61,6 +61,38 @@ final class RideMapStateTests: XCTestCase {
 
     }
 
+    func testOversizedLocationBatchMapsToTypedError() throws {
+        let state = MobileRideMapState()
+        let started = try state.startGpsOnly(atMs: 100)
+        defer {
+            _ = try? state.stop(atMs: 2_000)
+            _ = try? state.discard()
+        }
+        let sample = MobilePhoneLocationSampleDto(
+            wallClockUnixMs: 1_700_000_001_000,
+            latitudeDegrees: 39.7392,
+            longitudeDegrees: -104.9903,
+            altitudeMeters: 1_600,
+            horizontalAccuracyMeters: 4,
+            verticalAccuracyMeters: nil,
+            speedMetersPerSecond: nil,
+            speedAccuracyMetersPerSecond: nil,
+            courseDegrees: nil,
+            courseAccuracyDegrees: nil
+        )
+
+        XCTAssertThrowsError(
+            try state.ingestLocationBatchOutcomes(
+                recordingToken: started.recordingToken,
+                receiptMonotonicMs: 1_000,
+                receiptWallClockUnixMs: 1_700_000_001_000,
+                samples: Array(repeating: sample, count: 257)
+            )
+        ) { error in
+            XCTAssertEqual(error as? MobileRideMapError, .locationBatchTooLarge)
+        }
+    }
+
     func testMusicHistoryProjectsRustRetentionAndObservationTime() throws {
         let state = MobileRideMapState()
         XCTAssertNil(state.currentMusicHistory())

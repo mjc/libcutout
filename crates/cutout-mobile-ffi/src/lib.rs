@@ -4616,6 +4616,9 @@ pub enum MobileRideMapCoreErrorDto {
     /// The supplied location values are invalid.
     #[error("invalid location")]
     InvalidLocation,
+    /// The source supplied more location samples than one bounded ingestion batch permits.
+    #[error("location batch exceeds the maximum size of 256 samples")]
+    LocationBatchTooLarge,
     /// The connected vehicle identity is empty after trimming.
     #[error("invalid vehicle identity")]
     InvalidVehicleIdentity,
@@ -7479,6 +7482,7 @@ pub struct MobileRideMapCore {
 }
 
 const MAX_PENDING_LOCATION_WRITES: usize = 64;
+const MAX_LOCATION_BATCH_SIZE: usize = 256;
 const AUTO_RESUME_RIDE_WINDOW_MILLISECONDS: u64 = 3 * 60 * 60 * 1_000;
 const EXPLICIT_PAUSE_PERSISTENCE_WINDOW_MILLISECONDS: u64 = 24 * 60 * 60 * 1_000;
 
@@ -9224,6 +9228,9 @@ impl MobileRideMapCore {
         receipt_wall_clock_unix_ms: u64,
         samples: Vec<MobilePhoneLocationSampleDto>,
     ) -> Result<Vec<MobileRideMapCoreDecisionDto>, MobileRideMapCoreErrorDto> {
+        if samples.len() > MAX_LOCATION_BATCH_SIZE {
+            return Err(MobileRideMapCoreErrorDto::LocationBatchTooLarge);
+        }
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         state.require_ready()?;
         state
@@ -9245,7 +9252,8 @@ impl MobileRideMapCore {
     ///
     /// # Errors
     ///
-    /// Returns a typed error when the Rust ride core is not ready or a sample cannot be converted.
+    /// Returns a typed error when the Rust ride core is not ready, a sample cannot be converted,
+    /// or the batch exceeds [`MAX_LOCATION_BATCH_SIZE`].
     pub fn ingest_location_batch_with_outcomes(
         &self,
         recording: Option<MobileRideMapRecordingTokenDto>,
@@ -9253,6 +9261,9 @@ impl MobileRideMapCore {
         receipt_wall_clock_unix_ms: u64,
         samples: Vec<MobilePhoneLocationSampleDto>,
     ) -> Result<Vec<MobileRideMapCoreOutcomeDto>, MobileRideMapCoreErrorDto> {
+        if samples.len() > MAX_LOCATION_BATCH_SIZE {
+            return Err(MobileRideMapCoreErrorDto::LocationBatchTooLarge);
+        }
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         state.require_ready()?;
         state.ingest_location_batch(
@@ -20662,6 +20673,51 @@ mod tests {
         assert_eq!(accepted_points[0].monotonic_ms, 9_000);
         assert_eq!(accepted_points[1].wall_clock_unix_ms, 1_700_000_001_000);
         assert_eq!(accepted_points[1].monotonic_ms, 10_000);
+    }
+
+    #[test]
+    fn location_batch_rejects_oversized_input_before_processing() {
+        let state = MobileRideMapCore::new();
+        let started = state.start_gps_only(9_000).unwrap();
+        let sample = MobilePhoneLocationSampleDto {
+            wall_clock_unix_ms: 1_700_000_001_000,
+            latitude_degrees: 40.0,
+            longitude_degrees: -105.0,
+            altitude_meters: 1_600.0,
+            horizontal_accuracy_meters: Some(3.0),
+            vertical_accuracy_meters: None,
+            speed_meters_per_second: None,
+            speed_accuracy_meters_per_second: None,
+            course_degrees: None,
+            course_accuracy_degrees: None,
+        };
+        let samples = vec![sample; MAX_LOCATION_BATCH_SIZE + 1];
+
+        let result = state.ingest_location_batch_with_outcomes(
+            started.recording_token.clone(),
+            10_000,
+            1_700_000_001_000,
+            samples.clone(),
+        );
+
+        assert_eq!(
+            result,
+            Err(MobileRideMapCoreErrorDto::LocationBatchTooLarge)
+        );
+        let result = state.ingest_location_batch(
+            started.recording_token,
+            10_000,
+            1_700_000_001_000,
+            samples,
+        );
+        assert_eq!(
+            result,
+            Err(MobileRideMapCoreErrorDto::LocationBatchTooLarge)
+        );
+        assert_eq!(
+            state.current_snapshot(10_000).unwrap().summary.point_count,
+            0
+        );
     }
 
     #[test]
