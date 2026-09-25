@@ -106,6 +106,9 @@ in
 
   tasks."project:dependency-policy".exec = "cargo deny --locked check";
 
+  tasks."check:android-camera-protocols".exec =
+    "cargo check --locked -p cutout-protocols --target aarch64-linux-android";
+
   tasks."test:rust-lint-policy".exec = "bash tests/fixtures/macro-policy/run.sh";
 
   tasks."project:quality-gate" = {
