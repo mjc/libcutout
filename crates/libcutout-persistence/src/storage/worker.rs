@@ -268,6 +268,20 @@ impl DatabaseWorker<'_> {
                     updated_at_ms,
                 ));
             }
+            Command::VerifiedConnectionPolicy {
+                platform_identifier,
+                updated_at_ms,
+                reply,
+            } => {
+                let result =
+                    remember_last_connected_device(connection, &platform_identifier, updated_at_ms)
+                        .and_then(|()| {
+                            selected_device(connection).map(|selected| {
+                                selected.as_deref() == Some(platform_identifier.as_str())
+                            })
+                        });
+                let _ = reply.send(result);
+            }
             Command::LastConnectedDevice { reply } => {
                 let _ = reply.send(last_connected_device(connection));
             }

@@ -1535,6 +1535,14 @@ pub struct PendingBmsVoltageWrite {
     consumed: bool,
 }
 
+/// Verified connection history and selected-device policy, ordered as one database command.
+#[must_use = "poll or wait for the verified connection policy result"]
+#[derive(Debug)]
+pub struct PendingVerifiedConnectionPolicy {
+    response: Receiver<Result<bool, StorageError>>,
+    consumed: bool,
+}
+
 /// Durable outcome for one asynchronously appended location.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct LocationWriteResult {
@@ -2036,6 +2044,43 @@ impl PendingBmsVoltageWrite {
     }
 }
 
+impl PendingVerifiedConnectionPolicy {
+    /// Returns the policy result when the worker completes this command.
+    ///
+    /// `None` means that the command is still queued or executing. A terminal result is returned
+    /// at most once.
+    pub fn try_result(&mut self) -> Option<Result<bool, StorageError>> {
+        if self.consumed {
+            return None;
+        }
+        match self.response.try_recv() {
+            Ok(result) => {
+                self.consumed = true;
+                Some(result)
+            }
+            Err(mpsc::TryRecvError::Empty) => None,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.consumed = true;
+                Some(Err(StorageError::ResponseDropped))
+            }
+        }
+    }
+
+    /// Waits for the ordered connection policy result.
+    ///
+    /// Platform callbacks should use [`Self::try_result`] rather than waiting.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::ResponseDropped`] when the worker exits before replying, or the
+    /// storage error produced by the command.
+    pub fn wait_result(self) -> Result<bool, StorageError> {
+        self.response
+            .recv()
+            .map_err(|_| StorageError::ResponseDropped)?
+    }
+}
+
 impl RideDatabase {
     /// Opens or reuses the one canonical database service for this process.
     ///
@@ -2271,6 +2316,36 @@ impl RideDatabase {
         let (reply, response) = response_channel();
         self.enqueue(Command::RecordBmsVoltageSamples { samples, reply })?;
         Ok(PendingBmsVoltageWrite {
+            response,
+            consumed: false,
+        })
+    }
+
+    /// Queues verified-device history and selected-device policy lookup as one worker command.
+    ///
+    /// The command is ordered with every other operation on the existing bounded database
+    /// worker. It remembers the verified identity before reporting whether that identity is the
+    /// currently selected device, without waiting for SQLite completion.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::QueueFull`] when the bounded queue is saturated,
+    /// [`StorageError::WorkerStopped`] when the worker is unavailable, or a validation error for
+    /// an invalid platform identifier.
+    pub fn queue_verified_connection_policy(
+        &self,
+        platform_identifier: &str,
+        updated_at_ms: u64,
+    ) -> Result<PendingVerifiedConnectionPolicy, StorageError> {
+        let platform_identifier =
+            normalize_stored_text(platform_identifier, "platform identifier")?;
+        let (reply, response) = response_channel();
+        self.enqueue(Command::VerifiedConnectionPolicy {
+            platform_identifier,
+            updated_at_ms,
+            reply,
+        })?;
+        Ok(PendingVerifiedConnectionPolicy {
             response,
             consumed: false,
         })
@@ -3783,6 +3858,11 @@ enum Command {
         platform_identifier: String,
         updated_at_ms: u64,
         reply: Reply<()>,
+    },
+    VerifiedConnectionPolicy {
+        platform_identifier: String,
+        updated_at_ms: u64,
+        reply: Reply<bool>,
     },
     LastConnectedDevice {
         reply: Reply<Option<String>>,
