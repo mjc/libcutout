@@ -58,6 +58,31 @@ final class RideHistoryModelTests: XCTestCase {
     }
 
     @MainActor
+    private static func saveHistoryRide(
+        in state: MobileRideMapState,
+        startingAt startMs: UInt64 = 100,
+        latitude: Double = 39.7000
+    ) async throws -> String {
+        _ = try state.startGpsOnly(atMs: startMs)
+        _ = await settle(state, try state.ingestLocation(
+            monotonicMs: startMs,
+            wallClockUnixMs: 1_700_000_000_000 + startMs,
+            latitudeDegrees: latitude,
+            longitudeDegrees: -104.9000,
+            horizontalAccuracyMeters: 5
+        ))
+        _ = await settle(state, try state.ingestLocation(
+            monotonicMs: startMs + 1_000,
+            wallClockUnixMs: 1_700_000_001_000 + startMs,
+            latitudeDegrees: latitude + 0.0001,
+            longitudeDegrees: -104.9000,
+            horizontalAccuracyMeters: 5
+        ))
+        _ = try state.stop(atMs: startMs + 1_000)
+        return try state.save().rideID
+    }
+
+    @MainActor
     func testStorageFailureDoesNotLookLikeAnEmptyHistory() async {
         let model = RideHistoryModel(
             stateProvider: { nil },
@@ -742,23 +767,7 @@ final class RideHistoryModelTests: XCTestCase {
     @MainActor
     func testSameRideViewportReplacementRejectsLateFailureAndLoadingState() async throws {
         let state = MobileRideMapState()
-        _ = try state.startGpsOnly(atMs: 100)
-        _ = await Self.settle(state, try state.ingestLocation(
-            monotonicMs: 100,
-            wallClockUnixMs: 1_700_000_000_100,
-            latitudeDegrees: 39.7000,
-            longitudeDegrees: -104.9000,
-            horizontalAccuracyMeters: 5
-        ))
-        _ = await Self.settle(state, try state.ingestLocation(
-            monotonicMs: 1_100,
-            wallClockUnixMs: 1_700_000_001_100,
-            latitudeDegrees: 39.7001,
-            longitudeDegrees: -104.9000,
-            horizontalAccuracyMeters: 5
-        ))
-        _ = try state.stop(atMs: 1_100)
-        let rideID = try state.save().rideID
+        let rideID = try await Self.saveHistoryRide(in: state)
 
         let query = GatedRideHistoryQuery(base: state, failAfterRelease: true)
         let model = RideHistoryModel(stateProvider: { query })
@@ -806,23 +815,7 @@ final class RideHistoryModelTests: XCTestCase {
     @MainActor
     func testSameRideSelectionReplacementRejectsLateFailureAndLoadingState() async throws {
         let state = MobileRideMapState()
-        _ = try state.startGpsOnly(atMs: 100)
-        _ = await Self.settle(state, try state.ingestLocation(
-            monotonicMs: 100,
-            wallClockUnixMs: 1_700_000_000_100,
-            latitudeDegrees: 39.7000,
-            longitudeDegrees: -104.9000,
-            horizontalAccuracyMeters: 5
-        ))
-        _ = await Self.settle(state, try state.ingestLocation(
-            monotonicMs: 1_100,
-            wallClockUnixMs: 1_700_000_001_100,
-            latitudeDegrees: 39.7001,
-            longitudeDegrees: -104.9000,
-            horizontalAccuracyMeters: 5
-        ))
-        _ = try state.stop(atMs: 1_100)
-        let rideID = try state.save().rideID
+        let rideID = try await Self.saveHistoryRide(in: state)
 
         let query = GatedRideHistoryQuery(base: state, failAfterRelease: true)
         let model = RideHistoryModel(stateProvider: { query })
@@ -862,6 +855,59 @@ final class RideHistoryModelTests: XCTestCase {
         XCTAssertEqual(model.detailProjectionVersion, replacementDetailVersion)
         XCTAssertFalse(model.routeLoading)
         XCTAssertFalse(model.detailRouteLoading)
+        XCTAssertNil(model.routeError)
+        XCTAssertNil(model.detailRouteError)
+    }
+
+    @MainActor
+    func testSameRideReloadReplacementRejectsLateDetailFailure() async throws {
+        let state = MobileRideMapState()
+        let rideID = try await Self.saveHistoryRide(in: state)
+
+        let query = GatedRideHistoryQuery(base: state, failAfterRelease: true)
+        let model = RideHistoryModel(stateProvider: { query })
+        model.setDateFilter(.allTime)
+        await Self.waitUntil("initial same-ride history load") {
+            model.selectedRideID == rideID
+                && !model.isLoading
+                && !model.routeLoading
+                && !model.detailRouteLoading
+        }
+        let originalPoints = model.displayPoints
+
+        query.armNextProjection()
+        model.reload(selecting: rideID)
+        let staleProjectionStarted = await query.waitUntilGatedProjectionStarts()
+        XCTAssertTrue(staleProjectionStarted)
+
+        model.reload(selecting: rideID)
+        await Self.waitUntil("replacement same-ride history reload") {
+            !model.isLoading
+                && !model.routeLoading
+                && !model.detailRouteLoading
+        }
+        let replacementRoutePoints = model.displayPoints
+        let replacementDetailPoints = model.detailDisplayPoints
+        let replacementVersion = model.projectionVersion
+        let replacementDetailVersion = model.detailProjectionVersion
+        XCTAssertEqual(replacementRoutePoints, originalPoints)
+        XCTAssertFalse(replacementDetailPoints.isEmpty)
+
+        query.releaseGatedProjection()
+        let staleProjectionFinished = await query.waitUntilGatedProjectionFinishes()
+        XCTAssertTrue(staleProjectionFinished)
+        for _ in 0 ..< 20 { await Task.yield() }
+
+        XCTAssertEqual(model.selectedRideID, rideID)
+        XCTAssertEqual(model.detailProjectionRideID, rideID)
+        XCTAssertEqual(model.displayPoints, replacementRoutePoints)
+        XCTAssertEqual(model.detailDisplayPoints, replacementDetailPoints)
+        XCTAssertEqual(model.projectionVersion, replacementVersion)
+        XCTAssertEqual(model.detailProjectionVersion, replacementDetailVersion)
+        XCTAssertFalse(model.isLoading)
+        XCTAssertFalse(model.routeLoading)
+        XCTAssertFalse(model.detailRouteLoading)
+        XCTAssertNil(model.error)
         XCTAssertNil(model.routeError)
         XCTAssertNil(model.detailRouteError)
     }
