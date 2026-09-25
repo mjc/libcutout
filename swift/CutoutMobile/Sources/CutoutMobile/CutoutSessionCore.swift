@@ -2,6 +2,7 @@ import CoreBluetooth
 import CoreLocation
 import CutoutMobileFFI
 import Foundation
+import Synchronization
 
 func protocolIdentityFallbackDisplayName(
     protocolFamily: DeviceDetectionProtocolFamily?
@@ -439,7 +440,7 @@ private final class WeakCutoutSessionCoreReference: @unchecked Sendable {
 public final class CutoutSessionCore: NSObject {
     public var rideSessionStateHandle: CutoutSessionStateHandle { rustSessionState }
     public var connectionSnapshot: ConnectionSnapshot { rustSessionState.connectionAttemptSnapshot() }
-    public var rideMapStateHandle: MobileRideMapState? { rideMapRecorder.stateHandle }
+    public var rideMapStateHandle: MobileRideMapState? { rideMapStateForInitialization }
     public private(set) var displayState = RideDisplayState()
     public private(set) var phase = SessionConnectionPhase.starting
     public var records: [String] { diagnosticLog.values }
@@ -451,7 +452,10 @@ public final class CutoutSessionCore: NSObject {
     }
     public private(set) var faultHistoryReadback: FaultHistoryReadback?
     public private(set) var bmsSnapshot: BmsSnapshot?
-    public private(set) var phoneLocationSnapshot = MobilePhoneLocationSnapshotDto(latestSample: nil, gpsSpeed: nil)
+    @MainActor public private(set) var phoneLocationSnapshot = MobilePhoneLocationSnapshotDto(
+        latestSample: nil, gpsSpeed: nil)
+    @MainActor private var rideMapStorageStatus: (error: MobileRideMapError?, isReady: Bool) = (nil, false)
+    private let latestPhoneLocationSample = Mutex<MobilePhoneLocationSampleDto?>(nil)
     private var storedProtocolIdentityCandidate: DevicePickerDiscoveryCandidate?
     public var protocolIdentityCandidate: DevicePickerDiscoveryCandidate? {
         onBleQueue { storedProtocolIdentityCandidate }
@@ -492,7 +496,7 @@ public final class CutoutSessionCore: NSObject {
     public var onBluetoothRestorationResolved: ((String?) -> Void)?
 
     private let clock: MonotonicClock
-    private let wallClock: () -> Date
+    private let wallClock: @Sendable () -> Date
     private var diagnosticLog = BoundedDiagnosticLog(capacity: 2_048)
     private let bleQueue = DispatchQueue(label: "io.cutout.corebluetooth")
     private let bleQueueKey = DispatchSpecificKey<Void>()
@@ -596,51 +600,71 @@ public final class CutoutSessionCore: NSObject {
             }
         )
     private let rideMapStateForInitialization: MobileRideMapState?
-    private lazy var rideMapRecorder: any CutoutSessionRideMapRecording =
-        injectedRideMapRecorder
-        ?? CutoutSessionRideMapRecorder(
-            state: rideMapStateForInitialization,
-            clock: clock,
-            wallClock: wallClock,
-            publishSnapshot: { [weak self] snapshot in
-                self?.publishRideMapSnapshot(snapshot)
-            },
-            publishDecisions: { [weak self] batch in
-                self?.publishRideMapDecisions(batch)
-            },
-            publishError: { [weak self] error, context in
-                self?.publishRideMapError(error, context: context)
-            },
-            publishAvailability: { [weak self] in
-                self?.publishRideMapAvailability()
-            },
-            recordDiagnostic: { [weak self] message in
-                self?.recordRideMapDiagnostic(message)
-            },
-            onLocationDemand: { [weak self] active in
-                self?.publishOnMain {
-                    self?.phoneLocationAdapter.updateDemand(active)
+    private lazy var rideMapRecorder: any CutoutSessionRideMapRecording = {
+        guard let injectedRideMapRecorder else {
+            let reference = WeakCutoutSessionCoreReference(self)
+            return CutoutSessionRideMapRecorder(
+                state: rideMapStateForInitialization,
+                clock: clock,
+                wallClock: wallClock,
+                publishSnapshot: { snapshot in
+                    reference.value?.publishOnMain {
+                        MainActor.assumeIsolated {
+                            reference.value?.publishRideMapSnapshot(snapshot)
+                        }
+                    }
+                },
+                publishDecisions: { batch in
+                    reference.value?.publishOnMain {
+                        MainActor.assumeIsolated {
+                            reference.value?.publishRideMapDecisions(batch)
+                        }
+                    }
+                },
+                publishError: { error, context in
+                    reference.value?.publishOnMain {
+                        MainActor.assumeIsolated {
+                            reference.value?.publishRideMapError(error, context: context)
+                        }
+                    }
+                },
+                publishAvailability: { initializationError, isReady in
+                    reference.value?.publishRideMapAvailability(
+                        initializationError: initializationError,
+                        isReady: isReady
+                    )
+                },
+                recordDiagnostic: { message in
+                    reference.value?.recordRideMapDiagnostic(message)
+                },
+                onLocationDemand: { active in
+                    Task { @MainActor in
+                        reference.value?.phoneLocationAdapter.updateDemand(active)
+                    }
                 }
-            }
-        )
-    private lazy var phoneLocationAdapter: any CutoutSessionPhoneLocationAdapting =
+            )
+        }
+        return injectedRideMapRecorder
+    }()
+    @MainActor private lazy var phoneLocationAdapter: any CutoutSessionPhoneLocationAdapting =
         injectedPhoneLocationAdapter
         ?? CutoutSessionPhoneLocationAdapter(
             clock: clock,
             wallClock: wallClock,
-            onSnapshot: { [weak self] snapshot, receivedAt in
-                guard let self else { return }
+            onSnapshot: { [reference = WeakCutoutSessionCoreReference(self)] snapshot, receivedAt in
+                guard let self = reference.value else { return }
+                self.latestPhoneLocationSample.withLock { $0 = snapshot.latestSample }
                 self.phoneLocationSnapshot = snapshot
                 self.publishPhoneLocationSnapshot(receivedAt: receivedAt)
             },
-            onLocationUpdate: { [weak self] update in
-                self?.handlePhoneLocationUpdate(update)
+            onLocationUpdate: { [reference = WeakCutoutSessionCoreReference(self)] update in
+                reference.value?.handlePhoneLocationUpdate(update)
             },
-            onAvailabilityChange: { [weak self] in
-                self?.publishRideMapAvailability()
+            onAvailabilityChange: { [reference = WeakCutoutSessionCoreReference(self)] in
+                reference.value?.publishRideMapAvailabilityOnMain()
             }
         )
-    private lazy var rideMapPresentation = CutoutSessionRideMapPresentation(
+    @MainActor private lazy var rideMapPresentation = CutoutSessionRideMapPresentation(
         onSnapshot: { [weak self] snapshot in
             self?.publishOnMain { self?.onRideMapSnapshotChange?(snapshot) }
         },
@@ -716,7 +740,7 @@ public final class CutoutSessionCore: NSObject {
             reconnectScheduler: any ConnectionReconnectScheduling = MainQueueReconnectScheduler(),
             reconnectJitter: @escaping () -> Double = { Double.random(in: 0...1) },
             selectedDeviceStore: DevicePickerSelectionStore = DevicePickerSelectionStore(),
-            wallClock: @escaping () -> Date = { Date() },
+            wallClock: @escaping @Sendable () -> Date = { Date() },
             rideMapState: MobileRideMapState? = nil,
             database: RideDatabaseHandle? = nil,
             notificationEffects: CutoutSessionNotificationEffects? = nil,
@@ -755,7 +779,7 @@ public final class CutoutSessionCore: NSObject {
         init(
             clock: MonotonicClock,
             selectedDeviceStore: DevicePickerSelectionStore = DevicePickerSelectionStore(),
-            wallClock: @escaping () -> Date = { Date() },
+            wallClock: @escaping @Sendable () -> Date = { Date() },
             rideMapState: MobileRideMapState? = nil,
             database: RideDatabaseHandle? = nil
         ) {
@@ -785,14 +809,20 @@ public final class CutoutSessionCore: NSObject {
         }
     #endif
 
+    @MainActor
     public func start() {
-        rideMapRecorder.start { [weak self] in
-            guard let self else { return }
-            self.onBleQueue {
-                self.observeRideMapConnection(at: self.clock.now())
+        // Create CLLocationManager on the app thread before Map restoration can publish
+        // availability from its storage queue.
+        phoneLocationAdapter.start()
+        let queue = bleQueue
+        let reference = WeakCutoutSessionCoreReference(self)
+        rideMapRecorder.start {
+            queue.async {
+                guard let core = reference.value else { return }
+                core.observeRideMapConnection(at: core.clock.now())
             }
         }
-        publishRideMapAvailability()
+        publishRideMapAvailabilityOnMain()
         #if DEBUG
             if let testScript {
                 publishOnMain { self.onBluetoothRestorationResolved?(nil) }
@@ -800,7 +830,6 @@ public final class CutoutSessionCore: NSObject {
                 return
             }
         #endif
-        phoneLocationAdapter.start()
         return onBleQueue {
             guard central == nil else {
                 return
@@ -1040,9 +1069,9 @@ public final class CutoutSessionCore: NSObject {
     /// The wheel has no completion readback for this action, so this reports only
     /// whether the command was accepted by the live transport.
     @discardableResult
-    public func resetTripMeterForNewRide() -> Bool {
+    public func resetTripMeterForNewRide(token: ConnectionAttemptToken) -> Bool {
         onBleQueue {
-            guard let owner = liveOwner else { return false }
+            guard let owner = liveOwner, owner.token == token else { return false }
             do {
                 _ = try owner.submitAction(.resetTripMeter, at: clock.now())
                 record("trip_meter_reset_on_new_ride=submitted")
@@ -1853,7 +1882,7 @@ public final class CutoutSessionCore: NSObject {
             rustSessionState.verifiedConnectionAttemptIsCurrent(token: token)
         else { return }
         do {
-            rideMapRecorder.beginBmsStorageSession()
+            bmsStorageSessionIdentifier = UUID().uuidString
             let owner = makeDeviceTransport(
                 token: token,
                 advertisement: advertisement,
@@ -2123,6 +2152,7 @@ public final class CutoutSessionCore: NSObject {
         publishOnMain { self.onBmsSnapshotChange?(value) }
     }
 
+    @MainActor
     private func publishPhoneLocationSnapshot(receivedAt: MonotonicMilliseconds) {
         let value = phoneLocationSnapshot
         publishOnMain { self.onPhoneLocationSnapshotChange?(value, receivedAt) }
@@ -2174,15 +2204,16 @@ public final class CutoutSessionCore: NSObject {
     private func observeRideMapConnection(at receivedAt: MonotonicMilliseconds) {
         let snapshot = connectionSnapshot
         guard let token = snapshot.token else { return }
+        let queue = bleQueue
+        let reference = WeakCutoutSessionCoreReference(self)
         rideMapRecorder.observeConnection(
             at: receivedAt,
             token: token,
-            isConnectionCurrent: { [weak self] in
-                self?.connectionSnapshot.generation == snapshot.generation
-            },
             connectionState: rustSessionState,
-            resetTripMeter: { [weak self] in
-                self?.resetTripMeterForNewRide() ?? false
+            resetTripMeter: { token in
+                queue.async {
+                    reference.value?.resetTripMeterForNewRide(token: token)
+                }
             }
         )
     }
@@ -2191,10 +2222,12 @@ public final class CutoutSessionCore: NSObject {
         rideMapRecorder.persistBmsSamples(
             observations,
             deviceIdentity: protocolIdentityCandidate?.platformIdentifier
-                ?? peripheral?.identifier.uuidString
+                ?? peripheral?.identifier.uuidString,
+            sessionIdentifier: bmsStorageSessionIdentifier
         )
     }
 
+    @MainActor
     private func publishRideMapDecisions(_ batch: RideMapDecisionBatch) {
         let snapshot = batch.snapshot ?? rideMapPresentation.latestSnapshot
         for decision in batch.decisions {
@@ -2211,10 +2244,12 @@ public final class CutoutSessionCore: NSObject {
         }
     }
 
+    @MainActor
     private func publishRideMapSnapshot(_ snapshot: MobileRideMapSnapshotDto) {
         rideMapPresentation.publishSnapshot(snapshot)
     }
 
+    @MainActor
     private func publishRideMapError(
         _ error: MobileRideMapError,
         context: MobileRideMapErrorContext
@@ -2223,11 +2258,24 @@ public final class CutoutSessionCore: NSObject {
         rideMapPresentation.publishError(event)
     }
 
-    private func publishRideMapAvailability() {
+    private func publishRideMapAvailability(
+        initializationError: MobileRideMapError?,
+        isReady: Bool
+    ) {
+        let reference = WeakCutoutSessionCoreReference(self)
+        Task { @MainActor in
+            guard let core = reference.value else { return }
+            core.rideMapStorageStatus = (initializationError, isReady)
+            core.publishRideMapAvailabilityOnMain()
+        }
+    }
+
+    @MainActor
+    private func publishRideMapAvailabilityOnMain() {
         let availability: MobileRideMapAvailability
-        if rideMapRecorder.initializationError != nil {
+        if rideMapStorageStatus.error != nil {
             availability = .storageUnavailable
-        } else if rideMapRecorder.isReady == false {
+        } else if !rideMapStorageStatus.isReady {
             availability = .checking
         } else if !CLLocationManager.locationServicesEnabled() {
             availability = .servicesDisabled
@@ -2285,7 +2333,7 @@ public final class CutoutSessionCore: NSObject {
                 )
                 return false
             }
-            let location = phoneLocationAdapter.latestSample
+            let location = latestPhoneLocationSample.withLock { $0 }
             let outcome = captureRecorder.recordNotification(
                 characteristic: channel,
                 service: serviceUuid,
@@ -3617,17 +3665,18 @@ extension CutoutSessionCore {
     }
 }
 
-extension CutoutSessionCore: CLLocationManagerDelegate {
+extension CutoutSessionCore {
+    @MainActor
     public func updateRideLocationDemand(for state: MobileRideMapStateDto) {
-        publishOnMain {
-            self.phoneLocationAdapter.updateDemand(state == .active)
-        }
+        phoneLocationAdapter.updateDemand(state == .active)
     }
 
+    @MainActor
     public func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         phoneLocationAdapter.locationManagerDidChangeAuthorization(manager)
     }
 
+    @MainActor
     public func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         phoneLocationAdapter.locationManager(
             manager,
@@ -3639,31 +3688,32 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
         rideMapRecorder.ingestLocation(update)
     }
 
-    public func startRideMapGpsOnly(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
-        try rideMapRecorder.startGpsOnly(atMs: atMs)
+    public func startRideMapGpsOnly(atMs: UInt64) async throws -> MobileRideMapSnapshotDto {
+        try await rideMapRecorder.startGpsOnly(atMs: atMs)
     }
 
-    public func pauseRideMap(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
-        try rideMapRecorder.pause(atMs: atMs)
+    public func pauseRideMap(atMs: UInt64) async throws -> MobileRideMapSnapshotDto {
+        try await rideMapRecorder.pause(atMs: atMs)
     }
 
-    public func resumeRideMap(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
-        try rideMapRecorder.resume(atMs: atMs)
+    public func resumeRideMap(atMs: UInt64) async throws -> MobileRideMapSnapshotDto {
+        try await rideMapRecorder.resume(atMs: atMs)
     }
 
-    public func stopRideMap(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
-        try rideMapRecorder.stop(atMs: atMs)
+    public func stopRideMap(atMs: UInt64) async throws -> MobileRideMapSnapshotDto {
+        try await rideMapRecorder.stop(atMs: atMs)
     }
 
-    public func saveRideMap() throws -> MobileRideMapSnapshotDto {
-        try rideMapRecorder.save()
+    public func saveRideMap() async throws -> MobileRideMapSnapshotDto {
+        try await rideMapRecorder.save()
     }
 
-    public func discardRideMap() throws -> MobileRideMapSnapshotDto {
-        try rideMapRecorder.discard()
+    public func discardRideMap() async throws -> MobileRideMapSnapshotDto {
+        try await rideMapRecorder.discard()
     }
 
     /// Clears the Rust-owned location context before starting a new capture.
+    @MainActor
     public func resetRideMapLocationAdmission() {
         phoneLocationAdapter.clear()
     }
@@ -3715,11 +3765,11 @@ extension CBCharacteristic {
     }
 }
 
-struct MonotonicClock {
-    private let source: () -> MonotonicMilliseconds
+struct MonotonicClock: Sendable {
+    private let source: @Sendable () -> MonotonicMilliseconds
 
     init(
-        now: @escaping () -> MonotonicMilliseconds = {
+        now: @escaping @Sendable () -> MonotonicMilliseconds = {
             MonotonicMilliseconds(UInt64(ProcessInfo.processInfo.systemUptime * 1_000))
         }
     ) {

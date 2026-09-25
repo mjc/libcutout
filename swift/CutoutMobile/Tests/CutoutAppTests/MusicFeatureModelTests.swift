@@ -781,6 +781,24 @@ private struct HistoricalRideQuery: RideHistoryQuerying {
         func submitDeviceAction(token: ConnectionAttemptToken, id: DeviceActionID) throws {}
         func now() -> MonotonicMilliseconds { MonotonicMilliseconds(0) }
         func updateRideLocationDemand(for state: MobileRideMapStateDto) {}
+        func startRideMapGpsOnly(atMs: UInt64) async throws -> MobileRideMapSnapshotDto {
+            throw MobileRideMapError.storageError("ride map unavailable")
+        }
+        func pauseRideMap(atMs: UInt64) async throws -> MobileRideMapSnapshotDto {
+            throw MobileRideMapError.storageError("ride map unavailable")
+        }
+        func resumeRideMap(atMs: UInt64) async throws -> MobileRideMapSnapshotDto {
+            throw MobileRideMapError.storageError("ride map unavailable")
+        }
+        func stopRideMap(atMs: UInt64) async throws -> MobileRideMapSnapshotDto {
+            throw MobileRideMapError.storageError("ride map unavailable")
+        }
+        func saveRideMap() async throws -> MobileRideMapSnapshotDto {
+            throw MobileRideMapError.storageError("ride map unavailable")
+        }
+        func discardRideMap() async throws -> MobileRideMapSnapshotDto {
+            throw MobileRideMapError.storageError("ride map unavailable")
+        }
     }
 
     @MainActor

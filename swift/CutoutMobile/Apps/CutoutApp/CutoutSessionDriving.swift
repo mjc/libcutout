@@ -5,6 +5,7 @@ import CutoutMobileFFI
 protocol CutoutSessionDriving: AnyObject {
     var onPhoneAlarmActionsAvailable: ((MobilePhoneAlarmActionsDto) -> Void)? { get set }
     var rideSessionStateHandle: CutoutSessionStateHandle { get }
+    var connectionSnapshot: ConnectionSnapshot { get }
     /// The Rust-backed map adapter is optional while persistence is unavailable.
     var rideMapStateHandle: MobileRideMapState? { get }
     var onDisplayStateChange: ((RideDisplayState) -> Void)? { get set }
@@ -44,21 +45,25 @@ protocol CutoutSessionDriving: AnyObject {
     func setDeviceControlsValidation(token: ConnectionAttemptToken, authorized: Bool) throws
     func now() -> MonotonicMilliseconds
     @discardableResult
-    func resetTripMeterForNewRide() -> Bool
+    func resetTripMeterForNewRide(token: ConnectionAttemptToken) -> Bool
 
     func resetRideMapLocationAdmission()
     func updateRideLocationDemand(for state: MobileRideMapStateDto)
-    func startRideMapGpsOnly(atMs: UInt64) throws -> MobileRideMapSnapshotDto
-    func pauseRideMap(atMs: UInt64) throws -> MobileRideMapSnapshotDto
-    func resumeRideMap(atMs: UInt64) throws -> MobileRideMapSnapshotDto
-    func stopRideMap(atMs: UInt64) throws -> MobileRideMapSnapshotDto
-    func saveRideMap() throws -> MobileRideMapSnapshotDto
-    func discardRideMap() throws -> MobileRideMapSnapshotDto
+    func startRideMapGpsOnly(atMs: UInt64) async throws -> MobileRideMapSnapshotDto
+    func pauseRideMap(atMs: UInt64) async throws -> MobileRideMapSnapshotDto
+    func resumeRideMap(atMs: UInt64) async throws -> MobileRideMapSnapshotDto
+    func stopRideMap(atMs: UInt64) async throws -> MobileRideMapSnapshotDto
+    func saveRideMap() async throws -> MobileRideMapSnapshotDto
+    func discardRideMap() async throws -> MobileRideMapSnapshotDto
 }
 
 extension CutoutSessionCore: CutoutSessionDriving {}
 
 extension CutoutSessionDriving {
+    var connectionSnapshot: ConnectionSnapshot {
+        rideSessionStateHandle.connectionAttemptSnapshot()
+    }
+
     var onPhoneAlarmActionsAvailable: ((MobilePhoneAlarmActionsDto) -> Void)? {
         get { nil }
         set {}
@@ -72,7 +77,7 @@ extension CutoutSessionDriving {
     var rideMapStateHandle: MobileRideMapState? { nil }
 
     @discardableResult
-    func resetTripMeterForNewRide() -> Bool { false }
+    func resetTripMeterForNewRide(token: ConnectionAttemptToken) -> Bool { false }
 
     var rideMapStorageError: String? {
         guard let state = rideMapStateHandle else { return "Rust ride database is unavailable" }
@@ -86,36 +91,5 @@ extension CutoutSessionDriving {
         return state.isReady ? .ready : .checking
     }
 
-    private func requireRideMapState() throws -> MobileRideMapState {
-        guard let state = rideMapStateHandle else {
-            throw MobileRideMapError.storageError("Rust ride database is unavailable")
-        }
-        return state
-    }
-
     func resetRideMapLocationAdmission() {}
-
-    func startRideMapGpsOnly(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
-        try requireRideMapState().startGpsOnly(atMs: atMs)
-    }
-
-    func pauseRideMap(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
-        try requireRideMapState().pause(atMs: atMs)
-    }
-
-    func resumeRideMap(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
-        try requireRideMapState().resume(atMs: atMs)
-    }
-
-    func stopRideMap(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
-        try requireRideMapState().stop(atMs: atMs)
-    }
-
-    func saveRideMap() throws -> MobileRideMapSnapshotDto {
-        try requireRideMapState().save()
-    }
-
-    func discardRideMap() throws -> MobileRideMapSnapshotDto {
-        try requireRideMapState().discard()
-    }
 }

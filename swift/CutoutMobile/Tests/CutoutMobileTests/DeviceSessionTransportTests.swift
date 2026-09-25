@@ -1,5 +1,6 @@
 import CutoutMobileFFI
 import Foundation
+import Synchronization
 import XCTest
 
 @testable import CutoutMobile
@@ -96,13 +97,13 @@ final class DeviceSessionTransportTests: XCTestCase {
 
     func testQueuedSettingExpiresAtActualFlushWithoutWriting() throws {
         try queue.sync {
-            var now: UInt64 = 100
+            let now = Mutex<UInt64>(100)
             let (state, transport, sink) = try makeReadyTransport(
-                writeLimit: 64, clock: MonotonicClock(now: { MonotonicMilliseconds(now) }))
+                writeLimit: 64, clock: MonotonicClock(now: { MonotonicMilliseconds(now.withLock { $0 }) }))
             defer { transport.invalidate() }
             sink.dispositions = [.queued]
             _ = try transport.submitSetting(.displayBrightness, value: .number(value: 10), at: MonotonicMilliseconds(3))
-            now = 2_003
+            now.withLock { $0 = 2_003 }
             transport.handlePeripheralIsReadyToSendWithoutResponse()
             XCTAssertTrue(sink.submittedWrites.isEmpty)
             XCTAssertEqual(state.settings().setting(for: .displayBrightness)?.transport, .cancelled)
@@ -145,15 +146,15 @@ final class DeviceSessionTransportTests: XCTestCase {
 
     func testBackpressureDoesNotSuspendSubmittedSettingTimeout() throws {
         try queue.sync {
-            var now: UInt64 = 100
+            let now = Mutex<UInt64>(100)
             let (state, transport, sink) = try makeReadyTransport(
-                writeLimit: 64, clock: MonotonicClock(now: { MonotonicMilliseconds(now) }))
+                writeLimit: 64, clock: MonotonicClock(now: { MonotonicMilliseconds(now.withLock { $0 }) }))
             defer { transport.invalidate() }
             _ = try transport.submitSetting(.displayBrightness, value: .number(value: 10), at: MonotonicMilliseconds(3))
             XCTAssertEqual(state.settings().setting(for: .displayBrightness)?.transport, .submitted)
             let writes = sink.writes
             sink.canSend = false
-            now = 2_100
+            now.withLock { $0 = 2_100 }
             transport.handleTimer()
             XCTAssertEqual(state.settings().setting(for: .displayBrightness)?.status, .timedOut)
             XCTAssertEqual(sink.writes, writes)

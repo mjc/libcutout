@@ -2,12 +2,13 @@ import CoreLocation
 import CutoutMobileFFI
 import Foundation
 
-struct PhoneLocationUpdate {
+struct PhoneLocationUpdate: Sendable {
     let receiptMonotonic: MonotonicMilliseconds
     let receiptWallClock: Date
     let samples: [MobilePhoneLocationSampleDto]
 }
 
+@MainActor
 protocol CutoutSessionPhoneLocationAdapting: AnyObject {
     var latestSample: MobilePhoneLocationSampleDto? { get }
     var authorizationStatus: CLAuthorizationStatus { get }
@@ -19,12 +20,13 @@ protocol CutoutSessionPhoneLocationAdapting: AnyObject {
 }
 
 /// Owns Core Location lifetime and phone-sample admission. Ride-map persistence remains in Core.
-final class CutoutSessionPhoneLocationAdapter: NSObject, CLLocationManagerDelegate, CutoutSessionPhoneLocationAdapting {
+@MainActor
+final class CutoutSessionPhoneLocationAdapter: NSObject, CutoutSessionPhoneLocationAdapting {
     private let clock: MonotonicClock
     private let wallClock: () -> Date
-    private let onSnapshot: (MobilePhoneLocationSnapshotDto, MonotonicMilliseconds) -> Void
-    private let onLocationUpdate: (PhoneLocationUpdate) -> Void
-    private let onAvailabilityChange: () -> Void
+    private let onSnapshot: @MainActor (MobilePhoneLocationSnapshotDto, MonotonicMilliseconds) -> Void
+    private let onLocationUpdate: @MainActor (PhoneLocationUpdate) -> Void
+    private let onAvailabilityChange: @MainActor () -> Void
     private var locationUpdatesDemanded = false
     private var locationManagerUpdatesStarted = false
     private var didRequestWhenInUseAuthorization = false
@@ -49,9 +51,9 @@ final class CutoutSessionPhoneLocationAdapter: NSObject, CLLocationManagerDelega
     init(
         clock: MonotonicClock,
         wallClock: @escaping () -> Date,
-        onSnapshot: @escaping (MobilePhoneLocationSnapshotDto, MonotonicMilliseconds) -> Void,
-        onLocationUpdate: @escaping (PhoneLocationUpdate) -> Void,
-        onAvailabilityChange: @escaping () -> Void
+        onSnapshot: @escaping @MainActor (MobilePhoneLocationSnapshotDto, MonotonicMilliseconds) -> Void,
+        onLocationUpdate: @escaping @MainActor (PhoneLocationUpdate) -> Void,
+        onAvailabilityChange: @escaping @MainActor () -> Void
     ) {
         self.clock = clock
         self.wallClock = wallClock
@@ -101,12 +103,20 @@ final class CutoutSessionPhoneLocationAdapter: NSObject, CLLocationManagerDelega
         }
     }
 
-    func locationManagerDidChangeAuthorization(_: CLLocationManager) {
-        onAvailabilityChange()
-        updateDemand(locationUpdatesDemanded)
+    nonisolated func locationManagerDidChangeAuthorization(_: CLLocationManager) {
+        MainActor.assumeIsolated {
+            onAvailabilityChange()
+            updateDemand(locationUpdatesDemanded)
+        }
     }
 
-    func locationManager(_: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+    nonisolated func locationManager(_: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        MainActor.assumeIsolated {
+            receiveLocations(locations)
+        }
+    }
+
+    private func receiveLocations(_ locations: [CLLocation]) {
         guard !locations.isEmpty else { return }
 
         let receiptMonotonic = clock.now()
@@ -131,6 +141,8 @@ final class CutoutSessionPhoneLocationAdapter: NSObject, CLLocationManagerDelega
         locationManagerUpdatesStarted = false
     }
 }
+
+extension CutoutSessionPhoneLocationAdapter: CLLocationManagerDelegate {}
 
 extension MobilePhoneLocationSampleDto {
     fileprivate init?(location: CLLocation) {

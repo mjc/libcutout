@@ -1,5 +1,6 @@
 import CoreLocation
 import CutoutMobileFFI
+import Synchronization
 import XCTest
 
 @testable import CutoutMobile
@@ -180,12 +181,12 @@ final class CutoutSessionCoreTests: XCTestCase {
     }
 
     func testMonotonicClockUsesItsInjectedUptimeSource() {
-        var now = MonotonicMilliseconds(100)
-        let clock = MonotonicClock(now: { now })
+        let now = Mutex<MonotonicMilliseconds>(MonotonicMilliseconds(100))
+        let clock = MonotonicClock(now: { now.withLock { $0 } })
 
         XCTAssertEqual(clock.now(), MonotonicMilliseconds(100))
 
-        now = MonotonicMilliseconds(250)
+        now.withLock { $0 = MonotonicMilliseconds(250) }
         XCTAssertEqual(clock.now(), MonotonicMilliseconds(250))
     }
 
@@ -200,6 +201,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         )
     }
 
+    @MainActor
     func testPhoneLocationReadbackTracksAValidSampleWithoutAnActiveRide() {
         let core = CutoutSessionCore()
         let location = CLLocation(
@@ -220,6 +222,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(core.phoneLocationSnapshot.latestSample?.longitudeDegrees, -104.9903)
     }
 
+    @MainActor
     func testAuthorizationChangePublishesRideMapAvailabilityWithoutLocationDemand() {
         let core = CutoutSessionCore()
         var publications = 0
@@ -228,6 +231,29 @@ final class CutoutSessionCoreTests: XCTestCase {
         core.locationManagerDidChangeAuthorization(CLLocationManager())
 
         XCTAssertEqual(publications, 1)
+    }
+
+    @MainActor
+    func testAuthorizationRefreshPreservesRustStorageFailure() async {
+        let unavailable = expectation(description: "Rust storage failure is published")
+        let core = CutoutSessionCore(
+            rideMapState: MobileRideMapState(storageUnavailable: "map database unavailable")
+        )
+        var lastAvailability: MobileRideMapAvailability?
+        var observedStorageFailure = false
+        core.onRideMapAvailabilityChange = { availability in
+            lastAvailability = availability
+            if availability == .storageUnavailable && !observedStorageFailure {
+                observedStorageFailure = true
+                unavailable.fulfill()
+            }
+        }
+
+        core.start()
+        await fulfillment(of: [unavailable], timeout: 2)
+
+        core.locationManagerDidChangeAuthorization(CLLocationManager())
+        XCTAssertEqual(lastAvailability, .storageUnavailable)
     }
 
     private static func location(timestamp: Date, latitude: CLLocationDegrees) -> CLLocation {
@@ -307,16 +333,16 @@ final class CutoutSessionCoreTests: XCTestCase {
     }
 
     func testCaptureElapsedTimeUsesTheInjectedMonotonicClockAtExactBoundaries() {
-        var now = MonotonicMilliseconds(2_999)
-        let core = CutoutSessionCore(clock: MonotonicClock { now })
+        let now = Mutex<MonotonicMilliseconds>(MonotonicMilliseconds(2_999))
+        let core = CutoutSessionCore(clock: MonotonicClock { now.withLock { $0 } })
         let startedAt = MonotonicMilliseconds(1_000)
 
         XCTAssertEqual(core.captureElapsedMilliseconds(since: startedAt), 1_999)
 
-        now = MonotonicMilliseconds(3_000)
+        now.withLock { $0 = MonotonicMilliseconds(3_000) }
         XCTAssertEqual(core.captureElapsedMilliseconds(since: startedAt), 2_000)
 
-        now = MonotonicMilliseconds(3_001)
+        now.withLock { $0 = MonotonicMilliseconds(3_001) }
         XCTAssertEqual(core.captureElapsedMilliseconds(since: startedAt), 2_001)
     }
 
@@ -451,6 +477,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertFalse(core.pair(platformIdentifier: "ios-local-missing"))
     }
 
+    @MainActor
     func testScriptedProbeTimeoutFailsWithoutPublishingLive() {
         let failed = expectation(description: "probe timeout is published")
         let live = expectation(description: "probe timeout never publishes live")
@@ -483,6 +510,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertNil(core.displayState.speed.millimetersPerSecond)
     }
 
+    @MainActor
     func testScriptedSessionUsesTheCorePublicationPath() {
         let live = expectation(description: "scripted session reaches live")
         let core = CutoutSessionCore(
@@ -508,6 +536,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(core.displayState.speed.millimetersPerSecond, 8_000)
     }
 
+    @MainActor
     func testLiveScriptRetainsItsPickerRowAfterPublishingIdentity() {
         let live = expectation(description: "scripted session reaches live")
         let core = CutoutSessionCore(
@@ -530,6 +559,7 @@ final class CutoutSessionCoreTests: XCTestCase {
     }
 
     #if DEBUG
+        @MainActor
         func testScriptedControlsUseProtocolEvidenceAndFenceReplacementRequests() throws {
             let live = expectation(description: "generic session reaches live twice")
             live.expectedFulfillmentCount = 2
@@ -560,6 +590,7 @@ final class CutoutSessionCoreTests: XCTestCase {
             let first = try XCTUnwrap(oldToken)
             let current = try XCTUnwrap(newToken)
             XCTAssertNotEqual(first.generation, current.generation)
+            XCTAssertFalse(core.resetTripMeterForNewRide(token: first))
             let before = core.settings
             XCTAssertThrowsError(
                 try core.submitDeviceSetting(token: first, id: .highBeam, value: .boolean(value: true))
@@ -583,6 +614,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         }
     #endif
 
+    @MainActor
     func testScriptedBluetoothUnavailableSessionPublishesNoPickerRows() {
         assertScriptedInitialBluetoothState(
             .unavailable,
@@ -591,6 +623,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         )
     }
 
+    @MainActor
     func testScriptedBluetoothPermissionDeniedSessionPublishesNoPickerRows() {
         assertScriptedInitialBluetoothState(
             .permissionDenied,
@@ -599,6 +632,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         )
     }
 
+    @MainActor
     private func assertScriptedInitialBluetoothState(
         _ initialBluetoothState: CutoutSessionTestInitialBluetoothState,
         phase expectedPhase: SessionConnectionPhase,
@@ -625,6 +659,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(core.scanState, expectedScanState)
     }
 
+    @MainActor
     func testExplicitDisconnectCancelsTheScriptedLateLiveCallback() {
         let live = expectation(description: "late scripted callback is ignored")
         live.isInverted = true
@@ -651,6 +686,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertNil(core.displayState.speed.millimetersPerSecond)
     }
 
+    @MainActor
     func testScriptedLiveConnectionStartsRideMapAndPublishesSnapshot() throws {
         let live = expectation(description: "scripted session reaches live")
         let rideStarted = expectation(description: "ride-map recording starts")
@@ -690,6 +726,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(core.rideMapStateHandle?.currentSnapshot()?.state, .active)
     }
 
+    @MainActor
     func testProductionLocationPathPublishesAcceptedRideMapPoint() throws {
         let live = expectation(description: "scripted session reaches live")
         let recording = expectation(description: "durable recording accepts locations")
@@ -744,6 +781,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         wait(for: [pointAccepted], timeout: 2)
     }
 
+    @MainActor
     func testScriptedSessionPublishesReconnectAndReturnsLive() {
         let retry = expectation(description: "scripted session schedules reconnect")
         let live = expectation(description: "scripted session returns live")
@@ -821,6 +859,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertTrue(core.isRecordOnlyConnection)
     }
 
+    @MainActor
     func testTransportTerminationPreservesVerifiedWheelIdentityAcrossRetries() {
         let scheduler = RecordingReconnectScheduler()
         let core = CutoutSessionCore(
@@ -852,6 +891,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertNil(core.electricUnicycleModel)
     }
 
+    @MainActor
     func testTransportTerminationUsesTheSharedReconnectTransition() {
         let scheduler = RecordingReconnectScheduler()
         let retry = expectation(description: "transport termination schedules retry")
@@ -928,6 +968,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(core.connectionSnapshot.readiness, .disconnected)
     }
 
+    @MainActor
     func testBluetoothStateChangesClearPickerCancelReconnectAndRestoreScanning() {
         let scheduler = RecordingReconnectScheduler()
         var reconnectCount = 0
@@ -969,6 +1010,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(scanCount, 1)
     }
 
+    @MainActor
     func testTransportTerminationExhaustionCannotRunAnOlderReconnect() {
         let scheduler = RecordingReconnectScheduler()
         var reconnectCount = 0
@@ -2672,21 +2714,21 @@ final class CutoutSessionCoreTests: XCTestCase {
     }
 
     func testBegodeProbeResponsesExpireOnlyAfterMonotonicDeadline() {
-        var now = MonotonicMilliseconds(1_000)
-        let core = CutoutSessionCore(clock: MonotonicClock(now: { now }))
+        let now = Mutex<MonotonicMilliseconds>(MonotonicMilliseconds(1_000))
+        let core = CutoutSessionCore(clock: MonotonicClock(now: { now.withLock { $0 } }))
         let channel = BluetoothUuid.bluetooth16(0xffe1)
 
         core.observeDetectionProbeWrite(channel: channel, bytes: Data("N".utf8))
 
-        now = MonotonicMilliseconds(2_999)
+        now.withLock { $0 = MonotonicMilliseconds(2_999) }
         core.expireOutstandingBegodeProbeResponses()
         XCTAssertFalse(core.records.contains("begode_probe_missing=model"))
 
-        now = MonotonicMilliseconds(3_000)
+        now.withLock { $0 = MonotonicMilliseconds(3_000) }
         core.expireOutstandingBegodeProbeResponses()
         XCTAssertFalse(core.records.contains("begode_probe_missing=model"))
 
-        now = MonotonicMilliseconds(3_001)
+        now.withLock { $0 = MonotonicMilliseconds(3_001) }
         core.expireOutstandingBegodeProbeResponses()
         XCTAssertTrue(core.records.contains("begode_probe_missing=model"))
     }
@@ -2703,8 +2745,8 @@ final class CutoutSessionCoreTests: XCTestCase {
     }
 
     func testAnsweredBegodeProbeDoesNotHideOtherMissingResponses() {
-        var now = MonotonicMilliseconds(1_000)
-        let core = CutoutSessionCore(clock: MonotonicClock(now: { now }))
+        let now = Mutex<MonotonicMilliseconds>(MonotonicMilliseconds(1_000))
+        let core = CutoutSessionCore(clock: MonotonicClock(now: { now.withLock { $0 } }))
         let channel = BluetoothUuid.bluetooth16(0xffe1)
 
         core.observeDetectionProbeWrite(channel: channel, bytes: Data("N".utf8))
@@ -2712,7 +2754,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         core.observeDetectionProbeWrite(channel: channel, bytes: Data("M".utf8))
         core.observeDetectionNotification(channel: channel, bytes: Data("NAME=Falcon".utf8))
 
-        now = MonotonicMilliseconds(3_003)
+        now.withLock { $0 = MonotonicMilliseconds(3_003) }
         core.expireOutstandingBegodeProbeResponses()
 
         XCTAssertFalse(core.records.contains("begode_probe_missing=model"))
@@ -3367,6 +3409,7 @@ final class CutoutSessionCoreTests: XCTestCase {
             symbolName: "circle.hexagongrid.circle"
         )
     }
+    @MainActor
     func testCoreLocationSentinelsBecomeTypedAbsenceBeforeForwarding() throws {
         let location = CLLocation(
             coordinate: CLLocationCoordinate2D(latitude: 39.7392, longitude: -104.9903),
@@ -3531,11 +3574,16 @@ private func dutyCycle(_ permille: Int16) -> DutyCycle {
     DutyCycle(permille: permille)
 }
 
-private final class TestMonotonicClock {
-    var now: MonotonicMilliseconds
+private final class TestMonotonicClock: Sendable {
+    private let storage: Mutex<MonotonicMilliseconds>
+
+    var now: MonotonicMilliseconds {
+        get { storage.withLock { $0 } }
+        set { storage.withLock { $0 = newValue } }
+    }
 
     init(_ now: MonotonicMilliseconds) {
-        self.now = now
+        storage = Mutex(now)
     }
 }
 

@@ -128,12 +128,12 @@ struct RideMapRouteView: View {
             mapPosition: $presentation.liveMapPosition,
             isApplyingCamera: $presentation.liveIsApplyingCamera,
             followsLatestPoint: $presentation.followsLatestPoint,
-            pause: { _ = model.pauseRideMap() },
-            resume: { _ = model.resumeRideMap() },
-            save: { _ = model.saveRideMap() },
-            stop: { _ = model.stopRideMap() },
-            start: { _ = model.startGpsOnlyRide() },
-            discard: { _ = model.discardRideMap() }
+            pause: { Task { _ = await model.pauseRideMap() } },
+            resume: { Task { _ = await model.resumeRideMap() } },
+            save: { Task { _ = await model.saveRideMap() } },
+            stop: { Task { _ = await model.stopRideMap() } },
+            start: { Task { _ = await model.startGpsOnlyRide() } },
+            discard: { Task { _ = await model.discardRideMap() } }
         )
     }
 

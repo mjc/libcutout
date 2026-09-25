@@ -1,6 +1,7 @@
 import Foundation
 
 enum LiveValidatorInvocation {
+    @MainActor
     static func run(
         arguments: [String],
         environment: [String: String],

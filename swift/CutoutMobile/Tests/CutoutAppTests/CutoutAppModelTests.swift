@@ -183,7 +183,7 @@ final class CutoutAppModelTests: XCTestCase {
     #endif
 
     @MainActor
-    func testMusicHistoryDefaultIsAppliedToEachNewRide() throws {
+    func testMusicHistoryDefaultIsAppliedToEachNewRide() async throws {
         for policy in [MobileMusicHistoryPolicyDto.opaqueItem, .humanReadable] {
             let suiteName = "CutoutAppMusicHistoryNewRide-\(UUID().uuidString)"
             let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
@@ -197,7 +197,8 @@ final class CutoutAppModelTests: XCTestCase {
 
             XCTAssertTrue(model.music.setHistoryPolicy(policy))
             XCTAssertEqual(policyStore.policy, policy)
-            XCTAssertTrue(model.startGpsOnlyRide())
+            let started = await model.startGpsOnlyRide()
+            XCTAssertTrue(started)
             XCTAssertEqual(model.music.historyPolicy, policy)
             XCTAssertEqual(driver.rideMapState.currentMusicHistoryPolicy(), policy)
         }
@@ -447,11 +448,12 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testRideMapCommandFailureRemainsVisibleAsTheTypedRustError() {
+    func testRideMapCommandFailureRemainsVisibleAsTheTypedRustError() async {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)
 
-        XCTAssertFalse(model.pauseRideMap())
+        let paused = await model.pauseRideMap()
+        XCTAssertFalse(paused)
         XCTAssertEqual(model.rideMapError, .noActiveRide)
         XCTAssertEqual(model.rideMapLiveError, .noActiveRide)
         XCTAssertNil(model.rideHistory.error)
@@ -470,7 +472,8 @@ final class CutoutAppModelTests: XCTestCase {
                 core: driver,
                 rideHistoryQueryProvider: { query }
             )
-            XCTAssertTrue(model.startGpsOnlyRide())
+            let started = await model.startGpsOnlyRide()
+            XCTAssertTrue(started)
             XCTAssertTrue(model.music.setHistoryPolicy(.humanReadable))
             _ = await Self.settle(
                 driver.rideMapState,
@@ -514,8 +517,10 @@ final class CutoutAppModelTests: XCTestCase {
                 ))
             let rideID = try XCTUnwrap(model.rideMapSnapshot?.rideID)
             XCTAssertFalse(driver.rideMapState.currentMusicEvents().isEmpty)
-            XCTAssertTrue(model.stopRideMap())
-            XCTAssertTrue(model.saveRideMap())
+            let stopped = await model.stopRideMap()
+            let saved = await model.saveRideMap()
+            XCTAssertTrue(stopped)
+            XCTAssertTrue(saved)
             XCTAssertFalse(try driver.rideMapState.storedMusicHistory(rideID: rideID).events.isEmpty)
             await Self.waitUntil("music-history route before gated viewport") {
                 model.rideHistory.selectedRideID == rideID
@@ -587,41 +592,47 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testRideMapLifecycleControlsUpdateRecordingState() {
+    func testRideMapLifecycleControlsUpdateRecordingState() async {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)
 
         XCTAssertFalse(model.isRideMapRecording)
-        XCTAssertTrue(model.startGpsOnlyRide())
-        XCTAssertEqual(driver.tripMeterResetCount, 1)
+        let started = await model.startGpsOnlyRide()
+        XCTAssertTrue(started)
+        XCTAssertEqual(driver.tripMeterResetCount, 0)
         XCTAssertEqual(driver.resetRideMapLocationAdmissionCount, 1)
         XCTAssertTrue(model.isRideMapRecording)
         XCTAssertEqual(driver.rideLocationDemandStates, [.active])
-        XCTAssertTrue(model.pauseRideMap())
+        let paused = await model.pauseRideMap()
+        XCTAssertTrue(paused)
         XCTAssertFalse(model.isRideMapRecording)
         XCTAssertTrue(model.isRideMapPaused)
         XCTAssertEqual(driver.rideLocationDemandStates, [.active, .paused])
-        XCTAssertTrue(model.resumeRideMap())
+        let resumed = await model.resumeRideMap()
+        XCTAssertTrue(resumed)
         XCTAssertEqual(driver.rideLocationDemandStates, [.active, .paused, .active])
-        XCTAssertTrue(model.stopRideMap())
+        let stopped = await model.stopRideMap()
+        XCTAssertTrue(stopped)
         XCTAssertFalse(model.isRideMapRecording)
         XCTAssertFalse(model.isRideMapPaused)
         XCTAssertEqual(driver.rideLocationDemandStates.last, .stopped)
     }
 
     @MainActor
-    func testRejectedRideMapStartDoesNotResetLocationAdmission() {
+    func testRejectedRideMapStartDoesNotResetLocationAdmission() async {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)
 
-        XCTAssertTrue(model.startGpsOnlyRide())
+        let started = await model.startGpsOnlyRide()
+        XCTAssertTrue(started)
         XCTAssertEqual(driver.resetRideMapLocationAdmissionCount, 1)
 
-        XCTAssertFalse(model.startGpsOnlyRide())
+        let restarted = await model.startGpsOnlyRide()
+        XCTAssertFalse(restarted)
         XCTAssertEqual(
             driver.tripMeterResetCount,
-            1,
-            "a rejected start must not reset the device trip meter"
+            0,
+            "GPS-only rides without a verified BLE attempt must not reset the device trip meter"
         )
         XCTAssertEqual(
             driver.resetRideMapLocationAdmissionCount,
@@ -3438,7 +3449,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     }
 
     @discardableResult
-    func resetTripMeterForNewRide() -> Bool {
+    func resetTripMeterForNewRide(token: ConnectionAttemptToken) -> Bool {
         tripMeterResetCount += 1
         return true
     }
@@ -3449,6 +3460,30 @@ private final class SessionDriverSpy: CutoutSessionDriving {
 
     func updateRideLocationDemand(for state: MobileRideMapStateDto) {
         rideLocationDemandStates.append(state)
+    }
+
+    func startRideMapGpsOnly(atMs: UInt64) async throws -> MobileRideMapSnapshotDto {
+        try rideMapState.startGpsOnly(atMs: atMs)
+    }
+
+    func pauseRideMap(atMs: UInt64) async throws -> MobileRideMapSnapshotDto {
+        try rideMapState.pause(atMs: atMs)
+    }
+
+    func resumeRideMap(atMs: UInt64) async throws -> MobileRideMapSnapshotDto {
+        try rideMapState.resume(atMs: atMs)
+    }
+
+    func stopRideMap(atMs: UInt64) async throws -> MobileRideMapSnapshotDto {
+        try rideMapState.stop(atMs: atMs)
+    }
+
+    func saveRideMap() async throws -> MobileRideMapSnapshotDto {
+        try rideMapState.save()
+    }
+
+    func discardRideMap() async throws -> MobileRideMapSnapshotDto {
+        try rideMapState.discard()
     }
 
     func submitDeviceSetting(token: ConnectionAttemptToken, id: DeviceSettingID, value: DeviceSettingValue) throws {

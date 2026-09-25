@@ -2,6 +2,7 @@ import XCTest
 
 @testable import CutoutMobileLiveValidator
 
+@MainActor
 final class LiveValidatorInvocationTests: XCTestCase {
     func testSettingsSweepIsRejectedBeforeConstructingTransport() {
         var starts = 0
