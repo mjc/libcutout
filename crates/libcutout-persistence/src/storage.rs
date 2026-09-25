@@ -88,6 +88,7 @@ struct PreviousRidePoint {
 }
 
 const MAX_STORED_TEXT_CHARS: usize = 512;
+const MAX_VERIFIED_CONNECTION_LIFECYCLE_MUTATIONS: usize = 3;
 /// Origin of a canonical ride record.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RideSource {
@@ -1452,6 +1453,17 @@ pub enum StorageError {
     /// The bounded command queue is full.
     #[error("ride database command queue is full")]
     QueueFull,
+    /// A verified-connection admission plan exceeded its lifecycle mutation limit.
+    #[error("verified-connection admission has {actual} lifecycle mutations; maximum is {maximum}")]
+    TooManyConnectionAdmissionMutations {
+        /// Number of submitted lifecycle mutations.
+        actual: usize,
+        /// Maximum supported mutation count.
+        maximum: usize,
+    },
+    /// A verified-connection admission plan has an inconsistent created-ride target.
+    #[error("invalid verified-connection admission plan")]
+    InvalidConnectionAdmissionPlan,
     /// The worker stopped before accepting a command.
     #[error("ride database worker stopped")]
     WorkerStopped,
@@ -1535,11 +1547,69 @@ pub struct PendingBmsVoltageWrite {
     consumed: bool,
 }
 
-/// Verified connection history and selected-device policy, ordered as one database command.
-#[must_use = "poll or wait for the verified connection policy result"]
+/// Lifecycle mutation included in an ordered verified-connection admission.
+#[derive(Clone, Debug)]
+pub enum VerifiedConnectionLifecycleMutation {
+    /// Applies one timestamped transition to an existing ride.
+    Transition {
+        /// Ride being transitioned.
+        ride_id: RideId,
+        /// Requested lifecycle event.
+        event: RideEvent,
+        /// Wall-clock event timestamp.
+        occurred_at_ms: u64,
+        /// Monotonic event timestamp, when available.
+        monotonic_at_ms: Option<u64>,
+    },
+    /// Creates and starts a new live ride.
+    StartLive {
+        /// Wall-clock creation timestamp.
+        created_at_ms: u64,
+        /// Monotonic creation timestamp.
+        monotonic_created_at_ms: u64,
+        /// Candidate vehicle identity for the new ride.
+        candidate_vehicle: Option<String>,
+    },
+}
+
+/// Ride targeted by verified-connection metadata in the same transaction.
+#[derive(Clone, Copy, Debug)]
+pub enum VerifiedConnectionRideTarget {
+    /// An existing ride.
+    Existing(RideId),
+    /// The live ride created by this admission's lifecycle plan.
+    Created,
+}
+
+/// Complete metadata snapshot written with verified-connection admission.
+#[derive(Clone, Debug)]
+pub struct VerifiedConnectionRideMetadata {
+    /// Existing ride or ride created by the automatic lifecycle plan.
+    pub target: VerifiedConnectionRideTarget,
+    /// Candidate vehicle identity, or `None` to clear it.
+    pub candidate_vehicle: Option<String>,
+    /// Associated vehicle identity, or `None` to clear it.
+    pub associated_vehicle: Option<String>,
+    /// Monotonic association timestamp.
+    pub associated_at_ms: Option<u64>,
+    /// Monotonic last-telemetry timestamp.
+    pub last_telemetry_at_ms: Option<u64>,
+}
+
+/// Durable result of one ordered verified-connection admission.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct VerifiedConnectionAdmissionOutcome {
+    /// Whether the verified identity matched the currently selected device.
+    pub selected_device_matches: bool,
+    /// Ride created by the automatic lifecycle plan, if any.
+    pub created_ride_id: Option<RideId>,
+}
+
+/// Verified connection admission accepted by the bounded worker but not necessarily committed.
+#[must_use = "poll or wait for the verified connection admission result"]
 #[derive(Debug)]
-pub struct PendingVerifiedConnectionPolicy {
-    response: Receiver<Result<bool, StorageError>>,
+pub struct PendingVerifiedConnectionAdmission {
+    response: Receiver<Result<VerifiedConnectionAdmissionOutcome, StorageError>>,
     consumed: bool,
 }
 
@@ -2044,12 +2114,14 @@ impl PendingBmsVoltageWrite {
     }
 }
 
-impl PendingVerifiedConnectionPolicy {
-    /// Returns the policy result when the worker completes this command.
+impl PendingVerifiedConnectionAdmission {
+    /// Returns the admission result when the worker completes this command.
     ///
     /// `None` means that the command is still queued or executing. A terminal result is returned
     /// at most once.
-    pub fn try_result(&mut self) -> Option<Result<bool, StorageError>> {
+    pub fn try_result(
+        &mut self,
+    ) -> Option<Result<VerifiedConnectionAdmissionOutcome, StorageError>> {
         if self.consumed {
             return None;
         }
@@ -2066,7 +2138,7 @@ impl PendingVerifiedConnectionPolicy {
         }
     }
 
-    /// Waits for the ordered connection policy result.
+    /// Waits for the ordered connection admission result.
     ///
     /// Platform callbacks should use [`Self::try_result`] rather than waiting.
     ///
@@ -2074,7 +2146,7 @@ impl PendingVerifiedConnectionPolicy {
     ///
     /// Returns [`StorageError::ResponseDropped`] when the worker exits before replying, or the
     /// storage error produced by the command.
-    pub fn wait_result(self) -> Result<bool, StorageError> {
+    pub fn wait_result(self) -> Result<VerifiedConnectionAdmissionOutcome, StorageError> {
         self.response
             .recv()
             .map_err(|_| StorageError::ResponseDropped)?
@@ -2321,31 +2393,88 @@ impl RideDatabase {
         })
     }
 
-    /// Queues verified-device history and selected-device policy lookup as one worker command.
+    /// Queues verified-device history, policy, lifecycle, and metadata as one worker transaction.
     ///
     /// The command is ordered with every other operation on the existing bounded database
-    /// worker. It remembers the verified identity before reporting whether that identity is the
-    /// currently selected device, without waiting for SQLite completion.
+    /// worker. It always remembers the verified identity and applies ride metadata; the automatic
+    /// lifecycle plan runs only when the identity matches the currently selected device. The
+    /// method returns after bounded enqueue and does not wait for SQLite completion.
     ///
     /// # Errors
     ///
     /// Returns [`StorageError::QueueFull`] when the bounded queue is saturated,
     /// [`StorageError::WorkerStopped`] when the worker is unavailable, or a validation error for
     /// an invalid platform identifier.
-    pub fn queue_verified_connection_policy(
+    pub fn queue_verified_connection_admission(
         &self,
         platform_identifier: &str,
         updated_at_ms: u64,
-    ) -> Result<PendingVerifiedConnectionPolicy, StorageError> {
+        mut lifecycle_mutations: Vec<VerifiedConnectionLifecycleMutation>,
+        metadata: Option<VerifiedConnectionRideMetadata>,
+    ) -> Result<PendingVerifiedConnectionAdmission, StorageError> {
+        if lifecycle_mutations.len() > MAX_VERIFIED_CONNECTION_LIFECYCLE_MUTATIONS {
+            return Err(StorageError::TooManyConnectionAdmissionMutations {
+                actual: lifecycle_mutations.len(),
+                maximum: MAX_VERIFIED_CONNECTION_LIFECYCLE_MUTATIONS,
+            });
+        }
+        let start_count = lifecycle_mutations
+            .iter()
+            .filter(|mutation| match mutation {
+                VerifiedConnectionLifecycleMutation::Transition { .. } => false,
+                VerifiedConnectionLifecycleMutation::StartLive { .. } => true,
+            })
+            .count();
+        if start_count > 1
+            || (metadata
+                .as_ref()
+                .is_some_and(|metadata| match metadata.target {
+                    VerifiedConnectionRideTarget::Existing(_) => false,
+                    VerifiedConnectionRideTarget::Created => true,
+                })
+                && start_count != 1)
+        {
+            return Err(StorageError::InvalidConnectionAdmissionPlan);
+        }
         let platform_identifier =
             normalize_stored_text(platform_identifier, "platform identifier")?;
+        for mutation in &mut lifecycle_mutations {
+            if let VerifiedConnectionLifecycleMutation::StartLive {
+                candidate_vehicle, ..
+            } = mutation
+            {
+                *candidate_vehicle = normalize_optional_stored_text(
+                    candidate_vehicle.as_deref(),
+                    "candidate vehicle",
+                )?;
+            }
+        }
+        let metadata = metadata
+            .map(|metadata| -> Result<_, StorageError> {
+                Ok(VerifiedConnectionRideMetadata {
+                    target: metadata.target,
+                    candidate_vehicle: normalize_optional_stored_text(
+                        metadata.candidate_vehicle.as_deref(),
+                        "candidate vehicle",
+                    )?,
+                    associated_vehicle: normalize_optional_stored_text(
+                        metadata.associated_vehicle.as_deref(),
+                        "associated vehicle",
+                    )?,
+                    associated_at_ms: metadata.associated_at_ms,
+                    last_telemetry_at_ms: metadata.last_telemetry_at_ms,
+                })
+            })
+            .transpose()?;
         let (reply, response) = response_channel();
-        self.enqueue(Command::VerifiedConnectionPolicy {
+        self.enqueue(Command::VerifiedConnectionAdmission {
             platform_identifier,
             updated_at_ms,
+            lifecycle_mutations,
+            metadata,
             reply,
         })?;
-        Ok(PendingVerifiedConnectionPolicy {
+        Ok(PendingVerifiedConnectionAdmission {
             response,
             consumed: false,
         })
@@ -3859,10 +3988,12 @@ enum Command {
         updated_at_ms: u64,
         reply: Reply<()>,
     },
-    VerifiedConnectionPolicy {
+    VerifiedConnectionAdmission {
         platform_identifier: String,
         updated_at_ms: u64,
-        reply: Reply<bool>,
+        lifecycle_mutations: Vec<VerifiedConnectionLifecycleMutation>,
+        metadata: Option<VerifiedConnectionRideMetadata>,
+        reply: Reply<VerifiedConnectionAdmissionOutcome>,
     },
     LastConnectedDevice {
         reply: Reply<Option<String>>,
@@ -5729,6 +5860,79 @@ fn remember_last_connected_device(
         ],
     )?;
     Ok(())
+}
+
+fn apply_verified_connection_admission(
+    connection: &mut Connection,
+    platform_identifier: &str,
+    updated_at_ms: u64,
+    lifecycle_mutations: &[VerifiedConnectionLifecycleMutation],
+    metadata: Option<&VerifiedConnectionRideMetadata>,
+) -> Result<VerifiedConnectionAdmissionOutcome, StorageError> {
+    let transaction = connection.transaction()?;
+    remember_last_connected_device(&transaction, platform_identifier, updated_at_ms)?;
+    let selected_device_matches =
+        selected_device(&transaction)?.as_deref() == Some(platform_identifier);
+    let mut created_ride_id = None;
+
+    if selected_device_matches {
+        for mutation in lifecycle_mutations {
+            match mutation {
+                VerifiedConnectionLifecycleMutation::Transition {
+                    ride_id,
+                    event,
+                    occurred_at_ms,
+                    monotonic_at_ms,
+                } => {
+                    transition_ride(
+                        &transaction,
+                        *ride_id,
+                        *event,
+                        *occurred_at_ms,
+                        *monotonic_at_ms,
+                    )?;
+                }
+                VerifiedConnectionLifecycleMutation::StartLive {
+                    created_at_ms,
+                    monotonic_created_at_ms,
+                    candidate_vehicle,
+                } => {
+                    if created_ride_id.is_some() {
+                        return Err(StorageError::InvalidConnectionAdmissionPlan);
+                    }
+                    created_ride_id = Some(create_started_live_ride_in_transaction(
+                        &transaction,
+                        *created_at_ms,
+                        *monotonic_created_at_ms,
+                        candidate_vehicle.as_deref(),
+                    )?);
+                }
+            }
+        }
+    }
+
+    if let Some(metadata) = metadata {
+        let ride_id = match metadata.target {
+            VerifiedConnectionRideTarget::Existing(ride_id) => Some(ride_id),
+            VerifiedConnectionRideTarget::Created => created_ride_id,
+        };
+        if let Some(ride_id) = ride_id {
+            update_ride_map_metadata(
+                &transaction,
+                ride_id,
+                metadata.candidate_vehicle.as_deref(),
+                metadata.associated_vehicle.as_deref(),
+                metadata.associated_at_ms,
+                metadata.last_telemetry_at_ms,
+            )?;
+        }
+    }
+
+    transaction.commit()?;
+    Ok(VerifiedConnectionAdmissionOutcome {
+        selected_device_matches,
+        created_ride_id,
+    })
 }
 
 fn last_connected_device(connection: &Connection) -> Result<Option<String>, StorageError> {

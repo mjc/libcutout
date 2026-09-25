@@ -5425,6 +5425,9 @@ pub enum MobileRideDatabaseError {
     /// The bounded Rust worker queue is full.
     #[error("ride database queue is full")]
     QueueFull,
+    /// A verified-connection lifecycle plan was malformed or exceeded its supported bounds.
+    #[error("invalid verified connection admission plan")]
+    InvalidConnectionAdmissionPlan,
     /// A BMS voltage batch exceeded the supported sample count.
     #[error("BMS voltage batch is too large")]
     BmsBatchTooLarge,
@@ -5502,6 +5505,10 @@ fn map_ride_database_error(error: persistence::StorageError) -> MobileRideDataba
         persistence::StorageError::Transition(_) => MobileRideDatabaseError::InvalidTransition,
         persistence::StorageError::InvalidRideState(_) => MobileRideDatabaseError::InvalidRideState,
         persistence::StorageError::QueueFull => MobileRideDatabaseError::QueueFull,
+        persistence::StorageError::TooManyConnectionAdmissionMutations { .. }
+        | persistence::StorageError::InvalidConnectionAdmissionPlan => {
+            MobileRideDatabaseError::InvalidConnectionAdmissionPlan
+        }
         persistence::StorageError::WorkerStopped
         | persistence::StorageError::ResponseDropped
         | persistence::StorageError::WorkerStart(_)

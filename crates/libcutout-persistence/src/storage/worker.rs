@@ -1,10 +1,10 @@
 use super::{
     Command, SegmentStartReasonInput, SpatialSchemaState, abort_pevcap_import, append_location,
-    append_location_with_result, append_pevcap_location_batch, append_trail_segment, backup,
-    begin_pevcap_import, clear_last_connected_device, clear_ride_session_marker,
-    clear_selected_device, create_map_point, create_ride, create_started_live_ride,
-    create_started_ride, create_trail, delete_music_history, device_name, export_ride_json,
-    find_ride, finish_pevcap_import, integrity_check, last_connected_device,
+    append_location_with_result, append_pevcap_location_batch, append_trail_segment,
+    apply_verified_connection_admission, backup, begin_pevcap_import, clear_last_connected_device,
+    clear_ride_session_marker, clear_selected_device, create_map_point, create_ride,
+    create_started_live_ride, create_started_ride, create_trail, delete_music_history, device_name,
+    export_ride_json, find_ride, finish_pevcap_import, integrity_check, last_connected_device,
     list_ride_history_vehicle_options, list_rides, load_summary, load_summary_with_duration,
     map_points_in_bounds, migrate_device_name, music_events, music_history, music_history_policy,
     music_history_state, newest_recoverable_ride, pevcap_import_receipt, phone_alarm_preferences,
@@ -268,18 +268,20 @@ impl DatabaseWorker<'_> {
                     updated_at_ms,
                 ));
             }
-            Command::VerifiedConnectionPolicy {
+            Command::VerifiedConnectionAdmission {
                 platform_identifier,
                 updated_at_ms,
+                lifecycle_mutations,
+                metadata,
                 reply,
             } => {
-                let result =
-                    remember_last_connected_device(connection, &platform_identifier, updated_at_ms)
-                        .and_then(|()| {
-                            selected_device(connection).map(|selected| {
-                                selected.as_deref() == Some(platform_identifier.as_str())
-                            })
-                        });
+                let result = apply_verified_connection_admission(
+                    connection,
+                    &platform_identifier,
+                    updated_at_ms,
+                    &lifecycle_mutations,
+                    metadata.as_ref(),
+                );
                 let _ = reply.send(result);
             }
             Command::LastConnectedDevice { reply } => {

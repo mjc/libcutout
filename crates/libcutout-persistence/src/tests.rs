@@ -23,7 +23,8 @@ use super::{
     BmsVoltageSampleRecord, GeoBounds, HistoryContextBudget, PevcapImportOutcome,
     PevcapImportPreview, PevcapImportWarning, PhoneAlarmPreferencesRecord, QueryLimit,
     RideDatabase, RideHistoryQuery, RideId, RideRecord, RideSource, RouteProjectionCancellation,
-    StorageError, VoltageSagModelRecord, normalize_device_display_name,
+    StorageError, VerifiedConnectionLifecycleMutation, VerifiedConnectionRideMetadata,
+    VerifiedConnectionRideTarget, VoltageSagModelRecord, normalize_device_display_name,
 };
 
 static TEST_LOCK: Mutex<()> = Mutex::new(());
@@ -3753,15 +3754,16 @@ fn queued_bms_samples_do_not_wait_for_a_busy_sqlite_worker() {
 }
 
 #[test]
-fn verified_connection_policy_request_does_not_wait_for_sqlite() {
+fn verified_connection_admission_is_compound_and_does_not_wait_for_sqlite() {
     let _guard = test_guard();
     let path = std::env::temp_dir().join(format!(
         "libcutout-persistence-verified-connection-{}.sqlite",
         uuid::Uuid::new_v4()
     ));
     let database = RideDatabase::open(&path).unwrap();
-    let ride = database.create_ride(RideSource::Live, 1_000).unwrap();
-    database.transition(ride, RideEvent::Start).unwrap();
+    let ride = database
+        .create_started_live_ride(1_000, 100, Some("wheel-a"))
+        .unwrap();
     database
         .remember_selected_device("wheel-a", None, 1_000)
         .unwrap();
@@ -3790,15 +3792,133 @@ fn verified_connection_policy_request_does_not_wait_for_sqlite() {
         .expect("location write reaches the deliberate worker gate");
 
     let mut pending = database
-        .queue_verified_connection_policy("wheel-a", 2_000)
+        .queue_verified_connection_admission(
+            "wheel-a",
+            2_000,
+            vec![
+                VerifiedConnectionLifecycleMutation::Transition {
+                    ride_id: ride,
+                    event: RideEvent::Stop,
+                    occurred_at_ms: 2_000,
+                    monotonic_at_ms: Some(200),
+                },
+                VerifiedConnectionLifecycleMutation::Transition {
+                    ride_id: ride,
+                    event: RideEvent::Save,
+                    occurred_at_ms: 2_001,
+                    monotonic_at_ms: Some(201),
+                },
+            ],
+            Some(VerifiedConnectionRideMetadata {
+                target: VerifiedConnectionRideTarget::Existing(ride),
+                candidate_vehicle: Some("wheel-a".to_owned()),
+                associated_vehicle: Some("wheel-a".to_owned()),
+                associated_at_ms: Some(200),
+                last_telemetry_at_ms: None,
+            }),
+        )
         .expect("verified connection command enters the existing bounded worker");
     assert!(pending.try_result().is_none());
 
     release_sender.send(()).unwrap();
-    assert!(pending.wait_result().unwrap());
+    let outcome = pending.wait_result().unwrap();
+    assert!(outcome.selected_device_matches);
+    assert_eq!(outcome.created_ride_id, None);
     assert_eq!(
         database.last_connected_device().unwrap().as_deref(),
         Some("wheel-a")
+    );
+    let saved = database.find_ride(ride).unwrap().unwrap();
+    assert_eq!(saved.state(), RideLifecycleState::Saved);
+    assert_eq!(saved.associated_vehicle(), Some("wheel-a"));
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn verified_connection_admission_rolls_back_lifecycle_and_history_together() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-verified-connection-rollback-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    database
+        .remember_selected_device("wheel-a", None, 1_000)
+        .unwrap();
+    let ride = database
+        .create_started_live_ride(1_000, 100, Some("wheel-a"))
+        .unwrap();
+
+    let pending = database
+        .queue_verified_connection_admission(
+            "wheel-a",
+            2_000,
+            vec![VerifiedConnectionLifecycleMutation::Transition {
+                ride_id: ride,
+                event: RideEvent::Stop,
+                occurred_at_ms: 2_000,
+                monotonic_at_ms: Some(200),
+            }],
+            Some(VerifiedConnectionRideMetadata {
+                target: VerifiedConnectionRideTarget::Existing(RideId::new()),
+                candidate_vehicle: Some("wheel-a".to_owned()),
+                associated_vehicle: Some("wheel-a".to_owned()),
+                associated_at_ms: Some(200),
+                last_telemetry_at_ms: None,
+            }),
+        )
+        .unwrap();
+
+    assert!(matches!(pending.wait_result(), Err(StorageError::NotFound)));
+    assert_eq!(
+        database.find_ride(ride).unwrap().unwrap().state(),
+        RideLifecycleState::Active
+    );
+    assert_eq!(database.last_connected_device().unwrap(), None);
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn unselected_verified_connection_skips_automatic_lifecycle_mutations() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-unselected-connection-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    database
+        .remember_selected_device("wheel-a", None, 1_000)
+        .unwrap();
+
+    let outcome = database
+        .queue_verified_connection_admission(
+            "wheel-b",
+            2_000,
+            vec![VerifiedConnectionLifecycleMutation::StartLive {
+                created_at_ms: 2_000,
+                monotonic_created_at_ms: 200,
+                candidate_vehicle: Some("wheel-b".to_owned()),
+            }],
+            None,
+        )
+        .unwrap()
+        .wait_result()
+        .unwrap();
+
+    assert!(!outcome.selected_device_matches);
+    assert_eq!(outcome.created_ride_id, None);
+    assert!(
+        database
+            .list_rides(None, QueryLimit::new(10).unwrap())
+            .unwrap()
+            .rides()
+            .is_empty()
+    );
+    assert_eq!(
+        database.last_connected_device().unwrap().as_deref(),
+        Some("wheel-b")
     );
     database.shutdown().unwrap();
     let _ = std::fs::remove_file(path);
