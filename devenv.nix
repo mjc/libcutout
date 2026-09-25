@@ -30,6 +30,9 @@ let
       includeNDK = true;
       ndkVersion = "29.0.14206865";
     }).ndk-bundle;
+  androidNdkRoot = "${androidNdk}/libexec/android-sdk/ndk-bundle";
+  androidNdkHost = if pkgs.stdenv.isDarwin then "darwin-x86_64" else "linux-x86_64";
+  androidArm64Clang = "${androidNdkRoot}/toolchains/llvm/prebuilt/${androidNdkHost}/bin/aarch64-linux-android21-clang";
   cutoutCargoFuzz = pkgs.writeShellScriptBin "cutout-cargo-fuzz" ''
     export PATH="${nightlyRust}/bin:${pkgs.cargo-fuzz}/bin:$PATH"
     exec cargo fuzz "$@"
@@ -66,7 +69,8 @@ in
     pkgs.valgrind
   ];
 
-  env.ANDROID_NDK_ROOT = "${androidNdk}/libexec/android-sdk/ndk-bundle";
+  env.ANDROID_NDK_ROOT = androidNdkRoot;
+  env.CC_aarch64_linux_android = androidArm64Clang;
   env.JNA_JAR = "${pkgs.jna}/share/java/jna.jar";
   env.KOTLIN_COROUTINES_JAR = "${pkgs.kotlin}/lib/kotlinx-coroutines-core-jvm.jar";
 
@@ -116,6 +120,9 @@ in
   tasks."check:android-camera-protocols".exec =
     "cargo check --locked -p cutout-protocols --target aarch64-linux-android";
 
+  tasks."check:android-camera-ffi".exec =
+    "cargo check --locked -p cutout-mobile-ffi --target aarch64-linux-android";
+
   tasks."test:rust-lint-policy".exec = "bash tests/fixtures/macro-policy/run.sh";
 
   tasks."project:quality-gate" = {
@@ -126,6 +133,7 @@ in
       "project:tests"
       "project:dependency-policy"
       "check:android-camera-protocols"
+      "check:android-camera-ffi"
     ]
     ++ lib.optionals pkgs.stdenv.isDarwin [
       "build:ios-ui-tests"
