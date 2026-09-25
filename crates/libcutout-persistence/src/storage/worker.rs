@@ -273,6 +273,7 @@ impl DatabaseWorker<'_> {
                 updated_at_ms,
                 lifecycle_mutations,
                 metadata,
+                unselected_metadata,
                 reply,
             } => {
                 let result = apply_verified_connection_admission(
@@ -281,6 +282,7 @@ impl DatabaseWorker<'_> {
                     updated_at_ms,
                     &lifecycle_mutations,
                     metadata.as_ref(),
+                    unselected_metadata.as_ref(),
                 );
                 let _ = reply.send(result);
             }

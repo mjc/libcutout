@@ -5,6 +5,15 @@ struct RideMapDecisionBatch: Sendable {
     let outcomes: [MobileRideMapOutcomeDto]
 }
 
+private struct PendingRideMapConnectionAdmission {
+    let admission: MobileRideMapConnectionAdmission
+    let previousRideID: String?
+    let atMs: UInt64
+    let token: ConnectionAttemptToken
+    let connectionState: CutoutSessionStateHandle
+    let resetTripMeter: @Sendable (ConnectionAttemptToken) -> Void
+}
+
 protocol CutoutSessionRideMapRecording: AnyObject {
     func start(replayConnection: @escaping @Sendable () -> Void)
     func persistBmsSamples(
@@ -40,6 +49,7 @@ actor CutoutSessionRideMapRecorder: CutoutSessionRideMapRecording {
     private let recordDiagnostic: @Sendable (String) -> Void
     private let onLocationDemand: @Sendable (Bool) -> Void
     private var writePoller: DispatchSourceTimer?
+    private var pendingConnectionAdmissions: [PendingRideMapConnectionAdmission] = []
     private var restorationStarted = false
     nonisolated var unownedExecutor: UnownedSerialExecutor {
         queue.asUnownedSerialExecutor()
@@ -131,19 +141,21 @@ actor CutoutSessionRideMapRecorder: CutoutSessionRideMapRecording {
                 do {
                     let previousRideID = recorder.state?.currentSnapshot(atMs: receivedAt.rawValue)?.rideID
                     guard let state = recorder.state else { return }
-                    let snapshot = try state.ensureRecordingForVerifiedConnection(
+                    let admission = try state.beginVerifiedConnectionAdmission(
                         connectionState: connectionState,
                         token: token,
                         atMs: receivedAt.rawValue
                     )
-                    if snapshot?.rideID != previousRideID {
-                        resetTripMeter(token)
-                    }
-                    _ = try state.observeTelemetry(atMs: receivedAt.rawValue)
-                    if let snapshot = state.currentSnapshot(atMs: receivedAt.rawValue) {
-                        recorder.publishSnapshot(snapshot)
-                    }
-                    recorder.synchronizeLocationDemand()
+                    recorder.pendingConnectionAdmissions.append(
+                        PendingRideMapConnectionAdmission(
+                            admission: admission,
+                            previousRideID: previousRideID,
+                            atMs: receivedAt.rawValue,
+                            token: token,
+                            connectionState: connectionState,
+                            resetTripMeter: resetTripMeter
+                        )
+                    )
                 } catch let error as MobileRideMapError where error == .staleConnection {
                     return
                 } catch let error as MobileRideMapError {
@@ -231,11 +243,51 @@ actor CutoutSessionRideMapRecorder: CutoutSessionRideMapRecording {
         )
         timer.setEventHandler { [weak self] in
             self?.assumeIsolated { recorder in
+                recorder.drainConnectionAdmissions()
                 recorder.drainLocationWrites()
             }
         }
         writePoller = timer
         timer.resume()
+    }
+
+    private func drainConnectionAdmissions() {
+        guard let state else { return }
+        var remaining = [PendingRideMapConnectionAdmission]()
+        remaining.reserveCapacity(pendingConnectionAdmissions.count)
+        for pending in pendingConnectionAdmissions {
+            do {
+                switch try state.pollVerifiedConnectionAdmission(pending.admission) {
+                case .pending:
+                    remaining.append(pending)
+                case let .completed(admissionSnapshot):
+                    let connectionIsCurrent = pending.connectionState
+                        .verifiedConnectionAttemptIsCurrent(token: pending.token)
+                    if connectionIsCurrent,
+                        admissionSnapshot?.rideID != pending.previousRideID
+                    {
+                        pending.resetTripMeter(pending.token)
+                    }
+                    if connectionIsCurrent {
+                        _ = try state.observeTelemetry(atMs: pending.atMs)
+                    }
+                    if let snapshot = state.currentSnapshot(atMs: pending.atMs) ?? admissionSnapshot {
+                        publishSnapshot(snapshot)
+                    }
+                    synchronizeLocationDemand()
+                }
+            } catch let error as MobileRideMapError where error == .staleConnection {
+                continue
+            } catch let error as MobileRideMapError {
+                let snapshot = state.currentSnapshot(atMs: pending.atMs)
+                if let snapshot { publishSnapshot(snapshot) }
+                publishError(error, MobileRideMapErrorContext(snapshot: snapshot))
+                recordDiagnostic("ride_map_connection_error=\(error)")
+            } catch {
+                recordDiagnostic("ride_map_connection_error=\(error)")
+            }
+        }
+        pendingConnectionAdmissions = remaining
     }
 
     private func startRestoration(replayConnection: @escaping @Sendable () -> Void) {

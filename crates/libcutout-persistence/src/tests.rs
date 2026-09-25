@@ -3816,6 +3816,7 @@ fn verified_connection_admission_is_compound_and_does_not_wait_for_sqlite() {
                 associated_at_ms: Some(200),
                 last_telemetry_at_ms: None,
             }),
+            None,
         )
         .expect("verified connection command enters the existing bounded worker");
     assert!(pending.try_result().is_none());
@@ -3867,6 +3868,7 @@ fn verified_connection_admission_rolls_back_lifecycle_and_history_together() {
                 associated_at_ms: Some(200),
                 last_telemetry_at_ms: None,
             }),
+            None,
         )
         .unwrap();
 
@@ -3902,6 +3904,7 @@ fn unselected_verified_connection_skips_automatic_lifecycle_mutations() {
                 candidate_vehicle: Some("wheel-b".to_owned()),
             }],
             None,
+            None,
         )
         .unwrap()
         .wait_result()
@@ -3922,6 +3925,64 @@ fn unselected_verified_connection_skips_automatic_lifecycle_mutations() {
     );
     database.shutdown().unwrap();
     let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn unselected_verified_connection_uses_its_metadata_branch_without_starting_a_ride() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-unselected-metadata-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    database
+        .remember_selected_device("wheel-a", None, 1_000)
+        .unwrap();
+    let existing_ride = database
+        .create_started_live_ride(1_000, 100, Some("wheel-a"))
+        .unwrap();
+
+    let outcome = database
+        .queue_verified_connection_admission(
+            "wheel-b",
+            2_000,
+            vec![VerifiedConnectionLifecycleMutation::StartLive {
+                created_at_ms: 2_000,
+                monotonic_created_at_ms: 200,
+                candidate_vehicle: Some("wheel-b".to_owned()),
+            }],
+            Some(VerifiedConnectionRideMetadata {
+                target: VerifiedConnectionRideTarget::Created,
+                candidate_vehicle: Some("wheel-b".to_owned()),
+                associated_vehicle: Some("wheel-b".to_owned()),
+                associated_at_ms: Some(200),
+                last_telemetry_at_ms: None,
+            }),
+            Some(VerifiedConnectionRideMetadata {
+                target: VerifiedConnectionRideTarget::Existing(existing_ride),
+                candidate_vehicle: Some("wheel-b".to_owned()),
+                associated_vehicle: Some("wheel-b".to_owned()),
+                associated_at_ms: Some(200),
+                last_telemetry_at_ms: None,
+            }),
+        )
+        .unwrap()
+        .wait_result()
+        .unwrap();
+
+    assert!(!outcome.selected_device_matches);
+    assert_eq!(outcome.created_ride_id, None);
+    let existing = database.find_ride(existing_ride).unwrap().unwrap();
+    assert_eq!(existing.state(), RideLifecycleState::Active);
+    assert_eq!(existing.associated_vehicle(), Some("wheel-b"));
+    assert_eq!(
+        database
+            .list_rides(None, QueryLimit::new(10).unwrap())
+            .unwrap()
+            .rides()
+            .len(),
+        1
+    );
 }
 
 #[test]

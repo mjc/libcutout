@@ -381,6 +381,24 @@ final class RideMapStateTests: XCTestCase {
         return decision
     }
 
+    private func settleAdmission(
+        _ state: MobileRideMapState,
+        _ admission: MobileRideMapConnectionAdmission
+    ) async throws -> MobileRideMapSnapshotDto? {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(10))
+        while clock.now < deadline, !Task.isCancelled {
+            switch try state.pollVerifiedConnectionAdmission(admission) {
+            case .pending:
+                try? await Task.sleep(for: .milliseconds(1))
+            case let .completed(snapshot):
+                return snapshot
+            }
+        }
+        XCTFail("timed out waiting for verified ride-map admission")
+        return nil
+    }
+
     func testStorageUnavailableStateCannotCreateAnInMemoryRide() {
         let state = MobileRideMapState(storageUnavailable: "database unavailable")
 
@@ -494,12 +512,15 @@ final class RideMapStateTests: XCTestCase {
         _ = connectionState.connectionLinkEstablished(token: token)
         _ = connectionState.observeConnectionNotification(token: token, bytes: Data(vescReply))
         _ = connectionState.resolveDeviceSession(token: token, identificationComplete: true, nowMs: 200)
-        XCTAssertNil(
-            try state.ensureRecordingForVerifiedConnection(
+        let initialAdmission = try await settleAdmission(
+            state,
+            try state.beginVerifiedConnectionAdmission(
                 connectionState: connectionState,
                 token: token,
                 atMs: 200
-            ))
+            )
+        )
+        XCTAssertNil(initialAdmission)
         _ = try state.startGpsOnly(atMs: 100)
         XCTAssertEqual(
             state.currentSnapshot(atMs: 1_100)?.summary.durationMilliseconds,
@@ -514,11 +535,13 @@ final class RideMapStateTests: XCTestCase {
                 longitudeDegrees: -104.9903,
                 horizontalAccuracyMeters: 4
             ))
-        _ = try state.ensureRecordingForVerifiedConnection(
-            connectionState: connectionState,
-            token: token,
-            atMs: 200
-        )
+        _ = try await settleAdmission(
+            state,
+            try state.beginVerifiedConnectionAdmission(
+                connectionState: connectionState,
+                token: token,
+                atMs: 200
+            ))
 
         guard case let .accepted(point) = decision else {
             return XCTFail("expected the location to be admitted")

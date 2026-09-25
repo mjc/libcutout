@@ -36,7 +36,8 @@ use std::{
 
 use persistence::{
     CaptureMetadata, CaptureWriteOutcome, CaptureWriter, CaptureWriterMonitor, CaptureWriterStatus,
-    SavedCaptureArtifact,
+    SavedCaptureArtifact, VerifiedConnectionLifecycleMutation, VerifiedConnectionRideMetadata,
+    VerifiedConnectionRideTarget,
 };
 
 use cutout_core::{
@@ -4625,6 +4626,9 @@ pub enum MobileRideMapCoreErrorDto {
     /// The connection attempt is no longer the current verified attempt.
     #[error("stale verified connection attempt")]
     StaleConnection,
+    /// A verified-connection admission is awaiting its ordered database outcome.
+    #[error("verified connection admission is pending")]
+    AdmissionPending,
     /// The route display budget, viewport, or privacy policy is invalid.
     #[error("invalid route projection")]
     InvalidRouteProjection,
@@ -4779,6 +4783,17 @@ pub struct MobileRideMapCoreSnapshotDto {
     pub associated_vehicle: Option<String>,
     /// Whether canonical start/end annotations are meaningful for this lifecycle state.
     pub recorded_bounds_available: bool,
+}
+
+/// Nonblocking result of polling a verified connection admission.
+#[derive(Clone, Debug, PartialEq, uniffi::Enum)]
+pub enum MobileRideMapAdmissionPollDto {
+    /// SQLite has not completed the ordered admission transaction.
+    Pending,
+    /// The admission is terminal; a snapshot is absent when no ride is open.
+    Completed {
+        snapshot: Option<MobileRideMapCoreSnapshotDto>,
+    },
 }
 
 /// Result of associating a connected vehicle with the active recording.
@@ -7488,6 +7503,76 @@ pub struct MobileRideMapCore {
     inner: Mutex<MobileRideMapCoreInner>,
 }
 
+#[derive(Debug)]
+enum MobileRideMapAdmissionState {
+    Pending(PendingVerifiedMapAdmission),
+    Completed(Result<Option<MobileRideMapCoreSnapshotDto>, MobileRideMapCoreErrorDto>),
+}
+
+/// Pollable completion for one verified connection admission.
+#[derive(Debug, uniffi::Object)]
+pub struct MobileRideMapConnectionAdmission {
+    core: Arc<MobileRideMapCore>,
+    state: Mutex<MobileRideMapAdmissionState>,
+}
+
+impl MobileRideMapConnectionAdmission {
+    pub(crate) fn new(
+        core: Arc<MobileRideMapCore>,
+        pending: PendingVerifiedMapAdmission,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            core,
+            state: Mutex::new(MobileRideMapAdmissionState::Pending(pending)),
+        })
+    }
+}
+
+#[uniffi::export]
+impl MobileRideMapConnectionAdmission {
+    /// Returns immediately with pending/completed admission state; never waits on SQLite.
+    ///
+    /// # Errors
+    ///
+    /// Returns the terminal storage or map-state error for this admission.
+    pub fn poll(&self) -> Result<MobileRideMapAdmissionPollDto, MobileRideMapCoreErrorDto> {
+        #[cfg(test)]
+        wait_verified_connection_admission_test_gate();
+
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        let storage_result = match &mut *state {
+            MobileRideMapAdmissionState::Completed(result) => {
+                return result
+                    .clone()
+                    .map(|snapshot| MobileRideMapAdmissionPollDto::Completed { snapshot });
+            }
+            MobileRideMapAdmissionState::Pending(pending) => {
+                match pending.pending_storage.as_mut() {
+                    Some(storage) => match storage.try_result() {
+                        Some(Ok(outcome)) => Ok(Some(outcome)),
+                        Some(Err(error)) => Err(error),
+                        None => return Ok(MobileRideMapAdmissionPollDto::Pending),
+                    },
+                    None => Ok(None),
+                }
+            }
+        };
+        let MobileRideMapAdmissionState::Pending(pending) = std::mem::replace(
+            &mut *state,
+            MobileRideMapAdmissionState::Completed(Err(
+                MobileRideMapCoreErrorDto::AdmissionPending,
+            )),
+        ) else {
+            unreachable!("pending admission state was checked above");
+        };
+        let result = self
+            .core
+            .complete_verified_connection_admission(pending, storage_result);
+        *state = MobileRideMapAdmissionState::Completed(result.clone());
+        result.map(|snapshot| MobileRideMapAdmissionPollDto::Completed { snapshot })
+    }
+}
+
 const MAX_PENDING_LOCATION_WRITES: usize = 64;
 const MAX_LOCATION_BATCH_SIZE: usize = 256;
 const AUTO_RESUME_RIDE_WINDOW_MILLISECONDS: u64 = 3 * 60 * 60 * 1_000;
@@ -7531,6 +7616,8 @@ struct MobileRideMapCoreInner {
     monotonic_epoch_offset_milliseconds: u64,
     initialization_error: Option<MobileRideMapCoreErrorDto>,
     restoration_state: MobileRideMapRestorationState,
+    next_connection_admission_id: u64,
+    pending_connection_admission_id: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -7547,6 +7634,248 @@ struct PendingMapLocationWrite {
     admitted_sample: ride_maps::AdmittedLocationSample,
     point: MobileRideMapCorePointDto,
     write: persistence::PendingLocationWrite,
+}
+
+#[derive(Debug)]
+struct PendingVerifiedMapAdmission {
+    admission_id: u64,
+    pending_storage: Option<persistence::PendingVerifiedConnectionAdmission>,
+    immediate_snapshot: Option<MobileRideMapCoreSnapshotDto>,
+    is_immediate_noop: bool,
+    selected_mutations: Vec<VerifiedConnectionLifecycleMutation>,
+    platform_identifier: String,
+    connection_generation: u64,
+    at_ms: u64,
+    logical_at_ms: u64,
+}
+
+#[cfg(test)]
+static VERIFIED_CONNECTION_ADMISSION_TEST_GATE: Mutex<
+    Option<(
+        std::sync::mpsc::SyncSender<()>,
+        std::sync::mpsc::Receiver<()>,
+    )>,
+> = Mutex::new(None);
+
+#[cfg(test)]
+fn wait_verified_connection_admission_test_gate() {
+    let gate = VERIFIED_CONNECTION_ADMISSION_TEST_GATE
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .take();
+    if let Some((entered, release)) = gate {
+        let _ = entered.send(());
+        let _ = release.recv();
+    }
+}
+
+#[derive(Debug)]
+struct VerifiedConnectionAdmissionPreview {
+    recorder: ride_maps::RideMapRecorder,
+    admission_recorder: ride_maps::RideMapRecorder,
+    ride_id: Option<MobileRideIdDto>,
+    monotonic_epoch_offset_milliseconds: u64,
+    recoverable_updated_at_milliseconds: Option<u64>,
+    created_ride: bool,
+    metadata: Option<VerifiedConnectionRideMetadata>,
+}
+
+impl VerifiedConnectionAdmissionPreview {
+    fn from_state(state: &MobileRideMapCoreInner) -> Self {
+        Self {
+            recorder: state.recorder.clone(),
+            admission_recorder: state.admission_recorder.clone(),
+            ride_id: state.ride_id.clone(),
+            monotonic_epoch_offset_milliseconds: state.monotonic_epoch_offset_milliseconds,
+            recoverable_updated_at_milliseconds: state.recoverable_updated_at_milliseconds,
+            created_ride: false,
+            metadata: None,
+        }
+    }
+
+    fn transition(
+        &mut self,
+        event: MobileRideEventDto,
+        at_ms: u64,
+        occurred_at_ms: u64,
+        mutations: &mut Vec<VerifiedConnectionLifecycleMutation>,
+    ) -> Result<(), MobileRideMapCoreErrorDto> {
+        let ride_id = self
+            .ride_id
+            .clone()
+            .ok_or(MobileRideMapCoreErrorDto::NoActiveRide)?;
+        let current = self
+            .recorder
+            .state()
+            .ok_or(MobileRideMapCoreErrorDto::NoActiveRide)?;
+        let transition = current
+            .transition(event.into())
+            .map_err(|_| MobileRideMapCoreErrorDto::InvalidTransition)?;
+        let epoch_offset = if event == MobileRideEventDto::Resume
+            && (match current {
+                ride_maps::RideLifecycleState::Interrupted
+                | ride_maps::RideLifecycleState::Paused => true,
+                _ => false,
+            }) {
+            self.recorder
+                .recording_timing()
+                .last_monotonic_milliseconds()
+                .as_u64()
+                .saturating_sub(at_ms)
+        } else {
+            self.monotonic_epoch_offset_milliseconds
+        };
+        let logical_at_ms = at_ms.saturating_add(epoch_offset);
+        self.recorder
+            .apply_transition_at(
+                transition,
+                ride_maps::MonotonicMilliseconds::new(logical_at_ms),
+            )
+            .map_err(|_| MobileRideMapCoreErrorDto::InvalidTransition)?;
+        self.admission_recorder
+            .apply_transition_at(
+                transition,
+                ride_maps::MonotonicMilliseconds::new(logical_at_ms),
+            )
+            .map_err(|_| MobileRideMapCoreErrorDto::InvalidTransition)?;
+        self.monotonic_epoch_offset_milliseconds = epoch_offset;
+        if event == MobileRideEventDto::Resume {
+            self.recoverable_updated_at_milliseconds = None;
+        }
+        mutations.push(VerifiedConnectionLifecycleMutation::Transition {
+            ride_id: parse_mobile_ride_id(&ride_id).map_err(map_core_error)?,
+            event: event.into(),
+            occurred_at_ms,
+            monotonic_at_ms: Some(logical_at_ms),
+        });
+        Ok(())
+    }
+
+    fn start_live(
+        &mut self,
+        at_ms: u64,
+        created_at_ms: u64,
+        candidate_vehicle: Option<&str>,
+        mutations: &mut Vec<VerifiedConnectionLifecycleMutation>,
+    ) -> Result<(), MobileRideMapCoreErrorDto> {
+        let candidate_identity = candidate_vehicle.and_then(ride_maps::VehicleIdentity::new);
+        self.recorder
+            .start(
+                ride_maps::MonotonicMilliseconds::new(at_ms),
+                candidate_identity.clone(),
+            )
+            .map_err(|_| MobileRideMapCoreErrorDto::AlreadyRecording)?;
+        self.admission_recorder
+            .start(
+                ride_maps::MonotonicMilliseconds::new(at_ms),
+                candidate_identity,
+            )
+            .map_err(|_| MobileRideMapCoreErrorDto::AlreadyRecording)?;
+        self.ride_id = None;
+        self.created_ride = true;
+        self.monotonic_epoch_offset_milliseconds = 0;
+        self.recoverable_updated_at_milliseconds = None;
+        mutations.push(VerifiedConnectionLifecycleMutation::StartLive {
+            created_at_ms,
+            monotonic_created_at_ms: at_ms,
+            candidate_vehicle: candidate_vehicle.map(str::to_owned),
+        });
+        Ok(())
+    }
+
+    fn associate_vehicle(
+        &mut self,
+        identity: &ride_maps::VehicleIdentity,
+        at_ms: u64,
+    ) -> Result<ride_maps::VehicleAssociation, MobileRideMapCoreErrorDto> {
+        let association = self
+            .admission_recorder
+            .observe_vehicle(identity, ride_maps::MonotonicMilliseconds::new(at_ms));
+        if association == ride_maps::VehicleAssociation::Associated {
+            let _ = self
+                .recorder
+                .observe_vehicle(identity, ride_maps::MonotonicMilliseconds::new(at_ms));
+        }
+        let target = if self.created_ride {
+            Some(VerifiedConnectionRideTarget::Created)
+        } else {
+            self.ride_id
+                .as_ref()
+                .map(parse_mobile_ride_id)
+                .transpose()
+                .map_err(map_core_error)?
+                .map(VerifiedConnectionRideTarget::Existing)
+        };
+        if let Some(target) = target {
+            self.metadata = Some(VerifiedConnectionRideMetadata {
+                target,
+                candidate_vehicle: self
+                    .admission_recorder
+                    .candidate_vehicle()
+                    .map(str::to_owned),
+                associated_vehicle: self
+                    .admission_recorder
+                    .associated_vehicle()
+                    .map(str::to_owned),
+                associated_at_ms: self
+                    .admission_recorder
+                    .associated_at_milliseconds()
+                    .map(ride_maps::MonotonicMilliseconds::as_u64),
+                last_telemetry_at_ms: self
+                    .admission_recorder
+                    .last_telemetry_at_milliseconds()
+                    .map(ride_maps::MonotonicMilliseconds::as_u64),
+            });
+        }
+        Ok(association)
+    }
+}
+
+fn plan_verified_connection_auto_recording(
+    preview: &mut VerifiedConnectionAdmissionPreview,
+    identity: &str,
+    at_ms: u64,
+    occurred_at_ms: u64,
+    mutations: &mut Vec<VerifiedConnectionLifecycleMutation>,
+) -> Result<(), MobileRideMapCoreErrorDto> {
+    let current_vehicle = preview
+        .recorder
+        .associated_vehicle()
+        .or_else(|| preview.recorder.candidate_vehicle());
+    let current_ride_belongs_to_another_vehicle = preview
+        .recorder
+        .state()
+        .is_some_and(ride_maps::RideLifecycleState::is_recording)
+        && current_vehicle.is_some_and(|vehicle| vehicle != identity);
+    if current_ride_belongs_to_another_vehicle {
+        preview.transition(MobileRideEventDto::Stop, at_ms, occurred_at_ms, mutations)?;
+        preview.transition(MobileRideEventDto::Save, at_ms, occurred_at_ms, mutations)?;
+    }
+
+    if preview.recorder.state() == Some(ride_maps::RideLifecycleState::Interrupted) {
+        let matches_vehicle = preview.recorder.associated_vehicle() == Some(identity)
+            || (preview.recorder.associated_vehicle().is_none()
+                && preview.recorder.candidate_vehicle() == Some(identity));
+        let within_resume_window =
+            preview
+                .recoverable_updated_at_milliseconds
+                .is_some_and(|updated_at| {
+                    wall_clock_age_milliseconds(occurred_at_ms, updated_at)
+                        <= AUTO_RESUME_RIDE_WINDOW_MILLISECONDS
+                });
+        if matches_vehicle && within_resume_window {
+            preview.transition(MobileRideEventDto::Resume, at_ms, occurred_at_ms, mutations)?;
+        }
+    }
+
+    if preview
+        .recorder
+        .state()
+        .is_none_or(ride_maps::RideLifecycleState::allows_auto_recording_replacement)
+    {
+        preview.start_live(at_ms, occurred_at_ms, Some(identity), mutations)?;
+    }
+    Ok(())
 }
 
 impl MobileRideMapCore {
@@ -7571,18 +7900,239 @@ impl MobileRideMapCore {
     }
 
     /// Applies connection policy for an already verified Rust connection attempt.
+    #[cfg(test)]
     pub(crate) fn ensure_recording_for_vehicle_on_connection(
         &self,
         platform_identifier: &str,
         at_ms: u64,
         connection_generation: u64,
     ) -> Result<Option<MobileRideMapCoreSnapshotDto>, MobileRideMapCoreErrorDto> {
-        self.ensure_recording_for_vehicle_with_connection_generation(
+        let pending = self.begin_verified_connection_admission(
             platform_identifier,
             at_ms,
-            Some(connection_generation),
-            None,
-        )
+            connection_generation,
+        )?;
+        self.finish_verified_connection_admission(pending)
+    }
+
+    fn begin_verified_connection_admission(
+        &self,
+        platform_identifier: &str,
+        at_ms: u64,
+        connection_generation: u64,
+    ) -> Result<PendingVerifiedMapAdmission, MobileRideMapCoreErrorDto> {
+        let identity = ride_maps::VehicleIdentity::new(platform_identifier)
+            .ok_or(MobileRideMapCoreErrorDto::InvalidVehicleIdentity)?;
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        state.require_ready()?;
+
+        if state.last_connection_transition_generation == Some(connection_generation)
+            && state.last_connection_transition_ride_id == state.ride_id
+        {
+            let snapshot = state
+                .recorder
+                .state()
+                .map(|lifecycle| state.snapshot(lifecycle.into()));
+            return Ok(PendingVerifiedMapAdmission {
+                admission_id: 0,
+                pending_storage: None,
+                immediate_snapshot: snapshot,
+                is_immediate_noop: true,
+                selected_mutations: Vec::new(),
+                platform_identifier: identity.as_str().to_owned(),
+                connection_generation,
+                at_ms,
+                logical_at_ms: state.logical_monotonic_milliseconds(at_ms),
+            });
+        }
+
+        let next_admission_id = state.next_connection_admission_id;
+        let following_admission_id = next_admission_id.checked_add(1).ok_or_else(|| {
+            MobileRideMapCoreErrorDto::Storage(
+                "verified connection admission identifiers are exhausted".to_owned(),
+            )
+        })?;
+        let logical_at_ms = state.logical_monotonic_milliseconds(at_ms);
+        let connection_generation_consumed =
+            state.last_connection_transition_generation == Some(connection_generation);
+        let mut selected_preview = VerifiedConnectionAdmissionPreview::from_state(&state);
+        let mut unselected_preview = VerifiedConnectionAdmissionPreview::from_state(&state);
+        let mut selected_mutations = Vec::new();
+        let updated_at_ms = if state.database.is_some() {
+            wall_clock_milliseconds()?
+        } else {
+            0
+        };
+
+        if state.database.is_some() && !connection_generation_consumed {
+            plan_verified_connection_auto_recording(
+                &mut selected_preview,
+                identity.as_str(),
+                at_ms,
+                updated_at_ms,
+                &mut selected_mutations,
+            )?;
+        }
+
+        let should_associate = |preview: &VerifiedConnectionAdmissionPreview| {
+            preview
+                .recorder
+                .state()
+                .is_some_and(ride_maps::RideLifecycleState::is_recording)
+        };
+        if should_associate(&selected_preview) {
+            selected_preview.associate_vehicle(&identity, logical_at_ms)?;
+        }
+        if should_associate(&unselected_preview) {
+            unselected_preview.associate_vehicle(&identity, logical_at_ms)?;
+        }
+
+        let pending_storage = if let Some(database) = state.database.as_ref() {
+            Some(
+                database
+                    .inner
+                    .queue_verified_connection_admission(
+                        identity.as_str(),
+                        updated_at_ms,
+                        selected_mutations.clone(),
+                        selected_preview.metadata.clone(),
+                        unselected_preview.metadata.clone(),
+                    )
+                    .map_err(map_storage_core_error)?,
+            )
+        } else {
+            None
+        };
+
+        state.next_connection_admission_id = following_admission_id;
+        state.pending_connection_admission_id = Some(next_admission_id);
+        Ok(PendingVerifiedMapAdmission {
+            admission_id: next_admission_id,
+            pending_storage,
+            immediate_snapshot: None,
+            is_immediate_noop: false,
+            selected_mutations,
+            platform_identifier: identity.as_str().to_owned(),
+            connection_generation,
+            at_ms,
+            logical_at_ms,
+        })
+    }
+
+    #[cfg(test)]
+    fn finish_verified_connection_admission(
+        &self,
+        mut pending: PendingVerifiedMapAdmission,
+    ) -> Result<Option<MobileRideMapCoreSnapshotDto>, MobileRideMapCoreErrorDto> {
+        let storage_result = match pending.pending_storage.take() {
+            Some(pending_storage) => pending_storage.wait_result().map(Some),
+            None => Ok(None),
+        };
+        self.complete_verified_connection_admission(pending, storage_result)
+    }
+
+    fn complete_verified_connection_admission(
+        &self,
+        pending: PendingVerifiedMapAdmission,
+        storage_result: Result<
+            Option<persistence::VerifiedConnectionAdmissionOutcome>,
+            persistence::StorageError,
+        >,
+    ) -> Result<Option<MobileRideMapCoreSnapshotDto>, MobileRideMapCoreErrorDto> {
+        if pending.is_immediate_noop {
+            return Ok(pending.immediate_snapshot);
+        }
+        let outcome = match storage_result {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+                if state.pending_connection_admission_id == Some(pending.admission_id) {
+                    state.pending_connection_admission_id = None;
+                }
+                return Err(map_storage_core_error(error));
+            }
+        };
+        let selected_device_matches =
+            outcome.is_some_and(|outcome| outcome.selected_device_matches);
+        let created_ride_id = outcome.and_then(|outcome| outcome.created_ride_id);
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        if state.pending_connection_admission_id != Some(pending.admission_id) {
+            return Err(MobileRideMapCoreErrorDto::StaleConnection);
+        }
+
+        state.last_connected_vehicle =
+            ride_maps::VehicleIdentity::new(&pending.platform_identifier);
+
+        if selected_device_matches {
+            for mutation in &pending.selected_mutations {
+                match mutation {
+                    VerifiedConnectionLifecycleMutation::Transition { event, .. } => {
+                        state.apply_connection_transition_in_memory(
+                            (*event).into(),
+                            pending.at_ms,
+                        )?;
+                    }
+                    VerifiedConnectionLifecycleMutation::StartLive {
+                        monotonic_created_at_ms,
+                        candidate_vehicle,
+                        ..
+                    } => {
+                        let created_ride_id =
+                            created_ride_id.ok_or(MobileRideMapCoreErrorDto::InvalidTransition)?;
+                        state.start_gps_only_at_with_id(
+                            *monotonic_created_at_ms,
+                            candidate_vehicle.as_deref(),
+                            Some(mobile_ride_id(created_ride_id)),
+                        )?;
+                    }
+                }
+            }
+        }
+
+        let Some(lifecycle) = state.recorder.state() else {
+            state.pending_connection_admission_id = None;
+            return Ok(None);
+        };
+        if !lifecycle.is_recording() {
+            state.pending_connection_admission_id = None;
+            return Ok(Some(state.snapshot(lifecycle.into())));
+        }
+        let identity = ride_maps::VehicleIdentity::new(&pending.platform_identifier)
+            .ok_or(MobileRideMapCoreErrorDto::InvalidVehicleIdentity)?;
+        let at_ms = pending.logical_at_ms;
+        let mut staged = state.admission_recorder.clone();
+        let mut durable_staged = state.recorder.clone();
+        let association =
+            staged.observe_vehicle(&identity, ride_maps::MonotonicMilliseconds::new(at_ms));
+        if association == ride_maps::VehicleAssociation::Associated {
+            let _ = durable_staged
+                .observe_vehicle(&identity, ride_maps::MonotonicMilliseconds::new(at_ms));
+            state.revision = state.revision.saturating_add(1);
+        }
+        state.recorder = durable_staged;
+        state.admission_recorder = staged;
+        let confirmed = match association {
+            ride_maps::VehicleAssociation::Associated
+            | ride_maps::VehicleAssociation::AlreadyAssociated => true,
+            _ => false,
+        };
+        if confirmed {
+            let ride_id = state.ride_id.clone();
+            state.last_connection_transition_generation = Some(pending.connection_generation);
+            state.last_connection_transition_ride_id = ride_id;
+        }
+        state.pending_connection_admission_id = None;
+        Ok(Some(state.snapshot(lifecycle.into())))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn install_verified_connection_admission_test_gate(
+        entered: std::sync::mpsc::SyncSender<()>,
+        release: std::sync::mpsc::Receiver<()>,
+    ) {
+        *VERIFIED_CONNECTION_ADMISSION_TEST_GATE
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some((entered, release));
     }
 
     /// Associates a verified vehicle with the active recording for Rust-owned tests and flows.
@@ -7968,6 +8518,8 @@ impl MobileRideMapCoreInner {
             } else {
                 MobileRideMapRestorationState::Ready
             },
+            next_connection_admission_id: 1,
+            pending_connection_admission_id: None,
         }
     }
 
@@ -8244,6 +8796,9 @@ impl MobileRideMapCoreInner {
     }
 
     fn require_ready(&self) -> Result<(), MobileRideMapCoreErrorDto> {
+        if self.pending_connection_admission_id.is_some() {
+            return Err(MobileRideMapCoreErrorDto::AdmissionPending);
+        }
         self.restoration_error().map_or(Ok(()), Err)
     }
 
@@ -9611,6 +10166,57 @@ impl MobileRideMapCoreInner {
         self.revision = self.revision.saturating_add(1);
         self.generation = self.generation.saturating_add(1);
         Ok(self.snapshot_at_logical(transition.next().into(), at_milliseconds))
+    }
+
+    fn apply_connection_transition_in_memory(
+        &mut self,
+        event: MobileRideEventDto,
+        at_milliseconds: u64,
+    ) -> Result<(), MobileRideMapCoreErrorDto> {
+        let epoch_offset = if event == MobileRideEventDto::Resume
+            && (match self.recorder.state() {
+                Some(
+                    ride_maps::RideLifecycleState::Interrupted
+                    | ride_maps::RideLifecycleState::Paused,
+                ) => true,
+                _ => false,
+            }) {
+            self.recorder
+                .recording_timing()
+                .last_monotonic_milliseconds()
+                .as_u64()
+                .saturating_sub(at_milliseconds)
+        } else {
+            self.monotonic_epoch_offset_milliseconds
+        };
+        let logical_at_ms = at_milliseconds.saturating_add(epoch_offset);
+        let transition = self
+            .recorder
+            .state()
+            .ok_or(MobileRideMapCoreErrorDto::NoActiveRide)?
+            .transition(event.into())
+            .map_err(|_| MobileRideMapCoreErrorDto::InvalidTransition)?;
+        let outcomes = self.poll_location_write_outcomes(logical_at_ms);
+        self.settled_location_outcomes.extend(outcomes);
+        self.monotonic_epoch_offset_milliseconds = epoch_offset;
+        self.recorder
+            .apply_transition_at(
+                transition,
+                ride_maps::MonotonicMilliseconds::new(logical_at_ms),
+            )
+            .map_err(|_| MobileRideMapCoreErrorDto::InvalidTransition)?;
+        self.admission_recorder
+            .apply_transition_at(
+                transition,
+                ride_maps::MonotonicMilliseconds::new(logical_at_ms),
+            )
+            .map_err(|_| MobileRideMapCoreErrorDto::InvalidTransition)?;
+        if event == MobileRideEventDto::Resume {
+            self.recoverable_updated_at_milliseconds = None;
+        }
+        self.revision = self.revision.saturating_add(1);
+        self.generation = self.generation.saturating_add(1);
+        Ok(())
     }
 }
 

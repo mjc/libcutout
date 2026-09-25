@@ -34,11 +34,17 @@ public enum MobileRideMapError: Error, Equatable, Hashable, Sendable {
     case locationBatchTooLarge
     case invalidVehicleIdentity
     case staleConnection
+    case admissionPending
     case invalidRouteProjection
     case invalidMusicInput(String)
     case rideNotFound
     case cancelled
     case storageError(String)
+}
+
+public enum MobileRideMapAdmissionState {
+    case pending
+    case completed(MobileRideMapSnapshotDto?)
 }
 
 /// Rust-owned ride identity captured when an asynchronous map operation starts.
@@ -867,17 +873,28 @@ public final class MobileRideMapState: @unchecked Sendable {
         }
     }
 
-    public func ensureRecordingForVerifiedConnection(
+    public func beginVerifiedConnectionAdmission(
         connectionState: CutoutSessionStateHandle,
         token: ConnectionAttemptToken,
         atMs: UInt64
-    ) throws -> MobileRideMapSnapshotDto? {
+    ) throws -> MobileRideMapConnectionAdmission {
         try withCore {
-            try connectionState.ensureRideRecordingForVerifiedConnection(
+            try connectionState.beginRideRecordingForVerifiedConnection(
                 rideMap: $0,
                 token: token,
                 atMs: atMs
-            ).map(mapSnapshot)
+            )
+        }
+    }
+
+    public func pollVerifiedConnectionAdmission(
+        _ admission: MobileRideMapConnectionAdmission
+    ) throws -> MobileRideMapAdmissionState {
+        switch try admission.poll() {
+        case .pending:
+            .pending
+        case let .completed(snapshot):
+            .completed(snapshot.map(mapSnapshot))
         }
     }
 
@@ -1619,6 +1636,7 @@ public final class MobileRideMapState: @unchecked Sendable {
         case .LocationBatchTooLarge: return .locationBatchTooLarge
         case .InvalidVehicleIdentity: return .invalidVehicleIdentity
         case .StaleConnection: return .staleConnection
+        case .AdmissionPending: return .admissionPending
         case .InvalidRouteProjection: return .invalidRouteProjection
         case .Cancelled: return .cancelled
         case let .InvalidMusicInput(message): return .invalidMusicInput(message)

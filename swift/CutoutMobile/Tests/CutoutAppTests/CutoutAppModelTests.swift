@@ -63,6 +63,25 @@ final class CutoutAppModelTests: XCTestCase {
         return decision
     }
 
+    private static func settleAdmission(
+        _ state: MobileRideMapState,
+        _ admission: MobileRideMapConnectionAdmission,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) async throws -> MobileRideMapSnapshotDto? {
+        let deadline = ContinuousClock.now + .seconds(10)
+        while ContinuousClock.now < deadline, !Task.isCancelled {
+            switch try state.pollVerifiedConnectionAdmission(admission) {
+            case .pending:
+                try? await Task.sleep(for: .milliseconds(1))
+            case let .completed(snapshot):
+                return snapshot
+            }
+        }
+        XCTFail("timed out waiting for verified ride-map admission", file: file, line: line)
+        return nil
+    }
+
     @MainActor
     private static func waitUntil(
         _ description: String,
@@ -415,10 +434,13 @@ final class CutoutAppModelTests: XCTestCase {
             identificationComplete: true,
             nowMs: 200
         )
-        _ = try driver.rideMapState.ensureRecordingForVerifiedConnection(
-            connectionState: connectionState,
-            token: token,
-            atMs: 200
+        _ = try await Self.settleAdmission(
+            driver.rideMapState,
+            try driver.rideMapState.beginVerifiedConnectionAdmission(
+                connectionState: connectionState,
+                token: token,
+                atMs: 200
+            )
         )
         _ = try driver.rideMapState.startGpsOnly(atMs: 100)
         _ = await Self.settle(
@@ -430,10 +452,13 @@ final class CutoutAppModelTests: XCTestCase {
                 longitudeDegrees: -104.9903,
                 horizontalAccuracyMeters: 5
             ))
-        _ = try driver.rideMapState.ensureRecordingForVerifiedConnection(
-            connectionState: connectionState,
-            token: token,
-            atMs: 200
+        _ = try await Self.settleAdmission(
+            driver.rideMapState,
+            try driver.rideMapState.beginVerifiedConnectionAdmission(
+                connectionState: connectionState,
+                token: token,
+                atMs: 200
+            )
         )
 
         let model = CutoutAppModel(core: driver)

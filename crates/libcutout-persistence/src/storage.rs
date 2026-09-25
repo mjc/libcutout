@@ -2397,8 +2397,9 @@ impl RideDatabase {
     ///
     /// The command is ordered with every other operation on the existing bounded database
     /// worker. It always remembers the verified identity and applies ride metadata; the automatic
-    /// lifecycle plan runs only when the identity matches the currently selected device. The
-    /// method returns after bounded enqueue and does not wait for SQLite completion.
+    /// lifecycle plan and its metadata run only when the identity matches the selected device;
+    /// otherwise the alternate metadata snapshot is applied. The method returns after bounded
+    /// enqueue and does not wait for SQLite completion.
     ///
     /// # Errors
     ///
@@ -2411,6 +2412,7 @@ impl RideDatabase {
         updated_at_ms: u64,
         mut lifecycle_mutations: Vec<VerifiedConnectionLifecycleMutation>,
         metadata: Option<VerifiedConnectionRideMetadata>,
+        unselected_metadata: Option<VerifiedConnectionRideMetadata>,
     ) -> Result<PendingVerifiedConnectionAdmission, StorageError> {
         if lifecycle_mutations.len() > MAX_VERIFIED_CONNECTION_LIFECYCLE_MUTATIONS {
             return Err(StorageError::TooManyConnectionAdmissionMutations {
@@ -2425,13 +2427,17 @@ impl RideDatabase {
                 VerifiedConnectionLifecycleMutation::StartLive { .. } => true,
             })
             .count();
-        if start_count > 1
-            || (metadata
+        let metadata_targets_created_ride = |metadata: &Option<VerifiedConnectionRideMetadata>| {
+            metadata
                 .as_ref()
                 .is_some_and(|metadata| match metadata.target {
                     VerifiedConnectionRideTarget::Existing(_) => false,
                     VerifiedConnectionRideTarget::Created => true,
                 })
+        };
+        if start_count > 1
+            || ((metadata_targets_created_ride(&metadata)
+                || metadata_targets_created_ride(&unselected_metadata))
                 && start_count != 1)
         {
             return Err(StorageError::InvalidConnectionAdmissionPlan);
@@ -2449,29 +2455,31 @@ impl RideDatabase {
                 )?;
             }
         }
-        let metadata = metadata
-            .map(|metadata| -> Result<_, StorageError> {
-                Ok(VerifiedConnectionRideMetadata {
-                    target: metadata.target,
-                    candidate_vehicle: normalize_optional_stored_text(
-                        metadata.candidate_vehicle.as_deref(),
-                        "candidate vehicle",
-                    )?,
-                    associated_vehicle: normalize_optional_stored_text(
-                        metadata.associated_vehicle.as_deref(),
-                        "associated vehicle",
-                    )?,
-                    associated_at_ms: metadata.associated_at_ms,
-                    last_telemetry_at_ms: metadata.last_telemetry_at_ms,
-                })
+        let normalize_metadata = |metadata: VerifiedConnectionRideMetadata|
+         -> Result<VerifiedConnectionRideMetadata, StorageError> {
+            Ok(VerifiedConnectionRideMetadata {
+                target: metadata.target,
+                candidate_vehicle: normalize_optional_stored_text(
+                    metadata.candidate_vehicle.as_deref(),
+                    "candidate vehicle",
+                )?,
+                associated_vehicle: normalize_optional_stored_text(
+                    metadata.associated_vehicle.as_deref(),
+                    "associated vehicle",
+                )?,
+                associated_at_ms: metadata.associated_at_ms,
+                last_telemetry_at_ms: metadata.last_telemetry_at_ms,
             })
-            .transpose()?;
+        };
+        let metadata = metadata.map(normalize_metadata).transpose()?;
+        let unselected_metadata = unselected_metadata.map(normalize_metadata).transpose()?;
         let (reply, response) = response_channel();
         self.enqueue(Command::VerifiedConnectionAdmission {
             platform_identifier,
             updated_at_ms,
             lifecycle_mutations,
             metadata,
+            unselected_metadata,
             reply,
         })?;
         Ok(PendingVerifiedConnectionAdmission {
@@ -3993,6 +4001,7 @@ enum Command {
         updated_at_ms: u64,
         lifecycle_mutations: Vec<VerifiedConnectionLifecycleMutation>,
         metadata: Option<VerifiedConnectionRideMetadata>,
+        unselected_metadata: Option<VerifiedConnectionRideMetadata>,
         reply: Reply<VerifiedConnectionAdmissionOutcome>,
     },
     LastConnectedDevice {
@@ -5868,6 +5877,7 @@ fn apply_verified_connection_admission(
     updated_at_ms: u64,
     lifecycle_mutations: &[VerifiedConnectionLifecycleMutation],
     metadata: Option<&VerifiedConnectionRideMetadata>,
+    unselected_metadata: Option<&VerifiedConnectionRideMetadata>,
 ) -> Result<VerifiedConnectionAdmissionOutcome, StorageError> {
     let transaction = connection.transaction()?;
     remember_last_connected_device(&transaction, platform_identifier, updated_at_ms)?;
@@ -5911,6 +5921,11 @@ fn apply_verified_connection_admission(
         }
     }
 
+    let metadata = if selected_device_matches {
+        metadata
+    } else {
+        unselected_metadata
+    };
     if let Some(metadata) = metadata {
         let ride_id = match metadata.target {
             VerifiedConnectionRideTarget::Existing(ride_id) => Some(ride_id),

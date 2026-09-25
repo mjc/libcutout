@@ -6,9 +6,11 @@ use cutout_core::{
 };
 use std::sync::Arc;
 
+#[cfg(test)]
+use crate::MobileRideMapAdmissionPollDto;
 use crate::{
-    CutoutSessionStateHandle, MobileRideMapCore, MobileRideMapCoreErrorDto,
-    MobileRideMapCoreSnapshotDto, MonotonicTimestamp,
+    CutoutSessionStateHandle, MobileRideMapConnectionAdmission, MobileRideMapCore,
+    MobileRideMapCoreErrorDto, MonotonicTimestamp,
 };
 
 /// Identity captured with native callbacks and decoded telemetry.
@@ -172,38 +174,41 @@ impl CutoutSessionStateHandle {
             .is_verified(&token.into())
     }
 
-    /// Atomically admits one verified connection to the Rust-owned ride-map core.
+    /// Atomically enqueues one verified connection admission in the Rust-owned ride-map core.
     ///
-    /// The session-state lock remains held while the map core consumes the token, so connection
-    /// invalidation cannot race between verification and ride admission. Swift supplies only the
-    /// Rust-issued attempt token; it cannot choose a separate identity or automatic policy.
+    /// The session-state lock remains held through ordered enqueue, so connection invalidation
+    /// cannot race between verification and admission. SQLite completion is polled separately,
+    /// after this method releases the session lock. Swift supplies only the Rust-issued token.
     ///
     /// # Errors
     ///
     /// Returns `StaleConnection` when the token is no longer the current verified attempt, or a
-    /// typed ride-map error when the map core cannot admit the connection.
+    /// typed ride-map error when the map core cannot enqueue the connection.
     #[allow(
         clippy::needless_pass_by_value,
         reason = "UniFFI owns the Arc argument at the binding boundary."
     )]
-    pub fn ensure_ride_recording_for_verified_connection(
+    pub fn begin_ride_recording_for_verified_connection(
         &self,
         ride_map: Arc<MobileRideMapCore>,
         token: MobileConnectionAttemptTokenDto,
         at_ms: u64,
-    ) -> Result<Option<MobileRideMapCoreSnapshotDto>, MobileRideMapCoreErrorDto> {
+    ) -> Result<Arc<MobileRideMapConnectionAdmission>, MobileRideMapCoreErrorDto> {
         let token = token.into();
-        let state = self.lock_inner();
-        let verified = state
-            .session_state()
-            .connection
-            .verified_attempt(&token)
-            .ok_or(MobileRideMapCoreErrorDto::StaleConnection)?;
-        ride_map.ensure_recording_for_vehicle_on_connection(
-            verified.platform_identifier(),
-            at_ms,
-            verified.generation(),
-        )
+        let pending = {
+            let state = self.lock_inner();
+            let verified = state
+                .session_state()
+                .connection
+                .verified_attempt(&token)
+                .ok_or(MobileRideMapCoreErrorDto::StaleConnection)?;
+            ride_map.begin_verified_connection_admission(
+                verified.platform_identifier(),
+                at_ms,
+                verified.generation(),
+            )?
+        };
+        Ok(MobileRideMapConnectionAdmission::new(ride_map, pending))
     }
 
     /// Expires pending detection without allowing a late response to promote it.
@@ -282,7 +287,7 @@ mod tests {
 
         assert_eq!(
             handle
-                .ensure_ride_recording_for_verified_connection(MobileRideMapCore::new(), token, 20)
+                .begin_ride_recording_for_verified_connection(MobileRideMapCore::new(), token, 20)
                 .expect_err("pending connection cannot enter the ride path"),
             MobileRideMapCoreErrorDto::StaleConnection
         );
@@ -291,13 +296,85 @@ mod tests {
         let replacement_token = replacement.token.unwrap();
         assert_eq!(
             handle
-                .ensure_ride_recording_for_verified_connection(
+                .begin_ride_recording_for_verified_connection(
                     MobileRideMapCore::new(),
                     replacement_token,
                     40
                 )
                 .expect_err("replacement must still be verified before admission"),
             MobileRideMapCoreErrorDto::StaleConnection
+        );
+    }
+
+    #[test]
+    fn verified_admission_releases_session_lock_after_ordered_enqueue() {
+        let handle = CutoutSessionStateHandle::new();
+        let initial = handle.begin_connection_attempt("A".into(), 10);
+        let token = initial.token.unwrap();
+        handle.connection_link_established(token.clone());
+        {
+            let mut inner = handle.lock_inner();
+            assert!(
+                inner
+                    .session_state_mut()
+                    .connection
+                    .finish_detection(&token.clone().into(), true)
+            );
+        }
+        assert!(handle.verified_connection_attempt_is_current(token.clone()));
+
+        let ride_map = MobileRideMapCore::new();
+        let (entered_sender, entered_receiver) = std::sync::mpsc::sync_channel(1);
+        let (release_sender, release_receiver) = std::sync::mpsc::sync_channel(1);
+        MobileRideMapCore::install_verified_connection_admission_test_gate(
+            entered_sender,
+            release_receiver,
+        );
+
+        let task_handle = Arc::clone(&handle);
+        let task_map = Arc::clone(&ride_map);
+        let admission = task_handle
+            .begin_ride_recording_for_verified_connection(task_map, token.clone(), 20)
+            .expect("verified connection enqueues admission without waiting for SQLite");
+        let task_admission = Arc::clone(&admission);
+        let poll = std::thread::spawn(move || task_admission.poll());
+        entered_receiver
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .expect("admission polling reaches the held terminal-result boundary");
+        assert_eq!(
+            ride_map
+                .pause(21)
+                .expect_err("lifecycle cannot overtake the pending admission"),
+            MobileRideMapCoreErrorDto::AdmissionPending
+        );
+
+        let disconnect_handle = Arc::clone(&handle);
+        let (disconnected_sender, disconnected_receiver) = std::sync::mpsc::sync_channel(1);
+        let disconnect = std::thread::spawn(move || {
+            let revision = disconnect_handle.disconnect_connection_attempt().revision;
+            let _ = disconnected_sender.send(revision);
+        });
+        let disconnected_revision =
+            disconnected_receiver.recv_timeout(std::time::Duration::from_secs(1));
+        release_sender.send(()).unwrap();
+        let completed = MobileRideMapAdmissionPollDto::Completed { snapshot: None };
+        assert_eq!(poll.join().unwrap().unwrap(), completed);
+        assert_eq!(admission.poll().unwrap(), completed);
+        assert!(disconnect.join().is_ok());
+        assert!(
+            disconnected_revision.expect("disconnect must not wait for SQLite completion")
+                > initial.revision
+        );
+        assert!(!handle.verified_connection_attempt_is_current(token));
+        assert_eq!(
+            ride_map
+                .inner
+                .lock()
+                .unwrap()
+                .last_connected_vehicle
+                .as_ref()
+                .map(cutout_ride_maps::VehicleIdentity::as_str),
+            Some("A")
         );
     }
 
