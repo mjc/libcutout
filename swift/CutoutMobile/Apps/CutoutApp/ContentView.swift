@@ -167,12 +167,6 @@ struct ContentView: View {
         navigate(to: .devicePicker)
     }
 
-    private func finishCaptureAndReturnToPicker() {
-        Task { @MainActor in
-            _ = await model.finishCapture()
-        }
-    }
-
     @ViewBuilder
     private func destinationContent(for destination: CutoutAppRoute) -> some View {
         if case .lighting = destination, model.selectedConnectionRoute == nil {
@@ -298,7 +292,7 @@ struct ContentView: View {
         case .vescDebug:
             VescDebugRouteView(model: model)
         case .capture:
-            CaptureRouteView(model: model, finishCapture: finishCaptureAndReturnToPicker)
+            CaptureRouteView(capture: model.capture)
         case .rideMap:
             RideMapRouteView(model: model, presentation: rideMapPresentation, { rideID in
                 model.rideMapMode = .history

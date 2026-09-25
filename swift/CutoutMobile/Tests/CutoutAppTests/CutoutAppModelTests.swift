@@ -1043,7 +1043,7 @@ final class CutoutAppModelTests: XCTestCase {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)
         let picker = DevicePickerRouteView(model: model, pair: { _ in }, navigate: { _ in })
-        let capture = CaptureRouteView(model: model, finishCapture: {})
+        let capture = CaptureRouteView(capture: model.capture)
 
         XCTAssertFalse(observesChange({ _ = picker.body }) {
             driver.onDisplayStateChange?(RideDisplayState(notificationCount: 1))
@@ -1089,7 +1089,7 @@ final class CutoutAppModelTests: XCTestCase {
         }
 
         XCTAssertTrue(observesProgressChange {
-            _ = CaptureRouteView(model: $0, finishCapture: {}).body
+            _ = CaptureRouteView(capture: $0.capture).body
         })
         XCTAssertFalse(observesProgressChange {
             _ = DevicePickerRouteView(model: $0, pair: { _ in }, navigate: { _ in }).body
@@ -1971,7 +1971,7 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertTrue(model.recordOnly(platformIdentifier: "wheel-a", deviceKind: ""))
         let generation = CaptureGeneration(rawValue: 1)
         driver.emitCaptureEvent(.started(generation: generation, fileURL: URL(fileURLWithPath: "/tmp/manual-capture.jsonl")))
-        let saved = await model.finishCapture()
+        let saved = await model.capture.finish()
         XCTAssertFalse(saved)
         for tick in 1...3 {
             driver.emitCaptureEvent(.progress(generation: generation, CaptureProgress(
@@ -1984,7 +1984,7 @@ final class CutoutAppModelTests: XCTestCase {
             XCTAssertFalse(model.capture.isFinishing)
             XCTAssertEqual(model.capture.activeGeneration, generation)
         }
-        let retried = await model.finishCapture()
+        let retried = await model.capture.finish()
         XCTAssertFalse(retried)
         XCTAssertEqual(driver.flushCaptureCount, 2)
         XCTAssertEqual(driver.disconnectCount, 0)
@@ -2034,8 +2034,8 @@ final class CutoutAppModelTests: XCTestCase {
         let model = CutoutAppModel(core: driver)
 
         XCTAssertTrue(model.recordOnly(platformIdentifier: "unknown-device", deviceKind: "Unknown device"))
-        let firstFinishSucceeded = await model.finishCapture()
-        let secondFinishSucceeded = await model.finishCapture()
+        let firstFinishSucceeded = await model.capture.finish()
+        let secondFinishSucceeded = await model.capture.finish()
         XCTAssertTrue(firstFinishSucceeded)
         XCTAssertFalse(secondFinishSucceeded)
 
@@ -2052,7 +2052,7 @@ final class CutoutAppModelTests: XCTestCase {
         driver.duringFlush = {
             model.deliverCaptureEvent(.started(generation: .init(rawValue: 2), fileURL: URL(fileURLWithPath: "/tmp/second")))
         }
-        let accepted = await model.finishCapture()
+        let accepted = await model.capture.finish()
         XCTAssertFalse(accepted)
         XCTAssertEqual(driver.disconnectCount, 0)
         XCTAssertEqual(model.capture.activeGeneration, .init(rawValue: 2))
@@ -2064,7 +2064,7 @@ final class CutoutAppModelTests: XCTestCase {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)
         model.deliverCaptureEvent(.started(fileURL: URL(fileURLWithPath: "/tmp/automatic")))
-        let accepted = await model.finishCapture()
+        let accepted = await model.capture.finish()
         XCTAssertFalse(accepted)
         XCTAssertEqual(driver.disconnectCount, 0)
         XCTAssertEqual(driver.flushCaptureCount, 0)
@@ -2076,7 +2076,7 @@ final class CutoutAppModelTests: XCTestCase {
         let model = CutoutAppModel(core: driver)
 
         XCTAssertTrue(model.recordOnly(platformIdentifier: "unknown-device", deviceKind: "Unknown device"))
-        let finishSucceeded = await model.finishCapture()
+        let finishSucceeded = await model.capture.finish()
         XCTAssertFalse(finishSucceeded)
 
         XCTAssertEqual(driver.flushCaptureCount, 1)
@@ -2089,12 +2089,12 @@ final class CutoutAppModelTests: XCTestCase {
         let driver = SessionDriverSpy(rows: [], flushSucceeds: false)
         let model = CutoutAppModel(core: driver)
 
-        let inactiveFlushSucceeded = await model.flushCapture()
+        let inactiveFlushSucceeded = await model.capture.flush()
         XCTAssertFalse(inactiveFlushSucceeded)
         XCTAssertNil(model.capture.status)
 
         model.deliverCaptureEvent(.started(fileURL: URL(fileURLWithPath: "/tmp/capture.jsonl")))
-        let activeFlushSucceeded = await model.flushCapture()
+        let activeFlushSucceeded = await model.capture.flush()
         XCTAssertFalse(activeFlushSucceeded)
         XCTAssertEqual(model.capture.status, .failed)
         XCTAssertEqual(driver.flushCaptureCount, 2)
@@ -2364,7 +2364,7 @@ final class CutoutAppModelTests: XCTestCase {
         model.deliverCaptureEvent(.started(fileURL: fileURL))
         model.deliverCaptureEvent(.progress(initial))
 
-        XCTAssertFalse(observesChange({ _ = model.captureStatusText }) {
+        XCTAssertFalse(observesChange({ _ = model.capture.status?.displayText }) {
             model.deliverCaptureEvent(.progress(updated))
         })
         XCTAssertEqual(model.capture.progress, updated)
@@ -2376,7 +2376,7 @@ final class CutoutAppModelTests: XCTestCase {
             queuedMessageCount: 1,
             writerError: nil
         )
-        XCTAssertTrue(observesChange({ _ = model.captureStatusText }) {
+        XCTAssertTrue(observesChange({ _ = model.capture.status?.displayText }) {
             model.deliverCaptureEvent(.progress(visibleSummaryChange))
         })
     }
@@ -2439,7 +2439,7 @@ final class CutoutAppModelTests: XCTestCase {
 
         model.deliverCaptureEvent(.started(fileURL: priorCapture))
         model.deliverCaptureEvent(.progress(priorProgress))
-        model.startCaptureLabel(.ride)
+        model.capture.startLabel(.ride)
         XCTAssertEqual(model.capture.status, .labelStarted(label: "Ride", notificationCount: 42, fileName: "prior.cutout"))
         XCTAssertEqual(model.capture.progress, priorProgress)
         XCTAssertEqual(model.capture.activeLabels, [.ride])
@@ -2555,12 +2555,12 @@ final class CutoutAppModelTests: XCTestCase {
         }
         XCTAssertTrue(model.recordOnly(platformIdentifier: fixture.candidate.platformIdentifier, deviceKind: ""))
         await fulfillment(of: [started], timeout: 2)
-        let saved = await model.finishCapture()
+        let saved = await model.capture.finish()
         XCTAssertFalse(saved)
         failedSave = true
         await fulfillment(of: [ticks], timeout: 4)
         failedSave = false
-        let retried = await model.finishCapture()
+        let retried = await model.capture.finish()
         XCTAssertFalse(retried)
         XCTAssertTrue(model.isRecordOnlyCapture)
         core.disconnectAndScan()
@@ -2585,8 +2585,8 @@ final class CutoutAppModelTests: XCTestCase {
         }
         XCTAssertTrue(model.recordOnly(platformIdentifier: fixture.candidate.platformIdentifier, deviceKind: ""))
         await fulfillment(of: [started], timeout: 2)
-        model.startCaptureLabel(.ride)
-        model.startCaptureLabel(.balance)
+        model.capture.startLabel(.ride)
+        model.capture.startLabel(.balance)
         core.handleTransportTermination(platformIdentifier: fixture.candidate.platformIdentifier, error: nil, reconnect: {})
         await fulfillment(of: [completed], timeout: 3)
         let fileURL = try XCTUnwrap(url)
@@ -2686,7 +2686,7 @@ final class CutoutAppModelTests: XCTestCase {
 
         model.deliverCaptureEvent(.started(fileURL: priorCapture))
         model.deliverCaptureEvent(.progress(priorProgress))
-        model.startCaptureLabel(.ride)
+        model.capture.startLabel(.ride)
 
         XCTAssertFalse(model.recordOnly(platformIdentifier: "missing-device", deviceKind: "Unknown device"))
 
@@ -2699,20 +2699,20 @@ final class CutoutAppModelTests: XCTestCase {
     func testCaptureLabelActionsIgnoreInvalidRepeatedTransitions() {
         let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
 
-        model.stopCaptureLabel(.ride)
-        XCTAssertNil(model.captureStatusText)
+        model.capture.stopLabel(.ride)
+        XCTAssertNil(model.capture.status?.displayText)
         XCTAssertTrue(model.capture.activeLabels.isEmpty)
 
         model.deliverCaptureEvent(.started(fileURL: URL(fileURLWithPath: "/tmp/labels.jsonl")))
-        model.startCaptureLabel(.ride)
+        model.capture.startLabel(.ride)
         XCTAssertEqual(model.capture.status, .labelStarted(label: "Ride", notificationCount: 0, fileName: "labels.jsonl"))
         XCTAssertEqual(model.capture.activeLabels, [.ride])
 
-        model.stopCaptureLabel(.ride)
+        model.capture.stopLabel(.ride)
         XCTAssertEqual(model.capture.status, .labelStopped(label: "Ride", notificationCount: 0, fileName: "labels.jsonl"))
         XCTAssertTrue(model.capture.activeLabels.isEmpty)
 
-        model.stopCaptureLabel(.ride)
+        model.capture.stopLabel(.ride)
         XCTAssertEqual(model.capture.status, .labelStopped(label: "Ride", notificationCount: 0, fileName: "labels.jsonl"))
     }
 
@@ -2730,8 +2730,8 @@ final class CutoutAppModelTests: XCTestCase {
             let model = CutoutAppModel(core: driver)
 
             model.deliverCaptureEvent(.started(fileURL: URL(fileURLWithPath: "/tmp/labels.jsonl")))
-            model.startCaptureLabel(active)
-            model.startCaptureLabel(replacement)
+            model.capture.startLabel(active)
+            model.capture.startLabel(replacement)
 
             XCTAssertEqual(model.capture.activeLabels, [replacement])
             XCTAssertEqual(model.capture.status, .labelStarted(label: replacement.title, notificationCount: 0, fileName: "labels.jsonl"))

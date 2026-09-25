@@ -13,7 +13,7 @@ struct BluetoothCapturesView: View {
             if model.capture.activeGeneration != nil {
                 Section {
                     NavigationLink {
-                        CaptureRouteView(model: model, finishCapture: finish)
+                        CaptureRouteView(capture: model.capture)
                     } label: {
                         Label {
                             VStack(alignment: .leading, spacing: 4) {
@@ -76,7 +76,7 @@ struct BluetoothCapturesView: View {
             )
         }
         .navigationDestination(isPresented: $showsRecording) {
-            CaptureRouteView(model: model, finishCapture: finish)
+            CaptureRouteView(capture: model.capture)
         }
     }
 
@@ -94,9 +94,6 @@ struct BluetoothCapturesView: View {
         }
     }
 
-    private func finish() {
-        Task { @MainActor in _ = await model.finishCapture() }
-    }
 }
 
 private struct CaptureArtifactRow: View {

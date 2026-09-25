@@ -359,10 +359,6 @@ final class CutoutAppModel {
         VescRideSnapshot(displayState: displayState, title: selectedRideTitle)
     }
 
-    var captureStatusText: String? {
-        capture.status?.displayText
-    }
-
     var connectionStatusText: String {
         connectionState.statusText ?? phase.displayText
     }
@@ -523,7 +519,12 @@ final class CutoutAppModel {
 #endif
         self.permitsStoredDeviceAutoPairing = permitsStoredDeviceAutoPairing
         self.core = core
-        capture = CaptureFeatureModel(sessionState: core.rideSessionStateHandle)
+        capture = CaptureFeatureModel(
+            sessionState: core.rideSessionStateHandle,
+            flush: { await core.flushCapture() },
+            finish: { await core.finishCapture() },
+            changeCaptureLabel: { try core.changeCaptureLabel(generation: $0, action: $1) }
+        )
         rideMapStorageError = core.rideMapStorageError
         rideMapAvailability = core.rideMapAvailability
         liveActivityCoordinator = LiveActivityRideLifecycleCoordinator(
@@ -1792,17 +1793,6 @@ final class CutoutAppModel {
         pair(platformIdentifier: platformIdentifier)
     }
 
-    func startCaptureLabel(_ label: CaptureQuickLabel) {
-        capture.startLabel(label, record: core.changeCaptureLabel(generation:action:))
-    }
-
-    @discardableResult
-    func flushCapture() async -> Bool {
-        let didFlush = await core.flushCapture()
-        capture.apply(.lifecycle(core.rideSessionStateHandle.captureLifecycleSnapshot()))
-        return didFlush
-    }
-
     func appDidEnterBackground() {
         let suspension = musicProviderLifecycle.suspend()
 #if canImport(MediaPlayer) && os(iOS)
@@ -1836,20 +1826,20 @@ final class CutoutAppModel {
         }
         guard let snapshot = currentLiveActivitySnapshot() else {
             guard isRecordOnlyCapture else { return }
-            Task { [weak self] in _ = await self?.flushCapture() }
+            let capture = self.capture
+            Task { _ = await capture.flush() }
             return
         }
         liveActivityRequestID += 1
         let requestID = liveActivityRequestID
         let atMs = core.now().rawValue
+        let capture = self.capture
         Task { [weak self, liveActivityCoordinator] in
             await liveActivityCoordinator.appDidEnterBackground(
                 requestID: requestID,
                 atMs: atMs,
                 snapshot: snapshot,
-                captureFlush: { [weak self] in
-                    await self?.flushCapture() ?? false
-                }
+                captureFlush: { await capture.flush() }
             )
             self?.liveActivityError = await liveActivityCoordinator.lastError
         }
@@ -1870,15 +1860,6 @@ final class CutoutAppModel {
             )
             self?.liveActivityError = await liveActivityCoordinator.lastError
         }
-    }
-
-    @discardableResult
-    func finishCapture() async -> Bool {
-        await core.finishCapture()
-    }
-
-    func stopCaptureLabel(_ label: CaptureQuickLabel) {
-        capture.stopLabel(label, record: core.changeCaptureLabel(generation:action:))
     }
 
     func disconnectTransport() {

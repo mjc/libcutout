@@ -127,7 +127,7 @@ struct EucRideRouteView: View {
                 rideState: model.eucRidePresentationState,
                 rideTitle: model.selectedRideTitle,
                 now: model.currentMonotonicTime,
-                captureStatusText: model.captureStatusText,
+                captureStatusText: model.capture.status?.displayText,
                 connectionStatusText: model.connectionStatusText,
                 phoneLocationReadback: model.phoneLocationReadback
             )
@@ -139,12 +139,11 @@ struct EucRideRouteView: View {
 }
 
 struct CaptureRouteView: View {
-    let model: CutoutAppModel
-    let finishCapture: () -> Void
+    let capture: CaptureFeatureModel
 
     var body: some View {
-        if model.capture.activeGeneration == nil, model.capture.status != nil,
-           let artifact = model.capture.completed.first(where: { $0.id == model.capture.latestGeneration }) {
+        if capture.activeGeneration == nil, capture.status != nil,
+           let artifact = capture.completed.first(where: { $0.id == capture.latestGeneration }) {
             CaptureArtifactDetailView(artifact: artifact)
         } else {
             recording
@@ -153,21 +152,25 @@ struct CaptureRouteView: View {
 
     private var recording: some View {
         CaptureRecordingScreen(
-            deviceKind: model.capture.device?.title ?? model.capture.deviceKind,
-            advertisedName: model.capture.device?.advertisedName,
-            captureStatusText: model.capture.recordingSummary,
-            captureStatusTone: model.capture.status?.statusStripTone ?? .nominal,
-            captureProgress: model.capture.progress,
-            activeLabels: model.capture.activeLabels,
-            annotationErrorText: model.capture.annotationErrorText,
-            dismissAnnotationError: model.capture.dismissAnnotationError,
-            isFinishing: model.capture.isFinishing,
-            canFinish: model.isRecordOnlyCapture,
-            canAnnotate: model.capture.canAnnotate,
-            finishCapture: finishCapture,
-            startCaptureLabel: model.startCaptureLabel,
-            stopCaptureLabel: model.stopCaptureLabel
+            deviceKind: capture.device?.title ?? capture.deviceKind,
+            advertisedName: capture.device?.advertisedName,
+            captureStatusText: capture.recordingSummary,
+            captureStatusTone: capture.status?.statusStripTone ?? .nominal,
+            captureProgress: capture.progress,
+            activeLabels: capture.activeLabels,
+            annotationErrorText: capture.annotationErrorText,
+            dismissAnnotationError: capture.dismissAnnotationError,
+            isFinishing: capture.isFinishing,
+            canFinish: capture.isManualCapture,
+            canAnnotate: capture.canAnnotate,
+            finishCapture: finish,
+            startCaptureLabel: capture.startLabel,
+            stopCaptureLabel: capture.stopLabel
         )
+    }
+
+    private func finish() {
+        Task { @MainActor in _ = await capture.finish() }
     }
 }
 
@@ -257,7 +260,7 @@ struct VescRideRouteView: View {
                 liveSnapshot: model.vescRideSnapshot,
                 phase: model.phase,
                 now: model.currentMonotonicTime,
-                captureStatusText: model.captureStatusText,
+                captureStatusText: model.capture.status?.displayText,
                 connectionStatusText: model.connectionStatusText
             )
             .accessibilityElement(children: .contain)
@@ -275,7 +278,7 @@ struct VescDebugRouteView: View {
             snapshot: model.vescRideSnapshot,
             phase: model.phase,
             notificationCount: model.displayState.notificationCount,
-            captureStatusText: model.captureStatusText,
+            captureStatusText: model.capture.status?.displayText,
             connectionStatusText: model.connectionStatusText
         )
         .accessibilityElement(children: .contain)

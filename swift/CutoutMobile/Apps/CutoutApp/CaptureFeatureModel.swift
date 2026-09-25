@@ -35,9 +35,24 @@ struct CaptureDeviceIdentity: Equatable {
 @Observable
 final class CaptureFeatureModel {
     @ObservationIgnored let sessionState: CutoutSessionStateHandle
+    @ObservationIgnored private let flushOperation: @MainActor () async -> Bool
+    @ObservationIgnored private let finishOperation: @MainActor () async -> Bool
+    @ObservationIgnored private let changeCaptureLabel: (CaptureGeneration, MobileCaptureLabelActionDto) throws -> [MobileCaptureLabelDto]
+    @ObservationIgnored private var finishTask: Task<Bool, Never>?
+    @ObservationIgnored private var finishRequestGeneration: CaptureGeneration?
 
-    init(sessionState: CutoutSessionStateHandle) {
+    init(
+        sessionState: CutoutSessionStateHandle,
+        flush: @escaping @MainActor () async -> Bool = { false },
+        finish: @escaping @MainActor () async -> Bool = { false },
+        changeCaptureLabel: @escaping (CaptureGeneration, MobileCaptureLabelActionDto) throws -> [MobileCaptureLabelDto] = { _, _ in
+            throw MobileCaptureAnnotationError.NotRecording
+        }
+    ) {
         self.sessionState = sessionState
+        flushOperation = flush
+        finishOperation = finish
+        self.changeCaptureLabel = changeCaptureLabel
         lifecycle = sessionState.captureLifecycleSnapshot()
     }
 
@@ -47,6 +62,7 @@ final class CaptureFeatureModel {
     private(set) var progress: CaptureProgress?
     private(set) var activeLabels = Set<CaptureQuickLabel>()
     private(set) var annotationError: MobileCaptureAnnotationError?
+    private(set) var isFinishRequested = false
     private(set) var deviceKind: String?
     private(set) var device: CaptureDeviceIdentity?
     private(set) var isUserInitiated = false
@@ -62,7 +78,9 @@ final class CaptureFeatureModel {
         default: nil
         }
     }
-    var isFinishing: Bool { lifecycle.attempt?.stage == .saving || lifecycle.attempt?.stage == .finalizing }
+    var isFinishing: Bool {
+        isFinishRequested || lifecycle.attempt?.stage == .saving || lifecycle.attempt?.stage == .finalizing
+    }
     var isManualCapture: Bool { lifecycle.attempt?.origin == .manual && activeGeneration != nil }
     var status: CaptureStatus? {
         // A rejected startup belongs to the setup error, not to the previous artifact.
@@ -131,31 +149,22 @@ final class CaptureFeatureModel {
         isUserInitiated = false
     }
 
-    func startLabel(
-        _ next: CaptureQuickLabel,
-        record: (CaptureGeneration, MobileCaptureLabelActionDto) throws -> [MobileCaptureLabelDto]
-    ) {
-        guard !activeLabels.contains(next), changeLabel(.start(label: next.domainLabel), record: record) else { return }
+    func startLabel(_ next: CaptureQuickLabel) {
+        guard !activeLabels.contains(next), changeLabel(.start(label: next.domainLabel)) else { return }
         label = next.title
         recordingStatus = .labelStarted(label: next.title, notificationCount: notificationCount, fileName: fileName)
     }
 
-    func stopLabel(
-        _ previous: CaptureQuickLabel,
-        record: (CaptureGeneration, MobileCaptureLabelActionDto) throws -> [MobileCaptureLabelDto]
-    ) {
-        guard activeLabels.contains(previous), changeLabel(.stop(label: previous.domainLabel), record: record) else { return }
+    func stopLabel(_ previous: CaptureQuickLabel) {
+        guard activeLabels.contains(previous), changeLabel(.stop(label: previous.domainLabel)) else { return }
         label = previous.title
         recordingStatus = .labelStopped(label: previous.title, notificationCount: notificationCount, fileName: fileName)
     }
 
-    private func changeLabel(
-        _ action: MobileCaptureLabelActionDto,
-        record: (CaptureGeneration, MobileCaptureLabelActionDto) throws -> [MobileCaptureLabelDto]
-    ) -> Bool {
+    private func changeLabel(_ action: MobileCaptureLabelActionDto) -> Bool {
         guard canAnnotate, let generation = activeGeneration else { return false }
         do {
-            let active = try record(generation, action)
+            let active = try changeCaptureLabel(generation, action)
             activeLabels = Set(CaptureQuickLabel.allCases.filter { active.contains($0.domainLabel) })
             annotationError = nil
             return true
@@ -184,12 +193,38 @@ final class CaptureFeatureModel {
         annotationError = nil
     }
 
+    func flush() async -> Bool {
+        let flushed = await flushOperation()
+        apply(.lifecycle(sessionState.captureLifecycleSnapshot()))
+        return flushed
+    }
+
+    func finish() async -> Bool {
+        guard let generation = activeGeneration, isManualCapture else { return false }
+        if finishRequestGeneration == generation, let finishTask { return await finishTask.value }
+
+        finishRequestGeneration = generation
+        isFinishRequested = true
+        let task = Task { @MainActor in await finishOperation() }
+        finishTask = task
+        let succeeded = await task.value
+        let snapshot = sessionState.captureLifecycleSnapshot()
+        lifecycle = snapshot
+
+        guard finishRequestGeneration == generation else { return false }
+        finishTask = nil
+        finishRequestGeneration = nil
+        isFinishRequested = false
+        return succeeded && snapshot.attempt?.generation.value == generation.rawValue
+    }
+
     func apply(_ event: CaptureEvent) {
         switch event {
         case let .lifecycle(snapshot):
             lifecycle = snapshot
         case let .started(generation, fileURL):
             guard generation == activeGeneration else { return }
+            if finishRequestGeneration != generation { isFinishRequested = false }
             let context = acceptedStarts.removeValue(forKey: generation) ?? pendingStart
             resetRecordingPresentation()
             presentedGeneration = generation

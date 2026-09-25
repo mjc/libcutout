@@ -61,7 +61,11 @@ func deliverCaptureFixture(
 
 @MainActor
 extension CaptureFeatureModel {
-    convenience init() { self.init(sessionState: CutoutSessionStateHandle()) }
+    convenience init(
+        changeCaptureLabel: @escaping (CaptureGeneration, MobileCaptureLabelActionDto) throws -> [MobileCaptureLabelDto] = { _, _ in [] }
+    ) {
+        self.init(sessionState: CutoutSessionStateHandle(), changeCaptureLabel: changeCaptureLabel)
+    }
 
     func deliverCaptureEvent(_ event: CaptureEvent, origin: MobileCaptureOriginDto = .automatic) {
         deliverCaptureFixture(event, owner: sessionState, origin: origin, publish: apply)
