@@ -35,6 +35,9 @@ pub enum NovatekResponseError {
     /// The response was not valid UTF-8.
     #[error("Novatek response is not UTF-8")]
     InvalidUtf8,
+    /// The response XML was incomplete or had data outside its document root.
+    #[error("Novatek response is not a complete XML document")]
+    MalformedXml,
     /// A required XML element was absent.
     #[error("Novatek response is missing <{tag}>")]
     MissingTag {
@@ -936,6 +939,7 @@ pub fn parse_firmware_response(
     response: &[u8],
 ) -> Result<NovatekFirmwareVersion, NovatekResponseError> {
     let xml = bounded_xml(response)?;
+    require_xml_root(xml, "Function")?;
     parse_expected_command(xml, NovatekReadCommand::FirmwareVersion.command_id())?;
     let status = parse_status(xml)?;
     if status != 0 {
@@ -960,6 +964,7 @@ pub fn parse_live_view_response(
     response: &[u8],
 ) -> Result<NovatekLiveViewLinks, NovatekResponseError> {
     let xml = bounded_xml(response)?;
+    require_xml_root(xml, "LIST")?;
     Ok(NovatekLiveViewLinks {
         movie: parse_rtsp_uri(xml, "MovieLiveViewLink")?,
         photo: parse_rtsp_uri(xml, "PhotoLiveViewLink")?,
@@ -976,6 +981,7 @@ pub fn parse_storage_response(
     response: &[u8],
 ) -> Result<NovatekStoragePresence, NovatekResponseError> {
     let xml = bounded_xml(response)?;
+    require_xml_root(xml, "Function")?;
     parse_expected_command(xml, NovatekReadCommand::StoragePresent.command_id())?;
     let status = parse_status(xml)?;
     if status != 0 {
@@ -1004,6 +1010,7 @@ pub fn parse_command_response(
     expected_command_id: NovatekCommandId,
 ) -> Result<NovatekCommandOutcome, NovatekResponseError> {
     let xml = bounded_xml(response)?;
+    require_xml_root(xml, "Function")?;
     let command = match extract_tag(xml, "Cmd", "<Cmd>", "</Cmd>") {
         Ok(value) => {
             let value = value
@@ -1063,6 +1070,7 @@ pub fn parse_configuration_response(
     response: &[u8],
 ) -> Result<NovatekConfiguration, NovatekResponseError> {
     let xml = bounded_xml(response)?;
+    require_xml_root(xml, "Function")?;
     let mut cursor = 0;
     let mut statuses: ArrayVec<NovatekCommandStatus, NOVATEK_MAX_COMMAND_STATUS_ENTRIES> =
         ArrayVec::new();
@@ -1148,9 +1156,7 @@ pub fn parse_media_list_response(
     response: &[u8],
 ) -> Result<NovatekMediaList, NovatekResponseError> {
     let xml = bounded_xml_with_limit(response, NOVATEK_MAX_MEDIA_RESPONSE_BYTES)?;
-    if !xml.contains("<LIST>") || !xml.contains("</LIST>") {
-        return Err(NovatekResponseError::MissingTag { tag: "LIST" });
-    }
+    require_xml_root(xml, "LIST")?;
     let mut cursor = 0;
     let mut entries = Vec::with_capacity(64);
     let mut paths = HashSet::with_capacity(64);
@@ -1309,6 +1315,43 @@ fn bounded_xml_with_limit(response: &[u8], max: usize) -> Result<&str, NovatekRe
         return Err(NovatekResponseError::ResponseTooLarge { max });
     }
     str::from_utf8(response).map_err(|_| NovatekResponseError::InvalidUtf8)
+}
+
+fn require_xml_root(xml: &str, root: &'static str) -> Result<(), NovatekResponseError> {
+    let xml = xml.trim_start();
+    let xml = if let Some(declaration) = xml.strip_prefix("<?xml") {
+        let end = declaration
+            .find("?>")
+            .ok_or(NovatekResponseError::MalformedXml)?;
+        declaration
+            .get(end + 2..)
+            .ok_or(NovatekResponseError::MalformedXml)?
+            .trim_start()
+    } else {
+        xml
+    };
+    let open = match root {
+        "Function" => "<Function>",
+        "LIST" => "<LIST>",
+        _ => return Err(NovatekResponseError::MalformedXml),
+    };
+    let close = match root {
+        "Function" => "</Function>",
+        "LIST" => "</LIST>",
+        _ => return Err(NovatekResponseError::MalformedXml),
+    };
+    let body = xml
+        .strip_prefix(open)
+        .ok_or(NovatekResponseError::MalformedXml)?;
+    let close_start = body.find(close).ok_or(NovatekResponseError::MalformedXml)?;
+    let trailing = body
+        .get(close_start + close.len()..)
+        .ok_or(NovatekResponseError::MalformedXml)?;
+    if trailing.trim().is_empty() {
+        Ok(())
+    } else {
+        Err(NovatekResponseError::MalformedXml)
+    }
 }
 
 fn extract_tag<'a>(
@@ -1695,6 +1738,33 @@ mod tests {
         assert_eq!(
             parse_command_response(br"<Function><Cmd>2001</Cmd></Function>", command_id(2001),),
             Ok(NovatekCommandOutcome::Unknown)
+        );
+    }
+
+    #[test]
+    fn response_parsers_reject_truncated_or_trailing_xml_documents() {
+        let command = br"<Function><Cmd>2001</Cmd><Status>0</Status>";
+        assert_eq!(
+            parse_command_response(command, command_id(2001)),
+            Err(NovatekResponseError::MalformedXml)
+        );
+
+        let configuration = br"<Function><Cmd>2001</Cmd><Status>0</Status></Function>garbage";
+        assert_eq!(
+            parse_configuration_response(configuration),
+            Err(NovatekResponseError::MalformedXml)
+        );
+
+        let live_view = br"<LIST><MovieLiveViewLink>rtsp://192.168.1.254/movie</MovieLiveViewLink><PhotoLiveViewLink>rtsp://192.168.1.254/photo</PhotoLiveViewLink>";
+        assert_eq!(
+            parse_live_view_response(live_view),
+            Err(NovatekResponseError::MalformedXml)
+        );
+
+        let media = br"<LIST></LIST>garbage";
+        assert_eq!(
+            parse_media_list_response(media),
+            Err(NovatekResponseError::MalformedXml)
         );
     }
 
