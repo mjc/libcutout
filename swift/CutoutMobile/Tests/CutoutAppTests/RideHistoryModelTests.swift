@@ -740,6 +740,133 @@ final class RideHistoryModelTests: XCTestCase {
     }
 
     @MainActor
+    func testSameRideViewportReplacementRejectsLateFailureAndLoadingState() async throws {
+        let state = MobileRideMapState()
+        _ = try state.startGpsOnly(atMs: 100)
+        _ = await Self.settle(state, try state.ingestLocation(
+            monotonicMs: 100,
+            wallClockUnixMs: 1_700_000_000_100,
+            latitudeDegrees: 39.7000,
+            longitudeDegrees: -104.9000,
+            horizontalAccuracyMeters: 5
+        ))
+        _ = await Self.settle(state, try state.ingestLocation(
+            monotonicMs: 1_100,
+            wallClockUnixMs: 1_700_000_001_100,
+            latitudeDegrees: 39.7001,
+            longitudeDegrees: -104.9000,
+            horizontalAccuracyMeters: 5
+        ))
+        _ = try state.stop(atMs: 1_100)
+        let rideID = try state.save().rideID
+
+        let query = GatedRideHistoryQuery(base: state, failAfterRelease: true)
+        let model = RideHistoryModel(stateProvider: { query })
+        model.setDateFilter(.allTime)
+        await Self.waitUntil("same-ride history detail") {
+            model.selectedRideID == rideID && !model.detailRouteLoading
+        }
+
+        query.armNextProjection()
+        model.projectDetailViewport(MobileGeoBoundsDto(
+            minimumLatitudeDegrees: 39.6999,
+            maximumLatitudeDegrees: 39.70001,
+            minimumLongitudeDegrees: -104.9001,
+            maximumLongitudeDegrees: -104.8999
+        ))
+        let staleProjectionStarted = await query.waitUntilGatedProjectionStarts()
+        XCTAssertTrue(staleProjectionStarted)
+
+        model.projectDetailViewport(MobileGeoBoundsDto(
+            minimumLatitudeDegrees: 39.70009,
+            maximumLatitudeDegrees: 39.70011,
+            minimumLongitudeDegrees: -104.9001,
+            maximumLongitudeDegrees: -104.8999
+        ))
+        await Self.waitUntil("replacement same-ride viewport projection") {
+            !model.detailRouteLoading && model.detailDisplayPoints.count == 1
+        }
+        let replacementPoints = model.detailDisplayPoints
+        let replacementVersion = model.detailProjectionVersion
+        XCTAssertNil(model.detailRouteError)
+
+        query.releaseGatedProjection()
+        let staleProjectionFinished = await query.waitUntilGatedProjectionFinishes()
+        XCTAssertTrue(staleProjectionFinished)
+        for _ in 0 ..< 20 { await Task.yield() }
+
+        XCTAssertEqual(model.selectedRideID, rideID)
+        XCTAssertEqual(model.detailProjectionRideID, rideID)
+        XCTAssertEqual(model.detailDisplayPoints, replacementPoints)
+        XCTAssertEqual(model.detailProjectionVersion, replacementVersion)
+        XCTAssertFalse(model.detailRouteLoading)
+        XCTAssertNil(model.detailRouteError)
+    }
+
+    @MainActor
+    func testSameRideSelectionReplacementRejectsLateFailureAndLoadingState() async throws {
+        let state = MobileRideMapState()
+        _ = try state.startGpsOnly(atMs: 100)
+        _ = await Self.settle(state, try state.ingestLocation(
+            monotonicMs: 100,
+            wallClockUnixMs: 1_700_000_000_100,
+            latitudeDegrees: 39.7000,
+            longitudeDegrees: -104.9000,
+            horizontalAccuracyMeters: 5
+        ))
+        _ = await Self.settle(state, try state.ingestLocation(
+            monotonicMs: 1_100,
+            wallClockUnixMs: 1_700_000_001_100,
+            latitudeDegrees: 39.7001,
+            longitudeDegrees: -104.9000,
+            horizontalAccuracyMeters: 5
+        ))
+        _ = try state.stop(atMs: 1_100)
+        let rideID = try state.save().rideID
+
+        let query = GatedRideHistoryQuery(base: state, failAfterRelease: true)
+        let model = RideHistoryModel(stateProvider: { query })
+        model.setDateFilter(.allTime)
+        await Self.waitUntil("initial same-ride selection projection") {
+            model.selectedRideID == rideID
+                && !model.routeLoading
+                && !model.detailRouteLoading
+        }
+
+        query.armNextProjection()
+        model.selectFromHistoryList(rideID)
+        let staleProjectionStarted = await query.waitUntilGatedProjectionStarts()
+        XCTAssertTrue(staleProjectionStarted)
+
+        model.selectFromHistoryList(rideID)
+        await Self.waitUntil("replacement same-ride selection projection") {
+            !model.routeLoading && !model.detailRouteLoading
+        }
+        let replacementRoutePoints = model.displayPoints
+        let replacementDetailPoints = model.detailDisplayPoints
+        let replacementVersion = model.projectionVersion
+        let replacementDetailVersion = model.detailProjectionVersion
+        XCTAssertFalse(replacementRoutePoints.isEmpty)
+        XCTAssertFalse(replacementDetailPoints.isEmpty)
+
+        query.releaseGatedProjection()
+        let staleProjectionFinished = await query.waitUntilGatedProjectionFinishes()
+        XCTAssertTrue(staleProjectionFinished)
+        for _ in 0 ..< 20 { await Task.yield() }
+
+        XCTAssertEqual(model.selectedRideID, rideID)
+        XCTAssertEqual(model.detailProjectionRideID, rideID)
+        XCTAssertEqual(model.displayPoints, replacementRoutePoints)
+        XCTAssertEqual(model.detailDisplayPoints, replacementDetailPoints)
+        XCTAssertEqual(model.projectionVersion, replacementVersion)
+        XCTAssertEqual(model.detailProjectionVersion, replacementDetailVersion)
+        XCTAssertFalse(model.routeLoading)
+        XCTAssertFalse(model.detailRouteLoading)
+        XCTAssertNil(model.routeError)
+        XCTAssertNil(model.detailRouteError)
+    }
+
+    @MainActor
     func testModelDeallocatesWhilePageQueryIsInFlight() async {
         let query = GatedRideHistoryQuery(
             base: MobileRideMapState(),
