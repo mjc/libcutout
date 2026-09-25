@@ -515,21 +515,22 @@ final class MusicFeatureModel {
         stopProviderWork()
         let generation = effect.generation
         let provider = selectedProvider
+        let lifecycle = providerLifecycle
         let appleMonitor = self.appleMonitor
         let spotifyProvider = self.spotifyProvider
+        let waitForPoll = waitForMonitorPoll
         effects.run(.monitor(generation)) { [weak self, appleMonitor, spotifyProvider] in
-            guard let self else { return }
             await Self.monitor(
                 provider: provider,
                 generation: generation,
                 allowAuthorization: effect.start == .authorize,
-                lifecycle: self.providerLifecycle,
+                lifecycle: lifecycle,
                 appleMonitor: appleMonitor,
                 spotifyProvider: spotifyProvider,
-                waitForPoll: self.waitForMonitorPoll,
+                waitForPoll: waitForPoll,
                 isCurrent: { [weak self] in
                     guard let self else { return false }
-                    return self.providerLifecycle.classifyMonitor(generation: generation) == .current
+                    return lifecycle.classifyMonitor(generation: generation) == .current
                         && self.selectedProvider == provider
                 },
                 observedAtMs: { [weak self] in self?.monotonicNow() },
@@ -538,7 +539,7 @@ final class MusicFeatureModel {
                 },
                 refresh: { [weak self] in self?.refreshSnapshot() }
             )
-            self.finishMonitoring(generation: generation)
+            self?.finishMonitoring(generation: generation)
         }
 #else
         _ = ingestObservation(unavailableMusicObservation(observedAtMs: monotonicNow()))

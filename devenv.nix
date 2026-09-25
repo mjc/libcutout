@@ -219,6 +219,7 @@ in
         -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testActualMonitorTaskUsesPassiveAuthorizationAndCancelsOnBackground \
         -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testExplicitConnectAllowsAuthorizationPrompt \
         -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testExplicitShutdownInvalidatesLateMonitorObservationBeforeAdapterTeardown \
+        -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testAppModelDeallocationStopsMusicMonitor \
         -parallel-testing-enabled NO \
         ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
         test

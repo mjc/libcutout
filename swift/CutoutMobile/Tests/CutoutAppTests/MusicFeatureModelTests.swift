@@ -216,6 +216,30 @@ final class MusicFeatureModelTests: XCTestCase {
         XCTAssertTrue(model.timelineEvents.isEmpty)
     }
 
+    func testAppModelDeallocationStopsMusicMonitor() async throws {
+        let suite = try makeDefaults()
+        defer { suite.defaults.removePersistentDomain(forName: suite.name) }
+        let monitoring = MusicMonitoringPreferenceStore(defaults: suite.defaults)
+        monitoring.setEnabled(true)
+        let monitor = TestAppleMusicMonitor()
+        var model: CutoutAppModel? = CutoutAppModel(
+            core: MusicMonitorSessionDriver(),
+            musicHistoryPolicyStore: MusicHistoryPolicyStore(defaults: suite.defaults),
+            musicProviderSelectionStore: MusicProviderSelectionStore(defaults: suite.defaults),
+            musicMonitoringPreferenceStore: monitoring,
+            appleMusicMonitor: monitor
+        )
+        weak var weakModel = model
+
+        model?.music.start(sceneIsActive: true)
+        await waitUntil("app-owned music monitor start") { monitor.startCount == 1 }
+
+        model = nil
+
+        XCTAssertNil(weakModel)
+        await waitUntil("app-model deallocation stops music adapter") { monitor.stopCount == 2 }
+    }
+
     func testExplicitConnectAllowsAuthorizationPrompt() async throws {
         let suite = try makeDefaults()
         defer { suite.defaults.removePersistentDomain(forName: suite.name) }
@@ -419,7 +443,7 @@ final class MusicFeatureModelTests: XCTestCase {
 
 #if canImport(MediaPlayer) && os(iOS)
 @MainActor
-private final class TestAppleMusicMonitor: AppleMusicMonitorDriving {
+final class TestAppleMusicMonitor: AppleMusicMonitorDriving {
     private(set) var authorizationPrompts = [Bool]()
     private(set) var startCount = 0
     private(set) var stopCount = 0
@@ -487,6 +511,48 @@ private final class TestAppleMusicMonitor: AppleMusicMonitorDriving {
     func refreshObservation(observedAtMs: UInt64) {
         _ = observedAtMs
     }
+}
+
+@MainActor
+private final class MusicMonitorSessionDriver: CutoutSessionDriving {
+    let rideSessionStateHandle = CutoutSessionStateHandle()
+    var onDisplayStateChange: ((RideDisplayState) -> Void)?
+    var onPhaseChange: ((SessionConnectionPhase) -> Void)?
+    var onReconnectScheduled: ((SessionConnectionRetry) -> Void)?
+    var onCaptureEvent: ((CaptureEvent) -> Void)?
+    var onScanStateChange: ((DevicePickerScanState) -> Void)?
+    var onSettingsChange: ((DeviceSettings) -> Void)?
+    var onFaultHistoryReadbackChange: ((FaultHistoryReadback?) -> Void)?
+    var onBmsSnapshotChange: ((BmsSnapshot?) -> Void)?
+    var onPhoneLocationSnapshotChange: ((MobilePhoneLocationSnapshotDto, MonotonicMilliseconds) -> Void)?
+    var onRideMapDecisionChange: ((MobileRideMapSnapshotDto, MobileRideMapDecisionDto) -> Void)?
+    var onRideMapSnapshotChange: ((MobileRideMapSnapshotDto) -> Void)?
+    var onRideMapErrorChange: ((MobileRideMapErrorEvent) -> Void)?
+    var onRideMapAvailabilityChange: ((MobileRideMapAvailability) -> Void)?
+    var onProtocolIdentityCandidateChange: ((DevicePickerDiscoveryCandidate?) -> Void)?
+    var onBluetoothRestorationResolved: ((String?) -> Void)?
+    var protocolIdentityCandidate: DevicePickerDiscoveryCandidate? { nil }
+    var electricUnicycleModel: ElectricUnicycleModel? { nil }
+    var settings: DeviceSettings { rideSessionStateHandle.settings() }
+
+    func start() {}
+    func pair(platformIdentifier: String) -> Bool { false }
+    func pair(platformIdentifier: String, model: ElectricUnicycleModel) -> Bool { false }
+    func probe(platformIdentifier: String) -> Bool { false }
+    func recordOnly(platformIdentifier: String, note: String?, annotations: [String]) -> Bool { false }
+    func changeCaptureLabel(
+        generation: CaptureGeneration,
+        action: MobileCaptureLabelActionDto
+    ) throws -> [MobileCaptureLabelDto] { [] }
+    func updateMusicCapturePolicy(_ policy: MobileMusicHistoryPolicyDto) {}
+    func updateMusicCaptureObservation(_ observation: MobilePevcapMusicEventDto?) {}
+    func flushCapture() async -> Bool { true }
+    func finishCapture() async -> Bool { true }
+    func disconnectAndScan() {}
+    func submitDeviceSetting(token: ConnectionAttemptToken, id: DeviceSettingID, value: DeviceSettingValue) throws {}
+    func submitDeviceAction(token: ConnectionAttemptToken, id: DeviceActionID) throws {}
+    func now() -> MonotonicMilliseconds { MonotonicMilliseconds(0) }
+    func updateRideLocationDemand(for state: MobileRideMapStateDto) {}
 }
 
 @MainActor

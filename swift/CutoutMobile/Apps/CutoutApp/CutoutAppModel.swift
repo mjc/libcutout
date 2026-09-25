@@ -206,11 +206,11 @@ final class CutoutAppModel {
         phoneAlarmAuthorizationTask?.cancel()
         phoneAlarmAuthorizationGeneration &+= 1
         let generation = phoneAlarmAuthorizationGeneration
-        phoneAlarmAuthorizationTask = Task { @MainActor [weak self] in
-            guard let self else { return }
+        let phoneAlarmDelivery = self.phoneAlarmDelivery
+        phoneAlarmAuthorizationTask = Task { @MainActor [weak self, phoneAlarmDelivery] in
             let authorization = await phoneAlarmDelivery.authorizationStatus()
-            guard !Task.isCancelled, generation == phoneAlarmAuthorizationGeneration else { return }
-            applyPhoneAlarmAuthorization(authorization)
+            guard let self, !Task.isCancelled, generation == self.phoneAlarmAuthorizationGeneration else { return }
+            self.applyPhoneAlarmAuthorization(authorization)
         }
     }
 
@@ -433,6 +433,7 @@ final class CutoutAppModel {
         musicHistoryPolicyStore: MusicHistoryPolicyStore = MusicHistoryPolicyStore(),
         musicProviderSelectionStore: MusicProviderSelectionStore = MusicProviderSelectionStore(),
         musicMonitoringPreferenceStore: MusicMonitoringPreferenceStore = MusicMonitoringPreferenceStore(),
+        appleMusicMonitor: (any AppleMusicMonitorDriving)? = nil,
         phoneAlarmDelivery: any PhoneRideAlarmDelivering = makePhoneRideAlarmDelivery(),
         rideHistoryQueryProvider: RideHistoryQueryProvider? = nil,
         rideHistoryDateProvider: @escaping RideHistoryDateProvider = { Date() }
@@ -446,6 +447,7 @@ final class CutoutAppModel {
             musicHistoryPolicyStore: musicHistoryPolicyStore,
             musicProviderSelectionStore: musicProviderSelectionStore,
             musicMonitoringPreferenceStore: musicMonitoringPreferenceStore,
+            appleMusicMonitor: appleMusicMonitor,
             phoneAlarmDelivery: phoneAlarmDelivery,
             rideHistoryQueryProvider: rideHistoryQueryProvider,
             rideHistoryDateProvider: rideHistoryDateProvider
@@ -461,6 +463,7 @@ final class CutoutAppModel {
         musicHistoryPolicyStore: MusicHistoryPolicyStore,
         musicProviderSelectionStore: MusicProviderSelectionStore,
         musicMonitoringPreferenceStore: MusicMonitoringPreferenceStore,
+        appleMusicMonitor: (any AppleMusicMonitorDriving)? = nil,
         phoneAlarmDelivery: any PhoneRideAlarmDelivering,
         rideHistoryQueryProvider: RideHistoryQueryProvider?,
         rideHistoryDateProvider: @escaping RideHistoryDateProvider = { Date() }
@@ -500,7 +503,8 @@ final class CutoutAppModel {
             invalidateHistoryForDeletion: { rideHistory.invalidateForMusicDeletion() },
             selectedHistoryRideID: { rideHistory.selectedRideID },
             clearSelectedHistoryMusic: { rideHistory.clearMusicMetadata() },
-            setRideHistoryError: { rideHistory.setError($0) }
+            setRideHistoryError: { rideHistory.setError($0) },
+            appleMonitor: appleMusicMonitor
         )
         self.rideHistory.onPageUpdated = { [weak self] in
             self?.applyRideHistoryPageResult()
