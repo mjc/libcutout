@@ -47,6 +47,11 @@ public enum MobileRideMapAdmissionState {
     case completed(MobileRideMapSnapshotDto?)
 }
 
+public enum MobileRideMapLifecycleState {
+    case pending
+    case completed(MobileRideMapSnapshotDto)
+}
+
 /// Rust-owned ride identity captured when an asynchronous map operation starts.
 public struct MobileRideMapErrorContext: Equatable, Hashable, Sendable {
     public let rideID: String?
@@ -895,6 +900,24 @@ public final class MobileRideMapState: @unchecked Sendable {
             .pending
         case let .completed(snapshot):
             .completed(snapshot.map(mapSnapshot))
+        }
+    }
+
+    public func beginLifecycleCommand(
+        event: MobileRideEventDto,
+        atMs: UInt64
+    ) throws -> MobileRideMapLifecycleCommand {
+        try withCore { try $0.beginLifecycleCommand(event: event, atMs: atMs) }
+    }
+
+    public func pollLifecycleCommand(
+        _ command: MobileRideMapLifecycleCommand
+    ) throws -> MobileRideMapLifecycleState {
+        switch try command.poll() {
+        case .pending:
+            .pending
+        case let .completed(snapshot):
+            .completed(mapSnapshot(snapshot))
         }
     }
 

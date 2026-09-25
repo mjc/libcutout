@@ -1547,6 +1547,14 @@ pub struct PendingBmsVoltageWrite {
     consumed: bool,
 }
 
+/// Lifecycle transition accepted by the bounded SQLite worker but not yet committed.
+#[must_use = "poll or wait for the durable lifecycle transition result"]
+#[derive(Debug)]
+pub struct PendingRideLifecycleTransition {
+    response: Receiver<Result<RideLifecycleState, StorageError>>,
+    consumed: bool,
+}
+
 /// Lifecycle mutation included in an ordered verified-connection admission.
 #[derive(Clone, Debug)]
 pub enum VerifiedConnectionLifecycleMutation {
@@ -2108,6 +2116,39 @@ impl PendingBmsVoltageWrite {
     /// Returns [`StorageError::ResponseDropped`] when the database worker disappears before
     /// sending a result.
     pub fn wait_result(self) -> Result<(), StorageError> {
+        self.response
+            .recv()
+            .map_err(|_| StorageError::ResponseDropped)?
+    }
+}
+
+impl PendingRideLifecycleTransition {
+    /// Returns the new lifecycle state when the worker has committed the transition.
+    pub fn try_result(&mut self) -> Option<Result<RideLifecycleState, StorageError>> {
+        if self.consumed {
+            return None;
+        }
+        match self.response.try_recv() {
+            Ok(result) => {
+                self.consumed = true;
+                Some(result)
+            }
+            Err(mpsc::TryRecvError::Empty) => None,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.consumed = true;
+                Some(Err(StorageError::ResponseDropped))
+            }
+        }
+    }
+
+    /// Waits for the committed lifecycle transition result.
+    ///
+    /// Use [`Self::try_result`] from callbacks or polling loops.
+    ///
+    /// # Errors
+    ///
+    /// Returns the storage error or [`StorageError::ResponseDropped`] if the worker stops.
+    pub fn wait_result(self) -> Result<RideLifecycleState, StorageError> {
         self.response
             .recv()
             .map_err(|_| StorageError::ResponseDropped)?
@@ -3289,6 +3330,35 @@ impl RideDatabase {
         monotonic_at_ms: u64,
     ) -> Result<RideLifecycleState, StorageError> {
         self.transition_blocking_with_timestamp(ride_id, event, Some(monotonic_at_ms))
+    }
+
+    /// Queues one timestamped lifecycle transition without waiting for SQLite.
+    ///
+    /// The bounded queue returns `QueueFull` immediately when it cannot accept the command.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::QueueFull`] when the command queue is full, or a worker error when
+    /// the command cannot be enqueued.
+    pub fn queue_transition_at(
+        &self,
+        ride_id: RideId,
+        event: RideEvent,
+        monotonic_at_ms: u64,
+    ) -> Result<PendingRideLifecycleTransition, StorageError> {
+        let occurred_at_ms = wall_clock_now_milliseconds()?;
+        let (reply, response) = response_channel();
+        self.enqueue(Command::Transition {
+            ride_id,
+            event,
+            occurred_at_ms,
+            monotonic_at_ms: Some(monotonic_at_ms),
+            reply,
+        })?;
+        Ok(PendingRideLifecycleTransition {
+            response,
+            consumed: false,
+        })
     }
 
     fn transition_blocking_with_timestamp(

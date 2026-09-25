@@ -1211,6 +1211,52 @@ fn queued_location_write_can_bound_wait_for_a_worker_gate() {
 }
 
 #[test]
+fn queued_lifecycle_transition_does_not_wait_for_sqlite() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-queued-lifecycle-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database.create_ride(RideSource::Live, 1_000).unwrap();
+    database
+        .transition_at(ride, RideEvent::Start, 1_000)
+        .unwrap();
+
+    let (entered_sender, entered_receiver) = std::sync::mpsc::sync_channel(0);
+    let (release_sender, release_receiver) = std::sync::mpsc::sync_channel(0);
+    let sample = LocationSample::new(
+        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        1_001,
+        1_700_000_000_001,
+        None,
+        LocationSource::Live,
+    );
+    let _pending_location = database
+        .enqueue_location_with_worker_gate_for_test(
+            ride,
+            sample,
+            RideMapSegmentId::new(0),
+            RouteTelemetryState::GpsOnly,
+            entered_sender,
+            release_receiver,
+        )
+        .unwrap();
+    entered_receiver
+        .recv_timeout(Duration::from_secs(1))
+        .expect("location write reaches the deliberate worker gate");
+
+    let pending = database
+        .queue_transition_at(ride, RideEvent::Pause, 1_002)
+        .expect("lifecycle submission returns while SQLite is held");
+
+    release_sender.send(()).unwrap();
+    assert_eq!(pending.wait_result().unwrap(), RideLifecycleState::Paused);
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn consumed_location_write_reports_worker_failure_and_recovers() {
     let _guard = test_guard();
     let path = std::env::temp_dir().join(format!(

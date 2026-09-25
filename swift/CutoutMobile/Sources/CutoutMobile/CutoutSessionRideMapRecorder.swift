@@ -98,34 +98,50 @@ actor CutoutSessionRideMapRecorder: CutoutSessionRideMapRecording {
         return snapshot
     }
 
-    func pause(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
-        let snapshot = try requireState().pause(atMs: atMs)
+    func pause(atMs: UInt64) async throws -> MobileRideMapSnapshotDto {
+        let snapshot = try await transition(.pause, atMs: atMs)
         synchronizeLocationDemand()
         return snapshot
     }
 
-    func resume(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
-        let snapshot = try requireState().resume(atMs: atMs)
+    func resume(atMs: UInt64) async throws -> MobileRideMapSnapshotDto {
+        let snapshot = try await transition(.resume, atMs: atMs)
         synchronizeLocationDemand()
         return snapshot
     }
 
-    func stop(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
-        let snapshot = try requireState().stop(atMs: atMs)
+    func stop(atMs: UInt64) async throws -> MobileRideMapSnapshotDto {
+        let snapshot = try await transition(.stop, atMs: atMs)
         synchronizeLocationDemand()
         return snapshot
     }
 
-    func save() throws -> MobileRideMapSnapshotDto {
-        let snapshot = try requireState().save()
+    func save() async throws -> MobileRideMapSnapshotDto {
+        let snapshot = try await transition(.save, atMs: clock.now().rawValue)
         synchronizeLocationDemand()
         return snapshot
     }
 
-    func discard() throws -> MobileRideMapSnapshotDto {
-        let snapshot = try requireState().discard()
+    func discard() async throws -> MobileRideMapSnapshotDto {
+        let snapshot = try await transition(.discard, atMs: clock.now().rawValue)
         synchronizeLocationDemand()
         return snapshot
+    }
+
+    private func transition(
+        _ event: MobileRideEventDto,
+        atMs: UInt64
+    ) async throws -> MobileRideMapSnapshotDto {
+        let state = try requireState()
+        let command = try state.beginLifecycleCommand(event: event, atMs: atMs)
+        while true {
+            switch try state.pollLifecycleCommand(command) {
+            case .pending:
+                try? await Task.sleep(nanoseconds: 10_000_000)
+            case let .completed(snapshot):
+                return snapshot
+            }
+        }
     }
 
     nonisolated func observeConnection(
