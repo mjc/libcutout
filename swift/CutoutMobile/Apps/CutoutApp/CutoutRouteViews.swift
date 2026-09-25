@@ -6,13 +6,14 @@ import SwiftUI
 
 struct AppMusicCompactPlayerModifier: ViewModifier {
     let model: CutoutAppModel
+    let feature: MusicFeatureModel
     @State private var isMusicSettingsPresented = false
 
     func body(content: Content) -> some View {
         content.musicCompactPlayer(
-            nowPlaying: model.musicNowPlaying,
-            timeline: model.musicTimelineEvents,
-            isHidden: model.isMusicPlayerHidden,
+            nowPlaying: feature.nowPlaying,
+            timeline: feature.timelineEvents,
+            isHidden: feature.isPlayerHidden,
             onCommand: { command in
                 Task { @MainActor in
                     _ = await model.handleMusicCommand(command)
@@ -29,8 +30,8 @@ struct AppMusicCompactPlayerModifier: ViewModifier {
 }
 
 extension View {
-    func appMusicCompactPlayer(model: CutoutAppModel) -> some View {
-        modifier(AppMusicCompactPlayerModifier(model: model))
+    func appMusicCompactPlayer(model: CutoutAppModel, feature: MusicFeatureModel) -> some View {
+        modifier(AppMusicCompactPlayerModifier(model: model, feature: feature))
     }
 }
 
@@ -134,7 +135,7 @@ struct EucRideRouteView: View {
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("dashboard.screen.eucRide")
         }
-        .appMusicCompactPlayer(model: model)
+        .appMusicCompactPlayer(model: model, feature: model.music)
     }
 }
 
@@ -266,7 +267,7 @@ struct VescRideRouteView: View {
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("dashboard.screen.vescRide")
         }
-        .appMusicCompactPlayer(model: model)
+        .appMusicCompactPlayer(model: model, feature: model.music)
     }
 }
 

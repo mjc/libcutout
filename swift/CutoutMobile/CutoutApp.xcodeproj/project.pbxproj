@@ -28,6 +28,7 @@
 		30000000000000000000000B /* Apps/CutoutApp/CaptureViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000000B /* Apps/CutoutApp/CaptureViews.swift */; };
 		CA9700000000000000000001 /* Apps/CutoutApp/CaptureFeatureModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA9700000000000000000002 /* Apps/CutoutApp/CaptureFeatureModel.swift */; };
 		CA9700000000000000000003 /* Apps/CutoutApp/BluetoothCapturesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA9700000000000000000004 /* Apps/CutoutApp/BluetoothCapturesView.swift */; };
+		D65000000000000000000001 /* Apps/CutoutApp/MusicFeatureModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D65000000000000000000002 /* Apps/CutoutApp/MusicFeatureModel.swift */; };
 		30000000000000000000000C /* Apps/CutoutApp/DeviceGlyphs.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000000C /* Apps/CutoutApp/DeviceGlyphs.swift */; };
 		30000000000000000000000D /* Apps/CutoutApp/DevicePickerControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000000D /* Apps/CutoutApp/DevicePickerControls.swift */; };
 		30000000000000000000000E /* Apps/CutoutApp/DevicePickerViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000000E /* Apps/CutoutApp/DevicePickerViews.swift */; };
@@ -134,6 +135,7 @@
 		40000000000000000000000B /* Apps/CutoutApp/CaptureViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/CaptureViews.swift; sourceTree = SOURCE_ROOT; };
 		CA9700000000000000000002 /* Apps/CutoutApp/CaptureFeatureModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/CaptureFeatureModel.swift; sourceTree = SOURCE_ROOT; };
 		CA9700000000000000000004 /* Apps/CutoutApp/BluetoothCapturesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/BluetoothCapturesView.swift; sourceTree = SOURCE_ROOT; };
+		D65000000000000000000002 /* Apps/CutoutApp/MusicFeatureModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/MusicFeatureModel.swift; sourceTree = SOURCE_ROOT; };
 		40000000000000000000000C /* Apps/CutoutApp/DeviceGlyphs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/DeviceGlyphs.swift; sourceTree = SOURCE_ROOT; };
 		40000000000000000000000D /* Apps/CutoutApp/DevicePickerControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/DevicePickerControls.swift; sourceTree = SOURCE_ROOT; };
 		40000000000000000000000E /* Apps/CutoutApp/DevicePickerViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/DevicePickerViews.swift; sourceTree = SOURCE_ROOT; };
@@ -270,6 +272,7 @@
 				40000000000000000000000B /* Apps/CutoutApp/CaptureViews.swift */,
 				CA9700000000000000000002 /* Apps/CutoutApp/CaptureFeatureModel.swift */,
 				CA9700000000000000000004 /* Apps/CutoutApp/BluetoothCapturesView.swift */,
+				D65000000000000000000002 /* Apps/CutoutApp/MusicFeatureModel.swift */,
 				40000000000000000000000C /* Apps/CutoutApp/DeviceGlyphs.swift */,
 				40000000000000000000000D /* Apps/CutoutApp/DevicePickerControls.swift */,
 				40000000000000000000000E /* Apps/CutoutApp/DevicePickerViews.swift */,
@@ -520,6 +523,7 @@
 				30000000000000000000000B /* Apps/CutoutApp/CaptureViews.swift in Sources */,
 				CA9700000000000000000001 /* Apps/CutoutApp/CaptureFeatureModel.swift in Sources */,
 				CA9700000000000000000003 /* Apps/CutoutApp/BluetoothCapturesView.swift in Sources */,
+				D65000000000000000000001 /* Apps/CutoutApp/MusicFeatureModel.swift in Sources */,
 				30000000000000000000000C /* Apps/CutoutApp/DeviceGlyphs.swift in Sources */,
 				30000000000000000000000D /* Apps/CutoutApp/DevicePickerControls.swift in Sources */,
 				30000000000000000000000E /* Apps/CutoutApp/DevicePickerViews.swift in Sources */,

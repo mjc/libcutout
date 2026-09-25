@@ -64,23 +64,44 @@ final class CutoutAppModel {
     private(set) var rideMapLivePointsTruncated = false
     private(set) var rideMapLiveSegmentsOmittedByBudget = false
     private(set) var rideMapLastDecision: MobileRideMapDecisionDto?
-    private(set) var musicSettingsNowPlaying: MusicNowPlaying?
-    var musicNowPlaying: MusicNowPlaying? {
-        isMusicPlayerHidden ? nil : musicSettingsNowPlaying
+    let music: MusicFeatureModel
+    var musicSettingsNowPlaying: MusicNowPlaying? {
+        get { music.settingsNowPlaying }
+        set { music.settingsNowPlaying = newValue }
     }
-    private(set) var musicTimelineEvents = [MobileMusicRideEventDto]()
-    private(set) var selectedMusicProvider: MobileMusicProviderDto
-    private(set) var isMusicPlayerHidden: Bool
-    private(set) var musicHistoryPolicy = MobileMusicHistoryPolicyDto.disabled
-    private(set) var musicHistoryUnavailable = false
-    private(set) var musicHistorySaveError: MobileRideMapError?
+    var musicNowPlaying: MusicNowPlaying? { music.nowPlaying }
+    var musicTimelineEvents: [MobileMusicRideEventDto] {
+        get { music.timelineEvents }
+        set { music.timelineEvents = newValue }
+    }
+    var selectedMusicProvider: MobileMusicProviderDto {
+        get { music.selectedProvider }
+        set { music.selectedProvider = newValue }
+    }
+    var isMusicPlayerHidden: Bool {
+        get { music.isPlayerHidden }
+        set { music.isPlayerHidden = newValue }
+    }
+    var musicHistoryPolicy: MobileMusicHistoryPolicyDto {
+        get { music.historyPolicy }
+        set { music.historyPolicy = newValue }
+    }
+    var musicHistoryUnavailable: Bool {
+        get { music.historyUnavailable }
+        set { music.historyUnavailable = newValue }
+    }
+    var musicHistorySaveError: MobileRideMapError? {
+        get { music.historySaveError }
+        set { music.historySaveError = newValue }
+    }
     private var musicObservationError: MobileRideMapError?
     private var musicHistoryPersistenceError: MobileRideMapError?
-    private(set) var musicCommandFeedback: MusicCommandFeedback?
-
-    var musicCommandStatusText: String? {
-        musicCommandFeedback?.messageKey.map { pevLocalizedText($0) }
+    var musicCommandFeedback: MusicCommandFeedback? {
+        get { music.commandFeedback }
+        set { music.commandFeedback = newValue }
     }
+
+    var musicCommandStatusText: String? { music.commandStatusText }
 
     /// Compatibility projection for callers that only display the live map.
     /// New route presentations should use the explicitly scoped error properties.
@@ -529,13 +550,15 @@ final class CutoutAppModel {
         self.selectedDeviceStore = selectedDeviceStore
         self.rideSessionMarkerStore = rideSessionMarkerStore
         self.musicPlayerVisibilityStore = MusicPlayerVisibilityStore()
-        self.isMusicPlayerHidden = musicPlayerVisibilityStore.isHidden
         self.musicProviderSelectionStore = musicProviderSelectionStore
         self.musicMonitoringPreferenceStore = musicMonitoringPreferenceStore
         self.phoneAlarmDelivery = phoneAlarmDelivery
-        self.selectedMusicProvider = musicProviderSelectionStore.provider
         self.musicHistoryPolicyStore = musicHistoryPolicyStore
-        self.musicHistoryPolicy = musicHistoryPolicyStore.policy
+        self.music = MusicFeatureModel(
+            selectedProvider: musicProviderSelectionStore.provider,
+            isPlayerHidden: musicPlayerVisibilityStore.isHidden,
+            historyPolicy: musicHistoryPolicyStore.policy
+        )
         self.musicCoordinator = MusicIntegrationCoordinator(
             rideMapState: core.rideMapStateHandle,
             lifecycle: musicProviderLifecycle

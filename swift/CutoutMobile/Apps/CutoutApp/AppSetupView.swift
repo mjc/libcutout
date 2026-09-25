@@ -64,17 +64,17 @@ struct AppSetupView: View {
                         .toolbar { doneToolbar }
                 case .music:
                     MusicSettingsView(
-                        nowPlaying: model.musicSettingsNowPlaying,
+                        nowPlaying: model.music.settingsNowPlaying,
                         selectedProvider: Binding(
-                            get: { model.selectedMusicProvider },
+                            get: { model.music.selectedProvider },
                             set: model.selectMusicProvider
                         ),
                         historyPolicy: Binding(
-                            get: { model.musicHistoryPolicy },
+                            get: { model.music.historyPolicy },
                             set: { _ = model.setMusicHistoryPolicy($0) }
                         ),
-                        historyUnavailable: model.musicHistoryUnavailable,
-                        historySaveError: model.musicHistorySaveError,
+                        historyUnavailable: model.music.historyUnavailable,
+                        historySaveError: model.music.historySaveError,
                         onConnect: model.connectMusic,
                         onAuthorizeSpotify: model.authorizeSpotify,
                         onOpenProvider: {
