@@ -5,6 +5,45 @@ import CutoutMobileFFI
 
 @MainActor
 final class MusicFeatureModelTests: XCTestCase {
+    func testOpeningHistoricalRideDetailDoesNotDispatchMusicTransport() async throws {
+        let suite = try makeDefaults()
+        defer { suite.defaults.removePersistentDomain(forName: suite.name) }
+        let rideID = "historical-ride"
+        let historyQuery = HistoricalRideQuery(rideID: rideID)
+        var providerCommands = [(MobileMusicProviderDto, MobileMusicCommandDto)]()
+        let music = makeModel(
+            defaults: suite.defaults,
+            providerCommandHandler: { provider, command in
+                providerCommands.append((provider, command))
+                return .unavailable
+            }
+        )
+        let history = RideHistoryModel(
+            stateProvider: { historyQuery },
+            storageErrorProvider: { nil }
+        )
+        XCTAssertTrue(music.ingestObservation(observation(atMs: 1_000)))
+        let playingProjection = try XCTUnwrap(music.settingsNowPlaying)
+
+        history.reload(selecting: rideID)
+        await waitUntil("historical ride detail load") {
+            history.selectedRideID == rideID
+                && !history.isLoading
+                && !history.routeLoading
+                && !history.detailRouteLoading
+        }
+
+        XCTAssertEqual(music.selectedProvider, .appleMusic)
+        XCTAssertEqual(music.settingsNowPlaying, playingProjection)
+        XCTAssertNil(history.routeError)
+        XCTAssertNil(history.detailRouteError)
+        XCTAssertFalse(history.detailMusicTimelineUnavailable)
+        XCTAssertTrue(
+            providerCommands.isEmpty,
+            "loading historical ride detail must not send music transport commands"
+        )
+    }
+
     func testDeletingHistoryInvalidatesDetailBeforeRustDeleteAndClearsCaptureBeforeSelection() throws {
         let state = MobileRideMapState()
         _ = try state.startGpsOnly(atMs: 100)
@@ -415,7 +454,8 @@ final class MusicFeatureModelTests: XCTestCase {
         clearSelectedHistoryMusic: @escaping @MainActor () -> Void = {},
         setRideHistoryError: @escaping @MainActor (MobileRideMapError) -> Void = { _ in },
         appleMonitor: (any AppleMusicMonitorDriving)? = nil,
-        monitorPollWaiter: MusicMonitorPollWaiter? = nil
+        monitorPollWaiter: MusicMonitorPollWaiter? = nil,
+        providerCommandHandler: MusicProviderCommandHandler? = nil
     ) -> MusicFeatureModel {
         MusicFeatureModel(
             providerSelectionStore: MusicProviderSelectionStore(defaults: defaults),
@@ -430,7 +470,8 @@ final class MusicFeatureModelTests: XCTestCase {
             clearSelectedHistoryMusic: clearSelectedHistoryMusic,
             setRideHistoryError: setRideHistoryError,
             appleMonitor: appleMonitor,
-            monitorPollWaiter: monitorPollWaiter
+            monitorPollWaiter: monitorPollWaiter,
+            providerCommandHandler: providerCommandHandler
         )
     }
 
@@ -470,6 +511,71 @@ final class MusicFeatureModelTests: XCTestCase {
                 openProvider: true
             )
         ))
+    }
+}
+
+private struct HistoricalRideQuery: RideHistoryQuerying {
+    private let summary: MobileRideMapHistorySummaryDto
+
+    init(rideID: String) {
+        summary = MobileRideMapHistorySummaryDto(
+            rideID: rideID,
+            state: .saved,
+            summary: MobileRideMapSummaryDto(
+                pointCount: 0,
+                distanceMeters: 0,
+                durationMilliseconds: 0
+            ),
+            segmentCount: 0,
+            createdAtMilliseconds: 0,
+            candidateVehicle: nil,
+            associatedVehicle: nil,
+            associatedVehicleName: nil,
+            telemetryState: .associatedNoTelemetry
+        )
+    }
+
+    func projectStoredPoints(
+        rideID: String,
+        budget: UInt32,
+        viewport: MobileGeoBoundsDto?,
+        privacy: MobileRideMapRoutePrivacyPolicy,
+        cancellation: MobileRideMapProjectionCancellation?
+    ) throws -> MobileRideMapRouteProjection {
+        _ = (rideID, budget, viewport, privacy, cancellation)
+        return MobileRideMapRouteProjection(
+            points: [],
+            segments: [],
+            sourcePointCount: 0,
+            sourceSegmentCount: 0,
+            candidatePointCount: 0,
+            candidateSegmentCount: 0,
+            displayedSegmentCount: 0,
+            backgroundGapCount: 0,
+            presence: .emptyRide
+        )
+    }
+
+    func storedMusicHistory(rideID: String) throws -> MobileMusicHistoryDto {
+        _ = rideID
+        return MobileMusicHistoryDto(status: .unavailable, events: [])
+    }
+
+    func storedHistoryVehicleOptions() throws -> [MobileRideMapHistoryVehicleOptionDto] {
+        []
+    }
+
+    func storedHistoryRide(rideID: String) throws -> MobileRideMapHistorySummaryDto? {
+        summary.rideID == rideID ? summary : nil
+    }
+
+    func storedHistoryPage(
+        cursor: MobileRideCursorDto?,
+        limit: UInt32,
+        filter: MobileRideHistoryFilterDto?
+    ) throws -> MobileRideMapHistoryPageDto {
+        _ = (cursor, limit, filter)
+        return MobileRideMapHistoryPageDto(summaries: [summary], nextCursor: nil)
     }
 }
 

@@ -20,6 +20,10 @@ typealias MusicMonitorPollWaiter = @MainActor @Sendable (
     UInt64,
     @escaping @MainActor @Sendable () -> UInt64
 ) async -> Bool
+typealias MusicProviderCommandHandler = @MainActor (
+    MobileMusicProviderDto,
+    MobileMusicCommandDto
+) async -> MusicCommandOutcome
 
 #if canImport(MediaPlayer) && os(iOS)
 extension AppleMusicProviderAdapter: AppleMusicMonitorDriving {}
@@ -46,6 +50,7 @@ final class MusicFeatureModel {
     @ObservationIgnored private let selectedHistoryRideID: @MainActor () -> String?
     @ObservationIgnored private let clearSelectedHistoryMusic: @MainActor () -> Void
     @ObservationIgnored private let setRideHistoryError: @MainActor (MobileRideMapError) -> Void
+    @ObservationIgnored private let providerCommandHandler: MusicProviderCommandHandler?
 #if canImport(MediaPlayer) && os(iOS)
     @ObservationIgnored let appleProvider: AppleMusicProviderAdapter
     @ObservationIgnored private let appleMonitor: any AppleMusicMonitorDriving
@@ -84,7 +89,8 @@ final class MusicFeatureModel {
         clearSelectedHistoryMusic: @escaping @MainActor () -> Void,
         setRideHistoryError: @escaping @MainActor (MobileRideMapError) -> Void,
         appleMonitor: (any AppleMusicMonitorDriving)? = nil,
-        monitorPollWaiter: MusicMonitorPollWaiter? = nil
+        monitorPollWaiter: MusicMonitorPollWaiter? = nil,
+        providerCommandHandler: MusicProviderCommandHandler? = nil
     ) {
         let providerLifecycle = MobileMusicProviderLifecycle()
         let effects = MusicProviderEffectExecutor()
@@ -101,6 +107,7 @@ final class MusicFeatureModel {
         self.selectedHistoryRideID = selectedHistoryRideID
         self.clearSelectedHistoryMusic = clearSelectedHistoryMusic
         self.setRideHistoryError = setRideHistoryError
+        self.providerCommandHandler = providerCommandHandler
         self.providerLifecycle = providerLifecycle
         self.effects = effects
         self.coordinator = MusicIntegrationCoordinator(
@@ -452,9 +459,7 @@ final class MusicFeatureModel {
         let requestID = beginCommandFeedback()
 #if canImport(MediaPlayer) && os(iOS)
         if command == .openProvider {
-            let result = commandProvider == .spotify
-                ? await spotifyProvider.perform(.openProvider)
-                : await appleProvider.perform(.openProvider)
+            let result = await performProviderCommand(command, provider: commandProvider)
             return finishCommand(result, provider: commandProvider, requestID: requestID)
         }
 #endif
@@ -465,13 +470,27 @@ final class MusicFeatureModel {
             return finishCommand(.refused, provider: commandProvider, requestID: requestID)
         }
 #if canImport(MediaPlayer) && os(iOS)
-        let result = nowPlaying.provider == .spotify
-            ? await spotifyProvider.perform(command)
-            : await appleProvider.perform(command)
+        let result = await performProviderCommand(command, provider: nowPlaying.provider)
         if result == .accepted { refreshSnapshot() }
         return finishCommand(result, provider: commandProvider, requestID: requestID)
 #else
         return finishCommand(.unavailable, provider: commandProvider, requestID: requestID)
+#endif
+    }
+
+    private func performProviderCommand(
+        _ command: MobileMusicCommandDto,
+        provider: MobileMusicProviderDto
+    ) async -> MusicCommandOutcome {
+        if let providerCommandHandler {
+            return await providerCommandHandler(provider, command)
+        }
+#if canImport(MediaPlayer) && os(iOS)
+        return provider == .spotify
+            ? await spotifyProvider.perform(command)
+            : await appleProvider.perform(command)
+#else
+        return .unavailable
 #endif
     }
 
