@@ -7529,8 +7529,23 @@ pub struct MobileRideMapConnectionAdmission {
 
 #[derive(Debug)]
 enum MobileRideMapLifecycleState {
-    Pending(PendingMobileRideLifecycle),
+    Pending(PendingMobileRideCommand),
     Completed(Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto>),
+}
+
+#[derive(Debug)]
+enum PendingMobileRideCommand {
+    Start(PendingMobileRideStart),
+    Transition(PendingMobileRideLifecycle),
+}
+
+#[derive(Debug)]
+struct PendingMobileRideStart {
+    command_id: u64,
+    at_ms: u64,
+    candidate_vehicle: Option<String>,
+    storage: Option<persistence::PendingLiveRideCreation>,
+    created_ride_id: Option<MobileRideIdDto>,
 }
 
 #[derive(Debug)]
@@ -7565,7 +7580,7 @@ impl MobileRideMapConnectionAdmission {
 }
 
 impl MobileRideMapLifecycleCommand {
-    fn new(core: Arc<MobileRideMapCore>, pending: PendingMobileRideLifecycle) -> Arc<Self> {
+    fn new(core: Arc<MobileRideMapCore>, pending: PendingMobileRideCommand) -> Arc<Self> {
         Arc::new(Self {
             core,
             state: Mutex::new(MobileRideMapLifecycleState::Pending(pending)),
@@ -7588,13 +7603,29 @@ impl MobileRideMapLifecycleCommand {
                     .clone()
                     .map(|snapshot| MobileRideMapLifecyclePollDto::Completed { snapshot });
             }
-            MobileRideMapLifecycleState::Pending(pending) => match pending.storage.as_mut() {
-                Some(storage) => match storage.try_result() {
-                    Some(result) => result.map(|_| ()).map_err(map_storage_core_error),
-                    None => return Ok(MobileRideMapLifecyclePollDto::Pending),
-                },
-                None => Ok(()),
-            },
+            MobileRideMapLifecycleState::Pending(PendingMobileRideCommand::Transition(pending)) => {
+                match pending.storage.as_mut() {
+                    Some(storage) => match storage.try_result() {
+                        Some(result) => result.map(|_| ()).map_err(map_storage_core_error),
+                        None => return Ok(MobileRideMapLifecyclePollDto::Pending),
+                    },
+                    None => Ok(()),
+                }
+            }
+            MobileRideMapLifecycleState::Pending(PendingMobileRideCommand::Start(pending)) => {
+                match pending.storage.as_mut() {
+                    Some(storage) => match storage.try_result() {
+                        Some(Ok(ride_id)) => {
+                            pending.created_ride_id =
+                                Some(mobile_ride_id_from_uuid(ride_id.uuid()));
+                            Ok(())
+                        }
+                        Some(Err(error)) => Err(map_storage_core_error(error)),
+                        None => return Ok(MobileRideMapLifecyclePollDto::Pending),
+                    },
+                    None => Ok(()),
+                }
+            }
         };
         let MobileRideMapLifecycleState::Pending(pending) = std::mem::replace(
             &mut *state,
@@ -7604,9 +7635,14 @@ impl MobileRideMapLifecycleCommand {
         ) else {
             unreachable!("pending lifecycle state was checked above");
         };
-        let result = self
-            .core
-            .complete_lifecycle_command(&pending, storage_result);
+        let result = match pending {
+            PendingMobileRideCommand::Start(pending) => self
+                .core
+                .complete_start_gps_only_command(&pending, storage_result),
+            PendingMobileRideCommand::Transition(pending) => self
+                .core
+                .complete_lifecycle_command(&pending, storage_result),
+        };
         *state = MobileRideMapLifecycleState::Completed(result.clone());
         result.map(|snapshot| MobileRideMapLifecyclePollDto::Completed { snapshot })
     }
@@ -9232,7 +9268,7 @@ impl MobileRideMapCore {
         drop(state);
         Ok(MobileRideMapLifecycleCommand::new(
             Arc::clone(self),
-            PendingMobileRideLifecycle {
+            PendingMobileRideCommand::Transition(PendingMobileRideLifecycle {
                 command_id,
                 event,
                 ride_id,
@@ -9240,8 +9276,89 @@ impl MobileRideMapCore {
                 logical_at_ms,
                 transition,
                 storage,
-            },
+            }),
         ))
+    }
+
+    fn begin_start_gps_only_command_inner(
+        self: &Arc<Self>,
+        at_ms: u64,
+    ) -> Result<Arc<MobileRideMapLifecycleCommand>, MobileRideMapCoreErrorDto> {
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        state.require_ready()?;
+        let can_start_ride = match state.recorder.state() {
+            None
+            | Some(
+                ride_maps::RideLifecycleState::Stopped
+                | ride_maps::RideLifecycleState::Interrupted
+                | ride_maps::RideLifecycleState::Saved
+                | ride_maps::RideLifecycleState::Discarded,
+            ) => true,
+            Some(_) => false,
+        };
+        if !can_start_ride {
+            return Err(MobileRideMapCoreErrorDto::AlreadyRecording);
+        }
+        let command_id = state.next_lifecycle_command_id;
+        let next_command_id = command_id.checked_add(1).ok_or_else(|| {
+            MobileRideMapCoreErrorDto::Storage("lifecycle command IDs exhausted".to_owned())
+        })?;
+        let candidate_vehicle = state
+            .last_connected_vehicle
+            .as_ref()
+            .map(|identity| identity.as_str().to_owned());
+        let storage = state
+            .database
+            .as_ref()
+            .map(|database| {
+                database
+                    .inner
+                    .queue_create_started_live_ride(
+                        wall_clock_milliseconds()?,
+                        at_ms,
+                        candidate_vehicle.as_deref(),
+                    )
+                    .map_err(map_storage_core_error)
+            })
+            .transpose()?;
+        state.next_lifecycle_command_id = next_command_id;
+        state.pending_lifecycle_command_id = Some(command_id);
+        Ok(MobileRideMapLifecycleCommand::new(
+            Arc::clone(self),
+            PendingMobileRideCommand::Start(PendingMobileRideStart {
+                command_id,
+                at_ms,
+                candidate_vehicle,
+                storage,
+                created_ride_id: None,
+            }),
+        ))
+    }
+
+    fn complete_start_gps_only_command(
+        &self,
+        pending: &PendingMobileRideStart,
+        storage_result: Result<(), MobileRideMapCoreErrorDto>,
+    ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        if state.pending_lifecycle_command_id != Some(pending.command_id) {
+            return Err(MobileRideMapCoreErrorDto::StaleConnection);
+        }
+        if let Err(error) = storage_result {
+            state.pending_lifecycle_command_id = None;
+            return Err(error);
+        }
+        let ride_id = pending
+            .created_ride_id
+            .clone()
+            .unwrap_or_else(|| mobile_ride_id_from_uuid(Uuid::new_v4()));
+        let result = state.start_gps_only_at_with_id(
+            pending.at_ms,
+            pending.candidate_vehicle.as_deref(),
+            Some(ride_id),
+        );
+        state.pending_lifecycle_command_id = None;
+        result
     }
 
     fn complete_lifecycle_command(
@@ -9302,6 +9419,21 @@ impl MobileRideMapCore {
 
 #[uniffi::export]
 impl MobileRideMapCore {
+    /// Queues GPS-only ride creation and returns before SQLite completes.
+    ///
+    /// Poll the returned command to publish the ride into the Rust map projection.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a ride is already open, another map command is pending, or the
+    /// bounded storage queue cannot accept the command.
+    pub fn begin_start_gps_only_command(
+        self: &Arc<Self>,
+        at_ms: u64,
+    ) -> Result<Arc<MobileRideMapLifecycleCommand>, MobileRideMapCoreErrorDto> {
+        self.begin_start_gps_only_command_inner(at_ms)
+    }
+
     /// Queues a timestamped lifecycle transition and returns before SQLite completes it.
     ///
     /// # Errors
@@ -14426,6 +14558,31 @@ mod tests {
             command.poll().expect("terminal result is cached"),
             MobileRideMapLifecyclePollDto::Completed { .. }
         ));
+    }
+
+    #[test]
+    fn gps_only_start_is_published_only_when_its_command_is_polled() {
+        let core = MobileRideMapCore::new();
+        let command = core
+            .begin_start_gps_only_command(1_000)
+            .expect("start command is accepted");
+
+        assert!(core.current_snapshot(1_000).is_none());
+        assert!(matches!(
+            core.begin_start_gps_only_command(1_001),
+            Err(MobileRideMapCoreErrorDto::AdmissionPending)
+        ));
+        let MobileRideMapLifecyclePollDto::Completed { snapshot } =
+            command.poll().expect("start command completes")
+        else {
+            panic!("in-memory start should complete on its first poll");
+        };
+        assert_eq!(snapshot.state, MobileRideLifecycleStateDto::Active);
+        assert_eq!(core.current_snapshot(1_000), Some(snapshot.clone()));
+        assert_eq!(
+            command.poll().expect("terminal result is cached"),
+            MobileRideMapLifecyclePollDto::Completed { snapshot }
+        );
     }
 
     #[test]

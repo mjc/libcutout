@@ -92,8 +92,9 @@ actor CutoutSessionRideMapRecorder: CutoutSessionRideMapRecording {
         }
     }
 
-    func startGpsOnly(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
-        let snapshot = try requireState().startGpsOnly(atMs: atMs)
+    func startGpsOnly(atMs: UInt64) async throws -> MobileRideMapSnapshotDto {
+        let state = try requireState()
+        let snapshot = try await state.startGpsOnlyCommand(atMs: atMs)
         synchronizeLocationDemand()
         return snapshot
     }
@@ -133,21 +134,7 @@ actor CutoutSessionRideMapRecorder: CutoutSessionRideMapRecording {
         atMs: UInt64
     ) async throws -> MobileRideMapSnapshotDto {
         let state = try requireState()
-        let command = try state.beginLifecycleCommand(event: event, atMs: atMs)
-        // Rust has accepted this mutation and holds its lifecycle barrier until the command
-        // reaches a terminal result. Keep polling even if the UI task that requested it is
-        // cancelled; otherwise cancellation makes Task.sleep return immediately on every pass.
-        let completion = Task {
-            while true {
-                switch try state.pollLifecycleCommand(command) {
-                case .pending:
-                    try await Task.sleep(nanoseconds: 10_000_000)
-                case let .completed(snapshot):
-                    return snapshot
-                }
-            }
-        }
-        return try await completion.value
+        return try await state.performLifecycleCommand(event: event, atMs: atMs)
     }
 
     nonisolated func observeConnection(

@@ -878,6 +878,14 @@ public final class MobileRideMapState: @unchecked Sendable {
         }
     }
 
+    public func beginStartGpsOnlyCommand(atMs: UInt64) throws -> MobileRideMapLifecycleCommand {
+        try withCore { try $0.beginStartGpsOnlyCommand(atMs: atMs) }
+    }
+
+    public func startGpsOnlyCommand(atMs: UInt64) async throws -> MobileRideMapSnapshotDto {
+        try await completeLifecycleCommand(beginStartGpsOnlyCommand(atMs: atMs))
+    }
+
     public func beginVerifiedConnectionAdmission(
         connectionState: CutoutSessionStateHandle,
         token: ConnectionAttemptToken,
@@ -919,6 +927,31 @@ public final class MobileRideMapState: @unchecked Sendable {
         case let .completed(snapshot):
             .completed(mapSnapshot(snapshot))
         }
+    }
+
+    public func performLifecycleCommand(
+        event: MobileRideEventDto,
+        atMs: UInt64
+    ) async throws -> MobileRideMapSnapshotDto {
+        try await completeLifecycleCommand(beginLifecycleCommand(event: event, atMs: atMs))
+    }
+
+    private func completeLifecycleCommand(
+        _ command: MobileRideMapLifecycleCommand
+    ) async throws -> MobileRideMapSnapshotDto {
+        // Rust holds its mutation barrier until a terminal poll. Keep this settlement task
+        // independent of caller cancellation so it cannot strand the accepted command.
+        let completion = Task {
+            while true {
+                switch try pollLifecycleCommand(command) {
+                case .pending:
+                    try await Task.sleep(nanoseconds: 10_000_000)
+                case let .completed(snapshot):
+                    return snapshot
+                }
+            }
+        }
+        return try await completion.value
     }
 
     public func pause(atMs: UInt64) throws -> MobileRideMapSnapshotDto {

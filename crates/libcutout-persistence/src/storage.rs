@@ -1547,6 +1547,14 @@ pub struct PendingBmsVoltageWrite {
     consumed: bool,
 }
 
+/// A live ride creation accepted by the bounded database queue but not yet committed.
+#[must_use = "poll or wait for the durable live ride creation result"]
+#[derive(Debug)]
+pub struct PendingLiveRideCreation {
+    response: Receiver<Result<RideId, StorageError>>,
+    consumed: bool,
+}
+
 /// Lifecycle transition accepted by the bounded SQLite worker but not yet committed.
 #[must_use = "poll or wait for the durable lifecycle transition result"]
 #[derive(Debug)]
@@ -2122,6 +2130,37 @@ impl PendingBmsVoltageWrite {
     }
 }
 
+impl PendingLiveRideCreation {
+    /// Returns the new ride identity when the worker has committed the creation.
+    pub fn try_result(&mut self) -> Option<Result<RideId, StorageError>> {
+        if self.consumed {
+            return None;
+        }
+        match self.response.try_recv() {
+            Ok(result) => {
+                self.consumed = true;
+                Some(result)
+            }
+            Err(mpsc::TryRecvError::Empty) => None,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.consumed = true;
+                Some(Err(StorageError::ResponseDropped))
+            }
+        }
+    }
+
+    /// Waits for the durable ride-creation result.
+    ///
+    /// # Errors
+    ///
+    /// Returns the storage error or [`StorageError::ResponseDropped`] if the worker stops.
+    pub fn wait_result(self) -> Result<RideId, StorageError> {
+        self.response
+            .recv()
+            .map_err(|_| StorageError::ResponseDropped)?
+    }
+}
+
 impl PendingRideLifecycleTransition {
     /// Returns the new lifecycle state when the worker has committed the transition.
     pub fn try_result(&mut self) -> Option<Result<RideLifecycleState, StorageError>> {
@@ -2324,13 +2363,39 @@ impl RideDatabase {
         monotonic_created_at_ms: u64,
         candidate_vehicle: Option<&str>,
     ) -> Result<RideId, StorageError> {
+        self.queue_create_started_live_ride(
+            created_at_ms,
+            monotonic_created_at_ms,
+            candidate_vehicle,
+        )?
+        .wait_result()
+    }
+
+    /// Queues an active live ride creation without waiting for SQLite.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::QueueFull`] when the bounded queue is saturated,
+    /// [`StorageError::WorkerStopped`] when the worker is unavailable, or a validation error for
+    /// an invalid candidate vehicle.
+    pub fn queue_create_started_live_ride(
+        &self,
+        created_at_ms: u64,
+        monotonic_created_at_ms: u64,
+        candidate_vehicle: Option<&str>,
+    ) -> Result<PendingLiveRideCreation, StorageError> {
         let candidate_vehicle =
             normalize_optional_stored_text(candidate_vehicle, "candidate vehicle")?;
-        self.request(move |reply| Command::CreateStartedLiveRide {
+        let (reply, response) = response_channel();
+        self.enqueue(Command::CreateStartedLiveRide {
             created_at_ms,
             monotonic_created_at_ms,
             candidate_vehicle,
             reply,
+        })?;
+        Ok(PendingLiveRideCreation {
+            response,
+            consumed: false,
         })
     }
 

@@ -3488,27 +3488,27 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     }
 
     func startRideMapGpsOnly(atMs: UInt64) async throws -> MobileRideMapSnapshotDto {
-        try rideMapState.startGpsOnly(atMs: atMs)
+        try await rideMapState.startGpsOnlyCommand(atMs: atMs)
     }
 
     func pauseRideMap(atMs: UInt64) async throws -> MobileRideMapSnapshotDto {
-        try rideMapState.pause(atMs: atMs)
+        try await rideMapState.performLifecycleCommand(event: .pause, atMs: atMs)
     }
 
     func resumeRideMap(atMs: UInt64) async throws -> MobileRideMapSnapshotDto {
-        try rideMapState.resume(atMs: atMs)
+        try await rideMapState.performLifecycleCommand(event: .resume, atMs: atMs)
     }
 
     func stopRideMap(atMs: UInt64) async throws -> MobileRideMapSnapshotDto {
-        try rideMapState.stop(atMs: atMs)
+        try await rideMapState.performLifecycleCommand(event: .stop, atMs: atMs)
     }
 
     func saveRideMap() async throws -> MobileRideMapSnapshotDto {
-        try rideMapState.save()
+        try await rideMapState.performLifecycleCommand(event: .save, atMs: nowValue)
     }
 
     func discardRideMap() async throws -> MobileRideMapSnapshotDto {
-        try rideMapState.discard()
+        try await rideMapState.performLifecycleCommand(event: .discard, atMs: nowValue)
     }
 
     func submitDeviceSetting(token: ConnectionAttemptToken, id: DeviceSettingID, value: DeviceSettingValue) throws {
