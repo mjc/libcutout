@@ -240,6 +240,38 @@ final class MusicFeatureModelTests: XCTestCase {
         await waitUntil("app-model deallocation stops music adapter") { monitor.stopCount == 2 }
     }
 
+    func testAppModelKeepsOneMusicMonitorAcrossStartupAndSceneResume() async throws {
+        let suite = try makeDefaults()
+        defer { suite.defaults.removePersistentDomain(forName: suite.name) }
+        let monitoring = MusicMonitoringPreferenceStore(defaults: suite.defaults)
+        monitoring.setEnabled(true)
+        let monitor = TestAppleMusicMonitor()
+        let model = CutoutAppModel(
+            core: MusicMonitorSessionDriver(),
+            musicHistoryPolicyStore: MusicHistoryPolicyStore(defaults: suite.defaults),
+            musicProviderSelectionStore: MusicProviderSelectionStore(defaults: suite.defaults),
+            musicMonitoringPreferenceStore: monitoring,
+            appleMusicMonitor: monitor
+        )
+
+        model.start(sceneIsActive: true)
+        await waitUntil("root-owned music monitor start") { monitor.startCount == 1 }
+
+        model.start(sceneIsActive: true)
+        model.appDidBecomeActive()
+        await Task.yield()
+        XCTAssertEqual(monitor.startCount, 1, "repeated startup and active notifications must not duplicate the monitor")
+
+        model.appDidEnterBackground()
+        await waitUntil("root music monitor suspension") { monitor.stopCount >= 2 }
+        model.appDidBecomeActive()
+        await waitUntil("root music monitor restoration") { monitor.startCount == 2 }
+
+        model.music.stopMonitoring()
+        await waitUntil("root music monitor shutdown") { monitor.stopCount >= 4 }
+        XCTAssertEqual(monitor.startCount, 2)
+    }
+
     func testExplicitConnectAllowsAuthorizationPrompt() async throws {
         let suite = try makeDefaults()
         defer { suite.defaults.removePersistentDomain(forName: suite.name) }
