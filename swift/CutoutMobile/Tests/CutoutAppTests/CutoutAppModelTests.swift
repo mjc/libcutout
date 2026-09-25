@@ -382,11 +382,13 @@ final class CutoutAppModelTests: XCTestCase {
         )
         let rideID = try XCTUnwrap(model.rideMapSnapshot?.rideID)
         XCTAssertFalse(model.musicTimelineEvents.isEmpty)
+        let playback = try XCTUnwrap(model.musicNowPlaying)
 
         XCTAssertTrue(model.forgetMusicHistory(for: rideID))
 
         XCTAssertEqual(model.musicHistoryPolicy, .disabled)
         XCTAssertTrue(model.musicTimelineEvents.isEmpty)
+        XCTAssertEqual(model.musicNowPlaying, playback)
         XCTAssertEqual(driver.rideMapState.currentMusicHistoryPolicy(), .disabled)
         XCTAssertTrue(driver.rideMapState.currentMusicEvents().isEmpty)
     }
