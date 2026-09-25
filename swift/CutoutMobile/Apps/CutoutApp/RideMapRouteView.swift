@@ -97,7 +97,7 @@ struct RideMapRouteView: View {
         .background(PevColors.pageBackground)
         .foregroundStyle(PevColors.primaryText)
         .accessibilityIdentifier("ride-map.screen")
-        .appMusicCompactPlayer(model: model, feature: model.music)
+        .appMusicCompactPlayer(model: model)
 #if os(iOS)
         // Ride Detail owns its compact header so it remains attached to the map
         // when the destination is pushed from either Map entry path. Leaving the

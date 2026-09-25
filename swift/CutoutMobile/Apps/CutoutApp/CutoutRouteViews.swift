@@ -6,22 +6,21 @@ import SwiftUI
 
 struct AppMusicCompactPlayerModifier: ViewModifier {
     let model: CutoutAppModel
-    let feature: MusicFeatureModel
     @State private var isMusicSettingsPresented = false
 
     func body(content: Content) -> some View {
         content.musicCompactPlayer(
-            nowPlaying: feature.nowPlaying,
-            timeline: feature.timelineEvents,
-            isHidden: feature.isPlayerHidden,
+            nowPlaying: model.music.nowPlaying,
+            timeline: model.music.timelineEvents,
+            isHidden: model.music.isPlayerHidden,
             onCommand: { command in
                 Task { @MainActor in
-                    _ = await feature.handleCommand(command)
+                    _ = await model.music.handleCommand(command)
                 }
             },
             onOpenSettings: { isMusicSettingsPresented = true },
-            onDismiss: feature.dismissPlayer,
-            onRestore: feature.restorePlayer
+            onDismiss: model.music.dismissPlayer,
+            onRestore: model.music.restorePlayer
         )
         .sheet(isPresented: $isMusicSettingsPresented) {
             AppSetupView(model: model, opensMusic: true)
@@ -30,8 +29,8 @@ struct AppMusicCompactPlayerModifier: ViewModifier {
 }
 
 extension View {
-    func appMusicCompactPlayer(model: CutoutAppModel, feature: MusicFeatureModel) -> some View {
-        modifier(AppMusicCompactPlayerModifier(model: model, feature: feature))
+    func appMusicCompactPlayer(model: CutoutAppModel) -> some View {
+        modifier(AppMusicCompactPlayerModifier(model: model))
     }
 }
 
@@ -135,7 +134,7 @@ struct EucRideRouteView: View {
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("dashboard.screen.eucRide")
         }
-        .appMusicCompactPlayer(model: model, feature: model.music)
+        .appMusicCompactPlayer(model: model)
     }
 }
 
@@ -267,7 +266,7 @@ struct VescRideRouteView: View {
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("dashboard.screen.vescRide")
         }
-        .appMusicCompactPlayer(model: model, feature: model.music)
+        .appMusicCompactPlayer(model: model)
     }
 }
 
