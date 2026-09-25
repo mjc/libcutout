@@ -313,6 +313,11 @@ final class MusicFeatureModel {
     }
 
     func stopMonitoring() {
+        _ = providerLifecycle.cancelMonitor()
+        stopProviderWork()
+    }
+
+    private func stopProviderWork() {
         effects.cancelAll(in: .monitor)
 #if canImport(MediaPlayer) && os(iOS)
         appleMonitor.stopMonitoring()
@@ -357,7 +362,7 @@ final class MusicFeatureModel {
                 )
             )))
         }
-        stopMonitoring()
+        stopProviderWork()
         if let nowPlaying = coordinator.nowPlaying {
             settingsNowPlaying = nowPlaying.staleProjection
         }
@@ -484,7 +489,7 @@ final class MusicFeatureModel {
             appleProvider.applySuspension(suspension)
 #endif
             spotifyProvider.applySuspension(suspension)
-            stopMonitoring()
+            stopProviderWork()
         case .appleMusicSystemPlayer where previousProvider != provider:
             providerLifecycle.requestMonitor(request: .observe)
             beginMonitoring()
@@ -507,7 +512,7 @@ final class MusicFeatureModel {
         if let settingsNowPlaying {
             self.settingsNowPlaying = settingsNowPlaying.staleProjection
         }
-        stopMonitoring()
+        stopProviderWork()
         let generation = effect.generation
         let provider = selectedProvider
         let appleMonitor = self.appleMonitor

@@ -184,6 +184,36 @@ final class MusicFeatureModelTests: XCTestCase {
         XCTAssertEqual(monitor.suspensionCount, 1)
         XCTAssertFalse(monitor.authorizationPrompts.contains(true))
     }
+
+    func testExplicitShutdownInvalidatesLateMonitorObservationBeforeAdapterTeardown() async throws {
+        let suite = try makeDefaults()
+        defer { suite.defaults.removePersistentDomain(forName: suite.name) }
+        let monitoring = MusicMonitoringPreferenceStore(defaults: suite.defaults)
+        monitoring.setEnabled(true)
+        let monitor = TestAppleMusicMonitor()
+        let pollWaiter = TestMusicMonitorPollWaiter()
+        let model = makeModel(
+            defaults: suite.defaults,
+            monitoringPreferenceStore: monitoring,
+            appleMonitor: monitor,
+            monitorPollWaiter: { deadlineMs, _ in
+                await pollWaiter.wait(until: deadlineMs)
+            }
+        )
+
+        model.start(sceneIsActive: true)
+        await waitUntil("monitor poll before shutdown") { pollWaiter.startedCount == 1 }
+        let nowPlayingBeforeShutdown = try XCTUnwrap(model.settingsNowPlaying)
+
+        model.stopMonitoring()
+        monitor.emit(observation(atMs: 2_000, identifier: "late-track"))
+        pollWaiter.releaseNext(returning: false)
+        await waitUntil("shutdown poll completion") { pollWaiter.completedCount == 1 }
+
+        XCTAssertEqual(monitor.stopCount, 2)
+        XCTAssertEqual(model.settingsNowPlaying, nowPlayingBeforeShutdown)
+        XCTAssertTrue(model.timelineEvents.isEmpty)
+    }
 #endif
 
 #if !os(iOS)
@@ -342,12 +372,12 @@ final class MusicFeatureModelTests: XCTestCase {
         return (name, try XCTUnwrap(UserDefaults(suiteName: name)))
     }
 
-    private func observation(atMs: UInt64) -> MusicProviderObservation {
+    private func observation(atMs: UInt64, identifier: String = "track-1") -> MusicProviderObservation {
         MusicProviderObservation(snapshot: MobileMusicSnapshotDto(
             provider: .appleMusic,
             sessionId: "feature-test",
             state: .playing,
-            item: MobileMusicItemDto(identifier: "track-1", title: "Track", artist: "Artist"),
+            item: MobileMusicItemDto(identifier: identifier, title: "Track", artist: "Artist"),
             positionMilliseconds: nil,
             durationMilliseconds: nil,
             observedAtMs: atMs,
@@ -369,6 +399,7 @@ private final class TestAppleMusicMonitor: AppleMusicMonitorDriving {
     private(set) var startCount = 0
     private(set) var stopCount = 0
     private(set) var suspensionCount = 0
+    private var onObservation: (@MainActor (MusicProviderObservation) -> Void)?
 
     func requestAuthorization(allowPrompt: Bool) async -> Bool {
         authorizationPrompts.append(allowPrompt)
@@ -393,6 +424,7 @@ private final class TestAppleMusicMonitor: AppleMusicMonitorDriving {
         onObservation: @escaping @MainActor (MusicProviderObservation) -> Void
     ) async {
         startCount += 1
+        self.onObservation = onObservation
         onObservation(MusicProviderObservation(snapshot: MobileMusicSnapshotDto(
             provider: .appleMusic,
             sessionId: "test-monitor",
@@ -403,6 +435,10 @@ private final class TestAppleMusicMonitor: AppleMusicMonitorDriving {
             observedAtMs: observedAtMs(),
             capabilities: .init(previous: false, play: true, pause: true, next: false, openProvider: true)
         )))
+    }
+
+    func emit(_ observation: MusicProviderObservation) {
+        onObservation?(observation)
     }
 
     func stopMonitoring() {
