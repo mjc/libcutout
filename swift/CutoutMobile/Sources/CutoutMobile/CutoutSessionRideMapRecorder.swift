@@ -182,7 +182,7 @@ actor CutoutSessionRideMapRecorder: CutoutSessionRideMapRecording {
                 )
                 guard !samples.isEmpty else { return }
                 do {
-                    try state.recordBmsVoltageSamples(deviceIdentity: deviceIdentity, samples: samples)
+                    try state.queueBmsVoltageSamples(deviceIdentity: deviceIdentity, samples: samples)
                 } catch {
                     recorder.recordDiagnostic("bms_storage_error=\(error)")
                 }
@@ -268,6 +268,7 @@ actor CutoutSessionRideMapRecorder: CutoutSessionRideMapRecording {
     }
 
     private func drainLocationWrites() {
+        drainBmsVoltageWrites()
         guard let state,
             state.initializationError == nil,
             state.isReady,
@@ -275,6 +276,15 @@ actor CutoutSessionRideMapRecorder: CutoutSessionRideMapRecording {
                 || state.currentSnapshot(atMs: clock.now().rawValue)?.state.isOpen == true
         else { return }
         publishDecisionBatch(state.pollLocationWrites())
+    }
+
+    private func drainBmsVoltageWrites() {
+        guard let state else { return }
+        for outcome in state.pollBmsVoltageWrites() {
+            if let error = outcome.error {
+                recordDiagnostic("bms_storage_error request=\(outcome.requestId) error=\(error)")
+            }
+        }
     }
 
     private func publishDecisionBatch(_ decisions: [MobileRideMapDecisionDto]) {

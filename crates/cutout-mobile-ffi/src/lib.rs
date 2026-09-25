@@ -5409,6 +5409,9 @@ pub enum MobileRideDatabaseError {
     /// The bounded Rust worker queue is full.
     #[error("ride database queue is full")]
     QueueFull,
+    /// A BMS voltage batch exceeded the supported sample count.
+    #[error("BMS voltage batch is too large")]
+    BmsBatchTooLarge,
     /// The Rust worker is no longer available.
     #[error("ride database worker stopped")]
     WorkerStopped,
@@ -5994,6 +5997,22 @@ fn core_music_event(
 #[derive(Debug, uniffi::Object)]
 pub struct RideDatabaseHandle {
     inner: persistence::RideDatabase,
+    pending_bms_writes: Mutex<PendingBmsVoltageWrites>,
+}
+
+const MAX_PENDING_BMS_WRITES: usize = 64;
+const MAX_BMS_SAMPLES_PER_BATCH: usize = 256;
+
+#[derive(Debug)]
+struct PendingBmsVoltageWrites {
+    next_request_id: u64,
+    writes: VecDeque<PendingMobileBmsVoltageWrite>,
+}
+
+#[derive(Debug)]
+struct PendingMobileBmsVoltageWrite {
+    request_id: u64,
+    write: persistence::PendingBmsVoltageWrite,
 }
 
 /// Cooperative cancellation for one durable route projection.
@@ -6094,7 +6113,15 @@ pub fn open_ride_database(
     path: String,
 ) -> Result<Arc<RideDatabaseHandle>, MobileRideDatabaseError> {
     persistence::RideDatabase::open(Path::new(&path))
-        .map(|inner| Arc::new(RideDatabaseHandle { inner }))
+        .map(|inner| {
+            Arc::new(RideDatabaseHandle {
+                inner,
+                pending_bms_writes: Mutex::new(PendingBmsVoltageWrites {
+                    next_request_id: 1,
+                    writes: VecDeque::new(),
+                }),
+            })
+        })
         .map_err(map_ride_database_error)
 }
 
@@ -6117,6 +6144,39 @@ pub struct MobileStoredBmsVoltageSampleDto {
     pub pack_observation_index: Option<u16>,
     /// Raw reported voltage.
     pub voltage: Voltage,
+}
+
+/// Terminal outcome for one Rust-identified BMS voltage batch.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileBmsVoltageWriteOutcomeDto {
+    /// Rust-assigned identity returned when the batch was queued.
+    pub request_id: u64,
+    /// Absent when the batch was durably committed.
+    pub error: Option<MobileRideDatabaseError>,
+}
+
+fn stored_bms_voltage_samples(
+    device_identity: &str,
+    samples: Vec<MobileStoredBmsVoltageSampleDto>,
+) -> Result<Vec<persistence::BmsVoltageSampleRecord>, MobileRideDatabaseError> {
+    samples
+        .into_iter()
+        .map(|sample| {
+            persistence::BmsVoltageSampleRecord::new(
+                device_identity,
+                &sample.session_identifier,
+                sample.event_sequence,
+                sample.monotonic_milliseconds,
+                sample.wall_clock_milliseconds,
+                sample.observation_index,
+                sample.voltage.value,
+            )
+            .map(|record| {
+                record.with_pack_identity(sample.pack_index, sample.pack_observation_index)
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(map_ride_database_error)
 }
 
 #[uniffi::export]
@@ -6157,27 +6217,81 @@ impl RideDatabaseHandle {
         device_identity: String,
         samples: Vec<MobileStoredBmsVoltageSampleDto>,
     ) -> Result<(), MobileRideDatabaseError> {
-        let samples = samples
-            .into_iter()
-            .map(|sample| {
-                persistence::BmsVoltageSampleRecord::new(
-                    &device_identity,
-                    &sample.session_identifier,
-                    sample.event_sequence,
-                    sample.monotonic_milliseconds,
-                    sample.wall_clock_milliseconds,
-                    sample.observation_index,
-                    sample.voltage.value,
-                )
-                .map(|record| {
-                    record.with_pack_identity(sample.pack_index, sample.pack_observation_index)
-                })
-            })
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(map_ride_database_error)?;
+        let samples = stored_bms_voltage_samples(&device_identity, samples)?;
         self.inner
             .record_bms_voltage_samples(&samples)
             .map_err(map_ride_database_error)
+    }
+
+    /// Queues one bounded BMS batch without waiting for SQLite completion.
+    ///
+    /// The returned request ID can be matched with a terminal outcome from
+    /// [`Self::poll_bms_voltage_writes`]. An empty batch is ignored and returns `None`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error when the batch is invalid, the pending set is full, or the database
+    /// worker cannot accept the command.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "UniFFI exports owned identity and sample buffers."
+    )]
+    pub fn queue_bms_voltage_samples(
+        &self,
+        device_identity: String,
+        samples: Vec<MobileStoredBmsVoltageSampleDto>,
+    ) -> Result<Option<u64>, MobileRideDatabaseError> {
+        if samples.len() > MAX_BMS_SAMPLES_PER_BATCH {
+            return Err(MobileRideDatabaseError::BmsBatchTooLarge);
+        }
+        let samples = stored_bms_voltage_samples(&device_identity, samples)?;
+        if samples.is_empty() {
+            return Ok(None);
+        }
+
+        let mut pending = self
+            .pending_bms_writes
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if pending.writes.len() >= MAX_PENDING_BMS_WRITES {
+            return Err(MobileRideDatabaseError::QueueFull);
+        }
+        let next_request_id = pending
+            .next_request_id
+            .checked_add(1)
+            .ok_or(MobileRideDatabaseError::StorageFailure)?;
+        let write = self
+            .inner
+            .queue_bms_voltage_samples(samples)
+            .map_err(map_ride_database_error)?;
+        let request_id = pending.next_request_id;
+        pending.next_request_id = next_request_id;
+        pending
+            .writes
+            .push_back(PendingMobileBmsVoltageWrite { request_id, write });
+        Ok(Some(request_id))
+    }
+
+    /// Returns completed BMS batches without waiting for SQLite.
+    pub fn poll_bms_voltage_writes(&self) -> Vec<MobileBmsVoltageWriteOutcomeDto> {
+        let mut pending = self
+            .pending_bms_writes
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let mut completed = Vec::new();
+        let mut remaining = VecDeque::with_capacity(pending.writes.len());
+        while let Some(mut item) = pending.writes.pop_front() {
+            if let Some(result) = item.write.try_result() {
+                completed.push(MobileBmsVoltageWriteOutcomeDto {
+                    request_id: item.request_id,
+                    error: result.err().map(map_ride_database_error),
+                });
+            } else {
+                remaining.push_back(item);
+            }
+        }
+        pending.writes = remaining;
+        completed
     }
 
     /// Lists one bounded page of ride history in stable newest-first order.
@@ -13422,6 +13536,58 @@ mod tests {
         assert_eq!(core.restore(1).unwrap(), None);
         assert!(core.is_ready());
         assert!(core.start_gps_only(1).is_ok());
+        database.shutdown().expect("database shuts down");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn queued_bms_batch_is_correlated_and_pollable_through_mobile_database_handle() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-bms-queue-{}-{}.sqlite3",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+        let sample = MobileStoredBmsVoltageSampleDto {
+            session_identifier: "session-a".to_owned(),
+            event_sequence: 1,
+            monotonic_milliseconds: 1_000,
+            wall_clock_milliseconds: 1_700_000_000_000,
+            observation_index: 0,
+            pack_index: Some(0),
+            pack_observation_index: Some(0),
+            voltage: Voltage { value: 4_193 },
+        };
+        assert_eq!(
+            database.queue_bms_voltage_samples(
+                "wheel-a".to_owned(),
+                vec![sample.clone(); MAX_BMS_SAMPLES_PER_BATCH + 1]
+            ),
+            Err(MobileRideDatabaseError::BmsBatchTooLarge)
+        );
+        let request_id = database
+            .queue_bms_voltage_samples("wheel-a".to_owned(), vec![sample])
+            .expect("bounded database queue accepts the BMS batch")
+            .expect("non-empty batch receives a request ID");
+        database
+            .inner
+            .integrity_check()
+            .expect("FIFO barrier waits for the BMS command to complete");
+        let outcomes = database.poll_bms_voltage_writes();
+
+        assert_eq!(
+            outcomes,
+            vec![MobileBmsVoltageWriteOutcomeDto {
+                request_id,
+                error: None,
+            }]
+        );
+        assert!(database.poll_bms_voltage_writes().is_empty());
+
         database.shutdown().expect("database shuts down");
         let _ = fs::remove_file(path);
     }
