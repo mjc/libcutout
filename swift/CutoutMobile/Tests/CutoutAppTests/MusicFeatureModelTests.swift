@@ -46,29 +46,49 @@ final class MusicFeatureModelTests: XCTestCase {
 
 #if canImport(SpotifyiOS) && os(iOS)
     func testSpotifyCallbackAdmissionSurvivesEitherSceneEventOrder() throws {
+        let suite = try makeDefaults()
+        defer { suite.defaults.removePersistentDomain(forName: suite.name) }
         let redirectURL = try XCTUnwrap(URL(string: "cutout-spotify://spotify-login-callback"))
         let callbackURL = try XCTUnwrap(
             URL(string: "cutout-spotify://spotify-login-callback/#access_token=test")
         )
 
         for callbackBeforeResume in [true, false] {
-            let lifecycle = MobileMusicProviderLifecycle()
+            let providerStore = MusicProviderSelectionStore(defaults: suite.defaults)
+            providerStore.set(.spotify)
+            var callbackModel: MusicFeatureModel?
+            var callbackAuthorizationID: MobileMusicAuthorizationId?
+            var handedOff = [URL]()
+            let music = makeModel(
+                defaults: suite.defaults,
+                providerSelectionStore: providerStore,
+                spotifyCallbackHandler: { url in
+                    guard let model = callbackModel else { return false }
+                    return SpotifyAuthorizationCallbackGate.dispatch(
+                        url,
+                        redirectURL: redirectURL,
+                        authorizationID: callbackAuthorizationID,
+                        lifecycle: model.providerLifecycle
+                    ) { acceptedURL in
+                        handedOff.append(acceptedURL)
+                        return true
+                    }
+                }
+            )
+            callbackModel = music
+            let lifecycle = music.providerLifecycle
             lifecycle.requestMonitor(request: .authorize)
             XCTAssertEqual(lifecycle.beginMonitor()?.start, .authorize)
             let authorization = try XCTUnwrap(lifecycle.beginAuthorizationEffect(
                 kind: .authorizing,
                 nowMs: 1_000
             ))
+            callbackAuthorizationID = authorization.id
             _ = try XCTUnwrap(lifecycle.beginProviderSession())
             XCTAssertTrue(lifecycle.suspend().observationGap)
 
             if callbackBeforeResume {
-                XCTAssertTrue(SpotifyAuthorizationCallbackGate.accepts(
-                    callbackURL,
-                    redirectURL: redirectURL,
-                    authorizationID: authorization.id,
-                    lifecycle: lifecycle
-                ))
+                XCTAssertTrue(music.handleProviderURL(callbackURL))
                 XCTAssertEqual(
                     lifecycle.finishAuthorization(id: authorization.id),
                     .authorizing
@@ -79,24 +99,16 @@ final class MusicFeatureModelTests: XCTestCase {
             XCTAssertEqual(lifecycle.beginMonitor()?.start, .observe)
 
             if !callbackBeforeResume {
-                XCTAssertTrue(SpotifyAuthorizationCallbackGate.accepts(
-                    callbackURL,
-                    redirectURL: redirectURL,
-                    authorizationID: authorization.id,
-                    lifecycle: lifecycle
-                ))
+                XCTAssertTrue(music.handleProviderURL(callbackURL))
                 XCTAssertEqual(
                     lifecycle.finishAuthorization(id: authorization.id),
                     .authorizing
                 )
             }
 
-            XCTAssertFalse(SpotifyAuthorizationCallbackGate.accepts(
-                callbackURL,
-                redirectURL: redirectURL,
-                authorizationID: authorization.id,
-                lifecycle: lifecycle
-            ))
+            XCTAssertEqual(handedOff, [callbackURL])
+            XCTAssertFalse(music.handleProviderURL(callbackURL))
+            XCTAssertEqual(handedOff, [callbackURL], "duplicate callback must not reach the SDK handoff")
         }
     }
 #endif
@@ -503,6 +515,7 @@ final class MusicFeatureModelTests: XCTestCase {
     private func makeModel(
         state: MobileRideMapState? = nil,
         defaults: UserDefaults,
+        providerSelectionStore: MusicProviderSelectionStore? = nil,
         historyPolicyStore: MusicHistoryPolicyStore? = nil,
         monitoringPreferenceStore: MusicMonitoringPreferenceStore? = nil,
         selectedRideID: @escaping @MainActor () -> String? = { nil },
@@ -512,10 +525,11 @@ final class MusicFeatureModelTests: XCTestCase {
         setRideHistoryError: @escaping @MainActor (MobileRideMapError) -> Void = { _ in },
         appleMonitor: (any AppleMusicMonitorDriving)? = nil,
         monitorPollWaiter: MusicMonitorPollWaiter? = nil,
-        providerCommandHandler: MusicProviderCommandHandler? = nil
+        providerCommandHandler: MusicProviderCommandHandler? = nil,
+        spotifyCallbackHandler: (@MainActor (URL) -> Bool)? = nil
     ) -> MusicFeatureModel {
         MusicFeatureModel(
-            providerSelectionStore: MusicProviderSelectionStore(defaults: defaults),
+            providerSelectionStore: providerSelectionStore ?? MusicProviderSelectionStore(defaults: defaults),
             historyPolicyStore: historyPolicyStore ?? MusicHistoryPolicyStore(defaults: defaults),
             monitoringPreferenceStore: monitoringPreferenceStore ?? MusicMonitoringPreferenceStore(defaults: defaults),
             rideMapState: state,
@@ -528,7 +542,8 @@ final class MusicFeatureModelTests: XCTestCase {
             setRideHistoryError: setRideHistoryError,
             appleMonitor: appleMonitor,
             monitorPollWaiter: monitorPollWaiter,
-            providerCommandHandler: providerCommandHandler
+            providerCommandHandler: providerCommandHandler,
+            spotifyCallbackHandler: spotifyCallbackHandler
         )
     }
 

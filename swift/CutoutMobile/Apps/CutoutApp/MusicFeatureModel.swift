@@ -43,6 +43,7 @@ final class MusicFeatureModel {
     @ObservationIgnored let coordinator: MusicIntegrationCoordinator
     @ObservationIgnored private let rideMapState: MobileRideMapState?
     @ObservationIgnored let spotifyProvider: SpotifyProviderAdapter
+    @ObservationIgnored private let spotifyCallbackHandler: (@MainActor (URL) -> Bool)?
     @ObservationIgnored private let monotonicNow: @MainActor () -> UInt64
     @ObservationIgnored private let updateCapturePolicy: @MainActor (MobileMusicHistoryPolicyDto) -> Void
     @ObservationIgnored private let updateCaptureObservation: @MainActor (MobilePevcapMusicEventDto?) -> Void
@@ -90,7 +91,8 @@ final class MusicFeatureModel {
         setRideHistoryError: @escaping @MainActor (MobileRideMapError) -> Void,
         appleMonitor: (any AppleMusicMonitorDriving)? = nil,
         monitorPollWaiter: MusicMonitorPollWaiter? = nil,
-        providerCommandHandler: MusicProviderCommandHandler? = nil
+        providerCommandHandler: MusicProviderCommandHandler? = nil,
+        spotifyCallbackHandler: (@MainActor (URL) -> Bool)? = nil
     ) {
         let providerLifecycle = MobileMusicProviderLifecycle()
         let effects = MusicProviderEffectExecutor()
@@ -114,10 +116,12 @@ final class MusicFeatureModel {
             rideMapState: rideMapState,
             lifecycle: providerLifecycle
         )
-        self.spotifyProvider = SpotifyProviderAdapter(
+        let spotifyProvider = SpotifyProviderAdapter(
             lifecycle: providerLifecycle,
             effects: effects
         )
+        self.spotifyProvider = spotifyProvider
+        self.spotifyCallbackHandler = spotifyCallbackHandler
 #if canImport(MediaPlayer) && os(iOS)
         let appleProvider = AppleMusicProviderAdapter(
             lifecycle: providerLifecycle,
@@ -293,6 +297,7 @@ final class MusicFeatureModel {
     func handleProviderURL(_ url: URL) -> Bool {
 #if canImport(SpotifyiOS) && os(iOS)
         guard selectedProvider == .spotify else { return false }
+        if let spotifyCallbackHandler { return spotifyCallbackHandler(url) }
         return spotifyProvider.handleCallback(url)
 #else
         _ = url

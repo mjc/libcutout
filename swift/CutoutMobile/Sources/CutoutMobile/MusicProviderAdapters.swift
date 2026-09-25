@@ -27,6 +27,22 @@ enum SpotifyAuthorizationCallbackGate {
         else { return false }
         return true
     }
+
+    static func dispatch(
+        _ url: URL,
+        redirectURL: URL,
+        authorizationID: MobileMusicAuthorizationId?,
+        lifecycle: MobileMusicProviderLifecycle,
+        handoff: (URL) -> Bool
+    ) -> Bool {
+        guard accepts(
+            url,
+            redirectURL: redirectURL,
+            authorizationID: authorizationID,
+            lifecycle: lifecycle
+        ) else { return false }
+        return handoff(url)
+    }
 }
 
 /// Thin main-thread bridge to Spotify's official App Remote SDK. The SDK owns
@@ -565,19 +581,19 @@ public final class SpotifyProviderAdapter: NSObject {
     /// Handles the redirect URL returned by Spotify after App Remote auth.
     @discardableResult
     public func handleCallback(_ url: URL) -> Bool {
-        guard let configuration,
-              SpotifyAuthorizationCallbackGate.accepts(
-                url,
-                redirectURL: configuration.redirectURL,
-                authorizationID: authorizationGeneration,
-                lifecycle: lifecycle
-              ),
-              let sessionManager
-        else { return false }
-        // SessionManager owns the authorization-code/PKCE callback. It never
-        // asks Spotify to start playback; the returned session is connected to
-        // App Remote below after the callback delegate fires.
-        return sessionManager.application(UIApplication.shared, open: url, options: [:])
+        guard let configuration else { return false }
+        return SpotifyAuthorizationCallbackGate.dispatch(
+            url,
+            redirectURL: configuration.redirectURL,
+            authorizationID: authorizationGeneration,
+            lifecycle: lifecycle
+        ) { [self] url in
+            guard let sessionManager else { return false }
+            // SessionManager owns the authorization-code/PKCE callback. It never
+            // asks Spotify to start playback; the returned session is connected to
+            // App Remote below after the callback delegate fires.
+            return sessionManager.application(UIApplication.shared, open: url, options: [:])
+        }
     }
 
     private nonisolated func enqueueSession(_ session: SPTSession, generation: MobileMusicAuthorizationId) {
