@@ -1,7 +1,7 @@
-import SwiftUI
+import CutoutMobile
 import MapKit
 import Observation
-import CutoutMobile
+import SwiftUI
 
 @MainActor
 @Observable
@@ -98,13 +98,13 @@ struct RideMapRouteView: View {
         .foregroundStyle(PevColors.primaryText)
         .accessibilityIdentifier("ride-map.screen")
         .appMusicCompactPlayer(model: model)
-#if os(iOS)
-        // Ride Detail owns its compact header so it remains attached to the map
-        // when the destination is pushed from either Map entry path. Leaving the
-        // NavigationStack bar visible creates a second title band and pushes the
-        // detail content toward the middle of the screen.
-        .toolbar(.hidden, for: .navigationBar)
-#endif
+        #if os(iOS)
+            // Ride Detail owns its compact header so it remains attached to the map
+            // when the destination is pushed from either Map entry path. Leaving the
+            // NavigationStack bar visible creates a second title band and pushes the
+            // detail content toward the middle of the screen.
+            .toolbar(.hidden, for: .navigationBar)
+        #endif
     }
 
     private var liveContent: some View {

@@ -5,11 +5,12 @@ import Foundation
 final class CutoutSessionBluetoothWriteAdapter {
     private let pendingWrites = CoreBluetoothWriteQueue(capacity: 64)
     private var nextWriteID: UInt64 = 0
-    private let makeCaptureReceipt: (
-        BluetoothUuid,
-        Data,
-        UInt64
-    ) -> (CoreBluetoothWriteDisposition) -> Bool
+    private let makeCaptureReceipt:
+        (
+            BluetoothUuid,
+            Data,
+            UInt64
+        ) -> (CoreBluetoothWriteDisposition) -> Bool
     private let recordWrite: (BluetoothUuid, Data) -> Void
 
     init(

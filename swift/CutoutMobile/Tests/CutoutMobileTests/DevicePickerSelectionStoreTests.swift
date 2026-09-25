@@ -1,5 +1,6 @@
 import Foundation
 import XCTest
+
 @testable import CutoutMobile
 
 final class DevicePickerSelectionStoreTests: XCTestCase {

@@ -164,11 +164,13 @@ final class RideHistoryModel {
             applyLoadFailure(selectionError)
             return
         }
-        guard let selectedRideID = Self.preferredHistorySelection(
-            requestedID: requestedRideID,
-            currentID: self.selectedRideID,
-            summaries: rides
-        ) else {
+        guard
+            let selectedRideID = Self.preferredHistorySelection(
+                requestedID: requestedRideID,
+                currentID: self.selectedRideID,
+                summaries: rides
+            )
+        else {
             self.selectedRideID = nil
             clearRouteProjection()
             routeLoading = false
@@ -200,9 +202,9 @@ final class RideHistoryModel {
 
     func projectDetailViewport(_ viewport: MobileGeoBoundsDto?) {
         guard let selectedRideID,
-              rides.contains(where: { $0.rideID == selectedRideID }),
-              let projectionRideID = detailProjectionRideID,
-              projectionRideID == selectedRideID
+            rides.contains(where: { $0.rideID == selectedRideID }),
+            let projectionRideID = detailProjectionRideID,
+            projectionRideID == selectedRideID
         else {
             return
         }
@@ -234,21 +236,23 @@ final class RideHistoryModel {
         let budget = Self.limits.historyPreviewPointLimit
         viewportTask = Task { [weak self] in
             do {
-                let result = try await withTaskCancellationHandler(operation: {
-                    try await Self.runCancellableDetached(priority: .userInitiated) {
-                        try state.projectStoredPoints(
-                            rideID: request.rideID,
-                            budget: budget,
-                            viewport: viewport,
-                            privacy: .precise,
-                            cancellation: cancellation
-                        )
-                    }
-                }, onCancel: {
-                    cancellation.cancel()
-                })
+                let result = try await withTaskCancellationHandler(
+                    operation: {
+                        try await Self.runCancellableDetached(priority: .userInitiated) {
+                            try state.projectStoredPoints(
+                                rideID: request.rideID,
+                                budget: budget,
+                                viewport: viewport,
+                                privacy: .precise,
+                                cancellation: cancellation
+                            )
+                        }
+                    },
+                    onCancel: {
+                        cancellation.cancel()
+                    })
                 guard let self,
-                      self.admits(request, isCancelled: Task.isCancelled)
+                    self.admits(request, isCancelled: Task.isCancelled)
                 else { return }
                 self.replaceDetailDisplayPoints(
                     result.points,
@@ -270,7 +274,7 @@ final class RideHistoryModel {
                 self.detailRouteLoading = false
             } catch {
                 guard let self,
-                      self.admits(request, isCancelled: Task.isCancelled)
+                    self.admits(request, isCancelled: Task.isCancelled)
                 else { return }
                 let mappedError = Self.mapError(error)
                 if mappedError == .cancelled { return }
@@ -332,37 +336,39 @@ final class RideHistoryModel {
         )
         selectionTask = Task { [weak self] in
             do {
-                let result = try await withTaskCancellationHandler(operation: {
-                    try await Self.runCancellableDetached(priority: .userInitiated) {
-                        let projection = try state.projectStoredPoints(
-                            rideID: request.rideID,
-                            budget: budget,
-                            viewport: nil,
-                            privacy: .precise,
-                            cancellation: cancellation
-                        )
-                        let musicHistory: MusicHistoryQueryResult
-                        do {
-                            let storedHistory = try state.storedMusicHistory(rideID: request.rideID)
-                            musicHistory = MusicHistoryQueryResult(
-                                events: storedHistory.events,
-                                state: storedHistory.historyState,
-                                error: nil
+                let result = try await withTaskCancellationHandler(
+                    operation: {
+                        try await Self.runCancellableDetached(priority: .userInitiated) {
+                            let projection = try state.projectStoredPoints(
+                                rideID: request.rideID,
+                                budget: budget,
+                                viewport: nil,
+                                privacy: .precise,
+                                cancellation: cancellation
                             )
-                        } catch {
-                            musicHistory = MusicHistoryQueryResult(
-                                events: [],
-                                state: nil,
-                                error: Self.mapError(error)
-                            )
+                            let musicHistory: MusicHistoryQueryResult
+                            do {
+                                let storedHistory = try state.storedMusicHistory(rideID: request.rideID)
+                                musicHistory = MusicHistoryQueryResult(
+                                    events: storedHistory.events,
+                                    state: storedHistory.historyState,
+                                    error: nil
+                                )
+                            } catch {
+                                musicHistory = MusicHistoryQueryResult(
+                                    events: [],
+                                    state: nil,
+                                    error: Self.mapError(error)
+                                )
+                            }
+                            return (projection, musicHistory)
                         }
-                        return (projection, musicHistory)
-                    }
-                }, onCancel: {
-                    cancellation.cancel()
-                })
+                    },
+                    onCancel: {
+                        cancellation.cancel()
+                    })
                 guard let self,
-                      self.admits(request, isCancelled: Task.isCancelled)
+                    self.admits(request, isCancelled: Task.isCancelled)
                 else { return }
                 let (projection, musicHistory) = result
                 self.cameraFitVersion &+= 1
@@ -402,7 +408,7 @@ final class RideHistoryModel {
                 self.detailRouteLoading = false
             } catch {
                 guard let self,
-                      self.admits(request, isCancelled: Task.isCancelled)
+                    self.admits(request, isCancelled: Task.isCancelled)
                 else { return }
                 let mappedError = Self.mapError(error)
                 self.routeError = mappedError
@@ -561,18 +567,19 @@ final class RideHistoryModel {
                     let vehicleOptions = try state.storedHistoryVehicleOptions()
                     var summaries = page.summaries
                     if let requestedRideID,
-                       summaries.contains(where: { $0.rideID == requestedRideID }) == false,
-                       let requestedRide = try state.storedHistoryRide(rideID: requestedRideID)
+                        summaries.contains(where: { $0.rideID == requestedRideID }) == false,
+                        let requestedRide = try state.storedHistoryRide(rideID: requestedRideID)
                     {
-                        let insertionIndex = summaries.firstIndex {
-                            $0.createdAtMilliseconds < requestedRide.createdAtMilliseconds
-                        } ?? summaries.endIndex
+                        let insertionIndex =
+                            summaries.firstIndex {
+                                $0.createdAtMilliseconds < requestedRide.createdAtMilliseconds
+                            } ?? summaries.endIndex
                         summaries.insert(requestedRide, at: insertionIndex)
                     }
                     return (summaries, page.nextCursor, vehicleOptions)
                 }
                 guard let self,
-                      self.accepts(generation: generation, isCancelled: Task.isCancelled)
+                    self.accepts(generation: generation, isCancelled: Task.isCancelled)
                 else { return }
                 self.loadTask = nil
                 self.isLoading = false
@@ -595,7 +602,7 @@ final class RideHistoryModel {
                 )
             } catch {
                 guard let self,
-                      self.accepts(generation: generation, isCancelled: Task.isCancelled)
+                    self.accepts(generation: generation, isCancelled: Task.isCancelled)
                 else { return }
                 self.finishLoad(
                     generation: generation,
@@ -607,10 +614,10 @@ final class RideHistoryModel {
 
     func loadMore() {
         guard canLoadMore,
-              loadTask == nil,
-              isLoading == false,
-              let cursor,
-              let state = stateProvider()
+            loadTask == nil,
+            isLoading == false,
+            let cursor,
+            let state = stateProvider()
         else { return }
         pageTask?.cancel()
         queryGeneration &+= 1
@@ -626,7 +633,7 @@ final class RideHistoryModel {
                     )
                 }
                 guard let self,
-                      self.accepts(generation: generation, isCancelled: Task.isCancelled)
+                    self.accepts(generation: generation, isCancelled: Task.isCancelled)
                 else { return }
                 self.pageTask = nil
                 self.rides = Self.appendingUniqueHistory(
@@ -647,7 +654,7 @@ final class RideHistoryModel {
                 self.onPageUpdated?()
             } catch {
                 guard let self,
-                      self.accepts(generation: generation, isCancelled: Task.isCancelled)
+                    self.accepts(generation: generation, isCancelled: Task.isCancelled)
                 else { return }
                 self.pageTask = nil
                 self.error = Self.mapError(error)
@@ -774,12 +781,12 @@ final class RideHistoryModel {
         )
         for summary in summaries {
             if let identity = summary.associatedVehicle,
-               let name = summary.associatedVehicleName
+                let name = summary.associatedVehicleName
             {
                 names[identity] = name
             }
             if let identity = summary.candidateVehicle,
-               let name = summary.candidateVehicleName
+                let name = summary.candidateVehicleName
             {
                 names[identity] = name
             }
@@ -887,11 +894,13 @@ final class RideHistoryModel {
             try Task.checkCancellation()
             return result
         }
-        return try await withTaskCancellationHandler(operation: {
-            try await task.value
-        }, onCancel: {
-            task.cancel()
-        })
+        return try await withTaskCancellationHandler(
+            operation: {
+                try await task.value
+            },
+            onCancel: {
+                task.cancel()
+            })
     }
 
     nonisolated private static func mapError(_ error: Error) -> MobileRideMapError {

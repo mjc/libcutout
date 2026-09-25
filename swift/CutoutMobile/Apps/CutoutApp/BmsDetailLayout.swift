@@ -51,17 +51,23 @@ struct BmsDetailLayout: View {
                         Label(localizedAppText("bms.pack.balancing"), systemImage: "equal")
                     }
                     if group.temperature != nil {
-                        BmsReadingMetric(title: localizedAppText("bms.pack.temperature"), value: group.temperatureMetricValue.displayText, unit: RideUnits.temperatureUnit)
+                        BmsReadingMetric(
+                            title: localizedAppText("bms.pack.temperature"),
+                            value: group.temperatureMetricValue.displayText, unit: RideUnits.temperatureUnit)
                     }
                     if group.resistance != nil {
-                        BmsReadingMetric(title: localizedAppText("bms.detail.resistance"), value: group.resistanceMetricValue.displayText, unit: "mΩ")
+                        BmsReadingMetric(
+                            title: localizedAppText("bms.detail.resistance"),
+                            value: group.resistanceMetricValue.displayText, unit: "mΩ")
                     }
                 }
                 .bmsPanel()
 
                 HStack {
                     if let previous = snapshot.groups.last(where: { $0.index < group.index }) {
-                        Button { showGroupDetail(previous.index) } label: {
+                        Button {
+                            showGroupDetail(previous.index)
+                        } label: {
                             Label(localizedAppText("bms.pack.previous"), systemImage: "chevron.left")
                                 .frame(minHeight: 44)
                         }
@@ -69,7 +75,9 @@ struct BmsDetailLayout: View {
                     }
                     Spacer()
                     if let next = snapshot.groups.first(where: { $0.index > group.index }) {
-                        Button { showGroupDetail(next.index) } label: {
+                        Button {
+                            showGroupDetail(next.index)
+                        } label: {
                             Label(localizedAppText("bms.pack.next"), systemImage: "chevron.right")
                                 .frame(minHeight: 44)
                         }
@@ -101,7 +109,7 @@ struct BmsDetailLayout: View {
                 )
                 .foregroundStyle(Color.accentColor)
             }
-            .chartYScale(domain: (low - 0.005) ... (high + 0.005))
+            .chartYScale(domain: (low - 0.005)...(high + 0.005))
             .chartXAxis(.hidden)
             .frame(height: 120)
             .accessibilityLabel(localizedAppText("bms.pack.recent_history_accessibility", group.recentVoltages.count))
@@ -109,7 +117,8 @@ struct BmsDetailLayout: View {
             PevDashboardGrid(adaptiveMinimumColumnWidth: 120, columnSpacing: 16, spacing: 16) {
                 BmsReadingMetric(
                     title: localizedAppText("bms.pack.recent_range"),
-                    value: "\(RideUnits.decimalString(low, fractionDigits: 3))–\(RideUnits.decimalString(high, fractionDigits: 3))",
+                    value:
+                        "\(RideUnits.decimalString(low, fractionDigits: 3))–\(RideUnits.decimalString(high, fractionDigits: 3))",
                     unit: "V"
                 )
                 if let latest = group.latestVoltage, latest != group.voltage {

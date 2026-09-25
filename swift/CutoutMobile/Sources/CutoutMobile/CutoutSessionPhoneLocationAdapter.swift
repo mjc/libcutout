@@ -1,6 +1,6 @@
 import CoreLocation
-import Foundation
 import CutoutMobileFFI
+import Foundation
 
 struct PhoneLocationUpdate {
     let receiptMonotonic: MonotonicMilliseconds
@@ -70,9 +70,9 @@ final class CutoutSessionPhoneLocationAdapter: NSObject, CLLocationManagerDelega
 
     func updateDemand(_ demanded: Bool) {
         locationUpdatesDemanded = demanded
-#if os(iOS)
-        locationManager.allowsBackgroundLocationUpdates = demanded
-#endif
+        #if os(iOS)
+            locationManager.allowsBackgroundLocationUpdates = demanded
+        #endif
 
         guard demanded else {
             stopUpdatesIfNeeded()
@@ -117,11 +117,12 @@ final class CutoutSessionPhoneLocationAdapter: NSObject, CLLocationManagerDelega
             _ = state.ingest(sample: sample)
         }
         onSnapshot(state.currentSnapshot(), receiptMonotonic)
-        onLocationUpdate(PhoneLocationUpdate(
-            receiptMonotonic: receiptMonotonic,
-            receiptWallClock: wallClock(),
-            samples: samples
-        ))
+        onLocationUpdate(
+            PhoneLocationUpdate(
+                receiptMonotonic: receiptMonotonic,
+                receiptWallClock: wallClock(),
+                samples: samples
+            ))
     }
 
     private func stopUpdatesIfNeeded() {
@@ -131,14 +132,14 @@ final class CutoutSessionPhoneLocationAdapter: NSObject, CLLocationManagerDelega
     }
 }
 
-private extension MobilePhoneLocationSampleDto {
-    init?(location: CLLocation) {
+extension MobilePhoneLocationSampleDto {
+    fileprivate init?(location: CLLocation) {
         let timestamp = location.timestamp.timeIntervalSince1970 * 1_000
         guard timestamp.isFinite, timestamp > 0, timestamp < Double(UInt64.max) else { return nil }
         let coordinate = location.coordinate
         guard coordinate.latitude.isFinite,
-              coordinate.longitude.isFinite,
-              location.altitude.isFinite
+            coordinate.longitude.isFinite,
+            location.altitude.isFinite
         else { return nil }
 
         self.init(

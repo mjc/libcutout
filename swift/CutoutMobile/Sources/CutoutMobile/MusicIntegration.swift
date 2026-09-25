@@ -1,5 +1,5 @@
-import CutoutMobileFFI
 import CoreGraphics
+import CutoutMobileFFI
 import Foundation
 import SwiftUI
 
@@ -12,7 +12,7 @@ public struct MusicArtwork: Equatable, Sendable {
 
     public init?(image: CGImage) {
         guard image.width <= Self.maxPixelDimension,
-              image.height <= Self.maxPixelDimension
+            image.height <= Self.maxPixelDimension
         else { return nil }
         self.image = image
     }
@@ -99,7 +99,11 @@ final class MusicTransportCoordinator {
     typealias Completion = @MainActor (MobileMusicTransportRequestId, MusicCommandOutcome) -> Void
 
     private let lifecycle: MobileMusicProviderLifecycle
-    private var pending: (providerGeneration: MobileMusicProviderSessionId, requestID: MobileMusicTransportRequestId, completion: Completion)?
+    private var pending:
+        (
+            providerGeneration: MobileMusicProviderSessionId, requestID: MobileMusicTransportRequestId,
+            completion: Completion
+        )?
 
     init(lifecycle: MobileMusicProviderLifecycle) {
         self.lifecycle = lifecycle
@@ -130,7 +134,9 @@ final class MusicTransportCoordinator {
         )
     }
 
-    func expire(providerGeneration: MobileMusicProviderSessionId, requestID: MobileMusicTransportRequestId, nowMs: UInt64) {
+    func expire(
+        providerGeneration: MobileMusicProviderSessionId, requestID: MobileMusicTransportRequestId, nowMs: UInt64
+    ) {
         apply(
             lifecycle.expireTransport(providerGeneration: providerGeneration, nowMs: nowMs),
             requestID: requestID
@@ -149,14 +155,16 @@ final class MusicTransportCoordinator {
 
     func resolveCancelled(requestID: MobileMusicTransportRequestId?) {
         guard let requestID,
-              pending?.requestID == requestID,
-              let completion = pending?.completion
+            pending?.requestID == requestID,
+            let completion = pending?.completion
         else { return }
         pending = nil
         completion(requestID, .unavailable)
     }
 
-    func apply(_ result: MobileMusicTransportCompletion, requestID fallbackRequestID: MobileMusicTransportRequestId? = nil) {
+    func apply(
+        _ result: MobileMusicTransportCompletion, requestID fallbackRequestID: MobileMusicTransportRequestId? = nil
+    ) {
         let requestID = result.requestId ?? fallbackRequestID
         guard let requestID, pending?.requestID == requestID, let completion = pending?.completion else { return }
         if result.state == .stale {
@@ -198,10 +206,11 @@ final class MusicProviderTransportExecutor {
         ) -> Void
     ) async -> MusicCommandOutcome {
         guard !Task.isCancelled else { return .unavailable }
-        let providerGeneration = switch owner {
-        case let .provider(providerGeneration): providerGeneration
-        case let .connection(providerGeneration, _): providerGeneration
-        }
+        let providerGeneration =
+            switch owner {
+            case let .provider(providerGeneration): providerGeneration
+            case let .connection(providerGeneration, _): providerGeneration
+            }
         let effect = lifecycle.beginTransportEffect(
             owner: owner,
             command: command,
@@ -211,15 +220,17 @@ final class MusicProviderTransportExecutor {
 
         return await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
-                guard coordinator.register(
-                    providerGeneration: providerGeneration,
-                    effect: effect,
-                    completion: { [effects] requestID, outcome in
-                        effects.cancel(.transport(requestID))
-                        onTerminal(requestID)
-                        continuation.resume(returning: outcome)
-                    }
-                ) else {
+                guard
+                    coordinator.register(
+                        providerGeneration: providerGeneration,
+                        effect: effect,
+                        completion: { [effects] requestID, outcome in
+                            effects.cancel(.transport(requestID))
+                            onTerminal(requestID)
+                            continuation.resume(returning: outcome)
+                        }
+                    )
+                else {
                     coordinator.cancel(
                         providerGeneration: providerGeneration,
                         requestID: effect.id
@@ -331,8 +342,8 @@ final class MusicCommandTaskSlot {
     }
 }
 
-private extension MobileMusicTransportOutcome {
-    var commandOutcome: MusicCommandOutcome {
+extension MobileMusicTransportOutcome {
+    fileprivate var commandOutcome: MusicCommandOutcome {
         switch self {
         case .accepted: .accepted
         case .failed, .timedOut: .failed
@@ -352,21 +363,21 @@ public enum MusicProviderMonitoringMode: Equatable, Sendable {
     case unavailable
 }
 
-public extension MobileMusicProviderDto {
-    static var allCases: [Self] { [.appleMusic, .spotify] }
+extension MobileMusicProviderDto {
+    public static var allCases: [Self] { [.appleMusic, .spotify] }
 
-    var monitoringMode: MusicProviderMonitoringMode {
+    public var monitoringMode: MusicProviderMonitoringMode {
         switch self {
         case .appleMusic: .appleMusicSystemPlayer
-#if canImport(SpotifyiOS) && os(iOS)
-        case .spotify: .spotifyAppRemote
-#else
-        case .spotify: .unavailable
-#endif
+        #if canImport(SpotifyiOS) && os(iOS)
+            case .spotify: .spotifyAppRemote
+        #else
+            case .spotify: .unavailable
+        #endif
         }
     }
 
-    var title: String {
+    public var title: String {
         switch self {
         case .appleMusic: pevLocalizedText("music.provider.apple_music")
         case .spotify: pevLocalizedText("music.provider.spotify")
@@ -594,14 +605,16 @@ final class AppleMusicObservationBridge {
         self.observedAtMs = observedAtMs
         self.onObservation = onObservation
         let replacementObservedAtMs = observedAtMs()
-        cachedObservation = previousObservation?.staleProjection(
-            observedAtMs: replacementObservedAtMs
-        ) ?? MusicProviderObservation.unavailable(
-            provider: .appleMusic,
-            sessionId: "system-music-player",
-            observedAtMs: replacementObservedAtMs,
-            openProvider: true
-        )
+        cachedObservation =
+            previousObservation?.staleProjection(
+                observedAtMs: replacementObservedAtMs
+            )
+            ?? MusicProviderObservation.unavailable(
+                provider: .appleMusic,
+                sessionId: "system-music-player",
+                observedAtMs: replacementObservedAtMs,
+                openProvider: true
+            )
         if let cachedObservation {
             onObservation(cachedObservation)
         }
@@ -612,7 +625,7 @@ final class AppleMusicObservationBridge {
             }
         }
         guard activeGeneration == generation,
-              lifecycle.classifyProviderSession(id: generation) == .current
+            lifecycle.classifyProviderSession(id: generation) == .current
         else {
             unsubscribe(generation: generation)
             return retiredTransport
@@ -622,7 +635,7 @@ final class AppleMusicObservationBridge {
 
     func refresh(observedAtMs: UInt64) {
         guard let generation = activeGeneration,
-              lifecycle.classifyProviderSession(id: generation) == .current
+            lifecycle.classifyProviderSession(id: generation) == .current
         else { return }
         guard readInFlight == nil else {
             pendingRefreshObservedAtMs = max(pendingRefreshObservedAtMs ?? 0, observedAtMs)
@@ -633,13 +646,13 @@ final class AppleMusicObservationBridge {
         effects.run(.playerStateTimeout(requestID)) { [weak self] in
             do { try await Task.sleep(for: self?.playerStateTimeout ?? .seconds(10)) } catch { return }
             guard let self,
-                  self.activeGeneration == generation,
-                  self.lifecycle.classifyProviderSession(id: generation) == .current,
-                  self.lifecycle.expirePlayerStateRequest(
-                      id: requestID,
-                      nowMs: self.observedAtMs?() ?? observedAtMs
-                  ) == .expired,
-                  self.readInFlight == requestID
+                self.activeGeneration == generation,
+                self.lifecycle.classifyProviderSession(id: generation) == .current,
+                self.lifecycle.expirePlayerStateRequest(
+                    id: requestID,
+                    nowMs: self.observedAtMs?() ?? observedAtMs
+                ) == .expired,
+                self.readInFlight == requestID
             else { return }
             self.readInFlight = nil
             self.publishStaleCachedObservation(fallbackObservedAtMs: observedAtMs)
@@ -653,7 +666,7 @@ final class AppleMusicObservationBridge {
             )
             guard let self else { return }
             guard self.activeGeneration == generation,
-                  self.lifecycle.classifyProviderSession(id: generation) == .current
+                self.lifecycle.classifyProviderSession(id: generation) == .current
             else { return }
             let completion = self.lifecycle.completePlayerStateRequest(
                 id: requestID,
@@ -688,8 +701,8 @@ final class AppleMusicObservationBridge {
 
     private func runPendingRefresh(generation: MobileMusicProviderSessionId) {
         guard activeGeneration == generation,
-              lifecycle.classifyProviderSession(id: generation) == .current,
-              let pendingRefreshObservedAtMs
+            lifecycle.classifyProviderSession(id: generation) == .current,
+            let pendingRefreshObservedAtMs
         else { return }
         self.pendingRefreshObservedAtMs = nil
         refresh(observedAtMs: pendingRefreshObservedAtMs)
@@ -718,16 +731,16 @@ final class AppleMusicObservationBridge {
 
     private func providerDidChange(generation: UInt64) {
         guard activeGeneration?.value == generation,
-              let activeGeneration,
-              lifecycle.classifyProviderSession(id: activeGeneration) == .current,
-              let observedAtMs
+            let activeGeneration,
+            lifecycle.classifyProviderSession(id: activeGeneration) == .current,
+            let observedAtMs
         else { return }
         refresh(observedAtMs: observedAtMs())
     }
 }
 
-private extension MobileMusicCapabilitiesDto {
-    func supports(_ command: MobileMusicCommandDto) -> Bool {
+extension MobileMusicCapabilitiesDto {
+    fileprivate func supports(_ command: MobileMusicCommandDto) -> Bool {
         switch command {
         case .previous: previous
         case .play: play
@@ -984,10 +997,10 @@ struct MusicAccessibilityAnnouncementTracker {
     }
 }
 
-public extension MobileMusicHistoryPolicyDto {
-    static var allCases: [Self] { [.disabled, .opaqueItem, .humanReadable] }
+extension MobileMusicHistoryPolicyDto {
+    public static var allCases: [Self] { [.disabled, .opaqueItem, .humanReadable] }
 
-    var title: String {
+    public var title: String {
         switch self {
         case .disabled:
             pevLocalizedText("music.history.disabled")
@@ -998,7 +1011,7 @@ public extension MobileMusicHistoryPolicyDto {
         }
     }
 
-    var explanation: String {
+    public var explanation: String {
         switch self {
         case .disabled:
             pevLocalizedText("music.history.disabled.explanation")
@@ -1010,8 +1023,8 @@ public extension MobileMusicHistoryPolicyDto {
     }
 }
 
-public extension MobileMusicRideEventKindDto {
-    var timelineTitle: String {
+extension MobileMusicRideEventKindDto {
+    public var timelineTitle: String {
         switch self {
         case .play: pevLocalizedText("music.timeline.play")
         case .pause: pevLocalizedText("music.timeline.pause")
@@ -1023,8 +1036,8 @@ public extension MobileMusicRideEventKindDto {
     }
 }
 
-private extension MobileMusicProviderDto {
-    var timelineIDComponent: String {
+extension MobileMusicProviderDto {
+    fileprivate var timelineIDComponent: String {
         switch self {
         case .appleMusic: "apple-music"
         case .spotify: "spotify"
@@ -1032,8 +1045,8 @@ private extension MobileMusicProviderDto {
     }
 }
 
-private extension MobileMusicRideEventKindDto {
-    var timelineIDComponent: String {
+extension MobileMusicRideEventKindDto {
+    fileprivate var timelineIDComponent: String {
         switch self {
         case .play: "play"
         case .pause: "pause"
@@ -1045,8 +1058,8 @@ private extension MobileMusicRideEventKindDto {
     }
 }
 
-public extension MobileMusicRideEventDto {
-    var timelineID: String {
+extension MobileMusicRideEventDto {
+    public var timelineID: String {
         [
             String(sequence),
             provider.timelineIDComponent,
@@ -1057,7 +1070,7 @@ public extension MobileMusicRideEventDto {
         ].joined(separator: "-")
     }
 
-    var timelineItemTitle: String {
+    public var timelineItemTitle: String {
         title ?? itemIdentifier ?? pevLocalizedText("music.timeline.unknown_item")
     }
 }
@@ -1210,11 +1223,13 @@ public final class MusicIntegrationCoordinator {
         resetCorrelationIfRideChanged()
         let decision: MobileMusicObservationDecision
         do {
-            guard let accepted = try lifecycle.observeMusic(
-                snapshot: snapshot,
-                wallClockAtMs: wallClockAtMs,
-                clockUncertaintyMs: clockUncertaintyMs
-            ) else {
+            guard
+                let accepted = try lifecycle.observeMusic(
+                    snapshot: snapshot,
+                    wallClockAtMs: wallClockAtMs,
+                    clockUncertaintyMs: clockUncertaintyMs
+                )
+            else {
                 return nil
             }
             decision = accepted
@@ -1310,11 +1325,13 @@ public final class MusicIntegrationCoordinator {
         clockUncertaintyMs: UInt64
     ) throws -> MobileMusicTimelineOutcomeDto {
         resetCorrelationIfRideChanged()
-        guard let decision = try lifecycle.observeMusic(
-            snapshot: snapshot,
-            wallClockAtMs: wallClockAtMs,
-            clockUncertaintyMs: clockUncertaintyMs
-        ) else {
+        guard
+            let decision = try lifecycle.observeMusic(
+                snapshot: snapshot,
+                wallClockAtMs: wallClockAtMs,
+                clockUncertaintyMs: clockUncertaintyMs
+            )
+        else {
             return .outOfOrder
         }
         let snapshot = decision.snapshot

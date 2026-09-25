@@ -87,12 +87,13 @@ public final class LightingAccessoryPersistence {
     /// Returns a restore request only when every safety prerequisite is satisfied.
     public func restoreCandidate() -> LightingAccessoryRestoreCandidate? {
         guard let record,
-              let identifier = canonicalIdentifier(record.platformIdentifier()),
-              record.restoreEnabled(),
-              isCompatibleWithCurrentProfile,
-              record.confirmation() == .confirmed,
-              let confirmedState = record.confirmedState(),
-              record.requestedState() == confirmedState else {
+            let identifier = canonicalIdentifier(record.platformIdentifier()),
+            record.restoreEnabled(),
+            isCompatibleWithCurrentProfile,
+            record.confirmation() == .confirmed,
+            let confirmedState = record.confirmedState(),
+            record.requestedState() == confirmedState
+        else {
             return nil
         }
         return LightingAccessoryRestoreCandidate(
@@ -126,9 +127,10 @@ public final class LightingAccessoryPersistence {
     /// old record is still safe after a profile change.
     public var isCompatibleWithCurrentProfile: Bool {
         guard let record,
-              record.profile() == .melkOc21,
-              record.profileVersion() == Self.currentProfileVersion,
-              let fingerprint = recordCapabilitiesFingerprint else {
+            record.profile() == .melkOc21,
+            record.profileVersion() == Self.currentProfileVersion,
+            let fingerprint = recordCapabilitiesFingerprint
+        else {
             return false
         }
         return fingerprint == Self.currentCapabilitiesFingerprint
@@ -154,15 +156,18 @@ public final class LightingAccessoryPersistence {
             return false
         }
         if let existing = record?.platformIdentifier(),
-           canonicalIdentifier(existing) == platformIdentifier {
+            canonicalIdentifier(existing) == platformIdentifier
+        {
             backfillMissingCapabilitiesFingerprint()
             return false
         }
-        guard let newRecord = try? MobileRgbLightingAccessoryRecord(
-            platformIdentifier: platformIdentifier,
-            profile: .melkOc21,
-            profileVersion: Self.currentProfileVersion
-        ) else {
+        guard
+            let newRecord = try? MobileRgbLightingAccessoryRecord(
+                platformIdentifier: platformIdentifier,
+                profile: .melkOc21,
+                profileVersion: Self.currentProfileVersion
+            )
+        else {
             return false
         }
         record = newRecord
@@ -176,8 +181,9 @@ public final class LightingAccessoryPersistence {
     /// explicitly re-pairs after profile evidence changes.
     private func backfillMissingCapabilitiesFingerprint() {
         guard record?.profile() == .melkOc21,
-              record?.profileVersion() == Self.currentProfileVersion,
-              recordCapabilitiesFingerprint == nil else {
+            record?.profileVersion() == Self.currentProfileVersion,
+            recordCapabilitiesFingerprint == nil
+        else {
             return
         }
         recordCapabilitiesFingerprint = Self.currentCapabilitiesFingerprint
@@ -289,7 +295,6 @@ public final class LightingAccessoryPersistence {
         return replaced
     }
 
-
     private static func loadRecord(from defaults: UserDefaults) -> LoadResult {
         guard let data = defaults.data(forKey: Key.record) else { return .missing }
         if let envelope = try? JSONDecoder().decode(Envelope.self, from: data) {
@@ -320,22 +325,24 @@ public final class LightingAccessoryPersistence {
 
     private func migrateLegacyRecord() {
         guard let rawIdentifier = defaults.string(forKey: Key.legacyPlatformIdentifier),
-              let identifier = canonicalIdentifier(rawIdentifier),
-              let migrated = try? MobileRgbLightingAccessoryRecord(
-                  platformIdentifier: identifier,
-                  profile: .melkOc21,
-                  profileVersion: Self.currentProfileVersion
-              ) else {
+            let identifier = canonicalIdentifier(rawIdentifier),
+            let migrated = try? MobileRgbLightingAccessoryRecord(
+                platformIdentifier: identifier,
+                profile: .melkOc21,
+                profileVersion: Self.currentProfileVersion
+            )
+        else {
             return
         }
 
         guard defaults.object(forKey: Key.legacyPowerOn) != nil,
-              defaults.object(forKey: Key.legacyEnabled) != nil,
-              let red = Self.legacyByte(defaults, key: Key.legacyRed),
-              let green = Self.legacyByte(defaults, key: Key.legacyGreen),
-              let blue = Self.legacyByte(defaults, key: Key.legacyBlue),
-              let brightness = Self.legacyByte(defaults, key: Key.legacyBrightness),
-              brightness <= 100 else {
+            defaults.object(forKey: Key.legacyEnabled) != nil,
+            let red = Self.legacyByte(defaults, key: Key.legacyRed),
+            let green = Self.legacyByte(defaults, key: Key.legacyGreen),
+            let blue = Self.legacyByte(defaults, key: Key.legacyBlue),
+            let brightness = Self.legacyByte(defaults, key: Key.legacyBrightness),
+            brightness <= 100
+        else {
             return
         }
 

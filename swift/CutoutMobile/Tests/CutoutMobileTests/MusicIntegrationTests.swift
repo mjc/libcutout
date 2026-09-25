@@ -1,6 +1,7 @@
-import XCTest
 import CoreGraphics
 import CutoutMobileFFI
+import XCTest
+
 @testable import CutoutMobile
 
 final class MusicIntegrationTests: XCTestCase {
@@ -55,21 +56,24 @@ final class MusicIntegrationTests: XCTestCase {
         let provider = try! XCTUnwrap(lifecycle.beginProviderSession())
         var callbacks = [(MobileMusicTransportRequestId, MusicCommandOutcome)]()
 
-        let first = try XCTUnwrap(lifecycle.beginTransportEffect(
-            owner: .provider(providerGeneration: provider),
-            command: .play,
-            nowMs: 1_000
-        ))
-        XCTAssertTrue(coordinator.register(
-            providerGeneration: provider,
-            effect: first,
-            completion: { callbacks.append(($0, $1)) }
-        ))
-        XCTAssertNil(lifecycle.beginTransportEffect(
-            owner: .provider(providerGeneration: provider),
-            command: .play,
-            nowMs: 1_001
-        ))
+        let first = try XCTUnwrap(
+            lifecycle.beginTransportEffect(
+                owner: .provider(providerGeneration: provider),
+                command: .play,
+                nowMs: 1_000
+            ))
+        XCTAssertTrue(
+            coordinator.register(
+                providerGeneration: provider,
+                effect: first,
+                completion: { callbacks.append(($0, $1)) }
+            ))
+        XCTAssertNil(
+            lifecycle.beginTransportEffect(
+                owner: .provider(providerGeneration: provider),
+                command: .play,
+                nowMs: 1_001
+            ))
         coordinator.expire(providerGeneration: provider, requestID: first.id, nowMs: 10_999)
         XCTAssertTrue(callbacks.isEmpty)
         coordinator.expire(providerGeneration: provider, requestID: first.id, nowMs: 11_000)
@@ -77,16 +81,18 @@ final class MusicIntegrationTests: XCTestCase {
         coordinator.finish(providerGeneration: provider, requestID: first.id, accepted: false)
         XCTAssertEqual(callbacks.map(\.1), [.failed])
 
-        let second = try XCTUnwrap(lifecycle.beginTransportEffect(
-            owner: .provider(providerGeneration: provider),
-            command: .play,
-            nowMs: 11_001
-        ))
-        XCTAssertTrue(coordinator.register(
-            providerGeneration: provider,
-            effect: second,
-            completion: { callbacks.append(($0, $1)) }
-        ))
+        let second = try XCTUnwrap(
+            lifecycle.beginTransportEffect(
+                owner: .provider(providerGeneration: provider),
+                command: .play,
+                nowMs: 11_001
+            ))
+        XCTAssertTrue(
+            coordinator.register(
+                providerGeneration: provider,
+                effect: second,
+                completion: { callbacks.append(($0, $1)) }
+            ))
         coordinator.finish(providerGeneration: provider, requestID: second.id, accepted: true)
         coordinator.finish(providerGeneration: provider, requestID: second.id, accepted: false)
         XCTAssertEqual(callbacks.map(\.1), [.failed, .accepted])
@@ -98,16 +104,18 @@ final class MusicIntegrationTests: XCTestCase {
         let coordinator = MusicTransportCoordinator(lifecycle: lifecycle)
         let provider = try! XCTUnwrap(lifecycle.beginProviderSession())
         var callbacks = [(MobileMusicTransportRequestId, MusicCommandOutcome)]()
-        let request = try XCTUnwrap(lifecycle.beginTransportEffect(
-            owner: .provider(providerGeneration: provider),
-            command: .play,
-            nowMs: 100
-        ))
-        XCTAssertTrue(coordinator.register(
-            providerGeneration: provider,
-            effect: request,
-            completion: { callbacks.append(($0, $1)) }
-        ))
+        let request = try XCTUnwrap(
+            lifecycle.beginTransportEffect(
+                owner: .provider(providerGeneration: provider),
+                command: .play,
+                nowMs: 100
+            ))
+        XCTAssertTrue(
+            coordinator.register(
+                providerGeneration: provider,
+                effect: request,
+                completion: { callbacks.append(($0, $1)) }
+            ))
 
         coordinator.apply(lifecycle.retireProviderSession(id: provider))
         coordinator.finish(providerGeneration: provider, requestID: request.id, accepted: true)
@@ -202,11 +210,11 @@ final class MusicIntegrationTests: XCTestCase {
             MobileMusicProviderDto.appleMusic.monitoringMode,
             .appleMusicSystemPlayer
         )
-#if canImport(SpotifyiOS) && os(iOS)
-        XCTAssertEqual(MobileMusicProviderDto.spotify.monitoringMode, .spotifyAppRemote)
-#else
-        XCTAssertEqual(MobileMusicProviderDto.spotify.monitoringMode, .unavailable)
-#endif
+        #if canImport(SpotifyiOS) && os(iOS)
+            XCTAssertEqual(MobileMusicProviderDto.spotify.monitoringMode, .spotifyAppRemote)
+        #else
+            XCTAssertEqual(MobileMusicProviderDto.spotify.monitoringMode, .unavailable)
+        #endif
     }
 
     func testPlayerStateFreshnessExpiresOnlyAfterRustObservationDeadline() {
@@ -444,7 +452,11 @@ final class MusicIntegrationTests: XCTestCase {
             return nil
         }
         XCTAssertEqual(loadCount, 2)
-        XCTAssertNil(cache.artwork(for: nil) { loadCount += 1; return artwork })
+        XCTAssertNil(
+            cache.artwork(for: nil) {
+                loadCount += 1
+                return artwork
+            })
         XCTAssertEqual(loadCount, 2)
     }
 
@@ -885,11 +897,12 @@ final class MusicIntegrationTests: XCTestCase {
             ),
             .recorded
         )
-        let transport = try XCTUnwrap(lifecycle.beginTransportEffect(
-            owner: .provider(providerGeneration: provider),
-            command: .next,
-            nowMs: 1_150
-        ))
+        let transport = try XCTUnwrap(
+            lifecycle.beginTransportEffect(
+                owner: .provider(providerGeneration: provider),
+                command: .next,
+                nowMs: 1_150
+            ))
         XCTAssertEqual(
             lifecycle.finishTransport(
                 providerGeneration: provider,
@@ -931,33 +944,37 @@ final class MusicIntegrationTests: XCTestCase {
             )
         }
 
-        let first = try XCTUnwrap(lifecycle.observeMusic(
-            snapshot: snapshot(trackID: "first", observedAtMs: 100),
-            wallClockAtMs: 1_000,
-            clockUncertaintyMs: 5
-        )?.historyTransition)
+        let first = try XCTUnwrap(
+            lifecycle.observeMusic(
+                snapshot: snapshot(trackID: "first", observedAtMs: 100),
+                wallClockAtMs: 1_000,
+                clockUncertaintyMs: 5
+            )?.historyTransition)
         XCTAssertEqual(lifecycle.acknowledgeHistoryTransition(id: first.id), .acknowledged)
 
-        let pending = try XCTUnwrap(lifecycle.observeMusic(
-            snapshot: snapshot(trackID: "second", observedAtMs: 200),
-            wallClockAtMs: 2_000,
-            clockUncertaintyMs: 5
-        )?.historyTransition)
-        let retry = try XCTUnwrap(lifecycle.observeMusic(
-            snapshot: snapshot(trackID: "second", observedAtMs: 300),
-            wallClockAtMs: 3_000,
-            clockUncertaintyMs: 5
-        )?.historyTransition)
+        let pending = try XCTUnwrap(
+            lifecycle.observeMusic(
+                snapshot: snapshot(trackID: "second", observedAtMs: 200),
+                wallClockAtMs: 2_000,
+                clockUncertaintyMs: 5
+            )?.historyTransition)
+        let retry = try XCTUnwrap(
+            lifecycle.observeMusic(
+                snapshot: snapshot(trackID: "second", observedAtMs: 300),
+                wallClockAtMs: 3_000,
+                clockUncertaintyMs: 5
+            )?.historyTransition)
 
         XCTAssertEqual(retry.id, pending.id)
         XCTAssertEqual(retry.snapshot.observedAtMs, 200)
         XCTAssertEqual(retry.wallClockAtMs, 2_000)
         XCTAssertEqual(lifecycle.acknowledgeHistoryTransition(id: retry.id), .acknowledged)
-        XCTAssertNil(try lifecycle.observeMusic(
-            snapshot: snapshot(trackID: "second", observedAtMs: 400),
-            wallClockAtMs: 4_000,
-            clockUncertaintyMs: 5
-        )?.historyTransition)
+        XCTAssertNil(
+            try lifecycle.observeMusic(
+                snapshot: snapshot(trackID: "second", observedAtMs: 400),
+                wallClockAtMs: 4_000,
+                clockUncertaintyMs: 5
+            )?.historyTransition)
     }
 }
 

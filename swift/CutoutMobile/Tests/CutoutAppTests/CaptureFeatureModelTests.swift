@@ -1,8 +1,9 @@
-import XCTest
-import Foundation
-@testable import CutoutApp
 import CutoutMobile
 import CutoutMobileFFI
+import Foundation
+import XCTest
+
+@testable import CutoutApp
 
 @MainActor
 final class CaptureFeatureModelTests: XCTestCase {
@@ -26,10 +27,12 @@ final class CaptureFeatureModelTests: XCTestCase {
         XCTAssertNotNil(capture.annotationErrorText)
         XCTAssertTrue(capture.canAnnotate, "Stopping the accepted interval must remain available")
         for tick in 1...3 {
-            capture.deliverCaptureEvent(.progress(CaptureProgress(
-                elapsedMilliseconds: UInt64(tick * 1000), notificationCount: UInt64(tick),
-                fileSizeBytes: 300, queuedMessageCount: 0, writerError: nil
-            )))
+            capture.deliverCaptureEvent(
+                .progress(
+                    CaptureProgress(
+                        elapsedMilliseconds: UInt64(tick * 1000), notificationCount: UInt64(tick),
+                        fileSizeBytes: 300, queuedMessageCount: 0, writerError: nil
+                    )))
             XCTAssertNotNil(capture.annotationErrorText)
         }
         XCTAssertEqual(capture.recordingSummary, "Receiving Bluetooth data")
@@ -52,7 +55,10 @@ final class CaptureFeatureModelTests: XCTestCase {
 
     func testLabelsAreNotAcceptedBeforeTheWriterStartsOrAfterItCompletes() {
         var requests = 0
-        let capture = CaptureFeatureModel(changeCaptureLabel: { _, _ in requests += 1; return [.ride] })
+        let capture = CaptureFeatureModel(changeCaptureLabel: { _, _ in
+            requests += 1
+            return [.ride]
+        })
         capture.startLabel(.ride)
         XCTAssertEqual(requests, 0)
         let url = URL(fileURLWithPath: "/tmp/labels.jsonl")
@@ -69,13 +75,14 @@ final class CaptureFeatureModelTests: XCTestCase {
         let url = URL(fileURLWithPath: "/tmp/saved.jsonl")
         capture.deliverCaptureEvent(.started(fileURL: url))
         capture.deliverCaptureEvent(.finished(fileURL: url))
-        XCTAssertFalse(capture.requestStart(device: nil, description: "new attempt") {
-            let generation = capture.sessionState.beginCapture(origin: .manual)!
-            XCTAssertTrue(capture.sessionState.captureWriterStartFailed(generation: generation))
-            capture.apply(.lifecycle(capture.sessionState.captureLifecycleSnapshot()))
-            capture.apply(.failed(generation: CaptureGeneration(rawValue: generation.value)))
-            return false
-        })
+        XCTAssertFalse(
+            capture.requestStart(device: nil, description: "new attempt") {
+                let generation = capture.sessionState.beginCapture(origin: .manual)!
+                XCTAssertTrue(capture.sessionState.captureWriterStartFailed(generation: generation))
+                capture.apply(.lifecycle(capture.sessionState.captureLifecycleSnapshot()))
+                capture.apply(.failed(generation: CaptureGeneration(rawValue: generation.value)))
+                return false
+            })
         XCTAssertEqual(capture.status, .saved(fileName: "saved.jsonl"))
         XCTAssertEqual(capture.completed.count, 1)
         XCTAssertEqual(capture.completed.first?.outcome, .saved)
@@ -90,15 +97,18 @@ final class CaptureFeatureModelTests: XCTestCase {
         var publications: [CaptureEvent] = []
         func queueStart(device: CaptureDeviceIdentity, path: String) -> CaptureGeneration {
             var generation: MobileCaptureGenerationDto!
-            XCTAssertTrue(capture.requestStart(device: device, description: nil) {
-                generation = capture.sessionState.beginCapture(origin: .manual)!
-                _ = capture.sessionState.captureWriterStarted(generation: generation)
-                publications += [
-                    .lifecycle(capture.sessionState.captureLifecycleSnapshot()),
-                    .started(generation: CaptureGeneration(rawValue: generation.value), fileURL: URL(fileURLWithPath: path)),
-                ]
-                return true
-            })
+            XCTAssertTrue(
+                capture.requestStart(device: device, description: nil) {
+                    generation = capture.sessionState.beginCapture(origin: .manual)!
+                    _ = capture.sessionState.captureWriterStarted(generation: generation)
+                    publications += [
+                        .lifecycle(capture.sessionState.captureLifecycleSnapshot()),
+                        .started(
+                            generation: CaptureGeneration(rawValue: generation.value),
+                            fileURL: URL(fileURLWithPath: path)),
+                    ]
+                    return true
+                })
             return CaptureGeneration(rawValue: generation.value)
         }
         let first = queueStart(device: firstDevice, path: "/tmp/a")
@@ -116,10 +126,11 @@ final class CaptureFeatureModelTests: XCTestCase {
         let second = row(id: "device-b", advertisement: "GotWay_B")
         let capture = CaptureFeatureModel()
         let url = URL(fileURLWithPath: "/tmp/falcon.jsonl")
-        XCTAssertTrue(capture.requestStart(device: CaptureDeviceIdentity(row: first), description: nil) {
-            capture.deliverCaptureEvent(.started(fileURL: url), origin: .manual)
-            return true
-        })
+        XCTAssertTrue(
+            capture.requestStart(device: CaptureDeviceIdentity(row: first), description: nil) {
+                capture.deliverCaptureEvent(.started(fileURL: url), origin: .manual)
+                return true
+            })
         capture.updateDevice(second)
         capture.deliverCaptureEvent(.finished(fileURL: url))
 
@@ -133,12 +144,14 @@ final class CaptureFeatureModelTests: XCTestCase {
     func testDetectedIdentityRefreshReachesCompletedArtifactWithoutAnotherPacket() {
         let capture = CaptureFeatureModel()
         let url = URL(fileURLWithPath: "/tmp/automatic.jsonl")
-        XCTAssertTrue(capture.requestStart(
-            device: CaptureDeviceIdentity(row: row(id: "device-a", advertisement: "Old advertisement")), description: nil
-        ) {
-            capture.deliverCaptureEvent(.started(fileURL: url))
-            return true
-        })
+        XCTAssertTrue(
+            capture.requestStart(
+                device: CaptureDeviceIdentity(row: row(id: "device-a", advertisement: "Old advertisement")),
+                description: nil
+            ) {
+                capture.deliverCaptureEvent(.started(fileURL: url))
+                return true
+            })
         capture.updateDevice(row(id: "device-a", advertisement: "GotWay_A"))
         capture.deliverCaptureEvent(.finished(fileURL: url))
         XCTAssertEqual(capture.completed.first?.device?.advertisedName, "GotWay_A")
@@ -208,7 +221,9 @@ final class CaptureFeatureModelTests: XCTestCase {
         )
         XCTAssertEqual(CaptureStatus.saved(fileName: "ride.cutout").accessibilityAnnouncement, "Capture saved")
         XCTAssertEqual(CaptureStatus.failed.accessibilityAnnouncement, "Capture failed")
-        XCTAssertNil(CaptureStatus.recording(label: "Ride", notificationCount: 200, fileName: "ride.cutout").accessibilityAnnouncement)
+        XCTAssertNil(
+            CaptureStatus.recording(label: "Ride", notificationCount: 200, fileName: "ride.cutout")
+                .accessibilityAnnouncement)
         XCTAssertNil(CaptureStatus.recordingLocally(fileName: "ride.cutout").accessibilityAnnouncement)
     }
 
@@ -296,13 +311,15 @@ final class CaptureFeatureModelTests: XCTestCase {
     func testFlushFailureAffectsOnlyAnActiveCapture() async {
         let sessionState = CutoutSessionStateHandle()
         var flushCalls = 0
-        let capture = CaptureFeatureModel(sessionState: sessionState, flush: {
-            flushCalls += 1
-            if let attempt = sessionState.captureLifecycleSnapshot().attempt {
-                _ = sessionState.captureWriterFailed(generation: attempt.generation)
-            }
-            return false
-        })
+        let capture = CaptureFeatureModel(
+            sessionState: sessionState,
+            flush: {
+                flushCalls += 1
+                if let attempt = sessionState.captureLifecycleSnapshot().attempt {
+                    _ = sessionState.captureWriterFailed(generation: attempt.generation)
+                }
+                return false
+            })
 
         let inactiveFlushSucceeded = await capture.flush()
         XCTAssertFalse(inactiveFlushSucceeded)
@@ -371,17 +388,20 @@ final class CaptureFeatureModelTests: XCTestCase {
         let finishEntered = expectation(description: "finish remains in flight")
         var releaseFlush: CheckedContinuation<Bool, Never>?
         var finishCalls = 0
-        let capture = CaptureFeatureModel(sessionState: sessionState, finish: {
-            finishCalls += 1
-            guard let token = sessionState.beginCaptureFinish(generation: generation) else { return false }
-            finishEntered.fulfill()
-            let flushed = await withCheckedContinuation { releaseFlush = $0 }
-            return sessionState.finishCaptureFlush(token: token, succeeded: flushed)
-        })
-        capture.deliverCaptureEvent(.started(
-            generation: .init(rawValue: generation.value),
-            fileURL: URL(fileURLWithPath: "/tmp/dismissed-route.jsonl")
-        ), origin: .manual)
+        let capture = CaptureFeatureModel(
+            sessionState: sessionState,
+            finish: {
+                finishCalls += 1
+                guard let token = sessionState.beginCaptureFinish(generation: generation) else { return false }
+                finishEntered.fulfill()
+                let flushed = await withCheckedContinuation { releaseFlush = $0 }
+                return sessionState.finishCaptureFlush(token: token, succeeded: flushed)
+            })
+        capture.deliverCaptureEvent(
+            .started(
+                generation: .init(rawValue: generation.value),
+                fileURL: URL(fileURLWithPath: "/tmp/dismissed-route.jsonl")
+            ), origin: .manual)
 
         var route: CaptureRouteView? = CaptureRouteView(capture: capture)
         XCTAssertNotNil(route)
@@ -398,10 +418,11 @@ final class CaptureFeatureModelTests: XCTestCase {
         XCTAssertTrue(finishSucceeded)
         XCTAssertEqual(finishCalls, 1)
 
-        capture.deliverCaptureEvent(.finished(
-            generation: .init(rawValue: generation.value),
-            fileURL: URL(fileURLWithPath: "/tmp/dismissed-route.jsonl")
-        ))
+        capture.deliverCaptureEvent(
+            .finished(
+                generation: .init(rawValue: generation.value),
+                fileURL: URL(fileURLWithPath: "/tmp/dismissed-route.jsonl")
+            ))
         XCTAssertFalse(capture.isFinishing)
     }
 
@@ -413,16 +434,20 @@ final class CaptureFeatureModelTests: XCTestCase {
         var releaseFlush: CheckedContinuation<Bool, Never>?
         var finishCalls = 0
         var disconnectCalls = 0
-        let capture = CaptureFeatureModel(sessionState: sessionState, finish: {
-            finishCalls += 1
-            guard let token = sessionState.beginCaptureFinish(generation: generation) else { return false }
-            enteredFinish.fulfill()
-            let flushed = await withCheckedContinuation { releaseFlush = $0 }
-            let accepted = sessionState.finishCaptureFlush(token: token, succeeded: flushed)
-            if accepted { disconnectCalls += 1 }
-            return accepted
-        })
-        capture.deliverCaptureEvent(.started(generation: .init(rawValue: generation.value), fileURL: URL(fileURLWithPath: "/tmp/finish.jsonl")), origin: .manual)
+        let capture = CaptureFeatureModel(
+            sessionState: sessionState,
+            finish: {
+                finishCalls += 1
+                guard let token = sessionState.beginCaptureFinish(generation: generation) else { return false }
+                enteredFinish.fulfill()
+                let flushed = await withCheckedContinuation { releaseFlush = $0 }
+                let accepted = sessionState.finishCaptureFlush(token: token, succeeded: flushed)
+                if accepted { disconnectCalls += 1 }
+                return accepted
+            })
+        capture.deliverCaptureEvent(
+            .started(generation: .init(rawValue: generation.value), fileURL: URL(fileURLWithPath: "/tmp/finish.jsonl")),
+            origin: .manual)
 
         let first = Task { @MainActor in await capture.finish() }
         await fulfillment(of: [enteredFinish], timeout: 2)
@@ -440,10 +465,11 @@ final class CaptureFeatureModelTests: XCTestCase {
         XCTAssertTrue(secondSucceeded)
         XCTAssertEqual(finishCalls, 1)
         XCTAssertEqual(disconnectCalls, 1)
-        capture.deliverCaptureEvent(.finished(
-            generation: .init(rawValue: generation.value),
-            fileURL: URL(fileURLWithPath: "/tmp/finish.jsonl")
-        ))
+        capture.deliverCaptureEvent(
+            .finished(
+                generation: .init(rawValue: generation.value),
+                fileURL: URL(fileURLWithPath: "/tmp/finish.jsonl")
+            ))
         XCTAssertFalse(capture.isFinishing)
     }
 
@@ -453,15 +479,20 @@ final class CaptureFeatureModelTests: XCTestCase {
         XCTAssertTrue(sessionState.captureWriterStarted(generation: generation))
         var flushOutcomes = [false, true]
         var disconnectCalls = 0
-        let capture = CaptureFeatureModel(sessionState: sessionState, finish: {
-            guard let token = sessionState.beginCaptureFinish(generation: generation),
-                  !flushOutcomes.isEmpty else { return false }
-            let flushed = flushOutcomes.removeFirst()
-            let accepted = sessionState.finishCaptureFlush(token: token, succeeded: flushed)
-            if accepted { disconnectCalls += 1 }
-            return accepted
-        })
-        capture.deliverCaptureEvent(.started(generation: .init(rawValue: generation.value), fileURL: URL(fileURLWithPath: "/tmp/retry.jsonl")), origin: .manual)
+        let capture = CaptureFeatureModel(
+            sessionState: sessionState,
+            finish: {
+                guard let token = sessionState.beginCaptureFinish(generation: generation),
+                    !flushOutcomes.isEmpty
+                else { return false }
+                let flushed = flushOutcomes.removeFirst()
+                let accepted = sessionState.finishCaptureFlush(token: token, succeeded: flushed)
+                if accepted { disconnectCalls += 1 }
+                return accepted
+            })
+        capture.deliverCaptureEvent(
+            .started(generation: .init(rawValue: generation.value), fileURL: URL(fileURLWithPath: "/tmp/retry.jsonl")),
+            origin: .manual)
 
         let firstSucceeded = await capture.finish()
         XCTAssertFalse(firstSucceeded)
@@ -482,37 +513,43 @@ final class CaptureFeatureModelTests: XCTestCase {
         let firstFinishEntered = expectation(description: "first finish waits on its flush")
         var releaseFirstFlush: CheckedContinuation<Bool, Never>?
         var finishCalls = 0
-        let capture = CaptureFeatureModel(sessionState: sessionState, finish: {
-            finishCalls += 1
-            guard let attempt = sessionState.captureLifecycleSnapshot().attempt,
-                  let token = sessionState.beginCaptureFinish(generation: attempt.generation) else { return false }
-            if attempt.generation.value == firstGeneration.value {
-                firstFinishEntered.fulfill()
-                let flushed = await withCheckedContinuation { releaseFirstFlush = $0 }
-                return sessionState.finishCaptureFlush(token: token, succeeded: flushed)
-            }
-            return sessionState.finishCaptureFlush(token: token, succeeded: true)
-        })
-        capture.deliverCaptureEvent(.started(
-            generation: .init(rawValue: firstGeneration.value),
-            fileURL: URL(fileURLWithPath: "/tmp/first-finish.jsonl")
-        ), origin: .manual)
+        let capture = CaptureFeatureModel(
+            sessionState: sessionState,
+            finish: {
+                finishCalls += 1
+                guard let attempt = sessionState.captureLifecycleSnapshot().attempt,
+                    let token = sessionState.beginCaptureFinish(generation: attempt.generation)
+                else { return false }
+                if attempt.generation.value == firstGeneration.value {
+                    firstFinishEntered.fulfill()
+                    let flushed = await withCheckedContinuation { releaseFirstFlush = $0 }
+                    return sessionState.finishCaptureFlush(token: token, succeeded: flushed)
+                }
+                return sessionState.finishCaptureFlush(token: token, succeeded: true)
+            })
+        capture.deliverCaptureEvent(
+            .started(
+                generation: .init(rawValue: firstGeneration.value),
+                fileURL: URL(fileURLWithPath: "/tmp/first-finish.jsonl")
+            ), origin: .manual)
 
         let firstFinish = Task { @MainActor in await capture.finish() }
         await fulfillment(of: [firstFinishEntered], timeout: 2)
-        capture.deliverCaptureEvent(.started(
-            generation: .init(rawValue: 0),
-            fileURL: URL(fileURLWithPath: "/tmp/second-finish.jsonl")
-        ), origin: .manual)
+        capture.deliverCaptureEvent(
+            .started(
+                generation: .init(rawValue: 0),
+                fileURL: URL(fileURLWithPath: "/tmp/second-finish.jsonl")
+            ), origin: .manual)
 
         let secondFinishSucceeded = await capture.finish()
         XCTAssertTrue(secondFinishSucceeded)
         XCTAssertEqual(finishCalls, 2)
         let secondGeneration = try! XCTUnwrap(capture.activeGeneration)
-        capture.deliverCaptureEvent(.finished(
-            generation: secondGeneration,
-            fileURL: URL(fileURLWithPath: "/tmp/second-finish.jsonl")
-        ))
+        capture.deliverCaptureEvent(
+            .finished(
+                generation: secondGeneration,
+                fileURL: URL(fileURLWithPath: "/tmp/second-finish.jsonl")
+            ))
         XCTAssertFalse(capture.isFinishing)
 
         releaseFirstFlush?.resume(returning: true)
@@ -560,7 +597,8 @@ final class CaptureFeatureModelTests: XCTestCase {
 
     func testNewGenerationResetsProgressLabelsAndFinishAdmission() {
         let capture = CaptureFeatureModel()
-        capture.deliverCaptureEvent(.started(generation: .init(rawValue: 1), fileURL: URL(fileURLWithPath: "/tmp/a")), origin: .manual)
+        capture.deliverCaptureEvent(
+            .started(generation: .init(rawValue: 1), fileURL: URL(fileURLWithPath: "/tmp/a")), origin: .manual)
         capture.startLabel(.ride)
         capture.beginSavingFixture()
         capture.deliverCaptureEvent(.started(generation: .init(rawValue: 2), fileURL: URL(fileURLWithPath: "/tmp/b")))

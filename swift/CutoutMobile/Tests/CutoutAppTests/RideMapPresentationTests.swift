@@ -1,8 +1,8 @@
 import MapKit
-@testable import CutoutMobile
 import XCTest
 
 @testable import CutoutApp
+@testable import CutoutMobile
 
 @MainActor
 final class RideMapPresentationTests: XCTestCase {

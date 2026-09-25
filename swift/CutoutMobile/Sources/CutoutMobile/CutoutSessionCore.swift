@@ -201,10 +201,12 @@ struct IdentificationProbeTransportCoordinator {
         using sink: any CoreBluetoothOperationSink
     ) {
         let session = VescOnewheelSession()
-        guard let linkActions = try? session.linkUp(
-            at: now,
-            writeLimit: TransportWriteLimitBytes(512)
-        ) else {
+        guard
+            let linkActions = try? session.linkUp(
+                at: now,
+                writeLimit: TransportWriteLimitBytes(512)
+            )
+        else {
             return
         }
         linkActions
@@ -226,7 +228,8 @@ protocol ConnectionReconnectCancellable: AnyObject {
 }
 
 protocol ConnectionReconnectScheduling: AnyObject {
-    func schedule(after delayMilliseconds: UInt64, operation: @escaping () -> Void) -> any ConnectionReconnectCancellable
+    func schedule(after delayMilliseconds: UInt64, operation: @escaping () -> Void)
+        -> any ConnectionReconnectCancellable
 }
 
 final class ConnectionReconnectController {
@@ -240,7 +243,8 @@ final class ConnectionReconnectController {
 
     func schedule(jitter: Double, operation: @escaping () -> Void) -> ConnectionReconnectSchedule? {
         attempt += 1
-        guard let delayMilliseconds = ConnectionReconnectPolicy.delayMilliseconds(attempt: attempt, jitter: jitter) else {
+        guard let delayMilliseconds = ConnectionReconnectPolicy.delayMilliseconds(attempt: attempt, jitter: jitter)
+        else {
             pending?.cancel()
             pending = nil
             return nil
@@ -270,7 +274,9 @@ private final class DispatchReconnectCancellation: ConnectionReconnectCancellabl
 }
 
 private final class MainQueueReconnectScheduler: ConnectionReconnectScheduling {
-    func schedule(after delayMilliseconds: UInt64, operation: @escaping () -> Void) -> any ConnectionReconnectCancellable {
+    func schedule(after delayMilliseconds: UInt64, operation: @escaping () -> Void)
+        -> any ConnectionReconnectCancellable
+    {
         let workItem = DispatchWorkItem(block: operation)
         DispatchQueue.main.asyncAfter(
             deadline: .now() + .milliseconds(Int(delayMilliseconds)),
@@ -302,109 +308,112 @@ enum CoreBluetoothRestorationPolicy {
 }
 
 #if DEBUG
-public enum CutoutSessionTestInitialBluetoothState: Sendable {
-    case scanning
-    case unavailable
-    case permissionDenied
-}
-
-public struct CutoutSessionTestScript {
-    public let candidate: DevicePickerDiscoveryCandidate
-    public let protocolNotifications: [Data]
-    /// Optional notifications used only to establish protocol identity before
-    /// the live notification replay begins.
-    public let protocolDetectionNotifications: [Data]?
-    /// Applies the decoded notification steps to the production display path.
-    /// Most UI fixtures provide a separate presentation snapshot; this opt-in
-    /// keeps those fixtures deterministic while allowing raw replay tests to
-    /// prove the real parser-to-dashboard boundary.
-    public let appliesProtocolNotificationSteps: Bool
-    public let protocolNotificationIntervalMilliseconds: UInt64?
-    public let telemetry: TelemetrySnapshot?
-    public let telemetryUpdate: TelemetrySnapshot?
-    public let telemetryUpdateDelayMilliseconds: UInt64
-    public let bmsSnapshot: BmsSnapshot?
-    public let startsLive: Bool
-    public let initialBluetoothState: CutoutSessionTestInitialBluetoothState
-    public let failsConnection: Bool
-    public let identificationProbeFailure: IdentificationProbeFailure?
-    public let detectedSupport: DevicePickerCandidateSupport?
-    public let emitsLateLiveAfterFailure: Bool
-    public let reconnectsAfterFirstLive: Bool
-    public let reconnectAfterLiveMilliseconds: UInt64
-    public let reconnectDelayMilliseconds: UInt64
-    public let bluetoothLossAfterFirstLiveMilliseconds: UInt64?
-    public let emitsStaleTelemetry: Bool
-    public let flushCaptureSucceeds: Bool
-    public let connectionDelayMilliseconds: UInt64
-
-    public init(
-        candidate: DevicePickerDiscoveryCandidate,
-        telemetry: TelemetrySnapshot?,
-        protocolNotifications: [Data] = [],
-        protocolDetectionNotifications: [Data]? = nil,
-        appliesProtocolNotificationSteps: Bool = false,
-        protocolNotificationIntervalMilliseconds: UInt64? = nil,
-        telemetryUpdate: TelemetrySnapshot? = nil,
-        telemetryUpdateDelayMilliseconds: UInt64 = 0,
-        bmsSnapshot: BmsSnapshot? = nil,
-        startsLive: Bool = false,
-        initialBluetoothState: CutoutSessionTestInitialBluetoothState = .scanning,
-        failsConnection: Bool = false,
-        identificationProbeFailure: IdentificationProbeFailure? = nil,
-        detectedSupport: DevicePickerCandidateSupport? = nil,
-        emitsLateLiveAfterFailure: Bool = false,
-        reconnectsAfterFirstLive: Bool = false,
-        reconnectAfterLiveMilliseconds: UInt64 = 0,
-        reconnectDelayMilliseconds: UInt64 = 1_000,
-        bluetoothLossAfterFirstLiveMilliseconds: UInt64? = nil,
-        emitsStaleTelemetry: Bool = false,
-        flushCaptureSucceeds: Bool = true,
-        connectionDelayMilliseconds: UInt64 = 1_000
-    ) {
-        self.candidate = candidate
-        self.protocolNotifications = protocolNotifications
-        self.protocolDetectionNotifications = protocolDetectionNotifications
-        self.appliesProtocolNotificationSteps = appliesProtocolNotificationSteps
-        self.protocolNotificationIntervalMilliseconds = protocolNotificationIntervalMilliseconds
-        self.telemetry = telemetry
-        self.telemetryUpdate = telemetryUpdate
-        self.telemetryUpdateDelayMilliseconds = telemetryUpdateDelayMilliseconds
-        self.bmsSnapshot = bmsSnapshot
-        self.startsLive = startsLive
-        self.initialBluetoothState = initialBluetoothState
-        self.failsConnection = failsConnection
-        self.identificationProbeFailure = identificationProbeFailure
-        self.detectedSupport = detectedSupport
-        self.emitsLateLiveAfterFailure = emitsLateLiveAfterFailure
-        self.reconnectsAfterFirstLive = reconnectsAfterFirstLive
-        self.reconnectAfterLiveMilliseconds = reconnectAfterLiveMilliseconds
-        self.reconnectDelayMilliseconds = reconnectDelayMilliseconds
-        self.bluetoothLossAfterFirstLiveMilliseconds = bluetoothLossAfterFirstLiveMilliseconds
-        self.emitsStaleTelemetry = emitsStaleTelemetry
-        self.flushCaptureSucceeds = flushCaptureSucceeds
-        self.connectionDelayMilliseconds = connectionDelayMilliseconds
+    public enum CutoutSessionTestInitialBluetoothState: Sendable {
+        case scanning
+        case unavailable
+        case permissionDenied
     }
-}
 
-/// Deterministic transport for exercising the Rust-backed settings path without BLE.
-private final class CutoutSessionTestOperationSink: CoreBluetoothOperationSink {
-    private(set) var writes: [(BluetoothUuid, Data)] = []
+    public struct CutoutSessionTestScript {
+        public let candidate: DevicePickerDiscoveryCandidate
+        public let protocolNotifications: [Data]
+        /// Optional notifications used only to establish protocol identity before
+        /// the live notification replay begins.
+        public let protocolDetectionNotifications: [Data]?
+        /// Applies the decoded notification steps to the production display path.
+        /// Most UI fixtures provide a separate presentation snapshot; this opt-in
+        /// keeps those fixtures deterministic while allowing raw replay tests to
+        /// prove the real parser-to-dashboard boundary.
+        public let appliesProtocolNotificationSteps: Bool
+        public let protocolNotificationIntervalMilliseconds: UInt64?
+        public let telemetry: TelemetrySnapshot?
+        public let telemetryUpdate: TelemetrySnapshot?
+        public let telemetryUpdateDelayMilliseconds: UInt64
+        public let bmsSnapshot: BmsSnapshot?
+        public let startsLive: Bool
+        public let initialBluetoothState: CutoutSessionTestInitialBluetoothState
+        public let failsConnection: Bool
+        public let identificationProbeFailure: IdentificationProbeFailure?
+        public let detectedSupport: DevicePickerCandidateSupport?
+        public let emitsLateLiveAfterFailure: Bool
+        public let reconnectsAfterFirstLive: Bool
+        public let reconnectAfterLiveMilliseconds: UInt64
+        public let reconnectDelayMilliseconds: UInt64
+        public let bluetoothLossAfterFirstLiveMilliseconds: UInt64?
+        public let emitsStaleTelemetry: Bool
+        public let flushCaptureSucceeds: Bool
+        public let connectionDelayMilliseconds: UInt64
 
-    func subscribe(channel _: BluetoothUuid) {}
-
-    func writeWithoutResponse(channel: BluetoothUuid, bytes: Data, isCurrent: @escaping () -> Bool, onReceipt: @escaping (CoreBluetoothWriteDisposition) -> Void) -> CoreBluetoothWriteDisposition {
-        guard isCurrent() else {
-            onReceipt(.cancelled)
-            return .cancelled
+        public init(
+            candidate: DevicePickerDiscoveryCandidate,
+            telemetry: TelemetrySnapshot?,
+            protocolNotifications: [Data] = [],
+            protocolDetectionNotifications: [Data]? = nil,
+            appliesProtocolNotificationSteps: Bool = false,
+            protocolNotificationIntervalMilliseconds: UInt64? = nil,
+            telemetryUpdate: TelemetrySnapshot? = nil,
+            telemetryUpdateDelayMilliseconds: UInt64 = 0,
+            bmsSnapshot: BmsSnapshot? = nil,
+            startsLive: Bool = false,
+            initialBluetoothState: CutoutSessionTestInitialBluetoothState = .scanning,
+            failsConnection: Bool = false,
+            identificationProbeFailure: IdentificationProbeFailure? = nil,
+            detectedSupport: DevicePickerCandidateSupport? = nil,
+            emitsLateLiveAfterFailure: Bool = false,
+            reconnectsAfterFirstLive: Bool = false,
+            reconnectAfterLiveMilliseconds: UInt64 = 0,
+            reconnectDelayMilliseconds: UInt64 = 1_000,
+            bluetoothLossAfterFirstLiveMilliseconds: UInt64? = nil,
+            emitsStaleTelemetry: Bool = false,
+            flushCaptureSucceeds: Bool = true,
+            connectionDelayMilliseconds: UInt64 = 1_000
+        ) {
+            self.candidate = candidate
+            self.protocolNotifications = protocolNotifications
+            self.protocolDetectionNotifications = protocolDetectionNotifications
+            self.appliesProtocolNotificationSteps = appliesProtocolNotificationSteps
+            self.protocolNotificationIntervalMilliseconds = protocolNotificationIntervalMilliseconds
+            self.telemetry = telemetry
+            self.telemetryUpdate = telemetryUpdate
+            self.telemetryUpdateDelayMilliseconds = telemetryUpdateDelayMilliseconds
+            self.bmsSnapshot = bmsSnapshot
+            self.startsLive = startsLive
+            self.initialBluetoothState = initialBluetoothState
+            self.failsConnection = failsConnection
+            self.identificationProbeFailure = identificationProbeFailure
+            self.detectedSupport = detectedSupport
+            self.emitsLateLiveAfterFailure = emitsLateLiveAfterFailure
+            self.reconnectsAfterFirstLive = reconnectsAfterFirstLive
+            self.reconnectAfterLiveMilliseconds = reconnectAfterLiveMilliseconds
+            self.reconnectDelayMilliseconds = reconnectDelayMilliseconds
+            self.bluetoothLossAfterFirstLiveMilliseconds = bluetoothLossAfterFirstLiveMilliseconds
+            self.emitsStaleTelemetry = emitsStaleTelemetry
+            self.flushCaptureSucceeds = flushCaptureSucceeds
+            self.connectionDelayMilliseconds = connectionDelayMilliseconds
         }
-        writes.append((channel, bytes))
-        onReceipt(.submitted)
-        return .submitted
     }
 
-    func disconnect() {}
-}
+    /// Deterministic transport for exercising the Rust-backed settings path without BLE.
+    private final class CutoutSessionTestOperationSink: CoreBluetoothOperationSink {
+        private(set) var writes: [(BluetoothUuid, Data)] = []
+
+        func subscribe(channel _: BluetoothUuid) {}
+
+        func writeWithoutResponse(
+            channel: BluetoothUuid, bytes: Data, isCurrent: @escaping () -> Bool,
+            onReceipt: @escaping (CoreBluetoothWriteDisposition) -> Void
+        ) -> CoreBluetoothWriteDisposition {
+            guard isCurrent() else {
+                onReceipt(.cancelled)
+                return .cancelled
+            }
+            writes.append((channel, bytes))
+            onReceipt(.submitted)
+            return .submitted
+        }
+
+        func disconnect() {}
+    }
 #endif
 
 struct BoundedDiagnosticLog {
@@ -474,11 +483,11 @@ public final class CutoutSessionCore: NSObject {
         rustSessionState.settings()
     }
 
-#if DEBUG
-    var musicCaptureObservationForTesting: MobilePevcapMusicEventDto? {
-        onBleQueue { musicCaptureContext.current }
-    }
-#endif
+    #if DEBUG
+        var musicCaptureObservationForTesting: MobilePevcapMusicEventDto? {
+            onBleQueue { musicCaptureContext.current }
+        }
+    #endif
 
     public var onDisplayStateChange: ((RideDisplayState) -> Void)?
     public var onPhaseChange: ((SessionConnectionPhase) -> Void)?
@@ -498,7 +507,6 @@ public final class CutoutSessionCore: NSObject {
     public var onRideMapAvailabilityChange: ((MobileRideMapAvailability) -> Void)?
     public var onProtocolIdentityCandidateChange: ((DevicePickerDiscoveryCandidate?) -> Void)?
     public var onBluetoothRestorationResolved: ((String?) -> Void)?
-
 
     private let clock: MonotonicClock
     private let wallClock: () -> Date
@@ -539,15 +547,16 @@ public final class CutoutSessionCore: NSObject {
                 case .rejected: captured = .rejected
                 case .cancelled: captured = .cancelled
                 }
-                return self.acceptCaptureWrite(builder.recordWriteWithoutResponseReceipt(
-                    monotonicMs: MobileMonotonicMillisDto(
-                        milliseconds: startedAt.map { self.captureElapsedMilliseconds(since: $0) } ?? 0
-                    ),
-                    characteristic: channel.bytes,
-                    bytes: bytes,
-                    writeId: writeID,
-                    disposition: captured
-                ))
+                return self.acceptCaptureWrite(
+                    builder.recordWriteWithoutResponseReceipt(
+                        monotonicMs: MobileMonotonicMillisDto(
+                            milliseconds: startedAt.map { self.captureElapsedMilliseconds(since: $0) } ?? 0
+                        ),
+                        characteristic: channel.bytes,
+                        bytes: bytes,
+                        writeId: writeID,
+                        disposition: captured
+                    ))
             }
         },
         recordWrite: { [weak self] channel, bytes in
@@ -580,16 +589,17 @@ public final class CutoutSessionCore: NSObject {
     private var captureMusicHistoryPolicy = MobileMusicHistoryPolicyDto.disabled
     private var captureFileURL: URL? { captureWriter?.fileURL }
     private var captureProgressTimer: DispatchSourceTimer?
-#if DEBUG
-    var captureDirectoryForTesting: URL?
-#endif
+    #if DEBUG
+        var captureDirectoryForTesting: URL?
+    #endif
     private var bmsStorageSessionIdentifier = UUID().uuidString
     private let deviceDetectionSession: DeviceDetectionSession
     private let identificationProbeTransport: IdentificationProbeTransportCoordinator
     private var begodeProbeExpiryWorkItem: DispatchWorkItem?
     private var protocolDetectionExpiryWorkItem: DispatchWorkItem?
     private lazy var displayPublisher: any CutoutSessionDisplayPublishing =
-        injectedDisplayPublisher ?? CutoutSessionDisplayPublisher(
+        injectedDisplayPublisher
+        ?? CutoutSessionDisplayPublisher(
             clock: clock,
             onDisplayStateChange: { [weak self] value in
                 self?.onDisplayStateChange?(value)
@@ -599,7 +609,8 @@ public final class CutoutSessionCore: NSObject {
             }
         )
     private lazy var notificationEffects: CutoutSessionNotificationEffects =
-        injectedNotificationEffects ?? CutoutSessionNotificationEffects(
+        injectedNotificationEffects
+        ?? CutoutSessionNotificationEffects(
             applyActions: { [weak self] actions in
                 actions.forEach { self?.applySessionAction($0) }
             },
@@ -615,7 +626,8 @@ public final class CutoutSessionCore: NSObject {
         )
     private let rideMapStateForInitialization: MobileRideMapState?
     private lazy var rideMapRecorder: any CutoutSessionRideMapRecording =
-        injectedRideMapRecorder ?? CutoutSessionRideMapRecorder(
+        injectedRideMapRecorder
+        ?? CutoutSessionRideMapRecorder(
             state: rideMapStateForInitialization,
             clock: clock,
             wallClock: wallClock,
@@ -641,7 +653,8 @@ public final class CutoutSessionCore: NSObject {
             }
         )
     private lazy var phoneLocationAdapter: any CutoutSessionPhoneLocationAdapting =
-        injectedPhoneLocationAdapter ?? CutoutSessionPhoneLocationAdapter(
+        injectedPhoneLocationAdapter
+        ?? CutoutSessionPhoneLocationAdapter(
             clock: clock,
             wallClock: wallClock,
             onSnapshot: { [weak self] snapshot, receivedAt in
@@ -674,20 +687,20 @@ public final class CutoutSessionCore: NSObject {
         }
     )
     private var didResolveBluetoothRestoration = false
-#if DEBUG
-    private let testScript: CutoutSessionTestScript?
-    var captureFinishWriterGate: (() -> Void)?
-    private var testOperationSink: CutoutSessionTestOperationSink?
-    private var testScriptWorkItem: DispatchWorkItem?
-    private var testScriptUpdateWorkItem: DispatchWorkItem?
-    private var testProtocolNotificationTimer: DispatchSourceTimer?
-    private var testScriptDidReconnect = false
-#endif
+    #if DEBUG
+        private let testScript: CutoutSessionTestScript?
+        var captureFinishWriterGate: (() -> Void)?
+        private var testOperationSink: CutoutSessionTestOperationSink?
+        private var testScriptWorkItem: DispatchWorkItem?
+        private var testScriptUpdateWorkItem: DispatchWorkItem?
+        private var testProtocolNotificationTimer: DispatchSourceTimer?
+        private var testScriptDidReconnect = false
+    #endif
 
     deinit {
-#if DEBUG
-        testProtocolNotificationTimer?.cancel()
-#endif
+        #if DEBUG
+            testProtocolNotificationTimer?.cancel()
+        #endif
         connectionDeadlineWorkItem?.cancel()
         protocolDetectionExpiryWorkItem?.cancel()
         captureProgressTimer?.cancel()
@@ -703,7 +716,8 @@ public final class CutoutSessionCore: NSObject {
     }
 
     public override convenience init() {
-        let rideMapState = RustPersistenceStore.shared.map(MobileRideMapState.init(database:))
+        let rideMapState =
+            RustPersistenceStore.shared.map(MobileRideMapState.init(database:))
             ?? MobileRideMapState(storageUnavailable: "Rust ride database is unavailable")
         self.init(
             clock: MonotonicClock(),
@@ -712,89 +726,91 @@ public final class CutoutSessionCore: NSObject {
         )
     }
 
-#if DEBUG
-    public convenience init(
-        testScript: CutoutSessionTestScript,
-        rideMapState: MobileRideMapState? = nil,
-        selectedDeviceStore: DevicePickerSelectionStore = DevicePickerSelectionStore()
-    ) {
-        self.init(
-            clock: MonotonicClock(),
-            testScript: testScript,
-            selectedDeviceStore: selectedDeviceStore,
-            rideMapState: rideMapState
-        )
-    }
+    #if DEBUG
+        public convenience init(
+            testScript: CutoutSessionTestScript,
+            rideMapState: MobileRideMapState? = nil,
+            selectedDeviceStore: DevicePickerSelectionStore = DevicePickerSelectionStore()
+        ) {
+            self.init(
+                clock: MonotonicClock(),
+                testScript: testScript,
+                selectedDeviceStore: selectedDeviceStore,
+                rideMapState: rideMapState
+            )
+        }
 
-    init(
-        clock: MonotonicClock,
-        testScript: CutoutSessionTestScript? = nil,
-        reconnectScheduler: any ConnectionReconnectScheduling = MainQueueReconnectScheduler(),
-        reconnectJitter: @escaping () -> Double = { Double.random(in: 0...1) },
-        selectedDeviceStore: DevicePickerSelectionStore = DevicePickerSelectionStore(),
-        wallClock: @escaping () -> Date = { Date() },
-        rideMapState: MobileRideMapState? = nil,
-        database: RideDatabaseHandle? = nil,
-        notificationEffects: CutoutSessionNotificationEffects? = nil,
-        displayPublisher: (any CutoutSessionDisplayPublishing)? = nil,
-        phoneLocationAdapter: (any CutoutSessionPhoneLocationAdapting)? = nil,
-        rideMapRecorder: (any CutoutSessionRideMapRecording)? = nil
-    ) {
-        let rustSessionState = database.map {
-            CutoutSessionStateHandle.withDatabase(database: $0)
-        } ?? CutoutSessionStateHandle()
-        self.rustSessionState = rustSessionState
-        let deviceDetectionSession = DeviceDetectionSession(sessionState: rustSessionState)
-        self.deviceDetectionSession = deviceDetectionSession
-        self.identificationProbeTransport = IdentificationProbeTransportCoordinator(
-            detectionSession: deviceDetectionSession
-        )
-        self.clock = clock
-        self.wallClock = wallClock
-        self.rideMapStateForInitialization = rideMapState
-        self.testScript = testScript
-        self.captureDirectoryForTesting = testScript.map { _ in FileManager.default.temporaryDirectory }
-        self.reconnectController = ConnectionReconnectController(scheduler: reconnectScheduler)
-        self.reconnectJitter = reconnectJitter
-        self.selectedDeviceStore = selectedDeviceStore
-        self.injectedNotificationEffects = notificationEffects
-        self.injectedDisplayPublisher = displayPublisher
-        self.injectedPhoneLocationAdapter = phoneLocationAdapter
-        self.injectedRideMapRecorder = rideMapRecorder
-        super.init()
-        bleQueue.setSpecific(key: bleQueueKey, value: ())
-    }
-#else
-    init(
-        clock: MonotonicClock,
-        selectedDeviceStore: DevicePickerSelectionStore = DevicePickerSelectionStore(),
-        wallClock: @escaping () -> Date = { Date() },
-        rideMapState: MobileRideMapState? = nil,
-        database: RideDatabaseHandle? = nil
-    ) {
-        let rustSessionState = database.map {
-            CutoutSessionStateHandle.withDatabase(database: $0)
-        } ?? CutoutSessionStateHandle()
-        self.rustSessionState = rustSessionState
-        let deviceDetectionSession = DeviceDetectionSession(sessionState: rustSessionState)
-        self.deviceDetectionSession = deviceDetectionSession
-        self.identificationProbeTransport = IdentificationProbeTransportCoordinator(
-            detectionSession: deviceDetectionSession
-        )
-        self.clock = clock
-        self.wallClock = wallClock
-        self.rideMapStateForInitialization = rideMapState
-        self.reconnectController = ConnectionReconnectController(scheduler: MainQueueReconnectScheduler())
-        self.reconnectJitter = { Double.random(in: 0...1) }
-        self.selectedDeviceStore = selectedDeviceStore
-        self.injectedNotificationEffects = nil
-        self.injectedDisplayPublisher = nil
-        self.injectedPhoneLocationAdapter = nil
-        self.injectedRideMapRecorder = nil
-        super.init()
-        bleQueue.setSpecific(key: bleQueueKey, value: ())
-    }
-#endif
+        init(
+            clock: MonotonicClock,
+            testScript: CutoutSessionTestScript? = nil,
+            reconnectScheduler: any ConnectionReconnectScheduling = MainQueueReconnectScheduler(),
+            reconnectJitter: @escaping () -> Double = { Double.random(in: 0...1) },
+            selectedDeviceStore: DevicePickerSelectionStore = DevicePickerSelectionStore(),
+            wallClock: @escaping () -> Date = { Date() },
+            rideMapState: MobileRideMapState? = nil,
+            database: RideDatabaseHandle? = nil,
+            notificationEffects: CutoutSessionNotificationEffects? = nil,
+            displayPublisher: (any CutoutSessionDisplayPublishing)? = nil,
+            phoneLocationAdapter: (any CutoutSessionPhoneLocationAdapting)? = nil,
+            rideMapRecorder: (any CutoutSessionRideMapRecording)? = nil
+        ) {
+            let rustSessionState =
+                database.map {
+                    CutoutSessionStateHandle.withDatabase(database: $0)
+                } ?? CutoutSessionStateHandle()
+            self.rustSessionState = rustSessionState
+            let deviceDetectionSession = DeviceDetectionSession(sessionState: rustSessionState)
+            self.deviceDetectionSession = deviceDetectionSession
+            self.identificationProbeTransport = IdentificationProbeTransportCoordinator(
+                detectionSession: deviceDetectionSession
+            )
+            self.clock = clock
+            self.wallClock = wallClock
+            self.rideMapStateForInitialization = rideMapState
+            self.testScript = testScript
+            self.captureDirectoryForTesting = testScript.map { _ in FileManager.default.temporaryDirectory }
+            self.reconnectController = ConnectionReconnectController(scheduler: reconnectScheduler)
+            self.reconnectJitter = reconnectJitter
+            self.selectedDeviceStore = selectedDeviceStore
+            self.injectedNotificationEffects = notificationEffects
+            self.injectedDisplayPublisher = displayPublisher
+            self.injectedPhoneLocationAdapter = phoneLocationAdapter
+            self.injectedRideMapRecorder = rideMapRecorder
+            super.init()
+            bleQueue.setSpecific(key: bleQueueKey, value: ())
+        }
+    #else
+        init(
+            clock: MonotonicClock,
+            selectedDeviceStore: DevicePickerSelectionStore = DevicePickerSelectionStore(),
+            wallClock: @escaping () -> Date = { Date() },
+            rideMapState: MobileRideMapState? = nil,
+            database: RideDatabaseHandle? = nil
+        ) {
+            let rustSessionState =
+                database.map {
+                    CutoutSessionStateHandle.withDatabase(database: $0)
+                } ?? CutoutSessionStateHandle()
+            self.rustSessionState = rustSessionState
+            let deviceDetectionSession = DeviceDetectionSession(sessionState: rustSessionState)
+            self.deviceDetectionSession = deviceDetectionSession
+            self.identificationProbeTransport = IdentificationProbeTransportCoordinator(
+                detectionSession: deviceDetectionSession
+            )
+            self.clock = clock
+            self.wallClock = wallClock
+            self.rideMapStateForInitialization = rideMapState
+            self.reconnectController = ConnectionReconnectController(scheduler: MainQueueReconnectScheduler())
+            self.reconnectJitter = { Double.random(in: 0...1) }
+            self.selectedDeviceStore = selectedDeviceStore
+            self.injectedNotificationEffects = nil
+            self.injectedDisplayPublisher = nil
+            self.injectedPhoneLocationAdapter = nil
+            self.injectedRideMapRecorder = nil
+            super.init()
+            bleQueue.setSpecific(key: bleQueueKey, value: ())
+        }
+    #endif
 
     public func start() {
         rideMapRecorder.start { [weak self] in
@@ -804,26 +820,26 @@ public final class CutoutSessionCore: NSObject {
             }
         }
         publishRideMapAvailability()
-#if DEBUG
-        if let testScript {
-            publishOnMain { self.onBluetoothRestorationResolved?(nil) }
-            start(testScript: testScript)
-            return
-        }
-#endif
+        #if DEBUG
+            if let testScript {
+                publishOnMain { self.onBluetoothRestorationResolved?(nil) }
+                start(testScript: testScript)
+                return
+            }
+        #endif
         phoneLocationAdapter.start()
         return onBleQueue {
             guard central == nil else {
                 return
             }
             #if os(iOS)
-            central = CBCentralManager(
-                delegate: self,
-                queue: bleQueue,
-                options: CoreBluetoothRestorationPolicy.centralManagerOptions
-            )
+                central = CBCentralManager(
+                    delegate: self,
+                    queue: bleQueue,
+                    options: CoreBluetoothRestorationPolicy.centralManagerOptions
+                )
             #else
-            central = CBCentralManager(delegate: self, queue: bleQueue)
+                central = CBCentralManager(delegate: self, queue: bleQueue)
             #endif
         }
     }
@@ -839,11 +855,11 @@ public final class CutoutSessionCore: NSObject {
 
     @discardableResult
     public func pair(platformIdentifier: String) -> Bool {
-#if DEBUG
-        if let testScript {
-            return onBleQueue { pair(testScript: testScript, platformIdentifier: platformIdentifier) }
-        }
-#endif
+        #if DEBUG
+            if let testScript {
+                return onBleQueue { pair(testScript: testScript, platformIdentifier: platformIdentifier) }
+            }
+        #endif
         return onBleQueue {
             let identifier = CoreBluetoothPeripheralIdentifier(platformIdentifier)
             let snapshot = rustSessionState.selectDiscoveredPlatform(platformIdentifier: platformIdentifier)
@@ -857,18 +873,18 @@ public final class CutoutSessionCore: NSObject {
 
     @discardableResult
     public func pair(platformIdentifier: String, model: ElectricUnicycleModel) -> Bool {
-#if DEBUG
-        if let testScript {
-            return onBleQueue {
-                pair(testScript: testScript, platformIdentifier: platformIdentifier, model: model)
+        #if DEBUG
+            if let testScript {
+                return onBleQueue {
+                    pair(testScript: testScript, platformIdentifier: platformIdentifier, model: model)
+                }
             }
-        }
-#endif
+        #endif
         return onBleQueue {
             let identifier = CoreBluetoothPeripheralIdentifier(platformIdentifier)
             let snapshot = rustSessionState.selectDiscoveredPlatform(platformIdentifier: platformIdentifier)
             guard let peripheral = discoveredPeripherals[identifier],
-                  let advertisement = snapshot.advertisement(platformIdentifier: platformIdentifier)
+                let advertisement = snapshot.advertisement(platformIdentifier: platformIdentifier)
             else { return false }
             return connectForProtocolDetection(to: peripheral, using: advertisement)
         }
@@ -876,13 +892,13 @@ public final class CutoutSessionCore: NSObject {
 
     @discardableResult
     public func probe(platformIdentifier: String) -> Bool {
-#if DEBUG
-        if let testScript {
-            return onBleQueue {
-                pair(testScript: testScript, platformIdentifier: platformIdentifier)
+        #if DEBUG
+            if let testScript {
+                return onBleQueue {
+                    pair(testScript: testScript, platformIdentifier: platformIdentifier)
+                }
             }
-        }
-#endif
+        #endif
         return onBleQueue {
             let identifier = CoreBluetoothPeripheralIdentifier(platformIdentifier)
             let snapshot = rustSessionState.selectDiscoveredPlatform(platformIdentifier: platformIdentifier)
@@ -898,24 +914,26 @@ public final class CutoutSessionCore: NSObject {
 
     @discardableResult
     public func recordOnly(platformIdentifier: String, note: String? = nil, annotations: [String] = []) -> Bool {
-#if DEBUG
-        if let testScript {
-            guard platformIdentifier == testScript.candidate.platformIdentifier else { return false }
-            return onBleQueue {
-                guard rustSessionState.captureLifecycleSnapshot().canStart else { return false }
-                isRecordOnly = true
-                guard startCapture(
-                    reason: note ?? "record-only", annotations: annotations,
-                    evidence: "simulator_fixture", origin: .manual
-                ) else {
-                    isRecordOnly = false
-                    return false
+        #if DEBUG
+            if let testScript {
+                guard platformIdentifier == testScript.candidate.platformIdentifier else { return false }
+                return onBleQueue {
+                    guard rustSessionState.captureLifecycleSnapshot().canStart else { return false }
+                    isRecordOnly = true
+                    guard
+                        startCapture(
+                            reason: note ?? "record-only", annotations: annotations,
+                            evidence: "simulator_fixture", origin: .manual
+                        )
+                    else {
+                        isRecordOnly = false
+                        return false
+                    }
+                    publishCaptureProgress()
+                    return true
                 }
-                publishCaptureProgress()
-                return true
             }
-        }
-#endif
+        #endif
         return onBleQueue {
             let identifier = CoreBluetoothPeripheralIdentifier(platformIdentifier)
             let snapshot = rustSessionState.selectDiscoveredPlatform(platformIdentifier: platformIdentifier)
@@ -981,11 +999,11 @@ public final class CutoutSessionCore: NSObject {
     private func flushCaptureOnBleQueue() -> Bool {
         guard let captureWriter else { return false }
         let succeeded: Bool
-#if DEBUG
-        succeeded = testScript?.flushCaptureSucceeds == false ? false : captureWriter.builder.flushWriter()
-#else
-        succeeded = captureWriter.builder.flushWriter()
-#endif
+        #if DEBUG
+            succeeded = testScript?.flushCaptureSucceeds == false ? false : captureWriter.builder.flushWriter()
+        #else
+            succeeded = captureWriter.builder.flushWriter()
+        #endif
         if !succeeded {
             _ = rustSessionState.captureWriterFailed(generation: captureWriter.generation.dto)
             publishCaptureProgress()
@@ -995,13 +1013,15 @@ public final class CutoutSessionCore: NSObject {
 
     /// Rust admits the save; native code performs the flush and releases only its owned transport.
     public func finishCapture() async -> Bool {
-        guard let token = onBleQueue({
-            guard let generation = captureGeneration,
-                  let token = rustSessionState.beginCaptureFinish(generation: generation.dto)
-            else { return Optional<MobileCaptureFinishTokenDto>.none }
-            publishCaptureProgress()
-            return token
-        }) else { return false }
+        guard
+            let token = onBleQueue({
+                guard let generation = captureGeneration,
+                    let token = rustSessionState.beginCaptureFinish(generation: generation.dto)
+                else { return Optional<MobileCaptureFinishTokenDto>.none }
+                publishCaptureProgress()
+                return token
+            })
+        else { return false }
         let succeeded = await flushCapture()
         return onBleQueue {
             guard rustSessionState.finishCaptureFlush(token: token, succeeded: succeeded) else {
@@ -1018,7 +1038,9 @@ public final class CutoutSessionCore: NSObject {
         onBleQueue { disconnectAndScanOnBleQueue() }
     }
 
-    public func submitDeviceSetting(token: ConnectionAttemptToken, id: DeviceSettingID, value: DeviceSettingValue) throws {
+    public func submitDeviceSetting(token: ConnectionAttemptToken, id: DeviceSettingID, value: DeviceSettingValue)
+        throws
+    {
         try onBleQueue {
             Result {
                 guard let owner = liveOwner, owner.token == token else {
@@ -1100,315 +1122,332 @@ public final class CutoutSessionCore: NSObject {
         }
     }
 
-#if DEBUG
-    private func start(testScript: CutoutSessionTestScript) {
-        onBleQueue {
+    #if DEBUG
+        private func start(testScript: CutoutSessionTestScript) {
+            onBleQueue {
+                testScriptWorkItem?.cancel()
+                testScriptUpdateWorkItem?.cancel()
+                testScriptDidReconnect = false
+                testOperationSink = nil
+                liveOwner = nil
+                displayState = RideDisplayState()
+                publishDisplayState()
+                switch testScript.initialBluetoothState {
+                case .scanning:
+                    break
+                case .unavailable:
+                    storedScanState = DevicePickerScanState(status: .bluetoothUnavailable, rows: [])
+                    publishScanState()
+                    setPhase(.bluetoothUnavailable(rawState: 4))
+                    return
+                case .permissionDenied:
+                    storedScanState = .permissionDenied
+                    publishScanState()
+                    setPhase(.bluetoothPermissionDenied)
+                    return
+                }
+                storedScanState = DevicePickerScanState(status: .idle, rows: [testScript.candidate.pickerRow])
+                publishScanState()
+                setPhase(.scanning)
+                if testScript.startsLive {
+                    _ = pair(testScript: testScript, platformIdentifier: testScript.candidate.platformIdentifier)
+                }
+            }
+        }
+
+        private func pair(
+            testScript: CutoutSessionTestScript,
+            platformIdentifier: String,
+            model: ElectricUnicycleModel? = nil
+        ) -> Bool {
+            guard platformIdentifier == testScript.candidate.platformIdentifier else { return false }
+            let route: DevicePickerConnectionRoute
+            let candidateModel: ElectricUnicycleModel?
+            switch testScript.candidate.support {
+            case .supported(let supportedRoute, let supportedModel):
+                guard let supportedRoute else { return false }
+                route = supportedRoute
+                candidateModel = supportedModel
+            case .probeRecommended:
+                guard case let .supported(detectedRoute, detectedModel) = testScript.detectedSupport,
+                    let detectedRoute
+                else { return false }
+                route = detectedRoute
+                candidateModel = detectedModel
+            default:
+                return false
+            }
+            let selectedModel = model ?? candidateModel
+            if route == .electricUnicycle, selectedModel == nil {
+                return false
+            }
+
+            guard rustSessionState.captureLifecycleSnapshot().canPair else { return false }
+            finishCaptureAfterLinkDown()
+
+            self.selectedRoute = route
+            self.selectedModel = selectedModel
             testScriptWorkItem?.cancel()
             testScriptUpdateWorkItem?.cancel()
-            testScriptDidReconnect = false
-            testOperationSink = nil
+            liveOwner?.invalidate()
             liveOwner = nil
-            displayState = RideDisplayState()
-            publishDisplayState()
-            switch testScript.initialBluetoothState {
-            case .scanning:
-                break
-            case .unavailable:
-                storedScanState = DevicePickerScanState(status: .bluetoothUnavailable, rows: [])
-                publishScanState()
-                setPhase(.bluetoothUnavailable(rawState: 4))
-                return
-            case .permissionDenied:
-                storedScanState = .permissionDenied
-                publishScanState()
-                setPhase(.bluetoothPermissionDenied)
-                return
-            }
-            storedScanState = DevicePickerScanState(status: .idle, rows: [testScript.candidate.pickerRow])
-            publishScanState()
-            setPhase(.scanning)
-            if testScript.startsLive {
-                _ = pair(testScript: testScript, platformIdentifier: testScript.candidate.platformIdentifier)
-            }
-        }
-    }
-
-    private func pair(
-        testScript: CutoutSessionTestScript,
-        platformIdentifier: String,
-        model: ElectricUnicycleModel? = nil
-    ) -> Bool {
-        guard platformIdentifier == testScript.candidate.platformIdentifier else { return false }
-        let route: DevicePickerConnectionRoute
-        let candidateModel: ElectricUnicycleModel?
-        switch testScript.candidate.support {
-        case .supported(let supportedRoute, let supportedModel):
-            guard let supportedRoute else { return false }
-            route = supportedRoute
-            candidateModel = supportedModel
-        case .probeRecommended:
-            guard case let .supported(detectedRoute, detectedModel) = testScript.detectedSupport,
-                  let detectedRoute
+            guard
+                let token = rustSessionState.beginConnectionAttempt(
+                    platformIdentifier: platformIdentifier, nowMs: clock.now().rawValue
+                ).token
             else { return false }
-            route = detectedRoute
-            candidateModel = detectedModel
-        default:
-            return false
-        }
-        let selectedModel = model ?? candidateModel
-        if route == .electricUnicycle, selectedModel == nil {
-            return false
-        }
-
-        guard rustSessionState.captureLifecycleSnapshot().canPair else { return false }
-        finishCaptureAfterLinkDown()
-
-        self.selectedRoute = route
-        self.selectedModel = selectedModel
-        testScriptWorkItem?.cancel()
-        testScriptUpdateWorkItem?.cancel()
-        liveOwner?.invalidate()
-        liveOwner = nil
-        guard let token = rustSessionState.beginConnectionAttempt(
-            platformIdentifier: platformIdentifier, nowMs: clock.now().rawValue
-        ).token else { return false }
-        if let vescBoardProfile {
-            _ = rustSessionState.configureConnectionVescProfile(token: token, profile: vescBoardProfile)
-        }
-        setPhase(.discoveringServices)
-        setPhase(.subscribing)
-        let work = DispatchWorkItem { [weak self] in
-            self?.onBleQueue {
-                self?.finish(testScript: testScript, token: token)
+            if let vescBoardProfile {
+                _ = rustSessionState.configureConnectionVescProfile(token: token, profile: vescBoardProfile)
             }
-        }
-        testScriptWorkItem = work
-        DispatchQueue.main.asyncAfter(
-            deadline: .now() + .milliseconds(Int(clamping: testScript.connectionDelayMilliseconds)),
-            execute: work
-        )
-        return true
-    }
-
-    private func finish(testScript: CutoutSessionTestScript, token: ConnectionAttemptToken) {
-        guard rustSessionState.connectionAttemptIsCurrent(token: token) else { return }
-        if testScript.identificationProbeFailure != nil || testScript.failsConnection {
-            connectionLinkDownOnBleQueue(token: token)
-            _ = rustSessionState.connectionTransportFailed(token: token)
-        }
-        if let failure = testScript.identificationProbeFailure {
-            setPhase(.failed(.identificationFailed(failure)))
-            return
-        }
-        if testScript.failsConnection {
-            setPhase(.failed(.connectFailed("deterministic fixture")))
-            guard testScript.emitsLateLiveAfterFailure else { return }
+            setPhase(.discoveringServices)
+            setPhase(.subscribing)
             let work = DispatchWorkItem { [weak self] in
                 self?.onBleQueue {
-                    self?.emit(testScript: testScript, token: token)
+                    self?.finish(testScript: testScript, token: token)
                 }
             }
             testScriptWorkItem = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(500), execute: work)
-            return
-        }
-        _ = rustSessionState.connectionLinkEstablished(token: token)
-        for bytes in testScript.protocolDetectionNotifications ?? testScript.protocolNotifications {
-            _ = rustSessionState.observeConnectionNotification(token: token, bytes: bytes)
-        }
-        _ = rustSessionState.resolveDeviceSession(
-            token: token, identificationComplete: true, nowMs: clock.now().rawValue
-        )
-        if rustSessionState.verifiedConnectionAttemptIsCurrent(token: token) {
-            let sink = CutoutSessionTestOperationSink()
-            testOperationSink = sink
-            let advertisement = CoreBluetoothAdvertisement(
-                peripheralIdentifier: CoreBluetoothPeripheralIdentifier(token.platformIdentifier),
-                localName: testScript.candidate.displayName, advertisedServiceUuids: []
+            DispatchQueue.main.asyncAfter(
+                deadline: .now() + .milliseconds(Int(clamping: testScript.connectionDelayMilliseconds)),
+                execute: work
             )
-            let owner = makeDeviceTransport(token: token, advertisement: advertisement, sink: sink)
-            liveOwner = owner
-            attachSettingsCallback()
-            do {
-                let step = try owner.handleLinkUp(at: clock.now())
-                let channels = step.operations.compactMap { operation -> BluetoothUuid? in
-                    guard case let .subscribe(channel) = operation else { return nil }
-                    owner.handleNotificationStateUpdate(channel: channel, isNotifying: true, error: nil)
-                    return channel
-                }
-                if let channel = channels.first {
-                    let replayStartedAt = clock.now()
-                    let replayInterval = testScript.protocolNotificationIntervalMilliseconds ?? 1
-                    for (index, bytes) in testScript.protocolNotifications.enumerated() {
-                        let receivedAt = MonotonicMilliseconds(
-                            replayStartedAt.rawValue + UInt64(index) * replayInterval
-                        )
-                        let step = try owner.handleNotification(
-                            bytes: bytes,
-                            channel: channel,
-                            at: receivedAt
-                        )
-                        if testScript.appliesProtocolNotificationSteps {
-                            applyNotificationStep(step, receivedAt: receivedAt)
-                        }
-                    }
-                    repeatTestProtocolNotifications(testScript, token: token, channel: channel)
-                }
-            } catch {
-                setPhase(.failed(.sessionFailed(error.sessionMessage)))
+            return true
+        }
+
+        private func finish(testScript: CutoutSessionTestScript, token: ConnectionAttemptToken) {
+            guard rustSessionState.connectionAttemptIsCurrent(token: token) else { return }
+            if testScript.identificationProbeFailure != nil || testScript.failsConnection {
+                connectionLinkDownOnBleQueue(token: token)
+                _ = rustSessionState.connectionTransportFailed(token: token)
+            }
+            if let failure = testScript.identificationProbeFailure {
+                setPhase(.failed(.identificationFailed(failure)))
                 return
             }
-        }
-        if testScript.appliesProtocolNotificationSteps {
-            if testScript.protocolNotifications.isEmpty {
-                setPhase(.live)
+            if testScript.failsConnection {
+                setPhase(.failed(.connectFailed("deterministic fixture")))
+                guard testScript.emitsLateLiveAfterFailure else { return }
+                let work = DispatchWorkItem { [weak self] in
+                    self?.onBleQueue {
+                        self?.emit(testScript: testScript, token: token)
+                    }
+                }
+                testScriptWorkItem = work
+                DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(500), execute: work)
+                return
             }
+            _ = rustSessionState.connectionLinkEstablished(token: token)
+            for bytes in testScript.protocolDetectionNotifications ?? testScript.protocolNotifications {
+                _ = rustSessionState.observeConnectionNotification(token: token, bytes: bytes)
+            }
+            _ = rustSessionState.resolveDeviceSession(
+                token: token, identificationComplete: true, nowMs: clock.now().rawValue
+            )
+            if rustSessionState.verifiedConnectionAttemptIsCurrent(token: token) {
+                let sink = CutoutSessionTestOperationSink()
+                testOperationSink = sink
+                let advertisement = CoreBluetoothAdvertisement(
+                    peripheralIdentifier: CoreBluetoothPeripheralIdentifier(token.platformIdentifier),
+                    localName: testScript.candidate.displayName, advertisedServiceUuids: []
+                )
+                let owner = makeDeviceTransport(token: token, advertisement: advertisement, sink: sink)
+                liveOwner = owner
+                attachSettingsCallback()
+                do {
+                    let step = try owner.handleLinkUp(at: clock.now())
+                    let channels = step.operations.compactMap { operation -> BluetoothUuid? in
+                        guard case let .subscribe(channel) = operation else { return nil }
+                        owner.handleNotificationStateUpdate(channel: channel, isNotifying: true, error: nil)
+                        return channel
+                    }
+                    if let channel = channels.first {
+                        let replayStartedAt = clock.now()
+                        let replayInterval = testScript.protocolNotificationIntervalMilliseconds ?? 1
+                        for (index, bytes) in testScript.protocolNotifications.enumerated() {
+                            let receivedAt = MonotonicMilliseconds(
+                                replayStartedAt.rawValue + UInt64(index) * replayInterval
+                            )
+                            let step = try owner.handleNotification(
+                                bytes: bytes,
+                                channel: channel,
+                                at: receivedAt
+                            )
+                            if testScript.appliesProtocolNotificationSteps {
+                                applyNotificationStep(step, receivedAt: receivedAt)
+                            }
+                        }
+                        repeatTestProtocolNotifications(testScript, token: token, channel: channel)
+                    }
+                } catch {
+                    setPhase(.failed(.sessionFailed(error.sessionMessage)))
+                    return
+                }
+            }
+            if testScript.appliesProtocolNotificationSteps {
+                if testScript.protocolNotifications.isEmpty {
+                    setPhase(.live)
+                }
+                scheduleTestTelemetryUpdateIfNeeded(testScript, token: token)
+                scheduleTestReconnectIfNeeded(testScript, token: token)
+                scheduleTestBluetoothLossIfNeeded(testScript, token: token)
+                return
+            }
+            emit(testScript: testScript, token: token)
+        }
+
+        private func emit(testScript: CutoutSessionTestScript, token: ConnectionAttemptToken) {
+            guard rustSessionState.connectionAttemptIsCurrent(token: token),
+                rustSessionState.connectionAttemptSnapshot().transport == .connected
+            else { return }
+            if testScript.startsLive {
+                storedProtocolIdentityCandidate = testScript.candidate
+                publishProtocolIdentityCandidate()
+            }
+            guard let telemetry = testScript.telemetry else {
+                setPhase(.live)
+                return
+            }
+            let now = clock.now()
+            let receivedAt =
+                if testScript.emitsStaleTelemetry {
+                    MonotonicMilliseconds(
+                        now.rawValue > RideTelemetryFreshnessPolicy.staleAfter.rawValue
+                            ? now.rawValue - RideTelemetryFreshnessPolicy.staleAfter.rawValue - 1
+                            : 0
+                    )
+                } else {
+                    now
+                }
+            let actions = testScript.bmsSnapshot.map { [SessionAction.withBmsSnapshot($0)] } ?? []
+            applyNotificationStep(
+                CoreBluetoothSessionStep(operations: [], snapshot: telemetry, actions: actions),
+                receivedAt: receivedAt
+            )
             scheduleTestTelemetryUpdateIfNeeded(testScript, token: token)
             scheduleTestReconnectIfNeeded(testScript, token: token)
             scheduleTestBluetoothLossIfNeeded(testScript, token: token)
-            return
         }
-        emit(testScript: testScript, token: token)
-    }
 
-    private func emit(testScript: CutoutSessionTestScript, token: ConnectionAttemptToken) {
-        guard rustSessionState.connectionAttemptIsCurrent(token: token),
-              rustSessionState.connectionAttemptSnapshot().transport == .connected else { return }
-        if testScript.startsLive {
-            storedProtocolIdentityCandidate = testScript.candidate
-            publishProtocolIdentityCandidate()
-        }
-        guard let telemetry = testScript.telemetry else {
-            setPhase(.live)
-            return
-        }
-        let now = clock.now()
-        let receivedAt = if testScript.emitsStaleTelemetry {
-            MonotonicMilliseconds(
-                now.rawValue > RideTelemetryFreshnessPolicy.staleAfter.rawValue
-                    ? now.rawValue - RideTelemetryFreshnessPolicy.staleAfter.rawValue - 1
-                    : 0
-            )
-        } else {
-            now
-        }
-        let actions = testScript.bmsSnapshot.map { [SessionAction.withBmsSnapshot($0)] } ?? []
-        applyNotificationStep(
-            CoreBluetoothSessionStep(operations: [], snapshot: telemetry, actions: actions),
-            receivedAt: receivedAt
-        )
-        scheduleTestTelemetryUpdateIfNeeded(testScript, token: token)
-        scheduleTestReconnectIfNeeded(testScript, token: token)
-        scheduleTestBluetoothLossIfNeeded(testScript, token: token)
-    }
-
-    private func repeatTestProtocolNotifications(_ script: CutoutSessionTestScript, token: ConnectionAttemptToken, channel: BluetoothUuid) {
-        testProtocolNotificationTimer?.cancel()
-        testProtocolNotificationTimer = nil
-        guard let interval = script.protocolNotificationIntervalMilliseconds, interval > 0 else { return }
-        let timer = DispatchSource.makeTimerSource(queue: bleQueue)
-        timer.schedule(deadline: .now() + .milliseconds(Int(clamping: interval)), repeating: .milliseconds(Int(clamping: interval)))
-        timer.setEventHandler { [weak self] in
-            guard let self else { return }
-            guard self.rustSessionState.verifiedConnectionAttemptIsCurrent(token: token),
-                  let owner = self.liveOwner, owner.token == token else {
-                self.testProtocolNotificationTimer?.cancel()
-                self.testProtocolNotificationTimer = nil
-                return
-            }
-            do {
-                for bytes in script.protocolNotifications {
-                    let at = self.clock.now()
-                    self.applyNotificationStep(try owner.handleNotification(bytes: bytes, channel: channel, at: at), receivedAt: at)
+        private func repeatTestProtocolNotifications(
+            _ script: CutoutSessionTestScript, token: ConnectionAttemptToken, channel: BluetoothUuid
+        ) {
+            testProtocolNotificationTimer?.cancel()
+            testProtocolNotificationTimer = nil
+            guard let interval = script.protocolNotificationIntervalMilliseconds, interval > 0 else { return }
+            let timer = DispatchSource.makeTimerSource(queue: bleQueue)
+            timer.schedule(
+                deadline: .now() + .milliseconds(Int(clamping: interval)),
+                repeating: .milliseconds(Int(clamping: interval)))
+            timer.setEventHandler { [weak self] in
+                guard let self else { return }
+                guard self.rustSessionState.verifiedConnectionAttemptIsCurrent(token: token),
+                    let owner = self.liveOwner, owner.token == token
+                else {
+                    self.testProtocolNotificationTimer?.cancel()
+                    self.testProtocolNotificationTimer = nil
+                    return
                 }
-            } catch {
-                self.testProtocolNotificationTimer?.cancel()
-                self.testProtocolNotificationTimer = nil
-                self.setPhase(.failed(.notificationIngestFailed(error.sessionMessage)))
+                do {
+                    for bytes in script.protocolNotifications {
+                        let at = self.clock.now()
+                        self.applyNotificationStep(
+                            try owner.handleNotification(bytes: bytes, channel: channel, at: at), receivedAt: at)
+                    }
+                } catch {
+                    self.testProtocolNotificationTimer?.cancel()
+                    self.testProtocolNotificationTimer = nil
+                    self.setPhase(.failed(.notificationIngestFailed(error.sessionMessage)))
+                }
             }
+            testProtocolNotificationTimer = timer
+            timer.resume()
         }
-        testProtocolNotificationTimer = timer
-        timer.resume()
-    }
 
-    private func scheduleTestTelemetryUpdateIfNeeded(_ testScript: CutoutSessionTestScript, token: ConnectionAttemptToken) {
-        guard let telemetry = testScript.telemetryUpdate else { return }
-        let update = DispatchWorkItem { [weak self] in
-            self?.onBleQueue {
-                guard let self, self.rustSessionState.connectionAttemptIsCurrent(token: token) else { return }
-                self.applyNotificationStep(
-                    CoreBluetoothSessionStep(operations: [], snapshot: telemetry),
-                    receivedAt: self.clock.now()
-                )
-            }
-        }
-        testScriptUpdateWorkItem = update
-        DispatchQueue.main.asyncAfter(
-            deadline: .now() + .milliseconds(Int(clamping: testScript.telemetryUpdateDelayMilliseconds)),
-            execute: update
-        )
-    }
-
-    private func scheduleTestReconnectIfNeeded(_ testScript: CutoutSessionTestScript, token: ConnectionAttemptToken) {
-        guard testScript.reconnectsAfterFirstLive, !testScriptDidReconnect else { return }
-        testScriptDidReconnect = true
-        let reconnect = DispatchWorkItem { [weak self] in
-            self?.onBleQueue {
-                guard let self, self.rustSessionState.connectionAttemptIsCurrent(token: token) else { return }
-                self.connectionLinkDownOnBleQueue(token: token)
-                self.testScriptUpdateWorkItem?.cancel()
-                guard let retryToken = self.rustSessionState.beginConnectionAttempt(
-                    platformIdentifier: token.platformIdentifier, nowMs: self.clock.now().rawValue
-                ).token else { return }
-                self.setPhase(.discoveringServices)
-                self.publishOnMain {
-                    self.onReconnectScheduled?(
-                        SessionConnectionRetry(
-                            platformIdentifier: testScript.candidate.platformIdentifier,
-                            attempt: 1,
-                            deadline: self.clock.now(),
-                            failure: .connectFailed("deterministic reconnect")
-                        )
+        private func scheduleTestTelemetryUpdateIfNeeded(
+            _ testScript: CutoutSessionTestScript, token: ConnectionAttemptToken
+        ) {
+            guard let telemetry = testScript.telemetryUpdate else { return }
+            let update = DispatchWorkItem { [weak self] in
+                self?.onBleQueue {
+                    guard let self, self.rustSessionState.connectionAttemptIsCurrent(token: token) else { return }
+                    self.applyNotificationStep(
+                        CoreBluetoothSessionStep(operations: [], snapshot: telemetry),
+                        receivedAt: self.clock.now()
                     )
                 }
-                let resume = DispatchWorkItem { [weak self] in
-                    self?.onBleQueue {
-                        self?.setPhase(.subscribing)
-                        self?.finish(testScript: testScript, token: retryToken)
-                    }
-                }
-                self.testScriptWorkItem = resume
-                DispatchQueue.main.asyncAfter(
-                    deadline: .now() + .milliseconds(Int(clamping: testScript.reconnectDelayMilliseconds)),
-                    execute: resume
-                )
             }
+            testScriptUpdateWorkItem = update
+            DispatchQueue.main.asyncAfter(
+                deadline: .now() + .milliseconds(Int(clamping: testScript.telemetryUpdateDelayMilliseconds)),
+                execute: update
+            )
         }
-        testScriptWorkItem = reconnect
-        DispatchQueue.main.asyncAfter(
-            deadline: .now() + .milliseconds(Int(clamping: testScript.reconnectAfterLiveMilliseconds)),
-            execute: reconnect
-        )
-    }
 
-    private func scheduleTestBluetoothLossIfNeeded(_ testScript: CutoutSessionTestScript, token: ConnectionAttemptToken) {
-        guard let delay = testScript.bluetoothLossAfterFirstLiveMilliseconds else { return }
-        let loss = DispatchWorkItem { [weak self] in
-            self?.onBleQueue {
-                guard let self, self.rustSessionState.connectionAttemptIsCurrent(token: token) else { return }
-                self.connectionLinkDownOnBleQueue(token: token)
-                self.storedScanState = DevicePickerScanState(status: .bluetoothUnavailable, rows: [])
-                self.publishScanState()
-                self.setPhase(.bluetoothUnavailable(rawState: 4))
+        private func scheduleTestReconnectIfNeeded(_ testScript: CutoutSessionTestScript, token: ConnectionAttemptToken)
+        {
+            guard testScript.reconnectsAfterFirstLive, !testScriptDidReconnect else { return }
+            testScriptDidReconnect = true
+            let reconnect = DispatchWorkItem { [weak self] in
+                self?.onBleQueue {
+                    guard let self, self.rustSessionState.connectionAttemptIsCurrent(token: token) else { return }
+                    self.connectionLinkDownOnBleQueue(token: token)
+                    self.testScriptUpdateWorkItem?.cancel()
+                    guard
+                        let retryToken = self.rustSessionState.beginConnectionAttempt(
+                            platformIdentifier: token.platformIdentifier, nowMs: self.clock.now().rawValue
+                        ).token
+                    else { return }
+                    self.setPhase(.discoveringServices)
+                    self.publishOnMain {
+                        self.onReconnectScheduled?(
+                            SessionConnectionRetry(
+                                platformIdentifier: testScript.candidate.platformIdentifier,
+                                attempt: 1,
+                                deadline: self.clock.now(),
+                                failure: .connectFailed("deterministic reconnect")
+                            )
+                        )
+                    }
+                    let resume = DispatchWorkItem { [weak self] in
+                        self?.onBleQueue {
+                            self?.setPhase(.subscribing)
+                            self?.finish(testScript: testScript, token: retryToken)
+                        }
+                    }
+                    self.testScriptWorkItem = resume
+                    DispatchQueue.main.asyncAfter(
+                        deadline: .now() + .milliseconds(Int(clamping: testScript.reconnectDelayMilliseconds)),
+                        execute: resume
+                    )
+                }
             }
+            testScriptWorkItem = reconnect
+            DispatchQueue.main.asyncAfter(
+                deadline: .now() + .milliseconds(Int(clamping: testScript.reconnectAfterLiveMilliseconds)),
+                execute: reconnect
+            )
         }
-        testScriptWorkItem = loss
-        DispatchQueue.main.asyncAfter(
-            deadline: .now() + .milliseconds(Int(clamping: delay)),
-            execute: loss
-        )
-    }
-#endif
+
+        private func scheduleTestBluetoothLossIfNeeded(
+            _ testScript: CutoutSessionTestScript, token: ConnectionAttemptToken
+        ) {
+            guard let delay = testScript.bluetoothLossAfterFirstLiveMilliseconds else { return }
+            let loss = DispatchWorkItem { [weak self] in
+                self?.onBleQueue {
+                    guard let self, self.rustSessionState.connectionAttemptIsCurrent(token: token) else { return }
+                    self.connectionLinkDownOnBleQueue(token: token)
+                    self.storedScanState = DevicePickerScanState(status: .bluetoothUnavailable, rows: [])
+                    self.publishScanState()
+                    self.setPhase(.bluetoothUnavailable(rawState: 4))
+                }
+            }
+            testScriptWorkItem = loss
+            DispatchQueue.main.asyncAfter(
+                deadline: .now() + .milliseconds(Int(clamping: delay)),
+                execute: loss
+            )
+        }
+    #endif
 
     private func disconnectAndScanOnBleQueue() {
         liveOwner?.invalidate()
@@ -1420,29 +1459,29 @@ public final class CutoutSessionCore: NSObject {
         connectionDeadlineWorkItem?.cancel()
         connectionAttempt = nil
         publishConnectionSnapshot()
-#if DEBUG
-        if testScript != nil { _ = rustSessionState.disconnectConnectionAttempt() }
-        testScriptWorkItem?.cancel()
-        testScriptWorkItem = nil
-        testScriptUpdateWorkItem?.cancel()
-        testScriptUpdateWorkItem = nil
-#endif
+        #if DEBUG
+            if testScript != nil { _ = rustSessionState.disconnectConnectionAttempt() }
+            testScriptWorkItem?.cancel()
+            testScriptWorkItem = nil
+            testScriptUpdateWorkItem?.cancel()
+            testScriptUpdateWorkItem = nil
+        #endif
         suppressReconnect = true
         cancelPendingReconnect()
         musicCaptureContext.reset()
-#if DEBUG
-        if testScript != nil, isRecordOnly, captureBuilder != nil {
+        #if DEBUG
+            if testScript != nil, isRecordOnly, captureBuilder != nil {
+                finishCaptureAfterLinkDown()
+            } else if testScript != nil, isRecordOnly, let completedCaptureURL = captureFileURL {
+                let generation = captureGeneration ?? .legacy
+                capturePresentation.end()
+                publishCaptureEvent(.finished(generation: generation, fileURL: completedCaptureURL))
+            } else {
+                finishCaptureAfterLinkDown()
+            }
+        #else
             finishCaptureAfterLinkDown()
-        } else if testScript != nil, isRecordOnly, let completedCaptureURL = captureFileURL {
-            let generation = captureGeneration ?? .legacy
-            capturePresentation.end()
-            publishCaptureEvent(.finished(generation: generation, fileURL: completedCaptureURL))
-        } else {
-            finishCaptureAfterLinkDown()
-        }
-#else
-        finishCaptureAfterLinkDown()
-#endif
+        #endif
         isRecordOnly = false
         isDetectingProtocol = false
         selectedModel = nil
@@ -1475,13 +1514,15 @@ public final class CutoutSessionCore: NSObject {
         advertisement = nil
 
         #if DEBUG
-        if let testScript {
-            storedScanState = DevicePickerScanState(status: .idle, rows: [testScript.candidate.pickerRow])
-        } else {
-            storedScanState = DevicePickerScanState(status: .scanning, discoverySnapshot: rustSessionState.discoverySnapshot())
-        }
+            if let testScript {
+                storedScanState = DevicePickerScanState(status: .idle, rows: [testScript.candidate.pickerRow])
+            } else {
+                storedScanState = DevicePickerScanState(
+                    status: .scanning, discoverySnapshot: rustSessionState.discoverySnapshot())
+            }
         #else
-        storedScanState = DevicePickerScanState(status: .scanning, discoverySnapshot: rustSessionState.discoverySnapshot())
+            storedScanState = DevicePickerScanState(
+                status: .scanning, discoverySnapshot: rustSessionState.discoverySnapshot())
         #endif
         publishScanState()
         setPhase(.scanning)
@@ -1565,7 +1606,6 @@ public final class CutoutSessionCore: NSObject {
         }
     }
 
-
     private func clearFaultHistoryReadback() {
         guard faultHistoryReadback != nil else {
             return
@@ -1591,13 +1631,14 @@ public final class CutoutSessionCore: NSObject {
     }
 
     private func publishDetectionIdentityCandidate(_ resolution: DeviceDetectionResolution) {
-        guard resolution.protocolFamily != nil
-            || resolution.protocolConflict
-            || resolution.modelBanner != nil
-            || resolution.firmwareBanner != nil
-            || resolution.imuBanner != nil
-            || resolution.missingProbeResponse != nil
-            || resolution.malformedProbeResponse != nil
+        guard
+            resolution.protocolFamily != nil
+                || resolution.protocolConflict
+                || resolution.modelBanner != nil
+                || resolution.firmwareBanner != nil
+                || resolution.imuBanner != nil
+                || resolution.missingProbeResponse != nil
+                || resolution.malformedProbeResponse != nil
         else {
             return
         }
@@ -1682,14 +1723,17 @@ public final class CutoutSessionCore: NSObject {
         pendingServiceDiscoveries.removeAll()
         clearPendingWithoutResponseWrites()
         connectionAttempt = CoreBluetoothConnectionAttempt(token: token, peripheral: peripheral, owner: self)
-        if let previous, previous.state == .connected || previous.state == .connecting || previous.state == .disconnecting {
+        if let previous,
+            previous.state == .connected || previous.state == .connecting || previous.state == .disconnecting
+        {
             retiringPeripheralIdentifiers.insert(previous.identifier)
             previous.delegate = nil
             central?.cancelPeripheralConnection(previous)
         }
         let work = DispatchWorkItem { [weak self] in
             guard let self, self.rustSessionState.connectionAttemptIsCurrent(token: token),
-                  self.connectionSnapshot.readiness == .pending else { return }
+                self.connectionSnapshot.readiness == .pending
+            else { return }
             let expired = self.rustSessionState.expireConnectionAttempt(token: token, nowMs: self.clock.now().rawValue)
             guard expired.readiness == .recordOnly else { return }
             self.recordUnresolvedProtocolDetection(.timedOut, on: self.peripheral)
@@ -1704,10 +1748,12 @@ public final class CutoutSessionCore: NSObject {
     }
 
     func prepareRestoredConnection(from restoredPlatformIdentifiers: [String]) -> String? {
-        guard let selectedIdentifier = CoreBluetoothRestorationPolicy.selectedPlatformIdentifier(
-            savedPlatformIdentifier: selectedDeviceStore.platformIdentifier,
-            restoredPlatformIdentifiers: restoredPlatformIdentifiers
-        ) else {
+        guard
+            let selectedIdentifier = CoreBluetoothRestorationPolicy.selectedPlatformIdentifier(
+                savedPlatformIdentifier: selectedDeviceStore.platformIdentifier,
+                restoredPlatformIdentifiers: restoredPlatformIdentifiers
+            )
+        else {
             return nil
         }
         rustSessionState.setDeviceConnectionIntent(intent: .reconnect)
@@ -1716,8 +1762,8 @@ public final class CutoutSessionCore: NSObject {
 
     private func startPreparedConnection() {
         guard let attempt = connectionAttempt,
-              rustSessionState.connectionAttemptIsCurrent(token: attempt.token),
-              !retiringPeripheralIdentifiers.contains(attempt.peripheral.identifier)
+            rustSessionState.connectionAttemptIsCurrent(token: attempt.token),
+            !retiringPeripheralIdentifiers.contains(attempt.peripheral.identifier)
         else { return }
         attempt.peripheral.delegate = attempt
         central?.connect(attempt.peripheral)
@@ -1734,7 +1780,10 @@ public final class CutoutSessionCore: NSObject {
         return true
     }
 
-    private func connectRecordOnly(to peripheral: CBPeripheral, using advertisement: CoreBluetoothAdvertisement, note: String?, annotations: [String]) -> Bool {
+    private func connectRecordOnly(
+        to peripheral: CBPeripheral, using advertisement: CoreBluetoothAdvertisement, note: String?,
+        annotations: [String]
+    ) -> Bool {
         guard rustSessionState.captureLifecycleSnapshot().canStart else { return false }
         cancelPendingReconnect()
         rustSessionState.setDeviceConnectionIntent(intent: .recordOnly)
@@ -1749,12 +1798,15 @@ public final class CutoutSessionCore: NSObject {
         liveOwner = nil
         deviceDetectionSession.reset()
         _ = deviceDetectionSession.observeAdvertisement(name: advertisement.localName.map { Data($0.utf8) })
-        guard startCapture(
-            reason: "record-only",
-            annotations: ["route=record_only"] + annotations + (note.map {
-                [pevcapAnnotation(key: "user_note", value: $0)]
-            } ?? []), origin: .manual
-        ) else {
+        guard
+            startCapture(
+                reason: "record-only",
+                annotations: ["route=record_only"] + annotations
+                    + (note.map {
+                        [pevcapAnnotation(key: "user_note", value: $0)]
+                    } ?? []), origin: .manual
+            )
+        else {
             isRecordOnly = false
             return false
         }
@@ -1815,9 +1867,11 @@ public final class CutoutSessionCore: NSObject {
             guard let self, self.liveOwner?.token == token else { return }
             self.failConnectionCapture()
             self.cancelFailedConnectionAttempt()
-            self.setPhase(.failed(.notificationFailed(
-                error?.sessionMessage ?? "notifications disabled for \(channel)"
-            )))
+            self.setPhase(
+                .failed(
+                    .notificationFailed(
+                        error?.sessionMessage ?? "notifications disabled for \(channel)"
+                    )))
         }
         if let chargeEstimateProfile { owner.configureChargeEstimate(profile: chargeEstimateProfile) }
         return owner
@@ -1825,7 +1879,8 @@ public final class CutoutSessionCore: NSObject {
 
     private func buildOwner(for peripheral: CBPeripheral) {
         guard liveOwner == nil, let advertisement, let token = connectionSnapshot.token,
-              rustSessionState.verifiedConnectionAttemptIsCurrent(token: token) else { return }
+            rustSessionState.verifiedConnectionAttemptIsCurrent(token: token)
+        else { return }
         do {
             rideMapRecorder.beginBmsStorageSession()
             let owner = makeDeviceTransport(
@@ -1862,7 +1917,8 @@ public final class CutoutSessionCore: NSObject {
 
     private func handleDisconnect(from peripheral: CBPeripheral, error: Error?) {
         guard let attempt = connectionAttempt,
-              acceptsConnectionCallback(peripheral, token: attempt.token) else {
+            acceptsConnectionCallback(peripheral, token: attempt.token)
+        else {
             return
         }
         let wasDetecting = connectionSnapshot.readiness == .pending
@@ -1881,7 +1937,8 @@ public final class CutoutSessionCore: NSObject {
             reconnect: { [weak self, weak peripheral] in
                 guard let self, let peripheral else { return }
                 self.prepareConnectionAttempt(to: peripheral)
-                _ = self.deviceDetectionSession.observeAdvertisement(name: self.advertisement?.localName.map { Data($0.utf8) })
+                _ = self.deviceDetectionSession.observeAdvertisement(
+                    name: self.advertisement?.localName.map { Data($0.utf8) })
                 self.startPreparedConnection()
             }
         )
@@ -1919,12 +1976,12 @@ public final class CutoutSessionCore: NSObject {
         reconnect: @escaping () -> Void
     ) {
         record("disconnected=\(platformIdentifier) error=\(String(describing: error))")
-#if DEBUG
-        testScriptWorkItem?.cancel()
-        testScriptWorkItem = nil
-        testScriptUpdateWorkItem?.cancel()
-        testScriptUpdateWorkItem = nil
-#endif
+        #if DEBUG
+            testScriptWorkItem?.cancel()
+            testScriptWorkItem = nil
+            testScriptUpdateWorkItem?.cancel()
+            testScriptUpdateWorkItem = nil
+        #endif
         clearProtocolDetectionExpiry()
         markOutstandingBegodeProbeResponsesMissing()
         finishCaptureAfterLinkDown()
@@ -1964,21 +2021,26 @@ public final class CutoutSessionCore: NSObject {
     ) {
         rustSessionState.setDeviceConnectionIntent(intent: .reconnect)
         let connectionGeneration = connectionSnapshot.generation
-        guard let schedule = reconnectController.schedule(
-            jitter: reconnectJitter(),
-            operation: { [weak self] in
-                guard let self else { return }
-                self.onBleQueue {
-                    guard !self.suppressReconnect,
-                          self.connectionSnapshot.generation == connectionGeneration else { return }
-                    guard self.startCapture(
-                        reason: "protocol-detection",
-                        annotations: ["intent=previously_connected"]
-                    ) else { return }
-                    reconnect()
+        guard
+            let schedule = reconnectController.schedule(
+                jitter: reconnectJitter(),
+                operation: { [weak self] in
+                    guard let self else { return }
+                    self.onBleQueue {
+                        guard !self.suppressReconnect,
+                            self.connectionSnapshot.generation == connectionGeneration
+                        else { return }
+                        guard
+                            self.startCapture(
+                                reason: "protocol-detection",
+                                annotations: ["intent=previously_connected"]
+                            )
+                        else { return }
+                        reconnect()
+                    }
                 }
-            }
-        ) else {
+            )
+        else {
             rustSessionState.setDeviceConnectionIntent(intent: .recordOnly)
             setPhase(.failed(.connectFailed(error.sessionMessage)))
             central?.scanForPeripherals(withServices: nil)
@@ -2059,7 +2121,6 @@ public final class CutoutSessionCore: NSObject {
         }
     }
 
-
     private func publishSettings(_ value: DeviceSettings) {
         publishOnMain { [weak self] in
             guard let self, self.connectionSnapshot.revision == value.connection.revision else { return }
@@ -2097,19 +2158,19 @@ public final class CutoutSessionCore: NSObject {
     }
 
     private func publishProtocolIdentityCandidate() {
-#if DEBUG
-        if testScript == nil {
+        #if DEBUG
+            if testScript == nil {
+                storedScanState = DevicePickerScanState(
+                    status: storedScanState.status,
+                    discoverySnapshot: rustSessionState.discoverySnapshot()
+                )
+            }
+        #else
             storedScanState = DevicePickerScanState(
                 status: storedScanState.status,
                 discoverySnapshot: rustSessionState.discoverySnapshot()
             )
-        }
-#else
-        storedScanState = DevicePickerScanState(
-            status: storedScanState.status,
-            discoverySnapshot: rustSessionState.discoverySnapshot()
-        )
-#endif
+        #endif
         publishScanState()
         let value = protocolIdentityCandidate
         let generation = connectionSnapshot.generation
@@ -2294,12 +2355,14 @@ public final class CutoutSessionCore: NSObject {
         captureNotificationCount = 0
 
         var directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-#if DEBUG
-        directory = captureDirectoryForTesting ?? directory
-#endif
-        let url = directory.appendingPathComponent("cutout-btle-capture-\(Int(Date().timeIntervalSince1970))-\(UUID().uuidString).jsonl")
+        #if DEBUG
+            directory = captureDirectoryForTesting ?? directory
+        #endif
+        let url = directory.appendingPathComponent(
+            "cutout-btle-capture-\(Int(Date().timeIntervalSince1970))-\(UUID().uuidString).jsonl")
         let builder = MobilePevcapCaptureBuilder(
-            wallClockStartUnixMs: MobileWallClockUnixMillisDto(milliseconds: UInt64(Date().timeIntervalSince1970 * 1_000)),
+            wallClockStartUnixMs: MobileWallClockUnixMillisDto(
+                milliseconds: UInt64(Date().timeIntervalSince1970 * 1_000)),
             platformId: advertisement?.peripheralIdentifier.rawValue ?? "ios",
             writeLimit: MobileTransportWriteLimitDto(bytes: 23)
         )
@@ -2442,21 +2505,24 @@ public final class CutoutSessionCore: NSObject {
 
     private func finishCaptureAfterLinkDown() {
         guard captureBuilder != nil else { return }
-        let outcome = captureBuilder?.recordLinkDown(
-            monotonicMs: MobileMonotonicMillisDto(milliseconds: captureElapsedMilliseconds())
-        ) ?? .accepted
+        let outcome =
+            captureBuilder?.recordLinkDown(
+                monotonicMs: MobileMonotonicMillisDto(milliseconds: captureElapsedMilliseconds())
+            ) ?? .accepted
         finishCaptureWriter(priorWriteSucceeded: outcome == .accepted)
     }
 
     @discardableResult
     private func recordCaptureLinkUp() -> Bool {
         guard let builder = captureBuilder else { return true }
-        return acceptCaptureWrite(builder.recordLinkUp(
-            monotonicMs: MobileMonotonicMillisDto(milliseconds: captureElapsedMilliseconds()),
-            maxWriteLen: peripheral.map {
-                MobileTransportWriteLimitDto(bytes: UInt16(clamping: $0.maximumWriteValueLength(for: .withoutResponse)))
-            }
-        ))
+        return acceptCaptureWrite(
+            builder.recordLinkUp(
+                monotonicMs: MobileMonotonicMillisDto(milliseconds: captureElapsedMilliseconds()),
+                maxWriteLen: peripheral.map {
+                    MobileTransportWriteLimitDto(
+                        bytes: UInt16(clamping: $0.maximumWriteValueLength(for: .withoutResponse)))
+                }
+            ))
     }
 
     private func finishCaptureWriter(
@@ -2475,7 +2541,7 @@ public final class CutoutSessionCore: NSObject {
         musicCaptureContext.reset()
         let finish = DispatchWorkItem { [weak self] in
             #if DEBUG
-            self?.captureFinishWriterGate?()
+                self?.captureFinishWriterGate?()
             #endif
             let writerSucceeded = builder.finishWriter()
             let artifact = writerSucceeded ? builder.completedArtifact() : nil
@@ -2501,17 +2567,17 @@ public final class CutoutSessionCore: NSObject {
         DispatchQueue.global(qos: .utility).async(execute: finish)
     }
 
-#if DEBUG
-    func finishCaptureForTesting(priorWriteSucceeded: Bool = true) {
-        onBleQueue {
-            self.finishCaptureWriter(priorWriteSucceeded: priorWriteSucceeded)
+    #if DEBUG
+        func finishCaptureForTesting(priorWriteSucceeded: Bool = true) {
+            onBleQueue {
+                self.finishCaptureWriter(priorWriteSucceeded: priorWriteSucceeded)
+            }
         }
-    }
 
-    func acceptCaptureWriteOutcomeForTesting(_ outcome: MobileCaptureWriteOutcomeDto) -> Bool {
-        onBleQueue { acceptCaptureWrite(outcome) }
-    }
-#endif
+        func acceptCaptureWriteOutcomeForTesting(_ outcome: MobileCaptureWriteOutcomeDto) -> Bool {
+            onBleQueue { acceptCaptureWrite(outcome) }
+        }
+    #endif
 
     private func captureElapsedMilliseconds() -> UInt64 {
         guard let captureStartedAt else {
@@ -2547,14 +2613,22 @@ public final class CutoutSessionCore: NSObject {
             return
         }
         if let protocolIdentityCandidate {
-            guard acceptCaptureWrite(builder.addAnnotation(annotation: pevcapAnnotation(
-                key: "resolved_evidence",
-                value: protocolIdentityCandidate.evidence
-            ))) else { return }
-            guard acceptCaptureWrite(builder.addAnnotation(annotation: pevcapAnnotation(
-                key: "resolved_detail",
-                value: protocolIdentityCandidate.detail
-            ))) else { return }
+            guard
+                acceptCaptureWrite(
+                    builder.addAnnotation(
+                        annotation: pevcapAnnotation(
+                            key: "resolved_evidence",
+                            value: protocolIdentityCandidate.evidence
+                        )))
+            else { return }
+            guard
+                acceptCaptureWrite(
+                    builder.addAnnotation(
+                        annotation: pevcapAnnotation(
+                            key: "resolved_detail",
+                            value: protocolIdentityCandidate.detail
+                        )))
+            else { return }
         }
     }
 
@@ -2585,18 +2659,19 @@ func sanitizedPevcapAnnotation(_ annotation: String) -> String {
 }
 
 private func sanitizePevcapAnnotationComponent(_ value: String) -> String {
-    String(value.map { character in
-        switch character {
-        case "=", "\n", "\r":
-            " "
-        default:
-            character
-        }
-    })
+    String(
+        value.map { character in
+            switch character {
+            case "=", "\n", "\r":
+                " "
+            default:
+                character
+            }
+        })
 }
 
-private extension ElectricUnicycleModel {
-    func pevcapResolvedIdentity(verification: MobileVerificationStatusDto) -> MobileResolvedIdentityDto {
+extension ElectricUnicycleModel {
+    fileprivate func pevcapResolvedIdentity(verification: MobileVerificationStatusDto) -> MobileResolvedIdentityDto {
         MobileResolvedIdentityDto(
             protocolFamily: pevcapProtocolFamily,
             model: MobileVerifiedStringDto(value: pevcapModelName, verification: verification),
@@ -2604,7 +2679,7 @@ private extension ElectricUnicycleModel {
         )
     }
 
-    var pevcapProtocolFamily: MobileProtocolFamilyDto {
+    fileprivate var pevcapProtocolFamily: MobileProtocolFamilyDto {
         switch self {
         case .aero:
             .veteranLeaperkimNosfet
@@ -2613,7 +2688,7 @@ private extension ElectricUnicycleModel {
         }
     }
 
-    var pevcapModelName: String {
+    fileprivate var pevcapModelName: String {
         switch self {
         case .aero:
             "NOSFET Aero"
@@ -2623,24 +2698,24 @@ private extension ElectricUnicycleModel {
     }
 }
 
-private extension DiscoverySnapshot {
-    var selectedAdvertisement: CoreBluetoothAdvertisement? {
+extension DiscoverySnapshot {
+    fileprivate var selectedAdvertisement: CoreBluetoothAdvertisement? {
         selectedPlatformIdentifier.flatMap(advertisement(platformIdentifier:))
     }
 
-    var lastAdvertisement: CoreBluetoothAdvertisement? {
+    fileprivate var lastAdvertisement: CoreBluetoothAdvertisement? {
         observations.last.map(CoreBluetoothAdvertisement.init(discoveryObservation:))
     }
 
-    func advertisement(platformIdentifier: String) -> CoreBluetoothAdvertisement? {
+    fileprivate func advertisement(platformIdentifier: String) -> CoreBluetoothAdvertisement? {
         observations
             .last { $0.platformIdentifier == platformIdentifier }
             .map(CoreBluetoothAdvertisement.init(discoveryObservation:))
     }
 }
 
-private extension CoreBluetoothAdvertisement {
-    func withVescNordicUartFallbackName() -> Self {
+extension CoreBluetoothAdvertisement {
+    fileprivate func withVescNordicUartFallbackName() -> Self {
         guard
             localName?.isEmpty != false,
             advertisedServiceUuids.contains(.vescNordicUartService)
@@ -2657,8 +2732,8 @@ private extension CoreBluetoothAdvertisement {
     }
 }
 
-private extension CutoutSessionCore {
-    func restoreSelectedPeripheral(from restoredPeripherals: [CBPeripheral]) {
+extension CutoutSessionCore {
+    fileprivate func restoreSelectedPeripheral(from restoredPeripherals: [CBPeripheral]) {
         assertOnBleQueue()
         let restoredIdentifiers = restoredPeripherals.map(\.identifier.uuidString)
         guard
@@ -2698,7 +2773,9 @@ private extension CutoutSessionCore {
         _ = deviceDetectionSession.observeAdvertisement(
             name: restoredAdvertisement.localName.map { Data($0.utf8) }
         )
-        record("central_restore=selected state=\(restoredPeripheral.state.rawValue) observations=\(discovery.observations.count)")
+        record(
+            "central_restore=selected state=\(restoredPeripheral.state.rawValue) observations=\(discovery.observations.count)"
+        )
 
         switch restoredPeripheral.state {
         case .connected:
@@ -2729,7 +2806,7 @@ private extension CutoutSessionCore {
     }
 
     @discardableResult
-    func prepareRestoredRide() -> Bool {
+    fileprivate func prepareRestoredRide() -> Bool {
         guard startCapture(reason: "protocol-detection", annotations: ["intent=previously_connected"])
         else { return false }
         clearFaultHistoryReadback()
@@ -2738,7 +2815,7 @@ private extension CutoutSessionCore {
         return true
     }
 
-    func resumeConnectedPeripheral(_ peripheral: CBPeripheral) {
+    fileprivate func resumeConnectedPeripheral(_ peripheral: CBPeripheral) {
         assertOnBleQueue()
         guard liveOwner == nil else { return }
         setPhase(.discoveringServices)
@@ -2796,15 +2873,15 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
         assertOnBleQueue()
         guard didResolveBluetoothRestoration == false else { return }
         didResolveBluetoothRestoration = true
-        let restoredPlatformIdentifier: String? = if
-            let peripheral,
-            selectedRoute != nil || isDetectingProtocol,
-            peripheral.state == .connected || peripheral.state == .connecting
-        {
-            peripheral.identifier.uuidString
-        } else {
-            nil
-        }
+        let restoredPlatformIdentifier: String? =
+            if let peripheral,
+                selectedRoute != nil || isDetectingProtocol,
+                peripheral.state == .connected || peripheral.state == .connecting
+            {
+                peripheral.identifier.uuidString
+            } else {
+                nil
+            }
         publishBluetoothRestoration(restoredPlatformIdentifier)
     }
 
@@ -2834,7 +2911,8 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
                 connectionDeadlineWorkItem?.cancel()
                 publishConnectionSnapshot()
             }
-            storedScanState = state == .unauthorized
+            storedScanState =
+                state == .unauthorized
                 ? .permissionDenied
                 : DevicePickerScanState(status: .bluetoothUnavailable, rows: [])
             publishScanState()
@@ -2899,7 +2977,8 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
         )
         discoveredPeripherals[advertisement.peripheralIdentifier] = peripheral
         observeAdvertisement(advertisement)
-        let advertisedServices = advertisement.advertisedServiceUuids.map(String.init(describing:)).joined(separator: ",")
+        let advertisedServices = advertisement.advertisedServiceUuids.map(String.init(describing:)).joined(
+            separator: ",")
         let candidate = [
             "candidate=\(advertisement.peripheralIdentifier.rawValue)",
             "name=\(advertisement.localName ?? "")",
@@ -2913,7 +2992,8 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
     public func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         assertOnBleQueue()
         guard central === self.central, let attempt = connectionAttempt,
-              acceptsConnectionCallback(peripheral, token: attempt.token) else { return }
+            acceptsConnectionCallback(peripheral, token: attempt.token)
+        else { return }
         _ = rustSessionState.connectionLinkEstablished(token: attempt.token)
         publishConnectionSnapshot()
         setPhase(.discoveringServices)
@@ -3031,7 +3111,9 @@ extension CutoutSessionCore: CBPeripheralDelegate {
             return
         }
         guard subscribedCharacteristics[channel] === characteristic else {
-            record("notification_ignored=unbound_characteristic service=\(characteristic.service?.uuid.uuidString ?? "unknown") characteristic=\(characteristic.uuid.uuidString)")
+            record(
+                "notification_ignored=unbound_characteristic service=\(characteristic.service?.uuid.uuidString ?? "unknown") characteristic=\(characteristic.uuid.uuidString)"
+            )
             return
         }
         let detectionResolution = observeDetectionNotification(channel: channel, bytes: value)
@@ -3042,18 +3124,20 @@ extension CutoutSessionCore: CBPeripheralDelegate {
         }
         if isDetectingProtocol {
             guard promoteProtocolDetectionIfResolved(detectionResolution, on: characteristic.service?.peripheral) else {
-                guard captureFrame(
-                    direction: "notify",
-                    characteristic: characteristic.uuid,
-                    service: characteristic.service?.uuid,
-                    bytes: value
-                ) else { return }
+                guard
+                    captureFrame(
+                        direction: "notify",
+                        characteristic: characteristic.uuid,
+                        service: characteristic.service?.uuid,
+                        bytes: value
+                    )
+                else { return }
                 captureNotificationCount += 1
                 publishCaptureProgress()
                 if isDetectingProtocol, channel.bluetooth16Value == 0xffe1,
-                   deviceDetectionSession.nextBegodeProbeExpiry(
-                       timeout: BegodeProbeResponsePolicy.timeoutAfter
-                   ) == nil
+                    deviceDetectionSession.nextBegodeProbeExpiry(
+                        timeout: BegodeProbeResponsePolicy.timeoutAfter
+                    ) == nil
                 {
                     finishProtocolDetectionOrRecord(
                         detectionResolution,
@@ -3064,12 +3148,14 @@ extension CutoutSessionCore: CBPeripheralDelegate {
             }
         }
         if isRecordOnly {
-            guard captureFrame(
-                direction: "notify",
-                characteristic: characteristic.uuid,
-                service: characteristic.service?.uuid,
-                bytes: value
-            ) else { return }
+            guard
+                captureFrame(
+                    direction: "notify",
+                    characteristic: characteristic.uuid,
+                    service: characteristic.service?.uuid,
+                    bytes: value
+                )
+            else { return }
             record("record_only_notification=\(characteristic.uuid.uuidString) bytes=\(value.count)")
             captureNotificationCount += 1
             publishCaptureProgress()
@@ -3092,7 +3178,8 @@ extension CutoutSessionCore: CBPeripheralDelegate {
                 at: receivedAt
             )
             let ingestFinishedAt = clock.now()
-            let ingestMilliseconds = ingestFinishedAt.rawValue >= ingestStartedAt.rawValue
+            let ingestMilliseconds =
+                ingestFinishedAt.rawValue >= ingestStartedAt.rawValue
                 ? ingestFinishedAt.rawValue - ingestStartedAt.rawValue
                 : 0
             let captureAccepted = captureFrame(
@@ -3131,7 +3218,9 @@ extension CutoutSessionCore: CBPeripheralDelegate {
             return
         }
         guard subscribedCharacteristics[channel] === characteristic else {
-            record("notification_state_ignored=unbound_characteristic service=\(characteristic.service?.uuid.uuidString ?? "unknown") characteristic=\(characteristic.uuid.uuidString)")
+            record(
+                "notification_state_ignored=unbound_characteristic service=\(characteristic.service?.uuid.uuidString ?? "unknown") characteristic=\(characteristic.uuid.uuidString)"
+            )
             return
         }
         if let error {
@@ -3154,8 +3243,8 @@ extension CutoutSessionCore: CBPeripheralDelegate {
     }
 }
 
-private extension CutoutSessionCore {
-    func bindDiscoveredCharacteristic(_ channel: BluetoothUuid, _ characteristic: CBCharacteristic) {
+extension CutoutSessionCore {
+    fileprivate func bindDiscoveredCharacteristic(_ channel: BluetoothUuid, _ characteristic: CBCharacteristic) {
         guard let existing = subscribedCharacteristics[channel] else {
             subscribedCharacteristics[channel] = characteristic
             return
@@ -3168,7 +3257,7 @@ private extension CutoutSessionCore {
         }
     }
 
-    func preferredServiceUuid(for route: DevicePickerConnectionRoute?) -> CBUUID? {
+    fileprivate func preferredServiceUuid(for route: DevicePickerConnectionRoute?) -> CBUUID? {
         switch route {
         case .vescOnewheel:
             return BluetoothUuid.vescNordicUartService.coreBluetoothUuid
@@ -3179,7 +3268,7 @@ private extension CutoutSessionCore {
         }
     }
 
-    func assertOnBleQueue() {
+    fileprivate func assertOnBleQueue() {
         dispatchPrecondition(condition: .onQueue(bleQueue))
     }
 }
@@ -3203,7 +3292,10 @@ extension CutoutSessionCore: CoreBluetoothOperationSink {
         peripheral?.setNotifyValue(true, for: characteristic)
     }
 
-    public func writeWithoutResponse(channel: BluetoothUuid, bytes: Data, isCurrent: @escaping () -> Bool, onReceipt: @escaping (CoreBluetoothWriteDisposition) -> Void) -> CoreBluetoothWriteDisposition {
+    public func writeWithoutResponse(
+        channel: BluetoothUuid, bytes: Data, isCurrent: @escaping () -> Bool,
+        onReceipt: @escaping (CoreBluetoothWriteDisposition) -> Void
+    ) -> CoreBluetoothWriteDisposition {
         observeDetectionProbeWrite(channel: channel, bytes: bytes)
         guard let characteristic = subscribedCharacteristics[channel] else {
             setPhase(.failed(.missingWriteChannel))
@@ -3331,7 +3423,8 @@ extension CutoutSessionCore {
         let previous = deviceDetectionSession.resolution
         let current: DeviceDetectionResolution
         if let token = connectionAttempt?.token,
-           let resolution = rustSessionState.observeConnectionNotification(token: token, bytes: bytes) {
+            let resolution = rustSessionState.observeConnectionNotification(token: token, bytes: bytes)
+        {
             current = DeviceDetectionResolution(resolution)
         } else if connectionAttempt == nil {
             // Standalone decoder fixtures have no platform connection attempt.
@@ -3457,7 +3550,8 @@ extension CutoutSessionCore {
             annotateDetection("protocol_detection_resolved=\(route.rawValue)")
             buildOwner(for: peripheral)
             return liveOwner != nil
-        case .probeRecommended, .unknownRecordable, .knownUnsupported, .ambiguous, .conflicting, .rejectedNoise, .manualEntry, .unsupported:
+        case .probeRecommended, .unknownRecordable, .knownUnsupported, .ambiguous, .conflicting, .rejectedNoise,
+            .manualEntry, .unsupported:
             let resolved = rustSessionState.resolveDeviceSession(
                 token: token,
                 identificationComplete: allowClosestMatch,
@@ -3473,7 +3567,8 @@ extension CutoutSessionCore {
                 connectionDeadlineWorkItem?.cancel()
                 publishConnectionSnapshot()
             }
-            let failure: IdentificationProbeFailure = candidate.support == .conflicting
+            let failure: IdentificationProbeFailure =
+                candidate.support == .conflicting
                 ? .conflictingEvidence
                 : (candidate.support == .unknownRecordable ? .unsupported : .unsupported)
             guard allowClosestMatch else { return false }
@@ -3498,11 +3593,13 @@ extension CutoutSessionCore {
             break
         }
 
-        guard !promoteProtocolDetectionIfResolved(
-            resolution,
-            on: peripheral,
-            allowClosestMatch: true
-        ) else {
+        guard
+            !promoteProtocolDetectionIfResolved(
+                resolution,
+                on: peripheral,
+                allowClosestMatch: true
+            )
+        else {
             return
         }
 
@@ -3590,9 +3687,11 @@ extension CutoutSessionCore {
 
     private func scheduleBegodeProbeExpiry() {
         begodeProbeExpiryWorkItem?.cancel()
-        guard let deadline = deviceDetectionSession.nextBegodeProbeExpiry(
-            timeout: BegodeProbeResponsePolicy.timeoutAfter
-        ) else {
+        guard
+            let deadline = deviceDetectionSession.nextBegodeProbeExpiry(
+                timeout: BegodeProbeResponsePolicy.timeoutAfter
+            )
+        else {
             begodeProbeExpiryWorkItem = nil
             return
         }
@@ -3617,7 +3716,8 @@ extension CutoutSessionCore {
         let generation = connectionSnapshot.generation
         let work = DispatchWorkItem { [weak self, weak peripheral] in
             guard let self, self.connectionSnapshot.generation == generation,
-                  self.isDetectingProtocol else { return }
+                self.isDetectingProtocol
+            else { return }
             self.finishProtocolDetectionOrRecord(self.deviceDetectionSession.resolution, on: peripheral)
         }
         protocolDetectionExpiryWorkItem = work
@@ -3718,8 +3818,8 @@ func bmsStorageSamples(
         )
     }
 }
-private extension CBCharacteristic {
-    var mobileGattRoles: [MobileGattRoleDto] {
+extension CBCharacteristic {
+    fileprivate var mobileGattRoles: [MobileGattRoleDto] {
         var roles: [MobileGattRoleDto] = []
         if properties.contains(.read) {
             roles.append(.read)
@@ -3743,9 +3843,11 @@ private extension CBCharacteristic {
 struct MonotonicClock {
     private let source: () -> MonotonicMilliseconds
 
-    init(now: @escaping () -> MonotonicMilliseconds = {
-        MonotonicMilliseconds(UInt64(ProcessInfo.processInfo.systemUptime * 1_000))
-    }) {
+    init(
+        now: @escaping () -> MonotonicMilliseconds = {
+            MonotonicMilliseconds(UInt64(ProcessInfo.processInfo.systemUptime * 1_000))
+        }
+    ) {
         source = now
     }
 
@@ -3754,20 +3856,20 @@ struct MonotonicClock {
     }
 }
 
-private extension Optional where Wrapped == Error {
-    var sessionMessage: String {
+extension Optional where Wrapped == Error {
+    fileprivate var sessionMessage: String {
         map(String.init(describing:)) ?? "unknown error"
     }
 }
 
-private extension Error {
-    var sessionMessage: String {
+extension Error {
+    fileprivate var sessionMessage: String {
         String(describing: self)
     }
 }
 
-private extension Data {
-    var hexString: String {
+extension Data {
+    fileprivate var hexString: String {
         map { String(format: "%02x", $0) }.joined()
     }
 }

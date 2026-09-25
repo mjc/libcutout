@@ -37,7 +37,8 @@ final class CaptureFeatureModel {
     @ObservationIgnored let sessionState: CutoutSessionStateHandle
     @ObservationIgnored private let flushOperation: @MainActor () async -> Bool
     @ObservationIgnored private let finishOperation: @MainActor () async -> Bool
-    @ObservationIgnored private let changeCaptureLabel: (CaptureGeneration, MobileCaptureLabelActionDto) throws -> [MobileCaptureLabelDto]
+    @ObservationIgnored private let changeCaptureLabel:
+        (CaptureGeneration, MobileCaptureLabelActionDto) throws -> [MobileCaptureLabelDto]
     @ObservationIgnored private var finishTask: Task<Bool, Never>?
     @ObservationIgnored private var finishRequestGeneration: CaptureGeneration?
 
@@ -45,9 +46,10 @@ final class CaptureFeatureModel {
         sessionState: CutoutSessionStateHandle,
         flush: @escaping @MainActor () async -> Bool = { false },
         finish: @escaping @MainActor () async -> Bool = { false },
-        changeCaptureLabel: @escaping (CaptureGeneration, MobileCaptureLabelActionDto) throws -> [MobileCaptureLabelDto] = { _, _ in
-            throw MobileCaptureAnnotationError.NotRecording
-        }
+        changeCaptureLabel: @escaping (CaptureGeneration, MobileCaptureLabelActionDto) throws ->
+            [MobileCaptureLabelDto] = { _, _ in
+                throw MobileCaptureAnnotationError.NotRecording
+            }
     ) {
         self.sessionState = sessionState
         flushOperation = flush
@@ -71,7 +73,9 @@ final class CaptureFeatureModel {
     private(set) var label: String?
     private(set) var completed: [CaptureArtifact] = []
 
-    var latestGeneration: CaptureGeneration? { lifecycle.attempt.map { CaptureGeneration(rawValue: $0.generation.value) } }
+    var latestGeneration: CaptureGeneration? {
+        lifecycle.attempt.map { CaptureGeneration(rawValue: $0.generation.value) }
+    }
     var activeGeneration: CaptureGeneration? {
         switch lifecycle.attempt?.stage {
         case .recording, .saving, .saveFailed, .finalizing: latestGeneration
@@ -85,7 +89,10 @@ final class CaptureFeatureModel {
     var status: CaptureStatus? {
         // A rejected startup belongs to the setup error, not to the previous artifact.
         if lifecycle.attempt?.stage == .failed, latestGeneration != presentedGeneration,
-           let recordingStatus { return recordingStatus }
+            let recordingStatus
+        {
+            return recordingStatus
+        }
         switch lifecycle.attempt?.stage {
         case .failed, .saveFailed: return .failed
         case .saved: return fileName.map { .saved(fileName: $0) }
@@ -113,7 +120,8 @@ final class CaptureFeatureModel {
         pendingStart = StartContext(device: device, description: description)
         let accepted = operation()
         if accepted, let context = pendingStart,
-           let attempt = sessionState.captureLifecycleSnapshot().attempt {
+            let attempt = sessionState.captureLifecycleSnapshot().attempt
+        {
             acceptedStarts[CaptureGeneration(rawValue: attempt.generation.value)] = context
         }
         pendingStart = nil
@@ -266,11 +274,12 @@ final class CaptureFeatureModel {
 
     private func complete(_ generation: CaptureGeneration, outcome: CaptureArtifact.Outcome, fileURL: URL?) {
         if let recording = recordings.removeValue(forKey: generation) {
-            completed.insert(CaptureArtifact(
-                id: generation, fileURL: fileURL ?? recording.fileURL, startedAt: recording.startedAt,
-                device: recording.device, isUserInitiated: recording.isUserInitiated,
-                progress: recording.progress, outcome: outcome
-            ), at: 0)
+            completed.insert(
+                CaptureArtifact(
+                    id: generation, fileURL: fileURL ?? recording.fileURL, startedAt: recording.startedAt,
+                    device: recording.device, isUserInitiated: recording.isUserInitiated,
+                    progress: recording.progress, outcome: outcome
+                ), at: 0)
         }
         guard generation == latestGeneration else { return }
         guard generation == presentedGeneration else { return }

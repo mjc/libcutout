@@ -1,6 +1,6 @@
-import Foundation
 import CutoutMobile
 import CutoutMobileFFI
+import Foundation
 import SwiftUI
 
 struct RideMapSummaryView: View {

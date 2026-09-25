@@ -1,7 +1,8 @@
 import CutoutMobile
 import SwiftUI
+
 #if canImport(UIKit)
-import UIKit
+    import UIKit
 #endif
 
 struct AppSetupView: View {
@@ -29,7 +30,8 @@ struct AppSetupView: View {
                             Text(localizedAppText("phone_alarm.summary"))
                                 .foregroundStyle(.secondary)
                         } label: {
-                            Label(localizedAppText("phone_alarm.title"), systemImage: "iphone.radiowaves.left.and.right")
+                            Label(
+                                localizedAppText("phone_alarm.title"), systemImage: "iphone.radiowaves.left.and.right")
                         }
                     }
                     .accessibilityIdentifier("setup.phone-alarms")
@@ -143,7 +145,7 @@ private struct PhoneRideAlarmSettingsView: View {
                                 )
                             }
                         ),
-                        in: 1 ... 100
+                        in: 1...100
                     ) {
                         LabeledContent(
                             localizedAppText("phone_alarm.pwm_duty"),
@@ -183,11 +185,11 @@ private struct PhoneRideAlarmSettingsView: View {
                             Task { await model.requestPhoneAlarmAuthorization() }
                         }
                     case .denied, .permitted(alerts: false, sounds: _, quietly: _):
-#if canImport(UIKit)
-                        Button(localizedAppText("phone_alarm.open_settings")) {
-                            openURL(URL(string: UIApplication.openSettingsURLString)!)
-                        }
-#endif
+                        #if canImport(UIKit)
+                            Button(localizedAppText("phone_alarm.open_settings")) {
+                                openURL(URL(string: UIApplication.openSettingsURLString)!)
+                            }
+                        #endif
                     case .permitted:
                         EmptyView()
                     }

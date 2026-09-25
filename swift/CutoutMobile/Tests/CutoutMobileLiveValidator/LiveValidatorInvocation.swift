@@ -16,13 +16,15 @@ enum LiveValidatorInvocation {
             "CUTOUT_AERO_INCLUDE_TRIP_RESET",
         ]
         guard !arguments.contains("--settings"),
-              !mutationFlags.contains(where: { environment[$0] == "1" }) else {
+            !mutationFlags.contains(where: { environment[$0] == "1" })
+        else {
             record("settings_validation_disabled: live mutation requires a reviewed operation and restoration contract")
             return 1
         }
         guard arguments.count <= 1,
-              let timeout = arguments.first.map(Double.init) ?? 45,
-              timeout.isFinite, timeout > 0, timeout <= 600 else {
+            let timeout = arguments.first.map(Double.init) ?? 45,
+            timeout.isFinite, timeout > 0, timeout <= 600
+        else {
             record("invalid_arguments: expected an optional timeout in seconds greater than 0 and at most 600")
             return 1
         }

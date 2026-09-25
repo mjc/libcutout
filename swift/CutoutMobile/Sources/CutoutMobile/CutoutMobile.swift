@@ -1,4 +1,5 @@
 import CutoutMobileFFI
+import Foundation
 
 public typealias Angle = CutoutMobileFFI.Angle
 public typealias BatteryCurrent = CutoutMobileFFI.BatteryCurrent
@@ -19,7 +20,6 @@ public typealias Speed = CutoutMobileFFI.Speed
 public typealias Temperature = CutoutMobileFFI.Temperature
 public typealias Voltage = CutoutMobileFFI.Voltage
 public typealias VoltageDelta = CutoutMobileFFI.VoltageDelta
-import Foundation
 
 public struct MonotonicMilliseconds: Equatable, Hashable, Sendable {
     public let rawValue: UInt64
@@ -156,8 +156,8 @@ public enum ProtocolDetectionResolutionDisposition: Equatable, Sendable {
     case refuse(IdentificationProbeFailure)
 }
 
-public extension DeviceDetectionResolution {
-    func connectionDisposition(
+extension DeviceDetectionResolution {
+    public func connectionDisposition(
         platformIdentifier: String,
         displayName: String,
         allowClosestMatch: Bool = false
@@ -174,11 +174,12 @@ public extension DeviceDetectionResolution {
             }
             return .pending
         }
-        let support = DevicePickerCandidateSupport(discoveryCandidate(
-            platformIdentifier: platformIdentifier,
-            displayName: displayName,
-            allowClosestMatch: allowClosestMatch
-        ))
+        let support = DevicePickerCandidateSupport(
+            discoveryCandidate(
+                platformIdentifier: platformIdentifier,
+                displayName: displayName,
+                allowClosestMatch: allowClosestMatch
+            ))
         guard let route = support.connectionRoute else {
             if malformedProbeResponse != nil {
                 return .refuse(.malformedResponse)
@@ -191,7 +192,7 @@ public extension DeviceDetectionResolution {
         return .promote(route: route, model: support.electricUnicycleModel)
     }
 
-    func discoveryCandidate(
+    public func discoveryCandidate(
         platformIdentifier: String,
         displayName: String,
         allowClosestMatch: Bool = false
@@ -221,7 +222,7 @@ public extension DeviceDetectionResolution {
         )
     }
 
-    func probeDisposition(
+    public func probeDisposition(
         platformIdentifier: String,
         displayName: String
     ) -> IdentificationProbeResolutionDisposition {
@@ -234,10 +235,11 @@ public extension DeviceDetectionResolution {
         if missingProbeResponse != nil {
             return .refuse(.timedOut)
         }
-        let support = DevicePickerCandidateSupport(discoveryCandidate(
-            platformIdentifier: platformIdentifier,
-            displayName: displayName
-        ))
+        let support = DevicePickerCandidateSupport(
+            discoveryCandidate(
+                platformIdentifier: platformIdentifier,
+                displayName: displayName
+            ))
         return support.electricUnicycleModel.map(IdentificationProbeResolutionDisposition.promote)
             ?? .pending
     }
@@ -315,9 +317,12 @@ public final class DeviceDetectionSession {
 
     public func observeAdvertisement(name: Data?) -> DeviceDetectionResolution {
         guard let token = currentToken else {
-            return inner.observeAdvertisementUnscoped(name: name).map(DeviceDetectionResolution.init) ?? currentResolution()
+            return inner.observeAdvertisementUnscoped(name: name).map(DeviceDetectionResolution.init)
+                ?? currentResolution()
         }
-        guard let resolution = inner.observeAdvertisementForAttempt(token: token, name: name) else { return currentResolution() }
+        guard let resolution = inner.observeAdvertisementForAttempt(token: token, name: name) else {
+            return currentResolution()
+        }
         return DeviceDetectionResolution(resolution)
     }
 
@@ -333,19 +338,24 @@ public final class DeviceDetectionSession {
 
     public func observeNotification(bytes: Data) -> DeviceDetectionResolution {
         guard let token = currentToken else {
-            return inner.observeNotificationUnscoped(bytes: bytes).map(DeviceDetectionResolution.init) ?? currentResolution()
+            return inner.observeNotificationUnscoped(bytes: bytes).map(DeviceDetectionResolution.init)
+                ?? currentResolution()
         }
-        guard let resolution = inner.observeNotificationForAttempt(token: token, bytes: bytes) else { return currentResolution() }
+        guard let resolution = inner.observeNotificationForAttempt(token: token, bytes: bytes) else {
+            return currentResolution()
+        }
         return DeviceDetectionResolution(resolution)
     }
 
     func beginIdentificationProbe(at startedAt: MonotonicMilliseconds) -> IdentificationProbeOutcome {
         let outcome: CutoutMobileFFI.MobileIdentificationProbeOutcomeDto
         if let token = currentToken {
-            guard let scoped = inner.beginIdentificationProbeForAttemptAt(
-                token: token,
-                startedAtMs: startedAt.rawValue
-            ) else { return .unsupported }
+            guard
+                let scoped = inner.beginIdentificationProbeForAttemptAt(
+                    token: token,
+                    startedAtMs: startedAt.rawValue
+                )
+            else { return .unsupported }
             outcome = scoped
         } else {
             outcome = inner.beginIdentificationProbeAt(startedAtMs: startedAt.rawValue)
@@ -356,12 +366,13 @@ public final class DeviceDetectionSession {
         case .unsupported:
             return .unsupported
         case .writes(let writes):
-            return .writes(writes.map { write in
-                IdentificationProbeWrite(
-                    channel: BluetoothUuid(write.characteristic)!,
-                    bytes: write.payload
-                )
-            })
+            return .writes(
+                writes.map { write in
+                    IdentificationProbeWrite(
+                        channel: BluetoothUuid(write.characteristic)!,
+                        bytes: write.payload
+                    )
+                })
         case .alreadyPending:
             return .alreadyPending
         }
@@ -377,9 +388,11 @@ public final class DeviceDetectionSession {
 
     func observeBegodeNameProbe(at startedAt: MonotonicMilliseconds) -> DeviceDetectionResolution {
         guard let token = currentToken else {
-            return inner.observeBegodeNameProbeUnscopedAt(startedAtMs: startedAt.rawValue).map(DeviceDetectionResolution.init) ?? currentResolution()
+            return inner.observeBegodeNameProbeUnscopedAt(startedAtMs: startedAt.rawValue).map(
+                DeviceDetectionResolution.init) ?? currentResolution()
         }
-        guard let resolution = inner.observeBegodeNameProbeForAttemptAt(token: token, startedAtMs: startedAt.rawValue) else { return currentResolution() }
+        guard let resolution = inner.observeBegodeNameProbeForAttemptAt(token: token, startedAtMs: startedAt.rawValue)
+        else { return currentResolution() }
         return DeviceDetectionResolution(resolution)
     }
 
@@ -387,15 +400,20 @@ public final class DeviceDetectionSession {
         guard let token = currentToken else {
             return inner.observeBegodeFirmwareProbeUnscoped().map(DeviceDetectionResolution.init) ?? currentResolution()
         }
-        guard let resolution = inner.observeBegodeFirmwareProbeForAttempt(token: token) else { return currentResolution() }
+        guard let resolution = inner.observeBegodeFirmwareProbeForAttempt(token: token) else {
+            return currentResolution()
+        }
         return DeviceDetectionResolution(resolution)
     }
 
     func observeBegodeFirmwareProbe(at startedAt: MonotonicMilliseconds) -> DeviceDetectionResolution {
         guard let token = currentToken else {
-            return inner.observeBegodeFirmwareProbeUnscopedAt(startedAtMs: startedAt.rawValue).map(DeviceDetectionResolution.init) ?? currentResolution()
+            return inner.observeBegodeFirmwareProbeUnscopedAt(startedAtMs: startedAt.rawValue).map(
+                DeviceDetectionResolution.init) ?? currentResolution()
         }
-        guard let resolution = inner.observeBegodeFirmwareProbeForAttemptAt(token: token, startedAtMs: startedAt.rawValue) else { return currentResolution() }
+        guard
+            let resolution = inner.observeBegodeFirmwareProbeForAttemptAt(token: token, startedAtMs: startedAt.rawValue)
+        else { return currentResolution() }
         return DeviceDetectionResolution(resolution)
     }
 
@@ -409,27 +427,37 @@ public final class DeviceDetectionSession {
 
     func observeBegodeImuProbe(at startedAt: MonotonicMilliseconds) -> DeviceDetectionResolution {
         guard let token = currentToken else {
-            return inner.observeBegodeImuProbeUnscopedAt(startedAtMs: startedAt.rawValue).map(DeviceDetectionResolution.init) ?? currentResolution()
+            return inner.observeBegodeImuProbeUnscopedAt(startedAtMs: startedAt.rawValue).map(
+                DeviceDetectionResolution.init) ?? currentResolution()
         }
-        guard let resolution = inner.observeBegodeImuProbeForAttemptAt(token: token, startedAtMs: startedAt.rawValue) else { return currentResolution() }
+        guard let resolution = inner.observeBegodeImuProbeForAttemptAt(token: token, startedAtMs: startedAt.rawValue)
+        else { return currentResolution() }
         return DeviceDetectionResolution(resolution)
     }
 
     public func observeBegodeNameProbeTimeout() -> DeviceDetectionResolution {
         guard let token = currentToken else { return DeviceDetectionResolution(inner.observeBegodeNameProbeTimeout()) }
-        guard let resolution = inner.observeBegodeNameProbeTimeoutForAttempt(token: token) else { return currentResolution() }
+        guard let resolution = inner.observeBegodeNameProbeTimeoutForAttempt(token: token) else {
+            return currentResolution()
+        }
         return DeviceDetectionResolution(resolution)
     }
 
     public func observeBegodeFirmwareProbeTimeout() -> DeviceDetectionResolution {
-        guard let token = currentToken else { return DeviceDetectionResolution(inner.observeBegodeFirmwareProbeTimeout()) }
-        guard let resolution = inner.observeBegodeFirmwareProbeTimeoutForAttempt(token: token) else { return currentResolution() }
+        guard let token = currentToken else {
+            return DeviceDetectionResolution(inner.observeBegodeFirmwareProbeTimeout())
+        }
+        guard let resolution = inner.observeBegodeFirmwareProbeTimeoutForAttempt(token: token) else {
+            return currentResolution()
+        }
         return DeviceDetectionResolution(resolution)
     }
 
     public func observeBegodeImuProbeTimeout() -> DeviceDetectionResolution {
         guard let token = currentToken else { return DeviceDetectionResolution(inner.observeBegodeImuProbeTimeout()) }
-        guard let resolution = inner.observeBegodeImuProbeTimeoutForAttempt(token: token) else { return currentResolution() }
+        guard let resolution = inner.observeBegodeImuProbeTimeoutForAttempt(token: token) else {
+            return currentResolution()
+        }
         return DeviceDetectionResolution(resolution)
     }
 
@@ -445,8 +473,10 @@ public final class DeviceDetectionSession {
             return inner.expireBegodeProbeResponsesUnscoped(nowMs: now.rawValue, timeoutMs: timeout.rawValue)
                 .map(DeviceDetectionPendingProbe.init)
         }
-        return inner.expireBegodeProbeResponsesForAttempt(token: token, nowMs: now.rawValue, timeoutMs: timeout.rawValue)
-            .map(DeviceDetectionPendingProbe.init)
+        return inner.expireBegodeProbeResponsesForAttempt(
+            token: token, nowMs: now.rawValue, timeoutMs: timeout.rawValue
+        )
+        .map(DeviceDetectionPendingProbe.init)
     }
 
     func markBegodeProbeResponsesMissing() -> [DeviceDetectionPendingProbe] {
@@ -1072,16 +1102,17 @@ public struct ChargeEstimateState: Equatable, Hashable, Sendable {
     }
 
     static var missingProfile: Self {
-        Self(MobileChargeEstimateStateDto(
-            kind: .unavailable,
-            estimate: nil,
-            voltageSag: nil,
-            unavailableReason: .capacityMissing,
-            error: nil,
-            resetReason: nil,
-            samples: 0,
-            observedFor: MobileDurationDto(milliseconds: 0)
-        ))
+        Self(
+            MobileChargeEstimateStateDto(
+                kind: .unavailable,
+                estimate: nil,
+                voltageSag: nil,
+                unavailableReason: .capacityMissing,
+                error: nil,
+                resetReason: nil,
+                samples: 0,
+                observedFor: MobileDurationDto(milliseconds: 0)
+            ))
     }
 
     public var displayValue: String {
@@ -1169,8 +1200,8 @@ public struct ChargeEstimateProfile: Equatable, Hashable, Sendable {
     }
 }
 
-private extension ChargeEstimateKind {
-    var displayText: String {
+extension ChargeEstimateKind {
+    fileprivate var displayText: String {
         switch self {
         case .atPresentCurrent: pevLocalizedText("charge.estimate.kind.present_current")
         case .profileBackedTimeToFull: pevLocalizedText("charge.estimate.kind.profile_backed")
@@ -1179,8 +1210,8 @@ private extension ChargeEstimateKind {
     }
 }
 
-private extension ChargeEstimateConfidence {
-    var displayText: String {
+extension ChargeEstimateConfidence {
+    fileprivate var displayText: String {
         switch self {
         case .low: pevLocalizedText("charge.estimate.confidence.low")
         case .medium: pevLocalizedText("charge.estimate.confidence.medium")
@@ -1188,7 +1219,6 @@ private extension ChargeEstimateConfidence {
         }
     }
 }
-
 
 public struct FaultHistoryEntry: Equatable, Hashable, Sendable {
     public let code: FaultCode
@@ -1300,7 +1330,6 @@ public enum LightState: Equatable, Hashable, Sendable {
         }
     }
 }
-
 
 public enum TelemetryPowerPresentation: Equatable, Hashable, Sendable {
     case calculatedPackCurrent(Power)
@@ -1431,20 +1460,22 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
         self.batteryLevelEstimated = batteryLevelEstimated
         self.chargeMode = chargeMode
         self.chargeEstimate = chargeEstimate
-        self.riderDashboardProjection = riderDashboardProjection
-            ?? mobileRiderDashboardProjectionForValues(values: MobileRiderDashboardValuesDto(
-                operatingState: operatingState,
-                batteryLevelReported: batteryLevelReported,
-                batteryLevelEstimated: batteryLevelEstimated,
-                voltage: voltage,
-                batteryCurrent: batteryCurrent,
-                reportedPower: power,
-                controllerTemperature: controllerTemperature,
-                motorTemperature: motorTemperature,
-                batteryTemperature: batteryTemperature,
-                pwm: pwm,
-                limpHomeRange: limpHomeRange
-            ))
+        self.riderDashboardProjection =
+            riderDashboardProjection
+            ?? mobileRiderDashboardProjectionForValues(
+                values: MobileRiderDashboardValuesDto(
+                    operatingState: operatingState,
+                    batteryLevelReported: batteryLevelReported,
+                    batteryLevelEstimated: batteryLevelEstimated,
+                    voltage: voltage,
+                    batteryCurrent: batteryCurrent,
+                    reportedPower: power,
+                    controllerTemperature: controllerTemperature,
+                    motorTemperature: motorTemperature,
+                    batteryTemperature: batteryTemperature,
+                    pwm: pwm,
+                    limpHomeRange: limpHomeRange
+                ))
     }
 
     fileprivate init(_ dto: MobileTelemetrySnapshotDto) {
@@ -1643,20 +1674,20 @@ public struct FootpadTelemetry: Equatable, Hashable, Sendable {
     }
 }
 
-public extension FootpadTelemetry {
-    var adc1MetricValue: PevDashboardMetricValue {
+extension FootpadTelemetry {
+    public var adc1MetricValue: PevDashboardMetricValue {
         footpadMetricValue(adc1Milliunits)
     }
 
-    var adc2MetricValue: PevDashboardMetricValue {
+    public var adc2MetricValue: PevDashboardMetricValue {
         footpadMetricValue(adc2Milliunits)
     }
 
-    var stateDisplayText: String {
+    public var stateDisplayText: String {
         contactState?.displayText ?? pevLocalizedText("footpad.state", Int64(state))
     }
 
-    var accessibilityValue: String {
+    public var accessibilityValue: String {
         pevLocalizedText(
             "footpad.accessibility.summary",
             pevLocalizedText("footpad.adc1"),
@@ -1667,7 +1698,7 @@ public extension FootpadTelemetry {
         )
     }
 
-    var summaryText: String {
+    public var summaryText: String {
         pevLocalizedText(
             "footpad.summary",
             stateDisplayText,
@@ -2172,8 +2203,8 @@ private func vescMetricValue<Value>(
     return .available(display: text, accessibility: text)
 }
 
-public extension VescRideSnapshot {
-    static func dashboardSupport(
+extension VescRideSnapshot {
+    public static func dashboardSupport(
         for snapshot: VescRideSnapshot?,
         phase: SessionConnectionPhase,
         at now: MonotonicMilliseconds,
@@ -2183,8 +2214,9 @@ public extension VescRideSnapshot {
             return .telemetryStale(elapsed: staleElapsed)
         }
         if let snapshot,
-           case let .available(display, accessibility) = snapshot.dutyHeadroomProgressMetricValue,
-           let progress = snapshot.dutyHeadroomProgress {
+            case let .available(display, accessibility) = snapshot.dutyHeadroomProgressMetricValue,
+            let progress = snapshot.dutyHeadroomProgress
+        {
             return .dutyHeadroom(
                 metricValue: .available(display: display, accessibility: accessibility),
                 progress: progress
@@ -2196,14 +2228,14 @@ public extension VescRideSnapshot {
         return .none
     }
 
-    func updateAge(
+    public func updateAge(
         at now: MonotonicMilliseconds,
         staleAfter staleThreshold: MonotonicMilliseconds
     ) -> EucRideUpdateAge {
         rideUpdateAge(updatedAt: lastUpdate, at: now, staleAfter: staleThreshold)
     }
 
-    func staleTelemetryElapsed(
+    public func staleTelemetryElapsed(
         at now: MonotonicMilliseconds,
         staleAfter staleThreshold: MonotonicMilliseconds
     ) -> MonotonicMilliseconds? {
@@ -2250,10 +2282,11 @@ public enum RideHeroReadout: Equatable, Hashable, Sendable {
         state: EucRideScreenState?,
         now: MonotonicMilliseconds
     ) -> Self {
-        let freshness = state?.updateAge(
-            at: now,
-            staleAfter: RideTelemetryFreshnessPolicy.staleAfter
-        ).freshness ?? .unavailable
+        let freshness =
+            state?.updateAge(
+                at: now,
+                staleAfter: RideTelemetryFreshnessPolicy.staleAfter
+            ).freshness ?? .unavailable
         let severity = rideHeroSeverity(
             state?.warningState(
                 at: now,
@@ -2275,10 +2308,11 @@ public enum RideHeroReadout: Equatable, Hashable, Sendable {
         snapshot: VescRideSnapshot?,
         now: MonotonicMilliseconds
     ) -> Self {
-        let freshness = snapshot?.updateAge(
-            at: now,
-            staleAfter: RideTelemetryFreshnessPolicy.staleAfter
-        ).freshness ?? .unavailable
+        let freshness =
+            snapshot?.updateAge(
+                at: now,
+                staleAfter: RideTelemetryFreshnessPolicy.staleAfter
+            ).freshness ?? .unavailable
         let severity = rideHeroSeverity(snapshot?.warning ?? .unknown)
         guard let boardSpeed = snapshot?.boardSpeed else {
             return .unavailable(freshness: freshness, severity: severity)
@@ -2306,23 +2340,23 @@ private func rideHeroSeverity(_ warning: VescRideWarning) -> RideHeroSeverity {
     switch warning {
     case .none: .nominal
     case .lowVoltage, .highVoltage, .mosfetTemperature, .motorTemperature,
-         .current, .dutyPushback, .speedPushback, .temperaturePushback, .wheelslip, .sensors,
-         .lowBattery:
+        .current, .dutyPushback, .speedPushback, .temperaturePushback, .wheelslip, .sensors,
+        .lowBattery:
         .caution
     case .error, .bmsConnection: .critical
     case .unknown: .unavailable
     }
 }
 
-private extension TelemetrySnapshot {
-    var pwmHeadroomValue: RiderHeadroomValue {
+extension TelemetrySnapshot {
+    fileprivate var pwmHeadroomValue: RiderHeadroomValue {
         for case let .pwmHeadroom(value) in riderDashboardProjection.safetyMetrics {
             return value
         }
         return .unavailable
     }
 
-    var pwmHeadroomApplicability: EucRideMetricApplicability {
+    fileprivate var pwmHeadroomApplicability: EucRideMetricApplicability {
         switch pwmHeadroomValue {
         case .available: .available
         case .notApplicable: .notApplicable
@@ -2330,7 +2364,7 @@ private extension TelemetrySnapshot {
         }
     }
 
-    var dutyHeadroom: BatteryLevel? {
+    fileprivate var dutyHeadroom: BatteryLevel? {
         guard case .available(let permille) = pwmHeadroomValue else { return nil }
         return BatteryLevel(value: UInt8(permille / 10))
     }
@@ -2628,7 +2662,6 @@ public struct SpeedAlarmMode: Equatable, Hashable, Sendable {
     }
 }
 
-
 public struct SpeedReadout: Equatable, Hashable, Sendable {
     public let millimetersPerSecond: Int32?
     public let source: ReadbackSource?
@@ -2675,7 +2708,8 @@ public struct PhoneLocationReadback: Equatable, Hashable, Sendable {
         receivedAt: MonotonicMilliseconds? = nil
     ) {
         self.speed = SpeedReadout(millimetersPerSecond: snapshot.gpsSpeed?.value.value)
-        self.receivedAt = speed.millimetersPerSecond == nil || snapshot.latestSample == nil
+        self.receivedAt =
+            speed.millimetersPerSecond == nil || snapshot.latestSample == nil
             ? nil
             : receivedAt
     }
@@ -2849,16 +2883,16 @@ public struct BmsGroupSnapshot: Equatable, Hashable, Sendable, Identifiable {
     }
 }
 
-public extension BmsGroupSnapshot {
-    var voltageMetricValue: PevDashboardMetricValue {
+extension BmsGroupSnapshot {
+    public var voltageMetricValue: PevDashboardMetricValue {
         bmsVoltageMetricValue(voltage)
     }
 
-    var temperatureMetricValue: PevDashboardMetricValue {
+    public var temperatureMetricValue: PevDashboardMetricValue {
         bmsTemperatureMetricValue(temperature)
     }
 
-    var resistanceMetricValue: PevDashboardMetricValue {
+    public var resistanceMetricValue: PevDashboardMetricValue {
         guard let resistance else { return .unavailable }
         let text = RideUnits.decimalString(Double(resistance.value), fractionDigits: 0)
         return .available(display: text, accessibility: text)
@@ -3277,13 +3311,16 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
         let hasCellVoltageEvidence = groups.contains { group in
             group.voltage.map { $0.value > 0 } ?? false
         }
-        let averageGroupVoltage = hasCellVoltageEvidence
+        let averageGroupVoltage =
+            hasCellVoltageEvidence
             ? self.averageGroupVoltage.flatMap { $0.value > 0 ? $0 : nil }
             : nil
-        let lowestGroupVoltage = lowestGroupIndex
+        let lowestGroupVoltage =
+            lowestGroupIndex
             .flatMap { index in groups.first { $0.index == index }?.voltage }
             .flatMap { $0.value > 0 ? $0 : nil }
-        let hasTemperatureEvidence = highestTemperature != nil
+        let hasTemperatureEvidence =
+            highestTemperature != nil
             && (!temperatureReadings.isEmpty || highestTemperatureLabel != nil)
 
         return BmsOverviewPresentation(
@@ -3687,8 +3724,8 @@ public struct SessionDebugRow: Equatable, Hashable, Sendable {
 
 }
 
-public extension ReadbackAvailability {
-    var displayText: String {
+extension ReadbackAvailability {
+    public var displayText: String {
         switch self {
         case .available:
             pevLocalizedText("readback.availability.available")
@@ -3700,8 +3737,8 @@ public extension ReadbackAvailability {
     }
 }
 
-public extension VerificationState {
-    var displayText: String {
+extension VerificationState {
+    public var displayText: String {
         switch self {
         case .unverified:
             pevLocalizedText("verification.unverified")
@@ -3942,8 +3979,8 @@ public struct BmsNoDataPresentation: Equatable, Hashable, Sendable {
     }
 }
 
-public extension BmsSnapshot {
-    func noDataPresentation(rideState: EucRideScreenState?) -> BmsNoDataPresentation {
+extension BmsSnapshot {
+    public func noDataPresentation(rideState: EucRideScreenState?) -> BmsNoDataPresentation {
         BmsNoDataPresentation(snapshot: self, rideState: rideState)
     }
 }
@@ -4302,8 +4339,8 @@ public struct EucRideScreenState: Equatable, Hashable, Sendable {
     }
 }
 
-private extension TelemetrySnapshot {
-    var hasVisibleRideValues: Bool {
+extension TelemetrySnapshot {
+    fileprivate var hasVisibleRideValues: Bool {
         speed != nil
             || voltage != nil
             || batteryCurrent != nil
@@ -4320,7 +4357,7 @@ private extension TelemetrySnapshot {
             || batteryLevelEstimated != nil
     }
 
-    var hasTemperature: Bool {
+    fileprivate var hasTemperature: Bool {
         controllerTemperature != nil || motorTemperature != nil || batteryTemperature != nil
     }
 }
@@ -4360,8 +4397,8 @@ public enum SessionConnectionFailure: Equatable, Hashable, Sendable {
     }
 }
 
-public extension IdentificationProbeFailure {
-    var displayText: String {
+extension IdentificationProbeFailure {
+    public var displayText: String {
         switch self {
         case .timedOut:
             pevLocalizedText("euc.failure.identification_timeout")
@@ -4500,8 +4537,8 @@ public enum ElectricUnicycleModel: Equatable, Hashable, Sendable {
     case falcon
 }
 
-public extension ElectricUnicycleModel {
-    init(_ dto: DiscoveryElectricUnicycleModel) {
+extension ElectricUnicycleModel {
+    public init(_ dto: DiscoveryElectricUnicycleModel) {
         switch dto {
         case .aero:
             self = .aero
@@ -4510,7 +4547,7 @@ public extension ElectricUnicycleModel {
         }
     }
 
-    var displayName: String {
+    public var displayName: String {
         switch self {
         case .aero:
             "Aero"
@@ -4518,7 +4555,7 @@ public extension ElectricUnicycleModel {
             "Falcon"
         }
     }
-    var dto: DiscoveryElectricUnicycleModel {
+    public var dto: DiscoveryElectricUnicycleModel {
         switch self {
         case .aero:
             .aero
@@ -4615,14 +4652,16 @@ struct VoltageSagModelStore {
                 learnedAtMilliseconds: UInt64(Date().timeIntervalSince1970 * 1_000)
             )) != nil {
                 defaults.removeObject(forKey: Self.keyPrefix + deviceIdentity)
-            } else if let data = try? JSONEncoder().encode(Record(
-                schemaVersion: model.schemaVersion,
-                deviceIdentity: deviceIdentity,
-                effectiveResistanceMilliohms: model.effectiveResistanceMilliohms,
-                observations: model.observations,
-                hardwareVerified: model.hardwareVerified,
-                lastLearnedWallClockMilliseconds: Int64(Date().timeIntervalSince1970 * 1_000)
-            )) {
+            } else if let data = try? JSONEncoder().encode(
+                Record(
+                    schemaVersion: model.schemaVersion,
+                    deviceIdentity: deviceIdentity,
+                    effectiveResistanceMilliohms: model.effectiveResistanceMilliohms,
+                    observations: model.observations,
+                    hardwareVerified: model.hardwareVerified,
+                    lastLearnedWallClockMilliseconds: Int64(Date().timeIntervalSince1970 * 1_000)
+                ))
+            {
                 defaults.set(data, forKey: Self.keyPrefix + deviceIdentity)
             }
             return
@@ -4654,7 +4693,6 @@ struct VoltageSagModelStore {
         defaults.removeObject(forKey: Self.keyPrefix + deviceIdentity)
     }
 }
-
 
 public final class VescOnewheelSession: @unchecked Sendable {
     private let inner: VescReadOnlySession
@@ -4717,13 +4755,14 @@ public final class VescOnewheelSession: @unchecked Sendable {
         channel: Data = Data(),
         bytes: Data = Data()
     ) throws -> [SessionAction] {
-        let result = inner.ingestChecked(input: MobileSessionInputDto(
-            kind: kind,
-            monotonicMs: monotonicMilliseconds.dto,
-            maxWriteLen: writeLimit?.dto,
-            channel: channel,
-            bytes: bytes
-        ))
+        let result = inner.ingestChecked(
+            input: MobileSessionInputDto(
+                kind: kind,
+                monotonicMs: monotonicMilliseconds.dto,
+                maxWriteLen: writeLimit?.dto,
+                channel: channel,
+                bytes: bytes
+            ))
         if let error = result.error {
             throw CutoutSessionError(error)
         }
@@ -4738,11 +4777,13 @@ public final class VescOnewheelSession: @unchecked Sendable {
     }
 
     private func refreshChargeEstimate(at monotonicMilliseconds: MonotonicMilliseconds) {
-        chargeEstimateState = ChargeEstimateState(chargeEstimator.update(input: MobileChargeEstimateInputDto(
-            at: monotonicMilliseconds.dto,
-            snapshot: inner.currentSnapshot(),
-            freshness: MobileDurationDto(milliseconds: 30_000)
-        )))
+        chargeEstimateState = ChargeEstimateState(
+            chargeEstimator.update(
+                input: MobileChargeEstimateInputDto(
+                    at: monotonicMilliseconds.dto,
+                    snapshot: inner.currentSnapshot(),
+                    freshness: MobileDurationDto(milliseconds: 30_000)
+                )))
     }
 }
 
@@ -4760,51 +4801,55 @@ public struct BluetoothUuid: Equatable, Hashable, Sendable {
 
     public static let vescSerialFff0 = bluetooth16(0xfff0)
 
-    public static let vescNordicUartNotify = BluetoothUuid(Data([
-        0x6e, 0x40, 0x00, 0x03,
-        0xb5, 0xa3,
-        0xf3, 0x93,
-        0xe0, 0xa9,
-        0xe5, 0x0e, 0x24, 0xdc, 0xca, 0x9e,
-    ]))!
+    public static let vescNordicUartNotify = BluetoothUuid(
+        Data([
+            0x6e, 0x40, 0x00, 0x03,
+            0xb5, 0xa3,
+            0xf3, 0x93,
+            0xe0, 0xa9,
+            0xe5, 0x0e, 0x24, 0xdc, 0xca, 0x9e,
+        ]))!
 
-    public static let vescNordicUartService = BluetoothUuid(Data([
-        0x6e, 0x40, 0x00, 0x01,
-        0xb5, 0xa3,
-        0xf3, 0x93,
-        0xe0, 0xa9,
-        0xe5, 0x0e, 0x24, 0xdc, 0xca, 0x9e,
-    ]))!
+    public static let vescNordicUartService = BluetoothUuid(
+        Data([
+            0x6e, 0x40, 0x00, 0x01,
+            0xb5, 0xa3,
+            0xf3, 0x93,
+            0xe0, 0xa9,
+            0xe5, 0x0e, 0x24, 0xdc, 0xca, 0x9e,
+        ]))!
 
-    public static let vescNordicUartWrite = BluetoothUuid(Data([
-        0x6e, 0x40, 0x00, 0x02,
-        0xb5, 0xa3,
-        0xf3, 0x93,
-        0xe0, 0xa9,
-        0xe5, 0x0e, 0x24, 0xdc, 0xca, 0x9e,
-    ]))!
+    public static let vescNordicUartWrite = BluetoothUuid(
+        Data([
+            0x6e, 0x40, 0x00, 0x02,
+            0xb5, 0xa3,
+            0xf3, 0x93,
+            0xe0, 0xa9,
+            0xe5, 0x0e, 0x24, 0xdc, 0xca, 0x9e,
+        ]))!
 
     public static func bluetooth16(_ value: UInt16) -> BluetoothUuid {
         let high = UInt8((value >> 8) & 0xff)
         let low = UInt8(value & 0xff)
-        return BluetoothUuid(Data([
-            0x00, 0x00, high, low,
-            0x00, 0x00,
-            0x10, 0x00,
-            0x80, 0x00,
-            0x00, 0x80,
-            0x5f, 0x9b, 0x34, 0xfb,
-        ]))!
+        return BluetoothUuid(
+            Data([
+                0x00, 0x00, high, low,
+                0x00, 0x00,
+                0x10, 0x00,
+                0x80, 0x00,
+                0x00, 0x80,
+                0x5f, 0x9b, 0x34, 0xfb,
+            ]))!
     }
 }
 
-public extension DiscoveryServiceUuid {
-    init(_ uuid: BluetoothUuid) {
+extension DiscoveryServiceUuid {
+    public init(_ uuid: BluetoothUuid) {
         self.init(bytes: uuid.bytes)
     }
 
-    static let eucSerialFfe0 = Self(.eucSerialFfe0)
-    static let vescNordicUart = Self(.vescNordicUartService)
+    public static let eucSerialFfe0 = Self(.eucSerialFfe0)
+    public static let vescNordicUart = Self(.vescNordicUartService)
 }
 
 public struct CoreBluetoothPeripheralIdentifier: Equatable, Hashable, Sendable {
@@ -4947,12 +4992,14 @@ public struct CoreBluetoothSessionStep: Equatable, Hashable, Sendable {
     }
 }
 
-
 public protocol CoreBluetoothOperationSink: AnyObject {
     func subscribe(channel: BluetoothUuid)
     /// Reports admission synchronously and a final receipt when a queued write is submitted or rejected.
     /// All receipts run on the transport's queue.
-    func writeWithoutResponse(channel: BluetoothUuid, bytes: Data, isCurrent: @escaping () -> Bool, onReceipt: @escaping (CoreBluetoothWriteDisposition) -> Void) -> CoreBluetoothWriteDisposition
+    func writeWithoutResponse(
+        channel: BluetoothUuid, bytes: Data, isCurrent: @escaping () -> Bool,
+        onReceipt: @escaping (CoreBluetoothWriteDisposition) -> Void
+    ) -> CoreBluetoothWriteDisposition
     func canSubmitWithoutResponse() -> Bool
     func disconnect()
     func peripheralIsReadyToSendWithoutResponse()
@@ -4971,24 +5018,27 @@ public enum CoreBluetoothWriteDisposition: Equatable, Hashable, Sendable {
     case cancelled
 }
 
-public extension CoreBluetoothOperationSink {
-    func writeWithoutResponse(channel: BluetoothUuid, bytes: Data) -> CoreBluetoothWriteDisposition {
+extension CoreBluetoothOperationSink {
+    public func writeWithoutResponse(channel: BluetoothUuid, bytes: Data) -> CoreBluetoothWriteDisposition {
         writeWithoutResponse(channel: channel, bytes: bytes, onReceipt: { _ in })
     }
 
-    func writeWithoutResponse(channel: BluetoothUuid, bytes: Data, onReceipt: @escaping (CoreBluetoothWriteDisposition) -> Void) -> CoreBluetoothWriteDisposition {
+    public func writeWithoutResponse(
+        channel: BluetoothUuid, bytes: Data, onReceipt: @escaping (CoreBluetoothWriteDisposition) -> Void
+    ) -> CoreBluetoothWriteDisposition {
         writeWithoutResponse(channel: channel, bytes: bytes, isCurrent: { true }, onReceipt: onReceipt)
     }
 
-    func canSubmitWithoutResponse() -> Bool { true }
-    func peripheralIsReadyToSendWithoutResponse() {}
-    func clearPendingWithoutResponseWrites() {}
+    public func canSubmitWithoutResponse() -> Bool { true }
+    public func peripheralIsReadyToSendWithoutResponse() {}
+    public func clearPendingWithoutResponseWrites() {}
 }
 
 /// Queue-confined pending native writes, including their eventual transport receipts.
 final class CoreBluetoothWriteQueue {
     private let capacity: Int
-    private var pending: [(isCurrent: () -> Bool, write: () -> Void, receipt: (CoreBluetoothWriteDisposition) -> Void)] = []
+    private var pending:
+        [(isCurrent: () -> Bool, write: () -> Void, receipt: (CoreBluetoothWriteDisposition) -> Void)] = []
 
     init(capacity: Int) { self.capacity = capacity }
 
@@ -5059,13 +5109,15 @@ public struct CoreBluetoothOperationExecutor {
                 onWriteReceipt(.rejected)
                 return .rejected
             }
-            return sink.writeWithoutResponse(channel: channel, bytes: bytes, isCurrent: isCurrent, onReceipt: onWriteReceipt)
+            return sink.writeWithoutResponse(
+                channel: channel, bytes: bytes, isCurrent: isCurrent, onReceipt: onWriteReceipt)
         case .writeWithoutResponseWithOperationID(let channel, let bytes, _):
             guard let sink else {
                 onWriteReceipt(.rejected)
                 return .rejected
             }
-            return sink.writeWithoutResponse(channel: channel, bytes: bytes, isCurrent: isCurrent, onReceipt: onWriteReceipt)
+            return sink.writeWithoutResponse(
+                channel: channel, bytes: bytes, isCurrent: isCurrent, onReceipt: onWriteReceipt)
         case .disconnect:
             sink?.disconnect()
             return nil
@@ -5109,7 +5161,6 @@ public enum CoreBluetoothLiveRecord: Equatable, Hashable, Sendable {
         at: MonotonicMilliseconds
     )
 }
-
 
 public struct CoreBluetoothCaptureContext: Equatable, Hashable, Sendable {
     public let platformIdentifier: CoreBluetoothPeripheralIdentifier
@@ -5224,284 +5275,286 @@ public struct CoreBluetoothCentralCoordinator: Equatable, Hashable, Sendable {
     }
 }
 
-private extension CoreBluetoothScanPolicy {
-    func matches(_ advertisement: CoreBluetoothAdvertisement) -> Bool {
+extension CoreBluetoothScanPolicy {
+    fileprivate func matches(_ advertisement: CoreBluetoothAdvertisement) -> Bool {
         !Set(serviceUuids).isDisjoint(with: advertisement.advertisedServiceUuids)
     }
 }
 
 #if canImport(CoreBluetooth)
-import CoreBluetooth
+    import CoreBluetooth
 
-public extension CoreBluetoothScanPolicy {
-    var coreBluetoothServiceUuids: [CBUUID] {
-        serviceUuids.map(\.coreBluetoothUuid)
-    }
-}
-
-public extension CoreBluetoothCentralAction {
-    var coreBluetoothServiceUuids: [CBUUID] {
-        switch self {
-        case .scan(let serviceUuids), .discoverServices(let serviceUuids):
+    extension CoreBluetoothScanPolicy {
+        public var coreBluetoothServiceUuids: [CBUUID] {
             serviceUuids.map(\.coreBluetoothUuid)
-        case .discoverCharacteristics(_, let characteristics):
-            characteristics.map(\.coreBluetoothUuid)
-        case .connect:
-            []
-        }
-    }
-}
-
-public extension BluetoothUuid {
-    var coreBluetoothUuid: CBUUID {
-        if let shortUuid = bluetooth16Value {
-            return CBUUID(string: String(format: "%04X", shortUuid))
-        }
-        return CBUUID(data: bytes)
-    }
-
-    init?(coreBluetoothUuid: CBUUID) {
-        switch coreBluetoothUuid.data.count {
-        case 2:
-            let value = coreBluetoothUuid.data.reduce(UInt16(0)) { ($0 << 8) | UInt16($1) }
-            self = .bluetooth16(value)
-        case 16:
-            self.init(coreBluetoothUuid.data)
-        default:
-            return nil
         }
     }
 
-    var bluetooth16Value: UInt16? {
-        let baseSuffix = Data([
-            0x00, 0x00,
-            0x10, 0x00,
-            0x80, 0x00,
-            0x00, 0x80,
-            0x5f, 0x9b, 0x34, 0xfb,
-        ])
-        guard bytes.count == 16, bytes.prefix(2) == Data([0x00, 0x00]), bytes.suffix(12) == baseSuffix else {
-            return nil
+    extension CoreBluetoothCentralAction {
+        public var coreBluetoothServiceUuids: [CBUUID] {
+            switch self {
+            case .scan(let serviceUuids), .discoverServices(let serviceUuids):
+                serviceUuids.map(\.coreBluetoothUuid)
+            case .discoverCharacteristics(_, let characteristics):
+                characteristics.map(\.coreBluetoothUuid)
+            case .connect:
+                []
+            }
         }
-        return (UInt16(bytes[2]) << 8) | UInt16(bytes[3])
-    }
-}
-
-public extension CoreBluetoothAdvertisement {
-    init(peripheral: CBPeripheral, advertisementData: [String: Any], rssi: NSNumber? = nil) {
-        let localName = advertisementData[CBAdvertisementDataLocalNameKey] as? String
-        let serviceUuids = (
-            advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID] ?? []
-        ).compactMap(BluetoothUuid.init(coreBluetoothUuid:))
-        let manufacturerData = (advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data)
-            .flatMap(CoreBluetoothManufacturerDataSummary.init(advertisementData:))
-            .map { [$0] } ?? []
-        self.init(
-            peripheralIdentifier: CoreBluetoothPeripheralIdentifier(peripheral.identifier.uuidString),
-            localName: localName ?? peripheral.name,
-            advertisedServiceUuids: serviceUuids,
-            manufacturerData: manufacturerData,
-            rssiDbm: rssi.map(Int16.init(truncating:))
-        )
     }
 
-    init(discoveryObservation observation: DiscoveryObservationSnapshot) {
-        self.init(
-            peripheralIdentifier: CoreBluetoothPeripheralIdentifier(observation.platformIdentifier),
-            localName: observation.advertisedNameText,
-            advertisedServiceUuids: observation.advertisedServiceUuids.compactMap {
-                BluetoothUuid($0.bytes)
-            },
-            manufacturerData: observation.manufacturerData.map(CoreBluetoothManufacturerDataSummary.init),
-            rssiDbm: observation.rssiDbm
-        )
-    }
-}
+    extension BluetoothUuid {
+        public var coreBluetoothUuid: CBUUID {
+            if let shortUuid = bluetooth16Value {
+                return CBUUID(string: String(format: "%04X", shortUuid))
+            }
+            return CBUUID(data: bytes)
+        }
 
-public extension DiscoveryObservation {
-    init(_ advertisement: CoreBluetoothAdvertisement) {
-        self.init(
-            platformIdentifier: advertisement.peripheralIdentifier.rawValue,
-            advertisedName: advertisement.localName.map { Data($0.utf8) },
-            advertisedServiceUuids: advertisement.advertisedServiceUuids.map(DiscoveryServiceUuid.init),
-            manufacturerData: advertisement.manufacturerData.map(DiscoveryManufacturerDataSummary.init),
-            rssiDbm: advertisement.rssiDbm
-        )
-    }
-}
+        public init?(coreBluetoothUuid: CBUUID) {
+            switch coreBluetoothUuid.data.count {
+            case 2:
+                let value = coreBluetoothUuid.data.reduce(UInt16(0)) { ($0 << 8) | UInt16($1) }
+                self = .bluetooth16(value)
+            case 16:
+                self.init(coreBluetoothUuid.data)
+            default:
+                return nil
+            }
+        }
 
-public extension CoreBluetoothManufacturerDataSummary {
-    init(_ summary: DiscoveryManufacturerDataSummary) {
-        self.init(companyIdentifier: summary.companyIdentifier, payloadLength: summary.payloadLen)
+        public var bluetooth16Value: UInt16? {
+            let baseSuffix = Data([
+                0x00, 0x00,
+                0x10, 0x00,
+                0x80, 0x00,
+                0x00, 0x80,
+                0x5f, 0x9b, 0x34, 0xfb,
+            ])
+            guard bytes.count == 16, bytes.prefix(2) == Data([0x00, 0x00]), bytes.suffix(12) == baseSuffix else {
+                return nil
+            }
+            return (UInt16(bytes[2]) << 8) | UInt16(bytes[3])
+        }
     }
-}
 
-public extension DiscoveryManufacturerDataSummary {
-    init(_ summary: CoreBluetoothManufacturerDataSummary) {
-        self.init(companyIdentifier: summary.companyIdentifier, payloadLen: summary.payloadLength)
-    }
-}
-
-private extension CoreBluetoothManufacturerDataSummary {
-    init?(advertisementData: Data) {
-        if advertisementData.count >= 2 {
-            let companyIdentifier = UInt16(advertisementData[0]) | (UInt16(advertisementData[1]) << 8)
+    extension CoreBluetoothAdvertisement {
+        public init(peripheral: CBPeripheral, advertisementData: [String: Any], rssi: NSNumber? = nil) {
+            let localName = advertisementData[CBAdvertisementDataLocalNameKey] as? String
+            let serviceUuids = (advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID] ?? []).compactMap(
+                BluetoothUuid.init(coreBluetoothUuid:))
+            let manufacturerData =
+                (advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data)
+                .flatMap(CoreBluetoothManufacturerDataSummary.init(advertisementData:))
+                .map { [$0] } ?? []
             self.init(
-                companyIdentifier: companyIdentifier,
-                payloadLength: UInt64(advertisementData.count.saturatingSubtracting(2))
+                peripheralIdentifier: CoreBluetoothPeripheralIdentifier(peripheral.identifier.uuidString),
+                localName: localName ?? peripheral.name,
+                advertisedServiceUuids: serviceUuids,
+                manufacturerData: manufacturerData,
+                rssiDbm: rssi.map(Int16.init(truncating:))
             )
-        } else {
-            return nil
+        }
+
+        public init(discoveryObservation observation: DiscoveryObservationSnapshot) {
+            self.init(
+                peripheralIdentifier: CoreBluetoothPeripheralIdentifier(observation.platformIdentifier),
+                localName: observation.advertisedNameText,
+                advertisedServiceUuids: observation.advertisedServiceUuids.compactMap {
+                    BluetoothUuid($0.bytes)
+                },
+                manufacturerData: observation.manufacturerData.map(CoreBluetoothManufacturerDataSummary.init),
+                rssiDbm: observation.rssiDbm
+            )
         }
     }
-}
 
-private extension Int {
-    func saturatingSubtracting(_ rhs: Int) -> Int {
-        Swift.max(0, self - rhs)
-    }
-}
-
-public extension CoreBluetoothCharacteristicProperty {
-    init?(coreBluetoothProperty: CBCharacteristicProperties) {
-        switch coreBluetoothProperty {
-        case .read:
-            self = .read
-        case .write:
-            self = .write
-        case .writeWithoutResponse:
-            self = .writeWithoutResponse
-        case .notify:
-            self = .notify
-        case .indicate:
-            self = .indicate
-        default:
-            return nil
+    extension DiscoveryObservation {
+        public init(_ advertisement: CoreBluetoothAdvertisement) {
+            self.init(
+                platformIdentifier: advertisement.peripheralIdentifier.rawValue,
+                advertisedName: advertisement.localName.map { Data($0.utf8) },
+                advertisedServiceUuids: advertisement.advertisedServiceUuids.map(DiscoveryServiceUuid.init),
+                manufacturerData: advertisement.manufacturerData.map(DiscoveryManufacturerDataSummary.init),
+                rssiDbm: advertisement.rssiDbm
+            )
         }
     }
-}
 
-public extension CoreBluetoothGattCharacteristic {
-    init?(characteristic: CBCharacteristic) {
-        guard let uuid = BluetoothUuid(coreBluetoothUuid: characteristic.uuid) else {
-            return nil
-        }
-        let candidateProperties: [CoreBluetoothCharacteristicProperty] = [
-            .read,
-            .write,
-            .writeWithoutResponse,
-            .notify,
-            .indicate,
-        ]
-        let properties = Set(candidateProperties.filter {
-            characteristic.properties.contains($0.coreBluetoothProperty)
-        })
-        self.init(uuid: uuid, properties: properties)
-    }
-}
-
-public extension CoreBluetoothGattService {
-    init?(service: CBService) {
-        guard let uuid = BluetoothUuid(coreBluetoothUuid: service.uuid) else {
-            return nil
-        }
-        self.init(
-            uuid: uuid,
-            characteristics: (service.characteristics ?? []).compactMap(CoreBluetoothGattCharacteristic.init)
-        )
-    }
-}
-
-public extension CoreBluetoothGattInventory {
-    init(services: [CBService]) {
-        self.init(services: services.compactMap(CoreBluetoothGattService.init))
-    }
-}
-
-
-
-private extension CBPeripheral {
-    var withoutResponseWriteLimit: UInt16 {
-        UInt16(clamping: maximumWriteValueLength(for: .withoutResponse))
-    }
-}
-
-private extension CoreBluetoothCharacteristicProperty {
-    var coreBluetoothProperty: CBCharacteristicProperties {
-        switch self {
-        case .read:
-            .read
-        case .write:
-            .write
-        case .writeWithoutResponse:
-            .writeWithoutResponse
-        case .notify:
-            .notify
-        case .indicate:
-            .indicate
+    extension CoreBluetoothManufacturerDataSummary {
+        public init(_ summary: DiscoveryManufacturerDataSummary) {
+            self.init(companyIdentifier: summary.companyIdentifier, payloadLength: summary.payloadLen)
         }
     }
-}
 
-public final class CoreBluetoothPeripheralOperationSink: CoreBluetoothOperationSink {
-    private let peripheral: CBPeripheral
-    private let pendingWithoutResponseWrites = CoreBluetoothWriteQueue(capacity: 64)
-
-    public init(peripheral: CBPeripheral) {
-        self.peripheral = peripheral
-    }
-
-    public func subscribe(channel: BluetoothUuid) {
-        guard let characteristic = peripheral.characteristic(for: channel) else {
-            return
+    extension DiscoveryManufacturerDataSummary {
+        public init(_ summary: CoreBluetoothManufacturerDataSummary) {
+            self.init(companyIdentifier: summary.companyIdentifier, payloadLen: summary.payloadLength)
         }
-        peripheral.setNotifyValue(true, for: characteristic)
     }
 
-    public func writeWithoutResponse(channel: BluetoothUuid, bytes: Data, isCurrent: @escaping () -> Bool, onReceipt: @escaping (CoreBluetoothWriteDisposition) -> Void) -> CoreBluetoothWriteDisposition {
-        guard let characteristic = peripheral.characteristic(for: channel) else {
-            onReceipt(.rejected)
-            return .rejected
+    extension CoreBluetoothManufacturerDataSummary {
+        fileprivate init?(advertisementData: Data) {
+            if advertisementData.count >= 2 {
+                let companyIdentifier = UInt16(advertisementData[0]) | (UInt16(advertisementData[1]) << 8)
+                self.init(
+                    companyIdentifier: companyIdentifier,
+                    payloadLength: UInt64(advertisementData.count.saturatingSubtracting(2))
+                )
+            } else {
+                return nil
+            }
         }
-        guard characteristic.properties.contains(.writeWithoutResponse) else {
-            onReceipt(.rejected)
-            return .rejected
+    }
+
+    extension Int {
+        fileprivate func saturatingSubtracting(_ rhs: Int) -> Int {
+            Swift.max(0, self - rhs)
         }
-        return pendingWithoutResponseWrites.submit(
-            canSend: { peripheral.canSendWriteWithoutResponse },
-            isCurrent: isCurrent,
-            write: { [peripheral] in
-                peripheral.writeValue(bytes, for: characteristic, type: .withoutResponse)
-            },
-            onReceipt: onReceipt
-        )
     }
 
-    public func canSubmitWithoutResponse() -> Bool {
-        peripheral.canSendWriteWithoutResponse
+    extension CoreBluetoothCharacteristicProperty {
+        public init?(coreBluetoothProperty: CBCharacteristicProperties) {
+            switch coreBluetoothProperty {
+            case .read:
+                self = .read
+            case .write:
+                self = .write
+            case .writeWithoutResponse:
+                self = .writeWithoutResponse
+            case .notify:
+                self = .notify
+            case .indicate:
+                self = .indicate
+            default:
+                return nil
+            }
+        }
     }
 
-    public func peripheralIsReadyToSendWithoutResponse() {
-        pendingWithoutResponseWrites.flush { peripheral.canSendWriteWithoutResponse }
+    extension CoreBluetoothGattCharacteristic {
+        public init?(characteristic: CBCharacteristic) {
+            guard let uuid = BluetoothUuid(coreBluetoothUuid: characteristic.uuid) else {
+                return nil
+            }
+            let candidateProperties: [CoreBluetoothCharacteristicProperty] = [
+                .read,
+                .write,
+                .writeWithoutResponse,
+                .notify,
+                .indicate,
+            ]
+            let properties = Set(
+                candidateProperties.filter {
+                    characteristic.properties.contains($0.coreBluetoothProperty)
+                })
+            self.init(uuid: uuid, properties: properties)
+        }
     }
 
-    public func clearPendingWithoutResponseWrites() {
-        pendingWithoutResponseWrites.clear()
+    extension CoreBluetoothGattService {
+        public init?(service: CBService) {
+            guard let uuid = BluetoothUuid(coreBluetoothUuid: service.uuid) else {
+                return nil
+            }
+            self.init(
+                uuid: uuid,
+                characteristics: (service.characteristics ?? []).compactMap(CoreBluetoothGattCharacteristic.init)
+            )
+        }
     }
 
-    public func disconnect() {
-        // Disconnect is owned by CBCentralManager; this sink only owns peripheral operations.
+    extension CoreBluetoothGattInventory {
+        public init(services: [CBService]) {
+            self.init(services: services.compactMap(CoreBluetoothGattService.init))
+        }
     }
-}
 
-private extension CBPeripheral {
-    func characteristic(for channel: BluetoothUuid) -> CBCharacteristic? {
-        let uuid = channel.coreBluetoothUuid
-        return services?
-            .lazy
-            .compactMap { $0.characteristics }
-            .joined()
-            .first { $0.uuid == uuid }
+    extension CBPeripheral {
+        fileprivate var withoutResponseWriteLimit: UInt16 {
+            UInt16(clamping: maximumWriteValueLength(for: .withoutResponse))
+        }
     }
-}
+
+    extension CoreBluetoothCharacteristicProperty {
+        fileprivate var coreBluetoothProperty: CBCharacteristicProperties {
+            switch self {
+            case .read:
+                .read
+            case .write:
+                .write
+            case .writeWithoutResponse:
+                .writeWithoutResponse
+            case .notify:
+                .notify
+            case .indicate:
+                .indicate
+            }
+        }
+    }
+
+    public final class CoreBluetoothPeripheralOperationSink: CoreBluetoothOperationSink {
+        private let peripheral: CBPeripheral
+        private let pendingWithoutResponseWrites = CoreBluetoothWriteQueue(capacity: 64)
+
+        public init(peripheral: CBPeripheral) {
+            self.peripheral = peripheral
+        }
+
+        public func subscribe(channel: BluetoothUuid) {
+            guard let characteristic = peripheral.characteristic(for: channel) else {
+                return
+            }
+            peripheral.setNotifyValue(true, for: characteristic)
+        }
+
+        public func writeWithoutResponse(
+            channel: BluetoothUuid, bytes: Data, isCurrent: @escaping () -> Bool,
+            onReceipt: @escaping (CoreBluetoothWriteDisposition) -> Void
+        ) -> CoreBluetoothWriteDisposition {
+            guard let characteristic = peripheral.characteristic(for: channel) else {
+                onReceipt(.rejected)
+                return .rejected
+            }
+            guard characteristic.properties.contains(.writeWithoutResponse) else {
+                onReceipt(.rejected)
+                return .rejected
+            }
+            return pendingWithoutResponseWrites.submit(
+                canSend: { peripheral.canSendWriteWithoutResponse },
+                isCurrent: isCurrent,
+                write: { [peripheral] in
+                    peripheral.writeValue(bytes, for: characteristic, type: .withoutResponse)
+                },
+                onReceipt: onReceipt
+            )
+        }
+
+        public func canSubmitWithoutResponse() -> Bool {
+            peripheral.canSendWriteWithoutResponse
+        }
+
+        public func peripheralIsReadyToSendWithoutResponse() {
+            pendingWithoutResponseWrites.flush { peripheral.canSendWriteWithoutResponse }
+        }
+
+        public func clearPendingWithoutResponseWrites() {
+            pendingWithoutResponseWrites.clear()
+        }
+
+        public func disconnect() {
+            // Disconnect is owned by CBCentralManager; this sink only owns peripheral operations.
+        }
+    }
+
+    extension CBPeripheral {
+        fileprivate func characteristic(for channel: BluetoothUuid) -> CBCharacteristic? {
+            let uuid = channel.coreBluetoothUuid
+            return services?
+                .lazy
+                .compactMap { $0.characteristics }
+                .joined()
+                .first { $0.uuid == uuid }
+        }
+    }
 #endif

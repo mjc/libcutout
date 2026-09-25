@@ -439,7 +439,9 @@ private struct LightingPresetsCard: View {
                     .onSubmit { isPresetNameFocused = false }
                 Button(localizedAppText("lighting.save"), action: save)
                     .buttonStyle(.borderedProminent)
-                    .disabled(!model.canSavePreset || presetName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(
+                        !model.canSavePreset || presetName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    )
                     .accessibilityIdentifier("lighting.preset.save")
             }
         }
@@ -556,26 +558,28 @@ private struct LightingColorWheel: View {
             let pointerY = radius + sin(pointerAngle) * pointerRadius
 
             wheelCanvas(size: size, radius: radius, pointerX: pointerX, pointerY: pointerY)
-            .frame(width: size, height: size)
-            .contentShape(Circle())
-            .gesture(DragGesture(minimumDistance: 0).onChanged { value in
-                update(at: value.location, in: size, isFinal: false)
-            }.onEnded { value in
-                update(at: value.location, in: size, isFinal: true)
-            })
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(localizedAppText("lighting.color_wheel"))
-            .accessibilityValue(accessibilityValueText)
-            .accessibilityHint(localizedAppText("lighting.color_wheel.hint"))
-            .accessibilityIdentifier("lighting.color-wheel.control")
-            .accessibilityRepresentation {
-                VStack {
-                    Slider(value: hueAccessibilityBinding, in: 0...1)
-                        .accessibilityLabel(localizedAppText("lighting.hue"))
-                    Slider(value: saturationAccessibilityBinding, in: 0...1)
-                        .accessibilityLabel(localizedAppText("lighting.saturation"))
+                .frame(width: size, height: size)
+                .contentShape(Circle())
+                .gesture(
+                    DragGesture(minimumDistance: 0).onChanged { value in
+                        update(at: value.location, in: size, isFinal: false)
+                    }.onEnded { value in
+                        update(at: value.location, in: size, isFinal: true)
+                    }
+                )
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(localizedAppText("lighting.color_wheel"))
+                .accessibilityValue(accessibilityValueText)
+                .accessibilityHint(localizedAppText("lighting.color_wheel.hint"))
+                .accessibilityIdentifier("lighting.color-wheel.control")
+                .accessibilityRepresentation {
+                    VStack {
+                        Slider(value: hueAccessibilityBinding, in: 0...1)
+                            .accessibilityLabel(localizedAppText("lighting.hue"))
+                        Slider(value: saturationAccessibilityBinding, in: 0...1)
+                            .accessibilityLabel(localizedAppText("lighting.saturation"))
+                    }
                 }
-            }
         }
         .aspectRatio(1, contentMode: .fit)
         .frame(maxWidth: 300)
@@ -585,17 +589,19 @@ private struct LightingColorWheel: View {
     private func wheelCanvas(size: CGFloat, radius: CGFloat, pointerX: CGFloat, pointerY: CGFloat) -> some View {
         ZStack {
             Circle()
-                .fill(AngularGradient(
-                    gradient: Gradient(colors: [.red, .yellow, .green, .cyan, .blue, .purple, .red]),
-                    center: .center
-                ))
+                .fill(
+                    AngularGradient(
+                        gradient: Gradient(colors: [.red, .yellow, .green, .cyan, .blue, .purple, .red]),
+                        center: .center
+                    ))
             Circle()
-                .fill(RadialGradient(
-                    colors: [.white, .white.opacity(0)],
-                    center: .center,
-                    startRadius: 0,
-                    endRadius: radius
-                ))
+                .fill(
+                    RadialGradient(
+                        colors: [.white, .white.opacity(0)],
+                        center: .center,
+                        startRadius: 0,
+                        endRadius: radius
+                    ))
             Circle().stroke(PevColors.cardStroke, lineWidth: 1)
             Circle()
                 .fill(Color(hue: hue, saturation: saturation, brightness: 1))
@@ -662,14 +668,15 @@ private struct LightingColorWheel: View {
         let p = value * (1 - saturation)
         let q = value * (1 - fraction * saturation)
         let t = value * (1 - (1 - fraction) * saturation)
-        let channels: (Double, Double, Double) = switch sector {
-        case 0: (value, t, p)
-        case 1: (q, value, p)
-        case 2: (p, value, t)
-        case 3: (p, q, value)
-        case 4: (t, p, value)
-        default: (value, p, q)
-        }
+        let channels: (Double, Double, Double) =
+            switch sector {
+            case 0: (value, t, p)
+            case 1: (q, value, p)
+            case 2: (p, value, t)
+            case 3: (p, q, value)
+            case 4: (t, p, value)
+            default: (value, p, q)
+            }
         return (
             UInt8((channels.0 * 255).rounded()),
             UInt8((channels.1 * 255).rounded()),
@@ -698,7 +705,7 @@ private struct LightingPairingSheet: View {
                             localizedAppText(model.isReady ? "lighting.connection.connected" : "lighting.connect"),
                             systemImage: "link"
                         )
-                            .frame(maxWidth: .infinity)
+                        .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(model.isReady)
@@ -716,7 +723,9 @@ private struct LightingPairingSheet: View {
                                     model.selectCandidate(candidate)
                                 } label: {
                                     HStack {
-                                        Label(candidate.name ?? localizedAppText("lighting.pairing.unknown_name"), systemImage: "lightbulb.led.fill")
+                                        Label(
+                                            candidate.name ?? localizedAppText("lighting.pairing.unknown_name"),
+                                            systemImage: "lightbulb.led.fill")
                                         Spacer()
                                         Text(localizedAppText("lighting.dbm", Int64(candidate.rssi)))
                                             .monospacedDigit()
@@ -759,9 +768,9 @@ private struct LightingPairingSheet: View {
             }
             .background(PevColors.pageBackground.ignoresSafeArea())
             .navigationTitle(localizedAppText("lighting.add"))
-#if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-#endif
+            #if os(iOS)
+                .navigationBarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button(localizedAppText("lighting.back")) { dismiss() }
@@ -799,8 +808,8 @@ private struct LightingPairingSheet: View {
                             ? localizedAppText("lighting.connection.looking_nearby")
                             : model.connectionState.displayText
                     )
-                        .font(.subheadline)
-                        .foregroundStyle(PevColors.muted)
+                    .font(.subheadline)
+                    .foregroundStyle(PevColors.muted)
                 }
                 Spacer()
                 connectionPill
@@ -858,6 +867,7 @@ private struct LightingPairingSheet: View {
             .foregroundStyle(model.connectionState == .ready ? PevColors.green : PevColors.yellow)
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
-            .background((model.connectionState == .ready ? PevColors.green : PevColors.yellow).opacity(0.14), in: Capsule())
+            .background(
+                (model.connectionState == .ready ? PevColors.green : PevColors.yellow).opacity(0.14), in: Capsule())
     }
 }

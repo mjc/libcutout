@@ -1,11 +1,12 @@
-import XCTest
 import CoreLocation
-import Foundation
-@testable import CutoutApp
-@testable import CutoutMobile
 import CutoutMobileFFI
+import Foundation
 import Observation
 import Synchronization
+import XCTest
+
+@testable import CutoutApp
+@testable import CutoutMobile
 
 private struct SharedVescReplayFixture: Decodable {
     struct Notification: Decodable {
@@ -70,7 +71,7 @@ final class CutoutAppModelTests: XCTestCase {
         line: UInt = #line,
         condition: @escaping @MainActor () async -> Bool
     ) async {
-        for _ in 0 ..< maxTurns {
+        for _ in 0..<maxTurns {
             if await condition() { return }
             await Task.yield()
         }
@@ -84,7 +85,8 @@ final class CutoutAppModelTests: XCTestCase {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
-        let fixtureURL = repositoryRoot
+        let fixtureURL =
+            repositoryRoot
             .appendingPathComponent("crates/cutout-mobile-ffi/tests/fixtures/vesc-replay-v1.json")
         return try JSONDecoder().decode(
             SharedVescReplayFixture.self,
@@ -133,52 +135,52 @@ final class CutoutAppModelTests: XCTestCase {
                 "rideMapAvailability",
                 "protocolIdentity",
                 "bluetoothRestoration",
-                "captureEvent"
+                "captureEvent",
             ]
         )
     }
 
-#if !os(iOS)
-    @MainActor
-    func testMusicMonitoringStartsWhenHistoryIsDisabled() {
-        let monitoringPreference = MusicMonitoringPreferenceStore()
-        let previousPreference = monitoringPreference.isEnabled
-        monitoringPreference.setEnabled(true)
-        defer { monitoringPreference.setEnabled(previousPreference) }
-        let model = CutoutAppModel(
-            core: SessionDriverSpy(rows: []),
-            musicMonitoringPreferenceStore: monitoringPreference
-        )
+    #if !os(iOS)
+        @MainActor
+        func testMusicMonitoringStartsWhenHistoryIsDisabled() {
+            let monitoringPreference = MusicMonitoringPreferenceStore()
+            let previousPreference = monitoringPreference.isEnabled
+            monitoringPreference.setEnabled(true)
+            defer { monitoringPreference.setEnabled(previousPreference) }
+            let model = CutoutAppModel(
+                core: SessionDriverSpy(rows: []),
+                musicMonitoringPreferenceStore: monitoringPreference
+            )
 
-        XCTAssertEqual(model.music.historyPolicy, .disabled)
-        model.start()
+            XCTAssertEqual(model.music.historyPolicy, .disabled)
+            model.start()
 
-        XCTAssertEqual(model.music.nowPlaying?.provider, .appleMusic)
-        XCTAssertEqual(model.music.nowPlaying?.state, .unavailable)
-    }
+            XCTAssertEqual(model.music.nowPlaying?.provider, .appleMusic)
+            XCTAssertEqual(model.music.nowPlaying?.state, .unavailable)
+        }
 
-    @MainActor
-    func testMusicMonitoringWaitsForActiveSceneAfterStartup() {
-        let monitoringPreference = MusicMonitoringPreferenceStore()
-        let previousPreference = monitoringPreference.isEnabled
-        monitoringPreference.setEnabled(true)
-        defer { monitoringPreference.setEnabled(previousPreference) }
-        let model = CutoutAppModel(
-            core: SessionDriverSpy(rows: []),
-            musicMonitoringPreferenceStore: monitoringPreference
-        )
+        @MainActor
+        func testMusicMonitoringWaitsForActiveSceneAfterStartup() {
+            let monitoringPreference = MusicMonitoringPreferenceStore()
+            let previousPreference = monitoringPreference.isEnabled
+            monitoringPreference.setEnabled(true)
+            defer { monitoringPreference.setEnabled(previousPreference) }
+            let model = CutoutAppModel(
+                core: SessionDriverSpy(rows: []),
+                musicMonitoringPreferenceStore: monitoringPreference
+            )
 
-        model.start(sceneIsActive: false)
+            model.start(sceneIsActive: false)
 
-        XCTAssertNil(model.music.nowPlaying)
+            XCTAssertNil(model.music.nowPlaying)
 
-        model.appDidBecomeActive()
+            model.appDidBecomeActive()
 
-        XCTAssertEqual(model.music.nowPlaying?.provider, .appleMusic)
-        XCTAssertEqual(model.music.nowPlaying?.state, .unavailable)
-    }
+            XCTAssertEqual(model.music.nowPlaying?.provider, .appleMusic)
+            XCTAssertEqual(model.music.nowPlaying?.state, .unavailable)
+        }
 
-#endif
+    #endif
 
     @MainActor
     func testMusicHistoryDefaultIsAppliedToEachNewRide() throws {
@@ -231,10 +233,11 @@ final class CutoutAppModelTests: XCTestCase {
         var frame = Data(repeating: 0, count: 42)
         frame.replaceSubrange(0..<4, with: [0xdc, 0x5a, 0x5c, 38])
         frame.replaceSubrange(28..<30, with: [0xa7, 0xf8])
-        let core = CutoutSessionCore(testScript: CutoutSessionTestScript(
-            candidate: fixture.candidate, telemetry: fixture.testScript.telemetry,
-            protocolNotifications: [frame], connectionDelayMilliseconds: 0
-        ))
+        let core = CutoutSessionCore(
+            testScript: CutoutSessionTestScript(
+                candidate: fixture.candidate, telemetry: fixture.testScript.telemetry,
+                protocolNotifications: [frame], connectionDelayMilliseconds: 0
+            ))
         let model = CutoutAppModel(core: core)
         model.start()
         XCTAssertTrue(model.pair(platformIdentifier: fixture.candidate.platformIdentifier))
@@ -248,7 +251,8 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(snapshot.descriptor(for: .pwmTiltback)?.access, .writable)
         XCTAssertEqual(snapshot.settingDescriptors.filter { $0.access == .writable }.count, 18)
         XCTAssertFalse(snapshot.validationAuthorized)
-        XCTAssertThrowsError(try model.submitDeviceSetting(token: token, id: .pwmTiltback, value: .number(value: 101))) {
+        XCTAssertThrowsError(try model.submitDeviceSetting(token: token, id: .pwmTiltback, value: .number(value: 101)))
+        {
             XCTAssertEqual($0 as? DeviceSettingSubmissionError, .InvalidValue)
         }
         try model.submitDeviceSetting(token: token, id: .pwmTiltback, value: .number(value: 80))
@@ -271,9 +275,10 @@ final class CutoutAppModelTests: XCTestCase {
         let replay = try loadSharedVescReplayFixture()
         XCTAssertEqual(replay.version, 1)
         XCTAssertFalse(replay.notifications.isEmpty)
-        XCTAssertTrue(replay.notifications.allSatisfy {
-            Data($0.channel) == BluetoothUuid.vescNordicUartNotify.bytes
-        })
+        XCTAssertTrue(
+            replay.notifications.allSatisfy {
+                Data($0.channel) == BluetoothUuid.vescNordicUartNotify.bytes
+            })
         let finalSample = try XCTUnwrap(replay.notifications.last)
         let expectedSpeed = try XCTUnwrap(finalSample.speedMillimetresPerSecond)
         let expectedVoltage = try XCTUnwrap(finalSample.voltageMillivolts)
@@ -281,26 +286,29 @@ final class CutoutAppModelTests: XCTestCase {
             candidate: fixture.candidate,
             telemetry: nil,
             protocolNotifications: replay.notifications.map { Data($0.bytes) },
-            protocolDetectionNotifications: [Data([
-                2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101, 114,
-                104, 97, 115, 104, 0, 38, 208, 3,
-            ])],
+            protocolDetectionNotifications: [
+                Data([
+                    2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101, 114,
+                    104, 97, 115, 104, 0, 38, 208, 3,
+                ])
+            ],
             appliesProtocolNotificationSteps: true,
             protocolNotificationIntervalMilliseconds: 1,
             connectionDelayMilliseconds: 0
         )
         let core = CutoutSessionCore(testScript: script)
-        core.configureVescBoard(profile: VescBoardProfile(
-            motorPolePairs: 15,
-            gearRatioDenominator: 1,
-            wheelCircumference: Distance(value: 2_100),
-            batteryType: .liIon,
-            batteryCells: 15,
-            batteryParallelCells: 1,
-            batteryCellModel: .unknown,
-            chargeProfile: nil,
-            reportsBatteryCurrent: true
-        ))
+        core.configureVescBoard(
+            profile: VescBoardProfile(
+                motorPolePairs: 15,
+                gearRatioDenominator: 1,
+                wheelCircumference: Distance(value: 2_100),
+                batteryType: .liIon,
+                batteryCells: 15,
+                batteryParallelCells: 1,
+                batteryCellModel: .unknown,
+                chargeProfile: nil,
+                reportsBatteryCurrent: true
+            ))
         let model = CutoutAppModel(core: core)
 
         model.start()
@@ -361,9 +369,10 @@ final class CutoutAppModelTests: XCTestCase {
             selectedGroupIndex: nil,
             navigate: { _ in }
         )
-        XCTAssertFalse(observesChange({ _ = route.body }) {
-            driver.onDisplayStateChange?(RideDisplayState(notificationCount: 1))
-        })
+        XCTAssertFalse(
+            observesChange({ _ = route.body }) {
+                driver.onDisplayStateChange?(RideDisplayState(notificationCount: 1))
+            })
     }
 
     @MainActor
@@ -377,9 +386,10 @@ final class CutoutAppModelTests: XCTestCase {
             navigate: { _ in }
         )
 
-        XCTAssertTrue(observesChange({ _ = route.body }) {
-            driver.onDisplayStateChange?(RideDisplayState(notificationCount: 1))
-        })
+        XCTAssertTrue(
+            observesChange({ _ = route.body }) {
+                driver.onDisplayStateChange?(RideDisplayState(notificationCount: 1))
+            })
     }
 
     @MainActor
@@ -393,10 +403,12 @@ final class CutoutAppModelTests: XCTestCase {
             ).token
         )
         _ = connectionState.connectionLinkEstablished(token: token)
-        _ = connectionState.observeConnectionNotification(token: token, bytes: Data([
-            2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101, 114, 104, 97, 115, 104,
-            0, 38, 208, 3,
-        ]))
+        _ = connectionState.observeConnectionNotification(
+            token: token,
+            bytes: Data([
+                2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101, 114, 104, 97, 115, 104,
+                0, 38, 208, 3,
+            ]))
         _ = connectionState.resolveDeviceSession(
             token: token,
             identificationComplete: true,
@@ -408,13 +420,15 @@ final class CutoutAppModelTests: XCTestCase {
             atMs: 200
         )
         _ = try driver.rideMapState.startGpsOnly(atMs: 100)
-        _ = await Self.settle(driver.rideMapState, try driver.rideMapState.ingestLocation(
-            monotonicMs: 100,
-            wallClockUnixMs: 1_700_000_000_100,
-            latitudeDegrees: 39.7392,
-            longitudeDegrees: -104.9903,
-            horizontalAccuracyMeters: 5
-        ))
+        _ = await Self.settle(
+            driver.rideMapState,
+            try driver.rideMapState.ingestLocation(
+                monotonicMs: 100,
+                wallClockUnixMs: 1_700_000_000_100,
+                latitudeDegrees: 39.7392,
+                longitudeDegrees: -104.9903,
+                horizontalAccuracyMeters: 5
+            ))
         _ = try driver.rideMapState.ensureRecordingForVerifiedConnection(
             connectionState: connectionState,
             token: token,
@@ -458,20 +472,24 @@ final class CutoutAppModelTests: XCTestCase {
             )
             XCTAssertTrue(model.startGpsOnlyRide())
             XCTAssertTrue(model.music.setHistoryPolicy(.humanReadable))
-            _ = await Self.settle(driver.rideMapState, try driver.rideMapState.ingestLocation(
-                monotonicMs: 100,
-                wallClockUnixMs: 1_700_000_000_100,
-                latitudeDegrees: 39.7000,
-                longitudeDegrees: -104.9000,
-                horizontalAccuracyMeters: 5
-            ))
-            _ = await Self.settle(driver.rideMapState, try driver.rideMapState.ingestLocation(
-                monotonicMs: 1_100,
-                wallClockUnixMs: 1_700_000_001_100,
-                latitudeDegrees: 39.7001,
-                longitudeDegrees: -104.9000,
-                horizontalAccuracyMeters: 5
-            ))
+            _ = await Self.settle(
+                driver.rideMapState,
+                try driver.rideMapState.ingestLocation(
+                    monotonicMs: 100,
+                    wallClockUnixMs: 1_700_000_000_100,
+                    latitudeDegrees: 39.7000,
+                    longitudeDegrees: -104.9000,
+                    horizontalAccuracyMeters: 5
+                ))
+            _ = await Self.settle(
+                driver.rideMapState,
+                try driver.rideMapState.ingestLocation(
+                    monotonicMs: 1_100,
+                    wallClockUnixMs: 1_700_000_001_100,
+                    latitudeDegrees: 39.7001,
+                    longitudeDegrees: -104.9000,
+                    horizontalAccuracyMeters: 5
+                ))
             let snapshot = MobileMusicSnapshotDto(
                 provider: .appleMusic,
                 sessionId: "session",
@@ -488,11 +506,12 @@ final class CutoutAppModelTests: XCTestCase {
                     openProvider: true
                 )
             )
-            XCTAssertTrue(model.music.ingestObservation(
-                MusicProviderObservation(snapshot: snapshot),
-                wallClockAtMs: 1_700_000_000_500,
-                clockUncertaintyMs: 5
-            ))
+            XCTAssertTrue(
+                model.music.ingestObservation(
+                    MusicProviderObservation(snapshot: snapshot),
+                    wallClockAtMs: 1_700_000_000_500,
+                    clockUncertaintyMs: 5
+                ))
             let rideID = try XCTUnwrap(model.rideMapSnapshot?.rideID)
             XCTAssertFalse(driver.rideMapState.currentMusicEvents().isEmpty)
             XCTAssertTrue(model.stopRideMap())
@@ -513,12 +532,13 @@ final class CutoutAppModelTests: XCTestCase {
             XCTAssertFalse(detailPoints.isEmpty)
 
             query.armNextProjection()
-            model.rideHistory.projectDetailViewport(MobileGeoBoundsDto(
-                minimumLatitudeDegrees: 39.70009,
-                maximumLatitudeDegrees: 39.70011,
-                minimumLongitudeDegrees: -104.90001,
-                maximumLongitudeDegrees: -104.89999
-            ))
+            model.rideHistory.projectDetailViewport(
+                MobileGeoBoundsDto(
+                    minimumLatitudeDegrees: 39.70009,
+                    maximumLatitudeDegrees: 39.70011,
+                    minimumLongitudeDegrees: -104.90001,
+                    maximumLongitudeDegrees: -104.89999
+                ))
             let gatedProjectionStarted = await query.waitUntilGatedProjectionStarts()
             XCTAssertTrue(gatedProjectionStarted)
 
@@ -534,7 +554,7 @@ final class CutoutAppModelTests: XCTestCase {
             query.releaseGatedProjection()
             let gatedProjectionFinished = await query.waitUntilGatedProjectionFinishes()
             XCTAssertTrue(gatedProjectionFinished)
-            for _ in 0 ..< 20 {
+            for _ in 0..<20 {
                 await Task.yield()
             }
             XCTAssertFalse(model.rideHistory.routeLoading)
@@ -547,12 +567,13 @@ final class CutoutAppModelTests: XCTestCase {
             XCTAssertNil(model.rideHistory.detailMusicState)
 
             let priorDetailProjectionVersion = model.rideHistory.detailProjectionVersion
-            model.rideHistory.projectDetailViewport(MobileGeoBoundsDto(
-                minimumLatitudeDegrees: 39.70009,
-                maximumLatitudeDegrees: 39.70011,
-                minimumLongitudeDegrees: -104.90001,
-                maximumLongitudeDegrees: -104.89999
-            ))
+            model.rideHistory.projectDetailViewport(
+                MobileGeoBoundsDto(
+                    minimumLatitudeDegrees: 39.70009,
+                    maximumLatitudeDegrees: 39.70011,
+                    minimumLongitudeDegrees: -104.90001,
+                    maximumLongitudeDegrees: -104.89999
+                ))
             await Self.waitUntil("post-deletion detail projection") {
                 !model.rideHistory.detailRouteLoading
                     && model.rideHistory.detailProjectionVersion > priorDetailProjectionVersion
@@ -682,18 +703,21 @@ final class CutoutAppModelTests: XCTestCase {
             recordingToken: MobileRideMapRecordingTokenDto(rideId: "ride-b", generation: 4)
         )
 
-        XCTAssertFalse(CutoutAppModel.shouldApplyRideMapError(
-            context: staleRide,
-            currentSnapshot: current
-        ))
-        XCTAssertFalse(CutoutAppModel.shouldApplyRideMapError(
-            context: staleGeneration,
-            currentSnapshot: current
-        ))
-        XCTAssertTrue(CutoutAppModel.shouldApplyRideMapError(
-            context: currentRide,
-            currentSnapshot: current
-        ))
+        XCTAssertFalse(
+            CutoutAppModel.shouldApplyRideMapError(
+                context: staleRide,
+                currentSnapshot: current
+            ))
+        XCTAssertFalse(
+            CutoutAppModel.shouldApplyRideMapError(
+                context: staleGeneration,
+                currentSnapshot: current
+            ))
+        XCTAssertTrue(
+            CutoutAppModel.shouldApplyRideMapError(
+                context: currentRide,
+                currentSnapshot: current
+            ))
     }
 
     @MainActor
@@ -724,14 +748,16 @@ final class CutoutAppModelTests: XCTestCase {
     func testRouteProjectionUsesRustBoundedProjection() async throws {
         let state = MobileRideMapState()
         _ = try state.startGpsOnly(atMs: 100)
-        for sequence in 0 ..< 10 {
-            _ = await Self.settle(state, try state.ingestLocation(
-                monotonicMs: UInt64(1_000 + sequence * 1_000),
-                wallClockUnixMs: UInt64(1_700_000_000_000 + sequence * 1_000),
-                latitudeDegrees: 39.7 + Double(sequence) / 10_000,
-                longitudeDegrees: -104.9 - Double(sequence) / 10_000,
-                horizontalAccuracyMeters: 5
-            ))
+        for sequence in 0..<10 {
+            _ = await Self.settle(
+                state,
+                try state.ingestLocation(
+                    monotonicMs: UInt64(1_000 + sequence * 1_000),
+                    wallClockUnixMs: UInt64(1_700_000_000_000 + sequence * 1_000),
+                    latitudeDegrees: 39.7 + Double(sequence) / 10_000,
+                    longitudeDegrees: -104.9 - Double(sequence) / 10_000,
+                    horizontalAccuracyMeters: 5
+                ))
         }
 
         let projection = try state.projectPoints(budget: 4)
@@ -750,12 +776,14 @@ final class CutoutAppModelTests: XCTestCase {
         let picker = DevicePickerRouteView(model: model, pair: { _ in }, navigate: { _ in })
         let capture = CaptureRouteView(capture: model.capture)
 
-        XCTAssertFalse(observesChange({ _ = picker.body }) {
-            driver.onDisplayStateChange?(RideDisplayState(notificationCount: 1))
-        })
-        XCTAssertFalse(observesChange({ _ = capture.body }) {
-            driver.onDisplayStateChange?(RideDisplayState(notificationCount: 2))
-        })
+        XCTAssertFalse(
+            observesChange({ _ = picker.body }) {
+                driver.onDisplayStateChange?(RideDisplayState(notificationCount: 1))
+            })
+        XCTAssertFalse(
+            observesChange({ _ = capture.body }) {
+                driver.onDisplayStateChange?(RideDisplayState(notificationCount: 2))
+            })
     }
 
     @MainActor
@@ -767,44 +795,51 @@ final class CutoutAppModelTests: XCTestCase {
             let driver = SessionDriverSpy(rows: [])
             let model = CutoutAppModel(core: driver)
             if withAvailableBms {
-                driver.onBmsSnapshotChange?(BmsSnapshot(
-                    topology: BmsTopology(
-                        layoutLabel: "20S1P",
-                        seriesGroupCount: 20,
-                        parallelCount: 1,
-                        packCount: 1,
-                        bmsCount: 1,
-                        confidence: .verified
-                    )
-                ))
+                driver.onBmsSnapshotChange?(
+                    BmsSnapshot(
+                        topology: BmsTopology(
+                            layoutLabel: "20S1P",
+                            seriesGroupCount: 20,
+                            parallelCount: 1,
+                            packCount: 1,
+                            bmsCount: 1,
+                            confidence: .verified
+                        )
+                    ))
             }
             let fileURL = URL(fileURLWithPath: "/tmp/ride.cutout")
             model.deliverCaptureEvent(.started(fileURL: fileURL))
             model.deliverCaptureEvent(.progress(Self.priorCaptureProgress))
 
             return observesChange({ render(model) }) {
-                model.deliverCaptureEvent(.progress(CaptureProgress(
-                    elapsedMilliseconds: 64_000,
-                    notificationCount: 42,
-                    fileSizeBytes: 16_384,
-                    queuedMessageCount: 1,
-                    writerError: nil
-                )))
+                model.deliverCaptureEvent(
+                    .progress(
+                        CaptureProgress(
+                            elapsedMilliseconds: 64_000,
+                            notificationCount: 42,
+                            fileSizeBytes: 16_384,
+                            queuedMessageCount: 1,
+                            writerError: nil
+                        )))
             }
         }
 
-        XCTAssertTrue(observesProgressChange {
-            _ = CaptureRouteView(capture: $0.capture).body
-        })
-        XCTAssertFalse(observesProgressChange {
-            _ = DevicePickerRouteView(model: $0, pair: { _ in }, navigate: { _ in }).body
-        })
-        XCTAssertFalse(observesProgressChange {
-            _ = EucPackRouteView(model: $0, packScreen: .root, selectedGroupIndex: nil, navigate: { _ in }).body
-        })
-        XCTAssertFalse(observesProgressChange(withAvailableBms: true) {
-            _ = EucPackRouteView(model: $0, packScreen: .root, selectedGroupIndex: nil, navigate: { _ in }).body
-        })
+        XCTAssertTrue(
+            observesProgressChange {
+                _ = CaptureRouteView(capture: $0.capture).body
+            })
+        XCTAssertFalse(
+            observesProgressChange {
+                _ = DevicePickerRouteView(model: $0, pair: { _ in }, navigate: { _ in }).body
+            })
+        XCTAssertFalse(
+            observesProgressChange {
+                _ = EucPackRouteView(model: $0, packScreen: .root, selectedGroupIndex: nil, navigate: { _ in }).body
+            })
+        XCTAssertFalse(
+            observesProgressChange(withAvailableBms: true) {
+                _ = EucPackRouteView(model: $0, packScreen: .root, selectedGroupIndex: nil, navigate: { _ in }).body
+            })
     }
 
     @MainActor
@@ -860,7 +895,7 @@ final class CutoutAppModelTests: XCTestCase {
                     state: DevicePickerRowState(action: .use),
                     symbolName: "circle.hexagongrid.circle",
                     connectionRoute: .vescOnewheel
-                ),
+                )
             ]
         )
         let model = CutoutAppModel(core: driver)
@@ -953,7 +988,7 @@ final class CutoutAppModelTests: XCTestCase {
                     state: DevicePickerRowState(action: .use),
                     symbolName: "circle.hexagongrid.circle",
                     connectionRoute: .vescOnewheel
-                ),
+                )
             ]
         )
         let model = CutoutAppModel(
@@ -982,7 +1017,7 @@ final class CutoutAppModelTests: XCTestCase {
                     state: DevicePickerRowState(action: .use),
                     symbolName: "circle.hexagongrid.circle",
                     connectionRoute: .vescOnewheel
-                ),
+                )
             ]
         )
         let model = CutoutAppModel(core: driver)
@@ -1091,7 +1126,7 @@ final class CutoutAppModelTests: XCTestCase {
                     state: DevicePickerRowState(action: .use),
                     symbolName: "circle.hexagongrid.circle",
                     connectionRoute: .vescOnewheel
-                ),
+                )
             ],
             pairingSucceeds: false
         )
@@ -1125,7 +1160,7 @@ final class CutoutAppModelTests: XCTestCase {
                     detail: "Device 1234",
                     state: DevicePickerRowState(action: .probe),
                     symbolName: "questionmark.circle"
-                ),
+                )
             ]
         )
         let model = CutoutAppModel(core: driver)
@@ -1653,15 +1688,19 @@ final class CutoutAppModelTests: XCTestCase {
         let model = CutoutAppModel(core: driver)
         XCTAssertTrue(model.recordOnly(platformIdentifier: "wheel-a", deviceKind: ""))
         let generation = CaptureGeneration(rawValue: 1)
-        driver.emitCaptureEvent(.started(generation: generation, fileURL: URL(fileURLWithPath: "/tmp/manual-capture.jsonl")))
+        driver.emitCaptureEvent(
+            .started(generation: generation, fileURL: URL(fileURLWithPath: "/tmp/manual-capture.jsonl")))
         let saved = await model.capture.finish()
         XCTAssertFalse(saved)
         for tick in 1...3 {
-            driver.emitCaptureEvent(.progress(generation: generation, CaptureProgress(
-                elapsedMilliseconds: UInt64(tick * 1_000), notificationCount: UInt64(tick),
-                fileSizeBytes: 128, queuedMessageCount: 0,
-                writerError: tick == 2 ? "disk full" : nil
-            )))
+            driver.emitCaptureEvent(
+                .progress(
+                    generation: generation,
+                    CaptureProgress(
+                        elapsedMilliseconds: UInt64(tick * 1_000), notificationCount: UInt64(tick),
+                        fileSizeBytes: 128, queuedMessageCount: 0,
+                        writerError: tick == 2 ? "disk full" : nil
+                    )))
             XCTAssertEqual(model.capture.status, .failed)
             XCTAssertEqual(model.capture.recordingSummary, localizedAppText("captures.save_failed"))
             XCTAssertFalse(model.capture.isFinishing)
@@ -1762,7 +1801,8 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertTrue(model.recordOnly(platformIdentifier: "first", deviceKind: "First"))
         model.deliverCaptureEvent(.started(generation: .init(rawValue: 1), fileURL: URL(fileURLWithPath: "/tmp/first")))
         driver.duringFlush = {
-            model.deliverCaptureEvent(.started(generation: .init(rawValue: 2), fileURL: URL(fileURLWithPath: "/tmp/second")))
+            model.deliverCaptureEvent(
+                .started(generation: .init(rawValue: 2), fileURL: URL(fileURLWithPath: "/tmp/second")))
         }
         let accepted = await model.capture.finish()
         XCTAssertFalse(accepted)
@@ -1814,29 +1854,29 @@ final class CutoutAppModelTests: XCTestCase {
         )
         driver.onPhaseChange?(.subscribing)
         driver.onPhaseChange?(.live)
-        for _ in 0 ..< 20 {
+        for _ in 0..<20 {
             if driver.rideSessionStateHandle.rideSessionSnapshot().phase == .active { break }
             await Task.yield()
         }
 
         model.appDidEnterBackground()
-        for _ in 0 ..< 20 {
+        for _ in 0..<20 {
             if driver.flushCaptureCount == 1 { break }
             await Task.yield()
         }
         model.appDidEnterBackground()
-        for _ in 0 ..< 5 { await Task.yield() }
+        for _ in 0..<5 { await Task.yield() }
 
         XCTAssertEqual(driver.flushCaptureCount, 1)
         XCTAssertEqual(driver.rideSessionStateHandle.rideSessionSnapshot().appPresence, .background)
 
         model.appDidBecomeActive()
-        for _ in 0 ..< 20 {
+        for _ in 0..<20 {
             if driver.rideSessionStateHandle.rideSessionSnapshot().appPresence == .foreground { break }
             await Task.yield()
         }
         model.appDidEnterBackground()
-        for _ in 0 ..< 20 {
+        for _ in 0..<20 {
             if driver.flushCaptureCount == 2 { break }
             await Task.yield()
         }
@@ -1852,7 +1892,7 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertTrue(model.recordOnly(platformIdentifier: "unknown-device", deviceKind: "Unknown device"))
 
         model.appDidEnterBackground()
-        for _ in 0 ..< 20 {
+        for _ in 0..<20 {
             if driver.flushCaptureCount == 1 { break }
             await Task.yield()
         }
@@ -1964,9 +2004,10 @@ final class CutoutAppModelTests: XCTestCase {
         model.deliverCaptureEvent(.started(fileURL: fileURL))
         model.deliverCaptureEvent(.progress(initial))
 
-        XCTAssertFalse(observesChange({ _ = model.capture.status?.displayText }) {
-            model.deliverCaptureEvent(.progress(updated))
-        })
+        XCTAssertFalse(
+            observesChange({ _ = model.capture.status?.displayText }) {
+                model.deliverCaptureEvent(.progress(updated))
+            })
         XCTAssertEqual(model.capture.progress, updated)
 
         let visibleSummaryChange = CaptureProgress(
@@ -1976,9 +2017,10 @@ final class CutoutAppModelTests: XCTestCase {
             queuedMessageCount: 1,
             writerError: nil
         )
-        XCTAssertTrue(observesChange({ _ = model.capture.status?.displayText }) {
-            model.deliverCaptureEvent(.progress(visibleSummaryChange))
-        })
+        XCTAssertTrue(
+            observesChange({ _ = model.capture.status?.displayText }) {
+                model.deliverCaptureEvent(.progress(visibleSummaryChange))
+            })
     }
 
     @MainActor
@@ -1990,13 +2032,15 @@ final class CutoutAppModelTests: XCTestCase {
         model.deliverCaptureEvent(.started(fileURL: priorCapture))
         model.deliverCaptureEvent(.progress(priorProgress))
         model.capture.startLabel(.ride)
-        XCTAssertEqual(model.capture.status, .labelStarted(label: "Ride", notificationCount: 42, fileName: "prior.cutout"))
+        XCTAssertEqual(
+            model.capture.status, .labelStarted(label: "Ride", notificationCount: 42, fileName: "prior.cutout"))
         XCTAssertEqual(model.capture.progress, priorProgress)
         XCTAssertEqual(model.capture.activeLabels, [.ride])
 
         XCTAssertFalse(model.recordOnly(platformIdentifier: "unknown-device", deviceKind: "Unknown device"))
 
-        XCTAssertEqual(model.capture.status, .labelStarted(label: "Ride", notificationCount: 42, fileName: "prior.cutout"))
+        XCTAssertEqual(
+            model.capture.status, .labelStarted(label: "Ride", notificationCount: 42, fileName: "prior.cutout"))
         XCTAssertEqual(model.capture.progress, priorProgress)
         XCTAssertEqual(model.capture.activeLabels, [.ride])
     }
@@ -2048,10 +2092,11 @@ final class CutoutAppModelTests: XCTestCase {
     @MainActor
     func testRealCaptureTimerPreservesFailedSaveAndAllowsRetry() async throws {
         let fixture = CutoutUITestSessionFixture.unknownDevice
-        let core = CutoutSessionCore(testScript: CutoutSessionTestScript(
-            candidate: fixture.candidate, telemetry: nil,
-            flushCaptureSucceeds: false, connectionDelayMilliseconds: 0
-        ))
+        let core = CutoutSessionCore(
+            testScript: CutoutSessionTestScript(
+                candidate: fixture.candidate, telemetry: nil,
+                flushCaptureSucceeds: false, connectionDelayMilliseconds: 0
+            ))
         let model = CutoutAppModel(core: core)
         let started = expectation(description: "real writer starts")
         let ticks = expectation(description: "timer keeps failed save visible")
@@ -2063,11 +2108,16 @@ final class CutoutAppModelTests: XCTestCase {
         core.onCaptureEvent = { event in
             model.applyCaptureEvent(event)
             switch event {
-            case let .started(_, fileURL): url = fileURL; started.fulfill()
+            case let .started(_, fileURL):
+                url = fileURL
+                started.fulfill()
             case let .progress(_, progress) where failedSave && progress.elapsedMilliseconds >= 1_000:
                 XCTAssertEqual(model.capture.status, .failed)
                 XCTAssertFalse(model.capture.isFinishing)
-                if receivedTicks < 2 { receivedTicks += 1; ticks.fulfill() }
+                if receivedTicks < 2 {
+                    receivedTicks += 1
+                    ticks.fulfill()
+                }
             case .finished: finished.fulfill()
             default: break
             }
@@ -2099,14 +2149,18 @@ final class CutoutAppModelTests: XCTestCase {
         core.onCaptureEvent = { event in
             model.applyCaptureEvent(event)
             if case .started = event { started.fulfill() }
-            if case let .finished(_, fileURL) = event { url = fileURL; completed.fulfill() }
+            if case let .finished(_, fileURL) = event {
+                url = fileURL
+                completed.fulfill()
+            }
             if case .failed = event { XCTFail("closing labels must remain writable") }
         }
         XCTAssertTrue(model.recordOnly(platformIdentifier: fixture.candidate.platformIdentifier, deviceKind: ""))
         await fulfillment(of: [started], timeout: 2)
         model.capture.startLabel(.ride)
         model.capture.startLabel(.balance)
-        core.handleTransportTermination(platformIdentifier: fixture.candidate.platformIdentifier, error: nil, reconnect: {})
+        core.handleTransportTermination(
+            platformIdentifier: fixture.candidate.platformIdentifier, error: nil, reconnect: {})
         await fulfillment(of: [completed], timeout: 3)
         let fileURL = try XCTUnwrap(url)
         defer { try? FileManager.default.removeItem(at: fileURL) }
@@ -2120,11 +2174,12 @@ final class CutoutAppModelTests: XCTestCase {
     @MainActor
     private func assertDelayedCaptureFinalization(priorWriteSucceeded: Bool) async throws {
         let fixture = CutoutUITestSessionFixture.euc
-        let core = CutoutSessionCore(testScript: CutoutSessionTestScript(
-            candidate: fixture.candidate,
-            telemetry: fixture.testScript.telemetry,
-            connectionDelayMilliseconds: 0
-        ))
+        let core = CutoutSessionCore(
+            testScript: CutoutSessionTestScript(
+                candidate: fixture.candidate,
+                telemetry: fixture.testScript.telemetry,
+                connectionDelayMilliseconds: 0
+            ))
         let model = CutoutAppModel(core: core)
         let firstStarted = expectation(description: "capture A starts")
         let secondStarted = expectation(description: "capture B starts")
@@ -2209,7 +2264,8 @@ final class CutoutAppModelTests: XCTestCase {
 
         XCTAssertFalse(model.recordOnly(platformIdentifier: "missing-device", deviceKind: "Unknown device"))
 
-        XCTAssertEqual(model.capture.status, .labelStarted(label: "Ride", notificationCount: 42, fileName: "prior.cutout"))
+        XCTAssertEqual(
+            model.capture.status, .labelStarted(label: "Ride", notificationCount: 42, fileName: "prior.cutout"))
         XCTAssertEqual(model.capture.progress, priorProgress)
         XCTAssertEqual(model.capture.activeLabels, [.ride])
     }
@@ -2232,7 +2288,9 @@ final class CutoutAppModelTests: XCTestCase {
             model.capture.startLabel(replacement)
 
             XCTAssertEqual(model.capture.activeLabels, [replacement])
-            XCTAssertEqual(model.capture.status, .labelStarted(label: replacement.title, notificationCount: 0, fileName: "labels.jsonl"))
+            XCTAssertEqual(
+                model.capture.status,
+                .labelStarted(label: replacement.title, notificationCount: 0, fileName: "labels.jsonl"))
             XCTAssertEqual(
                 driver.captureAnnotations,
                 [
@@ -2492,15 +2550,17 @@ final class CutoutAppModelTests: XCTestCase {
         )
         driver.onPhaseChange?(.subscribing)
         driver.onPhaseChange?(.live)
-        for _ in 0 ..< 200 {
+        for _ in 0..<200 {
             if driver.rideSessionStateHandle.rideSessionSnapshot().phase == .active { break }
             await Task.yield()
         }
         XCTAssertEqual(driver.rideSessionStateHandle.rideSessionSnapshot().phase, .active)
         driver.onPhaseChange?(.bluetoothUnavailable(rawState: 4))
 
-        for _ in 0 ..< 200 {
-            if case .ended(reason: .unrecoverableSessionFailure) = driver.rideSessionStateHandle.rideSessionSnapshot().phase {
+        for _ in 0..<200 {
+            if case .ended(reason: .unrecoverableSessionFailure) = driver.rideSessionStateHandle.rideSessionSnapshot()
+                .phase
+            {
                 break
             }
             await Task.yield()
@@ -2533,13 +2593,13 @@ final class CutoutAppModelTests: XCTestCase {
         )
         driver.onPhaseChange?(.subscribing)
         driver.onPhaseChange?(.live)
-        for _ in 0 ..< 200 {
+        for _ in 0..<200 {
             if driver.rideSessionStateHandle.rideSessionSnapshot().phase == .active { break }
             await Task.yield()
         }
 
         driver.onPhaseChange?(.failed(.connectFailed("retries exhausted")))
-        for _ in 0 ..< 200 {
+        for _ in 0..<200 {
             if case .ended = driver.rideSessionStateHandle.rideSessionSnapshot().phase { break }
             await Task.yield()
         }
@@ -2581,9 +2641,12 @@ final class CutoutAppModelTests: XCTestCase {
         driver.onPhaseChange?(.subscribing)
         driver.onPhaseChange?(.live)
 
-        for _ in 0 ..< 200 {
+        for _ in 0..<200 {
             if await manager.lastStartedSnapshot?.connectionState == .connected,
-               driver.rideSessionStateHandle.rideSessionSnapshot().phase == .active { break }
+                driver.rideSessionStateHandle.rideSessionSnapshot().phase == .active
+            {
+                break
+            }
             await Task.yield()
         }
         let identity = driver.rideSessionStateHandle.rideSessionSnapshot().identity
@@ -2597,9 +2660,12 @@ final class CutoutAppModelTests: XCTestCase {
                 failure: .connectFailed("timed out")
             )
         )
-        for _ in 0 ..< 200 {
+        for _ in 0..<200 {
             if driver.rideSessionStateHandle.rideSessionSnapshot().phase == .reconnecting,
-               await manager.lastUpdatedSnapshot?.connectionState == .stale { break }
+                await manager.lastUpdatedSnapshot?.connectionState == .stale
+            {
+                break
+            }
             await Task.yield()
         }
 
@@ -2622,7 +2688,7 @@ final class CutoutAppModelTests: XCTestCase {
             )
         )
         driver.onPhaseChange?(.live)
-        for _ in 0 ..< 200 {
+        for _ in 0..<200 {
             if driver.rideSessionStateHandle.rideSessionSnapshot().phase == .active { break }
             await Task.yield()
         }
@@ -2675,8 +2741,8 @@ final class CutoutAppModelTests: XCTestCase {
         await Self.waitUntil("restored ride identity") {
             let snapshot = driver.rideSessionStateHandle.rideSessionSnapshot()
             guard snapshot.identity == started.snapshot.identity,
-                  snapshot.phase == .active,
-                  markerStore.marker != nil
+                snapshot.phase == .active,
+                markerStore.marker != nil
             else { return false }
             return await manager.startCount == 1
         }
@@ -2769,7 +2835,7 @@ final class CutoutAppModelTests: XCTestCase {
 
         model.start()
         XCTAssertTrue(model.pair(platformIdentifier: platformIdentifier))
-        for _ in 0 ..< 200 {
+        for _ in 0..<200 {
             if markerStore.marker != nil { break }
             await Task.yield()
         }
@@ -2899,7 +2965,7 @@ final class CutoutAppModelTests: XCTestCase {
         )
 
         model.start()
-        for _ in 0 ..< 200 {
+        for _ in 0..<200 {
             if driver.pairedPlatformIdentifiers.isEmpty == false { break }
             await Task.yield()
         }
@@ -2915,7 +2981,7 @@ final class CutoutAppModelTests: XCTestCase {
 
         model.start()
         driver.onPhaseChange?(.scanning)
-        for _ in 0 ..< 20 {
+        for _ in 0..<20 {
             if await manager.lastEndReason != nil { break }
             await Task.yield()
         }
@@ -3187,22 +3253,42 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     var rideMapStateHandle: MobileRideMapState? { rideMapUnavailable ? nil : rideMapState }
     let rideMapAvailability: MobileRideMapAvailability = .ready
     var callbackRegistrationEvents = [String]()
-    var onPhoneAlarmActionsAvailable: ((MobilePhoneAlarmActionsDto) -> Void)? { didSet { recordCallbackRegistration("phoneAlarmActions") } }
+    var onPhoneAlarmActionsAvailable: ((MobilePhoneAlarmActionsDto) -> Void)? {
+        didSet { recordCallbackRegistration("phoneAlarmActions") }
+    }
     var onDisplayStateChange: ((RideDisplayState) -> Void)? { didSet { recordCallbackRegistration("displayState") } }
     var onPhaseChange: ((SessionConnectionPhase) -> Void)? { didSet { recordCallbackRegistration("phase") } }
-    var onReconnectScheduled: ((SessionConnectionRetry) -> Void)? { didSet { recordCallbackRegistration("reconnectScheduled") } }
+    var onReconnectScheduled: ((SessionConnectionRetry) -> Void)? {
+        didSet { recordCallbackRegistration("reconnectScheduled") }
+    }
     var onCaptureEvent: ((CaptureEvent) -> Void)? { didSet { recordCallbackRegistration("captureEvent") } }
     var onScanStateChange: ((DevicePickerScanState) -> Void)? { didSet { recordCallbackRegistration("scanState") } }
     var onSettingsChange: ((DeviceSettings) -> Void)? { didSet { recordCallbackRegistration("settings") } }
-    var onFaultHistoryReadbackChange: ((FaultHistoryReadback?) -> Void)? { didSet { recordCallbackRegistration("faultHistory") } }
+    var onFaultHistoryReadbackChange: ((FaultHistoryReadback?) -> Void)? {
+        didSet { recordCallbackRegistration("faultHistory") }
+    }
     var onBmsSnapshotChange: ((BmsSnapshot?) -> Void)? { didSet { recordCallbackRegistration("bmsSnapshot") } }
-    var onPhoneLocationSnapshotChange: ((MobilePhoneLocationSnapshotDto, MonotonicMilliseconds) -> Void)? { didSet { recordCallbackRegistration("phoneLocation") } }
-    var onRideMapDecisionChange: ((MobileRideMapSnapshotDto, MobileRideMapDecisionDto) -> Void)? { didSet { recordCallbackRegistration("rideMapDecision") } }
-    var onRideMapSnapshotChange: ((MobileRideMapSnapshotDto) -> Void)? { didSet { recordCallbackRegistration("rideMapSnapshot") } }
-    var onRideMapErrorChange: ((MobileRideMapErrorEvent) -> Void)? { didSet { recordCallbackRegistration("rideMapError") } }
-    var onRideMapAvailabilityChange: ((MobileRideMapAvailability) -> Void)? { didSet { recordCallbackRegistration("rideMapAvailability") } }
-    var onProtocolIdentityCandidateChange: ((DevicePickerDiscoveryCandidate?) -> Void)? { didSet { recordCallbackRegistration("protocolIdentity") } }
-    var onBluetoothRestorationResolved: ((String?) -> Void)? { didSet { recordCallbackRegistration("bluetoothRestoration") } }
+    var onPhoneLocationSnapshotChange: ((MobilePhoneLocationSnapshotDto, MonotonicMilliseconds) -> Void)? {
+        didSet { recordCallbackRegistration("phoneLocation") }
+    }
+    var onRideMapDecisionChange: ((MobileRideMapSnapshotDto, MobileRideMapDecisionDto) -> Void)? {
+        didSet { recordCallbackRegistration("rideMapDecision") }
+    }
+    var onRideMapSnapshotChange: ((MobileRideMapSnapshotDto) -> Void)? {
+        didSet { recordCallbackRegistration("rideMapSnapshot") }
+    }
+    var onRideMapErrorChange: ((MobileRideMapErrorEvent) -> Void)? {
+        didSet { recordCallbackRegistration("rideMapError") }
+    }
+    var onRideMapAvailabilityChange: ((MobileRideMapAvailability) -> Void)? {
+        didSet { recordCallbackRegistration("rideMapAvailability") }
+    }
+    var onProtocolIdentityCandidateChange: ((DevicePickerDiscoveryCandidate?) -> Void)? {
+        didSet { recordCallbackRegistration("protocolIdentity") }
+    }
+    var onBluetoothRestorationResolved: ((String?) -> Void)? {
+        didSet { recordCallbackRegistration("bluetoothRestoration") }
+    }
     var protocolIdentityCandidate: DevicePickerDiscoveryCandidate?
     var isRecordOnlyConnection = false
     var electricUnicycleModel: ElectricUnicycleModel?
@@ -3247,7 +3333,8 @@ private final class SessionDriverSpy: CutoutSessionDriving {
         self.restoredPlatformIdentifier = restoredPlatformIdentifier
         self.notifyBluetoothRestorationOnStart = notifyBluetoothRestorationOnStart
         self.rideMapUnavailable = rideMapUnavailable
-        let state = rideMapState
+        let state =
+            rideMapState
             ?? RustPersistenceStore.shared.map(MobileRideMapState.init(database:))
             ?? MobileRideMapState()
         if state.currentSnapshot() != nil {
@@ -3301,7 +3388,9 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     }
     private var captureLabelState = MobileCaptureLabels()
     private var captureLabelGeneration: CaptureGeneration?
-    func changeCaptureLabel(generation: CaptureGeneration, action: MobileCaptureLabelActionDto) throws -> [MobileCaptureLabelDto] {
+    func changeCaptureLabel(generation: CaptureGeneration, action: MobileCaptureLabelActionDto) throws
+        -> [MobileCaptureLabelDto]
+    {
         guard rideSessionStateHandle.captureLifecycleSnapshot().attempt?.generation.value == generation.rawValue else {
             throw MobileCaptureAnnotationError.NotRecording
         }
@@ -3331,7 +3420,8 @@ private final class SessionDriverSpy: CutoutSessionDriving {
 
     func finishCapture() async -> Bool {
         guard let generation = rideSessionStateHandle.captureLifecycleSnapshot().attempt?.generation,
-              let token = rideSessionStateHandle.beginCaptureFinish(generation: generation) else { return false }
+            let token = rideSessionStateHandle.beginCaptureFinish(generation: generation)
+        else { return false }
         onCaptureEvent?(.lifecycle(rideSessionStateHandle.captureLifecycleSnapshot()))
         let flushed = await flushCapture()
         let accepted = rideSessionStateHandle.finishCaptureFlush(token: token, succeeded: flushed)

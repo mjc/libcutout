@@ -25,9 +25,12 @@ struct BmsPackLayout: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             if let lowest, let highest,
-               let lowVoltage = lowest.voltage, let highVoltage = highest.voltage,
-               let spread = snapshot.cellDelta {
-                voltageSummary(lowest: lowest, highest: highest, low: Double(lowVoltage.value), high: Double(highVoltage.value), spread: spread)
+                let lowVoltage = lowest.voltage, let highVoltage = highest.voltage,
+                let spread = snapshot.cellDelta
+            {
+                voltageSummary(
+                    lowest: lowest, highest: highest, low: Double(lowVoltage.value), high: Double(highVoltage.value),
+                    spread: spread)
             }
 
             if snapshot.energyPercent != nil || snapshot.voltage != nil || snapshot.current != nil {
@@ -35,9 +38,14 @@ struct BmsPackLayout: View {
             }
 
             ForEach(snapshot.groups.filter { $0.alertLevel == .warning || $0.alertLevel == .critical }) { group in
-                Button { showGroupDetail(group.index) } label: {
-                    Label(localizedAppText("bms.pack.reading_warning", group.index), systemImage: "exclamationmark.triangle")
-                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                Button {
+                    showGroupDetail(group.index)
+                } label: {
+                    Label(
+                        localizedAppText("bms.pack.reading_warning", group.index),
+                        systemImage: "exclamationmark.triangle"
+                    )
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                 }
                 .foregroundStyle(group.alertLevel == .critical ? PevColors.red : PevColors.orange)
                 .buttonStyle(.plain)
@@ -99,7 +107,9 @@ struct BmsPackLayout: View {
         }
     }
 
-    private func voltageSummary(lowest: BmsGroupSnapshot, highest: BmsGroupSnapshot, low: Double, high: Double, spread: VoltageDelta) -> some View {
+    private func voltageSummary(
+        lowest: BmsGroupSnapshot, highest: BmsGroupSnapshot, low: Double, high: Double, spread: VoltageDelta
+    ) -> some View {
         VStack(alignment: .leading, spacing: 20) {
             VStack(alignment: .leading, spacing: 6) {
                 Text(localizedAppText("bms.pack.difference"))
@@ -128,7 +138,7 @@ struct BmsPackLayout: View {
                     .cornerRadius(2)
                 }
             }
-            .chartYScale(domain: (low - 5) / 1_000 ... (high + 5) / 1_000)
+            .chartYScale(domain: (low - 5) / 1_000...(high + 5) / 1_000)
             .chartYAxis {
                 AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { value in
                     AxisGridLine().foregroundStyle(.secondary.opacity(0.15))
@@ -164,7 +174,9 @@ struct BmsPackLayout: View {
     }
 
     private func extreme(_ group: BmsGroupSnapshot, title: String) -> some View {
-        Button { showGroupDetail(group.index) } label: {
+        Button {
+            showGroupDetail(group.index)
+        } label: {
             HStack(alignment: .center, spacing: 8) {
                 BmsReadingMetric(title: localizedAppText(title), value: group.voltageMetricValue.displayText, unit: "V")
                 Image(systemName: "chevron.right")
@@ -187,9 +199,11 @@ struct BmsPackLayout: View {
     }
 
     private var packGroups: [(number: Int, groups: [BmsGroupSnapshot])] {
-        Dictionary(grouping: filteredGroups.compactMap { group in
-            group.packNumber.map { ($0, group) }
-        }, by: \.0)
+        Dictionary(
+            grouping: filteredGroups.compactMap { group in
+                group.packNumber.map { ($0, group) }
+            }, by: \.0
+        )
         .map { number, entries in (number, entries.map(\.1)) }
         .sorted { $0.number < $1.number }
     }
@@ -211,7 +225,9 @@ struct BmsPackLayout: View {
     }
 
     private func groupGrid(_ groups: [BmsGroupSnapshot]) -> some View {
-        PevDashboardGrid(adaptiveMinimumColumnWidth: 80, accessibilityMinimumColumnWidth: 240, columnSpacing: 8, spacing: 8) {
+        PevDashboardGrid(
+            adaptiveMinimumColumnWidth: 80, accessibilityMinimumColumnWidth: 240, columnSpacing: 8, spacing: 8
+        ) {
             ForEach(groups) { group in
                 BmsStripCell(group: group, isHighlighted: false) {
                     showGroupDetail(group.index)
@@ -223,15 +239,22 @@ struct BmsPackLayout: View {
     private var packMeasurements: some View {
         PevDashboardGrid(adaptiveMinimumColumnWidth: 100, columnSpacing: 16, spacing: 16) {
             if snapshot.energyPercent != nil {
-                BmsReadingMetric(title: localizedAppText("bms.pack.charge"), value: snapshot.energyMetricValue.displayText, unit: "")
-                    .accessibilityIdentifier("bms.pack.charge")
+                BmsReadingMetric(
+                    title: localizedAppText("bms.pack.charge"), value: snapshot.energyMetricValue.displayText, unit: ""
+                )
+                .accessibilityIdentifier("bms.pack.charge")
             }
             if snapshot.voltage != nil {
-                BmsReadingMetric(title: localizedAppText("bms.pack.voltage"), value: snapshot.voltageMetricValue.displayText, unit: "V")
-                    .accessibilityIdentifier("bms.pack.voltage")
+                BmsReadingMetric(
+                    title: localizedAppText("bms.pack.voltage"), value: snapshot.voltageMetricValue.displayText,
+                    unit: "V"
+                )
+                .accessibilityIdentifier("bms.pack.voltage")
             }
             if let current = snapshot.current {
-                BmsReadingMetric(title: localizedAppText("bms.pack.current"), value: RideUnits.decimalString(Double(current.value) / 1_000, fractionDigits: 1), unit: "A")
+                BmsReadingMetric(
+                    title: localizedAppText("bms.pack.current"),
+                    value: RideUnits.decimalString(Double(current.value) / 1_000, fractionDigits: 1), unit: "A")
             }
         }
         .bmsPanel()

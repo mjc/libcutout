@@ -70,6 +70,10 @@ in
         enable = true;
         package = config.languages.rust.toolchainPackage;
       };
+      swift-format = {
+        enable = true;
+        package = pkgs.swift-format;
+      };
     };
   };
 

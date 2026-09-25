@@ -7,8 +7,8 @@ func bmsGroupAccessibilityValue(_ value: String, isHighlighted: Bool) -> String 
         : value
 }
 
-private extension View {
-    func bmsGroupAccessibility(
+extension View {
+    fileprivate func bmsGroupAccessibility(
         _ group: BmsGroupSnapshot,
         isHighlighted: Bool
     ) -> some View {

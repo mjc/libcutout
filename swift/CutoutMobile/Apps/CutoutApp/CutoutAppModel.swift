@@ -33,11 +33,13 @@ final class CutoutAppModel {
             try Task.checkCancellation()
             return result
         }
-        return try await withTaskCancellationHandler(operation: {
-            try await task.value
-        }, onCancel: {
-            task.cancel()
-        })
+        return try await withTaskCancellationHandler(
+            operation: {
+                try await task.value
+            },
+            onCancel: {
+                task.cancel()
+            })
     }
     nonisolated private static var rideMapLimits: MobileRideMapLimits { .rustOwned }
 
@@ -99,10 +101,11 @@ final class CutoutAppModel {
             }
         }
         if let identity = rideMapVehicleIdentity,
-           let candidate = core.protocolIdentityCandidate,
-           candidate.platformIdentifier == identity,
-           candidate.displayName != identity,
-           !candidate.displayName.isEmpty {
+            let candidate = core.protocolIdentityCandidate,
+            candidate.platformIdentifier == identity,
+            candidate.displayName != identity,
+            !candidate.displayName.isEmpty
+        {
             return candidate.displayName
         }
         guard let identity = rideMapVehicleIdentity else {
@@ -161,10 +164,11 @@ final class CutoutAppModel {
             guard phoneAlarmAuthorization.capability.canSchedule else { return }
         }
         do {
-            applyPhoneAlarmActions(try core.rideSessionStateHandle.setPhoneAlarmEnabled(
-                deviceIdentity: deviceIdentity,
-                enabled: enabled
-            ))
+            applyPhoneAlarmActions(
+                try core.rideSessionStateHandle.setPhoneAlarmEnabled(
+                    deviceIdentity: deviceIdentity,
+                    enabled: enabled
+                ))
             syncPhoneAlarmPreferences()
             phoneAlarmDeliveryError = nil
         } catch {
@@ -176,10 +180,11 @@ final class CutoutAppModel {
     func setPhoneAlarmPwmDutyPercent(_ percent: Int, deviceIdentity: String) {
         guard let percent = UInt8(exactly: percent) else { return }
         do {
-            applyPhoneAlarmActions(try core.rideSessionStateHandle.setPhoneAlarmPwmDutyPercent(
-                deviceIdentity: deviceIdentity,
-                dutyPercent: percent
-            ))
+            applyPhoneAlarmActions(
+                try core.rideSessionStateHandle.setPhoneAlarmPwmDutyPercent(
+                    deviceIdentity: deviceIdentity,
+                    dutyPercent: percent
+                ))
             syncPhoneAlarmPreferences()
             phoneAlarmDeliveryError = nil
         } catch {
@@ -216,9 +221,10 @@ final class CutoutAppModel {
 
     private func applyPhoneAlarmAuthorization(_ authorization: PhoneRideAlarmAuthorization) {
         phoneAlarmAuthorization = authorization
-        applyPhoneAlarmActions(core.rideSessionStateHandle.setPhoneAlarmDeliveryCapability(
-            capability: authorization.capability
-        ))
+        applyPhoneAlarmActions(
+            core.rideSessionStateHandle.setPhoneAlarmDeliveryCapability(
+                capability: authorization.capability
+            ))
     }
 
     private func syncPhoneAlarmPreferences() {
@@ -277,22 +283,23 @@ final class CutoutAppModel {
         guard let error = error as? MobilePhoneAlarmError else {
             return error.localizedDescription
         }
-        let key = switch error {
-        case .NoActiveDevice: "phone_alarm.error.no_active_device"
-        case .InvalidDeviceIdentity: "phone_alarm.error.invalid_device_identity"
-        case .InvalidPwmDutyThreshold: "phone_alarm.error.invalid_pwm_duty"
-        case .InvalidPwmHeadroomThreshold: "phone_alarm.error.invalid_pwm_headroom"
-        case .TooManyDevices: "phone_alarm.error.too_many_devices"
-        case .DeviceIdentityChanged: "phone_alarm.error.device_changed"
-        case .StorageFailure: "phone_alarm.error.storage_failure"
-        }
+        let key =
+            switch error {
+            case .NoActiveDevice: "phone_alarm.error.no_active_device"
+            case .InvalidDeviceIdentity: "phone_alarm.error.invalid_device_identity"
+            case .InvalidPwmDutyThreshold: "phone_alarm.error.invalid_pwm_duty"
+            case .InvalidPwmHeadroomThreshold: "phone_alarm.error.invalid_pwm_headroom"
+            case .TooManyDevices: "phone_alarm.error.too_many_devices"
+            case .DeviceIdentityChanged: "phone_alarm.error.device_changed"
+            case .StorageFailure: "phone_alarm.error.storage_failure"
+            }
         return localizedAppText(key)
     }
 
     static func meaningfulDeviceName(_ candidate: String?, identity: String) -> String? {
         guard let candidate,
-              !candidate.isEmpty,
-              candidate != identity
+            !candidate.isEmpty,
+            candidate != identity
         else {
             return nil
         }
@@ -387,9 +394,9 @@ final class CutoutAppModel {
         }
         try Task.checkCancellation()
         #if DEBUG
-        let permitsStoredDeviceAutoPairing = uiTestFixture == nil
+            let permitsStoredDeviceAutoPairing = uiTestFixture == nil
         #else
-        let permitsStoredDeviceAutoPairing = true
+            let permitsStoredDeviceAutoPairing = true
         #endif
         return CutoutAppModel(
             core: makeSessionDriver(rideMapState: state),
@@ -407,9 +414,9 @@ final class CutoutAppModel {
 
     convenience init() {
         #if DEBUG
-        let permitsStoredDeviceAutoPairing = Self.uiTestFixture == nil
+            let permitsStoredDeviceAutoPairing = Self.uiTestFixture == nil
         #else
-        let permitsStoredDeviceAutoPairing = true
+            let permitsStoredDeviceAutoPairing = true
         #endif
         self.init(
             core: Self.makeSessionDriver(),
@@ -512,7 +519,7 @@ final class CutoutAppModel {
         self.music.timelineEvents = music.coordinator.recordedEvents
         hasSavedDevice = selectedDeviceStore.platformIdentifier != nil
         if let identity = selectedDeviceStore.platformIdentifier,
-           let name = selectedDeviceStore.displayName(for: identity)
+            let name = selectedDeviceStore.displayName(for: identity)
         {
             rideMapVehicleNameCache[identity] = name
         }
@@ -539,7 +546,9 @@ final class CutoutAppModel {
                 },
                 settings: { [weak self] snapshot in
                     guard let self, self.phase == .live,
-                          self.core.rideSessionStateHandle.connectionAttemptSnapshot().revision == snapshot.connection.revision else { return }
+                        self.core.rideSessionStateHandle.connectionAttemptSnapshot().revision
+                            == snapshot.connection.revision
+                    else { return }
                     self.settings = snapshot
                 },
                 faultHistory: { [weak self] faultHistoryReadback in
@@ -558,7 +567,7 @@ final class CutoutAppModel {
                     guard let self else { return }
                     guard self.acceptsRideMapSnapshot(snapshot) else { return }
                     if let previousRideID = self.rideMapSnapshot?.rideID,
-                       previousRideID != snapshot.rideID
+                        previousRideID != snapshot.rideID
                     {
                         // A newer Rust snapshot can be an automatic replacement, not merely a new
                         // revision of the same ride. Invalidate both successful and failed projections
@@ -575,10 +584,10 @@ final class CutoutAppModel {
                 },
                 rideMapError: { [weak self] event in
                     guard let self,
-                          Self.shouldApplyRideMapError(
-                              context: event.context,
-                              currentSnapshot: self.rideMapSnapshot
-                          )
+                        Self.shouldApplyRideMapError(
+                            context: event.context,
+                            currentSnapshot: self.rideMapSnapshot
+                        )
                     else { return }
                     self.rideMapLiveError = event.error
                 },
@@ -635,21 +644,25 @@ final class CutoutAppModel {
                     )
                 }
                 guard !Task.isCancelled, let self else { return }
-                guard Self.shouldApplyRestoredLiveProjection(
-                    restorationGeneration: restorationGeneration,
-                    currentGeneration: self.rideMapLiveProjectionGeneration,
-                    liveProjectionEnabled: self.rideMapLiveProjectionEnabled
-                ) else {
+                guard
+                    Self.shouldApplyRestoredLiveProjection(
+                        restorationGeneration: restorationGeneration,
+                        currentGeneration: self.rideMapLiveProjectionGeneration,
+                        liveProjectionEnabled: self.rideMapLiveProjectionEnabled
+                    )
+                else {
                     return
                 }
                 self.applyLiveProjection(result)
             } catch {
                 guard !Task.isCancelled, let self else { return }
-                guard Self.shouldApplyRestoredLiveProjection(
-                    restorationGeneration: restorationGeneration,
-                    currentGeneration: self.rideMapLiveProjectionGeneration,
-                    liveProjectionEnabled: self.rideMapLiveProjectionEnabled
-                ) else {
+                guard
+                    Self.shouldApplyRestoredLiveProjection(
+                        restorationGeneration: restorationGeneration,
+                        currentGeneration: self.rideMapLiveProjectionGeneration,
+                        liveProjectionEnabled: self.rideMapLiveProjectionEnabled
+                    )
+                else {
                     return
                 }
                 self.rideMapLiveError = Self.mapRideMapError(error)
@@ -713,7 +726,7 @@ final class CutoutAppModel {
 
     func refreshRideMapDuration() {
         guard let snapshot = core.rideMapStateHandle?.currentSnapshot(atMs: currentMonotonicTime.rawValue),
-              snapshot.state == .active
+            snapshot.state == .active
         else {
             return
         }
@@ -878,13 +891,15 @@ final class CutoutAppModel {
                     guard self.rideMapLiveProjectionEnabled else {
                         break
                     }
-                    guard Self.shouldApplyLiveProjection(
-                        generation: generation,
-                        currentGeneration: self.rideMapLiveProjectionGeneration,
-                        enabled: self.rideMapLiveProjectionEnabled,
-                        rideID: rideID,
-                        currentRideID: self.rideMapSnapshot?.rideID
-                    ) else {
+                    guard
+                        Self.shouldApplyLiveProjection(
+                            generation: generation,
+                            currentGeneration: self.rideMapLiveProjectionGeneration,
+                            enabled: self.rideMapLiveProjectionEnabled,
+                            rideID: rideID,
+                            currentRideID: self.rideMapSnapshot?.rideID
+                        )
+                    else {
                         continue
                     }
                     self.applyLiveProjection(projection)
@@ -892,13 +907,15 @@ final class CutoutAppModel {
                     guard self.rideMapLiveProjectionEnabled else {
                         break
                     }
-                    guard Self.shouldApplyLiveProjection(
-                        generation: generation,
-                        currentGeneration: self.rideMapLiveProjectionGeneration,
-                        enabled: self.rideMapLiveProjectionEnabled,
-                        rideID: rideID,
-                        currentRideID: self.rideMapSnapshot?.rideID
-                    ) else {
+                    guard
+                        Self.shouldApplyLiveProjection(
+                            generation: generation,
+                            currentGeneration: self.rideMapLiveProjectionGeneration,
+                            enabled: self.rideMapLiveProjectionEnabled,
+                            rideID: rideID,
+                            currentRideID: self.rideMapSnapshot?.rideID
+                        )
+                    else {
                         continue
                     }
                     self.rideMapLiveError = Self.mapRideMapError(error)
@@ -1048,13 +1065,15 @@ final class CutoutAppModel {
     func recordOnly(platformIdentifier: String, deviceKind: String) -> Bool {
         guard core.rideSessionStateHandle.captureLifecycleSnapshot().canStart else { return false }
         let trimmedKind = deviceKind.trimmingCharacters(in: .whitespacesAndNewlines)
-        let annotationKind = trimmedKind
+        let annotationKind =
+            trimmedKind
             .replacingOccurrences(of: "\n", with: " ")
             .replacingOccurrences(of: "\r", with: " ")
             .replacingOccurrences(of: "=", with: " ")
         let annotations = annotationKind.isEmpty ? [] : ["capture_description=\(annotationKind)"]
         let device = devicePickerScanState?.rows.first { $0.id == platformIdentifier }.map(CaptureDeviceIdentity.init)
-        let didStart = capture.requestStart(device: device, description: annotationKind.isEmpty ? nil : annotationKind) {
+        let didStart = capture.requestStart(device: device, description: annotationKind.isEmpty ? nil : annotationKind)
+        {
             core.recordOnly(
                 platformIdentifier: platformIdentifier,
                 note: "user-initiated Bluetooth capture",
@@ -1167,10 +1186,11 @@ final class CutoutAppModel {
             return
         }
         if let candidate,
-           let displayName = Self.meaningfulDeviceName(
-               candidate.displayName,
-               identity: candidate.platformIdentifier
-           ) {
+            let displayName = Self.meaningfulDeviceName(
+                candidate.displayName,
+                identity: candidate.platformIdentifier
+            )
+        {
             // Persist every resolved identity, not only the currently selected one. History can
             // contain rides from an older CoreBluetooth identifier and must still be relabelable.
             let persistedDisplayName = selectedDeviceStore.displayName(
@@ -1195,7 +1215,8 @@ final class CutoutAppModel {
         // Advertisement-derived routes only decide which device the user selected. The protocol
         // detector owns the route once bytes have resolved it.
         if connectionState.selection?.platformIdentifier == nil
-            || connectionState.selection?.platformIdentifier == selection.platformIdentifier {
+            || connectionState.selection?.platformIdentifier == selection.platformIdentifier
+        {
             let resolvedSelection = ConnectionSelection(
                 platformIdentifier: selection.platformIdentifier,
                 title: connectionState.selection?.title ?? selection.title,
@@ -1234,12 +1255,14 @@ final class CutoutAppModel {
     private func handlePhaseChange(_ phase: SessionConnectionPhase) {
         switch (phase, connectionState) {
         case (.starting, .identified), (.starting, .connecting), (.starting, .retrying), (.starting, .connected),
-             (.scanning, .identified), (.scanning, .connecting), (.scanning, .retrying), (.scanning, .connected):
+            (.scanning, .identified), (.scanning, .connecting), (.scanning, .retrying), (.scanning, .connected):
             return
         default:
             break
         }
-        guard !phase.supportsLiveActivity || connectionState.selection != nil || permitsStoredDeviceAutoPairing else { return }
+        guard !phase.supportsLiveActivity || connectionState.selection != nil || permitsStoredDeviceAutoPairing else {
+            return
+        }
         if case .live = phase {
             switch connectionState {
             case .connecting(_, phase: .subscribing), .identified:
@@ -1291,11 +1314,12 @@ final class CutoutAppModel {
                 break
             }
             if let selection = selection(from: core.protocolIdentityCandidate) {
-                connectionState = .connected(ConnectionSelection(
-                    platformIdentifier: selection.platformIdentifier,
-                    title: connectionState.selection?.title ?? selection.title,
-                    route: selection.route
-                ))
+                connectionState = .connected(
+                    ConnectionSelection(
+                        platformIdentifier: selection.platformIdentifier,
+                        title: connectionState.selection?.title ?? selection.title,
+                        route: selection.route
+                    ))
             } else if let selection = connectionState.selection {
                 connectionState = .connected(selection)
             }
@@ -1313,7 +1337,7 @@ final class CutoutAppModel {
 
     private func handleReconnectScheduled(_ retry: SessionConnectionRetry) {
         guard let selection = connectionState.selection,
-              selection.platformIdentifier == retry.platformIdentifier
+            selection.platformIdentifier == retry.platformIdentifier
         else { return }
         if case .failed = phase {
             phase = .discoveringServices
@@ -1334,12 +1358,13 @@ final class CutoutAppModel {
             return
         }
         if let platformIdentifier {
-            connectionState = .identified(ConnectionSelection(
-                platformIdentifier: platformIdentifier,
-                title: selectedDeviceStore.displayName(for: platformIdentifier)
-                    ?? localizedAppText("setup.device"),
-                route: .electricUnicycle
-            ))
+            connectionState = .identified(
+                ConnectionSelection(
+                    platformIdentifier: platformIdentifier,
+                    title: selectedDeviceStore.displayName(for: platformIdentifier)
+                        ?? localizedAppText("setup.device"),
+                    route: .electricUnicycle
+                ))
         }
         if platformIdentifier != nil, marker == nil {
             permitsStoredDeviceAutoPairing = false
@@ -1347,11 +1372,12 @@ final class CutoutAppModel {
             return
         }
         if let platformIdentifier, let marker {
-            let markerMatches = (try? core.rideSessionStateHandle
-                .rideSessionMarkerMatchesPlatformIdentifier(
-                    marker: marker,
-                    platformIdentifier: platformIdentifier
-                )) == true
+            let markerMatches =
+                (try? core.rideSessionStateHandle
+                    .rideSessionMarkerMatchesPlatformIdentifier(
+                        marker: marker,
+                        platformIdentifier: platformIdentifier
+                    )) == true
             permitsStoredDeviceAutoPairing = false
             if !markerMatches {
                 beginRideSessionRecovery(
@@ -1389,14 +1415,14 @@ final class CutoutAppModel {
             switch recoveryResult {
             case .adopted:
                 if error == nil,
-                   core.rideSessionStateHandle.rideSessionSnapshot().phase == .active
+                    core.rideSessionStateHandle.rideSessionSnapshot().phase == .active
                 {
                     lastLiveActivitySnapshot = snapshot
                     lastLiveActivityUpdate = snapshot == nil ? nil : core.now()
                 }
             case .ended, .noPersistedRide:
                 if restoredPlatformIdentifier == nil,
-                   let scanState = devicePickerScanState
+                    let scanState = devicePickerScanState
                 {
                     permitsStoredDeviceAutoPairing = true
                     handleScanStateChange(scanState)
@@ -1428,11 +1454,11 @@ final class CutoutAppModel {
     private static func makeSessionDriver(
         rideMapState: MobileRideMapState? = nil
     ) -> any CutoutSessionDriving {
-#if DEBUG
-        if let fixture = uiTestFixture {
-            return CutoutSessionCore(testScript: fixture.testScript, rideMapState: rideMapState)
-        }
-#endif
+        #if DEBUG
+            if let fixture = uiTestFixture {
+                return CutoutSessionCore(testScript: fixture.testScript, rideMapState: rideMapState)
+            }
+        #endif
         if let rideMapState {
             return CutoutSessionCore(rideMapState: rideMapState)
         }
@@ -1440,13 +1466,13 @@ final class CutoutAppModel {
     }
 
     #if DEBUG
-    private static var uiTestFixture: CutoutUITestSessionFixture? {
-        CutoutUITestSessionFixture.resolve(
-            environmentValue: ProcessInfo.processInfo.environment["CUTOUT_UI_TEST_FIXTURE"],
-            persistedValue: UserDefaults.standard.string(forKey: "CUTOUT_UI_TEST_FIXTURE"),
-            arguments: ProcessInfo.processInfo.arguments
-        )
-    }
+        private static var uiTestFixture: CutoutUITestSessionFixture? {
+            CutoutUITestSessionFixture.resolve(
+                environmentValue: ProcessInfo.processInfo.environment["CUTOUT_UI_TEST_FIXTURE"],
+                persistedValue: UserDefaults.standard.string(forKey: "CUTOUT_UI_TEST_FIXTURE"),
+                arguments: ProcessInfo.processInfo.arguments
+            )
+        }
     #endif
 
     private func syncLiveActivity() {
@@ -1488,8 +1514,9 @@ final class CutoutAppModel {
 
         let rideLifecyclePhase = core.rideSessionStateHandle.rideSessionSnapshot().phase
         if phase.isReconnectingTransport,
-           rideLifecyclePhase == .active || rideLifecyclePhase == .reconnecting,
-           let previousSnapshot = lastLiveActivitySnapshot {
+            rideLifecyclePhase == .active || rideLifecyclePhase == .reconnecting,
+            let previousSnapshot = lastLiveActivitySnapshot
+        {
             guard rideLifecyclePhase == .active else { return }
             let staleSnapshot = previousSnapshot.presented(isStale: true)
             liveActivityRequestID += 1
@@ -1509,14 +1536,15 @@ final class CutoutAppModel {
         }
 
         let shouldBeActive = phase.supportsLiveActivity && liveActivityIdentity != nil && isRecordOnlyCapture == false
-        let endReason: LiveActivityRideLifecycleEndReason = switch phase {
-        case .scanning:
-            .disconnected
-        case .bluetoothPermissionDenied, .bluetoothUnavailable, .failed:
-            .unavailable
-        default:
-            .sessionEnded
-        }
+        let endReason: LiveActivityRideLifecycleEndReason =
+            switch phase {
+            case .scanning:
+                .disconnected
+            case .bluetoothPermissionDenied, .bluetoothUnavailable, .failed:
+                .unavailable
+            default:
+                .sessionEnded
+            }
         guard shouldReconcileLiveActivity(snapshot: snapshot, shouldBeActive: shouldBeActive) else { return }
         liveActivityRequestID += 1
         let requestID = liveActivityRequestID
@@ -1571,7 +1599,8 @@ final class CutoutAppModel {
         }
         if let model = selectedRow?.electricUnicycleModel
             ?? core.protocolIdentityCandidate?.support.electricUnicycleModel
-            ?? phase.connectingModel {
+            ?? phase.connectingModel
+        {
             return .model(model)
         }
         return nil
@@ -1579,7 +1608,8 @@ final class CutoutAppModel {
 
     private func liveActivityGlyph(for selectedRow: DevicePickerRow?) -> LiveActivityRideGlyph {
         if selectedRow?.connectionRoute == .vescOnewheel
-            || core.protocolIdentityCandidate?.support.connectionRoute == .vescOnewheel {
+            || core.protocolIdentityCandidate?.support.connectionRoute == .vescOnewheel
+        {
             return .floatwheelAtom
         }
         return .electricUnicycle
@@ -1606,7 +1636,9 @@ final class CutoutAppModel {
         guard
             previousSnapshot == nil
                 || snapshot.connectionState != previousSnapshot?.connectionState
-                || lastLiveActivityUpdate.map({ now.elapsed(since: $0).rawValue >= Self.liveActivityUpdateIntervalMilliseconds }) != false
+                || lastLiveActivityUpdate.map({
+                    now.elapsed(since: $0).rawValue >= Self.liveActivityUpdateIntervalMilliseconds
+                }) != false
         else { return false }
 
         lastLiveActivitySnapshot = snapshot
@@ -1620,8 +1652,8 @@ final class CutoutAppModel {
 
 }
 
-private extension SessionConnectionPhase {
-    var supportsLiveActivity: Bool {
+extension SessionConnectionPhase {
+    fileprivate var supportsLiveActivity: Bool {
         switch self {
         case .connecting, .discoveringServices, .subscribing, .live:
             true
@@ -1630,12 +1662,12 @@ private extension SessionConnectionPhase {
         }
     }
 
-    var connectingModel: ElectricUnicycleModel? {
+    fileprivate var connectingModel: ElectricUnicycleModel? {
         guard case .connecting(let model) = self else { return nil }
         return model
     }
 
-    var isReconnectingTransport: Bool {
+    fileprivate var isReconnectingTransport: Bool {
         switch self {
         case .connecting, .discoveringServices, .subscribing:
             true

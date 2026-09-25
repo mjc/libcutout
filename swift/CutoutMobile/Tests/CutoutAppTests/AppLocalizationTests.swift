@@ -1,5 +1,6 @@
 import Foundation
 import XCTest
+
 @testable import CutoutApp
 
 final class AppLocalizationTests: XCTestCase {
@@ -74,9 +75,10 @@ final class AppLocalizationTests: XCTestCase {
     }
 
     func testCatalogFixtureFormatsHighlightedBmsAccessibilityValue() throws {
-        let fixture = try AppLocalizationBundleFixture(strings: """
-        "bms.group.accessibility.highlighted" = "Highlighted: %1$@";
-        """)
+        let fixture = try AppLocalizationBundleFixture(
+            strings: """
+                "bms.group.accessibility.highlighted" = "Highlighted: %1$@";
+                """)
         defer { fixture.remove() }
 
         XCTAssertEqual(

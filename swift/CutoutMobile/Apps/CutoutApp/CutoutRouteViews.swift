@@ -143,7 +143,8 @@ struct CaptureRouteView: View {
 
     var body: some View {
         if capture.activeGeneration == nil, capture.status != nil,
-           let artifact = capture.completed.first(where: { $0.id == capture.latestGeneration }) {
+            let artifact = capture.completed.first(where: { $0.id == capture.latestGeneration })
+        {
             CaptureArtifactDetailView(artifact: artifact)
         } else {
             recording
@@ -207,7 +208,8 @@ struct EucPackRouteView: View {
             .onChange(of: model.bmsSnapshot?.availability, initial: true) { _, availability in
                 guard packScreen == .root else { return }
                 guard availability == .available, rootScreenID == nil,
-                      let snapshot = model.bmsSnapshot else {
+                    let snapshot = model.bmsSnapshot
+                else {
                     if availability == nil || availability == .unavailable || availability == .unsupported {
                         rootScreenID = nil
                     }
@@ -224,7 +226,8 @@ struct EucPackRouteView: View {
                 catalog.presentedScreen(for: $0, liveBmsSnapshot: model.bmsSnapshot)
             }
         } else if let rootScreenID,
-                  let rootScreen = catalog.screen(id: rootScreenID) {
+            let rootScreen = catalog.screen(id: rootScreenID)
+        {
             catalog.presentedScreen(for: rootScreen, liveBmsSnapshot: model.bmsSnapshot)
         } else {
             catalog.presentedBmsScreen(liveBmsSnapshot: model.bmsSnapshot)
@@ -244,7 +247,8 @@ struct EucTuneRouteView: View {
                     submitAction: model.submitDeviceAction
                 )
             } else {
-                ContentUnavailableView(localizedAppText("settings.readback.unavailable"), systemImage: "slider.horizontal.3")
+                ContentUnavailableView(
+                    localizedAppText("settings.readback.unavailable"), systemImage: "slider.horizontal.3")
             }
         }
         .accessibilityIdentifier("settings.screen.eucTune")
@@ -286,8 +290,8 @@ struct VescDebugRouteView: View {
     }
 }
 
-private extension MelkLightingPeripheralState {
-    var persistedConnectionState: MobileRgbLightingConnectionStateDto? {
+extension MelkLightingPeripheralState {
+    fileprivate var persistedConnectionState: MobileRgbLightingConnectionStateDto? {
         switch self {
         case .idle:
             nil
@@ -300,7 +304,7 @@ private extension MelkLightingPeripheralState {
         }
     }
 
-    var invalidatesPendingCommand: Bool {
+    fileprivate var invalidatesPendingCommand: Bool {
         switch self {
         case .retrying, .disconnected, .failed:
             true
@@ -602,7 +606,8 @@ final class LightingRouteModel {
     func setSchedule(_ schedule: MobileMelkScheduleDto, now: Date = Date(), calendar: Calendar = .current) -> Bool {
         let parts = calendar.dateComponents([.hour, .minute, .second, .weekday], from: now)
         guard let hour = parts.hour, let minute = parts.minute, let second = parts.second,
-              let weekday = parts.weekday else { return false }
+            let weekday = parts.weekday
+        else { return false }
         let clock = MobileMelkClockDto(
             hour: UInt8(hour), minute: UInt8(minute), second: UInt8(second),
             weekday: UInt8((weekday + 5) % 7 + 1)
@@ -825,12 +830,14 @@ final class LightingRouteModel {
 
     private func restoreIfEligible() {
         guard restoreEnabled, !restoreAttempted,
-              let peripheralIdentifier,
-              persistence.platformIdentifier == peripheralIdentifier else {
+            let peripheralIdentifier,
+            persistence.platformIdentifier == peripheralIdentifier
+        else {
             return
         }
         guard let candidate = persistence.restoreCandidate(),
-              candidate.platformIdentifier == peripheralIdentifier else {
+            candidate.platformIdentifier == peripheralIdentifier
+        else {
             if !persistence.isCompatibleWithCurrentProfile {
                 restoreAttempted = true
                 controlError = localizedAppText("lighting.error.restore_incompatible")
@@ -862,7 +869,8 @@ extension MelkLightingPeripheralState {
         case .scanning: localizedAppText("lighting.state.scanning")
         case .connecting: localizedAppText("lighting.state.connecting")
         case let .retrying(attempt, delayMilliseconds):
-            localizedAppText("lighting.state.retrying", Int64(attempt), Int64(max(1, Int((delayMilliseconds + 999) / 1000))))
+            localizedAppText(
+                "lighting.state.retrying", Int64(attempt), Int64(max(1, Int((delayMilliseconds + 999) / 1000))))
         case .discovering: localizedAppText("lighting.state.discovering")
         case .ready: localizedAppText("lighting.state.ready")
         case .disconnected: localizedAppText("lighting.state.disconnected")
@@ -880,8 +888,8 @@ extension MelkLightingPeripheralState {
     }
 }
 
-private extension MelkLightingCommandStatus {
-    var displayText: String {
+extension MelkLightingCommandStatus {
+    fileprivate var displayText: String {
         switch self {
         case .idle: localizedAppText("lighting.command.idle")
         case .requested: localizedAppText("lighting.command.requested")
@@ -890,7 +898,7 @@ private extension MelkLightingCommandStatus {
         }
     }
 
-    var symbolName: String {
+    fileprivate var symbolName: String {
         switch self {
         case .idle: "circle"
         case .requested: "clock"

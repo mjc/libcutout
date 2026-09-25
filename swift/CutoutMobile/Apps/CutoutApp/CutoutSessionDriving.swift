@@ -32,7 +32,8 @@ protocol CutoutSessionDriving: AnyObject {
     func pair(platformIdentifier: String, model: ElectricUnicycleModel) -> Bool
     func probe(platformIdentifier: String) -> Bool
     func recordOnly(platformIdentifier: String, note: String?, annotations: [String]) -> Bool
-    func changeCaptureLabel(generation: CaptureGeneration, action: MobileCaptureLabelActionDto) throws -> [MobileCaptureLabelDto]
+    func changeCaptureLabel(generation: CaptureGeneration, action: MobileCaptureLabelActionDto) throws
+        -> [MobileCaptureLabelDto]
     func updateMusicCapturePolicy(_ policy: MobileMusicHistoryPolicyDto)
     func updateMusicCaptureObservation(_ observation: MobilePevcapMusicEventDto?)
     func flushCapture() async -> Bool

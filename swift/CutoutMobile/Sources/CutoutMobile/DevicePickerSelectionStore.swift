@@ -1,5 +1,5 @@
-import Foundation
 import CutoutMobileFFI
+import Foundation
 
 public struct DevicePickerSelectionStore {
     private static let key = "io.cutout.devicePicker.selectedPlatformIdentifier"

@@ -1,13 +1,14 @@
-#if os(macOS)
-import AppKit
-#endif
 import CutoutMobile
 import SwiftUI
+
+#if os(macOS)
+    import AppKit
+#endif
 
 @main
 struct CutoutApp: App {
     #if os(macOS)
-    @NSApplicationDelegateAdaptor(CutoutAppDelegate.self) private var appDelegate
+        @NSApplicationDelegateAdaptor(CutoutAppDelegate.self) private var appDelegate
     #endif
     @State private var model: CutoutAppModel?
     @State private var rideMapPresentation = RideMapPresentationState()
@@ -32,8 +33,7 @@ struct CutoutApp: App {
                     await openApplication()
                 }
                 .onOpenURL { url in
-                    if let model { _ = model.music.handleProviderURL(url) }
-                    else { pendingMusicURL = url }
+                    if let model { _ = model.music.handleProviderURL(url) } else { pendingMusicURL = url }
                 }
                 .onChange(of: scenePhase) {
                     switch scenePhase {
@@ -89,7 +89,7 @@ struct CutoutApp: App {
                 navigationPath: $navigationPath
             )
             #if os(macOS)
-            .frame(minWidth: 360, minHeight: 280)
+                .frame(minWidth: 360, minHeight: 280)
             #endif
         } else if let startupError {
             ContentUnavailableView {
@@ -199,14 +199,14 @@ struct CutoutNavigationCommands: Commands {
 }
 
 #if os(macOS)
-final class CutoutAppDelegate: NSObject, NSApplicationDelegate {
-    func applicationDidFinishLaunching(_: Notification) {
-        NSApp.setActivationPolicy(.regular)
-        NSApp.activate(ignoringOtherApps: true)
-        if CommandLine.arguments.contains("--launch-smoke") {
-            print("cutout_app_launch=ok")
-            Foundation.exit(EXIT_SUCCESS)
+    final class CutoutAppDelegate: NSObject, NSApplicationDelegate {
+        func applicationDidFinishLaunching(_: Notification) {
+            NSApp.setActivationPolicy(.regular)
+            NSApp.activate(ignoringOtherApps: true)
+            if CommandLine.arguments.contains("--launch-smoke") {
+                print("cutout_app_launch=ok")
+                Foundation.exit(EXIT_SUCCESS)
+            }
         }
     }
-}
 #endif

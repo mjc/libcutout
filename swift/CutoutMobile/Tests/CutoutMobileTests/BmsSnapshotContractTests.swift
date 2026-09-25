@@ -1,5 +1,6 @@
-import XCTest
 import CutoutMobileFFI
+import XCTest
+
 @testable import CutoutMobile
 
 final class BmsSnapshotContractTests: XCTestCase {
@@ -30,7 +31,8 @@ final class BmsSnapshotContractTests: XCTestCase {
 
     func testBmsAccessibilityCopyResolvesFromThePackageCatalog() {
         XCTAssertEqual(pevLocalizedText("bms.accessibility.group", Int64(7)), "Cell group 7")
-        XCTAssertEqual(pevLocalizedText("bms.accessibility.group_named", Int64(7), "left pack"), "Cell group 7, left pack")
+        XCTAssertEqual(
+            pevLocalizedText("bms.accessibility.group_named", Int64(7), "left pack"), "Cell group 7, left pack")
         XCTAssertEqual(pevLocalizedText("bms.accessibility.voltage", "4.071"), "4.071 volts")
         XCTAssertEqual(pevLocalizedText("bms.accessibility.voltage_unavailable"), "voltage unavailable")
         XCTAssertEqual(pevLocalizedText("bms.accessibility.balancing"), "balancing")
@@ -59,8 +61,14 @@ final class BmsSnapshotContractTests: XCTestCase {
 
     func testBmsNoDataRowsResolveFromThePackageCatalog() {
         let cases: [(BmsNoDataTextRow, String, String)] = [
-            (.cellBalanceWarning, "bms.no_data.row.cell_balance_warning", "CutOut can’t see individual cell balance or weak groups."),
-            (.bmsDiagnosticsWarning, "bms.no_data.row.diagnostics_warning", "BMS temperature, faults, or cutout reason stay unavailable."),
+            (
+                .cellBalanceWarning, "bms.no_data.row.cell_balance_warning",
+                "CutOut can’t see individual cell balance or weak groups."
+            ),
+            (
+                .bmsDiagnosticsWarning, "bms.no_data.row.diagnostics_warning",
+                "BMS temperature, faults, or cutout reason stay unavailable."
+            ),
             (.cellVoltages, "bms.no_data.row.cell_voltages", "individual cell/group voltages"),
             (.weakGroups, "bms.no_data.row.weak_groups", "cell balance / weak parallel group"),
             (.bmsDiagnostics, "bms.no_data.row.diagnostics", "BMS temperature, faults, and cutout reason"),
@@ -433,7 +441,7 @@ final class BmsSnapshotContractTests: XCTestCase {
             temperatureReadings: [Temperature(value: 37_800), Temperature(value: 35_200)],
             groups: [
                 BmsGroupSnapshot(index: 17, voltage: Voltage(value: 4_071), alertLevel: .warning),
-                BmsGroupSnapshot(index: 18, voltage: Voltage(value: 4_089), alertLevel: .nominal)
+                BmsGroupSnapshot(index: 18, voltage: Voltage(value: 4_089), alertLevel: .nominal),
             ]
         )
 
@@ -520,7 +528,7 @@ final class BmsSnapshotContractTests: XCTestCase {
             lowestGroupIndex: 17,
             groups: [
                 BmsGroupSnapshot(index: 17, voltage: Voltage(value: 4_071), alertLevel: .warning),
-                BmsGroupSnapshot(index: 18, voltage: Voltage(value: 4_089), alertLevel: .nominal)
+                BmsGroupSnapshot(index: 18, voltage: Voltage(value: 4_089), alertLevel: .nominal),
             ]
         )
 
@@ -611,7 +619,7 @@ final class BmsSnapshotContractTests: XCTestCase {
                     alertLevel: .critical,
                     detail: "sagging under load"
                 ),
-                BmsGroupSnapshot(index: 31, voltage: Voltage(value: 4_089), alertLevel: .warning)
+                BmsGroupSnapshot(index: 31, voltage: Voltage(value: 4_089), alertLevel: .warning),
             ]
         )
 
@@ -652,7 +660,7 @@ final class BmsSnapshotContractTests: XCTestCase {
                     alertLevel: .warning,
                     detail: "sagging under load"
                 ),
-                BmsGroupSnapshot(index: 18, voltage: Voltage(value: 4_089), alertLevel: .nominal)
+                BmsGroupSnapshot(index: 18, voltage: Voltage(value: 4_089), alertLevel: .nominal),
             ]
         )
 
@@ -725,7 +733,7 @@ final class BmsSnapshotContractTests: XCTestCase {
             groups: [
                 BmsGroupSnapshot(index: 0, voltage: Voltage(value: 4_000), temperature: Temperature(value: 30_000)),
                 BmsGroupSnapshot(index: 1, voltage: Voltage(value: 4_000)),
-                BmsGroupSnapshot(index: 2, voltage: Voltage(value: 4_000), temperature: Temperature(value: 31_000))
+                BmsGroupSnapshot(index: 2, voltage: Voltage(value: 4_000), temperature: Temperature(value: 31_000)),
             ]
         )
 
@@ -764,11 +772,14 @@ final class BmsSnapshotContractTests: XCTestCase {
                 confidence: .verified
             ),
             groups: [
-                BmsGroupSnapshot(index: 17, voltage: Voltage(value: 4_071), temperature: Temperature(value: 34_900), resistance: Resistance(value: 21), alertLevel: .warning),
-                BmsGroupSnapshot(index: 18, voltage: Voltage(value: 4_089), alertLevel: .nominal)
-            ] + (19...56).map { index in
-                BmsGroupSnapshot(index: index, voltage: Voltage(value: 4_080), alertLevel: .nominal)
-            }
+                BmsGroupSnapshot(
+                    index: 17, voltage: Voltage(value: 4_071), temperature: Temperature(value: 34_900),
+                    resistance: Resistance(value: 21), alertLevel: .warning),
+                BmsGroupSnapshot(index: 18, voltage: Voltage(value: 4_089), alertLevel: .nominal),
+            ]
+                + (19...56).map { index in
+                    BmsGroupSnapshot(index: index, voltage: Voltage(value: 4_080), alertLevel: .nominal)
+                }
         )
 
         XCTAssertEqual(snapshot.inlineCellMapModes, [.balanceView, .temperatures, .faults])
@@ -799,24 +810,32 @@ final class BmsSnapshotContractTests: XCTestCase {
         )
 
         XCTAssertEqual(snapshot.noDataWarningTitle, "No cell-level BMS data")
-        XCTAssertEqual(snapshot.noDataWarningLines.map(\.id), [
-            .cellBalanceWarning,
-            .bmsDiagnosticsWarning,
-        ])
-        XCTAssertEqual(snapshot.noDataWarningLines.map(\.text), [
-            "CutOut can’t see individual cell balance or weak groups.",
-            "BMS temperature, faults, or cutout reason stay unavailable.",
-        ])
-        XCTAssertEqual(snapshot.noDataUnknownRows.map(\.id), [
-            .cellVoltages,
-            .weakGroups,
-            .bmsDiagnostics,
-        ])
-        XCTAssertEqual(snapshot.noDataUnknownRows.map(\.text), [
-            "individual cell/group voltages",
-            "cell balance / weak parallel group",
-            "BMS temperature, faults, and cutout reason",
-        ])
+        XCTAssertEqual(
+            snapshot.noDataWarningLines.map(\.id),
+            [
+                .cellBalanceWarning,
+                .bmsDiagnosticsWarning,
+            ])
+        XCTAssertEqual(
+            snapshot.noDataWarningLines.map(\.text),
+            [
+                "CutOut can’t see individual cell balance or weak groups.",
+                "BMS temperature, faults, or cutout reason stay unavailable.",
+            ])
+        XCTAssertEqual(
+            snapshot.noDataUnknownRows.map(\.id),
+            [
+                .cellVoltages,
+                .weakGroups,
+                .bmsDiagnostics,
+            ])
+        XCTAssertEqual(
+            snapshot.noDataUnknownRows.map(\.text),
+            [
+                "individual cell/group voltages",
+                "cell balance / weak parallel group",
+                "BMS temperature, faults, and cutout reason",
+            ])
     }
 }
 

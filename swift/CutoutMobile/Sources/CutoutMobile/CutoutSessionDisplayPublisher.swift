@@ -37,9 +37,10 @@ final class CutoutSessionDisplayPublisher: CutoutSessionDisplayPublishing {
         pendingStateQueuedAt = queuedAt
 
         let now = clock.now()
-        let elapsed = lastPublication.map {
-            now.elapsed(since: $0).rawValue
-        } ?? intervalMilliseconds
+        let elapsed =
+            lastPublication.map {
+                now.elapsed(since: $0).rawValue
+            } ?? intervalMilliseconds
         let warningSeverity = EucRideScreenState(
             phase: .live,
             displayState: state
@@ -77,9 +78,10 @@ final class CutoutSessionDisplayPublisher: CutoutSessionDisplayPublishing {
         workItem?.cancel()
         workItem = nil
         pendingState = nil
-        let publicationDelayMilliseconds = pendingStateQueuedAt.map {
-            clock.now().elapsed(since: $0).rawValue
-        } ?? 0
+        let publicationDelayMilliseconds =
+            pendingStateQueuedAt.map {
+                clock.now().elapsed(since: $0).rawValue
+            } ?? 0
         pendingStateQueuedAt = nil
         let now = clock.now()
         lastPublication = now

@@ -1,5 +1,5 @@
-import Foundation
 import CutoutMobileFFI
+import Foundation
 
 struct RideMapDecisionBatch {
     let snapshot: MobileRideMapSnapshotDto?
@@ -149,7 +149,7 @@ final class CutoutSessionRideMapRecorder: CutoutSessionRideMapRecording {
         guard isReady else { return }
         queue.async { [weak self] in
             guard let self,
-                  isConnectionCurrent()
+                isConnectionCurrent()
             else { return }
             do {
                 let previousRideID = self.state?.currentSnapshot(atMs: receivedAt.rawValue)?.rideID
@@ -187,10 +187,10 @@ final class CutoutSessionRideMapRecorder: CutoutSessionRideMapRecording {
         deviceIdentity: String?
     ) {
         guard let state,
-              state.initializationError == nil,
-              state.isReady,
-              let deviceIdentity,
-              let wallClockMilliseconds = unixMilliseconds(for: wallClock())
+            state.initializationError == nil,
+            state.isReady,
+            let deviceIdentity,
+            let wallClockMilliseconds = unixMilliseconds(for: wallClock())
         else { return }
         let samples = bmsStorageSamples(
             observations: observations,
@@ -211,14 +211,15 @@ final class CutoutSessionRideMapRecorder: CutoutSessionRideMapRecording {
 
     func ingestLocation(_ update: PhoneLocationUpdate) {
         guard let state,
-              state.initializationError == nil,
-              state.isReady,
-              let receiptWallClockUnixMs = unixMilliseconds(for: update.receiptWallClock)
+            state.initializationError == nil,
+            state.isReady,
+            let receiptWallClockUnixMs = unixMilliseconds(for: update.receiptWallClock)
         else { return }
 
         queue.async { [weak self] in
             guard let self else { return }
-            let recordingToken = state
+            let recordingToken =
+                state
                 .currentSnapshot(atMs: update.receiptMonotonic.rawValue)?
                 .recordingToken
             let errorContext = MobileRideMapErrorContext(recordingToken: recordingToken)
@@ -288,19 +289,20 @@ final class CutoutSessionRideMapRecorder: CutoutSessionRideMapRecording {
 
     private func drainLocationWrites() {
         guard let state,
-              state.initializationError == nil,
-              state.isReady,
-              state.hasPendingLocationWrites
+            state.initializationError == nil,
+            state.isReady,
+            state.hasPendingLocationWrites
                 || state.currentSnapshot(atMs: clock.now().rawValue)?.state.isOpen == true
         else { return }
         publishDecisionBatch(state.pollLocationWrites())
     }
 
     private func publishDecisionBatch(_ decisions: [MobileRideMapDecisionDto]) {
-        publishDecisions(RideMapDecisionBatch(
-            snapshot: state?.currentSnapshot(atMs: clock.now().rawValue),
-            decisions: decisions
-        ))
+        publishDecisions(
+            RideMapDecisionBatch(
+                snapshot: state?.currentSnapshot(atMs: clock.now().rawValue),
+                decisions: decisions
+            ))
     }
 
     private func synchronizeLocationDemand() {

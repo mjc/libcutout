@@ -2,6 +2,7 @@ import CutoutMobile
 import CutoutMobileFFI
 import Foundation
 import XCTest
+
 @testable import CutoutApp
 
 /// Drives the real Rust lifecycle before publishing native evidence. Replacement
@@ -62,7 +63,8 @@ func deliverCaptureFixture(
 @MainActor
 extension CaptureFeatureModel {
     convenience init(
-        changeCaptureLabel: @escaping (CaptureGeneration, MobileCaptureLabelActionDto) throws -> [MobileCaptureLabelDto] = { _, _ in [] }
+        changeCaptureLabel: @escaping (CaptureGeneration, MobileCaptureLabelActionDto) throws ->
+            [MobileCaptureLabelDto] = { _, _ in [] }
     ) {
         self.init(sessionState: CutoutSessionStateHandle(), changeCaptureLabel: changeCaptureLabel)
     }

@@ -1,8 +1,9 @@
+import CutoutMobileFFI
 import Observation
 import XCTest
+
 @testable import CutoutApp
 @testable import CutoutMobile
-import CutoutMobileFFI
 
 final class CutoutAppRouteTests: XCTestCase {
     func testScreenRoutesMatchTopLevelSections() {
@@ -69,7 +70,8 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(localizedAppText("bms.no_data.what_is_unknown"), "WHAT IS UNKNOWN")
         XCTAssertEqual(localizedAppText("bms.no_data.pack_estimate_accessibility"), "Pack estimate")
         XCTAssertEqual(localizedAppText("bms.no_data.confidence_accessibility"), "Confidence")
-        XCTAssertEqual(localizedAppText("bms.no_data.estimate_detail.recent_sag"), "Derived from voltage curve + recent sag")
+        XCTAssertEqual(
+            localizedAppText("bms.no_data.estimate_detail.recent_sag"), "Derived from voltage curve + recent sag")
         XCTAssertEqual(localizedAppText("bms.no_data.estimate_detail.voltage_curve"), "Derived from voltage curve only")
         XCTAssertEqual(localizedAppText("bms.no_data.estimate_detail.unavailable"), "Estimate unavailable")
         XCTAssertEqual(localizedAppText("bms.diagnostics.title"), "BMS diagnostics")
@@ -79,11 +81,14 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(localizedAppText("picker.advanced_capture"), "Capture unknown device")
         XCTAssertEqual(localizedAppText("picker.capture_kind.label"), "Device kind for capture")
         XCTAssertEqual(localizedAppText("picker.capture_kind.placeholder"), "Device model")
-        XCTAssertEqual(localizedAppText("picker.capture_kind.hint"), "Enter the device family and model, for example EUC NOSFET Aeon")
+        XCTAssertEqual(
+            localizedAppText("picker.capture_kind.hint"),
+            "Enter the device family and model, for example EUC NOSFET Aeon")
         XCTAssertEqual(localizedAppText("picker.section.supported_now"), "Supported now")
         XCTAssertEqual(localizedAppText("picker.section.detected_devices"), "Detected devices")
         XCTAssertEqual(localizedAppText("picker.section.record_only"), "Record only")
-        XCTAssertEqual(localizedAppText("picker.capture_kind_required_hint"), "Enter a device kind above to enable capture")
+        XCTAssertEqual(
+            localizedAppText("picker.capture_kind_required_hint"), "Enter a device kind above to enable capture")
         XCTAssertEqual(localizedAppText("capture.stop"), "Stop & Save")
         XCTAssertEqual(localizedAppText("picker.use_action.hint"), "Connect to this device")
         XCTAssertEqual(localizedAppText("picker.error.device_no_longer_available"), "Device is no longer available")
@@ -187,8 +192,6 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(white.hue, 0, accuracy: 0.0001)
         XCTAssertEqual(white.saturation, 0, accuracy: 0.0001)
     }
-
-
 
     func testEucPackRouteRejectsNonPackScreens() {
         XCTAssertNil(EucPackScreen(screenID: .vescRide))

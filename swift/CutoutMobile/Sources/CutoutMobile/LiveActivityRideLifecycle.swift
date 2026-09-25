@@ -136,14 +136,15 @@ public actor LiveActivityRideLifecycleCoordinator {
                 marker: marker,
                 restoredPlatformIdentifier: restoredPlatformIdentifier
             )
-            let result: LiveActivityRideRecoveryResult = switch decision.effect {
-            case .startActivity:
-                .adopted
-            case .endActivity:
-                .ended(requiresUserAction: restoredPlatformIdentifier != nil)
-            default:
-                .ended(requiresUserAction: false)
-            }
+            let result: LiveActivityRideRecoveryResult =
+                switch decision.effect {
+                case .startActivity:
+                    .adopted
+                case .endActivity:
+                    .ended(requiresUserAction: restoredPlatformIdentifier != nil)
+                default:
+                    .ended(requiresUserAction: false)
+                }
             persistSessionMarker()
             await execute(
                 effect: decision.effect,
@@ -411,12 +412,13 @@ public actor LiveActivityRideLifecycleCoordinator {
                 return
             }
             do {
-                let updateStaleAfterMilliseconds: UInt64 = switch effect {
-                case .markActivityStale:
-                    0
-                default:
-                    staleAfterMilliseconds
-                }
+                let updateStaleAfterMilliseconds: UInt64 =
+                    switch effect {
+                    case .markActivityStale:
+                        0
+                    default:
+                        staleAfterMilliseconds
+                    }
                 _ = try await manager.update(
                     snapshot: snapshot,
                     staleAfterMilliseconds: updateStaleAfterMilliseconds
@@ -517,195 +519,196 @@ public actor LiveActivityRideLifecycleCoordinator {
 }
 
 #if canImport(ActivityKit) && !os(macOS)
-@preconcurrency import ActivityKit
+    @preconcurrency import ActivityKit
 
-@available(iOS 16.2, *)
-public struct LiveActivityRideAttributes: ActivityAttributes, Codable, Hashable, Sendable {
-    public struct ContentState: Codable, Hashable, Sendable {
-        public let snapshot: LiveActivityRideSnapshot
-        public let staleAt: Date?
+    @available(iOS 16.2, *)
+    public struct LiveActivityRideAttributes: ActivityAttributes, Codable, Hashable, Sendable {
+        public struct ContentState: Codable, Hashable, Sendable {
+            public let snapshot: LiveActivityRideSnapshot
+            public let staleAt: Date?
 
-        public init(snapshot: LiveActivityRideSnapshot, staleAt: Date? = nil) {
-            self.snapshot = snapshot
-            self.staleAt = staleAt
+            public init(snapshot: LiveActivityRideSnapshot, staleAt: Date? = nil) {
+                self.snapshot = snapshot
+                self.staleAt = staleAt
+            }
+
+            public func presentationSnapshot(isStale: Bool, now: Date) -> LiveActivityRideSnapshot {
+                snapshot.presented(isStale: isStale || staleAt.map { now >= $0 } == true)
+            }
         }
 
-        public func presentationSnapshot(isStale: Bool, now: Date) -> LiveActivityRideSnapshot {
-            snapshot.presented(isStale: isStale || staleAt.map { now >= $0 } == true)
+        public let identity: LiveActivityRideIdentity
+        public let rideSessionIdentity: LiveActivityRideSessionIdentity
+
+        public init(
+            identity: LiveActivityRideIdentity,
+            rideSessionIdentity: LiveActivityRideSessionIdentity
+        ) {
+            self.identity = identity
+            self.rideSessionIdentity = rideSessionIdentity
         }
     }
 
-    public let identity: LiveActivityRideIdentity
-    public let rideSessionIdentity: LiveActivityRideSessionIdentity
+    @available(iOS 16.2, *)
+    public actor LiveActivityRideActivityKitManager: LiveActivityRideLifecycleManaging {
+        private let state = LiveActivityRideActivityKitState()
 
-    public init(
-        identity: LiveActivityRideIdentity,
-        rideSessionIdentity: LiveActivityRideSessionIdentity
-    ) {
-        self.identity = identity
-        self.rideSessionIdentity = rideSessionIdentity
-    }
-}
+        public init() {}
 
-@available(iOS 16.2, *)
-public actor LiveActivityRideActivityKitManager: LiveActivityRideLifecycleManaging {
-    private let state = LiveActivityRideActivityKitState()
-
-    public init() {}
-
-    public func start(
-        snapshot: LiveActivityRideSnapshot,
-        rideSessionIdentity: LiveActivityRideSessionIdentity,
-        staleAfterMilliseconds: UInt64
-    ) async throws -> LiveActivityRideStartOutcome {
-        try await state.start(
-            snapshot: snapshot,
-            rideSessionIdentity: rideSessionIdentity,
-            staleAfterMilliseconds: staleAfterMilliseconds
-        )
-    }
-
-    public func update(
-        snapshot: LiveActivityRideSnapshot,
-        staleAfterMilliseconds: UInt64
-    ) async throws -> LiveActivityRideUpdateOutcome {
-        try await state.update(
-            snapshot: snapshot,
-            staleAfterMilliseconds: staleAfterMilliseconds
-        )
-    }
-
-    public func end(reason: LiveActivityRideLifecycleEndReason) async throws -> LiveActivityRideEndOutcome {
-        try await state.end(reason: reason)
-    }
-}
-
-@available(iOS 16.2, *)
-private actor LiveActivityRideActivityKitState {
-    private var activity: Activity<LiveActivityRideAttributes>?
-    private var lastSnapshot: LiveActivityRideSnapshot?
-
-    func start(
-        snapshot: LiveActivityRideSnapshot,
-        rideSessionIdentity: LiveActivityRideSessionIdentity,
-        staleAfterMilliseconds: UInt64
-    ) async throws -> LiveActivityRideStartOutcome {
-        guard ActivityAuthorizationInfo().areActivitiesEnabled else {
-            throw LiveActivityRideLifecycleError.authorizationDenied
+        public func start(
+            snapshot: LiveActivityRideSnapshot,
+            rideSessionIdentity: LiveActivityRideSessionIdentity,
+            staleAfterMilliseconds: UInt64
+        ) async throws -> LiveActivityRideStartOutcome {
+            try await state.start(
+                snapshot: snapshot,
+                rideSessionIdentity: rideSessionIdentity,
+                staleAfterMilliseconds: staleAfterMilliseconds
+            )
         }
 
-        let existingActivities = Activity<LiveActivityRideAttributes>.activities
-        let reconciliation = liveActivityRideReconciliation(
-            existingIdentities: existingActivities.map(\.attributes.rideSessionIdentity),
-            desiredIdentity: rideSessionIdentity
-        )
-        for staleIndex in reconciliation.staleIndices {
-            let staleActivity = existingActivities[staleIndex]
-            await staleActivity.end(staleActivity.content, dismissalPolicy: .immediate)
-        }
-
-        if let adoptedIndex = reconciliation.adoptedIndex {
-            activity = existingActivities[adoptedIndex]
-            _ = try await update(
+        public func update(
+            snapshot: LiveActivityRideSnapshot,
+            staleAfterMilliseconds: UInt64
+        ) async throws -> LiveActivityRideUpdateOutcome {
+            try await state.update(
                 snapshot: snapshot,
                 staleAfterMilliseconds: staleAfterMilliseconds
             )
-            return .adopted(activityID: existingActivities[adoptedIndex].id)
         }
 
-        activity = nil
-        do {
-            let startedActivity = try Activity.request(
-                attributes: LiveActivityRideAttributes(
-                    identity: snapshot.identity,
-                    rideSessionIdentity: rideSessionIdentity
-                ),
-                content: content(
-                    snapshot: snapshot,
-                    staleAfterMilliseconds: staleAfterMilliseconds
-                ),
-                pushType: nil
-            )
-            activity = startedActivity
-            lastSnapshot = snapshot
-            return .started(activityID: startedActivity.id)
-        } catch {
-            activity = nil
-            lastSnapshot = nil
-            throw LiveActivityRideLifecycleError.requestFailed
+        public func end(reason: LiveActivityRideLifecycleEndReason) async throws -> LiveActivityRideEndOutcome {
+            try await state.end(reason: reason)
         }
     }
 
-    func update(
-        snapshot: LiveActivityRideSnapshot,
-        staleAfterMilliseconds: UInt64
-    ) async throws -> LiveActivityRideUpdateOutcome {
-        guard let activity else {
+    @available(iOS 16.2, *)
+    private actor LiveActivityRideActivityKitState {
+        private var activity: Activity<LiveActivityRideAttributes>?
+        private var lastSnapshot: LiveActivityRideSnapshot?
+
+        func start(
+            snapshot: LiveActivityRideSnapshot,
+            rideSessionIdentity: LiveActivityRideSessionIdentity,
+            staleAfterMilliseconds: UInt64
+        ) async throws -> LiveActivityRideStartOutcome {
+            guard ActivityAuthorizationInfo().areActivitiesEnabled else {
+                throw LiveActivityRideLifecycleError.authorizationDenied
+            }
+
+            let existingActivities = Activity<LiveActivityRideAttributes>.activities
+            let reconciliation = liveActivityRideReconciliation(
+                existingIdentities: existingActivities.map(\.attributes.rideSessionIdentity),
+                desiredIdentity: rideSessionIdentity
+            )
+            for staleIndex in reconciliation.staleIndices {
+                let staleActivity = existingActivities[staleIndex]
+                await staleActivity.end(staleActivity.content, dismissalPolicy: .immediate)
+            }
+
+            if let adoptedIndex = reconciliation.adoptedIndex {
+                activity = existingActivities[adoptedIndex]
+                _ = try await update(
+                    snapshot: snapshot,
+                    staleAfterMilliseconds: staleAfterMilliseconds
+                )
+                return .adopted(activityID: existingActivities[adoptedIndex].id)
+            }
+
+            activity = nil
+            do {
+                let startedActivity = try Activity.request(
+                    attributes: LiveActivityRideAttributes(
+                        identity: snapshot.identity,
+                        rideSessionIdentity: rideSessionIdentity
+                    ),
+                    content: content(
+                        snapshot: snapshot,
+                        staleAfterMilliseconds: staleAfterMilliseconds
+                    ),
+                    pushType: nil
+                )
+                activity = startedActivity
+                lastSnapshot = snapshot
+                return .started(activityID: startedActivity.id)
+            } catch {
+                activity = nil
+                lastSnapshot = nil
+                throw LiveActivityRideLifecycleError.requestFailed
+            }
+        }
+
+        func update(
+            snapshot: LiveActivityRideSnapshot,
+            staleAfterMilliseconds: UInt64
+        ) async throws -> LiveActivityRideUpdateOutcome {
+            guard let activity else {
+                throw LiveActivityRideLifecycleError.activityUnavailable
+            }
+
+            await activity.update(
+                content(
+                    snapshot: snapshot,
+                    staleAfterMilliseconds: staleAfterMilliseconds
+                )
+            )
+            lastSnapshot = snapshot
+            return LiveActivityRideUpdateOutcome(activityID: activity.id)
+        }
+
+        func end(reason _: LiveActivityRideLifecycleEndReason) async throws -> LiveActivityRideEndOutcome {
+            let currentActivityID = activity?.id
+            let activities = Activity<LiveActivityRideAttributes>.activities
+            for currentActivity in activities {
+                let finalContent =
+                    currentActivity.id == currentActivityID
+                    ? lastSnapshot.map {
+                        content(snapshot: $0, staleAfterMilliseconds: 0)
+                    } ?? currentActivity.content
+                    : currentActivity.content
+                await currentActivity.end(finalContent, dismissalPolicy: .immediate)
+            }
+
+            activity = nil
+            lastSnapshot = nil
+            return LiveActivityRideEndOutcome(activityIDs: activities.map(\.id))
+        }
+
+        private func content(
+            snapshot: LiveActivityRideSnapshot,
+            staleAfterMilliseconds: UInt64
+        ) -> ActivityContent<LiveActivityRideAttributes.ContentState> {
+            let staleAt = Date().addingTimeInterval(TimeInterval(staleAfterMilliseconds) / 1_000)
+            return ActivityContent(
+                state: LiveActivityRideAttributes.ContentState(
+                    snapshot: snapshot,
+                    staleAt: staleAt
+                ),
+                staleDate: staleAt
+            )
+        }
+    }
+#else
+    public actor LiveActivityRideActivityKitManager: LiveActivityRideLifecycleManaging {
+        public init() {}
+
+        public func start(
+            snapshot _: LiveActivityRideSnapshot,
+            rideSessionIdentity _: LiveActivityRideSessionIdentity,
+            staleAfterMilliseconds _: UInt64
+        ) async throws -> LiveActivityRideStartOutcome {
             throw LiveActivityRideLifecycleError.activityUnavailable
         }
 
-        await activity.update(
-            content(
-                snapshot: snapshot,
-                staleAfterMilliseconds: staleAfterMilliseconds
-            )
-        )
-        lastSnapshot = snapshot
-        return LiveActivityRideUpdateOutcome(activityID: activity.id)
-    }
-
-    func end(reason _: LiveActivityRideLifecycleEndReason) async throws -> LiveActivityRideEndOutcome {
-        let currentActivityID = activity?.id
-        let activities = Activity<LiveActivityRideAttributes>.activities
-        for currentActivity in activities {
-            let finalContent = currentActivity.id == currentActivityID
-                ? lastSnapshot.map {
-                    content(snapshot: $0, staleAfterMilliseconds: 0)
-                } ?? currentActivity.content
-                : currentActivity.content
-            await currentActivity.end(finalContent, dismissalPolicy: .immediate)
+        public func update(
+            snapshot _: LiveActivityRideSnapshot,
+            staleAfterMilliseconds _: UInt64
+        ) async throws -> LiveActivityRideUpdateOutcome {
+            throw LiveActivityRideLifecycleError.activityUnavailable
         }
 
-        activity = nil
-        lastSnapshot = nil
-        return LiveActivityRideEndOutcome(activityIDs: activities.map(\.id))
+        public func end(reason _: LiveActivityRideLifecycleEndReason) async throws -> LiveActivityRideEndOutcome {
+            LiveActivityRideEndOutcome(activityIDs: [])
+        }
     }
-
-    private func content(
-        snapshot: LiveActivityRideSnapshot,
-        staleAfterMilliseconds: UInt64
-    ) -> ActivityContent<LiveActivityRideAttributes.ContentState> {
-        let staleAt = Date().addingTimeInterval(TimeInterval(staleAfterMilliseconds) / 1_000)
-        return ActivityContent(
-            state: LiveActivityRideAttributes.ContentState(
-                snapshot: snapshot,
-                staleAt: staleAt
-            ),
-            staleDate: staleAt
-        )
-    }
-}
-#else
-public actor LiveActivityRideActivityKitManager: LiveActivityRideLifecycleManaging {
-    public init() {}
-
-    public func start(
-        snapshot _: LiveActivityRideSnapshot,
-        rideSessionIdentity _: LiveActivityRideSessionIdentity,
-        staleAfterMilliseconds _: UInt64
-    ) async throws -> LiveActivityRideStartOutcome {
-        throw LiveActivityRideLifecycleError.activityUnavailable
-    }
-
-    public func update(
-        snapshot _: LiveActivityRideSnapshot,
-        staleAfterMilliseconds _: UInt64
-    ) async throws -> LiveActivityRideUpdateOutcome {
-        throw LiveActivityRideLifecycleError.activityUnavailable
-    }
-
-    public func end(reason _: LiveActivityRideLifecycleEndReason) async throws -> LiveActivityRideEndOutcome {
-        LiveActivityRideEndOutcome(activityIDs: [])
-    }
-}
 #endif

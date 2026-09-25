@@ -75,12 +75,13 @@ enum CaptureStatus: Equatable {
         notificationCount: Int,
         fileName: String?
     ) -> String {
-        let key = switch (action, fileName) {
-        case ("started", .some): "capture.status.label_started_file"
-        case ("stopped", .some): "capture.status.label_stopped_file"
-        case ("started", nil): "capture.status.label_started"
-        default: "capture.status.label_stopped"
-        }
+        let key =
+            switch (action, fileName) {
+            case ("started", .some): "capture.status.label_started_file"
+            case ("stopped", .some): "capture.status.label_stopped_file"
+            case ("started", nil): "capture.status.label_started"
+            default: "capture.status.label_stopped"
+            }
         guard let fileName else { return localizedAppText(key, label) }
         return localizedAppText(key, label, Int64(notificationCount), fileName)
     }
@@ -104,7 +105,8 @@ enum ConnectionState: Equatable {
         switch self {
         case .picker:
             nil
-        case let .identified(selection), let .connecting(selection, _), let .retrying(selection, _), let .connected(selection), let .failed(selection, _):
+        case let .identified(selection), let .connecting(selection, _), let .retrying(selection, _),
+            let .connected(selection), let .failed(selection, _):
             selection
         }
     }

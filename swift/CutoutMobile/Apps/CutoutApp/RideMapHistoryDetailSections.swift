@@ -10,8 +10,8 @@ extension MobileRideMapError {
     }
 }
 
-private extension MobileMusicHistoryStateDto {
-    var detailTitle: String {
+extension MobileMusicHistoryStateDto {
+    fileprivate var detailTitle: String {
         switch self {
         case .missing:
             localizedAppText("music.history.state.missing")
@@ -26,7 +26,7 @@ private extension MobileMusicHistoryStateDto {
         }
     }
 
-    var detailSymbol: String {
+    fileprivate var detailSymbol: String {
         switch self {
         case .missing: "minus.circle"
         case .disabled: "nosign"

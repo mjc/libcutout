@@ -36,8 +36,8 @@ extension RideHeroReadout {
     }
 }
 
-private extension EucRideUpdateFreshness {
-    var accessibilityText: String {
+extension EucRideUpdateFreshness {
+    fileprivate var accessibilityText: String {
         switch self {
         case .fresh: localizedAppText("ride.hero.freshness.fresh")
         case .stale: localizedAppText("ride.hero.freshness.stale")
@@ -46,8 +46,8 @@ private extension EucRideUpdateFreshness {
     }
 }
 
-private extension RideHeroSeverity {
-    var accessibilityText: String {
+extension RideHeroSeverity {
+    fileprivate var accessibilityText: String {
         switch self {
         case .nominal: localizedAppText("ride.hero.severity.nominal")
         case .caution: localizedAppText("ride.hero.severity.caution")
@@ -60,7 +60,8 @@ private extension RideHeroSeverity {
 struct PevRideHeroSection: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.verticalSizeClass) private var verticalSizeClass
-    @ScaledMetric(relativeTo: .largeTitle) private var eucSpeedFontSize = PevRideHeroStyle.electricUnicycleSpeedPointSize
+    @ScaledMetric(relativeTo: .largeTitle) private var eucSpeedFontSize = PevRideHeroStyle
+        .electricUnicycleSpeedPointSize
     @ScaledMetric(relativeTo: .largeTitle) private var vescSpeedFontSize = PevRideHeroStyle.vescOnewheelSpeedPointSize
     @ScaledMetric(relativeTo: .title2) private var speedUnitFontSize = PevRideHeroStyle.unitPointSize
 

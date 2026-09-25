@@ -11,7 +11,9 @@ struct PickerDeviceRow: View {
             HStack(alignment: .top, spacing: 14) {
                 deviceSummary
                 if action != nil {
-                    Button { showsDetails = true } label: {
+                    Button {
+                        showsDetails = true
+                    } label: {
                         Image(systemName: "info.circle")
                             .font(.title3)
                             .foregroundStyle(PevColors.muted)

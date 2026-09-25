@@ -2,6 +2,7 @@ import CutoutMobile
 import CutoutMobileFFI
 import Foundation
 import XCTest
+
 @testable import CutoutApp
 
 final class RideHistoryModelTests: XCTestCase {
@@ -64,20 +65,24 @@ final class RideHistoryModelTests: XCTestCase {
         latitude: Double = 39.7000
     ) async throws -> String {
         _ = try state.startGpsOnly(atMs: startMs)
-        _ = await settle(state, try state.ingestLocation(
-            monotonicMs: startMs,
-            wallClockUnixMs: 1_700_000_000_000 + startMs,
-            latitudeDegrees: latitude,
-            longitudeDegrees: -104.9000,
-            horizontalAccuracyMeters: 5
-        ))
-        _ = await settle(state, try state.ingestLocation(
-            monotonicMs: startMs + 1_000,
-            wallClockUnixMs: 1_700_000_001_000 + startMs,
-            latitudeDegrees: latitude + 0.0001,
-            longitudeDegrees: -104.9000,
-            horizontalAccuracyMeters: 5
-        ))
+        _ = await settle(
+            state,
+            try state.ingestLocation(
+                monotonicMs: startMs,
+                wallClockUnixMs: 1_700_000_000_000 + startMs,
+                latitudeDegrees: latitude,
+                longitudeDegrees: -104.9000,
+                horizontalAccuracyMeters: 5
+            ))
+        _ = await settle(
+            state,
+            try state.ingestLocation(
+                monotonicMs: startMs + 1_000,
+                wallClockUnixMs: 1_700_000_001_000 + startMs,
+                latitudeDegrees: latitude + 0.0001,
+                longitudeDegrees: -104.9000,
+                horizontalAccuracyMeters: 5
+            ))
         _ = try state.stop(atMs: startMs + 1_000)
         return try state.save().rideID
     }
@@ -125,77 +130,86 @@ final class RideHistoryModelTests: XCTestCase {
 
     @MainActor
     func testDetailLoadGenerationRejectsDeletedOrReplacedSelection() {
-        XCTAssertTrue(RideHistoryModel.shouldApplyHistoryDetailLoad(
-            rideID: "ride-a",
-            selectedRideID: "ride-a",
-            loadGeneration: 3,
-            currentGeneration: 3,
-            isCancelled: false
-        ))
-        XCTAssertFalse(RideHistoryModel.shouldApplyHistoryDetailLoad(
-            rideID: "ride-a",
-            selectedRideID: "ride-a",
-            loadGeneration: 3,
-            currentGeneration: 4,
-            isCancelled: false
-        ))
-        XCTAssertFalse(RideHistoryModel.shouldApplyHistoryDetailLoad(
-            rideID: "ride-a",
-            selectedRideID: "ride-b",
-            loadGeneration: 3,
-            currentGeneration: 3,
-            isCancelled: false
-        ))
+        XCTAssertTrue(
+            RideHistoryModel.shouldApplyHistoryDetailLoad(
+                rideID: "ride-a",
+                selectedRideID: "ride-a",
+                loadGeneration: 3,
+                currentGeneration: 3,
+                isCancelled: false
+            ))
+        XCTAssertFalse(
+            RideHistoryModel.shouldApplyHistoryDetailLoad(
+                rideID: "ride-a",
+                selectedRideID: "ride-a",
+                loadGeneration: 3,
+                currentGeneration: 4,
+                isCancelled: false
+            ))
+        XCTAssertFalse(
+            RideHistoryModel.shouldApplyHistoryDetailLoad(
+                rideID: "ride-a",
+                selectedRideID: "ride-b",
+                loadGeneration: 3,
+                currentGeneration: 3,
+                isCancelled: false
+            ))
     }
 
     @MainActor
     func testQueryGenerationRejectsLateReloadOrPageResults() {
-        XCTAssertTrue(RideHistoryModel.shouldApplyHistoryQuery(
-            generation: 7,
-            currentGeneration: 7,
-            isCancelled: false
-        ))
-        XCTAssertFalse(RideHistoryModel.shouldApplyHistoryQuery(
-            generation: 7,
-            currentGeneration: 8,
-            isCancelled: false
-        ))
-        XCTAssertFalse(RideHistoryModel.shouldApplyHistoryQuery(
-            generation: 7,
-            currentGeneration: 7,
-            isCancelled: true
-        ))
+        XCTAssertTrue(
+            RideHistoryModel.shouldApplyHistoryQuery(
+                generation: 7,
+                currentGeneration: 7,
+                isCancelled: false
+            ))
+        XCTAssertFalse(
+            RideHistoryModel.shouldApplyHistoryQuery(
+                generation: 7,
+                currentGeneration: 8,
+                isCancelled: false
+            ))
+        XCTAssertFalse(
+            RideHistoryModel.shouldApplyHistoryQuery(
+                generation: 7,
+                currentGeneration: 7,
+                isCancelled: true
+            ))
     }
 
     @MainActor
     func testLateDetailViewportCannotRestoreInvalidatedProjection() {
-        XCTAssertTrue(RideHistoryModel.shouldApplyHistoryDetailViewport(
-            rideID: "ride-a",
-            selectedRideID: "ride-a",
-            expectedProjectionRideID: "ride-a",
-            currentProjectionRideID: "ride-a",
-            loadGeneration: 3,
-            currentGeneration: 3,
-            isCancelled: false
-        ))
-        XCTAssertFalse(RideHistoryModel.shouldApplyHistoryDetailViewport(
-            rideID: "ride-a",
-            selectedRideID: "ride-a",
-            expectedProjectionRideID: "ride-a",
-            currentProjectionRideID: nil,
-            loadGeneration: 3,
-            currentGeneration: 4,
-            isCancelled: false
-        ))
-        XCTAssertFalse(RideHistoryModel.shouldApplyHistoryDetailViewport(
-            rideID: "ride-a",
-            selectedRideID: "ride-a",
-            expectedProjectionRideID: "ride-a",
-            currentProjectionRideID: "ride-b",
-            loadGeneration: 3,
-            currentGeneration: 3,
-            isCancelled: false
-        ))
+        XCTAssertTrue(
+            RideHistoryModel.shouldApplyHistoryDetailViewport(
+                rideID: "ride-a",
+                selectedRideID: "ride-a",
+                expectedProjectionRideID: "ride-a",
+                currentProjectionRideID: "ride-a",
+                loadGeneration: 3,
+                currentGeneration: 3,
+                isCancelled: false
+            ))
+        XCTAssertFalse(
+            RideHistoryModel.shouldApplyHistoryDetailViewport(
+                rideID: "ride-a",
+                selectedRideID: "ride-a",
+                expectedProjectionRideID: "ride-a",
+                currentProjectionRideID: nil,
+                loadGeneration: 3,
+                currentGeneration: 4,
+                isCancelled: false
+            ))
+        XCTAssertFalse(
+            RideHistoryModel.shouldApplyHistoryDetailViewport(
+                rideID: "ride-a",
+                selectedRideID: "ride-a",
+                expectedProjectionRideID: "ride-a",
+                currentProjectionRideID: "ride-b",
+                loadGeneration: 3,
+                currentGeneration: 3,
+                isCancelled: false
+            ))
     }
 
     @MainActor
@@ -224,11 +238,12 @@ final class RideHistoryModelTests: XCTestCase {
             ),
             "ride-1"
         )
-        XCTAssertNil(RideHistoryModel.preferredHistorySelection(
-            requestedID: "ride-missing",
-            currentID: "ride-2",
-            summaries: ["ride-1", "ride-2"].map(Self.historySummary)
-        ))
+        XCTAssertNil(
+            RideHistoryModel.preferredHistorySelection(
+                requestedID: "ride-missing",
+                currentID: "ride-2",
+                summaries: ["ride-1", "ride-2"].map(Self.historySummary)
+            ))
         XCTAssertEqual(
             RideHistoryModel.selectionError(
                 requestedID: "ride-missing",
@@ -236,10 +251,11 @@ final class RideHistoryModelTests: XCTestCase {
             ),
             .rideNotFound
         )
-        XCTAssertNil(RideHistoryModel.selectionError(
-            requestedID: "ride-2",
-            summaries: ["ride-1", "ride-2"].map(Self.historySummary)
-        ))
+        XCTAssertNil(
+            RideHistoryModel.selectionError(
+                requestedID: "ride-2",
+                summaries: ["ride-1", "ride-2"].map(Self.historySummary)
+            ))
         XCTAssertEqual(
             RideHistoryModel.selectionAction(
                 requestedID: "ride-2",
@@ -323,14 +339,16 @@ final class RideHistoryModelTests: XCTestCase {
     func testRoutePreviewActionLoadsTheLargestBoundedPreview() async throws {
         let state = MobileRideMapState()
         _ = try state.startGpsOnly(atMs: 100)
-        for index in 0 ... 4_096 {
-            _ = await Self.settle(state, try state.ingestLocation(
-                monotonicMs: 100 + UInt64(index) * 1_000,
-                wallClockUnixMs: 1_700_000_000_100 + UInt64(index) * 1_000,
-                latitudeDegrees: 39.7000 + Double(index) * 0.00001,
-                longitudeDegrees: -104.9000,
-                horizontalAccuracyMeters: 5
-            ))
+        for index in 0...4_096 {
+            _ = await Self.settle(
+                state,
+                try state.ingestLocation(
+                    monotonicMs: 100 + UInt64(index) * 1_000,
+                    wallClockUnixMs: 1_700_000_000_100 + UInt64(index) * 1_000,
+                    latitudeDegrees: 39.7000 + Double(index) * 0.00001,
+                    longitudeDegrees: -104.9000,
+                    horizontalAccuracyMeters: 5
+                ))
         }
         _ = try state.stop(atMs: 4_096_100)
         let rideID = try state.save().rideID
@@ -363,20 +381,24 @@ final class RideHistoryModelTests: XCTestCase {
 
         func saveRide(startingAt startMs: UInt64) async throws -> String {
             _ = try state.startGpsOnly(atMs: startMs)
-            _ = await Self.settle(state, try state.ingestLocation(
-                monotonicMs: startMs,
-                wallClockUnixMs: 1_700_000_000_000 + startMs,
-                latitudeDegrees: 39.7000,
-                longitudeDegrees: -104.9000,
-                horizontalAccuracyMeters: 5
-            ))
-            _ = await Self.settle(state, try state.ingestLocation(
-                monotonicMs: startMs + 1_000,
-                wallClockUnixMs: 1_700_000_001_000 + startMs,
-                latitudeDegrees: 39.7001,
-                longitudeDegrees: -104.9000,
-                horizontalAccuracyMeters: 5
-            ))
+            _ = await Self.settle(
+                state,
+                try state.ingestLocation(
+                    monotonicMs: startMs,
+                    wallClockUnixMs: 1_700_000_000_000 + startMs,
+                    latitudeDegrees: 39.7000,
+                    longitudeDegrees: -104.9000,
+                    horizontalAccuracyMeters: 5
+                ))
+            _ = await Self.settle(
+                state,
+                try state.ingestLocation(
+                    monotonicMs: startMs + 1_000,
+                    wallClockUnixMs: 1_700_000_001_000 + startMs,
+                    latitudeDegrees: 39.7001,
+                    longitudeDegrees: -104.9000,
+                    horizontalAccuracyMeters: 5
+                ))
             _ = try state.stop(atMs: startMs + 1_000)
             return try state.save().rideID
         }
@@ -398,20 +420,24 @@ final class RideHistoryModelTests: XCTestCase {
     func testDetailViewportProjectionDoesNotReplaceHistoryProjection() async throws {
         let state = MobileRideMapState()
         _ = try state.startGpsOnly(atMs: 100)
-        _ = await Self.settle(state, try state.ingestLocation(
-            monotonicMs: 100,
-            wallClockUnixMs: 1_700_000_000_100,
-            latitudeDegrees: 39.7000,
-            longitudeDegrees: -104.9000,
-            horizontalAccuracyMeters: 5
-        ))
-        _ = await Self.settle(state, try state.ingestLocation(
-            monotonicMs: 1_100,
-            wallClockUnixMs: 1_700_000_001_100,
-            latitudeDegrees: 39.7001,
-            longitudeDegrees: -104.9000,
-            horizontalAccuracyMeters: 5
-        ))
+        _ = await Self.settle(
+            state,
+            try state.ingestLocation(
+                monotonicMs: 100,
+                wallClockUnixMs: 1_700_000_000_100,
+                latitudeDegrees: 39.7000,
+                longitudeDegrees: -104.9000,
+                horizontalAccuracyMeters: 5
+            ))
+        _ = await Self.settle(
+            state,
+            try state.ingestLocation(
+                monotonicMs: 1_100,
+                wallClockUnixMs: 1_700_000_001_100,
+                latitudeDegrees: 39.7001,
+                longitudeDegrees: -104.9000,
+                horizontalAccuracyMeters: 5
+            ))
         _ = try state.stop(atMs: 1_100)
         let rideID = try state.save().rideID
 
@@ -439,12 +465,13 @@ final class RideHistoryModelTests: XCTestCase {
         let selectedDetailProjectionVersion = model.detailProjectionVersion
         XCTAssertGreaterThan(selectedDetailProjectionVersion, initialDetailProjectionVersion)
 
-        model.projectDetailViewport(MobileGeoBoundsDto(
-            minimumLatitudeDegrees: 39.70009,
-            maximumLatitudeDegrees: 39.70011,
-            minimumLongitudeDegrees: -104.90001,
-            maximumLongitudeDegrees: -104.89999
-        ))
+        model.projectDetailViewport(
+            MobileGeoBoundsDto(
+                minimumLatitudeDegrees: 39.70009,
+                maximumLatitudeDegrees: 39.70011,
+                minimumLongitudeDegrees: -104.90001,
+                maximumLongitudeDegrees: -104.89999
+            ))
         XCTAssertTrue(model.detailRouteLoading)
         model.invalidateForMusicDeletion()
         XCTAssertFalse(model.detailRouteLoading)
@@ -457,12 +484,13 @@ final class RideHistoryModelTests: XCTestCase {
         }
         XCTAssertEqual(model.displayPoints, historyPoints)
 
-        model.projectDetailViewport(MobileGeoBoundsDto(
-            minimumLatitudeDegrees: 39.70009,
-            maximumLatitudeDegrees: 39.70011,
-            minimumLongitudeDegrees: -104.90001,
-            maximumLongitudeDegrees: -104.89999
-        ))
+        model.projectDetailViewport(
+            MobileGeoBoundsDto(
+                minimumLatitudeDegrees: 39.70009,
+                maximumLatitudeDegrees: 39.70011,
+                minimumLongitudeDegrees: -104.90001,
+                maximumLongitudeDegrees: -104.89999
+            ))
         await Self.waitUntil("detail viewport projection") {
             model.detailDisplayPoints.count == 1
         }
@@ -477,12 +505,13 @@ final class RideHistoryModelTests: XCTestCase {
         XCTAssertTrue(model.detailDisplayPoints.isEmpty)
         XCTAssertEqual(model.displayPoints, historyPoints)
 
-        model.projectDetailViewport(MobileGeoBoundsDto(
-            minimumLatitudeDegrees: 40,
-            maximumLatitudeDegrees: 39,
-            minimumLongitudeDegrees: -104.90001,
-            maximumLongitudeDegrees: -104.89999
-        ))
+        model.projectDetailViewport(
+            MobileGeoBoundsDto(
+                minimumLatitudeDegrees: 40,
+                maximumLatitudeDegrees: 39,
+                minimumLongitudeDegrees: -104.90001,
+                maximumLongitudeDegrees: -104.89999
+            ))
         await Self.waitUntil("invalid history detail viewport error") {
             model.detailRouteError != nil
         }
@@ -490,12 +519,13 @@ final class RideHistoryModelTests: XCTestCase {
         XCTAssertNil(model.routeError)
         XCTAssertFalse(model.detailRouteLoading)
 
-        model.projectDetailViewport(MobileGeoBoundsDto(
-            minimumLatitudeDegrees: 40,
-            maximumLatitudeDegrees: 41,
-            minimumLongitudeDegrees: -104,
-            maximumLongitudeDegrees: -103
-        ))
+        model.projectDetailViewport(
+            MobileGeoBoundsDto(
+                minimumLatitudeDegrees: 40,
+                maximumLatitudeDegrees: 41,
+                minimumLongitudeDegrees: -104,
+                maximumLongitudeDegrees: -103
+            ))
         await Self.waitUntil("empty history detail viewport") {
             !model.detailRouteLoading
                 && model.detailRouteError == nil
@@ -525,20 +555,24 @@ final class RideHistoryModelTests: XCTestCase {
     func testReloadFailureRetainsPreviouslySelectedRouteAndRetryRestoresIt() async throws {
         let state = MobileRideMapState()
         _ = try state.startGpsOnly(atMs: 100)
-        _ = await Self.settle(state, try state.ingestLocation(
-            monotonicMs: 100,
-            wallClockUnixMs: 1_700_000_000_100,
-            latitudeDegrees: 39.7000,
-            longitudeDegrees: -104.9000,
-            horizontalAccuracyMeters: 5
-        ))
-        _ = await Self.settle(state, try state.ingestLocation(
-            monotonicMs: 1_100,
-            wallClockUnixMs: 1_700_000_001_100,
-            latitudeDegrees: 39.7001,
-            longitudeDegrees: -104.9000,
-            horizontalAccuracyMeters: 5
-        ))
+        _ = await Self.settle(
+            state,
+            try state.ingestLocation(
+                monotonicMs: 100,
+                wallClockUnixMs: 1_700_000_000_100,
+                latitudeDegrees: 39.7000,
+                longitudeDegrees: -104.9000,
+                horizontalAccuracyMeters: 5
+            ))
+        _ = await Self.settle(
+            state,
+            try state.ingestLocation(
+                monotonicMs: 1_100,
+                wallClockUnixMs: 1_700_000_001_100,
+                latitudeDegrees: 39.7001,
+                longitudeDegrees: -104.9000,
+                horizontalAccuracyMeters: 5
+            ))
         _ = try state.stop(atMs: 1_100)
         let rideID = try state.save().rideID
 
@@ -592,20 +626,24 @@ final class RideHistoryModelTests: XCTestCase {
     func testSearchChangeRejectsLatePriorPageResult() async throws {
         let state = MobileRideMapState()
         _ = try state.startGpsOnly(atMs: 100)
-        _ = await Self.settle(state, try state.ingestLocation(
-            monotonicMs: 100,
-            wallClockUnixMs: 1_700_000_000_100,
-            latitudeDegrees: 39.7000,
-            longitudeDegrees: -104.9000,
-            horizontalAccuracyMeters: 5
-        ))
-        _ = await Self.settle(state, try state.ingestLocation(
-            monotonicMs: 1_100,
-            wallClockUnixMs: 1_700_000_001_100,
-            latitudeDegrees: 39.7001,
-            longitudeDegrees: -104.9000,
-            horizontalAccuracyMeters: 5
-        ))
+        _ = await Self.settle(
+            state,
+            try state.ingestLocation(
+                monotonicMs: 100,
+                wallClockUnixMs: 1_700_000_000_100,
+                latitudeDegrees: 39.7000,
+                longitudeDegrees: -104.9000,
+                horizontalAccuracyMeters: 5
+            ))
+        _ = await Self.settle(
+            state,
+            try state.ingestLocation(
+                monotonicMs: 1_100,
+                wallClockUnixMs: 1_700_000_001_100,
+                latitudeDegrees: 39.7001,
+                longitudeDegrees: -104.9000,
+                horizontalAccuracyMeters: 5
+            ))
         _ = try state.stop(atMs: 1_100)
         let rideID = try state.save().rideID
         let query = GatedRideHistoryQuery(base: state, failAfterRelease: false)
@@ -631,7 +669,7 @@ final class RideHistoryModelTests: XCTestCase {
         query.releaseGatedHistoryPage()
         let gatedPageFinished = await query.waitUntilGatedHistoryPageFinishes()
         XCTAssertTrue(gatedPageFinished)
-        for _ in 0 ..< 20 { await Task.yield() }
+        for _ in 0..<20 { await Task.yield() }
 
         XCTAssertEqual(model.rides.map(\.rideID), matchingRideIDs)
         XCTAssertEqual(model.selectedRideID, selectedRideID)
@@ -644,23 +682,27 @@ final class RideHistoryModelTests: XCTestCase {
     func testReloadRejectsLateCursorPageResult() async throws {
         let state = MobileRideMapState()
         let pageLimit = Int(MobileRideMapLimits.rustOwned.historyPageLimit)
-        for index in 0 ... pageLimit {
+        for index in 0...pageLimit {
             let startMs = UInt64(index + 1) * 10_000
             _ = try state.startGpsOnly(atMs: startMs)
-            _ = await Self.settle(state, try state.ingestLocation(
-                monotonicMs: startMs,
-                wallClockUnixMs: 1_700_000_000_000 + startMs,
-                latitudeDegrees: 39.7000,
-                longitudeDegrees: -104.9000,
-                horizontalAccuracyMeters: 5
-            ))
-            _ = await Self.settle(state, try state.ingestLocation(
-                monotonicMs: startMs + 1_000,
-                wallClockUnixMs: 1_700_000_001_000 + startMs,
-                latitudeDegrees: 39.7001,
-                longitudeDegrees: -104.9000,
-                horizontalAccuracyMeters: 5
-            ))
+            _ = await Self.settle(
+                state,
+                try state.ingestLocation(
+                    monotonicMs: startMs,
+                    wallClockUnixMs: 1_700_000_000_000 + startMs,
+                    latitudeDegrees: 39.7000,
+                    longitudeDegrees: -104.9000,
+                    horizontalAccuracyMeters: 5
+                ))
+            _ = await Self.settle(
+                state,
+                try state.ingestLocation(
+                    monotonicMs: startMs + 1_000,
+                    wallClockUnixMs: 1_700_000_001_000 + startMs,
+                    latitudeDegrees: 39.7001,
+                    longitudeDegrees: -104.9000,
+                    horizontalAccuracyMeters: 5
+                ))
             _ = try state.stop(atMs: startMs + 1_000)
             _ = try state.save()
         }
@@ -691,7 +733,7 @@ final class RideHistoryModelTests: XCTestCase {
         query.releaseGatedHistoryPage()
         let stalePageFinished = await query.waitUntilGatedHistoryPageFinishes()
         XCTAssertTrue(stalePageFinished)
-        for _ in 0 ..< 20 { await Task.yield() }
+        for _ in 0..<20 { await Task.yield() }
 
         XCTAssertEqual(model.rides.map(\.rideID), firstPageRideIDs)
         XCTAssertTrue(model.canLoadMore)
@@ -705,20 +747,24 @@ final class RideHistoryModelTests: XCTestCase {
 
         func saveRide(startingAt startMs: UInt64, latitude: Double) async throws -> String {
             _ = try state.startGpsOnly(atMs: startMs)
-            _ = await Self.settle(state, try state.ingestLocation(
-                monotonicMs: startMs,
-                wallClockUnixMs: 1_700_000_000_000 + startMs,
-                latitudeDegrees: latitude,
-                longitudeDegrees: -104.9000,
-                horizontalAccuracyMeters: 5
-            ))
-            _ = await Self.settle(state, try state.ingestLocation(
-                monotonicMs: startMs + 1_000,
-                wallClockUnixMs: 1_700_000_001_000 + startMs,
-                latitudeDegrees: latitude + 0.0001,
-                longitudeDegrees: -104.9000,
-                horizontalAccuracyMeters: 5
-            ))
+            _ = await Self.settle(
+                state,
+                try state.ingestLocation(
+                    monotonicMs: startMs,
+                    wallClockUnixMs: 1_700_000_000_000 + startMs,
+                    latitudeDegrees: latitude,
+                    longitudeDegrees: -104.9000,
+                    horizontalAccuracyMeters: 5
+                ))
+            _ = await Self.settle(
+                state,
+                try state.ingestLocation(
+                    monotonicMs: startMs + 1_000,
+                    wallClockUnixMs: 1_700_000_001_000 + startMs,
+                    latitudeDegrees: latitude + 0.0001,
+                    longitudeDegrees: -104.9000,
+                    horizontalAccuracyMeters: 5
+                ))
             _ = try state.stop(atMs: startMs + 1_000)
             return try state.save().rideID
         }
@@ -752,7 +798,7 @@ final class RideHistoryModelTests: XCTestCase {
         query.releaseGatedProjection()
         let staleProjectionFinished = await query.waitUntilGatedProjectionFinishes()
         XCTAssertTrue(staleProjectionFinished)
-        for _ in 0 ..< 20 { await Task.yield() }
+        for _ in 0..<20 { await Task.yield() }
 
         XCTAssertEqual(model.selectedRideID, secondRideID)
         XCTAssertEqual(model.detailProjectionRideID, secondRideID)
@@ -777,21 +823,23 @@ final class RideHistoryModelTests: XCTestCase {
         }
 
         query.armNextProjection()
-        model.projectDetailViewport(MobileGeoBoundsDto(
-            minimumLatitudeDegrees: 39.6999,
-            maximumLatitudeDegrees: 39.70001,
-            minimumLongitudeDegrees: -104.9001,
-            maximumLongitudeDegrees: -104.8999
-        ))
+        model.projectDetailViewport(
+            MobileGeoBoundsDto(
+                minimumLatitudeDegrees: 39.6999,
+                maximumLatitudeDegrees: 39.70001,
+                minimumLongitudeDegrees: -104.9001,
+                maximumLongitudeDegrees: -104.8999
+            ))
         let staleProjectionStarted = await query.waitUntilGatedProjectionStarts()
         XCTAssertTrue(staleProjectionStarted)
 
-        model.projectDetailViewport(MobileGeoBoundsDto(
-            minimumLatitudeDegrees: 39.70009,
-            maximumLatitudeDegrees: 39.70011,
-            minimumLongitudeDegrees: -104.9001,
-            maximumLongitudeDegrees: -104.8999
-        ))
+        model.projectDetailViewport(
+            MobileGeoBoundsDto(
+                minimumLatitudeDegrees: 39.70009,
+                maximumLatitudeDegrees: 39.70011,
+                minimumLongitudeDegrees: -104.9001,
+                maximumLongitudeDegrees: -104.8999
+            ))
         await Self.waitUntil("replacement same-ride viewport projection") {
             !model.detailRouteLoading && model.detailDisplayPoints.count == 1
         }
@@ -802,7 +850,7 @@ final class RideHistoryModelTests: XCTestCase {
         query.releaseGatedProjection()
         let staleProjectionFinished = await query.waitUntilGatedProjectionFinishes()
         XCTAssertTrue(staleProjectionFinished)
-        for _ in 0 ..< 20 { await Task.yield() }
+        for _ in 0..<20 { await Task.yield() }
 
         XCTAssertEqual(model.selectedRideID, rideID)
         XCTAssertEqual(model.detailProjectionRideID, rideID)
@@ -845,7 +893,7 @@ final class RideHistoryModelTests: XCTestCase {
         query.releaseGatedProjection()
         let staleProjectionFinished = await query.waitUntilGatedProjectionFinishes()
         XCTAssertTrue(staleProjectionFinished)
-        for _ in 0 ..< 20 { await Task.yield() }
+        for _ in 0..<20 { await Task.yield() }
 
         XCTAssertEqual(model.selectedRideID, rideID)
         XCTAssertEqual(model.detailProjectionRideID, rideID)
@@ -896,7 +944,7 @@ final class RideHistoryModelTests: XCTestCase {
         query.releaseGatedProjection()
         let staleProjectionFinished = await query.waitUntilGatedProjectionFinishes()
         XCTAssertTrue(staleProjectionFinished)
-        for _ in 0 ..< 20 { await Task.yield() }
+        for _ in 0..<20 { await Task.yield() }
 
         XCTAssertEqual(model.selectedRideID, rideID)
         XCTAssertEqual(model.detailProjectionRideID, rideID)
@@ -937,33 +985,39 @@ final class RideHistoryModelTests: XCTestCase {
 
     @MainActor
     func testDetailViewportPreservesSourceBudgetOmission() {
-        XCTAssertTrue(RideHistoryModel.detailPointsAreTruncated(
-            sourcePointsOmittedByBudget: true,
-            viewportPointsOmittedByBudget: false
-        ))
-        XCTAssertTrue(RideHistoryModel.detailPointsAreTruncated(
-            sourcePointsOmittedByBudget: false,
-            viewportPointsOmittedByBudget: true
-        ))
-        XCTAssertFalse(RideHistoryModel.detailPointsAreTruncated(
-            sourcePointsOmittedByBudget: false,
-            viewportPointsOmittedByBudget: false
-        ))
+        XCTAssertTrue(
+            RideHistoryModel.detailPointsAreTruncated(
+                sourcePointsOmittedByBudget: true,
+                viewportPointsOmittedByBudget: false
+            ))
+        XCTAssertTrue(
+            RideHistoryModel.detailPointsAreTruncated(
+                sourcePointsOmittedByBudget: false,
+                viewportPointsOmittedByBudget: true
+            ))
+        XCTAssertFalse(
+            RideHistoryModel.detailPointsAreTruncated(
+                sourcePointsOmittedByBudget: false,
+                viewportPointsOmittedByBudget: false
+            ))
     }
 
     @MainActor
     func testDetailViewportPreservesSourceSegmentBudgetOmission() {
-        XCTAssertTrue(RideHistoryModel.detailSegmentsAreOmitted(
-            sourceSegmentsOmittedByBudget: true,
-            viewportSegmentsOmittedByBudget: false
-        ))
-        XCTAssertTrue(RideHistoryModel.detailSegmentsAreOmitted(
-            sourceSegmentsOmittedByBudget: false,
-            viewportSegmentsOmittedByBudget: true
-        ))
-        XCTAssertFalse(RideHistoryModel.detailSegmentsAreOmitted(
-            sourceSegmentsOmittedByBudget: false,
-            viewportSegmentsOmittedByBudget: false
-        ))
+        XCTAssertTrue(
+            RideHistoryModel.detailSegmentsAreOmitted(
+                sourceSegmentsOmittedByBudget: true,
+                viewportSegmentsOmittedByBudget: false
+            ))
+        XCTAssertTrue(
+            RideHistoryModel.detailSegmentsAreOmitted(
+                sourceSegmentsOmittedByBudget: false,
+                viewportSegmentsOmittedByBudget: true
+            ))
+        XCTAssertFalse(
+            RideHistoryModel.detailSegmentsAreOmitted(
+                sourceSegmentsOmittedByBudget: false,
+                viewportSegmentsOmittedByBudget: false
+            ))
     }
 }

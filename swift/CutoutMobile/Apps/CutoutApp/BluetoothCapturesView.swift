@@ -127,11 +127,14 @@ struct CaptureArtifactDetailView: View {
         List {
             Section {
                 CaptureArtifactRow(artifact: artifact)
-                LabeledContent(localizedAppText("captures.source"), value: localizedAppText(
-                    artifact.isUserInitiated ? "captures.manual" : "captures.automatic"
-                ))
+                LabeledContent(
+                    localizedAppText("captures.source"),
+                    value: localizedAppText(
+                        artifact.isUserInitiated ? "captures.manual" : "captures.automatic"
+                    ))
                 if let progress = artifact.progress {
-                    LabeledContent(localizedAppText("capture.detail.elapsed"), value: progress.elapsedMetricValue.displayText)
+                    LabeledContent(
+                        localizedAppText("capture.detail.elapsed"), value: progress.elapsedMetricValue.displayText)
                 }
             }
             Section {

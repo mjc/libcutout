@@ -176,17 +176,19 @@ struct RideMapCanvasView: View {
         for cameraRegion: MobileRideMapCameraRegion,
         centeredOn latest: MobileRideMapRouteDisplayPoint? = nil
     ) -> MKCoordinateRegion? {
-        let center = latest.map {
-            CLLocationCoordinate2D(latitude: $0.latitudeDegrees, longitude: $0.longitudeDegrees)
-        } ?? CLLocationCoordinate2D(
-            latitude: cameraRegion.centerLatitudeDegrees,
-            longitude: cameraRegion.centerLongitudeDegrees
-        )
+        let center =
+            latest.map {
+                CLLocationCoordinate2D(latitude: $0.latitudeDegrees, longitude: $0.longitudeDegrees)
+            }
+            ?? CLLocationCoordinate2D(
+                latitude: cameraRegion.centerLatitudeDegrees,
+                longitude: cameraRegion.centerLongitudeDegrees
+            )
         guard CLLocationCoordinate2DIsValid(center),
-              cameraRegion.latitudeSpanDegrees.isFinite,
-              cameraRegion.longitudeSpanDegrees.isFinite,
-              cameraRegion.latitudeSpanDegrees > 0,
-              cameraRegion.longitudeSpanDegrees > 0
+            cameraRegion.latitudeSpanDegrees.isFinite,
+            cameraRegion.longitudeSpanDegrees.isFinite,
+            cameraRegion.latitudeSpanDegrees > 0,
+            cameraRegion.longitudeSpanDegrees > 0
         else {
             return nil
         }
@@ -205,8 +207,8 @@ struct RideMapCanvasView: View {
         let center = region.center
         let span = region.span
         guard center.latitude.isFinite, center.longitude.isFinite,
-              span.latitudeDelta.isFinite, span.longitudeDelta.isFinite,
-              span.latitudeDelta > 0, span.longitudeDelta > 0
+            span.latitudeDelta.isFinite, span.longitudeDelta.isFinite,
+            span.latitudeDelta > 0, span.longitudeDelta > 0
         else {
             return nil
         }
@@ -355,7 +357,8 @@ struct RideMapCanvasView: View {
             rebuildContextPaths()
             let cameraFitID = key.cameraFitID ?? key.routeID
             if fitsRouteOnChange, fittedRouteID != cameraFitID, points.isEmpty == false,
-               fitMap(to: cameraRegion) {
+                fitMap(to: cameraRegion)
+            {
                 fittedRouteID = cameraFitID
             }
         }
@@ -384,8 +387,8 @@ struct RideMapCanvasView: View {
 
     private func updatePaths(for key: PathKey) {
         guard let currentKey = renderedKey,
-              currentKey.routeID == key.routeID,
-              currentKey.projectionVersion == key.projectionVersion
+            currentKey.routeID == key.routeID,
+            currentKey.projectionVersion == key.projectionVersion
         else {
             rebuildPaths(for: key)
             return
@@ -397,18 +400,18 @@ struct RideMapCanvasView: View {
         }
 
         guard let firstSequence = key.firstSequence,
-              let lastSequence = key.lastSequence,
-              let renderedFirst = currentKey.firstSequence,
-              let renderedLast = currentKey.lastSequence
+            let lastSequence = key.lastSequence,
+            let renderedFirst = currentKey.firstSequence,
+            let renderedLast = currentKey.lastSequence
         else {
             rebuildPaths(for: key)
             return
         }
 
         if key.pointCount == currentKey.pointCount + 1,
-           firstSequence == renderedFirst,
-           lastSequence == renderedLast + 1,
-           let point = points.last
+            firstSequence == renderedFirst,
+            lastSequence == renderedLast + 1,
+            let point = points.last
         {
             append(point)
             renderedKey = key
@@ -416,9 +419,9 @@ struct RideMapCanvasView: View {
         }
 
         if key.pointCount == currentKey.pointCount,
-           firstSequence == renderedFirst + 1,
-           lastSequence == renderedLast + 1,
-           let point = points.last
+            firstSequence == renderedFirst + 1,
+            lastSequence == renderedLast + 1,
+            let point = points.last
         {
             dropFirstPoint()
             append(point)
