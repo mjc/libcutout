@@ -25,6 +25,11 @@ let
     after = [ "check:xcode-ios" ];
   };
   nightlyRust = pkgs.rust-bin.nightly.latest.default;
+  androidNdk =
+    (pkgs.androidenv.composeAndroidPackages {
+      includeNDK = true;
+      ndkVersion = "29.0.14206865";
+    }).ndk-bundle;
   cutoutCargoFuzz = pkgs.writeShellScriptBin "cutout-cargo-fuzz" ''
     export PATH="${nightlyRust}/bin:${pkgs.cargo-fuzz}/bin:$PATH"
     exec cargo fuzz "$@"
@@ -40,6 +45,7 @@ in
   languages.nix.enable = true;
 
   packages = [
+    androidNdk
     cutoutCargoFuzz
     pkgs.cargo-deny
     pkgs.cargo-fuzz
@@ -60,6 +66,7 @@ in
     pkgs.valgrind
   ];
 
+  env.ANDROID_NDK_ROOT = "${androidNdk}/libexec/android-sdk/ndk-bundle";
   env.JNA_JAR = "${pkgs.jna}/share/java/jna.jar";
   env.KOTLIN_COROUTINES_JAR = "${pkgs.kotlin}/lib/kotlinx-coroutines-core-jvm.jar";
 
