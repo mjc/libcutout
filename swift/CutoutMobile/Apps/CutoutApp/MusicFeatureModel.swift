@@ -3,6 +3,28 @@ import CutoutMobileFFI
 import Foundation
 import Observation
 
+@MainActor
+protocol AppleMusicMonitorDriving: AnyObject {
+    func requestAuthorization(allowPrompt: Bool) async -> Bool
+    func unauthorizedSnapshot(observedAtMs: UInt64) -> MobileMusicSnapshotDto
+    func startMonitoring(
+        observedAtMs: @escaping @MainActor () -> UInt64,
+        onObservation: @escaping @MainActor (MusicProviderObservation) -> Void
+    ) async
+    func stopMonitoring()
+    func applySuspension(_ suspension: MobileMusicProviderSuspension)
+    func refreshObservation(observedAtMs: UInt64)
+}
+
+typealias MusicMonitorPollWaiter = @MainActor @Sendable (
+    UInt64,
+    @escaping @MainActor @Sendable () -> UInt64
+) async -> Bool
+
+#if canImport(MediaPlayer) && os(iOS)
+extension AppleMusicProviderAdapter: AppleMusicMonitorDriving {}
+#endif
+
 /// App-retained owner for shared music presentation, provider lifecycle, and
 /// Rust-backed history effects. It reuses the existing domain authorities.
 @MainActor
@@ -26,6 +48,8 @@ final class MusicFeatureModel {
     @ObservationIgnored private let setRideHistoryError: @MainActor (MobileRideMapError) -> Void
 #if canImport(MediaPlayer) && os(iOS)
     @ObservationIgnored let appleProvider: AppleMusicProviderAdapter
+    @ObservationIgnored private let appleMonitor: any AppleMusicMonitorDriving
+    @ObservationIgnored private let waitForMonitorPoll: MusicMonitorPollWaiter
 #endif
 
     var settingsNowPlaying: MusicNowPlaying?
@@ -58,7 +82,9 @@ final class MusicFeatureModel {
         invalidateHistoryForDeletion: @escaping @MainActor () -> Void,
         selectedHistoryRideID: @escaping @MainActor () -> String?,
         clearSelectedHistoryMusic: @escaping @MainActor () -> Void,
-        setRideHistoryError: @escaping @MainActor (MobileRideMapError) -> Void
+        setRideHistoryError: @escaping @MainActor (MobileRideMapError) -> Void,
+        appleMonitor: (any AppleMusicMonitorDriving)? = nil,
+        monitorPollWaiter: MusicMonitorPollWaiter? = nil
     ) {
         let providerLifecycle = MobileMusicProviderLifecycle()
         let effects = MusicProviderEffectExecutor()
@@ -86,10 +112,15 @@ final class MusicFeatureModel {
             effects: effects
         )
 #if canImport(MediaPlayer) && os(iOS)
-        self.appleProvider = AppleMusicProviderAdapter(
+        let appleProvider = AppleMusicProviderAdapter(
             lifecycle: providerLifecycle,
             effects: effects
         )
+        self.appleProvider = appleProvider
+        self.appleMonitor = appleMonitor ?? appleProvider
+        self.waitForMonitorPoll = monitorPollWaiter ?? { deadlineMs, nowMs in
+            await MusicProviderEffectExecutor.wait(until: deadlineMs, nowMs: nowMs)
+        }
 #endif
         selectedProvider = providerSelectionStore.provider
         isPlayerHidden = playerVisibilityStore.isHidden
@@ -268,7 +299,7 @@ final class MusicFeatureModel {
         let observation: MusicProviderObservation
         switch selectedProvider.monitoringMode {
         case .appleMusicSystemPlayer:
-            appleProvider.refreshObservation(observedAtMs: observedAtMs)
+            appleMonitor.refreshObservation(observedAtMs: observedAtMs)
             return
         case .spotifyAppRemote:
             observation = spotifyProvider.observation(observedAtMs: observedAtMs)
@@ -284,7 +315,7 @@ final class MusicFeatureModel {
     func stopMonitoring() {
         effects.cancelAll(in: .monitor)
 #if canImport(MediaPlayer) && os(iOS)
-        appleProvider.stopMonitoring()
+        appleMonitor.stopMonitoring()
 #endif
 #if canImport(SpotifyiOS) && os(iOS)
         spotifyProvider.stopMonitoring()
@@ -304,7 +335,7 @@ final class MusicFeatureModel {
     func sceneDidEnterBackground() {
         let suspension = providerLifecycle.suspend()
 #if canImport(MediaPlayer) && os(iOS)
-        appleProvider.applySuspension(suspension)
+        appleMonitor.applySuspension(suspension)
 #endif
         spotifyProvider.applySuspension(suspension)
         if suspension.observationGap {
@@ -479,17 +510,18 @@ final class MusicFeatureModel {
         stopMonitoring()
         let generation = effect.generation
         let provider = selectedProvider
-        let appleProvider = self.appleProvider
+        let appleMonitor = self.appleMonitor
         let spotifyProvider = self.spotifyProvider
-        effects.run(.monitor(generation)) { [weak self, appleProvider, spotifyProvider] in
+        effects.run(.monitor(generation)) { [weak self, appleMonitor, spotifyProvider] in
             guard let self else { return }
             await Self.monitor(
                 provider: provider,
                 generation: generation,
                 allowAuthorization: effect.start == .authorize,
                 lifecycle: self.providerLifecycle,
-                appleProvider: appleProvider,
+                appleMonitor: appleMonitor,
                 spotifyProvider: spotifyProvider,
+                waitForPoll: self.waitForMonitorPoll,
                 isCurrent: { [weak self] in
                     guard let self else { return false }
                     return self.providerLifecycle.classifyMonitor(generation: generation) == .current
@@ -512,7 +544,7 @@ final class MusicFeatureModel {
     private func finishMonitoring(generation: MobileMusicMonitorId) {
         guard providerLifecycle.finishMonitor(generation: generation) == .current else { return }
 #if canImport(MediaPlayer) && os(iOS)
-        appleProvider.stopMonitoring()
+        appleMonitor.stopMonitoring()
 #endif
 #if canImport(SpotifyiOS) && os(iOS)
         spotifyProvider.stopMonitoring()
@@ -526,8 +558,9 @@ final class MusicFeatureModel {
         generation: MobileMusicMonitorId,
         allowAuthorization: Bool,
         lifecycle: MobileMusicProviderLifecycle,
-        appleProvider: AppleMusicProviderAdapter,
+        appleMonitor: any AppleMusicMonitorDriving,
         spotifyProvider: SpotifyProviderAdapter,
+        waitForPoll: MusicMonitorPollWaiter,
         isCurrent: @escaping @MainActor () -> Bool,
         observedAtMs: @escaping @MainActor () -> UInt64?,
         record: @escaping @MainActor (MusicProviderObservation) -> Void,
@@ -551,10 +584,7 @@ final class MusicFeatureModel {
                           nowMs: nowMs
                       ) else { return }
                 spotifyProvider.refreshPlayerState()
-                guard await MusicProviderEffectExecutor.wait(
-                    until: poll.deadlineMs,
-                    nowMs: { observedAtMs() ?? poll.deadlineMs }
-                ) else { return }
+                guard await waitForPoll(poll.deadlineMs, { observedAtMs() ?? poll.deadlineMs }) else { return }
             }
             return
         }
@@ -568,15 +598,15 @@ final class MusicFeatureModel {
             ))
             return
         }
-        guard await appleProvider.requestAuthorization(allowPrompt: allowAuthorization) else {
+        guard await appleMonitor.requestAuthorization(allowPrompt: allowAuthorization) else {
             guard !Task.isCancelled, isCurrent(), let nowMs = observedAtMs() else { return }
             record(MusicProviderObservation(
-                snapshot: appleProvider.unauthorizedSnapshot(observedAtMs: nowMs)
+                snapshot: appleMonitor.unauthorizedSnapshot(observedAtMs: nowMs)
             ))
             return
         }
         guard !Task.isCancelled, isCurrent() else { return }
-        await appleProvider.startMonitoring(
+        await appleMonitor.startMonitoring(
             observedAtMs: { observedAtMs() ?? 0 },
             onObservation: { observation in
                 guard isCurrent() else { return }
@@ -584,7 +614,7 @@ final class MusicFeatureModel {
             }
         )
         guard !Task.isCancelled, isCurrent() else { return }
-        defer { if isCurrent() { appleProvider.stopMonitoring() } }
+        defer { if isCurrent() { appleMonitor.stopMonitoring() } }
         while !Task.isCancelled {
             guard isCurrent(), let nowMs = observedAtMs(),
                   let poll = lifecycle.nextMonitorPoll(
@@ -592,11 +622,8 @@ final class MusicFeatureModel {
                       workState: .active,
                       nowMs: nowMs
                   ) else { return }
-            appleProvider.refreshObservation(observedAtMs: nowMs)
-            guard await MusicProviderEffectExecutor.wait(
-                until: poll.deadlineMs,
-                nowMs: { observedAtMs() ?? poll.deadlineMs }
-            ) else { return }
+            appleMonitor.refreshObservation(observedAtMs: nowMs)
+            guard await waitForPoll(poll.deadlineMs, { observedAtMs() ?? poll.deadlineMs }) else { return }
         }
     }
 #endif

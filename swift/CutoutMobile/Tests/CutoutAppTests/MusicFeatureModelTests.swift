@@ -135,6 +135,57 @@ final class MusicFeatureModelTests: XCTestCase {
         XCTAssertNil(model.nowPlaying?.item)
     }
 
+#if canImport(MediaPlayer) && os(iOS)
+    func testActualMonitorTaskUsesPassiveAuthorizationAndCancelsOnBackground() async throws {
+        let suite = try makeDefaults()
+        defer { suite.defaults.removePersistentDomain(forName: suite.name) }
+        let monitoring = MusicMonitoringPreferenceStore(defaults: suite.defaults)
+        monitoring.setEnabled(true)
+        let monitor = TestAppleMusicMonitor()
+        let pollWaiter = TestMusicMonitorPollWaiter()
+        var captureObservations = [MobilePevcapMusicEventDto?]()
+        let model = makeModel(
+            defaults: suite.defaults,
+            monitoringPreferenceStore: monitoring,
+            appleMonitor: monitor,
+            monitorPollWaiter: { deadlineMs, _ in
+                await pollWaiter.wait(until: deadlineMs)
+            },
+            updateCaptureObservation: { captureObservations.append($0) }
+        )
+
+        model.start(sceneIsActive: true)
+        await waitUntil("first monitor poll") { pollWaiter.startedCount == 1 }
+
+        XCTAssertEqual(monitor.authorizationPrompts, [false])
+        XCTAssertEqual(monitor.startCount, 1)
+        XCTAssertEqual(monitor.stopCount, 1, "starting a new generation first tears down any prior provider session")
+        XCTAssertEqual(model.settingsNowPlaying?.state, .playing)
+        XCTAssertEqual(model.settingsNowPlaying?.item?.identifier, "monitor-track")
+        XCTAssertTrue(model.timelineEvents.isEmpty)
+        XCTAssertFalse(captureObservations.contains { $0 != nil })
+
+        model.start(sceneIsActive: true)
+        await waitUntil("replacement monitor poll") { pollWaiter.startedCount == 2 }
+        XCTAssertEqual(monitor.startCount, 2)
+        XCTAssertEqual(monitor.stopCount, 2)
+
+        pollWaiter.releaseNext(returning: false)
+        await waitUntil("superseded monitor poll") { pollWaiter.completedCount == 1 }
+        XCTAssertEqual(monitor.stopCount, 2, "the superseded task must not stop the replacement monitor")
+
+        model.sceneDidEnterBackground()
+        XCTAssertEqual(monitor.stopCount, 3)
+        pollWaiter.releaseNext(returning: false)
+        await waitUntil("cancelled monitor poll") { pollWaiter.completedCount == 2 }
+        await Task.yield()
+
+        XCTAssertEqual(monitor.stopCount, 3, "a stale task must not tear down a later provider session")
+        XCTAssertEqual(monitor.suspensionCount, 1)
+        XCTAssertFalse(monitor.authorizationPrompts.contains(true))
+    }
+#endif
+
 #if !os(iOS)
     func testUnavailableMusicCommandPublishesVisibleFeedback() async throws {
         let suite = try makeDefaults()
@@ -251,7 +302,9 @@ final class MusicFeatureModelTests: XCTestCase {
         invalidateHistory: @escaping @MainActor () -> Void = {},
         updateCaptureObservation: @escaping @MainActor (MobilePevcapMusicEventDto?) -> Void = { _ in },
         clearSelectedHistoryMusic: @escaping @MainActor () -> Void = {},
-        setRideHistoryError: @escaping @MainActor (MobileRideMapError) -> Void = { _ in }
+        setRideHistoryError: @escaping @MainActor (MobileRideMapError) -> Void = { _ in },
+        appleMonitor: (any AppleMusicMonitorDriving)? = nil,
+        monitorPollWaiter: MusicMonitorPollWaiter? = nil
     ) -> MusicFeatureModel {
         MusicFeatureModel(
             providerSelectionStore: MusicProviderSelectionStore(defaults: defaults),
@@ -264,8 +317,24 @@ final class MusicFeatureModelTests: XCTestCase {
             invalidateHistoryForDeletion: invalidateHistory,
             selectedHistoryRideID: selectedRideID,
             clearSelectedHistoryMusic: clearSelectedHistoryMusic,
-            setRideHistoryError: setRideHistoryError
+            setRideHistoryError: setRideHistoryError,
+            appleMonitor: appleMonitor,
+            monitorPollWaiter: monitorPollWaiter
         )
+    }
+
+    private func waitUntil(
+        _ description: String,
+        maxTurns: Int = 10_000,
+        file: StaticString = #filePath,
+        line: UInt = #line,
+        condition: @escaping @MainActor () -> Bool
+    ) async {
+        for _ in 0 ..< maxTurns {
+            if condition() { return }
+            await Task.yield()
+        }
+        XCTFail("timed out waiting for \(description)", file: file, line: line)
     }
 
     private func makeDefaults() throws -> (name: String, defaults: UserDefaults) {
@@ -292,3 +361,80 @@ final class MusicFeatureModelTests: XCTestCase {
         ))
     }
 }
+
+#if canImport(MediaPlayer) && os(iOS)
+@MainActor
+private final class TestAppleMusicMonitor: AppleMusicMonitorDriving {
+    private(set) var authorizationPrompts = [Bool]()
+    private(set) var startCount = 0
+    private(set) var stopCount = 0
+    private(set) var suspensionCount = 0
+
+    func requestAuthorization(allowPrompt: Bool) async -> Bool {
+        authorizationPrompts.append(allowPrompt)
+        return true
+    }
+
+    func unauthorizedSnapshot(observedAtMs: UInt64) -> MobileMusicSnapshotDto {
+        MobileMusicSnapshotDto(
+            provider: .appleMusic,
+            sessionId: "test-monitor",
+            state: .unauthorized,
+            item: nil,
+            positionMilliseconds: nil,
+            durationMilliseconds: nil,
+            observedAtMs: observedAtMs,
+            capabilities: .init(previous: false, play: false, pause: false, next: false, openProvider: true)
+        )
+    }
+
+    func startMonitoring(
+        observedAtMs: @escaping @MainActor () -> UInt64,
+        onObservation: @escaping @MainActor (MusicProviderObservation) -> Void
+    ) async {
+        startCount += 1
+        onObservation(MusicProviderObservation(snapshot: MobileMusicSnapshotDto(
+            provider: .appleMusic,
+            sessionId: "test-monitor",
+            state: .playing,
+            item: .init(identifier: "monitor-track", title: "Track", artist: "Artist"),
+            positionMilliseconds: nil,
+            durationMilliseconds: nil,
+            observedAtMs: observedAtMs(),
+            capabilities: .init(previous: false, play: true, pause: true, next: false, openProvider: true)
+        )))
+    }
+
+    func stopMonitoring() {
+        stopCount += 1
+    }
+
+    func applySuspension(_ suspension: MobileMusicProviderSuspension) {
+        _ = suspension
+        suspensionCount += 1
+    }
+
+    func refreshObservation(observedAtMs: UInt64) {
+        _ = observedAtMs
+    }
+}
+
+@MainActor
+private final class TestMusicMonitorPollWaiter {
+    private var continuations = [CheckedContinuation<Bool, Never>]()
+    private(set) var startedCount = 0
+    private(set) var completedCount = 0
+
+    func wait(until _: UInt64) async -> Bool {
+        startedCount += 1
+        let result = await withCheckedContinuation { continuations.append($0) }
+        completedCount += 1
+        return result
+    }
+
+    func releaseNext(returning result: Bool) {
+        guard !continuations.isEmpty else { return }
+        continuations.removeFirst().resume(returning: result)
+    }
+}
+#endif
