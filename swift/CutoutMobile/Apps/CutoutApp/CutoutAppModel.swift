@@ -159,6 +159,19 @@ final class CutoutAppModel {
     private(set) var phoneAlarmSettings: MobilePhoneAlarmPreferencesDto?
     private(set) var phoneAlarmAuthorization = PhoneRideAlarmAuthorization.unavailable
     private(set) var phoneAlarmDeliveryError: String?
+    private(set) var cameraMediaReferences: [CameraMediaReference] = []
+    private static let maximumCameraMediaReferences = 64
+
+    /// Supplies the active capture identity to the camera route without
+    /// giving the view ownership of capture state.
+    var currentCameraCaptureFileName: () -> String? {
+        { [weak self] in self?.capture.fileName }
+    }
+
+    /// Exposes the Rust-owned camera/session state to the camera route.
+    var cameraSessionStateHandle: CutoutSessionStateHandle {
+        core.rideSessionStateHandle
+    }
 
     var selectedRideTitle: String? {
         connectionState.selection?.title
@@ -425,6 +438,74 @@ final class CutoutAppModel {
 
     var connectionStatusText: String {
         connectionState.statusText ?? phase.displayText
+    }
+
+    func annotateCapture(key: String, value: String) {
+        _ = core.annotateCapture(key: key, value: value)
+    }
+
+    /// Records a completed camera download against the capture identity that
+    /// was captured when the operation started.
+    func recordCameraMediaReference(
+        captureFileName: String,
+        source: CameraSourceKind = .novatekR3Pro,
+        media: CameraMediaEvidence,
+        localURL: URL
+    ) {
+        guard !captureFileName.isEmpty else { return }
+        guard capture.activeGeneration != nil else { return }
+        guard captureFileName == capture.fileName else { return }
+        guard !cameraMediaReferences.contains(where: {
+            $0.rideCaptureFileName == captureFileName
+                && $0.cameraPath == media.path
+        }) else { return }
+
+        let input = MobileCameraMediaProvenanceInput(
+            source: source.mobileDto,
+            cameraPath: media.path,
+            sizeBytes: media.sizeBytes,
+            cameraTimecode: media.timecode,
+            cameraTime: media.time,
+            rideCaptureFileName: captureFileName,
+            capturedAtMonotonicMs: currentMonotonicTime.rawValue,
+            capturedAtWallClockMs: UInt64(max(0, Date().timeIntervalSince1970 * 1_000)),
+            clockUncertainty: .unknown
+        )
+        let sessionState = core.rideSessionStateHandle
+        guard (try? sessionState.recordCameraMediaProvenance(input: input)) != nil else {
+            return
+        }
+        guard let provenance = sessionState.cameraMediaProvenance().first(where: {
+            $0.source == source.mobileDto
+                && $0.cameraPath == media.path
+                && $0.rideCaptureFileName == captureFileName
+        }) else {
+            return
+        }
+
+        let reference = CameraMediaReference(provenance: provenance, localURL: localURL)
+        cameraMediaReferences.append(reference)
+        if cameraMediaReferences.count > Self.maximumCameraMediaReferences {
+            cameraMediaReferences.removeFirst()
+        }
+    }
+
+    func recordCameraMediaReference(
+        source: CameraSourceKind,
+        media: CameraMediaEvidence,
+        localURL: URL
+    ) {
+        guard let captureFileName = capture.fileName else { return }
+        recordCameraMediaReference(
+            captureFileName: captureFileName,
+            source: source,
+            media: media,
+            localURL: localURL
+        )
+    }
+
+    func recordCameraMediaReference(media: CameraMediaEvidence, localURL: URL) {
+        recordCameraMediaReference(source: .novatekR3Pro, media: media, localURL: localURL)
     }
 
     private let core: any CutoutSessionDriving
@@ -3174,6 +3255,10 @@ final class CutoutAppModel {
     }
 
     func applyCaptureEvent(_ event: CaptureEvent) {
+        if case .started = event {
+            core.rideSessionStateHandle.clearCameraMediaProvenance()
+            cameraMediaReferences.removeAll(keepingCapacity: true)
+        }
         capture.apply(event)
     }
 

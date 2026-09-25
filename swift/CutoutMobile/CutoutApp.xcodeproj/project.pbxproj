@@ -35,6 +35,10 @@
 		300000000000000000000011 /* Apps/CutoutApp/EucRideViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000011 /* Apps/CutoutApp/EucRideViews.swift */; };
 		300000000000000000000012 /* Apps/CutoutApp/PevScreenTitleBlock.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000012 /* Apps/CutoutApp/PevScreenTitleBlock.swift */; };
 		300000000000000000000013 /* Apps/CutoutApp/PevDashboardScaffoldViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000013 /* Apps/CutoutApp/PevDashboardScaffoldViews.swift */; };
+		300000000000000000000014 /* Apps/CutoutApp/CameraRouteView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000014 /* Apps/CutoutApp/CameraRouteView.swift */; };
+		CA8500000000000000000001 /* Apps/CutoutApp/CameraControlModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA8500000000000000000011 /* Apps/CutoutApp/CameraControlModel.swift */; };
+		CA8500000000000000000002 /* Apps/CutoutApp/CameraMediaModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA8500000000000000000012 /* Apps/CutoutApp/CameraMediaModel.swift */; };
+		CA8500000000000000000003 /* Apps/CutoutApp/CameraDiscoveryModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA8500000000000000000013 /* Apps/CutoutApp/CameraDiscoveryModel.swift */; };
 		300000000000000000000015 /* Apps/CutoutApp/PevScreenTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000015 /* Apps/CutoutApp/PevScreenTheme.swift */; };
 		300000000000000000000016 /* Apps/CutoutApp/VescDebugViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000016 /* Apps/CutoutApp/VescDebugViews.swift */; };
 		300000000000000000000017 /* Apps/CutoutApp/VescRideViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000017 /* Apps/CutoutApp/VescRideViews.swift */; };
@@ -138,6 +142,10 @@
 		400000000000000000000011 /* Apps/CutoutApp/EucRideViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/EucRideViews.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000012 /* Apps/CutoutApp/PevScreenTitleBlock.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/PevScreenTitleBlock.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000013 /* Apps/CutoutApp/PevDashboardScaffoldViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/PevDashboardScaffoldViews.swift; sourceTree = SOURCE_ROOT; };
+		400000000000000000000014 /* Apps/CutoutApp/CameraRouteView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/CameraRouteView.swift; sourceTree = SOURCE_ROOT; };
+		CA8500000000000000000011 /* Apps/CutoutApp/CameraControlModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/CameraControlModel.swift; sourceTree = SOURCE_ROOT; };
+		CA8500000000000000000012 /* Apps/CutoutApp/CameraMediaModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/CameraMediaModel.swift; sourceTree = SOURCE_ROOT; };
+		CA8500000000000000000013 /* Apps/CutoutApp/CameraDiscoveryModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/CameraDiscoveryModel.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000015 /* Apps/CutoutApp/PevScreenTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/PevScreenTheme.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000016 /* Apps/CutoutApp/VescDebugViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/VescDebugViews.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000017 /* Apps/CutoutApp/VescRideViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/VescRideViews.swift; sourceTree = SOURCE_ROOT; };
@@ -224,6 +232,10 @@
 				111111111111111111111122 /* Apps/CutoutApp/ContentView.swift */,
 				C00100000000000000000011 /* Apps/CutoutApp/TabAccentColors.swift */,
 				111111111111111111111123 /* Apps/CutoutApp/CutoutAppModel.swift */,
+				400000000000000000000014 /* Apps/CutoutApp/CameraRouteView.swift */,
+				CA8500000000000000000011 /* Apps/CutoutApp/CameraControlModel.swift */,
+				CA8500000000000000000012 /* Apps/CutoutApp/CameraMediaModel.swift */,
+				CA8500000000000000000013 /* Apps/CutoutApp/CameraDiscoveryModel.swift */,
 				40000000000000000000001B /* Apps/CutoutApp/CutoutAppState.swift */,
 				40000000000000000000001C /* Apps/CutoutApp/CutoutRouteViews.swift */,
 				5EC7F605A4BE4DD590E4C995 /* Apps/CutoutApp/DeviceControlsForm.swift */,
@@ -471,6 +483,10 @@
 				111111111111111111111112 /* Apps/CutoutApp/ContentView.swift in Sources */,
 				C00100000000000000000001 /* Apps/CutoutApp/TabAccentColors.swift in Sources */,
 				111111111111111111111113 /* Apps/CutoutApp/CutoutAppModel.swift in Sources */,
+				300000000000000000000014 /* Apps/CutoutApp/CameraRouteView.swift in Sources */,
+				CA8500000000000000000001 /* Apps/CutoutApp/CameraControlModel.swift in Sources */,
+				CA8500000000000000000002 /* Apps/CutoutApp/CameraMediaModel.swift in Sources */,
+				CA8500000000000000000003 /* Apps/CutoutApp/CameraDiscoveryModel.swift in Sources */,
 				30000000000000000000001B /* Apps/CutoutApp/CutoutAppState.swift in Sources */,
 				30000000000000000000001C /* Apps/CutoutApp/CutoutRouteViews.swift in Sources */,
 				A6FD381C839A4BD98A66DDD6 /* Apps/CutoutApp/DeviceControlsForm.swift in Sources */,

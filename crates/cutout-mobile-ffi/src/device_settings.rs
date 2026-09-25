@@ -317,7 +317,7 @@ impl From<DeviceSettingSnapshot> for MobileSettingSnapshotDto {
             request_id: value.request_id,
             status: value.status.into(),
             transport: value.transport.map(Into::into),
-            age_ms: value.age.map(cutout_core::Duration::as_milliseconds),
+            age_ms: value.age.map(cutout_core::Quantity::as_milliseconds),
             refusal: value
                 .refusal
                 .map(|reason| cutout_core::ControlRefusalReasonDto::from(reason).into()),
@@ -496,7 +496,8 @@ impl CutoutSessionStateHandle {
     ///
     /// # Errors
     ///
-    /// Returns the typed connection, validation, or protocol refusal.
+    /// Returns [`MobileDeviceSettingRequestError`] when the token or requested setting is not
+    /// admitted by the Rust-owned protocol state.
     pub fn submit_setting(
         &self,
         token: MobileConnectionAttemptTokenDto,

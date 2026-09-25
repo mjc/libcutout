@@ -26,10 +26,11 @@ pub use capture_history::*;
 use std::{
     collections::VecDeque,
     convert::TryFrom,
+    net::Ipv4Addr,
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex, MutexGuard, PoisonError,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -44,10 +45,17 @@ use cutout_core::{
     BatteryCurrent as CoreBatteryCurrent, BatteryCurrentReadingDto, BatteryInfoDto,
     BatteryLevel as CoreBatteryLevel, BatteryLevelBasis, BatteryLevelReadingDto,
     BatteryPageKindDto, BatteryReadbackAvailabilityDto, BatteryReadbackDto,
-    BluetoothServiceUuid as CoreBluetoothServiceUuid, Capacity, ChargeEstimateError,
-    ChargeEstimateInput, ChargeEstimateResetReason, ChargeEstimateState,
-    ChargeEstimateUnavailableReason, ChargeFlow, ChargeMode, ChargeModeDto, ChargeModeReadingDto,
-    ChargeProfileIdentity, ChargeSessionIdentity, ChargeTimeEstimate, ControlRefusalReasonDto,
+    BluetoothServiceUuid as CoreBluetoothServiceUuid,
+    CameraClockUncertainty as CoreCameraClockUncertainty,
+    CameraMediaCaptureTiming as CoreCameraMediaCaptureTiming,
+    CameraMediaProvenance as CoreCameraMediaProvenance,
+    CameraMediaProvenanceError as CoreCameraMediaProvenanceError,
+    CameraOnboardRecordingState as CoreCameraOnboardRecordingState,
+    CameraPreviewState as CoreCameraPreviewState, CameraSessionToken as CoreCameraSessionToken,
+    CameraSourceKind as CoreCameraSourceKind, Capacity, ChargeEstimateError, ChargeEstimateInput,
+    ChargeEstimateResetReason, ChargeEstimateState, ChargeEstimateUnavailableReason, ChargeFlow,
+    ChargeMode, ChargeModeDto, ChargeModeReadingDto, ChargeProfileIdentity, ChargeSessionIdentity,
+    ChargeTimeEstimate, ControlRefusalReasonDto,
     DeviceConnectionIntent as CoreDeviceConnectionIntent, DiscoveryCandidateSnapshot,
     DiscoveryCandidateSupport as CoreDiscoveryCandidateSupport,
     DiscoveryConnectionRoute as CoreDiscoveryConnectionRoute,
@@ -95,19 +103,1110 @@ use cutout_music::{
 use cutout_protocols::{
     BEGODE_DATA_CHANNEL, BEGODE_FALCON_REGISTRY_ENTRY, ConcreteSessionErrorDto,
     ConcreteSessionStepResultDto, DeviceDetectionEvent, DeviceDetectionResolution, DeviceFamily,
-    IdentityBannerEvidence, NOSFET_AERO_REGISTRY_ENTRY, PendingProbe, ProtocolFamilyClassification,
-    ProtocolFamilyState, ProtocolModelIdentityEvidence, StagedIdentityInput, StagedIdentityOutcome,
+    H264FileSink, IdentityBannerEvidence, NOSFET_AERO_REGISTRY_ENTRY, NovatekCapabilityError,
+    NovatekCommandOutcome, NovatekConfiguration, NovatekConfigurationError, NovatekHttpOrigin,
+    NovatekMediaPathError, NovatekMediaThumbnailError, NovatekOriginError, NovatekProfileError,
+    NovatekR3V1Profile, NovatekR3V1Session, NovatekReadCommand, NovatekRecordingCommand,
+    NovatekSessionError, NovatekStillCaptureCommand, NovatekStoragePresence, PendingProbe,
+    ProtocolFamilyClassification, ProtocolFamilyState, ProtocolModelIdentityEvidence, RtspError,
+    RtspPreviewSession, StagedIdentityInput, StagedIdentityOutcome,
     VescBatteryType as CoreVescBatteryType, VescBoardProfile as CoreVescBoardProfile,
-    VescReadOnlySession as CoreVescReadOnlySession, closest_known_model, identify_known_model,
+    VescReadOnlySession as CoreVescReadOnlySession, VideoClockRate, VideoConfiguration, VideoFrame,
+    closest_known_model, identify_known_model, is_r3_pro_firmware, parse_read_only_snapshot,
 };
 use cutout_ride_maps as ride_maps;
 use libcutout_persistence as persistence;
+use tokio::sync::Notify;
 use uuid::Uuid;
 
 uniffi::setup_scaffolding!();
 
 mod music_provider_lifecycle;
 pub use music_provider_lifecycle::*;
+
+/// Foreground preview state owned by the Rust camera session.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileCameraPreviewStateDto {
+    /// No preview is active.
+    Stopped,
+    /// Preview is waiting for usable media.
+    Buffering,
+    /// Preview is receiving current media.
+    Live,
+    /// The most recent preview media is no longer current.
+    Stale,
+    /// An active preview was interrupted.
+    Interrupted,
+    /// The selected camera cannot provide a preview.
+    Unavailable,
+}
+
+/// Authoritative onboard recording state owned by the Rust camera session.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileCameraOnboardRecordingStateDto {
+    /// Recording readback has not arrived.
+    Unknown,
+    /// Camera confirmed that onboard recording is stopped.
+    Stopped,
+    /// Camera confirmed that onboard recording is active.
+    Recording,
+}
+
+/// Current camera state returned by the Rust session handle.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileCameraSnapshotDto {
+    /// Foreground RTSP preview state.
+    pub preview: MobileCameraPreviewStateDto,
+    /// Camera-reported onboard recording state.
+    pub onboard_recording: MobileCameraOnboardRecordingStateDto,
+}
+
+/// Opaque identity for asynchronous work belonging to one camera lifecycle.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileCameraSessionTokenDto {
+    /// Lifecycle generation captured when the work began.
+    pub generation: u64,
+}
+
+impl From<CoreCameraSessionToken> for MobileCameraSessionTokenDto {
+    fn from(token: CoreCameraSessionToken) -> Self {
+        Self {
+            generation: token.generation(),
+        }
+    }
+}
+
+impl From<MobileCameraSessionTokenDto> for CoreCameraSessionToken {
+    fn from(token: MobileCameraSessionTokenDto) -> Self {
+        Self::new(token.generation)
+    }
+}
+
+/// Camera source identity attached to media provenance.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileCameraSourceKindDto {
+    /// Verified `FreedConn` R3 Pro Novatek profile.
+    NovatekR3Pro,
+    /// Standard RTSP camera source.
+    Rtsp,
+    /// Deterministic fixture source used by tests and replay.
+    Fixture,
+}
+
+/// Confidence available for camera/phone clock alignment.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileCameraClockUncertaintyDto {
+    /// No clock relationship was established.
+    Unknown,
+    /// Clocks may differ by at most this many milliseconds.
+    Milliseconds { value: u64 },
+}
+
+/// Camera-media provenance submitted by a mobile adapter after a bounded download.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileCameraMediaProvenanceInput {
+    /// Camera source identity.
+    pub source: MobileCameraSourceKindDto,
+    /// Camera-reported media path.
+    pub camera_path: String,
+    /// Camera-reported media size in bytes.
+    pub size_bytes: u64,
+    /// Camera-reported media timecode.
+    pub camera_timecode: u64,
+    /// Camera-reported display time, when available.
+    pub camera_time: String,
+    /// Associated ride capture file name.
+    pub ride_capture_file_name: String,
+    /// Host monotonic time when the association was captured.
+    pub captured_at_monotonic_ms: u64,
+    /// Host wall-clock time when the association was captured.
+    pub captured_at_wall_clock_ms: u64,
+    /// Explicit camera/phone clock uncertainty.
+    pub clock_uncertainty: MobileCameraClockUncertaintyDto,
+}
+
+/// Camera-media provenance returned from the Rust session state.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileCameraMediaProvenanceDto {
+    /// Camera source identity.
+    pub source: MobileCameraSourceKindDto,
+    /// Camera-reported media path.
+    pub camera_path: String,
+    /// Camera-reported media size in bytes.
+    pub size_bytes: u64,
+    /// Camera-reported media timecode.
+    pub camera_timecode: u64,
+    /// Camera-reported display time, when available.
+    pub camera_time: String,
+    /// Associated ride capture file name.
+    pub ride_capture_file_name: String,
+    /// Host monotonic time when the association was captured.
+    pub captured_at_monotonic_ms: u64,
+    /// Host wall-clock time when the association was captured.
+    pub captured_at_wall_clock_ms: u64,
+    /// Explicit camera/phone clock uncertainty.
+    pub clock_uncertainty: MobileCameraClockUncertaintyDto,
+}
+
+/// Failure returned when a mobile adapter submits unbounded camera provenance.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
+pub enum MobileCameraMediaProvenanceError {
+    /// The camera path is empty.
+    #[error("camera media path is empty")]
+    EmptyCameraPath,
+    /// The camera path exceeds Rust's bound.
+    #[error("camera media path is too long")]
+    CameraPathTooLong,
+    /// The camera display time exceeds Rust's bound.
+    #[error("camera media time is too long")]
+    CameraTimeTooLong,
+    /// The ride capture name is empty.
+    #[error("ride capture file name is empty")]
+    EmptyRideCaptureFileName,
+    /// The ride capture name exceeds Rust's bound.
+    #[error("ride capture file name is too long")]
+    RideCaptureFileNameTooLong,
+}
+
+/// Lifecycle observation emitted by a platform RTSP transport.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileCameraPreviewEventDto {
+    /// A preview transport has started and is waiting for its first frame.
+    Started,
+    /// An encoded preview frame was received.
+    FrameReceived,
+    /// An active preview transport was interrupted.
+    Interrupted,
+    /// The preview transport was deliberately stopped.
+    Stopped,
+    /// The selected source cannot provide a preview.
+    Unavailable,
+}
+
+/// One encoded video access unit returned by the RTSP preview session.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileCameraVideoFrameDto {
+    /// Encoded frame bytes in the source codec format.
+    pub data: Vec<u8>,
+    /// SPS/PPS NAL units extracted by the Rust H.264 boundary.
+    pub parameter_sets: Vec<Vec<u8>>,
+    /// Number of lost RTP packets before this frame.
+    pub loss: u16,
+    /// Whether this frame is a random-access point.
+    pub is_random_access_point: bool,
+    /// Presentation timestamp in the stream's clock units.
+    pub timestamp: i64,
+    /// Clock rate associated with `timestamp`, in Hz.
+    pub clock_rate_hz: u32,
+}
+
+/// Codec configuration advertised by the camera's RTSP SDP.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileCameraVideoConfigurationDto {
+    /// RFC 6381 codec identifier, for example `avc1.4D401E`.
+    pub codec: String,
+    /// Coded width in pixels.
+    pub width: u32,
+    /// Coded height in pixels.
+    pub height: u32,
+    /// SPS/PPS NAL units extracted from the codec configuration.
+    pub parameter_sets: Vec<Vec<u8>>,
+}
+
+/// Failure returned by the mobile RTSP preview object.
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
+pub enum MobileCameraPreviewError {
+    /// The supplied URI was not an RTSP URI.
+    #[error("invalid RTSP URI")]
+    InvalidUri,
+    /// The URI did not identify a validated local IPv4 camera origin.
+    #[error("RTSP endpoint is not local")]
+    NonLocalUri,
+    /// The URI differs from the explicitly selected camera origin.
+    #[error("RTSP endpoint does not match the camera origin")]
+    OriginMismatch,
+    /// The RTSP server advertised no H.264 video stream.
+    #[error("RTSP session has no H.264 video stream")]
+    UnsupportedVideoCodec,
+    /// An encoded access unit exceeded the fixed mobile memory budget.
+    #[error("RTSP video frame is too large")]
+    VideoFrameTooLarge,
+    /// The preview object has already been stopped or ended.
+    #[error("RTSP preview is not running")]
+    NotRunning,
+    /// RTSP failed while negotiating or consuming the session.
+    #[error("RTSP session failed")]
+    Session,
+}
+
+impl From<RtspError> for MobileCameraPreviewError {
+    fn from(error: RtspError) -> Self {
+        match error {
+            RtspError::InvalidUri => Self::InvalidUri,
+            RtspError::NonLocalUri => Self::NonLocalUri,
+            RtspError::OriginMismatch => Self::OriginMismatch,
+            RtspError::UnsupportedVideoCodec => Self::UnsupportedVideoCodec,
+            RtspError::VideoFrameTooLarge { .. } => Self::VideoFrameTooLarge,
+            RtspError::Session(_) => Self::Session,
+        }
+    }
+}
+
+/// Async mobile RTSP preview session backed by the Rust RTSP transport.
+#[derive(Debug, uniffi::Object)]
+pub struct MobileCameraPreviewSession {
+    inner: Mutex<Option<RtspPreviewSession>>,
+    video_configuration: Mutex<Option<VideoConfiguration>>,
+    stop: Arc<Notify>,
+    stopped: AtomicBool,
+    generation: AtomicU64,
+}
+
+impl From<CoreCameraPreviewState> for MobileCameraPreviewStateDto {
+    fn from(state: CoreCameraPreviewState) -> Self {
+        match state {
+            CoreCameraPreviewState::Stopped => Self::Stopped,
+            CoreCameraPreviewState::Buffering => Self::Buffering,
+            CoreCameraPreviewState::Live => Self::Live,
+            CoreCameraPreviewState::Stale => Self::Stale,
+            CoreCameraPreviewState::Interrupted => Self::Interrupted,
+            _ => Self::Unavailable,
+        }
+    }
+}
+
+impl From<MobileCameraPreviewStateDto> for CoreCameraPreviewState {
+    fn from(state: MobileCameraPreviewStateDto) -> Self {
+        match state {
+            MobileCameraPreviewStateDto::Stopped => Self::Stopped,
+            MobileCameraPreviewStateDto::Buffering => Self::Buffering,
+            MobileCameraPreviewStateDto::Live => Self::Live,
+            MobileCameraPreviewStateDto::Stale => Self::Stale,
+            MobileCameraPreviewStateDto::Interrupted => Self::Interrupted,
+            MobileCameraPreviewStateDto::Unavailable => Self::Unavailable,
+        }
+    }
+}
+
+impl From<CoreCameraOnboardRecordingState> for MobileCameraOnboardRecordingStateDto {
+    fn from(state: CoreCameraOnboardRecordingState) -> Self {
+        match state {
+            CoreCameraOnboardRecordingState::Stopped => Self::Stopped,
+            CoreCameraOnboardRecordingState::Recording => Self::Recording,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+impl From<MobileCameraOnboardRecordingStateDto> for CoreCameraOnboardRecordingState {
+    fn from(state: MobileCameraOnboardRecordingStateDto) -> Self {
+        match state {
+            MobileCameraOnboardRecordingStateDto::Unknown => Self::Unknown,
+            MobileCameraOnboardRecordingStateDto::Stopped => Self::Stopped,
+            MobileCameraOnboardRecordingStateDto::Recording => Self::Recording,
+        }
+    }
+}
+
+impl From<cutout_core::CameraSessionState> for MobileCameraSnapshotDto {
+    fn from(state: cutout_core::CameraSessionState) -> Self {
+        Self {
+            preview: state.preview().into(),
+            onboard_recording: state.onboard_recording().into(),
+        }
+    }
+}
+
+impl From<MobileCameraSourceKindDto> for CoreCameraSourceKind {
+    fn from(source: MobileCameraSourceKindDto) -> Self {
+        match source {
+            MobileCameraSourceKindDto::NovatekR3Pro => Self::NovatekR3Pro,
+            MobileCameraSourceKindDto::Rtsp => Self::Rtsp,
+            MobileCameraSourceKindDto::Fixture => Self::Fixture,
+        }
+    }
+}
+
+impl From<CoreCameraSourceKind> for MobileCameraSourceKindDto {
+    fn from(source: CoreCameraSourceKind) -> Self {
+        match source {
+            CoreCameraSourceKind::NovatekR3Pro => Self::NovatekR3Pro,
+            CoreCameraSourceKind::Rtsp => Self::Rtsp,
+            CoreCameraSourceKind::Fixture => Self::Fixture,
+        }
+    }
+}
+
+impl From<MobileCameraClockUncertaintyDto> for CoreCameraClockUncertainty {
+    fn from(uncertainty: MobileCameraClockUncertaintyDto) -> Self {
+        match uncertainty {
+            MobileCameraClockUncertaintyDto::Unknown => Self::Unknown,
+            MobileCameraClockUncertaintyDto::Milliseconds { value } => Self::Milliseconds(value),
+        }
+    }
+}
+
+impl From<CoreCameraClockUncertainty> for MobileCameraClockUncertaintyDto {
+    fn from(uncertainty: CoreCameraClockUncertainty) -> Self {
+        match uncertainty {
+            CoreCameraClockUncertainty::Unknown => Self::Unknown,
+            CoreCameraClockUncertainty::Milliseconds(value) => Self::Milliseconds { value },
+        }
+    }
+}
+
+impl From<&CoreCameraMediaProvenance> for MobileCameraMediaProvenanceDto {
+    fn from(record: &CoreCameraMediaProvenance) -> Self {
+        Self {
+            source: record.source().into(),
+            camera_path: record.camera_path().to_owned(),
+            size_bytes: record.size_bytes(),
+            camera_timecode: record.camera_timecode(),
+            camera_time: record.camera_time().to_owned(),
+            ride_capture_file_name: record.ride_capture_file_name().to_owned(),
+            captured_at_monotonic_ms: record.captured_at_monotonic().as_milliseconds(),
+            captured_at_wall_clock_ms: record.captured_at_wall_clock().as_milliseconds(),
+            clock_uncertainty: record.clock_uncertainty().into(),
+        }
+    }
+}
+
+impl From<CoreCameraMediaProvenanceError> for MobileCameraMediaProvenanceError {
+    fn from(error: CoreCameraMediaProvenanceError) -> Self {
+        match error {
+            CoreCameraMediaProvenanceError::EmptyCameraPath => Self::EmptyCameraPath,
+            CoreCameraMediaProvenanceError::CameraPathTooLong => Self::CameraPathTooLong,
+            CoreCameraMediaProvenanceError::CameraTimeTooLong => Self::CameraTimeTooLong,
+            CoreCameraMediaProvenanceError::EmptyRideCaptureFileName => {
+                Self::EmptyRideCaptureFileName
+            }
+            CoreCameraMediaProvenanceError::RideCaptureFileNameTooLong => {
+                Self::RideCaptureFileNameTooLong
+            }
+        }
+    }
+}
+
+impl MobileCameraMediaProvenanceInput {
+    fn into_core(self) -> Result<CoreCameraMediaProvenance, MobileCameraMediaProvenanceError> {
+        CoreCameraMediaProvenance::new(
+            self.source.into(),
+            &self.camera_path,
+            self.size_bytes,
+            self.camera_timecode,
+            &self.camera_time,
+            &self.ride_capture_file_name,
+            CoreCameraMediaCaptureTiming {
+                captured_at_monotonic: MonotonicTimestamp::new(self.captured_at_monotonic_ms),
+                captured_at_wall_clock: WallClockUnixTimestamp::new(self.captured_at_wall_clock_ms),
+                clock_uncertainty: self.clock_uncertainty.into(),
+            },
+        )
+        .map_err(Into::into)
+    }
+}
+
+impl From<VideoFrame> for MobileCameraVideoFrameDto {
+    fn from(frame: VideoFrame) -> Self {
+        let parts = frame.into_parts();
+        Self {
+            data: parts.data,
+            parameter_sets: parts.parameter_sets,
+            loss: parts.loss,
+            is_random_access_point: parts.is_random_access_point,
+            timestamp: parts.timestamp,
+            clock_rate_hz: parts.clock_rate_hz.get(),
+        }
+    }
+}
+
+impl From<&VideoConfiguration> for MobileCameraVideoConfigurationDto {
+    fn from(configuration: &VideoConfiguration) -> Self {
+        let dimensions = configuration.dimensions();
+        Self {
+            codec: configuration.codec().as_str().to_owned(),
+            width: dimensions.width(),
+            height: dimensions.height(),
+            parameter_sets: cutout_protocols::parse_avcc_parameter_sets(configuration.extra_data())
+                .unwrap_or_default(),
+        }
+    }
+}
+
+impl MobileCameraVideoFrameDto {
+    fn into_video_frame(self) -> Result<VideoFrame, MobileCameraPreviewFileError> {
+        let clock_rate_hz = VideoClockRate::new(self.clock_rate_hz)
+            .ok_or(MobileCameraPreviewFileError::InvalidFrame)?;
+        VideoFrame::new(
+            self.data,
+            self.loss,
+            self.is_random_access_point,
+            self.timestamp,
+            clock_rate_hz,
+        )
+        .map_err(|_| MobileCameraPreviewFileError::InvalidFrame)
+    }
+}
+
+#[uniffi::export(async_runtime = "tokio")]
+impl MobileCameraPreviewSession {
+    /// Waits for the next encoded video frame from the running session.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MobileCameraPreviewError::NotRunning`] after [`Self::stop`]
+    /// or a transport/depacketization failure from RTSP.
+    pub async fn next_video_frame(
+        &self,
+    ) -> Result<Option<MobileCameraVideoFrameDto>, MobileCameraPreviewError> {
+        // Create the notification future before checking state so a stop that
+        // races this call cannot be missed between the check and the select.
+        let stop = Arc::clone(&self.stop);
+        let notified = stop.notified();
+        tokio::pin!(notified);
+        if self.stopped.load(Ordering::Acquire) {
+            return Err(MobileCameraPreviewError::NotRunning);
+        }
+        let generation = self.generation.load(Ordering::Acquire);
+        let mut session = {
+            let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+            inner.take().ok_or(MobileCameraPreviewError::NotRunning)?
+        };
+        let result = tokio::select! {
+            result = session.next_video_frame() => result,
+            () = &mut notified => return Ok(None),
+        };
+        match result {
+            Ok(Some(frame)) => {
+                // A completed read belongs to the generation that started it.
+                // Do not resurrect a session after stop (or a future restart).
+                let configuration = session.video_configuration().cloned();
+                let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+                if !self.stopped.load(Ordering::Acquire)
+                    && self.generation.load(Ordering::Acquire) == generation
+                {
+                    *inner = Some(session);
+                } else {
+                    // A stop raced the read. Do not leak the completed frame
+                    // into a newer consumer or retain the detached session.
+                    drop(inner);
+                    return Ok(None);
+                }
+                if let Some(configuration) = configuration {
+                    *self
+                        .video_configuration
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner) = Some(configuration);
+                }
+                Ok(Some(frame.into()))
+            }
+            Ok(None) => Ok(None),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    /// Returns codec configuration advertised during RTSP negotiation.
+    #[must_use]
+    pub fn video_configuration(&self) -> Option<MobileCameraVideoConfigurationDto> {
+        self.video_configuration
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .map(Into::into)
+    }
+
+    /// Stops the preview and releases the underlying RTSP session.
+    pub fn stop(&self) {
+        self.stopped.store(true, Ordering::Release);
+        self.generation.fetch_add(1, Ordering::AcqRel);
+        self.stop.notify_waiters();
+        let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        inner.take();
+    }
+}
+
+fn mobile_camera_preview_from_session(
+    session: RtspPreviewSession,
+) -> Arc<MobileCameraPreviewSession> {
+    let video_configuration = session.video_configuration().cloned();
+    Arc::new(MobileCameraPreviewSession {
+        inner: Mutex::new(Some(session)),
+        video_configuration: Mutex::new(video_configuration),
+        stop: Arc::new(Notify::new()),
+        stopped: AtomicBool::new(false),
+        generation: AtomicU64::new(0),
+    })
+}
+
+/// Connects a mobile RTSP preview only when its host matches the selected
+/// camera origin.
+///
+/// The URI comes from camera-reported metadata, so the mobile caller supplies
+/// the origin it explicitly selected during HTTP discovery.
+///
+/// # Errors
+///
+/// Returns an error when `expected_address` is not an IPv4 address, the URI is
+/// malformed or non-local, it names a different address, or the RTSP handshake
+/// fails.
+#[uniffi::export(async_runtime = "tokio")]
+pub async fn mobile_camera_preview_connect_for_origin(
+    uri: String,
+    expected_address: String,
+) -> Result<Arc<MobileCameraPreviewSession>, MobileCameraPreviewError> {
+    let expected_address = expected_address
+        .parse::<Ipv4Addr>()
+        .map_err(|_| MobileCameraPreviewError::NonLocalUri)?;
+    let session = RtspPreviewSession::connect_for_origin(&uri, expected_address).await?;
+    Ok(mobile_camera_preview_from_session(session))
+}
+
+/// Mobile-facing Annex-B H.264 file sink for encoded preview frames.
+#[derive(Debug, uniffi::Object)]
+pub struct MobileCameraPreviewFileSink {
+    inner: Mutex<Option<H264FileSink>>,
+}
+
+/// Failure while creating or writing an encoded preview file.
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
+pub enum MobileCameraPreviewFileError {
+    /// The destination could not be created.
+    #[error("could not create preview file")]
+    Create,
+    /// The supplied frame was not a valid bounded preview frame.
+    #[error("invalid preview frame")]
+    InvalidFrame,
+    /// A valid frame could not be written or was not valid RTSP H.264 data.
+    #[error("could not write preview frame")]
+    Write,
+    /// The sink has already been finished.
+    #[error("preview file sink is finished")]
+    Finished,
+}
+
+#[uniffi::export]
+impl MobileCameraPreviewFileSink {
+    /// Creates or truncates an Annex-B H.264 elementary-stream file.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MobileCameraPreviewFileError::Create`] when the destination
+    /// cannot be opened.
+    #[uniffi::constructor]
+    pub fn create(path: String) -> Result<Arc<Self>, MobileCameraPreviewFileError> {
+        let sink = H264FileSink::create(path).map_err(|_| MobileCameraPreviewFileError::Create)?;
+        Ok(Arc::new(Self {
+            inner: Mutex::new(Some(sink)),
+        }))
+    }
+
+    /// Writes one encoded preview frame to the file.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MobileCameraPreviewFileError::Finished`] after finishing,
+    /// [`MobileCameraPreviewFileError::InvalidFrame`] for an invalid DTO, or
+    /// [`MobileCameraPreviewFileError::Write`] for malformed H.264 data or an
+    /// I/O failure.
+    pub fn write_frame(
+        &self,
+        frame: MobileCameraVideoFrameDto,
+    ) -> Result<(), MobileCameraPreviewFileError> {
+        let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        let sink = inner
+            .as_mut()
+            .ok_or(MobileCameraPreviewFileError::Finished)?;
+        let frame = frame.into_video_frame()?;
+        sink.write_frame(&frame)
+            .map_err(|_| MobileCameraPreviewFileError::Write)
+    }
+
+    /// Flushes buffered bytes and closes the file.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MobileCameraPreviewFileError::Finished`] if this sink was
+    /// already finished, or [`MobileCameraPreviewFileError::Write`] if the
+    /// final flush fails.
+    pub fn finish(&self) -> Result<(), MobileCameraPreviewFileError> {
+        let sink = self
+            .inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
+            .ok_or(MobileCameraPreviewFileError::Finished)?;
+        sink.finish()
+            .map_err(|_| MobileCameraPreviewFileError::Write)
+    }
+}
+
+/// Read-only command supported by the Novatek R3 Pro adapter.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileNovatekReadCommandDto {
+    /// Source-backed command `2016` with semantics retained as opaque status.
+    Command2016,
+    /// Source-backed live-view format and RTSP-link command `2019`.
+    LiveViewFormat,
+    /// Source-backed firmware-version command `3012`.
+    FirmwareVersion,
+    /// Source-backed configuration/status command `3014`.
+    Configuration,
+    /// Source-backed media-list command `3015`.
+    MediaList,
+    /// Source-backed storage-presence command `3024`.
+    StoragePresent,
+}
+
+impl From<MobileNovatekReadCommandDto> for NovatekReadCommand {
+    fn from(command: MobileNovatekReadCommandDto) -> Self {
+        match command {
+            MobileNovatekReadCommandDto::Command2016 => Self::Command2016,
+            MobileNovatekReadCommandDto::LiveViewFormat => Self::LiveViewFormat,
+            MobileNovatekReadCommandDto::FirmwareVersion => Self::FirmwareVersion,
+            MobileNovatekReadCommandDto::Configuration => Self::Configuration,
+            MobileNovatekReadCommandDto::MediaList => Self::MediaList,
+            MobileNovatekReadCommandDto::StoragePresent => Self::StoragePresent,
+        }
+    }
+}
+
+/// Explicit Novatek mutation authorized by retained R3V1 capability evidence.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileNovatekCommandDto {
+    /// Request that the camera start recording.
+    StartRecording,
+    /// Request that the camera stop recording.
+    StopRecording,
+    /// Request a still image.
+    StillCapture,
+}
+
+impl MobileNovatekCommandDto {
+    const fn expected_response_command_id(self) -> u16 {
+        match self {
+            Self::StartRecording | Self::StopRecording => 2001,
+            Self::StillCapture => 1001,
+        }
+    }
+}
+
+/// A camera command target authorized against one retained camera origin.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileNovatekCommandRequestDto {
+    /// Validated local camera origin retained by Rust.
+    pub origin: MobileNovatekHttpOriginDto,
+    /// Origin-relative command target.
+    pub target: String,
+    /// Semantic command authorized by the retained profile.
+    pub command: MobileNovatekCommandDto,
+    /// Retained-session generation that authorized this request.
+    pub session_generation: u64,
+    /// Camera lifecycle identity that authorized this request.
+    pub camera_session_token: MobileCameraSessionTokenDto,
+}
+
+/// Failure while authorizing a Novatek mutation against retained evidence.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
+pub enum MobileNovatekCommandAuthorizationError {
+    /// No validated R3V1 camera session is retained or the command is not advertised.
+    #[error("Novatek command is not supported by the retained session")]
+    Unsupported,
+    /// The requested origin differs from the origin that supplied retained evidence.
+    #[error("Novatek command origin differs from retained evidence")]
+    OriginMismatch,
+}
+
+/// Failure while completing a command after its retained session changed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
+pub enum MobileNovatekCommandCompletionError {
+    /// The command was authorized by a session that has since been replaced or cleared.
+    #[error("Novatek command belongs to a stale camera session")]
+    StaleSession,
+}
+
+/// Outcome reported by a bounded Novatek command response.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileNovatekCommandOutcomeDto {
+    /// The camera response reported status zero.
+    Acknowledged,
+    /// The camera response reported a nonzero status.
+    Refused,
+    /// The response did not provide a usable status.
+    Unknown,
+}
+
+/// One Novatek command/status pair returned to a mobile client.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileNovatekCommandStatusDto {
+    /// Numeric command identifier reported by the camera.
+    pub command_id: u16,
+    /// Camera-reported status value.
+    pub status: u16,
+}
+
+/// One bounded Novatek media record returned to a mobile client.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileNovatekMediaEntryDto {
+    /// Camera-reported file name.
+    pub name: String,
+    /// Camera-reported path.
+    pub path: String,
+    /// File size in bytes.
+    pub size_bytes: u64,
+    /// Camera-reported timestamp code.
+    pub timecode: u64,
+    /// Camera-reported display time.
+    pub time: String,
+    /// Camera-reported attribute bits.
+    pub attributes: u32,
+}
+
+/// Bounded, read-only Novatek evidence collected for the R3 Pro profile.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileNovatekReadOnlySnapshotDto {
+    /// Firmware version reported by command `3012`.
+    pub firmware_version: String,
+    /// Movie-preview RTSP URI reported by command `2019`.
+    pub movie_rtsp_uri: String,
+    /// Photo-preview RTSP URI reported by command `2019`.
+    pub photo_rtsp_uri: String,
+    /// Configuration/status pairs reported by command `3014`.
+    pub configuration: Vec<MobileNovatekCommandStatusDto>,
+    /// Whether command `3024` reports an inserted storage card.
+    pub storage_present: bool,
+    /// Bounded media records reported by command `3015`.
+    pub media: Vec<MobileNovatekMediaEntryDto>,
+}
+
+/// Failure returned when a captured Novatek response cannot be parsed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
+pub enum MobileNovatekParseError {
+    /// One or more responses were malformed or exceeded parser bounds.
+    #[error("invalid Novatek read-only response")]
+    InvalidResponse,
+}
+
+/// Failure returned when a mutating Novatek target is requested without the
+/// verified R3V1 firmware and command-capability proofs.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
+pub enum MobileNovatekProfileError {
+    /// The reported firmware is outside the verified R3V1 family.
+    #[error("unsupported Novatek firmware profile")]
+    UnsupportedFirmware,
+    /// The reported firmware exceeds the bounded identity representation.
+    #[error("Novatek firmware version is too long")]
+    FirmwareVersionTooLong,
+    /// Read-only configuration did not advertise the requested command.
+    #[error("Novatek command capability is not advertised")]
+    CapabilityNotAdvertised,
+    /// The adapter supplied more command/status pairs than Rust retains.
+    #[error("Novatek configuration is too large")]
+    ConfigurationTooLarge,
+    /// The adapter supplied ambiguous duplicate command/status evidence.
+    #[error("Novatek configuration is malformed")]
+    ConfigurationMalformed,
+}
+
+impl From<NovatekProfileError> for MobileNovatekProfileError {
+    fn from(error: NovatekProfileError) -> Self {
+        match error {
+            NovatekProfileError::UnsupportedFirmware => Self::UnsupportedFirmware,
+            NovatekProfileError::FirmwareVersionTooLong => Self::FirmwareVersionTooLong,
+        }
+    }
+}
+
+impl From<NovatekCapabilityError> for MobileNovatekProfileError {
+    fn from(_: NovatekCapabilityError) -> Self {
+        Self::CapabilityNotAdvertised
+    }
+}
+
+impl From<NovatekConfigurationError> for MobileNovatekProfileError {
+    fn from(error: NovatekConfigurationError) -> Self {
+        match error {
+            NovatekConfigurationError::TooManyStatuses { .. } => Self::ConfigurationTooLarge,
+            NovatekConfigurationError::DuplicateCommand { .. }
+            | NovatekConfigurationError::InvalidCommand { .. } => Self::ConfigurationMalformed,
+        }
+    }
+}
+
+/// Failure while establishing the Rust-owned validated Novatek session.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
+pub enum MobileNovatekSessionError {
+    /// The selected origin was not a validated local IPv4 origin.
+    #[error("invalid Novatek camera origin")]
+    InvalidOrigin,
+    /// The reported firmware is outside the verified R3V1 family.
+    #[error("unsupported Novatek firmware profile")]
+    UnsupportedFirmware,
+    /// The reported firmware exceeds the bounded identity representation.
+    #[error("Novatek firmware version is too long")]
+    FirmwareVersionTooLong,
+    /// The supplied configuration exceeds Rust's fixed bound.
+    #[error("Novatek configuration is too large")]
+    ConfigurationTooLarge,
+    /// The supplied configuration contains ambiguous or reserved evidence.
+    #[error("Novatek configuration is malformed")]
+    ConfigurationMalformed,
+}
+
+impl From<NovatekSessionError> for MobileNovatekSessionError {
+    fn from(error: NovatekSessionError) -> Self {
+        match error {
+            NovatekSessionError::Profile(NovatekProfileError::UnsupportedFirmware) => {
+                Self::UnsupportedFirmware
+            }
+            NovatekSessionError::Profile(NovatekProfileError::FirmwareVersionTooLong) => {
+                Self::FirmwareVersionTooLong
+            }
+            NovatekSessionError::Configuration(NovatekConfigurationError::TooManyStatuses {
+                ..
+            }) => Self::ConfigurationTooLarge,
+            NovatekSessionError::Configuration(
+                NovatekConfigurationError::DuplicateCommand { .. }
+                | NovatekConfigurationError::InvalidCommand { .. },
+            ) => Self::ConfigurationMalformed,
+        }
+    }
+}
+
+fn build_novatek_session(
+    origin: &MobileNovatekHttpOriginDto,
+    firmware_version: &str,
+    configuration: impl IntoIterator<Item = (u16, u16)>,
+) -> Result<NovatekR3V1Session, MobileNovatekSessionError> {
+    let address = origin
+        .address
+        .parse::<Ipv4Addr>()
+        .map_err(|_| MobileNovatekSessionError::InvalidOrigin)?;
+    let origin = NovatekHttpOrigin::new(address, origin.port)
+        .map_err(|_| MobileNovatekSessionError::InvalidOrigin)?;
+    NovatekR3V1Session::new(origin, firmware_version, configuration).map_err(Into::into)
+}
+
+/// Failure returned when validating a mobile-supplied Novatek origin.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
+pub enum MobileNovatekOriginError {
+    /// The address was not valid IPv4 text.
+    #[error("invalid IPv4 address")]
+    InvalidAddress,
+    /// The address was not private, link-local, or loopback.
+    #[error("origin is not local")]
+    NonLocalAddress,
+    /// Port zero cannot identify a camera HTTP service.
+    #[error("origin has an invalid TCP port")]
+    InvalidPort,
+}
+
+/// Failure returned when a camera-reported media path is not safe to download.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
+pub enum MobileNovatekMediaPathError {
+    /// The path is not rooted at the camera's validated Novatek volume.
+    #[error("invalid Novatek media path")]
+    InvalidPath,
+}
+
+/// Failure while building an authorized media-thumbnail target.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
+pub enum MobileNovatekThumbnailTargetError {
+    /// The retained R3V1 configuration does not advertise command `4001`.
+    #[error("media thumbnails are not advertised")]
+    CapabilityNotAdvertised,
+    /// The media record is not present in the current retained read-only snapshot.
+    #[error("media evidence is no longer current")]
+    MediaNotCurrent,
+    /// The camera-reported path is not a safe thumbnail path.
+    #[error("invalid Novatek media path")]
+    InvalidPath,
+}
+
+/// Returns whether verified R3V1 evidence acknowledges thumbnail command `4001`.
+#[uniffi::export]
+#[must_use]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "UniFFI exports owned boundary values"
+)]
+pub fn mobile_novatek_media_thumbnails_supported(
+    firmware_version: String,
+    configuration: Vec<MobileNovatekCommandStatusDto>,
+) -> bool {
+    let Ok(profile) = NovatekR3V1Profile::parse(&firmware_version) else {
+        return false;
+    };
+    let Ok(configuration) = NovatekConfiguration::from_status_pairs(
+        configuration
+            .into_iter()
+            .map(|status| (status.command_id, status.status)),
+    ) else {
+        return false;
+    };
+    profile.media_thumbnail_capability(&configuration).is_ok()
+}
+
+/// Validated local Novatek HTTP origin returned to a mobile client.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileNovatekHttpOriginDto {
+    /// Validated IPv4 address text.
+    pub address: String,
+    /// Validated TCP port.
+    pub port: u16,
+}
+
+/// Returns the fixed relative target for a read-only Novatek command.
+#[uniffi::export]
+#[must_use]
+pub fn mobile_novatek_read_command_target(command: MobileNovatekReadCommandDto) -> String {
+    NovatekReadCommand::from(command)
+        .request_target()
+        .to_owned()
+}
+
+/// Maps a validated camera media path to an origin-relative HTTP target.
+///
+/// The returned target is safe to append to a caller-validated local origin.
+/// No network request is made by this helper.
+///
+/// # Errors
+///
+/// Returns [`MobileNovatekMediaPathError::InvalidPath`] when the supplied
+/// path is not a bounded Novatek media path.
+#[uniffi::export]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "UniFFI exports owned strings"
+)]
+pub fn mobile_novatek_media_download_target(
+    path: String,
+) -> Result<String, MobileNovatekMediaPathError> {
+    cutout_protocols::media_download_target(&path)
+        .map(|target| target.as_str().to_owned())
+        .map_err(|error| match error {
+            NovatekMediaPathError::InvalidRoot
+            | NovatekMediaPathError::UnsafeComponent
+            | NovatekMediaPathError::ValueTooLong { .. } => {
+                MobileNovatekMediaPathError::InvalidPath
+            }
+        })
+}
+
+/// Returns whether a firmware string is in the verified R3V1 R3 Pro family.
+#[uniffi::export]
+#[must_use]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "UniFFI exports owned strings"
+)]
+pub fn mobile_novatek_firmware_is_r3_pro(firmware_version: String) -> bool {
+    is_r3_pro_firmware(&firmware_version)
+}
+
+/// Validates a local IPv4 origin before the platform network adapter connects.
+///
+/// # Errors
+///
+/// Returns an error when `address` is not IPv4 text, is not a local address,
+/// or `port` is zero.
+#[uniffi::export]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "UniFFI exports owned strings"
+)]
+pub fn mobile_validate_novatek_http_origin(
+    address: String,
+    port: u16,
+) -> Result<MobileNovatekHttpOriginDto, MobileNovatekOriginError> {
+    let address = address
+        .parse::<Ipv4Addr>()
+        .map_err(|_| MobileNovatekOriginError::InvalidAddress)?;
+    let origin = NovatekHttpOrigin::new(address, port).map_err(|error| match error {
+        NovatekOriginError::NonLocalAddress => MobileNovatekOriginError::NonLocalAddress,
+        NovatekOriginError::InvalidPort => MobileNovatekOriginError::InvalidPort,
+    })?;
+    Ok(MobileNovatekHttpOriginDto {
+        address: origin.address().to_string(),
+        port: origin.port(),
+    })
+}
+
+/// Parses captured Novatek responses into bounded mobile-owned evidence.
+///
+/// # Errors
+///
+/// Returns [`MobileNovatekParseError::InvalidResponse`] when any captured
+/// response is malformed or exceeds the Rust parser's fixed bounds.
+#[uniffi::export]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "UniFFI exports owned byte buffers"
+)]
+pub fn mobile_parse_novatek_read_only_snapshot(
+    firmware_response: Vec<u8>,
+    live_view_response: Vec<u8>,
+    configuration_response: Vec<u8>,
+    storage_response: Vec<u8>,
+    media_response: Vec<u8>,
+) -> Result<MobileNovatekReadOnlySnapshotDto, MobileNovatekParseError> {
+    let snapshot = parse_read_only_snapshot(
+        &firmware_response,
+        &live_view_response,
+        &configuration_response,
+        &storage_response,
+        &media_response,
+    )
+    .map_err(|_| MobileNovatekParseError::InvalidResponse)?;
+    Ok(MobileNovatekReadOnlySnapshotDto {
+        firmware_version: snapshot.firmware().as_str().to_owned(),
+        movie_rtsp_uri: snapshot.live_view().movie().as_str().to_owned(),
+        photo_rtsp_uri: snapshot.live_view().photo().as_str().to_owned(),
+        configuration: snapshot
+            .configuration()
+            .statuses()
+            .iter()
+            .map(|status| MobileNovatekCommandStatusDto {
+                command_id: status.command_id().get(),
+                status: status.status().get(),
+            })
+            .collect(),
+        storage_present: snapshot.storage() == NovatekStoragePresence::Present,
+        media: snapshot
+            .media()
+            .entries()
+            .iter()
+            .map(|entry| MobileNovatekMediaEntryDto {
+                name: entry.name().to_owned(),
+                path: entry.path().to_owned(),
+                size_bytes: entry.size_bytes(),
+                timecode: entry.timecode(),
+                time: entry.time().to_owned(),
+                attributes: entry.attributes(),
+            })
+            .collect(),
+    })
+}
+
+/// Parses a bounded Novatek command response without inferring state change.
+/// The reported command must match `expected_command_id`; a status from a
+/// different command is never treated as an acknowledgement.
+///
+/// # Errors
+///
+/// Returns [`MobileNovatekParseError::InvalidResponse`] when the response is
+/// not valid bounded UTF-8 or contains a malformed status value.
+fn parse_novatek_command_outcome(
+    response: &[u8],
+    expected_command_id: u16,
+) -> Result<MobileNovatekCommandOutcomeDto, MobileNovatekParseError> {
+    let outcome = cutout_protocols::parse_command_response_for_id(response, expected_command_id)
+        .map_err(|_| MobileNovatekParseError::InvalidResponse)?;
+    Ok(match outcome {
+        NovatekCommandOutcome::Acknowledged => MobileNovatekCommandOutcomeDto::Acknowledged,
+        NovatekCommandOutcome::Refused { .. } => MobileNovatekCommandOutcomeDto::Refused,
+        NovatekCommandOutcome::Unknown => MobileNovatekCommandOutcomeDto::Unknown,
+    })
+}
 
 /// Mobile discovery candidate support state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
@@ -782,9 +1881,146 @@ impl From<DeviceConnectionIntentDto> for CoreDeviceConnectionIntent {
 pub struct CutoutSessionStateHandle {
     inner: Mutex<MobileSessionState>,
     phone_alarm: Mutex<MobilePhoneAlarmState>,
+    novatek_session: Mutex<NovatekCameraSessionState>,
 }
 
 type MobileSessionState = cutout_protocols::DeviceConnectionSession;
+
+#[derive(Debug)]
+struct RetainedNovatekSession {
+    profile: NovatekR3V1Session,
+    read_only_snapshot: MobileNovatekReadOnlySnapshotDto,
+}
+
+#[derive(Debug, Default)]
+struct NovatekCameraSessionState {
+    generation: NovatekSessionGeneration,
+    retained: Option<RetainedNovatekSession>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct NovatekSessionGeneration(u64);
+
+impl NovatekSessionGeneration {
+    fn advance(&mut self) {
+        self.0 = self.0.wrapping_add(1);
+    }
+}
+
+impl NovatekCameraSessionState {
+    fn replace_read_only(
+        &mut self,
+        profile: NovatekR3V1Session,
+        read_only_snapshot: MobileNovatekReadOnlySnapshotDto,
+    ) {
+        self.generation.advance();
+        self.retained = Some(RetainedNovatekSession {
+            profile,
+            read_only_snapshot,
+        });
+    }
+
+    fn clear(&mut self) {
+        self.generation.advance();
+        self.retained = None;
+    }
+
+    fn profile(&self) -> Option<&NovatekR3V1Session> {
+        self.retained.as_ref().map(|session| &session.profile)
+    }
+
+    fn authorize_command(
+        &self,
+        requested_origin: &MobileNovatekHttpOriginDto,
+        command: MobileNovatekCommandDto,
+    ) -> Result<MobileNovatekCommandRequestDto, MobileNovatekCommandAuthorizationError> {
+        let profile = self
+            .profile()
+            .ok_or(MobileNovatekCommandAuthorizationError::Unsupported)?;
+        let origin = MobileNovatekHttpOriginDto {
+            address: profile.origin().address().to_string(),
+            port: profile.origin().port(),
+        };
+        if requested_origin != &origin {
+            return Err(MobileNovatekCommandAuthorizationError::OriginMismatch);
+        }
+
+        let target = match command {
+            MobileNovatekCommandDto::StartRecording => profile
+                .recording_command_target(NovatekRecordingCommand::Start)
+                .map(|target| target.as_str().to_owned()),
+            MobileNovatekCommandDto::StopRecording => profile
+                .recording_command_target(NovatekRecordingCommand::Stop)
+                .map(|target| target.as_str().to_owned()),
+            MobileNovatekCommandDto::StillCapture => profile
+                .still_capture_command_target(NovatekStillCaptureCommand)
+                .map(|target| target.as_str().to_owned()),
+        };
+        let target = target.map_err(|_| MobileNovatekCommandAuthorizationError::Unsupported)?;
+
+        Ok(MobileNovatekCommandRequestDto {
+            origin,
+            target,
+            command,
+            session_generation: self.generation.0,
+            camera_session_token: MobileCameraSessionTokenDto { generation: 0 },
+        })
+    }
+
+    fn complete_command(
+        &self,
+        request: &MobileNovatekCommandRequestDto,
+        response: &[u8],
+    ) -> Result<MobileNovatekCommandOutcomeDto, MobileNovatekCommandCompletionError> {
+        let Ok(current_request) = self.authorize_command(&request.origin, request.command) else {
+            return Err(MobileNovatekCommandCompletionError::StaleSession);
+        };
+        if current_request.origin != request.origin
+            || current_request.target != request.target
+            || current_request.command != request.command
+            || current_request.session_generation != request.session_generation
+        {
+            return Err(MobileNovatekCommandCompletionError::StaleSession);
+        }
+
+        Ok(
+            parse_novatek_command_outcome(response, request.command.expected_response_command_id())
+                .unwrap_or(MobileNovatekCommandOutcomeDto::Unknown),
+        )
+    }
+
+    fn media_is_current(&self, path: &str, size_bytes: u64) -> bool {
+        self.retained.as_ref().is_some_and(|session| {
+            session
+                .read_only_snapshot
+                .media
+                .iter()
+                .any(|entry| entry.path == path && entry.size_bytes == size_bytes)
+        })
+    }
+
+    fn media_thumbnail_target(
+        &self,
+        path: &str,
+        size_bytes: u64,
+    ) -> Result<String, MobileNovatekThumbnailTargetError> {
+        if !self.media_is_current(path, size_bytes) {
+            return Err(MobileNovatekThumbnailTargetError::MediaNotCurrent);
+        }
+        self.profile()
+            .ok_or(MobileNovatekThumbnailTargetError::CapabilityNotAdvertised)?
+            .media_thumbnail_target(path)
+            .map(|target| target.as_str().to_owned())
+            .map_err(|error| match error {
+                NovatekMediaThumbnailError::Capability(_) => {
+                    MobileNovatekThumbnailTargetError::CapabilityNotAdvertised
+                }
+                NovatekMediaThumbnailError::Path(_) => {
+                    MobileNovatekThumbnailTargetError::InvalidPath
+                }
+            })
+    }
+}
 
 #[derive(Debug, Default)]
 struct MobilePhoneAlarmState {
@@ -1235,6 +2471,7 @@ impl CutoutSessionStateHandle {
         Arc::new(Self {
             inner: Mutex::new(MobileSessionState::default()),
             phone_alarm: Mutex::new(MobilePhoneAlarmState::default()),
+            novatek_session: Mutex::new(NovatekCameraSessionState::default()),
         })
     }
 
@@ -1252,6 +2489,7 @@ impl CutoutSessionStateHandle {
                 database: Some(database.inner.clone()),
                 ..MobilePhoneAlarmState::default()
             }),
+            novatek_session: Mutex::new(NovatekCameraSessionState::default()),
         })
     }
 
@@ -1294,6 +2532,246 @@ impl CutoutSessionStateHandle {
             .into_iter()
             .map(Into::into)
             .collect()
+    }
+
+    /// Returns the current Rust-owned camera preview and recording state.
+    #[must_use]
+    pub fn camera_snapshot(&self) -> MobileCameraSnapshotDto {
+        self.lock_inner().session_state().camera().to_owned().into()
+    }
+
+    /// Replaces the retained Novatek proof and complete bounded read-only snapshot.
+    ///
+    /// The snapshot is retained by Rust so command and media authorization do
+    /// not depend on a second Swift-owned copy of protocol evidence.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the origin, firmware, or command evidence fails
+    /// the verified R3V1 session checks.
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn configure_novatek_read_only_session(
+        &self,
+        origin: MobileNovatekHttpOriginDto,
+        snapshot: MobileNovatekReadOnlySnapshotDto,
+    ) -> Result<(), MobileNovatekSessionError> {
+        let session = build_novatek_session(
+            &origin,
+            &snapshot.firmware_version,
+            snapshot
+                .configuration
+                .iter()
+                .map(|status| (status.command_id, status.status)),
+        )?;
+        self.novatek_session
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .replace_read_only(session, snapshot);
+        Ok(())
+    }
+
+    /// Drops the retained Novatek proof and its command capabilities.
+    pub fn clear_novatek_session(&self) {
+        self.novatek_session
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clear();
+    }
+
+    /// Returns whether Rust-retained media evidence matches one camera record.
+    #[must_use]
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn novatek_media_is_current(&self, path: String, size_bytes: u64) -> bool {
+        self.novatek_session
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .media_is_current(&path, size_bytes)
+    }
+
+    /// Builds a thumbnail target only from current Rust-retained R3V1 evidence.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the media is stale, command `4001` is not
+    /// advertised, or the camera path is invalid.
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn novatek_media_thumbnail_target(
+        &self,
+        path: String,
+        size_bytes: u64,
+    ) -> Result<String, MobileNovatekThumbnailTargetError> {
+        self.novatek_session
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .media_thumbnail_target(&path, size_bytes)
+    }
+
+    /// Returns the retained validated Novatek origin, when configured.
+    #[must_use]
+    pub fn novatek_session_origin(&self) -> Option<MobileNovatekHttpOriginDto> {
+        self.novatek_session
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .profile()
+            .map(|profile| MobileNovatekHttpOriginDto {
+                address: profile.origin().address().to_string(),
+                port: profile.origin().port(),
+            })
+    }
+
+    /// Authorizes a Novatek mutation using the retained origin and capabilities.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when there is no retained session, the origin differs,
+    /// or the retained configuration does not advertise the requested command.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "UniFFI exports owned boundary values"
+    )]
+    pub fn authorize_novatek_command(
+        &self,
+        requested_origin: MobileNovatekHttpOriginDto,
+        command: MobileNovatekCommandDto,
+    ) -> Result<MobileNovatekCommandRequestDto, MobileNovatekCommandAuthorizationError> {
+        let inner = self.lock_inner();
+        let mut request = self
+            .novatek_session
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .authorize_command(&requested_origin, command)?;
+        request.camera_session_token = inner.session_state().camera().token().into();
+        Ok(request)
+    }
+
+    /// Completes a command only if its authorizing Novatek session is current.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MobileNovatekCommandCompletionError::StaleSession`] when the
+    /// retained session changed before the response arrived.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "UniFFI exports owned boundary values"
+    )]
+    pub fn complete_novatek_command(
+        &self,
+        request: MobileNovatekCommandRequestDto,
+        response: Vec<u8>,
+    ) -> Result<MobileNovatekCommandOutcomeDto, MobileNovatekCommandCompletionError> {
+        let inner = self.lock_inner();
+        if request.camera_session_token != inner.session_state().camera().token().into() {
+            return Err(MobileNovatekCommandCompletionError::StaleSession);
+        }
+        self.novatek_session
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .complete_command(&request, &response)
+    }
+
+    /// Captures an identity for asynchronous camera work.
+    #[must_use]
+    pub fn camera_session_token(&self) -> MobileCameraSessionTokenDto {
+        self.lock_inner().session_state().camera().token().into()
+    }
+
+    /// Returns whether asynchronous camera work still belongs to the lifecycle.
+    #[must_use]
+    pub fn camera_session_token_is_current(&self, token: MobileCameraSessionTokenDto) -> bool {
+        self.lock_inner()
+            .session_state()
+            .camera()
+            .is_current(token.into())
+    }
+
+    /// Retires asynchronous camera work without changing presentation truth.
+    pub fn advance_camera_generation(&self) {
+        self.lock_inner()
+            .session_state_mut()
+            .camera_mut()
+            .advance_generation();
+    }
+
+    /// Retires the camera lifecycle and returns it to its non-optimistic baseline.
+    pub fn invalidate_camera_lifecycle(&self) {
+        let mut inner = self.lock_inner();
+        inner.session_state_mut().camera_mut().invalidate();
+        self.novatek_session
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clear();
+    }
+
+    /// Records a foreground preview observation without changing recording truth.
+    pub fn observe_camera_preview(&self, preview: MobileCameraPreviewStateDto) {
+        self.lock_inner()
+            .session_state_mut()
+            .camera_mut()
+            .observe_preview(preview.into());
+    }
+
+    /// Reduces one platform preview lifecycle event into Rust-owned state.
+    pub fn reduce_camera_preview(&self, event: MobileCameraPreviewEventDto) {
+        let preview = match event {
+            MobileCameraPreviewEventDto::Started => CoreCameraPreviewState::Buffering,
+            MobileCameraPreviewEventDto::FrameReceived => CoreCameraPreviewState::Live,
+            MobileCameraPreviewEventDto::Interrupted => CoreCameraPreviewState::Interrupted,
+            MobileCameraPreviewEventDto::Stopped => CoreCameraPreviewState::Stopped,
+            MobileCameraPreviewEventDto::Unavailable => CoreCameraPreviewState::Unavailable,
+        };
+        self.lock_inner()
+            .session_state_mut()
+            .camera_mut()
+            .observe_preview(preview);
+    }
+
+    /// Records authoritative onboard recording truth without changing preview state.
+    pub fn observe_camera_onboard_recording(
+        &self,
+        onboard_recording: MobileCameraOnboardRecordingStateDto,
+    ) {
+        self.lock_inner()
+            .session_state_mut()
+            .camera_mut()
+            .observe_onboard_recording(onboard_recording.into());
+    }
+
+    /// Records bounded camera-media provenance without copying video bytes into
+    /// the Rust session state.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error when camera metadata exceeds the Rust-owned bounds
+    /// or contains an empty required identifier.
+    pub fn record_camera_media_provenance(
+        &self,
+        input: MobileCameraMediaProvenanceInput,
+    ) -> Result<(), MobileCameraMediaProvenanceError> {
+        let record = input.into_core()?;
+        self.lock_inner()
+            .session_state_mut()
+            .record_camera_media_provenance(record);
+        Ok(())
+    }
+
+    /// Returns bounded camera-media provenance retained by the Rust session.
+    #[must_use]
+    pub fn camera_media_provenance(&self) -> Vec<MobileCameraMediaProvenanceDto> {
+        self.lock_inner()
+            .session_state()
+            .camera_provenance()
+            .media()
+            .iter()
+            .map(MobileCameraMediaProvenanceDto::from)
+            .collect()
+    }
+
+    /// Clears camera-media provenance for the next ride capture.
+    pub fn clear_camera_media_provenance(&self) {
+        self.lock_inner()
+            .session_state_mut()
+            .camera_provenance
+            .clear();
     }
 
     /// Applies one typed Apple-platform event to the Rust-owned ride lifecycle.
@@ -13324,6 +14802,417 @@ mod tests {
             parse_mobile_ride_id(&MobileRideIdDto { bytes: vec![0; 15] }),
             Err(MobileRideDatabaseError::InvalidIdentifier)
         ));
+    }
+
+    #[test]
+    fn mobile_preview_frame_conversion_rejects_invalid_clock_rate_and_size() {
+        let invalid_clock_rate = MobileCameraVideoFrameDto {
+            data: vec![0, 0, 0, 1, 0x65],
+            parameter_sets: Vec::new(),
+            loss: 0,
+            is_random_access_point: false,
+            timestamp: 0,
+            clock_rate_hz: 0,
+        };
+        assert_eq!(
+            invalid_clock_rate.into_video_frame(),
+            Err(MobileCameraPreviewFileError::InvalidFrame)
+        );
+
+        let oversized = MobileCameraVideoFrameDto {
+            data: vec![0; 8 * 1024 * 1024 + 1],
+            parameter_sets: Vec::new(),
+            loss: 0,
+            is_random_access_point: false,
+            timestamp: 0,
+            clock_rate_hz: 90_000,
+        };
+        assert_eq!(
+            oversized.into_video_frame(),
+            Err(MobileCameraPreviewFileError::InvalidFrame)
+        );
+    }
+
+    #[test]
+    fn mobile_thumbnail_availability_uses_rust_owned_profile_and_status_rules() {
+        let evidence = |firmware_version: &str, status: u16| {
+            mobile_novatek_media_thumbnails_supported(
+                firmware_version.to_owned(),
+                vec![MobileNovatekCommandStatusDto {
+                    command_id: 4001,
+                    status,
+                }],
+            )
+        };
+
+        assert!(evidence("R3V1.1_20240411", 0));
+        assert!(!evidence("R3V1.1_20240411", 7));
+        assert!(!evidence("R3V2.0_20240411", 0));
+        assert!(!mobile_novatek_media_thumbnails_supported(
+            "R3V1.1_20240411".to_owned(),
+            vec![
+                MobileNovatekCommandStatusDto {
+                    command_id: 4001,
+                    status: 0,
+                },
+                MobileNovatekCommandStatusDto {
+                    command_id: 4001,
+                    status: 0,
+                },
+            ],
+        ));
+    }
+
+    #[test]
+    fn camera_session_state_handle_authorizes_novatek_commands_from_retained_proof() {
+        let handle = CutoutSessionStateHandle::new();
+        configure_test_novatek_session(&handle, &[(2001, 0), (1001, 0)]);
+
+        assert_eq!(
+            handle.novatek_session_origin(),
+            Some(MobileNovatekHttpOriginDto {
+                address: "192.168.1.254".to_owned(),
+                port: 80,
+            })
+        );
+        let request = |command| {
+            handle
+                .authorize_novatek_command(
+                    MobileNovatekHttpOriginDto {
+                        address: "192.168.1.254".to_owned(),
+                        port: 80,
+                    },
+                    command,
+                )
+                .expect("command capability is retained")
+        };
+        assert_eq!(
+            request(MobileNovatekCommandDto::StartRecording),
+            MobileNovatekCommandRequestDto {
+                origin: MobileNovatekHttpOriginDto {
+                    address: "192.168.1.254".to_owned(),
+                    port: 80,
+                },
+                target: "/?custom=1&cmd=2001&str=1".to_owned(),
+                command: MobileNovatekCommandDto::StartRecording,
+                session_generation: 1,
+                camera_session_token: MobileCameraSessionTokenDto { generation: 0 },
+            }
+        );
+        let stop = request(MobileNovatekCommandDto::StopRecording);
+        assert_eq!(stop.target, "/?custom=1&cmd=2001&str=0");
+        assert_eq!(stop.command, MobileNovatekCommandDto::StopRecording);
+        let still = request(MobileNovatekCommandDto::StillCapture);
+        assert_eq!(still.target, "/?custom=1&cmd=1001");
+        assert_eq!(still.command, MobileNovatekCommandDto::StillCapture);
+        assert_eq!(
+            handle.authorize_novatek_command(
+                MobileNovatekHttpOriginDto {
+                    address: "192.168.1.253".to_owned(),
+                    port: 80,
+                },
+                MobileNovatekCommandDto::StillCapture,
+            ),
+            Err(MobileNovatekCommandAuthorizationError::OriginMismatch)
+        );
+
+        configure_test_novatek_session(&handle, &[(2001, 0)]);
+        assert_eq!(
+            handle.authorize_novatek_command(
+                MobileNovatekHttpOriginDto {
+                    address: "192.168.1.254".to_owned(),
+                    port: 80,
+                },
+                MobileNovatekCommandDto::StillCapture,
+            ),
+            Err(MobileNovatekCommandAuthorizationError::Unsupported)
+        );
+    }
+
+    #[test]
+    fn camera_session_state_handle_rejects_command_response_from_replaced_session() {
+        let handle = CutoutSessionStateHandle::new();
+        configure_test_novatek_session(&handle, &[(1001, 0)]);
+        let request = handle
+            .authorize_novatek_command(
+                MobileNovatekHttpOriginDto {
+                    address: "192.168.1.254".to_owned(),
+                    port: 80,
+                },
+                MobileNovatekCommandDto::StillCapture,
+            )
+            .expect("still capture is advertised");
+
+        configure_test_novatek_session(&handle, &[(1001, 0)]);
+
+        assert_eq!(
+            handle.complete_novatek_command(
+                request,
+                br"<Function><Cmd>1001</Cmd><Status>0</Status></Function>".to_vec(),
+            ),
+            Err(MobileNovatekCommandCompletionError::StaleSession)
+        );
+    }
+
+    #[test]
+    fn camera_session_state_handle_rejects_command_response_after_lifecycle_advance() {
+        let handle = CutoutSessionStateHandle::new();
+        configure_test_novatek_session(&handle, &[(1001, 0)]);
+        let request = handle
+            .authorize_novatek_command(
+                MobileNovatekHttpOriginDto {
+                    address: "192.168.1.254".to_owned(),
+                    port: 80,
+                },
+                MobileNovatekCommandDto::StillCapture,
+            )
+            .expect("still capture is advertised");
+
+        handle.advance_camera_generation();
+
+        assert_eq!(
+            handle.complete_novatek_command(
+                request,
+                br"<Function><Cmd>1001</Cmd><Status>0</Status></Function>".to_vec(),
+            ),
+            Err(MobileNovatekCommandCompletionError::StaleSession)
+        );
+    }
+
+    #[test]
+    fn camera_session_state_handle_parses_response_for_authorized_command() {
+        let handle = CutoutSessionStateHandle::new();
+        configure_test_novatek_session(&handle, &[(1001, 0)]);
+        let request = handle
+            .authorize_novatek_command(
+                MobileNovatekHttpOriginDto {
+                    address: "192.168.1.254".to_owned(),
+                    port: 80,
+                },
+                MobileNovatekCommandDto::StillCapture,
+            )
+            .expect("still capture is advertised");
+
+        assert_eq!(
+            handle.complete_novatek_command(
+                request,
+                br"<Function><Cmd>1001</Cmd><Status>7</Status></Function>".to_vec(),
+            ),
+            Ok(MobileNovatekCommandOutcomeDto::Refused)
+        );
+    }
+
+    #[test]
+    fn camera_session_state_handle_invalidates_novatek_proof_with_camera_lifecycle() {
+        let handle = CutoutSessionStateHandle::new();
+        configure_test_novatek_session(&handle, &[(1001, 0)]);
+        assert!(handle.novatek_session_origin().is_some());
+
+        handle.invalidate_camera_lifecycle();
+
+        assert_eq!(handle.novatek_session_origin(), None);
+        assert_eq!(
+            handle.authorize_novatek_command(
+                MobileNovatekHttpOriginDto {
+                    address: "192.168.1.254".to_owned(),
+                    port: 80,
+                },
+                MobileNovatekCommandDto::StillCapture,
+            ),
+            Err(MobileNovatekCommandAuthorizationError::Unsupported)
+        );
+    }
+
+    fn configure_test_novatek_session(
+        handle: &CutoutSessionStateHandle,
+        configuration: &[(u16, u16)],
+    ) {
+        handle
+            .configure_novatek_read_only_session(
+                MobileNovatekHttpOriginDto {
+                    address: "192.168.1.254".to_owned(),
+                    port: 80,
+                },
+                MobileNovatekReadOnlySnapshotDto {
+                    firmware_version: "R3V1.1_20240411".to_owned(),
+                    movie_rtsp_uri: "rtsp://192.168.1.254/movie".to_owned(),
+                    photo_rtsp_uri: "rtsp://192.168.1.254/photo".to_owned(),
+                    configuration: configuration
+                        .iter()
+                        .map(|&(command_id, status)| MobileNovatekCommandStatusDto {
+                            command_id,
+                            status,
+                        })
+                        .collect(),
+                    storage_present: true,
+                    media: Vec::new(),
+                },
+            )
+            .expect("validated R3V1 evidence establishes the session");
+    }
+
+    #[test]
+    fn camera_session_state_handle_owns_read_only_media_evidence() {
+        let handle = CutoutSessionStateHandle::new();
+        let snapshot = MobileNovatekReadOnlySnapshotDto {
+            firmware_version: "R3V1.1_20240411".to_owned(),
+            movie_rtsp_uri: "rtsp://192.168.1.254/xxx.mov".to_owned(),
+            photo_rtsp_uri: "rtsp://192.168.1.254/xxx.mov".to_owned(),
+            configuration: vec![MobileNovatekCommandStatusDto {
+                command_id: 2001,
+                status: 0,
+            }],
+            storage_present: true,
+            media: vec![MobileNovatekMediaEntryDto {
+                name: "clip.TS".to_owned(),
+                path: "A:\\Novatek\\Movie\\clip.TS".to_owned(),
+                size_bytes: 42,
+                timecode: 7,
+                time: "2025/01/01 00:00:00".to_owned(),
+                attributes: 32,
+            }],
+        };
+        handle
+            .configure_novatek_read_only_session(
+                MobileNovatekHttpOriginDto {
+                    address: "192.168.1.254".to_owned(),
+                    port: 80,
+                },
+                snapshot.clone(),
+            )
+            .expect("validated read-only evidence establishes the session");
+
+        assert!(handle.novatek_media_is_current("A:\\Novatek\\Movie\\clip.TS".to_owned(), 42));
+        assert!(!handle.novatek_media_is_current("A:\\Novatek\\Movie\\other.TS".to_owned(), 42));
+
+        handle.clear_novatek_session();
+        assert!(!handle.novatek_media_is_current("A:\\Novatek\\Movie\\clip.TS".to_owned(), 42));
+    }
+
+    #[test]
+    fn camera_session_state_thumbnail_target_requires_current_media_and_capability() {
+        let handle = CutoutSessionStateHandle::new();
+        let origin = MobileNovatekHttpOriginDto {
+            address: "192.168.1.254".to_owned(),
+            port: 80,
+        };
+        let snapshot = |status| MobileNovatekReadOnlySnapshotDto {
+            firmware_version: "R3V1.1_20240411".to_owned(),
+            movie_rtsp_uri: "rtsp://192.168.1.254/xxx.mov".to_owned(),
+            photo_rtsp_uri: "rtsp://192.168.1.254/xxx.mov".to_owned(),
+            configuration: vec![MobileNovatekCommandStatusDto {
+                command_id: 4001,
+                status,
+            }],
+            storage_present: true,
+            media: vec![MobileNovatekMediaEntryDto {
+                name: "clip.TS".to_owned(),
+                path: "A:\\Novatek\\Movie\\clip.TS".to_owned(),
+                size_bytes: 42,
+                timecode: 7,
+                time: "2025/01/01 00:00:00".to_owned(),
+                attributes: 32,
+            }],
+        };
+
+        handle
+            .configure_novatek_read_only_session(origin.clone(), snapshot(7))
+            .expect("bounded R3V1 evidence is retained");
+        assert_eq!(
+            handle.novatek_media_thumbnail_target("A:\\Novatek\\Movie\\clip.TS".to_owned(), 42),
+            Err(MobileNovatekThumbnailTargetError::CapabilityNotAdvertised)
+        );
+
+        handle
+            .configure_novatek_read_only_session(origin.clone(), snapshot(0))
+            .expect("acknowledged thumbnail capability is retained");
+        assert_eq!(
+            handle
+                .novatek_media_thumbnail_target("A:\\Novatek\\Movie\\clip.TS".to_owned(), 42,)
+                .expect("current media and command proof produce a target"),
+            "/Novatek/Movie/clip.TS?custom=1&cmd=4001"
+        );
+        assert_eq!(
+            handle.novatek_media_thumbnail_target("A:\\Novatek\\Movie\\clip.TS".to_owned(), 43),
+            Err(MobileNovatekThumbnailTargetError::MediaNotCurrent)
+        );
+
+        handle.clear_novatek_session();
+        assert_eq!(
+            handle.novatek_media_thumbnail_target("A:\\Novatek\\Movie\\clip.TS".to_owned(), 42),
+            Err(MobileNovatekThumbnailTargetError::MediaNotCurrent)
+        );
+    }
+
+    #[test]
+    fn novatek_session_state_replaces_profile_and_media_evidence_together() {
+        let mut state = NovatekCameraSessionState::default();
+        let snapshot = MobileNovatekReadOnlySnapshotDto {
+            firmware_version: "R3V1.1_20240411".to_owned(),
+            movie_rtsp_uri: "rtsp://192.168.1.254/xxx.mov".to_owned(),
+            photo_rtsp_uri: "rtsp://192.168.1.254/xxx.mov".to_owned(),
+            configuration: vec![MobileNovatekCommandStatusDto {
+                command_id: 2001,
+                status: 0,
+            }],
+            storage_present: true,
+            media: vec![MobileNovatekMediaEntryDto {
+                name: "clip.TS".to_owned(),
+                path: "A:\\Novatek\\Movie\\clip.TS".to_owned(),
+                size_bytes: 42,
+                timecode: 7,
+                time: "2025/01/01 00:00:00".to_owned(),
+                attributes: 32,
+            }],
+        };
+        let profile = build_novatek_session(
+            &MobileNovatekHttpOriginDto {
+                address: "192.168.1.254".to_owned(),
+                port: 80,
+            },
+            &snapshot.firmware_version,
+            snapshot
+                .configuration
+                .iter()
+                .map(|status| (status.command_id, status.status)),
+        )
+        .expect("read-only evidence establishes a valid profile");
+
+        state.replace_read_only(profile, snapshot);
+        assert!(state.media_is_current("A:\\Novatek\\Movie\\clip.TS", 42));
+
+        state.clear();
+        assert!(state.profile().is_none());
+        assert!(!state.media_is_current("A:\\Novatek\\Movie\\clip.TS", 42));
+    }
+
+    #[test]
+    fn novatek_command_outcome_parser_preserves_ack_refusal_and_unknown() {
+        assert_eq!(
+            parse_novatek_command_outcome(
+                br"<Function><Cmd>2001</Cmd><Status>0</Status></Function>",
+                2001,
+            ),
+            Ok(MobileNovatekCommandOutcomeDto::Acknowledged)
+        );
+        assert_eq!(
+            parse_novatek_command_outcome(
+                br"<Function><Cmd>2001</Cmd><Status>7</Status></Function>",
+                2001,
+            ),
+            Ok(MobileNovatekCommandOutcomeDto::Refused)
+        );
+        assert_eq!(
+            parse_novatek_command_outcome(br"<Function><Cmd>2001</Cmd></Function>", 2001,),
+            Ok(MobileNovatekCommandOutcomeDto::Unknown)
+        );
+        assert_eq!(
+            parse_novatek_command_outcome(
+                br"<Function><Cmd>3024</Cmd><Status>0</Status></Function>",
+                2001,
+            ),
+            Err(MobileNovatekParseError::InvalidResponse)
+        );
     }
 
     #[test]

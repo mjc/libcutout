@@ -25,6 +25,14 @@ let
     after = [ "check:xcode-ios" ];
   };
   nightlyRust = pkgs.rust-bin.nightly.latest.default;
+  androidNdk =
+    (pkgs.androidenv.composeAndroidPackages {
+      includeNDK = true;
+      ndkVersion = "29.0.14206865";
+    }).ndk-bundle;
+  androidNdkRoot = "${androidNdk}/libexec/android-sdk/ndk-bundle";
+  androidNdkHost = if pkgs.stdenv.isDarwin then "darwin-x86_64" else "linux-x86_64";
+  androidArm64Clang = "${androidNdkRoot}/toolchains/llvm/prebuilt/${androidNdkHost}/bin/aarch64-linux-android21-clang";
   cutoutCargoFuzz = pkgs.writeShellScriptBin "cutout-cargo-fuzz" ''
     export PATH="${nightlyRust}/bin:${pkgs.cargo-fuzz}/bin:$PATH"
     exec cargo fuzz "$@"
@@ -40,6 +48,7 @@ in
   languages.nix.enable = true;
 
   packages = [
+    androidNdk
     cutoutCargoFuzz
     pkgs.cargo-deny
     pkgs.cargo-fuzz
@@ -60,7 +69,10 @@ in
     pkgs.valgrind
   ];
 
+  env.ANDROID_NDK_ROOT = androidNdkRoot;
+  env.CC_aarch64_linux_android = androidArm64Clang;
   env.JNA_JAR = "${pkgs.jna}/share/java/jna.jar";
+  env.KOTLIN_COROUTINES_JAR = "${pkgs.kotlin}/lib/kotlinx-coroutines-core-jvm.jar";
 
   treefmt = {
     enable = true;
@@ -105,6 +117,12 @@ in
 
   tasks."project:dependency-policy".exec = "cargo deny --locked check";
 
+  tasks."check:android-camera-protocols".exec =
+    "cargo check --locked -p cutout-protocols --target aarch64-linux-android";
+
+  tasks."check:android-camera-ffi".exec =
+    "cargo check --locked -p cutout-mobile-ffi --target aarch64-linux-android";
+
   tasks."test:rust-lint-policy".exec = "bash tests/fixtures/macro-policy/run.sh";
 
   tasks."project:quality-gate" = {
@@ -114,6 +132,8 @@ in
       "project:lint"
       "project:tests"
       "project:dependency-policy"
+      "check:android-camera-protocols"
+      "check:android-camera-ffi"
     ]
     ++ lib.optionals pkgs.stdenv.isDarwin [
       "build:ios-ui-tests"
@@ -196,12 +216,13 @@ in
     kotlinc \
       target/uniffi-smoke/kotlin/uniffi/cutout_mobile_ffi/cutout_mobile_ffi.kt \
       tests/mobile-ffi/kotlin-smoke.kt \
-      -cp "$JNA_JAR" \
+      -cp "$JNA_JAR:$KOTLIN_COROUTINES_JAR" \
       -include-runtime \
       -d target/uniffi-smoke/kotlin-smoke.jar
     java \
-      -Djna.library.path="$PWD/target/debug" \
-      -cp "target/uniffi-smoke/kotlin-smoke.jar:$JNA_JAR" \
+      -Djava.library.path="$DEVENV_ROOT/target/debug" \
+      -Djna.library.path="$DEVENV_ROOT/target/debug" \
+      -cp "target/uniffi-smoke/kotlin-smoke.jar:$JNA_JAR:$KOTLIN_COROUTINES_JAR" \
       Kotlin_smokeKt
   '';
   tasks."build:ios-ui-tests" = {

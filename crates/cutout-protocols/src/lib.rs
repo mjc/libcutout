@@ -7,6 +7,9 @@
     deny(clippy::expect_used, clippy::panic, clippy::unwrap_used)
 )]
 #![cfg_attr(not(test), deny(clippy::indexing_slicing))]
+// Existing protocol adapters qualify imported core types to make the ownership
+// boundary explicit; retain that readability without failing the warning gate.
+#![allow(unused_qualifications)]
 
 //! Protocol-family scaffolding for Cutout.
 
@@ -72,6 +75,29 @@ mod melk_lighting;
 pub use melk_lighting::{
     MELK_FRAME_LEN, MELK_NOTIFY_CHANNEL, MELK_SERVICE_CHANNEL, MELK_WRITE_CHANNEL,
     MelkGattEvidence, MelkLightingProfile, MelkPatternDescriptor, MelkWritePolicy,
+};
+mod novatek;
+pub use novatek::{
+    NOVATEK_MAX_MEDIA_RESPONSE_BYTES, NOVATEK_MAX_RESPONSE_BYTES,
+    NOVATEK_VERIFIED_R3_PRO_FIRMWARE_PREFIX, NovatekCapabilityError, NovatekCommandId,
+    NovatekCommandOutcome, NovatekCommandStatus, NovatekConfiguration, NovatekConfigurationError,
+    NovatekFirmwareVersion, NovatekHttpOrigin, NovatekLiveViewLinks, NovatekMediaDownloadTarget,
+    NovatekMediaEntry, NovatekMediaList, NovatekMediaPathError, NovatekMediaThumbnailCapability,
+    NovatekMediaThumbnailError, NovatekMediaThumbnailTarget, NovatekOriginError,
+    NovatekProfileError, NovatekR3V1Profile, NovatekR3V1Session, NovatekReadCommand,
+    NovatekReadOnlySnapshot, NovatekRecordingCapability, NovatekRecordingCommand,
+    NovatekResponseError, NovatekRtspUri, NovatekSessionError, NovatekStatusCode,
+    NovatekStillCaptureCapability, NovatekStillCaptureCommand, NovatekStoragePresence,
+    is_r3_pro_firmware, media_download_target, media_thumbnail_target, parse_command_response,
+    parse_command_response_for_id, parse_configuration_response, parse_firmware_response,
+    parse_live_view_response, parse_media_list_response, parse_read_only_snapshot,
+    parse_storage_response,
+};
+mod rtsp;
+pub use rtsp::{
+    H264FileSink, RtspError, RtspPreviewSession, VideoClockRate, VideoCodec, VideoConfiguration,
+    VideoConfigurationError, VideoDimensions, VideoFrame, VideoFrameError,
+    parse_avcc_parameter_sets,
 };
 mod probe;
 pub use probe::{AeroProbe, FalconProbe, ProtocolProbe};

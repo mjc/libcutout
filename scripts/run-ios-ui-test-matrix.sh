@@ -68,7 +68,8 @@ matrix_rows() {
 
 is_smoke_test() {
   case "$1" in
-    */testPickerExposesAccessibleCaptureControls | \
+    */testCameraSurfaceReturnsToTheRideWithoutCameraNetwork | \
+      */testPickerExposesAccessibleCaptureControls | \
       */testVescUseShowsConnectingBeforeRide | \
       */testVescRidePublishesDynamicTelemetryAfterRouteMountsAtAccessibilityDynamicType | \
       */testEucRidePublishesDynamicTelemetryAfterRouteMountsAtAccessibilityDynamicType | \

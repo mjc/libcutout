@@ -182,7 +182,7 @@ impl BmsObservationSummary {
 fn stabilized_voltage(samples: &[BmsVoltageSample]) -> Voltage {
     let seed = samples
         .first()
-        .map_or_else(Voltage::default, |sample| sample.voltage);
+        .map_or(Voltage::from_millivolts(0), |sample| sample.voltage);
     let mut values: Vec<_> = samples.iter().map(|sample| sample.voltage).collect();
     values.resize(BMS_OBSERVATION_HISTORY_CYCLES, seed);
     values.sort_unstable_by_key(|value| value.as_millivolts());

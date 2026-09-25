@@ -1,6 +1,10 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "camera.preview.accessibility" : {
+      "comment" : "VoiceOver label for the live ride-camera preview surface.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Camera preview" } } }
+    },
     "bms.accessibility.balancing" : {
       "comment" : "VoiceOver BMS cell-group state when that group is actively balancing.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "balancing" } } }
