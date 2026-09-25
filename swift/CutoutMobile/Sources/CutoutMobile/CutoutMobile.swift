@@ -2396,66 +2396,6 @@ public enum VescWriteGuardrail: Equatable, Hashable, Sendable {
     }
 }
 
-public struct VescDebugSnapshot: Equatable, Hashable, Sendable {
-    public let profileTitle: String
-    public let transportDetail: String
-    public let dutyCycle: DutyCycle?
-    public let maxSeenDutyCycle: DutyCycle?
-    public let packVoltage: Voltage?
-    public let batteryCurrentLimit: BatteryCurrent?
-    public let motorCurrentLimit: PhaseCurrent?
-    public let lastFault: String?
-    public let inputApp: String?
-    public let canStatus: String?
-    public let logging: String?
-    public let writeGuardrail: VescWriteGuardrail
-
-    public init(
-        profileTitle: String,
-        transportDetail: String,
-        dutyCycle: DutyCycle? = nil,
-        maxSeenDutyCycle: DutyCycle? = nil,
-        packVoltage: Voltage? = nil,
-        batteryCurrentLimit: BatteryCurrent? = nil,
-        motorCurrentLimit: PhaseCurrent? = nil,
-        lastFault: String? = nil,
-        inputApp: String? = nil,
-        canStatus: String? = nil,
-        logging: String? = nil,
-        writeGuardrail: VescWriteGuardrail
-    ) {
-        self.profileTitle = profileTitle
-        self.transportDetail = transportDetail
-        self.dutyCycle = dutyCycle
-        self.maxSeenDutyCycle = maxSeenDutyCycle
-        self.packVoltage = packVoltage
-        self.batteryCurrentLimit = batteryCurrentLimit
-        self.motorCurrentLimit = motorCurrentLimit
-        self.lastFault = lastFault
-        self.inputApp = inputApp
-        self.canStatus = canStatus
-        self.logging = logging
-        self.writeGuardrail = writeGuardrail
-    }
-
-    fileprivate init(_ dto: MobileVescDebugSnapshotDto) {
-        self.init(
-            profileTitle: dto.profileTitle,
-            transportDetail: dto.transportDetail,
-            dutyCycle: dto.dutyCycle,
-            maxSeenDutyCycle: dto.maxSeenDutyCycle,
-            packVoltage: dto.packVoltage?.value,
-            batteryCurrentLimit: dto.batteryCurrentLimit?.value,
-            motorCurrentLimit: dto.motorCurrentLimit?.value,
-            lastFault: dto.lastFault,
-            inputApp: dto.inputApp,
-            canStatus: dto.canStatus,
-            logging: dto.logging,
-            writeGuardrail: VescWriteGuardrail(dto.writeGuardrail)
-        )
-    }
-}
-
 public enum ReadbackAvailability: Equatable, Hashable, Sendable {
     case available
     case unavailable

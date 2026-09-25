@@ -1811,30 +1811,6 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertNotEqual(snapshot.title, "Fungineers X7")
     }
 
-    func testVescDebugSnapshotKeepsGuardrailAndReadOnlyStateTyped() {
-        let snapshot = VescDebugSnapshot(
-            profileTitle: "Profile: Street stable",
-            transportDetail: "VESC Express · FW 6.x · UART bridge",
-            dutyCycle: dutyCycle(820),
-            maxSeenDutyCycle: dutyCycle(870),
-            packVoltage: voltageValue(75_400),
-            batteryCurrentLimit: batteryCurrentValue(45_000),
-            motorCurrentLimit: phaseCurrentValue(90_000),
-            lastFault: "FAULT_CODE_NONE",
-            inputApp: "ADC + balance",
-            canStatus: "single controller",
-            logging: "local CSV armed",
-            writeGuardrail: .policyRefusal
-        )
-
-        XCTAssertEqual(snapshot.dutyCycle, dutyCycle(820))
-        XCTAssertEqual(snapshot.maxSeenDutyCycle, dutyCycle(870))
-        XCTAssertEqual(snapshot.packVoltage, voltageValue(75_400))
-        XCTAssertEqual(snapshot.batteryCurrentLimit, batteryCurrentValue(45_000))
-        XCTAssertEqual(snapshot.motorCurrentLimit, phaseCurrentValue(90_000))
-        XCTAssertEqual(snapshot.writeGuardrail, .policyRefusal)
-    }
-
     func testSpeedObservationRemainsStickyAcrossTelemetryWithoutSpeed() {
         let core = CutoutSessionCore()
         let speedSnapshot = TelemetrySnapshot(
