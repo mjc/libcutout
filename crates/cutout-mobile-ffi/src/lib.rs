@@ -7881,10 +7881,15 @@ impl MobileRideMapCoreInner {
             telemetry_state,
         );
         if let Some(database) = self.database.as_ref() {
-            if self.pending_location_writes.len() >= MAX_PENDING_LOCATION_WRITES {
+            if self
+                .pending_location_writes
+                .len()
+                .saturating_add(self.settled_location_outcomes.len())
+                >= MAX_PENDING_LOCATION_WRITES
+            {
                 return Ok((
                     MobileRideMapCoreDecisionDto::StorageError {
-                        message: "ride location write queue is full".to_owned(),
+                        message: "ride location outcome queue is full".to_owned(),
                     },
                     None,
                 ));
@@ -8178,7 +8183,6 @@ impl MobileRideMapCoreInner {
         self.admission_recorder = self.recorder.clone();
         self.ride_id = None;
         self.pending_location_writes.clear();
-        self.settled_location_outcomes.clear();
         self.reset_music_history_policy();
         self.music_restore_failed = false;
     }
@@ -8387,7 +8391,6 @@ impl MobileRideMapCoreInner {
         self.reset_music_history_policy();
         self.music_restore_failed = false;
         self.pending_location_writes.clear();
-        self.settled_location_outcomes.clear();
         self.recoverable_updated_at_milliseconds = None;
         Ok(self.snapshot(MobileRideLifecycleStateDto::Active))
     }
@@ -19009,6 +19012,73 @@ mod tests {
     }
 
     #[test]
+    fn settled_location_outcome_survives_starting_the_next_ride() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-map-outcome-lifecycle-{}-{}.sqlite3",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let _ = fs::remove_file(&path);
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+        let state = restored_database_core(database.clone());
+        let first = state.start_gps_only(1_000).expect("first ride starts");
+
+        let sample = MobilePhoneLocationSampleDto {
+            wall_clock_unix_ms: 1_700_000_001_001,
+            latitude_degrees: 40.0,
+            longitude_degrees: -105.0,
+            altitude_meters: 1_600.0,
+            horizontal_accuracy_meters: Some(3.0),
+            vertical_accuracy_meters: None,
+            speed_meters_per_second: None,
+            speed_accuracy_meters_per_second: None,
+            course_degrees: None,
+            course_accuracy_degrees: None,
+        };
+        let pending_outcomes = state
+            .ingest_location_batch_with_outcomes(
+                first.recording_token,
+                1_001,
+                1_700_000_001_001,
+                vec![sample],
+            )
+            .expect("location write queues");
+        let [pending] = pending_outcomes.as_slice() else {
+            panic!("one sample yields one pending outcome");
+        };
+        let request_id = pending.request_id.expect("queued location has an ID");
+
+        state
+            .stop(2_000)
+            .expect("first ride stops after queued write");
+        state.save().expect("first ride saves");
+        let second = state
+            .start_gps_only(3_000)
+            .expect("next ride starts after the worker drains");
+        assert_ne!(second.ride_id, first.ride_id);
+
+        let outcomes = state.poll_location_write_outcomes(3_001);
+        let [terminal] = outcomes.as_slice() else {
+            panic!("the previous ride's terminal outcome remains available");
+        };
+        assert_eq!(terminal.request_id, Some(request_id));
+        assert_eq!(terminal.ride_id, first.ride_id);
+        assert_eq!(terminal.snapshot.ride_id, first.ride_id);
+        assert_eq!(terminal.snapshot.summary.point_count, 1);
+        assert!(matches!(
+            terminal.decision,
+            MobileRideMapCoreDecisionDto::Accepted { .. }
+        ));
+
+        database.shutdown().expect("database shuts down");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
     fn mobile_ride_map_core_settles_pending_location_after_stop() {
         let _guard = RIDE_DATABASE_TEST_LOCK
             .lock()
@@ -19102,6 +19172,31 @@ mod tests {
             decision,
             MobileRideMapCoreDecisionDto::StorageError { .. }
         ));
+
+        let previous_ride = state
+            .current_snapshot(66_000)
+            .expect("the saturated recording remains active");
+        state
+            .stop(66_000)
+            .expect("queued locations settle before stop");
+        state.save().expect("saturated ride saves");
+        let next_ride = state
+            .start_gps_only(67_000)
+            .expect("a new ride starts with retained outcomes");
+        assert_ne!(next_ride.ride_id, previous_ride.ride_id);
+        assert!(matches!(
+            state
+                .ingest_location(68_001, 1_700_000_068_001, 40.0, -105.0, 3.0)
+                .expect("outcome queue saturation is reported without waiting"),
+            MobileRideMapCoreDecisionDto::StorageError { .. }
+        ));
+        let settled = state.poll_location_write_outcomes(68_002);
+        assert_eq!(settled.len(), MAX_PENDING_LOCATION_WRITES);
+        assert!(
+            settled
+                .iter()
+                .all(|outcome| outcome.ride_id == previous_ride.ride_id)
+        );
 
         database.shutdown().expect("database shuts down");
         let _ = fs::remove_file(path);
