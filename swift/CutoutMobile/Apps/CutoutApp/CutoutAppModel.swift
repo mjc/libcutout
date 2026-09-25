@@ -645,83 +645,20 @@ final class CutoutAppModel {
 
     @discardableResult
     func handleMusicCommand(_ command: MobileMusicCommandDto) async -> MusicCommandOutcome {
-        let commandProvider = selectedMusicProvider
-        let feedbackRequestID = beginMusicCommandFeedback()
-#if canImport(MediaPlayer) && os(iOS)
-        // Opening the selected provider is a settings action, not a transport
-        // capability. It must work before any playback snapshot has arrived.
-        if command == .openProvider {
-            if selectedMusicProvider == .spotify {
-                return finishMusicCommand(
-                    await spotifyMusicProvider.perform(.openProvider),
-                    provider: commandProvider,
-                    requestID: feedbackRequestID
-                )
-            }
-            return finishMusicCommand(
-                await appleMusicProvider.perform(.openProvider),
-                provider: commandProvider,
-                requestID: feedbackRequestID
-            )
-        }
-#endif
-        guard let nowPlaying = musicNowPlaying else {
-            return finishMusicCommand(
-                .unavailable,
-                provider: commandProvider,
-                requestID: feedbackRequestID
-            )
-        }
-        guard nowPlaying.isCommandAvailable(command) else {
-            return finishMusicCommand(
-                .refused,
-                provider: commandProvider,
-                requestID: feedbackRequestID
-            )
-        }
-#if canImport(MediaPlayer) && os(iOS)
-        let outcome: MusicCommandOutcome
-        if nowPlaying.provider == .spotify {
-            outcome = await spotifyMusicProvider.perform(command)
-        } else {
-            outcome = await appleMusicProvider.perform(command)
-        }
-        if outcome == .accepted {
-            refreshMusicSnapshot()
-        }
-        return finishMusicCommand(
-            outcome,
-            provider: commandProvider,
-            requestID: feedbackRequestID
-        )
-#else
-        return finishMusicCommand(
-            .unavailable,
-            provider: commandProvider,
-            requestID: feedbackRequestID
-        )
-#endif
+        await music.handleCommand(command)
     }
 
     @discardableResult
     func beginMusicCommandFeedback() -> MobileMusicCommandFeedbackId? {
-        guard let requestID = musicProviderLifecycle.beginCommandFeedback() else {
-            musicCommandFeedback = nil
-            return nil
-        }
-        musicCommandFeedback = MusicCommandFeedback(requestID: requestID, outcome: .accepted)
-        return requestID
+        music.beginCommandFeedback()
     }
 
     func dismissMusicCommandFeedback(requestID: MobileMusicCommandFeedbackId) {
-        guard musicCommandFeedback?.requestID == requestID else { return }
-        _ = musicProviderLifecycle.dismissCommandFeedback(id: requestID)
-        musicCommandFeedback = nil
+        music.dismissCommandFeedback(requestID: requestID)
     }
 
     func dismissMusicCommandFeedback() {
-        guard let requestID = musicCommandFeedback?.requestID else { return }
-        dismissMusicCommandFeedback(requestID: requestID)
+        music.dismissCommandFeedback()
     }
 
     func finishMusicCommand(
@@ -729,12 +666,7 @@ final class CutoutAppModel {
         provider: MobileMusicProviderDto,
         requestID: MobileMusicCommandFeedbackId?
     ) -> MusicCommandOutcome {
-        if let requestID,
-           selectedMusicProvider == provider,
-           musicProviderLifecycle.classifyCommandFeedback(id: requestID) == .current {
-            musicCommandFeedback = MusicCommandFeedback(requestID: requestID, outcome: outcome)
-        }
-        return outcome
+        music.finishCommand(outcome, provider: provider, requestID: requestID)
     }
 
     func dismissMusicPlayer() {

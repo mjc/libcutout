@@ -377,6 +377,67 @@ final class MusicFeatureModel {
         updateMonitoring(from: previousProvider, to: provider)
     }
 
+    func beginCommandFeedback() -> MobileMusicCommandFeedbackId? {
+        guard let requestID = providerLifecycle.beginCommandFeedback() else {
+            commandFeedback = nil
+            return nil
+        }
+        commandFeedback = MusicCommandFeedback(requestID: requestID, outcome: .accepted)
+        return requestID
+    }
+
+    func dismissCommandFeedback(requestID: MobileMusicCommandFeedbackId) {
+        guard commandFeedback?.requestID == requestID else { return }
+        _ = providerLifecycle.dismissCommandFeedback(id: requestID)
+        commandFeedback = nil
+    }
+
+    func dismissCommandFeedback() {
+        guard let requestID = commandFeedback?.requestID else { return }
+        dismissCommandFeedback(requestID: requestID)
+    }
+
+    func finishCommand(
+        _ outcome: MusicCommandOutcome,
+        provider: MobileMusicProviderDto,
+        requestID: MobileMusicCommandFeedbackId?
+    ) -> MusicCommandOutcome {
+        if let requestID,
+           selectedProvider == provider,
+           providerLifecycle.classifyCommandFeedback(id: requestID) == .current {
+            commandFeedback = MusicCommandFeedback(requestID: requestID, outcome: outcome)
+        }
+        return outcome
+    }
+
+    func handleCommand(_ command: MobileMusicCommandDto) async -> MusicCommandOutcome {
+        let commandProvider = selectedProvider
+        let requestID = beginCommandFeedback()
+#if canImport(MediaPlayer) && os(iOS)
+        if command == .openProvider {
+            let result = commandProvider == .spotify
+                ? await spotifyProvider.perform(.openProvider)
+                : await appleProvider.perform(.openProvider)
+            return finishCommand(result, provider: commandProvider, requestID: requestID)
+        }
+#endif
+        guard let nowPlaying else {
+            return finishCommand(.unavailable, provider: commandProvider, requestID: requestID)
+        }
+        guard nowPlaying.isCommandAvailable(command) else {
+            return finishCommand(.refused, provider: commandProvider, requestID: requestID)
+        }
+#if canImport(MediaPlayer) && os(iOS)
+        let result = nowPlaying.provider == .spotify
+            ? await spotifyProvider.perform(command)
+            : await appleProvider.perform(command)
+        if result == .accepted { refreshSnapshot() }
+        return finishCommand(result, provider: commandProvider, requestID: requestID)
+#else
+        return finishCommand(.unavailable, provider: commandProvider, requestID: requestID)
+#endif
+    }
+
     private func updateMonitoring(
         from previousProvider: MobileMusicProviderDto,
         to provider: MobileMusicProviderDto

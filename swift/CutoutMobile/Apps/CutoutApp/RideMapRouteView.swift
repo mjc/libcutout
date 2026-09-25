@@ -199,7 +199,7 @@ struct RideMapRouteView: View {
                     timelineUnavailable: history.detailMusicTimelineUnavailable,
                     state: history.detailMusicState,
                     error: history.detailMusicError,
-                    forgetMusicHistory: { model.forgetMusicHistory(for: $0) }
+                    forgetMusicHistory: { model.music.forgetHistory(for: $0) }
                 ),
                 projectionRideID: history.detailProjectionRideID,
                 cameraRegion: history.detailCameraRegion,

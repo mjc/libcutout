@@ -63,23 +63,24 @@ struct AppSetupView: View {
                     BluetoothCapturesView(model: model)
                         .toolbar { doneToolbar }
                 case .music:
+                    let music = model.music
                     MusicSettingsView(
-                        nowPlaying: model.music.settingsNowPlaying,
+                        nowPlaying: music.settingsNowPlaying,
                         selectedProvider: Binding(
-                            get: { model.music.selectedProvider },
-                            set: model.selectMusicProvider
+                            get: { music.selectedProvider },
+                            set: music.selectProvider
                         ),
                         historyPolicy: Binding(
-                            get: { model.music.historyPolicy },
-                            set: { _ = model.setMusicHistoryPolicy($0) }
+                            get: { music.historyPolicy },
+                            set: { _ = music.setHistoryPolicy($0) }
                         ),
-                        historyUnavailable: model.music.historyUnavailable,
-                        historySaveError: model.music.historySaveError,
-                        onConnect: model.connectMusic,
-                        onAuthorizeSpotify: model.authorizeSpotify,
+                        historyUnavailable: music.historyUnavailable,
+                        historySaveError: music.historySaveError,
+                        onConnect: music.connect,
+                        onAuthorizeSpotify: music.authorizeSpotify,
                         onOpenProvider: {
                             Task { @MainActor in
-                                _ = await model.handleMusicCommand(.openProvider)
+                                _ = await music.handleCommand(.openProvider)
                             }
                         }
                     )

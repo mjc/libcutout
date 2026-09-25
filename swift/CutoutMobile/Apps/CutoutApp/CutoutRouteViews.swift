@@ -16,12 +16,12 @@ struct AppMusicCompactPlayerModifier: ViewModifier {
             isHidden: feature.isPlayerHidden,
             onCommand: { command in
                 Task { @MainActor in
-                    _ = await model.handleMusicCommand(command)
+                    _ = await feature.handleCommand(command)
                 }
             },
             onOpenSettings: { isMusicSettingsPresented = true },
-            onDismiss: model.dismissMusicPlayer,
-            onRestore: model.restoreMusicPlayer
+            onDismiss: feature.dismissPlayer,
+            onRestore: feature.restorePlayer
         )
         .sheet(isPresented: $isMusicSettingsPresented) {
             AppSetupView(model: model, opensMusic: true)
