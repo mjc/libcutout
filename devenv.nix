@@ -222,6 +222,7 @@ in
         -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testAppModelDeallocationStopsMusicMonitor \
         -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testAppModelKeepsOneMusicMonitorAcrossStartupAndSceneResume \
         -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testOpeningHistoricalRideDetailDoesNotDispatchMusicTransport \
+        -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testSpotifyCallbackAdmissionSurvivesEitherSceneEventOrder \
         -parallel-testing-enabled NO \
         ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
         test

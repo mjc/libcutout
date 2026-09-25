@@ -44,6 +44,63 @@ final class MusicFeatureModelTests: XCTestCase {
         )
     }
 
+#if canImport(SpotifyiOS) && os(iOS)
+    func testSpotifyCallbackAdmissionSurvivesEitherSceneEventOrder() throws {
+        let redirectURL = try XCTUnwrap(URL(string: "cutout-spotify://spotify-login-callback"))
+        let callbackURL = try XCTUnwrap(
+            URL(string: "cutout-spotify://spotify-login-callback/#access_token=test")
+        )
+
+        for callbackBeforeResume in [true, false] {
+            let lifecycle = MobileMusicProviderLifecycle()
+            lifecycle.requestMonitor(request: .authorize)
+            XCTAssertEqual(lifecycle.beginMonitor()?.start, .authorize)
+            let authorization = try XCTUnwrap(lifecycle.beginAuthorizationEffect(
+                kind: .authorizing,
+                nowMs: 1_000
+            ))
+            _ = try XCTUnwrap(lifecycle.beginProviderSession())
+            XCTAssertTrue(lifecycle.suspend().observationGap)
+
+            if callbackBeforeResume {
+                XCTAssertTrue(SpotifyAuthorizationCallbackGate.accepts(
+                    callbackURL,
+                    redirectURL: redirectURL,
+                    authorizationID: authorization.id,
+                    lifecycle: lifecycle
+                ))
+                XCTAssertEqual(
+                    lifecycle.finishAuthorization(id: authorization.id),
+                    .authorizing
+                )
+            }
+
+            XCTAssertEqual(lifecycle.resume(), .restored)
+            XCTAssertEqual(lifecycle.beginMonitor()?.start, .observe)
+
+            if !callbackBeforeResume {
+                XCTAssertTrue(SpotifyAuthorizationCallbackGate.accepts(
+                    callbackURL,
+                    redirectURL: redirectURL,
+                    authorizationID: authorization.id,
+                    lifecycle: lifecycle
+                ))
+                XCTAssertEqual(
+                    lifecycle.finishAuthorization(id: authorization.id),
+                    .authorizing
+                )
+            }
+
+            XCTAssertFalse(SpotifyAuthorizationCallbackGate.accepts(
+                callbackURL,
+                redirectURL: redirectURL,
+                authorizationID: authorization.id,
+                lifecycle: lifecycle
+            ))
+        }
+    }
+#endif
+
     func testDeletingHistoryInvalidatesDetailBeforeRustDeleteAndClearsCaptureBeforeSelection() throws {
         let state = MobileRideMapState()
         _ = try state.startGpsOnly(atMs: 100)

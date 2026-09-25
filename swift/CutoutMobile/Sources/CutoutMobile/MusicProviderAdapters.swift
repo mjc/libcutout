@@ -12,6 +12,23 @@ import Security
 
 #if canImport(SpotifyiOS) && os(iOS)
 
+enum SpotifyAuthorizationCallbackGate {
+    static func accepts(
+        _ url: URL,
+        redirectURL: URL,
+        authorizationID: MobileMusicAuthorizationId?,
+        lifecycle: MobileMusicProviderLifecycle
+    ) -> Bool {
+        guard url.scheme == redirectURL.scheme,
+              url.host == redirectURL.host,
+              musicCallbackPathMatches(expected: redirectURL.path, actual: url.path),
+              let authorizationID,
+              lifecycle.classifyAuthorization(id: authorizationID) != .stale
+        else { return false }
+        return true
+    }
+}
+
 /// Thin main-thread bridge to Spotify's official App Remote SDK. The SDK owns
 /// authorization, playback, and provider lifecycle; only bounded projections
 /// enter the shared music/Rust pipeline.
@@ -549,16 +566,17 @@ public final class SpotifyProviderAdapter: NSObject {
     @discardableResult
     public func handleCallback(_ url: URL) -> Bool {
         guard let configuration,
-              url.scheme == configuration.redirectURL.scheme,
-              url.host == configuration.redirectURL.host,
-              musicCallbackPathMatches(expected: configuration.redirectURL.path, actual: url.path)
+              SpotifyAuthorizationCallbackGate.accepts(
+                url,
+                redirectURL: configuration.redirectURL,
+                authorizationID: authorizationGeneration,
+                lifecycle: lifecycle
+              ),
+              let sessionManager
         else { return false }
         // SessionManager owns the authorization-code/PKCE callback. It never
         // asks Spotify to start playback; the returned session is connected to
         // App Remote below after the callback delegate fires.
-        guard let generation = authorizationGeneration,
-              lifecycle.classifyAuthorization(id: generation) != .stale,
-              let sessionManager else { return false }
         return sessionManager.application(UIApplication.shared, open: url, options: [:])
     }
 
