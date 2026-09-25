@@ -1527,6 +1527,14 @@ pub struct PendingLocationWrite {
     consumed: bool,
 }
 
+/// A BMS batch accepted by the bounded database queue but not necessarily committed yet.
+#[must_use = "poll or wait for the durable BMS batch result"]
+#[derive(Debug)]
+pub struct PendingBmsVoltageWrite {
+    response: Receiver<Result<(), StorageError>>,
+    consumed: bool,
+}
+
 /// Durable outcome for one asynchronously appended location.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct LocationWriteResult {
@@ -1990,6 +1998,44 @@ impl PendingLocationWrite {
     }
 }
 
+impl PendingBmsVoltageWrite {
+    /// Returns the durable result when the worker has completed the write.
+    ///
+    /// `None` means that the worker is still processing the batch. A terminal result is returned
+    /// at most once.
+    pub fn try_result(&mut self) -> Option<Result<(), StorageError>> {
+        if self.consumed {
+            return None;
+        }
+        match self.response.try_recv() {
+            Ok(result) => {
+                self.consumed = true;
+                Some(result)
+            }
+            Err(mpsc::TryRecvError::Empty) => None,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.consumed = true;
+                Some(Err(StorageError::ResponseDropped))
+            }
+        }
+    }
+
+    /// Waits for the durable BMS batch result.
+    ///
+    /// Lifecycle barriers may wait for this result; platform callbacks should use
+    /// [`Self::try_result`] instead.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::ResponseDropped`] when the database worker disappears before
+    /// sending a result.
+    pub fn wait_result(self) -> Result<(), StorageError> {
+        self.response
+            .recv()
+            .map_err(|_| StorageError::ResponseDropped)?
+    }
+}
+
 impl RideDatabase {
     /// Opens or reuses the one canonical database service for this process.
     ///
@@ -2205,9 +2251,28 @@ impl RideDatabase {
         &self,
         samples: &[BmsVoltageSampleRecord],
     ) -> Result<(), StorageError> {
-        self.request(move |reply| Command::RecordBmsVoltageSamples {
-            samples: samples.to_vec(),
-            reply,
+        self.queue_bms_voltage_samples(samples.to_vec())?
+            .wait_result()
+    }
+
+    /// Queues a BMS batch without waiting for the SQLite worker.
+    ///
+    /// The bounded queue applies backpressure at submission time. The returned ticket can be
+    /// polled for the durable result.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::QueueFull`] when the bounded queue is saturated, or
+    /// [`StorageError::WorkerStopped`] when the worker is unavailable.
+    pub fn queue_bms_voltage_samples(
+        &self,
+        samples: Vec<BmsVoltageSampleRecord>,
+    ) -> Result<PendingBmsVoltageWrite, StorageError> {
+        let (reply, response) = response_channel();
+        self.enqueue(Command::RecordBmsVoltageSamples { samples, reply })?;
+        Ok(PendingBmsVoltageWrite {
+            response,
+            consumed: false,
         })
     }
 

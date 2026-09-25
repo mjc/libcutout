@@ -3705,6 +3705,54 @@ fn bms_voltage_samples_are_durable_without_a_ride_and_duplicate_batches_are_idem
 }
 
 #[test]
+fn queued_bms_samples_do_not_wait_for_a_busy_sqlite_worker() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-queued-bms-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database.create_ride(RideSource::Live, 1_000).unwrap();
+    database.transition(ride, RideEvent::Start).unwrap();
+
+    let (entered_sender, entered_receiver) = std::sync::mpsc::sync_channel(0);
+    let (release_sender, release_receiver) = std::sync::mpsc::sync_channel(0);
+    let location = LocationSample::new(
+        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        1_001,
+        1_700_000_000_001,
+        None,
+        LocationSource::Live,
+    );
+    let _pending_location = database
+        .enqueue_location_with_worker_gate_for_test(
+            ride,
+            location,
+            RideMapSegmentId::new(0),
+            RouteTelemetryState::GpsOnly,
+            entered_sender,
+            release_receiver,
+        )
+        .unwrap();
+    entered_receiver
+        .recv_timeout(Duration::from_secs(1))
+        .expect("location write reaches the deliberate worker gate");
+
+    let samples = vec![
+        BmsVoltageSampleRecord::new("wheel-a", "session-a", 1, 1_000, 2_000, 45, 4_193).unwrap(),
+    ];
+    let mut pending = database
+        .queue_bms_voltage_samples(samples)
+        .expect("submission returns without waiting for SQLite");
+    assert!(pending.try_result().is_none());
+
+    release_sender.send(()).unwrap();
+    pending.wait_result().unwrap();
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn bms_voltage_constructor_requires_distinct_event_identities_for_successive_samples() {
     let _guard = test_guard();
     let path = std::env::temp_dir().join(format!(
