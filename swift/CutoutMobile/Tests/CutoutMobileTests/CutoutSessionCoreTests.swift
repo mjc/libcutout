@@ -8,6 +8,94 @@ import XCTest
     import CoreBluetooth
 #endif
 
+private final class CaptureRecorderSpy: CutoutSessionCaptureRecording {
+    var currentGeneration: CaptureGeneration? = .legacy
+    var activeFileURL: URL?
+    var hasWriter = true
+    var currentMusicObservation: MobilePevcapMusicEventDto?
+    var recordLinkUpResult: MobileCaptureWriteOutcomeDto = .accepted
+    #if DEBUG
+        var finishWriterGate: (() -> Void)?
+    #endif
+    private(set) var finishCount = 0
+    private(set) var publishFailureCount = 0
+
+    func start(
+        generation: CaptureGeneration,
+        platformIdentifier _: String,
+        advertisedServices _: [BluetoothUuid],
+        directory _: URL,
+        reason _: String,
+        annotations _: [String],
+        evidence _: String
+    ) -> Bool {
+        currentGeneration = generation
+        hasWriter = true
+        return true
+    }
+
+    func startSynthetic(generation: CaptureGeneration, fileURL: URL, progress _: CaptureProgress) {
+        currentGeneration = generation
+        activeFileURL = fileURL
+    }
+
+    func finishSynthetic() { activeFileURL = nil }
+    func publishStarted() {}
+    func resetMusicContext() { currentMusicObservation = nil }
+    func addAnnotation(_: String) -> MobileCaptureWriteOutcomeDto { .accepted }
+    func changeLabel(_: MobileCaptureLabelActionDto) throws -> [MobileCaptureLabelDto] { [] }
+    func flushWriter() -> Bool { true }
+
+    func publishProgress() -> CaptureProgress {
+        CaptureProgress(
+            elapsedMilliseconds: 0,
+            notificationCount: 0,
+            fileSizeBytes: 0,
+            queuedMessageCount: 0,
+            writerError: nil
+        )
+    }
+
+    func publishFailure() { publishFailureCount += 1 }
+    func writerStatus() -> MobileCaptureWriterStatusDto? { nil }
+
+    func recordNotification(
+        characteristic _: BluetoothUuid,
+        service _: BluetoothUuid,
+        bytes _: Data,
+        telemetry _: RawTelemetryReadback?,
+        phoneLocation _: MobilePhoneLocationSampleDto?
+    ) -> MobileCaptureWriteOutcomeDto { .accepted }
+
+    func recordLinkUp(maxWriteLength _: UInt16?) -> MobileCaptureWriteOutcomeDto { recordLinkUpResult }
+    func recordLinkDown() -> MobileCaptureWriteOutcomeDto { .accepted }
+    func recordMusicObservation(_: MobilePevcapMusicEventDto?) -> MobileCaptureWriteOutcomeDto { .accepted }
+    func updateMusicPolicy(_: MobileMusicHistoryPolicyDto) -> MobileCaptureWriteOutcomeDto { .accepted }
+
+    func setResolvedIdentity(
+        _: MobileResolvedIdentityDto,
+        evidence _: String?,
+        detail _: String?
+    ) -> MobileCaptureWriteOutcomeDto { .accepted }
+
+    func addGattFingerprint(_: MobileGattFingerprintDto) -> MobileCaptureWriteOutcomeDto { .accepted }
+
+    func makeWriteReceiptRecorder(
+        channel _: BluetoothUuid,
+        bytes _: Data,
+        writeID _: UInt64
+    ) -> (CoreBluetoothWriteDisposition) -> MobileCaptureWriteOutcomeDto { { _ in .accepted } }
+
+    func finish(publishesResult _: Bool, priorWriteSucceeded _: Bool) {
+        finishCount += 1
+        hasWriter = false
+        currentGeneration = nil
+    }
+
+    func elapsedMilliseconds() -> UInt64 { 0 }
+    func elapsedMilliseconds(since _: MonotonicMilliseconds) -> UInt64 { 0 }
+}
+
 final class CutoutSessionCoreTests: XCTestCase {
     func testDefaultSessionProvidesCanonicalRideHistory() throws {
         let core = CutoutSessionCore()
@@ -54,6 +142,21 @@ final class CutoutSessionCoreTests: XCTestCase {
 
         XCTAssertEqual(log.values, ["two", "three", "four"])
         XCTAssertEqual(log.droppedCount, 1)
+    }
+
+    func testLinkUpCaptureFailureUsesTheCoreFailurePolicy() {
+        let capture = CaptureRecorderSpy()
+        capture.recordLinkUpResult = .failed
+        let core = CutoutSessionCore(
+            clock: MonotonicClock(now: { MonotonicMilliseconds(100) }),
+            captureRecorder: capture
+        )
+
+        core.applyLinkUpStep(CoreBluetoothSessionStep(operations: [], snapshot: nil))
+
+        XCTAssertEqual(core.phase, .failed(.sessionFailed("capture writer queue overrun")))
+        XCTAssertEqual(capture.publishFailureCount, 1)
+        XCTAssertEqual(capture.finishCount, 1)
     }
 
     @MainActor
