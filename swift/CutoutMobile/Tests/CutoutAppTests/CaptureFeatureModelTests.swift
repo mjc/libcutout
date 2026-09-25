@@ -156,6 +156,255 @@ final class CaptureFeatureModelTests: XCTestCase {
         XCTAssertEqual(capture.recordingSummary, "Saving…")
     }
 
+    func testQuickLabelActionNamesAndTonesFollowTheirState() {
+        XCTAssertEqual(CaptureQuickLabel.ride.actionTitle(isActive: false), "Start Ride")
+        XCTAssertEqual(CaptureQuickLabel.ride.actionTitle(isActive: true), "Stop Ride")
+        XCTAssertEqual(CaptureQuickLabel.lowBeamOn.title, "Low beam on")
+        XCTAssertEqual(CaptureQuickLabel.lowBeamOn.actionTitle(isActive: false), "Start Low beam on")
+        XCTAssertEqual(CaptureQuickLabel.lowBeamOn.actionTitle(isActive: true), "Stop Low beam on")
+        for label in CaptureQuickLabel.allCases {
+            XCTAssertFalse(label.title.hasPrefix("capture.label."))
+            XCTAssertFalse(label.actionTitle(isActive: false).hasPrefix("capture.label."))
+            XCTAssertFalse(label.actionTitle(isActive: true).hasPrefix("capture.label."))
+        }
+        XCTAssertEqual(CaptureActionButtonTone.forState(isActive: false), .start)
+        XCTAssertEqual(CaptureActionButtonTone.forState(isActive: true), .stop)
+        XCTAssertEqual(CaptureActionButtonTone.finish, .finish)
+    }
+
+    func testCaptureStatusKeepsVisibleTextToneAndMeaningfulAnnouncements() {
+        XCTAssertEqual(
+            CaptureStatus.recordingLocally(fileName: "ride.cutout").displayText,
+            "Recording locally: ride.cutout"
+        )
+        XCTAssertEqual(
+            CaptureStatus.recording(label: nil, notificationCount: 2, fileName: nil).displayText,
+            "Recording: 2 notifications"
+        )
+        XCTAssertEqual(
+            CaptureStatus.recording(label: "Ride", notificationCount: 3, fileName: "ride.cutout").displayText,
+            "Ride: 3 notifications → ride.cutout"
+        )
+        XCTAssertEqual(
+            CaptureStatus.labelStarted(label: "Ride", notificationCount: 3, fileName: "ride.cutout").displayText,
+            "Ride started: 3 notifications → ride.cutout"
+        )
+        XCTAssertEqual(
+            CaptureStatus.labelStopped(label: "Ride", notificationCount: 4, fileName: nil).displayText,
+            "Ride stopped"
+        )
+        XCTAssertEqual(CaptureStatus.saved(fileName: "ride.cutout").displayText, "Saved capture: ride.cutout")
+        XCTAssertEqual(CaptureStatus.failed.statusStripTone, .critical)
+        XCTAssertEqual(CaptureStatus.recordingLocally(fileName: "capture.jsonl").statusStripTone, .nominal)
+        XCTAssertEqual(
+            CaptureStatus.labelStarted(label: "Ride", notificationCount: 3, fileName: "ride.cutout")
+                .accessibilityAnnouncement,
+            "Ride capture started"
+        )
+        XCTAssertEqual(
+            CaptureStatus.labelStopped(label: "Ride", notificationCount: 4, fileName: "ride.cutout")
+                .accessibilityAnnouncement,
+            "Ride capture stopped"
+        )
+        XCTAssertEqual(CaptureStatus.saved(fileName: "ride.cutout").accessibilityAnnouncement, "Capture saved")
+        XCTAssertEqual(CaptureStatus.failed.accessibilityAnnouncement, "Capture failed")
+        XCTAssertNil(CaptureStatus.recording(label: "Ride", notificationCount: 200, fileName: "ride.cutout").accessibilityAnnouncement)
+        XCTAssertNil(CaptureStatus.recordingLocally(fileName: "ride.cutout").accessibilityAnnouncement)
+    }
+
+    func testTypedCaptureEventsAndProgressUpdateFeaturePresentation() {
+        let capture = CaptureFeatureModel()
+        let fileURL = URL(fileURLWithPath: "/tmp/ride.cutout")
+        let progress = CaptureProgress(
+            elapsedMilliseconds: 63_000,
+            notificationCount: 42,
+            fileSizeBytes: 12_288,
+            queuedMessageCount: 2,
+            writerError: nil
+        )
+
+        capture.deliverCaptureEvent(.started(fileURL: fileURL), origin: .manual)
+        XCTAssertEqual(capture.status, .recordingLocally(fileName: "ride.cutout"))
+        capture.deliverCaptureEvent(.progress(progress))
+
+        XCTAssertEqual(capture.progress, progress)
+        XCTAssertEqual(capture.status, .recording(label: nil, notificationCount: 42, fileName: "ride.cutout"))
+        capture.deliverCaptureEvent(.notificationRecorded)
+        XCTAssertEqual(capture.status, .recording(label: nil, notificationCount: 43, fileName: "ride.cutout"))
+        capture.deliverCaptureEvent(.finished(fileURL: fileURL))
+        XCTAssertEqual(capture.status, .saved(fileName: "ride.cutout"))
+
+        capture.deliverCaptureEvent(.started(fileURL: fileURL), origin: .manual)
+        capture.deliverCaptureEvent(.failed)
+        XCTAssertEqual(capture.status, .failed)
+    }
+
+    func testLateTerminalEventsCannotReplaceTheCurrentGeneration() {
+        let capture = CaptureFeatureModel()
+        let first = CaptureGeneration(rawValue: 1)
+        let second = CaptureGeneration(rawValue: 2)
+        let firstURL = URL(fileURLWithPath: "/tmp/first.cutout")
+        let secondURL = URL(fileURLWithPath: "/tmp/second.cutout")
+        let progress = CaptureProgress(
+            elapsedMilliseconds: 1_000,
+            notificationCount: 7,
+            fileSizeBytes: 128,
+            queuedMessageCount: 0,
+            writerError: nil
+        )
+
+        capture.deliverCaptureEvent(.started(generation: first, fileURL: firstURL), origin: .manual)
+        capture.deliverCaptureEvent(.started(generation: second, fileURL: secondURL), origin: .manual)
+        capture.deliverCaptureEvent(.progress(generation: second, progress))
+        capture.deliverCaptureEvent(.finished(generation: first, fileURL: firstURL))
+        capture.deliverCaptureEvent(.failed(generation: first))
+
+        XCTAssertEqual(
+            capture.status,
+            .recording(label: nil, notificationCount: 7, fileName: "second.cutout")
+        )
+    }
+
+    func testInvalidRepeatedLabelTransitionsAreIgnored() {
+        var active = [MobileCaptureLabelDto]()
+        var requestedActions = [MobileCaptureLabelActionDto]()
+        let capture = CaptureFeatureModel(changeCaptureLabel: { _, action in
+            requestedActions.append(action)
+            switch action {
+            case let .start(label): active = [label]
+            case .stop: active = []
+            }
+            return active
+        })
+
+        capture.stopLabel(.ride)
+        XCTAssertNil(capture.status?.displayText)
+        XCTAssertTrue(capture.activeLabels.isEmpty)
+        capture.deliverCaptureEvent(.started(fileURL: URL(fileURLWithPath: "/tmp/labels.jsonl")), origin: .manual)
+        capture.startLabel(.ride)
+        XCTAssertEqual(capture.status, .labelStarted(label: "Ride", notificationCount: 0, fileName: "labels.jsonl"))
+        XCTAssertEqual(capture.activeLabels, [.ride])
+        capture.startLabel(.ride)
+        capture.stopLabel(.ride)
+        capture.stopLabel(.ride)
+
+        XCTAssertEqual(capture.status, .labelStopped(label: "Ride", notificationCount: 0, fileName: "labels.jsonl"))
+        XCTAssertTrue(capture.activeLabels.isEmpty)
+        XCTAssertEqual(requestedActions.count, 2)
+    }
+
+    func testFlushFailureAffectsOnlyAnActiveCapture() async {
+        let sessionState = CutoutSessionStateHandle()
+        var flushCalls = 0
+        let capture = CaptureFeatureModel(sessionState: sessionState, flush: {
+            flushCalls += 1
+            if let attempt = sessionState.captureLifecycleSnapshot().attempt {
+                _ = sessionState.captureWriterFailed(generation: attempt.generation)
+            }
+            return false
+        })
+
+        let inactiveFlushSucceeded = await capture.flush()
+        XCTAssertFalse(inactiveFlushSucceeded)
+        XCTAssertNil(capture.status)
+
+        capture.deliverCaptureEvent(.started(fileURL: URL(fileURLWithPath: "/tmp/flush.jsonl")), origin: .manual)
+        let activeFlushSucceeded = await capture.flush()
+        XCTAssertFalse(activeFlushSucceeded)
+        XCTAssertEqual(capture.status, .failed)
+        XCTAssertEqual(flushCalls, 2)
+    }
+
+    func testCaptureSessionDetailsExposeTypedWriterHealth() {
+        let healthyProgress = CaptureProgress(
+            elapsedMilliseconds: 63_000,
+            notificationCount: 42,
+            fileSizeBytes: 12_288,
+            queuedMessageCount: 0,
+            writerError: nil
+        )
+        let failedProgress = CaptureProgress(
+            elapsedMilliseconds: 63_000,
+            notificationCount: 42,
+            fileSizeBytes: 12_288,
+            queuedMessageCount: 0,
+            writerError: "queue overrun"
+        )
+        let healthyRows = captureSessionDetailRows(progress: healthyProgress)
+        let failedRows = captureSessionDetailRows(progress: failedProgress)
+
+        XCTAssertEqual(healthyProgress.writerHealth, .healthy)
+        XCTAssertEqual(failedProgress.writerHealth, .failed)
+        XCTAssertEqual(healthyRows[0].metricValue, healthyProgress.elapsedMetricValue)
+        XCTAssertEqual(healthyRows[1].metricValue, healthyProgress.notificationCountMetricValue)
+        XCTAssertEqual(healthyRows[2].metricValue, healthyProgress.fileSizeMetricValue)
+        XCTAssertEqual(healthyRows[3].metricValue, healthyProgress.queuedMessageCountMetricValue)
+        XCTAssertEqual(
+            healthyRows[4].metricValue,
+            healthyProgress.writerHealth.metricValue(display: "Healthy")
+        )
+        XCTAssertEqual(
+            failedRows[4].metricValue,
+            failedProgress.writerHealth.metricValue(display: "Failed")
+        )
+        XCTAssertEqual(
+            healthyRows.map(\.id),
+            [
+                "capture-elapsed",
+                "capture-packets",
+                "capture-file-size",
+                "capture-queued-messages",
+                "capture-writer-health",
+            ]
+        )
+        XCTAssertEqual(healthyRows[3].label, "Pending writes")
+        XCTAssertEqual(healthyRows[3].accessibilityValueText, "0")
+        XCTAssertEqual(healthyRows.last?.label, "Writer")
+        XCTAssertEqual(healthyRows.last?.accessibilityValueText, "Healthy")
+        XCTAssertEqual(failedRows.last?.accessibilityValueText, "Failed")
+    }
+
+    func testDismissedCaptureRouteDoesNotCancelInFlightFinish() async {
+        let sessionState = CutoutSessionStateHandle()
+        let generation = sessionState.beginCapture(origin: .manual)!
+        XCTAssertTrue(sessionState.captureWriterStarted(generation: generation))
+        let finishEntered = expectation(description: "finish remains in flight")
+        var releaseFlush: CheckedContinuation<Bool, Never>?
+        var finishCalls = 0
+        let capture = CaptureFeatureModel(sessionState: sessionState, finish: {
+            finishCalls += 1
+            guard let token = sessionState.beginCaptureFinish(generation: generation) else { return false }
+            finishEntered.fulfill()
+            let flushed = await withCheckedContinuation { releaseFlush = $0 }
+            return sessionState.finishCaptureFlush(token: token, succeeded: flushed)
+        })
+        capture.deliverCaptureEvent(.started(
+            generation: .init(rawValue: generation.value),
+            fileURL: URL(fileURLWithPath: "/tmp/dismissed-route.jsonl")
+        ), origin: .manual)
+
+        var route: CaptureRouteView? = CaptureRouteView(capture: capture)
+        XCTAssertNotNil(route)
+        let viewWaiter = Task { @MainActor in await capture.finish() }
+        await fulfillment(of: [finishEntered], timeout: 2)
+        route = nil
+        viewWaiter.cancel()
+
+        XCTAssertTrue(capture.isFinishing)
+        XCTAssertEqual(finishCalls, 1)
+        XCTAssertEqual(capture.activeGeneration, .init(rawValue: generation.value))
+        releaseFlush?.resume(returning: true)
+        let finishSucceeded = await viewWaiter.value
+        XCTAssertTrue(finishSucceeded)
+        XCTAssertEqual(finishCalls, 1)
+
+        capture.deliverCaptureEvent(.finished(
+            generation: .init(rawValue: generation.value),
+            fileURL: URL(fileURLWithPath: "/tmp/dismissed-route.jsonl")
+        ))
+        XCTAssertFalse(capture.isFinishing)
+    }
+
     func testConcurrentFinishRequestsShareOneFlushAndDisconnectAfterSuccess() async {
         let sessionState = CutoutSessionStateHandle()
         let generation = sessionState.beginCapture(origin: .manual)!

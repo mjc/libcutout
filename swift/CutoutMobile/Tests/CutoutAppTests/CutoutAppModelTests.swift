@@ -1104,34 +1104,12 @@ final class CutoutAppModelTests: XCTestCase {
         })
     }
 
-    func testCaptureQuickLabelProvidesOneStatefulActionName() {
-        XCTAssertEqual(CaptureQuickLabel.ride.actionTitle(isActive: false), "Start Ride")
-        XCTAssertEqual(CaptureQuickLabel.ride.actionTitle(isActive: true), "Stop Ride")
-    }
-
-    func testCaptureActionToneFollowsTheStatefulAction() {
-        XCTAssertEqual(CaptureActionButtonTone.forState(isActive: false), .start)
-        XCTAssertEqual(CaptureActionButtonTone.forState(isActive: true), .stop)
-        XCTAssertEqual(CaptureActionButtonTone.finish, .finish)
-    }
-
     @MainActor
     func testRecordOnlyCaptureDoesNotRequireADeviceDescription() {
         let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
         XCTAssertTrue(model.recordOnly(platformIdentifier: "unknown-device", deviceKind: " "))
         XCTAssertNil(model.capture.deviceKind)
         XCTAssertTrue(model.capture.isUserInitiated)
-    }
-
-    func testCaptureQuickLabelsResolveCatalogTitlesForVisibleAndAccessibleActions() {
-        for label in CaptureQuickLabel.allCases {
-            XCTAssertFalse(label.title.hasPrefix("capture.label."))
-            XCTAssertFalse(label.actionTitle(isActive: false).hasPrefix("capture.label."))
-            XCTAssertFalse(label.actionTitle(isActive: true).hasPrefix("capture.label."))
-        }
-        XCTAssertEqual(CaptureQuickLabel.lowBeamOn.title, "Low beam on")
-        XCTAssertEqual(CaptureQuickLabel.lowBeamOn.actionTitle(isActive: false), "Start Low beam on")
-        XCTAssertEqual(CaptureQuickLabel.lowBeamOn.actionTitle(isActive: true), "Stop Low beam on")
     }
 
     @MainActor
@@ -2046,6 +2024,35 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testCaptureFinishOutlivesAppModelShutdown() async throws {
+        let driver = SessionDriverSpy(rows: [])
+        var model: CutoutAppModel? = CutoutAppModel(core: driver)
+        weak let weakModel = model
+        XCTAssertTrue(model?.recordOnly(platformIdentifier: "wheel-a", deviceKind: "") == true)
+        let capture = try XCTUnwrap(model?.capture)
+        let flushEntered = expectation(description: "capture finish owns the suspended flush")
+        var releaseFlush: CheckedContinuation<Void, Never>?
+        driver.duringFlushAwait = {
+            flushEntered.fulfill()
+            await withCheckedContinuation { releaseFlush = $0 }
+        }
+
+        let finishWaiter = Task { @MainActor in await capture.finish() }
+        await fulfillment(of: [flushEntered], timeout: 2)
+        model = nil
+
+        XCTAssertNil(weakModel)
+        XCTAssertTrue(capture.isFinishing)
+        XCTAssertEqual(driver.flushCaptureCount, 1)
+        releaseFlush?.resume()
+        let finishSucceeded = await finishWaiter.value
+
+        XCTAssertTrue(finishSucceeded)
+        XCTAssertEqual(driver.disconnectCount, 1)
+        driver.duringFlushAwait = nil
+    }
+
+    @MainActor
     func testOldFlushCannotDisconnectANewCapture() async {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)
@@ -2084,22 +2091,6 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(driver.flushCaptureCount, 1)
         XCTAssertEqual(driver.disconnectCount, 0)
         XCTAssertEqual(model.capture.status, .failed)
-    }
-
-    @MainActor
-    func testFlushFailureMarksOnlyAnActiveCaptureFailed() async {
-        let driver = SessionDriverSpy(rows: [], flushSucceeds: false)
-        let model = CutoutAppModel(core: driver)
-
-        let inactiveFlushSucceeded = await model.capture.flush()
-        XCTAssertFalse(inactiveFlushSucceeded)
-        XCTAssertNil(model.capture.status)
-
-        model.deliverCaptureEvent(.started(fileURL: URL(fileURLWithPath: "/tmp/capture.jsonl")))
-        let activeFlushSucceeded = await model.capture.flush()
-        XCTAssertFalse(activeFlushSucceeded)
-        XCTAssertEqual(model.capture.status, .failed)
-        XCTAssertEqual(driver.flushCaptureCount, 2)
     }
 
     @MainActor
@@ -2248,102 +2239,6 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(model.selectedRideTitle, "Previously connected")
     }
 
-    func testCaptureStatusAnnouncesOnlyMeaningfulTransitions() {
-        XCTAssertEqual(
-            CaptureStatus.labelStarted(label: "Ride", notificationCount: 3, fileName: "ride.cutout")
-                .accessibilityAnnouncement,
-            "Ride capture started"
-        )
-        XCTAssertEqual(
-            CaptureStatus.labelStopped(label: "Ride", notificationCount: 4, fileName: "ride.cutout")
-                .accessibilityAnnouncement,
-            "Ride capture stopped"
-        )
-        XCTAssertEqual(CaptureStatus.saved(fileName: "ride.cutout").accessibilityAnnouncement, "Capture saved")
-        XCTAssertEqual(CaptureStatus.failed.accessibilityAnnouncement, "Capture failed")
-        XCTAssertNil(
-            CaptureStatus.recording(label: "Ride", notificationCount: 200, fileName: "ride.cutout")
-                .accessibilityAnnouncement
-        )
-        XCTAssertNil(CaptureStatus.recordingLocally(fileName: "ride.cutout").accessibilityAnnouncement)
-    }
-
-    func testCaptureStatusPreservesVisibleLifecycleText() {
-        XCTAssertEqual(
-            CaptureStatus.recordingLocally(fileName: "ride.cutout").displayText,
-            "Recording locally: ride.cutout"
-        )
-        XCTAssertEqual(
-            CaptureStatus.recording(label: nil, notificationCount: 2, fileName: nil).displayText,
-            "Recording: 2 notifications"
-        )
-        XCTAssertEqual(
-            CaptureStatus.recording(label: "Ride", notificationCount: 3, fileName: "ride.cutout").displayText,
-            "Ride: 3 notifications → ride.cutout"
-        )
-        XCTAssertEqual(
-            CaptureStatus.labelStarted(label: "Ride", notificationCount: 3, fileName: "ride.cutout").displayText,
-            "Ride started: 3 notifications → ride.cutout"
-        )
-        XCTAssertEqual(
-            CaptureStatus.labelStopped(label: "Ride", notificationCount: 4, fileName: nil).displayText,
-            "Ride stopped"
-        )
-        XCTAssertEqual(
-            CaptureStatus.saved(fileName: "ride.cutout").displayText,
-            "Saved capture: ride.cutout"
-        )
-    }
-
-    func testCaptureStatusMarksFinalizationFailure() {
-        XCTAssertEqual(CaptureStatus.failed.statusStripTone, .critical)
-        XCTAssertEqual(CaptureStatus.recordingLocally(fileName: "capture.jsonl").statusStripTone, .nominal)
-    }
-
-    @MainActor
-    func testCaptureStatusConsumesTypedCoreEvents() {
-        let model = CutoutAppModel()
-        let fileURL = URL(fileURLWithPath: "/tmp/ride.cutout")
-
-        model.deliverCaptureEvent(.started(fileURL: fileURL))
-        XCTAssertEqual(model.capture.status, .recordingLocally(fileName: "ride.cutout"))
-
-        model.deliverCaptureEvent(.notificationRecorded)
-        XCTAssertEqual(
-            model.capture.status,
-            .recording(label: nil, notificationCount: 1, fileName: "ride.cutout")
-        )
-
-        model.deliverCaptureEvent(.finished(fileURL: fileURL))
-        XCTAssertEqual(model.capture.status, .saved(fileName: "ride.cutout"))
-
-        model.deliverCaptureEvent(.started(fileURL: fileURL))
-        model.deliverCaptureEvent(.failed)
-        XCTAssertEqual(model.capture.status, .failed)
-    }
-
-    @MainActor
-    func testCaptureProgressPreservesWriterHealthAndFileMetadata() {
-        let model = CutoutAppModel()
-        let fileURL = URL(fileURLWithPath: "/tmp/ride.cutout")
-        let progress = CaptureProgress(
-            elapsedMilliseconds: 63_000,
-            notificationCount: 42,
-            fileSizeBytes: 12_288,
-            queuedMessageCount: 2,
-            writerError: nil
-        )
-
-        model.deliverCaptureEvent(.started(fileURL: fileURL))
-        model.deliverCaptureEvent(.progress(progress))
-
-        XCTAssertEqual(model.capture.progress, progress)
-        XCTAssertEqual(
-            model.capture.status,
-            .recording(label: nil, notificationCount: 42, fileName: "ride.cutout")
-        )
-    }
-
     @MainActor
     func testWriterProgressDoesNotRepublishAnUnchangedRideCaptureSummary() {
         let model = CutoutAppModel()
@@ -2383,56 +2278,6 @@ final class CutoutAppModelTests: XCTestCase {
         })
     }
 
-    func testCaptureSessionDetailsExposeTypedWriterHealth() {
-        let healthyProgress = CaptureProgress(
-            elapsedMilliseconds: 63_000,
-            notificationCount: 42,
-            fileSizeBytes: 12_288,
-            queuedMessageCount: 0,
-            writerError: nil
-        )
-        let failedProgress = CaptureProgress(
-            elapsedMilliseconds: 63_000,
-            notificationCount: 42,
-            fileSizeBytes: 12_288,
-            queuedMessageCount: 0,
-            writerError: "queue overrun"
-        )
-        let healthyRows = captureSessionDetailRows(progress: healthyProgress)
-        let failedRows = captureSessionDetailRows(progress: failedProgress)
-
-        XCTAssertEqual(healthyProgress.writerHealth, .healthy)
-        XCTAssertEqual(failedProgress.writerHealth, .failed)
-        XCTAssertEqual(healthyRows[0].metricValue, healthyProgress.elapsedMetricValue)
-        XCTAssertEqual(healthyRows[1].metricValue, healthyProgress.notificationCountMetricValue)
-        XCTAssertEqual(healthyRows[2].metricValue, healthyProgress.fileSizeMetricValue)
-        XCTAssertEqual(healthyRows[3].metricValue, healthyProgress.queuedMessageCountMetricValue)
-        XCTAssertEqual(
-            healthyRows[4].metricValue,
-            healthyProgress.writerHealth.metricValue(display: "Healthy")
-        )
-        XCTAssertEqual(
-            failedRows[4].metricValue,
-            failedProgress.writerHealth.metricValue(display: "Failed")
-        )
-
-        XCTAssertEqual(
-            healthyRows.map(\.id),
-            [
-                "capture-elapsed",
-                "capture-packets",
-                "capture-file-size",
-                "capture-queued-messages",
-                "capture-writer-health",
-            ]
-        )
-        XCTAssertEqual(healthyRows[3].label, "Pending writes")
-        XCTAssertEqual(healthyRows[3].accessibilityValueText, "0")
-        XCTAssertEqual(healthyRows.last?.label, "Writer")
-        XCTAssertEqual(healthyRows.last?.accessibilityValueText, "Healthy")
-        XCTAssertEqual(failedRows.last?.accessibilityValueText, "Failed")
-    }
-
     @MainActor
     func testNewRecordOnlyCaptureCannotReplaceAnActiveWriter() {
         let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
@@ -2451,37 +2296,6 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(model.capture.status, .labelStarted(label: "Ride", notificationCount: 42, fileName: "prior.cutout"))
         XCTAssertEqual(model.capture.progress, priorProgress)
         XCTAssertEqual(model.capture.activeLabels, [.ride])
-    }
-
-    @MainActor
-    func testLateCaptureTerminalEventsCannotReplaceTheCurrentGeneration() {
-        let model = CutoutAppModel()
-        let first = CaptureGeneration(rawValue: 1)
-        let second = CaptureGeneration(rawValue: 2)
-        let firstURL = URL(fileURLWithPath: "/tmp/first.cutout")
-        let secondURL = URL(fileURLWithPath: "/tmp/second.cutout")
-        let progress = CaptureProgress(
-            elapsedMilliseconds: 1_000,
-            notificationCount: 7,
-            fileSizeBytes: 128,
-            queuedMessageCount: 0,
-            writerError: nil
-        )
-
-        model.deliverCaptureEvent(.started(generation: first, fileURL: firstURL))
-        model.deliverCaptureEvent(.started(generation: second, fileURL: secondURL))
-        model.deliverCaptureEvent(.progress(generation: second, progress))
-        model.deliverCaptureEvent(.finished(generation: first, fileURL: firstURL))
-        XCTAssertEqual(
-            model.capture.status,
-            .recording(label: nil, notificationCount: 7, fileName: "second.cutout")
-        )
-        model.deliverCaptureEvent(.failed(generation: first))
-
-        XCTAssertEqual(
-            model.capture.status,
-            .recording(label: nil, notificationCount: 7, fileName: "second.cutout")
-        )
     }
 
     @MainActor
@@ -2695,27 +2509,6 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(model.capture.status, .labelStarted(label: "Ride", notificationCount: 42, fileName: "prior.cutout"))
         XCTAssertEqual(model.capture.progress, priorProgress)
         XCTAssertEqual(model.capture.activeLabels, [.ride])
-    }
-
-    @MainActor
-    func testCaptureLabelActionsIgnoreInvalidRepeatedTransitions() {
-        let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
-
-        model.capture.stopLabel(.ride)
-        XCTAssertNil(model.capture.status?.displayText)
-        XCTAssertTrue(model.capture.activeLabels.isEmpty)
-
-        model.deliverCaptureEvent(.started(fileURL: URL(fileURLWithPath: "/tmp/labels.jsonl")))
-        model.capture.startLabel(.ride)
-        XCTAssertEqual(model.capture.status, .labelStarted(label: "Ride", notificationCount: 0, fileName: "labels.jsonl"))
-        XCTAssertEqual(model.capture.activeLabels, [.ride])
-
-        model.capture.stopLabel(.ride)
-        XCTAssertEqual(model.capture.status, .labelStopped(label: "Ride", notificationCount: 0, fileName: "labels.jsonl"))
-        XCTAssertTrue(model.capture.activeLabels.isEmpty)
-
-        model.capture.stopLabel(.ride)
-        XCTAssertEqual(model.capture.status, .labelStopped(label: "Ride", notificationCount: 0, fileName: "labels.jsonl"))
     }
 
     @MainActor
@@ -3725,6 +3518,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     private(set) var captureAnnotations = [String]()
     private(set) var flushCaptureCount = 0
     var duringFlush: (() -> Void)?
+    var duringFlushAwait: (@MainActor () async -> Void)?
     private(set) var disconnectCount = 0
     private(set) var tripMeterResetCount = 0
     private(set) var resetRideMapLocationAdmissionCount = 0
@@ -3824,6 +3618,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     func flushCapture() async -> Bool {
         flushCaptureCount += 1
         duringFlush?()
+        await duringFlushAwait?()
         if !flushSucceeds, let generation = rideSessionStateHandle.captureLifecycleSnapshot().attempt?.generation {
             _ = rideSessionStateHandle.captureWriterFailed(generation: generation)
             onCaptureEvent?(.lifecycle(rideSessionStateHandle.captureLifecycleSnapshot()))
