@@ -6,6 +6,12 @@ import CutoutMobile
 @MainActor
 @Observable
 final class RideMapPresentationState {
+    enum Mode: String {
+        case live
+        case history
+    }
+
+    var mode: Mode = .live
     var liveMapPosition: MapCameraPosition = .automatic
     var historyMapPosition: MapCameraPosition = .automatic
     var detailMapPosition: MapCameraPosition = .automatic
@@ -65,9 +71,9 @@ struct RideMapRouteView: View {
                 }
 
                 HStack(spacing: 0) {
-                    Picker(localizedAppText("navigation.section.map"), selection: $model.rideMapMode) {
-                        Text(localizedAppText("ride_map.mode.live")).tag(CutoutAppModel.RideMapMode.live)
-                        Text(localizedAppText("ride_map.mode.history")).tag(CutoutAppModel.RideMapMode.history)
+                    Picker(localizedAppText("navigation.section.map"), selection: $presentation.mode) {
+                        Text(localizedAppText("ride_map.mode.live")).tag(RideMapPresentationState.Mode.live)
+                        Text(localizedAppText("ride_map.mode.history")).tag(RideMapPresentationState.Mode.history)
                     }
                     .pickerStyle(.segmented)
                 }
@@ -80,7 +86,7 @@ struct RideMapRouteView: View {
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("ride-map.mode-picker")
 
-                if model.rideMapMode == .live {
+                if presentation.mode == .live {
                     liveContent
                 } else {
                     historyContent
@@ -155,14 +161,14 @@ struct RideMapRouteView: View {
             vehicleFilter: history.vehicleFilter,
             vehicleFilterOptions: history.vehicleIdentities,
             select: { rideID in
-                model.rideMapMode = .history
+                presentation.mode = .history
                 history.selectFromHistoryList(rideID)
                 openHistory?(rideID)
             },
             load: { history.reload(selecting: history.selectedRideID) },
             loadMore: { history.loadMore() },
             returnToLive: {
-                model.rideMapMode = .live
+                presentation.mode = .live
             },
             setDateFilter: { history.setDateFilter($0) },
             setVehicleFilter: { history.setVehicleFilter($0) },

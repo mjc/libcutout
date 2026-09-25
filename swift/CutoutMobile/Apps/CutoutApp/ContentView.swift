@@ -295,7 +295,7 @@ struct ContentView: View {
             CaptureRouteView(capture: model.capture)
         case .rideMap:
             RideMapRouteView(model: model, presentation: rideMapPresentation, { rideID in
-                model.rideMapMode = .history
+                rideMapPresentation.mode = .history
                 navigate(to: .rideMapDetail(rideID: rideID))
             },
             showsNavigationHeader: model.selectedConnectionRoute == nil,

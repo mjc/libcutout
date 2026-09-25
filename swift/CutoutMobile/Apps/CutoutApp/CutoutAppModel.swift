@@ -39,11 +39,6 @@ final class CutoutAppModel {
             task.cancel()
         })
     }
-    enum RideMapMode: String {
-        case live
-        case history
-    }
-
     nonisolated private static var rideMapLimits: MobileRideMapLimits { .rustOwned }
 
     private(set) var displayState = RideDisplayState()
@@ -69,7 +64,6 @@ final class CutoutAppModel {
     private(set) var rideMapLivePointsTruncated = false
     private(set) var rideMapLiveSegmentsOmittedByBudget = false
     private(set) var rideMapLastDecision: MobileRideMapDecisionDto?
-    var rideMapMode = RideMapMode.live
     private(set) var musicSettingsNowPlaying: MusicNowPlaying?
     var musicNowPlaying: MusicNowPlaying? {
         isMusicPlayerHidden ? nil : musicSettingsNowPlaying
