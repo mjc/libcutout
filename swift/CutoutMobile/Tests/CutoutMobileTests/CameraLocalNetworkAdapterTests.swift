@@ -710,6 +710,32 @@ final class CameraLocalNetworkAdapterTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: source.path))
     }
 
+    func testMoveCameraDownloadFileRemovesOversizedURLSessionTemporaryFile() throws {
+        let source = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cutout-camera-oversized-download-\(UUID().uuidString).tmp")
+        try Data([1, 2]).write(to: source)
+        defer { try? FileManager.default.removeItem(at: source) }
+        let response = URLResponse(
+            url: URL(string: "http://192.168.1.254/Novatek/Movie/clip.TS")!,
+            mimeType: "video/mp2t",
+            expectedContentLength: -1,
+            textEncodingName: nil
+        )
+
+        XCTAssertThrowsError(
+            try moveCameraDownloadFile(
+                source,
+                response: response,
+                origin: testCameraOrigin,
+                maximumBytes: 1
+            )
+        ) { error in
+            XCTAssertEqual(error as? CameraMediaDownloadError, .responseTooLarge)
+        }
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: source.path))
+    }
+
     @MainActor
     func testMediaDownloadRejectsUnsafeCameraPathBeforeFetching() async {
         let media = CameraMediaEvidence(
