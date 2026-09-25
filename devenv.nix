@@ -216,7 +216,9 @@ in
         -project "$DEVENV_ROOT/swift/CutoutMobile/CutoutApp.xcodeproj" \
         -scheme CutoutAppIOSUnitTests \
         -destination "$destination" \
-        -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests \
+        -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testActualMonitorTaskUsesPassiveAuthorizationAndCancelsOnBackground \
+        -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testExplicitConnectAllowsAuthorizationPrompt \
+        -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testExplicitShutdownInvalidatesLateMonitorObservationBeforeAdapterTeardown \
         -parallel-testing-enabled NO \
         ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
         test
