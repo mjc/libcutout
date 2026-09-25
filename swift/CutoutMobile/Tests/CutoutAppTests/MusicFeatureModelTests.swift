@@ -147,11 +147,11 @@ final class MusicFeatureModelTests: XCTestCase {
         let model = makeModel(
             defaults: suite.defaults,
             monitoringPreferenceStore: monitoring,
+            updateCaptureObservation: { captureObservations.append($0) },
             appleMonitor: monitor,
             monitorPollWaiter: { deadlineMs, _ in
                 await pollWaiter.wait(until: deadlineMs)
-            },
-            updateCaptureObservation: { captureObservations.append($0) }
+            }
         )
 
         model.start(sceneIsActive: true)
@@ -160,7 +160,7 @@ final class MusicFeatureModelTests: XCTestCase {
         XCTAssertEqual(monitor.authorizationPrompts, [false])
         XCTAssertEqual(monitor.startCount, 1)
         XCTAssertEqual(monitor.stopCount, 1, "starting a new generation first tears down any prior provider session")
-        XCTAssertEqual(model.settingsNowPlaying?.state, .playing)
+        XCTAssertEqual(model.settingsNowPlaying?.state, MobileMusicPlaybackStateDto.playing)
         XCTAssertEqual(model.settingsNowPlaying?.item?.identifier, "monitor-track")
         XCTAssertTrue(model.timelineEvents.isEmpty)
         XCTAssertFalse(captureObservations.contains { $0 != nil })
