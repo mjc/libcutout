@@ -134,14 +134,20 @@ actor CutoutSessionRideMapRecorder: CutoutSessionRideMapRecording {
     ) async throws -> MobileRideMapSnapshotDto {
         let state = try requireState()
         let command = try state.beginLifecycleCommand(event: event, atMs: atMs)
-        while true {
-            switch try state.pollLifecycleCommand(command) {
-            case .pending:
-                try? await Task.sleep(nanoseconds: 10_000_000)
-            case let .completed(snapshot):
-                return snapshot
+        // Rust has accepted this mutation and holds its lifecycle barrier until the command
+        // reaches a terminal result. Keep polling even if the UI task that requested it is
+        // cancelled; otherwise cancellation makes Task.sleep return immediately on every pass.
+        let completion = Task {
+            while true {
+                switch try state.pollLifecycleCommand(command) {
+                case .pending:
+                    try await Task.sleep(nanoseconds: 10_000_000)
+                case let .completed(snapshot):
+                    return snapshot
+                }
             }
         }
+        return try await completion.value
     }
 
     nonisolated func observeConnection(
