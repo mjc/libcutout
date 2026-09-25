@@ -205,6 +205,7 @@ final class MusicFeatureModelTests: XCTestCase {
         await waitUntil("monitor poll before shutdown") { pollWaiter.startedCount == 1 }
         let nowPlayingBeforeShutdown = try XCTUnwrap(model.settingsNowPlaying)
 
+        monitor.emitOnNextStop(observation(atMs: 2_000, identifier: "teardown-track"))
         model.stopMonitoring()
         monitor.emit(observation(atMs: 2_000, identifier: "late-track"))
         pollWaiter.releaseNext(returning: false)
@@ -213,6 +214,30 @@ final class MusicFeatureModelTests: XCTestCase {
         XCTAssertEqual(monitor.stopCount, 2)
         XCTAssertEqual(model.settingsNowPlaying, nowPlayingBeforeShutdown)
         XCTAssertTrue(model.timelineEvents.isEmpty)
+    }
+
+    func testExplicitConnectAllowsAuthorizationPrompt() async throws {
+        let suite = try makeDefaults()
+        defer { suite.defaults.removePersistentDomain(forName: suite.name) }
+        let monitor = TestAppleMusicMonitor()
+        let pollWaiter = TestMusicMonitorPollWaiter()
+        let model = makeModel(
+            defaults: suite.defaults,
+            appleMonitor: monitor,
+            monitorPollWaiter: { deadlineMs, _ in
+                await pollWaiter.wait(until: deadlineMs)
+            }
+        )
+
+        model.connect()
+        await waitUntil("explicit authorization monitor poll") { pollWaiter.startedCount == 1 }
+
+        XCTAssertEqual(monitor.authorizationPrompts, [true])
+        XCTAssertEqual(monitor.startCount, 1)
+
+        model.stopMonitoring()
+        pollWaiter.releaseNext(returning: false)
+        await waitUntil("explicit authorization monitor cancellation") { pollWaiter.completedCount == 1 }
     }
 #endif
 
@@ -400,6 +425,7 @@ private final class TestAppleMusicMonitor: AppleMusicMonitorDriving {
     private(set) var stopCount = 0
     private(set) var suspensionCount = 0
     private var onObservation: (@MainActor (MusicProviderObservation) -> Void)?
+    private var onNextStopObservation: MusicProviderObservation?
 
     func requestAuthorization(allowPrompt: Bool) async -> Bool {
         authorizationPrompts.append(allowPrompt)
@@ -441,8 +467,16 @@ private final class TestAppleMusicMonitor: AppleMusicMonitorDriving {
         onObservation?(observation)
     }
 
+    func emitOnNextStop(_ observation: MusicProviderObservation) {
+        onNextStopObservation = observation
+    }
+
     func stopMonitoring() {
         stopCount += 1
+        if let onNextStopObservation {
+            self.onNextStopObservation = nil
+            onObservation?(onNextStopObservation)
+        }
     }
 
     func applySuspension(_ suspension: MobileMusicProviderSuspension) {
