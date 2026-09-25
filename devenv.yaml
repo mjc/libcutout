@@ -18,3 +18,9 @@ inputs:
     inputs:
       nixpkgs:
         follows: nixpkgs
+nixpkgs:
+  permitted_unfree_packages:
+    - android-sdk-ndk
+    - platform-tools
+    - android-sdk-platform-tools
+    - ndk
