@@ -85,6 +85,7 @@ use cutout_core::{
     ValueSource as CoreValueSource, ValueSourceDto, VerificationStatus, VerificationStatusDto,
     VerifiedValue, Voltage as CoreVoltage, VoltageReadingDto, VoltageSagEstimate,
     VoltageSagEstimator, VoltageSagInput, VoltageSagModel, WallClockUnixTimestamp, WriteMode,
+    calibrate_location_source_offset_ms,
 };
 use cutout_music::{
     MusicCapabilities as CoreMusicCapabilities, MusicCommand as CoreMusicCommand,
@@ -13335,10 +13336,12 @@ impl MobilePevcapCaptureBuilder {
             .into_iter()
             .map(|sample| {
                 let sample = sample.canonical().ok_or(())?;
-                let source_monotonic_offset_ms = i128::from(receipt_monotonic_absolute_ms)
-                    + i128::from(sample.wall_clock_unix_ms)
-                    - i128::from(receipt_wall_clock_unix_ms.milliseconds)
-                    - i128::from(started_at_ms);
+                let source_monotonic_offset_ms = calibrate_location_source_offset_ms(
+                    MonotonicTimestamp::new(started_at_ms),
+                    MonotonicTimestamp::new(receipt_monotonic_absolute_ms),
+                    receipt_wall_clock_unix_ms.milliseconds,
+                    sample.wall_clock_unix_ms,
+                );
                 PevcapLocationSample::new(
                     receipt_monotonic_ms,
                     sample.pevcap_location(),
@@ -13347,9 +13350,7 @@ impl MobilePevcapCaptureBuilder {
                 )
                 .map_err(|_| ())
                 .map(|location| {
-                    location.with_source_monotonic_offset_ms(
-                        i64::try_from(source_monotonic_offset_ms).ok(),
-                    )
+                    location.with_source_monotonic_offset_ms(source_monotonic_offset_ms)
                 })
             })
             .collect::<Result<Vec<_>, _>>();

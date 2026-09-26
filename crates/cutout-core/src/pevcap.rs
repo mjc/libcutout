@@ -2161,6 +2161,25 @@ pub struct PevcapLocationSample {
     pub produced_by_accessory: Option<bool>,
 }
 
+/// Calibrates a Core Location source timestamp against its callback's monotonic and wall-clock
+/// anchors, relative to capture start.
+///
+/// A source observation may predate capture start even though its callback arrives afterward;
+/// negative offsets are therefore preserved. `None` means the calibrated offset cannot fit in
+/// the persisted signed millisecond representation.
+#[must_use]
+pub fn calibrate_location_source_offset_ms(
+    capture_started_at: MonotonicTimestamp,
+    receipt_monotonic_ms: MonotonicTimestamp,
+    receipt_wall_clock_unix_ms: u64,
+    source_wall_clock_unix_ms: u64,
+) -> Option<i64> {
+    let offset = i128::from(receipt_monotonic_ms.get()) + i128::from(source_wall_clock_unix_ms)
+        - i128::from(receipt_wall_clock_unix_ms)
+        - i128::from(capture_started_at.get());
+    i64::try_from(offset).ok()
+}
+
 impl PevcapLocationSample {
     /// Creates a validated first-class location observation.
     ///
@@ -4313,6 +4332,53 @@ mod tests {
 
     const fn wc(value: u64) -> WallClockUnixTimestamp {
         WallClockUnixTimestamp::new(value)
+    }
+
+    #[test]
+    fn location_source_time_calibration_preserves_batches_across_callback_anchors() {
+        let capture_started_at = ms(100);
+        let first_callback_wall_clock = 1_700_000_000_010;
+        let first_callback_monotonic = ms(120);
+
+        assert_eq!(
+            calibrate_location_source_offset_ms(
+                capture_started_at,
+                first_callback_monotonic,
+                first_callback_wall_clock,
+                1_700_000_000_008,
+            ),
+            Some(18)
+        );
+        assert_eq!(
+            calibrate_location_source_offset_ms(
+                capture_started_at,
+                first_callback_monotonic,
+                first_callback_wall_clock,
+                1_700_000_000_009,
+            ),
+            Some(19)
+        );
+        assert_eq!(
+            calibrate_location_source_offset_ms(
+                capture_started_at,
+                ms(130),
+                1_700_000_000_013,
+                1_700_000_000_010,
+            ),
+            Some(27)
+        );
+    }
+
+    #[test]
+    fn location_source_time_calibration_keeps_negative_offsets_and_rejects_overflow() {
+        assert_eq!(
+            calibrate_location_source_offset_ms(ms(200), ms(220), 1_000, 950),
+            Some(-30)
+        );
+        assert_eq!(
+            calibrate_location_source_offset_ms(ms(0), ms(u64::MAX), 0, u64::MAX),
+            None
+        );
     }
 
     const fn write_len(value: u16) -> TransportWriteLimit {
