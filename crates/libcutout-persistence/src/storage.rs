@@ -20,7 +20,7 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
     fs::{self, File, OpenOptions},
-    io::{BufReader, Read},
+    io::{BufReader, Read, Write},
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
@@ -1549,6 +1549,15 @@ pub enum StorageError {
         /// Observed value.
         actual: u64,
     },
+    /// A published original-byte capture could not be found.
+    #[error("PEVCAP capture was not found")]
+    PevcapCaptureNotFound,
+    /// Stored capture bytes failed export integrity verification.
+    #[error("PEVCAP capture export integrity check failed: {0}")]
+    PevcapCaptureIntegrity(String),
+    /// A capture digest was not canonical lowercase SHA-256 hex.
+    #[error("invalid PEVCAP capture digest")]
+    InvalidPevcapCaptureDigest,
     /// The source artifact changed after the user reviewed its preflight result.
     #[error("PEVCAP artifact changed after preflight")]
     PevcapPreviewChanged,
@@ -3482,6 +3491,81 @@ impl RideDatabase {
             sequence,
             reply,
         })
+    }
+
+    /// Exports one published capture's exact original bytes from SQLite.
+    ///
+    /// The destination must not already exist. Reads remain bounded to one stored
+    /// 64 KiB chunk at a time, and the completed file is retained only when its
+    /// SHA-256 matches `digest`.
+    ///
+    /// # Errors
+    /// Returns [`StorageError`] if the digest is invalid, the capture is missing or
+    /// corrupt, a resource bound is exceeded, or the destination cannot be synced.
+    pub fn export_pevcap_capture(
+        &self,
+        digest: &str,
+        destination: &Path,
+    ) -> Result<String, StorageError> {
+        let mut expected_digest = [0_u8; 32];
+        if digest.len() != 64
+            || hex::decode_to_slice(digest, &mut expected_digest).is_err()
+            || hex_encode(expected_digest) != digest
+        {
+            return Err(StorageError::InvalidPevcapCaptureDigest);
+        }
+
+        let mut output = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(destination)?;
+        let result = (|| {
+            let mut content_digest = Sha256::new();
+            let mut byte_count = 0_u64;
+            let mut sequence = 0_u64;
+            loop {
+                let Some(chunk) = self.pevcap_capture_chunk(digest, sequence)? else {
+                    break;
+                };
+                byte_count = byte_count
+                    .checked_add(u64::try_from(chunk.len()).map_err(|_| {
+                        StorageError::PevcapCaptureIntegrity(
+                            "chunk length cannot be represented".to_owned(),
+                        )
+                    })?)
+                    .ok_or_else(|| {
+                        StorageError::PevcapCaptureIntegrity("byte count overflowed".to_owned())
+                    })?;
+                check_limit_result(PevcapLimits::IMPORT.check_artifact_bytes(byte_count))?;
+                content_digest.update(&chunk);
+                output.write_all(&chunk)?;
+                sequence = sequence.checked_add(1).ok_or_else(|| {
+                    StorageError::PevcapCaptureIntegrity("chunk sequence overflowed".to_owned())
+                })?;
+            }
+
+            if byte_count == 0 {
+                return Err(StorageError::PevcapCaptureNotFound);
+            }
+            if content_digest.finalize().as_slice() != expected_digest {
+                return Err(StorageError::PevcapCaptureIntegrity(
+                    "stored byte digest does not match capture identity".to_owned(),
+                ));
+            }
+
+            output.sync_all()?;
+            let parent = destination
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+                .unwrap_or_else(|| Path::new("."));
+            File::open(parent)?.sync_all()?;
+            Ok(digest.to_owned())
+        })();
+        if result.is_err() {
+            drop(output);
+            let _ = fs::remove_file(destination);
+        }
+        result
     }
 
     /// Lists published SQLite-backed captures in descending import-time/digest order.

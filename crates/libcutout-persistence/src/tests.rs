@@ -3747,6 +3747,71 @@ fn capture_only_bytes_survive_without_external_files() {
 }
 
 #[test]
+fn original_capture_exports_from_sqlite_byte_identically_without_overwriting() {
+    let _guard = test_guard();
+    for encoding in [PevcapEncoding::Jsonl, PevcapEncoding::Binary] {
+        let directory = std::env::temp_dir().join(format!(
+            "cutout-sqlite-capture-export-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        let database_path = directory.join("ride.sqlite");
+        let source_path = directory.join("source.pevcap");
+        let export_path = directory.join("export.pevcap");
+        let bytes = PevcapCapture::new(
+            pevcap_header(),
+            vec![PevcapRecord::link_up(MonotonicTimestamp::new(1), None); 2_000],
+        )
+        .encode(encoding)
+        .unwrap();
+        std::fs::write(&source_path, &bytes).unwrap();
+
+        let database = RideDatabase::open(&database_path).unwrap();
+        let preview = database.preflight_pevcap(&source_path, encoding).unwrap();
+        let receipt = database
+            .confirm_pevcap_import(&preview, 1_700_000_000_000)
+            .unwrap();
+        std::fs::remove_file(source_path).unwrap();
+        std::fs::remove_file(receipt.managed_artifact_path).unwrap();
+
+        assert_eq!(
+            database
+                .export_pevcap_capture(&receipt.artifact_digest, &export_path)
+                .unwrap(),
+            receipt.artifact_digest
+        );
+        assert_eq!(std::fs::read(&export_path).unwrap(), bytes);
+        assert!(
+            database
+                .export_pevcap_capture(&receipt.artifact_digest, &export_path)
+                .is_err()
+        );
+        assert_eq!(std::fs::read(&export_path).unwrap(), bytes);
+
+        database.shutdown().unwrap();
+        let connection = Connection::open(&database_path).unwrap();
+        connection
+            .execute(
+                "UPDATE pevcap_capture_chunks SET payload = X'00'
+             WHERE artifact_digest = ?1 AND sequence = 0",
+                [&receipt.artifact_digest],
+            )
+            .unwrap();
+        drop(connection);
+        let database = RideDatabase::open(&database_path).unwrap();
+        let corrupt_export_path = directory.join("corrupt.pevcap");
+        assert!(
+            database
+                .export_pevcap_capture(&receipt.artifact_digest, &corrupt_export_path)
+                .is_err()
+        );
+        assert!(!corrupt_export_path.exists());
+        database.shutdown().unwrap();
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+}
+
+#[test]
 fn schema_fifteen_capture_backfill_preserves_receipts_and_rides() {
     let _guard = test_guard();
     for with_gps in [false, true] {
