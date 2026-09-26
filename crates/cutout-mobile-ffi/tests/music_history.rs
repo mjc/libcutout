@@ -91,6 +91,76 @@ fn record(
     )
 }
 
+fn poll_music_command(
+    command: &MobileRideMapMusicCommand,
+) -> Result<MobileMusicTimelineRecordResultDto, MobileRideMapCoreErrorDto> {
+    loop {
+        match command.poll()? {
+            MobileRideMapMusicPollDto::Pending => std::thread::yield_now(),
+            MobileRideMapMusicPollDto::Completed { result } => return Ok(result),
+        }
+    }
+}
+
+fn poll_music_history_command(
+    command: &MobileRideMapMusicHistoryCommand,
+) -> Result<Option<MobileMusicHistoryDto>, MobileRideMapCoreErrorDto> {
+    loop {
+        match command.poll()? {
+            MobileRideMapMusicHistoryPollDto::Pending => std::thread::yield_now(),
+            MobileRideMapMusicHistoryPollDto::Completed { history } => return Ok(history),
+        }
+    }
+}
+
+#[test]
+fn queued_music_event_returns_durable_sequence_and_applies_current_privacy_policy() {
+    let fixture = setup();
+    let command = fixture
+        .core
+        .begin_record_music_event(
+            snapshot(2_000),
+            MobileMusicRideEventKindDto::Play,
+            2_000,
+            1_700_000_002_000,
+            5,
+        )
+        .unwrap();
+    let result = poll_music_command(&command).unwrap();
+    assert_eq!(result.outcome, MobileMusicTimelineOutcomeDto::Recorded);
+    assert_eq!(result.sequence, Some(0));
+    let stored = fixture.db.music_events(fixture.id.clone()).unwrap();
+    assert_eq!(stored.len(), 1);
+    assert_eq!(stored[0].title.as_deref(), Some("Private title"));
+
+    fixture
+        .core
+        .set_music_history_policy(MobileMusicHistoryPolicyDto::OpaqueItem)
+        .unwrap();
+    let command = fixture
+        .core
+        .begin_record_music_event(
+            snapshot(3_000),
+            MobileMusicRideEventKindDto::Pause,
+            3_000,
+            1_700_000_003_000,
+            5,
+        )
+        .unwrap();
+    let result = poll_music_command(&command).unwrap();
+    assert_eq!(result.outcome, MobileMusicTimelineOutcomeDto::Recorded);
+    assert_eq!(result.sequence, Some(1));
+    let stored = fixture.db.music_events(fixture.id.clone()).unwrap();
+    assert!(stored.iter().all(|event| event.title.is_none()));
+    assert!(stored.iter().all(|event| event.artist.is_none()));
+
+    let history = poll_music_history_command(&fixture.core.begin_current_music_history().unwrap())
+        .unwrap()
+        .unwrap();
+    assert_eq!(history.status, MobileMusicHistoryStatusDto::Redacted);
+    assert_eq!(history.events.len(), 2);
+}
+
 #[test]
 fn external_redaction_reaches_active_timeline() {
     let fixture = setup();

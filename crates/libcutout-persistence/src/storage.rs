@@ -1590,6 +1590,22 @@ pub struct PendingBmsVoltageWrite {
     consumed: bool,
 }
 
+/// A live music transition accepted by the bounded worker but not yet committed.
+#[must_use = "poll or wait for the durable music event result"]
+#[derive(Debug)]
+pub struct PendingMusicEventWrite {
+    response: Receiver<Result<MusicTimelineRecordResult, StorageError>>,
+    consumed: bool,
+}
+
+/// A music-history query accepted by the bounded worker but not yet completed.
+#[must_use = "poll or wait for the music history result"]
+#[derive(Debug)]
+pub struct PendingMusicHistoryRead {
+    response: Receiver<Result<MusicHistory, StorageError>>,
+    consumed: bool,
+}
+
 /// A live ride creation accepted by the bounded database queue but not yet committed.
 #[must_use = "poll or wait for the durable live ride creation result"]
 #[derive(Debug)]
@@ -2178,6 +2194,49 @@ impl PendingBmsVoltageWrite {
         self.response
             .recv()
             .map_err(|_| StorageError::ResponseDropped)?
+    }
+}
+
+impl PendingMusicEventWrite {
+    /// Returns the durable result when the worker has completed the event.
+    ///
+    /// `None` means that the worker is still processing the command. A terminal result is
+    /// returned at most once.
+    pub fn try_result(&mut self) -> Option<Result<MusicTimelineRecordResult, StorageError>> {
+        if self.consumed {
+            return None;
+        }
+        match self.response.try_recv() {
+            Ok(result) => {
+                self.consumed = true;
+                Some(result)
+            }
+            Err(mpsc::TryRecvError::Empty) => None,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.consumed = true;
+                Some(Err(StorageError::ResponseDropped))
+            }
+        }
+    }
+}
+
+impl PendingMusicHistoryRead {
+    /// Returns the durable history when the worker has completed the query.
+    pub fn try_result(&mut self) -> Option<Result<MusicHistory, StorageError>> {
+        if self.consumed {
+            return None;
+        }
+        match self.response.try_recv() {
+            Ok(result) => {
+                self.consumed = true;
+                Some(result)
+            }
+            Err(mpsc::TryRecvError::Empty) => None,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.consumed = true;
+                Some(Err(StorageError::ResponseDropped))
+            }
+        }
     }
 }
 
@@ -2862,6 +2921,48 @@ impl RideDatabase {
             ride_id,
             event,
             reply,
+        })
+    }
+
+    /// Queues one live music transition without waiting for the SQLite worker.
+    ///
+    /// The worker reads the current durable history policy and applies its privacy rules before
+    /// committing the event. This bounded queue is the live provider-callback path.
+    ///
+    /// # Errors
+    /// Returns [`StorageError::QueueFull`] when the worker queue is saturated, or
+    /// [`StorageError::WorkerStopped`] when the worker is unavailable.
+    pub fn queue_record_music_event(
+        &self,
+        ride_id: RideId,
+        event: MusicRideEvent,
+    ) -> Result<PendingMusicEventWrite, StorageError> {
+        let (reply, response) = response_channel();
+        self.enqueue(Command::RecordMusicEvent {
+            ride_id,
+            event,
+            reply,
+        })?;
+        Ok(PendingMusicEventWrite {
+            response,
+            consumed: false,
+        })
+    }
+
+    /// Queues one music-history query without waiting for the SQLite worker.
+    ///
+    /// # Errors
+    /// Returns [`StorageError::QueueFull`] when the worker queue is saturated, or
+    /// [`StorageError::WorkerStopped`] when the worker is unavailable.
+    pub fn queue_music_history(
+        &self,
+        ride_id: RideId,
+    ) -> Result<PendingMusicHistoryRead, StorageError> {
+        let (reply, response) = response_channel();
+        self.enqueue(Command::MusicHistory { ride_id, reply })?;
+        Ok(PendingMusicHistoryRead {
+            response,
+            consumed: false,
         })
     }
 

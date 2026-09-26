@@ -321,7 +321,9 @@ final class MusicFeatureModel {
                     snapshot: spotifyProvider.unavailableSnapshot(observedAtMs: observedAtMs)
                 )
             }
-            _ = ingestObservation(observation)
+            Task { @MainActor [weak self] in
+                _ = await self?.ingestObservationAsync(observation)
+            }
         #endif
     }
 
@@ -358,24 +360,26 @@ final class MusicFeatureModel {
         spotifyProvider.applySuspension(suspension)
         if suspension.observationGap {
             let observedAtMs = monotonicNow()
-            _ = ingestObservation(
-                MusicProviderObservation(
-                    snapshot: MobileMusicSnapshotDto(
-                        provider: selectedProvider,
-                        sessionId: "music-observation-gap",
-                        state: .disconnected,
-                        item: coordinator.nowPlaying?.item,
-                        positionMilliseconds: nil,
-                        durationMilliseconds: nil,
-                        observedAtMs: observedAtMs,
-                        capabilities: .init(
-                            previous: false,
-                            play: false,
-                            pause: false,
-                            next: false,
-                            openProvider: true
-                        )
-                    )))
+            let observation = MusicProviderObservation(
+                snapshot: MobileMusicSnapshotDto(
+                    provider: selectedProvider,
+                    sessionId: "music-observation-gap",
+                    state: .disconnected,
+                    item: coordinator.nowPlaying?.item,
+                    positionMilliseconds: nil,
+                    durationMilliseconds: nil,
+                    observedAtMs: observedAtMs,
+                    capabilities: .init(
+                        previous: false,
+                        play: false,
+                        pause: false,
+                        next: false,
+                        openProvider: true
+                    )
+                ))
+            Task { @MainActor [weak self] in
+                _ = await self?.ingestObservationAsync(observation)
+            }
         }
         stopProviderWork()
         if let nowPlaying = coordinator.nowPlaying {
@@ -563,7 +567,9 @@ final class MusicFeatureModel {
                     },
                     observedAtMs: { [weak self] in self?.monotonicNow() },
                     record: { [weak self] observation in
-                        _ = self?.ingestObservation(observation)
+                        Task { @MainActor [weak self] in
+                            _ = await self?.ingestObservationAsync(observation)
+                        }
                     },
                     refresh: { [weak self] in self?.refreshSnapshot() }
                 )
@@ -679,27 +685,14 @@ final class MusicFeatureModel {
                 wallClockAtMs: wallClockAtMs,
                 clockUncertaintyMs: clockUncertaintyMs
             )
-            setObservationError(nil)
-            if outcome == .recorded {
-                setHistoryPersistenceError(nil)
-                updateCaptureObservation(
-                    pevcapMusicObservation(
-                        from: observation,
-                        wallClockAtMs: wallClockAtMs,
-                        clockUncertaintyMs: clockUncertaintyMs,
-                        rideSequence: coordinator.lastRecordedSequence
-                    ))
-            } else if outcome == .disabled {
-                updateCaptureObservation(nil)
-                setHistoryPersistenceError(nil)
-            } else if outcome == .full {
-                updateCaptureObservation(nil)
-                setHistoryPersistenceError(.storageError("ride music timeline is full"))
-            } else if outcome != nil {
-                setHistoryPersistenceError(nil)
-            }
+            let succeeded = applyObservationOutcome(
+                outcome,
+                observation: observation,
+                wallClockAtMs: wallClockAtMs,
+                clockUncertaintyMs: clockUncertaintyMs
+            )
             finishObservation()
-            return outcome != .full
+            return succeeded
         } catch let MusicIntegrationIngestError.observation(error) {
             setObservationError(CutoutAppModel.mapRideMapError(error))
             finishObservation()
@@ -720,9 +713,78 @@ final class MusicFeatureModel {
         }
     }
 
+    @discardableResult
+    func ingestObservationAsync(
+        _ observation: MusicProviderObservation,
+        wallClockAtMs: UInt64? = nil,
+        clockUncertaintyMs: UInt64 = 1_000
+    ) async -> Bool {
+        let wallClockAtMs = wallClockAtMs ?? UInt64(Date().timeIntervalSince1970 * 1_000)
+        do {
+            let outcome = try await coordinator.ingestAsync(
+                observation: observation,
+                wallClockAtMs: wallClockAtMs,
+                clockUncertaintyMs: clockUncertaintyMs
+            )
+            let succeeded = applyObservationOutcome(
+                outcome,
+                observation: observation,
+                wallClockAtMs: wallClockAtMs,
+                clockUncertaintyMs: clockUncertaintyMs
+            )
+            await finishObservationAsync()
+            return succeeded
+        } catch let MusicIntegrationIngestError.observation(error) {
+            setObservationError(CutoutAppModel.mapRideMapError(error))
+            await finishObservationAsync()
+            return false
+        } catch let MusicIntegrationIngestError.history(error) {
+            setObservationError(nil)
+            if let error = error as? MobileRideMapError, error == .noActiveRide {
+                await finishObservationAsync()
+                return false
+            }
+            setHistoryPersistenceError(CutoutAppModel.mapRideMapError(error))
+            await finishObservationAsync()
+            return false
+        } catch {
+            setHistoryPersistenceError(CutoutAppModel.mapRideMapError(error))
+            await finishObservationAsync()
+            return false
+        }
+    }
+
     private func setObservationError(_ error: MobileRideMapError?) {
         observationError = error
         refreshHistoryErrorProjection()
+    }
+
+    private func applyObservationOutcome(
+        _ outcome: MobileMusicTimelineOutcomeDto?,
+        observation: MusicProviderObservation,
+        wallClockAtMs: UInt64,
+        clockUncertaintyMs: UInt64
+    ) -> Bool {
+        setObservationError(nil)
+        if outcome == .recorded {
+            setHistoryPersistenceError(nil)
+            updateCaptureObservation(
+                pevcapMusicObservation(
+                    from: observation,
+                    wallClockAtMs: wallClockAtMs,
+                    clockUncertaintyMs: clockUncertaintyMs,
+                    rideSequence: coordinator.lastRecordedSequence
+                ))
+        } else if outcome == .disabled {
+            updateCaptureObservation(nil)
+            setHistoryPersistenceError(nil)
+        } else if outcome == .full {
+            updateCaptureObservation(nil)
+            setHistoryPersistenceError(.storageError("ride music timeline is full"))
+        } else if outcome != nil {
+            setHistoryPersistenceError(nil)
+        }
+        return outcome != .full
     }
 
     func setHistoryPersistenceError(_ error: MobileRideMapError?) {
@@ -742,6 +804,15 @@ final class MusicFeatureModel {
 
     private func finishObservation() {
         timelineEvents = coordinator.recordedEvents
+        settingsNowPlaying = projectedNowPlaying()
+    }
+
+    private func finishObservationAsync() async {
+        do {
+            timelineEvents = try await coordinator.recordedEventsAsync()
+        } catch {
+            setHistoryPersistenceError(CutoutAppModel.mapRideMapError(error))
+        }
         settingsNowPlaying = projectedNowPlaying()
     }
 

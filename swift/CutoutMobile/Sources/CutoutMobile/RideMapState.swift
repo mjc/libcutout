@@ -52,6 +52,11 @@ public enum MobileRideMapLifecycleState {
     case completed(MobileRideMapSnapshotDto)
 }
 
+public enum MobileRideMapMusicState {
+    case pending
+    case completed(MobileMusicTimelineRecordResultDto)
+}
+
 /// Rust-owned ride identity captured when an asynchronous map operation starts.
 public struct MobileRideMapErrorContext: Equatable, Hashable, Sendable {
     public let rideID: String?
@@ -1062,6 +1067,77 @@ public final class MobileRideMapState: @unchecked Sendable {
                 clockUncertaintyMs: clockUncertaintyMs
             )
         }
+    }
+
+    public func beginRecordMusicEvent(
+        snapshot: MobileMusicSnapshotDto,
+        kind: MobileMusicRideEventKindDto,
+        monotonicAtMs: UInt64,
+        wallClockAtMs: UInt64,
+        clockUncertaintyMs: UInt64
+    ) throws -> MobileRideMapMusicCommand {
+        try withCore {
+            try $0.beginRecordMusicEvent(
+                snapshot: snapshot,
+                kind: kind,
+                monotonicAtMs: monotonicAtMs,
+                wallClockAtMs: wallClockAtMs,
+                clockUncertaintyMs: clockUncertaintyMs
+            )
+        }
+    }
+
+    public func pollMusicCommand(
+        _ command: MobileRideMapMusicCommand
+    ) throws -> MobileRideMapMusicState {
+        switch try command.poll() {
+        case .pending:
+            .pending
+        case let .completed(result):
+            .completed(result)
+        }
+    }
+
+    public func recordMusicEventWithSequenceAsync(
+        snapshot: MobileMusicSnapshotDto,
+        kind: MobileMusicRideEventKindDto,
+        monotonicAtMs: UInt64,
+        wallClockAtMs: UInt64,
+        clockUncertaintyMs: UInt64
+    ) async throws -> MobileMusicTimelineRecordResultDto {
+        let command = try beginRecordMusicEvent(
+            snapshot: snapshot,
+            kind: kind,
+            monotonicAtMs: monotonicAtMs,
+            wallClockAtMs: wallClockAtMs,
+            clockUncertaintyMs: clockUncertaintyMs
+        )
+        let completion = Task {
+            while true {
+                switch try pollMusicCommand(command) {
+                case .pending:
+                    try await Task.sleep(nanoseconds: 10_000_000)
+                case let .completed(result):
+                    return result
+                }
+            }
+        }
+        return try await completion.value
+    }
+
+    public func currentMusicHistoryAsync() async throws -> MobileMusicHistoryDto? {
+        let command = try withCore { try $0.beginCurrentMusicHistory() }
+        let completion = Task {
+            while true {
+                switch try command.poll() {
+                case .pending:
+                    try await Task.sleep(nanoseconds: 10_000_000)
+                case let .completed(history):
+                    return history
+                }
+            }
+        }
+        return try await completion.value
     }
 
     /// Returns nil when a healthy core has no active ride. A storage initialization failure

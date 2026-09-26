@@ -1201,12 +1201,12 @@ public final class MusicIntegrationCoordinator {
     /// A disabled history policy still updates the compact player but never writes
     /// to the ride database.
     @discardableResult
-    public func ingest(
+    public func ingestAsync(
         snapshot: MobileMusicSnapshotDto,
         wallClockAtMs: UInt64,
         clockUncertaintyMs: UInt64
-    ) throws -> MobileMusicTimelineOutcomeDto? {
-        try ingest(
+    ) async throws -> MobileMusicTimelineOutcomeDto? {
+        try await ingestAsync(
             snapshot: snapshot,
             artwork: nil,
             wallClockAtMs: wallClockAtMs,
@@ -1214,12 +1214,12 @@ public final class MusicIntegrationCoordinator {
         )
     }
 
-    private func ingest(
+    private func ingestAsync(
         snapshot: MobileMusicSnapshotDto,
         artwork: MusicArtwork?,
         wallClockAtMs: UInt64,
         clockUncertaintyMs: UInt64
-    ) throws -> MobileMusicTimelineOutcomeDto? {
+    ) async throws -> MobileMusicTimelineOutcomeDto? {
         resetCorrelationIfRideChanged()
         let decision: MobileMusicObservationDecision
         do {
@@ -1249,14 +1249,14 @@ public final class MusicIntegrationCoordinator {
                 _ = lifecycle.acknowledgeHistoryTransition(id: transition.id)
                 return .disabled
             }
-            let result = try rideMapState.recordMusicEventWithSequence(
+            let result = try await rideMapState.recordMusicEventWithSequenceAsync(
                 snapshot: transition.snapshot,
                 kind: transition.kind,
                 monotonicAtMs: transition.snapshot.observedAtMs,
                 wallClockAtMs: transition.wallClockAtMs,
                 clockUncertaintyMs: transition.clockUncertaintyMs
             )
-            lastRecordedSequence = result.sequence
+            if let sequence = result.sequence { lastRecordedSequence = sequence }
             _ = lifecycle.acknowledgeHistoryTransition(id: transition.id)
             let outcome = result.outcome
             return outcome
@@ -1274,17 +1274,81 @@ public final class MusicIntegrationCoordinator {
     /// Applies one provider observation through the same path used by ride
     /// recording and compact-player state.
     @discardableResult
-    public func ingest(
+    public func ingestAsync(
         observation: MusicProviderObservation,
         wallClockAtMs: UInt64,
         clockUncertaintyMs: UInt64
-    ) throws -> MobileMusicTimelineOutcomeDto? {
-        try ingest(
+    ) async throws -> MobileMusicTimelineOutcomeDto? {
+        try await ingestAsync(
             snapshot: observation.snapshot,
             artwork: observation.artwork,
             wallClockAtMs: wallClockAtMs,
             clockUncertaintyMs: clockUncertaintyMs
         )
+    }
+
+    /// Synchronous compatibility entry point for non-production tests and previews.
+    @discardableResult
+    public func ingest(
+        snapshot: MobileMusicSnapshotDto,
+        wallClockAtMs: UInt64,
+        clockUncertaintyMs: UInt64
+    ) throws -> MobileMusicTimelineOutcomeDto? {
+        try ingest(
+            observation: MusicProviderObservation(snapshot: snapshot),
+            wallClockAtMs: wallClockAtMs,
+            clockUncertaintyMs: clockUncertaintyMs
+        )
+    }
+
+    /// Synchronous compatibility entry point for non-production tests and previews.
+    @discardableResult
+    public func ingest(
+        observation: MusicProviderObservation,
+        wallClockAtMs: UInt64,
+        clockUncertaintyMs: UInt64
+    ) throws -> MobileMusicTimelineOutcomeDto? {
+        resetCorrelationIfRideChanged()
+        let decision: MobileMusicObservationDecision
+        do {
+            guard
+                let accepted = try lifecycle.observeMusic(
+                    snapshot: observation.snapshot,
+                    wallClockAtMs: wallClockAtMs,
+                    clockUncertaintyMs: clockUncertaintyMs
+                )
+            else { return nil }
+            decision = accepted
+        } catch {
+            if let nowPlaying { self.nowPlaying = nowPlaying.staleProjection }
+            throw MusicIntegrationIngestError.observation(error)
+        }
+        update(snapshot: decision.snapshot, artwork: observation.artwork)
+        guard let transition = decision.historyTransition else { return nil }
+        do {
+            guard let rideMapState else {
+                _ = lifecycle.acknowledgeHistoryTransition(id: transition.id)
+                return .disabled
+            }
+            let result = try rideMapState.recordMusicEventWithSequence(
+                snapshot: transition.snapshot,
+                kind: transition.kind,
+                monotonicAtMs: transition.snapshot.observedAtMs,
+                wallClockAtMs: transition.wallClockAtMs,
+                clockUncertaintyMs: transition.clockUncertaintyMs
+            )
+            if let sequence = result.sequence { lastRecordedSequence = sequence }
+            _ = lifecycle.acknowledgeHistoryTransition(id: transition.id)
+            return result.outcome
+        } catch MobileRideMapError.noActiveRide {
+            if historyPolicy == .disabled {
+                _ = lifecycle.acknowledgeHistoryTransition(id: transition.id)
+                return .disabled
+            }
+            throw MusicIntegrationIngestError.history(MobileRideMapError.noActiveRide)
+        } catch {
+            throw MusicIntegrationIngestError.history(error)
+        }
     }
 
     public func setHistoryPolicy(_ policy: MobileMusicHistoryPolicyDto) throws {
@@ -1354,6 +1418,10 @@ public final class MusicIntegrationCoordinator {
 
     public var recordedEvents: [MobileMusicRideEventDto] {
         rideMapState?.currentMusicEvents() ?? []
+    }
+
+    public func recordedEventsAsync() async throws -> [MobileMusicRideEventDto] {
+        try await rideMapState?.currentMusicHistoryAsync()?.events ?? []
     }
 
     private func resetCorrelationIfRideChanged() {

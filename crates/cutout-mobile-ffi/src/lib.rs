@@ -4818,6 +4818,28 @@ pub enum MobileRideMapRestorePollDto {
     },
 }
 
+/// Nonblocking result of polling one persisted music transition.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileRideMapMusicPollDto {
+    /// The bounded SQLite worker has not completed the event yet.
+    Pending,
+    /// Rust has the terminal durable admission result and optional assigned sequence.
+    Completed {
+        result: MobileMusicTimelineRecordResultDto,
+    },
+}
+
+/// Nonblocking result of polling the authoritative music-history query.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileRideMapMusicHistoryPollDto {
+    /// The bounded SQLite worker has not completed the query.
+    Pending,
+    /// Rust has the durable history projection; `None` means there is no current ride.
+    Completed {
+        history: Option<MobileMusicHistoryDto>,
+    },
+}
+
 /// Result of associating a connected vehicle with the active recording.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum MobileRideMapCoreAssociationDto {
@@ -7589,6 +7611,32 @@ pub struct MobileRideMapRestoreCommand {
     state: Mutex<MobileRideMapRestoreCommandState>,
 }
 
+#[derive(Debug)]
+enum MobileRideMapMusicCommandState {
+    Pending(persistence::PendingMusicEventWrite),
+    Completed(Result<MobileMusicTimelineRecordResultDto, MobileRideMapCoreErrorDto>),
+}
+
+#[derive(Debug)]
+enum MobileRideMapMusicHistoryCommandState {
+    Pending(persistence::PendingMusicHistoryRead),
+    Completed(Result<Option<MobileMusicHistoryDto>, MobileRideMapCoreErrorDto>),
+}
+
+/// Pollable result for one live music event queued through Rust-owned policy and persistence.
+#[must_use = "poll the music command until it returns a terminal result"]
+#[derive(Debug, uniffi::Object)]
+pub struct MobileRideMapMusicCommand {
+    state: Mutex<MobileRideMapMusicCommandState>,
+}
+
+/// Pollable result for one authoritative music-history query.
+#[must_use = "poll the music-history command until it returns a terminal result"]
+#[derive(Debug, uniffi::Object)]
+pub struct MobileRideMapMusicHistoryCommand {
+    state: Mutex<MobileRideMapMusicHistoryCommandState>,
+}
+
 impl MobileRideMapConnectionAdmission {
     pub(crate) fn new(
         core: Arc<MobileRideMapCore>,
@@ -7606,6 +7654,38 @@ impl MobileRideMapLifecycleCommand {
         Arc::new(Self {
             core,
             state: Mutex::new(MobileRideMapLifecycleState::Pending(pending)),
+        })
+    }
+}
+
+impl MobileRideMapMusicCommand {
+    fn pending(storage: persistence::PendingMusicEventWrite) -> Arc<Self> {
+        Arc::new(Self {
+            state: Mutex::new(MobileRideMapMusicCommandState::Pending(storage)),
+        })
+    }
+
+    fn completed(
+        result: Result<MobileMusicTimelineRecordResultDto, MobileRideMapCoreErrorDto>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            state: Mutex::new(MobileRideMapMusicCommandState::Completed(result)),
+        })
+    }
+}
+
+impl MobileRideMapMusicHistoryCommand {
+    fn pending(storage: persistence::PendingMusicHistoryRead) -> Arc<Self> {
+        Arc::new(Self {
+            state: Mutex::new(MobileRideMapMusicHistoryCommandState::Pending(storage)),
+        })
+    }
+
+    fn completed(
+        history: Result<Option<MobileMusicHistoryDto>, MobileRideMapCoreErrorDto>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            state: Mutex::new(MobileRideMapMusicHistoryCommandState::Completed(history)),
         })
     }
 }
@@ -7662,6 +7742,63 @@ impl MobileRideMapRestoreCommand {
             .complete_restore(self.command_id, restored, result);
         *state = MobileRideMapRestoreCommandState::Completed(result.clone());
         result
+    }
+}
+
+#[uniffi::export]
+impl MobileRideMapMusicCommand {
+    /// Returns immediately with pending/completed durable music-event state.
+    ///
+    /// # Errors
+    ///
+    /// Returns the terminal storage or map-state error for this event.
+    pub fn poll(&self) -> Result<MobileRideMapMusicPollDto, MobileRideMapCoreErrorDto> {
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        let result = match &mut *state {
+            MobileRideMapMusicCommandState::Completed(result) => {
+                return result
+                    .clone()
+                    .map(|result| MobileRideMapMusicPollDto::Completed { result });
+            }
+            MobileRideMapMusicCommandState::Pending(storage) => match storage.try_result() {
+                Some(result) => result
+                    .map(|result| MobileMusicTimelineRecordResultDto {
+                        outcome: result.outcome.into(),
+                        sequence: result.sequence,
+                    })
+                    .map_err(map_storage_core_error),
+                None => return Ok(MobileRideMapMusicPollDto::Pending),
+            },
+        };
+        *state = MobileRideMapMusicCommandState::Completed(result.clone());
+        result.map(|result| MobileRideMapMusicPollDto::Completed { result })
+    }
+}
+
+#[uniffi::export]
+impl MobileRideMapMusicHistoryCommand {
+    /// Returns immediately with pending/completed history state.
+    ///
+    /// # Errors
+    ///
+    /// Returns the terminal storage error for this query.
+    pub fn poll(&self) -> Result<MobileRideMapMusicHistoryPollDto, MobileRideMapCoreErrorDto> {
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        let result = match &mut *state {
+            MobileRideMapMusicHistoryCommandState::Completed(result) => {
+                return result
+                    .clone()
+                    .map(|history| MobileRideMapMusicHistoryPollDto::Completed { history });
+            }
+            MobileRideMapMusicHistoryCommandState::Pending(storage) => match storage.try_result() {
+                Some(result) => result
+                    .map(|history| Some(history.into()))
+                    .map_err(map_storage_core_error),
+                None => return Ok(MobileRideMapMusicHistoryPollDto::Pending),
+            },
+        };
+        *state = MobileRideMapMusicHistoryCommandState::Completed(result.clone());
+        result.map(|history| MobileRideMapMusicHistoryPollDto::Completed { history })
     }
 }
 
@@ -10136,11 +10273,117 @@ impl MobileRideMapCore {
         })
     }
 
+    /// Queues one provider transition through the bounded Rust SQLite worker.
+    ///
+    /// Rust owns lifecycle admission, privacy filtering, ordering, and durable sequence
+    /// assignment. The worker applies the current stored privacy policy before committing.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when input is invalid, the ride is unavailable, or the bounded worker
+    /// rejects the command.
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn begin_record_music_event(
+        &self,
+        snapshot: MobileMusicSnapshotDto,
+        kind: MobileMusicRideEventKindDto,
+        monotonic_at_ms: u64,
+        wall_clock_at_ms: u64,
+        clock_uncertainty_ms: u64,
+    ) -> Result<Arc<MobileRideMapMusicCommand>, MobileRideMapCoreErrorDto> {
+        let state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        state.require_ready()?;
+        let monotonic_at_ms = state.logical_monotonic_milliseconds(monotonic_at_ms);
+        let mut snapshot = snapshot;
+        snapshot.observed_at_ms = state.logical_monotonic_milliseconds(snapshot.observed_at_ms);
+        let snapshot = CoreMusicSnapshot::try_from(snapshot)
+            .map_err(MobileRideMapCoreErrorDto::InvalidMusicInput)?;
+        let Some(ride_id) = state.ride_id.as_ref() else {
+            return Err(MobileRideMapCoreErrorDto::NoActiveRide);
+        };
+        if state.recorder.state() != Some(ride_maps::RideLifecycleState::Active) {
+            return Ok(MobileRideMapMusicCommand::completed(Ok(
+                MobileMusicTimelineRecordResultDto {
+                    outcome: MobileMusicTimelineOutcomeDto::RideNotOpen,
+                    sequence: None,
+                },
+            )));
+        }
+        if snapshot.state() == CoreMusicPlaybackState::Stale
+            || snapshot.observed_at() > MonotonicTimestamp::from_milliseconds(monotonic_at_ms)
+        {
+            return Ok(MobileRideMapMusicCommand::completed(Ok(
+                MobileMusicTimelineRecordResultDto {
+                    outcome: MobileMusicTimelineOutcomeDto::OutOfOrder,
+                    sequence: None,
+                },
+            )));
+        }
+        let Some(database) = state.database.as_ref() else {
+            return Err(MobileRideMapCoreErrorDto::storage_unavailable());
+        };
+        let ride_id = parse_mobile_ride_id(ride_id).map_err(map_core_error)?;
+        // Construct the most detailed Rust-internal event; the ordered SQLite writer applies
+        // the authoritative durable policy and removes any metadata not permitted for this ride.
+        let Some(event) = CoreMusicRideEvent::try_from_snapshot(
+            &snapshot,
+            kind.into(),
+            MonotonicTimestamp::from_milliseconds(monotonic_at_ms),
+            WallClockUnixTimestamp::from_milliseconds(wall_clock_at_ms),
+            clock_uncertainty_ms,
+            CoreMusicHistoryPolicy::HumanReadable,
+        )
+        .map_err(|error| MobileRideMapCoreErrorDto::InvalidMusicInput(error.to_string()))?
+        else {
+            return Ok(MobileRideMapMusicCommand::completed(Ok(
+                MobileMusicTimelineRecordResultDto {
+                    outcome: MobileMusicTimelineOutcomeDto::Disabled,
+                    sequence: None,
+                },
+            )));
+        };
+        let storage = database
+            .inner
+            .queue_record_music_event(ride_id, event)
+            .map_err(map_storage_core_error)?;
+        Ok(MobileRideMapMusicCommand::pending(storage))
+    }
+
     /// Returns the authoritative bounded music timeline for the active ride.
     #[must_use]
     pub fn current_music_events(&self) -> Option<Vec<MobileMusicRideEventDto>> {
         let history = self.current_music_history()?;
         (history.status != MobileMusicHistoryStatusDto::Unavailable).then_some(history.events)
+    }
+
+    /// Queues the authoritative current-ride history query on the bounded SQLite worker.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the database command cannot be accepted.
+    pub fn begin_current_music_history(
+        &self,
+    ) -> Result<Arc<MobileRideMapMusicHistoryCommand>, MobileRideMapCoreErrorDto> {
+        let state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        let Some(ride_id) = state.ride_id.as_ref() else {
+            return Ok(MobileRideMapMusicHistoryCommand::completed(Ok(None)));
+        };
+        if state.recorder.state() == Some(ride_maps::RideLifecycleState::Discarded) {
+            return Ok(MobileRideMapMusicHistoryCommand::completed(Ok(None)));
+        }
+        let Some(database) = state.database.as_ref() else {
+            return Ok(MobileRideMapMusicHistoryCommand::completed(Ok(Some(
+                MobileMusicHistoryDto {
+                    status: MobileMusicHistoryStatusDto::Unavailable,
+                    events: Vec::new(),
+                },
+            ))));
+        };
+        let storage = database
+            .inner
+            .queue_music_history(parse_mobile_ride_id(ride_id).map_err(map_core_error)?)
+            .map_err(map_storage_core_error)?;
+        Ok(MobileRideMapMusicHistoryCommand::pending(storage))
     }
 
     /// Returns authoritative active history, distinguishing unavailable storage from empty history.
