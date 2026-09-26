@@ -235,7 +235,8 @@ final class CutoutSessionCaptureRecorder: CutoutSessionCaptureRecording {
     private func progress() -> CaptureProgress {
         let status = builder?.writerStatus()
         let attributes = fileURL.flatMap { try? FileManager.default.attributesOfItem(atPath: $0.path) }
-        let size = (attributes?[.size] as? NSNumber)?.uint64Value ?? 0
+        let fileSize = (attributes?[.size] as? NSNumber)?.uint64Value ?? 0
+        let size = max(fileSize, status?.bytesWritten ?? 0)
         return CaptureProgress(
             elapsedMilliseconds: elapsedMilliseconds(),
             notificationCount: notificationCount,

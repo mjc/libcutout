@@ -260,11 +260,34 @@ fn schema_v26_migration_adds_live_capture_tables_without_touching_existing_captu
     let _ = std::fs::remove_file(path);
 }
 
+fn database_capture_test_location(index: u64, source_offset_ms: i64) -> PevcapLocationSample {
+    PevcapLocationSample::new(
+        MonotonicTimestamp::new(12 + index),
+        PevcapPhoneLocation {
+            wall_clock_unix_ms: 1_700_000_000_010 + index,
+            latitude_degrees: 39.7,
+            longitude_degrees: -104.9,
+            altitude_meters: 1.0,
+            horizontal_accuracy_meters: None,
+            vertical_accuracy_meters: None,
+            speed_meters_per_second: None,
+            speed_accuracy_meters_per_second: None,
+            course_degrees: None,
+            course_accuracy_degrees: None,
+        },
+        None,
+        None,
+    )
+    .unwrap()
+    .with_source_monotonic_offset_ms(Some(source_offset_ms))
+}
+
 #[test]
 fn database_backed_capture_writer_persists_events_on_its_worker_thread() {
     let _guard = test_guard();
     let database_path = music_test_path();
     let artifact_path = database_path.with_extension("jsonl");
+    let _ = std::fs::remove_file(&artifact_path);
     let database = RideDatabase::open(&database_path).expect("database opens");
     let writer = LiveCaptureWriter::start_with_database(
         artifact_path.clone(),
@@ -280,37 +303,37 @@ fn database_backed_capture_writer_persists_events_on_its_worker_thread() {
         database.clone(),
     )
     .expect("database-backed writer starts");
-    let location = PevcapLocationSample::new(
-        MonotonicTimestamp::new(12),
-        PevcapPhoneLocation {
-            wall_clock_unix_ms: 1_700_000_000_010,
-            latitude_degrees: 39.7,
-            longitude_degrees: -104.9,
-            altitude_meters: 1.0,
-            horizontal_accuracy_meters: None,
-            vertical_accuracy_meters: None,
-            speed_meters_per_second: None,
-            speed_accuracy_meters_per_second: None,
-            course_degrees: None,
-            course_accuracy_degrees: None,
-        },
-        None,
-        None,
-    )
-    .unwrap()
-    .with_source_monotonic_offset_ms(Some(10));
+    let artifact_existed_while_recording = artifact_path.exists();
+    writer.flush().expect("live database capture starts");
+    assert!(writer.monitor().status().bytes_written > 0);
+    assert_eq!(writer.monitor().status().physical_bytes_written, 0);
+    let location = database_capture_test_location(0, 10);
     assert_eq!(
         writer.record_location(location),
         CaptureWriteOutcome::Accepted
     );
+    for index in 1..=500_u64 {
+        let source_offset_ms = i64::try_from(index).expect("bounded test index fits i64");
+        let location = database_capture_test_location(index, source_offset_ms);
+        assert_eq!(
+            writer.record_location(location),
+            CaptureWriteOutcome::Accepted
+        );
+        if index % 64 == 0 {
+            writer.flush().expect("accepted batch becomes durable");
+        }
+    }
+    assert!(!artifact_path.exists());
 
     let artifact = writer.finish().expect("writer finalizes");
+    assert!(artifact.status().physical_bytes_written > 0);
     let capture_id = artifact.live_capture_id().expect("SQLite capture identity");
     let snapshot = database
-        .live_capture(capture_id, QueryLimit::new(10).unwrap())
+        .live_capture(capture_id, QueryLimit::new(500).unwrap())
         .expect("durable event is queryable");
     assert_eq!(snapshot.state, LiveCaptureState::Finished);
-    assert_eq!(snapshot.events.len(), 1);
+    assert_eq!(snapshot.events.len(), 500);
+    assert_eq!(snapshot.next_sequence, 501);
     assert_eq!(snapshot.events[0].kind, LiveCaptureEventKind::Location);
     assert_eq!(snapshot.events[0].receipt_monotonic_ms, 12);
     assert_eq!(snapshot.events[0].source_monotonic_offset_ms, Some(10));
@@ -323,10 +346,33 @@ fn database_backed_capture_writer_persists_events_on_its_worker_thread() {
             .unwrap()
             .contains("source_monotonic_offset_ms")
     );
+    let last_page = database
+        .live_capture_page(capture_id, Some(499), QueryLimit::new(500).unwrap())
+        .expect("last event is queryable");
+    assert_eq!(last_page.events.len(), 1);
+    assert_eq!(last_page.events[0].sequence, 500);
+    let exported = std::fs::read(&artifact_path).expect("finalized export exists");
+    let mut lines = exported.split(|byte| *byte == b'\n');
+    assert_eq!(lines.next(), Some(snapshot.header_json.as_slice()));
+    assert_eq!(lines.next(), Some(snapshot.events[0].payload.as_slice()));
+    assert_eq!(
+        std::str::from_utf8(&exported)
+            .expect("JSONL export is UTF-8")
+            .lines()
+            .count(),
+        502
+    );
+    assert_eq!(
+        exported[..exported.len() - 1]
+            .rsplit(|byte| *byte == b'\n')
+            .next(),
+        Some(last_page.events[0].payload.as_slice())
+    );
 
     database.shutdown().expect("database shuts down");
     let _ = std::fs::remove_file(artifact_path);
     let _ = std::fs::remove_file(database_path);
+    assert!(!artifact_existed_while_recording);
 }
 
 fn test_guard() -> std::sync::MutexGuard<'static, ()> {

@@ -12452,7 +12452,7 @@ pub struct MobileCaptureWriterStatusDto {
     pub peak_queued_messages: u64,
     /// Messages rejected because the queue was full, closed, or past a retention limit.
     pub dropped_messages: u64,
-    /// Bytes written to the capture file.
+    /// Serialized capture bytes admitted; database-backed captures export them at finalization.
     pub bytes_written: u64,
     /// Total successful write payload bytes, including header rewrites.
     pub physical_bytes_written: u64,
