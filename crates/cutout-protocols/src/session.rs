@@ -32,6 +32,47 @@ use crate::{
     begode_falcon_target_voltage_profile, decode_veteran_bms_page, util::u64_to_i64_saturating,
 };
 
+const MAX_VESC_NOTIFICATION_BATCH_BYTES: usize = VESC_MAX_FRAME_LEN * 16;
+const MAX_VESC_NOTIFICATION_DISPATCHES: usize = MAX_VESC_NOTIFICATION_BATCH_BYTES;
+
+#[derive(Clone, Copy)]
+struct NotificationMetadata {
+    family: ProtocolFamily,
+    channel: GattChannel,
+    monotonic_ms: MonotonicTimestamp,
+}
+
+struct PendingVescNotification<'a> {
+    borrowed: Option<&'a [u8]>,
+    owned: ArrayVec<u8, VESC_MAX_FRAME_LEN>,
+}
+
+impl<'a> PendingVescNotification<'a> {
+    fn borrowed(bytes: &'a [u8]) -> Self {
+        Self {
+            borrowed: Some(bytes),
+            owned: ArrayVec::new(),
+        }
+    }
+
+    fn owned(bytes: &[u8]) -> Option<Self> {
+        let mut owned = ArrayVec::new();
+        owned.try_extend_from_slice(bytes).ok()?;
+        Some(Self::from_owned(owned))
+    }
+
+    fn from_owned(owned: ArrayVec<u8, VESC_MAX_FRAME_LEN>) -> Self {
+        Self {
+            borrowed: None,
+            owned,
+        }
+    }
+
+    fn as_bytes(&self) -> &[u8] {
+        self.borrowed.unwrap_or(&self.owned)
+    }
+}
+
 /// Raw VESC electrical RPM telemetry field id.
 pub const VESC_RAW_ERPM_FIELD_ID: u16 = 0x8001;
 
@@ -710,11 +751,101 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
         monotonic_ms: MonotonicTimestamp,
         output: &mut Vec<SessionOutput>,
     ) {
+        if bytes.len() > MAX_VESC_NOTIFICATION_BATCH_BYTES {
+            self.reject_oversized_notification(output);
+            return;
+        }
+        let mut pending = ArrayVec::<PendingVescNotification<'_>, 2>::new();
+        if pending
+            .try_push(PendingVescNotification::borrowed(bytes))
+            .is_err()
+        {
+            self.reject_oversized_notification(output);
+            return;
+        }
+        let metadata = NotificationMetadata {
+            family,
+            channel,
+            monotonic_ms,
+        };
+        let mut dispatches = 0;
+        while let Some(notification) = pending.pop() {
+            dispatches += 1;
+            if dispatches > MAX_VESC_NOTIFICATION_DISPATCHES {
+                self.reject_oversized_notification(output);
+                return;
+            }
+            self.dispatch_notification(&notification, metadata, output, &mut pending);
+        }
+    }
+}
+
+impl VescNotificationDecoder {
+    fn enqueue_notification_tail<'a>(
+        &mut self,
+        pending: &mut ArrayVec<PendingVescNotification<'a>, 2>,
+        bytes: &[u8],
+        borrowed_source: Option<&'a [u8]>,
+        start: usize,
+        output: &mut Vec<SessionOutput>,
+    ) -> bool {
+        let Some(tail) = bytes.get(start..) else {
+            self.reject_oversized_notification(output);
+            pending.clear();
+            return false;
+        };
+        let notification = if let Some(source) = borrowed_source {
+            let Some(tail) = source.get(start..) else {
+                self.reject_oversized_notification(output);
+                pending.clear();
+                return false;
+            };
+            PendingVescNotification::borrowed(tail)
+        } else {
+            let Some(tail_copy) = PendingVescNotification::owned(tail) else {
+                self.reject_oversized_notification(output);
+                pending.clear();
+                return false;
+            };
+            tail_copy
+        };
+        if pending.try_push(notification).is_err() {
+            self.reject_oversized_notification(output);
+            pending.clear();
+            return false;
+        }
+        true
+    }
+
+    fn dispatch_notification<'a>(
+        &mut self,
+        notification: &PendingVescNotification<'a>,
+        metadata: NotificationMetadata,
+        output: &mut Vec<SessionOutput>,
+        pending: &mut ArrayVec<PendingVescNotification<'a>, 2>,
+    ) {
+        self.dispatch_notification_slice(
+            metadata,
+            notification.as_bytes(),
+            notification.borrowed,
+            output,
+            pending,
+        );
+    }
+
+    fn dispatch_notification_slice<'a>(
+        &mut self,
+        metadata: NotificationMetadata,
+        bytes: &[u8],
+        borrowed_source: Option<&'a [u8]>,
+        output: &mut Vec<SessionOutput>,
+        pending: &mut ArrayVec<PendingVescNotification<'a>, 2>,
+    ) {
         if (self.refloat_stream_pending && complete_vesc_frame_len(bytes).is_none())
             || self.generic_stream_pending
             || !self.generic_prefix.is_empty()
         {
-            self.handle_notification_chunk(family, channel, bytes, monotonic_ms, output);
+            self.handle_notification_chunk(metadata, bytes, borrowed_source, output, pending);
             return;
         }
         if !(match bytes.first() {
@@ -725,20 +856,38 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
                 let Some(candidate) = bytes.get(start..) else {
                     return;
                 };
+                let candidate_source = borrowed_source.and_then(|source| source.get(start..));
                 if let Some(frame_len) = complete_vesc_frame_len(candidate) {
                     let Some(frame) = candidate.get(..frame_len) else {
                         return;
                     };
-                    self.handle_notification(family, channel, frame, monotonic_ms, output);
-                    if frame_len < candidate.len() {
-                        let Some(trailing) = candidate.get(frame_len..) else {
-                            return;
-                        };
-                        self.handle_notification(family, channel, trailing, monotonic_ms, output);
+                    if frame_len < candidate.len()
+                        && !self.enqueue_notification_tail(
+                            pending,
+                            candidate,
+                            candidate_source,
+                            frame_len,
+                            output,
+                        )
+                    {
+                        return;
                     }
+                    self.handle_notification_chunk(
+                        metadata,
+                        frame,
+                        candidate_source.and_then(|source| source.get(..frame_len)),
+                        output,
+                        pending,
+                    );
                     return;
                 }
-                self.handle_notification_chunk(family, channel, candidate, monotonic_ms, output);
+                self.handle_notification_chunk(
+                    metadata,
+                    candidate,
+                    candidate_source,
+                    output,
+                    pending,
+                );
                 return;
             }
         }
@@ -746,16 +895,27 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
             let Some(frame) = bytes.get(..frame_len) else {
                 return;
             };
-            self.handle_notification_chunk(family, channel, frame, monotonic_ms, output);
-            if frame_len < bytes.len() {
-                let Some(trailing) = bytes.get(frame_len..) else {
-                    return;
-                };
-                self.handle_notification(family, channel, trailing, monotonic_ms, output);
+            if frame_len < bytes.len()
+                && !self.enqueue_notification_tail(
+                    pending,
+                    bytes,
+                    borrowed_source,
+                    frame_len,
+                    output,
+                )
+            {
+                return;
             }
+            self.handle_notification_chunk(
+                metadata,
+                frame,
+                borrowed_source.and_then(|source| source.get(..frame_len)),
+                output,
+                pending,
+            );
             return;
         }
-        self.handle_notification_chunk(family, channel, bytes, monotonic_ms, output);
+        self.handle_notification_chunk(metadata, bytes, borrowed_source, output, pending);
     }
 }
 
@@ -786,15 +946,15 @@ impl VescNotificationDecoder {
         clippy::too_many_lines,
         reason = "This parser keeps stream state in one transaction."
     )]
-    fn handle_notification_chunk(
+    fn handle_notification_chunk<'a>(
         &mut self,
-        family: ProtocolFamily,
-        channel: GattChannel,
+        metadata: NotificationMetadata,
         bytes: &[u8],
-        monotonic_ms: MonotonicTimestamp,
+        borrowed_source: Option<&'a [u8]>,
         output: &mut Vec<SessionOutput>,
+        pending: &mut ArrayVec<PendingVescNotification<'a>, 2>,
     ) {
-        self.now_ms = monotonic_ms.as_milliseconds();
+        self.now_ms = metadata.monotonic_ms.as_milliseconds();
         if self.refloat_stream_pending
             && !self.generic_stream_pending
             && self.generic_prefix.is_empty()
@@ -806,22 +966,32 @@ impl VescNotificationDecoder {
                     return;
                 };
                 let refloat_handled = self.handle_refloat_notification(
-                    family,
-                    channel,
+                    metadata.family,
+                    metadata.channel,
                     refloat_chunk,
-                    monotonic_ms,
+                    metadata.monotonic_ms,
                     output,
                 );
-                if refloat_handled || !self.refloat_stream_pending {
-                    let Some(trailing) = bytes.get(refloat_bytes..) else {
-                        return;
-                    };
-                    self.handle_notification(family, channel, trailing, monotonic_ms, output);
+                if (refloat_handled || !self.refloat_stream_pending)
+                    && !self.enqueue_notification_tail(
+                        pending,
+                        bytes,
+                        borrowed_source,
+                        refloat_bytes,
+                        output,
+                    )
+                {
+                    return;
                 }
                 return;
             }
-            let refloat_handled =
-                self.handle_refloat_notification(family, channel, bytes, monotonic_ms, output);
+            let refloat_handled = self.handle_refloat_notification(
+                metadata.family,
+                metadata.channel,
+                bytes,
+                metadata.monotonic_ms,
+                output,
+            );
             if refloat_handled || self.refloat_stream_pending {
                 return;
             }
@@ -831,7 +1001,7 @@ impl VescNotificationDecoder {
         let mut generic_bytes = ArrayVec::<u8, VESC_MAX_FRAME_LEN>::new();
         let feed_generic = if self.generic_stream_pending {
             if generic_bytes.try_extend_from_slice(bytes).is_err() {
-                self.reject_oversized_generic_notification(output);
+                self.reject_oversized_notification(output);
                 return;
             }
             true
@@ -841,7 +1011,7 @@ impl VescNotificationDecoder {
                 .and_then(|()| generic_bytes.try_extend_from_slice(bytes))
                 .is_err()
             {
-                self.reject_oversized_generic_notification(output);
+                self.reject_oversized_notification(output);
                 return;
             }
             #[allow(
@@ -860,7 +1030,7 @@ impl VescNotificationDecoder {
                                 return;
                             };
                             if refloat_frame.try_extend_from_slice(refloat_bytes).is_err() {
-                                self.reject_oversized_generic_notification(output);
+                                self.reject_oversized_notification(output);
                                 return;
                             }
                             let mut trailing = ArrayVec::<u8, VESC_MAX_FRAME_LEN>::new();
@@ -868,30 +1038,30 @@ impl VescNotificationDecoder {
                                 return;
                             };
                             if trailing.try_extend_from_slice(trailing_bytes).is_err() {
-                                self.reject_oversized_generic_notification(output);
+                                self.reject_oversized_notification(output);
                                 return;
                             }
                             self.handle_refloat_notification(
-                                family,
-                                channel,
+                                metadata.family,
+                                metadata.channel,
                                 &refloat_frame,
-                                monotonic_ms,
+                                metadata.monotonic_ms,
                                 output,
                             );
-                            self.handle_notification(
-                                family,
-                                channel,
-                                &trailing,
-                                monotonic_ms,
-                                output,
-                            );
+                            if pending
+                                .try_push(PendingVescNotification::from_owned(trailing))
+                                .is_err()
+                            {
+                                self.reject_oversized_notification(output);
+                                return;
+                            }
                             return;
                         }
                         refloat_handled = self.handle_refloat_notification(
-                            family,
-                            channel,
+                            metadata.family,
+                            metadata.channel,
                             &generic_bytes,
-                            monotonic_ms,
+                            metadata.monotonic_ms,
                             output,
                         );
                         refloat_buffered = !refloat_handled;
@@ -905,7 +1075,7 @@ impl VescNotificationDecoder {
                         .try_extend_from_slice(&generic_bytes)
                         .is_err()
                     {
-                        self.reject_oversized_generic_notification(output);
+                        self.reject_oversized_notification(output);
                         return;
                     }
                     false
@@ -915,15 +1085,15 @@ impl VescNotificationDecoder {
             match generic_frame_kind(bytes) {
                 Some(is_generic) => {
                     if generic_bytes.try_extend_from_slice(bytes).is_err() {
-                        self.reject_oversized_generic_notification(output);
+                        self.reject_oversized_notification(output);
                         return;
                     }
                     if !is_generic {
                         refloat_handled = self.handle_refloat_notification(
-                            family,
-                            channel,
+                            metadata.family,
+                            metadata.channel,
                             bytes,
-                            monotonic_ms,
+                            metadata.monotonic_ms,
                             output,
                         );
                         refloat_buffered = !refloat_handled;
@@ -936,14 +1106,14 @@ impl VescNotificationDecoder {
                 }) =>
                 {
                     if self.generic_prefix.try_extend_from_slice(bytes).is_err() {
-                        self.reject_oversized_generic_notification(output);
+                        self.reject_oversized_notification(output);
                         return;
                     }
                     false
                 }
                 None => {
                     if generic_bytes.try_extend_from_slice(bytes).is_err() {
-                        self.reject_oversized_generic_notification(output);
+                        self.reject_oversized_notification(output);
                         return;
                     }
                     true
@@ -952,10 +1122,10 @@ impl VescNotificationDecoder {
         };
         if feed_generic {
             let (replied, buffered) = self.handle_vesc_notification(
-                family,
-                channel,
+                metadata.family,
+                metadata.channel,
                 &generic_bytes,
-                monotonic_ms,
+                metadata.monotonic_ms,
                 output,
                 NotificationByteLen::from_bytes(bytes.len()),
                 !refloat_handled,
@@ -965,17 +1135,19 @@ impl VescNotificationDecoder {
         } else if refloat_buffered || !self.generic_prefix.is_empty() {
             output.push(SessionOutput::NotificationIngest(
                 NotificationIngestOutcome::buffered_fragment(
-                    family,
-                    channel,
+                    metadata.family,
+                    metadata.channel,
                     NotificationByteLen::from_bytes(bytes.len()),
-                    monotonic_ms,
+                    metadata.monotonic_ms,
                 ),
             ));
         }
     }
 
-    fn reject_oversized_generic_notification(&mut self, output: &mut Vec<SessionOutput>) {
+    fn reject_oversized_notification(&mut self, output: &mut Vec<SessionOutput>) {
         self.stream = VescReadOnlyStreamDecoder::new();
+        self.refloat_stream = RefloatStreamDecoder::new();
+        self.refloat_stream_pending = false;
         self.generic_prefix.clear();
         self.generic_stream_pending = false;
         push_parser_error(ParserError::MalformedFrame, output);
@@ -3854,6 +4026,43 @@ mod tests {
             diagnostic_error_events(&output).len(),
             1,
             "the corrupt Refloat frame must remain visible alongside telemetry"
+        );
+    }
+
+    #[test]
+    fn generic_vesc_session_bounds_coalesced_notification_dispatch() {
+        let frame = vesc_selective_values_frame();
+        let max_batch_bytes = VESC_MAX_FRAME_LEN * 16;
+        let frame_count = max_batch_bytes / frame.len() + 1;
+        let mut notification = Vec::with_capacity(frame_count * frame.len());
+        for _ in 0..frame_count {
+            notification.extend_from_slice(&frame);
+        }
+
+        let output = vesc_output_for_notification_chunks(&[&notification]);
+
+        assert_eq!(
+            diagnostic_error_events(&output).len(),
+            1,
+            "an oversized coalesced callback must be rejected with one bounded diagnostic"
+        );
+    }
+
+    #[test]
+    fn generic_vesc_session_drains_large_bounded_coalesced_batch() {
+        let frame = vesc_selective_values_frame();
+        let frame_count = (VESC_MAX_FRAME_LEN * 16) / frame.len();
+        let mut notification = Vec::with_capacity(frame_count * frame.len());
+        for _ in 0..frame_count {
+            notification.extend_from_slice(&frame);
+        }
+
+        let output = vesc_output_for_notification_chunks(&[&notification]);
+
+        assert_eq!(
+            read_only_response_events(&output).len(),
+            frame_count,
+            "every supported reply in the bounded callback must be dispatched"
         );
     }
 
