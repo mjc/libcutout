@@ -273,6 +273,9 @@ final class MusicFeatureModelTests: XCTestCase {
 
             model.start(sceneIsActive: true)
             await waitUntil("first monitor poll") { pollWaiter.startedCount == 1 }
+            await waitUntil("first monitor presentation") {
+                model.settingsNowPlaying?.item?.identifier == "monitor-track"
+            }
 
             XCTAssertEqual(monitor.authorizationPrompts, [false])
             XCTAssertEqual(monitor.startCount, 1)
@@ -321,6 +324,9 @@ final class MusicFeatureModelTests: XCTestCase {
 
             model.start(sceneIsActive: true)
             await waitUntil("monitor poll before shutdown") { pollWaiter.startedCount == 1 }
+            await waitUntil("monitor presentation before shutdown") {
+                model.settingsNowPlaying?.item?.identifier == "monitor-track"
+            }
             let nowPlayingBeforeShutdown = try XCTUnwrap(model.settingsNowPlaying)
 
             monitor.emitOnNextStop(observation(atMs: 2_000, identifier: "teardown-track"))
