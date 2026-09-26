@@ -229,6 +229,28 @@ fn queued_history_deletion_stops_new_events_and_keeps_deleted_status() {
 }
 
 #[test]
+fn stored_music_history_is_available_through_a_pollable_rust_query() {
+    let fixture = setup();
+    record(
+        &fixture.core,
+        2_000,
+        2_000,
+        MobileMusicRideEventKindDto::Play,
+    )
+    .unwrap();
+
+    let command = fixture
+        .core
+        .begin_stored_music_history(fixture.id.clone())
+        .unwrap();
+    let history = poll_music_history_command(&command).unwrap().unwrap();
+
+    assert_eq!(history.status, MobileMusicHistoryStatusDto::Available);
+    assert_eq!(history.events.len(), 1);
+    assert_eq!(history.events[0].title.as_deref(), Some("Private title"));
+}
+
+#[test]
 fn forget_then_reenable_records_from_empty_sequence() {
     let fixture = setup();
     let (db, core, id) = (&fixture.db, &fixture.core, fixture.id.clone());

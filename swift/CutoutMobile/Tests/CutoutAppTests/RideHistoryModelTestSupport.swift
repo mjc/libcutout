@@ -68,8 +68,8 @@ final class GatedRideHistoryQuery: RideHistoryQuerying, @unchecked Sendable {
         return try result.get()
     }
 
-    func storedMusicHistory(rideID: String) throws -> MobileMusicHistoryDto {
-        try base.storedMusicHistory(rideID: rideID)
+    func storedMusicHistoryAsync(rideID: String) async throws -> MobileMusicHistoryDto {
+        try await base.storedMusicHistoryAsync(rideID: rideID)
     }
 
     func storedHistoryVehicleOptions() throws -> [MobileRideMapHistoryVehicleOptionDto] {

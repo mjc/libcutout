@@ -126,6 +126,36 @@ final class RideMapStateTests: XCTestCase {
         XCTAssertNil(state.currentMusicHistory())
     }
 
+    func testStoredMusicHistoryAsyncUsesPollableRustQuery() async throws {
+        let state = MobileRideMapState()
+        _ = try state.startGpsOnly(atMs: 1_000)
+        try state.setMusicHistoryPolicy(.humanReadable)
+        let snapshot = MobileMusicSnapshotDto(
+            provider: .spotify,
+            sessionId: "session",
+            state: .playing,
+            item: MobileMusicItemDto(identifier: "track", title: "Song", artist: "Artist"),
+            positionMilliseconds: 10,
+            durationMilliseconds: 100,
+            observedAtMs: 2_000,
+            capabilities: MobileMusicCapabilitiesDto(
+                previous: false, play: true, pause: true, next: true, openProvider: true)
+        )
+        _ = try state.recordMusicEvent(
+            snapshot: snapshot,
+            kind: .play,
+            monotonicAtMs: 3_000,
+            wallClockAtMs: 1_700_000_003_000,
+            clockUncertaintyMs: 5
+        )
+        let rideID = try XCTUnwrap(state.currentSnapshot()?.rideID)
+
+        let history = try await state.storedMusicHistoryAsync(rideID: rideID)
+
+        XCTAssertEqual(history.status, .available)
+        XCTAssertEqual(history.events.map(\.title), ["Song"])
+    }
+
     func testMusicHistoryPolicyIsProjectedFromRustAndResetsForNewRide() throws {
         let state = MobileRideMapState()
 

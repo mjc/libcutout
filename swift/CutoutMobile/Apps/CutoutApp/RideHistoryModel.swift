@@ -22,7 +22,7 @@ protocol RideHistoryQuerying: Sendable {
         privacy: MobileRideMapRoutePrivacyPolicy,
         cancellation: MobileRideMapProjectionCancellation?
     ) throws -> MobileRideMapRouteProjection
-    func storedMusicHistory(rideID: String) throws -> MobileMusicHistoryDto
+    func storedMusicHistoryAsync(rideID: String) async throws -> MobileMusicHistoryDto
     func storedHistoryVehicleOptions() throws -> [MobileRideMapHistoryVehicleOptionDto]
     func storedHistoryRide(rideID: String) throws -> MobileRideMapHistorySummaryDto?
     func storedHistoryPage(
@@ -348,7 +348,9 @@ final class RideHistoryModel {
                             )
                             let musicHistory: MusicHistoryQueryResult
                             do {
-                                let storedHistory = try state.storedMusicHistory(rideID: request.rideID)
+                                let storedHistory = try await state.storedMusicHistoryAsync(
+                                    rideID: request.rideID
+                                )
                                 musicHistory = MusicHistoryQueryResult(
                                     events: storedHistory.events,
                                     state: storedHistory.historyState,
@@ -886,11 +888,11 @@ final class RideHistoryModel {
 
     private nonisolated static func runCancellableDetached<Success: Sendable>(
         priority: TaskPriority,
-        operation: @escaping @Sendable () throws -> Success
+        operation: @escaping @Sendable () async throws -> Success
     ) async throws -> Success {
         let task = Task.detached(priority: priority) {
             try Task.checkCancellation()
-            let result = try operation()
+            let result = try await operation()
             try Task.checkCancellation()
             return result
         }

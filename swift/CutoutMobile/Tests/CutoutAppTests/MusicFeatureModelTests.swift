@@ -647,7 +647,7 @@ private struct HistoricalRideQuery: RideHistoryQuerying {
         )
     }
 
-    func storedMusicHistory(rideID: String) throws -> MobileMusicHistoryDto {
+    func storedMusicHistoryAsync(rideID: String) async throws -> MobileMusicHistoryDto {
         _ = rideID
         return MobileMusicHistoryDto(status: .unavailable, events: [])
     }

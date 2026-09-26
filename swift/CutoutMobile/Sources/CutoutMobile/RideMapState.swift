@@ -1205,6 +1205,23 @@ public final class MobileRideMapState: @unchecked Sendable {
         }
     }
 
+    public func storedMusicHistoryAsync(rideID: String) async throws -> MobileMusicHistoryDto {
+        try Task.checkCancellation()
+        let command = try withCore {
+            try $0.beginStoredMusicHistory(rideId: ffiRideID(rideID))
+        }
+        while true {
+            try Task.checkCancellation()
+            switch try command.poll() {
+            case .pending:
+                try await Task.sleep(nanoseconds: 10_000_000)
+            case let .completed(history):
+                guard let history else { throw MobileRideMapError.rideNotFound }
+                return history
+            }
+        }
+    }
+
     /// Permanently deletes stored music metadata for one ride.
     public func deleteStoredMusicHistory(rideID: String) throws {
         try withCore {

@@ -10568,6 +10568,31 @@ impl MobileRideMapCore {
         Ok(MobileRideMapMusicHistoryCommand::pending(storage))
     }
 
+    /// Queues one ride's authoritative stored music-history query on the bounded SQLite worker.
+    ///
+    /// # Errors
+    /// Returns an error when the ride identifier is invalid, storage is unavailable, or the
+    /// bounded worker cannot accept the query.
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn begin_stored_music_history(
+        &self,
+        ride_id: MobileRideIdDto,
+    ) -> Result<Arc<MobileRideMapMusicHistoryCommand>, MobileRideMapCoreErrorDto> {
+        let ride_id = parse_mobile_ride_id(&ride_id).map_err(map_core_error)?;
+        let database = self
+            .inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .database
+            .clone()
+            .ok_or_else(MobileRideMapCoreErrorDto::storage_unavailable)?;
+        let storage = database
+            .inner
+            .queue_music_history(ride_id)
+            .map_err(map_storage_core_error)?;
+        Ok(MobileRideMapMusicHistoryCommand::pending(storage))
+    }
+
     /// Returns authoritative active history, distinguishing unavailable storage from empty history.
     #[must_use]
     pub fn current_music_history(&self) -> Option<MobileMusicHistoryDto> {
