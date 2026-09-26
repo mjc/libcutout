@@ -13905,6 +13905,7 @@ fn mobile_gatt_channel(channel: &[u8]) -> GattChannel {
 fn phone_location_snapshot(
     sample: Option<MobilePhoneLocationSampleDto>,
 ) -> MobilePhoneLocationSnapshotDto {
+    let sample = sample.and_then(MobilePhoneLocationSampleDto::canonical);
     MobilePhoneLocationSnapshotDto {
         latest_sample: sample,
         gps_speed: sample.and_then(phone_location_speed),
@@ -19204,6 +19205,32 @@ mod tests {
         };
         assert_eq!(invalid.normalized_wall_clock_unix_ms(), 0);
         assert!(invalid.canonical().is_none());
+    }
+
+    #[test]
+    fn mobile_location_snapshot_normalizes_optional_sentinels_in_rust() {
+        let sample = MobilePhoneLocationSampleDto {
+            horizontal_accuracy_meters: Some(-1.0),
+            vertical_accuracy_meters: Some(-1.0),
+            speed_meters_per_second: Some(-1.0),
+            speed_accuracy_meters_per_second: Some(-1.0),
+            course_degrees: Some(-1.0),
+            course_accuracy_degrees: Some(-1.0),
+            ..capture_phone_location_fixture()
+        };
+
+        let snapshot = MobilePhoneLocationState::default().ingest(sample);
+        let canonical = snapshot
+            .latest_sample
+            .expect("valid coordinates retain the location sample");
+
+        assert_eq!(canonical.horizontal_accuracy_meters, None);
+        assert_eq!(canonical.vertical_accuracy_meters, None);
+        assert_eq!(canonical.speed_meters_per_second, None);
+        assert_eq!(canonical.speed_accuracy_meters_per_second, None);
+        assert_eq!(canonical.course_degrees, None);
+        assert_eq!(canonical.course_accuracy_degrees, None);
+        assert_eq!(snapshot.gps_speed, None);
     }
 
     #[test]

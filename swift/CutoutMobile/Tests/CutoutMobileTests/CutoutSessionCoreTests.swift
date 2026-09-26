@@ -3770,7 +3770,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         )
     }
     @MainActor
-    func testCoreLocationSentinelsBecomeTypedAbsenceBeforeForwarding() throws {
+    func testCoreLocationSentinelsNormalizeInRustSnapshotAndForwardRawBatch() throws {
         let location = CLLocation(
             coordinate: CLLocationCoordinate2D(latitude: 39.7392, longitude: -104.9903),
             altitude: 1_609,
@@ -3780,7 +3780,20 @@ final class CutoutSessionCoreTests: XCTestCase {
             speed: -1,
             timestamp: Date(timeIntervalSince1970: 1_700_000_000)
         )
-        let core = CutoutSessionCore()
+        var capturedUpdate: PhoneLocationUpdate?
+        var rideMapUpdate: PhoneLocationUpdate?
+        let locationEffects = CutoutSessionLocationEffects(
+            recordCaptureUpdate: { update in
+                capturedUpdate = update
+                return CaptureLocationWriteResult(generation: nil, outcome: .accepted)
+            },
+            ingestRideMapUpdate: { rideMapUpdate = $0 },
+            handleCaptureResult: { _ in }
+        )
+        let core = CutoutSessionCore(
+            clock: MonotonicClock(),
+            locationEffects: locationEffects
+        )
 
         core.locationManager(CLLocationManager(), didUpdateLocations: [location])
 
@@ -3791,6 +3804,17 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertNil(sample.courseDegrees)
         XCTAssertNil(sample.speedAccuracyMetersPerSecond)
         XCTAssertNil(sample.courseAccuracyDegrees)
+
+        for forwarded in [capturedUpdate, rideMapUpdate].compactMap({ $0?.samples.first }) {
+            XCTAssertEqual(forwarded.horizontalAccuracyMeters, -1)
+            XCTAssertEqual(forwarded.verticalAccuracyMeters, -1)
+            XCTAssertEqual(forwarded.speedMetersPerSecond, -1)
+            XCTAssertEqual(forwarded.speedAccuracyMetersPerSecond, -1)
+            XCTAssertEqual(forwarded.courseDegrees, -1)
+            XCTAssertEqual(forwarded.courseAccuracyDegrees, -1)
+        }
+        XCTAssertNotNil(capturedUpdate)
+        XCTAssertNotNil(rideMapUpdate)
     }
 }
 
