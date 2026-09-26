@@ -205,7 +205,7 @@ final class MusicFeatureModelTests: XCTestCase {
             ), "spotify:local:artist:album:track")
     }
 
-    func testHistoryPolicyLoadsFromItsStoreAndRedactsTheRustTimeline() throws {
+    func testHistoryPolicyLoadsFromItsStoreAndRedactsTheRustTimeline() async throws {
         let suite = try makeDefaults()
         defer { suite.defaults.removePersistentDomain(forName: suite.name) }
         let policyStore = MusicHistoryPolicyStore(defaults: suite.defaults)
@@ -215,11 +215,14 @@ final class MusicFeatureModelTests: XCTestCase {
         let model = makeModel(state: state, defaults: suite.defaults, historyPolicyStore: policyStore)
 
         XCTAssertEqual(model.historyPolicy, .opaqueItem)
-        XCTAssertTrue(model.setHistoryPolicy(.humanReadable))
-        XCTAssertTrue(model.ingestObservation(observation(atMs: 200)))
+        let enabled = await model.setHistoryPolicyAsync(.humanReadable)
+        XCTAssertTrue(enabled)
+        let ingested = await model.ingestObservationAsync(observation(atMs: 200))
+        XCTAssertTrue(ingested)
         XCTAssertEqual(model.timelineEvents.first?.title, "Track")
 
-        XCTAssertTrue(model.setHistoryPolicy(.opaqueItem))
+        let redacted = await model.setHistoryPolicyAsync(.opaqueItem)
+        XCTAssertTrue(redacted)
 
         XCTAssertEqual(model.timelineEvents.count, 1)
         XCTAssertNil(model.timelineEvents.first?.title)

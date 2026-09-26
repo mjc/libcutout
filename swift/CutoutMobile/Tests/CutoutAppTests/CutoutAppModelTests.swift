@@ -214,7 +214,8 @@ final class CutoutAppModelTests: XCTestCase {
                 musicHistoryPolicyStore: policyStore
             )
 
-            XCTAssertTrue(model.music.setHistoryPolicy(policy))
+            let policySaved = await model.music.setHistoryPolicyAsync(policy)
+            XCTAssertTrue(policySaved)
             XCTAssertEqual(policyStore.policy, policy)
             let started = await model.startGpsOnlyRide()
             XCTAssertTrue(started)

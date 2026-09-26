@@ -1606,6 +1606,14 @@ pub struct PendingMusicHistoryRead {
     consumed: bool,
 }
 
+/// A history-policy update accepted by the bounded worker but not yet committed.
+#[must_use = "poll or wait for the durable music-history policy result"]
+#[derive(Debug)]
+pub struct PendingMusicHistoryPolicyWrite {
+    response: Receiver<Result<(), StorageError>>,
+    consumed: bool,
+}
+
 /// A live ride creation accepted by the bounded database queue but not yet committed.
 #[must_use = "poll or wait for the durable live ride creation result"]
 #[derive(Debug)]
@@ -2223,6 +2231,26 @@ impl PendingMusicEventWrite {
 impl PendingMusicHistoryRead {
     /// Returns the durable history when the worker has completed the query.
     pub fn try_result(&mut self) -> Option<Result<MusicHistory, StorageError>> {
+        if self.consumed {
+            return None;
+        }
+        match self.response.try_recv() {
+            Ok(result) => {
+                self.consumed = true;
+                Some(result)
+            }
+            Err(mpsc::TryRecvError::Empty) => None,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.consumed = true;
+                Some(Err(StorageError::ResponseDropped))
+            }
+        }
+    }
+}
+
+impl PendingMusicHistoryPolicyWrite {
+    /// Returns the durable policy-write result when the worker has completed it.
+    pub fn try_result(&mut self) -> Option<Result<(), StorageError>> {
         if self.consumed {
             return None;
         }
@@ -2889,6 +2917,28 @@ impl RideDatabase {
             ride_id,
             policy,
             reply,
+        })
+    }
+
+    /// Queues a bounded durable history-policy update without waiting for SQLite.
+    ///
+    /// # Errors
+    /// Returns [`StorageError::QueueFull`] when the worker queue is saturated, or
+    /// [`StorageError::WorkerStopped`] when the worker is unavailable.
+    pub fn queue_save_music_history_policy(
+        &self,
+        ride_id: RideId,
+        policy: MusicHistoryPolicy,
+    ) -> Result<PendingMusicHistoryPolicyWrite, StorageError> {
+        let (reply, response) = response_channel();
+        self.enqueue(Command::SaveMusicHistoryPolicy {
+            ride_id,
+            policy,
+            reply,
+        })?;
+        Ok(PendingMusicHistoryPolicyWrite {
+            response,
+            consumed: false,
         })
     }
 

@@ -74,7 +74,11 @@ struct AppSetupView: View {
                         ),
                         historyPolicy: Binding(
                             get: { music.historyPolicy },
-                            set: { _ = music.setHistoryPolicy($0) }
+                            set: { policy in
+                                Task { @MainActor in
+                                    _ = await music.setHistoryPolicyAsync(policy)
+                                }
+                            }
                         ),
                         historyUnavailable: music.historyUnavailable,
                         historySaveError: music.historySaveError,

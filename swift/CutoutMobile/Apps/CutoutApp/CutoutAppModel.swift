@@ -365,6 +365,8 @@ final class CutoutAppModel {
     private var restorationMarkerAtLaunch: Data?
     private var rideMapVehicleNameCache = [String: String]()
     private var rideMapRestoreTask: Task<Void, Never>?
+    private var musicHistoryRestoreTask: Task<Void, Never>?
+    private var musicHistoryRestoreGeneration: UInt64 = 0
     private var phoneAlarmAuthorizationTask: Task<Void, Never>?
     private var rideMapLiveProjectionTask: Task<Void, Never>?
     private var rideMapDurationTask: Task<Void, Never>?
@@ -376,6 +378,7 @@ final class CutoutAppModel {
     private static let liveActivityUpdateIntervalMilliseconds: UInt64 = 1_000
 
     isolated deinit {
+        musicHistoryRestoreTask?.cancel()
         stopMusicMonitoring()
     }
 
@@ -619,14 +622,35 @@ final class CutoutAppModel {
     private func restoreRideMapState() {
         guard let state = core.rideMapStateHandle else { return }
         rideMapSnapshot = state.currentSnapshot()
-        if rideMapSnapshot != nil {
-            music.synchronizeHistory(state.currentMusicHistory())
-        } else {
+        musicHistoryRestoreTask?.cancel()
+        musicHistoryRestoreGeneration &+= 1
+        let historyGeneration = musicHistoryRestoreGeneration
+        guard let restoredRideID = rideMapSnapshot?.rideID else {
             music.rideMapClosed()
+            return
         }
         rideMapLiveTelemetryState = rideMapSnapshot?.telemetryState
         updateRideMapDurationTicker()
-        guard let restoredRideID = rideMapSnapshot?.rideID else { return }
+        musicHistoryRestoreTask = Task { @MainActor [weak self] in
+            do {
+                let history = try await state.currentMusicHistoryAsync()
+                guard
+                    !Task.isCancelled,
+                    let self,
+                    self.musicHistoryRestoreGeneration == historyGeneration,
+                    self.rideMapSnapshot?.rideID == restoredRideID
+                else { return }
+                self.music.synchronizeHistory(history)
+            } catch {
+                guard
+                    !Task.isCancelled,
+                    let self,
+                    self.musicHistoryRestoreGeneration == historyGeneration,
+                    self.rideMapSnapshot?.rideID == restoredRideID
+                else { return }
+                self.music.setHistoryPersistenceError(Self.mapRideMapError(error))
+            }
+        }
         rideMapRestoreTask?.cancel()
         let previewLimit = Self.rideMapLimits.liveTailPointLimit
         let restorationGeneration = rideMapLiveProjectionGeneration
@@ -690,7 +714,7 @@ final class CutoutAppModel {
             _ = core.resetTripMeterForNewRide(token: connectionToken)
         }
         core.resetRideMapLocationAdmission()
-        if let error = music.applyHistoryForNewRide() {
+        if let error = await music.applyHistoryForNewRideAsync() {
             rideMapLiveError = error
             guard core.rideMapStateHandle?.currentSnapshot() != nil else {
                 return false

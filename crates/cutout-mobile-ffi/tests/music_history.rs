@@ -113,6 +113,17 @@ fn poll_music_history_command(
     }
 }
 
+fn poll_music_policy_command(
+    command: &MobileRideMapMusicPolicyCommand,
+) -> Result<(), MobileRideMapCoreErrorDto> {
+    loop {
+        match command.poll()? {
+            MobileRideMapMusicPolicyPollDto::Pending => std::thread::yield_now(),
+            MobileRideMapMusicPolicyPollDto::Completed => return Ok(()),
+        }
+    }
+}
+
 #[test]
 fn queued_music_event_returns_durable_sequence_and_applies_current_privacy_policy() {
     let fixture = setup();
@@ -133,9 +144,9 @@ fn queued_music_event_returns_durable_sequence_and_applies_current_privacy_polic
     assert_eq!(stored.len(), 1);
     assert_eq!(stored[0].title.as_deref(), Some("Private title"));
 
-    fixture
+    let policy = fixture
         .core
-        .set_music_history_policy(MobileMusicHistoryPolicyDto::OpaqueItem)
+        .begin_set_music_history_policy(MobileMusicHistoryPolicyDto::OpaqueItem)
         .unwrap();
     let command = fixture
         .core
@@ -147,6 +158,7 @@ fn queued_music_event_returns_durable_sequence_and_applies_current_privacy_polic
             5,
         )
         .unwrap();
+    poll_music_policy_command(&policy).unwrap();
     let result = poll_music_command(&command).unwrap();
     assert_eq!(result.outcome, MobileMusicTimelineOutcomeDto::Recorded);
     assert_eq!(result.sequence, Some(1));

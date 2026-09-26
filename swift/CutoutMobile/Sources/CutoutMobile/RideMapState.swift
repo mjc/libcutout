@@ -1098,6 +1098,22 @@ public final class MobileRideMapState: @unchecked Sendable {
         }
     }
 
+    public func setMusicHistoryPolicyAsync(_ policy: MobileMusicHistoryPolicyDto) async throws {
+        let command = try withCore { try $0.beginSetMusicHistoryPolicy(policy: policy) }
+        // Once accepted, let the durable write settle independently of caller cancellation.
+        let completion = Task {
+            while true {
+                switch try command.poll() {
+                case .pending:
+                    try await Task.sleep(nanoseconds: 10_000_000)
+                case .completed:
+                    return
+                }
+            }
+        }
+        try await completion.value
+    }
+
     public func recordMusicEventWithSequenceAsync(
         snapshot: MobileMusicSnapshotDto,
         kind: MobileMusicRideEventKindDto,
@@ -1127,17 +1143,14 @@ public final class MobileRideMapState: @unchecked Sendable {
 
     public func currentMusicHistoryAsync() async throws -> MobileMusicHistoryDto? {
         let command = try withCore { try $0.beginCurrentMusicHistory() }
-        let completion = Task {
-            while true {
-                switch try command.poll() {
-                case .pending:
-                    try await Task.sleep(nanoseconds: 10_000_000)
-                case let .completed(history):
-                    return history
-                }
+        while true {
+            switch try command.poll() {
+            case .pending:
+                try await Task.sleep(nanoseconds: 10_000_000)
+            case let .completed(history):
+                return history
             }
         }
-        return try await completion.value
     }
 
     /// Returns nil when a healthy core has no active ride. A storage initialization failure

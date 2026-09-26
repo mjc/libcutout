@@ -1361,6 +1361,16 @@ public final class MusicIntegrationCoordinator {
         adoptHistoryPolicy(policy)
     }
 
+    public func setHistoryPolicyAsync(_ policy: MobileMusicHistoryPolicyDto) async throws {
+        guard let rideMapState else {
+            // A future-ride preference is still valid without a current ride store.
+            adoptHistoryPolicy(policy)
+            return
+        }
+        try await rideMapState.setMusicHistoryPolicyAsync(policy)
+        adoptHistoryPolicy(policy)
+    }
+
     /// Drops provider-local observations before a deliberate provider switch.
     /// Selection itself must not synthesize a stop, disconnect, or item change.
     public func resetProviderCorrelation() {

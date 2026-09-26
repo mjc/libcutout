@@ -137,7 +137,7 @@ final class MusicFeatureModel {
         selectedProvider = providerSelectionStore.provider
         isPlayerHidden = playerVisibilityStore.isHidden
         historyPolicy = historyPolicyStore.policy
-        timelineEvents = coordinator.recordedEvents
+        timelineEvents = []
     }
 
     @discardableResult
@@ -170,6 +170,42 @@ final class MusicFeatureModel {
         }
     }
 
+    @discardableResult
+    func setHistoryPolicyAsync(_ policy: MobileMusicHistoryPolicyDto) async -> Bool {
+        #if DEBUG
+            print("music_history_request policy=\(policy) has_ride_store=\(rideMapState != nil)")
+        #endif
+        let previous = historyPolicy
+        clearHistoryErrors()
+        do {
+            try await coordinator.setHistoryPolicyAsync(policy)
+            rememberHistoryPolicy(policy)
+            if policy == .disabled {
+                clearMusicCaptureContext()
+                timelineEvents = []
+            } else {
+                do {
+                    timelineEvents = try await coordinator.recordedEventsAsync()
+                } catch {
+                    setHistoryPersistenceError(CutoutAppModel.mapRideMapError(error))
+                }
+            }
+            return true
+        } catch let error as MobileRideMapError where error == .noActiveRide || error == .invalidTransition {
+            rememberHistoryPolicy(policy)
+            coordinator.restoreHistoryPolicy(policy)
+            if policy == .disabled { clearMusicCaptureContext() }
+            return true
+        } catch {
+            #if DEBUG
+                print("music_history_rejected error=\(error)")
+            #endif
+            historyPolicy = previous
+            setHistoryPersistenceError(CutoutAppModel.mapRideMapError(error))
+            return false
+        }
+    }
+
     private func rememberHistoryPolicy(_ policy: MobileMusicHistoryPolicyDto) {
         historyPolicyStore.set(policy)
         historyPolicy = policy
@@ -178,16 +214,20 @@ final class MusicFeatureModel {
         updateCapturePolicy(policy)
     }
 
-    func applyHistoryForNewRide() -> MobileRideMapError? {
+    func applyHistoryForNewRideAsync() async -> MobileRideMapError? {
         updateCaptureObservation(nil)
         let defaultPolicy = historyPolicyStore.policy
         historyPolicy = defaultPolicy
         do {
-            try coordinator.setHistoryPolicy(defaultPolicy)
+            try await coordinator.setHistoryPolicyAsync(defaultPolicy)
             historyUnavailable = false
             clearHistoryErrors()
             coordinator.restoreHistoryPolicy(defaultPolicy)
-            timelineEvents = coordinator.recordedEvents
+            if defaultPolicy == .disabled {
+                timelineEvents = []
+            } else {
+                timelineEvents = try await coordinator.recordedEventsAsync()
+            }
             updateCapturePolicy(defaultPolicy)
             return nil
         } catch {
@@ -200,7 +240,9 @@ final class MusicFeatureModel {
                 timelineEvents = []
                 return mappedError
             }
-            synchronizeHistory(rideMapState?.currentMusicHistory())
+            if let history = try? await rideMapState?.currentMusicHistoryAsync() {
+                synchronizeHistory(history)
+            }
             return mappedError
         }
     }
@@ -230,9 +272,7 @@ final class MusicFeatureModel {
             timelineEvents = history.events
         case .unavailable:
             historyUnavailable = true
-            let persistedPolicy = rideMapState?.currentMusicHistoryPolicy() ?? historyPolicy
-            historyPolicy = persistedPolicy
-            coordinator.restoreHistoryPolicy(persistedPolicy)
+            coordinator.restoreHistoryPolicy(historyPolicy)
             timelineEvents = []
         case .missing, .disabled, .deleted:
             historyUnavailable = false
