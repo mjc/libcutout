@@ -872,6 +872,14 @@ public final class MobileRideMapState: @unchecked Sendable {
         }
     }
 
+    public func beginRestoreCommand(atMs: UInt64) throws -> MobileRideMapRestoreCommand {
+        try withCore { try $0.beginRestoreCommand(atMs: atMs) }
+    }
+
+    public func restoreCommand(atMs: UInt64) async throws -> MobileRideMapSnapshotDto? {
+        try await completeRestoreCommand(beginRestoreCommand(atMs: atMs))
+    }
+
     public func startGpsOnly(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
         try withCore {
             mapSnapshot(try $0.startGpsOnly(atMs: atMs))
@@ -948,6 +956,22 @@ public final class MobileRideMapState: @unchecked Sendable {
                     try await Task.sleep(nanoseconds: 10_000_000)
                 case let .completed(snapshot):
                     return snapshot
+                }
+            }
+        }
+        return try await completion.value
+    }
+
+    private func completeRestoreCommand(
+        _ command: MobileRideMapRestoreCommand
+    ) async throws -> MobileRideMapSnapshotDto? {
+        let completion = Task {
+            while true {
+                switch try command.poll() {
+                case .pending:
+                    try await Task.sleep(nanoseconds: 10_000_000)
+                case let .completed(snapshot):
+                    return snapshot.map(mapSnapshot)
                 }
             }
         }

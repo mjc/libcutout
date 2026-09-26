@@ -6,12 +6,13 @@ use cutout_music::{
 };
 use cutout_ride_maps::{
     AverageSpeedMillimetresPerSecond, Coordinate, LocationAdmission, LocationSample,
-    LocationSource, RideEvent, RideLifecycleState, RideMapPoint, RideMapRecorder, RideMapSegmentId,
-    RidePointCount, RidePointSequence, RideSegmentStartReason, RideSummary, RouteCameraRegion,
-    RouteDisplayBudget, RouteDisplayPoint, RouteEndpointMetadata, RoutePrivacyPolicy,
-    RouteProjectionAccumulator, RouteSegmentDisplayMetadata, RouteTelemetryState, RouteViewport,
-    TransitionError, VehicleIdentity, WallClockUnixMilliseconds, count_segment_runs,
-    route_camera_region, route_camera_region_with_privacy, route_segment_display_metadata,
+    LocationSource, MAX_LIVE_ROUTE_POINTS, RideEvent, RideLifecycleState, RideMapPoint,
+    RideMapRecorder, RideMapSegmentId, RidePointCount, RidePointSequence, RideSegmentStartReason,
+    RideSummary, RouteCameraRegion, RouteDisplayBudget, RouteDisplayPoint, RouteEndpointMetadata,
+    RoutePrivacyPolicy, RouteProjectionAccumulator, RouteSegmentDisplayMetadata,
+    RouteTelemetryState, RouteViewport, TransitionError, VehicleIdentity,
+    WallClockUnixMilliseconds, count_segment_runs, route_camera_region,
+    route_camera_region_with_privacy, route_segment_display_metadata,
 };
 use hex::encode as hex_encode;
 use rusqlite::{Connection, ErrorCode, OptionalExtension, params};
@@ -708,6 +709,48 @@ impl RoutePoint {
 pub struct RoutePointPage {
     points: Vec<RoutePoint>,
     next_cursor: Option<RoutePointCursor>,
+}
+
+/// One bounded snapshot of the durable state required to restore a mobile ride-map core.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RideRestoreSnapshot {
+    last_connected_device: Option<String>,
+    ride: Option<RideRecord>,
+    route_points: Vec<RoutePoint>,
+    music_history_policy: Option<MusicHistoryPolicy>,
+    music_history_available: bool,
+}
+
+impl RideRestoreSnapshot {
+    /// Returns the last connected platform identity, when one was persisted.
+    #[must_use]
+    pub fn last_connected_device(&self) -> Option<&str> {
+        self.last_connected_device.as_deref()
+    }
+
+    /// Returns the recoverable ride, when one exists.
+    #[must_use]
+    pub const fn ride(&self) -> Option<&RideRecord> {
+        self.ride.as_ref()
+    }
+
+    /// Returns the bounded canonical route tail for the recoverable ride.
+    #[must_use]
+    pub fn route_points(&self) -> &[RoutePoint] {
+        &self.route_points
+    }
+
+    /// Returns the durable music-history policy when it could be read.
+    #[must_use]
+    pub const fn music_history_policy(&self) -> Option<MusicHistoryPolicy> {
+        self.music_history_policy
+    }
+
+    /// Returns whether the music history query succeeded for the recoverable ride.
+    #[must_use]
+    pub const fn music_history_available(&self) -> bool {
+        self.music_history_available
+    }
 }
 
 impl RoutePointPage {
@@ -1555,6 +1598,14 @@ pub struct PendingLiveRideCreation {
     consumed: bool,
 }
 
+/// A restore snapshot accepted by the bounded worker but not necessarily loaded yet.
+#[must_use = "poll or wait for the durable ride restore snapshot"]
+#[derive(Debug)]
+pub struct PendingRideRestoreSnapshot {
+    response: Receiver<Result<RideRestoreSnapshot, StorageError>>,
+    consumed: bool,
+}
+
 /// Lifecycle transition accepted by the bounded SQLite worker but not yet committed.
 #[must_use = "poll or wait for the durable lifecycle transition result"]
 #[derive(Debug)]
@@ -2155,6 +2206,37 @@ impl PendingLiveRideCreation {
     ///
     /// Returns the storage error or [`StorageError::ResponseDropped`] if the worker stops.
     pub fn wait_result(self) -> Result<RideId, StorageError> {
+        self.response
+            .recv()
+            .map_err(|_| StorageError::ResponseDropped)?
+    }
+}
+
+impl PendingRideRestoreSnapshot {
+    /// Returns the restore snapshot when the worker has completed its query.
+    pub fn try_result(&mut self) -> Option<Result<RideRestoreSnapshot, StorageError>> {
+        if self.consumed {
+            return None;
+        }
+        match self.response.try_recv() {
+            Ok(result) => {
+                self.consumed = true;
+                Some(result)
+            }
+            Err(mpsc::TryRecvError::Empty) => None,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.consumed = true;
+                Some(Err(StorageError::ResponseDropped))
+            }
+        }
+    }
+
+    /// Waits for the worker's restore snapshot query to finish.
+    ///
+    /// # Errors
+    ///
+    /// Returns the query error or [`StorageError::ResponseDropped`] if the worker stops.
+    pub fn wait_result(self) -> Result<RideRestoreSnapshot, StorageError> {
         self.response
             .recv()
             .map_err(|_| StorageError::ResponseDropped)?
@@ -3624,6 +3706,24 @@ impl RideDatabase {
         self.request(|reply| Command::NewestRecoverableRide { reply })
     }
 
+    /// Queues the bounded durable state needed to restore a mobile ride-map core.
+    ///
+    /// The query runs as one worker command so its ride, route tail, and associated history state
+    /// are read without another database command interleaving. Enqueue never waits for SQLite.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::QueueFull`] when the worker queue is saturated or a worker error
+    /// when the command cannot be accepted.
+    pub fn queue_restore_snapshot(&self) -> Result<PendingRideRestoreSnapshot, StorageError> {
+        let (reply, response) = response_channel();
+        self.enqueue(Command::RestoreSnapshot { reply })?;
+        Ok(PendingRideRestoreSnapshot {
+            response,
+            consumed: false,
+        })
+    }
+
     /// Lists one bounded page of visible rides in stable newest-first order.
     ///
     /// # Errors
@@ -4338,6 +4438,9 @@ enum Command {
     },
     NewestRecoverableRide {
         reply: Reply<Option<RideRecord>>,
+    },
+    RestoreSnapshot {
+        reply: Reply<RideRestoreSnapshot>,
     },
     ListRides {
         cursor: Option<RideCursor>,
@@ -7578,6 +7681,45 @@ fn newest_recoverable_ride(connection: &Connection) -> Result<Option<RideRecord>
         )
         .optional()
         .map_err(StorageError::from)
+}
+
+fn load_ride_restore_snapshot(
+    connection: &Connection,
+) -> Result<RideRestoreSnapshot, StorageError> {
+    let last_connected_device = last_connected_device(connection)?;
+    let ride = newest_recoverable_ride(connection)?;
+    let Some(ride) = ride else {
+        return Ok(RideRestoreSnapshot {
+            last_connected_device,
+            ride: None,
+            route_points: Vec::new(),
+            music_history_policy: None,
+            music_history_available: false,
+        });
+    };
+
+    let point_count = ride.summary().point_count().as_u64();
+    let first_sequence = point_count.saturating_sub(MAX_LIVE_ROUTE_POINTS as u64);
+    let mut cursor = first_sequence.checked_sub(1).map(RoutePointCursor::new);
+    let limit = QueryLimit::new(MAX_QUERY_LIMIT)?;
+    let mut restored_points = Vec::new();
+    loop {
+        let page = route_points(connection, ride.id(), cursor, limit)?;
+        restored_points.extend(page.points);
+        cursor = page.next_cursor;
+        if cursor.is_none() {
+            break;
+        }
+    }
+    let music_history_policy = music_history_policy(connection, ride.id()).ok();
+    let music_history_available = music_history(connection, ride.id()).is_ok();
+    Ok(RideRestoreSnapshot {
+        last_connected_device,
+        ride: Some(ride),
+        route_points: restored_points,
+        music_history_policy,
+        music_history_available,
+    })
 }
 
 #[allow(

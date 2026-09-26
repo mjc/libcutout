@@ -3853,6 +3853,67 @@ fn queued_live_ride_start_does_not_wait_for_a_busy_sqlite_worker() {
 }
 
 #[test]
+fn queued_ride_restore_snapshot_does_not_wait_for_a_busy_sqlite_worker() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-queued-ride-restore-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    database
+        .remember_last_connected_device("wheel-a", 1_000)
+        .unwrap();
+    let ride = database
+        .create_started_live_ride(1_000, 100, Some("wheel-a"))
+        .unwrap();
+    let location = LocationSample::new(
+        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        1_001,
+        1_700_000_000_001,
+        None,
+        LocationSource::Live,
+    );
+    database.append_location(ride, location).unwrap();
+
+    let (entered_sender, entered_receiver) = std::sync::mpsc::sync_channel(0);
+    let (release_sender, release_receiver) = std::sync::mpsc::sync_channel(0);
+    let _pending_location = database
+        .enqueue_location_with_worker_gate_for_test(
+            ride,
+            LocationSample::new(
+                Coordinate::from_degrees(40.00001, -105.0).unwrap(),
+                1_002,
+                1_700_000_000_002,
+                None,
+                LocationSource::Live,
+            ),
+            RideMapSegmentId::new(0),
+            RouteTelemetryState::GpsOnly,
+            entered_sender,
+            release_receiver,
+        )
+        .unwrap();
+    entered_receiver
+        .recv_timeout(Duration::from_secs(1))
+        .expect("location write reaches the deliberate worker gate");
+
+    let mut pending = database
+        .queue_restore_snapshot()
+        .expect("restore snapshot returns without waiting for SQLite");
+    assert!(pending.try_result().is_none());
+
+    release_sender.send(()).unwrap();
+    let snapshot = pending
+        .wait_result()
+        .expect("restore snapshot completes after the worker resumes");
+    assert_eq!(snapshot.last_connected_device(), Some("wheel-a"));
+    assert_eq!(snapshot.ride().map(RideRecord::id), Some(ride));
+    assert_eq!(snapshot.route_points().len(), 1);
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn verified_connection_admission_is_compound_and_does_not_wait_for_sqlite() {
     let _guard = test_guard();
     let path = std::env::temp_dir().join(format!(

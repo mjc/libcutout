@@ -87,7 +87,9 @@ actor CutoutSessionRideMapRecorder: CutoutSessionRideMapRecording {
         queue.async { [self] in
             assumeIsolated { recorder in
                 recorder.startWritePolling()
-                recorder.startRestoration(replayConnection: replayConnection)
+                Task {
+                    await recorder.startRestoration(replayConnection: replayConnection)
+                }
             }
         }
     }
@@ -299,7 +301,7 @@ actor CutoutSessionRideMapRecorder: CutoutSessionRideMapRecording {
         pendingConnectionAdmissions = remaining
     }
 
-    private func startRestoration(replayConnection: @escaping @Sendable () -> Void) {
+    private func startRestoration(replayConnection: @escaping @Sendable () -> Void) async {
         guard !restorationStarted else { return }
         restorationStarted = true
         guard let state else {
@@ -307,7 +309,7 @@ actor CutoutSessionRideMapRecorder: CutoutSessionRideMapRecording {
             return
         }
         do {
-            if let snapshot = try state.restore(atMs: clock.now().rawValue) {
+            if let snapshot = try await state.restoreCommand(atMs: clock.now().rawValue) {
                 publishSnapshot(snapshot)
             }
             publishAvailability(state.initializationError, state.isReady)

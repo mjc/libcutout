@@ -388,10 +388,8 @@ final class CutoutAppModel {
         let database = try await RustPersistenceStore.open()
         try Task.checkCancellation()
         let state = MobileRideMapState(database: database)
-        try await runCancellableDetached(priority: .userInitiated) {
-            let now = UInt64(ProcessInfo.processInfo.systemUptime * 1_000)
-            _ = try state.restore(atMs: now)
-        }
+        let now = UInt64(ProcessInfo.processInfo.systemUptime * 1_000)
+        _ = try await state.restoreCommand(atMs: now)
         try Task.checkCancellation()
         #if DEBUG
             let permitsStoredDeviceAutoPairing = uiTestFixture == nil

@@ -297,7 +297,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         let database = try XCTUnwrap(MobileRideMapState.debugDatabase)
 
         let state = MobileRideMapState(database: database)
-        _ = try state.restore(atMs: 0)
+        _ = try await state.restoreCommand(atMs: 0)
         defer {
             _ = try? state.stop(atMs: 200)
             _ = try? state.discard()

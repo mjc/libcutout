@@ -4807,6 +4807,17 @@ pub enum MobileRideMapLifecyclePollDto {
     },
 }
 
+/// Nonblocking result of polling a durable ride-map restore.
+#[derive(Clone, Debug, PartialEq, uniffi::Enum)]
+pub enum MobileRideMapRestorePollDto {
+    /// The durable startup state is still being loaded or recovered.
+    Pending,
+    /// Restoration settled; no recoverable ride is represented by `None`.
+    Completed {
+        snapshot: Option<MobileRideMapCoreSnapshotDto>,
+    },
+}
+
 /// Result of associating a connected vehicle with the active recording.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum MobileRideMapCoreAssociationDto {
@@ -7473,15 +7484,6 @@ impl RideDatabaseHandle {
             .map(|replacement| replacement.map(mobile_ride_id))
             .map_err(map_ride_database_error)
     }
-
-    fn newest_recoverable_ride(
-        &self,
-    ) -> Result<Option<MobileRideRecordDto>, MobileRideDatabaseError> {
-        self.inner
-            .newest_recoverable_ride()
-            .map(|ride| ride.as_ref().map(mobile_ride_record_dto))
-            .map_err(map_ride_database_error)
-    }
 }
 
 /// Rust-owned live ride map state. The mutex protects callbacks arriving from different Apple
@@ -7567,6 +7569,26 @@ pub struct MobileRideMapLifecycleCommand {
     state: Mutex<MobileRideMapLifecycleState>,
 }
 
+#[derive(Debug)]
+enum MobileRideMapRestoreCommandState {
+    Pending(
+        std::sync::mpsc::Receiver<(
+            MobileRideMapCoreInner,
+            Result<Option<MobileRideMapCoreSnapshotDto>, MobileRideMapCoreErrorDto>,
+        )>,
+    ),
+    Completed(Result<Option<MobileRideMapCoreSnapshotDto>, MobileRideMapCoreErrorDto>),
+}
+
+/// Pollable completion for one serialized Rust-owned durable ride-map restore.
+#[must_use = "poll the restore command until it returns a terminal result"]
+#[derive(Debug, uniffi::Object)]
+pub struct MobileRideMapRestoreCommand {
+    core: Arc<MobileRideMapCore>,
+    command_id: u64,
+    state: Mutex<MobileRideMapRestoreCommandState>,
+}
+
 impl MobileRideMapConnectionAdmission {
     pub(crate) fn new(
         core: Arc<MobileRideMapCore>,
@@ -7585,6 +7607,61 @@ impl MobileRideMapLifecycleCommand {
             core,
             state: Mutex::new(MobileRideMapLifecycleState::Pending(pending)),
         })
+    }
+}
+
+impl MobileRideMapRestoreCommand {
+    fn pending(
+        core: Arc<MobileRideMapCore>,
+        command_id: u64,
+        response: std::sync::mpsc::Receiver<(
+            MobileRideMapCoreInner,
+            Result<Option<MobileRideMapCoreSnapshotDto>, MobileRideMapCoreErrorDto>,
+        )>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            core,
+            command_id,
+            state: Mutex::new(MobileRideMapRestoreCommandState::Pending(response)),
+        })
+    }
+
+    fn completed(
+        core: Arc<MobileRideMapCore>,
+        result: Result<Option<MobileRideMapCoreSnapshotDto>, MobileRideMapCoreErrorDto>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            core,
+            command_id: 0,
+            state: Mutex::new(MobileRideMapRestoreCommandState::Completed(result)),
+        })
+    }
+
+    fn wait_result(
+        &self,
+    ) -> Result<Option<MobileRideMapCoreSnapshotDto>, MobileRideMapCoreErrorDto> {
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        let completion = match &mut *state {
+            MobileRideMapRestoreCommandState::Completed(result) => return result.clone(),
+            MobileRideMapRestoreCommandState::Pending(response) => {
+                if let Ok(completion) = response.recv() {
+                    completion
+                } else {
+                    let error = MobileRideMapCoreErrorDto::Storage(
+                        "ride-map restore worker stopped before returning its result".to_owned(),
+                    );
+                    let result = self.core.fail_restore(self.command_id, error);
+                    *state = MobileRideMapRestoreCommandState::Completed(result.clone());
+                    return result;
+                }
+            }
+        };
+        let (restored, result) = completion;
+        let result = self
+            .core
+            .complete_restore(self.command_id, restored, result);
+        *state = MobileRideMapRestoreCommandState::Completed(result.clone());
+        result
     }
 }
 
@@ -7645,6 +7722,46 @@ impl MobileRideMapLifecycleCommand {
         };
         *state = MobileRideMapLifecycleState::Completed(result.clone());
         result.map(|snapshot| MobileRideMapLifecyclePollDto::Completed { snapshot })
+    }
+}
+
+#[uniffi::export]
+impl MobileRideMapRestoreCommand {
+    /// Returns immediately with pending/completed restore state; never waits on SQLite.
+    ///
+    /// # Errors
+    ///
+    /// Returns the terminal storage or map-state error for this restore.
+    pub fn poll(&self) -> Result<MobileRideMapRestorePollDto, MobileRideMapCoreErrorDto> {
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        let completion = match &mut *state {
+            MobileRideMapRestoreCommandState::Completed(result) => {
+                return result
+                    .clone()
+                    .map(|snapshot| MobileRideMapRestorePollDto::Completed { snapshot });
+            }
+            MobileRideMapRestoreCommandState::Pending(response) => match response.try_recv() {
+                Ok(completion) => completion,
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    return Ok(MobileRideMapRestorePollDto::Pending);
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    let error = MobileRideMapCoreErrorDto::Storage(
+                        "ride-map restore worker stopped before returning its result".to_owned(),
+                    );
+                    let result = self.core.fail_restore(self.command_id, error);
+                    *state = MobileRideMapRestoreCommandState::Completed(result.clone());
+                    return result
+                        .map(|snapshot| MobileRideMapRestorePollDto::Completed { snapshot });
+                }
+            },
+        };
+        let (restored, result) = completion;
+        let result = self
+            .core
+            .complete_restore(self.command_id, restored, result);
+        *state = MobileRideMapRestoreCommandState::Completed(result.clone());
+        result.map(|snapshot| MobileRideMapRestorePollDto::Completed { snapshot })
     }
 }
 
@@ -7740,6 +7857,8 @@ struct MobileRideMapCoreInner {
     pending_connection_admission_id: Option<u64>,
     next_lifecycle_command_id: u64,
     pending_lifecycle_command_id: Option<u64>,
+    next_restore_command_id: u64,
+    pending_restore_command_id: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -7780,8 +7899,28 @@ static VERIFIED_CONNECTION_ADMISSION_TEST_GATE: Mutex<
 > = Mutex::new(None);
 
 #[cfg(test)]
+static RIDE_MAP_RESTORE_TEST_GATE: Mutex<
+    Option<(
+        std::sync::mpsc::SyncSender<()>,
+        std::sync::mpsc::Receiver<()>,
+    )>,
+> = Mutex::new(None);
+
+#[cfg(test)]
 fn wait_verified_connection_admission_test_gate() {
     let gate = VERIFIED_CONNECTION_ADMISSION_TEST_GATE
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .take();
+    if let Some((entered, release)) = gate {
+        let _ = entered.send(());
+        let _ = release.recv();
+    }
+}
+
+#[cfg(test)]
+fn wait_ride_map_restore_test_gate() {
+    let gate = RIDE_MAP_RESTORE_TEST_GATE
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .take();
@@ -8644,76 +8783,48 @@ impl MobileRideMapCoreInner {
             pending_connection_admission_id: None,
             next_lifecycle_command_id: 1,
             pending_lifecycle_command_id: None,
+            next_restore_command_id: 1,
+            pending_restore_command_id: None,
         }
     }
 
     fn restored_route_samples(
-        database: &RideDatabaseHandle,
-        ride_id: &MobileRideIdDto,
-        point_count: u64,
-    ) -> Result<Vec<ride_maps::RideMapPoint>, MobileRideMapCoreErrorDto> {
-        let tail_start = point_count.saturating_sub(ride_maps::MAX_LIVE_ROUTE_POINTS as u64);
-        let mut cursor = tail_start
-            .checked_sub(1)
-            .map(|sequence| MobileRoutePointCursorDto { sequence });
-        let mut samples = Vec::new();
-        loop {
-            let page = database
-                .route_points(ride_id.clone(), cursor, 500)
-                .map_err(map_core_error)?;
-            samples.extend(
-                page.points
-                    .into_iter()
-                    .map(|point| {
-                        mobile_ride_location(point.location).and_then(|sample| {
-                            map_ride_telemetry_state(point.telemetry_state)
-                                .map_err(|_| MobileRideDatabaseError::StorageFailure)
-                                .map(|telemetry_state| {
-                                    ride_maps::RideMapPoint::new_with_start_reason(
-                                        sample,
-                                        ride_maps::RideMapSegmentId::new(point.segment_id),
-                                        telemetry_state,
-                                        mobile_segment_start_reason(point.start_reason),
-                                    )
-                                })
-                        })
-                    })
-                    .collect::<Result<Vec<_>, _>>()
-                    .map_err(map_core_error)?,
-            );
-            if samples.len() > ride_maps::MAX_LIVE_ROUTE_POINTS {
-                let excess = samples.len() - ride_maps::MAX_LIVE_ROUTE_POINTS;
-                samples.drain(..excess);
-            }
-            cursor = page.next_cursor;
-            if cursor.is_none() {
-                return Ok(samples);
-            }
-        }
+        route_points: &[persistence::RoutePoint],
+    ) -> Vec<ride_maps::RideMapPoint> {
+        route_points
+            .iter()
+            .map(|point| {
+                ride_maps::RideMapPoint::new_with_start_reason(
+                    point.sample(),
+                    ride_maps::RideMapSegmentId::new(point.segment_id()),
+                    point.telemetry_state(),
+                    point.start_reason(),
+                )
+            })
+            .collect()
     }
 
     fn restore_active_ride(
         &mut self,
         at_ms: u64,
         apply_automatic_recovery: bool,
+        restore_snapshot: &persistence::RideRestoreSnapshot,
     ) -> Result<(), MobileRideMapCoreErrorDto> {
         let Some(database) = self.database.clone() else {
             return Ok(());
         };
-        self.last_connected_vehicle = database
-            .inner
+        self.last_connected_vehicle = restore_snapshot
             .last_connected_device()
-            .map_err(map_storage_core_error)?
-            .as_deref()
             .and_then(ride_maps::VehicleIdentity::new);
-        let Some(ride) = database.newest_recoverable_ride().map_err(map_core_error)? else {
+        let Some(stored_ride) = restore_snapshot.ride() else {
             return Ok(());
         };
+        let ride = mobile_ride_record_dto(stored_ride);
         // Keep the recorder's live tail bounded but complete. Swift can publish a separate
         // cancellable durable projection for the whole ride, while Rust must retain enough of
         // the route to preserve the live recorder and its canonical timing/segment metadata
         // when the first new location arrives after relaunch.
-        let samples = Self::restored_route_samples(&database, &ride.id, ride.summary.point_count)?;
+        let samples = Self::restored_route_samples(restore_snapshot.route_points());
         let last_restored_monotonic = samples
             .last()
             .map(|sample| sample.sample().monotonic_milliseconds().as_u64());
@@ -8781,14 +8892,10 @@ impl MobileRideMapCoreInner {
         self.ride_id = Some(ride.id.clone());
         self.recoverable_updated_at_milliseconds = Some(ride.updated_at_milliseconds);
         self.admission_recorder = self.recorder.clone();
-        let Some(active_id) = self.ride_id.as_ref() else {
-            return Err(MobileRideMapCoreErrorDto::NoActiveRide);
-        };
-        let ride_id = parse_mobile_ride_id(active_id).map_err(map_core_error)?;
-        if let Ok(policy) = database.inner.music_history_policy(ride_id) {
+        if let Some(policy) = restore_snapshot.music_history_policy() {
             self.music_history_policy = policy;
         }
-        if database.inner.music_history(ride_id).is_err() {
+        if !restore_snapshot.music_history_available() {
             // Music metadata is optional: retain the recovered ride and report history as unavailable.
             self.music_restore_failed = true;
         }
@@ -9210,6 +9317,107 @@ fn empty_map_point_batch() -> MobileRideMapCorePointBatchDto {
 }
 
 impl MobileRideMapCore {
+    fn begin_restore_command_inner(
+        self: &Arc<Self>,
+        at_ms: u64,
+    ) -> Result<Arc<MobileRideMapRestoreCommand>, MobileRideMapCoreErrorDto> {
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        if state.restoration_state == MobileRideMapRestorationState::Ready {
+            let snapshot = state
+                .recorder
+                .state()
+                .map(|lifecycle| state.snapshot_at(lifecycle.into(), at_ms));
+            return Ok(MobileRideMapRestoreCommand::completed(
+                Arc::clone(self),
+                Ok(snapshot),
+            ));
+        }
+        if state.pending_restore_command_id.is_some() {
+            return Err(MobileRideMapCoreErrorDto::AdmissionPending);
+        }
+        let command_id = state.next_restore_command_id;
+        state.next_restore_command_id = command_id.checked_add(1).ok_or_else(|| {
+            MobileRideMapCoreErrorDto::Storage("restore command IDs exhausted".to_owned())
+        })?;
+        state.pending_restore_command_id = Some(command_id);
+        state.initialization_error = None;
+        let database = state.database.clone();
+        drop(state);
+
+        let (sender, response) = std::sync::mpsc::channel();
+        let worker_database = database.clone();
+        let spawn = std::thread::Builder::new()
+            .name("cutout-ride-map-restore".to_owned())
+            .spawn(move || {
+                #[cfg(test)]
+                wait_ride_map_restore_test_gate();
+                let mut restored = MobileRideMapCoreInner::new(worker_database.clone());
+                let restore_result = match worker_database {
+                    Some(database) => database
+                        .inner
+                        .queue_restore_snapshot()
+                        .and_then(persistence::PendingRideRestoreSnapshot::wait_result)
+                        .map_err(map_storage_core_error)
+                        .and_then(|snapshot| restored.restore_active_ride(at_ms, true, &snapshot)),
+                    None => Ok(()),
+                };
+                let result = match restore_result {
+                    Ok(()) => {
+                        restored.restoration_state = MobileRideMapRestorationState::Ready;
+                        Ok(restored
+                            .recorder
+                            .state()
+                            .map(|lifecycle| restored.snapshot_at(lifecycle.into(), at_ms)))
+                    }
+                    Err(error) => {
+                        restored.initialization_error = Some(error.clone());
+                        restored.restoration_state = MobileRideMapRestorationState::Failed;
+                        Err(error)
+                    }
+                };
+                let _ = sender.send((restored, result));
+            });
+        if let Err(error) = spawn {
+            let error = MobileRideMapCoreErrorDto::Storage(error.to_string());
+            let _ = self.fail_restore(command_id, error.clone());
+            return Err(error);
+        }
+        Ok(MobileRideMapRestoreCommand::pending(
+            Arc::clone(self),
+            command_id,
+            response,
+        ))
+    }
+
+    fn complete_restore(
+        &self,
+        command_id: u64,
+        mut restored: MobileRideMapCoreInner,
+        result: Result<Option<MobileRideMapCoreSnapshotDto>, MobileRideMapCoreErrorDto>,
+    ) -> Result<Option<MobileRideMapCoreSnapshotDto>, MobileRideMapCoreErrorDto> {
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        if state.pending_restore_command_id != Some(command_id) {
+            return Err(MobileRideMapCoreErrorDto::StaleConnection);
+        }
+        restored.pending_restore_command_id = None;
+        *state = restored;
+        result
+    }
+
+    fn fail_restore(
+        &self,
+        command_id: u64,
+        error: MobileRideMapCoreErrorDto,
+    ) -> Result<Option<MobileRideMapCoreSnapshotDto>, MobileRideMapCoreErrorDto> {
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        if state.pending_restore_command_id == Some(command_id) {
+            state.pending_restore_command_id = None;
+            state.initialization_error = Some(error.clone());
+            state.restoration_state = MobileRideMapRestorationState::Failed;
+        }
+        Err(error)
+    }
+
     fn begin_lifecycle_command_inner(
         self: &Arc<Self>,
         event: MobileRideEventDto,
@@ -9419,6 +9627,18 @@ impl MobileRideMapCore {
 
 #[uniffi::export]
 impl MobileRideMapCore {
+    /// Queues durable startup restoration and returns a pollable command.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when another restore is pending or the bounded worker cannot accept it.
+    pub fn begin_restore_command(
+        self: &Arc<Self>,
+        at_ms: u64,
+    ) -> Result<Arc<MobileRideMapRestoreCommand>, MobileRideMapCoreErrorDto> {
+        self.begin_restore_command_inner(at_ms)
+    }
+
     /// Queues GPS-only ride creation and returns before SQLite completes.
     ///
     /// Poll the returned command to publish the ride into the Rust map projection.
@@ -9506,27 +9726,10 @@ impl MobileRideMapCore {
     /// Returns a typed storage error when recovery fails. A failed restoration can be retried;
     /// no recorder state is published until the recovery query succeeds.
     pub fn restore(
-        &self,
+        self: &Arc<Self>,
         at_ms: u64,
     ) -> Result<Option<MobileRideMapCoreSnapshotDto>, MobileRideMapCoreErrorDto> {
-        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        if state.restoration_state == MobileRideMapRestorationState::Ready {
-            return Ok(state
-                .recorder
-                .state()
-                .map(|lifecycle| state.snapshot_at(lifecycle.into(), at_ms)));
-        }
-        state.initialization_error = None;
-        if let Err(error) = state.restore_active_ride(at_ms, true) {
-            state.initialization_error = Some(error.clone());
-            state.restoration_state = MobileRideMapRestorationState::Failed;
-            return Err(error);
-        }
-        state.restoration_state = MobileRideMapRestorationState::Ready;
-        Ok(state
-            .recorder
-            .state()
-            .map(|lifecycle| state.snapshot_at(lifecycle.into(), at_ms)))
+        self.begin_restore_command_inner(at_ms)?.wait_result()
     }
 
     /// Starts a GPS-only ride and retains the last connected vehicle as a candidate.
@@ -21600,6 +21803,59 @@ mod tests {
 
         let _ = fs::remove_file(path);
     }
+
+    #[test]
+    fn restore_command_returns_pending_without_holding_the_core_lock() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-map-restore-command-{}-{}.sqlite3",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+        let core = MobileRideMapCore::with_database(database.clone());
+        let (entered_sender, entered_receiver) = std::sync::mpsc::sync_channel(0);
+        let (release_sender, release_receiver) = std::sync::mpsc::sync_channel(0);
+        *RIDE_MAP_RESTORE_TEST_GATE
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some((entered_sender, release_receiver));
+
+        let command = core
+            .begin_restore_command(0)
+            .expect("restore command is accepted without waiting for SQLite");
+        let worker_entered = entered_receiver.recv_timeout(Duration::from_secs(1));
+        let pending = command.poll();
+        let (ready_sender, ready_receiver) = std::sync::mpsc::channel();
+        let readiness_core = Arc::clone(&core);
+        thread::spawn(move || {
+            let _ = ready_sender.send(readiness_core.is_ready());
+        });
+        let ready_while_worker_is_paused = ready_receiver.recv_timeout(Duration::from_secs(1));
+        let (duplicate_sender, duplicate_receiver) = std::sync::mpsc::channel();
+        let duplicate_core = Arc::clone(&core);
+        thread::spawn(move || {
+            let _ = duplicate_sender.send(duplicate_core.begin_restore_command(1));
+        });
+        let duplicate = duplicate_receiver.recv_timeout(Duration::from_secs(1));
+        release_sender.send(()).expect("restore worker is released");
+
+        worker_entered.expect("restore worker reached the deterministic gate");
+        assert_eq!(pending, Ok(MobileRideMapRestorePollDto::Pending));
+        assert_eq!(ready_while_worker_is_paused, Ok(false));
+        assert!(matches!(
+            duplicate.expect("duplicate restore admission is nonblocking"),
+            Err(MobileRideMapCoreErrorDto::AdmissionPending)
+        ));
+        assert_eq!(command.wait_result().expect("restore completes"), None);
+        assert!(core.is_ready());
+
+        database.shutdown().expect("database shuts down");
+        let _ = fs::remove_file(path);
+    }
+
     #[test]
     fn mobile_ride_map_core_restores_pause_excluded_duration_after_reopen() {
         let _guard = RIDE_DATABASE_TEST_LOCK
