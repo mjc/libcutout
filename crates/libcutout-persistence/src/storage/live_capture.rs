@@ -278,6 +278,8 @@ impl LiveCaptureLocationAdmission {
 pub struct LiveCaptureLocationObservation {
     /// Source-reported coordinates, altitude, and optional measurement values.
     pub location: PevcapPhoneLocation,
+    /// Exact IEEE-754 bits of the original source timestamp in Unix seconds.
+    pub raw_source_timestamp_bits: Option<u64>,
     /// Whether the platform marked the sample as simulated, when available.
     pub simulated: Option<bool>,
     /// Whether the platform marked the sample as accessory-produced, when available.
@@ -385,6 +387,8 @@ pub(super) const LOCATION_SCHEMA: &str = "
             ('not_evaluated', 'accepted', 'duplicate', 'out_of_order',
              'accuracy_too_low', 'unrealistic_jump')),
         raw_float_bits BLOB CHECK (raw_float_bits IS NULL OR length(raw_float_bits) = 73),
+        raw_source_timestamp_bits BLOB CHECK
+            (raw_source_timestamp_bits IS NULL OR length(raw_source_timestamp_bits) = 8),
         CHECK ((validation_state = 'rejected') = (validation_reason IS NOT NULL)),
         PRIMARY KEY (capture_id, sequence),
         FOREIGN KEY (capture_id, sequence)
@@ -733,8 +737,8 @@ fn insert_location(
           horizontal_accuracy_meters, vertical_accuracy_meters, speed_meters_per_second,
           speed_accuracy_meters_per_second, course_degrees, course_accuracy_degrees,
           simulated, produced_by_accessory, validation_state, validation_reason, route_admission,
-          raw_float_bits)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+          raw_float_bits, raw_source_timestamp_bits)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
         params![
             id.as_string(),
             sequence,
@@ -778,6 +782,10 @@ fn insert_location(
             validation_reason,
             observation.admission.as_db(),
             encode_location_float_bits(&observation.location),
+            observation
+                .raw_source_timestamp_bits
+                .map(u64::to_le_bytes)
+                .map(|bytes| bytes.to_vec()),
         ],
     )?;
     Ok(())
@@ -991,6 +999,7 @@ struct LiveCaptureEventRow {
     validation_reason: Option<String>,
     route_admission: Option<String>,
     raw_float_bits: Option<Vec<u8>>,
+    raw_source_timestamp_bits: Option<Vec<u8>>,
 }
 
 impl LiveCaptureEventRow {
@@ -1017,6 +1026,7 @@ impl LiveCaptureEventRow {
             validation_reason: row.get(18)?,
             route_admission: row.get(19)?,
             raw_float_bits: row.get(20)?,
+            raw_source_timestamp_bits: row.get(21)?,
         })
     }
 
@@ -1043,6 +1053,7 @@ impl LiveCaptureEventRow {
             validation_reason,
             route_admission,
             raw_float_bits,
+            raw_source_timestamp_bits,
         } = self;
         let location = read_location_observation(
             sequence,
@@ -1063,6 +1074,7 @@ impl LiveCaptureEventRow {
                 validation_reason,
                 route_admission,
                 raw_float_bits,
+                raw_source_timestamp_bits,
             },
         )?;
         Ok(LiveCaptureEvent {
@@ -1093,6 +1105,7 @@ struct LiveCaptureLocationRow {
     validation_reason: Option<String>,
     route_admission: Option<String>,
     raw_float_bits: Option<Vec<u8>>,
+    raw_source_timestamp_bits: Option<Vec<u8>>,
 }
 
 fn read_location_observation(
@@ -1113,11 +1126,7 @@ fn read_raw_location_observation(
     row: LiveCaptureLocationRow,
     raw_float_bits: &[u8],
 ) -> Result<LiveCaptureLocationObservation, StorageError> {
-    let source_wall_clock_unix_ms =
-        source_wall_clock_unix_ms.ok_or_else(|| StorageError::InvalidStoredValue {
-            field: "live capture location source timestamp",
-            value: "missing timestamp for raw observation".to_owned(),
-        })?;
+    let raw_source_timestamp_bits = decode_source_timestamp_bits(row.raw_source_timestamp_bits)?;
     let simulated = parse_optional_bool(row.simulated, "location simulated flag")?;
     let produced_by_accessory =
         parse_optional_bool(row.produced_by_accessory, "location accessory flag")?;
@@ -1132,7 +1141,11 @@ fn read_raw_location_observation(
         "missing state",
     )?;
     Ok(LiveCaptureLocationObservation {
-        location: decode_location_float_bits(source_wall_clock_unix_ms, raw_float_bits)?,
+        location: decode_location_float_bits(
+            source_wall_clock_unix_ms.unwrap_or_default(),
+            raw_float_bits,
+        )?,
+        raw_source_timestamp_bits,
         simulated,
         produced_by_accessory,
         validation: LiveCaptureLocationValidation::from_db(
@@ -1164,6 +1177,7 @@ fn read_legacy_location_observation(
         validation_reason,
         route_admission,
         raw_float_bits: _,
+        raw_source_timestamp_bits,
     } = row;
     let location = match (latitude_degrees, longitude_degrees, altitude_meters) {
         (None, None, None) => {
@@ -1178,6 +1192,7 @@ fn read_legacy_location_observation(
                 || validation_state.is_some()
                 || validation_reason.is_some()
                 || route_admission.is_some()
+                || raw_source_timestamp_bits.is_some()
             {
                 return Err(StorageError::InvalidStoredValue {
                     field: "live capture location row",
@@ -1213,6 +1228,7 @@ fn read_legacy_location_observation(
                     course_degrees,
                     course_accuracy_degrees,
                 },
+                raw_source_timestamp_bits: decode_source_timestamp_bits(raw_source_timestamp_bits)?,
                 simulated,
                 produced_by_accessory,
                 validation: LiveCaptureLocationValidation::from_db(
@@ -1230,6 +1246,20 @@ fn read_legacy_location_observation(
         }
     };
     Ok(location)
+}
+
+fn decode_source_timestamp_bits(encoded: Option<Vec<u8>>) -> Result<Option<u64>, StorageError> {
+    encoded
+        .map(|encoded| {
+            let bytes: [u8; 8] = encoded.try_into().map_err(|encoded: Vec<u8>| {
+                StorageError::InvalidStoredValue {
+                    field: "live capture location source timestamp bits",
+                    value: format!("expected 8 bytes, got {}", encoded.len()),
+                }
+            })?;
+            Ok(u64::from_le_bytes(bytes))
+        })
+        .transpose()
 }
 
 fn required_location_value(
@@ -1280,7 +1310,7 @@ pub(super) fn read(
                 location.course_degrees, location.course_accuracy_degrees,
                 location.simulated, location.produced_by_accessory,
                 location.validation_state, location.validation_reason, location.route_admission,
-                location.raw_float_bits
+                location.raw_float_bits, location.raw_source_timestamp_bits
          FROM live_capture_events AS event
          LEFT JOIN live_capture_location_observations AS location
            ON location.capture_id = event.capture_id AND location.sequence = event.sequence

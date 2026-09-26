@@ -120,8 +120,7 @@ final class CutoutSessionPhoneLocationAdapter: NSObject, CutoutSessionPhoneLocat
         guard !locations.isEmpty else { return }
 
         let receiptMonotonic = clock.now()
-        let samples = locations.compactMap(MobilePhoneLocationSampleDto.init(location:))
-        guard !samples.isEmpty else { return }
+        let samples = locations.map(MobilePhoneLocationSampleDto.init(location:))
 
         for sample in samples {
             _ = state.ingest(sample: sample)
@@ -145,13 +144,12 @@ final class CutoutSessionPhoneLocationAdapter: NSObject, CutoutSessionPhoneLocat
 extension CutoutSessionPhoneLocationAdapter: CLLocationManagerDelegate {}
 
 extension MobilePhoneLocationSampleDto {
-    fileprivate init?(location: CLLocation) {
-        let timestamp = location.timestamp.timeIntervalSince1970 * 1_000
-        guard timestamp.isFinite, timestamp > 0, timestamp < Double(UInt64.max) else { return nil }
+    fileprivate init(location: CLLocation) {
         let coordinate = location.coordinate
 
         self.init(
-            wallClockUnixMs: UInt64(timestamp.rounded(.down)),
+            wallClockUnixMs: 0,
+            sourceTimestampUnixSeconds: location.timestamp.timeIntervalSince1970,
             latitudeDegrees: coordinate.latitude,
             longitudeDegrees: coordinate.longitude,
             altitudeMeters: location.altitude,

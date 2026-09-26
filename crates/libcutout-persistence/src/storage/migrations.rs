@@ -1,7 +1,7 @@
 use super::{MapPointId, SpatialRowId, StorageError};
 use rusqlite::{Connection, OptionalExtension, params};
 
-pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 30;
+pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 31;
 const APPLICATION_ID: i64 = 0x4355_544f;
 
 fn schema_pragmas(version: i64) -> String {
@@ -53,6 +53,7 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         27 => migrate_v27_to_current(connection)?,
         28 => migrate_v28_to_current(connection)?,
         29 => migrate_v29_to_current(connection)?,
+        30 => migrate_v30_to_current(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -1266,6 +1267,19 @@ fn migrate_v29_to_current(connection: &mut Connection) -> Result<(), StorageErro
     Ok(())
 }
 
+fn migrate_v30_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction()?;
+    transaction.execute_batch(
+        "ALTER TABLE live_capture_location_observations
+             ADD COLUMN raw_source_timestamp_bits BLOB
+                 CHECK (raw_source_timestamp_bits IS NULL OR length(raw_source_timestamp_bits) = 8);
+         PRAGMA application_id = 1129665615;
+         PRAGMA user_version = 31;",
+    )?;
+    transaction.commit()?;
+    Ok(())
+}
+
 fn table_has_column(
     connection: &Connection,
     table: &str,
@@ -1435,6 +1449,33 @@ fn verify_device_schema(connection: &Connection) -> Result<(), StorageError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn schema_v30_migration_adds_raw_location_source_timestamp_bits() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(&format!(
+                "CREATE TABLE live_capture_location_observations (raw_float_bits BLOB);
+                 PRAGMA application_id = {APPLICATION_ID};
+                 PRAGMA user_version = 30;"
+            ))
+            .unwrap();
+
+        migrate(&mut connection).unwrap();
+
+        let version: i64 = connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, CURRENT_SCHEMA_VERSION);
+        assert!(
+            table_has_column(
+                &connection,
+                "live_capture_location_observations",
+                "raw_source_timestamp_bits"
+            )
+            .unwrap()
+        );
+    }
 
     #[test]
     fn schema_v27_migration_preserves_rows_with_unknown_integrity() {

@@ -106,6 +106,7 @@ final class CutoutSessionCoreTests: XCTestCase {
     func testLocationEffectsRouteUnchangedUpdateInOrderAndIsolateCaptureFailures() {
         let sample = MobilePhoneLocationSampleDto(
             wallClockUnixMs: 1_700_000_000_025,
+            sourceTimestampUnixSeconds: nil,
             latitudeDegrees: 39.739_235_8,
             longitudeDegrees: -104.990_251,
             altitudeMeters: 1_609.344,
@@ -255,6 +256,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         )
         let location = MobilePhoneLocationSampleDto(
             wallClockUnixMs: 1_700_000_000_025,
+            sourceTimestampUnixSeconds: nil,
             latitudeDegrees: 39.739_235_8,
             longitudeDegrees: -104.990_251,
             altitudeMeters: 1_609.344,
@@ -589,6 +591,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         let state = MobilePhoneLocationState()
         let sample = MobilePhoneLocationSampleDto(
             wallClockUnixMs: 1_700_000_000_000,
+            sourceTimestampUnixSeconds: nil,
             latitudeDegrees: 39.7392,
             longitudeDegrees: -104.9903,
             altitudeMeters: 1_600,

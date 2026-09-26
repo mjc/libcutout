@@ -1247,9 +1247,13 @@ fn capture_writer_action(
                 kind: LiveCaptureEventKind::Location,
                 receipt_monotonic_ms: location.receipt_monotonic_ms.as_milliseconds(),
                 source_monotonic_offset_ms: location.source_monotonic_offset_ms,
-                source_wall_clock_unix_ms: Some(location.location.wall_clock_unix_ms),
+                source_wall_clock_unix_ms: (location.location.wall_clock_unix_ms != 0)
+                    .then_some(location.location.wall_clock_unix_ms),
                 location: Some(LiveCaptureLocationObservation {
                     location: location.location,
+                    raw_source_timestamp_bits: location
+                        .source_timestamp_unix_seconds
+                        .map(f64::to_bits),
                     simulated: location.simulated,
                     produced_by_accessory: location.produced_by_accessory,
                     validation,

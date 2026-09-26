@@ -243,6 +243,7 @@ fn live_location_is_structured_and_linked_to_its_exact_raw_event() {
             course_degrees: Some(271.125_000_000_1),
             course_accuracy_degrees: Some(1.75),
         },
+        raw_source_timestamp_bits: Some(1_700_000_000.110_f64.to_bits()),
         simulated: Some(true),
         produced_by_accessory: Some(false),
         validation: LiveCaptureLocationValidation::Valid,
@@ -463,6 +464,7 @@ fn invalid_latitude_observation() -> LiveCaptureLocationObservation {
             course_degrees: None,
             course_accuracy_degrees: None,
         },
+        raw_source_timestamp_bits: None,
         simulated: None,
         produced_by_accessory: None,
         validation: LiveCaptureLocationValidation::Rejected(

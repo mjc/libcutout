@@ -2255,7 +2255,7 @@ impl PevcapPhoneLocation {
 /// boundary. The nested phone location retains the source timestamp reported by Core Location.
 /// Keeping both timestamps makes delayed and batched delivery observable without coupling the
 /// location stream to transport notification records.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug)]
 pub struct PevcapLocationSample {
     /// Capture-relative receipt time.
     pub receipt_monotonic_ms: MonotonicTimestamp,
@@ -2266,12 +2266,31 @@ pub struct PevcapLocationSample {
     /// Source observation and its source wall-clock timestamp.
     pub location: PevcapPhoneLocation,
 
+    /// Exact source timestamp in Unix seconds, when supplied by the platform.
+    pub source_timestamp_unix_seconds: Option<f64>,
+
     /// Whether Core Location marked this observation as software-simulated, when available.
     pub simulated: Option<bool>,
 
     /// Whether Core Location marked this observation as produced by an accessory, when available.
     pub produced_by_accessory: Option<bool>,
 }
+
+impl PartialEq for PevcapLocationSample {
+    fn eq(&self, other: &Self) -> bool {
+        self.receipt_monotonic_ms == other.receipt_monotonic_ms
+            && self.source_monotonic_offset_ms == other.source_monotonic_offset_ms
+            && self.location == other.location
+            && option_f64_bits_eq(
+                self.source_timestamp_unix_seconds,
+                other.source_timestamp_unix_seconds,
+            )
+            && self.simulated == other.simulated
+            && self.produced_by_accessory == other.produced_by_accessory
+    }
+}
+
+impl Eq for PevcapLocationSample {}
 
 /// Calibrates a Core Location source timestamp against its callback's monotonic and wall-clock
 /// anchors, relative to capture start.
@@ -2292,6 +2311,18 @@ pub fn calibrate_location_source_offset_ms(
     i64::try_from(offset).ok()
 }
 
+/// Converts a positive finite Unix timestamp in seconds into persisted whole milliseconds.
+#[must_use]
+pub fn unix_milliseconds_from_seconds(timestamp: f64) -> Option<u64> {
+    if !timestamp.is_finite() || timestamp <= 0.0 {
+        return None;
+    }
+
+    let duration = std::time::Duration::try_from_secs_f64(timestamp).ok()?;
+    let milliseconds = u64::try_from(duration.as_millis()).ok()?;
+    (milliseconds > 0).then_some(milliseconds)
+}
+
 impl PevcapLocationSample {
     /// Creates a validated first-class location observation.
     ///
@@ -2309,6 +2340,7 @@ impl PevcapLocationSample {
             receipt_monotonic_ms,
             source_monotonic_offset_ms: None,
             location: location.canonical()?,
+            source_timestamp_unix_seconds: None,
             simulated,
             produced_by_accessory,
         })
@@ -2329,6 +2361,7 @@ impl PevcapLocationSample {
             receipt_monotonic_ms,
             source_monotonic_offset_ms: None,
             location,
+            source_timestamp_unix_seconds: None,
             simulated,
             produced_by_accessory,
         }
@@ -2338,6 +2371,13 @@ impl PevcapLocationSample {
     #[must_use]
     pub const fn with_source_monotonic_offset_ms(mut self, offset_ms: Option<i64>) -> Self {
         self.source_monotonic_offset_ms = offset_ms;
+        self
+    }
+
+    /// Retains the original source timestamp independently from its normalized wall-clock value.
+    #[must_use]
+    pub fn with_source_timestamp_unix_seconds(mut self, timestamp: Option<f64>) -> Self {
+        self.source_timestamp_unix_seconds = timestamp;
         self
     }
 
@@ -4209,6 +4249,12 @@ struct PevcapLocationJson {
     location: PevcapPhoneLocation,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     source_monotonic_offset_ms: Option<i64>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "serde_optional_float_bits"
+    )]
+    source_timestamp_unix_seconds: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     simulated: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -4222,6 +4268,7 @@ impl From<&PevcapLocationSample> for PevcapLocationJson {
             receipt_monotonic_ms: sample.receipt_monotonic_ms.as_milliseconds(),
             location: sample.location,
             source_monotonic_offset_ms: sample.source_monotonic_offset_ms,
+            source_timestamp_unix_seconds: sample.source_timestamp_unix_seconds,
             simulated: sample.simulated,
             produced_by_accessory: sample.produced_by_accessory,
         }
@@ -4230,7 +4277,11 @@ impl From<&PevcapLocationSample> for PevcapLocationJson {
 
 #[cfg(feature = "serde")]
 impl PevcapLocationJson {
-    fn try_into_location(self) -> Result<PevcapLocationSample, PevcapPhoneLocationError> {
+    fn try_into_location(mut self) -> Result<PevcapLocationSample, PevcapPhoneLocationError> {
+        if let Some(timestamp) = self.source_timestamp_unix_seconds {
+            self.location.wall_clock_unix_ms =
+                unix_milliseconds_from_seconds(timestamp).unwrap_or_default();
+        }
         self.location.canonical()?;
         Ok(self.into_raw_observation())
     }
@@ -4243,6 +4294,7 @@ impl PevcapLocationJson {
             self.produced_by_accessory,
         )
         .with_source_monotonic_offset_ms(self.source_monotonic_offset_ms)
+        .with_source_timestamp_unix_seconds(self.source_timestamp_unix_seconds)
     }
 }
 
@@ -4510,6 +4562,21 @@ mod tests {
             calibrate_location_source_offset_ms(ms(0), ms(u64::MAX), 0, u64::MAX),
             None
         );
+    }
+
+    #[test]
+    fn source_timestamp_seconds_convert_to_checked_unix_milliseconds() {
+        assert_eq!(
+            unix_milliseconds_from_seconds(1_700_000_000.123_9),
+            Some(1_700_000_000_123)
+        );
+        assert_eq!(unix_milliseconds_from_seconds(0.000_9), None);
+        assert_eq!(unix_milliseconds_from_seconds(0.001_9), Some(1));
+        assert_eq!(unix_milliseconds_from_seconds(0.0), None);
+        assert_eq!(unix_milliseconds_from_seconds(-1.0), None);
+        assert_eq!(unix_milliseconds_from_seconds(f64::NAN), None);
+        assert_eq!(unix_milliseconds_from_seconds(f64::INFINITY), None);
+        assert_eq!(unix_milliseconds_from_seconds(f64::MAX), None);
     }
 
     const fn write_len(value: u16) -> TransportWriteLimit {
@@ -4993,6 +5060,7 @@ mod tests {
         let invalid_location = PevcapLocationJson {
             receipt_monotonic_ms: 11,
             source_monotonic_offset_ms: None,
+            source_timestamp_unix_seconds: None,
             location: PevcapPhoneLocation {
                 wall_clock_unix_ms: 1_725_000_123_467,
                 latitude_degrees: 91.0,
@@ -5044,9 +5112,9 @@ mod tests {
         let mut capture = sample_pevcap_capture();
         let latitude = f64::from_bits(0x7ff8_0000_0000_0042);
         let speed = f64::NEG_INFINITY;
-        capture
-            .locations
-            .push(PevcapLocationSample::from_raw_observation(
+        let source_timestamp = f64::from_bits(0x7ff8_0000_0000_0077);
+        capture.locations.push(
+            PevcapLocationSample::from_raw_observation(
                 ms(11),
                 PevcapPhoneLocation {
                     wall_clock_unix_ms: 1_725_000_123_467,
@@ -5062,7 +5130,9 @@ mod tests {
                 },
                 Some(false),
                 Some(true),
-            ));
+            )
+            .with_source_timestamp_unix_seconds(Some(source_timestamp)),
+        );
 
         for encoding in [PevcapEncoding::Jsonl, PevcapEncoding::Binary] {
             let encoded = capture.encode(encoding).expect("raw capture should encode");
@@ -5075,6 +5145,13 @@ mod tests {
             assert_eq!(
                 observation.location.latitude_degrees.to_bits(),
                 latitude.to_bits()
+            );
+            assert_eq!(
+                observation
+                    .source_timestamp_unix_seconds
+                    .expect("raw source timestamp remains present")
+                    .to_bits(),
+                source_timestamp.to_bits()
             );
             assert_eq!(
                 observation

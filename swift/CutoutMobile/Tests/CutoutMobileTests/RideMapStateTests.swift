@@ -30,6 +30,7 @@ final class RideMapStateTests: XCTestCase {
         }
         let sample = MobilePhoneLocationSampleDto(
             wallClockUnixMs: 1_700_000_001_000,
+            sourceTimestampUnixSeconds: nil,
             latitudeDegrees: 39.7392,
             longitudeDegrees: -104.9903,
             altitudeMeters: 1_600,
@@ -70,6 +71,7 @@ final class RideMapStateTests: XCTestCase {
         }
         let sample = MobilePhoneLocationSampleDto(
             wallClockUnixMs: 1_700_000_001_000,
+            sourceTimestampUnixSeconds: nil,
             latitudeDegrees: 39.7392,
             longitudeDegrees: -104.9903,
             altitudeMeters: 1_600,

@@ -85,7 +85,7 @@ use cutout_core::{
     ValueSource as CoreValueSource, ValueSourceDto, VerificationStatus, VerificationStatusDto,
     VerifiedValue, Voltage as CoreVoltage, VoltageReadingDto, VoltageSagEstimate,
     VoltageSagEstimator, VoltageSagInput, VoltageSagModel, WallClockUnixTimestamp, WriteMode,
-    calibrate_location_source_offset_ms,
+    calibrate_location_source_offset_ms, unix_milliseconds_from_seconds,
 };
 use cutout_music::{
     MusicCapabilities as CoreMusicCapabilities, MusicCommand as CoreMusicCommand,
@@ -3836,6 +3836,7 @@ pub struct MobileFootpadTelemetryDto {
 #[derive(Clone, Copy, Debug, PartialEq, uniffi::Record)]
 pub struct MobilePhoneLocationSampleDto {
     pub wall_clock_unix_ms: u64,
+    pub source_timestamp_unix_seconds: Option<f64>,
     pub latitude_degrees: f64,
     pub longitude_degrees: f64,
     pub altitude_meters: f64,
@@ -3851,7 +3852,7 @@ impl MobilePhoneLocationSampleDto {
     /// Normalizes Core Location sentinel values into typed absence.
     fn canonical(self) -> Option<Self> {
         let location = PevcapPhoneLocation {
-            wall_clock_unix_ms: self.wall_clock_unix_ms,
+            wall_clock_unix_ms: self.normalized_wall_clock_unix_ms(),
             latitude_degrees: self.latitude_degrees,
             longitude_degrees: self.longitude_degrees,
             altitude_meters: self.altitude_meters,
@@ -3866,6 +3867,7 @@ impl MobilePhoneLocationSampleDto {
         .ok()?;
         Some(Self {
             wall_clock_unix_ms: location.wall_clock_unix_ms,
+            source_timestamp_unix_seconds: self.source_timestamp_unix_seconds,
             latitude_degrees: location.latitude_degrees,
             longitude_degrees: location.longitude_degrees,
             altitude_meters: location.altitude_meters,
@@ -3880,7 +3882,7 @@ impl MobilePhoneLocationSampleDto {
 
     fn pevcap_location(self) -> PevcapPhoneLocation {
         PevcapPhoneLocation {
-            wall_clock_unix_ms: self.wall_clock_unix_ms,
+            wall_clock_unix_ms: self.normalized_wall_clock_unix_ms(),
             latitude_degrees: self.latitude_degrees,
             longitude_degrees: self.longitude_degrees,
             altitude_meters: self.altitude_meters,
@@ -3891,6 +3893,13 @@ impl MobilePhoneLocationSampleDto {
             course_degrees: self.course_degrees,
             course_accuracy_degrees: self.course_accuracy_degrees,
         }
+    }
+
+    fn normalized_wall_clock_unix_ms(self) -> u64 {
+        self.source_timestamp_unix_seconds
+            .map_or(self.wall_clock_unix_ms, |seconds| {
+                unix_milliseconds_from_seconds(seconds).unwrap_or_default()
+            })
     }
 }
 
@@ -13332,7 +13341,8 @@ impl MobilePevcapCaptureBuilder {
             sample.pevcap_location(),
             simulated,
             produced_by_accessory,
-        );
+        )
+        .with_source_timestamp_unix_seconds(sample.source_timestamp_unix_seconds);
         self.send_location(location)
     }
 
@@ -13372,8 +13382,9 @@ impl MobilePevcapCaptureBuilder {
                     MonotonicTimestamp::new(started_at_ms),
                     MonotonicTimestamp::new(receipt_monotonic_absolute_ms),
                     receipt_wall_clock_unix_ms.milliseconds,
-                    sample.wall_clock_unix_ms,
-                );
+                    sample.normalized_wall_clock_unix_ms(),
+                )
+                .filter(|_| sample.normalized_wall_clock_unix_ms() != 0);
                 PevcapLocationSample::from_raw_observation(
                     receipt_monotonic_ms,
                     sample.pevcap_location(),
@@ -13381,6 +13392,7 @@ impl MobilePevcapCaptureBuilder {
                     None,
                 )
                 .with_source_monotonic_offset_ms(source_monotonic_offset_ms)
+                .with_source_timestamp_unix_seconds(sample.source_timestamp_unix_seconds)
             })
             .collect::<Vec<_>>();
         let ingress = self
@@ -19092,6 +19104,7 @@ mod tests {
     fn capture_phone_location_fixture() -> MobilePhoneLocationSampleDto {
         MobilePhoneLocationSampleDto {
             wall_clock_unix_ms: 1_700_000_000_008,
+            source_timestamp_unix_seconds: None,
             latitude_degrees: 39.739_235_8,
             longitude_degrees: -104.990_251,
             altitude_meters: 1_609.344,
@@ -19102,6 +19115,24 @@ mod tests {
             course_degrees: Some(271.5),
             course_accuracy_degrees: Some(3.0),
         }
+    }
+
+    #[test]
+    fn mobile_location_timestamp_is_normalized_from_the_original_source_value_in_rust() {
+        let sample = MobilePhoneLocationSampleDto {
+            wall_clock_unix_ms: 1,
+            source_timestamp_unix_seconds: Some(1_700_000_000.123_9),
+            ..capture_phone_location_fixture()
+        };
+        assert_eq!(sample.normalized_wall_clock_unix_ms(), 1_700_000_000_123);
+
+        let invalid = MobilePhoneLocationSampleDto {
+            wall_clock_unix_ms: 1_700_000_000_123,
+            source_timestamp_unix_seconds: Some(f64::NAN),
+            ..sample
+        };
+        assert_eq!(invalid.normalized_wall_clock_unix_ms(), 0);
+        assert!(invalid.canonical().is_none());
     }
 
     #[test]
@@ -19923,11 +19954,17 @@ mod tests {
             horizontal_accuracy_meters: Some(f64::INFINITY),
             ..valid
         };
+        let invalid_source_timestamp = f64::from_bits(0x7ff8_0000_0000_0077);
+        let invalid_timestamp = MobilePhoneLocationSampleDto {
+            wall_clock_unix_ms: 0,
+            source_timestamp_unix_seconds: Some(invalid_source_timestamp),
+            ..valid
+        };
         assert_eq!(
             builder.record_location_samples(
                 ms(120),
                 wc(1_700_000_000_010),
-                vec![valid, invalid, non_finite]
+                vec![valid, invalid, non_finite, invalid_timestamp]
             ),
             MobileCaptureWriteOutcomeDto::Accepted
         );
@@ -19935,12 +19972,29 @@ mod tests {
         drop(builder);
         database.shutdown().unwrap();
 
-        let connection = rusqlite::Connection::open(&database_path).unwrap();
+        assert_persisted_invalid_location_observations(
+            &database_path,
+            valid,
+            nan_latitude,
+            invalid_source_timestamp,
+        );
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    fn assert_persisted_invalid_location_observations(
+        database_path: &Path,
+        valid: MobilePhoneLocationSampleDto,
+        nan_latitude: f64,
+        invalid_source_timestamp: f64,
+    ) {
+        let connection = rusqlite::Connection::open(database_path).unwrap();
         let mut statement = connection
             .prepare(
                 "SELECT location.latitude_degrees, location.horizontal_accuracy_meters,
                         location.validation_state, location.validation_reason, event.payload,
-                        location.raw_float_bits
+                        location.raw_float_bits, location.raw_source_timestamp_bits,
+                        event.source_wall_clock_unix_ms
                  FROM live_capture_location_observations AS location
                  JOIN live_capture_events AS event USING (capture_id, sequence)
                  ORDER BY event.sequence",
@@ -19955,23 +20009,20 @@ mod tests {
                     row.get::<_, Option<String>>(3)?,
                     row.get::<_, Vec<u8>>(4)?,
                     row.get::<_, Vec<u8>>(5)?,
+                    row.get::<_, Option<Vec<u8>>>(6)?,
+                    row.get::<_, Option<u64>>(7)?,
                 ))
             })
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
-        assert_eq!(observations.len(), 3);
-        assert_eq!(
-            observations[0].0.map(f64::to_bits),
-            Some(valid.latitude_degrees.to_bits())
-        );
+
+        assert_eq!(observations.len(), 4);
+        assert_eq!(observations[0].0, Some(valid.latitude_degrees));
         assert_eq!(observations[0].1, valid.horizontal_accuracy_meters);
         assert_eq!(observations[0].2, "valid");
         assert_eq!(observations[0].3, None);
-        assert_eq!(
-            observations[1].0.map(f64::to_bits),
-            Some(91.0_f64.to_bits())
-        );
+        assert_eq!(observations[1].0, Some(91.0));
         assert_eq!(observations[1].1, Some(-1.0));
         assert_eq!(observations[1].2, "rejected");
         assert_eq!(observations[1].3.as_deref(), Some("invalid_latitude"));
@@ -19996,8 +20047,23 @@ mod tests {
             &observations[2].5[25..33],
             &f64::INFINITY.to_bits().to_le_bytes()
         );
-
-        fs::remove_dir_all(directory).unwrap();
+        assert_eq!(observations[3].0, Some(valid.latitude_degrees));
+        assert_eq!(observations[3].2, "rejected");
+        assert_eq!(
+            observations[3].3.as_deref(),
+            Some("missing_wall_clock_timestamp")
+        );
+        let raw_source_timestamp = invalid_source_timestamp.to_bits().to_le_bytes();
+        assert_eq!(
+            observations[3].6.as_deref(),
+            Some(&raw_source_timestamp[..])
+        );
+        assert_eq!(observations[3].7, None);
+        assert!(
+            String::from_utf8(observations[3].4.clone())
+                .unwrap()
+                .contains("f64:0x7ff8000000000077")
+        );
     }
 
     #[test]
@@ -21421,6 +21487,7 @@ mod tests {
         let started = state.start_gps_only(1_000).expect("recording starts");
         let sample = MobilePhoneLocationSampleDto {
             wall_clock_unix_ms: 1_700_000_000_001,
+            source_timestamp_unix_seconds: None,
             latitude_degrees: 40.0,
             longitude_degrees: -105.0,
             altitude_meters: 1_600.0,
@@ -21492,6 +21559,7 @@ mod tests {
 
         let sample = MobilePhoneLocationSampleDto {
             wall_clock_unix_ms: 1_700_000_001_001,
+            source_timestamp_unix_seconds: None,
             latitude_degrees: 40.0,
             longitude_degrees: -105.0,
             altitude_meters: 1_600.0,
@@ -23134,6 +23202,7 @@ mod tests {
 
         let sample = |wall_clock_unix_ms, latitude_degrees| MobilePhoneLocationSampleDto {
             wall_clock_unix_ms,
+            source_timestamp_unix_seconds: None,
             latitude_degrees,
             longitude_degrees: -105.0,
             altitude_meters: 1_600.0,
@@ -23186,6 +23255,7 @@ mod tests {
         let started = state.start_gps_only(9_000).unwrap();
         let sample = MobilePhoneLocationSampleDto {
             wall_clock_unix_ms: 1_700_000_001_000,
+            source_timestamp_unix_seconds: None,
             latitude_degrees: 40.0,
             longitude_degrees: -105.0,
             altitude_meters: 1_600.0,
@@ -23233,6 +23303,7 @@ mod tests {
             .expect("GPS-only recording starts");
         let sample = MobilePhoneLocationSampleDto {
             wall_clock_unix_ms: 1_700_000_001_000,
+            source_timestamp_unix_seconds: None,
             latitude_degrees: 40.0,
             longitude_degrees: -105.0,
             altitude_meters: 1_600.0,
@@ -23282,6 +23353,7 @@ mod tests {
             }
             let samples = vec![MobilePhoneLocationSampleDto {
                 wall_clock_unix_ms: 1_700_000_004_000,
+                source_timestamp_unix_seconds: None,
                 latitude_degrees: 40.0,
                 longitude_degrees: -105.0,
                 altitude_meters: 1_600.0,
@@ -23329,6 +23401,7 @@ mod tests {
                 1_700_000_000_000,
                 vec![MobilePhoneLocationSampleDto {
                     wall_clock_unix_ms: 1_700_000_000_000,
+                    source_timestamp_unix_seconds: None,
                     latitude_degrees: 40.0,
                     longitude_degrees: -105.0,
                     altitude_meters: 1_600.0,
