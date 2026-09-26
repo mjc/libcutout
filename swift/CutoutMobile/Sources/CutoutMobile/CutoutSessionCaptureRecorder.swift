@@ -22,6 +22,7 @@ struct CaptureWriterCompletion {
     let generation: CaptureGeneration
     let fileURL: URL?
     let succeeded: Bool
+    let databasePublicationSucceeded: Bool?
 }
 
 protocol CutoutSessionCaptureRecording: AnyObject {
@@ -39,7 +40,9 @@ protocol CutoutSessionCaptureRecording: AnyObject {
         directory: URL,
         reason: String,
         annotations: [String],
-        evidence: String
+        evidence: String,
+        origin: MobileCaptureOriginDto,
+        advertisedName: String?
     ) -> Bool
     func startSynthetic(generation: CaptureGeneration, fileURL: URL, progress: CaptureProgress)
     func finishSynthetic()
@@ -82,6 +85,7 @@ protocol CutoutSessionCaptureRecording: AnyObject {
 final class CutoutSessionCaptureRecorder: CutoutSessionCaptureRecording {
     private let clock: MonotonicClock
     private let wallClock: () -> Date
+    private let database: RideDatabaseHandle?
     private let publish: (CaptureEvent) -> Void
     private let onWriterCompletion: (CaptureWriterCompletion) -> Void
     private lazy var presentation = CutoutSessionCapturePresentation(publish: publish)
@@ -91,6 +95,8 @@ final class CutoutSessionCaptureRecorder: CutoutSessionCaptureRecording {
     private var fileURL: URL?
     private var musicContext = CaptureMusicContext()
     private var musicHistoryPolicy = MobileMusicHistoryPolicyDto.disabled
+    private var captureOrigin = MobileCaptureOriginDto.automatic
+    private var advertisedName: String?
 
     #if DEBUG
         var finishWriterGate: (() -> Void)?
@@ -104,11 +110,13 @@ final class CutoutSessionCaptureRecorder: CutoutSessionCaptureRecording {
     init(
         clock: MonotonicClock,
         wallClock: @escaping () -> Date,
+        database: RideDatabaseHandle?,
         publish: @escaping (CaptureEvent) -> Void,
         onWriterCompletion: @escaping (CaptureWriterCompletion) -> Void
     ) {
         self.clock = clock
         self.wallClock = wallClock
+        self.database = database
         self.publish = publish
         self.onWriterCompletion = onWriterCompletion
     }
@@ -120,9 +128,13 @@ final class CutoutSessionCaptureRecorder: CutoutSessionCaptureRecording {
         directory: URL,
         reason: String,
         annotations: [String],
-        evidence: String
+        evidence: String,
+        origin: MobileCaptureOriginDto,
+        advertisedName: String?
     ) -> Bool {
         presentation.begin(generation: generation)
+        captureOrigin = origin
+        self.advertisedName = advertisedName
         let startedAt = clock.now()
         self.startedAt = startedAt
         notificationCount = 0
@@ -331,12 +343,17 @@ final class CutoutSessionCaptureRecorder: CutoutSessionCaptureRecording {
         guard let builder else { return }
         let generation = currentGeneration ?? .legacy
         let fileURL = self.fileURL
+        let origin = captureOrigin
+        let advertisedName = self.advertisedName
         self.builder = nil
         self.fileURL = nil
         startedAt = nil
+        self.advertisedName = nil
         presentation.end()
 
         let completionHandler = onWriterCompletion
+        let database = database
+        let wallClock = wallClock
         #if DEBUG
             let finishWriterGate = finishWriterGate
         #endif
@@ -347,11 +364,35 @@ final class CutoutSessionCaptureRecorder: CutoutSessionCaptureRecording {
             let writerSucceeded = builder.finishWriter()
             let artifact = writerSucceeded ? builder.completedArtifact() : nil
             guard publishesResult else { return }
+            let databasePublicationSucceeded: Bool?
+            if let database, artifact != nil {
+                let milliseconds = wallClock().timeIntervalSince1970 * 1_000
+                if milliseconds.isFinite, milliseconds > 0, milliseconds < Double(UInt64.max) {
+                    do {
+                        _ = try database.retainFinishedCapture(
+                            builder: builder,
+                            origin: origin,
+                            advertisedName: advertisedName,
+                            publishedAt: MobileWallClockUnixMillisDto(
+                                milliseconds: UInt64(milliseconds.rounded(.down))
+                            )
+                        )
+                        databasePublicationSucceeded = true
+                    } catch {
+                        databasePublicationSucceeded = false
+                    }
+                } else {
+                    databasePublicationSucceeded = false
+                }
+            } else {
+                databasePublicationSucceeded = nil
+            }
             completionHandler(
                 CaptureWriterCompletion(
                     generation: generation,
                     fileURL: artifact.map { URL(fileURLWithPath: $0.path) } ?? fileURL,
-                    succeeded: priorWriteSucceeded && artifact != nil
+                    succeeded: priorWriteSucceeded && artifact != nil,
+                    databasePublicationSucceeded: databasePublicationSucceeded
                 ))
         }
         DispatchQueue.global(qos: .utility).async(execute: finish)

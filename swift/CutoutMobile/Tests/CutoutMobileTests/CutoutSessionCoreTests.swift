@@ -28,7 +28,9 @@ private final class CaptureRecorderSpy: CutoutSessionCaptureRecording {
         directory _: URL,
         reason _: String,
         annotations _: [String],
-        evidence _: String
+        evidence _: String,
+        origin _: MobileCaptureOriginDto,
+        advertisedName _: String?
     ) -> Bool {
         currentGeneration = generation
         hasWriter = true
@@ -111,6 +113,95 @@ final class CutoutSessionCoreTests: XCTestCase {
                 .storageError("Rust ride database is unavailable")
             )
         }
+    }
+
+    func testFinishedCaptureIsPublishedThroughTheExistingRustDatabase() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let database = try XCTUnwrap(MobileRideMapState.debugDatabase)
+        let platformIdentifier = "capture-test-\(UUID().uuidString)"
+
+        let completed = expectation(description: "finished capture is published")
+        let completion = Mutex<CaptureWriterCompletion?>(nil)
+        let recorder = CutoutSessionCaptureRecorder(
+            clock: MonotonicClock(now: { MonotonicMilliseconds(100) }),
+            wallClock: { Date(timeIntervalSince1970: 1_700_000_000) },
+            database: database,
+            publish: { _ in },
+            onWriterCompletion: { value in
+                completion.withLock { $0 = value }
+                completed.fulfill()
+            }
+        )
+
+        XCTAssertTrue(
+            recorder.start(
+                generation: CaptureGeneration(rawValue: 1),
+                platformIdentifier: platformIdentifier,
+                advertisedServices: [],
+                directory: directory,
+                reason: "manual_test",
+                annotations: [],
+                evidence: "simulator_fixture",
+                origin: .manual,
+                advertisedName: "VESC BLE UART"
+            )
+        )
+        recorder.finish(publishesResult: true, priorWriteSucceeded: true)
+
+        await fulfillment(of: [completed], timeout: 5)
+        let result = try XCTUnwrap(completion.withLock { $0 })
+        XCTAssertTrue(result.succeeded)
+        XCTAssertTrue(result.databasePublicationSucceeded == true)
+
+        let page = try database.listPevcapCaptures(cursor: nil, limit: 500)
+        let recording = try XCTUnwrap(
+            page.captures.compactMap(\.recording).first { $0.platformIdentifier == platformIdentifier }
+        )
+        XCTAssertEqual(recording.origin, .manual)
+        XCTAssertEqual(recording.advertisedName, "VESC BLE UART")
+        XCTAssertEqual(recording.platformIdentifier, platformIdentifier)
+    }
+
+    func testDatabasePublicationFailureRetainsTheFinishedCaptureFile() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let database = try XCTUnwrap(MobileRideMapState.debugDatabase)
+        let completed = expectation(description: "failed database publication still completes file capture")
+        let completion = Mutex<CaptureWriterCompletion?>(nil)
+        let recorder = CutoutSessionCaptureRecorder(
+            clock: MonotonicClock(now: { MonotonicMilliseconds(100) }),
+            wallClock: { Date(timeIntervalSince1970: 1_700_000_000) },
+            database: database,
+            publish: { _ in },
+            onWriterCompletion: { value in
+                completion.withLock { $0 = value }
+                completed.fulfill()
+            }
+        )
+
+        XCTAssertTrue(
+            recorder.start(
+                generation: CaptureGeneration(rawValue: 1),
+                platformIdentifier: "capture-test-\(UUID().uuidString)",
+                advertisedServices: [],
+                directory: directory,
+                reason: "manual_test",
+                annotations: [],
+                evidence: "simulator_fixture",
+                origin: .manual,
+                advertisedName: String(repeating: "x", count: 513)
+            )
+        )
+        recorder.finish(publishesResult: true, priorWriteSucceeded: true)
+
+        await fulfillment(of: [completed], timeout: 5)
+        let result = try XCTUnwrap(completion.withLock { $0 })
+        XCTAssertTrue(result.succeeded)
+        XCTAssertFalse(result.databasePublicationSucceeded ?? true)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: try XCTUnwrap(result.fileURL).path))
     }
 
     #if canImport(CoreBluetooth)

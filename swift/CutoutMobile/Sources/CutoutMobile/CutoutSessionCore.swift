@@ -501,6 +501,7 @@ public final class CutoutSessionCore: NSObject {
     private let bleQueue = DispatchQueue(label: "io.cutout.corebluetooth")
     private let bleQueueKey = DispatchSpecificKey<Void>()
     private let rustSessionState: CutoutSessionStateHandle
+    private let databaseForCapturePublication: RideDatabaseHandle?
     private let selectedDeviceStore: DevicePickerSelectionStore
     private let injectedNotificationEffects: CutoutSessionNotificationEffects?
     private let injectedCaptureRecorder: (any CutoutSessionCaptureRecording)?
@@ -552,6 +553,7 @@ public final class CutoutSessionCore: NSObject {
         ?? CutoutSessionCaptureRecorder(
             clock: clock,
             wallClock: wallClock,
+            database: databaseForCapturePublication,
             publish: { [weak self] event in self?.publishCaptureEvent(event) },
             onWriterCompletion: { [weak self] completion in
                 guard let self else { return }
@@ -754,6 +756,7 @@ public final class CutoutSessionCore: NSObject {
                     CutoutSessionStateHandle.withDatabase(database: $0)
                 } ?? CutoutSessionStateHandle()
             self.rustSessionState = rustSessionState
+            self.databaseForCapturePublication = database
             let deviceDetectionSession = DeviceDetectionSession(sessionState: rustSessionState)
             self.deviceDetectionSession = deviceDetectionSession
             self.identificationProbeTransport = IdentificationProbeTransportCoordinator(
@@ -788,6 +791,7 @@ public final class CutoutSessionCore: NSObject {
                     CutoutSessionStateHandle.withDatabase(database: $0)
                 } ?? CutoutSessionStateHandle()
             self.rustSessionState = rustSessionState
+            self.databaseForCapturePublication = database
             let deviceDetectionSession = DeviceDetectionSession(sessionState: rustSessionState)
             self.deviceDetectionSession = deviceDetectionSession
             self.identificationProbeTransport = IdentificationProbeTransportCoordinator(
@@ -2367,7 +2371,9 @@ public final class CutoutSessionCore: NSObject {
             directory: directory,
             reason: reason,
             annotations: extraAnnotations,
-            evidence: evidence
+            evidence: evidence,
+            origin: origin,
+            advertisedName: advertisement?.localName
         )
         guard started else {
             failConnectionCapture()
@@ -2520,6 +2526,9 @@ public final class CutoutSessionCore: NSObject {
             succeeded: succeeded
         )
         if succeeded, let fileURL = completion.fileURL {
+            if completion.databasePublicationSucceeded == false {
+                record("capture_warning=database_publication_failed; saved_file_retained=true")
+            }
             publishCaptureEvent(.finished(generation: completion.generation, fileURL: fileURL))
         } else {
             record("capture_error=writer_finish_failed")
