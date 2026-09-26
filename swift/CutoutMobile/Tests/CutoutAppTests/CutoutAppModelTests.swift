@@ -480,7 +480,6 @@ final class CutoutAppModelTests: XCTestCase {
 
         let paused = await model.pauseRideMap()
         XCTAssertFalse(paused)
-        XCTAssertEqual(model.rideMapError, .noActiveRide)
         XCTAssertEqual(model.liveRide.error, .noActiveRide)
         XCTAssertNil(model.rideHistory.error)
         XCTAssertNil(model.rideHistory.routeError)
@@ -541,7 +540,7 @@ final class CutoutAppModelTests: XCTestCase {
                     wallClockAtMs: 1_700_000_000_500,
                     clockUncertaintyMs: 5
                 ))
-            let rideID = try XCTUnwrap(model.rideMapSnapshot?.rideID)
+            let rideID = try XCTUnwrap(model.liveRide.snapshot?.rideID)
             XCTAssertFalse(driver.rideMapState.currentMusicEvents().isEmpty)
             let stopped = await model.stopRideMap()
             let saved = await model.saveRideMap()
@@ -623,25 +622,25 @@ final class CutoutAppModelTests: XCTestCase {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)
 
-        XCTAssertFalse(model.isRideMapRecording)
+        XCTAssertFalse(model.liveRide.snapshot?.state == .active)
         let started = await model.startGpsOnlyRide()
         XCTAssertTrue(started)
         XCTAssertEqual(driver.tripMeterResetCount, 0)
         XCTAssertEqual(driver.resetRideMapLocationAdmissionCount, 1)
-        XCTAssertTrue(model.isRideMapRecording)
+        XCTAssertTrue(model.liveRide.snapshot?.state == .active)
         XCTAssertEqual(driver.rideLocationDemandStates, [.active])
         let paused = await model.pauseRideMap()
         XCTAssertTrue(paused)
-        XCTAssertFalse(model.isRideMapRecording)
-        XCTAssertTrue(model.isRideMapPaused)
+        XCTAssertFalse(model.liveRide.snapshot?.state == .active)
+        XCTAssertTrue(model.liveRide.snapshot?.state == .paused)
         XCTAssertEqual(driver.rideLocationDemandStates, [.active, .paused])
         let resumed = await model.resumeRideMap()
         XCTAssertTrue(resumed)
         XCTAssertEqual(driver.rideLocationDemandStates, [.active, .paused, .active])
         let stopped = await model.stopRideMap()
         XCTAssertTrue(stopped)
-        XCTAssertFalse(model.isRideMapRecording)
-        XCTAssertFalse(model.isRideMapPaused)
+        XCTAssertFalse(model.liveRide.snapshot?.state == .active)
+        XCTAssertFalse(model.liveRide.snapshot?.state == .paused)
         XCTAssertEqual(driver.rideLocationDemandStates.last, .stopped)
     }
 

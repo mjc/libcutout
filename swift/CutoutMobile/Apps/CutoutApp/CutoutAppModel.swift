@@ -33,25 +33,7 @@ final class CutoutAppModel {
         snapshot: MobilePhoneLocationSnapshotDto(latestSample: nil, gpsSpeed: nil)
     )
     let liveRide: LiveRideModel
-    var rideMapSnapshot: MobileRideMapSnapshotDto? { liveRide.snapshot }
-    var rideMapStorageError: String? { liveRide.storageError }
-    var rideMapAvailability: MobileRideMapAvailability { liveRide.availability }
-    var rideMapLiveError: MobileRideMapError? { liveRide.error }
-    var rideMapLiveDisplayPoints: [MobileRideMapRouteDisplayPoint] { liveRide.displayPoints }
-    var rideMapLiveCameraRegion: MobileRideMapCameraRegion? { liveRide.cameraRegion }
-    var rideMapLiveEndpointMetadata: MobileRideMapRouteEndpointMetadata { liveRide.endpointMetadata }
-    var rideMapLiveSegments: [MobileRideMapSegmentDisplayMetadata] { liveRide.segments }
-    var rideMapLiveTelemetryState: MobileRideMapTelemetryStateDto? { liveRide.telemetryState }
-    var rideMapLiveBackgroundGapCount: UInt64 { liveRide.backgroundGapCount }
-    var rideMapLiveProjectionVersion: UInt64 { liveRide.projectionVersion }
-    var rideMapLivePointsTruncated: Bool { liveRide.pointsTruncated }
-    var rideMapLiveSegmentsOmittedByBudget: Bool { liveRide.segmentsOmittedByBudget }
-    var rideMapLastDecision: MobileRideMapDecisionDto? { liveRide.lastDecision }
     let music: MusicFeatureModel
-
-    /// Compatibility projection for callers that only display the live map.
-    /// New route presentations should use the explicitly scoped error properties.
-    var rideMapError: MobileRideMapError? { rideMapLiveError }
     private(set) var liveActivityError: LiveActivityRideLifecycleError?
     let capture: CaptureFeatureModel
     var isRecordOnlyCapture: Bool { capture.isManualCapture }
@@ -300,14 +282,6 @@ final class CutoutAppModel {
 
     var currentMonotonicTime: MonotonicMilliseconds {
         core.now()
-    }
-
-    var isRideMapRecording: Bool {
-        rideMapSnapshot?.state == .active
-    }
-
-    var isRideMapPaused: Bool {
-        rideMapSnapshot?.state == .paused
     }
 
     var rideState: EucRideScreenState {
@@ -581,7 +555,7 @@ final class CutoutAppModel {
         musicHistoryRestoreTask?.cancel()
         musicHistoryRestoreGeneration &+= 1
         let historyGeneration = musicHistoryRestoreGeneration
-        guard let restoredRideID = rideMapSnapshot?.rideID else {
+        guard let restoredRideID = liveRide.snapshot?.rideID else {
             music.rideMapClosed()
             return
         }
@@ -592,7 +566,7 @@ final class CutoutAppModel {
                     !Task.isCancelled,
                     let self,
                     self.musicHistoryRestoreGeneration == historyGeneration,
-                    self.rideMapSnapshot?.rideID == restoredRideID
+                    self.liveRide.snapshot?.rideID == restoredRideID
                 else { return }
                 self.music.synchronizeHistory(history)
             } catch {
@@ -600,7 +574,7 @@ final class CutoutAppModel {
                     !Task.isCancelled,
                     let self,
                     self.musicHistoryRestoreGeneration == historyGeneration,
-                    self.rideMapSnapshot?.rideID == restoredRideID
+                    self.liveRide.snapshot?.rideID == restoredRideID
                 else { return }
                 self.music.setHistoryPersistenceError(Self.mapRideMapError(error))
             }

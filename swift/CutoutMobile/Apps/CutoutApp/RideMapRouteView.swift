@@ -141,7 +141,7 @@ struct RideMapRouteView: View {
 
     private var historyContent: some View {
         RideMapHistoryContentView(
-            isRecording: model.isRideMapRecording,
+            isRecording: liveRide.snapshot?.state == .active,
             isPaused: liveRide.snapshot?.state == .paused,
             rides: history.rides,
             searchText: $history.searchText,
