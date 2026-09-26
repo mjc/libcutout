@@ -35,8 +35,9 @@ use std::{
 };
 
 use persistence::{
-    CaptureMetadata, CaptureWriteOutcome, CaptureWriter, CaptureWriterMonitor, CaptureWriterStatus,
-    SavedCaptureArtifact, VerifiedConnectionLifecycleMutation, VerifiedConnectionRideMetadata,
+    CaptureJsonlExport, CaptureMetadata, CaptureWriteOutcome, CaptureWriter, CaptureWriterFinish,
+    CaptureWriterMonitor, CaptureWriterStatus, LiveCaptureIntegrity, SavedCaptureArtifact,
+    VerifiedConnectionLifecycleMutation, VerifiedConnectionRideMetadata,
     VerifiedConnectionRideTarget,
 };
 
@@ -12462,6 +12463,113 @@ pub struct MobileCaptureWriterStatusDto {
     pub last_error: Option<String>,
 }
 
+/// Capture completeness established by the Rust writer and persisted in SQLite.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileCaptureIntegrityDto {
+    /// Every message admitted to the writer was retained.
+    Complete,
+    /// One or more messages were rejected before the terminal barrier.
+    Incomplete { dropped_messages: u64 },
+    /// Completeness is not knowable for this capture.
+    Unknown,
+}
+
+impl From<LiveCaptureIntegrity> for MobileCaptureIntegrityDto {
+    fn from(integrity: LiveCaptureIntegrity) -> Self {
+        match integrity {
+            LiveCaptureIntegrity::Complete => Self::Complete,
+            LiveCaptureIntegrity::Incomplete { dropped_messages } => {
+                Self::Incomplete { dropped_messages }
+            }
+            LiveCaptureIntegrity::Unknown => Self::Unknown,
+        }
+    }
+}
+
+/// Optional file export outcome after a canonical SQLite capture is finalized.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileCaptureJsonlExportDto {
+    /// A synced file artifact is available for sharing or publication.
+    Available {
+        artifact: MobileSavedCaptureArtifactDto,
+    },
+    /// Export was skipped because an incomplete capture must not be represented as complete.
+    NotAttempted,
+    /// The database capture is durable, but the optional export failed.
+    Failed { message: String },
+}
+
+/// Self-contained terminal capture-writer outcome.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileCaptureFinishOutcomeDto {
+    /// No writer was started.
+    NotStarted,
+    /// A concurrent caller currently owns the terminal barrier.
+    Finalizing,
+    /// File-only storage completed and its synced artifact is available.
+    ArtifactAvailable {
+        artifact: MobileSavedCaptureArtifactDto,
+    },
+    /// SQLite reached a terminal state, independent of optional JSONL export.
+    DatabaseFinished {
+        live_capture_id: String,
+        integrity: MobileCaptureIntegrityDto,
+        jsonl_export: MobileCaptureJsonlExportDto,
+        status: MobileCaptureWriterStatusDto,
+    },
+    /// Primary file or SQLite finalization failed before durable completion was established.
+    Failed { message: String },
+}
+
+impl From<CaptureWriterFinish> for MobileCaptureFinishOutcomeDto {
+    fn from(finish: CaptureWriterFinish) -> Self {
+        match finish {
+            CaptureWriterFinish::FileSaved(artifact) => Self::ArtifactAvailable {
+                artifact: (*artifact).into(),
+            },
+            CaptureWriterFinish::DatabaseFinished {
+                live_capture_id,
+                integrity,
+                jsonl_export,
+                status,
+            } => Self::DatabaseFinished {
+                live_capture_id: live_capture_id.to_string(),
+                integrity: integrity.into(),
+                jsonl_export: jsonl_export.into(),
+                status: status.into(),
+            },
+        }
+    }
+}
+
+impl From<CaptureJsonlExport> for MobileCaptureJsonlExportDto {
+    fn from(export: CaptureJsonlExport) -> Self {
+        match export {
+            CaptureJsonlExport::Available(artifact) => Self::Available {
+                artifact: (*artifact).into(),
+            },
+            CaptureJsonlExport::NotAttempted => Self::NotAttempted,
+            CaptureJsonlExport::Failed(message) => Self::Failed { message },
+        }
+    }
+}
+
+impl MobileCaptureFinishOutcomeDto {
+    fn has_exported_artifact(&self) -> bool {
+        match self {
+            Self::ArtifactAvailable { .. }
+            | Self::DatabaseFinished {
+                jsonl_export: MobileCaptureJsonlExportDto::Available { .. },
+                ..
+            } => true,
+            Self::NotStarted
+            | Self::Finalizing
+            | Self::DatabaseFinished { .. }
+            | Self::Failed { .. } => false,
+        }
+    }
+}
+
 /// Result of submitting one event to the bounded capture writer.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum MobileCaptureWriteOutcomeDto {
@@ -12547,7 +12655,7 @@ enum CaptureWriterSlot {
     Ready,
     Recording(CaptureWriter),
     Finalizing,
-    Complete(Result<Box<SavedCaptureArtifact>, String>),
+    Complete(Result<CaptureWriterFinish, String>),
 }
 
 impl CaptureWriterSlot {
@@ -12582,6 +12690,18 @@ pub struct MobileSavedCaptureArtifactDto {
     pub path: String,
     /// Final writer instrumentation.
     pub status: MobileCaptureWriterStatusDto,
+}
+
+impl From<SavedCaptureArtifact> for MobileSavedCaptureArtifactDto {
+    fn from(artifact: SavedCaptureArtifact) -> Self {
+        Self {
+            id: MobileCaptureArtifactIdDto {
+                value: artifact.id().to_string(),
+            },
+            path: artifact.path().to_string_lossy().into_owned(),
+            status: artifact.status().clone().into(),
+        }
+    }
 }
 const PEVCAP_MUSIC_CONTEXT_FRESHNESS_MS: u64 = 5_000;
 
@@ -12823,13 +12943,25 @@ impl MobilePevcapCaptureBuilder {
         writer.as_ref().is_some_and(|writer| writer.flush().is_ok())
     }
 
-    /// Finishes the Rust-owned streaming writer.
+    /// Finishes the Rust-owned writer and reports durability separately from file export.
     pub fn finish_writer(&self) -> bool {
+        self.finish_writer_outcome().has_exported_artifact()
+    }
+
+    /// Returns the correlated terminal writer result, including durable SQLite captures without
+    /// an exported file.
+    pub fn finish_writer_outcome(&self) -> MobileCaptureFinishOutcomeDto {
         let writer = {
             let mut slot = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
             match &*slot {
-                CaptureWriterSlot::Complete(result) => return result.is_ok(),
-                CaptureWriterSlot::Ready | CaptureWriterSlot::Finalizing => return false,
+                CaptureWriterSlot::Complete(result) => {
+                    return match result.clone() {
+                        Ok(finish) => finish.into(),
+                        Err(message) => MobileCaptureFinishOutcomeDto::Failed { message },
+                    };
+                }
+                CaptureWriterSlot::Ready => return MobileCaptureFinishOutcomeDto::NotStarted,
+                CaptureWriterSlot::Finalizing => return MobileCaptureFinishOutcomeDto::Finalizing,
                 CaptureWriterSlot::Recording(_) => {}
             }
             match std::mem::replace(&mut *slot, CaptureWriterSlot::Finalizing) {
@@ -12841,27 +12973,31 @@ impl MobilePevcapCaptureBuilder {
             .writer_ingress
             .lock()
             .unwrap_or_else(PoisonError::into_inner) = None;
-        let result = writer.finish().map(Box::new);
-        let succeeded = result.is_ok();
+        let result = writer.finish();
+        let outcome = match result.clone() {
+            Ok(finish) => finish.into(),
+            Err(message) => MobileCaptureFinishOutcomeDto::Failed { message },
+        };
         *self.writer.lock().unwrap_or_else(PoisonError::into_inner) =
             CaptureWriterSlot::Complete(result);
-        succeeded
+        outcome
     }
 
     /// Returns an artifact only after successful durable finalization, never merely after flush.
     #[must_use]
     pub fn completed_artifact(&self) -> Option<MobileSavedCaptureArtifactDto> {
         let slot = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
-        let CaptureWriterSlot::Complete(Ok(artifact)) = &*slot else {
+        let CaptureWriterSlot::Complete(Ok(finish)) = &*slot else {
             return None;
         };
-        Some(MobileSavedCaptureArtifactDto {
-            id: MobileCaptureArtifactIdDto {
-                value: artifact.id().to_string(),
-            },
-            path: artifact.path().to_string_lossy().into_owned(),
-            status: artifact.status().clone().into(),
-        })
+        match finish {
+            CaptureWriterFinish::FileSaved(artifact)
+            | CaptureWriterFinish::DatabaseFinished {
+                jsonl_export: CaptureJsonlExport::Available(artifact),
+                ..
+            } => Some((**artifact).clone().into()),
+            CaptureWriterFinish::DatabaseFinished { .. } => None,
+        }
     }
 
     /// Sets the ride music-history policy used for future PEVCAP metadata.
@@ -19725,6 +19861,54 @@ mod tests {
         assert_eq!(event_count, 1);
         assert_eq!(event_kind, "link_up");
 
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn mobile_finish_reports_sqlite_durability_when_jsonl_export_fails() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let directory =
+            std::env::temp_dir().join(format!("cutout-finish-outcome-{}", Uuid::new_v4()));
+        fs::create_dir(&directory).unwrap();
+        let database_path = directory.join("ride.sqlite");
+        let capture_path = directory.join("capture.jsonl");
+        let database = open_ride_database(database_path.to_string_lossy().into_owned()).unwrap();
+        let builder = MobilePevcapCaptureBuilder::new(wc(1_700_000_000_000), "phone".into(), None);
+        builder.set_database(Arc::clone(&database));
+        assert!(builder.start_writer(capture_path.to_string_lossy().into_owned()));
+        fs::write(&capture_path, b"existing user file").unwrap();
+
+        let live_capture_id = match builder.finish_writer_outcome() {
+            MobileCaptureFinishOutcomeDto::DatabaseFinished {
+                live_capture_id,
+                integrity: MobileCaptureIntegrityDto::Complete,
+                jsonl_export: MobileCaptureJsonlExportDto::Failed { .. },
+                status,
+            } => {
+                assert!(!status.failed);
+                live_capture_id
+            }
+            other => panic!("unexpected finish outcome: {other:?}"),
+        };
+        assert!(builder.completed_artifact().is_none());
+        assert_eq!(fs::read(&capture_path).unwrap(), b"existing user file");
+        drop(builder);
+        database.shutdown().unwrap();
+
+        let connection = rusqlite::Connection::open(&database_path).unwrap();
+        let (state, integrity, dropped_messages): (String, String, u64) = connection
+            .query_row(
+                "SELECT state, integrity, dropped_messages FROM live_capture_sessions
+                 WHERE capture_id = ?1",
+                [&live_capture_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(state, "finished");
+        assert_eq!(integrity, "complete");
+        assert_eq!(dropped_messages, 0);
         fs::remove_dir_all(directory).unwrap();
     }
 

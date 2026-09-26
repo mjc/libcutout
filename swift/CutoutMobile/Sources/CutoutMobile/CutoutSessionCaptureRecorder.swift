@@ -21,9 +21,27 @@ struct CaptureMusicContext: Equatable {
 
 struct CaptureWriterCompletion {
     let generation: CaptureGeneration
-    let fileURL: URL?
-    let succeeded: Bool
+    let outcome: MobileCaptureFinishOutcomeDto
+    let priorWriteSucceeded: Bool
     let databasePublicationSucceeded: Bool?
+
+    var artifact: MobileSavedCaptureArtifactDto? {
+        switch outcome {
+        case let .artifactAvailable(artifact): artifact
+        case let .databaseFinished(_, _, .available(artifact: artifact), _): artifact
+        case .notStarted, .finalizing, .databaseFinished, .failed: nil
+        }
+    }
+
+    var fileURL: URL? { artifact.map { URL(fileURLWithPath: $0.path) } }
+
+    var succeeded: Bool {
+        switch outcome {
+        case .artifactAvailable: priorWriteSucceeded
+        case .databaseFinished: true
+        case .notStarted, .finalizing, .failed: false
+        }
+    }
 }
 
 struct CaptureLocationWriteResult {
@@ -383,7 +401,6 @@ final class CutoutSessionCaptureRecorder: CutoutSessionCaptureRecording {
         musicContext.reset()
         guard let builder else { return }
         let generation = currentGeneration ?? .legacy
-        let fileURL = self.fileURL
         let origin = captureOrigin
         let advertisedName = self.advertisedName
         locationWriter.withLock { $0 = nil }
@@ -403,8 +420,13 @@ final class CutoutSessionCaptureRecorder: CutoutSessionCaptureRecording {
             #if DEBUG
                 finishWriterGate?()
             #endif
-            let writerSucceeded = builder.finishWriter()
-            let artifact = writerSucceeded ? builder.completedArtifact() : nil
+            let outcome = builder.finishWriterOutcome()
+            let artifact: MobileSavedCaptureArtifactDto?
+            switch outcome {
+            case let .artifactAvailable(saved): artifact = saved
+            case let .databaseFinished(_, _, .available(saved), _): artifact = saved
+            case .notStarted, .finalizing, .databaseFinished, .failed: artifact = nil
+            }
             guard publishesResult else { return }
             let databasePublicationSucceeded: Bool?
             if let database, artifact != nil {
@@ -432,8 +454,8 @@ final class CutoutSessionCaptureRecorder: CutoutSessionCaptureRecording {
             completionHandler(
                 CaptureWriterCompletion(
                     generation: generation,
-                    fileURL: artifact.map { URL(fileURLWithPath: $0.path) } ?? fileURL,
-                    succeeded: priorWriteSucceeded && artifact != nil,
+                    outcome: outcome,
+                    priorWriteSucceeded: priorWriteSucceeded,
                     databasePublicationSucceeded: databasePublicationSucceeded
                 ))
         }

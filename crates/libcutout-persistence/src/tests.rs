@@ -382,7 +382,7 @@ fn database_backed_capture_writer_persists_events_on_its_worker_thread() {
     }
     assert!(!artifact_path.exists());
 
-    let artifact = writer.finish().expect("writer finalizes");
+    let artifact = writer.finish_exported().expect("writer finalizes");
     assert!(artifact.status().physical_bytes_written > 0);
     let capture_id = artifact.live_capture_id().expect("SQLite capture identity");
     let snapshot = database
@@ -2745,7 +2745,7 @@ fn finished_recording_is_retained_without_deriving_a_ride() {
         writer.try_send_record(pevcap_location_record(1, 40.0, Some(3.0))),
         CaptureWriteOutcome::Accepted
     );
-    let artifact = writer.finish().unwrap();
+    let artifact = writer.finish_exported().unwrap();
     let bytes = std::fs::read(&source).unwrap();
     let database = RideDatabase::open(&path).unwrap();
     let receipt = database
@@ -2833,7 +2833,7 @@ fn finished_capture_receipt_rejects_replacement_bytes_before_first_publication()
         writer.try_send_record(PevcapRecord::link_up(MonotonicTimestamp::new(1), None)),
         CaptureWriteOutcome::Accepted
     );
-    let artifact = writer.finish().unwrap();
+    let artifact = writer.finish_exported().unwrap();
     let replacement = PevcapCapture::new(
         pevcap_header(),
         vec![PevcapRecord::link_up(MonotonicTimestamp::new(2), None)],
@@ -2896,7 +2896,7 @@ fn recorded_capture_is_not_cut_off_at_the_import_duration_limit() {
         CaptureWriteOutcome::Accepted
     );
 
-    let artifact = writer.finish().unwrap();
+    let artifact = writer.finish_exported().unwrap();
     let database = RideDatabase::open(&database_path).unwrap();
     let receipt = database
         .retain_finished_capture(
@@ -2958,7 +2958,7 @@ fn recorded_capture_locations_are_not_cut_off_at_the_import_duration_limit() {
         CaptureWriteOutcome::Accepted
     );
 
-    let artifact = writer.finish().unwrap();
+    let artifact = writer.finish_exported().unwrap();
     let database = RideDatabase::open(&directory.path().join("ride.sqlite")).unwrap();
     let receipt = database
         .retain_finished_capture(
@@ -3002,7 +3002,7 @@ fn recording_publication_rolls_back_and_reconciles_lost_reply() {
         },
     )
     .unwrap()
-    .finish()
+    .finish_exported()
     .unwrap();
     let bytes = std::fs::read(&source).unwrap();
     let database = RideDatabase::open(&path).unwrap();
@@ -3145,7 +3145,7 @@ fn recording_digest_collision_preserves_the_first_writer_identity() {
             },
         )
         .unwrap()
-        .finish()
+        .finish_exported()
         .unwrap()
     };
     let first = finish("first.jsonl");

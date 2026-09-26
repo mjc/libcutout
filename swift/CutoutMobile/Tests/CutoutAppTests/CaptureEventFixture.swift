@@ -48,6 +48,11 @@ func deliverCaptureFixture(
         _ = owner.retireCaptureWriter(generation: generation.dto)
         _ = owner.completeCaptureWriter(generation: generation.dto, succeeded: true)
         translated = .finished(generation: generation, fileURL: url)
+    case let .databaseFinished(generation, outcome):
+        let generation = resolve(generation)
+        _ = owner.retireCaptureWriter(generation: generation.dto)
+        _ = owner.completeCaptureWriter(generation: generation.dto, succeeded: true)
+        translated = .databaseFinished(generation: generation, outcome: outcome)
     case let .failed(generation):
         let generation = resolve(generation)
         _ = owner.retireCaptureWriter(generation: generation.dto)

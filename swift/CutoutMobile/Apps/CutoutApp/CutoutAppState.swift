@@ -6,13 +6,14 @@ enum CaptureStatus: Equatable {
     case labelStarted(label: String, notificationCount: Int, fileName: String?)
     case labelStopped(label: String, notificationCount: Int, fileName: String?)
     case saved(fileName: String)
+    case stored
     case failed
 
     var isRecording: Bool {
         switch self {
         case .recordingLocally, .recording, .labelStarted, .labelStopped:
             true
-        case .saved, .failed:
+        case .saved, .stored, .failed:
             false
         }
     }
@@ -29,6 +30,8 @@ enum CaptureStatus: Equatable {
             captureLabelText(label: label, action: "stopped", notificationCount: notificationCount, fileName: fileName)
         case let .saved(fileName):
             localizedAppText("capture.status.saved", fileName)
+        case .stored:
+            localizedAppText("capture.status.stored")
         case .failed:
             localizedAppText("capture.announcement.failed")
         }
@@ -40,7 +43,7 @@ enum CaptureStatus: Equatable {
             localizedAppText("capture.announcement.label_started", label)
         case let .labelStopped(label, _, _):
             localizedAppText("capture.announcement.label_stopped", label)
-        case .saved:
+        case .saved, .stored:
             localizedAppText("capture.announcement.saved")
         case .failed:
             localizedAppText("capture.announcement.failed")

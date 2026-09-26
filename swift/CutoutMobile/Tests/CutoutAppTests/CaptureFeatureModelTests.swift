@@ -53,6 +53,69 @@ final class CaptureFeatureModelTests: XCTestCase {
         XCTAssertTrue(capture.completed.isEmpty)
     }
 
+    func testDurableDatabaseCompletionIsNotPresentedAsWriterFailureOrFileArtifact() {
+        let capture = CaptureFeatureModel()
+        capture.deliverCaptureEvent(.started(fileURL: URL(fileURLWithPath: "/tmp/requested.jsonl")))
+        let generation = capture.activeGeneration!
+        let status = MobileCaptureWriterStatusDto(
+            queuedMessages: 0,
+            peakQueuedMessages: 0,
+            droppedMessages: 3,
+            bytesWritten: 100,
+            physicalBytesWritten: 0,
+            failed: false,
+            lastError: nil
+        )
+
+        capture.deliverCaptureEvent(
+            .databaseFinished(
+                generation: generation,
+                outcome: .databaseFinished(
+                    liveCaptureId: "capture-id",
+                    integrity: .incomplete(droppedMessages: 3),
+                    jsonlExport: .notAttempted,
+                    status: status
+                )
+            )
+        )
+
+        XCTAssertEqual(capture.status, .stored)
+        XCTAssertEqual(capture.completed.first?.outcome, .incomplete(droppedMessages: 3))
+        XCTAssertNil(capture.completed.first?.fileURL)
+        XCTAssertNil(capture.activeGeneration)
+    }
+
+    func testDurableDatabaseCompletionWithFailedExportRemainsStoredWithoutArtifact() {
+        let capture = CaptureFeatureModel()
+        capture.deliverCaptureEvent(.started(fileURL: URL(fileURLWithPath: "/tmp/requested.jsonl")))
+        let generation = capture.activeGeneration!
+
+        capture.deliverCaptureEvent(
+            .databaseFinished(
+                generation: generation,
+                outcome: .databaseFinished(
+                    liveCaptureId: "capture-id",
+                    integrity: .complete,
+                    jsonlExport: .failed(message: "destination exists"),
+                    status: MobileCaptureWriterStatusDto(
+                        queuedMessages: 0,
+                        peakQueuedMessages: 0,
+                        droppedMessages: 0,
+                        bytesWritten: 100,
+                        physicalBytesWritten: 0,
+                        failed: false,
+                        lastError: nil
+                    )
+                )
+            )
+        )
+
+        XCTAssertEqual(capture.status, .stored)
+        XCTAssertEqual(capture.completed.first?.outcome, .storedWithoutExport)
+        XCTAssertNil(capture.completed.first?.fileURL)
+        XCTAssertNil(capture.activeGeneration)
+    }
+
     func testLabelsAreNotAcceptedBeforeTheWriterStartsOrAfterItCompletes() {
         var requests = 0
         let capture = CaptureFeatureModel(changeCaptureLabel: { _, _ in

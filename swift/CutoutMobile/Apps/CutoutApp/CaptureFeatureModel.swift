@@ -6,10 +6,16 @@ import Observation
 /// Presentation of a writer-owned artifact, not a second capture store.
 /// Relaunch history must come from Rust storage; this is only the live callback projection.
 struct CaptureArtifact: Identifiable, Equatable {
-    enum Outcome { case saved, failed }
+    enum Outcome: Equatable {
+        case saved
+        case storedWithoutExport
+        case incomplete(droppedMessages: UInt64)
+        case integrityUnknown
+        case failed
+    }
 
     let id: CaptureGeneration
-    let fileURL: URL
+    let fileURL: URL?
     let startedAt: Date
     let device: CaptureDeviceIdentity?
     let isUserInitiated: Bool
@@ -95,7 +101,7 @@ final class CaptureFeatureModel {
         }
         switch lifecycle.attempt?.stage {
         case .failed, .saveFailed: return .failed
-        case .saved: return fileName.map { .saved(fileName: $0) }
+        case .saved: return fileName.map { .saved(fileName: $0) } ?? .stored
         default: return recordingStatus
         }
     }
@@ -131,7 +137,7 @@ final class CaptureFeatureModel {
     @ObservationIgnored private var recordings: [CaptureGeneration: Recording] = [:]
 
     private struct Recording {
-        let fileURL: URL
+        let requestedFileURL: URL
         let startedAt: Date
         var device: CaptureDeviceIdentity?
         let isUserInitiated: Bool
@@ -246,7 +252,7 @@ final class CaptureFeatureModel {
             label = nil
             clearLabels()
             recordings[generation] = Recording(
-                fileURL: fileURL, startedAt: .now, device: device,
+                requestedFileURL: fileURL, startedAt: .now, device: device,
                 isUserInitiated: isUserInitiated
             )
             recordingStatus = .recordingLocally(fileName: fileURL.lastPathComponent)
@@ -263,8 +269,29 @@ final class CaptureFeatureModel {
             updateRecordingStatus()
         case let .finished(generation, fileURL):
             complete(generation, outcome: .saved, fileURL: fileURL)
+        case let .databaseFinished(generation, outcome):
+            guard case let .databaseFinished(_, integrity, jsonlExport, _) = outcome else { return }
+            let artifact: MobileSavedCaptureArtifactDto?
+            switch jsonlExport {
+            case let .available(saved): artifact = saved
+            case .notAttempted, .failed: artifact = nil
+            }
+            let captureOutcome: CaptureArtifact.Outcome
+            switch integrity {
+            case .complete:
+                captureOutcome = artifact == nil ? .storedWithoutExport : .saved
+            case let .incomplete(droppedMessages):
+                captureOutcome = .incomplete(droppedMessages: droppedMessages)
+            case .unknown:
+                captureOutcome = .integrityUnknown
+            }
+            complete(
+                generation,
+                outcome: captureOutcome,
+                fileURL: artifact.map { URL(fileURLWithPath: $0.path) }
+            )
         case let .failed(generation):
-            complete(generation, outcome: .failed, fileURL: nil)
+            complete(generation, outcome: .failed, fileURL: nil, preserveRequestedFile: true)
         }
     }
 
@@ -272,22 +299,29 @@ final class CaptureFeatureModel {
         recordingStatus = .recording(label: label, notificationCount: notificationCount, fileName: fileName)
     }
 
-    private func complete(_ generation: CaptureGeneration, outcome: CaptureArtifact.Outcome, fileURL: URL?) {
+    private func complete(
+        _ generation: CaptureGeneration,
+        outcome: CaptureArtifact.Outcome,
+        fileURL: URL?,
+        preserveRequestedFile: Bool = false
+    ) {
         if let recording = recordings.removeValue(forKey: generation) {
             completed.insert(
                 CaptureArtifact(
-                    id: generation, fileURL: fileURL ?? recording.fileURL, startedAt: recording.startedAt,
+                    id: generation,
+                    fileURL: fileURL ?? (preserveRequestedFile ? recording.requestedFileURL : nil),
+                    startedAt: recording.startedAt,
                     device: recording.device, isUserInitiated: recording.isUserInitiated,
                     progress: recording.progress, outcome: outcome
                 ), at: 0)
         }
         guard generation == latestGeneration else { return }
         guard generation == presentedGeneration else { return }
-        if outcome == .saved, let fileURL {
-            fileName = fileURL.lastPathComponent
-            recordingStatus = .saved(fileName: fileURL.lastPathComponent)
-        } else {
+        if outcome == .failed {
             recordingStatus = .failed
+        } else {
+            fileName = fileURL?.lastPathComponent
+            recordingStatus = fileURL.map { .saved(fileName: $0.lastPathComponent) } ?? .stored
         }
         // Finish admission stays closed until an accepted new recording starts.
         clearLabels()

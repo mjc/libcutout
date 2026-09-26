@@ -110,6 +110,7 @@ public enum CaptureEvent: Equatable, Sendable {
     case notificationRecorded(generation: CaptureGeneration)
     case progress(generation: CaptureGeneration, CaptureProgress)
     case finished(generation: CaptureGeneration, fileURL: URL)
+    case databaseFinished(generation: CaptureGeneration, outcome: MobileCaptureFinishOutcomeDto)
     case failed(generation: CaptureGeneration)
 
     // Keep hand-authored fixtures source-compatible while production events carry identity.
@@ -2521,11 +2522,24 @@ public final class CutoutSessionCore: NSObject {
             generation: completion.generation.dto,
             succeeded: succeeded
         )
-        if succeeded, let fileURL = completion.fileURL {
+        if succeeded {
             if completion.databasePublicationSucceeded == false {
                 record("capture_warning=database_publication_failed; saved_file_retained=true")
             }
-            publishCaptureEvent(.finished(generation: completion.generation, fileURL: fileURL))
+            switch completion.outcome {
+            case let .artifactAvailable(artifact):
+                publishCaptureEvent(
+                    .finished(
+                        generation: completion.generation,
+                        fileURL: URL(fileURLWithPath: artifact.path)
+                    ))
+            case .databaseFinished:
+                publishCaptureEvent(
+                    .databaseFinished(generation: completion.generation, outcome: completion.outcome))
+            case .notStarted, .finalizing, .failed:
+                record("capture_error=writer_finish_failed")
+                publishCaptureEvent(.failed(generation: completion.generation))
+            }
         } else {
             record("capture_error=writer_finish_failed")
             publishCaptureEvent(.failed(generation: completion.generation))

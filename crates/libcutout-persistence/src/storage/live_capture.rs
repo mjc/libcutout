@@ -25,6 +25,12 @@ impl LiveCaptureId {
     }
 }
 
+impl std::fmt::Display for LiveCaptureId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
 /// Persisted event kind; event payload bytes retain the complete PEVCAP observation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LiveCaptureEventKind {

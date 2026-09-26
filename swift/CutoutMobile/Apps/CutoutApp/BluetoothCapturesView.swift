@@ -108,7 +108,18 @@ private struct CaptureArtifactRow: View {
             }
             Text(artifact.startedAt, format: .dateTime.month(.abbreviated).day().hour().minute())
                 .font(.subheadline).foregroundStyle(.secondary)
-            if artifact.outcome == .failed {
+            switch artifact.outcome {
+            case .saved: EmptyView()
+            case .storedWithoutExport:
+                Label(localizedAppText("captures.stored_without_export"), systemImage: "internaldrive")
+                    .foregroundStyle(.secondary)
+            case .incomplete:
+                Label(localizedAppText("captures.incomplete"), systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(PevColors.warningText)
+            case .integrityUnknown:
+                Label(localizedAppText("captures.integrity_unknown"), systemImage: "questionmark.folder")
+                    .foregroundStyle(.secondary)
+            case .failed:
                 Label(localizedAppText("captures.incomplete"), systemImage: "exclamationmark.triangle")
                     .foregroundStyle(PevColors.warningText)
             }
@@ -121,7 +132,9 @@ private struct CaptureArtifactRow: View {
 struct CaptureArtifactDetailView: View {
     let artifact: CaptureArtifact
 
-    private var fileExists: Bool { FileManager.default.fileExists(atPath: artifact.fileURL.path) }
+    private var fileExists: Bool {
+        artifact.fileURL.map { FileManager.default.fileExists(atPath: $0.path) } ?? false
+    }
 
     var body: some View {
         List {
@@ -138,8 +151,8 @@ struct CaptureArtifactDetailView: View {
                 }
             }
             Section {
-                if fileExists {
-                    ShareLink(item: artifact.fileURL) {
+                if fileExists, let fileURL = artifact.fileURL {
+                    ShareLink(item: fileURL) {
                         Label(localizedAppText("captures.share"), systemImage: "square.and.arrow.up")
                     }
                     .accessibilityIdentifier("captures.share")
@@ -151,9 +164,11 @@ struct CaptureArtifactDetailView: View {
             }
             Section {
                 DisclosureGroup(localizedAppText("captures.technical")) {
-                    Text(artifact.fileURL.lastPathComponent)
-                        .font(.footnote.monospaced())
-                        .textSelection(.enabled)
+                    if let fileURL = artifact.fileURL {
+                        Text(fileURL.lastPathComponent)
+                            .font(.footnote.monospaced())
+                            .textSelection(.enabled)
+                    }
                     if let identifier = artifact.device?.platformIdentifier {
                         Text(identifier).font(.footnote.monospaced()).textSelection(.enabled)
                     }
@@ -165,7 +180,16 @@ struct CaptureArtifactDetailView: View {
         }
         .scrollContentBackground(.hidden)
         .background(PevColors.pageBackground)
-        .navigationTitle(localizedAppText(artifact.outcome == .saved ? "captures.saved" : "captures.incomplete"))
+        .navigationTitle(localizedAppText(detailTitleKey))
         .accessibilityIdentifier("captures.detail")
+    }
+
+    private var detailTitleKey: String {
+        switch artifact.outcome {
+        case .saved: "captures.saved"
+        case .storedWithoutExport: "captures.stored_without_export"
+        case .incomplete, .failed: "captures.incomplete"
+        case .integrityUnknown: "captures.integrity_unknown"
+        }
     }
 }

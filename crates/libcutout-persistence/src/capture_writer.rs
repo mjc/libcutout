@@ -95,6 +95,35 @@ impl SavedCaptureArtifact {
     }
 }
 
+/// Durable terminal result of consuming a capture writer.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CaptureWriterFinish {
+    /// A synced JSONL file is the durable source for a file-only writer.
+    FileSaved(Box<SavedCaptureArtifact>),
+    /// SQLite is finalized; a JSONL file is an optional export of its durable contents.
+    DatabaseFinished {
+        /// Canonical SQLite capture identity.
+        live_capture_id: LiveCaptureId,
+        /// Durable completeness result established at the terminal barrier.
+        integrity: LiveCaptureIntegrity,
+        /// Optional PEVCAP JSONL export result.
+        jsonl_export: CaptureJsonlExport,
+        /// Final writer counters, including admitted and dropped messages.
+        status: CaptureWriterStatus,
+    },
+}
+
+/// Result of the optional JSONL export after SQLite finalization.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CaptureJsonlExport {
+    /// A synced export file is available for sharing or receipt publication.
+    Available(Box<SavedCaptureArtifact>),
+    /// Export was intentionally skipped because the durable capture is incomplete.
+    NotAttempted,
+    /// SQLite is durable, but creating or syncing the optional export failed.
+    Failed(String),
+}
+
 /// Read-only queue and failure evidence retained after active ownership is consumed.
 #[derive(Clone, Debug)]
 pub struct CaptureWriterMonitor(Arc<CaptureWriterState>);
@@ -237,10 +266,21 @@ enum CaptureWriterStorage {
 
 enum CaptureWriterBarrierResult {
     Flushed,
-    Finished {
+    FileFinished {
         content_digest: String,
         final_header: Box<PevcapHeader>,
     },
+    DatabaseFinished {
+        integrity: LiveCaptureIntegrity,
+        jsonl_export: CaptureWriterJsonlExport,
+        final_header: Box<PevcapHeader>,
+    },
+}
+
+enum CaptureWriterJsonlExport {
+    Available { content_digest: String },
+    NotAttempted,
+    Failed(String),
 }
 
 enum CaptureWriterAction {
@@ -662,17 +702,19 @@ impl CaptureWriter {
             .map_err(|_| "capture writer stopped before flush".to_string())??
         {
             CaptureWriterBarrierResult::Flushed => Ok(()),
-            CaptureWriterBarrierResult::Finished { .. } => {
+            CaptureWriterBarrierResult::FileFinished { .. }
+            | CaptureWriterBarrierResult::DatabaseFinished { .. } => {
                 Err("capture writer finished before flush".into())
             }
         }
     }
 
-    /// Consumes the active writer and returns evidence of successful durable completion.
+    /// Consumes the active writer and reports durable completion separately from JSONL export.
     ///
     /// # Errors
-    /// Returns queue, worker, or storage failure; no saved artifact is produced.
-    pub fn finish(mut self) -> Result<SavedCaptureArtifact, String> {
+    /// Returns queue, worker, or primary-storage failure. Optional database-backed export
+    /// failures are returned inside [`CaptureWriterFinish::DatabaseFinished`].
+    pub fn finish(mut self) -> Result<CaptureWriterFinish, String> {
         let (sender, receiver) = sync_channel(0);
         if self.ingress.close_and_send(CaptureWriterMessage::Barrier(
             CaptureBarrier::Finish,
@@ -692,11 +734,48 @@ impl CaptureWriter {
             join.join()
                 .map_err(|_| "capture writer thread panicked".to_string())?;
         }
-        let (content_digest, final_header) = match completion? {
-            CaptureWriterBarrierResult::Finished {
+        let finalization = match completion? {
+            CaptureWriterBarrierResult::FileFinished {
                 content_digest,
                 final_header,
-            } => (content_digest, final_header),
+            } => CaptureWriterFinish::FileSaved(Box::new(SavedCaptureArtifact {
+                id: self.artifact_id,
+                live_capture_id: self.live_capture_id,
+                path: self.path,
+                status: self.state.status(),
+                content_digest,
+                final_header: *final_header,
+            })),
+            CaptureWriterBarrierResult::DatabaseFinished {
+                integrity,
+                jsonl_export,
+                final_header,
+            } => {
+                let live_capture_id = self
+                    .live_capture_id
+                    .ok_or_else(|| "database writer has no live capture identity".to_string())?;
+                let status = self.state.status();
+                let jsonl_export = match jsonl_export {
+                    CaptureWriterJsonlExport::Available { content_digest } => {
+                        CaptureJsonlExport::Available(Box::new(SavedCaptureArtifact {
+                            id: self.artifact_id,
+                            live_capture_id: Some(live_capture_id),
+                            path: self.path,
+                            status: status.clone(),
+                            content_digest,
+                            final_header: *final_header,
+                        }))
+                    }
+                    CaptureWriterJsonlExport::NotAttempted => CaptureJsonlExport::NotAttempted,
+                    CaptureWriterJsonlExport::Failed(error) => CaptureJsonlExport::Failed(error),
+                };
+                CaptureWriterFinish::DatabaseFinished {
+                    live_capture_id,
+                    integrity,
+                    jsonl_export,
+                    status,
+                }
+            }
             CaptureWriterBarrierResult::Flushed => {
                 return Err("capture writer flushed instead of finishing".into());
             }
@@ -707,14 +786,37 @@ impl CaptureWriter {
                 .last_error
                 .unwrap_or_else(|| "capture writer failed".into()));
         }
-        Ok(SavedCaptureArtifact {
-            id: self.artifact_id,
-            live_capture_id: self.live_capture_id,
-            path: self.path,
-            status,
-            content_digest,
-            final_header: *final_header,
-        })
+        Ok(finalization)
+    }
+
+    /// Finishes the writer and requires an exported JSONL file.
+    ///
+    /// Prefer [`Self::finish`] when SQLite is the canonical source and file export is optional.
+    ///
+    /// # Errors
+    /// Returns a primary-storage error or an explicit error when durable database contents have
+    /// no JSONL export.
+    pub fn finish_exported(self) -> Result<SavedCaptureArtifact, String> {
+        match self.finish()? {
+            CaptureWriterFinish::FileSaved(artifact)
+            | CaptureWriterFinish::DatabaseFinished {
+                jsonl_export: CaptureJsonlExport::Available(artifact),
+                ..
+            } => Ok(*artifact),
+            CaptureWriterFinish::DatabaseFinished {
+                integrity,
+                jsonl_export: CaptureJsonlExport::NotAttempted,
+                ..
+            } => Err(format!(
+                "capture is durably finalized with {integrity:?} integrity; JSONL export was not attempted"
+            )),
+            CaptureWriterFinish::DatabaseFinished {
+                jsonl_export: CaptureJsonlExport::Failed(error),
+                ..
+            } => Err(format!(
+                "capture is durably finalized but JSONL export failed: {error}"
+            )),
+        }
     }
 
     /// Returns a cheap monitor that remains usable after the writer is consumed.
@@ -811,7 +913,7 @@ fn write_capture_stream(
                     CaptureBarrier::Flush => Ok(CaptureWriterBarrierResult::Flushed),
                     CaptureBarrier::Finish => {
                         let content_digest = digest_open_file(writer.get_mut())?;
-                        Ok(CaptureWriterBarrierResult::Finished {
+                        Ok(CaptureWriterBarrierResult::FileFinished {
                             content_digest,
                             final_header: Box::new(header.clone()),
                         })
@@ -885,12 +987,35 @@ fn write_database_capture_stream(
                 let result =
                     finalize_database_capture_metadata(header, &mut pending_metadata, state, kind)
                         .and_then(|()| persist_database_capture(capture, header, kind, state))
-                        .and_then(|()| match kind {
+                        .and_then(|integrity| match kind {
                             CaptureBarrier::Flush => Ok(CaptureWriterBarrierResult::Flushed),
                             CaptureBarrier::Finish => {
-                                let content_digest = export_database_capture(path, capture, state)?;
-                                Ok(CaptureWriterBarrierResult::Finished {
-                                    content_digest,
+                                let integrity = integrity.ok_or_else(|| {
+                                    "finished database capture has no integrity result".to_string()
+                                })?;
+                                let jsonl_export = match integrity {
+                                    LiveCaptureIntegrity::Complete => {
+                                        match export_database_capture(path, capture, state) {
+                                            Ok(content_digest) => {
+                                                CaptureWriterJsonlExport::Available {
+                                                    content_digest,
+                                                }
+                                            }
+                                            Err(error) => CaptureWriterJsonlExport::Failed(error),
+                                        }
+                                    }
+                                    LiveCaptureIntegrity::Incomplete { .. } => {
+                                        CaptureWriterJsonlExport::NotAttempted
+                                    }
+                                    LiveCaptureIntegrity::Unknown => {
+                                        CaptureWriterJsonlExport::Failed(
+                                            "finished live capture has unknown integrity".into(),
+                                        )
+                                    }
+                                };
+                                Ok(CaptureWriterBarrierResult::DatabaseFinished {
+                                    integrity,
+                                    jsonl_export,
                                     final_header: Box::new(header.clone()),
                                 })
                             }
@@ -909,8 +1034,10 @@ fn write_database_capture_stream(
         state,
         CaptureBarrier::Finish,
     )?;
-    persist_database_capture(capture, header, CaptureBarrier::Finish, state)?;
-    export_database_capture(path, capture, state)?;
+    let integrity = persist_database_capture(capture, header, CaptureBarrier::Finish, state)?;
+    if integrity == Some(LiveCaptureIntegrity::Complete) {
+        export_database_capture(path, capture, state)?;
+    }
     Ok(())
 }
 
@@ -959,7 +1086,7 @@ fn persist_database_capture(
     header: &PevcapHeader,
     kind: CaptureBarrier,
     state: &CaptureWriterState,
-) -> Result<(), String> {
+) -> Result<Option<LiveCaptureIntegrity>, String> {
     let header_line = header.to_jsonl_line().map_err(|error| error.to_string())?;
     capture
         .database
@@ -982,8 +1109,9 @@ fn persist_database_capture(
             .database
             .finish_live_capture_with_integrity(capture.id, finished_at_ms, integrity)
             .map_err(|error| format!("could not finish live SQLite capture: {error}"))?;
+        return Ok(Some(integrity));
     }
-    Ok(())
+    Ok(None)
 }
 
 fn export_database_capture(
@@ -1504,7 +1632,12 @@ mod tests {
         .unwrap();
         writer.flush().unwrap();
         assert!(!fs::read_to_string(&path).unwrap().contains("ride_stop"));
-        let artifact = writer.finish().unwrap();
+        let artifact = match writer.finish().unwrap() {
+            CaptureWriterFinish::FileSaved(artifact) => artifact,
+            CaptureWriterFinish::DatabaseFinished { .. } => {
+                panic!("file-only capture unexpectedly used SQLite")
+            }
+        };
         let capture = fs::read_to_string(artifact.path()).unwrap();
         assert_eq!(capture.matches("capture_label=ride_stop").count(), 1);
         assert_eq!(capture.matches("capture_label=balancing_stop").count(), 1);
@@ -1539,10 +1672,20 @@ mod tests {
         writer.state.incomplete_messages.store(2, Ordering::Release);
         let capture_id = writer.live_capture_id.unwrap();
 
-        let error = writer
+        let completion = writer
             .finish()
-            .expect_err("incomplete capture cannot produce a saved export");
-        assert!(error.contains("Incomplete { dropped_messages: 2 }"));
+            .expect("incomplete SQLite capture is still durably finalized");
+        match completion {
+            CaptureWriterFinish::DatabaseFinished {
+                integrity:
+                    LiveCaptureIntegrity::Incomplete {
+                        dropped_messages: 2,
+                    },
+                jsonl_export: CaptureJsonlExport::NotAttempted,
+                ..
+            } => {}
+            other => panic!("unexpected completion: {other:?}"),
+        }
         assert!(!artifact_path.exists());
         let snapshot = database
             .live_capture(capture_id, QueryLimit::new(10).unwrap())
@@ -1555,6 +1698,53 @@ mod tests {
             }
         );
         assert_eq!(snapshot.events.len(), 1);
+        database.shutdown().unwrap();
+    }
+
+    #[test]
+    fn database_export_collision_does_not_hide_durable_capture_completion() {
+        let directory = tempfile::tempdir().unwrap();
+        let database_path = directory.path().join("ride.sqlite");
+        let artifact_path = directory.path().join("capture.jsonl");
+        let database = RideDatabase::open(&database_path).unwrap();
+        let metadata = CaptureMetadata {
+            advertised_services: vec![],
+            gatt_fingerprints: vec![],
+            resolved_identity: None,
+            annotations: vec![],
+        };
+        let writer = CaptureWriter::start_with_database(
+            artifact_path.clone(),
+            WallClockUnixTimestamp::new(1_700_000_000_000),
+            "test",
+            None,
+            &metadata,
+            database.clone(),
+        )
+        .unwrap();
+        let capture_id = writer.live_capture_id.unwrap();
+        writer.flush().unwrap();
+        fs::write(&artifact_path, b"existing user file").unwrap();
+
+        let completion = writer
+            .finish()
+            .expect("JSONL export failure must not erase SQLite finalization");
+        match completion {
+            CaptureWriterFinish::DatabaseFinished {
+                live_capture_id: completed_id,
+                integrity: LiveCaptureIntegrity::Complete,
+                jsonl_export: CaptureJsonlExport::Failed(_),
+                ..
+            } => assert_eq!(completed_id, capture_id),
+            other => panic!("unexpected completion: {other:?}"),
+        }
+        assert_eq!(fs::read(&artifact_path).unwrap(), b"existing user file");
+
+        let snapshot = database
+            .live_capture(capture_id, QueryLimit::new(10).unwrap())
+            .unwrap();
+        assert_eq!(snapshot.state, LiveCaptureState::Finished);
+        assert_eq!(snapshot.integrity, LiveCaptureIntegrity::Complete);
         database.shutdown().unwrap();
     }
 

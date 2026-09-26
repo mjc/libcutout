@@ -2112,7 +2112,7 @@ final class CutoutAppModelTests: XCTestCase {
                     XCTAssertEqual(progress.notificationCount, 0)
                     progressed.fulfill()
                 }
-            case .finished:
+            case .finished, .databaseFinished:
                 XCTAssertGreaterThanOrEqual(finalProgress?.elapsedMilliseconds ?? 0, 1_000)
                 completed.fulfill()
             case .failed:
@@ -2156,7 +2156,7 @@ final class CutoutAppModelTests: XCTestCase {
                     receivedTicks += 1
                     ticks.fulfill()
                 }
-            case .finished: finished.fulfill()
+            case .finished, .databaseFinished: finished.fulfill()
             default: break
             }
         }
@@ -2242,7 +2242,7 @@ final class CutoutAppModelTests: XCTestCase {
                     secondFileName = fileURL.lastPathComponent
                     secondStarted.fulfill()
                 }
-            case let .finished(generation, _), let .failed(generation):
+            case let .finished(generation, _), let .databaseFinished(generation, _), let .failed(generation):
                 if generation == firstGeneration {
                     firstTerminal.fulfill()
                     if let secondFileName {
