@@ -23,26 +23,6 @@ typealias RideHistoryDateProvider = @MainActor () -> Date
 @Observable
 final class CutoutAppModel {
 
-    nonisolated static func runCancellableDetached<Success: Sendable>(
-        priority: TaskPriority,
-        operation: @escaping @Sendable () throws -> Success
-    ) async throws -> Success {
-        let task = Task.detached(priority: priority) {
-            try Task.checkCancellation()
-            let result = try operation()
-            try Task.checkCancellation()
-            return result
-        }
-        return try await withTaskCancellationHandler(
-            operation: {
-                try await task.value
-            },
-            onCancel: {
-                task.cancel()
-            })
-    }
-    nonisolated private static var rideMapLimits: MobileRideMapLimits { .rustOwned }
-
     private(set) var displayState = RideDisplayState()
     private(set) var phase = SessionConnectionPhase.starting
     private(set) var devicePickerScanState: DevicePickerScanState?
@@ -52,20 +32,21 @@ final class CutoutAppModel {
     private(set) var phoneLocationReadback = PhoneLocationReadback(
         snapshot: MobilePhoneLocationSnapshotDto(latestSample: nil, gpsSpeed: nil)
     )
-    private(set) var rideMapSnapshot: MobileRideMapSnapshotDto?
-    private(set) var rideMapStorageError: String?
-    private(set) var rideMapAvailability = MobileRideMapAvailability.checking
-    private(set) var rideMapLiveError: MobileRideMapError?
-    private(set) var rideMapLiveDisplayPoints = [MobileRideMapRouteDisplayPoint]()
-    private(set) var rideMapLiveCameraRegion: MobileRideMapCameraRegion?
-    private(set) var rideMapLiveEndpointMetadata = MobileRideMapRouteEndpointMetadata.empty
-    private(set) var rideMapLiveSegments = [MobileRideMapSegmentDisplayMetadata]()
-    private(set) var rideMapLiveTelemetryState: MobileRideMapTelemetryStateDto?
-    private(set) var rideMapLiveBackgroundGapCount: UInt64 = 0
-    private(set) var rideMapLiveProjectionVersion: UInt64 = 0
-    private(set) var rideMapLivePointsTruncated = false
-    private(set) var rideMapLiveSegmentsOmittedByBudget = false
-    private(set) var rideMapLastDecision: MobileRideMapDecisionDto?
+    let liveRide: LiveRideModel
+    var rideMapSnapshot: MobileRideMapSnapshotDto? { liveRide.snapshot }
+    var rideMapStorageError: String? { liveRide.storageError }
+    var rideMapAvailability: MobileRideMapAvailability { liveRide.availability }
+    var rideMapLiveError: MobileRideMapError? { liveRide.error }
+    var rideMapLiveDisplayPoints: [MobileRideMapRouteDisplayPoint] { liveRide.displayPoints }
+    var rideMapLiveCameraRegion: MobileRideMapCameraRegion? { liveRide.cameraRegion }
+    var rideMapLiveEndpointMetadata: MobileRideMapRouteEndpointMetadata { liveRide.endpointMetadata }
+    var rideMapLiveSegments: [MobileRideMapSegmentDisplayMetadata] { liveRide.segments }
+    var rideMapLiveTelemetryState: MobileRideMapTelemetryStateDto? { liveRide.telemetryState }
+    var rideMapLiveBackgroundGapCount: UInt64 { liveRide.backgroundGapCount }
+    var rideMapLiveProjectionVersion: UInt64 { liveRide.projectionVersion }
+    var rideMapLivePointsTruncated: Bool { liveRide.pointsTruncated }
+    var rideMapLiveSegmentsOmittedByBudget: Bool { liveRide.segmentsOmittedByBudget }
+    var rideMapLastDecision: MobileRideMapDecisionDto? { liveRide.lastDecision }
     let music: MusicFeatureModel
 
     /// Compatibility projection for callers that only display the live map.
@@ -364,16 +345,9 @@ final class CutoutAppModel {
     private var rideSessionRestorationState = RideSessionRestorationState.complete
     private var restorationMarkerAtLaunch: Data?
     private var rideMapVehicleNameCache = [String: String]()
-    private var rideMapRestoreTask: Task<Void, Never>?
     private var musicHistoryRestoreTask: Task<Void, Never>?
     private var musicHistoryRestoreGeneration: UInt64 = 0
     private var phoneAlarmAuthorizationTask: Task<Void, Never>?
-    private var rideMapLiveProjectionTask: Task<Void, Never>?
-    private var rideMapDurationTask: Task<Void, Never>?
-    private var rideMapLiveProjectionCancellation: MobileLiveRideMapProjectionCancellation?
-    private var rideMapDurableProjectionCancellation: MobileRideMapProjectionCancellation?
-    private var rideMapLiveProjectionGeneration: UInt64 = 0
-    private var rideMapLiveProjectionEnabled = false
     private var phoneAlarmAuthorizationGeneration: UInt64 = 0
     private static let liveActivityUpdateIntervalMilliseconds: UInt64 = 1_000
 
@@ -484,14 +458,18 @@ final class CutoutAppModel {
         self.rideHistory = rideHistory
         self.permitsStoredDeviceAutoPairing = permitsStoredDeviceAutoPairing
         self.core = core
+        liveRide = LiveRideModel(
+            state: core.rideMapStateHandle,
+            storageError: core.rideMapStorageError,
+            availability: core.rideMapAvailability,
+            now: { core.now().rawValue }
+        )
         capture = CaptureFeatureModel(
             sessionState: core.rideSessionStateHandle,
             flush: { await core.flushCapture() },
             finish: { await core.finishCapture() },
             changeCaptureLabel: { try core.changeCaptureLabel(generation: $0, action: $1) }
         )
-        rideMapStorageError = core.rideMapStorageError
-        rideMapAvailability = core.rideMapAvailability
         liveActivityCoordinator = LiveActivityRideLifecycleCoordinator(
             manager: liveActivityManager,
             sessionState: core.rideSessionStateHandle,
@@ -562,38 +540,16 @@ final class CutoutAppModel {
                     self?.phoneLocationReadback = PhoneLocationReadback(snapshot: snapshot, receivedAt: receivedAt)
                 },
                 rideMapDecision: { [weak self] snapshot, decision in
-                    self?.applyRideMapDecision(snapshot: snapshot, decision: decision)
+                    self?.liveRide.applyDecision(snapshot: snapshot, decision: decision)
                 },
                 rideMapSnapshot: { [weak self] snapshot in
-                    guard let self else { return }
-                    guard self.acceptsRideMapSnapshot(snapshot) else { return }
-                    if let previousRideID = self.rideMapSnapshot?.rideID,
-                        previousRideID != snapshot.rideID
-                    {
-                        // A newer Rust snapshot can be an automatic replacement, not merely a new
-                        // revision of the same ride. Invalidate both successful and failed projections
-                        // from the previous ride before publishing the replacement.
-                        self.invalidateLiveProjection(clearPoints: true)
-                        self.rideMapLiveError = nil
-                    }
-                    self.rideMapSnapshot = snapshot
-                    self.rideMapLiveTelemetryState = snapshot.telemetryState
-                    self.updateRideMapDurationTicker()
-                    if self.rideMapRestoreTask == nil {
-                        self.restoreRideMapState()
-                    }
+                    self?.liveRide.applySnapshot(snapshot)
                 },
                 rideMapError: { [weak self] event in
-                    guard let self,
-                        Self.shouldApplyRideMapError(
-                            context: event.context,
-                            currentSnapshot: self.rideMapSnapshot
-                        )
-                    else { return }
-                    self.rideMapLiveError = event.error
+                    self?.liveRide.applyError(event)
                 },
                 rideMapAvailability: { [weak self] availability in
-                    self?.rideMapAvailability = availability
+                    self?.liveRide.setAvailability(availability)
                 },
                 protocolIdentity: { [weak self] candidate in
                     self?.applyProtocolIdentityCandidate(candidate)
@@ -621,7 +577,7 @@ final class CutoutAppModel {
 
     private func restoreRideMapState() {
         guard let state = core.rideMapStateHandle else { return }
-        rideMapSnapshot = state.currentSnapshot()
+        liveRide.restore()
         musicHistoryRestoreTask?.cancel()
         musicHistoryRestoreGeneration &+= 1
         let historyGeneration = musicHistoryRestoreGeneration
@@ -629,8 +585,6 @@ final class CutoutAppModel {
             music.rideMapClosed()
             return
         }
-        rideMapLiveTelemetryState = rideMapSnapshot?.telemetryState
-        updateRideMapDurationTicker()
         musicHistoryRestoreTask = Task { @MainActor [weak self] in
             do {
                 let history = try await state.currentMusicHistoryAsync()
@@ -649,46 +603,6 @@ final class CutoutAppModel {
                     self.rideMapSnapshot?.rideID == restoredRideID
                 else { return }
                 self.music.setHistoryPersistenceError(Self.mapRideMapError(error))
-            }
-        }
-        rideMapRestoreTask?.cancel()
-        let previewLimit = Self.rideMapLimits.liveTailPointLimit
-        let restorationGeneration = rideMapLiveProjectionGeneration
-        rideMapRestoreTask = Task { [weak self] in
-            do {
-                let result = try await Self.runCancellableDetached(priority: .userInitiated) {
-                    // Restoration loads only the recorder tail synchronously. Project the
-                    // durable route here so relaunch preserves the whole ride and its canonical
-                    // camera bounds; subsequent live updates may use the bounded recorder path.
-                    try state.projectStoredPoints(
-                        rideID: restoredRideID,
-                        budget: previewLimit
-                    )
-                }
-                guard !Task.isCancelled, let self else { return }
-                guard
-                    Self.shouldApplyRestoredLiveProjection(
-                        restorationGeneration: restorationGeneration,
-                        currentGeneration: self.rideMapLiveProjectionGeneration,
-                        liveProjectionEnabled: self.rideMapLiveProjectionEnabled
-                    )
-                else {
-                    return
-                }
-                self.applyLiveProjection(result)
-            } catch {
-                guard !Task.isCancelled, let self else { return }
-                guard
-                    Self.shouldApplyRestoredLiveProjection(
-                        restorationGeneration: restorationGeneration,
-                        currentGeneration: self.rideMapLiveProjectionGeneration,
-                        liveProjectionEnabled: self.rideMapLiveProjectionEnabled
-                    )
-                else {
-                    return
-                }
-                self.rideMapLiveError = Self.mapRideMapError(error)
-                self.clearLiveProjectionState()
             }
         }
     }
@@ -715,7 +629,7 @@ final class CutoutAppModel {
         }
         core.resetRideMapLocationAdmission()
         if let error = await music.applyHistoryForNewRideAsync() {
-            rideMapLiveError = error
+            liveRide.setError(error)
             guard core.rideMapStateHandle?.currentSnapshot() != nil else {
                 return false
             }
@@ -743,37 +657,14 @@ final class CutoutAppModel {
             try await core.stopRideMap(atMs: currentMonotonicTime.rawValue)
         }
         if stopped {
-            invalidateLiveProjection(clearPoints: false)
+            liveRide.invalidateProjection(clearPoints: false)
             music.clearMusicCaptureContext()
         }
         return stopped
     }
 
     func refreshRideMapDuration() {
-        guard let snapshot = core.rideMapStateHandle?.currentSnapshot(atMs: currentMonotonicTime.rawValue),
-            snapshot.state == .active
-        else {
-            return
-        }
-        rideMapSnapshot = snapshot
-    }
-
-    private func updateRideMapDurationTicker() {
-        rideMapDurationTask?.cancel()
-        guard rideMapSnapshot?.state == .active else {
-            rideMapDurationTask = nil
-            return
-        }
-        rideMapDurationTask = Task { [weak self] in
-            while Task.isCancelled == false {
-                self?.refreshRideMapDuration()
-                do {
-                    try await Task.sleep(for: .seconds(1))
-                } catch {
-                    return
-                }
-            }
-        }
+        liveRide.refreshDuration()
     }
 
     @discardableResult
@@ -781,7 +672,7 @@ final class CutoutAppModel {
         guard await applyRideMapCommand({ try await core.saveRideMap() }) else {
             return false
         }
-        invalidateLiveProjection(clearPoints: false)
+        liveRide.invalidateProjection(clearPoints: false)
         music.rideMapClosed()
         reloadRideHistory()
         return true
@@ -792,7 +683,7 @@ final class CutoutAppModel {
         guard await applyRideMapCommand({ try await core.discardRideMap() }) else {
             return false
         }
-        invalidateLiveProjection(clearPoints: true)
+        liveRide.invalidateProjection(clearPoints: true)
         music.rideMapClosed()
         rideHistory.clearRouteProjection()
         reloadRideHistory()
@@ -811,178 +702,7 @@ final class CutoutAppModel {
     }
 
     nonisolated static func mapRideMapError(_ error: Error) -> MobileRideMapError {
-        if let error = error as? MobileRideMapError {
-            return error
-        }
-        return .storageError(String(describing: error))
-    }
-
-    static func shouldApplyLiveProjection(
-        generation: UInt64,
-        currentGeneration: UInt64,
-        enabled: Bool,
-        rideID: String,
-        currentRideID: String?
-    ) -> Bool {
-        enabled && generation == currentGeneration && currentRideID == rideID
-    }
-
-    static func shouldApplyRestoredLiveProjection(
-        restorationGeneration: UInt64,
-        currentGeneration: UInt64,
-        liveProjectionEnabled: Bool
-    ) -> Bool {
-        !liveProjectionEnabled && restorationGeneration == currentGeneration
-    }
-
-    static func shouldApplyRideMapError(
-        context: MobileRideMapErrorContext,
-        currentSnapshot: MobileRideMapSnapshotDto?
-    ) -> Bool {
-        guard let currentSnapshot else { return context.rideID == nil }
-        guard context.rideID == currentSnapshot.rideID else { return false }
-        guard let generation = context.generation else { return true }
-        return currentSnapshot.recordingToken?.generation == generation
-    }
-
-    private func applyRideMapDecision(
-        snapshot: MobileRideMapSnapshotDto,
-        decision: MobileRideMapDecisionDto
-    ) {
-        guard acceptsRideMapSnapshot(snapshot) else { return }
-        rideMapLiveError = nil
-        rideMapSnapshot = snapshot
-        rideMapLastDecision = decision
-        switch decision {
-        case let .pending(point):
-            rideMapLiveTelemetryState = point.telemetryState
-        case let .accepted(point):
-            rideMapLiveTelemetryState = point.telemetryState
-            requestLiveProjection()
-        case .rejected, .ignored, .storageError:
-            break
-        }
-    }
-
-    private func acceptsRideMapSnapshot(_ snapshot: MobileRideMapSnapshotDto) -> Bool {
-        guard let current = rideMapSnapshot else { return true }
-        guard snapshot.revision >= current.revision else { return false }
-        return snapshot.revision != current.revision || snapshot.rideID == current.rideID
-    }
-
-    /// Serializes live projections while allowing a burst of accepted points to coalesce.
-    ///
-    /// The Rust projection snapshots the recorder before doing its work, and the detached
-    /// operation receives a live-only cancellation token. A generation change cancels the
-    /// in-flight operation; the task remains alive until that operation returns so projections
-    /// never overlap on the same map core.
-    private func requestLiveProjection() {
-        rideMapLiveProjectionGeneration &+= 1
-        rideMapLiveProjectionEnabled = true
-        rideMapLiveProjectionCancellation?.cancel()
-        rideMapDurableProjectionCancellation?.cancel()
-        guard rideMapLiveProjectionTask == nil else { return }
-
-        guard let state = core.rideMapStateHandle else { return }
-        let budget = Self.rideMapLimits.liveTailPointLimit
-        rideMapLiveProjectionTask = Task { [weak self] in
-            defer {
-                self?.rideMapLiveProjectionTask = nil
-                self?.rideMapLiveProjectionCancellation = nil
-                self?.rideMapDurableProjectionCancellation = nil
-            }
-            while let self {
-                guard self.rideMapLiveProjectionEnabled else { break }
-                // Capture the identity for this individual query. A replacement can arrive
-                // while the previous query is unwinding; the surviving task must then retry
-                // the replacement ride instead of comparing every result with the old ride.
-                guard let rideID = self.rideMapSnapshot?.rideID, rideID.isEmpty == false else {
-                    break
-                }
-                let generation = self.rideMapLiveProjectionGeneration
-                let liveCancellation = MobileLiveRideMapProjectionCancellation()
-                let durableCancellation = MobileRideMapProjectionCancellation()
-                self.rideMapLiveProjectionCancellation = liveCancellation
-                self.rideMapDurableProjectionCancellation = durableCancellation
-                do {
-                    let projection = try await Self.runCancellableDetached(priority: .userInitiated) {
-                        try state.projectCurrentRoutePoints(
-                            budget: budget,
-                            rideID: rideID,
-                            durableCancellation: durableCancellation,
-                            liveCancellation: liveCancellation
-                        )
-                    }
-                    guard self.rideMapLiveProjectionEnabled else {
-                        break
-                    }
-                    guard
-                        Self.shouldApplyLiveProjection(
-                            generation: generation,
-                            currentGeneration: self.rideMapLiveProjectionGeneration,
-                            enabled: self.rideMapLiveProjectionEnabled,
-                            rideID: rideID,
-                            currentRideID: self.rideMapSnapshot?.rideID
-                        )
-                    else {
-                        continue
-                    }
-                    self.applyLiveProjection(projection)
-                } catch {
-                    guard self.rideMapLiveProjectionEnabled else {
-                        break
-                    }
-                    guard
-                        Self.shouldApplyLiveProjection(
-                            generation: generation,
-                            currentGeneration: self.rideMapLiveProjectionGeneration,
-                            enabled: self.rideMapLiveProjectionEnabled,
-                            rideID: rideID,
-                            currentRideID: self.rideMapSnapshot?.rideID
-                        )
-                    else {
-                        continue
-                    }
-                    self.rideMapLiveError = Self.mapRideMapError(error)
-                    self.clearLiveProjectionState()
-                }
-                return
-            }
-        }
-    }
-
-    private func applyLiveProjection(_ projection: MobileRideMapRouteProjection) {
-        rideMapLiveProjectionVersion &+= 1
-        rideMapLiveDisplayPoints = projection.points
-        rideMapLiveCameraRegion = projection.canonicalCameraRegion ?? projection.cameraRegion
-        rideMapLiveEndpointMetadata = projection.endpointMetadata
-        rideMapLiveSegments = projection.segments
-        rideMapLiveBackgroundGapCount = projection.backgroundGapCount
-        rideMapLivePointsTruncated = projection.pointsOmittedByBudget
-        rideMapLiveSegmentsOmittedByBudget = projection.segmentsOmittedByBudget
-    }
-
-    private func clearLiveProjectionState() {
-        rideMapLiveProjectionVersion &+= 1
-        rideMapLiveDisplayPoints.removeAll(keepingCapacity: true)
-        rideMapLiveCameraRegion = nil
-        rideMapLiveEndpointMetadata = .empty
-        rideMapLiveSegments.removeAll(keepingCapacity: true)
-        rideMapLiveTelemetryState = nil
-        rideMapLiveBackgroundGapCount = 0
-        rideMapLivePointsTruncated = false
-        rideMapLiveSegmentsOmittedByBudget = false
-    }
-
-    private func invalidateLiveProjection(clearPoints: Bool) {
-        rideMapLiveProjectionGeneration &+= 1
-        rideMapLiveProjectionEnabled = false
-        rideMapLiveProjectionCancellation?.cancel()
-        rideMapDurableProjectionCancellation?.cancel()
-        if clearPoints {
-            clearLiveProjectionState()
-            rideMapLastDecision = nil
-        }
+        LiveRideModel.mapError(error)
     }
 
     private func applyRideMapCommand(
@@ -990,19 +710,12 @@ final class CutoutAppModel {
         _ command: () async throws -> MobileRideMapSnapshotDto
     ) async -> Bool {
         do {
-            rideMapSnapshot = try await command()
-            if let rideMapSnapshot {
-                core.updateRideLocationDemand(for: rideMapSnapshot.state)
-            }
-            rideMapLiveError = nil
-            updateRideMapDurationTicker()
-            if resetPoints {
-                invalidateLiveProjection(clearPoints: true)
-            }
-            rideMapLiveTelemetryState = rideMapSnapshot?.telemetryState
+            let snapshot = try await command()
+            core.updateRideLocationDemand(for: snapshot.state)
+            liveRide.applyCommandSnapshot(snapshot, resetPoints: resetPoints)
             return true
         } catch {
-            rideMapLiveError = Self.mapRideMapError(error)
+            liveRide.setError(Self.mapRideMapError(error))
             return false
         }
     }

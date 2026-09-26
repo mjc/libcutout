@@ -464,13 +464,13 @@ final class CutoutAppModelTests: XCTestCase {
 
         let model = CutoutAppModel(core: driver)
 
-        XCTAssertEqual(model.rideMapSnapshot?.associatedVehicle, "pev-restored")
-        XCTAssertEqual(model.rideMapSnapshot?.summary.pointCount, 1)
-        XCTAssertEqual(model.rideMapLiveTelemetryState, .associatedNoTelemetry)
+        XCTAssertEqual(model.liveRide.snapshot?.associatedVehicle, "pev-restored")
+        XCTAssertEqual(model.liveRide.snapshot?.summary.pointCount, 1)
+        XCTAssertEqual(model.liveRide.telemetryState, .associatedNoTelemetry)
         await Self.waitUntil("restored ride-map projection") {
-            !model.rideMapLiveDisplayPoints.isEmpty
+            !model.liveRide.displayPoints.isEmpty
         }
-        XCTAssertEqual(model.rideMapLiveDisplayPoints.count, 1)
+        XCTAssertEqual(model.liveRide.displayPoints.count, 1)
     }
 
     @MainActor
@@ -481,7 +481,7 @@ final class CutoutAppModelTests: XCTestCase {
         let paused = await model.pauseRideMap()
         XCTAssertFalse(paused)
         XCTAssertEqual(model.rideMapError, .noActiveRide)
-        XCTAssertEqual(model.rideMapLiveError, .noActiveRide)
+        XCTAssertEqual(model.liveRide.error, .noActiveRide)
         XCTAssertNil(model.rideHistory.error)
         XCTAssertNil(model.rideHistory.routeError)
     }
@@ -671,7 +671,7 @@ final class CutoutAppModelTests: XCTestCase {
     @MainActor
     func testLiveProjectionGenerationRejectsStaleOrDisabledResults() {
         XCTAssertTrue(
-            CutoutAppModel.shouldApplyLiveProjection(
+            LiveRideModel.shouldApplyProjection(
                 generation: 3,
                 currentGeneration: 3,
                 enabled: true,
@@ -680,7 +680,7 @@ final class CutoutAppModelTests: XCTestCase {
             )
         )
         XCTAssertFalse(
-            CutoutAppModel.shouldApplyLiveProjection(
+            LiveRideModel.shouldApplyProjection(
                 generation: 2,
                 currentGeneration: 3,
                 enabled: true,
@@ -689,7 +689,7 @@ final class CutoutAppModelTests: XCTestCase {
             )
         )
         XCTAssertFalse(
-            CutoutAppModel.shouldApplyLiveProjection(
+            LiveRideModel.shouldApplyProjection(
                 generation: 3,
                 currentGeneration: 3,
                 enabled: false,
@@ -698,7 +698,7 @@ final class CutoutAppModelTests: XCTestCase {
             )
         )
         XCTAssertFalse(
-            CutoutAppModel.shouldApplyLiveProjection(
+            LiveRideModel.shouldApplyProjection(
                 generation: 3,
                 currentGeneration: 3,
                 enabled: true,
@@ -707,7 +707,7 @@ final class CutoutAppModelTests: XCTestCase {
             )
         )
         XCTAssertTrue(
-            CutoutAppModel.shouldApplyLiveProjection(
+            LiveRideModel.shouldApplyProjection(
                 generation: 4,
                 currentGeneration: 4,
                 enabled: true,
@@ -742,17 +742,17 @@ final class CutoutAppModelTests: XCTestCase {
         )
 
         XCTAssertFalse(
-            CutoutAppModel.shouldApplyRideMapError(
+            LiveRideModel.shouldApplyError(
                 context: staleRide,
                 currentSnapshot: current
             ))
         XCTAssertFalse(
-            CutoutAppModel.shouldApplyRideMapError(
+            LiveRideModel.shouldApplyError(
                 context: staleGeneration,
                 currentSnapshot: current
             ))
         XCTAssertTrue(
-            CutoutAppModel.shouldApplyRideMapError(
+            LiveRideModel.shouldApplyError(
                 context: currentRide,
                 currentSnapshot: current
             ))
@@ -761,21 +761,21 @@ final class CutoutAppModelTests: XCTestCase {
     @MainActor
     func testRestoredProjectionDoesNotReplaceNewerLiveState() {
         XCTAssertTrue(
-            CutoutAppModel.shouldApplyRestoredLiveProjection(
+            LiveRideModel.shouldApplyRestoredProjection(
                 restorationGeneration: 3,
                 currentGeneration: 3,
                 liveProjectionEnabled: false
             )
         )
         XCTAssertFalse(
-            CutoutAppModel.shouldApplyRestoredLiveProjection(
+            LiveRideModel.shouldApplyRestoredProjection(
                 restorationGeneration: 2,
                 currentGeneration: 3,
                 liveProjectionEnabled: false
             )
         )
         XCTAssertFalse(
-            CutoutAppModel.shouldApplyRestoredLiveProjection(
+            LiveRideModel.shouldApplyRestoredProjection(
                 restorationGeneration: 3,
                 currentGeneration: 3,
                 liveProjectionEnabled: true
@@ -3202,7 +3202,7 @@ final class CutoutAppModelTests: XCTestCase {
         core.start()
         XCTAssertTrue(core.pair(platformIdentifier: fixture.candidate.platformIdentifier))
         await Self.waitUntil("production ride-map recording") {
-            model.phase == .live && model.rideMapSnapshot?.state == .active
+            model.phase == .live && model.liveRide.snapshot?.state == .active
         }
         let connection = core.rideSessionStateHandle.connectionAttemptSnapshot()
         XCTAssertEqual(connection.readiness, .verified)
@@ -3224,11 +3224,11 @@ final class CutoutAppModelTests: XCTestCase {
             ]
         )
         await Self.waitUntil("app-model ride-map decision") {
-            guard case .accepted? = model.rideMapLastDecision else { return false }
+            guard case .accepted? = model.liveRide.lastDecision else { return false }
             return true
         }
         await Self.waitUntil("app-model live projection") {
-            !model.rideMapLiveDisplayPoints.isEmpty
+            !model.liveRide.displayPoints.isEmpty
         }
     }
 }

@@ -1,0 +1,322 @@
+import CutoutMobile
+import CutoutMobileFFI
+import Foundation
+import Observation
+
+/// Native lifetime and presentation for the Rust-owned live ride.
+@MainActor
+@Observable
+final class LiveRideModel {
+    private(set) var snapshot: MobileRideMapSnapshotDto?
+    private(set) var storageError: String?
+    private(set) var availability: MobileRideMapAvailability
+    private(set) var error: MobileRideMapError?
+    private(set) var displayPoints = [MobileRideMapRouteDisplayPoint]()
+    private(set) var cameraRegion: MobileRideMapCameraRegion?
+    private(set) var endpointMetadata = MobileRideMapRouteEndpointMetadata.empty
+    private(set) var segments = [MobileRideMapSegmentDisplayMetadata]()
+    private(set) var telemetryState: MobileRideMapTelemetryStateDto?
+    private(set) var backgroundGapCount: UInt64 = 0
+    private(set) var projectionVersion: UInt64 = 0
+    private(set) var pointsTruncated = false
+    private(set) var segmentsOmittedByBudget = false
+    private(set) var lastDecision: MobileRideMapDecisionDto?
+
+    private let state: MobileRideMapState?
+    private let now: @MainActor () -> UInt64
+    private var restoreTask: Task<Void, Never>?
+    private var projectionTask: Task<Void, Never>?
+    private var durationTask: Task<Void, Never>?
+    private var liveCancellation: MobileLiveRideMapProjectionCancellation?
+    private var durableCancellation: MobileRideMapProjectionCancellation?
+    private var projectionGeneration: UInt64 = 0
+    private var projectionEnabled = false
+
+    private struct ProjectionRequest {
+        let rideID: String
+        let generation: UInt64
+        let liveCancellation: MobileLiveRideMapProjectionCancellation
+        let durableCancellation: MobileRideMapProjectionCancellation
+    }
+
+    init(
+        state: MobileRideMapState?,
+        storageError: String?,
+        availability: MobileRideMapAvailability,
+        now: @escaping @MainActor () -> UInt64
+    ) {
+        self.state = state
+        self.storageError = storageError
+        self.availability = availability
+        self.now = now
+    }
+
+    isolated deinit {
+        restoreTask?.cancel()
+        projectionTask?.cancel()
+        durationTask?.cancel()
+        liveCancellation?.cancel()
+        durableCancellation?.cancel()
+    }
+
+    func restore() {
+        guard let state else { return }
+        snapshot = state.currentSnapshot()
+        telemetryState = snapshot?.telemetryState
+        updateDurationTicker()
+        restoreTask?.cancel()
+        guard let rideID = snapshot?.rideID else { return }
+        let generation = projectionGeneration
+        let budget = MobileRideMapLimits.rustOwned.liveTailPointLimit
+        restoreTask = Task { [weak self] in
+            do {
+                let projection = try await Self.runCancellableDetached(priority: .userInitiated) {
+                    try state.projectStoredPoints(rideID: rideID, budget: budget)
+                }
+                guard !Task.isCancelled, let self,
+                    Self.shouldApplyRestoredProjection(
+                        restorationGeneration: generation,
+                        currentGeneration: self.projectionGeneration,
+                        liveProjectionEnabled: self.projectionEnabled
+                    ), self.snapshot?.rideID == rideID
+                else { return }
+                self.applyProjection(projection)
+            } catch {
+                guard !Task.isCancelled, let self,
+                    Self.shouldApplyRestoredProjection(
+                        restorationGeneration: generation,
+                        currentGeneration: self.projectionGeneration,
+                        liveProjectionEnabled: self.projectionEnabled
+                    ), self.snapshot?.rideID == rideID
+                else { return }
+                self.error = Self.mapError(error)
+                self.clearProjection()
+            }
+        }
+    }
+
+    func applySnapshot(_ next: MobileRideMapSnapshotDto) {
+        guard accepts(next) else { return }
+        if let previousRideID = snapshot?.rideID, previousRideID != next.rideID {
+            invalidateProjection(clearPoints: true)
+            error = nil
+        }
+        snapshot = next
+        telemetryState = next.telemetryState
+        updateDurationTicker()
+        if restoreTask == nil { restore() }
+    }
+
+    func applyDecision(snapshot next: MobileRideMapSnapshotDto, decision: MobileRideMapDecisionDto) {
+        guard accepts(next) else { return }
+        error = nil
+        snapshot = next
+        lastDecision = decision
+        switch decision {
+        case let .pending(point):
+            telemetryState = point.telemetryState
+        case let .accepted(point):
+            telemetryState = point.telemetryState
+            requestProjection()
+        case .rejected, .ignored, .storageError:
+            break
+        }
+    }
+
+    func applyError(_ event: MobileRideMapErrorEvent) {
+        guard Self.shouldApplyError(context: event.context, currentSnapshot: snapshot) else { return }
+        error = event.error
+    }
+
+    func setError(_ error: MobileRideMapError?) {
+        self.error = error
+    }
+
+    func setAvailability(_ availability: MobileRideMapAvailability) {
+        self.availability = availability
+    }
+
+    func applyCommandSnapshot(_ snapshot: MobileRideMapSnapshotDto, resetPoints: Bool) {
+        self.snapshot = snapshot
+        error = nil
+        updateDurationTicker()
+        if resetPoints { invalidateProjection(clearPoints: true) }
+        telemetryState = snapshot.telemetryState
+    }
+
+    func refreshDuration() {
+        guard let next = state?.currentSnapshot(atMs: now()), next.state == .active else { return }
+        snapshot = next
+    }
+
+    func invalidateProjection(clearPoints: Bool) {
+        projectionGeneration &+= 1
+        projectionEnabled = false
+        liveCancellation?.cancel()
+        durableCancellation?.cancel()
+        if clearPoints {
+            clearProjection()
+            lastDecision = nil
+        }
+    }
+
+    private func updateDurationTicker() {
+        durationTask?.cancel()
+        guard snapshot?.state == .active else {
+            durationTask = nil
+            return
+        }
+        durationTask = Task { [weak self] in
+            while !Task.isCancelled {
+                self?.refreshDuration()
+                do { try await Task.sleep(for: .seconds(1)) } catch { return }
+            }
+        }
+    }
+
+    private func accepts(_ next: MobileRideMapSnapshotDto) -> Bool {
+        guard let current = snapshot else { return true }
+        guard next.revision >= current.revision else { return false }
+        return next.revision != current.revision || next.rideID == current.rideID
+    }
+
+    private func requestProjection() {
+        projectionGeneration &+= 1
+        projectionEnabled = true
+        liveCancellation?.cancel()
+        durableCancellation?.cancel()
+        guard projectionTask == nil, let state else { return }
+        let budget = MobileRideMapLimits.rustOwned.liveTailPointLimit
+        projectionTask = Task { [weak self] in
+            defer {
+                self?.projectionTask = nil
+                self?.liveCancellation = nil
+                self?.durableCancellation = nil
+            }
+            while let request = self?.nextProjectionRequest() {
+                do {
+                    let projection = try await Self.runCancellableDetached(priority: .userInitiated) {
+                        try state.projectCurrentRoutePoints(
+                            budget: budget,
+                            rideID: request.rideID,
+                            durableCancellation: request.durableCancellation,
+                            liveCancellation: request.liveCancellation
+                        )
+                    }
+                    guard let self else { break }
+                    guard self.projectionEnabled else { break }
+                    guard
+                        Self.shouldApplyProjection(
+                            generation: request.generation,
+                            currentGeneration: self.projectionGeneration,
+                            enabled: self.projectionEnabled,
+                            rideID: request.rideID,
+                            currentRideID: self.snapshot?.rideID
+                        )
+                    else { continue }
+                    self.applyProjection(projection)
+                } catch {
+                    guard let self else { break }
+                    guard self.projectionEnabled else { break }
+                    guard
+                        Self.shouldApplyProjection(
+                            generation: request.generation,
+                            currentGeneration: self.projectionGeneration,
+                            enabled: self.projectionEnabled,
+                            rideID: request.rideID,
+                            currentRideID: self.snapshot?.rideID
+                        )
+                    else { continue }
+                    self.error = Self.mapError(error)
+                    self.clearProjection()
+                }
+                return
+            }
+        }
+    }
+
+    private func nextProjectionRequest() -> ProjectionRequest? {
+        guard projectionEnabled, let rideID = snapshot?.rideID, !rideID.isEmpty else { return nil }
+        let request = ProjectionRequest(
+            rideID: rideID,
+            generation: projectionGeneration,
+            liveCancellation: MobileLiveRideMapProjectionCancellation(),
+            durableCancellation: MobileRideMapProjectionCancellation()
+        )
+        liveCancellation = request.liveCancellation
+        durableCancellation = request.durableCancellation
+        return request
+    }
+
+    private func applyProjection(_ projection: MobileRideMapRouteProjection) {
+        projectionVersion &+= 1
+        displayPoints = projection.points
+        cameraRegion = projection.canonicalCameraRegion ?? projection.cameraRegion
+        endpointMetadata = projection.endpointMetadata
+        segments = projection.segments
+        backgroundGapCount = projection.backgroundGapCount
+        pointsTruncated = projection.pointsOmittedByBudget
+        segmentsOmittedByBudget = projection.segmentsOmittedByBudget
+    }
+
+    private func clearProjection() {
+        projectionVersion &+= 1
+        displayPoints.removeAll(keepingCapacity: true)
+        cameraRegion = nil
+        endpointMetadata = .empty
+        segments.removeAll(keepingCapacity: true)
+        telemetryState = nil
+        backgroundGapCount = 0
+        pointsTruncated = false
+        segmentsOmittedByBudget = false
+    }
+
+    nonisolated static func mapError(_ error: Error) -> MobileRideMapError {
+        if let error = error as? MobileRideMapError { return error }
+        return .storageError(String(describing: error))
+    }
+
+    static func shouldApplyProjection(
+        generation: UInt64,
+        currentGeneration: UInt64,
+        enabled: Bool,
+        rideID: String,
+        currentRideID: String?
+    ) -> Bool {
+        enabled && generation == currentGeneration && currentRideID == rideID
+    }
+
+    static func shouldApplyRestoredProjection(
+        restorationGeneration: UInt64,
+        currentGeneration: UInt64,
+        liveProjectionEnabled: Bool
+    ) -> Bool {
+        !liveProjectionEnabled && restorationGeneration == currentGeneration
+    }
+
+    static func shouldApplyError(
+        context: MobileRideMapErrorContext,
+        currentSnapshot: MobileRideMapSnapshotDto?
+    ) -> Bool {
+        guard let currentSnapshot else { return context.rideID == nil }
+        guard context.rideID == currentSnapshot.rideID else { return false }
+        guard let generation = context.generation else { return true }
+        return currentSnapshot.recordingToken?.generation == generation
+    }
+
+    private nonisolated static func runCancellableDetached<Success: Sendable>(
+        priority: TaskPriority,
+        operation: @escaping @Sendable () throws -> Success
+    ) async throws -> Success {
+        let task = Task.detached(priority: priority) {
+            try Task.checkCancellation()
+            let result = try operation()
+            try Task.checkCancellation()
+            return result
+        }
+        return try await withTaskCancellationHandler(
+            operation: { try await task.value },
+            onCancel: { task.cancel() }
+        )
+    }
+}

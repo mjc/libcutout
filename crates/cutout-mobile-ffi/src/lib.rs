@@ -5471,6 +5471,15 @@ pub enum MobileRideDatabaseError {
     /// The capture-history cursor has a malformed digest or timestamp.
     #[error("invalid PEVCAP capture history cursor")]
     InvalidPevcapCaptureCursor,
+    /// The requested original-byte capture is not retained.
+    #[error("PEVCAP capture was not found")]
+    PevcapCaptureNotFound,
+    /// Retained original bytes failed their length or digest check.
+    #[error("PEVCAP capture integrity check failed")]
+    PevcapCaptureIntegrity,
+    /// The original-byte capture digest is malformed.
+    #[error("invalid PEVCAP capture digest")]
+    InvalidPevcapCaptureDigest,
     /// Geographic query bounds were non-finite, out of range, or reversed.
     #[error("invalid geographic bounds")]
     InvalidGeographicBounds,
@@ -5566,6 +5575,15 @@ fn map_ride_database_error(error: persistence::StorageError) -> MobileRideDataba
         }
         persistence::StorageError::InvalidPevcapCaptureCursor => {
             MobileRideDatabaseError::InvalidPevcapCaptureCursor
+        }
+        persistence::StorageError::PevcapCaptureNotFound => {
+            MobileRideDatabaseError::PevcapCaptureNotFound
+        }
+        persistence::StorageError::PevcapCaptureIntegrity(_) => {
+            MobileRideDatabaseError::PevcapCaptureIntegrity
+        }
+        persistence::StorageError::InvalidPevcapCaptureDigest => {
+            MobileRideDatabaseError::InvalidPevcapCaptureDigest
         }
         persistence::StorageError::InvalidGeographicBounds => {
             MobileRideDatabaseError::InvalidGeographicBounds
@@ -15516,6 +15534,24 @@ mod tests {
         fs, thread,
         time::{Duration, Instant},
     };
+
+    #[test]
+    fn original_capture_export_errors_keep_distinct_ffi_categories() {
+        assert_eq!(
+            map_ride_database_error(persistence::StorageError::PevcapCaptureNotFound),
+            MobileRideDatabaseError::PevcapCaptureNotFound
+        );
+        assert_eq!(
+            map_ride_database_error(persistence::StorageError::PevcapCaptureIntegrity(
+                "corrupt bytes".to_owned()
+            )),
+            MobileRideDatabaseError::PevcapCaptureIntegrity
+        );
+        assert_eq!(
+            map_ride_database_error(persistence::StorageError::InvalidPevcapCaptureDigest),
+            MobileRideDatabaseError::InvalidPevcapCaptureDigest
+        );
+    }
 
     fn restored_database_core(database: Arc<RideDatabaseHandle>) -> Arc<MobileRideMapCore> {
         restored_database_core_at(database, 0)

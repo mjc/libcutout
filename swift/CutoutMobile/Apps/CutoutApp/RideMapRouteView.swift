@@ -23,6 +23,7 @@ final class RideMapPresentationState {
 
 struct RideMapRouteView: View {
     @Bindable var model: CutoutAppModel
+    @Bindable var liveRide: LiveRideModel
     @Bindable var history: RideHistoryModel
     @Bindable var presentation: RideMapPresentationState
     private let openHistory: ((String) -> Void)?
@@ -50,6 +51,7 @@ struct RideMapRouteView: View {
         back: (() -> Void)? = nil
     ) {
         self._model = Bindable(wrappedValue: model)
+        self._liveRide = Bindable(wrappedValue: model.liveRide)
         self._history = Bindable(wrappedValue: model.rideHistory)
         self._presentation = Bindable(wrappedValue: presentation)
         self.openHistory = openHistory
@@ -109,22 +111,22 @@ struct RideMapRouteView: View {
 
     private var liveContent: some View {
         RideMapLiveContentView(
-            displayPoints: model.rideMapLiveDisplayPoints,
-            routeID: Self.liveRouteID(for: model.rideMapSnapshot),
-            projectionVersion: model.rideMapLiveProjectionVersion,
-            endpointMetadata: model.rideMapLiveEndpointMetadata,
-            cameraRegion: model.rideMapLiveCameraRegion,
-            segments: model.rideMapLiveSegments,
-            snapshot: model.rideMapSnapshot,
-            availability: model.rideMapAvailability,
+            displayPoints: liveRide.displayPoints,
+            routeID: Self.liveRouteID(for: liveRide.snapshot),
+            projectionVersion: liveRide.projectionVersion,
+            endpointMetadata: liveRide.endpointMetadata,
+            cameraRegion: liveRide.cameraRegion,
+            segments: liveRide.segments,
+            snapshot: liveRide.snapshot,
+            availability: liveRide.availability,
             speed: model.speed,
             vehicleName: model.rideMapVehicleName,
-            mapError: model.rideMapLiveError,
-            lastDecision: model.rideMapLastDecision,
-            telemetryState: model.rideMapLiveTelemetryState,
-            pointsTruncated: model.rideMapLivePointsTruncated,
-            segmentsOmittedByBudget: model.rideMapLiveSegmentsOmittedByBudget,
-            canonicalBackgroundGapCount: model.rideMapLiveBackgroundGapCount,
+            mapError: liveRide.error,
+            lastDecision: liveRide.lastDecision,
+            telemetryState: liveRide.telemetryState,
+            pointsTruncated: liveRide.pointsTruncated,
+            segmentsOmittedByBudget: liveRide.segmentsOmittedByBudget,
+            canonicalBackgroundGapCount: liveRide.backgroundGapCount,
             mapPosition: $presentation.liveMapPosition,
             isApplyingCamera: $presentation.liveIsApplyingCamera,
             followsLatestPoint: $presentation.followsLatestPoint,
@@ -140,7 +142,7 @@ struct RideMapRouteView: View {
     private var historyContent: some View {
         RideMapHistoryContentView(
             isRecording: model.isRideMapRecording,
-            isPaused: model.rideMapSnapshot?.state == .paused,
+            isPaused: liveRide.snapshot?.state == .paused,
             rides: history.rides,
             searchText: $history.searchText,
             canLoadMore: history.canLoadMore,
