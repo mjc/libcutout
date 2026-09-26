@@ -162,6 +162,9 @@ final class CutoutSessionCaptureRecorder: CutoutSessionCaptureRecording {
             platformId: platformIdentifier,
             writeLimit: MobileTransportWriteLimitDto(bytes: 23)
         )
+        if let database {
+            builder.setDatabase(database: database)
+        }
         _ = builder.setMusicHistoryPolicy(policy: musicHistoryPolicy)
         _ = builder.setCaptureStartMonotonicMs(monotonicMs: startedAt.rawValue)
         advertisedServices.forEach { _ = builder.addAdvertisedService(service: $0.bytes) }

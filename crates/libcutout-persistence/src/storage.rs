@@ -35,6 +35,12 @@ use uuid::Uuid;
 mod capture_data;
 mod capture_history;
 pub use capture_history::{PevcapCaptureCursor, PevcapCapturePage, StoredPevcapCapture};
+mod live_capture;
+pub use live_capture::{
+    LIVE_CAPTURE_EVENT_LIMIT_BYTES, LIVE_CAPTURE_HEADER_LIMIT_BYTES,
+    LIVE_CAPTURE_TOTAL_LIMIT_BYTES, LiveCaptureEvent, LiveCaptureEventKind, LiveCaptureId,
+    LiveCaptureSnapshot, LiveCaptureState,
+};
 mod recorded_capture;
 pub use recorded_capture::RecordedCapture;
 mod migrations;
@@ -1409,6 +1415,15 @@ pub enum StorageError {
     /// A recording identity or byte digest already belongs to different provenance.
     #[error("capture identity conflicts with retained provenance")]
     CaptureIdentityConflict,
+    /// A live-capture header, event or timestamp is outside its supported bound.
+    #[error("invalid live-capture input: {0}")]
+    LiveCaptureInputInvalid(&'static str),
+    /// A live capture reached its bounded durable byte or sequence limit.
+    #[error("live capture reached its persistence limit")]
+    LiveCaptureLimitExceeded,
+    /// The live capture is not active and cannot accept this lifecycle operation.
+    #[error("live capture is not active")]
+    LiveCaptureNotActive,
     /// The database path could not be used.
     #[error("invalid database path")]
     InvalidPath,
@@ -4281,6 +4296,36 @@ struct PevcapImportCompletion {
 }
 
 enum Command {
+    BeginLiveCapture {
+        id: LiveCaptureId,
+        header_json: Vec<u8>,
+        started_at_ms: u64,
+        reply: Reply<()>,
+    },
+    AppendLiveCaptureEvent {
+        id: LiveCaptureId,
+        kind: LiveCaptureEventKind,
+        receipt_monotonic_ms: u64,
+        source_monotonic_offset_ms: Option<i64>,
+        source_wall_clock_unix_ms: Option<u64>,
+        payload: Vec<u8>,
+        reply: Reply<u64>,
+    },
+    FinishLiveCapture {
+        id: LiveCaptureId,
+        finished_at_ms: u64,
+        reply: Reply<()>,
+    },
+    UpdateLiveCaptureHeader {
+        id: LiveCaptureId,
+        header_json: Vec<u8>,
+        reply: Reply<()>,
+    },
+    ReadLiveCapture {
+        id: LiveCaptureId,
+        limit: QueryLimit,
+        reply: Reply<LiveCaptureSnapshot>,
+    },
     RecordedCaptureLookup {
         id: crate::CaptureArtifactId,
         reply: Reply<Option<PevcapImportReceipt>>,

@@ -1,10 +1,11 @@
 //! Bounded PEVCAP file writer and durable completion evidence.
 //! This is the existing streaming writer, independent of any mobile binding or UI.
 
+use crate::storage::{LiveCaptureEventKind, LiveCaptureId, RideDatabase};
 use cutout_core::{
     CaptureLabelState, GattChannel, GattFingerprint, PEVCAP_CAPTURE_LABEL_ANNOTATION_KEY,
-    PevcapHeader, PevcapLocationSample, PevcapMusicEvent, PevcapRecord, PevcapResolvedIdentity,
-    TransportWriteLimit, WallClockUnixTimestamp,
+    PevcapDirection, PevcapHeader, PevcapLocationSample, PevcapMusicEvent, PevcapRecord,
+    PevcapResolvedIdentity, TransportWriteLimit, WallClockUnixTimestamp,
 };
 use sha2::{Digest, Sha256};
 use std::{
@@ -18,7 +19,7 @@ use std::{
         mpsc::{Receiver, SyncSender, TrySendError, sync_channel},
     },
     thread::{self, JoinHandle},
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use uuid::Uuid;
 
@@ -51,6 +52,7 @@ impl CaptureArtifactId {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SavedCaptureArtifact {
     id: CaptureArtifactId,
+    live_capture_id: Option<LiveCaptureId>,
     path: PathBuf,
     status: CaptureWriterStatus,
     content_digest: String,
@@ -62,6 +64,11 @@ impl SavedCaptureArtifact {
     #[must_use]
     pub const fn id(&self) -> CaptureArtifactId {
         self.id
+    }
+    /// Identity of the incrementally stored live capture, when database-backed writing was used.
+    #[must_use]
+    pub const fn live_capture_id(&self) -> Option<LiveCaptureId> {
+        self.live_capture_id
     }
     /// Exact artifact location, not just its display filename.
     #[must_use]
@@ -203,12 +210,34 @@ enum CaptureWriterMessage {
     ),
 }
 
+struct CaptureWriterEventLine {
+    json_line: String,
+    kind: LiveCaptureEventKind,
+    receipt_monotonic_ms: u64,
+    source_monotonic_offset_ms: Option<i64>,
+    source_wall_clock_unix_ms: Option<u64>,
+}
+
+struct DatabaseCapture {
+    database: RideDatabase,
+    id: LiveCaptureId,
+}
+
 enum CaptureWriterBarrierResult {
     Flushed,
     Finished {
         content_digest: String,
         final_header: Box<PevcapHeader>,
     },
+}
+
+enum CaptureWriterAction {
+    Event(CaptureWriterEventLine),
+    Metadata(CaptureMetadata),
+    Barrier(
+        CaptureBarrier,
+        SyncSender<Result<CaptureWriterBarrierResult, String>>,
+    ),
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -408,6 +437,7 @@ impl CaptureRecordPool {
 #[derive(Debug)]
 pub struct CaptureWriter {
     artifact_id: CaptureArtifactId,
+    live_capture_id: Option<LiveCaptureId>,
     path: PathBuf,
     ingress: CaptureWriterIngress,
     state: Arc<CaptureWriterState>,
@@ -429,6 +459,48 @@ impl CaptureWriter {
         write_limit: Option<TransportWriteLimit>,
         metadata: &CaptureMetadata,
     ) -> Result<Self, String> {
+        Self::start_inner(
+            path,
+            wall_clock_start_unix_ms,
+            platform_id,
+            write_limit,
+            metadata,
+            None,
+        )
+    }
+
+    /// Starts the bounded file writer and mirrors each accepted event through the canonical
+    /// Rust SQLite worker. Database work runs on the writer thread; callback admission remains
+    /// bounded and never waits for `SQLite`.
+    ///
+    /// # Errors
+    /// Returns the header, file creation, or worker startup error.
+    pub fn start_with_database(
+        path: PathBuf,
+        wall_clock_start_unix_ms: WallClockUnixTimestamp,
+        platform_id: &str,
+        write_limit: Option<TransportWriteLimit>,
+        metadata: &CaptureMetadata,
+        database: RideDatabase,
+    ) -> Result<Self, String> {
+        Self::start_inner(
+            path,
+            wall_clock_start_unix_ms,
+            platform_id,
+            write_limit,
+            metadata,
+            Some(database),
+        )
+    }
+
+    fn start_inner(
+        path: PathBuf,
+        wall_clock_start_unix_ms: WallClockUnixTimestamp,
+        platform_id: &str,
+        write_limit: Option<TransportWriteLimit>,
+        metadata: &CaptureMetadata,
+        database: Option<RideDatabase>,
+    ) -> Result<Self, String> {
         let header = capture_header(wall_clock_start_unix_ms, platform_id, write_limit, metadata)?;
         let file = sync_parent_directory_after(&path, || {
             OpenOptions::new()
@@ -448,23 +520,35 @@ impl CaptureWriter {
         };
         let thread_records = Arc::clone(&records);
         let thread_state = Arc::clone(&state);
-        let artifact_path = path.clone();
+        let artifact_id = CaptureArtifactId(Uuid::new_v4());
+        let database_capture = database.map(|database| DatabaseCapture {
+            database,
+            id: LiveCaptureId::new(),
+        });
+        let live_capture_id = database_capture.as_ref().map(|capture| capture.id);
+        let writer_path = path.clone();
+        let mut header = header;
         let join = thread::Builder::new()
             .name("cutout-pevcap-writer".into())
             .spawn(move || {
-                run_capture_writer(
-                    &path,
+                let result = write_capture_stream(
+                    &writer_path,
                     file,
-                    header,
+                    &mut header,
                     &receiver,
                     &thread_records,
                     &thread_state,
+                    database_capture.as_ref(),
                 );
+                if let Err(error) = result {
+                    thread_state.fail(error);
+                }
             })
             .map_err(|error| error.to_string())?;
         Ok(Self {
-            artifact_id: CaptureArtifactId(Uuid::new_v4()),
-            path: artifact_path,
+            artifact_id,
+            live_capture_id,
+            path,
             ingress,
             state,
             join: Some(join),
@@ -553,6 +637,7 @@ impl CaptureWriter {
         }
         Ok(SavedCaptureArtifact {
             id: self.artifact_id,
+            live_capture_id: self.live_capture_id,
             path: self.path,
             status,
             content_digest,
@@ -611,20 +696,6 @@ fn capture_header(
     .map_err(|error| format!("invalid capture header: {error}"))
 }
 
-fn run_capture_writer(
-    path: &Path,
-    file: File,
-    mut header: PevcapHeader,
-    receiver: &Receiver<CaptureWriterMessage>,
-    records: &CaptureRecordPool,
-    state: &CaptureWriterState,
-) {
-    let result = write_capture_stream(path, file, &mut header, receiver, records, state);
-    if let Err(error) = result {
-        state.fail(error);
-    }
-}
-
 fn write_capture_stream(
     path: &Path,
     file: File,
@@ -632,9 +703,20 @@ fn write_capture_stream(
     receiver: &Receiver<CaptureWriterMessage>,
     records: &CaptureRecordPool,
     state: &CaptureWriterState,
+    database_capture: Option<&DatabaseCapture>,
 ) -> Result<(), String> {
     let mut writer = BufWriter::new(file);
     let header_line = header.to_jsonl_line().map_err(|error| error.to_string())?;
+    if let Some(capture) = database_capture {
+        capture
+            .database
+            .begin_live_capture_with_id(
+                capture.id,
+                header_line.as_bytes().to_vec(),
+                header.wall_clock_start_unix_ms.as_milliseconds(),
+            )
+            .map_err(|error| format!("could not start live SQLite capture: {error}"))?;
+    }
     let header_bytes = write_line(&mut writer, &header_line)?;
     state
         .physical_bytes_written
@@ -649,37 +731,27 @@ fn write_capture_stream(
 
     while let Ok(message) = receiver.recv() {
         state.queued_messages.fetch_sub(1, Ordering::AcqRel);
-        let line = match message {
-            CaptureWriterMessage::Record => {
-                let record = records
-                    .take()
-                    .ok_or_else(|| "capture record slot was empty".to_string())?;
-                Some((
-                    record.to_jsonl_line().map_err(|error| error.to_string())?,
-                    Some((
-                        record.monotonic_ms.as_milliseconds(),
-                        record.phone_location.is_some(),
-                    )),
-                    None,
-                ))
+        match capture_writer_action(message, records)? {
+            CaptureWriterAction::Event(event) => {
+                write_capture_event_line(&mut writer, &event.json_line, state, &mut flush)?;
+                if let Some(capture) = database_capture {
+                    capture
+                        .database
+                        .append_live_capture_event(
+                            capture.id,
+                            event.kind,
+                            event.receipt_monotonic_ms,
+                            event.source_monotonic_offset_ms,
+                            event.source_wall_clock_unix_ms,
+                            event.json_line.into_bytes(),
+                        )
+                        .map_err(|error| {
+                            format!("could not persist live capture event: {error}")
+                        })?;
+                }
             }
-            CaptureWriterMessage::Location(location) => Some((
-                location
-                    .to_jsonl_line()
-                    .map_err(|error| error.to_string())?,
-                None,
-                Some(location.receipt_monotonic_ms.as_milliseconds()),
-            )),
-            CaptureWriterMessage::Music(music) => Some((
-                music.to_jsonl_line().map_err(|error| error.to_string())?,
-                None,
-                None,
-            )),
-            CaptureWriterMessage::Metadata(metadata) => {
-                pending_metadata = Some(metadata);
-                None
-            }
-            CaptureWriterMessage::Barrier(kind, reply) => {
+            CaptureWriterAction::Metadata(metadata) => pending_metadata = Some(metadata),
+            CaptureWriterAction::Barrier(kind, reply) => {
                 let result = flush_capture_barrier(
                     path,
                     &mut writer,
@@ -689,6 +761,7 @@ fn write_capture_stream(
                     state,
                     kind,
                 )
+                .and_then(|()| persist_database_capture(database_capture, header, kind))
                 .and_then(|()| match kind {
                     CaptureBarrier::Flush => Ok(CaptureWriterBarrierResult::Flushed),
                     CaptureBarrier::Finish => {
@@ -703,11 +776,7 @@ fn write_capture_stream(
                 if kind == CaptureBarrier::Finish {
                     return Ok(());
                 }
-                None
             }
-        };
-        if let Some((line, _, _)) = line {
-            write_capture_event_line(&mut writer, &line, state, &mut flush)?;
         }
     }
     flush_capture_barrier(
@@ -718,7 +787,86 @@ fn write_capture_stream(
         &mut flush,
         state,
         CaptureBarrier::Finish,
-    )
+    )?;
+    persist_database_capture(database_capture, header, CaptureBarrier::Finish)
+}
+
+fn persist_database_capture(
+    capture: Option<&DatabaseCapture>,
+    header: &PevcapHeader,
+    kind: CaptureBarrier,
+) -> Result<(), String> {
+    let Some(capture) = capture else {
+        return Ok(());
+    };
+    let header_line = header.to_jsonl_line().map_err(|error| error.to_string())?;
+    capture
+        .database
+        .update_live_capture_header(capture.id, header_line.into_bytes())
+        .map_err(|error| format!("could not persist live capture header: {error}"))?;
+    if kind == CaptureBarrier::Finish {
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_millis();
+        let now_ms = u64::try_from(now_ms).map_err(|error| error.to_string())?;
+        let finished_at_ms = now_ms.max(header.wall_clock_start_unix_ms.as_milliseconds());
+        capture
+            .database
+            .finish_live_capture(capture.id, finished_at_ms)
+            .map_err(|error| format!("could not finish live SQLite capture: {error}"))?;
+    }
+    Ok(())
+}
+
+fn capture_writer_action(
+    message: CaptureWriterMessage,
+    records: &CaptureRecordPool,
+) -> Result<CaptureWriterAction, String> {
+    match message {
+        CaptureWriterMessage::Record => {
+            let record = records
+                .take()
+                .ok_or_else(|| "capture record slot was empty".to_string())?;
+            let kind = match record.direction {
+                PevcapDirection::LinkUp => LiveCaptureEventKind::LinkUp,
+                PevcapDirection::LinkDown => LiveCaptureEventKind::LinkDown,
+                PevcapDirection::Inbound => LiveCaptureEventKind::Notification,
+                PevcapDirection::Outbound => LiveCaptureEventKind::Write,
+            };
+            Ok(CaptureWriterAction::Event(CaptureWriterEventLine {
+                json_line: record.to_jsonl_line().map_err(|error| error.to_string())?,
+                kind,
+                receipt_monotonic_ms: record.monotonic_ms.as_milliseconds(),
+                source_monotonic_offset_ms: None,
+                source_wall_clock_unix_ms: record
+                    .phone_location
+                    .map(|location| location.wall_clock_unix_ms),
+            }))
+        }
+        CaptureWriterMessage::Location(location) => {
+            Ok(CaptureWriterAction::Event(CaptureWriterEventLine {
+                json_line: location
+                    .to_jsonl_line()
+                    .map_err(|error| error.to_string())?,
+                kind: LiveCaptureEventKind::Location,
+                receipt_monotonic_ms: location.receipt_monotonic_ms.as_milliseconds(),
+                source_monotonic_offset_ms: location.source_monotonic_offset_ms,
+                source_wall_clock_unix_ms: Some(location.location.wall_clock_unix_ms),
+            }))
+        }
+        CaptureWriterMessage::Music(music) => {
+            Ok(CaptureWriterAction::Event(CaptureWriterEventLine {
+                json_line: music.to_jsonl_line().map_err(|error| error.to_string())?,
+                kind: LiveCaptureEventKind::Music,
+                receipt_monotonic_ms: music.monotonic_at.as_milliseconds(),
+                source_monotonic_offset_ms: None,
+                source_wall_clock_unix_ms: Some(music.wall_clock_unix_ms.as_milliseconds()),
+            }))
+        }
+        CaptureWriterMessage::Metadata(metadata) => Ok(CaptureWriterAction::Metadata(metadata)),
+        CaptureWriterMessage::Barrier(kind, reply) => Ok(CaptureWriterAction::Barrier(kind, reply)),
+    }
 }
 
 fn flush_capture_barrier(
@@ -1125,6 +1273,7 @@ mod tests {
         };
         let writer = CaptureWriter {
             artifact_id: CaptureArtifactId(Uuid::new_v4()),
+            live_capture_id: None,
             path: PathBuf::new(),
             ingress,
             state: Arc::clone(&state),
@@ -1160,6 +1309,7 @@ mod tests {
         };
         let writer = CaptureWriter {
             artifact_id: CaptureArtifactId(Uuid::new_v4()),
+            live_capture_id: None,
             path: PathBuf::new(),
             ingress,
             state: Arc::clone(&state),

@@ -40,6 +40,10 @@ pub(super) fn run(connection: Connection, receiver: &Receiver<Command>, worker_a
         spatial_schema: SpatialSchemaState::Uninitialized,
         worker_alive,
     };
+    if super::live_capture::interrupt_active(&worker.connection).is_err() {
+        worker.worker_alive.store(false, Ordering::Release);
+        return;
+    }
     while let Ok(command) = receiver.recv() {
         if worker.dispatch(command).is_break() {
             break;
@@ -64,6 +68,59 @@ impl DatabaseWorker<'_> {
         let spatial_schema = &mut self.spatial_schema;
         let worker_alive = self.worker_alive;
         match command {
+            Command::BeginLiveCapture {
+                id,
+                header_json,
+                started_at_ms,
+                reply,
+            } => {
+                let _ = reply.send(super::live_capture::begin(
+                    connection,
+                    id,
+                    &header_json,
+                    started_at_ms,
+                ));
+            }
+            Command::AppendLiveCaptureEvent {
+                id,
+                kind,
+                receipt_monotonic_ms,
+                source_monotonic_offset_ms,
+                source_wall_clock_unix_ms,
+                payload,
+                reply,
+            } => {
+                let _ = reply.send(super::live_capture::append(
+                    connection,
+                    id,
+                    kind,
+                    receipt_monotonic_ms,
+                    source_monotonic_offset_ms,
+                    source_wall_clock_unix_ms,
+                    &payload,
+                ));
+            }
+            Command::FinishLiveCapture {
+                id,
+                finished_at_ms,
+                reply,
+            } => {
+                let _ = reply.send(super::live_capture::finish(connection, id, finished_at_ms));
+            }
+            Command::UpdateLiveCaptureHeader {
+                id,
+                header_json,
+                reply,
+            } => {
+                let _ = reply.send(super::live_capture::update_header(
+                    connection,
+                    id,
+                    &header_json,
+                ));
+            }
+            Command::ReadLiveCapture { id, limit, reply } => {
+                let _ = reply.send(super::live_capture::read(connection, id, limit));
+            }
             Command::RecordedCaptureLookup { id, reply } => {
                 let _ = reply.send(super::recorded_capture::receipt_for_id(connection, id));
             }

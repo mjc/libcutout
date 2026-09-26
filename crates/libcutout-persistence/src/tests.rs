@@ -1,7 +1,9 @@
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use crate::CaptureWriteOutcome;
+use crate::{
+    CaptureMetadata as LiveCaptureMetadata, CaptureWriteOutcome, CaptureWriter as LiveCaptureWriter,
+};
 use cutout_core::{
     MonotonicTimestamp, PevcapCapture, PevcapEncoding, PevcapHeader, PevcapLocationSample,
     PevcapPhoneLocation, PevcapRecord, WallClockUnixTimestamp,
@@ -20,11 +22,12 @@ use rusqlite::Connection;
 use cutout_ride_maps::{RideLifecycleState, RideMapSegmentId, RideSegmentStartReason};
 
 use super::{
-    BmsVoltageSampleRecord, GeoBounds, HistoryContextBudget, PevcapImportOutcome,
-    PevcapImportPreview, PevcapImportWarning, PhoneAlarmPreferencesRecord, QueryLimit,
-    RideDatabase, RideHistoryQuery, RideId, RideRecord, RideSource, RouteProjectionCancellation,
-    StorageError, VerifiedConnectionLifecycleMutation, VerifiedConnectionRideMetadata,
-    VerifiedConnectionRideTarget, VoltageSagModelRecord, normalize_device_display_name,
+    BmsVoltageSampleRecord, GeoBounds, HistoryContextBudget, LiveCaptureEventKind,
+    LiveCaptureState, PevcapImportOutcome, PevcapImportPreview, PevcapImportWarning,
+    PhoneAlarmPreferencesRecord, QueryLimit, RideDatabase, RideHistoryQuery, RideId, RideRecord,
+    RideSource, RouteProjectionCancellation, StorageError, VerifiedConnectionLifecycleMutation,
+    VerifiedConnectionRideMetadata, VerifiedConnectionRideTarget, VoltageSagModelRecord,
+    normalize_device_display_name,
 };
 
 static TEST_LOCK: Mutex<()> = Mutex::new(());
@@ -61,6 +64,205 @@ fn close_music_test_database(database: RideDatabase, path: std::path::PathBuf) {
     let _ = std::fs::remove_file(path);
 }
 
+#[test]
+fn live_capture_events_are_ordered_durable_and_recovered_by_the_database_worker() {
+    let _guard = test_guard();
+    let path = music_test_path();
+    let database = RideDatabase::open(&path).expect("database opens");
+    let capture_id = database
+        .begin_live_capture(b"{\"format\":\"pevcap\"}".to_vec(), 100)
+        .expect("live capture starts");
+    assert_eq!(
+        database
+            .append_live_capture_event(
+                capture_id,
+                LiveCaptureEventKind::Location,
+                110,
+                Some(9),
+                Some(1_700_000_000_110),
+                b"{\"location\":1}".to_vec(),
+            )
+            .expect("location event is persisted"),
+        0
+    );
+    assert_eq!(
+        database
+            .append_live_capture_event(
+                capture_id,
+                LiveCaptureEventKind::Notification,
+                120,
+                None,
+                None,
+                b"{\"notification\":2}".to_vec(),
+            )
+            .expect("notification event is persisted"),
+        1
+    );
+    database
+        .finish_live_capture(capture_id, 130)
+        .expect("live capture finalizes");
+
+    let snapshot = database
+        .live_capture(capture_id, QueryLimit::new(10).unwrap())
+        .expect("capture is readable");
+    assert_eq!(snapshot.state, LiveCaptureState::Finished);
+    assert_eq!(snapshot.header_json, b"{\"format\":\"pevcap\"}");
+    assert_eq!(
+        snapshot
+            .events
+            .iter()
+            .map(|event| (event.sequence, event.kind, event.receipt_monotonic_ms))
+            .collect::<Vec<_>>(),
+        [
+            (0, LiveCaptureEventKind::Location, 110),
+            (1, LiveCaptureEventKind::Notification, 120)
+        ]
+    );
+    assert_eq!(snapshot.events[0].source_monotonic_offset_ms, Some(9));
+    assert_eq!(
+        snapshot.events[0].source_wall_clock_unix_ms,
+        Some(1_700_000_000_110)
+    );
+    assert_eq!(snapshot.events[0].payload, b"{\"location\":1}");
+    let interrupted_id = database
+        .begin_live_capture(b"{\"format\":\"pevcap\"}".to_vec(), 140)
+        .expect("second live capture starts");
+    database
+        .append_live_capture_event(
+            interrupted_id,
+            LiveCaptureEventKind::LinkUp,
+            141,
+            None,
+            None,
+            b"{\"link\":\"up\"}".to_vec(),
+        )
+        .expect("link event is persisted");
+
+    database.shutdown().expect("database shuts down");
+    let reopened = RideDatabase::open(&path).expect("database reopens");
+    let recovered = reopened
+        .live_capture(capture_id, QueryLimit::new(10).unwrap())
+        .expect("capture survives restart");
+    assert_eq!(recovered.state, LiveCaptureState::Finished);
+    assert_eq!(recovered.events, snapshot.events);
+    let interrupted = reopened
+        .live_capture(interrupted_id, QueryLimit::new(10).unwrap())
+        .expect("unfinished capture survives restart");
+    assert_eq!(interrupted.state, LiveCaptureState::Interrupted);
+    assert_eq!(interrupted.events[0].payload, b"{\"link\":\"up\"}");
+    reopened.shutdown().expect("reopened database shuts down");
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn schema_v26_migration_adds_live_capture_tables_without_touching_existing_capture_data() {
+    let _guard = test_guard();
+    let path = music_test_path();
+    let database = RideDatabase::open(&path).expect("database opens");
+    database.shutdown().expect("database shuts down");
+    let connection = Connection::open(&path).expect("SQLite file opens");
+    connection
+        .execute_batch(
+            "DROP TABLE live_capture_events;
+             DROP TABLE live_capture_sessions;
+             PRAGMA user_version = 26;",
+        )
+        .expect("database resembles schema 26");
+    drop(connection);
+
+    let migrated = RideDatabase::open(&path).expect("schema 26 database migrates");
+    let connection = Connection::open(&path).expect("migrated SQLite file opens");
+    assert_eq!(
+        connection
+            .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+            .unwrap(),
+        crate::storage::CURRENT_SCHEMA_VERSION
+    );
+    for table in ["live_capture_sessions", "live_capture_events"] {
+        assert!(
+            connection
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?1)",
+                    [table],
+                    |row| row.get::<_, bool>(0),
+                )
+                .unwrap()
+        );
+    }
+    drop(connection);
+    migrated.shutdown().expect("migrated database shuts down");
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn database_backed_capture_writer_persists_events_on_its_worker_thread() {
+    let _guard = test_guard();
+    let database_path = music_test_path();
+    let artifact_path = database_path.with_extension("jsonl");
+    let database = RideDatabase::open(&database_path).expect("database opens");
+    let writer = LiveCaptureWriter::start_with_database(
+        artifact_path.clone(),
+        WallClockUnixTimestamp::new(1_700_000_000_000),
+        "test-location-source",
+        None,
+        &LiveCaptureMetadata {
+            advertised_services: vec![],
+            gatt_fingerprints: vec![],
+            resolved_identity: None,
+            annotations: vec![],
+        },
+        database.clone(),
+    )
+    .expect("database-backed writer starts");
+    let location = PevcapLocationSample::new(
+        MonotonicTimestamp::new(12),
+        PevcapPhoneLocation {
+            wall_clock_unix_ms: 1_700_000_000_010,
+            latitude_degrees: 39.7,
+            longitude_degrees: -104.9,
+            altitude_meters: 1.0,
+            horizontal_accuracy_meters: None,
+            vertical_accuracy_meters: None,
+            speed_meters_per_second: None,
+            speed_accuracy_meters_per_second: None,
+            course_degrees: None,
+            course_accuracy_degrees: None,
+        },
+        None,
+        None,
+    )
+    .unwrap()
+    .with_source_monotonic_offset_ms(Some(10));
+    assert_eq!(
+        writer.record_location(location),
+        CaptureWriteOutcome::Accepted
+    );
+
+    let artifact = writer.finish().expect("writer finalizes");
+    let capture_id = artifact.live_capture_id().expect("SQLite capture identity");
+    let snapshot = database
+        .live_capture(capture_id, QueryLimit::new(10).unwrap())
+        .expect("durable event is queryable");
+    assert_eq!(snapshot.state, LiveCaptureState::Finished);
+    assert_eq!(snapshot.events.len(), 1);
+    assert_eq!(snapshot.events[0].kind, LiveCaptureEventKind::Location);
+    assert_eq!(snapshot.events[0].receipt_monotonic_ms, 12);
+    assert_eq!(snapshot.events[0].source_monotonic_offset_ms, Some(10));
+    assert_eq!(
+        snapshot.events[0].source_wall_clock_unix_ms,
+        Some(1_700_000_000_010)
+    );
+    assert!(
+        std::str::from_utf8(&snapshot.events[0].payload)
+            .unwrap()
+            .contains("source_monotonic_offset_ms")
+    );
+
+    database.shutdown().expect("database shuts down");
+    let _ = std::fs::remove_file(artifact_path);
+    let _ = std::fs::remove_file(database_path);
+}
+
 fn test_guard() -> std::sync::MutexGuard<'static, ()> {
     TEST_LOCK
         .lock()
@@ -92,6 +294,8 @@ fn music_v16_migration_preserves_events_without_fabricating_observation_times() 
          ALTER TABLE ride_music_history DROP COLUMN deleted;
          DROP TABLE bms_voltage_samples;
          DROP TABLE phone_alarm_preferences;
+         DROP TABLE live_capture_events;
+         DROP TABLE live_capture_sessions;
          PRAGMA user_version = 16;",
         )
         .unwrap();
@@ -128,6 +332,8 @@ fn schema_v19_migration_adds_music_history_state() {
             "ALTER TABLE ride_music_history DROP COLUMN state;
              DROP TABLE bms_voltage_samples;
              DROP TABLE phone_alarm_preferences;
+             DROP TABLE live_capture_events;
+             DROP TABLE live_capture_sessions;
              PRAGMA user_version = 19;",
         )
         .expect("legacy v19 shape creates");
@@ -155,6 +361,8 @@ fn pre_music_v16_migration_preserves_existing_capture_tables() {
              DROP TABLE ride_music_history;
              DROP TABLE bms_voltage_samples;
              DROP TABLE phone_alarm_preferences;
+             DROP TABLE live_capture_events;
+             DROP TABLE live_capture_sessions;
              PRAGMA user_version = 16;",
         )
         .unwrap();
@@ -310,6 +518,8 @@ fn music_v16_migration_rebuilds_utf8_text_bounds() {
              ALTER TABLE ride_music_history DROP COLUMN deleted;
              DROP TABLE bms_voltage_samples;
              DROP TABLE phone_alarm_preferences;
+             DROP TABLE live_capture_events;
+             DROP TABLE live_capture_sessions;
              PRAGMA user_version = 16;",
         )
         .unwrap();
@@ -2725,7 +2935,12 @@ fn recording_schema_migrates_from_25_without_changing_existing_capture() {
     };
     let fresh_schema = schema();
     connection
-        .execute_batch("DROP TABLE pevcap_recordings; PRAGMA user_version = 25;")
+        .execute_batch(
+            "DROP TABLE pevcap_recordings;
+             DROP TABLE live_capture_events;
+             DROP TABLE live_capture_sessions;
+             PRAGMA user_version = 25;",
+        )
         .unwrap();
     let database = RideDatabase::open(&path).unwrap();
     assert_eq!(schema(), fresh_schema);
@@ -2815,7 +3030,12 @@ fn stored_capture_history_index_is_identical_after_schema_24_migration() {
         )
         .expect("fresh schema has the capture history index");
     connection
-        .execute_batch("DROP INDEX pevcap_imports_history; PRAGMA user_version = 24;")
+        .execute_batch(
+            "DROP INDEX pevcap_imports_history;
+             DROP TABLE live_capture_events;
+             DROP TABLE live_capture_sessions;
+             PRAGMA user_version = 24;",
+        )
         .unwrap();
     drop(connection);
     RideDatabase::open(&path).unwrap().shutdown().unwrap();
@@ -2867,7 +3087,12 @@ fn stored_capture_history_survives_restart_and_missing_files() {
     database.shutdown().unwrap();
     let connection = Connection::open(&path).unwrap();
     connection
-        .execute_batch("DROP INDEX pevcap_imports_history; PRAGMA user_version = 24;")
+        .execute_batch(
+            "DROP INDEX pevcap_imports_history;
+             DROP TABLE live_capture_events;
+             DROP TABLE live_capture_sessions;
+             PRAGMA user_version = 24;",
+        )
         .unwrap();
     drop(connection);
     let database = RideDatabase::open(&path).unwrap();
@@ -2995,6 +3220,8 @@ fn schema_fifteen_capture_backfill_preserves_receipts_and_rides() {
                 "DROP TABLE pevcap_capture_chunks; DROP TABLE pevcap_captures;
              DROP TABLE bms_voltage_samples;
              DROP TABLE phone_alarm_preferences;
+             DROP TABLE live_capture_events;
+             DROP TABLE live_capture_sessions;
              PRAGMA user_version = 15;",
             )
             .unwrap();

@@ -5586,6 +5586,8 @@ fn map_ride_database_error(error: persistence::StorageError) -> MobileRideDataba
         | persistence::StorageError::InvalidStoredValue { .. }
         | persistence::StorageError::InvalidSqliteVersion(_)
         | persistence::StorageError::PevcapImport(_)
+        | persistence::StorageError::LiveCaptureInputInvalid(_)
+        | persistence::StorageError::LiveCaptureLimitExceeded
         | persistence::StorageError::SystemClock(_)
         | persistence::StorageError::SpatialCapabilityUnavailable
         | persistence::StorageError::SpatialSchemaInitialization(_) => {
@@ -5603,6 +5605,9 @@ fn map_ride_database_error(error: persistence::StorageError) -> MobileRideDataba
         }
         persistence::StorageError::MusicPolicyConflict => {
             MobileRideDatabaseError::MusicPolicyConflict
+        }
+        persistence::StorageError::LiveCaptureNotActive => {
+            MobileRideDatabaseError::InvalidRideState
         }
     }
 }
@@ -12528,6 +12533,7 @@ pub struct MobilePevcapCaptureBuilder {
     writer: Mutex<CaptureWriterSlot>,
     writer_ingress: Mutex<Option<persistence::CaptureWriterIngress>>,
     writer_state: Mutex<Option<CaptureWriterMonitor>>,
+    database: Mutex<Option<Arc<RideDatabaseHandle>>>,
     music_history_policy: Mutex<CoreMusicHistoryPolicy>,
     capture_start_monotonic_ms: Mutex<Option<u64>>,
     music_context: Mutex<VecDeque<PendingPevcapMusicContext>>,
@@ -12673,6 +12679,7 @@ impl MobilePevcapCaptureBuilder {
             writer: Mutex::new(CaptureWriterSlot::Ready),
             writer_ingress: Mutex::new(None),
             writer_state: Mutex::new(None),
+            database: Mutex::new(None),
             music_history_policy: Mutex::new(CoreMusicHistoryPolicy::Disabled),
             capture_start_monotonic_ms: Mutex::new(None),
             music_context: Mutex::new(VecDeque::with_capacity(PEVCAP_MUSIC_CONTEXT_CAPACITY)),
@@ -12756,13 +12763,32 @@ impl MobilePevcapCaptureBuilder {
             return false;
         };
         let metadata = self.metadata();
-        let writer = match CaptureWriter::start(
-            PathBuf::from(path),
-            self.wall_clock_start_unix_ms,
-            &self.platform_id,
-            self.write_limit,
-            &metadata,
-        ) {
+        let database = self
+            .database
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .map(|database| database.inner.clone());
+        let path = PathBuf::from(path);
+        let start = if let Some(database) = database {
+            CaptureWriter::start_with_database(
+                path,
+                self.wall_clock_start_unix_ms,
+                &self.platform_id,
+                self.write_limit,
+                &metadata,
+                database,
+            )
+        } else {
+            CaptureWriter::start(
+                path,
+                self.wall_clock_start_unix_ms,
+                &self.platform_id,
+                self.write_limit,
+                &metadata,
+            )
+        };
+        let writer = match start {
             Ok(writer) => writer,
             Err(error) => {
                 let state = CaptureWriterMonitor::failed(error.clone());
@@ -12784,6 +12810,11 @@ impl MobilePevcapCaptureBuilder {
             .unwrap_or_else(PoisonError::into_inner) = Some(writer.monitor());
         *slot = CaptureWriterSlot::Recording(writer);
         true
+    }
+
+    /// Routes active capture events through the existing Rust-owned database worker.
+    pub fn set_database(&self, database: Arc<RideDatabaseHandle>) {
+        *self.database.lock().unwrap_or_else(PoisonError::into_inner) = Some(database);
     }
 
     /// Flushes buffered capture bytes and syncs them to durable storage.
@@ -19652,6 +19683,49 @@ mod tests {
         let builder = MobilePevcapCaptureBuilder::new(wc(1_700_000_000_000), "phone".into(), None);
         assert!(!builder.finish_writer());
         assert!(builder.completed_artifact().is_none());
+    }
+
+    #[test]
+    fn mobile_capture_builder_routes_live_events_to_the_shared_database() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let directory =
+            std::env::temp_dir().join(format!("cutout-live-capture-{}", Uuid::new_v4()));
+        fs::create_dir(&directory).unwrap();
+        let database_path = directory.join("ride.sqlite");
+        let capture_path = directory.join("capture.jsonl");
+        let database = open_ride_database(database_path.to_string_lossy().into_owned()).unwrap();
+        let builder = MobilePevcapCaptureBuilder::new(wc(1_700_000_000_000), "phone".into(), None);
+        builder.set_database(Arc::clone(&database));
+        assert!(builder.start_writer(capture_path.to_string_lossy().into_owned()));
+        assert_eq!(
+            builder.record_link_up(ms(10), None),
+            MobileCaptureWriteOutcomeDto::Accepted
+        );
+        assert!(builder.finish_writer());
+        let artifact = builder.completed_artifact().unwrap();
+        drop(builder);
+        database.shutdown().unwrap();
+
+        let connection = rusqlite::Connection::open(&database_path).unwrap();
+        let (capture_id, state, event_count, event_kind): (String, String, u64, String) =
+            connection
+                .query_row(
+                    "SELECT capture_id, state,
+                            (SELECT COUNT(*) FROM live_capture_events),
+                            (SELECT event_kind FROM live_capture_events LIMIT 1)
+                     FROM live_capture_sessions",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                )
+                .unwrap();
+        assert_ne!(capture_id, artifact.id.value);
+        assert_eq!(state, "finished");
+        assert_eq!(event_count, 1);
+        assert_eq!(event_kind, "link_up");
+
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]

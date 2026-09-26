@@ -1,13 +1,15 @@
 use super::{MapPointId, SpatialRowId, StorageError};
 use rusqlite::{Connection, OptionalExtension, params};
 
-pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 26;
+pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 27;
 const APPLICATION_ID: i64 = 0x4355_544f;
 
+fn schema_pragmas(version: i64) -> String {
+    format!("PRAGMA application_id = {APPLICATION_ID}; PRAGMA user_version = {version};")
+}
+
 fn current_schema_pragmas() -> String {
-    format!(
-        "PRAGMA application_id = {APPLICATION_ID}; PRAGMA user_version = {CURRENT_SCHEMA_VERSION};"
-    )
+    schema_pragmas(CURRENT_SCHEMA_VERSION)
 }
 
 pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
@@ -47,6 +49,7 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         23 => migrate_v23_to_current(connection)?,
         24 => migrate_v24_to_current(connection)?,
         25 => migrate_v25_to_current(connection)?,
+        26 => migrate_v26_to_current(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -68,7 +71,11 @@ fn initialize_current_schema(connection: &Connection) -> Result<(), StorageError
         return Err(StorageError::InvalidDatabaseIdentity);
     }
     connection.execute_batch("BEGIN IMMEDIATE;")?;
-    if let Err(error) = create_current_schema(connection) {
+    if let Err(error) = create_current_schema(connection).and_then(|()| {
+        connection
+            .execute_batch(super::live_capture::SCHEMA)
+            .map_err(Into::into)
+    }) {
         let _ = connection.execute_batch("ROLLBACK;");
         return Err(error);
     }
@@ -504,6 +511,7 @@ fn migrate_v3_to_current(connection: &mut Connection) -> Result<(), StorageError
         DROP TABLE ride_session_marker_legacy;
         ",
     )?;
+    transaction.execute_batch(super::live_capture::SCHEMA)?;
     transaction.execute_batch(&current_schema_pragmas())?;
     transaction.commit()?;
     Ok(())
@@ -1184,6 +1192,14 @@ fn migrate_v24_to_current(connection: &mut Connection) -> Result<(), StorageErro
 fn migrate_v25_to_current(connection: &mut Connection) -> Result<(), StorageError> {
     let transaction = connection.transaction()?;
     transaction.execute_batch(super::recorded_capture::SCHEMA)?;
+    transaction.execute_batch("PRAGMA user_version = 26;")?;
+    transaction.commit()?;
+    migrate_v26_to_current(connection)
+}
+
+fn migrate_v26_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction()?;
+    transaction.execute_batch(super::live_capture::SCHEMA)?;
     transaction.execute_batch(&current_schema_pragmas())?;
     transaction.commit()?;
     Ok(())
@@ -1222,6 +1238,8 @@ pub(super) fn verify_current_schema(connection: &Connection) -> Result<(), Stora
         "pevcap_captures",
         "pevcap_capture_chunks",
         "pevcap_recordings",
+        "live_capture_sessions",
+        "live_capture_events",
         "trails",
         "trail_segments",
         "trail_segment_spatial_keys",
