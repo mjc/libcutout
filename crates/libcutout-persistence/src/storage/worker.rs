@@ -1,20 +1,21 @@
 use super::{
     Command, SegmentStartReasonInput, SpatialSchemaState, abort_pevcap_import, append_location,
-    append_location_with_result, append_pevcap_location_batch, append_trail_segment, backup,
-    begin_pevcap_import, clear_last_connected_device, clear_ride_session_marker,
-    clear_selected_device, create_map_point, create_ride, create_started_live_ride,
-    create_started_ride, create_trail, delete_music_history, device_name, export_ride_json,
-    find_ride, finish_pevcap_import, integrity_check, last_connected_device,
-    list_ride_history_vehicle_options, list_rides, load_summary, load_summary_with_duration,
-    map_points_in_bounds, migrate_device_name, music_events, music_history, music_history_policy,
-    music_history_state, newest_recoverable_ride, pevcap_import_receipt, phone_alarm_preferences,
-    project_history_context, project_route_points, rebuild_spatial_indexes,
-    record_bms_voltage_samples, record_music_event, remember_last_connected_device,
-    remember_selected_device, remove_voltage_sag_model, ride_session_marker, route_points,
-    save_device_name, save_music_event, save_music_history_policy, save_phone_alarm_preferences,
-    save_ride_session_marker, save_selected_device, save_voltage_sag_model, selected_device,
-    settle_recovered_ride, sqlite_capabilities, trail_segments_in_bounds, transition_ride,
-    update_ride_map_metadata, voltage_sag_model,
+    append_location_with_result, append_pevcap_location_batch, append_trail_segment,
+    apply_verified_connection_admission, backup, begin_pevcap_import, clear_last_connected_device,
+    clear_ride_session_marker, clear_selected_device, create_map_point, create_ride,
+    create_started_live_ride, create_started_ride, create_trail, delete_music_history, device_name,
+    export_ride_json, find_ride, finish_pevcap_import, integrity_check, last_connected_device,
+    list_ride_history_vehicle_options, list_rides, load_ride_restore_snapshot, load_summary,
+    load_summary_with_duration, map_points_in_bounds, migrate_device_name, music_events,
+    music_history, music_history_policy, music_history_state, newest_recoverable_ride,
+    pevcap_import_receipt, phone_alarm_preferences, project_history_context, project_route_points,
+    rebuild_spatial_indexes, record_bms_voltage_samples, record_music_event,
+    remember_last_connected_device, remember_selected_device, remove_voltage_sag_model,
+    ride_session_marker, route_points, save_device_name, save_music_event,
+    save_music_history_policy, save_phone_alarm_preferences, save_ride_session_marker,
+    save_selected_device, save_voltage_sag_model, selected_device, settle_recovered_ride,
+    sqlite_capabilities, trail_segments_in_bounds, transition_ride, update_ride_map_metadata,
+    voltage_sag_model,
 };
 use rusqlite::Connection;
 use std::ops::ControlFlow;
@@ -39,6 +40,10 @@ pub(super) fn run(connection: Connection, receiver: &Receiver<Command>, worker_a
         spatial_schema: SpatialSchemaState::Uninitialized,
         worker_alive,
     };
+    if super::live_capture::interrupt_active(&worker.connection).is_err() {
+        worker.worker_alive.store(false, Ordering::Release);
+        return;
+    }
     while let Ok(command) = receiver.recv() {
         if worker.dispatch(command).is_break() {
             break;
@@ -63,6 +68,79 @@ impl DatabaseWorker<'_> {
         let spatial_schema = &mut self.spatial_schema;
         let worker_alive = self.worker_alive;
         match command {
+            Command::BeginLiveCapture {
+                id,
+                header_json,
+                started_at_ms,
+                reply,
+            } => {
+                let _ = reply.send(super::live_capture::begin(
+                    connection,
+                    id,
+                    &header_json,
+                    started_at_ms,
+                ));
+            }
+            Command::AppendLiveCaptureEvent {
+                id,
+                kind,
+                receipt_monotonic_ms,
+                source_monotonic_offset_ms,
+                source_wall_clock_unix_ms,
+                payload,
+                location,
+                reply,
+            } => {
+                let _ = reply.send(super::live_capture::append(
+                    connection,
+                    &super::live_capture::LiveCaptureEventAppend {
+                        id,
+                        kind,
+                        receipt_monotonic_ms,
+                        source_monotonic_offset_ms,
+                        source_wall_clock_unix_ms,
+                        payload: &payload,
+                        location: location.as_ref(),
+                    },
+                ));
+            }
+            Command::FinishLiveCapture {
+                id,
+                finished_at_ms,
+                integrity,
+                reply,
+            } => {
+                let _ = reply.send(super::live_capture::finish(
+                    connection,
+                    id,
+                    finished_at_ms,
+                    integrity,
+                ));
+            }
+            Command::UpdateLiveCaptureHeader {
+                id,
+                header_json,
+                reply,
+            } => {
+                let _ = reply.send(super::live_capture::update_header(
+                    connection,
+                    id,
+                    &header_json,
+                ));
+            }
+            Command::ReadLiveCapture {
+                id,
+                after_sequence,
+                limit,
+                reply,
+            } => {
+                let _ = reply.send(super::live_capture::read(
+                    connection,
+                    id,
+                    after_sequence,
+                    limit,
+                ));
+            }
             Command::RecordedCaptureLookup { id, reply } => {
                 let _ = reply.send(super::recorded_capture::receipt_for_id(connection, id));
             }
@@ -267,6 +345,24 @@ impl DatabaseWorker<'_> {
                     &platform_identifier,
                     updated_at_ms,
                 ));
+            }
+            Command::VerifiedConnectionAdmission {
+                platform_identifier,
+                updated_at_ms,
+                lifecycle_mutations,
+                metadata,
+                unselected_metadata,
+                reply,
+            } => {
+                let result = apply_verified_connection_admission(
+                    connection,
+                    &platform_identifier,
+                    updated_at_ms,
+                    &lifecycle_mutations,
+                    metadata.as_ref(),
+                    unselected_metadata.as_ref(),
+                );
+                let _ = reply.send(result);
             }
             Command::LastConnectedDevice { reply } => {
                 let _ = reply.send(last_connected_device(connection));
@@ -561,6 +657,9 @@ impl DatabaseWorker<'_> {
             }
             Command::NewestRecoverableRide { reply } => {
                 let _ = reply.send(newest_recoverable_ride(connection));
+            }
+            Command::RestoreSnapshot { reply } => {
+                let _ = reply.send(load_ride_restore_snapshot(connection));
             }
             Command::ListRides {
                 cursor,

@@ -113,7 +113,6 @@ final class MusicPreferencesDeviceUITests: XCTestCase {
         XCTAssertEqual(app.state, .runningForeground, "Cached recovery must not reopen Spotify authorization")
     }
 
-
     private func openMusicSettings(in app: XCUIApplication) {
         let setup = app.buttons["device-picker.open-setup"]
         XCTAssertTrue(setup.waitForExistence(timeout: 30), app.debugDescription)
@@ -128,11 +127,13 @@ final class MusicPreferencesDeviceUITests: XCTestCase {
         let title = app.staticTexts["music.now-playing-title"]
         let playing = NSPredicate { object, _ in
             guard let title = object as? XCUIElement, title.exists,
-                  title.value as? String == "playing" else { return false }
+                title.value as? String == "playing"
+            else { return false }
             return !title.label.isEmpty && !["Playing", "Not playing", "Spotify"].contains(title.label)
         }
         let result = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: playing, object: title)], timeout: 30)
-        XCTAssertEqual(result, .completed, "Spotify must deliver an actual title without a ride:\n\(app.debugDescription)")
+        XCTAssertEqual(
+            result, .completed, "Spotify must deliver an actual title without a ride:\n\(app.debugDescription)")
     }
 }
 
@@ -255,7 +256,8 @@ final class CutoutAppUITests: XCTestCase {
         try assertProbeFailure("Device identification timed out")
     }
 
-    func testProbeTimeoutRemainsOnPickerAndExposesAccessibleFailureInLightAppearanceAtAccessibilityDynamicType() throws {
+    func testProbeTimeoutRemainsOnPickerAndExposesAccessibleFailureInLightAppearanceAtAccessibilityDynamicType() throws
+    {
         try assertProbeFailure("Device identification timed out")
     }
 
@@ -267,11 +269,17 @@ final class CutoutAppUITests: XCTestCase {
         try assertProbeFailure("Device returned an invalid identification response")
     }
 
-    func testProbeMalformedResponseRemainsOnPickerAndExposesAccessibleFailureInLightAppearanceAtAccessibilityDynamicType() throws {
+    func
+        testProbeMalformedResponseRemainsOnPickerAndExposesAccessibleFailureInLightAppearanceAtAccessibilityDynamicType()
+        throws
+    {
         try assertProbeFailure("Device returned an invalid identification response")
     }
 
-    func testProbeMalformedResponseRemainsOnPickerAndExposesAccessibleFailureInDarkAppearanceAtAccessibilityDynamicType() throws {
+    func
+        testProbeMalformedResponseRemainsOnPickerAndExposesAccessibleFailureInDarkAppearanceAtAccessibilityDynamicType()
+        throws
+    {
         try assertProbeFailure("Device returned an invalid identification response")
     }
 
@@ -279,11 +287,17 @@ final class CutoutAppUITests: XCTestCase {
         try assertProbeFailure("Device identification found conflicting evidence")
     }
 
-    func testProbeConflictingEvidenceRemainsOnPickerAndExposesAccessibleFailureInLightAppearanceAtAccessibilityDynamicType() throws {
+    func
+        testProbeConflictingEvidenceRemainsOnPickerAndExposesAccessibleFailureInLightAppearanceAtAccessibilityDynamicType()
+        throws
+    {
         try assertProbeFailure("Device identification found conflicting evidence")
     }
 
-    func testProbeConflictingEvidenceRemainsOnPickerAndExposesAccessibleFailureInDarkAppearanceAtAccessibilityDynamicType() throws {
+    func
+        testProbeConflictingEvidenceRemainsOnPickerAndExposesAccessibleFailureInDarkAppearanceAtAccessibilityDynamicType()
+        throws
+    {
         try assertProbeFailure("Device identification found conflicting evidence")
     }
 
@@ -291,11 +305,15 @@ final class CutoutAppUITests: XCTestCase {
         try assertProbeFailure("Device does not support this identification probe")
     }
 
-    func testProbeUnsupportedRemainsOnPickerAndExposesAccessibleFailureInLightAppearanceAtAccessibilityDynamicType() throws {
+    func testProbeUnsupportedRemainsOnPickerAndExposesAccessibleFailureInLightAppearanceAtAccessibilityDynamicType()
+        throws
+    {
         try assertProbeFailure("Device does not support this identification probe")
     }
 
-    func testProbeUnsupportedRemainsOnPickerAndExposesAccessibleFailureInDarkAppearanceAtAccessibilityDynamicType() throws {
+    func testProbeUnsupportedRemainsOnPickerAndExposesAccessibleFailureInDarkAppearanceAtAccessibilityDynamicType()
+        throws
+    {
         try assertProbeFailure("Device does not support this identification probe")
     }
 
@@ -530,7 +548,10 @@ final class CutoutAppUITests: XCTestCase {
         try performVisibleLayoutAccessibilityAudit()
     }
 
-    func testFinishCaptureOpensAccessibleSavedArtifactWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
+    func
+        testFinishCaptureOpensAccessibleSavedArtifactWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType()
+        throws
+    {
         _ = try finishCaptureAndOpenArtifact(usesLocalizedText: true)
         try performVisibleLayoutAccessibilityAudit()
     }
@@ -599,11 +620,15 @@ final class CutoutAppUITests: XCTestCase {
         try assertFinishCaptureFailureKeepsCaptureScreenAccessible()
     }
 
-    func testFinishCaptureFailureKeepsCaptureScreenAccessibleWithPseudolocalizedTextAtAccessibilityDynamicType() throws {
+    func testFinishCaptureFailureKeepsCaptureScreenAccessibleWithPseudolocalizedTextAtAccessibilityDynamicType() throws
+    {
         try assertFinishCaptureFailureKeepsCaptureScreenAccessible(usesLocalizedText: true)
     }
 
-    func testFinishCaptureFailureKeepsCaptureScreenAccessibleWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
+    func
+        testFinishCaptureFailureKeepsCaptureScreenAccessibleWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType()
+        throws
+    {
         try assertFinishCaptureFailureKeepsCaptureScreenAccessible(usesLocalizedText: true)
     }
 
@@ -658,7 +683,10 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertFalse(forget.isEnabled)
     }
 
-    func testDisconnectKeepsSavedDeviceAccessibleWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
+    func
+        testDisconnectKeepsSavedDeviceAccessibleWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType()
+        throws
+    {
         let forget = try disconnectAndRequireSavedDevice()
         try performVisibleLayoutAccessibilityAudit()
         forget.tap()
@@ -765,7 +793,8 @@ final class CutoutAppUITests: XCTestCase {
         let disconnect = app.buttons["dashboard.disconnect"]
 
         for cycle in 1...3 {
-            XCTAssertTrue(pairAvailableDevice(family), "Cycle \(cycle) did not start from the native \(family.name) Use button")
+            XCTAssertTrue(
+                pairAvailableDevice(family), "Cycle \(cycle) did not start from the native \(family.name) Use button")
             assertFirstRideRouteMatches(family, timeout: 20)
             XCTAssertTrue(ride.exists, "Cycle \(cycle) did not open the \(family.name) Ride screen")
             XCTAssertTrue(disconnect.waitForExistence(timeout: 5))
@@ -827,7 +856,10 @@ final class CutoutAppUITests: XCTestCase {
         try assertCaptureAccessibility()
     }
 
-    func testCapturePassesAccessibilityAuditWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
+    func
+        testCapturePassesAccessibilityAuditWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType()
+        throws
+    {
         try assertCaptureAccessibility(exercisesLabels: false)
     }
 
@@ -859,7 +891,10 @@ final class CutoutAppUITests: XCTestCase {
         try assertProductionPickerAccessibility(assertsPseudolocalizedCopy: true)
     }
 
-    func testProductionPickerPassesAccessibilityAuditWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
+    func
+        testProductionPickerPassesAccessibilityAuditWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType()
+        throws
+    {
         try assertProductionPickerAccessibility(assertsPseudolocalizedCopy: true)
     }
 
@@ -947,7 +982,9 @@ final class CutoutAppUITests: XCTestCase {
         for _ in 0..<4 where !apply.isHittable { screen.swipeUp() }
         apply.tap()
         XCTAssertFalse(apply.exists, "Apply should disappear after submitting the local draft")
-        XCTAssertEqual(app.staticTexts["settings.draft.displayBrightness"].label, draftValue, "A pending value must not snap back to old readback")
+        XCTAssertEqual(
+            app.staticTexts["settings.draft.displayBrightness"].label, draftValue,
+            "A pending value must not snap back to old readback")
 
         let controls = [
             "highBeam", "displayBrightness", "displayUnits", "beeperVolumePercent",
@@ -1006,7 +1043,7 @@ final class CutoutAppUITests: XCTestCase {
         let changed = XCTNSPredicateExpectation(
             predicate: NSPredicate { object, _ in
                 guard let element = object as? XCUIElement,
-                      let value = element.value as? String
+                    let value = element.value as? String
                 else { return false }
                 return element.exists && value != initialValue
             },
@@ -1088,7 +1125,10 @@ final class CutoutAppUITests: XCTestCase {
         try performVisibleLayoutAccessibilityAudit()
     }
 
-    func testCaptureSetupPassesAccessibilityAuditWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
+    func
+        testCaptureSetupPassesAccessibilityAuditWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType()
+        throws
+    {
         try assertCaptureSetupAccessible()
     }
 
@@ -1206,10 +1246,11 @@ final class CutoutAppUITests: XCTestCase {
         }
         XCTAssertTrue(screen.exists)
         XCTAssertTrue(app.tabBars.buttons["dashboard.nav.ride"].isHittable)
-        let secondaryRoute = switch family {
-        case .vesc: "dashboard.nav.debug"
-        case .euc: "dashboard.nav.pack"
-        }
+        let secondaryRoute =
+            switch family {
+            case .vesc: "dashboard.nav.debug"
+            case .euc: "dashboard.nav.pack"
+            }
         for identifier in ["dashboard.nav.ride", secondaryRoute] {
             let tab = app.tabBars.buttons[identifier]
             XCTAssertTrue(tab.isHittable)
@@ -1388,7 +1429,9 @@ final class CutoutAppUITests: XCTestCase {
         )
     }
 
-    func testVescUnavailableLiveActivityLockScreenPreservesUnavailableSemanticsInLightAppearanceAtAccessibilityDynamicType() {
+    func
+        testVescUnavailableLiveActivityLockScreenPreservesUnavailableSemanticsInLightAppearanceAtAccessibilityDynamicType()
+    {
         assertVescLiveActivityLockScreen(
             speed: "unavailable",
             headroom: "unavailable",
@@ -1396,7 +1439,9 @@ final class CutoutAppUITests: XCTestCase {
         )
     }
 
-    func testVescUnavailableLiveActivityLockScreenPreservesUnavailableSemanticsInDarkAppearanceAtAccessibilityDynamicType() {
+    func
+        testVescUnavailableLiveActivityLockScreenPreservesUnavailableSemanticsInDarkAppearanceAtAccessibilityDynamicType()
+    {
         assertVescLiveActivityLockScreen(
             speed: "unavailable",
             headroom: "unavailable",
@@ -1696,7 +1741,10 @@ final class CutoutAppUITests: XCTestCase {
         )
     }
 
-    func testFailedVescConnectionPassesAccessibilityAuditWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
+    func
+        testFailedVescConnectionPassesAccessibilityAuditWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType()
+        throws
+    {
         try assertFailedVescConnectionAccessibility(
             usesLocalizedText: true
         )
@@ -1738,7 +1786,10 @@ final class CutoutAppUITests: XCTestCase {
         try assertReconnectAccessibility(for: .vesc, usesLocalizedText: true)
     }
 
-    func testVescReconnectKeepsRideAccessibleWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
+    func
+        testVescReconnectKeepsRideAccessibleWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType()
+        throws
+    {
         try assertReconnectAccessibility(
             for: .vesc,
             usesLocalizedText: true,
@@ -1769,7 +1820,10 @@ final class CutoutAppUITests: XCTestCase {
         try assertReconnectAccessibility(for: .euc)
     }
 
-    func testEucReconnectKeepsRideAccessibleWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
+    func
+        testEucReconnectKeepsRideAccessibleWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType()
+        throws
+    {
         try assertReconnectAccessibility(
             for: .euc,
             usesLocalizedText: true,
@@ -1890,7 +1944,8 @@ final class CutoutAppUITests: XCTestCase {
         )
         XCTAssertEqual(XCTWaiter.wait(for: [failed], timeout: 5), .completed)
         XCTAssertTrue(picker.exists)
-        XCTAssertTrue(connectionStatus.isHittable, "Connection failure must be visible without test-controlled scrolling")
+        XCTAssertTrue(
+            connectionStatus.isHittable, "Connection failure must be visible without test-controlled scrolling")
         XCTAssertFalse(app.descendants(matching: .any)["dashboard.screen.vescRide"].exists)
         XCTAssertFalse(connectionStatus.label.isEmpty)
         restorePickerViewport(picker)
@@ -2012,7 +2067,10 @@ final class CutoutAppUITests: XCTestCase {
         try assertEucBmsOverviewAccessibility(assertsEnglishEnergy: true)
     }
 
-    func testEucBmsOverviewPassesAccessibilityAuditWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
+    func
+        testEucBmsOverviewPassesAccessibilityAuditWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType()
+        throws
+    {
         try assertEucBmsOverviewAccessibility(scrollsBeforeAudit: true)
     }
 
@@ -2032,7 +2090,9 @@ final class CutoutAppUITests: XCTestCase {
         try performVisibleLayoutAccessibilityAudit()
     }
 
-    func testEucBmsPassesAccessibilityAuditWithPseudolocalizedTextAtAccessibilityDynamicTypeAndIncreasedContrast() throws {
+    func testEucBmsPassesAccessibilityAuditWithPseudolocalizedTextAtAccessibilityDynamicTypeAndIncreasedContrast()
+        throws
+    {
         try assertEucBmsAccessibility(
             excluding: [],
             assertsEnglishMetric: false,
@@ -2040,7 +2100,10 @@ final class CutoutAppUITests: XCTestCase {
         )
     }
 
-    func testEucBmsPassesAccessibilityAuditWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
+    func
+        testEucBmsPassesAccessibilityAuditWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType()
+        throws
+    {
         try assertEucBmsAccessibility(
             excluding: [],
             assertsEnglishMetric: false,
@@ -2066,11 +2129,16 @@ final class CutoutAppUITests: XCTestCase {
         )
     }
 
-    func testEucBmsDetailPassesAccessibilityAuditWithPseudolocalizedTextAtAccessibilityDynamicTypeAndIncreasedContrast() throws {
+    func testEucBmsDetailPassesAccessibilityAuditWithPseudolocalizedTextAtAccessibilityDynamicTypeAndIncreasedContrast()
+        throws
+    {
         try assertEucBmsDetailAccessibility(excluding: [])
     }
 
-    func testEucBmsDetailPassesAccessibilityAuditWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
+    func
+        testEucBmsDetailPassesAccessibilityAuditWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType()
+        throws
+    {
         try assertEucBmsDetailAccessibility(
             excluding: [],
             ignoringClippedBmsDetailBoundaryWarnings: true
@@ -2111,7 +2179,10 @@ final class CutoutAppUITests: XCTestCase {
         try assertEucNoBmsSurface()
     }
 
-    func testEucNoBmsSurfacePassesAccessibilityAuditWithPseudolocalizedTextAtAccessibilityDynamicTypeAndIncreasedContrast() throws {
+    func
+        testEucNoBmsSurfacePassesAccessibilityAuditWithPseudolocalizedTextAtAccessibilityDynamicTypeAndIncreasedContrast()
+        throws
+    {
         try assertEucNoBmsSurface(auditExclusions: [])
     }
 
@@ -2129,11 +2200,15 @@ final class CutoutAppUITests: XCTestCase {
         try assertEucNoBmsSurface()
     }
 
-    func testEucNoBmsSurfacePassesAccessibilityAuditWithIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
+    func testEucNoBmsSurfacePassesAccessibilityAuditWithIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws
+    {
         try assertEucNoBmsSurface(auditExclusions: [])
     }
 
-    func testEucNoBmsSurfacePassesAccessibilityAuditWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
+    func
+        testEucNoBmsSurfacePassesAccessibilityAuditWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType()
+        throws
+    {
         try assertEucNoBmsSurface(auditExclusions: [])
     }
 
@@ -2149,15 +2224,23 @@ final class CutoutAppUITests: XCTestCase {
         try assertEucUnknownTopologySurface()
     }
 
-    func testEucUnknownTopologyPassesAccessibilityAuditWithIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
+    func testEucUnknownTopologyPassesAccessibilityAuditWithIncreasedContrastInLandscapeAtAccessibilityDynamicType()
+        throws
+    {
         try assertEucUnknownTopologySurface(auditExclusions: [])
     }
 
-    func testEucUnknownTopologyPassesAccessibilityAuditWithPseudolocalizedTextAtAccessibilityDynamicTypeAndIncreasedContrast() throws {
+    func
+        testEucUnknownTopologyPassesAccessibilityAuditWithPseudolocalizedTextAtAccessibilityDynamicTypeAndIncreasedContrast()
+        throws
+    {
         try assertEucUnknownTopologySurface(auditExclusions: [])
     }
 
-    func testEucUnknownTopologyPassesAccessibilityAuditWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
+    func
+        testEucUnknownTopologyPassesAccessibilityAuditWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType()
+        throws
+    {
         try assertEucUnknownTopologySurface(auditExclusions: [])
     }
 
@@ -2488,7 +2571,10 @@ final class CutoutAppUITests: XCTestCase {
         try assertVescStaleTelemetryAccessibility(usesLocalizedText: true)
     }
 
-    func testVescStaleTelemetryIsAnAccessibleWarningWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
+    func
+        testVescStaleTelemetryIsAnAccessibleWarningWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType()
+        throws
+    {
         try assertVescStaleTelemetryAccessibility(usesLocalizedText: true)
     }
 
@@ -2512,7 +2598,10 @@ final class CutoutAppUITests: XCTestCase {
         try assertEucStaleTelemetryAccessibility()
     }
 
-    func testEucStaleTelemetryIsAnAccessibleWarningWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
+    func
+        testEucStaleTelemetryIsAnAccessibleWarningWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType()
+        throws
+    {
         try assertEucStaleTelemetryAccessibility(usesLocalizedText: true)
     }
 
@@ -2572,7 +2661,10 @@ final class CutoutAppUITests: XCTestCase {
         try assertVescPendingTelemetryAccessibility()
     }
 
-    func testVescPendingTelemetryIsAnAccessibleWarningWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
+    func
+        testVescPendingTelemetryIsAnAccessibleWarningWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType()
+        throws
+    {
         try assertVescPendingTelemetryAccessibility(
             usesLocalizedText: true,
             ignoringVisibleRideStatusContrastWarning: true
@@ -2687,7 +2779,9 @@ final class CutoutAppUITests: XCTestCase {
         try performVisibleLayoutAccessibilityAudit()
     }
 
-    func testVescRidePassesAccessibilityAuditWithPseudolocalizedTextAndIncreasedContrastAtAccessibilityDynamicType() throws {
+    func testVescRidePassesAccessibilityAuditWithPseudolocalizedTextAndIncreasedContrastAtAccessibilityDynamicType()
+        throws
+    {
         try assertConnectedSurface(
             for: .vesc,
             requiredMetricLabel: nil,
@@ -2695,7 +2789,10 @@ final class CutoutAppUITests: XCTestCase {
         )
     }
 
-    func testVescRidePassesAccessibilityAuditWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
+    func
+        testVescRidePassesAccessibilityAuditWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType()
+        throws
+    {
         try assertConnectedSurface(
             for: .vesc,
             requiredMetricLabel: nil,
@@ -2809,7 +2906,10 @@ final class CutoutAppUITests: XCTestCase {
         try assertVescDebugSurface(auditExclusions: [])
     }
 
-    func testVescDebugPassesAccessibilityAuditWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
+    func
+        testVescDebugPassesAccessibilityAuditWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType()
+        throws
+    {
         try assertVescDebugSurface(
             auditExclusions: [],
             requiredMetricLabel: nil
@@ -2854,7 +2954,7 @@ final class CutoutAppUITests: XCTestCase {
         let liveTelemetry = XCTNSPredicateExpectation(
             predicate: NSPredicate { object, _ in
                 guard let speed = object as? XCUIElement,
-                      let value = speed.value as? String
+                    let value = speed.value as? String
                 else { return false }
                 return speed.exists && !value.isEmpty && value != "unavailable"
             },
@@ -3184,7 +3284,8 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(start.waitForExistence(timeout: 5))
         XCTAssertTrue(start.isEnabled)
         start.tap()
-        XCTAssertTrue(app.descendants(matching: .any)["capture.screen"].waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue(
+            app.descendants(matching: .any)["capture.screen"].waitForExistence(timeout: 10), app.debugDescription)
         retainCaptureScreenshot("Recording")
     }
 
@@ -3258,7 +3359,8 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(captures.waitForExistence(timeout: 5))
         captures.tap()
         app.buttons["captures.new"].tap()
-        let device = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "captures.select.")).firstMatch
+        let device = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "captures.select."))
+            .firstMatch
         XCTAssertTrue(device.waitForExistence(timeout: 5), app.debugDescription)
         device.tap()
         let screen = app.descendants(matching: .any)["captures.setup"]
@@ -3283,10 +3385,12 @@ final class CutoutAppUITests: XCTestCase {
 
         XCTAssertEqual(
             XCTWaiter.wait(
-                for: [XCTNSPredicateExpectation(
-                    predicate: NSPredicate(format: "label == %@", expectedStatus),
-                    object: status
-                )],
+                for: [
+                    XCTNSPredicateExpectation(
+                        predicate: NSPredicate(format: "label == %@", expectedStatus),
+                        object: status
+                    )
+                ],
                 timeout: 5
             ),
             .completed
@@ -3339,8 +3443,9 @@ final class CutoutAppUITests: XCTestCase {
         for _ in 0..<maxScrolls {
             let unobscuredFrame = unobscuredFrame(in: screen, above: obstruction)
             if element.exists,
-               isVisible(element.frame, in: unobscuredFrame, fully: requiresFullVisibility),
-               element.isHittable {
+                isVisible(element.frame, in: unobscuredFrame, fully: requiresFullVisibility),
+                element.isHittable
+            {
                 break
             }
             let isAboveViewport = element.exists && element.frame.minY < unobscuredFrame.minY
@@ -3380,7 +3485,8 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     private func unobscuredFrame(in screen: XCUIElement, above obstruction: XCUIElement?) -> CGRect {
-        let maximumY = obstruction?.exists == true
+        let maximumY =
+            obstruction?.exists == true
             ? min(screen.frame.maxY, obstruction?.frame.minY ?? screen.frame.maxY)
             : screen.frame.maxY
         return CGRect(
@@ -3421,10 +3527,13 @@ final class CutoutAppUITests: XCTestCase {
         let auditTypes = XCUIAccessibilityAuditType.all.subtracting(excluded)
         try app.performAccessibilityAudit(for: auditTypes) { issue in
             let elementDescription = issue.element?.debugDescription ?? "No element"
-            print("Accessibility audit issue [\(issue.auditType.rawValue)]: \(issue.detailedDescription)\n\(elementDescription)")
+            print(
+                "Accessibility audit issue [\(issue.auditType.rawValue)]: \(issue.detailedDescription)\n\(elementDescription)"
+            )
             if issue.auditType == .contrast,
-               let element = issue.element,
-               !self.isFullyRenderedForContrastAudit(element) {
+                let element = issue.element,
+                !self.isFullyRenderedForContrastAudit(element)
+            {
                 // XCTest sometimes audits lazily retained ScrollView children
                 // that are clipped by the scroll viewport, tab bar, or app.
                 // Their screenshots do not contain the complete foreground
@@ -3432,29 +3541,33 @@ final class CutoutAppUITests: XCTestCase {
                 return true
             }
             if issue.auditType == .contrast,
-               let element = issue.element,
-               [
-                   "device-picker.capture-kind.cancel",
-                   "device-picker.capture-kind.done",
-               ].contains(element.identifier) {
+                let element = issue.element,
+                [
+                    "device-picker.capture-kind.cancel",
+                    "device-picker.capture-kind.done",
+                ].contains(element.identifier)
+            {
                 // These native sheet toolbar buttons are black on the opaque
                 // system background in the exported failure screenshots.
                 return true
             }
             if issue.auditType == .contrast,
-               self.name.contains(
-                   "testBluetoothUnavailablePickerDoesNotOfferUseOrRideInLightAppearanceAtAccessibilityDynamicType"
-               ),
-               issue.element?.label == "Nearby Bluetooth devices" {
+                self.name.contains(
+                    "testBluetoothUnavailablePickerDoesNotOfferUseOrRideInLightAppearanceAtAccessibilityDynamicType"
+                ),
+                issue.element?.label == "Nearby Bluetooth devices"
+            {
                 // The exported element screenshot is black iOS `.label` text
                 // on the opaque white page background. Other picker findings
                 // and every other test remain fatal.
                 return true
             }
             if ignoringSystemToolbarDynamicTypeWarning,
-               issue.auditType == .dynamicType,
-               issue.detailedDescription == "User will not be able to change the font size of this SwiftUI.AccessibilityNode",
-               ["Done", "Cancel", "Done Done", "Cancel Cancel"].contains(issue.element?.label) {
+                issue.auditType == .dynamicType,
+                issue.detailedDescription
+                    == "User will not be able to change the font size of this SwiftUI.AccessibilityNode",
+                ["Done", "Cancel", "Done Done", "Cancel Cancel"].contains(issue.element?.label)
+            {
                 // These are NavigationStack's native toolbar controls. Their
                 // rendered screens show the system Dynamic Type buttons; all
                 // app-owned Dynamic Type findings remain fatal.
@@ -3462,7 +3575,7 @@ final class CutoutAppUITests: XCTestCase {
             }
             let knownAnonymousContrastTests = [
                 "0 sec": [
-                    "testCapturePassesAccessibilityAuditInRightToLeftLayout",
+                    "testCapturePassesAccessibilityAuditInRightToLeftLayout"
                 ],
                 "Bluetooth scan complete": [
                     "testFinishCaptureOpensAccessibleSavedArtifactInDarkAppearanceAtAccessibilityDynamicType",
@@ -3485,7 +3598,7 @@ final class CutoutAppUITests: XCTestCase {
                     "testProductionPickerPassesAccessibilityAuditWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType",
                 ],
                 "CutOut · BMS CutOut · BMS": [
-                    "testEucBmsPassesAccessibilityAuditWithPseudolocalizedTextAtAccessibilityDynamicTypeAndIncreasedContrast",
+                    "testEucBmsPassesAccessibilityAuditWithPseudolocalizedTextAtAccessibilityDynamicTypeAndIncreasedContrast"
                 ],
                 "CutOut": [
                     "testCaptureSetupControlsRemainReachableAtAccessibilityDynamicType",
@@ -3504,7 +3617,7 @@ final class CutoutAppUITests: XCTestCase {
                     "testVescUseShowsConnectingBeforeRideInRightToLeftLayout",
                 ],
                 "Nearby Bluetooth devices Nearby Bluetooth devices": [
-                    "testFinishCaptureOpensAccessibleSavedArtifactWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType",
+                    "testFinishCaptureOpensAccessibleSavedArtifactWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType"
                 ],
                 "Packets": [
                     "testBackgroundFlushRealWriterRemainsUsableAfterReactivatingCaptureAtAccessibilityDynamicType",
@@ -3512,7 +3625,7 @@ final class CutoutAppUITests: XCTestCase {
                     "testCapturePassesAccessibilityAuditInLightAppearanceAtAccessibilityDynamicType",
                 ],
                 "PWM headroom": [
-                    "testEucStaleTelemetryIsAnAccessibleWarningInDarkAppearanceAtAccessibilityDynamicType",
+                    "testEucStaleTelemetryIsAnAccessibleWarningInDarkAppearanceAtAccessibilityDynamicType"
                 ],
                 "Refloat VESC": [
                     "testVescStaleTelemetryIsAnAccessibleWarningAtAccessibilityDynamicType",
@@ -3524,7 +3637,7 @@ final class CutoutAppUITests: XCTestCase {
                     "testEucStaleTelemetryIsAnAccessibleWarningInLightAppearanceAtAccessibilityDynamicType",
                 ],
                 "Telemetry pending": [
-                    "testVescPendingTelemetryIsAnAccessibleWarningInRightToLeftLayout",
+                    "testVescPendingTelemetryIsAnAccessibleWarningInRightToLeftLayout"
                 ],
                 "Telemetry stale": [
                     "testProductionSurfacesPassAccessibilityAudit",
@@ -3535,31 +3648,33 @@ final class CutoutAppUITests: XCTestCase {
                     "testVescPendingTelemetryIsAnAccessibleWarningInLightAppearanceAtAccessibilityDynamicType",
                 ],
                 "board speed": [
-                    "testVescStaleTelemetryIsAnAccessibleWarningInLandscapeAtAccessibilityDynamicType",
+                    "testVescStaleTelemetryIsAnAccessibleWarningInLandscapeAtAccessibilityDynamicType"
                 ],
                 "speed": [
-                    "testEucStaleTelemetryIsAnAccessibleWarningInRightToLeftLayout",
+                    "testEucStaleTelemetryIsAnAccessibleWarningInRightToLeftLayout"
                 ],
                 "voltage": [
-                    "testProductionSurfacesPassAccessibilityAudit",
+                    "testProductionSurfacesPassAccessibilityAudit"
                 ],
                 "50.4": [
-                    "testProductionSurfacesPassAccessibilityAudit",
+                    "testProductionSurfacesPassAccessibilityAudit"
                 ],
                 "controller": [
-                    "testProductionSurfacesPassAccessibilityAudit",
+                    "testProductionSurfacesPassAccessibilityAudit"
                 ],
                 "32.0": [
-                    "testProductionSurfacesPassAccessibilityAudit",
+                    "testProductionSurfacesPassAccessibilityAudit"
                 ],
             ]
-            let isKnownAnonymousContrastNode = issue.element?.identifier.isEmpty == true
+            let isKnownAnonymousContrastNode =
+                issue.element?.identifier.isEmpty == true
                 && knownAnonymousContrastTests[issue.element?.label ?? "", default: []]
                     .contains { self.name.contains($0) }
             if issue.auditType == .contrast,
-               issue.detailedDescription == "Contrast failed for SwiftUI.AccessibilityNode",
-               (ignoringNilElementContrastWarning && issue.element == nil
-                   || isKnownAnonymousContrastNode) {
+                issue.detailedDescription == "Contrast failed for SwiftUI.AccessibilityNode",
+                ignoringNilElementContrastWarning && issue.element == nil
+                    || isKnownAnonymousContrastNode
+            {
                 // XCTest supplied no element, frame, or color for this
                 // simulator-only diagnostic, or an exact anonymous StaticText
                 // whose exported rendering has high-contrast text and surface.
@@ -3567,85 +3682,93 @@ final class CutoutAppUITests: XCTestCase {
                 return true
             }
             if issue.auditType == .contrast,
-               issue.detailedDescription
-                   == "Contrast is not high enough for SwiftUI.AccessibilityNode unless font size is larger.",
-               issue.element?.identifier.isEmpty == true,
-               issue.element?.label == "Telemetry stale",
-               self.name.contains("testProductionSurfacesPassAccessibilityAudit") {
+                issue.detailedDescription
+                    == "Contrast is not high enough for SwiftUI.AccessibilityNode unless font size is larger.",
+                issue.element?.identifier.isEmpty == true,
+                issue.element?.label == "Telemetry stale",
+                self.name.contains("testProductionSurfacesPassAccessibilityAudit")
+            {
                 // Xcode's element screenshot is black text on the opaque
                 // yellow warning surface. Other nearly-passing contrast
                 // findings remain fatal.
                 return true
             }
             if issue.auditType == .elementDetection,
-               issue.detailedDescription
-                   == "This element appears to display text that should be represented using the accessibility API.",
-               [
-                   "testCaptureSetupControlsRemainReachableInRightToLeftLayout",
-                   "testProductionSurfacesPassAccessibilityAudit",
-               ].contains(where: self.name.contains),
-               issue.element == nil {
+                issue.detailedDescription
+                    == "This element appears to display text that should be represented using the accessibility API.",
+                [
+                    "testCaptureSetupControlsRemainReachableInRightToLeftLayout",
+                    "testProductionSurfacesPassAccessibilityAudit",
+                ].contains(where: self.name.contains),
+                issue.element == nil
+            {
                 // Xcode supplied no element, frame, or element screenshot on
                 // either exact route. Every attributable detection finding
                 // remains fatal.
                 return true
             }
             if issue.auditType == .elementDetection,
-               issue.detailedDescription
-                   == "This element appears to display text that should be represented using the accessibility API.",
-               issue.element?.identifier.isEmpty == true,
-               issue.element?.label
-                   == "Enter the device family and model, for example EUC NOSFET Aeon Enter the device family and model, for example EUC NOSFET Aeon",
-               self.name.contains(
-                   "testCaptureSetupPassesAccessibilityAuditWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType"
-               ) {
+                issue.detailedDescription
+                    == "This element appears to display text that should be represented using the accessibility API.",
+                issue.element?.identifier.isEmpty == true,
+                issue.element?.label
+                    == "Enter the device family and model, for example EUC NOSFET Aeon Enter the device family and model, for example EUC NOSFET Aeon",
+                self.name.contains(
+                    "testCaptureSetupPassesAccessibilityAuditWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType"
+                )
+            {
                 // The same Xcode activity tree resolves this visual help copy
                 // as a StaticText accessibility element by its complete label.
                 // Other attributable detection findings remain fatal.
                 return true
             }
             if ignoringNilElementDetectionWarning,
-               issue.auditType == .elementDetection,
-               issue.element == nil,
-               issue.detailedDescription
-                   == "This element appears to display text that should be represented using the accessibility API." {
+                issue.auditType == .elementDetection,
+                issue.element == nil,
+                issue.detailedDescription
+                    == "This element appears to display text that should be represented using the accessibility API."
+            {
                 // Xcode supplied no element, frame, or element screenshot.
                 // Every attributable detection finding remains fatal.
                 return true
             }
             if ignoringVisibleRideStatusContrastWarning,
-               issue.auditType == .contrast,
-               let element = issue.element,
-               self.app.frame.contains(element.frame),
-               elementDescription.contains("identifier: 'ride.hero.status'") {
+                issue.auditType == .contrast,
+                let element = issue.element,
+                self.app.frame.contains(element.frame),
+                elementDescription.contains("identifier: 'ride.hero.status'")
+            {
                 // Xcode 27 reports the fully visible black-on-white title and
                 // black-on-#ffcc00 warning text in this one pseudolocalized
                 // landscape cell. Other status routes and findings stay fatal.
                 return true
             }
             if ignoringUnavailableMetricPlaceholderContrastWarning,
-               issue.auditType == .contrast,
-               let element = issue.element,
-               element.label == "--",
-               elementDescription.contains("value: unavailable") {
+                issue.auditType == .contrast,
+                let element = issue.element,
+                element.label == "--",
+                elementDescription.contains("value: unavailable")
+            {
                 // Xcode 27 reports the black unavailable placeholder on the
                 // opaque light metric card as failing contrast. Other metric
                 // text, available values, and every unrelated finding stay fatal.
                 return true
             }
             if ignoringVisibleBmsDetailBackControlContrastWarning,
-               issue.auditType == .contrast,
-               let element = issue.element,
-               elementDescription.contains("identifier: 'bms.detail.back'"),
-               self.app.frame.contains(element.frame) {
+                issue.auditType == .contrast,
+                let element = issue.element,
+                elementDescription.contains("identifier: 'bms.detail.back'"),
+                self.app.frame.contains(element.frame)
+            {
                 // RTL Xcode 27 reports the visible child of this native
                 // `.bordered` Button despite its captured opaque background
                 // and black text. Other visible controls still fail.
                 return true
             }
             if ignoringClippedBmsDetailBoundaryWarnings,
-               [.contrast, .dynamicType].contains(issue.auditType),
-               let element = issue.element {
+                [.contrast, .dynamicType].contains(issue.auditType),
+                let element = issue.element
+            {
                 let detail = self.app.descendants(matching: .any)["dashboard.screen.bmsCellDetail"]
                 let groups = self.app.buttons.matching(
                     NSPredicate(format: "identifier BEGINSWITH %@", "bms.group.")
@@ -3662,7 +3785,8 @@ final class CutoutAppUITests: XCTestCase {
                             - detail.frame.minY
                     )
                 )
-                let isClippedSelectedGroupChip = selectedGroupChip.exists
+                let isClippedSelectedGroupChip =
+                    selectedGroupChip.exists
                     && !unobscuredFrame.contains(selectedGroupChip.frame)
                     && selectedGroupChip.frame.contains(element.frame)
                 let isClippedGroupButton = groups.contains {
@@ -3956,7 +4080,8 @@ private enum ConnectedDeviceFamily: Equatable {
 
     func matches(label: String) -> Bool {
         let label = label.lowercased()
-        let isVesc = label.contains("vesc") || label.contains("refloat")
+        let isVesc =
+            label.contains("vesc") || label.contains("refloat")
             || label.contains("onewheel") || label.contains("floatwheel")
         return self == .vesc ? isVesc : !isVesc
     }

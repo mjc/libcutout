@@ -1,6 +1,7 @@
-import XCTest
-@testable import CutoutMobile
 import CutoutMobileFFI
+import XCTest
+
+@testable import CutoutMobile
 
 @MainActor
 final class MusicProviderEffectExecutorTests: XCTestCase {

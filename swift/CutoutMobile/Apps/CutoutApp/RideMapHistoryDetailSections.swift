@@ -10,8 +10,8 @@ extension MobileRideMapError {
     }
 }
 
-private extension MobileMusicHistoryStateDto {
-    var detailTitle: String {
+extension MobileMusicHistoryStateDto {
+    fileprivate var detailTitle: String {
         switch self {
         case .missing:
             localizedAppText("music.history.state.missing")
@@ -26,7 +26,7 @@ private extension MobileMusicHistoryStateDto {
         }
     }
 
-    var detailSymbol: String {
+    fileprivate var detailSymbol: String {
         switch self {
         case .missing: "minus.circle"
         case .disabled: "nosign"
@@ -195,7 +195,7 @@ struct RideMapHistoryDetailSummary: View {
     let musicHistoryState: MobileMusicHistoryStateDto?
     let musicHistoryError: MobileRideMapError?
     let musicHistoryCanForget: Bool
-    let forgetMusicHistory: () -> Bool
+    let forgetMusicHistory: @MainActor () async -> Bool
     let state: RideMapHistoryRouteState
     let loadRoutePreview: () -> Void
     let shareText: String
@@ -297,8 +297,10 @@ struct RideMapHistoryDetailSummary: View {
                         titleVisibility: .visible
                     ) {
                         Button(localizedAppText("music.history.forget"), role: .destructive) {
-                            if forgetMusicHistory() == false {
-                                isMusicHistoryForgetErrorPresented = true
+                            Task { @MainActor in
+                                if await forgetMusicHistory() == false {
+                                    isMusicHistoryForgetErrorPresented = true
+                                }
                             }
                         }
                         .accessibilityIdentifier("ride-map.detail-forget-music-history")

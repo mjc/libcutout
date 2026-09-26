@@ -1,6 +1,7 @@
 import CutoutMobileFFI
 import Foundation
 import XCTest
+
 @testable import CutoutMobile
 
 final class DeviceControlsTests: XCTestCase {
@@ -24,10 +25,12 @@ final class DeviceControlsTests: XCTestCase {
         frame.replaceSubrange(28..<30, with: [0xa7, 0xf8])
         _ = state.observeConnectionNotification(token: token, bytes: frame)
         _ = state.resolveDeviceSession(token: token, identificationComplete: false, nowMs: 1)
-        _ = state.ingestDeviceSession(token: token, input: MobileSessionInputDto(
-            kind: .linkUp, monotonicMs: .init(milliseconds: 1), maxWriteLen: nil,
-            channel: Data(), bytes: Data()
-        ))
+        _ = state.ingestDeviceSession(
+            token: token,
+            input: MobileSessionInputDto(
+                kind: .linkUp, monotonicMs: .init(milliseconds: 1), maxWriteLen: nil,
+                channel: Data(), bytes: Data()
+            ))
         let result = try state.submitAction(token: token, id: .horn, monotonicMs: 2)
         XCTAssertNil(result.telemetry.speed)
         XCTAssertNil(result.result.error)
@@ -45,14 +48,18 @@ final class DeviceControlsTests: XCTestCase {
         frame.replaceSubrange(28..<30, with: [0xa7, 0xf8])
         _ = state.observeConnectionNotification(token: token, bytes: frame)
         _ = state.resolveDeviceSession(token: token, identificationComplete: false, nowMs: 1)
-        _ = state.ingestDeviceSession(token: token, input: MobileSessionInputDto(
-            kind: .linkUp, monotonicMs: .init(milliseconds: 1), maxWriteLen: nil,
-            channel: Data(), bytes: Data()
-        ))
-        _ = state.ingestDeviceSession(token: token, input: MobileSessionInputDto(
-            kind: .notification, monotonicMs: .init(milliseconds: 1), maxWriteLen: nil,
-            channel: BluetoothUuid.bluetooth16(0xffe1).bytes, bytes: frame
-        ))
+        _ = state.ingestDeviceSession(
+            token: token,
+            input: MobileSessionInputDto(
+                kind: .linkUp, monotonicMs: .init(milliseconds: 1), maxWriteLen: nil,
+                channel: Data(), bytes: Data()
+            ))
+        _ = state.ingestDeviceSession(
+            token: token,
+            input: MobileSessionInputDto(
+                kind: .notification, monotonicMs: .init(milliseconds: 1), maxWriteLen: nil,
+                channel: BluetoothUuid.bluetooth16(0xffe1).bytes, bytes: frame
+            ))
         let requested = DeviceSettingValue.boolean(value: true)
         _ = try state.submitSetting(token: token, id: .highBeam, value: requested, monotonicMs: 2)
         let snapshot: DeviceSettingsSnapshot = state.settingsSnapshot()
@@ -62,7 +69,9 @@ final class DeviceControlsTests: XCTestCase {
         XCTAssertNil(highBeam.current)
         XCTAssertEqual(highBeam.status, .waitingForConfirmation)
         let replacement = state.beginConnectionAttempt(platformIdentifier: "B", nowMs: 3)
-        XCTAssertThrowsError(try state.submitSetting(token: token, id: .highBeam, value: .boolean(value: false), monotonicMs: 4)) { error in
+        XCTAssertThrowsError(
+            try state.submitSetting(token: token, id: .highBeam, value: .boolean(value: false), monotonicMs: 4)
+        ) { error in
             XCTAssertEqual(error as? DeviceSettingSubmissionError, .ConnectionUnavailable)
         }
         XCTAssertEqual(state.settingsSnapshot().connection, replacement)

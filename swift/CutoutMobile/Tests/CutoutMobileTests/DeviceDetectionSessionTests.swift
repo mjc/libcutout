@@ -1,5 +1,6 @@
-import XCTest
 import CutoutMobileFFI
+import XCTest
+
 @testable import CutoutMobile
 
 final class DeviceDetectionSessionTests: XCTestCase {
@@ -32,7 +33,7 @@ final class DeviceDetectionSessionTests: XCTestCase {
                 characteristic: BluetoothUuid.bluetooth16(0xffe1).bytes,
                 roles: [.read, .write, .writeWithoutResponse, .notify],
                 verification: .hardwareVerified
-            ),
+            )
         ])
 
         XCTAssertEqual(session.beginIdentificationProbe(at: MonotonicMilliseconds(999)), .unsupported)
@@ -58,9 +59,11 @@ final class DeviceDetectionSessionTests: XCTestCase {
             _ = session.observeNotification(bytes: begodeLiveFrame)
             _ = session.observeBegodeNameProbe()
             let resolution = session.observeNotification(bytes: Data("NAME:Falcon\r\n".utf8))
-            return DevicePickerDiscoveryCandidate(candidate: resolution.discoveryCandidate(
-                platformIdentifier: identifier, displayName: name
-            )).pickerRow
+            return DevicePickerDiscoveryCandidate(
+                candidate: resolution.discoveryCandidate(
+                    platformIdentifier: identifier, displayName: name
+                )
+            ).pickerRow
         }
         XCTAssertEqual(rows.map(\.title), ["Begode Falcon", "Begode Falcon"])
         XCTAssertEqual(rows.map(\.id), ["falcon-00A1", "falcon-00B2"])
@@ -139,7 +142,10 @@ final class DeviceDetectionSessionTests: XCTestCase {
         let conflictingSession = DeviceDetectionSession()
         _ = conflictingSession.observeNotification(bytes: syntheticVeteranFrameWithModelId43())
         let conflict = conflictingSession.observeNotification(
-            bytes: Data([0x55, 0xaa, 0x17, 0x75, 0x05, 0x38, 0x00, 0x76, 0x02, 0xee, 0xfb, 0x64, 0xf4, 0x94, 0x14, 0x81, 0x00, 0x09, 0x00, 0x18, 0x5a, 0x5a, 0x5a, 0x5a])
+            bytes: Data([
+                0x55, 0xaa, 0x17, 0x75, 0x05, 0x38, 0x00, 0x76, 0x02, 0xee, 0xfb, 0x64, 0xf4, 0x94, 0x14, 0x81, 0x00,
+                0x09, 0x00, 0x18, 0x5a, 0x5a, 0x5a, 0x5a,
+            ])
         )
 
         XCTAssertEqual(
@@ -158,34 +164,38 @@ final class DeviceDetectionSessionTests: XCTestCase {
 
     func testAttemptScopedIdentificationProbeOutcomeDistinguishesProbeNeededAndUnsupported() {
         let aeroState = CutoutSessionStateHandle()
-        _ = aeroState.observeDiscovery(observation: DiscoveryObservation(
-            platformIdentifier: "ios-local-aero",
-            advertisedName: Data("BLE device".utf8),
-            advertisedServiceUuids: [.eucSerialFfe0],
-            manufacturerData: [],
-            rssiDbm: -48
-        ))
+        _ = aeroState.observeDiscovery(
+            observation: DiscoveryObservation(
+                platformIdentifier: "ios-local-aero",
+                advertisedName: Data("BLE device".utf8),
+                advertisedServiceUuids: [.eucSerialFfe0],
+                manufacturerData: [],
+                rssiDbm: -48
+            ))
         _ = aeroState.selectDiscoveredPlatform(platformIdentifier: "ios-local-aero")
         XCTAssertNotNil(
             aeroState.beginConnectionAttempt(platformIdentifier: "ios-local-aero", nowMs: 1_000).token
         )
 
         let vescState = CutoutSessionStateHandle()
-        _ = vescState.observeDiscovery(observation: DiscoveryObservation(
-            platformIdentifier: "ios-local-vesc",
-            advertisedName: Data("Controller".utf8),
-            advertisedServiceUuids: [.vescNordicUart],
-            manufacturerData: [],
-            rssiDbm: -48
-        ))
+        _ = vescState.observeDiscovery(
+            observation: DiscoveryObservation(
+                platformIdentifier: "ios-local-vesc",
+                advertisedName: Data("Controller".utf8),
+                advertisedServiceUuids: [.vescNordicUart],
+                manufacturerData: [],
+                rssiDbm: -48
+            ))
         _ = vescState.selectDiscoveredPlatform(platformIdentifier: "ios-local-vesc")
         _ = vescState.beginConnectionAttempt(platformIdentifier: "ios-local-vesc", nowMs: 1_000).token
 
         let aeroSession = DeviceDetectionSession(sessionState: aeroState)
         XCTAssertEqual(aeroSession.beginIdentificationProbe(at: MonotonicMilliseconds(1_000)), .unsupported)
         _ = aeroSession.observeNotification(bytes: begodeLiveFrame)
-        guard case let .writes(writes) = aeroSession
-            .beginIdentificationProbe(at: MonotonicMilliseconds(1_000))
+        guard
+            case let .writes(writes) =
+                aeroSession
+                .beginIdentificationProbe(at: MonotonicMilliseconds(1_000))
         else {
             return XCTFail("Begode protocol evidence should schedule one query")
         }
@@ -230,10 +240,11 @@ final class DeviceDetectionSessionTests: XCTestCase {
 
         _ = session.observeBegodeNameProbe()
         let resolution = session.observeBegodeNameProbeTimeout()
-        let candidate = DevicePickerDiscoveryCandidate(candidate: resolution.discoveryCandidate(
-            platformIdentifier: "ios-local-falcon",
-            displayName: "GotWay_002441"
-        ))
+        let candidate = DevicePickerDiscoveryCandidate(
+            candidate: resolution.discoveryCandidate(
+                platformIdentifier: "ios-local-falcon",
+                displayName: "GotWay_002441"
+            ))
 
         XCTAssertEqual(candidate.support, .unknownRecordable(disabledReason: "Missing Begode probe response"))
         XCTAssertEqual(candidate.pickerRow.state, .unsupported(action: "Record"))
@@ -248,10 +259,11 @@ final class DeviceDetectionSessionTests: XCTestCase {
         let resolution = session.observeNotification(
             bytes: Data([0x4e, 0x41, 0x4d, 0x45, 0x3d, 0x46, 0x61, 0x6c, 0x63, 0x6f, 0x6e, 0x00])
         )
-        let candidate = DevicePickerDiscoveryCandidate(candidate: resolution.discoveryCandidate(
-            platformIdentifier: "ios-local-falcon-malformed",
-            displayName: "GotWay_002441"
-        ))
+        let candidate = DevicePickerDiscoveryCandidate(
+            candidate: resolution.discoveryCandidate(
+                platformIdentifier: "ios-local-falcon-malformed",
+                displayName: "GotWay_002441"
+            ))
 
         XCTAssertEqual(resolution.malformedProbeResponse, .begodeName)
         XCTAssertEqual(candidate.support, .unknownRecordable(disabledReason: "Malformed Begode probe response"))
@@ -267,10 +279,11 @@ final class DeviceDetectionSessionTests: XCTestCase {
         _ = session.observeNotification(bytes: Data("NAME=Falcon".utf8))
         _ = session.observeBegodeNameProbe()
         let resolution = session.observeBegodeNameProbeTimeout()
-        let candidate = DevicePickerDiscoveryCandidate(candidate: resolution.discoveryCandidate(
-            platformIdentifier: "ios-local-falcon-missing",
-            displayName: "GotWay_002441"
-        ))
+        let candidate = DevicePickerDiscoveryCandidate(
+            candidate: resolution.discoveryCandidate(
+                platformIdentifier: "ios-local-falcon-missing",
+                displayName: "GotWay_002441"
+            ))
 
         XCTAssertEqual(resolution.missingProbeResponse, .begodeName)
         XCTAssertEqual(candidate.support, .unknownRecordable(disabledReason: "Missing Begode probe response"))
@@ -294,10 +307,11 @@ final class DeviceDetectionSessionTests: XCTestCase {
         let session = DeviceDetectionSession()
 
         let resolution = session.observeNotification(bytes: syntheticVeteranFrameWithModelId43())
-        let candidate = DevicePickerDiscoveryCandidate(candidate: resolution.discoveryCandidate(
-            platformIdentifier: "ios-local-aero",
-            displayName: "NF2557"
-        ))
+        let candidate = DevicePickerDiscoveryCandidate(
+            candidate: resolution.discoveryCandidate(
+                platformIdentifier: "ios-local-aero",
+                displayName: "NF2557"
+            ))
 
         XCTAssertEqual(
             candidate.support,
@@ -307,21 +321,22 @@ final class DeviceDetectionSessionTests: XCTestCase {
     }
 
     func testVeteranFamilyOnlyDetectionResolutionRequiresProbe() {
-        let candidate = DevicePickerDiscoveryCandidate(candidate: mobileDiscoveryCandidateFromDetectionResolution(
-            platformIdentifier: "ios-local-veteran-family",
-            displayName: "Veteran stream",
-            resolution: DeviceDetectionResolutionRecord(
-                protocolFamily: .veteranLeaperkimNosfet,
-                protocolConflict: false,
-                veteranProtocolModelId: nil,
-                advertisedName: nil,
-                modelBanner: nil,
-                firmwareBanner: nil,
-                imuBanner: nil,
-                missingProbeResponse: nil,
-                malformedProbeResponse: nil
-            )
-        ))
+        let candidate = DevicePickerDiscoveryCandidate(
+            candidate: mobileDiscoveryCandidateFromDetectionResolution(
+                platformIdentifier: "ios-local-veteran-family",
+                displayName: "Veteran stream",
+                resolution: DeviceDetectionResolutionRecord(
+                    protocolFamily: .veteranLeaperkimNosfet,
+                    protocolConflict: false,
+                    veteranProtocolModelId: nil,
+                    advertisedName: nil,
+                    modelBanner: nil,
+                    firmwareBanner: nil,
+                    imuBanner: nil,
+                    missingProbeResponse: nil,
+                    malformedProbeResponse: nil
+                )
+            ))
 
         XCTAssertEqual(
             candidate.support,
@@ -365,21 +380,22 @@ final class DeviceDetectionSessionTests: XCTestCase {
     }
 
     func testBegodeFamilyOnlyDetectionResolutionRequiresProbe() {
-        let candidate = DevicePickerDiscoveryCandidate(candidate: mobileDiscoveryCandidateFromDetectionResolution(
-            platformIdentifier: "ios-local-begode-family",
-            displayName: "Begode stream",
-            resolution: DeviceDetectionResolutionRecord(
-                protocolFamily: .begodeGotway,
-                protocolConflict: false,
-                veteranProtocolModelId: nil,
-                advertisedName: nil,
-                modelBanner: nil,
-                firmwareBanner: nil,
-                imuBanner: nil,
-                missingProbeResponse: nil,
-                malformedProbeResponse: nil
-            )
-        ))
+        let candidate = DevicePickerDiscoveryCandidate(
+            candidate: mobileDiscoveryCandidateFromDetectionResolution(
+                platformIdentifier: "ios-local-begode-family",
+                displayName: "Begode stream",
+                resolution: DeviceDetectionResolutionRecord(
+                    protocolFamily: .begodeGotway,
+                    protocolConflict: false,
+                    veteranProtocolModelId: nil,
+                    advertisedName: nil,
+                    modelBanner: nil,
+                    firmwareBanner: nil,
+                    imuBanner: nil,
+                    missingProbeResponse: nil,
+                    malformedProbeResponse: nil
+                )
+            ))
 
         XCTAssertEqual(
             candidate.support,
@@ -391,21 +407,22 @@ final class DeviceDetectionSessionTests: XCTestCase {
     }
 
     func testVescFamilyOnlyDetectionResolutionProjectsSupportedCandidate() {
-        let candidate = DevicePickerDiscoveryCandidate(candidate: mobileDiscoveryCandidateFromDetectionResolution(
-            platformIdentifier: "ios-local-vesc-family",
-            displayName: "VESC stream",
-            resolution: DeviceDetectionResolutionRecord(
-                protocolFamily: .vesc,
-                protocolConflict: false,
-                veteranProtocolModelId: nil,
-                advertisedName: nil,
-                modelBanner: nil,
-                firmwareBanner: nil,
-                imuBanner: nil,
-                missingProbeResponse: nil,
-                malformedProbeResponse: nil
-            )
-        ))
+        let candidate = DevicePickerDiscoveryCandidate(
+            candidate: mobileDiscoveryCandidateFromDetectionResolution(
+                platformIdentifier: "ios-local-vesc-family",
+                displayName: "VESC stream",
+                resolution: DeviceDetectionResolutionRecord(
+                    protocolFamily: .vesc,
+                    protocolConflict: false,
+                    veteranProtocolModelId: nil,
+                    advertisedName: nil,
+                    modelBanner: nil,
+                    firmwareBanner: nil,
+                    imuBanner: nil,
+                    missingProbeResponse: nil,
+                    malformedProbeResponse: nil
+                )
+            ))
 
         XCTAssertEqual(candidate.productCategory, "VESC Onewheel")
         XCTAssertEqual(candidate.support, .supported(connectionRoute: .vescOnewheel, electricUnicycleModel: nil))
@@ -424,10 +441,11 @@ final class DeviceDetectionSessionTests: XCTestCase {
         _ = session.observeNotification(bytes: syntheticVeteranFrameWithModelId43())
 
         let resolution = session.observeNotification(bytes: begodeFrame)
-        let candidate = DevicePickerDiscoveryCandidate(candidate: resolution.discoveryCandidate(
-            platformIdentifier: "ios-local-conflict",
-            displayName: "Conflicting wheel"
-        ))
+        let candidate = DevicePickerDiscoveryCandidate(
+            candidate: resolution.discoveryCandidate(
+                platformIdentifier: "ios-local-conflict",
+                displayName: "Conflicting wheel"
+            ))
 
         XCTAssertTrue(resolution.protocolConflict)
         XCTAssertEqual(candidate.support, .conflicting(disabledReason: "Conflicting identity evidence"))

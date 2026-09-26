@@ -258,10 +258,11 @@ private func livePowerTile(
             fractionDigits: abs(power.value) < 1_000_000 ? 2 : 1
         )
         metricValue = .available(display: text, accessibility: text)
-        fallback = switch source {
-        case .calculatedPackCurrent, .calculated, .reported: ""
-        case .estimated: localizedAppText("ride.detail.estimated")
-        }
+        fallback =
+            switch source {
+            case .calculatedPackCurrent, .calculated, .reported: ""
+            case .estimated: localizedAppText("ride.detail.estimated")
+            }
     } else {
         metricValue = .unavailable
         fallback = ""

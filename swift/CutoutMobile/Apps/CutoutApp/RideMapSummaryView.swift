@@ -1,6 +1,6 @@
-import Foundation
 import CutoutMobile
 import CutoutMobileFFI
+import Foundation
 import SwiftUI
 
 struct RideMapSummaryView: View {
@@ -50,9 +50,11 @@ struct RideMapSummaryView: View {
 
     @MainActor
     static func vehicleLabel(for identity: String?) -> String {
-        identity == nil
-            ? localizedAppText("ride_map.gps_only")
-            : localizedAppText("ride_map.vehicle_name_unavailable")
+        RideMapMetricFormatting.vehicleLabel(
+            identity: identity,
+            resolve: { _ in nil },
+            noIdentityFallback: localizedAppText("ride_map.gps_only")
+        )
     }
 
     var body: some View {
@@ -88,13 +90,11 @@ struct RideMapSummaryView: View {
     }
 
     private func distanceText(for snapshot: MobileRideMapSnapshotDto) -> String {
-        Measurement(value: snapshot.summary.distanceMeters, unit: UnitLength.meters)
-            .formatted(.measurement(width: .abbreviated, usage: .road))
+        RideMapMetricFormatting.distanceText(for: snapshot.summary)
     }
 
     private func durationText(for snapshot: MobileRideMapSnapshotDto) -> String {
-        Duration.seconds(Double(snapshot.summary.durationMilliseconds) / 1_000)
-            .formatted(.units(allowed: [.hours, .minutes, .seconds], width: .abbreviated))
+        RideMapMetricFormatting.durationText(for: snapshot.summary)
     }
 
     private func indicatorColor(for state: IndicatorState) -> Color {

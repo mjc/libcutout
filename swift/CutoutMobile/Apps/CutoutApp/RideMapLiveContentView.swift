@@ -1,6 +1,6 @@
+import CutoutMobile
 import MapKit
 import SwiftUI
-import CutoutMobile
 
 struct RideMapLiveContentView: View {
     let displayPoints: [MobileRideMapRouteDisplayPoint]
@@ -93,12 +93,14 @@ struct RideMapLiveContentView: View {
                 .padding(.top, 16)
                 .padding(.bottom, 72)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(PevColors.pageBackground, in: UnevenRoundedRectangle(
-                    topLeadingRadius: 28,
-                    bottomLeadingRadius: 0,
-                    bottomTrailingRadius: 0,
-                    topTrailingRadius: 28
-                )
+                .background(
+                    PevColors.pageBackground,
+                    in: UnevenRoundedRectangle(
+                        topLeadingRadius: 28,
+                        bottomLeadingRadius: 0,
+                        bottomTrailingRadius: 0,
+                        topTrailingRadius: 28
+                    )
                 )
             }
         }
@@ -126,12 +128,12 @@ struct RideMapLiveContentView: View {
 
     private func recenterOnLatestPoint() {
         guard let point = displayPoints.last,
-              let cameraRegion,
-              let baseRegion = RideMapCanvasView.mapRegion(for: cameraRegion),
-              let region = Self.followRegion(
-                  centeredOn: point,
-                  span: followSpan ?? Self.stableFollowSpan(for: baseRegion.span)
-              )
+            let cameraRegion,
+            let baseRegion = RideMapCanvasView.mapRegion(for: cameraRegion),
+            let region = Self.followRegion(
+                centeredOn: point,
+                span: followSpan ?? Self.stableFollowSpan(for: baseRegion.span)
+            )
         else {
             return
         }
@@ -157,10 +159,10 @@ struct RideMapLiveContentView: View {
             longitude: point.longitudeDegrees
         )
         guard CLLocationCoordinate2DIsValid(center),
-              span.latitudeDelta.isFinite,
-              span.longitudeDelta.isFinite,
-              span.latitudeDelta > 0,
-              span.longitudeDelta > 0
+            span.latitudeDelta.isFinite,
+            span.longitudeDelta.isFinite,
+            span.latitudeDelta > 0,
+            span.longitudeDelta > 0
         else { return nil }
         return MKCoordinateRegion(center: center, span: span)
     }
@@ -284,9 +286,11 @@ private struct RideMapLiveStatusView: View {
     }
 
     private var recordingPillText: String {
-        let source = snapshot?.associatedVehicle == nil
-            ? localizedAppText("ride_map.gps_only")
-            : vehicleName ?? localizedAppText("ride_map.vehicle_name_unavailable")
+        let source = RideMapMetricFormatting.vehicleLabel(
+            identity: snapshot?.associatedVehicle,
+            resolve: { _ in vehicleName },
+            noIdentityFallback: localizedAppText("ride_map.gps_only")
+        )
         return "\(localizedAppText("ride_map.status.recording")) · \(source)"
     }
 }

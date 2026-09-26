@@ -970,8 +970,8 @@ impl RideMapRecorder {
     ///
     /// # Errors
     ///
-    /// Returns [`TransitionError::Invalid`] when the transition does not match the recorder's
-    /// current state.
+    /// Returns [`TransitionError::Invalid`] when the transition was validated against a
+    /// different recorder state.
     pub fn apply_transition(
         &mut self,
         transition: ValidatedRideTransition,
@@ -983,8 +983,8 @@ impl RideMapRecorder {
     ///
     /// # Errors
     ///
-    /// Returns [`TransitionError::Invalid`] when the transition does not match the recorder's
-    /// current state.
+    /// Returns [`TransitionError::Invalid`] when the transition was validated against a
+    /// different recorder state.
     pub fn apply_transition_at(
         &mut self,
         transition: ValidatedRideTransition,

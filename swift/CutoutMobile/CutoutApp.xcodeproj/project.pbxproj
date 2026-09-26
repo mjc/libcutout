@@ -28,6 +28,7 @@
 		30000000000000000000000B /* Apps/CutoutApp/CaptureViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000000B /* Apps/CutoutApp/CaptureViews.swift */; };
 		CA9700000000000000000001 /* Apps/CutoutApp/CaptureFeatureModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA9700000000000000000002 /* Apps/CutoutApp/CaptureFeatureModel.swift */; };
 		CA9700000000000000000003 /* Apps/CutoutApp/BluetoothCapturesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA9700000000000000000004 /* Apps/CutoutApp/BluetoothCapturesView.swift */; };
+		D65000000000000000000001 /* Apps/CutoutApp/MusicFeatureModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D65000000000000000000002 /* Apps/CutoutApp/MusicFeatureModel.swift */; };
 		30000000000000000000000C /* Apps/CutoutApp/DeviceGlyphs.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000000C /* Apps/CutoutApp/DeviceGlyphs.swift */; };
 		30000000000000000000000D /* Apps/CutoutApp/DevicePickerControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000000D /* Apps/CutoutApp/DevicePickerControls.swift */; };
 		30000000000000000000000E /* Apps/CutoutApp/DevicePickerViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000000E /* Apps/CutoutApp/DevicePickerViews.swift */; };
@@ -45,6 +46,8 @@
 		30000000000000000000001C /* Apps/CutoutApp/CutoutRouteViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000001C /* Apps/CutoutApp/CutoutRouteViews.swift */; };
 		30000000000000000000001D /* Apps/CutoutApp/CaptureQuickLabel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000001D /* Apps/CutoutApp/CaptureQuickLabel.swift */; };
 		30000000000000000000001E /* Apps/CutoutApp/CutoutSessionDriving.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000001E /* Apps/CutoutApp/CutoutSessionDriving.swift */; };
+		300000000000000000000031 /* Apps/CutoutApp/CutoutSessionCallbackRegistrar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000031 /* Apps/CutoutApp/CutoutSessionCallbackRegistrar.swift */; };
+		300000000000000000000032 /* Apps/CutoutApp/RideHistoryModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000032 /* Apps/CutoutApp/RideHistoryModel.swift */; };
 		30000000000000000000001F /* Apps/CutoutApp/PevDashboardPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000001F /* Apps/CutoutApp/PevDashboardPresentation.swift */; };
 		300000000000000000000020 /* Apps/CutoutApp/AppLocalization.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000020 /* Apps/CutoutApp/AppLocalization.swift */; };
 		300000000000000000000021 /* Apps/CutoutApp/ConnectionPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000021 /* Apps/CutoutApp/ConnectionPresentation.swift */; };
@@ -62,6 +65,7 @@
 		30000000000000000000002E /* Apps/CutoutApp/RideMapHistoryContentSections.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000002E /* Apps/CutoutApp/RideMapHistoryContentSections.swift */; };
 		30000000000000000000002F /* Apps/CutoutApp/RideMapHistoryDetailSections.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000002F /* Apps/CutoutApp/RideMapHistoryDetailSections.swift */; };
 		300000000000000000000030 /* Apps/CutoutApp/RideMapHistoryStyling.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000030 /* Apps/CutoutApp/RideMapHistoryStyling.swift */; };
+		300000000000000000000033 /* Apps/CutoutApp/RideMapMetricFormatting.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000033 /* Apps/CutoutApp/RideMapMetricFormatting.swift */; };
 		300000000000000000000041 /* Apps/CutoutApp/AppSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000041 /* Apps/CutoutApp/AppSetupView.swift */; };
 		300000000000000000000042 /* Apps/CutoutApp/PhoneRideAlarm.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000042 /* Apps/CutoutApp/PhoneRideAlarm.swift */; };
 		300000000000000000000044 /* Apps/CutoutApp/PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000044 /* Apps/CutoutApp/PrivacyInfo.xcprivacy */; };
@@ -75,6 +79,10 @@
 		C00100000000000000000001 /* Apps/CutoutApp/TabAccentColors.swift in Sources */ = {isa = PBXBuildFile; fileRef = C00100000000000000000011 /* Apps/CutoutApp/TabAccentColors.swift */; };
 		C00100000000000000000002 /* Apps/CutoutApp/TabAccentColors.swift in Sources */ = {isa = PBXBuildFile; fileRef = C00100000000000000000011 /* Apps/CutoutApp/TabAccentColors.swift */; };
 		C00100000000000000000003 /* UITests/TabAccentColorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C00100000000000000000012 /* UITests/TabAccentColorTests.swift */; };
+		D65100000000000000000001 /* MusicFeatureModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D65100000000000000000002 /* MusicFeatureModelTests.swift */; };
+		D65100000000000000000004 /* CutoutMobile in Frameworks */ = {isa = PBXBuildFile; productRef = D65100000000000000000005 /* CutoutMobile */; };
+		D65200000000000000000001 /* CutoutMobileFFI in Frameworks */ = {isa = PBXBuildFile; productRef = D65200000000000000000003 /* CutoutMobileFFI */; };
+		D65200000000000000000004 /* CutoutMobileFFI in Frameworks */ = {isa = PBXBuildFile; productRef = D65200000000000000000003 /* CutoutMobileFFI */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -86,6 +94,13 @@
 			remoteInfo = CutoutLiveActivityExtension;
 		};
 		444444444444444444444501 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 111111111111111111111191 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 111111111111111111111161;
+			remoteInfo = CutoutApp;
+		};
+		D6510000000000000000000A /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 111111111111111111111191 /* Project object */;
 			proxyType = 1;
@@ -131,6 +146,7 @@
 		40000000000000000000000B /* Apps/CutoutApp/CaptureViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/CaptureViews.swift; sourceTree = SOURCE_ROOT; };
 		CA9700000000000000000002 /* Apps/CutoutApp/CaptureFeatureModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/CaptureFeatureModel.swift; sourceTree = SOURCE_ROOT; };
 		CA9700000000000000000004 /* Apps/CutoutApp/BluetoothCapturesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/BluetoothCapturesView.swift; sourceTree = SOURCE_ROOT; };
+		D65000000000000000000002 /* Apps/CutoutApp/MusicFeatureModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/MusicFeatureModel.swift; sourceTree = SOURCE_ROOT; };
 		40000000000000000000000C /* Apps/CutoutApp/DeviceGlyphs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/DeviceGlyphs.swift; sourceTree = SOURCE_ROOT; };
 		40000000000000000000000D /* Apps/CutoutApp/DevicePickerControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/DevicePickerControls.swift; sourceTree = SOURCE_ROOT; };
 		40000000000000000000000E /* Apps/CutoutApp/DevicePickerViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/DevicePickerViews.swift; sourceTree = SOURCE_ROOT; };
@@ -148,6 +164,8 @@
 		40000000000000000000001C /* Apps/CutoutApp/CutoutRouteViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/CutoutRouteViews.swift; sourceTree = SOURCE_ROOT; };
 		40000000000000000000001D /* Apps/CutoutApp/CaptureQuickLabel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/CaptureQuickLabel.swift; sourceTree = SOURCE_ROOT; };
 		40000000000000000000001E /* Apps/CutoutApp/CutoutSessionDriving.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/CutoutSessionDriving.swift; sourceTree = SOURCE_ROOT; };
+		400000000000000000000031 /* Apps/CutoutApp/CutoutSessionCallbackRegistrar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/CutoutSessionCallbackRegistrar.swift; sourceTree = SOURCE_ROOT; };
+		400000000000000000000032 /* Apps/CutoutApp/RideHistoryModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/RideHistoryModel.swift; sourceTree = SOURCE_ROOT; };
 		40000000000000000000001F /* Apps/CutoutApp/PevDashboardPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/PevDashboardPresentation.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000020 /* Apps/CutoutApp/AppLocalization.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/AppLocalization.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000021 /* Apps/CutoutApp/ConnectionPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/ConnectionPresentation.swift; sourceTree = SOURCE_ROOT; };
@@ -165,11 +183,14 @@
 		40000000000000000000002E /* Apps/CutoutApp/RideMapHistoryContentSections.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/RideMapHistoryContentSections.swift; sourceTree = SOURCE_ROOT; };
 		40000000000000000000002F /* Apps/CutoutApp/RideMapHistoryDetailSections.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/RideMapHistoryDetailSections.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000030 /* Apps/CutoutApp/RideMapHistoryStyling.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/RideMapHistoryStyling.swift; sourceTree = SOURCE_ROOT; };
+		400000000000000000000033 /* Apps/CutoutApp/RideMapMetricFormatting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/RideMapMetricFormatting.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000041 /* Apps/CutoutApp/AppSetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/AppSetupView.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000042 /* Apps/CutoutApp/PhoneRideAlarm.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/PhoneRideAlarm.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000044 /* Apps/CutoutApp/PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Apps/CutoutApp/PrivacyInfo.xcprivacy; sourceTree = SOURCE_ROOT; };
 		444444444444444444444411 /* UITests/CutoutAppUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITests/CutoutAppUITests.swift; sourceTree = SOURCE_ROOT; };
 		444444444444444444444412 /* CutoutAppUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CutoutAppUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		D65100000000000000000002 /* MusicFeatureModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/CutoutAppTests/MusicFeatureModelTests.swift; sourceTree = SOURCE_ROOT; };
+		D65100000000000000000003 /* CutoutAppIOSUnitTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CutoutAppIOSUnitTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		500000000000000000000201 /* Apps/CutoutApp/Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Apps/CutoutApp/Localizable.xcstrings; sourceTree = SOURCE_ROOT; };
 		5EC7F605A4BE4DD590E4C995 /* Apps/CutoutApp/DeviceControlsForm.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/DeviceControlsForm.swift; sourceTree = SOURCE_ROOT; };
 		AABBCC000000000000000002 /* Apps/CutoutApp/LightingPlaybackControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/LightingPlaybackControls.swift; sourceTree = SOURCE_ROOT; };
@@ -184,6 +205,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				25D83AF12FF58F16005E4B18 /* CutoutMobile in Frameworks */,
+				D65200000000000000000004 /* CutoutMobileFFI in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -202,6 +224,15 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		D65100000000000000000007 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D65100000000000000000004 /* CutoutMobile in Frameworks */,
+				D65200000000000000000001 /* CutoutMobileFFI in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -214,6 +245,7 @@
 				111111111111111111111152 /* Frameworks */,
 				111111111111111111111153 /* Products */,
 				444444444444444444444415 /* UITests */,
+				D65100000000000000000002 /* MusicFeatureModelTests.swift */,
 			);
 			sourceTree = "<group>";
 		};
@@ -243,8 +275,11 @@
 				40000000000000000000002E /* Apps/CutoutApp/RideMapHistoryContentSections.swift */,
 				40000000000000000000002F /* Apps/CutoutApp/RideMapHistoryDetailSections.swift */,
 				400000000000000000000030 /* Apps/CutoutApp/RideMapHistoryStyling.swift */,
+				400000000000000000000033 /* Apps/CutoutApp/RideMapMetricFormatting.swift */,
 				40000000000000000000001D /* Apps/CutoutApp/CaptureQuickLabel.swift */,
 				40000000000000000000001E /* Apps/CutoutApp/CutoutSessionDriving.swift */,
+				400000000000000000000031 /* Apps/CutoutApp/CutoutSessionCallbackRegistrar.swift */,
+				400000000000000000000032 /* Apps/CutoutApp/RideHistoryModel.swift */,
 				40000000000000000000001F /* Apps/CutoutApp/PevDashboardPresentation.swift */,
 				400000000000000000000020 /* Apps/CutoutApp/AppLocalization.swift */,
 				400000000000000000000021 /* Apps/CutoutApp/ConnectionPresentation.swift */,
@@ -261,6 +296,7 @@
 				40000000000000000000000B /* Apps/CutoutApp/CaptureViews.swift */,
 				CA9700000000000000000002 /* Apps/CutoutApp/CaptureFeatureModel.swift */,
 				CA9700000000000000000004 /* Apps/CutoutApp/BluetoothCapturesView.swift */,
+				D65000000000000000000002 /* Apps/CutoutApp/MusicFeatureModel.swift */,
 				40000000000000000000000C /* Apps/CutoutApp/DeviceGlyphs.swift */,
 				40000000000000000000000D /* Apps/CutoutApp/DevicePickerControls.swift */,
 				40000000000000000000000E /* Apps/CutoutApp/DevicePickerViews.swift */,
@@ -291,6 +327,7 @@
 				111111111111111111111124 /* CutoutApp.app */,
 				222222222222222222222124 /* CutoutLiveActivityExtension.appex */,
 				444444444444444444444412 /* CutoutAppUITests.xctest */,
+				D65100000000000000000003 /* CutoutAppIOSUnitTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -346,6 +383,7 @@
 			name = CutoutApp;
 			packageProductDependencies = (
 				111111111111111111111181 /* CutoutMobile */,
+				D65200000000000000000003 /* CutoutMobileFFI */,
 			);
 			productName = CutoutApp;
 			productReference = 111111111111111111111124 /* CutoutApp.app */;
@@ -389,6 +427,27 @@
 			productReference = 444444444444444444444412 /* CutoutAppUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
+		D65100000000000000000009 /* CutoutAppIOSUnitTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = D6510000000000000000000E /* Build configuration list for PBXNativeTarget "CutoutAppIOSUnitTests" */;
+			buildPhases = (
+				D65100000000000000000007 /* Frameworks */,
+				D65100000000000000000008 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				D6510000000000000000000B /* PBXTargetDependency */,
+			);
+			name = CutoutAppIOSUnitTests;
+			packageProductDependencies = (
+				D65100000000000000000005 /* CutoutMobile */,
+				D65200000000000000000003 /* CutoutMobileFFI */,
+			);
+			productName = CutoutAppIOSUnitTests;
+			productReference = D65100000000000000000003 /* CutoutAppIOSUnitTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -407,6 +466,10 @@
 						CreatedOnToolsVersion = 27.0;
 						TestTargetID = 111111111111111111111161;
 					};
+					D65100000000000000000009 = {
+						CreatedOnToolsVersion = 27.0;
+						TestTargetID = 111111111111111111111161;
+					};
 				};
 			};
 			buildConfigurationList = 111111111111111111111172 /* Build configuration list for PBXProject "CutoutApp" */;
@@ -420,6 +483,7 @@
 			mainGroup = 111111111111111111111141;
 			packageReferences = (
 				111111111111111111111180 /* XCLocalSwiftPackageReference "." */,
+				D65200000000000000000002 /* XCLocalSwiftPackageReference "../../target/swift-ffi" */,
 			);
 			productRefGroup = 111111111111111111111153 /* Products */;
 			projectDirPath = "";
@@ -428,6 +492,7 @@
 				111111111111111111111161 /* CutoutApp */,
 				222222222222222222222161 /* CutoutLiveActivityExtension */,
 				444444444444444444444461 /* CutoutAppUITests */,
+				D65100000000000000000009 /* CutoutAppIOSUnitTests */,
 			);
 		};
 /* End PBXProject section */
@@ -490,8 +555,11 @@
 				30000000000000000000002E /* Apps/CutoutApp/RideMapHistoryContentSections.swift in Sources */,
 				30000000000000000000002F /* Apps/CutoutApp/RideMapHistoryDetailSections.swift in Sources */,
 				300000000000000000000030 /* Apps/CutoutApp/RideMapHistoryStyling.swift in Sources */,
+				300000000000000000000033 /* Apps/CutoutApp/RideMapMetricFormatting.swift in Sources */,
 				30000000000000000000001D /* Apps/CutoutApp/CaptureQuickLabel.swift in Sources */,
 				30000000000000000000001E /* Apps/CutoutApp/CutoutSessionDriving.swift in Sources */,
+				300000000000000000000031 /* Apps/CutoutApp/CutoutSessionCallbackRegistrar.swift in Sources */,
+				300000000000000000000032 /* Apps/CutoutApp/RideHistoryModel.swift in Sources */,
 				30000000000000000000001F /* Apps/CutoutApp/PevDashboardPresentation.swift in Sources */,
 				300000000000000000000020 /* Apps/CutoutApp/AppLocalization.swift in Sources */,
 				300000000000000000000021 /* Apps/CutoutApp/ConnectionPresentation.swift in Sources */,
@@ -508,6 +576,7 @@
 				30000000000000000000000B /* Apps/CutoutApp/CaptureViews.swift in Sources */,
 				CA9700000000000000000001 /* Apps/CutoutApp/CaptureFeatureModel.swift in Sources */,
 				CA9700000000000000000003 /* Apps/CutoutApp/BluetoothCapturesView.swift in Sources */,
+				D65000000000000000000001 /* Apps/CutoutApp/MusicFeatureModel.swift in Sources */,
 				30000000000000000000000C /* Apps/CutoutApp/DeviceGlyphs.swift in Sources */,
 				30000000000000000000000D /* Apps/CutoutApp/DevicePickerControls.swift in Sources */,
 				30000000000000000000000E /* Apps/CutoutApp/DevicePickerViews.swift in Sources */,
@@ -543,6 +612,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		D65100000000000000000008 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D65100000000000000000001 /* MusicFeatureModelTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -556,6 +633,11 @@
 			target = 111111111111111111111161 /* CutoutApp */;
 			targetProxy = 444444444444444444444501 /* PBXContainerItemProxy */;
 		};
+		D6510000000000000000000B /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 111111111111111111111161 /* CutoutApp */;
+			targetProxy = D6510000000000000000000A /* PBXContainerItemProxy */;
+		};
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
@@ -565,6 +647,7 @@
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOLS = YES;
+				ENABLE_TESTABILITY = YES;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 2RH32Y5HM5;
@@ -732,6 +815,42 @@
 			};
 			name = Release;
 		};
+		D6510000000000000000000C /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
+				PRODUCT_BUNDLE_IDENTIFIER = lol.cutout.app.ios-unit-tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/CutoutApp.app/CutoutApp";
+				TEST_TARGET_NAME = CutoutApp;
+			};
+			name = Debug;
+		};
+		D6510000000000000000000D /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
+				PRODUCT_BUNDLE_IDENTIFIER = lol.cutout.app.ios-unit-tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/CutoutApp.app/CutoutApp";
+				TEST_TARGET_NAME = CutoutApp;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -771,12 +890,25 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;
 		};
+		D6510000000000000000000E /* Build configuration list for PBXNativeTarget "CutoutAppIOSUnitTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				D6510000000000000000000C /* Debug */,
+				D6510000000000000000000D /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
 		111111111111111111111180 /* XCLocalSwiftPackageReference "." */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = .;
+		};
+		D65200000000000000000002 /* XCLocalSwiftPackageReference "../../target/swift-ffi" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../../target/swift-ffi;
 		};
 /* End XCLocalSwiftPackageReference section */
 
@@ -790,6 +922,16 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 111111111111111111111180 /* XCLocalSwiftPackageReference "." */;
 			productName = CutoutMobile;
+		};
+		D65100000000000000000005 /* CutoutMobile */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 111111111111111111111180 /* XCLocalSwiftPackageReference "." */;
+			productName = CutoutMobile;
+		};
+		D65200000000000000000003 /* CutoutMobileFFI */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = D65200000000000000000002 /* XCLocalSwiftPackageReference "../../target/swift-ffi" */;
+			productName = CutoutMobileFFI;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

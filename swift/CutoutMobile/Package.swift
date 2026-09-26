@@ -9,7 +9,7 @@ let package = Package(
         .macOS("27.0"),
     ],
     products: [
-        .library(name: "CutoutMobile", targets: ["CutoutMobile"]),
+        .library(name: "CutoutMobile", targets: ["CutoutMobile"])
     ],
     dependencies: [
         .package(name: "CutoutMobileFFI", path: "../../target/swift-ffi"),

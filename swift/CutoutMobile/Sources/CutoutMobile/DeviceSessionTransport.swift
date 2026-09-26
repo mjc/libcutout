@@ -74,7 +74,8 @@ final class DeviceSessionTransport: @unchecked Sendable {
             chargeEstimator.configureProfile(profile: profile)
         }
         if let model = voltageSagStore.load(for: token.platformIdentifier),
-           chargeEstimator.restoreVoltageSagModel(model: model) {
+            chargeEstimator.restoreVoltageSagModel(model: model)
+        {
             persistedVoltageSagObservations = model.observations
         }
     }
@@ -89,7 +90,6 @@ final class DeviceSessionTransport: @unchecked Sendable {
             try? voltageSagStore.remove(for: token.platformIdentifier)
         }
     }
-
 
     func clearChargeEstimateProfile() {
         chargeEstimator.clearProfile()
@@ -106,26 +106,35 @@ final class DeviceSessionTransport: @unchecked Sendable {
         return step
     }
 
-    func handleNotification(bytes: Data, channel: BluetoothUuid, at: MonotonicMilliseconds) throws -> CoreBluetoothSessionStep {
+    func handleNotification(bytes: Data, channel: BluetoothUuid, at: MonotonicMilliseconds) throws
+        -> CoreBluetoothSessionStep
+    {
         record(.notification(channel: channel, byteCount: CoreBluetoothPayloadByteCount(bytes.count), at: at))
         return try ingest(.notification, at: at, channel: channel.bytes, bytes: bytes)
     }
 
-    func submitSetting(_ id: DeviceSettingID, value: DeviceSettingValue, at: MonotonicMilliseconds) throws -> CoreBluetoothSessionStep {
-        guard !invalidated, waitingForSubscription == nil else { throw DeviceSettingSubmissionError.ConnectionUnavailable }
+    func submitSetting(_ id: DeviceSettingID, value: DeviceSettingValue, at: MonotonicMilliseconds) throws
+        -> CoreBluetoothSessionStep
+    {
+        guard !invalidated, waitingForSubscription == nil else {
+            throw DeviceSettingSubmissionError.ConnectionUnavailable
+        }
         defer { publishSettings(at: clock.now(), immediately: true) }
         let step = try state.submitSetting(token: token, id: id, value: value, monotonicMs: at.rawValue)
         return try process(step, at: at)
     }
 
     func submitAction(_ id: DeviceActionID, at: MonotonicMilliseconds) throws -> CoreBluetoothSessionStep {
-        guard !invalidated, waitingForSubscription == nil else { throw DeviceActionSubmissionError.ConnectionUnavailable }
+        guard !invalidated, waitingForSubscription == nil else {
+            throw DeviceActionSubmissionError.ConnectionUnavailable
+        }
         defer { publishSettings(at: clock.now(), immediately: true) }
         return try process(state.submitAction(token: token, id: id, monotonicMs: at.rawValue), at: at)
     }
 
     func setValidationAuthorization(_ authorized: Bool, at: MonotonicMilliseconds) throws {
-        let accepted = authorized
+        let accepted =
+            authorized
             ? state.authorizeDeviceControls(token: token)
             : state.revokeDeviceControls(token: token)
         guard accepted else {
@@ -153,7 +162,8 @@ final class DeviceSessionTransport: @unchecked Sendable {
     }
 
     func handleNotificationStateUpdate(channel: BluetoothUuid, isNotifying: Bool, error: Error?) {
-        guard !invalidated, state.verifiedConnectionAttemptIsCurrent(token: token), waitingForSubscription == channel else { return }
+        guard !invalidated, state.verifiedConnectionAttemptIsCurrent(token: token), waitingForSubscription == channel
+        else { return }
         waitingForSubscription = nil
         guard error == nil, isNotifying else {
             rejectPendingOperations()
@@ -179,10 +189,14 @@ final class DeviceSessionTransport: @unchecked Sendable {
         bytes: Data = Data()
     ) throws -> CoreBluetoothSessionStep {
         guard !invalidated else { throw DeviceSettingSubmissionError.ConnectionUnavailable }
-        guard let step = state.ingestDeviceSession(token: token, input: MobileSessionInputDto(
-            kind: kind, monotonicMs: at.dto, maxWriteLen: writeLimit?.dto,
-            channel: channel, bytes: bytes
-        )) else {
+        guard
+            let step = state.ingestDeviceSession(
+                token: token,
+                input: MobileSessionInputDto(
+                    kind: kind, monotonicMs: at.dto, maxWriteLen: writeLimit?.dto,
+                    channel: channel, bytes: bytes
+                ))
+        else {
             throw DeviceSettingSubmissionError.ConnectionUnavailable
         }
         let immediate = kind != .tick && kind != .notification
@@ -195,12 +209,15 @@ final class DeviceSessionTransport: @unchecked Sendable {
         publishImmediately: Bool = true
     ) throws -> CoreBluetoothSessionStep {
         guard step.session.connection.token == token,
-              state.verifiedConnectionAttemptIsCurrent(token: token) else {
+            state.verifiedConnectionAttemptIsCurrent(token: token)
+        else {
             throw DeviceSettingSubmissionError.ConnectionUnavailable
         }
-        chargeEstimate = ChargeEstimateState(chargeEstimator.update(input: MobileChargeEstimateInputDto(
-            at: at.dto, snapshot: step.telemetry, freshness: MobileDurationDto(milliseconds: 30_000)
-        )))
+        chargeEstimate = ChargeEstimateState(
+            chargeEstimator.update(
+                input: MobileChargeEstimateInputDto(
+                    at: at.dto, snapshot: step.telemetry, freshness: MobileDurationDto(milliseconds: 30_000)
+                )))
         persistVoltageSag()
         publishSettings(at: at, immediately: publishImmediately)
         if let error = step.result.error { throw CutoutSessionError(error) }
@@ -214,24 +231,33 @@ final class DeviceSessionTransport: @unchecked Sendable {
             let planned = planner.plan(action: action)
             let receipt: SettingWriteReceipt?
             if action.kind == .write, let operationID = action.operationID,
-               let setting = settings.settings.first(where: { $0.requestId == operationID }) {
-                receipt = SettingWriteReceipt(id: setting.id, requestID: operationID,
-                                              operationID: operationID, chunkCount: planned.count)
+                let setting = settings.settings.first(where: { $0.requestId == operationID })
+            {
+                receipt = SettingWriteReceipt(
+                    id: setting.id, requestID: operationID,
+                    operationID: operationID, chunkCount: planned.count)
             } else {
                 receipt = nil
             }
             if let receipt, planned.isEmpty { recordSettingTransport(receipt) }
             for (index, operation) in planned.enumerated() {
-                pending.append((operation, { [weak self] disposition in
-                    guard let self, !self.invalidated,
-                          self.state.verifiedConnectionAttemptIsCurrent(token: self.token) else { return }
-                    self.record(.writeReceipt(platformIdentifier: self.context.platformIdentifier,
-                                              operation: operation, disposition: disposition))
-                    if let receipt, receipt.chunks[index] == .queued {
-                        receipt.chunks[index] = disposition
-                        self.recordSettingTransport(receipt)
-                    }
-                }))
+                pending.append(
+                    (
+                        operation,
+                        { [weak self] disposition in
+                            guard let self, !self.invalidated,
+                                self.state.verifiedConnectionAttemptIsCurrent(token: self.token)
+                            else { return }
+                            self.record(
+                                .writeReceipt(
+                                    platformIdentifier: self.context.platformIdentifier,
+                                    operation: operation, disposition: disposition))
+                            if let receipt, receipt.chunks[index] == .queued {
+                                receipt.chunks[index] = disposition
+                                self.recordSettingTransport(receipt)
+                            }
+                        }
+                    ))
             }
         }
         execute(pending)
@@ -255,14 +281,17 @@ final class DeviceSessionTransport: @unchecked Sendable {
             // An already-enabled characteristic can acknowledge synchronously.
             // Install the wait before asking the native sink to subscribe.
             if case .subscribe(let channel) = operation { waitingForSubscription = channel }
-            executor.execute(operation, isCurrent: { [weak self] in
-                guard let self, !self.invalidated,
-                      self.state.verifiedConnectionAttemptIsCurrent(token: self.token) else { return false }
-                guard let operationID = self.operationID(of: operation) else { return true }
-                return self.state.settingTransportIsCurrent(
-                    token: self.token, operationId: operationID, monotonicMs: self.clock.now().rawValue
-                )
-            }, onWriteReceipt: onReceipt)
+            executor.execute(
+                operation,
+                isCurrent: { [weak self] in
+                    guard let self, !self.invalidated,
+                        self.state.verifiedConnectionAttemptIsCurrent(token: self.token)
+                    else { return false }
+                    guard let operationID = self.operationID(of: operation) else { return true }
+                    return self.state.settingTransportIsCurrent(
+                        token: self.token, operationId: operationID, monotonicMs: self.clock.now().rawValue
+                    )
+                }, onWriteReceipt: onReceipt)
             record(.operation(platformIdentifier: context.platformIdentifier, operation: operation))
         }
     }
@@ -305,10 +334,12 @@ final class DeviceSessionTransport: @unchecked Sendable {
         case .rejected: status = .rejected
         case .cancelled: status = .cancelled
         }
-        guard state.markSettingTransport(
-            token: token, id: receipt.id, requestId: receipt.requestID,
-            status: status, monotonicMs: clock.now().rawValue
-        ) else { return }
+        guard
+            state.markSettingTransport(
+                token: token, id: receipt.id, requestId: receipt.requestID,
+                status: status, monotonicMs: clock.now().rawValue
+            )
+        else { return }
         publishSettings(at: clock.now(), immediately: true)
     }
 
@@ -338,7 +369,9 @@ final class DeviceSessionTransport: @unchecked Sendable {
     }
 
     private func publishSettings(at: MonotonicMilliseconds, immediately: Bool) {
-        guard immediately || lastSettingsPublication.map({ at.elapsed(since: $0).rawValue >= 1_000 }) != false else { return }
+        guard immediately || lastSettingsPublication.map({ at.elapsed(since: $0).rawValue >= 1_000 }) != false else {
+            return
+        }
         let value = state.settings()
         guard value.connection.token == token, value != publishedSettings else { return }
         publishedSettings = value
@@ -348,9 +381,10 @@ final class DeviceSessionTransport: @unchecked Sendable {
 
     private func persistVoltageSag(force: Bool = false) {
         guard let model = chargeEstimator.voltageSagModel(),
-              model.observations != persistedVoltageSagObservations,
-              force || persistedVoltageSagObservations == 0
-                || UInt32(model.observations) >= UInt32(persistedVoltageSagObservations) + 8 else { return }
+            model.observations != persistedVoltageSagObservations,
+            force || persistedVoltageSagObservations == 0
+                || UInt32(model.observations) >= UInt32(persistedVoltageSagObservations) + 8
+        else { return }
         voltageSagStore.save(model, for: token.platformIdentifier)
         persistedVoltageSagObservations = model.observations
     }

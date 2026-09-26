@@ -2,12 +2,13 @@ import CutoutMobile
 import SwiftUI
 
 func captureSessionDetailRows(progress: CaptureProgress) -> [PevDashboardKeyValueRow] {
-    let writerHealth = switch progress.writerHealth {
-    case .healthy:
-        localizedAppText("capture.detail.writer.healthy")
-    case .failed:
-        localizedAppText("capture.detail.writer.failed")
-    }
+    let writerHealth =
+        switch progress.writerHealth {
+        case .healthy:
+            localizedAppText("capture.detail.writer.healthy")
+        case .failed:
+            localizedAppText("capture.detail.writer.failed")
+        }
     let rows = [
         PevDashboardKeyValueRow(
             id: "capture-elapsed",
@@ -135,10 +136,13 @@ struct CaptureRecordingScreen: View {
         .tint(PevColors.yellow)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("capture.screen")
-        .alert(localizedAppText("captures.label_not_recorded"), isPresented: Binding(
-            get: { annotationErrorText != nil },
-            set: { if !$0 { dismissAnnotationError() } }
-        )) {
+        .alert(
+            localizedAppText("captures.label_not_recorded"),
+            isPresented: Binding(
+                get: { annotationErrorText != nil },
+                set: { if !$0 { dismissAnnotationError() } }
+            )
+        ) {
             Button(localizedAppText("captures.label_error_dismiss"), role: .cancel, action: dismissAnnotationError)
         } message: {
             Text(annotationErrorText ?? "")
@@ -170,7 +174,7 @@ struct CaptureLabelControls: View {
     let stopCaptureLabel: (CaptureQuickLabel) -> Void
 
     private let columns = [
-        GridItem(.flexible(), spacing: 10),
+        GridItem(.flexible(), spacing: 10)
     ]
 
     var body: some View {

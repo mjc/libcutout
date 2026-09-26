@@ -96,10 +96,11 @@ struct RideMapRouteTruthView: View {
     }
 
     private var routeIsPresent: Bool {
-        hasRoute ?? Self.routeExists(
-            recordedPointCount: recordedPointCount,
-            displayedPointCount: displayedPointCount
-        )
+        hasRoute
+            ?? Self.routeExists(
+                recordedPointCount: recordedPointCount,
+                displayedPointCount: displayedPointCount
+            )
     }
 
     private var telemetryText: String {

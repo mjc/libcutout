@@ -1,13 +1,14 @@
-#if os(macOS)
-import AppKit
-#endif
 import CutoutMobile
 import SwiftUI
+
+#if os(macOS)
+    import AppKit
+#endif
 
 @main
 struct CutoutApp: App {
     #if os(macOS)
-    @NSApplicationDelegateAdaptor(CutoutAppDelegate.self) private var appDelegate
+        @NSApplicationDelegateAdaptor(CutoutAppDelegate.self) private var appDelegate
     #endif
     @State private var model: CutoutAppModel?
     @State private var rideMapPresentation = RideMapPresentationState()
@@ -32,8 +33,7 @@ struct CutoutApp: App {
                     await openApplication()
                 }
                 .onOpenURL { url in
-                    if let model { _ = model.handleMusicURL(url) }
-                    else { pendingMusicURL = url }
+                    if let model { _ = model.music.handleProviderURL(url) } else { pendingMusicURL = url }
                 }
                 .onChange(of: scenePhase) {
                     switch scenePhase {
@@ -50,16 +50,16 @@ struct CutoutApp: App {
                 .alert(
                     pevLocalizedText("music.command.title"),
                     isPresented: Binding(
-                        get: { model?.musicCommandStatusText != nil },
+                        get: { model?.music.commandStatusText != nil },
                         set: { isPresented in
                             guard !isPresented else { return }
-                            model?.dismissMusicCommandFeedback()
+                            model?.music.dismissCommandFeedback()
                         }
                     ),
-                    presenting: model?.musicCommandFeedback
+                    presenting: model?.music.commandFeedback
                 ) { feedback in
                     Button(pevLocalizedText("music.command.dismiss")) {
-                        model?.dismissMusicCommandFeedback(requestID: feedback.requestID)
+                        model?.music.dismissCommandFeedback(requestID: feedback.requestID)
                     }
                 } message: { feedback in
                     Text(feedback.messageKey.map { pevLocalizedText($0) } ?? "")
@@ -89,7 +89,7 @@ struct CutoutApp: App {
                 navigationPath: $navigationPath
             )
             #if os(macOS)
-            .frame(minWidth: 360, minHeight: 280)
+                .frame(minWidth: 360, minHeight: 280)
             #endif
         } else if let startupError {
             ContentUnavailableView {
@@ -118,7 +118,7 @@ struct CutoutApp: App {
             opened.start(sceneIsActive: scenePhase == .active)
             lighting.startIfRemembered()
             if let pendingMusicURL {
-                _ = opened.handleMusicURL(pendingMusicURL)
+                _ = opened.music.handleProviderURL(pendingMusicURL)
                 self.pendingMusicURL = nil
             }
         } catch is CancellationError {
@@ -199,14 +199,14 @@ struct CutoutNavigationCommands: Commands {
 }
 
 #if os(macOS)
-final class CutoutAppDelegate: NSObject, NSApplicationDelegate {
-    func applicationDidFinishLaunching(_: Notification) {
-        NSApp.setActivationPolicy(.regular)
-        NSApp.activate(ignoringOtherApps: true)
-        if CommandLine.arguments.contains("--launch-smoke") {
-            print("cutout_app_launch=ok")
-            Foundation.exit(EXIT_SUCCESS)
+    final class CutoutAppDelegate: NSObject, NSApplicationDelegate {
+        func applicationDidFinishLaunching(_: Notification) {
+            NSApp.setActivationPolicy(.regular)
+            NSApp.activate(ignoringOtherApps: true)
+            if CommandLine.arguments.contains("--launch-smoke") {
+                print("cutout_app_launch=ok")
+                Foundation.exit(EXIT_SUCCESS)
+            }
         }
     }
-}
 #endif

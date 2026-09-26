@@ -7,9 +7,18 @@ public enum PevRideTabs {
         isTuneSelected: Bool = false
     ) -> [PevScreenTab] {
         [
-            PevScreenTab(id: .ride, title: pevLocalizedText("tab.ride"), isSelected: !lightingSelected && (selected == .eucRide || (selected == nil && !isTuneSelected)), destinationTarget: .screen(.eucRide)),
-            PevScreenTab(id: .lighting, title: pevLocalizedText("tab.lighting"), isSelected: lightingSelected, destinationTarget: .lighting),
-            PevScreenTab(id: .pack, title: pevLocalizedText("tab.pack"), isSelected: selected == .bmsOverview || selected == .bmsCellMap6S || selected == .bmsCellMap40S || selected == .bmsCellDetail || selected == .bmsUnknownTopology || selected == .bmsNoData, destinationTarget: .eucPack),
+            PevScreenTab(
+                id: .ride, title: pevLocalizedText("tab.ride"),
+                isSelected: !lightingSelected && (selected == .eucRide || (selected == nil && !isTuneSelected)),
+                destinationTarget: .screen(.eucRide)),
+            PevScreenTab(
+                id: .lighting, title: pevLocalizedText("tab.lighting"), isSelected: lightingSelected,
+                destinationTarget: .lighting),
+            PevScreenTab(
+                id: .pack, title: pevLocalizedText("tab.pack"),
+                isSelected: selected == .bmsOverview || selected == .bmsCellMap6S || selected == .bmsCellMap40S
+                    || selected == .bmsCellDetail || selected == .bmsUnknownTopology || selected == .bmsNoData,
+                destinationTarget: .eucPack),
             PevScreenTab(id: .map, title: pevLocalizedText("tab.map"), isSelected: false, destinationTarget: .rideMap),
             PevScreenTab(
                 id: .tune,
@@ -25,11 +34,19 @@ public enum PevRideTabs {
         lightingSelected: Bool = false
     ) -> [PevScreenTab] {
         [
-            PevScreenTab(id: .ride, title: pevLocalizedText("tab.ride"), isSelected: !lightingSelected && (selected == nil || selected == .vescRide), destinationTarget: .vescRide),
-            PevScreenTab(id: .lighting, title: pevLocalizedText("tab.lighting"), isSelected: lightingSelected, destinationTarget: .lighting),
-            PevScreenTab(id: .debug, title: pevLocalizedText("tab.debug"), isSelected: selected == .vescDebug, destinationScreenID: .vescDebug),
+            PevScreenTab(
+                id: .ride, title: pevLocalizedText("tab.ride"),
+                isSelected: !lightingSelected && (selected == nil || selected == .vescRide),
+                destinationTarget: .vescRide),
+            PevScreenTab(
+                id: .lighting, title: pevLocalizedText("tab.lighting"), isSelected: lightingSelected,
+                destinationTarget: .lighting),
+            PevScreenTab(
+                id: .debug, title: pevLocalizedText("tab.debug"), isSelected: selected == .vescDebug,
+                destinationScreenID: .vescDebug),
             PevScreenTab(id: .map, title: pevLocalizedText("tab.map"), isSelected: false, destinationTarget: .rideMap),
-            unavailableTab(id: .logs, title: pevLocalizedText("tab.logs"), reason: pevLocalizedText("tab.reason.logs_unavailable"))
+            unavailableTab(
+                id: .logs, title: pevLocalizedText("tab.logs"), reason: pevLocalizedText("tab.reason.logs_unavailable")),
         ]
     }
 

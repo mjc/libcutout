@@ -1,4 +1,5 @@
 import XCTest
+
 @testable import CutoutMobile
 
 final class RideUnitsTests: XCTestCase {

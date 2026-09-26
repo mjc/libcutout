@@ -102,10 +102,11 @@ extension LiveActivityRideLifecycleError {
     }
 
     var failurePresentation: LiveActivityFailurePresentation {
-        let action: LiveActivityFailureAction = switch self {
-        case .authorizationDenied: .openSettings
-        case .requestFailed, .activityUnavailable: .retry
-        }
+        let action: LiveActivityFailureAction =
+            switch self {
+            case .authorizationDenied: .openSettings
+            case .requestFailed, .activityUnavailable: .retry
+            }
         return LiveActivityFailurePresentation(
             message: accessibilityAnnouncement,
             actionTitle: localizedAppText(

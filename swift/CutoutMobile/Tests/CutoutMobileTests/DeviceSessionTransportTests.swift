@@ -1,23 +1,35 @@
 import CutoutMobileFFI
 import Foundation
+import Synchronization
 import XCTest
+
 @testable import CutoutMobile
 
 final class DeviceSessionTransportTests: XCTestCase {
     private let queue = DispatchQueue(label: "cutout.generic-transport.test")
-    private let vescReply = Data([2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101, 114, 104, 97, 115, 104, 0, 38, 208, 3])
+    private let vescReply = Data([
+        2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101, 114, 104, 97, 115, 104, 0, 38, 208, 3,
+    ])
 
-    private func makeTransport(_ state: CutoutSessionStateHandle, token: ConnectionAttemptToken, sink: TransportSink, writeLimit: UInt16 = 20, clock: MonotonicClock = MonotonicClock(now: { MonotonicMilliseconds(100) })) -> DeviceSessionTransport {
+    private func makeTransport(
+        _ state: CutoutSessionStateHandle, token: ConnectionAttemptToken, sink: TransportSink, writeLimit: UInt16 = 20,
+        clock: MonotonicClock = MonotonicClock(now: { MonotonicMilliseconds(100) })
+    ) -> DeviceSessionTransport {
         DeviceSessionTransport(
             state: state, token: token,
-            advertisement: CoreBluetoothAdvertisement(peripheralIdentifier: CoreBluetoothPeripheralIdentifier(token.platformIdentifier), localName: nil, advertisedServiceUuids: []),
+            advertisement: CoreBluetoothAdvertisement(
+                peripheralIdentifier: CoreBluetoothPeripheralIdentifier(token.platformIdentifier), localName: nil,
+                advertisedServiceUuids: []),
             writeLimit: TransportWriteLimitBytes(writeLimit), operationSink: sink,
             queue: queue,
             clock: clock
         )
     }
 
-    private func makeReadyTransport(writeLimit: UInt16 = 20, clock: MonotonicClock = MonotonicClock(now: { MonotonicMilliseconds(100) }), falcon: Bool = false) throws -> (CutoutSessionStateHandle, DeviceSessionTransport, TransportSink) {
+    private func makeReadyTransport(
+        writeLimit: UInt16 = 20, clock: MonotonicClock = MonotonicClock(now: { MonotonicMilliseconds(100) }),
+        falcon: Bool = false
+    ) throws -> (CutoutSessionStateHandle, DeviceSessionTransport, TransportSink) {
         let state = CutoutSessionStateHandle()
         let token = try XCTUnwrap(state.beginConnectionAttempt(platformIdentifier: "NF2557", nowMs: 0).token)
         _ = state.connectionLinkEstablished(token: token)
@@ -25,7 +37,10 @@ final class DeviceSessionTransportTests: XCTestCase {
         frame.replaceSubrange(0..<4, with: [0xdc, 0x5a, 0x5c, 38])
         frame.replaceSubrange(28..<30, with: [0xa7, 0xf8])
         if falcon {
-            frame = Data([0x55, 0xaa, 0x17, 0x75, 0, 0, 0, 0x76, 0x02, 0xee, 0xfb, 0x64, 0xf4, 0x94, 0x14, 0x81, 0, 9, 0, 0x18, 0x5a, 0x5a, 0x5a, 0x5a])
+            frame = Data([
+                0x55, 0xaa, 0x17, 0x75, 0, 0, 0, 0x76, 0x02, 0xee, 0xfb, 0x64, 0xf4, 0x94, 0x14, 0x81, 0, 9, 0, 0x18,
+                0x5a, 0x5a, 0x5a, 0x5a,
+            ])
         }
         _ = state.observeConnectionNotification(token: token, bytes: frame)
         if falcon {
@@ -49,7 +64,8 @@ final class DeviceSessionTransportTests: XCTestCase {
             let (state, transport, sink) = try makeReadyTransport()
             defer { transport.invalidate() }
             sink.dispositions = [.queued]
-            let step = try transport.submitSetting(.highBeam, value: .boolean(value: true), at: MonotonicMilliseconds(3))
+            let step = try transport.submitSetting(
+                .highBeam, value: .boolean(value: true), at: MonotonicMilliseconds(3))
             let submittedSetting = try XCTUnwrap(state.settings().setting(for: .highBeam))
             let write = try XCTUnwrap(step.actions.first(where: { $0.kind == .write }))
             XCTAssertEqual(write.operationID, submittedSetting.requestId)
@@ -71,21 +87,23 @@ final class DeviceSessionTransportTests: XCTestCase {
             XCTAssertEqual(setting.transport, .submitted)
             XCTAssertEqual(setting.status, .sentWithoutConfirmation)
             XCTAssertNil(setting.current)
-            XCTAssertTrue(transport.records.contains { record in
-                if case .writeReceipt(_, _, .submitted) = record { return true }
-                return false
-            })
+            XCTAssertTrue(
+                transport.records.contains { record in
+                    if case .writeReceipt(_, _, .submitted) = record { return true }
+                    return false
+                })
         }
     }
 
     func testQueuedSettingExpiresAtActualFlushWithoutWriting() throws {
         try queue.sync {
-            var now: UInt64 = 100
-            let (state, transport, sink) = try makeReadyTransport(writeLimit: 64, clock: MonotonicClock(now: { MonotonicMilliseconds(now) }))
+            let now = Mutex<UInt64>(100)
+            let (state, transport, sink) = try makeReadyTransport(
+                writeLimit: 64, clock: MonotonicClock(now: { MonotonicMilliseconds(now.withLock { $0 }) }))
             defer { transport.invalidate() }
             sink.dispositions = [.queued]
             _ = try transport.submitSetting(.displayBrightness, value: .number(value: 10), at: MonotonicMilliseconds(3))
-            now = 2_003
+            now.withLock { $0 = 2_003 }
             transport.handlePeripheralIsReadyToSendWithoutResponse()
             XCTAssertTrue(sink.submittedWrites.isEmpty)
             XCTAssertEqual(state.settings().setting(for: .displayBrightness)?.transport, .cancelled)
@@ -112,13 +130,15 @@ final class DeviceSessionTransportTests: XCTestCase {
         try queue.sync {
             let (state, transport, sink) = try makeReadyTransport(writeLimit: 64, falcon: true)
             defer { transport.invalidate() }
-            let initial = try transport.submitSetting(.maximumSpeed, value: .number(value: 300), at: MonotonicMilliseconds(3))
+            let initial = try transport.submitSetting(
+                .maximumSpeed, value: .number(value: 300), at: MonotonicMilliseconds(3))
             let request = try XCTUnwrap(state.settings().setting(for: .maximumSpeed)?.requestId)
             XCTAssertEqual(initial.actions.first(where: { $0.kind == .write })?.operationID, request)
             XCTAssertEqual(state.settings().setting(for: .maximumSpeed)?.transport, .queued)
             sink.dispositions = [.rejected]
             let later = try transport.handleTick(at: MonotonicMilliseconds(103))
-            XCTAssertEqual(later.actions.first(where: { $0.kind == .write && $0.operationID == request })?.operationID, request)
+            XCTAssertEqual(
+                later.actions.first(where: { $0.kind == .write && $0.operationID == request })?.operationID, request)
             XCTAssertEqual(state.settings().setting(for: .maximumSpeed)?.transport, .rejected)
             XCTAssertEqual(state.settings().setting(for: .maximumSpeed)?.status, .failed)
         }
@@ -126,14 +146,15 @@ final class DeviceSessionTransportTests: XCTestCase {
 
     func testBackpressureDoesNotSuspendSubmittedSettingTimeout() throws {
         try queue.sync {
-            var now: UInt64 = 100
-            let (state, transport, sink) = try makeReadyTransport(writeLimit: 64, clock: MonotonicClock(now: { MonotonicMilliseconds(now) }))
+            let now = Mutex<UInt64>(100)
+            let (state, transport, sink) = try makeReadyTransport(
+                writeLimit: 64, clock: MonotonicClock(now: { MonotonicMilliseconds(now.withLock { $0 }) }))
             defer { transport.invalidate() }
             _ = try transport.submitSetting(.displayBrightness, value: .number(value: 10), at: MonotonicMilliseconds(3))
             XCTAssertEqual(state.settings().setting(for: .displayBrightness)?.transport, .submitted)
             let writes = sink.writes
             sink.canSend = false
-            now = 2_100
+            now.withLock { $0 = 2_100 }
             transport.handleTimer()
             XCTAssertEqual(state.settings().setting(for: .displayBrightness)?.status, .timedOut)
             XCTAssertEqual(sink.writes, writes)
@@ -209,7 +230,8 @@ final class DeviceSessionTransportTests: XCTestCase {
             XCTAssertEqual(state.settings().setting(for: .highBeam)?.transport, .cancelled)
             lateReceipt(.submitted)
             XCTAssertEqual(state.settings().setting(for: .highBeam)?.transport, .cancelled)
-            XCTAssertThrowsError(try transport.submitSetting(.highBeam, value: .boolean(value: false), at: MonotonicMilliseconds(4)))
+            XCTAssertThrowsError(
+                try transport.submitSetting(.highBeam, value: .boolean(value: false), at: MonotonicMilliseconds(4)))
         }
     }
 
@@ -221,7 +243,8 @@ final class DeviceSessionTransportTests: XCTestCase {
             _ = try transport.submitSetting(.highBeam, value: .boolean(value: true), at: MonotonicMilliseconds(3))
             var published: DeviceSettings?
             transport.onSettingsChange = { published = $0 }
-            XCTAssertThrowsError(try transport.submitSetting(.highBeam, value: .number(value: 999), at: MonotonicMilliseconds(4)))
+            XCTAssertThrowsError(
+                try transport.submitSetting(.highBeam, value: .number(value: 999), at: MonotonicMilliseconds(4)))
             let queued = try XCTUnwrap(state.settings().setting(for: .highBeam))
             XCTAssertEqual(queued.transport, .queued)
             XCTAssertNil(published, "An invalid retry changes neither the Rust snapshot nor its publication")
@@ -258,7 +281,8 @@ final class DeviceSessionTransportTests: XCTestCase {
         var submitted: [Int] = []
         var receipts = [[CoreBluetoothWriteDisposition]](repeating: [], count: 3)
         for index in 0..<3 {
-            let disposition = writes.submit(canSend: { false }, write: { submitted.append(index) }, onReceipt: { receipts[index].append($0) })
+            let disposition = writes.submit(
+                canSend: { false }, write: { submitted.append(index) }, onReceipt: { receipts[index].append($0) })
             XCTAssertEqual(disposition, index < 2 ? .queued : .rejected)
         }
         XCTAssertTrue(submitted.isEmpty)
@@ -277,7 +301,8 @@ final class DeviceSessionTransportTests: XCTestCase {
     func testNativeQueueClearCancelsEveryPendingWriteExactlyOnce() {
         let writes = CoreBluetoothWriteQueue(capacity: 2)
         var receipts: [CoreBluetoothWriteDisposition] = []
-        _ = writes.submit(canSend: { false }, write: { XCTFail("Cancelled write executed") }, onReceipt: { receipts.append($0) })
+        _ = writes.submit(
+            canSend: { false }, write: { XCTFail("Cancelled write executed") }, onReceipt: { receipts.append($0) })
         writes.clear()
         writes.clear()
         writes.flush { true }
@@ -323,7 +348,8 @@ final class DeviceSessionTransportTests: XCTestCase {
             let transport = makeTransport(state, token: token, sink: sink)
             _ = try transport.handleLinkUp(at: MonotonicMilliseconds(1))
             transport.handleNotificationStateUpdate(channel: .bluetooth16(0xffe1), isNotifying: true, error: nil)
-            _ = try transport.handleNotification(bytes: frame, channel: .bluetooth16(0xffe1), at: MonotonicMilliseconds(2))
+            _ = try transport.handleNotification(
+                bytes: frame, channel: .bluetooth16(0xffe1), at: MonotonicMilliseconds(2))
             _ = try transport.submitSetting(.highBeam, value: .boolean(value: true), at: MonotonicMilliseconds(3))
             let controls = state.settings()
             let highBeam = try XCTUnwrap(controls.setting(for: .highBeam))
@@ -335,7 +361,9 @@ final class DeviceSessionTransportTests: XCTestCase {
             XCTAssertEqual(highBeam.status, .sentWithoutConfirmation)
             XCTAssertNil(highBeam.current)
             let count = sink.writes.count
-            XCTAssertThrowsError(try transport.submitSetting(.tiltbackSpeed, value: .number(value: 99), at: MonotonicMilliseconds(4))) { error in
+            XCTAssertThrowsError(
+                try transport.submitSetting(.tiltbackSpeed, value: .number(value: 99), at: MonotonicMilliseconds(4))
+            ) { error in
                 XCTAssertEqual(error as? DeviceSettingSubmissionError, .InvalidValue)
             }
             XCTAssertEqual(sink.writes.count, count)
@@ -381,10 +409,12 @@ final class DeviceSessionTransportTests: XCTestCase {
                 transport?.handleNotificationStateUpdate(channel: channel, isNotifying: true, error: nil)
             }
             _ = try transport.handleLinkUp(at: MonotonicMilliseconds(1))
-            _ = try transport.handleNotification(bytes: frame, channel: .bluetooth16(0xffe1), at: MonotonicMilliseconds(2))
+            _ = try transport.handleNotification(
+                bytes: frame, channel: .bluetooth16(0xffe1), at: MonotonicMilliseconds(2))
             let before = sink.writes.count
             _ = try transport.submitSetting(.highBeam, value: .boolean(value: true), at: MonotonicMilliseconds(3))
-            XCTAssertEqual(sink.writes.count, before + 1, "On must reach the transport, not remain queued behind subscription")
+            XCTAssertEqual(
+                sink.writes.count, before + 1, "On must reach the transport, not remain queued behind subscription")
             _ = try transport.submitSetting(.highBeam, value: .boolean(value: false), at: MonotonicMilliseconds(4))
             XCTAssertEqual(sink.writes.count, before + 2)
             let highBeam = try XCTUnwrap(state.settings().setting(for: .highBeam))
@@ -407,9 +437,12 @@ final class DeviceSessionTransportTests: XCTestCase {
             let transport = makeTransport(state, token: token, sink: sink)
             defer { transport.invalidate() }
             _ = try transport.handleLinkUp(at: MonotonicMilliseconds(1))
-            _ = try transport.handleNotification(bytes: frame, channel: .bluetooth16(0xffe1), at: MonotonicMilliseconds(2))
+            _ = try transport.handleNotification(
+                bytes: frame, channel: .bluetooth16(0xffe1), at: MonotonicMilliseconds(2))
             let before = state.settings()
-            XCTAssertThrowsError(try transport.submitSetting(.highBeam, value: .boolean(value: true), at: MonotonicMilliseconds(3))) {
+            XCTAssertThrowsError(
+                try transport.submitSetting(.highBeam, value: .boolean(value: true), at: MonotonicMilliseconds(3))
+            ) {
                 XCTAssertEqual($0 as? DeviceSettingSubmissionError, .ConnectionUnavailable)
             }
             XCTAssertThrowsError(try transport.submitAction(.horn, at: MonotonicMilliseconds(4))) {
@@ -464,8 +497,14 @@ private final class TransportSink: CoreBluetoothOperationSink {
         subscriptions.append(channel)
         onSubscribe?(channel)
     }
-    func writeWithoutResponse(channel: BluetoothUuid, bytes: Data, isCurrent: @escaping () -> Bool, onReceipt: @escaping (CoreBluetoothWriteDisposition) -> Void) -> CoreBluetoothWriteDisposition {
-        guard isCurrent() else { onReceipt(.cancelled); return .cancelled }
+    func writeWithoutResponse(
+        channel: BluetoothUuid, bytes: Data, isCurrent: @escaping () -> Bool,
+        onReceipt: @escaping (CoreBluetoothWriteDisposition) -> Void
+    ) -> CoreBluetoothWriteDisposition {
+        guard isCurrent() else {
+            onReceipt(.cancelled)
+            return .cancelled
+        }
         writes.append(bytes)
         receipts.append(onReceipt)
         let disposition = dispositions.isEmpty ? .submitted : dispositions.removeFirst()

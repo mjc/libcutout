@@ -1,13 +1,15 @@
 import Foundation
 import XCTest
+
 @testable import CutoutMobile
 
 final class PevLocalizationTests: XCTestCase {
     func testCatalogFixtureReordersBmsAccessibilityArguments() throws {
-        let fixture = try LocalizationBundleFixture(strings: """
-        "bms.accessibility.group_named" = "Named %2$@ — cell group %1$lld";
-        "bms.accessibility.voltage" = "Voltage: %1$@";
-        """)
+        let fixture = try LocalizationBundleFixture(
+            strings: """
+                "bms.accessibility.group_named" = "Named %2$@ — cell group %1$lld";
+                "bms.accessibility.voltage" = "Voltage: %1$@";
+                """)
         defer { fixture.remove() }
 
         XCTAssertEqual(

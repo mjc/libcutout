@@ -1,4 +1,5 @@
 import XCTest
+
 @testable import CutoutMobile
 
 final class CoreBluetoothWriteQueueTests: XCTestCase {
@@ -7,11 +8,13 @@ final class CoreBluetoothWriteQueueTests: XCTestCase {
             let queue = CoreBluetoothWriteQueue(capacity: 1)
             var didWrite = false
             var receipts: [CoreBluetoothWriteDisposition] = []
-            _ = queue.submit(canSend: { ready }, write: { didWrite = true }, onReceipt: { disposition in
-                if disposition == .submitted { XCTAssertTrue(didWrite) }
-                if disposition == .queued { XCTAssertFalse(didWrite) }
-                receipts.append(disposition)
-            })
+            _ = queue.submit(
+                canSend: { ready }, write: { didWrite = true },
+                onReceipt: { disposition in
+                    if disposition == .submitted { XCTAssertTrue(didWrite) }
+                    if disposition == .queued { XCTAssertFalse(didWrite) }
+                    receipts.append(disposition)
+                })
             queue.flush { true }
             XCTAssertTrue(didWrite)
             XCTAssertEqual(receipts, ready ? [.submitted] : [.queued, .submitted])
@@ -38,7 +41,9 @@ final class CoreBluetoothWriteQueueTests: XCTestCase {
         var current = true
         var submitted: [Int] = []
         var receipts: [CoreBluetoothWriteDisposition] = []
-        _ = queue.submit(canSend: { false }, isCurrent: { current }, write: { submitted.append(1) }, onReceipt: { receipts.append($0) })
+        _ = queue.submit(
+            canSend: { false }, isCurrent: { current }, write: { submitted.append(1) },
+            onReceipt: { receipts.append($0) })
         _ = queue.submit(canSend: { false }, write: { submitted.append(2) }, onReceipt: { receipts.append($0) })
         current = false
         queue.flush { true }

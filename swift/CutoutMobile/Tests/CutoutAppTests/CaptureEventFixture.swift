@@ -2,6 +2,7 @@ import CutoutMobile
 import CutoutMobileFFI
 import Foundation
 import XCTest
+
 @testable import CutoutApp
 
 /// Drives the real Rust lifecycle before publishing native evidence. Replacement
@@ -47,6 +48,11 @@ func deliverCaptureFixture(
         _ = owner.retireCaptureWriter(generation: generation.dto)
         _ = owner.completeCaptureWriter(generation: generation.dto, succeeded: true)
         translated = .finished(generation: generation, fileURL: url)
+    case let .databaseFinished(generation, outcome):
+        let generation = resolve(generation)
+        _ = owner.retireCaptureWriter(generation: generation.dto)
+        _ = owner.completeCaptureWriter(generation: generation.dto, succeeded: true)
+        translated = .databaseFinished(generation: generation, outcome: outcome)
     case let .failed(generation):
         let generation = resolve(generation)
         _ = owner.retireCaptureWriter(generation: generation.dto)
@@ -61,7 +67,12 @@ func deliverCaptureFixture(
 
 @MainActor
 extension CaptureFeatureModel {
-    convenience init() { self.init(sessionState: CutoutSessionStateHandle()) }
+    convenience init(
+        changeCaptureLabel: @escaping (CaptureGeneration, MobileCaptureLabelActionDto) throws ->
+            [MobileCaptureLabelDto] = { _, _ in [] }
+    ) {
+        self.init(sessionState: CutoutSessionStateHandle(), changeCaptureLabel: changeCaptureLabel)
+    }
 
     func deliverCaptureEvent(_ event: CaptureEvent, origin: MobileCaptureOriginDto = .automatic) {
         deliverCaptureFixture(event, owner: sessionState, origin: origin, publish: apply)

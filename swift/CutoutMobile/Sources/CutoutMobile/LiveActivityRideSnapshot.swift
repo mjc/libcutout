@@ -237,13 +237,21 @@ public struct LiveActivityRideValue: Codable, Equatable, Hashable, Sendable {
         case .available:
             [value, unit, accessibilityProvenance, accessibilityDetail].compactMap { $0 }.joined(separator: ", ")
         case .stale:
-            [value, unit, accessibilityProvenance, accessibilityDetail, localizedLiveActivityText("live_activity.connection.stale")].compactMap { $0 }.joined(separator: ", ")
+            [
+                value, unit, accessibilityProvenance, accessibilityDetail,
+                localizedLiveActivityText("live_activity.connection.stale"),
+            ].compactMap { $0 }.joined(separator: ", ")
         case .unavailable:
-            [localizedLiveActivityText("live_activity.connection.unavailable"), unit, accessibilityDetail].compactMap { $0 }.joined(separator: ", ")
+            [localizedLiveActivityText("live_activity.connection.unavailable"), unit, accessibilityDetail].compactMap {
+                $0
+            }.joined(separator: ", ")
         case .notApplicable:
-            [localizedLiveActivityText("live_activity.value.not_applicable_accessibility"), unit].compactMap { $0 }.joined(separator: ", ")
+            [localizedLiveActivityText("live_activity.value.not_applicable_accessibility"), unit].compactMap { $0 }
+                .joined(separator: ", ")
         case .deferred:
-            [localizedLiveActivityText("live_activity.value.waiting_for_data"), unit, accessibilityDetail].compactMap { $0 }.joined(separator: ", ")
+            [localizedLiveActivityText("live_activity.value.waiting_for_data"), unit, accessibilityDetail].compactMap {
+                $0
+            }.joined(separator: ", ")
         }
     }
 
@@ -375,7 +383,8 @@ public struct LiveActivityRideSnapshot: Codable, Equatable, Hashable, Sendable {
         self.headroomSeverity = headroomSeverity
         self.beeps = beeps
         self.temperature = temperature
-        self.chargeEstimate = chargeEstimate ?? .deferred(label: localizedLiveActivityText("live_activity.label.charge"))
+        self.chargeEstimate =
+            chargeEstimate ?? .deferred(label: localizedLiveActivityText("live_activity.label.charge"))
     }
 
     public var visibleValues: [LiveActivityRideValue] {
@@ -459,8 +468,8 @@ public struct LiveActivityRideSnapshot: Codable, Equatable, Hashable, Sendable {
     }
 }
 
-private extension LiveActivityRideValue {
-    var stalePresentation: Self {
+extension LiveActivityRideValue {
+    fileprivate var stalePresentation: Self {
         guard state == .available else { return self }
         return .stale(
             label: label,
@@ -551,7 +560,9 @@ extension LiveActivityRideSnapshot {
                     source: .derivedTelemetry,
                     connectionState: connectionState
                 )
-            } ?? .unavailable(label: localizedLiveActivityText("live_activity.label.battery"), unit: RideUnits.percentUnit)
+            }
+            ?? .unavailable(
+                label: localizedLiveActivityText("live_activity.label.battery"), unit: RideUnits.percentUnit)
     }
 
     static func voltageValue(
@@ -567,7 +578,9 @@ extension LiveActivityRideSnapshot {
                     source: .liveTelemetry,
                     connectionState: connectionState
                 )
-            } ?? .unavailable(label: localizedLiveActivityText("live_activity.label.voltage"), unit: RideUnits.voltageUnit)
+            }
+            ?? .unavailable(
+                label: localizedLiveActivityText("live_activity.label.voltage"), unit: RideUnits.voltageUnit)
     }
 
     static func pwmValue(
@@ -586,9 +599,12 @@ extension LiveActivityRideSnapshot {
                         source: .liveTelemetry,
                         connectionState: connectionState
                     )
-                } ?? .unavailable(label: localizedLiveActivityText("live_activity.label.pwm"), unit: RideUnits.percentUnit)
+                }
+                ?? .unavailable(
+                    label: localizedLiveActivityText("live_activity.label.pwm"), unit: RideUnits.percentUnit)
         case .unavailable:
-            return .unavailable(label: localizedLiveActivityText("live_activity.label.pwm"), unit: RideUnits.percentUnit)
+            return .unavailable(
+                label: localizedLiveActivityText("live_activity.label.pwm"), unit: RideUnits.percentUnit)
         case .notApplicable:
             return .notApplicable(label: localizedLiveActivityText("live_activity.label.pwm"))
         }
@@ -734,9 +750,13 @@ extension LiveActivityRideSnapshot {
                     accessibilityDetail: estimate.displayDetail
                 )
             }
-            return .unavailable(label: localizedLiveActivityText("live_activity.label.charge"), accessibilityDetail: estimate.displayDetail)
+            return .unavailable(
+                label: localizedLiveActivityText("live_activity.label.charge"),
+                accessibilityDetail: estimate.displayDetail)
         case .failed:
-            return .unavailable(label: localizedLiveActivityText("live_activity.label.charge"), accessibilityDetail: estimate.displayDetail)
+            return .unavailable(
+                label: localizedLiveActivityText("live_activity.label.charge"),
+                accessibilityDetail: estimate.displayDetail)
         }
     }
 

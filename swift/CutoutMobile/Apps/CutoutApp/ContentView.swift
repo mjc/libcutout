@@ -2,8 +2,9 @@ import Accessibility
 import CutoutMobile
 import Foundation
 import SwiftUI
+
 #if os(iOS)
-import UIKit
+    import UIKit
 #endif
 
 struct ContentView: View {
@@ -38,9 +39,9 @@ struct ContentView: View {
                     .ignoresSafeArea()
 
                 DevicePickerRouteView(model: model, pair: pair, navigate: navigate)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                .accessibilityLabel(localizedAppText("picker.title"))
-                .accessibilityFocused($focusedRoute, equals: .devicePicker)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    .accessibilityLabel(localizedAppText("picker.title"))
+                    .accessibilityFocused($focusedRoute, equals: .devicePicker)
             }
             .navigationDestination(for: CutoutAppRoute.self) { destination in
                 destinationContent(for: destination)
@@ -84,7 +85,8 @@ struct ContentView: View {
         }
         .onChange(of: model.devicePickerScanState?.status) { _, _ in
             guard let scanState = model.devicePickerScanState,
-                  let announcement = connectionAnnouncements.next(for: scanState) else {
+                let announcement = connectionAnnouncements.next(for: scanState)
+            else {
                 return
             }
             AccessibilityNotification.Announcement(announcement).post()
@@ -129,13 +131,13 @@ struct ContentView: View {
         case .retry:
             model.retryLiveActivity()
         case .openSettings:
-#if os(iOS)
-            if let settingsURL = URL(string: UIApplication.openSettingsURLString) {
-                openURL(settingsURL)
-            }
-#else
-            model.retryLiveActivity()
-#endif
+            #if os(iOS)
+                if let settingsURL = URL(string: UIApplication.openSettingsURLString) {
+                    openURL(settingsURL)
+                }
+            #else
+                model.retryLiveActivity()
+            #endif
         }
     }
 
@@ -167,19 +169,15 @@ struct ContentView: View {
         navigate(to: .devicePicker)
     }
 
-    private func finishCaptureAndReturnToPicker() {
-        Task { @MainActor in
-            _ = await model.finishCapture()
-        }
-    }
-
     @ViewBuilder
     private func destinationContent(for destination: CutoutAppRoute) -> some View {
         if case .lighting = destination, model.selectedConnectionRoute == nil {
             LightingRouteView(model: lighting, rideModel: model)
                 .toolbar {
                     ToolbarItem(placement: .navigation) {
-                        Button(localizedAppText("ride_map.detail_back"), systemImage: "chevron.left") { navigate(to: .devicePicker) }
+                        Button(localizedAppText("ride_map.detail_back"), systemImage: "chevron.left") {
+                            navigate(to: .devicePicker)
+                        }
                     }
                 }
                 .accessibilityFocused($focusedRoute, equals: destination)
@@ -196,7 +194,8 @@ struct ContentView: View {
         } else {
             let tabs = TabView(selection: tabSelection) {
                 ForEach(availableTabs) { tab in
-                    if let tabRoute = destination.destination(for: tab, connectionRoute: model.selectedConnectionRoute) {
+                    if let tabRoute = destination.destination(for: tab, connectionRoute: model.selectedConnectionRoute)
+                    {
                         Tab(value: tab.id) {
                             destinationSurface(
                                 for: tabRoute,
@@ -210,13 +209,13 @@ struct ContentView: View {
                 }
             }
             .tint(tabAccent)
-#if os(iOS)
-            tabs
-                .toolbarBackground(PevColors.pageBackground, for: .tabBar)
-                .toolbarBackground(.visible, for: .tabBar)
-#else
-            tabs
-#endif
+            #if os(iOS)
+                tabs
+                    .toolbarBackground(PevColors.pageBackground, for: .tabBar)
+                    .toolbarBackground(.visible, for: .tabBar)
+            #else
+                tabs
+            #endif
         }
     }
 
@@ -298,15 +297,17 @@ struct ContentView: View {
         case .vescDebug:
             VescDebugRouteView(model: model)
         case .capture:
-            CaptureRouteView(model: model, finishCapture: finishCaptureAndReturnToPicker)
+            CaptureRouteView(capture: model.capture)
         case .rideMap:
-            RideMapRouteView(model: model, presentation: rideMapPresentation, { rideID in
-                model.rideMapMode = .history
-                navigate(to: .rideMapDetail(rideID: rideID))
-            },
-            showsNavigationHeader: model.selectedConnectionRoute == nil,
-            showBackButton: model.selectedConnectionRoute == nil,
-            back: { navigate(to: .devicePicker) })
+            RideMapRouteView(
+                model: model, presentation: rideMapPresentation,
+                { rideID in
+                    rideMapPresentation.mode = .history
+                    navigate(to: .rideMapDetail(rideID: rideID))
+                },
+                showsNavigationHeader: model.selectedConnectionRoute == nil,
+                showBackButton: model.selectedConnectionRoute == nil,
+                back: { navigate(to: .devicePicker) })
         case let .rideMapDetail(rideID):
             RideMapRouteView(
                 model: model,
@@ -362,16 +363,16 @@ struct ContentView: View {
 
     private var tabAccent: Color {
         #if os(iOS)
-        switch Self.accentKind(selectedConnectionRoute: model.selectedConnectionRoute, route: route) {
-        case .purple:
-            Color(uiColor: TabAccentColors.purple)
-        case .yellow:
-            Color(uiColor: TabAccentColors.yellow)
-        default:
-            .primary
-        }
+            switch Self.accentKind(selectedConnectionRoute: model.selectedConnectionRoute, route: route) {
+            case .purple:
+                Color(uiColor: TabAccentColors.purple)
+            case .yellow:
+                Color(uiColor: TabAccentColors.yellow)
+            default:
+                .primary
+            }
         #else
-        .primary
+            .primary
         #endif
     }
 
@@ -396,8 +397,8 @@ struct ContentView: View {
 
 }
 
-private extension PevScreenTabID {
-    var systemImage: String {
+extension PevScreenTabID {
+    fileprivate var systemImage: String {
         switch self {
         case .ride:
             "speedometer"

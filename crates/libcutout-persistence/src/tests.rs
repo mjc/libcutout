@@ -1,7 +1,9 @@
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use crate::CaptureWriteOutcome;
+use crate::{
+    CaptureMetadata as LiveCaptureMetadata, CaptureWriteOutcome, CaptureWriter as LiveCaptureWriter,
+};
 use cutout_core::{
     MonotonicTimestamp, PevcapCapture, PevcapEncoding, PevcapHeader, PevcapLocationSample,
     PevcapPhoneLocation, PevcapRecord, WallClockUnixTimestamp,
@@ -20,10 +22,13 @@ use rusqlite::Connection;
 use cutout_ride_maps::{RideLifecycleState, RideMapSegmentId, RideSegmentStartReason};
 
 use super::{
-    BmsVoltageSampleRecord, GeoBounds, HistoryContextBudget, PevcapImportOutcome,
-    PevcapImportPreview, PevcapImportWarning, PhoneAlarmPreferencesRecord, QueryLimit,
-    RideDatabase, RideHistoryQuery, RideId, RideRecord, RideSource, RouteProjectionCancellation,
-    StorageError, VoltageSagModelRecord, normalize_device_display_name,
+    BmsVoltageSampleRecord, GeoBounds, HistoryContextBudget, LiveCaptureEventKind,
+    LiveCaptureIntegrity, LiveCaptureLocationAdmission, LiveCaptureLocationObservation,
+    LiveCaptureLocationValidation, LiveCaptureState, PevcapImportOutcome, PevcapImportPreview,
+    PevcapImportWarning, PhoneAlarmPreferencesRecord, QueryLimit, RideDatabase, RideHistoryQuery,
+    RideId, RideRecord, RideSource, RouteProjectionCancellation, StorageError,
+    VerifiedConnectionLifecycleMutation, VerifiedConnectionRideMetadata,
+    VerifiedConnectionRideTarget, VoltageSagModelRecord, normalize_device_display_name,
 };
 
 static TEST_LOCK: Mutex<()> = Mutex::new(());
@@ -60,6 +65,519 @@ fn close_music_test_database(database: RideDatabase, path: std::path::PathBuf) {
     let _ = std::fs::remove_file(path);
 }
 
+#[test]
+fn live_capture_events_are_ordered_durable_and_recovered_by_the_database_worker() {
+    let _guard = test_guard();
+    let path = music_test_path();
+    let database = RideDatabase::open(&path).expect("database opens");
+    let capture_id = database
+        .begin_live_capture(b"{\"format\":\"pevcap\"}".to_vec(), 100)
+        .expect("live capture starts");
+    assert_eq!(
+        database
+            .append_live_capture_event(
+                capture_id,
+                LiveCaptureEventKind::Location,
+                110,
+                Some(9),
+                Some(1_700_000_000_110),
+                b"{\"location\":1}".to_vec(),
+            )
+            .expect("location event is persisted"),
+        0
+    );
+    assert_eq!(
+        database
+            .append_live_capture_event(
+                capture_id,
+                LiveCaptureEventKind::Notification,
+                120,
+                None,
+                None,
+                b"{\"notification\":2}".to_vec(),
+            )
+            .expect("notification event is persisted"),
+        1
+    );
+    database
+        .finish_live_capture(capture_id, 130)
+        .expect("live capture finalizes");
+
+    let snapshot = database
+        .live_capture(capture_id, QueryLimit::new(10).unwrap())
+        .expect("capture is readable");
+    assert_eq!(snapshot.state, LiveCaptureState::Finished);
+    assert_eq!(snapshot.integrity, LiveCaptureIntegrity::Complete);
+    assert_eq!(snapshot.header_json, b"{\"format\":\"pevcap\"}");
+    assert_eq!(
+        snapshot
+            .events
+            .iter()
+            .map(|event| (event.sequence, event.kind, event.receipt_monotonic_ms))
+            .collect::<Vec<_>>(),
+        [
+            (0, LiveCaptureEventKind::Location, 110),
+            (1, LiveCaptureEventKind::Notification, 120)
+        ]
+    );
+    assert_eq!(snapshot.events[0].source_monotonic_offset_ms, Some(9));
+    assert_eq!(
+        snapshot.events[0].source_wall_clock_unix_ms,
+        Some(1_700_000_000_110)
+    );
+    assert_eq!(snapshot.events[0].payload, b"{\"location\":1}");
+    let interrupted_id = database
+        .begin_live_capture(b"{\"format\":\"pevcap\"}".to_vec(), 140)
+        .expect("second live capture starts");
+    database
+        .append_live_capture_event(
+            interrupted_id,
+            LiveCaptureEventKind::LinkUp,
+            141,
+            None,
+            None,
+            b"{\"link\":\"up\"}".to_vec(),
+        )
+        .expect("link event is persisted");
+
+    database.shutdown().expect("database shuts down");
+    let reopened = RideDatabase::open(&path).expect("database reopens");
+    let recovered = reopened
+        .live_capture(capture_id, QueryLimit::new(10).unwrap())
+        .expect("capture survives restart");
+    assert_eq!(recovered.state, LiveCaptureState::Finished);
+    assert_eq!(recovered.events, snapshot.events);
+    let interrupted = reopened
+        .live_capture(interrupted_id, QueryLimit::new(10).unwrap())
+        .expect("unfinished capture survives restart");
+    assert_eq!(interrupted.state, LiveCaptureState::Interrupted);
+    assert_eq!(interrupted.integrity, LiveCaptureIntegrity::Unknown);
+    assert_eq!(interrupted.events[0].payload, b"{\"link\":\"up\"}");
+    reopened.shutdown().expect("reopened database shuts down");
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn live_capture_finish_persists_known_admission_loss_as_incomplete() {
+    let _guard = test_guard();
+    let path = music_test_path();
+    let database = RideDatabase::open(&path).expect("database opens");
+    let capture_id = database
+        .begin_live_capture(b"{\"format\":\"pevcap\"}".to_vec(), 100)
+        .expect("live capture starts");
+    database
+        .append_live_capture_event(
+            capture_id,
+            LiveCaptureEventKind::Location,
+            110,
+            Some(10),
+            Some(1_700_000_000_110),
+            b"{\"location\":1}".to_vec(),
+        )
+        .expect("accepted event persists");
+    database
+        .finish_live_capture_with_integrity(
+            capture_id,
+            130,
+            LiveCaptureIntegrity::Incomplete {
+                dropped_messages: 2,
+            },
+        )
+        .expect("partial capture finalizes with loss evidence");
+
+    let snapshot = database
+        .live_capture(capture_id, QueryLimit::new(10).unwrap())
+        .expect("partial capture remains inspectable");
+    assert_eq!(snapshot.state, LiveCaptureState::Finished);
+    assert_eq!(
+        snapshot.integrity,
+        LiveCaptureIntegrity::Incomplete {
+            dropped_messages: 2
+        }
+    );
+    assert_eq!(snapshot.events.len(), 1);
+
+    database.shutdown().expect("database shuts down");
+    let reopened = RideDatabase::open(&path).expect("database reopens");
+    assert_eq!(
+        reopened
+            .live_capture(capture_id, QueryLimit::new(10).unwrap())
+            .expect("loss evidence survives restart")
+            .integrity,
+        LiveCaptureIntegrity::Incomplete {
+            dropped_messages: 2
+        }
+    );
+    reopened.shutdown().expect("reopened database shuts down");
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn live_location_is_structured_and_linked_to_its_exact_raw_event() {
+    let _guard = test_guard();
+    let path = music_test_path();
+    let database = RideDatabase::open(&path).expect("database opens");
+    let capture_id = database
+        .begin_live_capture(b"{\"format\":\"pevcap\"}".to_vec(), 100)
+        .expect("live capture starts");
+    database
+        .append_live_capture_event(
+            capture_id,
+            LiveCaptureEventKind::Notification,
+            105,
+            None,
+            None,
+            b"{\"notification\":\"before\"}".to_vec(),
+        )
+        .expect("earlier event is persisted");
+    let observation = LiveCaptureLocationObservation {
+        location: PevcapPhoneLocation {
+            wall_clock_unix_ms: 1_700_000_000_110,
+            latitude_degrees: 45.123_456_789_012_3,
+            longitude_degrees: -122.987_654_321_098_7,
+            altitude_meters: 123.456_789_012_3,
+            horizontal_accuracy_meters: Some(3.125_000_000_01),
+            vertical_accuracy_meters: Some(4.25),
+            speed_meters_per_second: Some(8.75),
+            speed_accuracy_meters_per_second: Some(0.125),
+            course_degrees: Some(271.125_000_000_1),
+            course_accuracy_degrees: Some(1.75),
+        },
+        simulated: Some(true),
+        produced_by_accessory: Some(false),
+        validation: LiveCaptureLocationValidation::Valid,
+        admission: LiveCaptureLocationAdmission::Evaluated(LocationAdmission::Accepted),
+    };
+    let payload = b"{\"location\":{\"latitude\":45.1234567890123}}".to_vec();
+    assert_eq!(
+        database
+            .append_live_capture_location(
+                capture_id,
+                110,
+                Some(9),
+                observation.clone(),
+                payload.clone(),
+            )
+            .expect("structured location and raw event persist atomically"),
+        1
+    );
+    let rejected = invalid_latitude_observation();
+    let rejected_payload = b"{\"location\":{\"latitude\":91.0}}".to_vec();
+    assert_eq!(
+        database
+            .append_live_capture_location(
+                capture_id,
+                115,
+                Some(10),
+                rejected.clone(),
+                rejected_payload.clone(),
+            )
+            .expect("rejected location remains raw evidence"),
+        2
+    );
+    database
+        .append_live_capture_event(
+            capture_id,
+            LiveCaptureEventKind::LinkDown,
+            120,
+            None,
+            None,
+            b"{\"link\":\"down\"}".to_vec(),
+        )
+        .expect("later event is persisted");
+
+    database.shutdown().expect("database shuts down");
+    let reopened = RideDatabase::open(&path).expect("database reopens");
+    let snapshot = reopened
+        .live_capture(capture_id, QueryLimit::new(10).unwrap())
+        .expect("capture reads after restart");
+    let location_event = &snapshot.events[1];
+    assert_structured_location_event(location_event, 1, &payload, &observation);
+    assert_eq!(location_event.receipt_monotonic_ms, 110);
+    assert_eq!(location_event.source_monotonic_offset_ms, Some(9));
+    assert_eq!(
+        location_event.source_wall_clock_unix_ms,
+        Some(1_700_000_000_110)
+    );
+    assert_eq!(snapshot.events[0].location, None);
+    let rejected_event = &snapshot.events[2];
+    assert_structured_location_event(rejected_event, 2, &rejected_payload, &rejected);
+    assert_eq!(snapshot.events[3].location, None);
+    assert_eq!(snapshot.next_sequence, 4);
+    reopened.shutdown().expect("reopened database shuts down");
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn live_capture_event_pages_continue_without_duplicates_or_gaps() {
+    let _guard = test_guard();
+    let path = music_test_path();
+    let database = RideDatabase::open(&path).expect("database opens");
+    let capture_id = database
+        .begin_live_capture(b"{\"format\":\"pevcap\"}".to_vec(), 100)
+        .expect("live capture starts");
+    for index in 0..5 {
+        database
+            .append_live_capture_event(
+                capture_id,
+                LiveCaptureEventKind::Notification,
+                110 + index,
+                None,
+                None,
+                format!("{{\"index\":{index}}}").into_bytes(),
+            )
+            .expect("event is persisted");
+    }
+
+    let first = database
+        .live_capture_page(capture_id, None, QueryLimit::new(2).unwrap())
+        .expect("first page is readable");
+    let first_cursor = first.events.last().map(|event| event.sequence);
+    assert_eq!(
+        first
+            .events
+            .iter()
+            .map(|event| event.sequence)
+            .collect::<Vec<_>>(),
+        [0, 1]
+    );
+    assert_eq!(first.next_sequence, 5);
+
+    let second = database
+        .live_capture_page(capture_id, first_cursor, QueryLimit::new(2).unwrap())
+        .expect("second page is readable");
+    let second_cursor = second.events.last().map(|event| event.sequence);
+    assert_eq!(
+        second
+            .events
+            .iter()
+            .map(|event| event.sequence)
+            .collect::<Vec<_>>(),
+        [2, 3]
+    );
+    assert_eq!(second.header_json, first.header_json);
+    assert_eq!(second.state, first.state);
+
+    let third = database
+        .live_capture_page(capture_id, second_cursor, QueryLimit::new(2).unwrap())
+        .expect("third page is readable");
+    assert_eq!(
+        third
+            .events
+            .iter()
+            .map(|event| event.sequence)
+            .collect::<Vec<_>>(),
+        [4]
+    );
+    assert_eq!(third.next_sequence, 5);
+    database.shutdown().expect("database shuts down");
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn schema_v26_migration_adds_live_capture_tables_without_touching_existing_capture_data() {
+    let _guard = test_guard();
+    let path = music_test_path();
+    let database = RideDatabase::open(&path).expect("database opens");
+    database.shutdown().expect("database shuts down");
+    let connection = Connection::open(&path).expect("SQLite file opens");
+    connection
+        .execute_batch(
+            "DROP TABLE live_capture_location_observations;
+             DROP TABLE live_capture_events;
+             DROP TABLE live_capture_sessions;
+             PRAGMA user_version = 26;",
+        )
+        .expect("database resembles schema 26");
+    drop(connection);
+
+    let migrated = RideDatabase::open(&path).expect("schema 26 database migrates");
+    let connection = Connection::open(&path).expect("migrated SQLite file opens");
+    assert_eq!(
+        connection
+            .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+            .unwrap(),
+        crate::storage::CURRENT_SCHEMA_VERSION
+    );
+    for table in ["live_capture_sessions", "live_capture_events"] {
+        assert!(
+            connection
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?1)",
+                    [table],
+                    |row| row.get::<_, bool>(0),
+                )
+                .unwrap()
+        );
+    }
+    drop(connection);
+    migrated.shutdown().expect("migrated database shuts down");
+    let _ = std::fs::remove_file(path);
+}
+
+fn database_capture_test_location(index: u64, source_offset_ms: i64) -> PevcapLocationSample {
+    PevcapLocationSample::new(
+        MonotonicTimestamp::new(12 + index),
+        PevcapPhoneLocation {
+            wall_clock_unix_ms: 1_700_000_000_010 + index,
+            latitude_degrees: 39.7,
+            longitude_degrees: -104.9,
+            altitude_meters: 1.0,
+            horizontal_accuracy_meters: Some(2.25),
+            vertical_accuracy_meters: None,
+            speed_meters_per_second: None,
+            speed_accuracy_meters_per_second: None,
+            course_degrees: None,
+            course_accuracy_degrees: None,
+        },
+        Some(index % 2 == 0),
+        Some(false),
+    )
+    .unwrap()
+    .with_source_monotonic_offset_ms(Some(source_offset_ms))
+}
+
+fn assert_structured_location_event(
+    event: &super::LiveCaptureEvent,
+    sequence: u64,
+    payload: &[u8],
+    observation: &LiveCaptureLocationObservation,
+) {
+    assert_eq!(event.sequence, sequence);
+    assert_eq!(event.kind, LiveCaptureEventKind::Location);
+    assert_eq!(event.payload, payload);
+    assert_eq!(event.location.as_ref(), Some(observation));
+}
+
+fn invalid_latitude_observation() -> LiveCaptureLocationObservation {
+    LiveCaptureLocationObservation {
+        location: PevcapPhoneLocation {
+            wall_clock_unix_ms: 1_700_000_000_115,
+            latitude_degrees: 91.0,
+            longitude_degrees: -122.0,
+            altitude_meters: 125.0,
+            horizontal_accuracy_meters: None,
+            vertical_accuracy_meters: None,
+            speed_meters_per_second: None,
+            speed_accuracy_meters_per_second: None,
+            course_degrees: None,
+            course_accuracy_degrees: None,
+        },
+        simulated: None,
+        produced_by_accessory: None,
+        validation: LiveCaptureLocationValidation::Rejected(
+            cutout_core::PevcapPhoneLocationError::InvalidLatitude,
+        ),
+        admission: LiveCaptureLocationAdmission::NotEvaluated,
+    }
+}
+
+#[test]
+fn database_backed_capture_writer_persists_events_on_its_worker_thread() {
+    let _guard = test_guard();
+    let database_path = music_test_path();
+    let artifact_path = database_path.with_extension("jsonl");
+    let _ = std::fs::remove_file(&artifact_path);
+    let database = RideDatabase::open(&database_path).expect("database opens");
+    let writer = LiveCaptureWriter::start_with_database(
+        artifact_path.clone(),
+        WallClockUnixTimestamp::new(1_700_000_000_000),
+        "test-location-source",
+        None,
+        &LiveCaptureMetadata {
+            advertised_services: vec![],
+            gatt_fingerprints: vec![],
+            resolved_identity: None,
+            annotations: vec![],
+        },
+        database.clone(),
+    )
+    .expect("database-backed writer starts");
+    let artifact_existed_while_recording = artifact_path.exists();
+    writer.flush().expect("live database capture starts");
+    assert!(writer.monitor().status().bytes_written > 0);
+    assert_eq!(writer.monitor().status().physical_bytes_written, 0);
+    let location = database_capture_test_location(0, 10);
+    assert_eq!(
+        writer.record_location(location),
+        CaptureWriteOutcome::Accepted
+    );
+    for index in 1..=500_u64 {
+        let source_offset_ms = i64::try_from(index).expect("bounded test index fits i64");
+        let location = database_capture_test_location(index, source_offset_ms);
+        assert_eq!(
+            writer.record_location(location),
+            CaptureWriteOutcome::Accepted
+        );
+        if index % 64 == 0 {
+            writer.flush().expect("accepted batch becomes durable");
+        }
+    }
+    assert!(!artifact_path.exists());
+
+    let artifact = writer.finish_exported().expect("writer finalizes");
+    assert!(artifact.status().physical_bytes_written > 0);
+    let capture_id = artifact.live_capture_id().expect("SQLite capture identity");
+    let snapshot = database
+        .live_capture(capture_id, QueryLimit::new(500).unwrap())
+        .expect("durable event is queryable");
+    assert_eq!(snapshot.state, LiveCaptureState::Finished);
+    assert_eq!(snapshot.events.len(), 500);
+    assert_eq!(snapshot.next_sequence, 501);
+    assert_eq!(snapshot.events[0].kind, LiveCaptureEventKind::Location);
+    assert_eq!(snapshot.events[0].receipt_monotonic_ms, 12);
+    assert_eq!(snapshot.events[0].source_monotonic_offset_ms, Some(10));
+    assert_eq!(
+        snapshot.events[0].source_wall_clock_unix_ms,
+        Some(1_700_000_000_010)
+    );
+    let structured_location = snapshot.events[0]
+        .location
+        .as_ref()
+        .expect("location observation is stored in typed columns");
+    assert_eq!(structured_location.simulated, Some(true));
+    assert_eq!(
+        structured_location.validation,
+        LiveCaptureLocationValidation::Valid
+    );
+    assert_eq!(
+        structured_location.admission,
+        LiveCaptureLocationAdmission::NotEvaluated
+    );
+    assert!(
+        std::str::from_utf8(&snapshot.events[0].payload)
+            .unwrap()
+            .contains("source_monotonic_offset_ms")
+    );
+    let last_page = database
+        .live_capture_page(capture_id, Some(499), QueryLimit::new(500).unwrap())
+        .expect("last event is queryable");
+    assert_eq!(last_page.events.len(), 1);
+    assert_eq!(last_page.events[0].sequence, 500);
+    let exported = std::fs::read(&artifact_path).expect("finalized export exists");
+    let mut lines = exported.split(|byte| *byte == b'\n');
+    assert_eq!(lines.next(), Some(snapshot.header_json.as_slice()));
+    assert_eq!(lines.next(), Some(snapshot.events[0].payload.as_slice()));
+    assert_eq!(
+        std::str::from_utf8(&exported)
+            .expect("JSONL export is UTF-8")
+            .lines()
+            .count(),
+        502
+    );
+    assert_eq!(
+        exported[..exported.len() - 1]
+            .rsplit(|byte| *byte == b'\n')
+            .next(),
+        Some(last_page.events[0].payload.as_slice())
+    );
+
+    database.shutdown().expect("database shuts down");
+    let _ = std::fs::remove_file(artifact_path);
+    let _ = std::fs::remove_file(database_path);
+    assert!(!artifact_existed_while_recording);
+}
+
 fn test_guard() -> std::sync::MutexGuard<'static, ()> {
     TEST_LOCK
         .lock()
@@ -91,6 +609,9 @@ fn music_v16_migration_preserves_events_without_fabricating_observation_times() 
          ALTER TABLE ride_music_history DROP COLUMN deleted;
          DROP TABLE bms_voltage_samples;
          DROP TABLE phone_alarm_preferences;
+         DROP TABLE live_capture_location_observations;
+         DROP TABLE live_capture_events;
+         DROP TABLE live_capture_sessions;
          PRAGMA user_version = 16;",
         )
         .unwrap();
@@ -127,6 +648,9 @@ fn schema_v19_migration_adds_music_history_state() {
             "ALTER TABLE ride_music_history DROP COLUMN state;
              DROP TABLE bms_voltage_samples;
              DROP TABLE phone_alarm_preferences;
+             DROP TABLE live_capture_location_observations;
+             DROP TABLE live_capture_events;
+             DROP TABLE live_capture_sessions;
              PRAGMA user_version = 19;",
         )
         .expect("legacy v19 shape creates");
@@ -154,6 +678,9 @@ fn pre_music_v16_migration_preserves_existing_capture_tables() {
              DROP TABLE ride_music_history;
              DROP TABLE bms_voltage_samples;
              DROP TABLE phone_alarm_preferences;
+             DROP TABLE live_capture_location_observations;
+             DROP TABLE live_capture_events;
+             DROP TABLE live_capture_sessions;
              PRAGMA user_version = 16;",
         )
         .unwrap();
@@ -309,6 +836,9 @@ fn music_v16_migration_rebuilds_utf8_text_bounds() {
              ALTER TABLE ride_music_history DROP COLUMN deleted;
              DROP TABLE bms_voltage_samples;
              DROP TABLE phone_alarm_preferences;
+             DROP TABLE live_capture_location_observations;
+             DROP TABLE live_capture_events;
+             DROP TABLE live_capture_sessions;
              PRAGMA user_version = 16;",
         )
         .unwrap();
@@ -1205,6 +1735,52 @@ fn queued_location_write_can_bound_wait_for_a_worker_gate() {
         Ok(Ok(result)) if result.admission() == LocationAdmission::Accepted
     ));
 
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn queued_lifecycle_transition_does_not_wait_for_sqlite() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-queued-lifecycle-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database.create_ride(RideSource::Live, 1_000).unwrap();
+    database
+        .transition_at(ride, RideEvent::Start, 1_000)
+        .unwrap();
+
+    let (entered_sender, entered_receiver) = std::sync::mpsc::sync_channel(0);
+    let (release_sender, release_receiver) = std::sync::mpsc::sync_channel(0);
+    let sample = LocationSample::new(
+        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        1_001,
+        1_700_000_000_001,
+        None,
+        LocationSource::Live,
+    );
+    let _pending_location = database
+        .enqueue_location_with_worker_gate_for_test(
+            ride,
+            sample,
+            RideMapSegmentId::new(0),
+            RouteTelemetryState::GpsOnly,
+            entered_sender,
+            release_receiver,
+        )
+        .unwrap();
+    entered_receiver
+        .recv_timeout(Duration::from_secs(1))
+        .expect("location write reaches the deliberate worker gate");
+
+    let pending = database
+        .queue_transition_at(ride, RideEvent::Pause, 1_002)
+        .expect("lifecycle submission returns while SQLite is held");
+
+    release_sender.send(()).unwrap();
+    assert_eq!(pending.wait_result().unwrap(), RideLifecycleState::Paused);
     database.shutdown().unwrap();
     let _ = std::fs::remove_file(path);
 }
@@ -2319,7 +2895,7 @@ fn finished_recording_is_retained_without_deriving_a_ride() {
         writer.try_send_record(pevcap_location_record(1, 40.0, Some(3.0))),
         CaptureWriteOutcome::Accepted
     );
-    let artifact = writer.finish().unwrap();
+    let artifact = writer.finish_exported().unwrap();
     let bytes = std::fs::read(&source).unwrap();
     let database = RideDatabase::open(&path).unwrap();
     let receipt = database
@@ -2407,7 +2983,7 @@ fn finished_capture_receipt_rejects_replacement_bytes_before_first_publication()
         writer.try_send_record(PevcapRecord::link_up(MonotonicTimestamp::new(1), None)),
         CaptureWriteOutcome::Accepted
     );
-    let artifact = writer.finish().unwrap();
+    let artifact = writer.finish_exported().unwrap();
     let replacement = PevcapCapture::new(
         pevcap_header(),
         vec![PevcapRecord::link_up(MonotonicTimestamp::new(2), None)],
@@ -2470,7 +3046,7 @@ fn recorded_capture_is_not_cut_off_at_the_import_duration_limit() {
         CaptureWriteOutcome::Accepted
     );
 
-    let artifact = writer.finish().unwrap();
+    let artifact = writer.finish_exported().unwrap();
     let database = RideDatabase::open(&database_path).unwrap();
     let receipt = database
         .retain_finished_capture(
@@ -2532,7 +3108,7 @@ fn recorded_capture_locations_are_not_cut_off_at_the_import_duration_limit() {
         CaptureWriteOutcome::Accepted
     );
 
-    let artifact = writer.finish().unwrap();
+    let artifact = writer.finish_exported().unwrap();
     let database = RideDatabase::open(&directory.path().join("ride.sqlite")).unwrap();
     let receipt = database
         .retain_finished_capture(
@@ -2576,7 +3152,7 @@ fn recording_publication_rolls_back_and_reconciles_lost_reply() {
         },
     )
     .unwrap()
-    .finish()
+    .finish_exported()
     .unwrap();
     let bytes = std::fs::read(&source).unwrap();
     let database = RideDatabase::open(&path).unwrap();
@@ -2678,7 +3254,13 @@ fn recording_schema_migrates_from_25_without_changing_existing_capture() {
     };
     let fresh_schema = schema();
     connection
-        .execute_batch("DROP TABLE pevcap_recordings; PRAGMA user_version = 25;")
+        .execute_batch(
+            "DROP TABLE pevcap_recordings;
+             DROP TABLE live_capture_location_observations;
+             DROP TABLE live_capture_events;
+             DROP TABLE live_capture_sessions;
+             PRAGMA user_version = 25;",
+        )
         .unwrap();
     let database = RideDatabase::open(&path).unwrap();
     assert_eq!(schema(), fresh_schema);
@@ -2714,7 +3296,7 @@ fn recording_digest_collision_preserves_the_first_writer_identity() {
             },
         )
         .unwrap()
-        .finish()
+        .finish_exported()
         .unwrap()
     };
     let first = finish("first.jsonl");
@@ -2768,7 +3350,13 @@ fn stored_capture_history_index_is_identical_after_schema_24_migration() {
         )
         .expect("fresh schema has the capture history index");
     connection
-        .execute_batch("DROP INDEX pevcap_imports_history; PRAGMA user_version = 24;")
+        .execute_batch(
+            "DROP INDEX pevcap_imports_history;
+             DROP TABLE live_capture_location_observations;
+             DROP TABLE live_capture_events;
+             DROP TABLE live_capture_sessions;
+             PRAGMA user_version = 24;",
+        )
         .unwrap();
     drop(connection);
     RideDatabase::open(&path).unwrap().shutdown().unwrap();
@@ -2820,7 +3408,13 @@ fn stored_capture_history_survives_restart_and_missing_files() {
     database.shutdown().unwrap();
     let connection = Connection::open(&path).unwrap();
     connection
-        .execute_batch("DROP INDEX pevcap_imports_history; PRAGMA user_version = 24;")
+        .execute_batch(
+            "DROP INDEX pevcap_imports_history;
+             DROP TABLE live_capture_location_observations;
+             DROP TABLE live_capture_events;
+             DROP TABLE live_capture_sessions;
+             PRAGMA user_version = 24;",
+        )
         .unwrap();
     drop(connection);
     let database = RideDatabase::open(&path).unwrap();
@@ -2948,6 +3542,9 @@ fn schema_fifteen_capture_backfill_preserves_receipts_and_rides() {
                 "DROP TABLE pevcap_capture_chunks; DROP TABLE pevcap_captures;
              DROP TABLE bms_voltage_samples;
              DROP TABLE phone_alarm_preferences;
+             DROP TABLE live_capture_location_observations;
+             DROP TABLE live_capture_events;
+             DROP TABLE live_capture_sessions;
              PRAGMA user_version = 15;",
             )
             .unwrap();
@@ -3546,7 +4143,8 @@ fn legacy_schema_versions_migrate_to_the_current_schema() {
                 .unwrap();
         }
         drop(connection);
-        let database = RideDatabase::open(&path).unwrap();
+        let database = RideDatabase::open(&path)
+            .unwrap_or_else(|error| panic!("schema v{version} migration failed: {error:?}"));
         database.shutdown().unwrap();
 
         let connection = Connection::open(&path).unwrap();
@@ -3702,6 +4300,400 @@ fn bms_voltage_samples_are_durable_without_a_ride_and_duplicate_batches_are_idem
     );
     drop(connection);
     let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn queued_bms_samples_do_not_wait_for_a_busy_sqlite_worker() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-queued-bms-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database.create_ride(RideSource::Live, 1_000).unwrap();
+    database.transition(ride, RideEvent::Start).unwrap();
+
+    let (entered_sender, entered_receiver) = std::sync::mpsc::sync_channel(0);
+    let (release_sender, release_receiver) = std::sync::mpsc::sync_channel(0);
+    let location = LocationSample::new(
+        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        1_001,
+        1_700_000_000_001,
+        None,
+        LocationSource::Live,
+    );
+    let _pending_location = database
+        .enqueue_location_with_worker_gate_for_test(
+            ride,
+            location,
+            RideMapSegmentId::new(0),
+            RouteTelemetryState::GpsOnly,
+            entered_sender,
+            release_receiver,
+        )
+        .unwrap();
+    entered_receiver
+        .recv_timeout(Duration::from_secs(1))
+        .expect("location write reaches the deliberate worker gate");
+
+    let samples = vec![
+        BmsVoltageSampleRecord::new("wheel-a", "session-a", 1, 1_000, 2_000, 45, 4_193).unwrap(),
+    ];
+    let mut pending = database
+        .queue_bms_voltage_samples(samples)
+        .expect("submission returns without waiting for SQLite");
+    assert!(pending.try_result().is_none());
+
+    release_sender.send(()).unwrap();
+    pending.wait_result().unwrap();
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn queued_live_ride_start_does_not_wait_for_a_busy_sqlite_worker() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-queued-live-start-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database
+        .create_started_live_ride(1_000, 100, Some("wheel-a"))
+        .unwrap();
+
+    let (entered_sender, entered_receiver) = std::sync::mpsc::sync_channel(0);
+    let (release_sender, release_receiver) = std::sync::mpsc::sync_channel(0);
+    let location = LocationSample::new(
+        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        1_001,
+        1_700_000_000_001,
+        None,
+        LocationSource::Live,
+    );
+    let _pending_location = database
+        .enqueue_location_with_worker_gate_for_test(
+            ride,
+            location,
+            RideMapSegmentId::new(0),
+            RouteTelemetryState::GpsOnly,
+            entered_sender,
+            release_receiver,
+        )
+        .unwrap();
+    entered_receiver
+        .recv_timeout(Duration::from_secs(1))
+        .expect("location write reaches the deliberate worker gate");
+
+    let mut pending = database
+        .queue_create_started_live_ride(2_000, 200, Some("wheel-a"))
+        .expect("ride creation returns without waiting for SQLite");
+    assert!(pending.try_result().is_none());
+
+    release_sender.send(()).unwrap();
+    let created = pending
+        .wait_result()
+        .expect("queued ride creation succeeds after the worker resumes");
+    assert_ne!(created, ride);
+    assert_eq!(
+        database.find_ride(created).unwrap().unwrap().state(),
+        RideLifecycleState::Active
+    );
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn queued_ride_restore_snapshot_does_not_wait_for_a_busy_sqlite_worker() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-queued-ride-restore-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    database
+        .remember_last_connected_device("wheel-a", 1_000)
+        .unwrap();
+    let ride = database
+        .create_started_live_ride(1_000, 100, Some("wheel-a"))
+        .unwrap();
+    let location = LocationSample::new(
+        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        1_001,
+        1_700_000_000_001,
+        None,
+        LocationSource::Live,
+    );
+    database.append_location(ride, location).unwrap();
+
+    let (entered_sender, entered_receiver) = std::sync::mpsc::sync_channel(0);
+    let (release_sender, release_receiver) = std::sync::mpsc::sync_channel(0);
+    let _pending_location = database
+        .enqueue_location_with_worker_gate_for_test(
+            ride,
+            LocationSample::new(
+                Coordinate::from_degrees(40.00001, -105.0).unwrap(),
+                1_002,
+                1_700_000_000_002,
+                None,
+                LocationSource::Live,
+            ),
+            RideMapSegmentId::new(0),
+            RouteTelemetryState::GpsOnly,
+            entered_sender,
+            release_receiver,
+        )
+        .unwrap();
+    entered_receiver
+        .recv_timeout(Duration::from_secs(1))
+        .expect("location write reaches the deliberate worker gate");
+
+    let mut pending = database
+        .queue_restore_snapshot()
+        .expect("restore snapshot returns without waiting for SQLite");
+    assert!(pending.try_result().is_none());
+
+    release_sender.send(()).unwrap();
+    let snapshot = pending
+        .wait_result()
+        .expect("restore snapshot completes after the worker resumes");
+    assert_eq!(snapshot.last_connected_device(), Some("wheel-a"));
+    assert_eq!(snapshot.ride().map(RideRecord::id), Some(ride));
+    assert_eq!(snapshot.route_points().len(), 1);
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn verified_connection_admission_is_compound_and_does_not_wait_for_sqlite() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-verified-connection-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database
+        .create_started_live_ride(1_000, 100, Some("wheel-a"))
+        .unwrap();
+    database
+        .remember_selected_device("wheel-a", None, 1_000)
+        .unwrap();
+
+    let (entered_sender, entered_receiver) = std::sync::mpsc::sync_channel(0);
+    let (release_sender, release_receiver) = std::sync::mpsc::sync_channel(0);
+    let location = LocationSample::new(
+        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        1_001,
+        1_700_000_000_001,
+        None,
+        LocationSource::Live,
+    );
+    let _pending_location = database
+        .enqueue_location_with_worker_gate_for_test(
+            ride,
+            location,
+            RideMapSegmentId::new(0),
+            RouteTelemetryState::GpsOnly,
+            entered_sender,
+            release_receiver,
+        )
+        .unwrap();
+    entered_receiver
+        .recv_timeout(Duration::from_secs(1))
+        .expect("location write reaches the deliberate worker gate");
+
+    let mut pending = database
+        .queue_verified_connection_admission(
+            "wheel-a",
+            2_000,
+            vec![
+                VerifiedConnectionLifecycleMutation::Transition {
+                    ride_id: ride,
+                    event: RideEvent::Stop,
+                    occurred_at_ms: 2_000,
+                    monotonic_at_ms: Some(200),
+                },
+                VerifiedConnectionLifecycleMutation::Transition {
+                    ride_id: ride,
+                    event: RideEvent::Save,
+                    occurred_at_ms: 2_001,
+                    monotonic_at_ms: Some(201),
+                },
+            ],
+            Some(VerifiedConnectionRideMetadata {
+                target: VerifiedConnectionRideTarget::Existing(ride),
+                candidate_vehicle: Some("wheel-a".to_owned()),
+                associated_vehicle: Some("wheel-a".to_owned()),
+                associated_at_ms: Some(200),
+                last_telemetry_at_ms: None,
+            }),
+            None,
+        )
+        .expect("verified connection command enters the existing bounded worker");
+    assert!(pending.try_result().is_none());
+
+    release_sender.send(()).unwrap();
+    let outcome = pending.wait_result().unwrap();
+    assert!(outcome.selected_device_matches);
+    assert_eq!(outcome.created_ride_id, None);
+    assert_eq!(
+        database.last_connected_device().unwrap().as_deref(),
+        Some("wheel-a")
+    );
+    let saved = database.find_ride(ride).unwrap().unwrap();
+    assert_eq!(saved.state(), RideLifecycleState::Saved);
+    assert_eq!(saved.associated_vehicle(), Some("wheel-a"));
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn verified_connection_admission_rolls_back_lifecycle_and_history_together() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-verified-connection-rollback-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    database
+        .remember_selected_device("wheel-a", None, 1_000)
+        .unwrap();
+    let ride = database
+        .create_started_live_ride(1_000, 100, Some("wheel-a"))
+        .unwrap();
+
+    let pending = database
+        .queue_verified_connection_admission(
+            "wheel-a",
+            2_000,
+            vec![VerifiedConnectionLifecycleMutation::Transition {
+                ride_id: ride,
+                event: RideEvent::Stop,
+                occurred_at_ms: 2_000,
+                monotonic_at_ms: Some(200),
+            }],
+            Some(VerifiedConnectionRideMetadata {
+                target: VerifiedConnectionRideTarget::Existing(RideId::new()),
+                candidate_vehicle: Some("wheel-a".to_owned()),
+                associated_vehicle: Some("wheel-a".to_owned()),
+                associated_at_ms: Some(200),
+                last_telemetry_at_ms: None,
+            }),
+            None,
+        )
+        .unwrap();
+
+    assert!(matches!(pending.wait_result(), Err(StorageError::NotFound)));
+    assert_eq!(
+        database.find_ride(ride).unwrap().unwrap().state(),
+        RideLifecycleState::Active
+    );
+    assert_eq!(database.last_connected_device().unwrap(), None);
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn unselected_verified_connection_skips_automatic_lifecycle_mutations() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-unselected-connection-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    database
+        .remember_selected_device("wheel-a", None, 1_000)
+        .unwrap();
+
+    let outcome = database
+        .queue_verified_connection_admission(
+            "wheel-b",
+            2_000,
+            vec![VerifiedConnectionLifecycleMutation::StartLive {
+                created_at_ms: 2_000,
+                monotonic_created_at_ms: 200,
+                candidate_vehicle: Some("wheel-b".to_owned()),
+            }],
+            None,
+            None,
+        )
+        .unwrap()
+        .wait_result()
+        .unwrap();
+
+    assert!(!outcome.selected_device_matches);
+    assert_eq!(outcome.created_ride_id, None);
+    assert!(
+        database
+            .list_rides(None, QueryLimit::new(10).unwrap())
+            .unwrap()
+            .rides()
+            .is_empty()
+    );
+    assert_eq!(
+        database.last_connected_device().unwrap().as_deref(),
+        Some("wheel-b")
+    );
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn unselected_verified_connection_uses_its_metadata_branch_without_starting_a_ride() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-unselected-metadata-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    database
+        .remember_selected_device("wheel-a", None, 1_000)
+        .unwrap();
+    let existing_ride = database
+        .create_started_live_ride(1_000, 100, Some("wheel-a"))
+        .unwrap();
+
+    let outcome = database
+        .queue_verified_connection_admission(
+            "wheel-b",
+            2_000,
+            vec![VerifiedConnectionLifecycleMutation::StartLive {
+                created_at_ms: 2_000,
+                monotonic_created_at_ms: 200,
+                candidate_vehicle: Some("wheel-b".to_owned()),
+            }],
+            Some(VerifiedConnectionRideMetadata {
+                target: VerifiedConnectionRideTarget::Created,
+                candidate_vehicle: Some("wheel-b".to_owned()),
+                associated_vehicle: Some("wheel-b".to_owned()),
+                associated_at_ms: Some(200),
+                last_telemetry_at_ms: None,
+            }),
+            Some(VerifiedConnectionRideMetadata {
+                target: VerifiedConnectionRideTarget::Existing(existing_ride),
+                candidate_vehicle: Some("wheel-b".to_owned()),
+                associated_vehicle: Some("wheel-b".to_owned()),
+                associated_at_ms: Some(200),
+                last_telemetry_at_ms: None,
+            }),
+        )
+        .unwrap()
+        .wait_result()
+        .unwrap();
+
+    assert!(!outcome.selected_device_matches);
+    assert_eq!(outcome.created_ride_id, None);
+    let existing = database.find_ride(existing_ride).unwrap().unwrap();
+    assert_eq!(existing.state(), RideLifecycleState::Active);
+    assert_eq!(existing.associated_vehicle(), Some("wheel-b"));
+    assert_eq!(
+        database
+            .list_rides(None, QueryLimit::new(10).unwrap())
+            .unwrap()
+            .rides()
+            .len(),
+        1
+    );
 }
 
 #[test]

@@ -1,6 +1,6 @@
-import Foundation
 import CutoutMobile
 import CutoutMobileFFI
+import Foundation
 import SwiftUI
 
 enum LightingControlPage: String, CaseIterable {
@@ -39,7 +39,8 @@ enum LightingPatternCatalog {
     }
 
     static func groupName(for name: String) -> String {
-        let key = name
+        let key =
+            name
             .lowercased()
             .replacingOccurrences(of: " ", with: "_")
         return localizedAppText("lighting.effect.group.\(key)")
@@ -157,9 +158,11 @@ private struct LightingEffectPreview: View {
             let points = LightingEffectPreviewModel.points(for: patternID, in: proxy.size)
             let colors = LightingEffectPreviewModel.colors(for: patternID)
             ZStack {
-                ForEach(points.enumerated().map { index, point in
-                    LightingEffectPoint(id: index, point: point)
-                }) { dot in
+                ForEach(
+                    points.enumerated().map { index, point in
+                        LightingEffectPoint(id: index, point: point)
+                    }
+                ) { dot in
                     Circle()
                         .fill(colors[dot.id % colors.count])
                         .frame(width: 6, height: 6)
@@ -272,12 +275,17 @@ struct LightingPlaybackControls: View {
                     selectedPattern: pattern,
                     onSelect: selectPattern
                 )
-                Picker(localizedAppText("lighting.pattern"), selection: Binding(
-                    get: { pattern },
-                    set: { selectPattern($0) }
-                )) {
+                Picker(
+                    localizedAppText("lighting.pattern"),
+                    selection: Binding(
+                        get: { pattern },
+                        set: { selectPattern($0) }
+                    )
+                ) {
                     ForEach(patternIDs, id: \.self) { id in
-                        Text(localizedAppText("lighting.effect.option", Int64(id), LightingPatternCatalog.name(for: id))).tag(id)
+                        Text(
+                            localizedAppText("lighting.effect.option", Int64(id), LightingPatternCatalog.name(for: id))
+                        ).tag(id)
                     }
                 }
                 .pickerStyle(.menu)
@@ -288,23 +296,28 @@ struct LightingPlaybackControls: View {
                     Text(localizedAppText("lighting.percent", Int64(((255 - speed) * 100 / 255).rounded())))
                         .monospacedDigit().foregroundStyle(.secondary)
                 }
-                Slider(value: Binding(
-                    get: { 255 - speed },
-                    set: { speed = 255 - $0 }
-                ), in: 0...255, step: 1) {
+                Slider(
+                    value: Binding(
+                        get: { 255 - speed },
+                        set: { speed = 255 - $0 }
+                    ), in: 0...255, step: 1
+                ) {
                     Text(localizedAppText("lighting.effect.speed"))
                 } onEditingChanged: { editing in
                     if !editing, case let .effect(activePattern, _) = model.requestedPlayback,
-                       Int(activePattern) == pattern {
+                        Int(activePattern) == pattern
+                    {
                         if !model.setEffectSpeed(UInt8(speed)),
-                           case let .effect(_, currentSpeed) = model.requestedPlayback {
+                            case let .effect(_, currentSpeed) = model.requestedPlayback
+                        {
                             speed = Double(currentSpeed)
                         }
                     }
                 }
                 .tint(.purple)
                 .accessibilityIdentifier("lighting.effect-speed")
-                .accessibilityValue(localizedAppText("lighting.percent_accessibility", Int64(((255 - speed) * 100 / 255).rounded())))
+                .accessibilityValue(
+                    localizedAppText("lighting.percent_accessibility", Int64(((255 - speed) * 100 / 255).rounded())))
                 HStack {
                     Text(localizedAppText("lighting.slower"))
                     Spacer()
@@ -313,13 +326,16 @@ struct LightingPlaybackControls: View {
                 .font(.caption).foregroundStyle(PevColors.muted)
             } else {
                 Label(localizedAppText("lighting.page.music"), systemImage: "waveform").font(.headline)
-                Picker(localizedAppText("lighting.music.effect"), selection: Binding(
-                    get: { musicEffect },
-                    set: {
-                        musicEffect = $0
-                        applyMusic()
-                    }
-                )) {
+                Picker(
+                    localizedAppText("lighting.music.effect"),
+                    selection: Binding(
+                        get: { musicEffect },
+                        set: {
+                            musicEffect = $0
+                            applyMusic()
+                        }
+                    )
+                ) {
                     ForEach(musicNames.indices, id: \.self) { index in
                         Text(localizedAppText(musicNames[index])).tag(index)
                     }

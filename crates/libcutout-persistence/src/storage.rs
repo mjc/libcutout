@@ -6,12 +6,13 @@ use cutout_music::{
 };
 use cutout_ride_maps::{
     AverageSpeedMillimetresPerSecond, Coordinate, LocationAdmission, LocationSample,
-    LocationSource, RideEvent, RideLifecycleState, RideMapPoint, RideMapRecorder, RideMapSegmentId,
-    RidePointCount, RidePointSequence, RideSegmentStartReason, RideSummary, RouteCameraRegion,
-    RouteDisplayBudget, RouteDisplayPoint, RouteEndpointMetadata, RoutePrivacyPolicy,
-    RouteProjectionAccumulator, RouteSegmentDisplayMetadata, RouteTelemetryState, RouteViewport,
-    TransitionError, VehicleIdentity, WallClockUnixMilliseconds, count_segment_runs,
-    route_camera_region, route_camera_region_with_privacy, route_segment_display_metadata,
+    LocationSource, MAX_LIVE_ROUTE_POINTS, RideEvent, RideLifecycleState, RideMapPoint,
+    RideMapRecorder, RideMapSegmentId, RidePointCount, RidePointSequence, RideSegmentStartReason,
+    RideSummary, RouteCameraRegion, RouteDisplayBudget, RouteDisplayPoint, RouteEndpointMetadata,
+    RoutePrivacyPolicy, RouteProjectionAccumulator, RouteSegmentDisplayMetadata,
+    RouteTelemetryState, RouteViewport, TransitionError, VehicleIdentity,
+    WallClockUnixMilliseconds, count_segment_runs, route_camera_region,
+    route_camera_region_with_privacy, route_segment_display_metadata,
 };
 use hex::encode as hex_encode;
 use rusqlite::{Connection, ErrorCode, OptionalExtension, params};
@@ -34,6 +35,13 @@ use uuid::Uuid;
 mod capture_data;
 mod capture_history;
 pub use capture_history::{PevcapCaptureCursor, PevcapCapturePage, StoredPevcapCapture};
+mod live_capture;
+pub use live_capture::{
+    LIVE_CAPTURE_EVENT_LIMIT_BYTES, LIVE_CAPTURE_HEADER_LIMIT_BYTES,
+    LIVE_CAPTURE_TOTAL_LIMIT_BYTES, LiveCaptureEvent, LiveCaptureEventKind, LiveCaptureId,
+    LiveCaptureIntegrity, LiveCaptureLocationAdmission, LiveCaptureLocationObservation,
+    LiveCaptureLocationValidation, LiveCaptureSnapshot, LiveCaptureState,
+};
 mod recorded_capture;
 pub use recorded_capture::RecordedCapture;
 mod migrations;
@@ -88,6 +96,7 @@ struct PreviousRidePoint {
 }
 
 const MAX_STORED_TEXT_CHARS: usize = 512;
+const MAX_VERIFIED_CONNECTION_LIFECYCLE_MUTATIONS: usize = 3;
 /// Origin of a canonical ride record.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RideSource {
@@ -707,6 +716,48 @@ impl RoutePoint {
 pub struct RoutePointPage {
     points: Vec<RoutePoint>,
     next_cursor: Option<RoutePointCursor>,
+}
+
+/// One bounded snapshot of the durable state required to restore a mobile ride-map core.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RideRestoreSnapshot {
+    last_connected_device: Option<String>,
+    ride: Option<RideRecord>,
+    route_points: Vec<RoutePoint>,
+    music_history_policy: Option<MusicHistoryPolicy>,
+    music_history_available: bool,
+}
+
+impl RideRestoreSnapshot {
+    /// Returns the last connected platform identity, when one was persisted.
+    #[must_use]
+    pub fn last_connected_device(&self) -> Option<&str> {
+        self.last_connected_device.as_deref()
+    }
+
+    /// Returns the recoverable ride, when one exists.
+    #[must_use]
+    pub const fn ride(&self) -> Option<&RideRecord> {
+        self.ride.as_ref()
+    }
+
+    /// Returns the bounded canonical route tail for the recoverable ride.
+    #[must_use]
+    pub fn route_points(&self) -> &[RoutePoint] {
+        &self.route_points
+    }
+
+    /// Returns the durable music-history policy when it could be read.
+    #[must_use]
+    pub const fn music_history_policy(&self) -> Option<MusicHistoryPolicy> {
+        self.music_history_policy
+    }
+
+    /// Returns whether the music history query succeeded for the recoverable ride.
+    #[must_use]
+    pub const fn music_history_available(&self) -> bool {
+        self.music_history_available
+    }
 }
 
 impl RoutePointPage {
@@ -1365,6 +1416,15 @@ pub enum StorageError {
     /// A recording identity or byte digest already belongs to different provenance.
     #[error("capture identity conflicts with retained provenance")]
     CaptureIdentityConflict,
+    /// A live-capture header, event or timestamp is outside its supported bound.
+    #[error("invalid live-capture input: {0}")]
+    LiveCaptureInputInvalid(&'static str),
+    /// A live capture reached its bounded durable byte or sequence limit.
+    #[error("live capture reached its persistence limit")]
+    LiveCaptureLimitExceeded,
+    /// The live capture is not active and cannot accept this lifecycle operation.
+    #[error("live capture is not active")]
+    LiveCaptureNotActive,
     /// The database path could not be used.
     #[error("invalid database path")]
     InvalidPath,
@@ -1452,6 +1512,17 @@ pub enum StorageError {
     /// The bounded command queue is full.
     #[error("ride database command queue is full")]
     QueueFull,
+    /// A verified-connection admission plan exceeded its lifecycle mutation limit.
+    #[error("verified-connection admission has {actual} lifecycle mutations; maximum is {maximum}")]
+    TooManyConnectionAdmissionMutations {
+        /// Number of submitted lifecycle mutations.
+        actual: usize,
+        /// Maximum supported mutation count.
+        maximum: usize,
+    },
+    /// A verified-connection admission plan has an inconsistent created-ride target.
+    #[error("invalid verified-connection admission plan")]
+    InvalidConnectionAdmissionPlan,
     /// The worker stopped before accepting a command.
     #[error("ride database worker stopped")]
     WorkerStopped,
@@ -1524,6 +1595,128 @@ pub struct RideDatabase {
 #[derive(Debug)]
 pub struct PendingLocationWrite {
     response: Receiver<Result<LocationWriteResult, StorageError>>,
+    consumed: bool,
+}
+
+/// A BMS batch accepted by the bounded database queue but not necessarily committed yet.
+#[must_use = "poll or wait for the durable BMS batch result"]
+#[derive(Debug)]
+pub struct PendingBmsVoltageWrite {
+    response: Receiver<Result<(), StorageError>>,
+    consumed: bool,
+}
+
+/// A live music transition accepted by the bounded worker but not yet committed.
+#[must_use = "poll or wait for the durable music event result"]
+#[derive(Debug)]
+pub struct PendingMusicEventWrite {
+    response: Receiver<Result<MusicTimelineRecordResult, StorageError>>,
+    consumed: bool,
+}
+
+/// A music-history query accepted by the bounded worker but not yet completed.
+#[must_use = "poll or wait for the music history result"]
+#[derive(Debug)]
+pub struct PendingMusicHistoryRead {
+    response: Receiver<Result<MusicHistory, StorageError>>,
+    consumed: bool,
+}
+
+/// A music-history mutation accepted by the bounded worker but not yet committed.
+#[must_use = "poll or wait for the durable music-history mutation result"]
+#[derive(Debug)]
+pub struct PendingMusicHistoryWrite {
+    response: Receiver<Result<(), StorageError>>,
+    consumed: bool,
+}
+
+/// A live ride creation accepted by the bounded database queue but not yet committed.
+#[must_use = "poll or wait for the durable live ride creation result"]
+#[derive(Debug)]
+pub struct PendingLiveRideCreation {
+    response: Receiver<Result<RideId, StorageError>>,
+    consumed: bool,
+}
+
+/// A restore snapshot accepted by the bounded worker but not necessarily loaded yet.
+#[must_use = "poll or wait for the durable ride restore snapshot"]
+#[derive(Debug)]
+pub struct PendingRideRestoreSnapshot {
+    response: Receiver<Result<RideRestoreSnapshot, StorageError>>,
+    consumed: bool,
+}
+
+/// Lifecycle transition accepted by the bounded SQLite worker but not yet committed.
+#[must_use = "poll or wait for the durable lifecycle transition result"]
+#[derive(Debug)]
+pub struct PendingRideLifecycleTransition {
+    response: Receiver<Result<RideLifecycleState, StorageError>>,
+    consumed: bool,
+}
+
+/// Lifecycle mutation included in an ordered verified-connection admission.
+#[derive(Clone, Debug)]
+pub enum VerifiedConnectionLifecycleMutation {
+    /// Applies one timestamped transition to an existing ride.
+    Transition {
+        /// Ride being transitioned.
+        ride_id: RideId,
+        /// Requested lifecycle event.
+        event: RideEvent,
+        /// Wall-clock event timestamp.
+        occurred_at_ms: u64,
+        /// Monotonic event timestamp, when available.
+        monotonic_at_ms: Option<u64>,
+    },
+    /// Creates and starts a new live ride.
+    StartLive {
+        /// Wall-clock creation timestamp.
+        created_at_ms: u64,
+        /// Monotonic creation timestamp.
+        monotonic_created_at_ms: u64,
+        /// Candidate vehicle identity for the new ride.
+        candidate_vehicle: Option<String>,
+    },
+}
+
+/// Ride targeted by verified-connection metadata in the same transaction.
+#[derive(Clone, Copy, Debug)]
+pub enum VerifiedConnectionRideTarget {
+    /// An existing ride.
+    Existing(RideId),
+    /// The live ride created by this admission's lifecycle plan.
+    Created,
+}
+
+/// Complete metadata snapshot written with verified-connection admission.
+#[derive(Clone, Debug)]
+pub struct VerifiedConnectionRideMetadata {
+    /// Existing ride or ride created by the automatic lifecycle plan.
+    pub target: VerifiedConnectionRideTarget,
+    /// Candidate vehicle identity, or `None` to clear it.
+    pub candidate_vehicle: Option<String>,
+    /// Associated vehicle identity, or `None` to clear it.
+    pub associated_vehicle: Option<String>,
+    /// Monotonic association timestamp.
+    pub associated_at_ms: Option<u64>,
+    /// Monotonic last-telemetry timestamp.
+    pub last_telemetry_at_ms: Option<u64>,
+}
+
+/// Durable result of one ordered verified-connection admission.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct VerifiedConnectionAdmissionOutcome {
+    /// Whether the verified identity matched the currently selected device.
+    pub selected_device_matches: bool,
+    /// Ride created by the automatic lifecycle plan, if any.
+    pub created_ride_id: Option<RideId>,
+}
+
+/// Verified connection admission accepted by the bounded worker but not necessarily committed.
+#[must_use = "poll or wait for the verified connection admission result"]
+#[derive(Debug)]
+pub struct PendingVerifiedConnectionAdmission {
+    response: Receiver<Result<VerifiedConnectionAdmissionOutcome, StorageError>>,
     consumed: bool,
 }
 
@@ -1990,6 +2183,241 @@ impl PendingLocationWrite {
     }
 }
 
+impl PendingBmsVoltageWrite {
+    /// Returns the durable result when the worker has completed the write.
+    ///
+    /// `None` means that the worker is still processing the batch. A terminal result is returned
+    /// at most once.
+    pub fn try_result(&mut self) -> Option<Result<(), StorageError>> {
+        if self.consumed {
+            return None;
+        }
+        match self.response.try_recv() {
+            Ok(result) => {
+                self.consumed = true;
+                Some(result)
+            }
+            Err(mpsc::TryRecvError::Empty) => None,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.consumed = true;
+                Some(Err(StorageError::ResponseDropped))
+            }
+        }
+    }
+
+    /// Waits for the durable BMS batch result.
+    ///
+    /// Lifecycle barriers may wait for this result; platform callbacks should use
+    /// [`Self::try_result`] instead.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::ResponseDropped`] when the database worker disappears before
+    /// sending a result.
+    pub fn wait_result(self) -> Result<(), StorageError> {
+        self.response
+            .recv()
+            .map_err(|_| StorageError::ResponseDropped)?
+    }
+}
+
+impl PendingMusicEventWrite {
+    /// Returns the durable result when the worker has completed the event.
+    ///
+    /// `None` means that the worker is still processing the command. A terminal result is
+    /// returned at most once.
+    pub fn try_result(&mut self) -> Option<Result<MusicTimelineRecordResult, StorageError>> {
+        if self.consumed {
+            return None;
+        }
+        match self.response.try_recv() {
+            Ok(result) => {
+                self.consumed = true;
+                Some(result)
+            }
+            Err(mpsc::TryRecvError::Empty) => None,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.consumed = true;
+                Some(Err(StorageError::ResponseDropped))
+            }
+        }
+    }
+}
+
+impl PendingMusicHistoryRead {
+    /// Returns the durable history when the worker has completed the query.
+    pub fn try_result(&mut self) -> Option<Result<MusicHistory, StorageError>> {
+        if self.consumed {
+            return None;
+        }
+        match self.response.try_recv() {
+            Ok(result) => {
+                self.consumed = true;
+                Some(result)
+            }
+            Err(mpsc::TryRecvError::Empty) => None,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.consumed = true;
+                Some(Err(StorageError::ResponseDropped))
+            }
+        }
+    }
+}
+
+impl PendingMusicHistoryWrite {
+    /// Returns the durable mutation result when the worker has completed it.
+    pub fn try_result(&mut self) -> Option<Result<(), StorageError>> {
+        if self.consumed {
+            return None;
+        }
+        match self.response.try_recv() {
+            Ok(result) => {
+                self.consumed = true;
+                Some(result)
+            }
+            Err(mpsc::TryRecvError::Empty) => None,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.consumed = true;
+                Some(Err(StorageError::ResponseDropped))
+            }
+        }
+    }
+}
+
+impl PendingLiveRideCreation {
+    /// Returns the new ride identity when the worker has committed the creation.
+    pub fn try_result(&mut self) -> Option<Result<RideId, StorageError>> {
+        if self.consumed {
+            return None;
+        }
+        match self.response.try_recv() {
+            Ok(result) => {
+                self.consumed = true;
+                Some(result)
+            }
+            Err(mpsc::TryRecvError::Empty) => None,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.consumed = true;
+                Some(Err(StorageError::ResponseDropped))
+            }
+        }
+    }
+
+    /// Waits for the durable ride-creation result.
+    ///
+    /// # Errors
+    ///
+    /// Returns the storage error or [`StorageError::ResponseDropped`] if the worker stops.
+    pub fn wait_result(self) -> Result<RideId, StorageError> {
+        self.response
+            .recv()
+            .map_err(|_| StorageError::ResponseDropped)?
+    }
+}
+
+impl PendingRideRestoreSnapshot {
+    /// Returns the restore snapshot when the worker has completed its query.
+    pub fn try_result(&mut self) -> Option<Result<RideRestoreSnapshot, StorageError>> {
+        if self.consumed {
+            return None;
+        }
+        match self.response.try_recv() {
+            Ok(result) => {
+                self.consumed = true;
+                Some(result)
+            }
+            Err(mpsc::TryRecvError::Empty) => None,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.consumed = true;
+                Some(Err(StorageError::ResponseDropped))
+            }
+        }
+    }
+
+    /// Waits for the worker's restore snapshot query to finish.
+    ///
+    /// # Errors
+    ///
+    /// Returns the query error or [`StorageError::ResponseDropped`] if the worker stops.
+    pub fn wait_result(self) -> Result<RideRestoreSnapshot, StorageError> {
+        self.response
+            .recv()
+            .map_err(|_| StorageError::ResponseDropped)?
+    }
+}
+
+impl PendingRideLifecycleTransition {
+    /// Returns the new lifecycle state when the worker has committed the transition.
+    pub fn try_result(&mut self) -> Option<Result<RideLifecycleState, StorageError>> {
+        if self.consumed {
+            return None;
+        }
+        match self.response.try_recv() {
+            Ok(result) => {
+                self.consumed = true;
+                Some(result)
+            }
+            Err(mpsc::TryRecvError::Empty) => None,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.consumed = true;
+                Some(Err(StorageError::ResponseDropped))
+            }
+        }
+    }
+
+    /// Waits for the committed lifecycle transition result.
+    ///
+    /// Use [`Self::try_result`] from callbacks or polling loops.
+    ///
+    /// # Errors
+    ///
+    /// Returns the storage error or [`StorageError::ResponseDropped`] if the worker stops.
+    pub fn wait_result(self) -> Result<RideLifecycleState, StorageError> {
+        self.response
+            .recv()
+            .map_err(|_| StorageError::ResponseDropped)?
+    }
+}
+
+impl PendingVerifiedConnectionAdmission {
+    /// Returns the admission result when the worker completes this command.
+    ///
+    /// `None` means that the command is still queued or executing. A terminal result is returned
+    /// at most once.
+    pub fn try_result(
+        &mut self,
+    ) -> Option<Result<VerifiedConnectionAdmissionOutcome, StorageError>> {
+        if self.consumed {
+            return None;
+        }
+        match self.response.try_recv() {
+            Ok(result) => {
+                self.consumed = true;
+                Some(result)
+            }
+            Err(mpsc::TryRecvError::Empty) => None,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.consumed = true;
+                Some(Err(StorageError::ResponseDropped))
+            }
+        }
+    }
+
+    /// Waits for the ordered connection admission result.
+    ///
+    /// Platform callbacks should use [`Self::try_result`] rather than waiting.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::ResponseDropped`] when the worker exits before replying, or the
+    /// storage error produced by the command.
+    pub fn wait_result(self) -> Result<VerifiedConnectionAdmissionOutcome, StorageError> {
+        self.response
+            .recv()
+            .map_err(|_| StorageError::ResponseDropped)?
+    }
+}
+
 impl RideDatabase {
     /// Opens or reuses the one canonical database service for this process.
     ///
@@ -2120,13 +2548,39 @@ impl RideDatabase {
         monotonic_created_at_ms: u64,
         candidate_vehicle: Option<&str>,
     ) -> Result<RideId, StorageError> {
+        self.queue_create_started_live_ride(
+            created_at_ms,
+            monotonic_created_at_ms,
+            candidate_vehicle,
+        )?
+        .wait_result()
+    }
+
+    /// Queues an active live ride creation without waiting for SQLite.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::QueueFull`] when the bounded queue is saturated,
+    /// [`StorageError::WorkerStopped`] when the worker is unavailable, or a validation error for
+    /// an invalid candidate vehicle.
+    pub fn queue_create_started_live_ride(
+        &self,
+        created_at_ms: u64,
+        monotonic_created_at_ms: u64,
+        candidate_vehicle: Option<&str>,
+    ) -> Result<PendingLiveRideCreation, StorageError> {
         let candidate_vehicle =
             normalize_optional_stored_text(candidate_vehicle, "candidate vehicle")?;
-        self.request(move |reply| Command::CreateStartedLiveRide {
+        let (reply, response) = response_channel();
+        self.enqueue(Command::CreateStartedLiveRide {
             created_at_ms,
             monotonic_created_at_ms,
             candidate_vehicle,
             reply,
+        })?;
+        Ok(PendingLiveRideCreation {
+            response,
+            consumed: false,
         })
     }
 
@@ -2205,9 +2659,123 @@ impl RideDatabase {
         &self,
         samples: &[BmsVoltageSampleRecord],
     ) -> Result<(), StorageError> {
-        self.request(move |reply| Command::RecordBmsVoltageSamples {
-            samples: samples.to_vec(),
+        self.queue_bms_voltage_samples(samples.to_vec())?
+            .wait_result()
+    }
+
+    /// Queues a BMS batch without waiting for the SQLite worker.
+    ///
+    /// The bounded queue applies backpressure at submission time. The returned ticket can be
+    /// polled for the durable result.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::QueueFull`] when the bounded queue is saturated, or
+    /// [`StorageError::WorkerStopped`] when the worker is unavailable.
+    pub fn queue_bms_voltage_samples(
+        &self,
+        samples: Vec<BmsVoltageSampleRecord>,
+    ) -> Result<PendingBmsVoltageWrite, StorageError> {
+        let (reply, response) = response_channel();
+        self.enqueue(Command::RecordBmsVoltageSamples { samples, reply })?;
+        Ok(PendingBmsVoltageWrite {
+            response,
+            consumed: false,
+        })
+    }
+
+    /// Queues verified-device history, policy, lifecycle, and metadata as one worker transaction.
+    ///
+    /// The command is ordered with every other operation on the existing bounded database
+    /// worker. It always remembers the verified identity and applies ride metadata; the automatic
+    /// lifecycle plan and its metadata run only when the identity matches the selected device;
+    /// otherwise the alternate metadata snapshot is applied. The method returns after bounded
+    /// enqueue and does not wait for SQLite completion.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::QueueFull`] when the bounded queue is saturated,
+    /// [`StorageError::WorkerStopped`] when the worker is unavailable, or a validation error for
+    /// an invalid platform identifier.
+    pub fn queue_verified_connection_admission(
+        &self,
+        platform_identifier: &str,
+        updated_at_ms: u64,
+        mut lifecycle_mutations: Vec<VerifiedConnectionLifecycleMutation>,
+        metadata: Option<VerifiedConnectionRideMetadata>,
+        unselected_metadata: Option<VerifiedConnectionRideMetadata>,
+    ) -> Result<PendingVerifiedConnectionAdmission, StorageError> {
+        if lifecycle_mutations.len() > MAX_VERIFIED_CONNECTION_LIFECYCLE_MUTATIONS {
+            return Err(StorageError::TooManyConnectionAdmissionMutations {
+                actual: lifecycle_mutations.len(),
+                maximum: MAX_VERIFIED_CONNECTION_LIFECYCLE_MUTATIONS,
+            });
+        }
+        let start_count = lifecycle_mutations
+            .iter()
+            .filter(|mutation| match mutation {
+                VerifiedConnectionLifecycleMutation::Transition { .. } => false,
+                VerifiedConnectionLifecycleMutation::StartLive { .. } => true,
+            })
+            .count();
+        let metadata_targets_created_ride = |metadata: &Option<VerifiedConnectionRideMetadata>| {
+            metadata
+                .as_ref()
+                .is_some_and(|metadata| match metadata.target {
+                    VerifiedConnectionRideTarget::Existing(_) => false,
+                    VerifiedConnectionRideTarget::Created => true,
+                })
+        };
+        if start_count > 1
+            || ((metadata_targets_created_ride(&metadata)
+                || metadata_targets_created_ride(&unselected_metadata))
+                && start_count != 1)
+        {
+            return Err(StorageError::InvalidConnectionAdmissionPlan);
+        }
+        let platform_identifier =
+            normalize_stored_text(platform_identifier, "platform identifier")?;
+        for mutation in &mut lifecycle_mutations {
+            if let VerifiedConnectionLifecycleMutation::StartLive {
+                candidate_vehicle, ..
+            } = mutation
+            {
+                *candidate_vehicle = normalize_optional_stored_text(
+                    candidate_vehicle.as_deref(),
+                    "candidate vehicle",
+                )?;
+            }
+        }
+        let normalize_metadata = |metadata: VerifiedConnectionRideMetadata|
+         -> Result<VerifiedConnectionRideMetadata, StorageError> {
+            Ok(VerifiedConnectionRideMetadata {
+                target: metadata.target,
+                candidate_vehicle: normalize_optional_stored_text(
+                    metadata.candidate_vehicle.as_deref(),
+                    "candidate vehicle",
+                )?,
+                associated_vehicle: normalize_optional_stored_text(
+                    metadata.associated_vehicle.as_deref(),
+                    "associated vehicle",
+                )?,
+                associated_at_ms: metadata.associated_at_ms,
+                last_telemetry_at_ms: metadata.last_telemetry_at_ms,
+            })
+        };
+        let metadata = metadata.map(normalize_metadata).transpose()?;
+        let unselected_metadata = unselected_metadata.map(normalize_metadata).transpose()?;
+        let (reply, response) = response_channel();
+        self.enqueue(Command::VerifiedConnectionAdmission {
+            platform_identifier,
+            updated_at_ms,
+            lifecycle_mutations,
+            metadata,
+            unselected_metadata,
             reply,
+        })?;
+        Ok(PendingVerifiedConnectionAdmission {
+            response,
+            consumed: false,
         })
     }
 
@@ -2368,6 +2936,45 @@ impl RideDatabase {
         })
     }
 
+    /// Queues a bounded durable history-policy update without waiting for SQLite.
+    ///
+    /// # Errors
+    /// Returns [`StorageError::QueueFull`] when the worker queue is saturated, or
+    /// [`StorageError::WorkerStopped`] when the worker is unavailable.
+    pub fn queue_save_music_history_policy(
+        &self,
+        ride_id: RideId,
+        policy: MusicHistoryPolicy,
+    ) -> Result<PendingMusicHistoryWrite, StorageError> {
+        let (reply, response) = response_channel();
+        self.enqueue(Command::SaveMusicHistoryPolicy {
+            ride_id,
+            policy,
+            reply,
+        })?;
+        Ok(PendingMusicHistoryWrite {
+            response,
+            consumed: false,
+        })
+    }
+
+    /// Queues a bounded music-history deletion without waiting for SQLite.
+    ///
+    /// # Errors
+    /// Returns [`StorageError::QueueFull`] when the worker queue is saturated, or
+    /// [`StorageError::WorkerStopped`] when the worker is unavailable.
+    pub fn queue_delete_music_history(
+        &self,
+        ride_id: RideId,
+    ) -> Result<PendingMusicHistoryWrite, StorageError> {
+        let (reply, response) = response_channel();
+        self.enqueue(Command::DeleteMusicHistory { ride_id, reply })?;
+        Ok(PendingMusicHistoryWrite {
+            response,
+            consumed: false,
+        })
+    }
+
     /// Atomically admits a live transition using durable privacy, sequence, and observation state.
     ///
     /// # Errors
@@ -2397,6 +3004,48 @@ impl RideDatabase {
             ride_id,
             event,
             reply,
+        })
+    }
+
+    /// Queues one live music transition without waiting for the SQLite worker.
+    ///
+    /// The worker reads the current durable history policy and applies its privacy rules before
+    /// committing the event. This bounded queue is the live provider-callback path.
+    ///
+    /// # Errors
+    /// Returns [`StorageError::QueueFull`] when the worker queue is saturated, or
+    /// [`StorageError::WorkerStopped`] when the worker is unavailable.
+    pub fn queue_record_music_event(
+        &self,
+        ride_id: RideId,
+        event: MusicRideEvent,
+    ) -> Result<PendingMusicEventWrite, StorageError> {
+        let (reply, response) = response_channel();
+        self.enqueue(Command::RecordMusicEvent {
+            ride_id,
+            event,
+            reply,
+        })?;
+        Ok(PendingMusicEventWrite {
+            response,
+            consumed: false,
+        })
+    }
+
+    /// Queues one music-history query without waiting for the SQLite worker.
+    ///
+    /// # Errors
+    /// Returns [`StorageError::QueueFull`] when the worker queue is saturated, or
+    /// [`StorageError::WorkerStopped`] when the worker is unavailable.
+    pub fn queue_music_history(
+        &self,
+        ride_id: RideId,
+    ) -> Result<PendingMusicHistoryRead, StorageError> {
+        let (reply, response) = response_channel();
+        self.enqueue(Command::MusicHistory { ride_id, reply })?;
+        Ok(PendingMusicHistoryRead {
+            response,
+            consumed: false,
         })
     }
 
@@ -3014,6 +3663,35 @@ impl RideDatabase {
         self.transition_blocking_with_timestamp(ride_id, event, Some(monotonic_at_ms))
     }
 
+    /// Queues one timestamped lifecycle transition without waiting for SQLite.
+    ///
+    /// The bounded queue returns `QueueFull` immediately when it cannot accept the command.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::QueueFull`] when the command queue is full, or a worker error when
+    /// the command cannot be enqueued.
+    pub fn queue_transition_at(
+        &self,
+        ride_id: RideId,
+        event: RideEvent,
+        monotonic_at_ms: u64,
+    ) -> Result<PendingRideLifecycleTransition, StorageError> {
+        let occurred_at_ms = wall_clock_now_milliseconds()?;
+        let (reply, response) = response_channel();
+        self.enqueue(Command::Transition {
+            ride_id,
+            event,
+            occurred_at_ms,
+            monotonic_at_ms: Some(monotonic_at_ms),
+            reply,
+        })?;
+        Ok(PendingRideLifecycleTransition {
+            response,
+            consumed: false,
+        })
+    }
+
     fn transition_blocking_with_timestamp(
         &self,
         ride_id: RideId,
@@ -3210,6 +3888,24 @@ impl RideDatabase {
     /// Returns [`StorageError`] when the worker cannot query or decode the record.
     pub fn newest_recoverable_ride(&self) -> Result<Option<RideRecord>, StorageError> {
         self.request(|reply| Command::NewestRecoverableRide { reply })
+    }
+
+    /// Queues the bounded durable state needed to restore a mobile ride-map core.
+    ///
+    /// The query runs as one worker command so its ride, route tail, and associated history state
+    /// are read without another database command interleaving. Enqueue never waits for SQLite.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::QueueFull`] when the worker queue is saturated or a worker error
+    /// when the command cannot be accepted.
+    pub fn queue_restore_snapshot(&self) -> Result<PendingRideRestoreSnapshot, StorageError> {
+        let (reply, response) = response_channel();
+        self.enqueue(Command::RestoreSnapshot { reply })?;
+        Ok(PendingRideRestoreSnapshot {
+            response,
+            consumed: false,
+        })
     }
 
     /// Lists one bounded page of visible rides in stable newest-first order.
@@ -3601,6 +4297,39 @@ struct PevcapImportCompletion {
 }
 
 enum Command {
+    BeginLiveCapture {
+        id: LiveCaptureId,
+        header_json: Vec<u8>,
+        started_at_ms: u64,
+        reply: Reply<()>,
+    },
+    AppendLiveCaptureEvent {
+        id: LiveCaptureId,
+        kind: LiveCaptureEventKind,
+        receipt_monotonic_ms: u64,
+        source_monotonic_offset_ms: Option<i64>,
+        source_wall_clock_unix_ms: Option<u64>,
+        payload: Vec<u8>,
+        location: Option<LiveCaptureLocationObservation>,
+        reply: Reply<u64>,
+    },
+    FinishLiveCapture {
+        id: LiveCaptureId,
+        finished_at_ms: u64,
+        integrity: LiveCaptureIntegrity,
+        reply: Reply<()>,
+    },
+    UpdateLiveCaptureHeader {
+        id: LiveCaptureId,
+        header_json: Vec<u8>,
+        reply: Reply<()>,
+    },
+    ReadLiveCapture {
+        id: LiveCaptureId,
+        after_sequence: Option<i64>,
+        limit: QueryLimit,
+        reply: Reply<LiveCaptureSnapshot>,
+    },
     RecordedCaptureLookup {
         id: crate::CaptureArtifactId,
         reply: Reply<Option<PevcapImportReceipt>>,
@@ -3718,6 +4447,14 @@ enum Command {
         platform_identifier: String,
         updated_at_ms: u64,
         reply: Reply<()>,
+    },
+    VerifiedConnectionAdmission {
+        platform_identifier: String,
+        updated_at_ms: u64,
+        lifecycle_mutations: Vec<VerifiedConnectionLifecycleMutation>,
+        metadata: Option<VerifiedConnectionRideMetadata>,
+        unselected_metadata: Option<VerifiedConnectionRideMetadata>,
+        reply: Reply<VerifiedConnectionAdmissionOutcome>,
     },
     LastConnectedDevice {
         reply: Reply<Option<String>>,
@@ -3918,6 +4655,9 @@ enum Command {
     },
     NewestRecoverableRide {
         reply: Reply<Option<RideRecord>>,
+    },
+    RestoreSnapshot {
+        reply: Reply<RideRestoreSnapshot>,
     },
     ListRides {
         cursor: Option<RideCursor>,
@@ -5586,6 +6326,85 @@ fn remember_last_connected_device(
     Ok(())
 }
 
+fn apply_verified_connection_admission(
+    connection: &mut Connection,
+    platform_identifier: &str,
+    updated_at_ms: u64,
+    lifecycle_mutations: &[VerifiedConnectionLifecycleMutation],
+    metadata: Option<&VerifiedConnectionRideMetadata>,
+    unselected_metadata: Option<&VerifiedConnectionRideMetadata>,
+) -> Result<VerifiedConnectionAdmissionOutcome, StorageError> {
+    let transaction = connection.transaction()?;
+    remember_last_connected_device(&transaction, platform_identifier, updated_at_ms)?;
+    let selected_device_matches =
+        selected_device(&transaction)?.as_deref() == Some(platform_identifier);
+    let mut created_ride_id = None;
+
+    if selected_device_matches {
+        for mutation in lifecycle_mutations {
+            match mutation {
+                VerifiedConnectionLifecycleMutation::Transition {
+                    ride_id,
+                    event,
+                    occurred_at_ms,
+                    monotonic_at_ms,
+                } => {
+                    transition_ride(
+                        &transaction,
+                        *ride_id,
+                        *event,
+                        *occurred_at_ms,
+                        *monotonic_at_ms,
+                    )?;
+                }
+                VerifiedConnectionLifecycleMutation::StartLive {
+                    created_at_ms,
+                    monotonic_created_at_ms,
+                    candidate_vehicle,
+                } => {
+                    if created_ride_id.is_some() {
+                        return Err(StorageError::InvalidConnectionAdmissionPlan);
+                    }
+                    created_ride_id = Some(create_started_live_ride_in_transaction(
+                        &transaction,
+                        *created_at_ms,
+                        *monotonic_created_at_ms,
+                        candidate_vehicle.as_deref(),
+                    )?);
+                }
+            }
+        }
+    }
+
+    let metadata = if selected_device_matches {
+        metadata
+    } else {
+        unselected_metadata
+    };
+    if let Some(metadata) = metadata {
+        let ride_id = match metadata.target {
+            VerifiedConnectionRideTarget::Existing(ride_id) => Some(ride_id),
+            VerifiedConnectionRideTarget::Created => created_ride_id,
+        };
+        if let Some(ride_id) = ride_id {
+            update_ride_map_metadata(
+                &transaction,
+                ride_id,
+                metadata.candidate_vehicle.as_deref(),
+                metadata.associated_vehicle.as_deref(),
+                metadata.associated_at_ms,
+                metadata.last_telemetry_at_ms,
+            )?;
+        }
+    }
+
+    transaction.commit()?;
+    Ok(VerifiedConnectionAdmissionOutcome {
+        selected_device_matches,
+        created_ride_id,
+    })
+}
+
 fn last_connected_device(connection: &Connection) -> Result<Option<String>, StorageError> {
     connection
         .query_row(
@@ -7079,6 +7898,45 @@ fn newest_recoverable_ride(connection: &Connection) -> Result<Option<RideRecord>
         )
         .optional()
         .map_err(StorageError::from)
+}
+
+fn load_ride_restore_snapshot(
+    connection: &Connection,
+) -> Result<RideRestoreSnapshot, StorageError> {
+    let last_connected_device = last_connected_device(connection)?;
+    let ride = newest_recoverable_ride(connection)?;
+    let Some(ride) = ride else {
+        return Ok(RideRestoreSnapshot {
+            last_connected_device,
+            ride: None,
+            route_points: Vec::new(),
+            music_history_policy: None,
+            music_history_available: false,
+        });
+    };
+
+    let point_count = ride.summary().point_count().as_u64();
+    let first_sequence = point_count.saturating_sub(MAX_LIVE_ROUTE_POINTS as u64);
+    let mut cursor = first_sequence.checked_sub(1).map(RoutePointCursor::new);
+    let limit = QueryLimit::new(MAX_QUERY_LIMIT)?;
+    let mut restored_points = Vec::new();
+    loop {
+        let page = route_points(connection, ride.id(), cursor, limit)?;
+        restored_points.extend(page.points);
+        cursor = page.next_cursor;
+        if cursor.is_none() {
+            break;
+        }
+    }
+    let music_history_policy = music_history_policy(connection, ride.id()).ok();
+    let music_history_available = music_history(connection, ride.id()).is_ok();
+    Ok(RideRestoreSnapshot {
+        last_connected_device,
+        ride: Some(ride),
+        route_points: restored_points,
+        music_history_policy,
+        music_history_available,
+    })
 }
 
 #[allow(

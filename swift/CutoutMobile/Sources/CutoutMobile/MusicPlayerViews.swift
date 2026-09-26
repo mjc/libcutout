@@ -420,7 +420,9 @@ private struct MusicArtworkPlaceholder: View {
             .font(size >= 64 ? .largeTitle : .title3)
             .foregroundStyle(PevDashboardColors.yellow)
             .frame(width: size, height: size)
-            .background(PevDashboardColors.yellow.opacity(0.16), in: RoundedRectangle(cornerRadius: size >= 64 ? 16 : 12))
+            .background(
+                PevDashboardColors.yellow.opacity(0.16), in: RoundedRectangle(cornerRadius: size >= 64 ? 16 : 12)
+            )
             .accessibilityHidden(true)
     }
 }
@@ -476,8 +478,8 @@ public struct MusicCompactPlayerInset: ViewModifier {
     }
 }
 
-public extension View {
-    func musicCompactPlayer(
+extension View {
+    public func musicCompactPlayer(
         nowPlaying: MusicNowPlaying?,
         timeline: [MobileMusicRideEventDto] = [],
         isHidden: Bool,
@@ -486,14 +488,15 @@ public extension View {
         onDismiss: @escaping () -> Void,
         onRestore: @escaping () -> Void
     ) -> some View {
-        modifier(MusicCompactPlayerInset(
-            nowPlaying: nowPlaying,
-            timeline: timeline,
-            isHidden: isHidden,
-            onCommand: onCommand,
-            onOpenSettings: onOpenSettings,
-            onDismiss: onDismiss,
-            onRestore: onRestore
-        ))
+        modifier(
+            MusicCompactPlayerInset(
+                nowPlaying: nowPlaying,
+                timeline: timeline,
+                isHidden: isHidden,
+                onCommand: onCommand,
+                onOpenSettings: onOpenSettings,
+                onDismiss: onDismiss,
+                onRestore: onRestore
+            ))
     }
 }

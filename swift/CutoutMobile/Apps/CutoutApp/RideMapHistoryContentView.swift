@@ -15,7 +15,6 @@ struct RideMapHistoryContentView: View {
     var cameraRegion: MobileRideMapCameraRegion? = nil
     let endpointMetadata: MobileRideMapRouteEndpointMetadata
     let segments: [MobileRideMapSegmentDisplayMetadata]
-    let contextRoutes: [MobileRideMapHistoryContextRoute]
     let cameraFitVersion: UInt64
     let projectionVersion: UInt64
     let pointsTruncated: Bool
@@ -25,14 +24,14 @@ struct RideMapHistoryContentView: View {
     let historyError: MobileRideMapError?
     let routeError: MobileRideMapError?
     let selectedRideID: String?
-    let dateFilter: CutoutAppModel.RideMapHistoryDateFilter
+    let dateFilter: RideHistoryModel.DateFilter
     let vehicleFilter: String?
     let vehicleFilterOptions: [String]
     let select: (String) -> Void
     let load: () -> Void
     let loadMore: () -> Void
     let returnToLive: () -> Void
-    let setDateFilter: (CutoutAppModel.RideMapHistoryDateFilter) -> Void
+    let setDateFilter: (RideHistoryModel.DateFilter) -> Void
     let setVehicleFilter: (String?) -> Void
     let clearFilters: () -> Void
     let currentVehicleIdentity: String?
@@ -118,7 +117,7 @@ struct RideMapHistoryContentView: View {
     @MainActor
     static func hasActiveFilters(
         searchText: String,
-        dateFilter: CutoutAppModel.RideMapHistoryDateFilter,
+        dateFilter: RideHistoryModel.DateFilter,
         vehicleFilter: String?
     ) -> Bool {
         !normalizedSearchText(searchText).isEmpty
@@ -127,13 +126,8 @@ struct RideMapHistoryContentView: View {
     }
 
     @MainActor
-    static func searchDebounce(for searchText: String) -> Duration {
-        normalizedSearchText(searchText).isEmpty ? .zero : .milliseconds(250)
-    }
-
-    @MainActor
     static func normalizedSearchText(_ searchText: String) -> String {
-        searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        RideHistoryModel.normalizedSearchText(searchText) ?? ""
     }
 
     var body: some View {
@@ -195,7 +189,6 @@ struct RideMapHistoryContentView: View {
                             endpointMetadata: endpointMetadata,
                             cameraRegion: cameraRegion,
                             segments: segments,
-                            contextRoutes: contextRoutes,
                             cameraFitVersion: cameraFitVersion,
                             state: selectedRouteState,
                             pointsTruncated: pointsTruncated,
@@ -219,7 +212,6 @@ struct RideMapHistoryContentView: View {
                 }
             }
         }
-        .task(id: searchText) { await reloadHistory(for: searchText) }
         .searchable(text: $searchText)
         .safeAreaInset(edge: .bottom, spacing: 0) {
             Color.clear.frame(height: 92)
@@ -242,24 +234,14 @@ struct RideMapHistoryContentView: View {
         currentName: String?,
         resolve: (String) -> String?
     ) -> String {
-        resolve(identity)
-            .flatMap { $0.isEmpty ? nil : $0 }
-            ?? (identity == currentIdentity
-                ? currentName.flatMap { $0.isEmpty ? nil : $0 }
-                : nil)
-            ?? localizedAppText("ride_map.vehicle_name_unavailable")
+        RideMapMetricFormatting.vehicleLabel(
+            identity: identity,
+            resolve: { resolvedIdentity in
+                resolve(resolvedIdentity)
+                    ?? (resolvedIdentity == currentIdentity ? currentName : nil)
+            },
+            noIdentityFallback: localizedAppText("ride_map.vehicle_name_unavailable")
+        )
     }
 
-    private func reloadHistory(for searchText: String) async {
-        let debounce = Self.searchDebounce(for: searchText)
-        if debounce != .zero {
-            do {
-                try await Task.sleep(for: debounce)
-            } catch {
-                return
-            }
-        }
-        guard !Task.isCancelled else { return }
-        load()
-    }
 }

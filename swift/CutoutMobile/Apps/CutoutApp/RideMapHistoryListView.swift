@@ -35,8 +35,7 @@ struct RideMapHistoryListView: View {
     }
 
     private func distanceText(for summary: MobileRideMapSummaryDto) -> String {
-        Measurement(value: summary.distanceMeters, unit: UnitLength.meters)
-            .formatted(.measurement(width: .abbreviated, usage: .road))
+        RideMapMetricFormatting.distanceText(for: summary)
     }
 
     private func rideSubtitle(for ride: MobileRideMapHistorySummaryDto) -> String {
@@ -45,11 +44,7 @@ struct RideMapHistoryListView: View {
     }
 
     static func pointCountText(_ count: UInt64) -> String {
-        // The app catalog wrapper formats CVarArg values but does not evaluate
-        // xcstrings plural substitutions. Keep explicit one/other keys so
-        // translators can provide the correct grammar for each locale.
-        let key = count == 1 ? "ride_map.point_count.one" : "ride_map.point_count.other"
-        return localizedAppText(key, count)
+        RideMapMetricFormatting.pointCountText(count)
     }
 
     static func selectionAccessibilityValue(isSelected: Bool) -> String {
@@ -57,11 +52,7 @@ struct RideMapHistoryListView: View {
     }
 
     private func rideTitle(for ride: MobileRideMapHistorySummaryDto) -> String {
-        guard ride.createdAtMilliseconds > 0 else {
-            return localizedAppText("ride_map.untitled_ride")
-        }
-        return Date(timeIntervalSince1970: Double(ride.createdAtMilliseconds) / 1_000)
-            .formatted(.dateTime.month(.abbreviated).day().year().hour().minute())
+        RideMapMetricFormatting.recordedAtText(for: ride.createdAtMilliseconds)
     }
 }
 

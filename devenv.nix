@@ -70,6 +70,10 @@ in
         enable = true;
         package = config.languages.rust.toolchainPackage;
       };
+      swift-format = {
+        enable = true;
+        package = pkgs.swift-format;
+      };
     };
   };
 
@@ -99,6 +103,7 @@ in
     ]
     ++ lib.optionals pkgs.stdenv.isDarwin [
       "test:swift-package"
+      "test:ios-music-monitor"
       "test:shell-regressions"
     ];
   };
@@ -206,6 +211,26 @@ in
   '';
   tasks."build:ios-ui-tests" = {
     exec = "CUTOUT_IOS_TEST_DESTINATION='generic/platform=iOS Simulator' scripts/run-ios-ui-tests.sh --build-only ARCHS=arm64 ONLY_ACTIVE_ARCH=YES";
+    after = [ "check:xcode-ios" ];
+  };
+  tasks."test:ios-music-monitor" = {
+    exec = ''
+      destination="''${CUTOUT_IOS_TEST_DESTINATION:-platform=iOS Simulator,name=iPhone 18 Pro,OS=latest}"
+      cargo cutout xcodebuild -- \
+        -project "$DEVENV_ROOT/swift/CutoutMobile/CutoutApp.xcodeproj" \
+        -scheme CutoutAppIOSUnitTests \
+        -destination "$destination" \
+        -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testActualMonitorTaskUsesPassiveAuthorizationAndCancelsOnBackground \
+        -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testExplicitConnectAllowsAuthorizationPrompt \
+        -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testExplicitShutdownInvalidatesLateMonitorObservationBeforeAdapterTeardown \
+        -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testAppModelDeallocationStopsMusicMonitor \
+        -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testAppModelKeepsOneMusicMonitorAcrossStartupAndSceneResume \
+        -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testOpeningHistoricalRideDetailDoesNotDispatchMusicTransport \
+        -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testSpotifyCallbackAdmissionSurvivesEitherSceneEventOrder \
+        -parallel-testing-enabled NO \
+        ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
+        test
+    '';
     after = [ "check:xcode-ios" ];
   };
   tasks."test:shell-regressions".exec = ''

@@ -1,7 +1,8 @@
 import CutoutMobile
 import SwiftUI
+
 #if canImport(UIKit)
-import UIKit
+    import UIKit
 #endif
 
 struct AppSetupView: View {
@@ -29,7 +30,8 @@ struct AppSetupView: View {
                             Text(localizedAppText("phone_alarm.summary"))
                                 .foregroundStyle(.secondary)
                         } label: {
-                            Label(localizedAppText("phone_alarm.title"), systemImage: "iphone.radiowaves.left.and.right")
+                            Label(
+                                localizedAppText("phone_alarm.title"), systemImage: "iphone.radiowaves.left.and.right")
                         }
                     }
                     .accessibilityIdentifier("setup.phone-alarms")
@@ -63,23 +65,28 @@ struct AppSetupView: View {
                     BluetoothCapturesView(model: model)
                         .toolbar { doneToolbar }
                 case .music:
+                    let music = model.music
                     MusicSettingsView(
-                        nowPlaying: model.musicSettingsNowPlaying,
+                        nowPlaying: music.settingsNowPlaying,
                         selectedProvider: Binding(
-                            get: { model.selectedMusicProvider },
-                            set: model.selectMusicProvider
+                            get: { music.selectedProvider },
+                            set: music.selectProvider
                         ),
                         historyPolicy: Binding(
-                            get: { model.musicHistoryPolicy },
-                            set: { _ = model.setMusicHistoryPolicy($0) }
+                            get: { music.historyPolicy },
+                            set: { policy in
+                                Task { @MainActor in
+                                    _ = await music.setHistoryPolicyAsync(policy)
+                                }
+                            }
                         ),
-                        historyUnavailable: model.musicHistoryUnavailable,
-                        historySaveError: model.musicHistorySaveError,
-                        onConnect: model.connectMusic,
-                        onAuthorizeSpotify: model.authorizeSpotify,
+                        historyUnavailable: music.historyUnavailable,
+                        historySaveError: music.historySaveError,
+                        onConnect: music.connect,
+                        onAuthorizeSpotify: music.authorizeSpotify,
                         onOpenProvider: {
                             Task { @MainActor in
-                                _ = await model.handleMusicCommand(.openProvider)
+                                _ = await music.handleCommand(.openProvider)
                             }
                         }
                     )
@@ -142,7 +149,7 @@ private struct PhoneRideAlarmSettingsView: View {
                                 )
                             }
                         ),
-                        in: 1 ... 100
+                        in: 1...100
                     ) {
                         LabeledContent(
                             localizedAppText("phone_alarm.pwm_duty"),
@@ -182,11 +189,11 @@ private struct PhoneRideAlarmSettingsView: View {
                             Task { await model.requestPhoneAlarmAuthorization() }
                         }
                     case .denied, .permitted(alerts: false, sounds: _, quietly: _):
-#if canImport(UIKit)
-                        Button(localizedAppText("phone_alarm.open_settings")) {
-                            openURL(URL(string: UIApplication.openSettingsURLString)!)
-                        }
-#endif
+                        #if canImport(UIKit)
+                            Button(localizedAppText("phone_alarm.open_settings")) {
+                                openURL(URL(string: UIApplication.openSettingsURLString)!)
+                            }
+                        #endif
                     case .permitted:
                         EmptyView()
                     }

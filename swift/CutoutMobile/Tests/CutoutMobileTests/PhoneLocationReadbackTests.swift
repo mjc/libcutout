@@ -1,5 +1,6 @@
-import XCTest
 import CutoutMobileFFI
+import XCTest
+
 @testable import CutoutMobile
 
 final class PhoneLocationReadbackTests: XCTestCase {

@@ -265,6 +265,64 @@ fn apple_music_and_spotify_share_monitoring_and_observation_gap_policy() {
 }
 
 #[test]
+fn authorization_callback_remains_current_on_either_side_of_scene_resume() {
+    for callback_before_resume in [true, false] {
+        let mut lifecycle = MusicProviderLifecycle::default();
+        lifecycle.request_monitor(MusicMonitorRequest::Authorize);
+        assert_eq!(
+            lifecycle.begin_monitor().map(|effect| effect.start),
+            Some(MusicMonitorStart::Authorize),
+        );
+        let authorization = lifecycle
+            .begin_authorization(AuthorizationTransactionKind::Authorizing)
+            .expect("authorization");
+        let generation = lifecycle
+            .begin_provider_session()
+            .expect("provider session");
+
+        let suspension = lifecycle.suspend();
+        assert!(suspension.observation_gap);
+        assert_eq!(
+            lifecycle.classify_provider_session(generation),
+            CallbackEpochMatch::Stale,
+        );
+
+        if callback_before_resume {
+            assert_eq!(
+                lifecycle.classify_authorization(authorization),
+                AuthorizationTransactionMatch::Authorizing,
+            );
+            assert_eq!(
+                lifecycle.finish_authorization(authorization),
+                AuthorizationTransactionMatch::Authorizing,
+            );
+        }
+
+        assert_eq!(lifecycle.resume(), MusicMonitorResume::Restored);
+        assert_eq!(
+            lifecycle.begin_monitor().map(|effect| effect.start),
+            Some(MusicMonitorStart::Observe),
+        );
+
+        if !callback_before_resume {
+            assert_eq!(
+                lifecycle.classify_authorization(authorization),
+                AuthorizationTransactionMatch::Authorizing,
+            );
+            assert_eq!(
+                lifecycle.finish_authorization(authorization),
+                AuthorizationTransactionMatch::Authorizing,
+            );
+        }
+
+        assert_eq!(
+            lifecycle.classify_authorization(authorization),
+            AuthorizationTransactionMatch::Stale,
+        );
+    }
+}
+
+#[test]
 fn replaced_provider_work_rejects_stale_generation_and_connection_callbacks() {
     let mut lifecycle = MusicProviderLifecycle::default();
     let old_generation = lifecycle

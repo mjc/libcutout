@@ -204,6 +204,38 @@ mod tests {
     use super::*;
 
     #[test]
+    fn writer_failure_does_not_invalidate_a_verified_connection() {
+        let handle = CutoutSessionStateHandle::new();
+        let generation = handle
+            .begin_capture(MobileCaptureOriginDto::Automatic)
+            .unwrap();
+        assert!(handle.capture_writer_started(generation));
+
+        let snapshot = handle.begin_connection_attempt("A".into(), 10);
+        let token = snapshot.token.unwrap();
+        handle.connection_link_established(token.clone());
+        {
+            let mut inner = handle.lock_inner();
+            assert!(
+                inner
+                    .session_state_mut()
+                    .connection
+                    .finish_detection(&token.clone().into(), true)
+            );
+        }
+        let connection_before = handle.connection_attempt_snapshot();
+
+        assert!(handle.capture_writer_failed(generation));
+
+        assert_eq!(handle.connection_attempt_snapshot(), connection_before);
+        assert!(handle.verified_connection_attempt_is_current(token));
+        assert_eq!(
+            handle.capture_lifecycle_snapshot().attempt.unwrap().stage,
+            MobileCaptureStageDto::SaveFailed
+        );
+    }
+
+    #[test]
     fn shared_handle_keeps_capture_admission_across_connection_changes() {
         let owner = CutoutSessionStateHandle::new();
         let generation = owner.begin_capture(MobileCaptureOriginDto::Manual).unwrap();

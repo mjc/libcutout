@@ -2148,6 +2148,9 @@ pub struct PevcapLocationSample {
     /// Capture-relative receipt time.
     pub receipt_monotonic_ms: MonotonicTimestamp,
 
+    /// Calibrated capture-relative source time, when a callback clock anchor was available.
+    pub source_monotonic_offset_ms: Option<i64>,
+
     /// Validated source observation and its source wall-clock timestamp.
     pub location: PevcapPhoneLocation,
 
@@ -2156,6 +2159,25 @@ pub struct PevcapLocationSample {
 
     /// Whether Core Location marked this observation as produced by an accessory, when available.
     pub produced_by_accessory: Option<bool>,
+}
+
+/// Calibrates a Core Location source timestamp against its callback's monotonic and wall-clock
+/// anchors, relative to capture start.
+///
+/// A source observation may predate capture start even though its callback arrives afterward;
+/// negative offsets are therefore preserved. `None` means the calibrated offset cannot fit in
+/// the persisted signed millisecond representation.
+#[must_use]
+pub fn calibrate_location_source_offset_ms(
+    capture_started_at: MonotonicTimestamp,
+    receipt_monotonic_ms: MonotonicTimestamp,
+    receipt_wall_clock_unix_ms: u64,
+    source_wall_clock_unix_ms: u64,
+) -> Option<i64> {
+    let offset = i128::from(receipt_monotonic_ms.get()) + i128::from(source_wall_clock_unix_ms)
+        - i128::from(receipt_wall_clock_unix_ms)
+        - i128::from(capture_started_at.get());
+    i64::try_from(offset).ok()
 }
 
 impl PevcapLocationSample {
@@ -2173,10 +2195,18 @@ impl PevcapLocationSample {
     ) -> Result<Self, PevcapPhoneLocationError> {
         Ok(Self {
             receipt_monotonic_ms,
+            source_monotonic_offset_ms: None,
             location: location.canonical()?,
             simulated,
             produced_by_accessory,
         })
+    }
+
+    /// Sets the source timestamp calibrated from a callback's monotonic/wall-clock anchor.
+    #[must_use]
+    pub const fn with_source_monotonic_offset_ms(mut self, offset_ms: Option<i64>) -> Self {
+        self.source_monotonic_offset_ms = offset_ms;
+        self
     }
 
     /// Returns the standalone JSONL line used by the streaming capture writer.
@@ -4052,6 +4082,8 @@ struct PevcapLocationJson {
     receipt_monotonic_ms: u64,
     location: PevcapPhoneLocation,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    source_monotonic_offset_ms: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     simulated: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     produced_by_accessory: Option<bool>,
@@ -4063,6 +4095,7 @@ impl From<&PevcapLocationSample> for PevcapLocationJson {
         Self {
             receipt_monotonic_ms: sample.receipt_monotonic_ms.as_milliseconds(),
             location: sample.location,
+            source_monotonic_offset_ms: sample.source_monotonic_offset_ms,
             simulated: sample.simulated,
             produced_by_accessory: sample.produced_by_accessory,
         }
@@ -4072,12 +4105,13 @@ impl From<&PevcapLocationSample> for PevcapLocationJson {
 #[cfg(feature = "serde")]
 impl PevcapLocationJson {
     fn try_into_location(self) -> Result<PevcapLocationSample, PevcapPhoneLocationError> {
-        PevcapLocationSample::new(
+        Ok(PevcapLocationSample::new(
             MonotonicTimestamp::new(self.receipt_monotonic_ms),
             self.location,
             self.simulated,
             self.produced_by_accessory,
-        )
+        )?
+        .with_source_monotonic_offset_ms(self.source_monotonic_offset_ms))
     }
 }
 
@@ -4298,6 +4332,53 @@ mod tests {
 
     const fn wc(value: u64) -> WallClockUnixTimestamp {
         WallClockUnixTimestamp::new(value)
+    }
+
+    #[test]
+    fn location_source_time_calibration_preserves_batches_across_callback_anchors() {
+        let capture_started_at = ms(100);
+        let first_callback_wall_clock = 1_700_000_000_010;
+        let first_callback_monotonic = ms(120);
+
+        assert_eq!(
+            calibrate_location_source_offset_ms(
+                capture_started_at,
+                first_callback_monotonic,
+                first_callback_wall_clock,
+                1_700_000_000_008,
+            ),
+            Some(18)
+        );
+        assert_eq!(
+            calibrate_location_source_offset_ms(
+                capture_started_at,
+                first_callback_monotonic,
+                first_callback_wall_clock,
+                1_700_000_000_009,
+            ),
+            Some(19)
+        );
+        assert_eq!(
+            calibrate_location_source_offset_ms(
+                capture_started_at,
+                ms(130),
+                1_700_000_000_013,
+                1_700_000_000_010,
+            ),
+            Some(27)
+        );
+    }
+
+    #[test]
+    fn location_source_time_calibration_keeps_negative_offsets_and_rejects_overflow() {
+        assert_eq!(
+            calibrate_location_source_offset_ms(ms(200), ms(220), 1_000, 950),
+            Some(-30)
+        );
+        assert_eq!(
+            calibrate_location_source_offset_ms(ms(0), ms(u64::MAX), 0, u64::MAX),
+            None
+        );
     }
 
     const fn write_len(value: u16) -> TransportWriteLimit {
@@ -4780,6 +4861,7 @@ mod tests {
         let capture = sample_pevcap_capture();
         let invalid_location = PevcapLocationJson {
             receipt_monotonic_ms: 11,
+            source_monotonic_offset_ms: None,
             location: PevcapPhoneLocation {
                 wall_clock_unix_ms: 1_725_000_123_467,
                 latitude_degrees: 91.0,

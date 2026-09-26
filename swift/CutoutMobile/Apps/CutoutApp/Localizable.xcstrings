@@ -52,6 +52,12 @@
     "captures.incomplete" : {
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Incomplete capture" } } }
     },
+    "captures.integrity_unknown" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Capture integrity is unknown." } } }
+    },
+    "captures.stored_without_export" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Stored in app; export file unavailable." } } }
+    },
     "captures.saved" : {
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Capture Saved" } } }
     },
@@ -1913,6 +1919,10 @@
     "capture.status.saved" : {
       "comment" : "Visible capture status. The placeholder is the saved filename.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Saved capture: %@" } } }
+    },
+    "capture.status.stored" : {
+      "comment" : "Visible capture status when SQLite durably stored a capture without a file export.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Capture stored in app; export file unavailable." } } }
     },
     "navigation.section.map" : {
       "comment" : "Top-level app navigation title for live and historical ride maps.",

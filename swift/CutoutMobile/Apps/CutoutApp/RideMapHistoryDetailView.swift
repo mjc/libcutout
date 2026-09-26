@@ -9,7 +9,7 @@ struct RideMapHistoryMusicDetail {
     let timelineUnavailable: Bool
     let state: MobileMusicHistoryStateDto?
     let error: MobileRideMapError?
-    private let forgetMusicHistory: (String) -> Bool
+    private let forgetMusicHistory: @MainActor (String) async -> Bool
 
     init(
         rideID: String,
@@ -17,7 +17,7 @@ struct RideMapHistoryMusicDetail {
         timelineUnavailable: Bool = false,
         state: MobileMusicHistoryStateDto? = nil,
         error: MobileRideMapError? = nil,
-        forgetMusicHistory: @escaping (String) -> Bool
+        forgetMusicHistory: @escaping @MainActor (String) async -> Bool
     ) {
         self.rideID = rideID
         self.events = events
@@ -31,8 +31,8 @@ struct RideMapHistoryMusicDetail {
         !events.isEmpty || state == .redacted || state == .humanReadable
     }
 
-    func forget() -> Bool {
-        forgetMusicHistory(rideID)
+    func forget() async -> Bool {
+        await forgetMusicHistory(rideID)
     }
 }
 
@@ -57,8 +57,7 @@ struct RideMapHistoryDetailView: View {
     let routeError: MobileRideMapError?
     let isLoading: Bool
     let selectedHistoryID: String?
-    let select: (String) -> Void
-    let load: () -> Void
+    let ensureSelection: (String?) -> Void
     let retry: () -> Void
     let loadRoutePreview: () -> Void
     let vehicleName: (String?) -> String?
@@ -101,9 +100,11 @@ struct RideMapHistoryDetailView: View {
         fallback: String
     ) -> String {
         let identity = associatedVehicle ?? candidateVehicle
-        return identity.flatMap(resolve)
-            .flatMap { $0.isEmpty ? nil : $0 }
-            ?? (identity == nil ? fallback : localizedAppText("ride_map.vehicle_name_unavailable"))
+        return RideMapMetricFormatting.vehicleLabel(
+            identity: identity,
+            resolve: resolve,
+            noIdentityFallback: fallback
+        )
     }
 
     static func averageSpeedText(
@@ -129,20 +130,6 @@ struct RideMapHistoryDetailView: View {
     static func mapHeight(for availableHeight: CGFloat) -> CGFloat {
         guard availableHeight > 0 else { return 0 }
         return min(availableHeight, min(max(availableHeight * 0.58, 240), 520))
-    }
-
-    @MainActor
-    static func shouldSelectHistory(
-        initialHistoryID: String?,
-        selectedHistoryID: String?,
-        availableHistoryIDs: [String]
-    ) -> Bool {
-        guard let initialHistoryID,
-            availableHistoryIDs.contains(initialHistoryID)
-        else {
-            return false
-        }
-        return selectedHistoryID != initialHistoryID
     }
 
     static func routeID(for historyID: String?, cameraFitVersion: UInt64 = 0) -> String {
@@ -210,7 +197,7 @@ struct RideMapHistoryDetailView: View {
                                 musicHistoryError: music.error,
                                 musicHistoryCanForget: music.canForget,
                                 forgetMusicHistory: {
-                                    music.forget()
+                                    await music.forget()
                                 },
                                 state: routeState,
                                 loadRoutePreview: loadRoutePreview,
@@ -229,47 +216,22 @@ struct RideMapHistoryDetailView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .task(id: selectionTaskID, loadSelectionIfNeeded)
+        .task(id: selectionTaskID) {
+            ensureSelection(initialHistoryID)
+        }
         .accessibilityIdentifier("ride-map.detail")
     }
 
-    private func loadSelectionIfNeeded() {
-        guard let initialHistoryID else {
-            if rides.isEmpty { load() }
-            return
-        }
-        if rides.contains(where: { $0.rideID == initialHistoryID }) {
-            guard
-                Self.shouldSelectHistory(
-                    initialHistoryID: initialHistoryID,
-                    selectedHistoryID: selectedHistoryID,
-                    availableHistoryIDs: rides.map(\.rideID)
-                )
-            else {
-                return
-            }
-            select(initialHistoryID)
-        } else {
-            load()
-        }
-    }
-
     private func distanceText(for summary: MobileRideMapSummaryDto) -> String {
-        Measurement(value: summary.distanceMeters, unit: UnitLength.meters)
-            .formatted(.measurement(width: .abbreviated, usage: .road))
+        RideMapMetricFormatting.distanceText(for: summary)
     }
 
     private func durationText(for summary: MobileRideMapSummaryDto) -> String {
-        Duration.seconds(Double(summary.durationMilliseconds) / 1_000)
-            .formatted(.units(allowed: [.hours, .minutes, .seconds], width: .abbreviated))
+        RideMapMetricFormatting.durationText(for: summary)
     }
 
     private func recordedAtText(for milliseconds: UInt64) -> String {
-        guard milliseconds > 0 else {
-            return localizedAppText("ride_map.untitled_ride")
-        }
-        return Date(timeIntervalSince1970: Double(milliseconds) / 1_000)
-            .formatted(.dateTime.month(.abbreviated).day().year().hour().minute())
+        RideMapMetricFormatting.recordedAtText(for: milliseconds)
     }
 
     private func vehicleLabel(for ride: MobileRideMapHistorySummaryDto) -> String {
@@ -291,6 +253,6 @@ struct RideMapHistoryDetailView: View {
         let duration = durationText(for: ride.summary)
         let title = localizedAppText("ride_map.detail_title")
         return
-            "\(title)\n\(distance) · \(duration) · \(RideMapHistoryListView.pointCountText(ride.summary.pointCount))"
+            "\(title)\n\(distance) · \(duration) · \(RideMapMetricFormatting.pointCountText(ride.summary.pointCount))"
     }
 }

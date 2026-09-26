@@ -2,8 +2,9 @@ import CutoutMobile
 import CutoutMobileFFI
 import Foundation
 @preconcurrency import UserNotifications
+
 #if canImport(UIKit)
-import UIKit
+    import UIKit
 #endif
 
 enum PhoneRideAlarmAuthorization: Equatable, Sendable {
@@ -35,11 +36,11 @@ protocol PhoneRideAlarmDelivering: AnyObject {
 
 @MainActor
 func makePhoneRideAlarmDelivery() -> any PhoneRideAlarmDelivering {
-#if os(iOS)
-    SystemPhoneRideAlarmDelivery()
-#else
-    UnavailablePhoneRideAlarmDelivery()
-#endif
+    #if os(iOS)
+        SystemPhoneRideAlarmDelivery()
+    #else
+        UnavailablePhoneRideAlarmDelivery()
+    #endif
 }
 
 @MainActor
@@ -93,11 +94,11 @@ final class SystemPhoneRideAlarmDelivery: PhoneRideAlarmDelivering {
                 trigger: nil
             )
         )
-#if canImport(UIKit)
-        if request.playsSound, UIApplication.shared.applicationState == .active {
-            UINotificationFeedbackGenerator().notificationOccurred(.warning)
-        }
-#endif
+        #if canImport(UIKit)
+            if request.playsSound, UIApplication.shared.applicationState == .active {
+                UINotificationFeedbackGenerator().notificationOccurred(.warning)
+            }
+        #endif
     }
 
     func cancel(requestIDs: [UInt64]) {
@@ -128,11 +129,13 @@ struct PhoneRideAlarmAlert: Equatable {
             )
         case let .controllerWarning(warning):
             title = localizedAppText("phone_alarm.notification.controller_warning_title")
-            body = phoneRideAlarmWarningAnnouncement(warning)
+            body =
+                phoneRideAlarmWarningAnnouncement(warning)
                 ?? localizedAppText("phone_alarm.notification.controller_warning_unknown")
         case let .controllerStop(reason):
             title = localizedAppText("phone_alarm.notification.controller_stop_title")
-            body = phoneRideAlarmStopAnnouncement(reason)
+            body =
+                phoneRideAlarmStopAnnouncement(reason)
                 ?? localizedAppText("phone_alarm.notification.controller_stop_unknown")
         }
     }
@@ -185,8 +188,8 @@ private final class PhoneRideAlarmNotificationDelegate: NSObject, UNUserNotifica
     }
 }
 
-private extension UNNotificationSettings {
-    var phoneRideAlarmAuthorization: PhoneRideAlarmAuthorization {
+extension UNNotificationSettings {
+    fileprivate var phoneRideAlarmAuthorization: PhoneRideAlarmAuthorization {
         switch authorizationStatus {
         case .notDetermined:
             .notDetermined
