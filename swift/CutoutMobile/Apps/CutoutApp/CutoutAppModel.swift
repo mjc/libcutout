@@ -576,7 +576,7 @@ final class CutoutAppModel {
                     self.musicHistoryRestoreGeneration == historyGeneration,
                     self.liveRide.snapshot?.rideID == restoredRideID
                 else { return }
-                self.music.setHistoryPersistenceError(Self.mapRideMapError(error))
+                self.music.setHistoryPersistenceError(appRideMapError(error))
             }
         }
     }
@@ -675,10 +675,6 @@ final class CutoutAppModel {
         )
     }
 
-    nonisolated static func mapRideMapError(_ error: Error) -> MobileRideMapError {
-        LiveRideModel.mapError(error)
-    }
-
     private func applyRideMapCommand(
         resetPoints: Bool = false,
         _ command: () async throws -> MobileRideMapSnapshotDto
@@ -689,7 +685,7 @@ final class CutoutAppModel {
             liveRide.applyCommandSnapshot(snapshot, resetPoints: resetPoints)
             return true
         } catch {
-            liveRide.setError(Self.mapRideMapError(error))
+            liveRide.setError(appRideMapError(error))
             return false
         }
     }

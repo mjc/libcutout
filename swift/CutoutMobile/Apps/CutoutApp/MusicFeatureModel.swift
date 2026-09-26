@@ -165,7 +165,7 @@ final class MusicFeatureModel {
                 print("music_history_rejected error=\(error)")
             #endif
             historyPolicy = previous
-            setHistoryPersistenceError(CutoutAppModel.mapRideMapError(error))
+            setHistoryPersistenceError(appRideMapError(error))
             return false
         }
     }
@@ -187,7 +187,7 @@ final class MusicFeatureModel {
                 do {
                     timelineEvents = try await coordinator.recordedEventsAsync()
                 } catch {
-                    setHistoryPersistenceError(CutoutAppModel.mapRideMapError(error))
+                    setHistoryPersistenceError(appRideMapError(error))
                 }
             }
             return true
@@ -201,7 +201,7 @@ final class MusicFeatureModel {
                 print("music_history_rejected error=\(error)")
             #endif
             historyPolicy = previous
-            setHistoryPersistenceError(CutoutAppModel.mapRideMapError(error))
+            setHistoryPersistenceError(appRideMapError(error))
             return false
         }
     }
@@ -231,7 +231,7 @@ final class MusicFeatureModel {
             updateCapturePolicy(defaultPolicy)
             return nil
         } catch {
-            let mappedError = CutoutAppModel.mapRideMapError(error)
+            let mappedError = appRideMapError(error)
             setRideHistoryError(mappedError)
             guard rideMapState?.currentSnapshot() != nil else {
                 historyPolicy = .disabled
@@ -313,7 +313,7 @@ final class MusicFeatureModel {
             if selectedHistoryRideID() == rideID { clearSelectedHistoryMusic() }
             return true
         } catch {
-            setRideHistoryError(CutoutAppModel.mapRideMapError(error))
+            setRideHistoryError(appRideMapError(error))
             return false
         }
     }
@@ -736,7 +736,7 @@ final class MusicFeatureModel {
             finishObservation()
             return succeeded
         } catch let MusicIntegrationIngestError.observation(error) {
-            setObservationError(CutoutAppModel.mapRideMapError(error))
+            setObservationError(appRideMapError(error))
             finishObservation()
             return false
         } catch let MusicIntegrationIngestError.history(error) {
@@ -745,11 +745,11 @@ final class MusicFeatureModel {
                 finishObservation()
                 return false
             }
-            setHistoryPersistenceError(CutoutAppModel.mapRideMapError(error))
+            setHistoryPersistenceError(appRideMapError(error))
             finishObservation()
             return false
         } catch {
-            setHistoryPersistenceError(CutoutAppModel.mapRideMapError(error))
+            setHistoryPersistenceError(appRideMapError(error))
             finishObservation()
             return false
         }
@@ -777,7 +777,7 @@ final class MusicFeatureModel {
             await finishObservationAsync()
             return succeeded
         } catch let MusicIntegrationIngestError.observation(error) {
-            setObservationError(CutoutAppModel.mapRideMapError(error))
+            setObservationError(appRideMapError(error))
             await finishObservationAsync()
             return false
         } catch let MusicIntegrationIngestError.history(error) {
@@ -786,11 +786,11 @@ final class MusicFeatureModel {
                 await finishObservationAsync()
                 return false
             }
-            setHistoryPersistenceError(CutoutAppModel.mapRideMapError(error))
+            setHistoryPersistenceError(appRideMapError(error))
             await finishObservationAsync()
             return false
         } catch {
-            setHistoryPersistenceError(CutoutAppModel.mapRideMapError(error))
+            setHistoryPersistenceError(appRideMapError(error))
             await finishObservationAsync()
             return false
         }
@@ -853,7 +853,7 @@ final class MusicFeatureModel {
         do {
             timelineEvents = try await coordinator.recordedEventsAsync()
         } catch {
-            setHistoryPersistenceError(CutoutAppModel.mapRideMapError(error))
+            setHistoryPersistenceError(appRideMapError(error))
         }
         settingsNowPlaying = projectedNowPlaying()
     }

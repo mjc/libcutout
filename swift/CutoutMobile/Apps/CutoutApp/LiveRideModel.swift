@@ -89,7 +89,7 @@ final class LiveRideModel {
                         liveProjectionEnabled: self.projectionEnabled
                     ), self.snapshot?.rideID == rideID
                 else { return }
-                self.error = Self.mapError(error)
+                self.error = appRideMapError(error)
                 self.clearProjection()
             }
         }
@@ -227,7 +227,7 @@ final class LiveRideModel {
                             currentRideID: self.snapshot?.rideID
                         )
                     else { continue }
-                    self.error = Self.mapError(error)
+                    self.error = appRideMapError(error)
                     self.clearProjection()
                 }
                 return
@@ -269,11 +269,6 @@ final class LiveRideModel {
         backgroundGapCount = 0
         pointsTruncated = false
         segmentsOmittedByBudget = false
-    }
-
-    nonisolated static func mapError(_ error: Error) -> MobileRideMapError {
-        if let error = error as? MobileRideMapError { return error }
-        return .storageError(String(describing: error))
     }
 
     static func shouldApplyProjection(
