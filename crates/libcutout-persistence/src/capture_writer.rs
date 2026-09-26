@@ -254,6 +254,7 @@ struct CaptureWriterEventLine {
     source_monotonic_offset_ms: Option<i64>,
     source_wall_clock_unix_ms: Option<u64>,
     location: Option<LiveCaptureLocationObservation>,
+    record: Option<PevcapRecord>,
 }
 
 struct DatabaseCapture {
@@ -286,7 +287,7 @@ enum CaptureWriterJsonlExport {
 }
 
 enum CaptureWriterAction {
-    Event(CaptureWriterEventLine),
+    Event(Box<CaptureWriterEventLine>),
     Metadata(CaptureMetadata),
     Barrier(
         CaptureBarrier,
@@ -969,7 +970,11 @@ fn write_database_capture_stream(
             CaptureWriterAction::Event(event) => {
                 let payload = event.json_line.into_bytes();
                 let serialized_size = payload.len() as u64 + 1;
-                if let Some(location) = event.location {
+                if let Some(record) = event.record {
+                    capture
+                        .database
+                        .append_live_capture_record(capture.id, record, payload)
+                } else if let Some(location) = event.location {
                     capture.database.append_live_capture_location(
                         capture.id,
                         event.receipt_monotonic_ms,
@@ -994,44 +999,15 @@ fn write_database_capture_stream(
             }
             CaptureWriterAction::Metadata(metadata) => pending_metadata = Some(metadata),
             CaptureWriterAction::Barrier(kind, reply) => {
-                let result =
-                    finalize_database_capture_metadata(header, &mut pending_metadata, state, kind)
-                        .and_then(|()| persist_database_capture(capture, header, kind, state))
-                        .and_then(|integrity| match kind {
-                            CaptureBarrier::Flush => Ok(CaptureWriterBarrierResult::Flushed),
-                            CaptureBarrier::Finish => {
-                                let integrity = integrity.ok_or_else(|| {
-                                    "finished database capture has no integrity result".to_string()
-                                })?;
-                                let jsonl_export = match integrity {
-                                    LiveCaptureIntegrity::Complete => {
-                                        match export_database_capture(path, capture, state) {
-                                            Ok(content_digest) => {
-                                                CaptureWriterJsonlExport::Available {
-                                                    content_digest,
-                                                }
-                                            }
-                                            Err(error) => CaptureWriterJsonlExport::Failed(error),
-                                        }
-                                    }
-                                    LiveCaptureIntegrity::Incomplete { .. } => {
-                                        CaptureWriterJsonlExport::NotAttempted
-                                    }
-                                    LiveCaptureIntegrity::Unknown => {
-                                        CaptureWriterJsonlExport::Failed(
-                                            "finished live capture has unknown integrity".into(),
-                                        )
-                                    }
-                                };
-                                Ok(CaptureWriterBarrierResult::DatabaseFinished {
-                                    integrity,
-                                    jsonl_export,
-                                    final_header: Box::new(header.clone()),
-                                })
-                            }
-                        });
-                reply_capture_writer_result(result, &reply)?;
-                if kind == CaptureBarrier::Finish {
+                if finish_database_capture_barrier(
+                    path,
+                    header,
+                    &mut pending_metadata,
+                    state,
+                    capture,
+                    kind,
+                    &reply,
+                )? {
                     return Ok(());
                 }
             }
@@ -1049,6 +1025,50 @@ fn write_database_capture_stream(
         export_database_capture(path, capture, state)?;
     }
     Ok(())
+}
+
+fn finish_database_capture_barrier(
+    path: &Path,
+    header: &mut PevcapHeader,
+    pending_metadata: &mut Option<CaptureMetadata>,
+    state: &CaptureWriterState,
+    capture: &DatabaseCapture,
+    kind: CaptureBarrier,
+    reply: &SyncSender<Result<CaptureWriterBarrierResult, String>>,
+) -> Result<bool, String> {
+    let result = finalize_database_capture_metadata(header, pending_metadata, state, kind)
+        .and_then(|()| persist_database_capture(capture, header, kind, state))
+        .and_then(|integrity| match kind {
+            CaptureBarrier::Flush => Ok(CaptureWriterBarrierResult::Flushed),
+            CaptureBarrier::Finish => {
+                let integrity = integrity.ok_or_else(|| {
+                    "finished database capture has no integrity result".to_string()
+                })?;
+                let jsonl_export = match integrity {
+                    LiveCaptureIntegrity::Complete => {
+                        match export_database_capture(path, capture, state) {
+                            Ok(content_digest) => {
+                                CaptureWriterJsonlExport::Available { content_digest }
+                            }
+                            Err(error) => CaptureWriterJsonlExport::Failed(error),
+                        }
+                    }
+                    LiveCaptureIntegrity::Incomplete { .. } => {
+                        CaptureWriterJsonlExport::NotAttempted
+                    }
+                    LiveCaptureIntegrity::Unknown => CaptureWriterJsonlExport::Failed(
+                        "finished live capture has unknown integrity".into(),
+                    ),
+                };
+                Ok(CaptureWriterBarrierResult::DatabaseFinished {
+                    integrity,
+                    jsonl_export,
+                    final_header: Box::new(header.clone()),
+                })
+            }
+        });
+    reply_capture_writer_result(result, reply)?;
+    Ok(kind == CaptureBarrier::Finish)
 }
 
 fn finalize_database_capture_metadata(
@@ -1222,16 +1242,19 @@ fn capture_writer_action(
                 PevcapDirection::Inbound => LiveCaptureEventKind::Notification,
                 PevcapDirection::Outbound => LiveCaptureEventKind::Write,
             };
-            Ok(CaptureWriterAction::Event(CaptureWriterEventLine {
-                json_line: record.to_jsonl_line().map_err(|error| error.to_string())?,
-                kind,
-                receipt_monotonic_ms: record.monotonic_ms.as_milliseconds(),
-                source_monotonic_offset_ms: None,
-                source_wall_clock_unix_ms: record
-                    .phone_location
-                    .map(|location| location.wall_clock_unix_ms),
-                location: None,
-            }))
+            Ok(CaptureWriterAction::Event(Box::new(
+                CaptureWriterEventLine {
+                    json_line: record.to_jsonl_line().map_err(|error| error.to_string())?,
+                    kind,
+                    receipt_monotonic_ms: record.monotonic_ms.as_milliseconds(),
+                    source_monotonic_offset_ms: None,
+                    source_wall_clock_unix_ms: record
+                        .phone_location
+                        .map(|location| location.wall_clock_unix_ms),
+                    location: None,
+                    record: Some(record),
+                },
+            )))
         }
         CaptureWriterMessage::Location(location) => {
             let validation = location
@@ -1240,37 +1263,41 @@ fn capture_writer_action(
                 .map_or_else(LiveCaptureLocationValidation::Rejected, |_| {
                     LiveCaptureLocationValidation::Valid
                 });
-            Ok(CaptureWriterAction::Event(CaptureWriterEventLine {
-                json_line: location
-                    .to_jsonl_line()
-                    .map_err(|error| error.to_string())?,
-                kind: LiveCaptureEventKind::Location,
-                receipt_monotonic_ms: location.receipt_monotonic_ms.as_milliseconds(),
-                source_monotonic_offset_ms: location.source_monotonic_offset_ms,
-                source_wall_clock_unix_ms: (location.location.wall_clock_unix_ms != 0)
-                    .then_some(location.location.wall_clock_unix_ms),
-                location: Some(LiveCaptureLocationObservation {
-                    location: location.location,
-                    raw_source_timestamp_bits: location
-                        .source_timestamp_unix_seconds
-                        .map(f64::to_bits),
-                    simulated: location.simulated,
-                    produced_by_accessory: location.produced_by_accessory,
-                    validation,
-                    admission: LiveCaptureLocationAdmission::NotEvaluated,
-                }),
-            }))
+            Ok(CaptureWriterAction::Event(Box::new(
+                CaptureWriterEventLine {
+                    json_line: location
+                        .to_jsonl_line()
+                        .map_err(|error| error.to_string())?,
+                    kind: LiveCaptureEventKind::Location,
+                    receipt_monotonic_ms: location.receipt_monotonic_ms.as_milliseconds(),
+                    source_monotonic_offset_ms: location.source_monotonic_offset_ms,
+                    source_wall_clock_unix_ms: (location.location.wall_clock_unix_ms != 0)
+                        .then_some(location.location.wall_clock_unix_ms),
+                    location: Some(LiveCaptureLocationObservation {
+                        location: location.location,
+                        raw_source_timestamp_bits: location
+                            .source_timestamp_unix_seconds
+                            .map(f64::to_bits),
+                        simulated: location.simulated,
+                        produced_by_accessory: location.produced_by_accessory,
+                        validation,
+                        admission: LiveCaptureLocationAdmission::NotEvaluated,
+                    }),
+                    record: None,
+                },
+            )))
         }
-        CaptureWriterMessage::Music(music) => {
-            Ok(CaptureWriterAction::Event(CaptureWriterEventLine {
+        CaptureWriterMessage::Music(music) => Ok(CaptureWriterAction::Event(Box::new(
+            CaptureWriterEventLine {
                 json_line: music.to_jsonl_line().map_err(|error| error.to_string())?,
                 kind: LiveCaptureEventKind::Music,
                 receipt_monotonic_ms: music.monotonic_at.as_milliseconds(),
                 source_monotonic_offset_ms: None,
                 source_wall_clock_unix_ms: Some(music.wall_clock_unix_ms.as_milliseconds()),
                 location: None,
-            }))
-        }
+                record: None,
+            },
+        ))),
         CaptureWriterMessage::Metadata(metadata) => Ok(CaptureWriterAction::Metadata(metadata)),
         CaptureWriterMessage::Barrier(kind, reply) => Ok(CaptureWriterAction::Barrier(kind, reply)),
     }
@@ -1698,6 +1725,15 @@ mod tests {
             writer.record_location(database_test_location()),
             CaptureWriteOutcome::Accepted
         );
+        assert_eq!(
+            writer.try_send_record(PevcapRecord::inbound_notification(
+                cutout_core::MonotonicTimestamp::new(11),
+                GattChannel::from_bytes([0x11; 16]),
+                GattChannel::from_bytes([0x22; 16]),
+                vec![0xaa, 0xbb],
+            )),
+            CaptureWriteOutcome::Accepted
+        );
         writer.state.incomplete_messages.store(2, Ordering::Release);
         let capture_id = writer.live_capture_id.unwrap();
 
@@ -1726,7 +1762,20 @@ mod tests {
                 dropped_messages: 2
             }
         );
-        assert_eq!(snapshot.events.len(), 1);
+        assert_eq!(snapshot.events.len(), 2);
+        let connection = rusqlite::Connection::open(&database_path).unwrap();
+        let structured: (String, Vec<u8>, Vec<u8>) = connection
+            .query_row(
+                "SELECT ble.direction, ble.characteristic_uuid, ble.transport_payload
+                 FROM live_capture_ble_observations AS ble
+                 WHERE ble.capture_id = ?1 AND ble.sequence = 1",
+                [capture_id.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(structured.0, "inbound");
+        assert_eq!(structured.1, [0x11; 16]);
+        assert_eq!(structured.2, [0xaa, 0xbb]);
         database.shutdown().unwrap();
     }
 

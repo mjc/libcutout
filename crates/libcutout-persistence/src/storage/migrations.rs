@@ -1,7 +1,7 @@
 use super::{MapPointId, SpatialRowId, StorageError};
 use rusqlite::{Connection, OptionalExtension, params};
 
-pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 31;
+pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 32;
 const APPLICATION_ID: i64 = 0x4355_544f;
 
 fn schema_pragmas(version: i64) -> String {
@@ -54,6 +54,7 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         28 => migrate_v28_to_current(connection)?,
         29 => migrate_v29_to_current(connection)?,
         30 => migrate_v30_to_current(connection)?,
+        31 => migrate_v31_to_current(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -84,6 +85,11 @@ fn initialize_current_schema(connection: &Connection) -> Result<(), StorageError
         .and_then(|()| {
             connection
                 .execute_batch(super::live_capture::LOCATION_SCHEMA)
+                .map_err(Into::into)
+        })
+        .and_then(|()| {
+            connection
+                .execute_batch(super::live_capture::BLE_SCHEMA)
                 .map_err(Into::into)
         })
     {
@@ -524,6 +530,7 @@ fn migrate_v3_to_current(connection: &mut Connection) -> Result<(), StorageError
     )?;
     transaction.execute_batch(super::live_capture::SCHEMA)?;
     transaction.execute_batch(super::live_capture::LOCATION_SCHEMA)?;
+    transaction.execute_batch(super::live_capture::BLE_SCHEMA)?;
     transaction.execute_batch(&current_schema_pragmas())?;
     transaction.commit()?;
     Ok(())
@@ -1236,6 +1243,7 @@ fn migrate_v27_to_current(connection: &mut Connection) -> Result<(), StorageErro
 fn migrate_v28_to_current(connection: &mut Connection) -> Result<(), StorageError> {
     let transaction = connection.transaction()?;
     transaction.execute_batch(super::live_capture::LOCATION_SCHEMA)?;
+    transaction.execute_batch(super::live_capture::BLE_SCHEMA)?;
     transaction.execute_batch(&current_schema_pragmas())?;
     transaction.commit()?;
     Ok(())
@@ -1262,6 +1270,7 @@ fn migrate_v29_to_current(connection: &mut Connection) -> Result<(), StorageErro
          FROM live_capture_location_observations_v29;
          DROP TABLE live_capture_location_observations_v29;",
     )?;
+    transaction.execute_batch(super::live_capture::BLE_SCHEMA)?;
     transaction.execute_batch(&current_schema_pragmas())?;
     transaction.commit()?;
     Ok(())
@@ -1272,10 +1281,18 @@ fn migrate_v30_to_current(connection: &mut Connection) -> Result<(), StorageErro
     transaction.execute_batch(
         "ALTER TABLE live_capture_location_observations
              ADD COLUMN raw_source_timestamp_bits BLOB
-                 CHECK (raw_source_timestamp_bits IS NULL OR length(raw_source_timestamp_bits) = 8);
-         PRAGMA application_id = 1129665615;
-         PRAGMA user_version = 31;",
+                 CHECK (raw_source_timestamp_bits IS NULL OR length(raw_source_timestamp_bits) = 8);",
     )?;
+    transaction.execute_batch(super::live_capture::BLE_SCHEMA)?;
+    transaction.execute_batch(&current_schema_pragmas())?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn migrate_v31_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction()?;
+    transaction.execute_batch(super::live_capture::BLE_SCHEMA)?;
+    transaction.execute_batch(&current_schema_pragmas())?;
     transaction.commit()?;
     Ok(())
 }
@@ -1316,6 +1333,7 @@ pub(super) fn verify_current_schema(connection: &Connection) -> Result<(), Stora
         "live_capture_sessions",
         "live_capture_events",
         "live_capture_location_observations",
+        "live_capture_ble_observations",
         "trails",
         "trail_segments",
         "trail_segment_spatial_keys",
@@ -1475,6 +1493,28 @@ mod tests {
             )
             .unwrap()
         );
+        assert!(table_exists(&connection, "live_capture_ble_observations").unwrap());
+    }
+
+    #[test]
+    fn schema_v31_migration_adds_structured_live_ble_rows() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(&format!(
+                "PRAGMA application_id = {APPLICATION_ID};
+                 PRAGMA user_version = 31;"
+            ))
+            .unwrap();
+
+        migrate(&mut connection).unwrap();
+
+        assert!(table_exists(&connection, "live_capture_ble_observations").unwrap());
+        assert_eq!(
+            connection
+                .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                .unwrap(),
+            CURRENT_SCHEMA_VERSION
+        );
     }
 
     #[test]
@@ -1546,6 +1586,7 @@ mod tests {
         migrate(&mut connection).unwrap();
 
         assert!(table_exists(&connection, "live_capture_location_observations").unwrap());
+        assert!(table_exists(&connection, "live_capture_ble_observations").unwrap());
         assert_eq!(
             connection
                 .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))

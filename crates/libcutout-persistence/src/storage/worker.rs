@@ -89,6 +89,7 @@ impl DatabaseWorker<'_> {
                 source_wall_clock_unix_ms,
                 payload,
                 location,
+                ble_record,
                 reply,
             } => {
                 let _ = reply.send(super::live_capture::append(
@@ -101,6 +102,7 @@ impl DatabaseWorker<'_> {
                         source_wall_clock_unix_ms,
                         payload: &payload,
                         location: location.as_ref(),
+                        ble_record: ble_record.as_deref(),
                     },
                 ));
             }

@@ -1,7 +1,10 @@
 //! Incremental, bounded live-capture event persistence in the canonical database worker.
 
 use super::{Command, QueryLimit, RideDatabase, StorageError};
-use cutout_core::{PevcapPhoneLocation, PevcapPhoneLocationError};
+use cutout_core::{
+    PevcapDirection, PevcapPhoneLocation, PevcapPhoneLocationError, PevcapRecord,
+    PevcapWriteDisposition, RequestTarget, TransportWriteLimit, WriteMode,
+};
 use cutout_ride_maps::LocationAdmission;
 use rusqlite::{Connection, OptionalExtension, params};
 use uuid::Uuid;
@@ -304,6 +307,7 @@ pub(super) struct LiveCaptureEventAppend<'a> {
     pub(super) source_wall_clock_unix_ms: Option<u64>,
     pub(super) payload: &'a [u8],
     pub(super) location: Option<&'a LiveCaptureLocationObservation>,
+    pub(super) ble_record: Option<&'a PevcapRecord>,
 }
 
 /// Bounded snapshot of a live capture and its earliest events.
@@ -396,6 +400,40 @@ pub(super) const LOCATION_SCHEMA: &str = "
     ) WITHOUT ROWID;
 ";
 
+/// Structured transport facts linked to the exact event row, with original payload kept intact.
+pub(super) const BLE_SCHEMA: &str = "
+    CREATE TABLE live_capture_ble_observations (
+        capture_id TEXT NOT NULL,
+        sequence INTEGER NOT NULL CHECK (sequence >= 0),
+        direction TEXT NOT NULL CHECK (direction IN ('link_up', 'link_down', 'inbound', 'outbound')),
+        characteristic_uuid BLOB NOT NULL CHECK (length(characteristic_uuid) = 16),
+        service_uuid BLOB CHECK (service_uuid IS NULL OR length(service_uuid) = 16),
+        write_mode TEXT CHECK (write_mode IS NULL OR write_mode IN ('with_response', 'without_response')),
+        link_max_write_len INTEGER CHECK (link_max_write_len IS NULL OR link_max_write_len BETWEEN 0 AND 65535),
+        request_target_kind TEXT CHECK (request_target_kind IS NULL OR request_target_kind IN ('local', 'vesc_can_controller')),
+        request_target_controller_id INTEGER CHECK
+            (request_target_controller_id IS NULL OR request_target_controller_id BETWEEN 0 AND 255),
+        write_id_bits BLOB CHECK (write_id_bits IS NULL OR length(write_id_bits) = 8),
+        write_disposition TEXT CHECK (write_disposition IS NULL OR write_disposition IN
+            ('queued', 'submitted', 'rejected', 'cancelled')),
+        transport_payload BLOB NOT NULL CHECK (length(transport_payload) <= 65536),
+        raw_telemetry_json BLOB CHECK
+            (raw_telemetry_json IS NULL OR length(raw_telemetry_json) <= 65536),
+        CHECK (
+            (request_target_kind IS NULL AND request_target_controller_id IS NULL)
+            OR (request_target_kind = 'local' AND request_target_controller_id IS NULL)
+            OR (request_target_kind = 'vesc_can_controller'
+                AND request_target_controller_id IS NOT NULL)
+        ),
+        CHECK ((write_id_bits IS NULL) = (write_disposition IS NULL)),
+        PRIMARY KEY (capture_id, sequence),
+        FOREIGN KEY (capture_id, sequence)
+            REFERENCES live_capture_events(capture_id, sequence) ON DELETE CASCADE
+    ) WITHOUT ROWID;
+    CREATE INDEX live_capture_ble_characteristic
+        ON live_capture_ble_observations(characteristic_uuid, capture_id, sequence);
+";
+
 impl RideDatabase {
     /// Starts a live capture in the existing Rust-owned database worker.
     ///
@@ -464,6 +502,53 @@ impl RideDatabase {
             source_wall_clock_unix_ms,
             payload,
             location: None,
+            ble_record: None,
+            reply,
+        })
+    }
+
+    /// Appends a PEVCAP transport record and its queryable BLE facts atomically.
+    ///
+    /// # Errors
+    /// Returns a queue, worker, input-bound, inactive-session, or SQLite error.
+    pub fn append_live_capture_record(
+        &self,
+        id: LiveCaptureId,
+        record: PevcapRecord,
+        payload: Vec<u8>,
+    ) -> Result<u64, StorageError> {
+        let kind = match record.direction {
+            PevcapDirection::LinkUp => LiveCaptureEventKind::LinkUp,
+            PevcapDirection::LinkDown => LiveCaptureEventKind::LinkDown,
+            PevcapDirection::Inbound => LiveCaptureEventKind::Notification,
+            PevcapDirection::Outbound => LiveCaptureEventKind::Write,
+        };
+        let receipt_monotonic_ms = record.monotonic_ms.as_milliseconds();
+        let source_wall_clock_unix_ms = record
+            .phone_location
+            .map(|location| location.wall_clock_unix_ms)
+            .filter(|timestamp| *timestamp != 0);
+        validate_timestamp(receipt_monotonic_ms)?;
+        if let Some(timestamp) = source_wall_clock_unix_ms {
+            validate_timestamp(timestamp)?;
+        }
+        if payload.is_empty() || payload.len() > LIVE_CAPTURE_EVENT_LIMIT_BYTES {
+            return Err(StorageError::LiveCaptureInputInvalid("event payload size"));
+        }
+        if record.bytes.len() > LIVE_CAPTURE_EVENT_LIMIT_BYTES {
+            return Err(StorageError::LiveCaptureInputInvalid(
+                "transport payload size",
+            ));
+        }
+        self.request(|reply| Command::AppendLiveCaptureEvent {
+            id,
+            kind,
+            receipt_monotonic_ms,
+            source_monotonic_offset_ms: None,
+            source_wall_clock_unix_ms,
+            payload,
+            location: None,
+            ble_record: Some(Box::new(record)),
             reply,
         })
     }
@@ -524,6 +609,7 @@ impl RideDatabase {
             source_wall_clock_unix_ms: observation.source_wall_clock_unix_ms(),
             payload,
             location: Some(observation),
+            ble_record: None,
             reply,
         })
     }
@@ -666,6 +752,7 @@ pub(super) fn append(
         source_wall_clock_unix_ms,
         payload,
         location,
+        ble_record,
     } = event;
     let transaction = connection.transaction()?;
     let session: Option<(String, i64, i64)> = transaction
@@ -720,8 +807,77 @@ pub(super) fn append(
     if let Some(location) = location {
         insert_location(&transaction, *id, sequence, location)?;
     }
+    if let Some(record) = ble_record {
+        insert_ble_observation(&transaction, *id, sequence, record)?;
+    }
     transaction.commit()?;
     Ok(sequence)
+}
+
+fn insert_ble_observation(
+    transaction: &rusqlite::Transaction<'_>,
+    id: LiveCaptureId,
+    sequence: u64,
+    record: &PevcapRecord,
+) -> Result<(), StorageError> {
+    let direction = match record.direction {
+        PevcapDirection::LinkUp => "link_up",
+        PevcapDirection::LinkDown => "link_down",
+        PevcapDirection::Inbound => "inbound",
+        PevcapDirection::Outbound => "outbound",
+    };
+    let write_mode = record.write_mode.map(|mode| match mode {
+        WriteMode::WithResponse => "with_response",
+        WriteMode::WithoutResponse => "without_response",
+    });
+    let (request_target_kind, request_target_controller_id) = match record.target {
+        None => (None, None),
+        Some(RequestTarget::Local) => (Some("local"), None),
+        Some(RequestTarget::VescCanController { controller_id }) => {
+            (Some("vesc_can_controller"), Some(controller_id.get()))
+        }
+    };
+    let (write_id_bits, write_disposition) = record.write_receipt.map_or((None, None), |receipt| {
+        let disposition = match receipt.disposition {
+            PevcapWriteDisposition::Queued => "queued",
+            PevcapWriteDisposition::Submitted => "submitted",
+            PevcapWriteDisposition::Rejected => "rejected",
+            PevcapWriteDisposition::Cancelled => "cancelled",
+        };
+        (
+            Some(receipt.write_id.get().to_le_bytes().to_vec()),
+            Some(disposition),
+        )
+    });
+    let raw_telemetry_json = record
+        .telemetry
+        .as_ref()
+        .map(serde_json::to_vec)
+        .transpose()
+        .map_err(|_| StorageError::LiveCaptureInputInvalid("raw telemetry encoding"))?;
+    transaction.execute(
+        "INSERT INTO live_capture_ble_observations
+         (capture_id, sequence, direction, characteristic_uuid, service_uuid, write_mode,
+          link_max_write_len, request_target_kind, request_target_controller_id, write_id_bits,
+          write_disposition, transport_payload, raw_telemetry_json)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+        params![
+            id.as_string(),
+            sequence,
+            direction,
+            record.characteristic.as_bytes().as_slice(),
+            record.service.map(|service| service.as_bytes().to_vec()),
+            write_mode,
+            record.link_max_write_len.map(TransportWriteLimit::as_bytes),
+            request_target_kind,
+            request_target_controller_id,
+            write_id_bits,
+            write_disposition,
+            record.bytes.as_ref(),
+            raw_telemetry_json,
+        ],
+    )?;
+    Ok(())
 }
 
 fn insert_location(

@@ -1,5 +1,5 @@
 use crate::pevcap_limits::{LimitExceeded, PevcapLimits, PevcapUsage, check_limit};
-use cutout_core::{PevcapEncoding, PevcapEvent, PevcapPhoneLocation, PevcapReader};
+use cutout_core::{PevcapEncoding, PevcapEvent, PevcapPhoneLocation, PevcapReader, PevcapRecord};
 use cutout_music::{
     MusicEventTiming, MusicHistoryPolicy, MusicHistoryState, MusicProvider, MusicRideEvent,
     MusicRideEventKind, MusicTimeline, MusicTimelineOutcome, MusicValidationError,
@@ -4311,6 +4311,7 @@ enum Command {
         source_wall_clock_unix_ms: Option<u64>,
         payload: Vec<u8>,
         location: Option<LiveCaptureLocationObservation>,
+        ble_record: Option<Box<PevcapRecord>>,
         reply: Reply<u64>,
     },
     FinishLiveCapture {

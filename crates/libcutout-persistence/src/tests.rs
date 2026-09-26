@@ -5,8 +5,10 @@ use crate::{
     CaptureMetadata as LiveCaptureMetadata, CaptureWriteOutcome, CaptureWriter as LiveCaptureWriter,
 };
 use cutout_core::{
-    MonotonicTimestamp, PevcapCapture, PevcapEncoding, PevcapHeader, PevcapLocationSample,
-    PevcapPhoneLocation, PevcapRecord, WallClockUnixTimestamp,
+    GattChannel, MonotonicTimestamp, PevcapCapture, PevcapEncoding, PevcapHeader,
+    PevcapLocationSample, PevcapNativeWriteId, PevcapPhoneLocation, PevcapRecord,
+    PevcapWriteDisposition, PevcapWriteReceipt, RawTelemetryReadback, RequestTarget,
+    VescControllerId, WallClockUnixTimestamp, WriteMode,
 };
 use cutout_music::{
     MusicEventTiming, MusicHistoryPolicy, MusicHistoryState, MusicProvider, MusicRideEvent,
@@ -22,7 +24,7 @@ use rusqlite::Connection;
 use cutout_ride_maps::{RideLifecycleState, RideMapSegmentId, RideSegmentStartReason};
 
 use super::{
-    BmsVoltageSampleRecord, GeoBounds, HistoryContextBudget, LiveCaptureEventKind,
+    BmsVoltageSampleRecord, GeoBounds, HistoryContextBudget, LiveCaptureEventKind, LiveCaptureId,
     LiveCaptureIntegrity, LiveCaptureLocationAdmission, LiveCaptureLocationObservation,
     LiveCaptureLocationValidation, LiveCaptureState, PevcapImportOutcome, PevcapImportPreview,
     PevcapImportWarning, PhoneAlarmPreferencesRecord, QueryLimit, RideDatabase, RideHistoryQuery,
@@ -155,6 +157,135 @@ fn live_capture_events_are_ordered_durable_and_recovered_by_the_database_worker(
     assert_eq!(interrupted.events[0].payload, b"{\"link\":\"up\"}");
     reopened.shutdown().expect("reopened database shuts down");
     let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn live_ble_observation_is_structured_with_its_raw_event_sequence() {
+    let _guard = test_guard();
+    let path = music_test_path();
+    let database = RideDatabase::open(&path).expect("database opens");
+    let capture_id = database
+        .begin_live_capture(b"{\"format\":\"pevcap\"}".to_vec(), 100)
+        .expect("live capture starts");
+    let characteristic = GattChannel::from_bytes([0x11; 16]);
+    let service = GattChannel::from_bytes([0x22; 16]);
+    let record = PevcapRecord::inbound_notification(
+        MonotonicTimestamp::new(120),
+        characteristic,
+        service,
+        vec![1, 2, 3, 4],
+    )
+    .with_telemetry(RawTelemetryReadback::default());
+    let payload = record
+        .to_jsonl_line()
+        .expect("record serializes")
+        .into_bytes();
+
+    assert_eq!(
+        database
+            .append_live_capture_record(capture_id, record, payload)
+            .expect("BLE event is persisted"),
+        0
+    );
+    let mut outbound = PevcapRecord::targeted_outbound_write(
+        MonotonicTimestamp::new(121),
+        characteristic,
+        WriteMode::WithResponse,
+        vec![0xaa, 0xbb],
+        RequestTarget::VescCanController {
+            controller_id: VescControllerId::new(7),
+        },
+    );
+    outbound.write_receipt = Some(PevcapWriteReceipt {
+        write_id: PevcapNativeWriteId::new(u64::MAX),
+        disposition: PevcapWriteDisposition::Submitted,
+    });
+    let outbound_payload = outbound
+        .to_jsonl_line()
+        .expect("outbound record serializes")
+        .into_bytes();
+    assert_eq!(
+        database
+            .append_live_capture_record(capture_id, outbound, outbound_payload)
+            .expect("outbound write is persisted"),
+        1
+    );
+    database
+        .finish_live_capture(capture_id, 130)
+        .expect("capture finishes");
+    database.shutdown().expect("database shuts down");
+
+    let connection = Connection::open(&path).expect("database can be queried");
+    assert_stored_live_ble_observations(&connection, capture_id);
+    drop(connection);
+    let _ = std::fs::remove_file(path);
+}
+
+type StoredBleObservation = (
+    i64,
+    String,
+    Vec<u8>,
+    Option<Vec<u8>>,
+    Vec<u8>,
+    Option<Vec<u8>>,
+);
+
+fn assert_stored_live_ble_observations(connection: &Connection, capture_id: LiveCaptureId) {
+    let stored: StoredBleObservation = connection
+        .query_row(
+            "SELECT event.sequence, ble.direction, ble.characteristic_uuid,
+                    ble.service_uuid, ble.transport_payload, ble.raw_telemetry_json
+             FROM live_capture_events AS event
+             JOIN live_capture_ble_observations AS ble
+               ON ble.capture_id = event.capture_id AND ble.sequence = event.sequence
+             WHERE event.capture_id = ?1",
+            [capture_id.to_string()],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            },
+        )
+        .expect("structured BLE observation is queryable");
+    assert_eq!(stored.0, 0);
+    assert_eq!(stored.1, "inbound");
+    assert_eq!(stored.2, [0x11; 16]);
+    assert_eq!(stored.3, Some([0x22; 16].to_vec()));
+    assert_eq!(stored.4, [1, 2, 3, 4]);
+    assert_eq!(
+        stored.5,
+        Some(b"{\"fields\":[],\"float_fields\":[]}".to_vec())
+    );
+    let outbound: (String, i64, String, Vec<u8>, String, Vec<u8>) = connection
+        .query_row(
+            "SELECT request_target_kind, request_target_controller_id, write_mode,
+                    write_id_bits, write_disposition, transport_payload
+             FROM live_capture_ble_observations
+             WHERE capture_id = ?1 AND sequence = 1",
+            [capture_id.to_string()],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            },
+        )
+        .expect("outbound write metadata is queryable");
+    assert_eq!(outbound.0, "vesc_can_controller");
+    assert_eq!(outbound.1, 7);
+    assert_eq!(outbound.2, "with_response");
+    assert_eq!(outbound.3, u64::MAX.to_le_bytes());
+    assert_eq!(outbound.4, "submitted");
+    assert_eq!(outbound.5, [0xaa, 0xbb]);
 }
 
 #[test]
@@ -384,7 +515,8 @@ fn schema_v26_migration_adds_live_capture_tables_without_touching_existing_captu
     let connection = Connection::open(&path).expect("SQLite file opens");
     connection
         .execute_batch(
-            "DROP TABLE live_capture_location_observations;
+            "DROP TABLE live_capture_ble_observations;
+             DROP TABLE live_capture_location_observations;
              DROP TABLE live_capture_events;
              DROP TABLE live_capture_sessions;
              PRAGMA user_version = 26;",
@@ -611,6 +743,7 @@ fn music_v16_migration_preserves_events_without_fabricating_observation_times() 
          ALTER TABLE ride_music_history DROP COLUMN deleted;
          DROP TABLE bms_voltage_samples;
          DROP TABLE phone_alarm_preferences;
+         DROP TABLE live_capture_ble_observations;
          DROP TABLE live_capture_location_observations;
          DROP TABLE live_capture_events;
          DROP TABLE live_capture_sessions;
@@ -650,6 +783,7 @@ fn schema_v19_migration_adds_music_history_state() {
             "ALTER TABLE ride_music_history DROP COLUMN state;
              DROP TABLE bms_voltage_samples;
              DROP TABLE phone_alarm_preferences;
+             DROP TABLE live_capture_ble_observations;
              DROP TABLE live_capture_location_observations;
              DROP TABLE live_capture_events;
              DROP TABLE live_capture_sessions;
@@ -680,6 +814,7 @@ fn pre_music_v16_migration_preserves_existing_capture_tables() {
              DROP TABLE ride_music_history;
              DROP TABLE bms_voltage_samples;
              DROP TABLE phone_alarm_preferences;
+             DROP TABLE live_capture_ble_observations;
              DROP TABLE live_capture_location_observations;
              DROP TABLE live_capture_events;
              DROP TABLE live_capture_sessions;
@@ -838,6 +973,7 @@ fn music_v16_migration_rebuilds_utf8_text_bounds() {
              ALTER TABLE ride_music_history DROP COLUMN deleted;
              DROP TABLE bms_voltage_samples;
              DROP TABLE phone_alarm_preferences;
+             DROP TABLE live_capture_ble_observations;
              DROP TABLE live_capture_location_observations;
              DROP TABLE live_capture_events;
              DROP TABLE live_capture_sessions;
@@ -3258,6 +3394,7 @@ fn recording_schema_migrates_from_25_without_changing_existing_capture() {
     connection
         .execute_batch(
             "DROP TABLE pevcap_recordings;
+             DROP TABLE live_capture_ble_observations;
              DROP TABLE live_capture_location_observations;
              DROP TABLE live_capture_events;
              DROP TABLE live_capture_sessions;
@@ -3354,6 +3491,7 @@ fn stored_capture_history_index_is_identical_after_schema_24_migration() {
     connection
         .execute_batch(
             "DROP INDEX pevcap_imports_history;
+             DROP TABLE live_capture_ble_observations;
              DROP TABLE live_capture_location_observations;
              DROP TABLE live_capture_events;
              DROP TABLE live_capture_sessions;
@@ -3412,6 +3550,7 @@ fn stored_capture_history_survives_restart_and_missing_files() {
     connection
         .execute_batch(
             "DROP INDEX pevcap_imports_history;
+             DROP TABLE live_capture_ble_observations;
              DROP TABLE live_capture_location_observations;
              DROP TABLE live_capture_events;
              DROP TABLE live_capture_sessions;
@@ -3544,6 +3683,7 @@ fn schema_fifteen_capture_backfill_preserves_receipts_and_rides() {
                 "DROP TABLE pevcap_capture_chunks; DROP TABLE pevcap_captures;
              DROP TABLE bms_voltage_samples;
              DROP TABLE phone_alarm_preferences;
+             DROP TABLE live_capture_ble_observations;
              DROP TABLE live_capture_location_observations;
              DROP TABLE live_capture_events;
              DROP TABLE live_capture_sessions;
