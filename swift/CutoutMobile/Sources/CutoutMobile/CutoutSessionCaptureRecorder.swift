@@ -278,9 +278,18 @@ final class CutoutSessionCaptureRecorder: CutoutSessionCaptureRecording {
             guard let active else {
                 return CaptureLocationWriteResult(generation: nil, outcome: .accepted)
             }
+            guard let receiptWallClockUnixMs = unixMilliseconds(for: update.receiptWallClock) else {
+                return CaptureLocationWriteResult(
+                    generation: active.generation,
+                    outcome: .rejected
+                )
+            }
             let outcome = active.builder.recordLocationSamples(
                 receiptMonotonicMs: MobileMonotonicMillisDto(
                     milliseconds: update.receiptMonotonic.rawValue
+                ),
+                receiptWallClockUnixMs: MobileWallClockUnixMillisDto(
+                    milliseconds: receiptWallClockUnixMs
                 ),
                 samples: update.samples
             )

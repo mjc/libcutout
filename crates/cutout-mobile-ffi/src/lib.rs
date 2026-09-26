@@ -13143,6 +13143,7 @@ impl MobilePevcapCaptureBuilder {
     pub fn record_location_samples(
         &self,
         receipt_monotonic_ms: MobileMonotonicMillisDto,
+        receipt_wall_clock_unix_ms: MobileWallClockUnixMillisDto,
         samples: Vec<MobilePhoneLocationSampleDto>,
     ) -> MobileCaptureWriteOutcomeDto {
         if samples.is_empty() {
@@ -13161,10 +13162,16 @@ impl MobilePevcapCaptureBuilder {
         let Some(elapsed_ms) = receipt_monotonic_ms.milliseconds.checked_sub(started_at_ms) else {
             return MobileCaptureWriteOutcomeDto::Rejected;
         };
+        let receipt_monotonic_absolute_ms = receipt_monotonic_ms.milliseconds;
         let receipt_monotonic_ms = MonotonicTimestamp::new(elapsed_ms);
         let locations = samples
             .into_iter()
             .map(|sample| {
+                let sample = sample.canonical().ok_or(())?;
+                let source_monotonic_offset_ms = i128::from(receipt_monotonic_absolute_ms)
+                    + i128::from(sample.wall_clock_unix_ms)
+                    - i128::from(receipt_wall_clock_unix_ms.milliseconds)
+                    - i128::from(started_at_ms);
                 PevcapLocationSample::new(
                     receipt_monotonic_ms,
                     sample.pevcap_location(),
@@ -13172,6 +13179,11 @@ impl MobilePevcapCaptureBuilder {
                     None,
                 )
                 .map_err(|_| ())
+                .map(|location| {
+                    location.with_source_monotonic_offset_ms(
+                        i64::try_from(source_monotonic_offset_ms).ok(),
+                    )
+                })
             })
             .collect::<Result<Vec<_>, _>>();
         let Ok(locations) = locations else {
@@ -18918,7 +18930,7 @@ mod tests {
             ..first
         };
         assert_eq!(
-            builder.record_location_samples(ms(120), vec![first, second]),
+            builder.record_location_samples(ms(120), wc(1_700_000_000_010), vec![first, second],),
             MobileCaptureWriteOutcomeDto::Accepted
         );
         let third = MobilePhoneLocationSampleDto {
@@ -18926,7 +18938,7 @@ mod tests {
             ..first
         };
         assert_eq!(
-            builder.record_location_samples(ms(130), vec![third]),
+            builder.record_location_samples(ms(130), wc(1_700_000_000_013), vec![third],),
             MobileCaptureWriteOutcomeDto::Accepted
         );
         assert!(builder.finish_writer());
@@ -18953,6 +18965,14 @@ mod tests {
                 second.wall_clock_unix_ms,
                 third.wall_clock_unix_ms
             ]
+        );
+        assert_eq!(
+            capture
+                .locations
+                .iter()
+                .map(|location| location.source_monotonic_offset_ms)
+                .collect::<Vec<_>>(),
+            [Some(18), Some(19), Some(35)]
         );
     }
 
