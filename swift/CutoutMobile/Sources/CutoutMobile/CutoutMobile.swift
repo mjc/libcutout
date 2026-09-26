@@ -2370,32 +2370,6 @@ extension TelemetrySnapshot {
     }
 }
 
-public enum VescWriteGuardrail: Equatable, Hashable, Sendable {
-    case readOnly
-    case unsupportedCommand
-    case policyRefusal
-    case authorizedButUnimplemented
-    case parkedAndConfirmed
-    case unknown
-
-    fileprivate init(_ dto: MobileVescWriteGuardrailDto) {
-        switch dto {
-        case .readOnly:
-            self = .readOnly
-        case .unsupportedCommand:
-            self = .unsupportedCommand
-        case .policyRefusal:
-            self = .policyRefusal
-        case .authorizedButUnimplemented:
-            self = .authorizedButUnimplemented
-        case .parkedAndConfirmed:
-            self = .parkedAndConfirmed
-        case .unknown:
-            self = .unknown
-        }
-    }
-}
-
 public enum ReadbackAvailability: Equatable, Hashable, Sendable {
     case available
     case unavailable

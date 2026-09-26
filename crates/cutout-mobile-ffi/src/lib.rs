@@ -11479,68 +11479,6 @@ pub enum MobileVescSubProtocolDto {
     Generic,
 }
 
-/// VESC write guardrail shown by the debug surface.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
-pub enum MobileVescWriteGuardrailDto {
-    /// Debug screen is read-only for the current state.
-    ReadOnly,
-
-    /// Command is not supported by the product contract.
-    UnsupportedCommand,
-
-    /// Command was refused by safety policy.
-    PolicyRefusal,
-
-    /// Command passed policy, but no encoder/write path exists yet.
-    AuthorizedButUnimplemented,
-
-    /// Writes require parked state plus explicit confirmation.
-    ParkedAndConfirmed,
-
-    /// Guardrail state is unknown.
-    Unknown,
-}
-
-/// VESC debug/config snapshot for mobile UI.
-#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
-pub struct MobileVescDebugSnapshotDto {
-    /// Profile or setup label.
-    pub profile_title: String,
-
-    /// VESC implementation and firmware label.
-    pub transport_detail: String,
-
-    /// Current duty cycle.
-    pub duty_cycle: Option<DutyCycle>,
-
-    /// Maximum duty observed in the session.
-    pub max_seen_duty_cycle: Option<DutyCycle>,
-
-    /// Pack voltage.
-    pub pack_voltage: Option<VoltageReading>,
-
-    /// Battery current limit.
-    pub battery_current_limit: Option<BatteryCurrentReading>,
-
-    /// Motor/phase current limit.
-    pub motor_current_limit: Option<PhaseCurrentReading>,
-
-    /// Last fault label from read-only state.
-    pub last_fault: Option<String>,
-
-    /// Input app label.
-    pub input_app: Option<String>,
-
-    /// CAN status label.
-    pub can_status: Option<String>,
-
-    /// Logging state label.
-    pub logging: Option<String>,
-
-    /// Current write guardrail.
-    pub write_guardrail: MobileVescWriteGuardrailDto,
-}
-
 /// Confidence level for BMS topology mapping.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum MobileBmsTopologyConfidenceDto {
