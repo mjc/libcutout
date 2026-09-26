@@ -289,7 +289,32 @@ impl RideDatabase {
         id: LiveCaptureId,
         limit: QueryLimit,
     ) -> Result<LiveCaptureSnapshot, StorageError> {
-        self.request(|reply| Command::ReadLiveCapture { id, limit, reply })
+        self.live_capture_page(id, None, limit)
+    }
+
+    /// Reads one bounded live-capture event page after an optional sequence cursor.
+    ///
+    /// The snapshot's `next_sequence` is the total number of admitted events, so a caller can
+    /// determine whether another page exists without loading the entire capture.
+    ///
+    /// # Errors
+    /// Returns a queue, worker, missing-capture, or SQLite error.
+    pub fn live_capture_page(
+        &self,
+        id: LiveCaptureId,
+        after_sequence: Option<u64>,
+        limit: QueryLimit,
+    ) -> Result<LiveCaptureSnapshot, StorageError> {
+        let after_sequence = after_sequence
+            .map(i64::try_from)
+            .transpose()
+            .map_err(|_| StorageError::LiveCaptureInputInvalid("sequence range"))?;
+        self.request(|reply| Command::ReadLiveCapture {
+            id,
+            after_sequence,
+            limit,
+            reply,
+        })
     }
 }
 
@@ -465,6 +490,7 @@ pub(super) fn update_header(
 pub(super) fn read(
     connection: &Connection,
     id: LiveCaptureId,
+    after_sequence: Option<i64>,
     limit: QueryLimit,
 ) -> Result<LiveCaptureSnapshot, StorageError> {
     let header: Option<LiveCaptureHeaderRow> = connection
@@ -489,18 +515,23 @@ pub(super) fn read(
     let mut statement = connection.prepare(
         "SELECT sequence, event_kind, receipt_monotonic_ms, source_monotonic_offset_ms,
                 source_wall_clock_unix_ms, payload
-         FROM live_capture_events WHERE capture_id = ?1 ORDER BY sequence LIMIT ?2",
+         FROM live_capture_events
+         WHERE capture_id = ?1 AND sequence > COALESCE(?2, -1)
+         ORDER BY sequence LIMIT ?3",
     )?;
-    let rows = statement.query_map(params![id.as_string(), limit.get()], |row| {
-        Ok((
-            row.get::<_, u64>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, u64>(2)?,
-            row.get::<_, Option<i64>>(3)?,
-            row.get::<_, Option<u64>>(4)?,
-            row.get::<_, Vec<u8>>(5)?,
-        ))
-    })?;
+    let rows = statement.query_map(
+        params![id.as_string(), after_sequence, limit.get()],
+        |row| {
+            Ok((
+                row.get::<_, u64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, u64>(2)?,
+                row.get::<_, Option<i64>>(3)?,
+                row.get::<_, Option<u64>>(4)?,
+                row.get::<_, Vec<u8>>(5)?,
+            ))
+        },
+    )?;
     let events = rows
         .map(|row| {
             let (

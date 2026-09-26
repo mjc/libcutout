@@ -118,8 +118,18 @@ impl DatabaseWorker<'_> {
                     &header_json,
                 ));
             }
-            Command::ReadLiveCapture { id, limit, reply } => {
-                let _ = reply.send(super::live_capture::read(connection, id, limit));
+            Command::ReadLiveCapture {
+                id,
+                after_sequence,
+                limit,
+                reply,
+            } => {
+                let _ = reply.send(super::live_capture::read(
+                    connection,
+                    id,
+                    after_sequence,
+                    limit,
+                ));
             }
             Command::RecordedCaptureLookup { id, reply } => {
                 let _ = reply.send(super::recorded_capture::receipt_for_id(connection, id));

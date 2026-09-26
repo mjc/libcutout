@@ -4323,6 +4323,7 @@ enum Command {
     },
     ReadLiveCapture {
         id: LiveCaptureId,
+        after_sequence: Option<i64>,
         limit: QueryLimit,
         reply: Reply<LiveCaptureSnapshot>,
     },

@@ -155,6 +155,72 @@ fn live_capture_events_are_ordered_durable_and_recovered_by_the_database_worker(
 }
 
 #[test]
+fn live_capture_event_pages_continue_without_duplicates_or_gaps() {
+    let _guard = test_guard();
+    let path = music_test_path();
+    let database = RideDatabase::open(&path).expect("database opens");
+    let capture_id = database
+        .begin_live_capture(b"{\"format\":\"pevcap\"}".to_vec(), 100)
+        .expect("live capture starts");
+    for index in 0..5 {
+        database
+            .append_live_capture_event(
+                capture_id,
+                LiveCaptureEventKind::Notification,
+                110 + index,
+                None,
+                None,
+                format!("{{\"index\":{index}}}").into_bytes(),
+            )
+            .expect("event is persisted");
+    }
+
+    let first = database
+        .live_capture_page(capture_id, None, QueryLimit::new(2).unwrap())
+        .expect("first page is readable");
+    let first_cursor = first.events.last().map(|event| event.sequence);
+    assert_eq!(
+        first
+            .events
+            .iter()
+            .map(|event| event.sequence)
+            .collect::<Vec<_>>(),
+        [0, 1]
+    );
+    assert_eq!(first.next_sequence, 5);
+
+    let second = database
+        .live_capture_page(capture_id, first_cursor, QueryLimit::new(2).unwrap())
+        .expect("second page is readable");
+    let second_cursor = second.events.last().map(|event| event.sequence);
+    assert_eq!(
+        second
+            .events
+            .iter()
+            .map(|event| event.sequence)
+            .collect::<Vec<_>>(),
+        [2, 3]
+    );
+    assert_eq!(second.header_json, first.header_json);
+    assert_eq!(second.state, first.state);
+
+    let third = database
+        .live_capture_page(capture_id, second_cursor, QueryLimit::new(2).unwrap())
+        .expect("third page is readable");
+    assert_eq!(
+        third
+            .events
+            .iter()
+            .map(|event| event.sequence)
+            .collect::<Vec<_>>(),
+        [4]
+    );
+    assert_eq!(third.next_sequence, 5);
+    database.shutdown().expect("database shuts down");
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn schema_v26_migration_adds_live_capture_tables_without_touching_existing_capture_data() {
     let _guard = test_guard();
     let path = music_test_path();
