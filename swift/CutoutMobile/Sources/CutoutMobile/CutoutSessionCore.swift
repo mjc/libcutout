@@ -455,7 +455,6 @@ public final class CutoutSessionCore: NSObject {
     @MainActor public private(set) var phoneLocationSnapshot = MobilePhoneLocationSnapshotDto(
         latestSample: nil, gpsSpeed: nil)
     @MainActor private var rideMapStorageStatus: (error: MobileRideMapError?, isReady: Bool) = (nil, false)
-    private let latestPhoneLocationSample = Mutex<MobilePhoneLocationSampleDto?>(nil)
     private var storedProtocolIdentityCandidate: DevicePickerDiscoveryCandidate?
     public var protocolIdentityCandidate: DevicePickerDiscoveryCandidate? {
         onBleQueue { storedProtocolIdentityCandidate }
@@ -655,7 +654,6 @@ public final class CutoutSessionCore: NSObject {
             wallClock: wallClock,
             onSnapshot: { [reference = WeakCutoutSessionCoreReference(self)] snapshot, receivedAt in
                 guard let self = reference.value else { return }
-                self.latestPhoneLocationSample.withLock { $0 = snapshot.latestSample }
                 self.phoneLocationSnapshot = snapshot
                 self.publishPhoneLocationSnapshot(receivedAt: receivedAt)
             },
@@ -2335,13 +2333,11 @@ public final class CutoutSessionCore: NSObject {
                 )
                 return false
             }
-            let location = latestPhoneLocationSample.withLock { $0 }
             let outcome = captureRecorder.recordNotification(
                 characteristic: channel,
                 service: serviceUuid,
                 bytes: bytes,
-                telemetry: telemetry,
-                phoneLocation: location
+                telemetry: telemetry
             )
             guard acceptCaptureWrite(outcome) else { return false }
             record("capture_queue_depth=\(captureRecorder.writerStatus()?.queuedMessages ?? 0)")
@@ -3692,6 +3688,20 @@ extension CutoutSessionCore {
     }
 
     private func handlePhoneLocationUpdate(_ update: PhoneLocationUpdate) {
+        let captureResult = captureRecorder.recordLocationUpdate(update)
+        if captureResult.outcome != .accepted, let generation = captureResult.generation {
+            onBleQueue {
+                guard self.captureGeneration == generation else { return }
+                switch captureResult.outcome {
+                case .accepted:
+                    break
+                case .rejected:
+                    self.record("capture_warning=location_batch_rejected")
+                case .failed:
+                    _ = self.acceptCaptureWrite(.failed)
+                }
+            }
+        }
         rideMapRecorder.ingestLocation(update)
     }
 

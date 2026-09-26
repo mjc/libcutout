@@ -12526,9 +12526,10 @@ pub struct MobilePevcapCaptureBuilder {
     resolved_identity: Mutex<Option<PevcapResolvedIdentity>>,
     annotations: Mutex<cutout_core::CaptureAnnotations>,
     writer: Mutex<CaptureWriterSlot>,
+    writer_ingress: Mutex<Option<persistence::CaptureWriterIngress>>,
     writer_state: Mutex<Option<CaptureWriterMonitor>>,
     music_history_policy: Mutex<CoreMusicHistoryPolicy>,
-    music_capture_start_monotonic_ms: Mutex<Option<u64>>,
+    capture_start_monotonic_ms: Mutex<Option<u64>>,
     music_context: Mutex<VecDeque<PendingPevcapMusicContext>>,
 }
 
@@ -12670,9 +12671,10 @@ impl MobilePevcapCaptureBuilder {
             resolved_identity: Mutex::new(None),
             annotations: Mutex::new(cutout_core::CaptureAnnotations::default()),
             writer: Mutex::new(CaptureWriterSlot::Ready),
+            writer_ingress: Mutex::new(None),
             writer_state: Mutex::new(None),
             music_history_policy: Mutex::new(CoreMusicHistoryPolicy::Disabled),
-            music_capture_start_monotonic_ms: Mutex::new(None),
+            capture_start_monotonic_ms: Mutex::new(None),
             music_context: Mutex::new(VecDeque::with_capacity(PEVCAP_MUSIC_CONTEXT_CAPACITY)),
         })
     }
@@ -12773,6 +12775,10 @@ impl MobilePevcapCaptureBuilder {
             }
         };
         *self
+            .writer_ingress
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(writer.ingress());
+        *self
             .writer_state
             .lock()
             .unwrap_or_else(PoisonError::into_inner) = Some(writer.monitor());
@@ -12800,6 +12806,10 @@ impl MobilePevcapCaptureBuilder {
                 _ => unreachable!("recording state was checked while holding the lock"),
             }
         };
+        *self
+            .writer_ingress
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = None;
         let result = writer.finish().map(Box::new);
         let succeeded = result.is_ok();
         *self.writer.lock().unwrap_or_else(PoisonError::into_inner) =
@@ -12841,10 +12851,10 @@ impl MobilePevcapCaptureBuilder {
         true
     }
 
-    /// Sets the monotonic origin used for capture-relative music timestamps.
-    pub fn set_music_capture_start_monotonic_ms(&self, monotonic_ms: u64) -> bool {
+    /// Sets the Rust-owned monotonic origin used for capture-relative event timestamps.
+    pub fn set_capture_start_monotonic_ms(&self, monotonic_ms: u64) -> bool {
         *self
-            .music_capture_start_monotonic_ms
+            .capture_start_monotonic_ms
             .lock()
             .unwrap_or_else(PoisonError::into_inner) = Some(monotonic_ms);
         true
@@ -12855,7 +12865,7 @@ impl MobilePevcapCaptureBuilder {
         mut music: MobilePevcapMusicEventDto,
     ) -> Option<MobilePevcapMusicEventDto> {
         let start = *self
-            .music_capture_start_monotonic_ms
+            .capture_start_monotonic_ms
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
         let Some(start) = start else {
@@ -13123,6 +13133,58 @@ impl MobilePevcapCaptureBuilder {
             return MobileCaptureWriteOutcomeDto::Failed;
         };
         self.send_location(location)
+    }
+
+    /// Admits one Core Location callback batch as independent, ordered capture events.
+    ///
+    /// Callback time is absolute in the same monotonic domain as the capture start; Rust
+    /// converts it to capture-relative time. The batch is admitted through a cloneable
+    /// bounded writer ingress, so native callbacks never wait for flush or finalization.
+    pub fn record_location_samples(
+        &self,
+        receipt_monotonic_ms: MobileMonotonicMillisDto,
+        samples: Vec<MobilePhoneLocationSampleDto>,
+    ) -> MobileCaptureWriteOutcomeDto {
+        if samples.is_empty() {
+            return MobileCaptureWriteOutcomeDto::Accepted;
+        }
+        if samples.len() > persistence::CAPTURE_LOCATION_BATCH_CAPACITY {
+            return MobileCaptureWriteOutcomeDto::Rejected;
+        }
+        let Some(started_at_ms) = *self
+            .capture_start_monotonic_ms
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+        else {
+            return MobileCaptureWriteOutcomeDto::Failed;
+        };
+        let Some(elapsed_ms) = receipt_monotonic_ms.milliseconds.checked_sub(started_at_ms) else {
+            return MobileCaptureWriteOutcomeDto::Rejected;
+        };
+        let receipt_monotonic_ms = MonotonicTimestamp::new(elapsed_ms);
+        let locations = samples
+            .into_iter()
+            .map(|sample| {
+                PevcapLocationSample::new(
+                    receipt_monotonic_ms,
+                    sample.pevcap_location(),
+                    None,
+                    None,
+                )
+                .map_err(|_| ())
+            })
+            .collect::<Result<Vec<_>, _>>();
+        let Ok(locations) = locations else {
+            return MobileCaptureWriteOutcomeDto::Failed;
+        };
+        let ingress = self
+            .writer_ingress
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        ingress.map_or(MobileCaptureWriteOutcomeDto::Failed, |ingress| {
+            ingress.record_location_batch(&locations).into()
+        })
     }
 }
 
@@ -18834,6 +18896,64 @@ mod tests {
             course_degrees: Some(271.5),
             course_accuracy_degrees: Some(3.0),
         }
+    }
+
+    #[test]
+    fn mobile_capture_builder_records_location_batches_as_independent_capture_events() {
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-location-batch-{}-{}.jsonl",
+            std::process::id(),
+            thread::current().name().unwrap_or("test")
+        ));
+        let _ = fs::remove_file(&path);
+        let builder =
+            MobilePevcapCaptureBuilder::new(wc(1_700_000_000_000), "ios-corelocation".into(), None);
+        assert!(builder.set_capture_start_monotonic_ms(100));
+        assert!(builder.start_writer(path.to_string_lossy().into_owned()));
+
+        let first = capture_phone_location_fixture();
+        let second = MobilePhoneLocationSampleDto {
+            wall_clock_unix_ms: first.wall_clock_unix_ms + 1,
+            latitude_degrees: first.latitude_degrees + 0.000_01,
+            ..first
+        };
+        assert_eq!(
+            builder.record_location_samples(ms(120), vec![first, second]),
+            MobileCaptureWriteOutcomeDto::Accepted
+        );
+        let third = MobilePhoneLocationSampleDto {
+            wall_clock_unix_ms: first.wall_clock_unix_ms + 10,
+            ..first
+        };
+        assert_eq!(
+            builder.record_location_samples(ms(130), vec![third]),
+            MobileCaptureWriteOutcomeDto::Accepted
+        );
+        assert!(builder.finish_writer());
+
+        let capture =
+            PevcapCapture::decode(&fs::read(path).unwrap(), PevcapEncoding::Jsonl).unwrap();
+        assert!(capture.records.is_empty());
+        assert_eq!(
+            capture
+                .locations
+                .iter()
+                .map(|location| location.receipt_monotonic_ms.get())
+                .collect::<Vec<_>>(),
+            [20, 20, 30]
+        );
+        assert_eq!(
+            capture
+                .locations
+                .iter()
+                .map(|location| location.location.wall_clock_unix_ms)
+                .collect::<Vec<_>>(),
+            [
+                first.wall_clock_unix_ms,
+                second.wall_clock_unix_ms,
+                third.wall_clock_unix_ms
+            ]
+        );
     }
 
     #[allow(

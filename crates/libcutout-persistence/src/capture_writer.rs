@@ -103,6 +103,8 @@ impl CaptureWriterMonitor {
 }
 
 const CAPTURE_WRITER_QUEUE_CAPACITY: usize = 256;
+/// Maximum location observations admitted in one native callback batch.
+pub const CAPTURE_LOCATION_BATCH_CAPACITY: usize = 64;
 const CAPTURE_WRITER_BUFFER_BYTES: u64 = 128 * 1024;
 const CAPTURE_WRITER_FLUSH_INTERVAL: Duration = Duration::from_millis(500);
 const CAPTURE_WRITER_SYNC_INTERVAL: Duration = Duration::from_secs(3);
@@ -237,6 +239,148 @@ struct CaptureRecordPool {
     records: Mutex<VecDeque<PevcapRecord>>,
 }
 
+/// Cloneable, bounded admission capability; unlike a writer handle, it never waits for storage.
+#[derive(Clone)]
+pub struct CaptureWriterIngress {
+    sender: SyncSender<CaptureWriterMessage>,
+    records: Arc<CaptureRecordPool>,
+    state: Arc<CaptureWriterState>,
+    accepting: Arc<Mutex<bool>>,
+}
+
+impl std::fmt::Debug for CaptureWriterIngress {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("CaptureWriterIngress")
+    }
+}
+
+impl CaptureWriterIngress {
+    fn try_send(&self, message: CaptureWriterMessage) -> CaptureWriteOutcome {
+        let accepting = self
+            .accepting
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if !*accepting {
+            self.state.dropped_messages.fetch_add(1, Ordering::AcqRel);
+            return CaptureWriteOutcome::Failed;
+        }
+        try_send_message(&self.sender, &self.state, message)
+    }
+
+    fn close_and_send(&self, message: CaptureWriterMessage) -> CaptureWriteOutcome {
+        let mut accepting = self
+            .accepting
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if !*accepting {
+            self.state.dropped_messages.fetch_add(1, Ordering::AcqRel);
+            return CaptureWriteOutcome::Failed;
+        }
+        *accepting = false;
+        try_send_message(&self.sender, &self.state, message)
+    }
+
+    /// Admits one transport record without waiting for disk I/O.
+    pub fn try_send_record(&self, record: PevcapRecord) -> CaptureWriteOutcome {
+        let accepting = self
+            .accepting
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if !*accepting {
+            self.state.dropped_messages.fetch_add(1, Ordering::AcqRel);
+            return CaptureWriteOutcome::Failed;
+        }
+        let mut records = self
+            .records
+            .records
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if records.len() == records.capacity() {
+            self.state.dropped_messages.fetch_add(1, Ordering::AcqRel);
+            self.state.fail("capture writer queue is full");
+            return CaptureWriteOutcome::Failed;
+        }
+        records.push_back(record);
+        match try_send_message(&self.sender, &self.state, CaptureWriterMessage::Record) {
+            CaptureWriteOutcome::Accepted => CaptureWriteOutcome::Accepted,
+            CaptureWriteOutcome::Failed => {
+                records.pop_back();
+                CaptureWriteOutcome::Failed
+            }
+        }
+    }
+
+    /// Admits a bounded batch of independent location observations in one ordering step.
+    pub fn record_location_batch(&self, locations: &[PevcapLocationSample]) -> CaptureWriteOutcome {
+        if locations.len() > CAPTURE_LOCATION_BATCH_CAPACITY {
+            self.state
+                .dropped_messages
+                .fetch_add(locations.len() as u64, Ordering::AcqRel);
+            self.state.fail("capture location batch exceeds its limit");
+            return CaptureWriteOutcome::Failed;
+        }
+        let accepting = self
+            .accepting
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if !*accepting {
+            self.state
+                .dropped_messages
+                .fetch_add(locations.len() as u64, Ordering::AcqRel);
+            return CaptureWriteOutcome::Failed;
+        }
+        for (index, location) in locations.iter().enumerate() {
+            if try_send_message(
+                &self.sender,
+                &self.state,
+                CaptureWriterMessage::Location(*location),
+            ) == CaptureWriteOutcome::Failed
+            {
+                let remaining = locations.len().saturating_sub(index + 1);
+                self.state
+                    .dropped_messages
+                    .fetch_add(remaining as u64, Ordering::AcqRel);
+                return CaptureWriteOutcome::Failed;
+            }
+        }
+        CaptureWriteOutcome::Accepted
+    }
+
+    /// Admits one independent location observation without waiting for disk I/O.
+    #[must_use]
+    pub fn record_location(&self, location: PevcapLocationSample) -> CaptureWriteOutcome {
+        self.try_send(CaptureWriterMessage::Location(location))
+    }
+}
+
+fn try_send_message(
+    sender: &SyncSender<CaptureWriterMessage>,
+    state: &CaptureWriterState,
+    message: CaptureWriterMessage,
+) -> CaptureWriteOutcome {
+    let queued_messages = state.queued_messages.fetch_add(1, Ordering::AcqRel) + 1;
+    match sender.try_send(message) {
+        Ok(()) => {
+            state
+                .peak_queued_messages
+                .fetch_max(queued_messages, Ordering::AcqRel);
+            CaptureWriteOutcome::Accepted
+        }
+        Err(TrySendError::Full(_)) => {
+            state.queued_messages.fetch_sub(1, Ordering::AcqRel);
+            state.dropped_messages.fetch_add(1, Ordering::AcqRel);
+            state.fail("capture writer queue is full");
+            CaptureWriteOutcome::Failed
+        }
+        Err(TrySendError::Disconnected(_)) => {
+            state.queued_messages.fetch_sub(1, Ordering::AcqRel);
+            state.dropped_messages.fetch_add(1, Ordering::AcqRel);
+            state.fail("capture writer stopped");
+            CaptureWriteOutcome::Failed
+        }
+    }
+}
+
 impl CaptureRecordPool {
     fn new(capacity: usize) -> Self {
         Self {
@@ -265,8 +409,7 @@ impl CaptureRecordPool {
 pub struct CaptureWriter {
     artifact_id: CaptureArtifactId,
     path: PathBuf,
-    sender: SyncSender<CaptureWriterMessage>,
-    records: Arc<CaptureRecordPool>,
+    ingress: CaptureWriterIngress,
     state: Arc<CaptureWriterState>,
     join: Option<JoinHandle<()>>,
 }
@@ -297,6 +440,12 @@ impl CaptureWriter {
         let (sender, receiver) = sync_channel(CAPTURE_WRITER_QUEUE_CAPACITY);
         let records = Arc::new(CaptureRecordPool::new(CAPTURE_WRITER_QUEUE_CAPACITY));
         let state = Arc::new(CaptureWriterState::default());
+        let ingress = CaptureWriterIngress {
+            sender: sender.clone(),
+            records: Arc::clone(&records),
+            state: Arc::clone(&state),
+            accepting: Arc::new(Mutex::new(true)),
+        };
         let thread_records = Arc::clone(&records);
         let thread_state = Arc::clone(&state);
         let artifact_path = path.clone();
@@ -316,76 +465,25 @@ impl CaptureWriter {
         Ok(Self {
             artifact_id: CaptureArtifactId(Uuid::new_v4()),
             path: artifact_path,
-            sender,
-            records,
+            ingress,
             state,
             join: Some(join),
         })
     }
 
     fn try_send(&self, message: CaptureWriterMessage) -> CaptureWriteOutcome {
-        let queued_messages = self.state.queued_messages.fetch_add(1, Ordering::AcqRel) + 1;
-        match self.sender.try_send(message) {
-            Ok(()) => {
-                self.state
-                    .peak_queued_messages
-                    .fetch_max(queued_messages, Ordering::AcqRel);
-                CaptureWriteOutcome::Accepted
-            }
-            Err(TrySendError::Full(_)) => {
-                self.state.queued_messages.fetch_sub(1, Ordering::AcqRel);
-                self.state.dropped_messages.fetch_add(1, Ordering::AcqRel);
-                self.state.fail("capture writer queue is full");
-                CaptureWriteOutcome::Failed
-            }
-            Err(TrySendError::Disconnected(_)) => {
-                self.state.queued_messages.fetch_sub(1, Ordering::AcqRel);
-                self.state.dropped_messages.fetch_add(1, Ordering::AcqRel);
-                self.state.fail("capture writer stopped");
-                CaptureWriteOutcome::Failed
-            }
-        }
+        self.ingress.try_send(message)
     }
 
     /// Admits a transport record without waiting for disk I/O.
     pub fn try_send_record(&self, record: PevcapRecord) -> CaptureWriteOutcome {
-        let mut records = self
-            .records
-            .records
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        if records.len() == records.capacity() {
-            self.state.dropped_messages.fetch_add(1, Ordering::AcqRel);
-            self.state.fail("capture writer queue is full");
-            return CaptureWriteOutcome::Failed;
-        }
-        records.push_back(record);
-        let queued_messages = self.state.queued_messages.fetch_add(1, Ordering::AcqRel) + 1;
-        match self.sender.try_send(CaptureWriterMessage::Record) {
-            Ok(()) => {
-                self.state
-                    .peak_queued_messages
-                    .fetch_max(queued_messages, Ordering::AcqRel);
-                CaptureWriteOutcome::Accepted
-            }
-            Err(TrySendError::Full(CaptureWriterMessage::Record)) => {
-                records.pop_back();
-                self.state.queued_messages.fetch_sub(1, Ordering::AcqRel);
-                self.state.dropped_messages.fetch_add(1, Ordering::AcqRel);
-                self.state.fail("capture writer queue is full");
-                CaptureWriteOutcome::Failed
-            }
-            Err(TrySendError::Disconnected(CaptureWriterMessage::Record)) => {
-                records.pop_back();
-                self.state.queued_messages.fetch_sub(1, Ordering::AcqRel);
-                self.state.dropped_messages.fetch_add(1, Ordering::AcqRel);
-                self.state.fail("capture writer stopped");
-                CaptureWriteOutcome::Failed
-            }
-            Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) => {
-                unreachable!("record send returned a different message")
-            }
-        }
+        self.ingress.try_send_record(record)
+    }
+
+    /// Returns a cloneable event-admission handle for native callback ingress.
+    #[must_use]
+    pub fn ingress(&self) -> CaptureWriterIngress {
+        self.ingress.clone()
     }
 
     /// Waits for all admitted data and metadata to become durable.
@@ -420,7 +518,7 @@ impl CaptureWriter {
     /// Returns queue, worker, or storage failure; no saved artifact is produced.
     pub fn finish(mut self) -> Result<SavedCaptureArtifact, String> {
         let (sender, receiver) = sync_channel(0);
-        if self.try_send(CaptureWriterMessage::Barrier(
+        if self.ingress.close_and_send(CaptureWriterMessage::Barrier(
             CaptureBarrier::Finish,
             sender,
         )) != CaptureWriteOutcome::Accepted
@@ -477,7 +575,7 @@ impl CaptureWriter {
     /// Admits a location observation without waiting for disk I/O.
     #[must_use]
     pub fn record_location(&self, location: PevcapLocationSample) -> CaptureWriteOutcome {
-        self.try_send(CaptureWriterMessage::Location(location))
+        self.ingress.record_location(location)
     }
 
     /// Admits an already privacy-filtered music event without waiting for disk I/O.
@@ -880,6 +978,64 @@ mod tests {
     }
 
     #[test]
+    fn cloned_ingress_rejects_locations_after_writer_finalization() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("capture.jsonl");
+        let writer = CaptureWriter::start(
+            path.clone(),
+            WallClockUnixTimestamp::new(1_700_000_000_000),
+            "test",
+            None,
+            &CaptureMetadata {
+                advertised_services: vec![],
+                gatt_fingerprints: vec![],
+                resolved_identity: None,
+                annotations: vec![],
+            },
+        )
+        .unwrap();
+        let ingress = writer.ingress();
+        let location = PevcapLocationSample::new(
+            cutout_core::MonotonicTimestamp::new(12),
+            cutout_core::PevcapPhoneLocation {
+                wall_clock_unix_ms: 1_700_000_000_012,
+                latitude_degrees: 39.7,
+                longitude_degrees: -104.9,
+                altitude_meters: 1.0,
+                horizontal_accuracy_meters: None,
+                vertical_accuracy_meters: None,
+                speed_meters_per_second: None,
+                speed_accuracy_meters_per_second: None,
+                course_degrees: None,
+                course_accuracy_degrees: None,
+            },
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(
+            ingress.record_location(location),
+            CaptureWriteOutcome::Accepted
+        );
+        writer.finish().unwrap();
+        assert_eq!(
+            ingress.record_location(location),
+            CaptureWriteOutcome::Failed
+        );
+        assert_eq!(
+            cutout_core::PevcapCapture::decode(
+                &fs::read(path).unwrap(),
+                cutout_core::PevcapEncoding::Jsonl
+            )
+            .unwrap()
+            .locations
+            .len(),
+            1
+        );
+    }
+
+    #[test]
     fn finalization_uses_latest_metadata_and_does_not_duplicate_closed_intervals() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("capture.jsonl");
@@ -960,11 +1116,17 @@ mod tests {
     fn capture_writer_queue_overrun_is_nonblocking_and_instrumented() {
         let (sender, _receiver) = sync_channel(0);
         let state = Arc::new(CaptureWriterState::default());
+        let records = Arc::new(CaptureRecordPool::new(1));
+        let ingress = CaptureWriterIngress {
+            sender: sender.clone(),
+            records,
+            state: Arc::clone(&state),
+            accepting: Arc::new(Mutex::new(true)),
+        };
         let writer = CaptureWriter {
             artifact_id: CaptureArtifactId(Uuid::new_v4()),
             path: PathBuf::new(),
-            sender,
-            records: Arc::new(CaptureRecordPool::new(1)),
+            ingress,
             state: Arc::clone(&state),
             join: None,
         };
@@ -989,11 +1151,17 @@ mod tests {
     fn capture_writer_status_retains_peak_accepted_queue_depth() {
         let (sender, _receiver) = sync_channel(1);
         let state = Arc::new(CaptureWriterState::default());
+        let records = Arc::new(CaptureRecordPool::new(1));
+        let ingress = CaptureWriterIngress {
+            sender: sender.clone(),
+            records,
+            state: Arc::clone(&state),
+            accepting: Arc::new(Mutex::new(true)),
+        };
         let writer = CaptureWriter {
             artifact_id: CaptureArtifactId(Uuid::new_v4()),
             path: PathBuf::new(),
-            sender,
-            records: Arc::new(CaptureRecordPool::new(1)),
+            ingress,
             state: Arc::clone(&state),
             join: None,
         };

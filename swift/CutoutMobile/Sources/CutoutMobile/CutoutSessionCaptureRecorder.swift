@@ -1,5 +1,6 @@
 import CutoutMobileFFI
 import Foundation
+import Synchronization
 
 struct CaptureMusicContext: Equatable {
     private(set) var current: MobilePevcapMusicEventDto?
@@ -23,6 +24,16 @@ struct CaptureWriterCompletion {
     let fileURL: URL?
     let succeeded: Bool
     let databasePublicationSucceeded: Bool?
+}
+
+struct CaptureLocationWriteResult {
+    let generation: CaptureGeneration?
+    let outcome: MobileCaptureWriteOutcomeDto
+}
+
+private struct ActiveCaptureLocationWriter: Sendable {
+    let generation: CaptureGeneration
+    let builder: MobilePevcapCaptureBuilder
 }
 
 protocol CutoutSessionCaptureRecording: AnyObject {
@@ -58,9 +69,9 @@ protocol CutoutSessionCaptureRecording: AnyObject {
         characteristic: BluetoothUuid,
         service: BluetoothUuid,
         bytes: Data,
-        telemetry: RawTelemetryReadback?,
-        phoneLocation: MobilePhoneLocationSampleDto?
+        telemetry: RawTelemetryReadback?
     ) -> MobileCaptureWriteOutcomeDto
+    func recordLocationUpdate(_ update: PhoneLocationUpdate) -> CaptureLocationWriteResult
     func recordLinkUp(maxWriteLength: UInt16?) -> MobileCaptureWriteOutcomeDto
     func recordLinkDown() -> MobileCaptureWriteOutcomeDto
     func recordMusicObservation(_ observation: MobilePevcapMusicEventDto?) -> MobileCaptureWriteOutcomeDto
@@ -86,6 +97,7 @@ final class CutoutSessionCaptureRecorder: CutoutSessionCaptureRecording {
     private let clock: MonotonicClock
     private let wallClock: () -> Date
     private let database: RideDatabaseHandle?
+    private let locationWriter = Mutex<ActiveCaptureLocationWriter?>(nil)
     private let publish: (CaptureEvent) -> Void
     private let onWriterCompletion: (CaptureWriterCompletion) -> Void
     private lazy var presentation = CutoutSessionCapturePresentation(publish: publish)
@@ -132,6 +144,7 @@ final class CutoutSessionCaptureRecorder: CutoutSessionCaptureRecording {
         origin: MobileCaptureOriginDto,
         advertisedName: String?
     ) -> Bool {
+        locationWriter.withLock { $0 = nil }
         presentation.begin(generation: generation)
         captureOrigin = origin
         self.advertisedName = advertisedName
@@ -150,7 +163,7 @@ final class CutoutSessionCaptureRecorder: CutoutSessionCaptureRecording {
             writeLimit: MobileTransportWriteLimitDto(bytes: 23)
         )
         _ = builder.setMusicHistoryPolicy(policy: musicHistoryPolicy)
-        _ = builder.setMusicCaptureStartMonotonicMs(monotonicMs: startedAt.rawValue)
+        _ = builder.setCaptureStartMonotonicMs(monotonicMs: startedAt.rawValue)
         advertisedServices.forEach { _ = builder.addAdvertisedService(service: $0.bytes) }
         [
             "source=ios-app",
@@ -169,6 +182,7 @@ final class CutoutSessionCaptureRecorder: CutoutSessionCaptureRecording {
             presentation.end()
             return false
         }
+        locationWriter.withLock { $0 = ActiveCaptureLocationWriter(generation: generation, builder: builder) }
         musicContext.reset()
         return true
     }
@@ -241,8 +255,7 @@ final class CutoutSessionCaptureRecorder: CutoutSessionCaptureRecording {
         characteristic: BluetoothUuid,
         service: BluetoothUuid,
         bytes: Data,
-        telemetry: RawTelemetryReadback?,
-        phoneLocation: MobilePhoneLocationSampleDto?
+        telemetry: RawTelemetryReadback?
     ) -> MobileCaptureWriteOutcomeDto {
         if let builder {
             let outcome = builder.recordNotificationWithContext(
@@ -251,13 +264,28 @@ final class CutoutSessionCaptureRecorder: CutoutSessionCaptureRecording {
                 service: service.bytes,
                 bytes: bytes,
                 telemetry: telemetry?.dto,
-                phoneLocation: phoneLocation
+                phoneLocation: nil
             )
             if case .accepted = outcome { notificationCount += 1 }
             return outcome
         }
         notificationCount += 1
         return .accepted
+    }
+
+    func recordLocationUpdate(_ update: PhoneLocationUpdate) -> CaptureLocationWriteResult {
+        locationWriter.withLock { active in
+            guard let active else {
+                return CaptureLocationWriteResult(generation: nil, outcome: .accepted)
+            }
+            let outcome = active.builder.recordLocationSamples(
+                receiptMonotonicMs: MobileMonotonicMillisDto(
+                    milliseconds: update.receiptMonotonic.rawValue
+                ),
+                samples: update.samples
+            )
+            return CaptureLocationWriteResult(generation: active.generation, outcome: outcome)
+        }
     }
 
     func recordLinkUp(maxWriteLength: UInt16?) -> MobileCaptureWriteOutcomeDto {
@@ -345,6 +373,7 @@ final class CutoutSessionCaptureRecorder: CutoutSessionCaptureRecording {
         let fileURL = self.fileURL
         let origin = captureOrigin
         let advertisedName = self.advertisedName
+        locationWriter.withLock { $0 = nil }
         self.builder = nil
         self.fileURL = nil
         startedAt = nil

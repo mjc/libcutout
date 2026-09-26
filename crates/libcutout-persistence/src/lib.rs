@@ -13,8 +13,9 @@ mod capture_writer;
 mod pevcap_limits;
 mod storage;
 pub use capture_writer::{
-    CaptureArtifactId, CaptureMetadata, CaptureWriteOutcome, CaptureWriter, CaptureWriterMonitor,
-    CaptureWriterStatus, SavedCaptureArtifact,
+    CAPTURE_LOCATION_BATCH_CAPACITY, CaptureArtifactId, CaptureMetadata, CaptureWriteOutcome,
+    CaptureWriter, CaptureWriterIngress, CaptureWriterMonitor, CaptureWriterStatus,
+    SavedCaptureArtifact,
 };
 pub use storage::*;
 

@@ -66,9 +66,12 @@ private final class CaptureRecorderSpy: CutoutSessionCaptureRecording {
         characteristic _: BluetoothUuid,
         service _: BluetoothUuid,
         bytes _: Data,
-        telemetry _: RawTelemetryReadback?,
-        phoneLocation _: MobilePhoneLocationSampleDto?
+        telemetry _: RawTelemetryReadback?
     ) -> MobileCaptureWriteOutcomeDto { .accepted }
+
+    func recordLocationUpdate(_: PhoneLocationUpdate) -> CaptureLocationWriteResult {
+        CaptureLocationWriteResult(generation: currentGeneration, outcome: .accepted)
+    }
 
     func recordLinkUp(maxWriteLength _: UInt16?) -> MobileCaptureWriteOutcomeDto { recordLinkUpResult }
     func recordLinkDown() -> MobileCaptureWriteOutcomeDto { .accepted }
@@ -148,12 +151,36 @@ final class CutoutSessionCoreTests: XCTestCase {
                 advertisedName: "VESC BLE UART"
             )
         )
+        let location = MobilePhoneLocationSampleDto(
+            wallClockUnixMs: 1_700_000_000_025,
+            latitudeDegrees: 39.739_235_8,
+            longitudeDegrees: -104.990_251,
+            altitudeMeters: 1_609.344,
+            horizontalAccuracyMeters: 0.8,
+            verticalAccuracyMeters: 1.2,
+            speedMetersPerSecond: 4.470_400_25,
+            speedAccuracyMetersPerSecond: 0.25,
+            courseDegrees: 271.5,
+            courseAccuracyDegrees: 3.0
+        )
+        let locationWrite = recorder.recordLocationUpdate(
+            PhoneLocationUpdate(
+                receiptMonotonic: MonotonicMilliseconds(125),
+                receiptWallClock: Date(timeIntervalSince1970: 1_700_000_000.125),
+                samples: [location]
+            )
+        )
+        XCTAssertEqual(locationWrite.generation, CaptureGeneration(rawValue: 1))
+        XCTAssertEqual(locationWrite.outcome, .accepted)
         recorder.finish(publishesResult: true, priorWriteSucceeded: true)
 
         await fulfillment(of: [completed], timeout: 5)
         let result = try XCTUnwrap(completion.withLock { $0 })
         XCTAssertTrue(result.succeeded)
         XCTAssertTrue(result.databasePublicationSucceeded == true)
+        let captureText = try String(contentsOf: XCTUnwrap(result.fileURL), encoding: .utf8)
+        XCTAssertTrue(captureText.contains("\"location\":"))
+        XCTAssertFalse(captureText.contains("\"phone_location\":"))
 
         let page = try database.listPevcapCaptures(cursor: nil, limit: 500)
         let recording = try XCTUnwrap(
