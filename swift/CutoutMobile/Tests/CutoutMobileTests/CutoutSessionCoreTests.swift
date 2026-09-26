@@ -103,6 +103,44 @@ private final class CaptureRecorderSpy: CutoutSessionCaptureRecording {
 }
 
 final class CutoutSessionCoreTests: XCTestCase {
+    #if canImport(CoreBluetooth)
+        func testStaleCharacteristicErrorIsIgnoredBeforeCurrentCallbackFailure() {
+            let subscribed = NSObject()
+            let stale = NSObject()
+            let staleError = NSError(domain: "stale-characteristic", code: 1)
+            let currentError = NSError(domain: "current-characteristic", code: 2)
+
+            let staleResult = coreBluetoothCallbackDisposition(
+                subscribed: subscribed,
+                callback: stale,
+                error: staleError
+            )
+            guard case .ignored = staleResult else {
+                return XCTFail("a stale characteristic callback must be ignored before its error")
+            }
+
+            let currentErrorResult = coreBluetoothCallbackDisposition(
+                subscribed: subscribed,
+                callback: subscribed,
+                error: currentError
+            )
+            guard case .failed(let receivedError) = currentErrorResult else {
+                return XCTFail("an error from the subscribed characteristic must fail the callback")
+            }
+            XCTAssertEqual((receivedError as NSError).code, currentError.code)
+
+            let acceptedResult = coreBluetoothCallbackDisposition(
+                subscribed: subscribed,
+                callback: subscribed,
+                error: nil
+            )
+            guard case .accepted = acceptedResult else {
+                XCTFail("an error-free callback from the subscribed characteristic must be accepted")
+                return
+            }
+        }
+    #endif
+
     func testDefaultSessionProvidesCanonicalRideHistory() throws {
         let core = CutoutSessionCore()
         let state = try XCTUnwrap(core.rideMapStateHandle)

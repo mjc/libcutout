@@ -34,6 +34,26 @@ private struct AcceptedLiveNotificationIngress {
     let receivedAt: MonotonicMilliseconds
 }
 
+enum CoreBluetoothCallbackDisposition {
+    case ignored
+    case failed(Error)
+    case accepted
+}
+
+func coreBluetoothCallbackDisposition<Callback: AnyObject>(
+    subscribed: Callback?,
+    callback: Callback,
+    error: Error?
+) -> CoreBluetoothCallbackDisposition {
+    guard subscribed === callback else {
+        return .ignored
+    }
+    if let error {
+        return .failed(error)
+    }
+    return .accepted
+}
+
 public enum CaptureWriterHealth: Equatable, Sendable {
     case healthy
     case failed
@@ -3045,15 +3065,21 @@ extension CutoutSessionCore: CBPeripheralDelegate {
         guard let channel = BluetoothUuid(coreBluetoothUuid: characteristic.uuid) else {
             return
         }
-        guard subscribedCharacteristics[channel] === characteristic else {
+        switch coreBluetoothCallbackDisposition(
+            subscribed: subscribedCharacteristics[channel],
+            callback: characteristic,
+            error: error
+        ) {
+        case .ignored:
             record(
                 "notification_ignored=unbound_characteristic service=\(characteristic.service?.uuid.uuidString ?? "unknown") characteristic=\(characteristic.uuid.uuidString)"
             )
             return
-        }
-        if let error {
+        case .failed(let error):
             setPhase(.failed(.notificationFailed(error.sessionMessage)))
             return
+        case .accepted:
+            break
         }
         guard let value = characteristic.value else {
             return
@@ -3162,15 +3188,21 @@ extension CutoutSessionCore: CBPeripheralDelegate {
         guard let channel = BluetoothUuid(coreBluetoothUuid: characteristic.uuid) else {
             return
         }
-        guard subscribedCharacteristics[channel] === characteristic else {
+        switch coreBluetoothCallbackDisposition(
+            subscribed: subscribedCharacteristics[channel],
+            callback: characteristic,
+            error: error
+        ) {
+        case .ignored:
             record(
                 "notification_state_ignored=unbound_characteristic service=\(characteristic.service?.uuid.uuidString ?? "unknown") characteristic=\(characteristic.uuid.uuidString)"
             )
             return
-        }
-        if let error {
+        case .failed(let error):
             setPhase(.failed(.notificationFailed(error.sessionMessage)))
             return
+        case .accepted:
+            break
         }
         if isDetectingProtocol, channel.bluetooth16Value == 0xffe1, characteristic.isNotifying {
             startEucProtocolDetection(on: characteristic.service?.peripheral)
