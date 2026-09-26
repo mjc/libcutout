@@ -4909,12 +4909,14 @@ public struct CoreBluetoothSessionStep: Equatable, Hashable, Sendable {
     public let connectionAttempt: ConnectionAttemptToken?
     public let operations: [CoreBluetoothPlannedOperation]
     public let snapshot: TelemetrySnapshot?
+    public let semanticTelemetry: MobileTelemetrySnapshotDto?
     public let actions: [SessionAction]
     public let captureContext: CoreBluetoothCaptureContext?
 
     public init(
         operations: [CoreBluetoothPlannedOperation],
         snapshot: TelemetrySnapshot?,
+        semanticTelemetry: MobileTelemetrySnapshotDto? = nil,
         actions: [SessionAction] = [],
         captureContext: CoreBluetoothCaptureContext? = nil,
         connectionAttempt: ConnectionAttemptToken? = nil
@@ -4922,6 +4924,7 @@ public struct CoreBluetoothSessionStep: Equatable, Hashable, Sendable {
         self.connectionAttempt = connectionAttempt
         self.operations = operations
         self.snapshot = snapshot
+        self.semanticTelemetry = semanticTelemetry
         self.actions = actions
         self.captureContext = captureContext
     }

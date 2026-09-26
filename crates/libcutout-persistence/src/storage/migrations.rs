@@ -1,7 +1,7 @@
 use super::{MapPointId, SpatialRowId, StorageError};
 use rusqlite::{Connection, OptionalExtension, params};
 
-pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 33;
+pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 34;
 const APPLICATION_ID: i64 = 0x4355_544f;
 
 fn schema_pragmas(version: i64) -> String {
@@ -56,6 +56,7 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         30 => migrate_v30_to_current(connection)?,
         31 => migrate_v31_to_current(connection)?,
         32 => migrate_v32_to_current(connection)?,
+        33 => migrate_v33_to_current(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -96,6 +97,11 @@ fn initialize_current_schema(connection: &Connection) -> Result<(), StorageError
         .and_then(|()| {
             connection
                 .execute_batch(super::live_capture::BLE_RAW_TELEMETRY_SCHEMA)
+                .map_err(Into::into)
+        })
+        .and_then(|()| {
+            connection
+                .execute_batch(super::live_capture::BLE_SEMANTIC_TELEMETRY_SCHEMA)
                 .map_err(Into::into)
         })
     {
@@ -538,6 +544,7 @@ fn migrate_v3_to_current(connection: &mut Connection) -> Result<(), StorageError
     transaction.execute_batch(super::live_capture::LOCATION_SCHEMA)?;
     transaction.execute_batch(super::live_capture::BLE_SCHEMA)?;
     transaction.execute_batch(super::live_capture::BLE_RAW_TELEMETRY_SCHEMA)?;
+    transaction.execute_batch(super::live_capture::BLE_SEMANTIC_TELEMETRY_SCHEMA)?;
     transaction.execute_batch(&current_schema_pragmas())?;
     transaction.commit()?;
     Ok(())
@@ -1252,6 +1259,7 @@ fn migrate_v28_to_current(connection: &mut Connection) -> Result<(), StorageErro
     transaction.execute_batch(super::live_capture::LOCATION_SCHEMA)?;
     transaction.execute_batch(super::live_capture::BLE_SCHEMA)?;
     transaction.execute_batch(super::live_capture::BLE_RAW_TELEMETRY_SCHEMA)?;
+    transaction.execute_batch(super::live_capture::BLE_SEMANTIC_TELEMETRY_SCHEMA)?;
     transaction.execute_batch(&current_schema_pragmas())?;
     transaction.commit()?;
     Ok(())
@@ -1280,6 +1288,7 @@ fn migrate_v29_to_current(connection: &mut Connection) -> Result<(), StorageErro
     )?;
     transaction.execute_batch(super::live_capture::BLE_SCHEMA)?;
     transaction.execute_batch(super::live_capture::BLE_RAW_TELEMETRY_SCHEMA)?;
+    transaction.execute_batch(super::live_capture::BLE_SEMANTIC_TELEMETRY_SCHEMA)?;
     transaction.execute_batch(&current_schema_pragmas())?;
     transaction.commit()?;
     Ok(())
@@ -1294,6 +1303,7 @@ fn migrate_v30_to_current(connection: &mut Connection) -> Result<(), StorageErro
     )?;
     transaction.execute_batch(super::live_capture::BLE_SCHEMA)?;
     transaction.execute_batch(super::live_capture::BLE_RAW_TELEMETRY_SCHEMA)?;
+    transaction.execute_batch(super::live_capture::BLE_SEMANTIC_TELEMETRY_SCHEMA)?;
     transaction.execute_batch(&current_schema_pragmas())?;
     transaction.commit()?;
     Ok(())
@@ -1302,6 +1312,15 @@ fn migrate_v30_to_current(connection: &mut Connection) -> Result<(), StorageErro
 fn migrate_v32_to_current(connection: &mut Connection) -> Result<(), StorageError> {
     let transaction = connection.transaction()?;
     transaction.execute_batch(super::live_capture::BLE_RAW_TELEMETRY_SCHEMA)?;
+    transaction.execute_batch(super::live_capture::BLE_SEMANTIC_TELEMETRY_SCHEMA)?;
+    transaction.execute_batch(&current_schema_pragmas())?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn migrate_v33_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction()?;
+    transaction.execute_batch(super::live_capture::BLE_SEMANTIC_TELEMETRY_SCHEMA)?;
     transaction.execute_batch(&current_schema_pragmas())?;
     transaction.commit()?;
     Ok(())
@@ -1311,6 +1330,7 @@ fn migrate_v31_to_current(connection: &mut Connection) -> Result<(), StorageErro
     let transaction = connection.transaction()?;
     transaction.execute_batch(super::live_capture::BLE_SCHEMA)?;
     transaction.execute_batch(super::live_capture::BLE_RAW_TELEMETRY_SCHEMA)?;
+    transaction.execute_batch(super::live_capture::BLE_SEMANTIC_TELEMETRY_SCHEMA)?;
     transaction.execute_batch(&current_schema_pragmas())?;
     transaction.commit()?;
     Ok(())
@@ -1354,6 +1374,7 @@ pub(super) fn verify_current_schema(connection: &Connection) -> Result<(), Stora
         "live_capture_location_observations",
         "live_capture_ble_observations",
         "live_capture_ble_raw_telemetry_fields",
+        "live_capture_ble_semantic_telemetry",
         "trails",
         "trail_segments",
         "trail_segment_spatial_keys",
@@ -1544,6 +1565,7 @@ mod tests {
         connection
             .execute_batch(
                 "DROP TABLE live_capture_ble_raw_telemetry_fields;
+                 DROP TABLE live_capture_ble_semantic_telemetry;
                  PRAGMA user_version = 32;",
             )
             .unwrap();
@@ -1551,6 +1573,29 @@ mod tests {
         migrate(&mut connection).unwrap();
 
         assert!(table_exists(&connection, "live_capture_ble_raw_telemetry_fields").unwrap());
+        assert!(table_exists(&connection, "live_capture_ble_semantic_telemetry").unwrap());
+        assert_eq!(
+            connection
+                .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                .unwrap(),
+            CURRENT_SCHEMA_VERSION
+        );
+    }
+
+    #[test]
+    fn schema_v33_migration_adds_semantic_capture_telemetry() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        initialize_current_schema(&connection).unwrap();
+        connection
+            .execute_batch(
+                "DROP TABLE live_capture_ble_semantic_telemetry;
+                 PRAGMA user_version = 33;",
+            )
+            .unwrap();
+
+        migrate(&mut connection).unwrap();
+
+        assert!(table_exists(&connection, "live_capture_ble_semantic_telemetry").unwrap());
         assert_eq!(
             connection
                 .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))

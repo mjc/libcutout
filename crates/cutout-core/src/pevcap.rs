@@ -75,7 +75,7 @@ pub const PEVCAP_MAGIC: [u8; 8] = *b"PEVCAP\0\0";
 pub const PEVCAP_VERSION_MAJOR: u16 = 1;
 
 /// Current minor PEVCAP format version.
-pub const PEVCAP_VERSION_MINOR: u16 = 2;
+pub const PEVCAP_VERSION_MINOR: u16 = 3;
 
 /// PEVCAP version that introduced the independent location stream.
 pub const PEVCAP_VERSION_MINOR_LOCATIONS: u16 = 1;
@@ -1976,11 +1976,40 @@ pub struct PevcapRecord {
     /// Typed protocol-native telemetry decoded from the same inbound notification.
     pub telemetry: Option<RawTelemetryReadback>,
 
+    /// Semantic telemetry snapshot associated with this notification.
+    pub semantic_telemetry: Option<PevcapSemanticTelemetry>,
+
     /// Optional music observation correlated with this capture frame.
     pub music: Option<PevcapMusicEvent>,
 
     /// Latest phone location sample when this BLE record was received.
     pub phone_location: Option<PevcapPhoneLocation>,
+}
+
+/// Provenance of a semantic telemetry snapshot attached to a capture event.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
+pub enum PevcapTelemetryProvenance {
+    /// Snapshot emitted by the Rust live session while ingesting this event.
+    LiveSession,
+    /// Snapshot derived by replaying captured protocol evidence.
+    Replay,
+}
+
+/// Versioned semantic snapshot serialized by Rust and correlated to its source event.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PevcapSemanticTelemetry {
+    /// Snapshot observation time, independent of the event receipt time.
+    pub observed_at_ms: Option<MonotonicTimestamp>,
+    /// Whether this came from live session processing or a later replay.
+    pub provenance: PevcapTelemetryProvenance,
+    /// Version of the typed snapshot JSON contract.
+    pub snapshot_schema_version: u16,
+    /// Rust library version that produced or replayed the snapshot.
+    pub library_version: String,
+    /// JSON object containing the Rust-owned typed snapshot.
+    pub snapshot_json: String,
 }
 
 /// Bounded music metadata correlated with one PEVCAP frame.
@@ -2455,6 +2484,13 @@ impl PevcapRecord {
         self
     }
 
+    /// Attaches the semantic snapshot produced for this notification.
+    #[must_use]
+    pub fn with_semantic_telemetry(mut self, telemetry: PevcapSemanticTelemetry) -> Self {
+        self.semantic_telemetry = Some(telemetry);
+        self
+    }
+
     /// Attaches the latest phone location sample to this notification.
     #[must_use]
     pub fn with_phone_location(mut self, location: PevcapPhoneLocation) -> Self {
@@ -2492,6 +2528,7 @@ impl PevcapRecord {
             write_receipt: None,
             bytes: Bytes::new(),
             telemetry: None,
+            semantic_telemetry: None,
             music: None,
             phone_location: None,
         }
@@ -2511,6 +2548,7 @@ impl PevcapRecord {
             write_receipt: None,
             bytes: Bytes::new(),
             telemetry: None,
+            semantic_telemetry: None,
             music: None,
             phone_location: None,
         }
@@ -2535,6 +2573,7 @@ impl PevcapRecord {
             write_receipt: None,
             bytes: bytes.into(),
             telemetry: None,
+            semantic_telemetry: None,
             music: None,
             phone_location: None,
         }
@@ -2574,6 +2613,7 @@ impl PevcapRecord {
             write_receipt: None,
             bytes: bytes.into(),
             telemetry: None,
+            semantic_telemetry: None,
             music: None,
             phone_location: None,
         }
@@ -4168,9 +4208,47 @@ struct PevcapRecordJson {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     telemetry: Option<RawTelemetryReadback>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    semantic_telemetry: Option<PevcapSemanticTelemetryJson>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     music: Option<PevcapMusicEventJson>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     phone_location: Option<PevcapPhoneLocation>,
+}
+
+#[cfg(feature = "serde")]
+#[derive(Deserialize, Serialize)]
+struct PevcapSemanticTelemetryJson {
+    observed_at_ms: Option<u64>,
+    provenance: PevcapTelemetryProvenance,
+    snapshot_schema_version: u16,
+    library_version: String,
+    snapshot_json: String,
+}
+
+#[cfg(feature = "serde")]
+impl From<&PevcapSemanticTelemetry> for PevcapSemanticTelemetryJson {
+    fn from(telemetry: &PevcapSemanticTelemetry) -> Self {
+        Self {
+            observed_at_ms: telemetry.observed_at_ms.map(MonotonicTimestamp::get),
+            provenance: telemetry.provenance,
+            snapshot_schema_version: telemetry.snapshot_schema_version,
+            library_version: telemetry.library_version.clone(),
+            snapshot_json: telemetry.snapshot_json.clone(),
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+impl From<PevcapSemanticTelemetryJson> for PevcapSemanticTelemetry {
+    fn from(telemetry: PevcapSemanticTelemetryJson) -> Self {
+        Self {
+            observed_at_ms: telemetry.observed_at_ms.map(MonotonicTimestamp::new),
+            provenance: telemetry.provenance,
+            snapshot_schema_version: telemetry.snapshot_schema_version,
+            library_version: telemetry.library_version,
+            snapshot_json: telemetry.snapshot_json,
+        }
+    }
 }
 
 #[cfg(feature = "serde")]
@@ -4312,6 +4390,10 @@ impl From<&PevcapRecord> for PevcapRecordJson {
             write_receipt: record.write_receipt,
             bytes: record.bytes.clone(),
             telemetry: record.telemetry.clone(),
+            semantic_telemetry: record
+                .semantic_telemetry
+                .as_ref()
+                .map(PevcapSemanticTelemetryJson::from),
             music: record.music.as_ref().map(PevcapMusicEventJson::from),
             phone_location: record.phone_location,
         }
@@ -4338,6 +4420,7 @@ impl PevcapRecordJson {
             write_receipt: self.write_receipt,
             bytes: self.bytes,
             telemetry: self.telemetry,
+            semantic_telemetry: self.semantic_telemetry.map(Into::into),
             music,
             phone_location: self.phone_location,
         })
@@ -4693,7 +4776,7 @@ mod tests {
         assert_eq!(PEVCAP_MAGIC, *b"PEVCAP\0\0");
         assert_eq!(
             PevcapFormatVersion::current(),
-            PevcapFormatVersion { major: 1, minor: 2 }
+            PevcapFormatVersion { major: 1, minor: 3 }
         );
     }
 
@@ -4725,6 +4808,37 @@ mod tests {
         assert_eq!(music.monotonic_at, ms(17));
         assert_eq!(music.wall_clock_unix_ms, wc(1_700_000_000_042));
         assert!(!encoded.contains("track_position_ms"));
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn pevcap_semantic_telemetry_round_trips_with_its_own_observation_time() {
+        let mut capture = sample_pevcap_capture();
+        capture.records[1] =
+            capture.records[1]
+                .clone()
+                .with_semantic_telemetry(PevcapSemanticTelemetry {
+                    observed_at_ms: Some(ms(8)),
+                    provenance: PevcapTelemetryProvenance::LiveSession,
+                    snapshot_schema_version: 1,
+                    library_version: "test-build".to_owned(),
+                    snapshot_json: r#"{"speed":{"value":1234,"unit":"millimeters_per_second"}}"#
+                        .to_owned(),
+                });
+
+        let encoded = capture.to_jsonl().expect("capture serializes");
+        let decoded = PevcapCapture::from_jsonl(&encoded).expect("capture decodes");
+
+        assert_eq!(decoded, capture);
+        assert_eq!(decoded.records[1].monotonic_ms, ms(9));
+        assert_eq!(
+            decoded.records[1]
+                .semantic_telemetry
+                .as_ref()
+                .expect("semantic snapshot is retained")
+                .observed_at_ms,
+            Some(ms(8))
+        );
     }
 
     #[cfg(feature = "serde")]
@@ -6503,7 +6617,7 @@ mod tests {
         assert!(matches!(
             error,
             PevcapBinaryError::UnsupportedVersion {
-                version: PevcapFormatVersion { major: 2, minor: 2 }
+                version: PevcapFormatVersion { major: 2, minor: 3 }
             }
         ));
     }

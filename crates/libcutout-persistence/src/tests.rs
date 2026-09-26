@@ -173,13 +173,21 @@ fn live_ble_observation_is_structured_with_its_raw_event_sequence() {
         br#"{"fields":[{"id":71,"value":-12}],"float_fields":[{"id":91,"value_bits":2143294004}]}"#,
     )
     .expect("protocol telemetry fields deserialize");
+    let semantic_telemetry = cutout_core::PevcapSemanticTelemetry {
+        observed_at_ms: Some(MonotonicTimestamp::new(119)),
+        provenance: cutout_core::PevcapTelemetryProvenance::LiveSession,
+        snapshot_schema_version: 1,
+        library_version: "test-build".to_owned(),
+        snapshot_json: r#"{"speed":{"value":{"value":1234},"source":"reported"}}"#.to_owned(),
+    };
     let record = PevcapRecord::inbound_notification(
         MonotonicTimestamp::new(120),
         characteristic,
         service,
         vec![1, 2, 3, 4],
     )
-    .with_telemetry(telemetry);
+    .with_telemetry(telemetry)
+    .with_semantic_telemetry(semantic_telemetry);
     let payload = record
         .to_jsonl_line()
         .expect("record serializes")
@@ -268,6 +276,12 @@ fn assert_stored_live_ble_observations(connection: &Connection, capture_id: Live
                 .to_vec()
         )
     );
+    assert_stored_raw_ble_fields(connection, capture_id);
+    assert_stored_semantic_telemetry(connection, capture_id);
+    assert_stored_outbound_ble_observation(connection, capture_id);
+}
+
+fn assert_stored_raw_ble_fields(connection: &Connection, capture_id: LiveCaptureId) {
     let integer_field: (i64, Option<i64>, Option<Vec<u8>>) = connection
         .query_row(
             "SELECT field_id, integer_value, float_value_bits
@@ -291,6 +305,41 @@ fn assert_stored_live_ble_observations(connection: &Connection, capture_id: Live
         float_field,
         (91, None, Some(0x7fc0_1234_u32.to_le_bytes().to_vec()))
     );
+}
+
+fn assert_stored_semantic_telemetry(connection: &Connection, capture_id: LiveCaptureId) {
+    let semantic: (u64, String, i64, String, i64) = connection
+        .query_row(
+            "SELECT observed_at_ms, provenance,
+                    snapshot_schema_version, library_version,
+                    json_extract(snapshot_json, '$.speed.value.value')
+             FROM live_capture_ble_semantic_telemetry
+             WHERE capture_id = ?1 AND sequence = 0",
+            [capture_id.to_string()],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )
+        .expect("semantic snapshot is queryable");
+    assert_eq!(
+        semantic,
+        (
+            119,
+            "live_session".to_owned(),
+            1,
+            "test-build".to_owned(),
+            1234
+        )
+    );
+}
+
+fn assert_stored_outbound_ble_observation(connection: &Connection, capture_id: LiveCaptureId) {
     let outbound: (String, i64, String, Vec<u8>, String, Vec<u8>) = connection
         .query_row(
             "SELECT request_target_kind, request_target_controller_id, write_mode,
@@ -545,7 +594,8 @@ fn schema_v26_migration_adds_live_capture_tables_without_touching_existing_captu
     let connection = Connection::open(&path).expect("SQLite file opens");
     connection
         .execute_batch(
-            "DROP TABLE live_capture_ble_raw_telemetry_fields;
+            "DROP TABLE live_capture_ble_semantic_telemetry;
+             DROP TABLE live_capture_ble_raw_telemetry_fields;
              DROP TABLE live_capture_ble_observations;
              DROP TABLE live_capture_location_observations;
              DROP TABLE live_capture_events;
@@ -774,6 +824,7 @@ fn music_v16_migration_preserves_events_without_fabricating_observation_times() 
          ALTER TABLE ride_music_history DROP COLUMN deleted;
          DROP TABLE bms_voltage_samples;
          DROP TABLE phone_alarm_preferences;
+         DROP TABLE live_capture_ble_semantic_telemetry;
          DROP TABLE live_capture_ble_raw_telemetry_fields;
          DROP TABLE live_capture_ble_observations;
          DROP TABLE live_capture_location_observations;
@@ -814,8 +865,9 @@ fn schema_v19_migration_adds_music_history_state() {
         .execute_batch(
             "ALTER TABLE ride_music_history DROP COLUMN state;
              DROP TABLE bms_voltage_samples;
-             DROP TABLE phone_alarm_preferences;
-             DROP TABLE live_capture_ble_raw_telemetry_fields;
+         DROP TABLE phone_alarm_preferences;
+         DROP TABLE live_capture_ble_semantic_telemetry;
+         DROP TABLE live_capture_ble_raw_telemetry_fields;
              DROP TABLE live_capture_ble_observations;
              DROP TABLE live_capture_location_observations;
              DROP TABLE live_capture_events;
@@ -846,8 +898,9 @@ fn pre_music_v16_migration_preserves_existing_capture_tables() {
             "DROP TABLE ride_music_event;
              DROP TABLE ride_music_history;
              DROP TABLE bms_voltage_samples;
-             DROP TABLE phone_alarm_preferences;
-             DROP TABLE live_capture_ble_raw_telemetry_fields;
+         DROP TABLE phone_alarm_preferences;
+         DROP TABLE live_capture_ble_semantic_telemetry;
+         DROP TABLE live_capture_ble_raw_telemetry_fields;
              DROP TABLE live_capture_ble_observations;
              DROP TABLE live_capture_location_observations;
              DROP TABLE live_capture_events;
@@ -1006,8 +1059,9 @@ fn music_v16_migration_rebuilds_utf8_text_bounds() {
              ALTER TABLE ride_music_history DROP COLUMN last_observed_at_ms;
              ALTER TABLE ride_music_history DROP COLUMN deleted;
              DROP TABLE bms_voltage_samples;
-             DROP TABLE phone_alarm_preferences;
-             DROP TABLE live_capture_ble_raw_telemetry_fields;
+         DROP TABLE phone_alarm_preferences;
+         DROP TABLE live_capture_ble_semantic_telemetry;
+         DROP TABLE live_capture_ble_raw_telemetry_fields;
              DROP TABLE live_capture_ble_observations;
              DROP TABLE live_capture_location_observations;
              DROP TABLE live_capture_events;
@@ -3429,6 +3483,7 @@ fn recording_schema_migrates_from_25_without_changing_existing_capture() {
     connection
         .execute_batch(
             "DROP TABLE pevcap_recordings;
+             DROP TABLE live_capture_ble_semantic_telemetry;
              DROP TABLE live_capture_ble_raw_telemetry_fields;
              DROP TABLE live_capture_ble_observations;
              DROP TABLE live_capture_location_observations;
@@ -3527,6 +3582,7 @@ fn stored_capture_history_index_is_identical_after_schema_24_migration() {
     connection
         .execute_batch(
             "DROP INDEX pevcap_imports_history;
+             DROP TABLE live_capture_ble_semantic_telemetry;
              DROP TABLE live_capture_ble_raw_telemetry_fields;
              DROP TABLE live_capture_ble_observations;
              DROP TABLE live_capture_location_observations;
@@ -3587,6 +3643,7 @@ fn stored_capture_history_survives_restart_and_missing_files() {
     connection
         .execute_batch(
             "DROP INDEX pevcap_imports_history;
+             DROP TABLE live_capture_ble_semantic_telemetry;
              DROP TABLE live_capture_ble_raw_telemetry_fields;
              DROP TABLE live_capture_ble_observations;
              DROP TABLE live_capture_location_observations;
@@ -3721,6 +3778,7 @@ fn schema_fifteen_capture_backfill_preserves_receipts_and_rides() {
                 "DROP TABLE pevcap_capture_chunks; DROP TABLE pevcap_captures;
              DROP TABLE bms_voltage_samples;
              DROP TABLE phone_alarm_preferences;
+             DROP TABLE live_capture_ble_semantic_telemetry;
              DROP TABLE live_capture_ble_raw_telemetry_fields;
              DROP TABLE live_capture_ble_observations;
              DROP TABLE live_capture_location_observations;

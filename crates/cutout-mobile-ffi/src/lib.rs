@@ -66,7 +66,8 @@ use cutout_core::{
     ParserDiagnosticsDto, ParserDroppedBytesDto, ParserErrorDto, ParserFrameLenDto,
     ParserGapEvidenceDto, PayloadBodyLenDto, PevcapEncoding as CorePevcapEncoding,
     PevcapLocationSample, PevcapMusicEvent, PevcapPhoneLocation, PevcapRecord,
-    PevcapResolvedIdentity, PhaseCurrentReadingDto, PhoneAlarmEvidence as CorePhoneAlarmEvidence,
+    PevcapResolvedIdentity, PevcapSemanticTelemetry, PevcapTelemetryProvenance,
+    PhaseCurrentReadingDto, PhoneAlarmEvidence as CorePhoneAlarmEvidence,
     PhoneAlarmManager as CorePhoneAlarmManager, PhoneAlarmPreferences as CorePhoneAlarmPreferences,
     PowerReadingDto, ProtocolFamily, ProtocolFamilyDto, RIDE_SESSION_STALE_AFTER, RawFieldValue,
     RawFieldValueDto, RawTelemetryReadback, RawTelemetryReadbackDto, ReadOnlyOutputPayload,
@@ -2821,7 +2822,7 @@ pub enum MobileSettingValueSourceDto {
 }
 
 /// Mobile DTO monotonic timestamp.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record, serde::Serialize)]
 pub struct MobileMonotonicMillisDto {
     /// Timestamp value in milliseconds.
     pub milliseconds: u64,
@@ -3529,7 +3530,8 @@ pub enum MobileBatteryLevelBasisDto {
 }
 
 /// Mobile charging-state value.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum MobileChargeModeDto {
     /// The device reports that charging is active.
     Charging,
@@ -3539,7 +3541,7 @@ pub enum MobileChargeModeDto {
 }
 
 /// Mobile charging-state reading with provenance.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record, serde::Serialize)]
 pub struct MobileChargeModeReadingDto {
     /// Charging-state value.
     pub value: MobileChargeModeDto,
@@ -3615,7 +3617,7 @@ pub struct MobileChargeEstimateInputDto {
 }
 
 /// Mobile telemetry snapshot DTO.
-#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record, serde::Serialize)]
 pub struct MobileTelemetrySnapshotDto {
     /// Snapshot timestamp.
     pub at_ms: Option<MobileMonotonicMillisDto>,
@@ -3801,7 +3803,8 @@ pub struct MobileRiderDashboardValuesDto {
 }
 
 /// Mobile footpad telemetry DTO.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum MobileFootpadContactState {
     /// Neither footpad contact is active.
     None,
@@ -3817,7 +3820,7 @@ pub enum MobileFootpadContactState {
 }
 
 /// Mobile footpad telemetry DTO.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record, serde::Serialize)]
 pub struct MobileFootpadTelemetryDto {
     /// Protocol-specific footpad state bitfield/nibble.
     pub state: u8,
@@ -11335,7 +11338,8 @@ pub enum MobileVescControllerStateDto {
 }
 
 /// VESC controller operating mode for mobile UI.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum MobileVescRideOperatingModeDto {
     /// The protocol reported an unsupported mode value.
     Unknown,
@@ -11362,7 +11366,8 @@ impl From<RideOperatingModeDto> for MobileVescRideOperatingModeDto {
 }
 
 /// VESC ride warning state for mobile UI.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum MobileVescRideWarningDto {
     /// No ride warning is active.
     None,
@@ -11399,7 +11404,8 @@ pub enum MobileVescRideWarningDto {
 }
 
 /// Reason a VESC float controller stopped balancing.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum MobileVescRideStopReasonDto {
     /// No stop condition is active.
     None,
@@ -11986,7 +11992,8 @@ impl MobileBmsTopologyDto {
 }
 
 /// Conservative signed power/current flow direction.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum PowerFlowDirection {
     /// Positive discharge from pack to controller/motor.
     Discharge,
@@ -12005,7 +12012,8 @@ pub enum PowerFlowDirection {
 }
 
 /// Conservative EUC ride operating state.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum RideOperatingState {
     /// No live evidence has established whether the EUC is parked, riding, or charging.
     Unknown,
@@ -12026,14 +12034,14 @@ pub enum RideOperatingState {
 macro_rules! mobile_quantity {
     ($quantity:ident, $reading:ident, $raw:ty, $quantity_doc:literal, $reading_doc:literal) => {
         #[doc = $quantity_doc]
-        #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+        #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record, serde::Serialize)]
         pub struct $quantity {
             /// Fixed-unit value owned by this quantity type.
             pub value: $raw,
         }
 
         #[doc = $reading_doc]
-        #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+        #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record, serde::Serialize)]
         pub struct $reading {
             /// Semantic quantity value.
             pub value: $quantity,
@@ -12105,7 +12113,7 @@ pub struct Resistance {
 }
 
 /// PWM duty cycle.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record, serde::Serialize)]
 pub struct DutyCycle {
     /// Permille duty cycle.
     pub permille: i16,
@@ -12150,7 +12158,8 @@ pub enum MobileProtocolFamilyDto {
 }
 
 /// Mobile value source.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum MobileValueSourceDto {
     /// Value was reported directly by the device.
     Reported,
@@ -12163,7 +12172,8 @@ pub enum MobileValueSourceDto {
 }
 
 /// Mobile value quality.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum MobileValueQualityDto {
     /// Value is directly supported by observed data.
     Known,
@@ -12173,7 +12183,8 @@ pub enum MobileValueQualityDto {
 }
 
 /// Mobile verification status.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum MobileVerificationStatusDto {
     /// Not yet verified.
     Unverified,
@@ -13301,6 +13312,54 @@ impl MobilePevcapCaptureBuilder {
         phone_location: Option<MobilePhoneLocationSampleDto>,
         music: Option<MobilePevcapMusicEventDto>,
     ) -> MobileCaptureWriteOutcomeDto {
+        self.record_notification_inner(
+            monotonic_ms,
+            characteristic,
+            service,
+            bytes,
+            telemetry,
+            None,
+            phone_location,
+            music,
+        )
+    }
+
+    /// Records a notification with its Rust-produced semantic telemetry snapshot.
+    #[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)]
+    pub fn record_notification_with_context_and_semantic_telemetry(
+        &self,
+        monotonic_ms: MobileMonotonicMillisDto,
+        characteristic: Vec<u8>,
+        service: Vec<u8>,
+        bytes: Vec<u8>,
+        telemetry: Option<MobileRawTelemetryReadbackDto>,
+        semantic_telemetry: Option<MobileTelemetrySnapshotDto>,
+        phone_location: Option<MobilePhoneLocationSampleDto>,
+    ) -> MobileCaptureWriteOutcomeDto {
+        self.record_notification_inner(
+            monotonic_ms,
+            characteristic,
+            service,
+            bytes,
+            telemetry,
+            semantic_telemetry,
+            phone_location,
+            None,
+        )
+    }
+
+    #[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)]
+    fn record_notification_inner(
+        &self,
+        monotonic_ms: MobileMonotonicMillisDto,
+        characteristic: Vec<u8>,
+        service: Vec<u8>,
+        bytes: Vec<u8>,
+        telemetry: Option<MobileRawTelemetryReadbackDto>,
+        semantic_telemetry: Option<MobileTelemetrySnapshotDto>,
+        phone_location: Option<MobilePhoneLocationSampleDto>,
+        music: Option<MobilePevcapMusicEventDto>,
+    ) -> MobileCaptureWriteOutcomeDto {
         let mut record = PevcapRecord::inbound_notification(
             monotonic_ms.into_core(),
             mobile_gatt_channel(&characteristic),
@@ -13309,6 +13368,18 @@ impl MobilePevcapCaptureBuilder {
         );
         if let Some(telemetry) = telemetry {
             record = record.with_telemetry(raw_telemetry_from_mobile(telemetry));
+        }
+        if let Some(snapshot) = semantic_telemetry {
+            let Ok(snapshot_json) = serde_json::to_string(&snapshot) else {
+                return MobileCaptureWriteOutcomeDto::Failed;
+            };
+            record = record.with_semantic_telemetry(PevcapSemanticTelemetry {
+                observed_at_ms: snapshot.at_ms.map(MobileMonotonicMillisDto::into_core),
+                provenance: PevcapTelemetryProvenance::LiveSession,
+                snapshot_schema_version: 1,
+                library_version: env!("CARGO_PKG_VERSION").to_owned(),
+                snapshot_json,
+            });
         }
         if let Some(location) = phone_location.and_then(MobilePhoneLocationSampleDto::canonical) {
             record = record.with_phone_location(location.pevcap_location());
@@ -19550,6 +19621,59 @@ mod tests {
         assert_eq!(capture.records.len(), 1);
         assert!(capture.records[0].music.is_none());
         assert_eq!(capture.records[0].bytes.as_ref(), [0xab]);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn live_capture_preserves_the_rust_semantic_snapshot_and_its_timestamp() {
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-writer-semantic-telemetry-{}-{}.jsonl",
+            std::process::id(),
+            thread::current().name().unwrap_or("test")
+        ));
+        let _ = fs::remove_file(&path);
+        let builder = MobilePevcapCaptureBuilder::new(
+            wc(1_700_000_000_000),
+            "ios-corebluetooth".into(),
+            None,
+        );
+        assert!(builder.start_writer(path.to_string_lossy().into_owned()));
+        assert_eq!(
+            builder.record_notification_with_context_and_semantic_telemetry(
+                ms(9),
+                vec![0; 16],
+                vec![1; 16],
+                vec![0xab],
+                None,
+                Some(charge_estimator_snapshot(8, PowerFlowDirection::Charging)),
+                None,
+            ),
+            MobileCaptureWriteOutcomeDto::Accepted
+        );
+        assert!(builder.finish_writer());
+
+        let capture = PevcapCapture::decode(
+            &fs::read(&path).expect("capture exists"),
+            PevcapEncoding::Jsonl,
+        )
+        .expect("capture decodes");
+        let event = &capture.records[0];
+        assert_eq!(event.monotonic_ms.get(), 9);
+        let telemetry = event
+            .semantic_telemetry
+            .as_ref()
+            .expect("Rust snapshot is retained");
+        assert_eq!(
+            telemetry.observed_at_ms.map(MonotonicTimestamp::get),
+            Some(8)
+        );
+        assert_eq!(telemetry.provenance, PevcapTelemetryProvenance::LiveSession);
+        assert_eq!(telemetry.snapshot_schema_version, 1);
+        assert_eq!(telemetry.library_version, env!("CARGO_PKG_VERSION"));
+        let snapshot: serde_json::Value =
+            serde_json::from_str(&telemetry.snapshot_json).expect("snapshot JSON is valid");
+        assert_eq!(snapshot["voltage"]["value"]["value"], 95_000);
+        assert_eq!(snapshot["battery_current"]["value"]["value"], -2_000);
         let _ = fs::remove_file(path);
     }
 

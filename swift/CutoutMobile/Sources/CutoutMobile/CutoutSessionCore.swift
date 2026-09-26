@@ -2382,7 +2382,8 @@ public final class CutoutSessionCore: NSObject {
         characteristic: CBUUID,
         service: CBUUID? = nil,
         bytes: Data,
-        telemetry: RawTelemetryReadback? = nil
+        telemetry: RawTelemetryReadback? = nil,
+        semanticTelemetry: MobileTelemetrySnapshotDto? = nil
     ) -> Bool {
         guard let channel = BluetoothUuid(coreBluetoothUuid: characteristic) else {
             return false
@@ -2401,7 +2402,8 @@ public final class CutoutSessionCore: NSObject {
                 characteristic: channel,
                 service: serviceUuid,
                 bytes: bytes,
-                telemetry: telemetry
+                telemetry: telemetry,
+                semanticTelemetry: semanticTelemetry
             )
             guard acceptCaptureWrite(outcome) else { return false }
             record("capture_queue_depth=\(captureRecorder.writerStatus()?.queuedMessages ?? 0)")
@@ -3166,7 +3168,8 @@ extension CutoutSessionCore: CBPeripheralDelegate {
                 characteristic: characteristic.uuid,
                 service: characteristic.service?.uuid,
                 bytes: value,
-                telemetry: step.actions.compactMap(\.rawTelemetry).last
+                telemetry: step.actions.compactMap(\.rawTelemetry).last,
+                semanticTelemetry: step.semanticTelemetry
             )
             record("notification=\(characteristic.uuid.uuidString) bytes=\(value.count)")
             publishCaptureProgress()

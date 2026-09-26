@@ -264,6 +264,7 @@ final class DeviceSessionTransport: @unchecked Sendable {
         return CoreBluetoothSessionStep(
             operations: operations,
             snapshot: TelemetrySnapshot(step.telemetry, chargeEstimate: chargeEstimate),
+            semanticTelemetry: step.telemetry,
             actions: actions,
             captureContext: context,
             connectionAttempt: step.session.connection.token

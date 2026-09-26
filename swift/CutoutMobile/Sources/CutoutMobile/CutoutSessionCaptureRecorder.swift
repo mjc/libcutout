@@ -87,7 +87,8 @@ protocol CutoutSessionCaptureRecording: AnyObject {
         characteristic: BluetoothUuid,
         service: BluetoothUuid,
         bytes: Data,
-        telemetry: RawTelemetryReadback?
+        telemetry: RawTelemetryReadback?,
+        semanticTelemetry: MobileTelemetrySnapshotDto?
     ) -> MobileCaptureWriteOutcomeDto
     func recordLocationUpdate(_ update: PhoneLocationUpdate) -> CaptureLocationWriteResult
     func recordLinkUp(maxWriteLength: UInt16?) -> MobileCaptureWriteOutcomeDto
@@ -277,15 +278,17 @@ final class CutoutSessionCaptureRecorder: CutoutSessionCaptureRecording {
         characteristic: BluetoothUuid,
         service: BluetoothUuid,
         bytes: Data,
-        telemetry: RawTelemetryReadback?
+        telemetry: RawTelemetryReadback?,
+        semanticTelemetry: MobileTelemetrySnapshotDto?
     ) -> MobileCaptureWriteOutcomeDto {
         if let builder {
-            let outcome = builder.recordNotificationWithContext(
+            let outcome = builder.recordNotificationWithContextAndSemanticTelemetry(
                 monotonicMs: MobileMonotonicMillisDto(milliseconds: elapsedMilliseconds()),
                 characteristic: characteristic.bytes,
                 service: service.bytes,
                 bytes: bytes,
                 telemetry: telemetry?.dto,
+                semanticTelemetry: semanticTelemetry,
                 phoneLocation: nil
             )
             if case .accepted = outcome { notificationCount += 1 }

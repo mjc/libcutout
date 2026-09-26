@@ -457,6 +457,24 @@ pub(super) const BLE_RAW_TELEMETRY_SCHEMA: &str = "
         ON live_capture_ble_raw_telemetry_fields(field_kind, field_id, capture_id, sequence);
 ";
 
+/// Rust-produced semantic snapshots stay linked to the exact BLE event and preserve provenance.
+pub(super) const BLE_SEMANTIC_TELEMETRY_SCHEMA: &str = "
+    CREATE TABLE live_capture_ble_semantic_telemetry (
+        capture_id TEXT NOT NULL,
+        sequence INTEGER NOT NULL CHECK (sequence >= 0),
+        observed_at_ms INTEGER CHECK (observed_at_ms IS NULL OR observed_at_ms >= 0),
+        provenance TEXT NOT NULL CHECK (provenance IN ('live_session', 'replay')),
+        snapshot_schema_version INTEGER NOT NULL CHECK (snapshot_schema_version BETWEEN 1 AND 65535),
+        library_version TEXT NOT NULL CHECK (length(CAST(library_version AS BLOB)) BETWEEN 1 AND 64),
+        snapshot_json TEXT NOT NULL CHECK (json_valid(snapshot_json)),
+        PRIMARY KEY (capture_id, sequence),
+        FOREIGN KEY (capture_id, sequence)
+            REFERENCES live_capture_ble_observations(capture_id, sequence) ON DELETE CASCADE
+    ) WITHOUT ROWID;
+    CREATE INDEX live_capture_ble_semantic_telemetry_time
+        ON live_capture_ble_semantic_telemetry(provenance, observed_at_ms, capture_id, sequence);
+";
+
 impl RideDatabase {
     /// Starts a live capture in the existing Rust-owned database worker.
     ///
@@ -900,6 +918,16 @@ fn insert_ble_observation(
             raw_telemetry_json,
         ],
     )?;
+    insert_ble_telemetry(transaction, id, sequence, record)?;
+    Ok(())
+}
+
+fn insert_ble_telemetry(
+    transaction: &rusqlite::Transaction<'_>,
+    id: LiveCaptureId,
+    sequence: u64,
+    record: &PevcapRecord,
+) -> Result<(), StorageError> {
     if let Some(telemetry) = &record.telemetry {
         for (field_index, field) in telemetry.fields.iter().enumerate() {
             transaction.execute(
@@ -923,6 +951,34 @@ fn insert_ble_observation(
                 ],
             )?;
         }
+    }
+    if let Some(telemetry) = &record.semantic_telemetry {
+        if serde_json::from_str::<serde_json::Value>(&telemetry.snapshot_json).is_err() {
+            return Err(StorageError::LiveCaptureInputInvalid(
+                "semantic telemetry encoding",
+            ));
+        }
+        let provenance = match telemetry.provenance {
+            cutout_core::PevcapTelemetryProvenance::LiveSession => "live_session",
+            cutout_core::PevcapTelemetryProvenance::Replay => "replay",
+        };
+        transaction.execute(
+            "INSERT INTO live_capture_ble_semantic_telemetry
+             (capture_id, sequence, observed_at_ms, provenance, snapshot_schema_version,
+              library_version, snapshot_json)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                id.as_string(),
+                sequence,
+                telemetry
+                    .observed_at_ms
+                    .map(cutout_core::MonotonicTimestamp::get),
+                provenance,
+                telemetry.snapshot_schema_version,
+                telemetry.library_version,
+                telemetry.snapshot_json,
+            ],
+        )?;
     }
     Ok(())
 }

@@ -66,7 +66,8 @@ private final class CaptureRecorderSpy: CutoutSessionCaptureRecording {
         characteristic _: BluetoothUuid,
         service _: BluetoothUuid,
         bytes _: Data,
-        telemetry _: RawTelemetryReadback?
+        telemetry _: RawTelemetryReadback?,
+        semanticTelemetry _: MobileTelemetrySnapshotDto?
     ) -> MobileCaptureWriteOutcomeDto { .accepted }
 
     func recordLocationUpdate(_: PhoneLocationUpdate) -> CaptureLocationWriteResult {
