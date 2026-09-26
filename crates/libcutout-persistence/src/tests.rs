@@ -23,7 +23,8 @@ use cutout_ride_maps::{RideLifecycleState, RideMapSegmentId, RideSegmentStartRea
 
 use super::{
     BmsVoltageSampleRecord, GeoBounds, HistoryContextBudget, LiveCaptureEventKind,
-    LiveCaptureIntegrity, LiveCaptureState, PevcapImportOutcome, PevcapImportPreview,
+    LiveCaptureIntegrity, LiveCaptureLocationAdmission, LiveCaptureLocationObservation,
+    LiveCaptureLocationValidation, LiveCaptureState, PevcapImportOutcome, PevcapImportPreview,
     PevcapImportWarning, PhoneAlarmPreferencesRecord, QueryLimit, RideDatabase, RideHistoryQuery,
     RideId, RideRecord, RideSource, RouteProjectionCancellation, StorageError,
     VerifiedConnectionLifecycleMutation, VerifiedConnectionRideMetadata,
@@ -212,6 +213,102 @@ fn live_capture_finish_persists_known_admission_loss_as_incomplete() {
 }
 
 #[test]
+fn live_location_is_structured_and_linked_to_its_exact_raw_event() {
+    let _guard = test_guard();
+    let path = music_test_path();
+    let database = RideDatabase::open(&path).expect("database opens");
+    let capture_id = database
+        .begin_live_capture(b"{\"format\":\"pevcap\"}".to_vec(), 100)
+        .expect("live capture starts");
+    database
+        .append_live_capture_event(
+            capture_id,
+            LiveCaptureEventKind::Notification,
+            105,
+            None,
+            None,
+            b"{\"notification\":\"before\"}".to_vec(),
+        )
+        .expect("earlier event is persisted");
+    let observation = LiveCaptureLocationObservation {
+        location: PevcapPhoneLocation {
+            wall_clock_unix_ms: 1_700_000_000_110,
+            latitude_degrees: 45.123_456_789_012_3,
+            longitude_degrees: -122.987_654_321_098_7,
+            altitude_meters: 123.456_789_012_3,
+            horizontal_accuracy_meters: Some(3.125_000_000_01),
+            vertical_accuracy_meters: Some(4.25),
+            speed_meters_per_second: Some(8.75),
+            speed_accuracy_meters_per_second: Some(0.125),
+            course_degrees: Some(271.125_000_000_1),
+            course_accuracy_degrees: Some(1.75),
+        },
+        simulated: Some(true),
+        produced_by_accessory: Some(false),
+        validation: LiveCaptureLocationValidation::Valid,
+        admission: LiveCaptureLocationAdmission::Evaluated(LocationAdmission::Accepted),
+    };
+    let payload = b"{\"location\":{\"latitude\":45.1234567890123}}".to_vec();
+    assert_eq!(
+        database
+            .append_live_capture_location(
+                capture_id,
+                110,
+                Some(9),
+                observation.clone(),
+                payload.clone(),
+            )
+            .expect("structured location and raw event persist atomically"),
+        1
+    );
+    let rejected = invalid_latitude_observation();
+    let rejected_payload = b"{\"location\":{\"latitude\":91.0}}".to_vec();
+    assert_eq!(
+        database
+            .append_live_capture_location(
+                capture_id,
+                115,
+                Some(10),
+                rejected.clone(),
+                rejected_payload.clone(),
+            )
+            .expect("rejected location remains raw evidence"),
+        2
+    );
+    database
+        .append_live_capture_event(
+            capture_id,
+            LiveCaptureEventKind::LinkDown,
+            120,
+            None,
+            None,
+            b"{\"link\":\"down\"}".to_vec(),
+        )
+        .expect("later event is persisted");
+
+    database.shutdown().expect("database shuts down");
+    let reopened = RideDatabase::open(&path).expect("database reopens");
+    let snapshot = reopened
+        .live_capture(capture_id, QueryLimit::new(10).unwrap())
+        .expect("capture reads after restart");
+    let location_event = &snapshot.events[1];
+    assert_structured_location_event(location_event, 1, &payload, &observation);
+    assert_eq!(location_event.receipt_monotonic_ms, 110);
+    assert_eq!(location_event.source_monotonic_offset_ms, Some(9));
+    assert_eq!(
+        location_event.source_wall_clock_unix_ms,
+        Some(1_700_000_000_110)
+    );
+    assert_eq!(snapshot.events[0].location, None);
+    let rejected_event = &snapshot.events[2];
+    assert_structured_location_event(rejected_event, 2, &rejected_payload, &rejected);
+    assert_eq!(snapshot.events[3].location, None);
+    assert_eq!(snapshot.next_sequence, 4);
+    reopened.shutdown().expect("reopened database shuts down");
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn live_capture_event_pages_continue_without_duplicates_or_gaps() {
     let _guard = test_guard();
     let path = music_test_path();
@@ -286,7 +383,8 @@ fn schema_v26_migration_adds_live_capture_tables_without_touching_existing_captu
     let connection = Connection::open(&path).expect("SQLite file opens");
     connection
         .execute_batch(
-            "DROP TABLE live_capture_events;
+            "DROP TABLE live_capture_location_observations;
+             DROP TABLE live_capture_events;
              DROP TABLE live_capture_sessions;
              PRAGMA user_version = 26;",
         )
@@ -325,6 +423,39 @@ fn database_capture_test_location(index: u64, source_offset_ms: i64) -> PevcapLo
             latitude_degrees: 39.7,
             longitude_degrees: -104.9,
             altitude_meters: 1.0,
+            horizontal_accuracy_meters: Some(2.25),
+            vertical_accuracy_meters: None,
+            speed_meters_per_second: None,
+            speed_accuracy_meters_per_second: None,
+            course_degrees: None,
+            course_accuracy_degrees: None,
+        },
+        Some(index % 2 == 0),
+        Some(false),
+    )
+    .unwrap()
+    .with_source_monotonic_offset_ms(Some(source_offset_ms))
+}
+
+fn assert_structured_location_event(
+    event: &super::LiveCaptureEvent,
+    sequence: u64,
+    payload: &[u8],
+    observation: &LiveCaptureLocationObservation,
+) {
+    assert_eq!(event.sequence, sequence);
+    assert_eq!(event.kind, LiveCaptureEventKind::Location);
+    assert_eq!(event.payload, payload);
+    assert_eq!(event.location.as_ref(), Some(observation));
+}
+
+fn invalid_latitude_observation() -> LiveCaptureLocationObservation {
+    LiveCaptureLocationObservation {
+        location: PevcapPhoneLocation {
+            wall_clock_unix_ms: 1_700_000_000_115,
+            latitude_degrees: 91.0,
+            longitude_degrees: -122.0,
+            altitude_meters: 125.0,
             horizontal_accuracy_meters: None,
             vertical_accuracy_meters: None,
             speed_meters_per_second: None,
@@ -332,11 +463,13 @@ fn database_capture_test_location(index: u64, source_offset_ms: i64) -> PevcapLo
             course_degrees: None,
             course_accuracy_degrees: None,
         },
-        None,
-        None,
-    )
-    .unwrap()
-    .with_source_monotonic_offset_ms(Some(source_offset_ms))
+        simulated: None,
+        produced_by_accessory: None,
+        validation: LiveCaptureLocationValidation::Rejected(
+            cutout_core::PevcapPhoneLocationError::InvalidLatitude,
+        ),
+        admission: LiveCaptureLocationAdmission::NotEvaluated,
+    }
 }
 
 #[test]
@@ -397,6 +530,19 @@ fn database_backed_capture_writer_persists_events_on_its_worker_thread() {
     assert_eq!(
         snapshot.events[0].source_wall_clock_unix_ms,
         Some(1_700_000_000_010)
+    );
+    let structured_location = snapshot.events[0]
+        .location
+        .as_ref()
+        .expect("location observation is stored in typed columns");
+    assert_eq!(structured_location.simulated, Some(true));
+    assert_eq!(
+        structured_location.validation,
+        LiveCaptureLocationValidation::Valid
+    );
+    assert_eq!(
+        structured_location.admission,
+        LiveCaptureLocationAdmission::NotEvaluated
     );
     assert!(
         std::str::from_utf8(&snapshot.events[0].payload)
@@ -463,6 +609,7 @@ fn music_v16_migration_preserves_events_without_fabricating_observation_times() 
          ALTER TABLE ride_music_history DROP COLUMN deleted;
          DROP TABLE bms_voltage_samples;
          DROP TABLE phone_alarm_preferences;
+         DROP TABLE live_capture_location_observations;
          DROP TABLE live_capture_events;
          DROP TABLE live_capture_sessions;
          PRAGMA user_version = 16;",
@@ -501,6 +648,7 @@ fn schema_v19_migration_adds_music_history_state() {
             "ALTER TABLE ride_music_history DROP COLUMN state;
              DROP TABLE bms_voltage_samples;
              DROP TABLE phone_alarm_preferences;
+             DROP TABLE live_capture_location_observations;
              DROP TABLE live_capture_events;
              DROP TABLE live_capture_sessions;
              PRAGMA user_version = 19;",
@@ -530,6 +678,7 @@ fn pre_music_v16_migration_preserves_existing_capture_tables() {
              DROP TABLE ride_music_history;
              DROP TABLE bms_voltage_samples;
              DROP TABLE phone_alarm_preferences;
+             DROP TABLE live_capture_location_observations;
              DROP TABLE live_capture_events;
              DROP TABLE live_capture_sessions;
              PRAGMA user_version = 16;",
@@ -687,6 +836,7 @@ fn music_v16_migration_rebuilds_utf8_text_bounds() {
              ALTER TABLE ride_music_history DROP COLUMN deleted;
              DROP TABLE bms_voltage_samples;
              DROP TABLE phone_alarm_preferences;
+             DROP TABLE live_capture_location_observations;
              DROP TABLE live_capture_events;
              DROP TABLE live_capture_sessions;
              PRAGMA user_version = 16;",
@@ -3106,6 +3256,7 @@ fn recording_schema_migrates_from_25_without_changing_existing_capture() {
     connection
         .execute_batch(
             "DROP TABLE pevcap_recordings;
+             DROP TABLE live_capture_location_observations;
              DROP TABLE live_capture_events;
              DROP TABLE live_capture_sessions;
              PRAGMA user_version = 25;",
@@ -3201,6 +3352,7 @@ fn stored_capture_history_index_is_identical_after_schema_24_migration() {
     connection
         .execute_batch(
             "DROP INDEX pevcap_imports_history;
+             DROP TABLE live_capture_location_observations;
              DROP TABLE live_capture_events;
              DROP TABLE live_capture_sessions;
              PRAGMA user_version = 24;",
@@ -3258,6 +3410,7 @@ fn stored_capture_history_survives_restart_and_missing_files() {
     connection
         .execute_batch(
             "DROP INDEX pevcap_imports_history;
+             DROP TABLE live_capture_location_observations;
              DROP TABLE live_capture_events;
              DROP TABLE live_capture_sessions;
              PRAGMA user_version = 24;",
@@ -3389,6 +3542,7 @@ fn schema_fifteen_capture_backfill_preserves_receipts_and_rides() {
                 "DROP TABLE pevcap_capture_chunks; DROP TABLE pevcap_captures;
              DROP TABLE bms_voltage_samples;
              DROP TABLE phone_alarm_preferences;
+             DROP TABLE live_capture_location_observations;
              DROP TABLE live_capture_events;
              DROP TABLE live_capture_sessions;
              PRAGMA user_version = 15;",
@@ -3989,7 +4143,8 @@ fn legacy_schema_versions_migrate_to_the_current_schema() {
                 .unwrap();
         }
         drop(connection);
-        let database = RideDatabase::open(&path).unwrap();
+        let database = RideDatabase::open(&path)
+            .unwrap_or_else(|error| panic!("schema v{version} migration failed: {error:?}"));
         database.shutdown().unwrap();
 
         let connection = Connection::open(&path).unwrap();

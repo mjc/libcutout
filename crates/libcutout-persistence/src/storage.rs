@@ -39,7 +39,8 @@ mod live_capture;
 pub use live_capture::{
     LIVE_CAPTURE_EVENT_LIMIT_BYTES, LIVE_CAPTURE_HEADER_LIMIT_BYTES,
     LIVE_CAPTURE_TOTAL_LIMIT_BYTES, LiveCaptureEvent, LiveCaptureEventKind, LiveCaptureId,
-    LiveCaptureIntegrity, LiveCaptureSnapshot, LiveCaptureState,
+    LiveCaptureIntegrity, LiveCaptureLocationAdmission, LiveCaptureLocationObservation,
+    LiveCaptureLocationValidation, LiveCaptureSnapshot, LiveCaptureState,
 };
 mod recorded_capture;
 pub use recorded_capture::RecordedCapture;
@@ -4309,6 +4310,7 @@ enum Command {
         source_monotonic_offset_ms: Option<i64>,
         source_wall_clock_unix_ms: Option<u64>,
         payload: Vec<u8>,
+        location: Option<LiveCaptureLocationObservation>,
         reply: Reply<u64>,
     },
     FinishLiveCapture {

@@ -88,16 +88,20 @@ impl DatabaseWorker<'_> {
                 source_monotonic_offset_ms,
                 source_wall_clock_unix_ms,
                 payload,
+                location,
                 reply,
             } => {
                 let _ = reply.send(super::live_capture::append(
                     connection,
-                    id,
-                    kind,
-                    receipt_monotonic_ms,
-                    source_monotonic_offset_ms,
-                    source_wall_clock_unix_ms,
-                    &payload,
+                    &super::live_capture::LiveCaptureEventAppend {
+                        id,
+                        kind,
+                        receipt_monotonic_ms,
+                        source_monotonic_offset_ms,
+                        source_wall_clock_unix_ms,
+                        payload: &payload,
+                        location: location.as_ref(),
+                    },
                 ));
             }
             Command::FinishLiveCapture {

@@ -1,7 +1,7 @@
 use super::{MapPointId, SpatialRowId, StorageError};
 use rusqlite::{Connection, OptionalExtension, params};
 
-pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 28;
+pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 29;
 const APPLICATION_ID: i64 = 0x4355_544f;
 
 fn schema_pragmas(version: i64) -> String {
@@ -51,6 +51,7 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         25 => migrate_v25_to_current(connection)?,
         26 => migrate_v26_to_current(connection)?,
         27 => migrate_v27_to_current(connection)?,
+        28 => migrate_v28_to_current(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -72,11 +73,18 @@ fn initialize_current_schema(connection: &Connection) -> Result<(), StorageError
         return Err(StorageError::InvalidDatabaseIdentity);
     }
     connection.execute_batch("BEGIN IMMEDIATE;")?;
-    if let Err(error) = create_current_schema(connection).and_then(|()| {
-        connection
-            .execute_batch(super::live_capture::SCHEMA)
-            .map_err(Into::into)
-    }) {
+    if let Err(error) = create_current_schema(connection)
+        .and_then(|()| {
+            connection
+                .execute_batch(super::live_capture::SCHEMA)
+                .map_err(Into::into)
+        })
+        .and_then(|()| {
+            connection
+                .execute_batch(super::live_capture::LOCATION_SCHEMA)
+                .map_err(Into::into)
+        })
+    {
         let _ = connection.execute_batch("ROLLBACK;");
         return Err(error);
     }
@@ -513,6 +521,7 @@ fn migrate_v3_to_current(connection: &mut Connection) -> Result<(), StorageError
         ",
     )?;
     transaction.execute_batch(super::live_capture::SCHEMA)?;
+    transaction.execute_batch(super::live_capture::LOCATION_SCHEMA)?;
     transaction.execute_batch(&current_schema_pragmas())?;
     transaction.commit()?;
     Ok(())
@@ -1201,9 +1210,9 @@ fn migrate_v25_to_current(connection: &mut Connection) -> Result<(), StorageErro
 fn migrate_v26_to_current(connection: &mut Connection) -> Result<(), StorageError> {
     let transaction = connection.transaction()?;
     transaction.execute_batch(super::live_capture::SCHEMA)?;
-    transaction.execute_batch(&current_schema_pragmas())?;
+    transaction.execute_batch(&schema_pragmas(28))?;
     transaction.commit()?;
-    Ok(())
+    migrate_v28_to_current(connection)
 }
 
 fn migrate_v27_to_current(connection: &mut Connection) -> Result<(), StorageError> {
@@ -1218,6 +1227,14 @@ fn migrate_v27_to_current(connection: &mut Connection) -> Result<(), StorageErro
          PRAGMA application_id = 1129665615;
          PRAGMA user_version = 28;",
     )?;
+    transaction.commit()?;
+    migrate_v28_to_current(connection)
+}
+
+fn migrate_v28_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction()?;
+    transaction.execute_batch(super::live_capture::LOCATION_SCHEMA)?;
+    transaction.execute_batch(&current_schema_pragmas())?;
     transaction.commit()?;
     Ok(())
 }
@@ -1257,6 +1274,7 @@ pub(super) fn verify_current_schema(connection: &Connection) -> Result<(), Stora
         "pevcap_recordings",
         "live_capture_sessions",
         "live_capture_events",
+        "live_capture_location_observations",
         "trails",
         "trail_segments",
         "trail_segment_spatial_keys",
@@ -1434,6 +1452,32 @@ mod tests {
                 0
             )
         );
+        assert_eq!(
+            connection
+                .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                .unwrap(),
+            CURRENT_SCHEMA_VERSION
+        );
+    }
+
+    #[test]
+    fn schema_v28_migration_adds_structured_live_location_rows() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE live_capture_events (
+                     capture_id TEXT NOT NULL,
+                     sequence INTEGER NOT NULL,
+                     PRIMARY KEY (capture_id, sequence)
+                 ) WITHOUT ROWID;
+                 PRAGMA application_id = 1129665615;
+                 PRAGMA user_version = 28;",
+            )
+            .unwrap();
+
+        migrate(&mut connection).unwrap();
+
+        assert!(table_exists(&connection, "live_capture_location_observations").unwrap());
         assert_eq!(
             connection
                 .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))

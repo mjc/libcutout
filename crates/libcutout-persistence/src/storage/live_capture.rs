@@ -1,6 +1,8 @@
 //! Incremental, bounded live-capture event persistence in the canonical database worker.
 
 use super::{Command, QueryLimit, RideDatabase, StorageError};
+use cutout_core::{PevcapPhoneLocation, PevcapPhoneLocationError};
+use cutout_ride_maps::LocationAdmission;
 use rusqlite::{Connection, OptionalExtension, params};
 use uuid::Uuid;
 
@@ -175,6 +177,131 @@ pub struct LiveCaptureEvent {
     pub source_wall_clock_unix_ms: Option<u64>,
     /// Original event payload bytes.
     pub payload: Vec<u8>,
+    /// Structured Core Location facts when this event is a decoded location observation.
+    pub location: Option<LiveCaptureLocationObservation>,
+}
+
+/// Whether the source location fields were validated before route admission.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LiveCaptureLocationValidation {
+    /// The source observation was retained without attempting semantic validation.
+    NotEvaluated,
+    /// Required location fields passed Rust validation.
+    Valid,
+    /// Required location fields failed Rust validation; the raw payload remains authoritative.
+    Rejected(PevcapPhoneLocationError),
+}
+
+impl LiveCaptureLocationValidation {
+    const fn as_db(self) -> (&'static str, Option<&'static str>) {
+        match self {
+            Self::NotEvaluated => ("not_evaluated", None),
+            Self::Valid => ("valid", None),
+            Self::Rejected(reason) => ("rejected", Some(validation_reason_as_db(reason))),
+        }
+    }
+
+    fn from_db(state: &str, reason: Option<&str>) -> Result<Self, StorageError> {
+        match (state, reason) {
+            ("not_evaluated", None) => Ok(Self::NotEvaluated),
+            ("valid", None) => Ok(Self::Valid),
+            ("rejected", Some(reason)) => validation_reason_from_db(reason).map(Self::Rejected),
+            _ => Err(StorageError::InvalidStoredValue {
+                field: "live capture location validation",
+                value: format!("{state}:{reason:?}"),
+            }),
+        }
+    }
+}
+
+const fn validation_reason_as_db(reason: PevcapPhoneLocationError) -> &'static str {
+    match reason {
+        PevcapPhoneLocationError::MissingWallClockTimestamp => "missing_wall_clock_timestamp",
+        PevcapPhoneLocationError::InvalidLatitude => "invalid_latitude",
+        PevcapPhoneLocationError::InvalidLongitude => "invalid_longitude",
+        PevcapPhoneLocationError::InvalidAltitude => "invalid_altitude",
+    }
+}
+
+fn validation_reason_from_db(value: &str) -> Result<PevcapPhoneLocationError, StorageError> {
+    match value {
+        "missing_wall_clock_timestamp" => Ok(PevcapPhoneLocationError::MissingWallClockTimestamp),
+        "invalid_latitude" => Ok(PevcapPhoneLocationError::InvalidLatitude),
+        "invalid_longitude" => Ok(PevcapPhoneLocationError::InvalidLongitude),
+        "invalid_altitude" => Ok(PevcapPhoneLocationError::InvalidAltitude),
+        _ => Err(StorageError::InvalidStoredValue {
+            field: "live capture location validation reason",
+            value: value.to_owned(),
+        }),
+    }
+}
+
+/// Whether and how a validated location was admitted to the canonical route.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LiveCaptureLocationAdmission {
+    /// Route policy has not evaluated this observation.
+    NotEvaluated,
+    /// Route policy returned a decision.
+    Evaluated(LocationAdmission),
+}
+
+impl LiveCaptureLocationAdmission {
+    const fn as_db(self) -> &'static str {
+        match self {
+            Self::NotEvaluated => "not_evaluated",
+            Self::Evaluated(LocationAdmission::Accepted) => "accepted",
+            Self::Evaluated(LocationAdmission::Duplicate) => "duplicate",
+            Self::Evaluated(LocationAdmission::OutOfOrder) => "out_of_order",
+            Self::Evaluated(LocationAdmission::AccuracyTooLow) => "accuracy_too_low",
+            Self::Evaluated(LocationAdmission::UnrealisticJump) => "unrealistic_jump",
+        }
+    }
+
+    fn from_db(value: &str) -> Result<Self, StorageError> {
+        match value {
+            "not_evaluated" => Ok(Self::NotEvaluated),
+            "accepted" => Ok(Self::Evaluated(LocationAdmission::Accepted)),
+            "duplicate" => Ok(Self::Evaluated(LocationAdmission::Duplicate)),
+            "out_of_order" => Ok(Self::Evaluated(LocationAdmission::OutOfOrder)),
+            "accuracy_too_low" => Ok(Self::Evaluated(LocationAdmission::AccuracyTooLow)),
+            "unrealistic_jump" => Ok(Self::Evaluated(LocationAdmission::UnrealisticJump)),
+            _ => Err(StorageError::InvalidStoredValue {
+                field: "live capture location admission",
+                value: value.to_owned(),
+            }),
+        }
+    }
+}
+
+/// Full-precision typed location facts linked to one ordered raw capture event.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LiveCaptureLocationObservation {
+    /// Source-reported coordinates, altitude, and optional measurement values.
+    pub location: PevcapPhoneLocation,
+    /// Whether the platform marked the sample as simulated, when available.
+    pub simulated: Option<bool>,
+    /// Whether the platform marked the sample as accessory-produced, when available.
+    pub produced_by_accessory: Option<bool>,
+    /// Rust validation result, kept separate from route admission.
+    pub validation: LiveCaptureLocationValidation,
+    /// Rust route decision, or an explicit not-yet-evaluated state.
+    pub admission: LiveCaptureLocationAdmission,
+}
+
+impl LiveCaptureLocationObservation {
+    fn source_wall_clock_unix_ms(&self) -> Option<u64> {
+        (self.location.wall_clock_unix_ms != 0).then_some(self.location.wall_clock_unix_ms)
+    }
+}
+
+pub(super) struct LiveCaptureEventAppend<'a> {
+    pub(super) id: LiveCaptureId,
+    pub(super) kind: LiveCaptureEventKind,
+    pub(super) receipt_monotonic_ms: u64,
+    pub(super) source_monotonic_offset_ms: Option<i64>,
+    pub(super) source_wall_clock_unix_ms: Option<u64>,
+    pub(super) payload: &'a [u8],
+    pub(super) location: Option<&'a LiveCaptureLocationObservation>,
 }
 
 /// Bounded snapshot of a live capture and its earliest events.
@@ -231,6 +358,37 @@ pub(super) const SCHEMA: &str = "
         ON live_capture_events(capture_id, receipt_monotonic_ms, sequence);
     CREATE INDEX live_capture_events_source_wall_clock
         ON live_capture_events(capture_id, source_wall_clock_unix_ms, sequence);
+";
+
+/// Structured location values remain separate from, and foreign-keyed to, raw event bytes.
+pub(super) const LOCATION_SCHEMA: &str = "
+    CREATE TABLE live_capture_location_observations (
+        capture_id TEXT NOT NULL,
+        sequence INTEGER NOT NULL CHECK (sequence >= 0),
+        latitude_degrees REAL NOT NULL,
+        longitude_degrees REAL NOT NULL,
+        altitude_meters REAL NOT NULL,
+        horizontal_accuracy_meters REAL,
+        vertical_accuracy_meters REAL,
+        speed_meters_per_second REAL,
+        speed_accuracy_meters_per_second REAL,
+        course_degrees REAL,
+        course_accuracy_degrees REAL,
+        simulated INTEGER CHECK (simulated IS NULL OR simulated IN (0, 1)),
+        produced_by_accessory INTEGER
+            CHECK (produced_by_accessory IS NULL OR produced_by_accessory IN (0, 1)),
+        validation_state TEXT NOT NULL
+            CHECK (validation_state IN ('not_evaluated', 'valid', 'rejected')),
+        validation_reason TEXT CHECK (validation_reason IS NULL OR validation_reason IN
+            ('missing_wall_clock_timestamp', 'invalid_latitude', 'invalid_longitude', 'invalid_altitude')),
+        route_admission TEXT NOT NULL CHECK (route_admission IN
+            ('not_evaluated', 'accepted', 'duplicate', 'out_of_order',
+             'accuracy_too_low', 'unrealistic_jump')),
+        CHECK ((validation_state = 'rejected') = (validation_reason IS NOT NULL)),
+        PRIMARY KEY (capture_id, sequence),
+        FOREIGN KEY (capture_id, sequence)
+            REFERENCES live_capture_events(capture_id, sequence) ON DELETE CASCADE
+    ) WITHOUT ROWID;
 ";
 
 impl RideDatabase {
@@ -300,6 +458,67 @@ impl RideDatabase {
             source_monotonic_offset_ms,
             source_wall_clock_unix_ms,
             payload,
+            location: None,
+            reply,
+        })
+    }
+
+    /// Appends one raw location event and its typed facts in the same ordered transaction.
+    ///
+    /// A rejected observation is retained with its validation reason; route admission is stored
+    /// independently so raw evidence is never erased by projection policy.
+    ///
+    /// # Errors
+    /// Returns a queue, worker, input-bound, inactive-session, validation, or SQLite error.
+    pub fn append_live_capture_location(
+        &self,
+        id: LiveCaptureId,
+        receipt_monotonic_ms: u64,
+        source_monotonic_offset_ms: Option<i64>,
+        observation: LiveCaptureLocationObservation,
+        payload: Vec<u8>,
+    ) -> Result<u64, StorageError> {
+        validate_timestamp(receipt_monotonic_ms)?;
+        let validation_result = observation.location.canonical();
+        match (observation.validation, validation_result) {
+            (LiveCaptureLocationValidation::Valid, Ok(_))
+            | (LiveCaptureLocationValidation::NotEvaluated, _) => {}
+            (LiveCaptureLocationValidation::Rejected(expected), Err(actual))
+                if expected == actual => {}
+            _ => {
+                return Err(StorageError::LiveCaptureInputInvalid(
+                    "location validation state",
+                ));
+            }
+        }
+        let validation_is_incomplete = match observation.validation {
+            LiveCaptureLocationValidation::Valid => false,
+            LiveCaptureLocationValidation::NotEvaluated
+            | LiveCaptureLocationValidation::Rejected(_) => true,
+        };
+        let admission_was_evaluated = match observation.admission {
+            LiveCaptureLocationAdmission::NotEvaluated => false,
+            LiveCaptureLocationAdmission::Evaluated(_) => true,
+        };
+        if validation_is_incomplete && admission_was_evaluated {
+            return Err(StorageError::LiveCaptureInputInvalid(
+                "location admission before validation",
+            ));
+        }
+        if let Some(source_wall_clock_unix_ms) = observation.source_wall_clock_unix_ms() {
+            validate_timestamp(source_wall_clock_unix_ms)?;
+        }
+        if payload.is_empty() || payload.len() > LIVE_CAPTURE_EVENT_LIMIT_BYTES {
+            return Err(StorageError::LiveCaptureInputInvalid("event payload size"));
+        }
+        self.request(|reply| Command::AppendLiveCaptureEvent {
+            id,
+            kind: LiveCaptureEventKind::Location,
+            receipt_monotonic_ms,
+            source_monotonic_offset_ms,
+            source_wall_clock_unix_ms: observation.source_wall_clock_unix_ms(),
+            payload,
+            location: Some(observation),
             reply,
         })
     }
@@ -432,13 +651,17 @@ pub(super) fn begin(
 
 pub(super) fn append(
     connection: &mut Connection,
-    id: LiveCaptureId,
-    kind: LiveCaptureEventKind,
-    receipt_monotonic_ms: u64,
-    source_monotonic_offset_ms: Option<i64>,
-    source_wall_clock_unix_ms: Option<u64>,
-    payload: &[u8],
+    event: &LiveCaptureEventAppend<'_>,
 ) -> Result<u64, StorageError> {
+    let LiveCaptureEventAppend {
+        id,
+        kind,
+        receipt_monotonic_ms,
+        source_monotonic_offset_ms,
+        source_wall_clock_unix_ms,
+        payload,
+        location,
+    } = event;
     let transaction = connection.transaction()?;
     let session: Option<(String, i64, i64)> = transaction
         .query_row(
@@ -489,8 +712,47 @@ pub(super) fn append(
             payload
         ],
     )?;
+    if let Some(location) = location {
+        insert_location(&transaction, *id, sequence, location)?;
+    }
     transaction.commit()?;
     Ok(sequence)
+}
+
+fn insert_location(
+    transaction: &rusqlite::Transaction<'_>,
+    id: LiveCaptureId,
+    sequence: u64,
+    observation: &LiveCaptureLocationObservation,
+) -> Result<(), StorageError> {
+    let (validation_state, validation_reason) = observation.validation.as_db();
+    transaction.execute(
+        "INSERT INTO live_capture_location_observations
+         (capture_id, sequence, latitude_degrees, longitude_degrees, altitude_meters,
+          horizontal_accuracy_meters, vertical_accuracy_meters, speed_meters_per_second,
+          speed_accuracy_meters_per_second, course_degrees, course_accuracy_degrees,
+          simulated, produced_by_accessory, validation_state, validation_reason, route_admission)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+        params![
+            id.as_string(),
+            sequence,
+            observation.location.latitude_degrees,
+            observation.location.longitude_degrees,
+            observation.location.altitude_meters,
+            observation.location.horizontal_accuracy_meters,
+            observation.location.vertical_accuracy_meters,
+            observation.location.speed_meters_per_second,
+            observation.location.speed_accuracy_meters_per_second,
+            observation.location.course_degrees,
+            observation.location.course_accuracy_degrees,
+            observation.simulated.map(i64::from),
+            observation.produced_by_accessory.map(i64::from),
+            validation_state,
+            validation_reason,
+            observation.admission.as_db(),
+        ],
+    )?;
+    Ok(())
 }
 
 pub(super) fn finish(
@@ -585,6 +847,215 @@ pub(super) fn update_header(
     Ok(())
 }
 
+struct LiveCaptureEventRow {
+    sequence: u64,
+    kind: String,
+    receipt_monotonic_ms: u64,
+    source_monotonic_offset_ms: Option<i64>,
+    source_wall_clock_unix_ms: Option<u64>,
+    payload: Vec<u8>,
+    latitude_degrees: Option<f64>,
+    longitude_degrees: Option<f64>,
+    altitude_meters: Option<f64>,
+    horizontal_accuracy_meters: Option<f64>,
+    vertical_accuracy_meters: Option<f64>,
+    speed_meters_per_second: Option<f64>,
+    speed_accuracy_meters_per_second: Option<f64>,
+    course_degrees: Option<f64>,
+    course_accuracy_degrees: Option<f64>,
+    simulated: Option<i64>,
+    produced_by_accessory: Option<i64>,
+    validation_state: Option<String>,
+    validation_reason: Option<String>,
+    route_admission: Option<String>,
+}
+
+impl LiveCaptureEventRow {
+    fn from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            sequence: row.get(0)?,
+            kind: row.get(1)?,
+            receipt_monotonic_ms: row.get(2)?,
+            source_monotonic_offset_ms: row.get(3)?,
+            source_wall_clock_unix_ms: row.get(4)?,
+            payload: row.get(5)?,
+            latitude_degrees: row.get(6)?,
+            longitude_degrees: row.get(7)?,
+            altitude_meters: row.get(8)?,
+            horizontal_accuracy_meters: row.get(9)?,
+            vertical_accuracy_meters: row.get(10)?,
+            speed_meters_per_second: row.get(11)?,
+            speed_accuracy_meters_per_second: row.get(12)?,
+            course_degrees: row.get(13)?,
+            course_accuracy_degrees: row.get(14)?,
+            simulated: row.get(15)?,
+            produced_by_accessory: row.get(16)?,
+            validation_state: row.get(17)?,
+            validation_reason: row.get(18)?,
+            route_admission: row.get(19)?,
+        })
+    }
+
+    fn into_event(self) -> Result<LiveCaptureEvent, StorageError> {
+        let Self {
+            sequence,
+            kind,
+            receipt_monotonic_ms,
+            source_monotonic_offset_ms,
+            source_wall_clock_unix_ms,
+            payload,
+            latitude_degrees,
+            longitude_degrees,
+            altitude_meters,
+            horizontal_accuracy_meters,
+            vertical_accuracy_meters,
+            speed_meters_per_second,
+            speed_accuracy_meters_per_second,
+            course_degrees,
+            course_accuracy_degrees,
+            simulated,
+            produced_by_accessory,
+            validation_state,
+            validation_reason,
+            route_admission,
+        } = self;
+        let location = read_location_observation(
+            sequence,
+            source_wall_clock_unix_ms,
+            LiveCaptureLocationRow {
+                latitude_degrees,
+                longitude_degrees,
+                altitude_meters,
+                horizontal_accuracy_meters,
+                vertical_accuracy_meters,
+                speed_meters_per_second,
+                speed_accuracy_meters_per_second,
+                course_degrees,
+                course_accuracy_degrees,
+                simulated,
+                produced_by_accessory,
+                validation_state,
+                validation_reason,
+                route_admission,
+            },
+        )?;
+        Ok(LiveCaptureEvent {
+            sequence,
+            kind: LiveCaptureEventKind::parse(&kind)?,
+            receipt_monotonic_ms,
+            source_monotonic_offset_ms,
+            source_wall_clock_unix_ms,
+            payload,
+            location,
+        })
+    }
+}
+
+struct LiveCaptureLocationRow {
+    latitude_degrees: Option<f64>,
+    longitude_degrees: Option<f64>,
+    altitude_meters: Option<f64>,
+    horizontal_accuracy_meters: Option<f64>,
+    vertical_accuracy_meters: Option<f64>,
+    speed_meters_per_second: Option<f64>,
+    speed_accuracy_meters_per_second: Option<f64>,
+    course_degrees: Option<f64>,
+    course_accuracy_degrees: Option<f64>,
+    simulated: Option<i64>,
+    produced_by_accessory: Option<i64>,
+    validation_state: Option<String>,
+    validation_reason: Option<String>,
+    route_admission: Option<String>,
+}
+
+fn read_location_observation(
+    sequence: u64,
+    source_wall_clock_unix_ms: Option<u64>,
+    row: LiveCaptureLocationRow,
+) -> Result<Option<LiveCaptureLocationObservation>, StorageError> {
+    let LiveCaptureLocationRow {
+        latitude_degrees,
+        longitude_degrees,
+        altitude_meters,
+        horizontal_accuracy_meters,
+        vertical_accuracy_meters,
+        speed_meters_per_second,
+        speed_accuracy_meters_per_second,
+        course_degrees,
+        course_accuracy_degrees,
+        simulated,
+        produced_by_accessory,
+        validation_state,
+        validation_reason,
+        route_admission,
+    } = row;
+    let location = match (latitude_degrees, longitude_degrees, altitude_meters) {
+        (None, None, None) => {
+            if horizontal_accuracy_meters.is_some()
+                || vertical_accuracy_meters.is_some()
+                || speed_meters_per_second.is_some()
+                || speed_accuracy_meters_per_second.is_some()
+                || course_degrees.is_some()
+                || course_accuracy_degrees.is_some()
+                || simulated.is_some()
+                || produced_by_accessory.is_some()
+                || validation_state.is_some()
+                || validation_reason.is_some()
+                || route_admission.is_some()
+            {
+                return Err(StorageError::InvalidStoredValue {
+                    field: "live capture location row",
+                    value: format!("partial observation at sequence {sequence}"),
+                });
+            }
+            None
+        }
+        (Some(latitude_degrees), Some(longitude_degrees), Some(altitude_meters)) => {
+            let simulated = parse_optional_bool(simulated, "location simulated flag")?;
+            let produced_by_accessory =
+                parse_optional_bool(produced_by_accessory, "location accessory flag")?;
+            let validation_state =
+                validation_state.ok_or_else(|| StorageError::InvalidStoredValue {
+                    field: "live capture location validation",
+                    value: "missing state".to_owned(),
+                })?;
+            let route_admission =
+                route_admission.ok_or_else(|| StorageError::InvalidStoredValue {
+                    field: "live capture location admission",
+                    value: "missing state".to_owned(),
+                })?;
+            Some(LiveCaptureLocationObservation {
+                location: PevcapPhoneLocation {
+                    wall_clock_unix_ms: source_wall_clock_unix_ms.unwrap_or_default(),
+                    latitude_degrees,
+                    longitude_degrees,
+                    altitude_meters,
+                    horizontal_accuracy_meters,
+                    vertical_accuracy_meters,
+                    speed_meters_per_second,
+                    speed_accuracy_meters_per_second,
+                    course_degrees,
+                    course_accuracy_degrees,
+                },
+                simulated,
+                produced_by_accessory,
+                validation: LiveCaptureLocationValidation::from_db(
+                    &validation_state,
+                    validation_reason.as_deref(),
+                )?,
+                admission: LiveCaptureLocationAdmission::from_db(&route_admission)?,
+            })
+        }
+        _ => {
+            return Err(StorageError::InvalidStoredValue {
+                field: "live capture location row",
+                value: format!("partial coordinates at sequence {sequence}"),
+            });
+        }
+    };
+    Ok(location)
+}
+
 pub(super) fn read(
     connection: &Connection,
     id: LiveCaptureId,
@@ -614,44 +1085,26 @@ pub(super) fn read(
         return Err(StorageError::NotFound);
     };
     let mut statement = connection.prepare(
-        "SELECT sequence, event_kind, receipt_monotonic_ms, source_monotonic_offset_ms,
-                source_wall_clock_unix_ms, payload
-         FROM live_capture_events
-         WHERE capture_id = ?1 AND sequence > COALESCE(?2, -1)
-         ORDER BY sequence LIMIT ?3",
+        "SELECT event.sequence, event.event_kind, event.receipt_monotonic_ms,
+                event.source_monotonic_offset_ms, event.source_wall_clock_unix_ms, event.payload,
+                location.latitude_degrees, location.longitude_degrees, location.altitude_meters,
+                location.horizontal_accuracy_meters, location.vertical_accuracy_meters,
+                location.speed_meters_per_second, location.speed_accuracy_meters_per_second,
+                location.course_degrees, location.course_accuracy_degrees,
+                location.simulated, location.produced_by_accessory,
+                location.validation_state, location.validation_reason, location.route_admission
+         FROM live_capture_events AS event
+         LEFT JOIN live_capture_location_observations AS location
+           ON location.capture_id = event.capture_id AND location.sequence = event.sequence
+         WHERE event.capture_id = ?1 AND event.sequence > COALESCE(?2, -1)
+         ORDER BY event.sequence LIMIT ?3",
     )?;
     let rows = statement.query_map(
         params![id.as_string(), after_sequence, limit.get()],
-        |row| {
-            Ok((
-                row.get::<_, u64>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, u64>(2)?,
-                row.get::<_, Option<i64>>(3)?,
-                row.get::<_, Option<u64>>(4)?,
-                row.get::<_, Vec<u8>>(5)?,
-            ))
-        },
+        LiveCaptureEventRow::from_row,
     )?;
     let events = rows
-        .map(|row| {
-            let (
-                sequence,
-                kind,
-                receipt_monotonic_ms,
-                source_monotonic_offset_ms,
-                source_wall_clock_unix_ms,
-                payload,
-            ) = row?;
-            Ok(LiveCaptureEvent {
-                sequence,
-                kind: LiveCaptureEventKind::parse(&kind)?,
-                receipt_monotonic_ms,
-                source_monotonic_offset_ms,
-                source_wall_clock_unix_ms,
-                payload,
-            })
-        })
+        .map(|row| row?.into_event())
         .collect::<Result<Vec<_>, StorageError>>()?;
     Ok(LiveCaptureSnapshot {
         id,
@@ -663,6 +1116,22 @@ pub(super) fn read(
         next_sequence: header.next_sequence,
         events,
     })
+}
+
+fn parse_optional_bool(
+    value: Option<i64>,
+    field: &'static str,
+) -> Result<Option<bool>, StorageError> {
+    value
+        .map(|value| match value {
+            0 => Ok(false),
+            1 => Ok(true),
+            _ => Err(StorageError::InvalidStoredValue {
+                field,
+                value: value.to_string(),
+            }),
+        })
+        .transpose()
 }
 
 struct LiveCaptureHeaderRow {

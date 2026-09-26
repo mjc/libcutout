@@ -2,7 +2,8 @@
 //! Mobile captures use SQLite as their live source and export a file only at finalization.
 
 use crate::storage::{
-    LiveCaptureEventKind, LiveCaptureId, LiveCaptureIntegrity, LiveCaptureState, QueryLimit,
+    LiveCaptureEventKind, LiveCaptureId, LiveCaptureIntegrity, LiveCaptureLocationAdmission,
+    LiveCaptureLocationObservation, LiveCaptureLocationValidation, LiveCaptureState, QueryLimit,
     RideDatabase,
 };
 use cutout_core::{
@@ -252,6 +253,7 @@ struct CaptureWriterEventLine {
     receipt_monotonic_ms: u64,
     source_monotonic_offset_ms: Option<i64>,
     source_wall_clock_unix_ms: Option<u64>,
+    location: Option<LiveCaptureLocationObservation>,
 }
 
 struct DatabaseCapture {
@@ -967,9 +969,16 @@ fn write_database_capture_stream(
             CaptureWriterAction::Event(event) => {
                 let payload = event.json_line.into_bytes();
                 let serialized_size = payload.len() as u64 + 1;
-                capture
-                    .database
-                    .append_live_capture_event(
+                if let Some(location) = event.location {
+                    capture.database.append_live_capture_location(
+                        capture.id,
+                        event.receipt_monotonic_ms,
+                        event.source_monotonic_offset_ms,
+                        location,
+                        payload,
+                    )
+                } else {
+                    capture.database.append_live_capture_event(
                         capture.id,
                         event.kind,
                         event.receipt_monotonic_ms,
@@ -977,7 +986,8 @@ fn write_database_capture_stream(
                         event.source_wall_clock_unix_ms,
                         payload,
                     )
-                    .map_err(|error| format!("could not persist live capture event: {error}"))?;
+                }
+                .map_err(|error| format!("could not persist live capture event: {error}"))?;
                 state
                     .bytes_written
                     .fetch_add(serialized_size, Ordering::AcqRel);
@@ -1220,6 +1230,7 @@ fn capture_writer_action(
                 source_wall_clock_unix_ms: record
                     .phone_location
                     .map(|location| location.wall_clock_unix_ms),
+                location: None,
             }))
         }
         CaptureWriterMessage::Location(location) => {
@@ -1231,6 +1242,13 @@ fn capture_writer_action(
                 receipt_monotonic_ms: location.receipt_monotonic_ms.as_milliseconds(),
                 source_monotonic_offset_ms: location.source_monotonic_offset_ms,
                 source_wall_clock_unix_ms: Some(location.location.wall_clock_unix_ms),
+                location: Some(LiveCaptureLocationObservation {
+                    location: location.location,
+                    simulated: location.simulated,
+                    produced_by_accessory: location.produced_by_accessory,
+                    validation: LiveCaptureLocationValidation::Valid,
+                    admission: LiveCaptureLocationAdmission::NotEvaluated,
+                }),
             }))
         }
         CaptureWriterMessage::Music(music) => {
@@ -1240,6 +1258,7 @@ fn capture_writer_action(
                 receipt_monotonic_ms: music.monotonic_at.as_milliseconds(),
                 source_monotonic_offset_ms: None,
                 source_wall_clock_unix_ms: Some(music.wall_clock_unix_ms.as_milliseconds()),
+                location: None,
             }))
         }
         CaptureWriterMessage::Metadata(metadata) => Ok(CaptureWriterAction::Metadata(metadata)),
