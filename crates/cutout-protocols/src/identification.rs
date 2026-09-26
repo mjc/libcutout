@@ -454,7 +454,9 @@ impl DeviceDetectionSession {
             }
         }
         let vesc_reply = match self.vesc_decoder.feed_result(bytes) {
-            Ok(VescReadOnlyStreamResult::Replies(ref replies)) if !replies.is_empty() => true,
+            Ok(VescReadOnlyStreamResult::Replies { ref replies, .. }) if !replies.is_empty() => {
+                true
+            }
             _ => false,
         };
         let bytes = veteran_frame.as_ref().map_or_else(

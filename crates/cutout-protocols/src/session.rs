@@ -623,8 +623,14 @@ impl VescNotificationDecoder {
         self.refloat_info_received |= info_received;
 
         match result {
-            Ok(RefloatStreamResult::Replies(reply_count)) => {
+            Ok(RefloatStreamResult::Replies {
+                count: reply_count,
+                malformed_frames,
+            }) => {
                 self.refloat_stream_pending = false;
+                if malformed_frames {
+                    push_parser_error(ParserError::MalformedFrame, output);
+                }
                 output.push(SessionOutput::NotificationIngest(
                     NotificationIngestOutcome::semantic_events(
                         family,
@@ -991,7 +997,13 @@ impl VescNotificationDecoder {
         emit_ingest: bool,
     ) -> (bool, bool) {
         match self.stream.feed_result(bytes) {
-            Ok(VescReadOnlyStreamResult::Replies(replies)) => {
+            Ok(VescReadOnlyStreamResult::Replies {
+                replies,
+                malformed_frames,
+            }) => {
+                if malformed_frames && report_errors {
+                    push_parser_error(ParserError::MalformedFrame, output);
+                }
                 let event_count = replies
                     .iter()
                     .fold(SemanticEventCount::default(), |count, reply| {
@@ -3786,6 +3798,62 @@ mod tests {
                 .iter()
                 .any(|delta| delta.speed.is_some()),
             "the Refloat stream remains usable after the mixed frame"
+        );
+    }
+
+    #[test]
+    fn generic_vesc_session_reports_corrupt_frame_before_following_valid_frame() {
+        let valid = vesc_selective_values_frame();
+        let mut corrupt = valid;
+        let checksum_index = corrupt.len() - 2;
+        corrupt[checksum_index] ^= 0xff;
+
+        let mut trailing = corrupt[3..].to_vec();
+        trailing.extend_from_slice(&valid);
+        let output = vesc_output_for_notification_chunks(&[&corrupt[..3], &trailing]);
+
+        assert!(
+            read_only_response_events(&output)
+                .iter()
+                .any(|response| matches!(response, ReadOnlyResponse::RawTelemetry(_))),
+            "the valid reply after a corrupt frame must still reach telemetry"
+        );
+        assert_eq!(
+            output
+                .iter()
+                .filter(|item| matches!(
+                    item,
+                    SessionOutput::Event(DeviceEvent::DiagnosticError(_))
+                ))
+                .count(),
+            1,
+            "the corrupt frame must remain visible alongside the valid reply"
+        );
+    }
+
+    #[test]
+    fn generic_vesc_session_reports_corrupt_refloat_frame_and_keeps_following_telemetry() {
+        let ids = refloat_realtime_ids_frame();
+        let valid = refloat_realtime_data_frame();
+        let mut corrupt = valid.clone();
+        let checksum_index = corrupt.len() - 2;
+        corrupt[checksum_index] ^= 0xff;
+
+        let mut trailing = corrupt[3..].to_vec();
+        trailing.extend_from_slice(&valid);
+        let output =
+            vesc_output_for_notification_chunks(&[ids.as_slice(), &corrupt[..3], &trailing]);
+
+        assert!(
+            telemetry_events(&output)
+                .iter()
+                .any(|delta| delta.speed.is_some()),
+            "valid Refloat telemetry after a corrupt frame must still be emitted"
+        );
+        assert_eq!(
+            diagnostic_error_events(&output).len(),
+            1,
+            "the corrupt Refloat frame must remain visible alongside telemetry"
         );
     }
 
