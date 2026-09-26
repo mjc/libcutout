@@ -1606,10 +1606,10 @@ pub struct PendingMusicHistoryRead {
     consumed: bool,
 }
 
-/// A history-policy update accepted by the bounded worker but not yet committed.
-#[must_use = "poll or wait for the durable music-history policy result"]
+/// A music-history mutation accepted by the bounded worker but not yet committed.
+#[must_use = "poll or wait for the durable music-history mutation result"]
 #[derive(Debug)]
-pub struct PendingMusicHistoryPolicyWrite {
+pub struct PendingMusicHistoryWrite {
     response: Receiver<Result<(), StorageError>>,
     consumed: bool,
 }
@@ -2248,8 +2248,8 @@ impl PendingMusicHistoryRead {
     }
 }
 
-impl PendingMusicHistoryPolicyWrite {
-    /// Returns the durable policy-write result when the worker has completed it.
+impl PendingMusicHistoryWrite {
+    /// Returns the durable mutation result when the worker has completed it.
     pub fn try_result(&mut self) -> Option<Result<(), StorageError>> {
         if self.consumed {
             return None;
@@ -2929,14 +2929,31 @@ impl RideDatabase {
         &self,
         ride_id: RideId,
         policy: MusicHistoryPolicy,
-    ) -> Result<PendingMusicHistoryPolicyWrite, StorageError> {
+    ) -> Result<PendingMusicHistoryWrite, StorageError> {
         let (reply, response) = response_channel();
         self.enqueue(Command::SaveMusicHistoryPolicy {
             ride_id,
             policy,
             reply,
         })?;
-        Ok(PendingMusicHistoryPolicyWrite {
+        Ok(PendingMusicHistoryWrite {
+            response,
+            consumed: false,
+        })
+    }
+
+    /// Queues a bounded music-history deletion without waiting for SQLite.
+    ///
+    /// # Errors
+    /// Returns [`StorageError::QueueFull`] when the worker queue is saturated, or
+    /// [`StorageError::WorkerStopped`] when the worker is unavailable.
+    pub fn queue_delete_music_history(
+        &self,
+        ride_id: RideId,
+    ) -> Result<PendingMusicHistoryWrite, StorageError> {
+        let (reply, response) = response_channel();
+        self.enqueue(Command::DeleteMusicHistory { ride_id, reply })?;
+        Ok(PendingMusicHistoryWrite {
             response,
             consumed: false,
         })

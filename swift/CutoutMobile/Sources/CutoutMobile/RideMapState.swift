@@ -1100,6 +1100,22 @@ public final class MobileRideMapState: @unchecked Sendable {
 
     public func setMusicHistoryPolicyAsync(_ policy: MobileMusicHistoryPolicyDto) async throws {
         let command = try withCore { try $0.beginSetMusicHistoryPolicy(policy: policy) }
+        try await completeMusicHistoryWrite(command)
+    }
+
+    public func deleteMusicHistoryAsync(rideID: String) async throws {
+        let command = try withCore {
+            try $0.beginDeleteStoredMusicHistory(rideId: ffiRideID(rideID))
+        }
+        try await completeMusicHistoryWrite(command)
+    }
+
+    public func deleteCurrentMusicHistoryAsync() async throws {
+        let command = try withCore { try $0.beginDeleteCurrentMusicHistory() }
+        try await completeMusicHistoryWrite(command)
+    }
+
+    private func completeMusicHistoryWrite(_ command: MobileRideMapMusicWriteCommand) async throws {
         // Once accepted, let the durable write settle independently of caller cancellation.
         let completion = Task {
             while true {

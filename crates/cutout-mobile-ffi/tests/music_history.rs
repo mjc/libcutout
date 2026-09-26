@@ -114,12 +114,12 @@ fn poll_music_history_command(
 }
 
 fn poll_music_policy_command(
-    command: &MobileRideMapMusicPolicyCommand,
+    command: &MobileRideMapMusicWriteCommand,
 ) -> Result<(), MobileRideMapCoreErrorDto> {
     loop {
         match command.poll()? {
-            MobileRideMapMusicPolicyPollDto::Pending => std::thread::yield_now(),
-            MobileRideMapMusicPolicyPollDto::Completed => return Ok(()),
+            MobileRideMapMusicWritePollDto::Pending => std::thread::yield_now(),
+            MobileRideMapMusicWritePollDto::Completed => return Ok(()),
         }
     }
 }
@@ -185,6 +185,47 @@ fn external_redaction_reaches_active_timeline() {
         core.current_music_events().unwrap()[0].title.is_none(),
         "active timeline still discloses redacted title"
     );
+}
+
+#[test]
+fn queued_history_deletion_stops_new_events_and_keeps_deleted_status() {
+    let fixture = setup();
+    record(
+        &fixture.core,
+        2_000,
+        2_000,
+        MobileMusicRideEventKindDto::Play,
+    )
+    .unwrap();
+
+    let deletion = fixture.core.begin_delete_current_music_history().unwrap();
+    let later_event = fixture
+        .core
+        .begin_record_music_event(
+            snapshot(3_000),
+            MobileMusicRideEventKindDto::Pause,
+            3_000,
+            1_700_000_003_000,
+            5,
+        )
+        .unwrap();
+
+    poll_music_policy_command(&deletion).unwrap();
+    let later_result = poll_music_command(&later_event).unwrap();
+    assert_eq!(
+        later_result.outcome,
+        MobileMusicTimelineOutcomeDto::Disabled
+    );
+    assert_eq!(
+        fixture.db.music_events(fixture.id.clone()).unwrap().len(),
+        0
+    );
+
+    let history = poll_music_history_command(&fixture.core.begin_current_music_history().unwrap())
+        .unwrap()
+        .unwrap();
+    assert_eq!(history.status, MobileMusicHistoryStatusDto::Deleted);
+    assert!(history.events.is_empty());
 }
 
 #[test]

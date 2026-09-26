@@ -4840,12 +4840,12 @@ pub enum MobileRideMapMusicHistoryPollDto {
     },
 }
 
-/// Nonblocking result of polling a durable music-history policy update.
+/// Nonblocking result of polling a durable music-history mutation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
-pub enum MobileRideMapMusicPolicyPollDto {
-    /// The bounded SQLite worker has not completed the policy update.
+pub enum MobileRideMapMusicWritePollDto {
+    /// The bounded SQLite worker has not completed the mutation.
     Pending,
-    /// The requested policy is durable.
+    /// The requested mutation is durable.
     Completed,
 }
 
@@ -7633,8 +7633,8 @@ enum MobileRideMapMusicHistoryCommandState {
 }
 
 #[derive(Debug)]
-enum MobileRideMapMusicPolicyCommandState {
-    Pending(persistence::PendingMusicHistoryPolicyWrite),
+enum MobileRideMapMusicWriteCommandState {
+    Pending(persistence::PendingMusicHistoryWrite),
     Completed(Result<(), MobileRideMapCoreErrorDto>),
 }
 
@@ -7652,11 +7652,15 @@ pub struct MobileRideMapMusicHistoryCommand {
     state: Mutex<MobileRideMapMusicHistoryCommandState>,
 }
 
-/// Pollable completion for one durable music-history policy update.
-#[must_use = "poll the music policy command until it returns a terminal result"]
+/// Pollable completion for one durable music-history mutation.
+#[must_use = "poll the music-history write until it returns a terminal result"]
 #[derive(Debug, uniffi::Object)]
-pub struct MobileRideMapMusicPolicyCommand {
-    state: Mutex<MobileRideMapMusicPolicyCommandState>,
+pub struct MobileRideMapMusicWriteCommand {
+    core: Arc<MobileRideMapCore>,
+    ride_id: MobileRideIdDto,
+    previous_policy: Option<CoreMusicHistoryPolicy>,
+    deletes_history: bool,
+    state: Mutex<MobileRideMapMusicWriteCommandState>,
 }
 
 impl MobileRideMapConnectionAdmission {
@@ -7712,10 +7716,20 @@ impl MobileRideMapMusicHistoryCommand {
     }
 }
 
-impl MobileRideMapMusicPolicyCommand {
-    fn pending(storage: persistence::PendingMusicHistoryPolicyWrite) -> Arc<Self> {
+impl MobileRideMapMusicWriteCommand {
+    fn pending(
+        core: Arc<MobileRideMapCore>,
+        ride_id: MobileRideIdDto,
+        previous_policy: Option<CoreMusicHistoryPolicy>,
+        deletes_history: bool,
+        storage: persistence::PendingMusicHistoryWrite,
+    ) -> Arc<Self> {
         Arc::new(Self {
-            state: Mutex::new(MobileRideMapMusicPolicyCommandState::Pending(storage)),
+            core,
+            ride_id,
+            previous_policy,
+            deletes_history,
+            state: Mutex::new(MobileRideMapMusicWriteCommandState::Pending(storage)),
         })
     }
 }
@@ -7833,27 +7847,47 @@ impl MobileRideMapMusicHistoryCommand {
 }
 
 #[uniffi::export]
-impl MobileRideMapMusicPolicyCommand {
-    /// Returns immediately with pending/completed durable policy state.
+impl MobileRideMapMusicWriteCommand {
+    /// Returns immediately with pending/completed durable mutation state.
     ///
     /// # Errors
     ///
-    /// Returns the terminal storage error for this update.
-    pub fn poll(&self) -> Result<MobileRideMapMusicPolicyPollDto, MobileRideMapCoreErrorDto> {
+    /// Returns the terminal storage error for this mutation.
+    pub fn poll(&self) -> Result<MobileRideMapMusicWritePollDto, MobileRideMapCoreErrorDto> {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         let result = match &mut *state {
-            MobileRideMapMusicPolicyCommandState::Completed(result) => {
+            MobileRideMapMusicWriteCommandState::Completed(result) => {
                 return result
                     .clone()
-                    .map(|()| MobileRideMapMusicPolicyPollDto::Completed);
+                    .map(|()| MobileRideMapMusicWritePollDto::Completed);
             }
-            MobileRideMapMusicPolicyCommandState::Pending(storage) => match storage.try_result() {
+            MobileRideMapMusicWriteCommandState::Pending(storage) => match storage.try_result() {
                 Some(result) => result.map_err(map_storage_core_error),
-                None => return Ok(MobileRideMapMusicPolicyPollDto::Pending),
+                None => return Ok(MobileRideMapMusicWritePollDto::Pending),
             },
         };
-        *state = MobileRideMapMusicPolicyCommandState::Completed(result.clone());
-        result.map(|()| MobileRideMapMusicPolicyPollDto::Completed)
+        let mut core = self
+            .core
+            .inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if self.deletes_history
+            && core
+                .ride_id
+                .as_ref()
+                .is_some_and(|current| current == &self.ride_id)
+        {
+            match &result {
+                Ok(()) => core.reset_music_history_policy(),
+                Err(_) => {
+                    if let Some(policy) = self.previous_policy {
+                        core.apply_music_history_policy(policy);
+                    }
+                }
+            }
+        }
+        *state = MobileRideMapMusicWriteCommandState::Completed(result.clone());
+        result.map(|()| MobileRideMapMusicWritePollDto::Completed)
     }
 }
 
@@ -10241,9 +10275,9 @@ impl MobileRideMapCore {
     /// worker rejects the command.
     #[allow(clippy::needless_pass_by_value)]
     pub fn begin_set_music_history_policy(
-        &self,
+        self: &Arc<Self>,
         policy: MobileMusicHistoryPolicyDto,
-    ) -> Result<Arc<MobileRideMapMusicPolicyCommand>, MobileRideMapCoreErrorDto> {
+    ) -> Result<Arc<MobileRideMapMusicWriteCommand>, MobileRideMapCoreErrorDto> {
         let state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         state.require_ready()?;
         let Some(ride_id) = state.ride_id.as_ref() else {
@@ -10255,12 +10289,72 @@ impl MobileRideMapCore {
         let Some(database) = state.database.as_ref() else {
             return Err(MobileRideMapCoreErrorDto::storage_unavailable());
         };
+        let ride_id_dto = ride_id.clone();
         let ride_id = parse_mobile_ride_id(ride_id).map_err(map_core_error)?;
         let storage = database
             .inner
             .queue_save_music_history_policy(ride_id, policy.into())
             .map_err(map_storage_core_error)?;
-        Ok(MobileRideMapMusicPolicyCommand::pending(storage))
+        Ok(MobileRideMapMusicWriteCommand::pending(
+            Arc::clone(self),
+            ride_id_dto,
+            None,
+            false,
+            storage,
+        ))
+    }
+
+    /// Queues deletion of stored music metadata for one ride.
+    ///
+    /// When the ride is currently selected, new events are refused until deletion settles. A
+    /// failed write restores the prior in-memory policy; a successful write leaves it disabled.
+    ///
+    /// # Errors
+    /// Returns an error when the ride identifier, storage, or bounded worker rejects the command.
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn begin_delete_stored_music_history(
+        self: &Arc<Self>,
+        ride_id: MobileRideIdDto,
+    ) -> Result<Arc<MobileRideMapMusicWriteCommand>, MobileRideMapCoreErrorDto> {
+        let parsed_ride_id = parse_mobile_ride_id(&ride_id).map_err(map_core_error)?;
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        let Some(database) = state.database.clone() else {
+            return Err(MobileRideMapCoreErrorDto::storage_unavailable());
+        };
+        let previous_policy =
+            (state.ride_id.as_ref() == Some(&ride_id)).then_some(state.music_history_policy);
+        let storage = database
+            .inner
+            .queue_delete_music_history(parsed_ride_id)
+            .map_err(map_storage_core_error)?;
+        if previous_policy.is_some() {
+            state.apply_music_history_policy(CoreMusicHistoryPolicy::Disabled);
+        }
+        drop(state);
+        Ok(MobileRideMapMusicWriteCommand::pending(
+            Arc::clone(self),
+            ride_id,
+            previous_policy,
+            true,
+            storage,
+        ))
+    }
+
+    /// Queues deletion of music metadata for the current ride.
+    ///
+    /// # Errors
+    /// Returns an error when there is no current ride or storage rejects the command.
+    pub fn begin_delete_current_music_history(
+        self: &Arc<Self>,
+    ) -> Result<Arc<MobileRideMapMusicWriteCommand>, MobileRideMapCoreErrorDto> {
+        let ride_id = self
+            .inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .ride_id
+            .clone()
+            .ok_or(MobileRideMapCoreErrorDto::NoActiveRide)?;
+        self.begin_delete_stored_music_history(ride_id)
     }
 
     /// Records one low-rate provider transition for the active ride.

@@ -285,20 +285,22 @@ final class MusicFeatureModel {
     }
 
     @discardableResult
-    func forgetHistory(for rideID: String) -> Bool {
+    func forgetHistory(for rideID: String) async -> Bool {
         guard let rideMapState else {
             setRideHistoryError(.storageError("Rust ride database is unavailable"))
             return false
         }
         invalidateHistoryForDeletion()
+        let currentRide = rideMapState.currentSnapshot()
+        let isOpenCurrentRide = currentRide?.rideID == rideID && currentRide?.state.isOpen == true
         do {
-            if rideMapState.currentSnapshot()?.rideID == rideID,
-                rideMapState.currentSnapshot()?.state.isOpen == true
-            {
-                try rideMapState.deleteCurrentMusicHistory()
-                clearActiveHistory()
+            if isOpenCurrentRide {
+                try await rideMapState.deleteCurrentMusicHistoryAsync()
+                if rideMapState.currentSnapshot()?.rideID == rideID {
+                    clearActiveHistory()
+                }
             } else {
-                try rideMapState.deleteMusicHistory(rideID: rideID)
+                try await rideMapState.deleteMusicHistoryAsync(rideID: rideID)
                 if rideMapState.currentSnapshot()?.rideID == rideID {
                     historyPolicy = .disabled
                     historyUnavailable = false

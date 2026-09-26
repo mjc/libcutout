@@ -9,7 +9,7 @@ struct RideMapHistoryMusicDetail {
     let timelineUnavailable: Bool
     let state: MobileMusicHistoryStateDto?
     let error: MobileRideMapError?
-    private let forgetMusicHistory: (String) -> Bool
+    private let forgetMusicHistory: @MainActor (String) async -> Bool
 
     init(
         rideID: String,
@@ -17,7 +17,7 @@ struct RideMapHistoryMusicDetail {
         timelineUnavailable: Bool = false,
         state: MobileMusicHistoryStateDto? = nil,
         error: MobileRideMapError? = nil,
-        forgetMusicHistory: @escaping (String) -> Bool
+        forgetMusicHistory: @escaping @MainActor (String) async -> Bool
     ) {
         self.rideID = rideID
         self.events = events
@@ -31,8 +31,8 @@ struct RideMapHistoryMusicDetail {
         !events.isEmpty || state == .redacted || state == .humanReadable
     }
 
-    func forget() -> Bool {
-        forgetMusicHistory(rideID)
+    func forget() async -> Bool {
+        await forgetMusicHistory(rideID)
     }
 }
 
@@ -197,7 +197,7 @@ struct RideMapHistoryDetailView: View {
                                 musicHistoryError: music.error,
                                 musicHistoryCanForget: music.canForget,
                                 forgetMusicHistory: {
-                                    music.forget()
+                                    await music.forget()
                                 },
                                 state: routeState,
                                 loadRoutePreview: loadRoutePreview,

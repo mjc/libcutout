@@ -115,7 +115,7 @@ final class MusicFeatureModelTests: XCTestCase {
         }
     #endif
 
-    func testDeletingHistoryInvalidatesDetailBeforeRustDeleteAndClearsCaptureBeforeSelection() throws {
+    func testDeletingHistoryInvalidatesDetailBeforeRustDeleteAndClearsCaptureBeforeSelection() async throws {
         let state = MobileRideMapState()
         _ = try state.startGpsOnly(atMs: 100)
         let suite = try makeDefaults()
@@ -141,7 +141,8 @@ final class MusicFeatureModelTests: XCTestCase {
         XCTAssertTrue(model.ingestObservation(observation(atMs: 200), wallClockAtMs: 1_700_000_000_000))
         let rideID = try XCTUnwrap(state.currentSnapshot()?.rideID)
 
-        XCTAssertTrue(model.forgetHistory(for: rideID))
+        let didForget = await model.forgetHistory(for: rideID)
+        XCTAssertTrue(didForget)
 
         XCTAssertEqual(order, ["invalidate", "capture-clear", "selection-clear"])
         XCTAssertEqual(model.historyPolicy, .disabled)

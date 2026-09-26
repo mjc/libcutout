@@ -12,7 +12,7 @@ final class RideMapPresentationTests: XCTestCase {
         XCTAssertEqual(RideMapControlsView.controlSet(for: .stopped), .terminal)
     }
 
-    func testHistoryMusicForgetUsesDestinationRideID() {
+    func testHistoryMusicForgetUsesDestinationRideID() async {
         var forgottenRideID: String?
         let music = RideMapHistoryMusicDetail(
             rideID: "destination-ride",
@@ -23,12 +23,13 @@ final class RideMapPresentationTests: XCTestCase {
             }
         )
 
-        XCTAssertTrue(music.forget())
+        let didForget = await music.forget()
+        XCTAssertTrue(didForget)
         XCTAssertEqual(forgottenRideID, "destination-ride")
     }
 
     func testHistoryMusicForgetRequiresRetainedMetadata() {
-        let forget: (String) -> Bool = { _ in true }
+        let forget: @MainActor (String) async -> Bool = { _ in true }
         let missing = RideMapHistoryMusicDetail(
             rideID: "missing",
             events: [],

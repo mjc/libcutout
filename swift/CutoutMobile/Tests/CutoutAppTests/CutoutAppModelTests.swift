@@ -573,7 +573,8 @@ final class CutoutAppModelTests: XCTestCase {
             let gatedProjectionStarted = await query.waitUntilGatedProjectionStarts()
             XCTAssertTrue(gatedProjectionStarted)
 
-            XCTAssertTrue(model.music.forgetHistory(for: rideID))
+            let didForget = await model.music.forgetHistory(for: rideID)
+            XCTAssertTrue(didForget)
             XCTAssertFalse(model.rideHistory.routeLoading)
             XCTAssertFalse(model.rideHistory.detailRouteLoading)
             XCTAssertEqual(model.rideHistory.detailProjectionRideID, rideID)
