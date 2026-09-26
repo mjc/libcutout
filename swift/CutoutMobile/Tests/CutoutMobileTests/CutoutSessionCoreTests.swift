@@ -263,7 +263,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(log.droppedCount, 1)
     }
 
-    func testLinkUpCaptureFailureUsesTheCoreFailurePolicy() {
+    func testLinkUpCaptureFailureDoesNotFailTheConnection() {
         let capture = CaptureRecorderSpy()
         capture.recordLinkUpResult = .failed
         let core = CutoutSessionCore(
@@ -273,9 +273,65 @@ final class CutoutSessionCoreTests: XCTestCase {
 
         core.applyLinkUpStep(CoreBluetoothSessionStep(operations: [], snapshot: nil))
 
-        XCTAssertEqual(core.phase, .failed(.sessionFailed("capture writer queue overrun")))
+        XCTAssertEqual(core.phase, .subscribing)
         XCTAssertEqual(capture.publishFailureCount, 1)
         XCTAssertEqual(capture.finishCount, 1)
+    }
+
+    func testLinkUpSnapshotIsReducedWhenCaptureRecordingFails() {
+        let capture = CaptureRecorderSpy()
+        capture.recordLinkUpResult = .failed
+        let receivedAt = MonotonicMilliseconds(42)
+        let core = CutoutSessionCore(
+            clock: MonotonicClock(now: { receivedAt }),
+            captureRecorder: capture
+        )
+        let snapshot = TelemetrySnapshot(at: receivedAt, speed: speedValue(1_234))
+
+        core.applyLinkUpStep(CoreBluetoothSessionStep(operations: [], snapshot: snapshot))
+
+        XCTAssertEqual(core.displayState.speed.millimetersPerSecond, 1_234)
+        XCTAssertEqual(core.displayState.telemetry, snapshot)
+        XCTAssertEqual(core.displayState.notificationCount, 0)
+        XCTAssertEqual(core.displayState.lastUpdate, receivedAt)
+        XCTAssertTrue(core.hasObservedSpeedSnapshot)
+        XCTAssertEqual(core.phase, .subscribing)
+        XCTAssertEqual(capture.publishFailureCount, 1)
+        XCTAssertEqual(capture.finishCount, 1)
+    }
+
+    func testLinkUpWithoutSnapshotDoesNotRefreshStaleTelemetry() {
+        let previousSnapshot = TelemetrySnapshot(speed: speedValue(1_234))
+        let previous = RideDisplayState(
+            speed: SpeedReadout(snapshot: previousSnapshot),
+            telemetry: previousSnapshot,
+            notificationCount: 7,
+            lastUpdate: MonotonicMilliseconds(12)
+        )
+
+        let updated = previous.reducingLinkUpSnapshot(
+            nil,
+            receivedAt: MonotonicMilliseconds(42)
+        )
+
+        XCTAssertEqual(updated, previous)
+    }
+
+    func testLinkUpWithoutTelemetryTimestampDoesNotRefreshStaleTelemetry() {
+        let previousSnapshot = TelemetrySnapshot(speed: speedValue(8_000))
+        let previous = RideDisplayState(
+            speed: SpeedReadout(snapshot: previousSnapshot),
+            telemetry: previousSnapshot,
+            notificationCount: 3,
+            lastUpdate: MonotonicMilliseconds(20)
+        )
+
+        let updated = previous.reducingLinkUpSnapshot(
+            TelemetrySnapshot(),
+            receivedAt: MonotonicMilliseconds(42)
+        )
+
+        XCTAssertEqual(updated, previous)
     }
 
     @MainActor
@@ -1448,9 +1504,14 @@ final class CutoutSessionCoreTests: XCTestCase {
             applyActions: { _ in events.append("actions") },
             observeRideMapConnection: { _ in events.append("map") },
             persistBmsSamples: { _ in events.append("bms") },
-            reduceDisplayState: { state, snapshot, receivedAt in
+            reduceDisplayState: { state, snapshot, receivedAt, updateKind in
                 events.append("display")
-                return state.reducing(snapshot: snapshot, receivedAt: receivedAt)
+                switch updateKind {
+                case .linkUp:
+                    return state.reducingLinkUpSnapshot(snapshot, receivedAt: receivedAt)
+                case .notification:
+                    return state.reducing(snapshot: snapshot, receivedAt: receivedAt)
+                }
             }
         )
         let core = CutoutSessionCore(
@@ -1471,6 +1532,42 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(core.displayState.speed.millimetersPerSecond, 1_234)
         XCTAssertEqual(core.displayState.notificationCount, 1)
         XCTAssertEqual(core.displayState.lastUpdate, MonotonicMilliseconds(42))
+    }
+
+    func testLinkUpRunsSharedEffectsBeforeOneNonNotificationDisplayReduction() {
+        var events = [String]()
+        let effects = CutoutSessionNotificationEffects(
+            applyActions: { _ in events.append("actions") },
+            observeRideMapConnection: { _ in events.append("map") },
+            persistBmsSamples: { _ in events.append("bms") },
+            reduceDisplayState: { state, snapshot, receivedAt, updateKind in
+                events.append("display")
+                switch updateKind {
+                case .linkUp:
+                    return state.reducingLinkUpSnapshot(snapshot, receivedAt: receivedAt)
+                case .notification:
+                    return state.reducing(snapshot: snapshot, receivedAt: receivedAt)
+                }
+            }
+        )
+        let capture = CaptureRecorderSpy()
+        let receivedAt = MonotonicMilliseconds(100)
+        let core = CutoutSessionCore(
+            clock: MonotonicClock(now: { receivedAt }),
+            notificationEffects: effects,
+            captureRecorder: capture
+        )
+        let snapshot = TelemetrySnapshot(at: receivedAt, speed: speedValue(2_468))
+
+        core.applyLinkUpStep(CoreBluetoothSessionStep(operations: [], snapshot: snapshot))
+
+        XCTAssertEqual(events, ["actions", "map", "bms", "display"])
+        XCTAssertEqual(core.displayState.speed.millimetersPerSecond, 2_468)
+        XCTAssertEqual(core.displayState.telemetry, snapshot)
+        XCTAssertEqual(core.displayState.notificationCount, 0)
+        XCTAssertEqual(core.displayState.lastUpdate, receivedAt)
+        XCTAssertTrue(core.hasObservedSpeedSnapshot)
+        XCTAssertEqual(core.phase, .subscribing)
     }
 
     func testApplyNotificationStepPublishesDisplayStateOnMainThread() {

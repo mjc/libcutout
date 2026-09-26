@@ -8,13 +8,18 @@ struct CutoutSessionNotificationEffects {
     let applyActions: ([SessionAction]) -> Void
     let observeRideMapConnection: (MonotonicMilliseconds) -> Void
     let persistBmsSamples: ([BmsRawVoltageObservation]) -> Void
-    let reduceDisplayState: (RideDisplayState, TelemetrySnapshot?, MonotonicMilliseconds) -> RideDisplayState
+    let reduceDisplayState:
+        (
+            RideDisplayState, TelemetrySnapshot?, MonotonicMilliseconds, RideDisplayUpdateKind
+        ) -> RideDisplayState
 
     init(
         applyActions: @escaping ([SessionAction]) -> Void,
         observeRideMapConnection: @escaping (MonotonicMilliseconds) -> Void,
         persistBmsSamples: @escaping ([BmsRawVoltageObservation]) -> Void,
-        reduceDisplayState: @escaping (RideDisplayState, TelemetrySnapshot?, MonotonicMilliseconds) -> RideDisplayState
+        reduceDisplayState: @escaping (
+            RideDisplayState, TelemetrySnapshot?, MonotonicMilliseconds, RideDisplayUpdateKind
+        ) -> RideDisplayState
     ) {
         self.applyActions = applyActions
         self.observeRideMapConnection = observeRideMapConnection

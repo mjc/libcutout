@@ -545,7 +545,6 @@ public final class CutoutSessionCore: NSObject {
     private var suppressReconnect = false
     private var isIngestingLiveNotification = false
     private var deferredCaptureFailureMessage: String?
-    private var deferredCaptureFailureIsNotification = false
     private let reconnectController: ConnectionReconnectController
     private let reconnectJitter: () -> Double
     private lazy var captureRecorder: any CutoutSessionCaptureRecording =
@@ -597,8 +596,13 @@ public final class CutoutSessionCore: NSObject {
             persistBmsSamples: { [weak self] observations in
                 self?.persistBmsSamples(observations)
             },
-            reduceDisplayState: { state, snapshot, receivedAt in
-                state.reducing(snapshot: snapshot, receivedAt: receivedAt)
+            reduceDisplayState: { state, snapshot, receivedAt, updateKind in
+                switch updateKind {
+                case .linkUp:
+                    state.reducingLinkUpSnapshot(snapshot, receivedAt: receivedAt)
+                case .notification:
+                    state.reducing(snapshot: snapshot, receivedAt: receivedAt)
+                }
             }
         )
     private let rideMapStateForInitialization: MobileRideMapState?
@@ -1544,11 +1548,9 @@ public final class CutoutSessionCore: NSObject {
 
     func applyLinkUpStep(_ step: CoreBluetoothSessionStep) {
         record("link_operations=\(step.operations.map(String.init(describing:)).joined(separator: ","))")
-        guard recordCaptureLinkUp() else { return }
-        if let snapshot = step.snapshot {
-            hasObservedSpeedSnapshot = snapshot.speed?.value != nil
-        }
-        publishPhoneAlarmActionsAvailable()
+        recordCaptureLinkUp()
+        let receivedAt = clock.now()
+        applyAcceptedSessionStep(step, receivedAt: receivedAt, displayUpdateKind: .linkUp)
         setPhase(.subscribing)
     }
 
@@ -1557,6 +1559,15 @@ public final class CutoutSessionCore: NSObject {
             return
         }
         cancelPendingReconnect()
+        applyAcceptedSessionStep(step, receivedAt: receivedAt, displayUpdateKind: .notification)
+        setPhase(.live)
+    }
+
+    private func applyAcceptedSessionStep(
+        _ step: CoreBluetoothSessionStep,
+        receivedAt: MonotonicMilliseconds,
+        displayUpdateKind: RideDisplayUpdateKind
+    ) {
         let bmsObservations = step.actions.compactMap { action in
             action.kind == .bmsSnapshot ? action.bmsSnapshot : nil
         }.flatMap(\.rawObservations)
@@ -1564,11 +1575,15 @@ public final class CutoutSessionCore: NSObject {
         notificationEffects.observeRideMapConnection(receivedAt)
         notificationEffects.persistBmsSamples(bmsObservations)
         let snapshot = step.snapshot
-        displayState = notificationEffects.reduceDisplayState(displayState, snapshot, receivedAt)
+        displayState = notificationEffects.reduceDisplayState(
+            displayState,
+            snapshot,
+            receivedAt,
+            displayUpdateKind
+        )
         hasObservedSpeedSnapshot = hasObservedSpeedSnapshot || snapshot?.speed?.value != nil
         publishDisplayState()
         publishPhoneAlarmActionsAvailable()
-        setPhase(.live)
     }
 
     private func applySessionAction(_ action: SessionAction) {
@@ -1844,8 +1859,7 @@ public final class CutoutSessionCore: NSObject {
         liveOwner = nil
         deviceDetectionSession.reset()
         _ = deviceDetectionSession.observeAdvertisement(name: advertisement.localName.map { Data($0.utf8) })
-        guard startCapture(reason: "protocol-detection", annotations: ["intent=manual_use"])
-        else { return false }
+        _ = startCapture(reason: "protocol-detection", annotations: ["intent=manual_use"])
         clearFaultHistoryReadback()
         clearBmsSnapshot()
         clearProtocolIdentityCandidate()
@@ -1868,7 +1882,8 @@ public final class CutoutSessionCore: NSObject {
         )
         owner.onSubscriptionFailure = { [weak self] channel, error in
             guard let self, self.liveOwner?.token == token else { return }
-            self.failConnectionCapture()
+            _ = self.rustSessionState.connectionTransportFailed(token: token)
+            self.publishConnectionSnapshot()
             self.cancelFailedConnectionAttempt()
             self.setPhase(
                 .failed(
@@ -1896,7 +1911,6 @@ public final class CutoutSessionCore: NSObject {
             )
             liveOwner = owner
             attachSettingsCallback()
-            setPhase(.subscribing)
             owner.recordInventory(CoreBluetoothGattInventory(services: peripheral.services ?? []))
             applyLinkUpStep(try owner.handleLinkUp(at: clock.now()))
         } catch {
@@ -2033,12 +2047,10 @@ public final class CutoutSessionCore: NSObject {
                         guard !self.suppressReconnect,
                             self.connectionSnapshot.generation == connectionGeneration
                         else { return }
-                        guard
-                            self.startCapture(
-                                reason: "protocol-detection",
-                                annotations: ["intent=previously_connected"]
-                            )
-                        else { return }
+                        _ = self.startCapture(
+                            reason: "protocol-detection",
+                            annotations: ["intent=previously_connected"]
+                        )
                         reconnect()
                     }
                 }
@@ -2329,8 +2341,7 @@ public final class CutoutSessionCore: NSObject {
             guard let serviceUuid = service.flatMap(BluetoothUuid.init(coreBluetoothUuid:)) else {
                 record("capture_error=notification_missing_service characteristic=\(characteristic.uuidString)")
                 failCaptureWriter(
-                    message: "missing service UUID for \(characteristic.uuidString)",
-                    notificationFailure: true
+                    message: "missing service UUID for \(characteristic.uuidString)"
                 )
                 return false
             }
@@ -2373,12 +2384,9 @@ public final class CutoutSessionCore: NSObject {
             advertisedName: advertisement?.localName
         )
         guard started else {
-            failConnectionCapture()
             record("capture_error=writer_start_failed")
             _ = rustSessionState.captureWriterStartFailed(generation: identity)
             publishCaptureEvent(.failed(generation: generation))
-            setPhase(.failed(.sessionFailed("capture writer failed to start")))
-            cancelFailedConnectionAttempt()
             return false
         }
         _ = rustSessionState.captureWriterStarted(generation: identity)
@@ -2440,55 +2448,28 @@ public final class CutoutSessionCore: NSObject {
         failCaptureWriter(message: "capture writer queue overrun")
     }
 
-    private func failCaptureWriter(message: String, notificationFailure: Bool = false) {
+    private func failCaptureWriter(message: String) {
         if isIngestingLiveNotification {
             deferredCaptureFailureMessage = message
-            deferredCaptureFailureIsNotification = notificationFailure
             return
         }
-        failConnectionCapture()
-        publishCaptureFailure()
-        setPhase(
-            .failed(
-                notificationFailure
-                    ? .notificationFailed(message)
-                    : .sessionFailed(message)
-            )
-        )
+        record("capture_error=writer_failed reason=\(message)")
         if let generation = captureGeneration {
             _ = rustSessionState.captureWriterFailed(generation: generation.dto)
         }
+        publishCaptureFailure()
         finishCaptureWriter(priorWriteSucceeded: false)
-        isRecordOnly = false
-        cancelFailedConnectionAttempt()
     }
 
     private func finishDeferredCaptureFailure() {
         guard let message = deferredCaptureFailureMessage else { return }
         deferredCaptureFailureMessage = nil
-        let notificationFailure = deferredCaptureFailureIsNotification
-        deferredCaptureFailureIsNotification = false
-        failConnectionCapture()
+        record("capture_error=writer_failed reason=\(message)")
         if let generation = captureGeneration {
             _ = rustSessionState.captureWriterFailed(generation: generation.dto)
         }
         publishCaptureFailure()
-        setPhase(
-            .failed(
-                notificationFailure
-                    ? .notificationFailed(message)
-                    : .sessionFailed(message)
-            )
-        )
         finishCaptureWriter(priorWriteSucceeded: false)
-        isRecordOnly = false
-        cancelFailedConnectionAttempt()
-    }
-
-    private func failConnectionCapture() {
-        guard let token = connectionAttempt?.token else { return }
-        _ = rustSessionState.failConnectionCapture(token: token)
-        publishConnectionSnapshot()
     }
 
     private func finishCaptureAfterLinkDown() {
@@ -2497,12 +2478,11 @@ public final class CutoutSessionCore: NSObject {
         finishCaptureWriter(priorWriteSucceeded: outcome == .accepted)
     }
 
-    @discardableResult
-    private func recordCaptureLinkUp() -> Bool {
+    private func recordCaptureLinkUp() {
         let maxWriteLength = peripheral.map {
             UInt16(clamping: $0.maximumWriteValueLength(for: .withoutResponse))
         }
-        return acceptCaptureWrite(captureRecorder.recordLinkUp(maxWriteLength: maxWriteLength))
+        _ = acceptCaptureWrite(captureRecorder.recordLinkUp(maxWriteLength: maxWriteLength))
     }
 
     private func finishCaptureWriter(
@@ -2756,8 +2736,7 @@ extension CutoutSessionCore {
 
     @discardableResult
     fileprivate func prepareRestoredRide() -> Bool {
-        guard startCapture(reason: "protocol-detection", annotations: ["intent=previously_connected"])
-        else { return false }
+        _ = startCapture(reason: "protocol-detection", annotations: ["intent=previously_connected"])
         clearFaultHistoryReadback()
         clearBmsSnapshot()
         clearProtocolIdentityCandidate()
@@ -2948,7 +2927,7 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
         setPhase(.discoveringServices)
         peripheral.delegate = attempt
         if isRecordOnly || isDetectingProtocol {
-            guard recordCaptureLinkUp() else { return }
+            recordCaptureLinkUp()
         }
         peripheral.discoverServices(discoveryServiceUuidsForSelectedRoute)
     }
@@ -3073,14 +3052,12 @@ extension CutoutSessionCore: CBPeripheralDelegate {
         }
         if isDetectingProtocol {
             guard promoteProtocolDetectionIfResolved(detectionResolution, on: characteristic.service?.peripheral) else {
-                guard
-                    captureFrame(
-                        direction: "notify",
-                        characteristic: characteristic.uuid,
-                        service: characteristic.service?.uuid,
-                        bytes: value
-                    )
-                else { return }
+                _ = captureFrame(
+                    direction: "notify",
+                    characteristic: characteristic.uuid,
+                    service: characteristic.service?.uuid,
+                    bytes: value
+                )
                 publishCaptureProgress()
                 if isDetectingProtocol, channel.bluetooth16Value == 0xffe1,
                     deviceDetectionSession.nextBegodeProbeExpiry(
@@ -3096,14 +3073,12 @@ extension CutoutSessionCore: CBPeripheralDelegate {
             }
         }
         if isRecordOnly {
-            guard
-                captureFrame(
-                    direction: "notify",
-                    characteristic: characteristic.uuid,
-                    service: characteristic.service?.uuid,
-                    bytes: value
-                )
-            else { return }
+            _ = captureFrame(
+                direction: "notify",
+                characteristic: characteristic.uuid,
+                service: characteristic.service?.uuid,
+                bytes: value
+            )
             record("record_only_notification=\(characteristic.uuid.uuidString) bytes=\(value.count)")
             publishCaptureProgress()
             return

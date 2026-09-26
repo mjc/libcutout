@@ -3741,6 +3741,22 @@ public struct RideDisplayState: Equatable, Hashable, Sendable {
         snapshot: TelemetrySnapshot?,
         receivedAt: MonotonicMilliseconds
     ) -> RideDisplayState {
+        reducing(snapshot: snapshot, receivedAt: receivedAt, notificationCount: notificationCount + 1)
+    }
+
+    func reducingLinkUpSnapshot(
+        _ snapshot: TelemetrySnapshot?,
+        receivedAt: MonotonicMilliseconds
+    ) -> RideDisplayState {
+        guard let snapshot, snapshot.at != nil else { return self }
+        return reducing(snapshot: snapshot, receivedAt: receivedAt, notificationCount: notificationCount)
+    }
+
+    private func reducing(
+        snapshot: TelemetrySnapshot?,
+        receivedAt: MonotonicMilliseconds,
+        notificationCount: UInt64
+    ) -> RideDisplayState {
         let nextSpeed: SpeedReadout
         if let snapshot, snapshot.speed != nil {
             nextSpeed = SpeedReadout(snapshot: snapshot)
@@ -3750,7 +3766,7 @@ public struct RideDisplayState: Equatable, Hashable, Sendable {
         return RideDisplayState(
             speed: nextSpeed,
             telemetry: snapshot ?? telemetry,
-            notificationCount: notificationCount + 1,
+            notificationCount: notificationCount,
             lastUpdate: receivedAt
         )
     }
@@ -3758,6 +3774,11 @@ public struct RideDisplayState: Equatable, Hashable, Sendable {
     private var lastUpdateText: String {
         lastUpdate.map { "\($0.rawValue) ms" } ?? "never"
     }
+}
+
+enum RideDisplayUpdateKind {
+    case linkUp
+    case notification
 }
 
 public enum EucRideMetricApplicability: Equatable, Hashable, Sendable {

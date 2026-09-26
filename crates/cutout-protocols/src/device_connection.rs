@@ -142,12 +142,7 @@ mod tests {
             ConnectionReadiness::RecordOnly
         );
         assert!(owner.snapshot().identity.is_none());
-        owner.fail_capture(&token);
-        assert!(!owner.state.connection.is_current(&token));
-        assert_eq!(
-            owner.snapshot().connection.readiness,
-            ConnectionReadiness::Failed
-        );
+        assert!(owner.state.connection.is_current(&token));
     }
 
     #[test]
@@ -741,12 +736,6 @@ impl DeviceConnectionSession {
     /// Preserves pending detection as record-only; established-session failures are terminal.
     pub fn transport_failed(&mut self, token: &ConnectionAttemptToken) {
         self.state.connection.transport_failed(token);
-        self.clear_failed_device();
-    }
-
-    /// Capture storage failure invalidates every device-dependent operation.
-    pub fn fail_capture(&mut self, token: &ConnectionAttemptToken) {
-        self.state.connection.fail_capture(token);
         self.clear_failed_device();
     }
 

@@ -72,7 +72,7 @@ pub enum ConnectionReadiness {
     Verified,
     /// Detection ended without proof; only capture is permitted.
     RecordOnly,
-    /// Capture storage or a previously verified session failed.
+    /// A previously verified transport or session failed.
     Failed,
     /// A verified session observed protocol evidence that conflicts with its decoder.
     Conflicted,
@@ -225,7 +225,8 @@ impl ConnectionAttemptLifecycle {
             return self.finish_detection(token, false);
         }
         if self.snapshot.readiness == ConnectionReadiness::Verified {
-            self.fail_capture(token);
+            self.disconnect();
+            self.snapshot.readiness = ConnectionReadiness::Failed;
             return true;
         }
         false
@@ -242,16 +243,6 @@ impl ConnectionAttemptLifecycle {
         self.snapshot.deadline = None;
         self.snapshot.readiness = ConnectionReadiness::Conflicted;
         self.snapshot.transport = ConnectionTransportState::Disconnected;
-        true
-    }
-
-    /// Retires the attempt when capture storage can no longer preserve its evidence.
-    pub fn fail_capture(&mut self, token: &ConnectionAttemptToken) -> bool {
-        if !self.is_current(token) {
-            return false;
-        }
-        self.disconnect();
-        self.snapshot.readiness = ConnectionReadiness::Failed;
         true
     }
 

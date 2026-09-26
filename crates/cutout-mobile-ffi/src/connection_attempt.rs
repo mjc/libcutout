@@ -33,7 +33,7 @@ pub enum MobileConnectionReadinessDto {
     Verified,
     /// Identification ended; raw capture alone remains available.
     RecordOnly,
-    /// Capture storage or a previously verified connection failed.
+    /// A previously verified transport or session failed.
     Failed,
     /// A verified decoder observed contradictory protocol evidence.
     Conflicted,
@@ -239,16 +239,6 @@ impl CutoutSessionStateHandle {
     ) -> MobileConnectionAttemptSnapshotDto {
         let mut inner = self.lock_inner();
         inner.transport_failed(&token.into());
-        inner.session_state().connection.snapshot().into()
-    }
-
-    /// Invalidates a capture that can no longer preserve incoming evidence.
-    pub fn fail_connection_capture(
-        &self,
-        token: MobileConnectionAttemptTokenDto,
-    ) -> MobileConnectionAttemptSnapshotDto {
-        let mut inner = self.lock_inner();
-        inner.fail_capture(&token.into());
         inner.session_state().connection.snapshot().into()
     }
 }
