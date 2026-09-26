@@ -1234,6 +1234,12 @@ fn capture_writer_action(
             }))
         }
         CaptureWriterMessage::Location(location) => {
+            let validation = location
+                .location
+                .canonical()
+                .map_or_else(LiveCaptureLocationValidation::Rejected, |_| {
+                    LiveCaptureLocationValidation::Valid
+                });
             Ok(CaptureWriterAction::Event(CaptureWriterEventLine {
                 json_line: location
                     .to_jsonl_line()
@@ -1246,7 +1252,7 @@ fn capture_writer_action(
                     location: location.location,
                     simulated: location.simulated,
                     produced_by_accessory: location.produced_by_accessory,
-                    validation: LiveCaptureLocationValidation::Valid,
+                    validation,
                     admission: LiveCaptureLocationAdmission::NotEvaluated,
                 }),
             }))

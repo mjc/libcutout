@@ -149,26 +149,18 @@ extension MobilePhoneLocationSampleDto {
         let timestamp = location.timestamp.timeIntervalSince1970 * 1_000
         guard timestamp.isFinite, timestamp > 0, timestamp < Double(UInt64.max) else { return nil }
         let coordinate = location.coordinate
-        guard coordinate.latitude.isFinite,
-            coordinate.longitude.isFinite,
-            location.altitude.isFinite
-        else { return nil }
 
         self.init(
             wallClockUnixMs: UInt64(timestamp.rounded(.down)),
             latitudeDegrees: coordinate.latitude,
             longitudeDegrees: coordinate.longitude,
             altitudeMeters: location.altitude,
-            horizontalAccuracyMeters: Self.nonNegativeFinite(location.horizontalAccuracy),
-            verticalAccuracyMeters: Self.nonNegativeFinite(location.verticalAccuracy),
-            speedMetersPerSecond: Self.nonNegativeFinite(location.speed),
-            speedAccuracyMetersPerSecond: Self.nonNegativeFinite(location.speedAccuracy),
-            courseDegrees: Self.nonNegativeFinite(location.course),
-            courseAccuracyDegrees: Self.nonNegativeFinite(location.courseAccuracy)
+            horizontalAccuracyMeters: location.horizontalAccuracy,
+            verticalAccuracyMeters: location.verticalAccuracy,
+            speedMetersPerSecond: location.speed,
+            speedAccuracyMetersPerSecond: location.speedAccuracy,
+            courseDegrees: location.course,
+            courseAccuracyDegrees: location.courseAccuracy
         )
-    }
-
-    private static func nonNegativeFinite(_ value: CLLocationDistance) -> Double? {
-        value.isFinite && value >= 0 ? value : nil
     }
 }

@@ -365,9 +365,9 @@ pub(super) const LOCATION_SCHEMA: &str = "
     CREATE TABLE live_capture_location_observations (
         capture_id TEXT NOT NULL,
         sequence INTEGER NOT NULL CHECK (sequence >= 0),
-        latitude_degrees REAL NOT NULL,
-        longitude_degrees REAL NOT NULL,
-        altitude_meters REAL NOT NULL,
+        latitude_degrees REAL,
+        longitude_degrees REAL,
+        altitude_meters REAL,
         horizontal_accuracy_meters REAL,
         vertical_accuracy_meters REAL,
         speed_meters_per_second REAL,
@@ -384,6 +384,7 @@ pub(super) const LOCATION_SCHEMA: &str = "
         route_admission TEXT NOT NULL CHECK (route_admission IN
             ('not_evaluated', 'accepted', 'duplicate', 'out_of_order',
              'accuracy_too_low', 'unrealistic_jump')),
+        raw_float_bits BLOB CHECK (raw_float_bits IS NULL OR length(raw_float_bits) = 73),
         CHECK ((validation_state = 'rejected') = (validation_reason IS NOT NULL)),
         PRIMARY KEY (capture_id, sequence),
         FOREIGN KEY (capture_id, sequence)
@@ -731,28 +732,149 @@ fn insert_location(
          (capture_id, sequence, latitude_degrees, longitude_degrees, altitude_meters,
           horizontal_accuracy_meters, vertical_accuracy_meters, speed_meters_per_second,
           speed_accuracy_meters_per_second, course_degrees, course_accuracy_degrees,
-          simulated, produced_by_accessory, validation_state, validation_reason, route_admission)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+          simulated, produced_by_accessory, validation_state, validation_reason, route_admission,
+          raw_float_bits)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
         params![
             id.as_string(),
             sequence,
-            observation.location.latitude_degrees,
-            observation.location.longitude_degrees,
-            observation.location.altitude_meters,
-            observation.location.horizontal_accuracy_meters,
-            observation.location.vertical_accuracy_meters,
-            observation.location.speed_meters_per_second,
-            observation.location.speed_accuracy_meters_per_second,
-            observation.location.course_degrees,
-            observation.location.course_accuracy_degrees,
+            finite_sql_value(observation.location.latitude_degrees),
+            finite_sql_value(observation.location.longitude_degrees),
+            finite_sql_value(observation.location.altitude_meters),
+            finite_sql_value(
+                observation
+                    .location
+                    .horizontal_accuracy_meters
+                    .unwrap_or(f64::NAN)
+            ),
+            finite_sql_value(
+                observation
+                    .location
+                    .vertical_accuracy_meters
+                    .unwrap_or(f64::NAN)
+            ),
+            finite_sql_value(
+                observation
+                    .location
+                    .speed_meters_per_second
+                    .unwrap_or(f64::NAN)
+            ),
+            finite_sql_value(
+                observation
+                    .location
+                    .speed_accuracy_meters_per_second
+                    .unwrap_or(f64::NAN),
+            ),
+            finite_sql_value(observation.location.course_degrees.unwrap_or(f64::NAN)),
+            finite_sql_value(
+                observation
+                    .location
+                    .course_accuracy_degrees
+                    .unwrap_or(f64::NAN),
+            ),
             observation.simulated.map(i64::from),
             observation.produced_by_accessory.map(i64::from),
             validation_state,
             validation_reason,
             observation.admission.as_db(),
+            encode_location_float_bits(&observation.location),
         ],
     )?;
     Ok(())
+}
+
+fn finite_sql_value(value: f64) -> Option<f64> {
+    value.is_finite().then_some(value)
+}
+
+fn encode_location_float_bits(location: &PevcapPhoneLocation) -> Vec<u8> {
+    let optional_values = [
+        location.horizontal_accuracy_meters,
+        location.vertical_accuracy_meters,
+        location.speed_meters_per_second,
+        location.speed_accuracy_meters_per_second,
+        location.course_degrees,
+        location.course_accuracy_degrees,
+    ];
+    let presence = optional_values
+        .iter()
+        .enumerate()
+        .fold(0_u8, |mask, (index, value)| {
+            mask | (u8::from(value.is_some()) << index)
+        });
+    let values = [
+        location.latitude_degrees,
+        location.longitude_degrees,
+        location.altitude_meters,
+        optional_values[0].unwrap_or_default(),
+        optional_values[1].unwrap_or_default(),
+        optional_values[2].unwrap_or_default(),
+        optional_values[3].unwrap_or_default(),
+        optional_values[4].unwrap_or_default(),
+        optional_values[5].unwrap_or_default(),
+    ];
+    let mut encoded = Vec::with_capacity(73);
+    encoded.push(presence);
+    for value in values {
+        encoded.extend_from_slice(&value.to_bits().to_le_bytes());
+    }
+    encoded
+}
+
+fn decode_location_float_bits(
+    wall_clock_unix_ms: u64,
+    encoded: &[u8],
+) -> Result<PevcapPhoneLocation, StorageError> {
+    if encoded.len() != 73 {
+        return Err(StorageError::InvalidStoredValue {
+            field: "live capture location raw float bits",
+            value: format!("expected 73 bytes, got {}", encoded.len()),
+        });
+    }
+    let Some(&presence) = encoded.first() else {
+        return Err(StorageError::InvalidStoredValue {
+            field: "live capture location raw float bits",
+            value: "missing presence mask".to_owned(),
+        });
+    };
+    if presence & !0b0011_1111 != 0 {
+        return Err(StorageError::InvalidStoredValue {
+            field: "live capture location raw float presence",
+            value: presence.to_string(),
+        });
+    }
+    let float_at = |index: usize| -> Result<f64, StorageError> {
+        let offset = 1 + index * 8;
+        let bytes = encoded
+            .get(offset..offset + 8)
+            .ok_or_else(|| StorageError::InvalidStoredValue {
+                field: "live capture location raw float bits",
+                value: format!("missing float at index {index}"),
+            })?
+            .try_into()
+            .map_err(|_| StorageError::InvalidStoredValue {
+                field: "live capture location raw float bits",
+                value: format!("invalid float at index {index}"),
+            })?;
+        Ok(f64::from_bits(u64::from_le_bytes(bytes)))
+    };
+    let optional = |index: usize| {
+        ((presence & (1 << index)) != 0)
+            .then(|| float_at(index + 3))
+            .transpose()
+    };
+    Ok(PevcapPhoneLocation {
+        wall_clock_unix_ms,
+        latitude_degrees: float_at(0)?,
+        longitude_degrees: float_at(1)?,
+        altitude_meters: float_at(2)?,
+        horizontal_accuracy_meters: optional(0)?,
+        vertical_accuracy_meters: optional(1)?,
+        speed_meters_per_second: optional(2)?,
+        speed_accuracy_meters_per_second: optional(3)?,
+        course_degrees: optional(4)?,
+        course_accuracy_degrees: optional(5)?,
+    })
 }
 
 pub(super) fn finish(
@@ -868,6 +990,7 @@ struct LiveCaptureEventRow {
     validation_state: Option<String>,
     validation_reason: Option<String>,
     route_admission: Option<String>,
+    raw_float_bits: Option<Vec<u8>>,
 }
 
 impl LiveCaptureEventRow {
@@ -893,6 +1016,7 @@ impl LiveCaptureEventRow {
             validation_state: row.get(17)?,
             validation_reason: row.get(18)?,
             route_admission: row.get(19)?,
+            raw_float_bits: row.get(20)?,
         })
     }
 
@@ -918,6 +1042,7 @@ impl LiveCaptureEventRow {
             validation_state,
             validation_reason,
             route_admission,
+            raw_float_bits,
         } = self;
         let location = read_location_observation(
             sequence,
@@ -937,6 +1062,7 @@ impl LiveCaptureEventRow {
                 validation_state,
                 validation_reason,
                 route_admission,
+                raw_float_bits,
             },
         )?;
         Ok(LiveCaptureEvent {
@@ -966,9 +1092,58 @@ struct LiveCaptureLocationRow {
     validation_state: Option<String>,
     validation_reason: Option<String>,
     route_admission: Option<String>,
+    raw_float_bits: Option<Vec<u8>>,
 }
 
 fn read_location_observation(
+    sequence: u64,
+    source_wall_clock_unix_ms: Option<u64>,
+    mut row: LiveCaptureLocationRow,
+) -> Result<Option<LiveCaptureLocationObservation>, StorageError> {
+    match row.raw_float_bits.take() {
+        Some(raw_float_bits) => {
+            read_raw_location_observation(source_wall_clock_unix_ms, row, &raw_float_bits).map(Some)
+        }
+        None => read_legacy_location_observation(sequence, source_wall_clock_unix_ms, row),
+    }
+}
+
+fn read_raw_location_observation(
+    source_wall_clock_unix_ms: Option<u64>,
+    row: LiveCaptureLocationRow,
+    raw_float_bits: &[u8],
+) -> Result<LiveCaptureLocationObservation, StorageError> {
+    let source_wall_clock_unix_ms =
+        source_wall_clock_unix_ms.ok_or_else(|| StorageError::InvalidStoredValue {
+            field: "live capture location source timestamp",
+            value: "missing timestamp for raw observation".to_owned(),
+        })?;
+    let simulated = parse_optional_bool(row.simulated, "location simulated flag")?;
+    let produced_by_accessory =
+        parse_optional_bool(row.produced_by_accessory, "location accessory flag")?;
+    let validation_state = required_location_value(
+        row.validation_state,
+        "live capture location validation",
+        "missing state",
+    )?;
+    let route_admission = required_location_value(
+        row.route_admission,
+        "live capture location admission",
+        "missing state",
+    )?;
+    Ok(LiveCaptureLocationObservation {
+        location: decode_location_float_bits(source_wall_clock_unix_ms, raw_float_bits)?,
+        simulated,
+        produced_by_accessory,
+        validation: LiveCaptureLocationValidation::from_db(
+            &validation_state,
+            row.validation_reason.as_deref(),
+        )?,
+        admission: LiveCaptureLocationAdmission::from_db(&route_admission)?,
+    })
+}
+
+fn read_legacy_location_observation(
     sequence: u64,
     source_wall_clock_unix_ms: Option<u64>,
     row: LiveCaptureLocationRow,
@@ -988,6 +1163,7 @@ fn read_location_observation(
         validation_state,
         validation_reason,
         route_admission,
+        raw_float_bits: _,
     } = row;
     let location = match (latitude_degrees, longitude_degrees, altitude_meters) {
         (None, None, None) => {
@@ -1056,6 +1232,17 @@ fn read_location_observation(
     Ok(location)
 }
 
+fn required_location_value(
+    value: Option<String>,
+    field: &'static str,
+    missing: &'static str,
+) -> Result<String, StorageError> {
+    value.ok_or_else(|| StorageError::InvalidStoredValue {
+        field,
+        value: missing.to_owned(),
+    })
+}
+
 pub(super) fn read(
     connection: &Connection,
     id: LiveCaptureId,
@@ -1092,7 +1279,8 @@ pub(super) fn read(
                 location.speed_meters_per_second, location.speed_accuracy_meters_per_second,
                 location.course_degrees, location.course_accuracy_degrees,
                 location.simulated, location.produced_by_accessory,
-                location.validation_state, location.validation_reason, location.route_admission
+                location.validation_state, location.validation_reason, location.route_admission,
+                location.raw_float_bits
          FROM live_capture_events AS event
          LEFT JOIN live_capture_location_observations AS location
            ON location.capture_id = event.capture_id AND location.sequence = event.sequence

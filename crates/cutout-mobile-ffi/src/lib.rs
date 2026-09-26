@@ -13316,7 +13316,7 @@ impl MobilePevcapCaptureBuilder {
     ///
     /// The sample is kept separate from transport records so it remains available even when no
     /// BLE notification is received at the same instant. The writer queue is bounded; `false`
-    /// means the sample was rejected by canonical validation or could not be queued.
+    /// means the sample could not be queued; invalid source values remain capture evidence.
     pub fn record_location_sample(
         &self,
         receipt_monotonic_ms: MobileMonotonicMillisDto,
@@ -13327,17 +13327,12 @@ impl MobilePevcapCaptureBuilder {
         if let Some(outcome) = self.stopped_write_outcome() {
             return outcome;
         }
-        let Some(sample) = sample.canonical() else {
-            return MobileCaptureWriteOutcomeDto::Failed;
-        };
-        let Ok(location) = PevcapLocationSample::new(
+        let location = PevcapLocationSample::from_raw_observation(
             receipt_monotonic_ms.into_core(),
             sample.pevcap_location(),
             simulated,
             produced_by_accessory,
-        ) else {
-            return MobileCaptureWriteOutcomeDto::Failed;
-        };
+        );
         self.send_location(location)
     }
 
@@ -13373,28 +13368,21 @@ impl MobilePevcapCaptureBuilder {
         let locations = samples
             .into_iter()
             .map(|sample| {
-                let sample = sample.canonical().ok_or(())?;
                 let source_monotonic_offset_ms = calibrate_location_source_offset_ms(
                     MonotonicTimestamp::new(started_at_ms),
                     MonotonicTimestamp::new(receipt_monotonic_absolute_ms),
                     receipt_wall_clock_unix_ms.milliseconds,
                     sample.wall_clock_unix_ms,
                 );
-                PevcapLocationSample::new(
+                PevcapLocationSample::from_raw_observation(
                     receipt_monotonic_ms,
                     sample.pevcap_location(),
                     None,
                     None,
                 )
-                .map_err(|_| ())
-                .map(|location| {
-                    location.with_source_monotonic_offset_ms(source_monotonic_offset_ms)
-                })
+                .with_source_monotonic_offset_ms(source_monotonic_offset_ms)
             })
-            .collect::<Result<Vec<_>, _>>();
-        let Ok(locations) = locations else {
-            return MobileCaptureWriteOutcomeDto::Failed;
-        };
+            .collect::<Vec<_>>();
         let ingress = self
             .writer_ingress
             .lock()
@@ -19246,7 +19234,7 @@ mod tests {
         invalid_location.latitude_degrees = f64::NAN;
         assert_eq!(
             builder.record_location_sample(ms(7), invalid_location, None, None),
-            MobileCaptureWriteOutcomeDto::Failed
+            MobileCaptureWriteOutcomeDto::Accepted
         );
         assert_eq!(
             builder.record_notification_with_context(
@@ -19287,8 +19275,12 @@ mod tests {
         let capture = PevcapCapture::decode(&bytes, PevcapEncoding::Jsonl)
             .expect("stream writer output is PEVCAP");
         assert_eq!(capture.records.len(), 2);
-        assert_eq!(capture.locations.len(), 1);
+        assert_eq!(capture.locations.len(), 2);
         assert_eq!(capture.locations[0].receipt_monotonic_ms, ms(7).into_core());
+        assert_eq!(
+            capture.locations[1].location.latitude_degrees.to_bits(),
+            f64::NAN.to_bits()
+        );
         assert_eq!(capture.locations[0].simulated, Some(false));
         assert_eq!(capture.locations[0].produced_by_accessory, Some(true));
         let notification = &capture.records[0];
@@ -19899,6 +19891,111 @@ mod tests {
         assert_eq!(state, "finished");
         assert_eq!(event_count, 1);
         assert_eq!(event_kind, "link_up");
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn mobile_capture_builder_persists_invalid_location_observations() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let directory =
+            std::env::temp_dir().join(format!("cutout-invalid-location-{}", Uuid::new_v4()));
+        fs::create_dir(&directory).unwrap();
+        let database_path = directory.join("ride.sqlite");
+        let capture_path = directory.join("capture.jsonl");
+        let database = open_ride_database(database_path.to_string_lossy().into_owned()).unwrap();
+        let builder = MobilePevcapCaptureBuilder::new(wc(1_700_000_000_000), "phone".into(), None);
+        builder.set_database(Arc::clone(&database));
+        assert!(builder.set_capture_start_monotonic_ms(100));
+        assert!(builder.start_writer(capture_path.to_string_lossy().into_owned()));
+
+        let valid = capture_phone_location_fixture();
+        let invalid = MobilePhoneLocationSampleDto {
+            latitude_degrees: 91.0,
+            horizontal_accuracy_meters: Some(-1.0),
+            ..valid
+        };
+        let nan_latitude = f64::from_bits(0x7ff8_0000_0000_0042);
+        let non_finite = MobilePhoneLocationSampleDto {
+            latitude_degrees: nan_latitude,
+            horizontal_accuracy_meters: Some(f64::INFINITY),
+            ..valid
+        };
+        assert_eq!(
+            builder.record_location_samples(
+                ms(120),
+                wc(1_700_000_000_010),
+                vec![valid, invalid, non_finite]
+            ),
+            MobileCaptureWriteOutcomeDto::Accepted
+        );
+        assert!(builder.finish_writer());
+        drop(builder);
+        database.shutdown().unwrap();
+
+        let connection = rusqlite::Connection::open(&database_path).unwrap();
+        let mut statement = connection
+            .prepare(
+                "SELECT location.latitude_degrees, location.horizontal_accuracy_meters,
+                        location.validation_state, location.validation_reason, event.payload,
+                        location.raw_float_bits
+                 FROM live_capture_location_observations AS location
+                 JOIN live_capture_events AS event USING (capture_id, sequence)
+                 ORDER BY event.sequence",
+            )
+            .unwrap();
+        let observations = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, Option<f64>>(0)?,
+                    row.get::<_, Option<f64>>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, Vec<u8>>(4)?,
+                    row.get::<_, Vec<u8>>(5)?,
+                ))
+            })
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(observations.len(), 3);
+        assert_eq!(
+            observations[0].0.map(f64::to_bits),
+            Some(valid.latitude_degrees.to_bits())
+        );
+        assert_eq!(observations[0].1, valid.horizontal_accuracy_meters);
+        assert_eq!(observations[0].2, "valid");
+        assert_eq!(observations[0].3, None);
+        assert_eq!(
+            observations[1].0.map(f64::to_bits),
+            Some(91.0_f64.to_bits())
+        );
+        assert_eq!(observations[1].1, Some(-1.0));
+        assert_eq!(observations[1].2, "rejected");
+        assert_eq!(observations[1].3.as_deref(), Some("invalid_latitude"));
+        assert!(
+            String::from_utf8(observations[1].4.clone())
+                .unwrap()
+                .contains("91.0")
+        );
+        assert!(
+            String::from_utf8(observations[1].4.clone())
+                .unwrap()
+                .contains("-1.0")
+        );
+        assert_eq!(observations[2].0, None);
+        assert_eq!(observations[2].2, "rejected");
+        assert_eq!(observations[2].3.as_deref(), Some("invalid_latitude"));
+        assert_eq!(
+            &observations[2].5[1..9],
+            &nan_latitude.to_bits().to_le_bytes()
+        );
+        assert_eq!(
+            &observations[2].5[25..33],
+            &f64::INFINITY.to_bits().to_le_bytes()
+        );
 
         fs::remove_dir_all(directory).unwrap();
     }

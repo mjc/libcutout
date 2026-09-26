@@ -642,8 +642,8 @@ pub enum PevcapEvent {
 
     /// A location observation that decoded structurally but failed canonical validation.
     ///
-    /// Streaming importers may skip this event while retaining the typed reason for diagnostics;
-    /// the original line or payload remains available in the managed PEVCAP artifact.
+    /// The raw observation remains attached so callers can retain it as evidence while excluding
+    /// it from route admission.
     LocationRejected(PevcapLocationRejection),
 }
 
@@ -1312,11 +1312,11 @@ impl<R: Read> PevcapReader<R> {
 
 #[cfg(feature = "serde")]
 fn location_event(location: PevcapLocationJson) -> PevcapEvent {
-    let receipt_monotonic_ms = MonotonicTimestamp::new(location.receipt_monotonic_ms);
-    match location.try_into_location() {
-        Ok(location) => PevcapEvent::Location(location),
+    let observation = location.into_raw_observation();
+    match observation.location.canonical() {
+        Ok(_) => PevcapEvent::Location(observation),
         Err(reason) => PevcapEvent::LocationRejected(PevcapLocationRejection {
-            receipt_monotonic_ms,
+            observation,
             reason,
         }),
     }
@@ -2049,29 +2049,141 @@ pub struct PevcapPhoneLocation {
     /// Sample timestamp reported by the mobile platform.
     pub wall_clock_unix_ms: u64,
     /// WGS84 latitude in degrees.
+    #[cfg_attr(feature = "serde", serde(with = "serde_float_bits"))]
     pub latitude_degrees: f64,
     /// WGS84 longitude in degrees.
+    #[cfg_attr(feature = "serde", serde(with = "serde_float_bits"))]
     pub longitude_degrees: f64,
     /// Altitude above mean sea level in meters.
+    #[cfg_attr(feature = "serde", serde(with = "serde_float_bits"))]
     pub altitude_meters: f64,
     /// Horizontal accuracy in meters, when Core Location reported it.
-    #[cfg_attr(feature = "serde", serde(default))]
+    #[cfg_attr(feature = "serde", serde(default, with = "serde_optional_float_bits"))]
     pub horizontal_accuracy_meters: Option<f64>,
     /// Vertical accuracy in meters, when Core Location reported it.
-    #[cfg_attr(feature = "serde", serde(default))]
+    #[cfg_attr(feature = "serde", serde(default, with = "serde_optional_float_bits"))]
     pub vertical_accuracy_meters: Option<f64>,
     /// Platform-reported speed in meters per second, when available.
-    #[cfg_attr(feature = "serde", serde(default))]
+    #[cfg_attr(feature = "serde", serde(default, with = "serde_optional_float_bits"))]
     pub speed_meters_per_second: Option<f64>,
     /// Platform-reported speed accuracy in meters per second, when available.
-    #[cfg_attr(feature = "serde", serde(default))]
+    #[cfg_attr(feature = "serde", serde(default, with = "serde_optional_float_bits"))]
     pub speed_accuracy_meters_per_second: Option<f64>,
     /// Platform-reported direction of travel in degrees, when available.
-    #[cfg_attr(feature = "serde", serde(default))]
+    #[cfg_attr(feature = "serde", serde(default, with = "serde_optional_float_bits"))]
     pub course_degrees: Option<f64>,
     /// Platform-reported course accuracy in degrees, when available.
-    #[cfg_attr(feature = "serde", serde(default))]
+    #[cfg_attr(feature = "serde", serde(default, with = "serde_optional_float_bits"))]
     pub course_accuracy_degrees: Option<f64>,
+}
+
+#[cfg(feature = "serde")]
+mod serde_float_bits {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
+    use std::ops::Deref;
+
+    pub(super) fn serialize<S, T>(value: T, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+        T: Deref<Target = f64>,
+    {
+        if value.is_finite() {
+            serializer.serialize_f64(*value)
+        } else {
+            serializer.serialize_str(&format!("f64:0x{:016x}", value.to_bits()))
+        }
+    }
+
+    pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<f64, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = EncodedF64::deserialize(deserializer)?;
+        Ok(value.0)
+    }
+
+    pub(super) struct EncodedF64(pub(super) f64);
+
+    impl Serialize for EncodedF64 {
+        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+        {
+            serialize(&self.0, serializer)
+        }
+    }
+
+    impl<'de> Deserialize<'de> for EncodedF64 {
+        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            struct FloatBitsVisitor;
+
+            impl de::Visitor<'_> for FloatBitsVisitor {
+                type Value = f64;
+
+                fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                    formatter.write_str("a finite JSON number or an f64 bit-pattern string")
+                }
+
+                fn visit_f64<E>(self, value: f64) -> Result<Self::Value, E> {
+                    Ok(value)
+                }
+
+                fn visit_i64<E: de::Error>(self, value: i64) -> Result<Self::Value, E> {
+                    value.to_string().parse().map_err(de::Error::custom)
+                }
+
+                fn visit_u64<E: de::Error>(self, value: u64) -> Result<Self::Value, E> {
+                    value.to_string().parse().map_err(de::Error::custom)
+                }
+
+                fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+                where
+                    E: de::Error,
+                {
+                    let bits = value
+                        .strip_prefix("f64:0x")
+                        .ok_or_else(|| E::custom("expected f64:0x bit-pattern string"))?;
+                    if bits.len() != 16 {
+                        return Err(E::custom("f64 bit-pattern must contain 16 hex digits"));
+                    }
+                    u64::from_str_radix(bits, 16)
+                        .map(f64::from_bits)
+                        .map_err(E::custom)
+                }
+            }
+
+            deserializer.deserialize_any(FloatBitsVisitor).map(Self)
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+mod serde_optional_float_bits {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::ops::Deref;
+
+    use super::serde_float_bits::EncodedF64;
+
+    pub(super) fn serialize<S, T>(value: T, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+        T: Deref<Target = Option<f64>>,
+    {
+        value
+            .as_ref()
+            .map(|value| EncodedF64(*value))
+            .serialize(serializer)
+    }
+
+    pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<Option<f64>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Option::<EncodedF64>::deserialize(deserializer).map(|value| value.map(|value| value.0))
+    }
 }
 
 /// A required-field failure while canonicalizing a phone-location observation.
@@ -2151,7 +2263,7 @@ pub struct PevcapLocationSample {
     /// Calibrated capture-relative source time, when a callback clock anchor was available.
     pub source_monotonic_offset_ms: Option<i64>,
 
-    /// Validated source observation and its source wall-clock timestamp.
+    /// Source observation and its source wall-clock timestamp.
     pub location: PevcapPhoneLocation,
 
     /// Whether Core Location marked this observation as software-simulated, when available.
@@ -2202,6 +2314,26 @@ impl PevcapLocationSample {
         })
     }
 
+    /// Retains a raw platform observation for capture before semantic validation.
+    ///
+    /// Use this at ingestion boundaries where rejected source values must remain available as
+    /// evidence. Consumers that need a usable route point must validate `location` separately.
+    #[must_use]
+    pub const fn from_raw_observation(
+        receipt_monotonic_ms: MonotonicTimestamp,
+        location: PevcapPhoneLocation,
+        simulated: Option<bool>,
+        produced_by_accessory: Option<bool>,
+    ) -> Self {
+        Self {
+            receipt_monotonic_ms,
+            source_monotonic_offset_ms: None,
+            location,
+            simulated,
+            produced_by_accessory,
+        }
+    }
+
     /// Sets the source timestamp calibrated from a callback's monotonic/wall-clock anchor.
     #[must_use]
     pub const fn with_source_monotonic_offset_ms(mut self, offset_ms: Option<i64>) -> Self {
@@ -2226,8 +2358,8 @@ impl PevcapLocationSample {
 /// Why a structurally decoded PEVCAP location could not become a canonical sample.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PevcapLocationRejection {
-    /// Capture-relative receipt time decoded from the location event.
-    pub receipt_monotonic_ms: MonotonicTimestamp,
+    /// Unmodified source observation, including its receipt and calibrated timestamps.
+    pub observation: PevcapLocationSample,
 
     /// Canonicalization failure for the source location.
     pub reason: PevcapPhoneLocationError,
@@ -2818,12 +2950,7 @@ impl PevcapCapture {
                             version: decoded_version,
                         });
                     }
-                    locations.push(location.try_into_location().map_err(|source| {
-                        PevcapJsonlError::Location {
-                            line: line_number,
-                            source,
-                        }
-                    })?);
+                    locations.push(location.into_raw_observation());
                 }
                 PevcapJsonlLine::Music { music } => {
                     if header.is_none() {
@@ -3021,8 +3148,7 @@ impl PevcapCapture {
                         section: PevcapBinarySection::Location,
                         source,
                     })?
-                    .try_into_location()
-                    .map_err(PevcapBinaryError::Location)?;
+                    .into_raw_observation();
                 locations.push(location);
             }
         }
@@ -4105,13 +4231,18 @@ impl From<&PevcapLocationSample> for PevcapLocationJson {
 #[cfg(feature = "serde")]
 impl PevcapLocationJson {
     fn try_into_location(self) -> Result<PevcapLocationSample, PevcapPhoneLocationError> {
-        Ok(PevcapLocationSample::new(
+        self.location.canonical()?;
+        Ok(self.into_raw_observation())
+    }
+
+    fn into_raw_observation(self) -> PevcapLocationSample {
+        PevcapLocationSample::from_raw_observation(
             MonotonicTimestamp::new(self.receipt_monotonic_ms),
             self.location,
             self.simulated,
             self.produced_by_accessory,
-        )?
-        .with_source_monotonic_offset_ms(self.source_monotonic_offset_ms))
+        )
+        .with_source_monotonic_offset_ms(self.source_monotonic_offset_ms)
     }
 }
 
@@ -4877,6 +5008,12 @@ mod tests {
             simulated: None,
             produced_by_accessory: None,
         };
+        let rejected_observation = PevcapLocationSample::from_raw_observation(
+            ms(11),
+            invalid_location.location,
+            invalid_location.simulated,
+            invalid_location.produced_by_accessory,
+        );
         let input = format!(
             "{}\n{}\n",
             capture
@@ -4894,11 +5031,70 @@ mod tests {
         assert_eq!(
             reader.next_event().expect("rejection should be observable"),
             Some(PevcapEvent::LocationRejected(PevcapLocationRejection {
-                receipt_monotonic_ms: ms(11),
+                observation: rejected_observation,
                 reason: PevcapPhoneLocationError::InvalidLatitude,
             }))
         );
         assert_eq!(reader.next_event().expect("stream should finish"), None);
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn owned_capture_round_trips_invalid_location_float_bits_in_both_encodings() {
+        let mut capture = sample_pevcap_capture();
+        let latitude = f64::from_bits(0x7ff8_0000_0000_0042);
+        let speed = f64::NEG_INFINITY;
+        capture
+            .locations
+            .push(PevcapLocationSample::from_raw_observation(
+                ms(11),
+                PevcapPhoneLocation {
+                    wall_clock_unix_ms: 1_725_000_123_467,
+                    latitude_degrees: latitude,
+                    longitude_degrees: -104.9,
+                    altitude_meters: 1_600.0,
+                    horizontal_accuracy_meters: Some(-1.0),
+                    vertical_accuracy_meters: None,
+                    speed_meters_per_second: Some(speed),
+                    speed_accuracy_meters_per_second: None,
+                    course_degrees: Some(0.0),
+                    course_accuracy_degrees: None,
+                },
+                Some(false),
+                Some(true),
+            ));
+
+        for encoding in [PevcapEncoding::Jsonl, PevcapEncoding::Binary] {
+            let encoded = capture.encode(encoding).expect("raw capture should encode");
+            let decoded = PevcapCapture::decode(&encoded, encoding)
+                .expect("invalid source values remain structurally readable");
+            let observation = decoded
+                .locations
+                .last()
+                .expect("invalid observation is retained");
+            assert_eq!(
+                observation.location.latitude_degrees.to_bits(),
+                latitude.to_bits()
+            );
+            assert_eq!(
+                observation
+                    .location
+                    .horizontal_accuracy_meters
+                    .unwrap()
+                    .to_bits(),
+                (-1.0_f64).to_bits()
+            );
+            assert_eq!(
+                observation
+                    .location
+                    .speed_meters_per_second
+                    .unwrap()
+                    .to_bits(),
+                speed.to_bits()
+            );
+            assert_eq!(observation.simulated, Some(false));
+            assert_eq!(observation.produced_by_accessory, Some(true));
+        }
     }
 
     #[cfg(feature = "serde")]

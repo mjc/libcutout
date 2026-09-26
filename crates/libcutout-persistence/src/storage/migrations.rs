@@ -1,7 +1,7 @@
 use super::{MapPointId, SpatialRowId, StorageError};
 use rusqlite::{Connection, OptionalExtension, params};
 
-pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 29;
+pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 30;
 const APPLICATION_ID: i64 = 0x4355_544f;
 
 fn schema_pragmas(version: i64) -> String {
@@ -52,6 +52,7 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         26 => migrate_v26_to_current(connection)?,
         27 => migrate_v27_to_current(connection)?,
         28 => migrate_v28_to_current(connection)?,
+        29 => migrate_v29_to_current(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -1234,6 +1235,32 @@ fn migrate_v27_to_current(connection: &mut Connection) -> Result<(), StorageErro
 fn migrate_v28_to_current(connection: &mut Connection) -> Result<(), StorageError> {
     let transaction = connection.transaction()?;
     transaction.execute_batch(super::live_capture::LOCATION_SCHEMA)?;
+    transaction.execute_batch(&current_schema_pragmas())?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn migrate_v29_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction()?;
+    transaction.execute_batch(
+        "ALTER TABLE live_capture_location_observations
+             RENAME TO live_capture_location_observations_v29;",
+    )?;
+    transaction.execute_batch(super::live_capture::LOCATION_SCHEMA)?;
+    transaction.execute_batch(
+        "INSERT INTO live_capture_location_observations
+         (capture_id, sequence, latitude_degrees, longitude_degrees, altitude_meters,
+          horizontal_accuracy_meters, vertical_accuracy_meters, speed_meters_per_second,
+          speed_accuracy_meters_per_second, course_degrees, course_accuracy_degrees,
+          simulated, produced_by_accessory, validation_state, validation_reason, route_admission)
+         SELECT capture_id, sequence, latitude_degrees, longitude_degrees, altitude_meters,
+                horizontal_accuracy_meters, vertical_accuracy_meters, speed_meters_per_second,
+                speed_accuracy_meters_per_second, course_degrees, course_accuracy_degrees,
+                simulated, produced_by_accessory, validation_state, validation_reason,
+                route_admission
+         FROM live_capture_location_observations_v29;
+         DROP TABLE live_capture_location_observations_v29;",
+    )?;
     transaction.execute_batch(&current_schema_pragmas())?;
     transaction.commit()?;
     Ok(())
