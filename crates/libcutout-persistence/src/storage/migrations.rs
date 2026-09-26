@@ -1,7 +1,7 @@
 use super::{MapPointId, SpatialRowId, StorageError};
 use rusqlite::{Connection, OptionalExtension, params};
 
-pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 27;
+pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 28;
 const APPLICATION_ID: i64 = 0x4355_544f;
 
 fn schema_pragmas(version: i64) -> String {
@@ -50,6 +50,7 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         24 => migrate_v24_to_current(connection)?,
         25 => migrate_v25_to_current(connection)?,
         26 => migrate_v26_to_current(connection)?,
+        27 => migrate_v27_to_current(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -1205,6 +1206,22 @@ fn migrate_v26_to_current(connection: &mut Connection) -> Result<(), StorageErro
     Ok(())
 }
 
+fn migrate_v27_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction()?;
+    transaction.execute_batch(
+        "ALTER TABLE live_capture_sessions
+             ADD COLUMN integrity TEXT NOT NULL DEFAULT 'unknown'
+                 CHECK (integrity IN ('complete', 'incomplete', 'unknown'));
+         ALTER TABLE live_capture_sessions
+             ADD COLUMN dropped_messages INTEGER NOT NULL DEFAULT 0
+                 CHECK (dropped_messages >= 0);
+         PRAGMA application_id = 1129665615;
+         PRAGMA user_version = 28;",
+    )?;
+    transaction.commit()?;
+    Ok(())
+}
+
 fn table_has_column(
     connection: &Connection,
     table: &str,
@@ -1260,6 +1277,11 @@ pub(super) fn verify_current_schema(connection: &Connection) -> Result<(), Stora
         if !exists {
             return Err(StorageError::InvalidDatabaseIdentity);
         }
+    }
+    if !table_has_column(connection, "live_capture_sessions", "integrity")?
+        || !table_has_column(connection, "live_capture_sessions", "dropped_messages")?
+    {
+        return Err(StorageError::InvalidDatabaseIdentity);
     }
     verify_singleton_schema(connection, "selected_device", "platform_identifier")?;
     verify_singleton_schema(connection, "last_connected_device", "platform_identifier")?;
@@ -1363,4 +1385,60 @@ fn verify_device_schema(connection: &Connection) -> Result<(), StorageError> {
         return Err(StorageError::InvalidDatabaseIdentity);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn schema_v27_migration_preserves_rows_with_unknown_integrity() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE live_capture_sessions (
+                     capture_id TEXT PRIMARY KEY NOT NULL,
+                     state TEXT NOT NULL,
+                     header_json BLOB NOT NULL,
+                     started_at_ms INTEGER NOT NULL,
+                     finished_at_ms INTEGER,
+                     next_sequence INTEGER NOT NULL,
+                     stored_bytes INTEGER NOT NULL
+                 );
+                 INSERT INTO live_capture_sessions
+                     (capture_id, state, header_json, started_at_ms, finished_at_ms,
+                      next_sequence, stored_bytes)
+                 VALUES ('00000000-0000-0000-0000-000000000001', 'finished', X'7B7D',
+                         100, 120, 0, 2);
+                 PRAGMA application_id = 1129665615;
+                 PRAGMA user_version = 27;",
+            )
+            .unwrap();
+
+        migrate(&mut connection).unwrap();
+
+        let migrated: (String, i64, String, i64) = connection
+            .query_row(
+                "SELECT capture_id, started_at_ms, integrity, dropped_messages
+                 FROM live_capture_sessions",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            migrated,
+            (
+                "00000000-0000-0000-0000-000000000001".to_owned(),
+                100,
+                "unknown".to_owned(),
+                0
+            )
+        );
+        assert_eq!(
+            connection
+                .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                .unwrap(),
+            CURRENT_SCHEMA_VERSION
+        );
+    }
 }

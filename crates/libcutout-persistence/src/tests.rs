@@ -23,11 +23,11 @@ use cutout_ride_maps::{RideLifecycleState, RideMapSegmentId, RideSegmentStartRea
 
 use super::{
     BmsVoltageSampleRecord, GeoBounds, HistoryContextBudget, LiveCaptureEventKind,
-    LiveCaptureState, PevcapImportOutcome, PevcapImportPreview, PevcapImportWarning,
-    PhoneAlarmPreferencesRecord, QueryLimit, RideDatabase, RideHistoryQuery, RideId, RideRecord,
-    RideSource, RouteProjectionCancellation, StorageError, VerifiedConnectionLifecycleMutation,
-    VerifiedConnectionRideMetadata, VerifiedConnectionRideTarget, VoltageSagModelRecord,
-    normalize_device_display_name,
+    LiveCaptureIntegrity, LiveCaptureState, PevcapImportOutcome, PevcapImportPreview,
+    PevcapImportWarning, PhoneAlarmPreferencesRecord, QueryLimit, RideDatabase, RideHistoryQuery,
+    RideId, RideRecord, RideSource, RouteProjectionCancellation, StorageError,
+    VerifiedConnectionLifecycleMutation, VerifiedConnectionRideMetadata,
+    VerifiedConnectionRideTarget, VoltageSagModelRecord, normalize_device_display_name,
 };
 
 static TEST_LOCK: Mutex<()> = Mutex::new(());
@@ -106,6 +106,7 @@ fn live_capture_events_are_ordered_durable_and_recovered_by_the_database_worker(
         .live_capture(capture_id, QueryLimit::new(10).unwrap())
         .expect("capture is readable");
     assert_eq!(snapshot.state, LiveCaptureState::Finished);
+    assert_eq!(snapshot.integrity, LiveCaptureIntegrity::Complete);
     assert_eq!(snapshot.header_json, b"{\"format\":\"pevcap\"}");
     assert_eq!(
         snapshot
@@ -149,7 +150,63 @@ fn live_capture_events_are_ordered_durable_and_recovered_by_the_database_worker(
         .live_capture(interrupted_id, QueryLimit::new(10).unwrap())
         .expect("unfinished capture survives restart");
     assert_eq!(interrupted.state, LiveCaptureState::Interrupted);
+    assert_eq!(interrupted.integrity, LiveCaptureIntegrity::Unknown);
     assert_eq!(interrupted.events[0].payload, b"{\"link\":\"up\"}");
+    reopened.shutdown().expect("reopened database shuts down");
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn live_capture_finish_persists_known_admission_loss_as_incomplete() {
+    let _guard = test_guard();
+    let path = music_test_path();
+    let database = RideDatabase::open(&path).expect("database opens");
+    let capture_id = database
+        .begin_live_capture(b"{\"format\":\"pevcap\"}".to_vec(), 100)
+        .expect("live capture starts");
+    database
+        .append_live_capture_event(
+            capture_id,
+            LiveCaptureEventKind::Location,
+            110,
+            Some(10),
+            Some(1_700_000_000_110),
+            b"{\"location\":1}".to_vec(),
+        )
+        .expect("accepted event persists");
+    database
+        .finish_live_capture_with_integrity(
+            capture_id,
+            130,
+            LiveCaptureIntegrity::Incomplete {
+                dropped_messages: 2,
+            },
+        )
+        .expect("partial capture finalizes with loss evidence");
+
+    let snapshot = database
+        .live_capture(capture_id, QueryLimit::new(10).unwrap())
+        .expect("partial capture remains inspectable");
+    assert_eq!(snapshot.state, LiveCaptureState::Finished);
+    assert_eq!(
+        snapshot.integrity,
+        LiveCaptureIntegrity::Incomplete {
+            dropped_messages: 2
+        }
+    );
+    assert_eq!(snapshot.events.len(), 1);
+
+    database.shutdown().expect("database shuts down");
+    let reopened = RideDatabase::open(&path).expect("database reopens");
+    assert_eq!(
+        reopened
+            .live_capture(capture_id, QueryLimit::new(10).unwrap())
+            .expect("loss evidence survives restart")
+            .integrity,
+        LiveCaptureIntegrity::Incomplete {
+            dropped_messages: 2
+        }
+    );
     reopened.shutdown().expect("reopened database shuts down");
     let _ = std::fs::remove_file(path);
 }

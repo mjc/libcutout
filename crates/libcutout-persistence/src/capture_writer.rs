@@ -2,7 +2,8 @@
 //! Mobile captures use SQLite as their live source and export a file only at finalization.
 
 use crate::storage::{
-    LiveCaptureEventKind, LiveCaptureId, LiveCaptureState, QueryLimit, RideDatabase,
+    LiveCaptureEventKind, LiveCaptureId, LiveCaptureIntegrity, LiveCaptureState, QueryLimit,
+    RideDatabase,
 };
 use cutout_core::{
     CaptureLabelState, GattChannel, GattFingerprint, PEVCAP_CAPTURE_LABEL_ANNOTATION_KEY,
@@ -144,6 +145,7 @@ struct CaptureWriterState {
     queued_messages: AtomicU64,
     peak_queued_messages: AtomicU64,
     dropped_messages: AtomicU64,
+    incomplete_messages: AtomicU64,
     bytes_written: AtomicU64,
     physical_bytes_written: AtomicU64,
     failed: AtomicBool,
@@ -156,6 +158,7 @@ impl Default for CaptureWriterState {
             queued_messages: AtomicU64::new(0),
             peak_queued_messages: AtomicU64::new(0),
             dropped_messages: AtomicU64::new(0),
+            incomplete_messages: AtomicU64::new(0),
             bytes_written: AtomicU64::new(0),
             physical_bytes_written: AtomicU64::new(0),
             failed: AtomicBool::new(false),
@@ -336,6 +339,9 @@ impl CaptureWriterIngress {
             .unwrap_or_else(PoisonError::into_inner);
         if records.len() == records.capacity() {
             self.state.dropped_messages.fetch_add(1, Ordering::AcqRel);
+            self.state
+                .incomplete_messages
+                .fetch_add(1, Ordering::AcqRel);
             self.state.fail("capture writer queue is full");
             return CaptureWriteOutcome::Failed;
         }
@@ -351,13 +357,6 @@ impl CaptureWriterIngress {
 
     /// Admits a bounded batch of independent location observations in one ordering step.
     pub fn record_location_batch(&self, locations: &[PevcapLocationSample]) -> CaptureWriteOutcome {
-        if locations.len() > CAPTURE_LOCATION_BATCH_CAPACITY {
-            self.state
-                .dropped_messages
-                .fetch_add(locations.len() as u64, Ordering::AcqRel);
-            self.state.fail("capture location batch exceeds its limit");
-            return CaptureWriteOutcome::Failed;
-        }
         let accepting = self
             .accepting
             .lock()
@@ -366,6 +365,16 @@ impl CaptureWriterIngress {
             self.state
                 .dropped_messages
                 .fetch_add(locations.len() as u64, Ordering::AcqRel);
+            return CaptureWriteOutcome::Failed;
+        }
+        if locations.len() > CAPTURE_LOCATION_BATCH_CAPACITY {
+            self.state
+                .dropped_messages
+                .fetch_add(locations.len() as u64, Ordering::AcqRel);
+            self.state
+                .incomplete_messages
+                .fetch_add(locations.len() as u64, Ordering::AcqRel);
+            self.state.fail("capture location batch exceeds its limit");
             return CaptureWriteOutcome::Failed;
         }
         for (index, location) in locations.iter().enumerate() {
@@ -378,6 +387,9 @@ impl CaptureWriterIngress {
                 let remaining = locations.len().saturating_sub(index + 1);
                 self.state
                     .dropped_messages
+                    .fetch_add(remaining as u64, Ordering::AcqRel);
+                self.state
+                    .incomplete_messages
                     .fetch_add(remaining as u64, Ordering::AcqRel);
                 return CaptureWriteOutcome::Failed;
             }
@@ -397,6 +409,13 @@ fn try_send_message(
     state: &CaptureWriterState,
     message: CaptureWriterMessage,
 ) -> CaptureWriteOutcome {
+    let is_capture_message = match &message {
+        CaptureWriterMessage::Barrier(_, _) => false,
+        CaptureWriterMessage::Record
+        | CaptureWriterMessage::Location(_)
+        | CaptureWriterMessage::Music(_)
+        | CaptureWriterMessage::Metadata(_) => true,
+    };
     let queued_messages = state.queued_messages.fetch_add(1, Ordering::AcqRel) + 1;
     match sender.try_send(message) {
         Ok(()) => {
@@ -408,12 +427,18 @@ fn try_send_message(
         Err(TrySendError::Full(_)) => {
             state.queued_messages.fetch_sub(1, Ordering::AcqRel);
             state.dropped_messages.fetch_add(1, Ordering::AcqRel);
+            if is_capture_message {
+                state.incomplete_messages.fetch_add(1, Ordering::AcqRel);
+            }
             state.fail("capture writer queue is full");
             CaptureWriteOutcome::Failed
         }
         Err(TrySendError::Disconnected(_)) => {
             state.queued_messages.fetch_sub(1, Ordering::AcqRel);
             state.dropped_messages.fetch_add(1, Ordering::AcqRel);
+            if is_capture_message {
+                state.incomplete_messages.fetch_add(1, Ordering::AcqRel);
+            }
             state.fail("capture writer stopped");
             CaptureWriteOutcome::Failed
         }
@@ -859,7 +884,7 @@ fn write_database_capture_stream(
             CaptureWriterAction::Barrier(kind, reply) => {
                 let result =
                     finalize_database_capture_metadata(header, &mut pending_metadata, state, kind)
-                        .and_then(|()| persist_database_capture(capture, header, kind))
+                        .and_then(|()| persist_database_capture(capture, header, kind, state))
                         .and_then(|()| match kind {
                             CaptureBarrier::Flush => Ok(CaptureWriterBarrierResult::Flushed),
                             CaptureBarrier::Finish => {
@@ -884,7 +909,7 @@ fn write_database_capture_stream(
         state,
         CaptureBarrier::Finish,
     )?;
-    persist_database_capture(capture, header, CaptureBarrier::Finish)?;
+    persist_database_capture(capture, header, CaptureBarrier::Finish, state)?;
     export_database_capture(path, capture, state)?;
     Ok(())
 }
@@ -933,6 +958,7 @@ fn persist_database_capture(
     capture: &DatabaseCapture,
     header: &PevcapHeader,
     kind: CaptureBarrier,
+    state: &CaptureWriterState,
 ) -> Result<(), String> {
     let header_line = header.to_jsonl_line().map_err(|error| error.to_string())?;
     capture
@@ -946,9 +972,15 @@ fn persist_database_capture(
             .as_millis();
         let now_ms = u64::try_from(now_ms).map_err(|error| error.to_string())?;
         let finished_at_ms = now_ms.max(header.wall_clock_start_unix_ms.as_milliseconds());
+        let dropped_messages = state.incomplete_messages.load(Ordering::Acquire);
+        let integrity = if dropped_messages == 0 {
+            LiveCaptureIntegrity::Complete
+        } else {
+            LiveCaptureIntegrity::Incomplete { dropped_messages }
+        };
         capture
             .database
-            .finish_live_capture(capture.id, finished_at_ms)
+            .finish_live_capture_with_integrity(capture.id, finished_at_ms, integrity)
             .map_err(|error| format!("could not finish live SQLite capture: {error}"))?;
     }
     Ok(())
@@ -967,6 +999,12 @@ fn export_database_capture(
         .map_err(|error| format!("could not read finalized live capture: {error}"))?;
     if first_page.state != LiveCaptureState::Finished {
         return Err("live capture must be finalized before export".into());
+    }
+    if first_page.integrity != LiveCaptureIntegrity::Complete {
+        return Err(format!(
+            "live capture is not complete: {:?}",
+            first_page.integrity
+        ));
     }
 
     let mut created = false;
@@ -1470,6 +1508,94 @@ mod tests {
         let capture = fs::read_to_string(artifact.path()).unwrap();
         assert_eq!(capture.matches("capture_label=ride_stop").count(), 1);
         assert_eq!(capture.matches("capture_label=balancing_stop").count(), 1);
+    }
+
+    #[test]
+    fn database_capture_with_admission_loss_is_durable_but_not_exported() {
+        let directory = tempfile::tempdir().unwrap();
+        let database_path = directory.path().join("ride.sqlite");
+        let artifact_path = directory.path().join("capture.jsonl");
+        let database = RideDatabase::open(&database_path).unwrap();
+        let metadata = CaptureMetadata {
+            advertised_services: vec![],
+            gatt_fingerprints: vec![],
+            resolved_identity: None,
+            annotations: vec![],
+        };
+        let writer = CaptureWriter::start_with_database(
+            artifact_path.clone(),
+            WallClockUnixTimestamp::new(1_700_000_000_000),
+            "test",
+            None,
+            &metadata,
+            database.clone(),
+        )
+        .unwrap();
+        writer.flush().unwrap();
+        assert_eq!(
+            writer.record_location(database_test_location()),
+            CaptureWriteOutcome::Accepted
+        );
+        writer.state.incomplete_messages.store(2, Ordering::Release);
+        let capture_id = writer.live_capture_id.unwrap();
+
+        let error = writer
+            .finish()
+            .expect_err("incomplete capture cannot produce a saved export");
+        assert!(error.contains("Incomplete { dropped_messages: 2 }"));
+        assert!(!artifact_path.exists());
+        let snapshot = database
+            .live_capture(capture_id, QueryLimit::new(10).unwrap())
+            .unwrap();
+        assert_eq!(snapshot.state, LiveCaptureState::Finished);
+        assert_eq!(
+            snapshot.integrity,
+            LiveCaptureIntegrity::Incomplete {
+                dropped_messages: 2
+            }
+        );
+        assert_eq!(snapshot.events.len(), 1);
+        database.shutdown().unwrap();
+    }
+
+    fn database_test_location() -> PevcapLocationSample {
+        PevcapLocationSample::new(
+            cutout_core::MonotonicTimestamp::new(10),
+            cutout_core::PevcapPhoneLocation {
+                wall_clock_unix_ms: 1_700_000_000_010,
+                latitude_degrees: 39.7,
+                longitude_degrees: -104.9,
+                altitude_meters: 1.0,
+                horizontal_accuracy_meters: None,
+                vertical_accuracy_meters: None,
+                speed_meters_per_second: None,
+                speed_accuracy_meters_per_second: None,
+                course_degrees: None,
+                course_accuracy_degrees: None,
+            },
+            None,
+            None,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn callbacks_rejected_after_close_do_not_change_durable_integrity() {
+        let (sender, _receiver) = sync_channel(1);
+        let state = Arc::new(CaptureWriterState::default());
+        let ingress = CaptureWriterIngress {
+            sender,
+            records: Arc::new(CaptureRecordPool::new(1)),
+            state: Arc::clone(&state),
+            accepting: Arc::new(Mutex::new(false)),
+        };
+
+        assert_eq!(
+            ingress.record_location(database_test_location()),
+            CaptureWriteOutcome::Failed
+        );
+        assert_eq!(state.status().dropped_messages, 1);
+        assert_eq!(state.incomplete_messages.load(Ordering::Acquire), 0);
     }
 
     #[test]

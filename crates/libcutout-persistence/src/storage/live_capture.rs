@@ -107,6 +107,53 @@ impl LiveCaptureState {
     }
 }
 
+/// Durable knowledge about whether a finished capture retained every admitted message.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LiveCaptureIntegrity {
+    /// Every message admitted by the capture writer was retained.
+    Complete,
+    /// The capture finished after one or more writer messages were rejected.
+    Incomplete {
+        /// Number of writer messages rejected before finalization.
+        dropped_messages: u64,
+    },
+    /// Completeness cannot be proven, for example after process interruption.
+    Unknown,
+}
+
+impl LiveCaptureIntegrity {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Complete => "complete",
+            Self::Incomplete { .. } => "incomplete",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    const fn dropped_messages(self) -> u64 {
+        match self {
+            Self::Incomplete { dropped_messages } => dropped_messages,
+            Self::Complete | Self::Unknown => 0,
+        }
+    }
+
+    fn parse(value: &str, dropped_messages: u64) -> Result<Self, StorageError> {
+        match (value, dropped_messages) {
+            ("complete", 0) => Ok(Self::Complete),
+            ("incomplete", dropped_messages @ 1..) => Ok(Self::Incomplete { dropped_messages }),
+            ("unknown", 0) => Ok(Self::Unknown),
+            ("complete" | "incomplete" | "unknown", _) => Err(StorageError::InvalidStoredValue {
+                field: "live capture integrity loss count",
+                value: format!("{value}:{dropped_messages}"),
+            }),
+            _ => Err(StorageError::InvalidStoredValue {
+                field: "live capture integrity",
+                value: value.to_owned(),
+            }),
+        }
+    }
+}
+
 /// One ordered event and its original serialized payload.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LiveCaptureEvent {
@@ -131,6 +178,8 @@ pub struct LiveCaptureSnapshot {
     pub id: LiveCaptureId,
     /// Current durable lifecycle state.
     pub state: LiveCaptureState,
+    /// Durable completeness information, distinct from lifecycle state.
+    pub integrity: LiveCaptureIntegrity,
     /// Exact header JSON supplied when capture began.
     pub header_json: Vec<u8>,
     /// Capture start wall-clock timestamp.
@@ -148,12 +197,17 @@ pub(super) const SCHEMA: &str = "
     CREATE TABLE live_capture_sessions (
         capture_id TEXT PRIMARY KEY NOT NULL CHECK (length(capture_id) = 36),
         state TEXT NOT NULL CHECK (state IN ('active', 'finished', 'interrupted')),
+        integrity TEXT NOT NULL CHECK (integrity IN ('complete', 'incomplete', 'unknown')),
+        dropped_messages INTEGER NOT NULL DEFAULT 0 CHECK (dropped_messages >= 0),
         header_json BLOB NOT NULL CHECK (length(header_json) BETWEEN 1 AND 65536),
         started_at_ms INTEGER NOT NULL CHECK (started_at_ms >= 0),
         finished_at_ms INTEGER CHECK (finished_at_ms IS NULL OR finished_at_ms >= started_at_ms),
         next_sequence INTEGER NOT NULL DEFAULT 0 CHECK (next_sequence >= 0),
         stored_bytes INTEGER NOT NULL CHECK (stored_bytes BETWEEN 1 AND 536870912),
-        CHECK ((state = 'finished') = (finished_at_ms IS NOT NULL))
+        CHECK ((state = 'finished') = (finished_at_ms IS NOT NULL)),
+        CHECK ((integrity = 'complete' AND dropped_messages = 0)
+            OR (integrity = 'incomplete' AND dropped_messages > 0)
+            OR integrity = 'unknown')
     );
     CREATE TABLE live_capture_events (
         capture_id TEXT NOT NULL REFERENCES live_capture_sessions(capture_id) ON DELETE CASCADE,
@@ -253,10 +307,34 @@ impl RideDatabase {
         id: LiveCaptureId,
         finished_at_ms: u64,
     ) -> Result<(), StorageError> {
+        self.finish_live_capture_with_integrity(id, finished_at_ms, LiveCaptureIntegrity::Complete)
+    }
+
+    /// Finishes a live capture while durably preserving known writer-message loss.
+    ///
+    /// `Unknown` is reserved for old or interrupted captures and cannot be used to claim a
+    /// successful finish.
+    ///
+    /// # Errors
+    /// Returns a queue, worker, inactive-session, integrity, timestamp, or SQLite error.
+    pub fn finish_live_capture_with_integrity(
+        &self,
+        id: LiveCaptureId,
+        finished_at_ms: u64,
+        integrity: LiveCaptureIntegrity,
+    ) -> Result<(), StorageError> {
         validate_timestamp(finished_at_ms)?;
+        match integrity {
+            LiveCaptureIntegrity::Unknown
+            | LiveCaptureIntegrity::Incomplete {
+                dropped_messages: 0,
+            } => return Err(StorageError::LiveCaptureInputInvalid("finish integrity")),
+            LiveCaptureIntegrity::Complete | LiveCaptureIntegrity::Incomplete { .. } => {}
+        }
         self.request(|reply| Command::FinishLiveCapture {
             id,
             finished_at_ms,
+            integrity,
             reply,
         })
     }
@@ -334,8 +412,8 @@ pub(super) fn begin(
 ) -> Result<(), StorageError> {
     connection.execute(
         "INSERT INTO live_capture_sessions
-         (capture_id, state, header_json, started_at_ms, stored_bytes)
-         VALUES (?1, 'active', ?2, ?3, ?4)",
+         (capture_id, state, integrity, header_json, started_at_ms, stored_bytes)
+         VALUES (?1, 'active', 'complete', ?2, ?3, ?4)",
         params![
             id.as_string(),
             header_json,
@@ -413,35 +491,49 @@ pub(super) fn finish(
     connection: &Connection,
     id: LiveCaptureId,
     finished_at_ms: u64,
+    integrity: LiveCaptureIntegrity,
 ) -> Result<(), StorageError> {
-    let current: Option<(String, Option<u64>)> = connection
+    let current: Option<(String, Option<u64>, String, u64)> = connection
         .query_row(
-            "SELECT state, finished_at_ms FROM live_capture_sessions WHERE capture_id = ?1",
+            "SELECT state, finished_at_ms, integrity, dropped_messages
+             FROM live_capture_sessions WHERE capture_id = ?1",
             [id.as_string()],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )
         .optional()?;
-    let Some((state, existing_finished_at_ms)) = current else {
+    let Some((state, existing_finished_at_ms, existing_integrity, existing_dropped_messages)) =
+        current
+    else {
         return Err(StorageError::NotFound);
     };
     if state == LiveCaptureState::Finished.as_str()
         && existing_finished_at_ms == Some(finished_at_ms)
+        && existing_integrity == integrity.as_str()
+        && existing_dropped_messages == integrity.dropped_messages()
     {
         return Ok(());
     }
     if state != LiveCaptureState::Active.as_str() {
         return Err(StorageError::LiveCaptureNotActive);
     }
-    let changed = connection.execute(
-        "UPDATE live_capture_sessions SET state = 'finished', finished_at_ms = ?1
-         WHERE capture_id = ?2 AND state = 'active' AND started_at_ms <= ?1",
-        params![finished_at_ms, id.as_string()],
+    let transaction = connection.unchecked_transaction()?;
+    let changed = transaction.execute(
+        "UPDATE live_capture_sessions
+         SET state = 'finished', finished_at_ms = ?1, integrity = ?2, dropped_messages = ?3
+         WHERE capture_id = ?4 AND state = 'active' AND started_at_ms <= ?1",
+        params![
+            finished_at_ms,
+            integrity.as_str(),
+            integrity.dropped_messages(),
+            id.as_string()
+        ],
     )?;
     if changed != 1 {
         return Err(StorageError::LiveCaptureInputInvalid(
             "finish precedes capture start",
         ));
     }
+    transaction.commit()?;
     Ok(())
 }
 
@@ -495,16 +587,19 @@ pub(super) fn read(
 ) -> Result<LiveCaptureSnapshot, StorageError> {
     let header: Option<LiveCaptureHeaderRow> = connection
         .query_row(
-            "SELECT state, header_json, started_at_ms, finished_at_ms, next_sequence
+            "SELECT state, integrity, dropped_messages, header_json, started_at_ms,
+                    finished_at_ms, next_sequence
              FROM live_capture_sessions WHERE capture_id = ?1",
             [id.as_string()],
             |row| {
                 Ok(LiveCaptureHeaderRow {
                     state: row.get(0)?,
-                    header_json: row.get(1)?,
-                    started_at_ms: row.get(2)?,
-                    finished_at_ms: row.get(3)?,
-                    next_sequence: row.get(4)?,
+                    integrity: row.get(1)?,
+                    dropped_messages: row.get(2)?,
+                    header_json: row.get(3)?,
+                    started_at_ms: row.get(4)?,
+                    finished_at_ms: row.get(5)?,
+                    next_sequence: row.get(6)?,
                 })
             },
         )
@@ -555,6 +650,7 @@ pub(super) fn read(
     Ok(LiveCaptureSnapshot {
         id,
         state: LiveCaptureState::parse(&header.state)?,
+        integrity: LiveCaptureIntegrity::parse(&header.integrity, header.dropped_messages)?,
         header_json: header.header_json,
         started_at_ms: header.started_at_ms,
         finished_at_ms: header.finished_at_ms,
@@ -565,6 +661,8 @@ pub(super) fn read(
 
 struct LiveCaptureHeaderRow {
     state: String,
+    integrity: String,
+    dropped_messages: u64,
     header_json: Vec<u8>,
     started_at_ms: u64,
     finished_at_ms: Option<u64>,
@@ -573,7 +671,7 @@ struct LiveCaptureHeaderRow {
 
 pub(super) fn interrupt_active(connection: &Connection) -> Result<(), StorageError> {
     connection.execute(
-        "UPDATE live_capture_sessions SET state = 'interrupted'
+        "UPDATE live_capture_sessions SET state = 'interrupted', integrity = 'unknown'
          WHERE state = 'active'",
         [],
     )?;

@@ -103,9 +103,15 @@ impl DatabaseWorker<'_> {
             Command::FinishLiveCapture {
                 id,
                 finished_at_ms,
+                integrity,
                 reply,
             } => {
-                let _ = reply.send(super::live_capture::finish(connection, id, finished_at_ms));
+                let _ = reply.send(super::live_capture::finish(
+                    connection,
+                    id,
+                    finished_at_ms,
+                    integrity,
+                ));
             }
             Command::UpdateLiveCaptureHeader {
                 id,
