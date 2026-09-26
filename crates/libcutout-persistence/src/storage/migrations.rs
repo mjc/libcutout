@@ -1,7 +1,7 @@
 use super::{MapPointId, SpatialRowId, StorageError};
 use rusqlite::{Connection, OptionalExtension, params};
 
-pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 32;
+pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 33;
 const APPLICATION_ID: i64 = 0x4355_544f;
 
 fn schema_pragmas(version: i64) -> String {
@@ -55,6 +55,7 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         29 => migrate_v29_to_current(connection)?,
         30 => migrate_v30_to_current(connection)?,
         31 => migrate_v31_to_current(connection)?,
+        32 => migrate_v32_to_current(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -90,6 +91,11 @@ fn initialize_current_schema(connection: &Connection) -> Result<(), StorageError
         .and_then(|()| {
             connection
                 .execute_batch(super::live_capture::BLE_SCHEMA)
+                .map_err(Into::into)
+        })
+        .and_then(|()| {
+            connection
+                .execute_batch(super::live_capture::BLE_RAW_TELEMETRY_SCHEMA)
                 .map_err(Into::into)
         })
     {
@@ -531,6 +537,7 @@ fn migrate_v3_to_current(connection: &mut Connection) -> Result<(), StorageError
     transaction.execute_batch(super::live_capture::SCHEMA)?;
     transaction.execute_batch(super::live_capture::LOCATION_SCHEMA)?;
     transaction.execute_batch(super::live_capture::BLE_SCHEMA)?;
+    transaction.execute_batch(super::live_capture::BLE_RAW_TELEMETRY_SCHEMA)?;
     transaction.execute_batch(&current_schema_pragmas())?;
     transaction.commit()?;
     Ok(())
@@ -1244,6 +1251,7 @@ fn migrate_v28_to_current(connection: &mut Connection) -> Result<(), StorageErro
     let transaction = connection.transaction()?;
     transaction.execute_batch(super::live_capture::LOCATION_SCHEMA)?;
     transaction.execute_batch(super::live_capture::BLE_SCHEMA)?;
+    transaction.execute_batch(super::live_capture::BLE_RAW_TELEMETRY_SCHEMA)?;
     transaction.execute_batch(&current_schema_pragmas())?;
     transaction.commit()?;
     Ok(())
@@ -1271,6 +1279,7 @@ fn migrate_v29_to_current(connection: &mut Connection) -> Result<(), StorageErro
          DROP TABLE live_capture_location_observations_v29;",
     )?;
     transaction.execute_batch(super::live_capture::BLE_SCHEMA)?;
+    transaction.execute_batch(super::live_capture::BLE_RAW_TELEMETRY_SCHEMA)?;
     transaction.execute_batch(&current_schema_pragmas())?;
     transaction.commit()?;
     Ok(())
@@ -1284,6 +1293,15 @@ fn migrate_v30_to_current(connection: &mut Connection) -> Result<(), StorageErro
                  CHECK (raw_source_timestamp_bits IS NULL OR length(raw_source_timestamp_bits) = 8);",
     )?;
     transaction.execute_batch(super::live_capture::BLE_SCHEMA)?;
+    transaction.execute_batch(super::live_capture::BLE_RAW_TELEMETRY_SCHEMA)?;
+    transaction.execute_batch(&current_schema_pragmas())?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn migrate_v32_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction()?;
+    transaction.execute_batch(super::live_capture::BLE_RAW_TELEMETRY_SCHEMA)?;
     transaction.execute_batch(&current_schema_pragmas())?;
     transaction.commit()?;
     Ok(())
@@ -1292,6 +1310,7 @@ fn migrate_v30_to_current(connection: &mut Connection) -> Result<(), StorageErro
 fn migrate_v31_to_current(connection: &mut Connection) -> Result<(), StorageError> {
     let transaction = connection.transaction()?;
     transaction.execute_batch(super::live_capture::BLE_SCHEMA)?;
+    transaction.execute_batch(super::live_capture::BLE_RAW_TELEMETRY_SCHEMA)?;
     transaction.execute_batch(&current_schema_pragmas())?;
     transaction.commit()?;
     Ok(())
@@ -1334,6 +1353,7 @@ pub(super) fn verify_current_schema(connection: &Connection) -> Result<(), Stora
         "live_capture_events",
         "live_capture_location_observations",
         "live_capture_ble_observations",
+        "live_capture_ble_raw_telemetry_fields",
         "trails",
         "trail_segments",
         "trail_segment_spatial_keys",
@@ -1509,6 +1529,28 @@ mod tests {
         migrate(&mut connection).unwrap();
 
         assert!(table_exists(&connection, "live_capture_ble_observations").unwrap());
+        assert_eq!(
+            connection
+                .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                .unwrap(),
+            CURRENT_SCHEMA_VERSION
+        );
+    }
+
+    #[test]
+    fn schema_v32_migration_adds_queryable_raw_telemetry_fields() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        initialize_current_schema(&connection).unwrap();
+        connection
+            .execute_batch(
+                "DROP TABLE live_capture_ble_raw_telemetry_fields;
+                 PRAGMA user_version = 32;",
+            )
+            .unwrap();
+
+        migrate(&mut connection).unwrap();
+
+        assert!(table_exists(&connection, "live_capture_ble_raw_telemetry_fields").unwrap());
         assert_eq!(
             connection
                 .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))

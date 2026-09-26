@@ -434,6 +434,29 @@ pub(super) const BLE_SCHEMA: &str = "
         ON live_capture_ble_observations(characteristic_uuid, capture_id, sequence);
 ";
 
+/// Protocol-native decoded field slots remain independently queryable while the original
+/// telemetry JSON and PEVCAP event payload preserve the exact capture representation.
+pub(super) const BLE_RAW_TELEMETRY_SCHEMA: &str = "
+    CREATE TABLE live_capture_ble_raw_telemetry_fields (
+        capture_id TEXT NOT NULL,
+        sequence INTEGER NOT NULL CHECK (sequence >= 0),
+        field_kind TEXT NOT NULL CHECK (field_kind IN ('integer', 'float')),
+        field_index INTEGER NOT NULL CHECK (field_index BETWEEN 0 AND 18),
+        field_id INTEGER NOT NULL CHECK (field_id BETWEEN 0 AND 65535),
+        integer_value INTEGER,
+        float_value_bits BLOB CHECK (float_value_bits IS NULL OR length(float_value_bits) = 4),
+        CHECK (
+            (field_kind = 'integer' AND integer_value IS NOT NULL AND float_value_bits IS NULL)
+            OR (field_kind = 'float' AND integer_value IS NULL AND float_value_bits IS NOT NULL)
+        ),
+        PRIMARY KEY (capture_id, sequence, field_kind, field_index),
+        FOREIGN KEY (capture_id, sequence)
+            REFERENCES live_capture_ble_observations(capture_id, sequence) ON DELETE CASCADE
+    ) WITHOUT ROWID;
+    CREATE INDEX live_capture_ble_raw_telemetry_field_id
+        ON live_capture_ble_raw_telemetry_fields(field_kind, field_id, capture_id, sequence);
+";
+
 impl RideDatabase {
     /// Starts a live capture in the existing Rust-owned database worker.
     ///
@@ -877,6 +900,30 @@ fn insert_ble_observation(
             raw_telemetry_json,
         ],
     )?;
+    if let Some(telemetry) = &record.telemetry {
+        for (field_index, field) in telemetry.fields.iter().enumerate() {
+            transaction.execute(
+                "INSERT INTO live_capture_ble_raw_telemetry_fields
+                 (capture_id, sequence, field_kind, field_index, field_id, integer_value, float_value_bits)
+                 VALUES (?1, ?2, 'integer', ?3, ?4, ?5, NULL)",
+                params![id.as_string(), sequence, field_index, field.id, field.value],
+            )?;
+        }
+        for (field_index, field) in telemetry.float_fields.iter().enumerate() {
+            transaction.execute(
+                "INSERT INTO live_capture_ble_raw_telemetry_fields
+                 (capture_id, sequence, field_kind, field_index, field_id, integer_value, float_value_bits)
+                 VALUES (?1, ?2, 'float', ?3, ?4, NULL, ?5)",
+                params![
+                    id.as_string(),
+                    sequence,
+                    field_index,
+                    field.id,
+                    field.value_bits.to_le_bytes().as_slice(),
+                ],
+            )?;
+        }
+    }
     Ok(())
 }
 
