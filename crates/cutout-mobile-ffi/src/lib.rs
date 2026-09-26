@@ -12522,6 +12522,27 @@ pub enum MobileCaptureFinishOutcomeDto {
     Failed { message: String },
 }
 
+/// Correlated result of finishing a writer and publishing its saved-artifact receipt.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileCaptureCompletionDto {
+    /// Durable writer result, independent of optional saved-history publication.
+    pub finish: MobileCaptureFinishOutcomeDto,
+    /// Whether a file-backed capture was published into the saved-capture index.
+    /// `None` means publication was not applicable; `Some(false)` means it failed.
+    pub database_publication_succeeded: Option<bool>,
+}
+
+/// Optional saved-history publication request bundled with the writer's terminal operation.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileCaptureHistoryPublicationDto {
+    /// User or system action that produced the capture.
+    pub origin: MobileCaptureOriginDto,
+    /// Advertised device name captured when the recording started.
+    pub advertised_name: Option<String>,
+    /// Invalid or unavailable time is reported as a failed publication, not a failed capture.
+    pub published_at_unix_ms: Option<MobileWallClockUnixMillisDto>,
+}
+
 impl From<CaptureWriterFinish> for MobileCaptureFinishOutcomeDto {
     fn from(finish: CaptureWriterFinish) -> Self {
         match finish {
@@ -12640,6 +12661,7 @@ pub struct MobilePevcapCaptureBuilder {
     resolved_identity: Mutex<Option<PevcapResolvedIdentity>>,
     annotations: Mutex<cutout_core::CaptureAnnotations>,
     writer: Mutex<CaptureWriterSlot>,
+    writer_finish_lock: Mutex<()>,
     writer_ingress: Mutex<Option<persistence::CaptureWriterIngress>>,
     writer_state: Mutex<Option<CaptureWriterMonitor>>,
     database: Mutex<Option<Arc<RideDatabaseHandle>>>,
@@ -12705,6 +12727,64 @@ impl From<SavedCaptureArtifact> for MobileSavedCaptureArtifactDto {
     }
 }
 const PEVCAP_MUSIC_CONTEXT_FRESHNESS_MS: u64 = 5_000;
+
+fn completed_saved_capture(builder: &MobilePevcapCaptureBuilder) -> Option<SavedCaptureArtifact> {
+    let slot = builder
+        .writer
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    let CaptureWriterSlot::Complete(Ok(finish)) = &*slot else {
+        return None;
+    };
+    match finish {
+        CaptureWriterFinish::FileSaved(artifact)
+        | CaptureWriterFinish::DatabaseFinished {
+            jsonl_export: CaptureJsonlExport::Available(artifact),
+            ..
+        } => Some((**artifact).clone()),
+        CaptureWriterFinish::DatabaseFinished { .. } => None,
+    }
+}
+
+fn finish_writer_outcome(builder: &MobilePevcapCaptureBuilder) -> MobileCaptureFinishOutcomeDto {
+    let writer = {
+        let mut slot = builder
+            .writer
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        match &*slot {
+            CaptureWriterSlot::Complete(result) => {
+                return match result.clone() {
+                    Ok(finish) => finish.into(),
+                    Err(message) => MobileCaptureFinishOutcomeDto::Failed { message },
+                };
+            }
+            CaptureWriterSlot::Ready => return MobileCaptureFinishOutcomeDto::NotStarted,
+            CaptureWriterSlot::Finalizing => {
+                return MobileCaptureFinishOutcomeDto::Finalizing;
+            }
+            CaptureWriterSlot::Recording(_) => {}
+        }
+        match std::mem::replace(&mut *slot, CaptureWriterSlot::Finalizing) {
+            CaptureWriterSlot::Recording(writer) => writer,
+            _ => unreachable!("recording state was checked while holding the lock"),
+        }
+    };
+    *builder
+        .writer_ingress
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner) = None;
+    let result = writer.finish();
+    let outcome = match result.clone() {
+        Ok(finish) => finish.into(),
+        Err(message) => MobileCaptureFinishOutcomeDto::Failed { message },
+    };
+    *builder
+        .writer
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner) = CaptureWriterSlot::Complete(result);
+    outcome
+}
 
 impl MobilePevcapCaptureBuilder {
     fn update_annotations(
@@ -12798,6 +12878,7 @@ impl MobilePevcapCaptureBuilder {
             resolved_identity: Mutex::new(None),
             annotations: Mutex::new(cutout_core::CaptureAnnotations::default()),
             writer: Mutex::new(CaptureWriterSlot::Ready),
+            writer_finish_lock: Mutex::new(()),
             writer_ingress: Mutex::new(None),
             writer_state: Mutex::new(None),
             database: Mutex::new(None),
@@ -12879,6 +12960,10 @@ impl MobilePevcapCaptureBuilder {
     ///
     /// Returns `false` if the path already exists, preserving the existing capture.
     pub fn start_writer(&self, path: String) -> bool {
+        let _finish = self
+            .writer_finish_lock
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         let mut slot = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
         let CaptureWriterSlot::Ready = *slot else {
             return false;
@@ -12934,8 +13019,14 @@ impl MobilePevcapCaptureBuilder {
     }
 
     /// Routes active capture events through the existing Rust-owned database worker.
-    pub fn set_database(&self, database: Arc<RideDatabaseHandle>) {
+    pub fn set_database(&self, database: Arc<RideDatabaseHandle>) -> bool {
+        let writer = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
+        match &*writer {
+            CaptureWriterSlot::Ready => {}
+            _ => return false,
+        }
         *self.database.lock().unwrap_or_else(PoisonError::into_inner) = Some(database);
+        true
     }
 
     /// Flushes buffered capture bytes and syncs them to durable storage.
@@ -12952,53 +13043,62 @@ impl MobilePevcapCaptureBuilder {
     /// Returns the correlated terminal writer result, including durable SQLite captures without
     /// an exported file.
     pub fn finish_writer_outcome(&self) -> MobileCaptureFinishOutcomeDto {
-        let writer = {
-            let mut slot = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
-            match &*slot {
-                CaptureWriterSlot::Complete(result) => {
-                    return match result.clone() {
-                        Ok(finish) => finish.into(),
-                        Err(message) => MobileCaptureFinishOutcomeDto::Failed { message },
-                    };
-                }
-                CaptureWriterSlot::Ready => return MobileCaptureFinishOutcomeDto::NotStarted,
-                CaptureWriterSlot::Finalizing => return MobileCaptureFinishOutcomeDto::Finalizing,
-                CaptureWriterSlot::Recording(_) => {}
-            }
-            match std::mem::replace(&mut *slot, CaptureWriterSlot::Finalizing) {
-                CaptureWriterSlot::Recording(writer) => writer,
-                _ => unreachable!("recording state was checked while holding the lock"),
-            }
-        };
-        *self
-            .writer_ingress
+        let _finish = self
+            .writer_finish_lock
             .lock()
-            .unwrap_or_else(PoisonError::into_inner) = None;
-        let result = writer.finish();
-        let outcome = match result.clone() {
-            Ok(finish) => finish.into(),
-            Err(message) => MobileCaptureFinishOutcomeDto::Failed { message },
+            .unwrap_or_else(PoisonError::into_inner);
+        finish_writer_outcome(self)
+    }
+
+    /// Finishes this writer and publishes any available file artifact through its Rust database.
+    ///
+    /// The native adapter supplies platform-derived provenance and wall-clock time, but it does
+    /// not sequence writer completion and database publication as separate operations.
+    pub fn finish_writer_and_publish_capture(
+        &self,
+        publication: Option<MobileCaptureHistoryPublicationDto>,
+    ) -> MobileCaptureCompletionDto {
+        let _finish = self
+            .writer_finish_lock
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let finish = finish_writer_outcome(self);
+        let artifact = completed_saved_capture(self);
+        let database = self
+            .database
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        let database_publication_succeeded = match (publication, database, artifact) {
+            (None, _, _) | (Some(_), Some(_), None) => None,
+            (Some(_), None, _) => Some(false),
+            (Some(publication), Some(database), Some(artifact)) => Some(
+                publication
+                    .published_at_unix_ms
+                    .is_some_and(|published_at| {
+                        published_at.milliseconds > 0
+                            && database
+                                .inner
+                                .retain_finished_capture(
+                                    &artifact,
+                                    publication.origin.into(),
+                                    publication.advertised_name.as_deref(),
+                                    published_at.into_core(),
+                                )
+                                .is_ok()
+                    }),
+            ),
         };
-        *self.writer.lock().unwrap_or_else(PoisonError::into_inner) =
-            CaptureWriterSlot::Complete(result);
-        outcome
+        MobileCaptureCompletionDto {
+            finish,
+            database_publication_succeeded,
+        }
     }
 
     /// Returns an artifact only after successful durable finalization, never merely after flush.
     #[must_use]
     pub fn completed_artifact(&self) -> Option<MobileSavedCaptureArtifactDto> {
-        let slot = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
-        let CaptureWriterSlot::Complete(Ok(finish)) = &*slot else {
-            return None;
-        };
-        match finish {
-            CaptureWriterFinish::FileSaved(artifact)
-            | CaptureWriterFinish::DatabaseFinished {
-                jsonl_export: CaptureJsonlExport::Available(artifact),
-                ..
-            } => Some((**artifact).clone().into()),
-            CaptureWriterFinish::DatabaseFinished { .. } => None,
-        }
+        completed_saved_capture(self).map(Into::into)
     }
 
     /// Sets the ride music-history policy used for future PEVCAP metadata.
@@ -19961,6 +20061,240 @@ mod tests {
             builder.completed_artifact().unwrap().id
         );
         assert_eq!(recording.advertised_name.as_deref(), Some("GW-Falcon"));
+        database.shutdown().unwrap();
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn capture_builder_finishes_and_publishes_in_one_rust_operation() {
+        let _guard = RIDE_DATABASE_TEST_LOCK.lock().unwrap();
+        let directory =
+            std::env::temp_dir().join(format!("cutout-finish-publish-{}", Uuid::new_v4()));
+        fs::create_dir(&directory).unwrap();
+        let database =
+            open_ride_database(directory.join("ride.sqlite").to_string_lossy().into_owned())
+                .unwrap();
+        let source = directory.join("capture.jsonl");
+        let builder =
+            MobilePevcapCaptureBuilder::new(wc(1_700_000_000_000), "wheel-a".into(), None);
+        builder.set_database(Arc::clone(&database));
+        assert!(builder.start_writer(source.to_string_lossy().into_owned()));
+
+        let completion =
+            builder.finish_writer_and_publish_capture(Some(MobileCaptureHistoryPublicationDto {
+                origin: MobileCaptureOriginDto::Manual,
+                advertised_name: Some("GW-Falcon".into()),
+                published_at_unix_ms: Some(wc(1_700_000_001_000)),
+            }));
+
+        assert_eq!(completion.database_publication_succeeded, Some(true));
+        assert!(matches!(
+            completion.finish,
+            MobileCaptureFinishOutcomeDto::DatabaseFinished {
+                jsonl_export: MobileCaptureJsonlExportDto::Available { .. },
+                ..
+            }
+        ));
+        let captures = database.list_pevcap_captures(None, 1).unwrap();
+        let recording = captures.captures[0].recording.as_ref().unwrap();
+        assert_eq!(recording.origin, MobileCaptureOriginDto::Manual);
+        assert_eq!(recording.advertised_name.as_deref(), Some("GW-Falcon"));
+
+        database.shutdown().unwrap();
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn concurrent_finish_and_publication_calls_share_one_terminal_capture() {
+        let _guard = RIDE_DATABASE_TEST_LOCK.lock().unwrap();
+        let directory =
+            std::env::temp_dir().join(format!("cutout-concurrent-publish-{}", Uuid::new_v4()));
+        fs::create_dir(&directory).unwrap();
+        let database =
+            open_ride_database(directory.join("ride.sqlite").to_string_lossy().into_owned())
+                .unwrap();
+        let source = directory.join("capture.jsonl");
+        let builder =
+            MobilePevcapCaptureBuilder::new(wc(1_700_000_000_000), "wheel-a".into(), None);
+        builder.set_database(Arc::clone(&database));
+        assert!(builder.start_writer(source.to_string_lossy().into_owned()));
+
+        let gate = Arc::new(std::sync::Barrier::new(3));
+        let start = |builder: Arc<MobilePevcapCaptureBuilder>| {
+            let gate = Arc::clone(&gate);
+            thread::spawn(move || {
+                gate.wait();
+                builder.finish_writer_and_publish_capture(Some(
+                    MobileCaptureHistoryPublicationDto {
+                        origin: MobileCaptureOriginDto::Manual,
+                        advertised_name: Some("GW-Falcon".into()),
+                        published_at_unix_ms: Some(wc(1_700_000_001_000)),
+                    },
+                ))
+            })
+        };
+        let first = start(Arc::clone(&builder));
+        let second = start(Arc::clone(&builder));
+        gate.wait();
+        let first = first.join().unwrap();
+        let second = second.join().unwrap();
+
+        assert_eq!(first.database_publication_succeeded, Some(true));
+        assert_eq!(second.database_publication_succeeded, Some(true));
+        assert!(matches!(
+            first.finish,
+            MobileCaptureFinishOutcomeDto::DatabaseFinished { .. }
+        ));
+        assert!(matches!(
+            second.finish,
+            MobileCaptureFinishOutcomeDto::DatabaseFinished { .. }
+        ));
+        assert_eq!(
+            database
+                .list_pevcap_captures(None, 2)
+                .unwrap()
+                .captures
+                .len(),
+            1
+        );
+
+        database.shutdown().unwrap();
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn disabling_saved_history_still_finalizes_the_capture_file() {
+        let _guard = RIDE_DATABASE_TEST_LOCK.lock().unwrap();
+        let directory = std::env::temp_dir().join(format!("cutout-no-publish-{}", Uuid::new_v4()));
+        fs::create_dir(&directory).unwrap();
+        let database =
+            open_ride_database(directory.join("ride.sqlite").to_string_lossy().into_owned())
+                .unwrap();
+        let source = directory.join("capture.jsonl");
+        let builder =
+            MobilePevcapCaptureBuilder::new(wc(1_700_000_000_000), "wheel-a".into(), None);
+        builder.set_database(Arc::clone(&database));
+        assert!(builder.start_writer(source.to_string_lossy().into_owned()));
+
+        let completion = builder.finish_writer_and_publish_capture(None);
+        assert_eq!(completion.database_publication_succeeded, None);
+        assert!(builder.completed_artifact().is_some());
+        assert!(
+            database
+                .list_pevcap_captures(None, 1)
+                .unwrap()
+                .captures
+                .is_empty()
+        );
+
+        database.shutdown().unwrap();
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn requested_saved_history_without_a_database_reports_failure() {
+        let directory = std::env::temp_dir().join(format!("cutout-no-database-{}", Uuid::new_v4()));
+        fs::create_dir(&directory).unwrap();
+        let source = directory.join("capture.jsonl");
+        let builder =
+            MobilePevcapCaptureBuilder::new(wc(1_700_000_000_000), "wheel-a".into(), None);
+        assert!(builder.start_writer(source.to_string_lossy().into_owned()));
+
+        let completion =
+            builder.finish_writer_and_publish_capture(Some(MobileCaptureHistoryPublicationDto {
+                origin: MobileCaptureOriginDto::Manual,
+                advertised_name: None,
+                published_at_unix_ms: Some(wc(1_700_000_001_000)),
+            }));
+
+        assert_eq!(completion.database_publication_succeeded, Some(false));
+        assert!(builder.completed_artifact().is_some());
+        assert!(source.exists());
+        fs::remove_file(source).unwrap();
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn capture_database_cannot_be_replaced_after_writer_start() {
+        let _guard = RIDE_DATABASE_TEST_LOCK.lock().unwrap();
+        let directory =
+            std::env::temp_dir().join(format!("cutout-publish-owner-{}", Uuid::new_v4()));
+        fs::create_dir(&directory).unwrap();
+        let database =
+            open_ride_database(directory.join("ride.sqlite").to_string_lossy().into_owned())
+                .unwrap();
+        let builder =
+            MobilePevcapCaptureBuilder::new(wc(1_700_000_000_000), "wheel-a".into(), None);
+        assert!(builder.set_database(Arc::clone(&database)));
+        assert!(
+            builder.start_writer(
+                directory
+                    .join("capture.jsonl")
+                    .to_string_lossy()
+                    .into_owned()
+            )
+        );
+        assert!(!builder.set_database(Arc::clone(&database)));
+
+        let completion =
+            builder.finish_writer_and_publish_capture(Some(MobileCaptureHistoryPublicationDto {
+                origin: MobileCaptureOriginDto::Manual,
+                advertised_name: Some("GW-Falcon".into()),
+                published_at_unix_ms: Some(wc(1_700_000_001_000)),
+            }));
+        assert_eq!(completion.database_publication_succeeded, Some(true));
+        assert_eq!(
+            database
+                .list_pevcap_captures(None, 1)
+                .unwrap()
+                .captures
+                .len(),
+            1
+        );
+        database.shutdown().unwrap();
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn invalid_publication_time_keeps_finished_artifact_retryable() {
+        let _guard = RIDE_DATABASE_TEST_LOCK.lock().unwrap();
+        let directory =
+            std::env::temp_dir().join(format!("cutout-publish-time-{}", Uuid::new_v4()));
+        fs::create_dir(&directory).unwrap();
+        let database =
+            open_ride_database(directory.join("ride.sqlite").to_string_lossy().into_owned())
+                .unwrap();
+        let source = directory.join("capture.jsonl");
+        let builder =
+            MobilePevcapCaptureBuilder::new(wc(1_700_000_000_000), "wheel-a".into(), None);
+        builder.set_database(Arc::clone(&database));
+        assert!(builder.start_writer(source.to_string_lossy().into_owned()));
+
+        let failed =
+            builder.finish_writer_and_publish_capture(Some(MobileCaptureHistoryPublicationDto {
+                origin: MobileCaptureOriginDto::Manual,
+                advertised_name: None,
+                published_at_unix_ms: None,
+            }));
+        assert_eq!(failed.database_publication_succeeded, Some(false));
+        assert!(builder.completed_artifact().is_some());
+
+        let retried =
+            builder.finish_writer_and_publish_capture(Some(MobileCaptureHistoryPublicationDto {
+                origin: MobileCaptureOriginDto::Manual,
+                advertised_name: None,
+                published_at_unix_ms: Some(wc(1_700_000_001_000)),
+            }));
+        assert_eq!(retried.database_publication_succeeded, Some(true));
+        assert_eq!(
+            database
+                .list_pevcap_captures(None, 1)
+                .unwrap()
+                .captures
+                .len(),
+            1
+        );
+
         database.shutdown().unwrap();
         fs::remove_dir_all(directory).unwrap();
     }

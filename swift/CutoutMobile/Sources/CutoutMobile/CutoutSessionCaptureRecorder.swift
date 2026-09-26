@@ -181,7 +181,7 @@ final class CutoutSessionCaptureRecorder: CutoutSessionCaptureRecording {
             writeLimit: MobileTransportWriteLimitDto(bytes: 23)
         )
         if let database {
-            builder.setDatabase(database: database)
+            _ = builder.setDatabase(database: database)
         }
         _ = builder.setMusicHistoryPolicy(policy: musicHistoryPolicy)
         _ = builder.setCaptureStartMonotonicMs(monotonicMs: startedAt.rawValue)
@@ -411,7 +411,6 @@ final class CutoutSessionCaptureRecorder: CutoutSessionCaptureRecording {
         presentation.end()
 
         let completionHandler = onWriterCompletion
-        let database = database
         let wallClock = wallClock
         #if DEBUG
             let finishWriterGate = finishWriterGate
@@ -420,43 +419,24 @@ final class CutoutSessionCaptureRecorder: CutoutSessionCaptureRecording {
             #if DEBUG
                 finishWriterGate?()
             #endif
-            let outcome = builder.finishWriterOutcome()
-            let artifact: MobileSavedCaptureArtifactDto?
-            switch outcome {
-            case let .artifactAvailable(saved): artifact = saved
-            case let .databaseFinished(_, _, .available(saved), _): artifact = saved
-            case .notStarted, .finalizing, .databaseFinished, .failed: artifact = nil
-            }
-            guard publishesResult else { return }
-            let databasePublicationSucceeded: Bool?
-            if let database, artifact != nil {
-                let milliseconds = wallClock().timeIntervalSince1970 * 1_000
-                if milliseconds.isFinite, milliseconds > 0, milliseconds < Double(UInt64.max) {
-                    do {
-                        _ = try database.retainFinishedCapture(
-                            builder: builder,
-                            origin: origin,
-                            advertisedName: advertisedName,
-                            publishedAt: MobileWallClockUnixMillisDto(
-                                milliseconds: UInt64(milliseconds.rounded(.down))
-                            )
-                        )
-                        databasePublicationSucceeded = true
-                    } catch {
-                        databasePublicationSucceeded = false
+            let publication =
+                publishesResult
+                ? MobileCaptureHistoryPublicationDto(
+                    origin: origin,
+                    advertisedName: advertisedName,
+                    publishedAtUnixMs: unixMilliseconds(for: wallClock()).map {
+                        MobileWallClockUnixMillisDto(milliseconds: $0)
                     }
-                } else {
-                    databasePublicationSucceeded = false
-                }
-            } else {
-                databasePublicationSucceeded = nil
-            }
+                )
+                : nil
+            let completion = builder.finishWriterAndPublishCapture(publication: publication)
+            guard publishesResult else { return }
             completionHandler(
                 CaptureWriterCompletion(
                     generation: generation,
-                    outcome: outcome,
+                    outcome: completion.finish,
                     priorWriteSucceeded: priorWriteSucceeded,
-                    databasePublicationSucceeded: databasePublicationSucceeded
+                    databasePublicationSucceeded: completion.databasePublicationSucceeded
                 ))
         }
         DispatchQueue.global(qos: .utility).async(execute: finish)

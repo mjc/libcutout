@@ -293,6 +293,45 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(recording.platformIdentifier, platformIdentifier)
     }
 
+    func testFinishWithoutPublishingDoesNotReadPublicationClockOrNotifyCompletion() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let database = try XCTUnwrap(MobileRideMapState.debugDatabase)
+        let completion = expectation(description: "non-publishing finish does not notify")
+        completion.isInverted = true
+        let wallClockReadCount = Mutex(0)
+        let recorder = CutoutSessionCaptureRecorder(
+            clock: MonotonicClock(now: { MonotonicMilliseconds(100) }),
+            wallClock: {
+                wallClockReadCount.withLock { $0 += 1 }
+                return Date(timeIntervalSince1970: 1_700_000_000)
+            },
+            database: database,
+            publish: { _ in },
+            onWriterCompletion: { _ in completion.fulfill() }
+        )
+
+        XCTAssertTrue(
+            recorder.start(
+                generation: CaptureGeneration(rawValue: 1),
+                platformIdentifier: "capture-test-\(UUID().uuidString)",
+                advertisedServices: [],
+                directory: directory,
+                reason: "manual_test",
+                annotations: [],
+                evidence: "simulator_fixture",
+                origin: .manual,
+                advertisedName: nil
+            )
+        )
+        let readsBeforeFinish = wallClockReadCount.withLock { $0 }
+        recorder.finish(publishesResult: false, priorWriteSucceeded: true)
+
+        await fulfillment(of: [completion], timeout: 0.1)
+        XCTAssertEqual(wallClockReadCount.withLock { $0 }, readsBeforeFinish)
+    }
+
     func testDatabasePublicationFailureRetainsTheFinishedCaptureFile() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
