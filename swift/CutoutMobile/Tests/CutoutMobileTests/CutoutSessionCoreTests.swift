@@ -103,6 +103,70 @@ private final class CaptureRecorderSpy: CutoutSessionCaptureRecording {
 }
 
 final class CutoutSessionCoreTests: XCTestCase {
+    func testLocationEffectsRouteUnchangedUpdateInOrderAndIsolateCaptureFailures() {
+        let sample = MobilePhoneLocationSampleDto(
+            wallClockUnixMs: 1_700_000_000_025,
+            latitudeDegrees: 39.739_235_8,
+            longitudeDegrees: -104.990_251,
+            altitudeMeters: 1_609.344,
+            horizontalAccuracyMeters: 0.8,
+            verticalAccuracyMeters: 1.2,
+            speedMetersPerSecond: 4.470_400_25,
+            speedAccuracyMetersPerSecond: 0.25,
+            courseDegrees: 271.5,
+            courseAccuracyDegrees: 3.0
+        )
+        let update = PhoneLocationUpdate(
+            receiptMonotonic: MonotonicMilliseconds(125),
+            receiptWallClock: Date(timeIntervalSince1970: 1_700_000_000.125),
+            samples: [sample]
+        )
+        let expectedOutcomes: [MobileCaptureWriteOutcomeDto] = [.accepted, .rejected, .failed]
+
+        for (index, outcome) in expectedOutcomes.enumerated() {
+            var events: [String] = []
+            var captureUpdate: PhoneLocationUpdate?
+            var rideMapUpdate: PhoneLocationUpdate?
+            let result = CaptureLocationWriteResult(
+                generation: CaptureGeneration(rawValue: UInt64(index + 1)),
+                outcome: outcome
+            )
+            let effects = CutoutSessionLocationEffects(
+                recordCaptureUpdate: { received in
+                    events.append("capture")
+                    captureUpdate = received
+                    return result
+                },
+                ingestRideMapUpdate: { received in
+                    events.append("ride-map")
+                    rideMapUpdate = received
+                },
+                handleCaptureResult: { received in
+                    events.append("result")
+                    XCTAssertEqual(received.outcome, outcome)
+                    XCTAssertEqual(received.generation, result.generation)
+                }
+            )
+            let core = CutoutSessionCore(
+                clock: MonotonicClock(),
+                locationEffects: effects
+            )
+
+            core.handlePhoneLocationUpdate(update)
+
+            XCTAssertEqual(events, ["capture", "result", "ride-map"])
+            for received in [captureUpdate, rideMapUpdate].compactMap({ $0 }) {
+                XCTAssertEqual(received.receiptMonotonic, update.receiptMonotonic)
+                XCTAssertEqual(received.receiptWallClock, update.receiptWallClock)
+                XCTAssertEqual(received.samples.count, update.samples.count)
+                XCTAssertEqual(received.samples.first?.latitudeDegrees, sample.latitudeDegrees)
+                XCTAssertEqual(received.samples.first?.longitudeDegrees, sample.longitudeDegrees)
+            }
+            XCTAssertNotNil(captureUpdate)
+            XCTAssertNotNil(rideMapUpdate)
+        }
+    }
+
     #if canImport(CoreBluetooth)
         func testStaleCharacteristicErrorIsIgnoredBeforeCurrentCallbackFailure() {
             let subscribed = NSObject()

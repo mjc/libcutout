@@ -530,6 +530,7 @@ public final class CutoutSessionCore: NSObject {
     private let databaseForCapturePublication: RideDatabaseHandle?
     private let selectedDeviceStore: DevicePickerSelectionStore
     private let injectedNotificationEffects: CutoutSessionNotificationEffects?
+    private let injectedLocationEffects: CutoutSessionLocationEffects?
     private let injectedCaptureRecorder: (any CutoutSessionCaptureRecording)?
     private let injectedDisplayPublisher: (any CutoutSessionDisplayPublishing)?
     private let injectedPhoneLocationAdapter: (any CutoutSessionPhoneLocationAdapting)?
@@ -629,6 +630,20 @@ public final class CutoutSessionCore: NSObject {
                 case .notification:
                     state.reducing(snapshot: snapshot, receivedAt: receivedAt)
                 }
+            }
+        )
+    private lazy var locationEffects: CutoutSessionLocationEffects =
+        injectedLocationEffects
+        ?? CutoutSessionLocationEffects(
+            recordCaptureUpdate: { [weak self] update in
+                self?.captureRecorder.recordLocationUpdate(update)
+                    ?? CaptureLocationWriteResult(generation: nil, outcome: .accepted)
+            },
+            ingestRideMapUpdate: { [weak self] update in
+                self?.rideMapRecorder.ingestLocation(update)
+            },
+            handleCaptureResult: { [weak self] result in
+                self?.handleCaptureLocationWriteResult(result)
             }
         )
     private let rideMapStateForInitialization: MobileRideMapState?
@@ -775,6 +790,7 @@ public final class CutoutSessionCore: NSObject {
             rideMapState: MobileRideMapState? = nil,
             database: RideDatabaseHandle? = nil,
             notificationEffects: CutoutSessionNotificationEffects? = nil,
+            locationEffects: CutoutSessionLocationEffects? = nil,
             captureRecorder: (any CutoutSessionCaptureRecording)? = nil,
             displayPublisher: (any CutoutSessionDisplayPublishing)? = nil,
             phoneLocationAdapter: (any CutoutSessionPhoneLocationAdapting)? = nil,
@@ -800,6 +816,7 @@ public final class CutoutSessionCore: NSObject {
             self.reconnectJitter = reconnectJitter
             self.selectedDeviceStore = selectedDeviceStore
             self.injectedNotificationEffects = notificationEffects
+            self.injectedLocationEffects = locationEffects
             self.injectedCaptureRecorder = captureRecorder
             self.injectedDisplayPublisher = displayPublisher
             self.injectedPhoneLocationAdapter = phoneLocationAdapter
@@ -833,6 +850,7 @@ public final class CutoutSessionCore: NSObject {
             self.reconnectJitter = { Double.random(in: 0...1) }
             self.selectedDeviceStore = selectedDeviceStore
             self.injectedNotificationEffects = nil
+            self.injectedLocationEffects = nil
             self.injectedCaptureRecorder = nil
             self.injectedDisplayPublisher = nil
             self.injectedPhoneLocationAdapter = nil
@@ -3732,8 +3750,11 @@ extension CutoutSessionCore {
         )
     }
 
-    private func handlePhoneLocationUpdate(_ update: PhoneLocationUpdate) {
-        let captureResult = captureRecorder.recordLocationUpdate(update)
+    func handlePhoneLocationUpdate(_ update: PhoneLocationUpdate) {
+        locationEffects.ingest(update)
+    }
+
+    private func handleCaptureLocationWriteResult(_ captureResult: CaptureLocationWriteResult) {
         if captureResult.outcome != .accepted, let generation = captureResult.generation {
             onBleQueue {
                 guard self.captureGeneration == generation else { return }
@@ -3747,7 +3768,6 @@ extension CutoutSessionCore {
                 }
             }
         }
-        rideMapRecorder.ingestLocation(update)
     }
 
     public func startRideMapGpsOnly(atMs: UInt64) async throws -> MobileRideMapSnapshotDto {
