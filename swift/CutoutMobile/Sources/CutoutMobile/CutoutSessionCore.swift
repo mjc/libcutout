@@ -28,6 +28,12 @@ enum ProtocolDetectionFinishDecision: Equatable {
     }
 }
 
+private struct AcceptedLiveNotificationIngress {
+    let channel: BluetoothUuid
+    let bytes: Data
+    let receivedAt: MonotonicMilliseconds
+}
+
 public enum CaptureWriterHealth: Equatable, Sendable {
     case healthy
     case failed
@@ -1276,10 +1282,13 @@ public final class CutoutSessionCore: NSObject {
                             let receivedAt = MonotonicMilliseconds(
                                 replayStartedAt.rawValue + UInt64(index) * replayInterval
                             )
-                            let step = try owner.handleNotification(
-                                bytes: bytes,
-                                channel: channel,
-                                at: receivedAt
+                            let step = try ingestAcceptedLiveNotification(
+                                AcceptedLiveNotificationIngress(
+                                    channel: channel,
+                                    bytes: bytes,
+                                    receivedAt: receivedAt
+                                ),
+                                using: owner
                             )
                             if testScript.appliesProtocolNotificationSteps {
                                 applyNotificationStep(step, receivedAt: receivedAt)
@@ -1360,7 +1369,12 @@ public final class CutoutSessionCore: NSObject {
                     for bytes in script.protocolNotifications {
                         let at = self.clock.now()
                         self.applyNotificationStep(
-                            try owner.handleNotification(bytes: bytes, channel: channel, at: at), receivedAt: at)
+                            try self.ingestAcceptedLiveNotification(
+                                AcceptedLiveNotificationIngress(channel: channel, bytes: bytes, receivedAt: at),
+                                using: owner
+                            ),
+                            receivedAt: at
+                        )
                     }
                 } catch {
                     self.testProtocolNotificationTimer?.cancel()
@@ -3028,20 +3042,20 @@ extension CutoutSessionCore: CBPeripheralDelegate {
         error: Error?
     ) {
         assertOnBleQueue()
-        if let error {
-            setPhase(.failed(.notificationFailed(error.sessionMessage)))
-            return
-        }
-        guard
-            let value = characteristic.value,
-            let channel = BluetoothUuid(coreBluetoothUuid: characteristic.uuid)
-        else {
+        guard let channel = BluetoothUuid(coreBluetoothUuid: characteristic.uuid) else {
             return
         }
         guard subscribedCharacteristics[channel] === characteristic else {
             record(
                 "notification_ignored=unbound_characteristic service=\(characteristic.service?.uuid.uuidString ?? "unknown") characteristic=\(characteristic.uuid.uuidString)"
             )
+            return
+        }
+        if let error {
+            setPhase(.failed(.notificationFailed(error.sessionMessage)))
+            return
+        }
+        guard let value = characteristic.value else {
             return
         }
         let detectionResolution = observeDetectionNotification(channel: channel, bytes: value)
@@ -3094,10 +3108,9 @@ extension CutoutSessionCore: CBPeripheralDelegate {
         do {
             let receivedAt = clock.now()
             let ingestStartedAt = receivedAt
-            let step = try liveOwner.handleNotification(
-                bytes: value,
-                channel: channel,
-                at: receivedAt
+            let step = try ingestAcceptedLiveNotification(
+                AcceptedLiveNotificationIngress(channel: channel, bytes: value, receivedAt: receivedAt),
+                using: liveOwner
             )
             let ingestFinishedAt = clock.now()
             let ingestMilliseconds =
@@ -3127,6 +3140,17 @@ extension CutoutSessionCore: CBPeripheralDelegate {
             record("notification_ingest_error=\(error)")
             setPhase(.failed(.notificationIngestFailed(error.sessionMessage)))
         }
+    }
+
+    private func ingestAcceptedLiveNotification(
+        _ ingress: AcceptedLiveNotificationIngress,
+        using owner: DeviceSessionTransport
+    ) throws -> CoreBluetoothSessionStep {
+        try owner.handleNotification(
+            bytes: ingress.bytes,
+            channel: ingress.channel,
+            at: ingress.receivedAt
+        )
     }
 
     public func peripheral(
