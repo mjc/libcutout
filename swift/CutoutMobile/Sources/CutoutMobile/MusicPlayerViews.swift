@@ -176,6 +176,15 @@ private struct MusicPlayerIconButton: View {
 }
 
 enum MusicSettingsPresentation {
+    static func connectionActionTitle(
+        provider: MobileMusicProviderDto,
+        state: MobileMusicPlaybackStateDto?
+    ) -> String {
+        let key = state == .stale || state == .disconnected
+            ? "music.reconnect_provider" : "music.connect_provider"
+        return pevLocalizedText(key, provider.title)
+    }
+
     static func showsReauthorize(
         provider: MobileMusicProviderDto,
         state: MobileMusicPlaybackStateDto?
@@ -314,7 +323,9 @@ public struct MusicSettingsView: View {
                         .foregroundStyle(.secondary)
                         .accessibilityIdentifier("music.connection-status")
                 }
-                Button(pevLocalizedText("music.connect_provider", selectedProvider.title), action: onConnect)
+                Button(MusicSettingsPresentation.connectionActionTitle(
+                    provider: selectedProvider, state: nowPlaying?.state
+                ), action: onConnect)
                     .accessibilityIdentifier("music.connect-provider")
                 if MusicSettingsPresentation.showsReauthorize(
                     provider: selectedProvider,

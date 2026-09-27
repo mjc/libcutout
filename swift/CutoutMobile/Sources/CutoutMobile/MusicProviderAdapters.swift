@@ -579,6 +579,8 @@ public final class SpotifyProviderAdapter: NSObject {
         case .pending, .waitingToRetry:
             return
         case .exhausted:
+            // Local wakeup failures must not stop authorized Web playback.
+            guard selectedPlaybackTransport != .webApi else { return }
             lifecycleState = .unavailable
             emitChange()
             return
@@ -668,11 +670,7 @@ public final class SpotifyProviderAdapter: NSObject {
                       self.lifecycle.classifyProviderSession(id: generation) == .current else { return }
                 guard self.lifecycle.completePlayerStateRequestIfCurrent(
                     id: requestID, observationRevision: revision, nowMs: self.connectionNowMs
-                ) == .accepted else {
-                    self.lifecycleState = .stale
-                    self.emitChange()
-                    return
-                }
+                ) == .accepted else { return }
                 guard self.accessToken == accessToken else { return }
                 let previousURI = self.webPlayback?.item?.uri
                 self.webPlayback = playback

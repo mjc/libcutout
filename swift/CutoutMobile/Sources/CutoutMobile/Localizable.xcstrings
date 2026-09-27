@@ -890,6 +890,10 @@
       "comment" : "Explicit connect action in music settings. Placeholder is the provider name.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Connect %@" } } }
     },
+    "music.reconnect_provider" : {
+      "comment" : "Retry a lost music connection using the saved authorization. Placeholder is the provider name.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Reconnect %@" } } }
+    },
     "music.authorize_spotify" : {
       "comment" : "Explicitly replaces Spotify authorization when the cached session is no longer usable.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Reauthorize Spotify" } } }
@@ -1051,8 +1055,8 @@
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Playback interrupted" } } }
     },
     "music.state.stale" : {
-      "comment" : "Music provider data is stale.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Music status is stale" } } }
+      "comment" : "CutOut cannot get the current playback state from the music app.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Can’t get playback" } } }
     },
     "music.state.stopped" : {
       "comment" : "Music playback is stopped.",

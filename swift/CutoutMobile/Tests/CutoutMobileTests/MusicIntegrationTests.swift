@@ -116,6 +116,23 @@ final class MusicIntegrationTests: XCTestCase {
         ))
     }
 
+    func testLostSpotifyUpdatesKeepTheTrackAndOfferReconnect() {
+        let nowPlaying = MusicNowPlaying(
+            provider: .spotify,
+            state: .stale,
+            item: .init(identifier: "spotify:track:example", title: "Last song", artist: "Artist")
+        )
+        XCTAssertEqual(nowPlaying.title, "Last song")
+        XCTAssertEqual(nowPlaying.statusText, "Can’t get playback")
+        XCTAssertFalse(nowPlaying.requiresSetup)
+        XCTAssertEqual(MusicSettingsPresentation.connectionActionTitle(
+            provider: nowPlaying.provider, state: nowPlaying.state
+        ), "Reconnect Spotify")
+        XCTAssertFalse(MusicSettingsPresentation.showsReauthorize(
+            provider: nowPlaying.provider, state: nowPlaying.state
+        ))
+    }
+
     func testUnavailableMusicWithoutAPlayingItemDoesNotOccupyMapSpace() {
         XCTAssertFalse(MusicNowPlaying(provider: .spotify, state: .unavailable).showsCompactPlayer)
         for state in [MobileMusicPlaybackStateDto.stopped, .buffering, .interrupted, .disconnected, .stale] {
