@@ -2994,7 +2994,7 @@
     "controls.waiting" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Waiting for the wheel"}}}},
     "controls.restart" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Restart the wheel before calibrating again"}}}},
     "controls.ready" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Ready for the next step"}}}},
-    "controls.refusal.stationary" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Speed unavailable or above limit"}}}},
+    "controls.refusal.stationary" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Speed too high, unavailable, or state not allowed"}}}},
     "controls.refusal.expired" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Safety check expired"}}}},
     "controls.refusal.busy" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Wheel busy"}}}},
     "controls.refusal.model" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Unavailable for this wheel"}}}},

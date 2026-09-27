@@ -1155,6 +1155,7 @@ mod tests {
                     value: DeviceSettingValue::Number(55),
                 },
                 hex_literal::hex!("4c6b41701601808080808080808080808037aef39e07").as_slice(),
+                cutout_core::SafetyClass::StationaryOnly,
             ),
             (
                 DeviceCommand::SetSetting {
@@ -1162,6 +1163,7 @@ mod tests {
                     value: DeviceSettingValue::Number(50),
                 },
                 hex_literal::hex!("4c644170140102808080808080808032ec9452c7").as_slice(),
+                cutout_core::SafetyClass::BenignControl,
             ),
             (
                 DeviceCommand::SetSetting {
@@ -1170,6 +1172,7 @@ mod tests {
                 },
                 hex_literal::hex!("4c6441701c0102808080808080808080808080808080804b930b4f71")
                     .as_slice(),
+                cutout_core::SafetyClass::StationaryOnly,
             ),
             (
                 DeviceCommand::SetSetting {
@@ -1178,6 +1181,7 @@ mod tests {
                 },
                 hex_literal::hex!("4c6441701f0102808080808080808080808080808080808080803c6831fed2")
                     .as_slice(),
+                cutout_core::SafetyClass::StationaryOnly,
             ),
             (
                 DeviceCommand::SetSetting {
@@ -1188,6 +1192,7 @@ mod tests {
                     "4c64417021010280808080808080808080808080808080808080808028c549a32e"
                 )
                 .as_slice(),
+                cutout_core::SafetyClass::StationaryOnly,
             ),
             (
                 DeviceCommand::SetSetting {
@@ -1195,17 +1200,15 @@ mod tests {
                     value: DeviceSettingValue::Number(-15),
                 },
                 hex_literal::hex!("4c644170180102808080808080808080808080f129076df6").as_slice(),
+                cutout_core::SafetyClass::StationaryOnly,
             ),
         ];
-        for (command, expected) in cases {
+        for (command, expected, expected_safety_class) in cases {
             let encoded = NosfetDialect::encode(command).expect("source-backed setting encodes");
             assert_eq!(encoded.payload.as_slice(), expected);
             assert_eq!(encoded.command, command.kind());
             assert_eq!(encoded.mode, WriteMode::WithoutResponse);
-            assert!(matches!(
-                command.safety_class(),
-                cutout_core::SafetyClass::StationaryOnly | cutout_core::SafetyClass::BenignControl
-            ));
+            assert_eq!(command.safety_class(), expected_safety_class);
         }
     }
 
