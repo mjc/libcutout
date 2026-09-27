@@ -2166,6 +2166,10 @@
       "comment" : "Accessible route truth summary showing explicit gap segments.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Gap segments: %lld" } } }
     },
+    "ride_map.route_interrupted" : {
+      "comment" : "Rider-facing notice when a saved route has a genuine recording gap.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Route gap" } } }
+    },
     "ride_map.history_recording_continues" : {
       "comment" : "Persistent history-mode status while the Rust-owned ride recording continues in the background.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Recording continues" } } }

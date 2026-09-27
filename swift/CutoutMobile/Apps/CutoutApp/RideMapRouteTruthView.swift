@@ -39,20 +39,11 @@ struct RideMapRouteTruthView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(localizedAppText("ride_map.route_truth", segmentCount, telemetryText))
-                .font(.caption)
-                .foregroundStyle(PevColors.muted)
-                .accessibilityIdentifier("ride-map.route-truth")
-            if routeIsPresent, showsRecordedBounds {
-                Text(localizedAppText("ride_map.route_start_end", recordedPointCount ?? UInt64(displayedPointCount)))
-                    .font(.caption)
-                    .foregroundStyle(PevColors.muted)
-            }
             if Self.shouldShowBackgroundGapCount(
                 routeIsPresent: routeIsPresent,
                 canonicalBackgroundGapCount: backgroundGapCount
             ) {
-                Text(localizedAppText("ride_map.route_gaps", backgroundGapCount))
+                Text(localizedAppText("ride_map.route_interrupted"))
                     .font(.caption)
                     .foregroundStyle(PevColors.muted)
             }
@@ -65,7 +56,7 @@ struct RideMapRouteTruthView: View {
                 .foregroundStyle(.orange)
                 .accessibilityIdentifier("ride-map.segments-omitted")
             }
-            if let decisionText {
+            if let decisionText, !decisionIsAccepted {
                 Label(decisionText, systemImage: decisionSystemImage)
                     .font(.caption)
                     .foregroundStyle(decisionIsAccepted ? .green : .orange)
@@ -74,8 +65,6 @@ struct RideMapRouteTruthView: View {
         }
         .accessibilityElement(children: .combine)
     }
-
-    private var segmentCount: UInt64 { rustSegmentCount }
 
     static func shouldShowBackgroundGapCount(
         routeIsPresent: Bool,
@@ -100,24 +89,6 @@ struct RideMapRouteTruthView: View {
             recordedPointCount: recordedPointCount,
             displayedPointCount: displayedPointCount
         )
-    }
-
-    private var telemetryText: String {
-        guard let state = telemetryState else {
-            return localizedAppText("ride_map.telemetry.gps_only")
-        }
-        switch state {
-        case .gpsOnly:
-            return localizedAppText("ride_map.telemetry.gps_only")
-        case .associatedNoTelemetry:
-            return localizedAppText("ride_map.telemetry.no_telemetry")
-        case .associatedFresh:
-            return localizedAppText("ride_map.telemetry.fresh")
-        case .associatedStale:
-            return localizedAppText("ride_map.telemetry.stale")
-        case .unknown:
-            return localizedAppText("ride_map.telemetry.no_telemetry")
-        }
     }
 
     private var decisionText: String? {
