@@ -185,7 +185,7 @@ final class DeviceControlsPresentationTests: XCTestCase {
             )
         }
         XCTAssertEqual(DeviceControlPresentation.error(CutoutSessionError.commandRefused(.missingArm)),
-                       "Speed unavailable or above limit")
+                       "Speed too high, unavailable, or state not allowed")
         XCTAssertEqual(DeviceControlPresentation.error(CutoutSessionError.commandRefused(nil)), "Refused")
         XCTAssertEqual(DeviceControlPresentation.error(CutoutSessionError.unexpectedStepError("diagnostic")),
                        "The command could not be sent.")
