@@ -289,17 +289,21 @@ struct ContentView: View {
             LightingRouteView(model: lighting, rideModel: model)
         case .eucPack(let packScreen):
             EucPackRouteView(
-                model: model,
+                device: model.device,
                 packScreen: packScreen,
                 selectedGroupIndex: destination.selectedBmsGroupIndex,
                 navigate: navigate
             )
         case .eucTune:
-            EucTuneRouteView(model: model)
+            EucTuneRouteView(
+                device: model.device,
+                submitSetting: model.submitDeviceSetting,
+                submitAction: model.submitDeviceAction
+            )
         case .vescRide:
             VescRideRouteView(model: model)
         case .vescDebug:
-            VescDebugRouteView(model: model)
+            VescDebugRouteView(device: model.device, capture: model.capture)
         case .capture:
             CaptureRouteView(capture: model.capture)
         case .rideMap:

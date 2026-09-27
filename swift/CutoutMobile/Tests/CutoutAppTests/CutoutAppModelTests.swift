@@ -299,7 +299,16 @@ final class CutoutAppModelTests: XCTestCase {
         let highBeam = try XCTUnwrap(model.settings?.setting(for: .highBeam))
         XCTAssertEqual(highBeam.status, .sentWithoutConfirmation)
         XCTAssertNil(highBeam.current)
-        core.onPhaseChange?(.failed(.sessionFailed("write channel unavailable")))
+        let tune = EucTuneRouteView(
+            device: model.device,
+            submitSetting: model.submitDeviceSetting,
+            submitAction: model.submitDeviceAction
+        )
+        XCTAssertTrue(
+            observesChange({ _ = tune.body }) {
+                core.onPhaseChange?(.failed(.sessionFailed("write channel unavailable")))
+            }
+        )
         core.onSettingsChange?(snapshot)
         XCTAssertNil(model.settings)
         core.disconnectAndScan()
@@ -400,7 +409,7 @@ final class CutoutAppModelTests: XCTestCase {
             )
         )
         let route = EucPackRouteView(
-            model: model,
+            device: model.device,
             packScreen: .root,
             selectedGroupIndex: nil,
             navigate: { _ in }
@@ -416,7 +425,7 @@ final class CutoutAppModelTests: XCTestCase {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)
         let route = EucPackRouteView(
-            model: model,
+            device: model.device,
             packScreen: .root,
             selectedGroupIndex: nil,
             navigate: { _ in }
@@ -426,6 +435,35 @@ final class CutoutAppModelTests: XCTestCase {
             observesChange({ _ = route.body }) {
                 driver.onDisplayStateChange?(RideDisplayState(notificationCount: 1))
             })
+    }
+
+    @MainActor
+    func testVescDebugRouteObservesTelemetryButNotBms() {
+        let driver = SessionDriverSpy(rows: [])
+        let model = CutoutAppModel(core: driver)
+        let route = VescDebugRouteView(device: model.device, capture: model.capture)
+
+        XCTAssertFalse(
+            observesChange({ _ = route.body }) {
+                driver.onBmsSnapshotChange?(
+                    BmsSnapshot(
+                        topology: BmsTopology(
+                            layoutLabel: "20S1P",
+                            seriesGroupCount: 20,
+                            parallelCount: 1,
+                            packCount: 1,
+                            bmsCount: 1,
+                            confidence: .verified
+                        )
+                    )
+                )
+            }
+        )
+        XCTAssertTrue(
+            observesChange({ _ = route.body }) {
+                driver.onDisplayStateChange?(RideDisplayState(notificationCount: 1))
+            }
+        )
     }
 
     @MainActor
@@ -886,11 +924,15 @@ final class CutoutAppModelTests: XCTestCase {
             })
         XCTAssertFalse(
             observesProgressChange {
-                _ = EucPackRouteView(model: $0, packScreen: .root, selectedGroupIndex: nil, navigate: { _ in }).body
+                _ =
+                    EucPackRouteView(device: $0.device, packScreen: .root, selectedGroupIndex: nil, navigate: { _ in })
+                    .body
             })
         XCTAssertFalse(
             observesProgressChange(withAvailableBms: true) {
-                _ = EucPackRouteView(model: $0, packScreen: .root, selectedGroupIndex: nil, navigate: { _ in }).body
+                _ =
+                    EucPackRouteView(device: $0.device, packScreen: .root, selectedGroupIndex: nil, navigate: { _ in })
+                    .body
             })
     }
 

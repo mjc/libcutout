@@ -176,7 +176,7 @@ struct CaptureRouteView: View {
 }
 
 struct EucPackRouteView: View {
-    let model: CutoutAppModel
+    let device: DevicePresentationModel
     let packScreen: EucPackScreen
     let selectedGroupIndex: Int?
     let navigate: (CutoutAppRoute) -> Void
@@ -186,11 +186,11 @@ struct EucPackRouteView: View {
 
     var body: some View {
         if let screen = bmsScreen {
-            let rideState = screen.bmsContentOrUnavailable.kind == .noData ? model.device.rideState : nil
+            let rideState = screen.bmsContentOrUnavailable.kind == .noData ? device.rideState : nil
             BmsScreenView(
                 screen: screen,
                 rideState: rideState,
-                bmsSnapshot: model.device.bmsSnapshot,
+                bmsSnapshot: device.bmsSnapshot,
                 selectedGroupIndex: selectedGroupIndex,
                 showGroupDetail: { groupIndex in
                     navigate(.eucPack(.bmsCellDetail(groupIndex)))
@@ -201,14 +201,14 @@ struct EucPackRouteView: View {
             )
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("dashboard.screen.\(screen.id.rawValue)")
-            .onChange(of: model.device.bmsSnapshot?.groups.map(\.index), initial: true) { _, groupIndices in
+            .onChange(of: device.bmsSnapshot?.groups.map(\.index), initial: true) { _, groupIndices in
                 guard !packScreen.hasAvailableSelectedGroup(in: groupIndices) else { return }
                 navigate(.eucPack(.root))
             }
-            .onChange(of: model.device.bmsSnapshot?.availability, initial: true) { _, availability in
+            .onChange(of: device.bmsSnapshot?.availability, initial: true) { _, availability in
                 guard packScreen == .root else { return }
                 guard availability == .available, rootScreenID == nil,
-                    let snapshot = model.device.bmsSnapshot
+                    let snapshot = device.bmsSnapshot
                 else {
                     if availability == nil || availability == .unavailable || availability == .unsupported {
                         rootScreenID = nil
@@ -223,28 +223,30 @@ struct EucPackRouteView: View {
     private var bmsScreen: PevScreen? {
         if let screenID = packScreen.screenID {
             catalog.screen(id: screenID).map {
-                catalog.presentedScreen(for: $0, liveBmsSnapshot: model.device.bmsSnapshot)
+                catalog.presentedScreen(for: $0, liveBmsSnapshot: device.bmsSnapshot)
             }
         } else if let rootScreenID,
             let rootScreen = catalog.screen(id: rootScreenID)
         {
-            catalog.presentedScreen(for: rootScreen, liveBmsSnapshot: model.device.bmsSnapshot)
+            catalog.presentedScreen(for: rootScreen, liveBmsSnapshot: device.bmsSnapshot)
         } else {
-            catalog.presentedBmsScreen(liveBmsSnapshot: model.device.bmsSnapshot)
+            catalog.presentedBmsScreen(liveBmsSnapshot: device.bmsSnapshot)
         }
     }
 }
 
 struct EucTuneRouteView: View {
-    let model: CutoutAppModel
+    let device: DevicePresentationModel
+    let submitSetting: (ConnectionAttemptToken, DeviceSettingID, DeviceSettingValue) throws -> Void
+    let submitAction: (ConnectionAttemptToken, DeviceActionID) throws -> Void
 
     var body: some View {
         Group {
-            if let snapshot = model.device.settings {
+            if let snapshot = device.settings {
                 DeviceControlsForm(
                     snapshot: snapshot,
-                    submitSetting: model.submitDeviceSetting,
-                    submitAction: model.submitDeviceAction
+                    submitSetting: submitSetting,
+                    submitAction: submitAction
                 )
             } else {
                 ContentUnavailableView(
@@ -275,15 +277,16 @@ struct VescRideRouteView: View {
 }
 
 struct VescDebugRouteView: View {
-    let model: CutoutAppModel
+    let device: DevicePresentationModel
+    let capture: CaptureFeatureModel
 
     var body: some View {
         VescDebugScreenView(
-            snapshot: model.device.vescRideSnapshot,
-            phase: model.device.phase,
-            notificationCount: model.device.displayState.notificationCount,
-            captureStatusText: model.capture.status?.displayText,
-            connectionStatusText: model.device.connectionStatusText
+            snapshot: device.vescRideSnapshot,
+            phase: device.phase,
+            notificationCount: device.displayState.notificationCount,
+            captureStatusText: capture.status?.displayText,
+            connectionStatusText: device.connectionStatusText
         )
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("dashboard.screen.vescDebug")
