@@ -3,6 +3,13 @@ import CutoutMobileFFI
 import Foundation
 import Observation
 
+enum DevicePairOutcome {
+    case ignored
+    case unavailable
+    case accepted(DevicePickerRow)
+    case refused
+}
+
 /// App-lifetime presentation of the one Rust-backed device session.
 @MainActor
 @Observable
@@ -69,6 +76,73 @@ final class DevicePresentationModel {
     func rememberVehicleName(_ name: String, for identity: String) {
         vehicleNameCache[identity] = name
         selectedDeviceStore.save(platformIdentifier: identity, displayName: name)
+    }
+
+    func pair(
+        platformIdentifier: String,
+        mayRetryCurrentSelection: Bool,
+        performPair: (DevicePickerRow) -> Bool
+    ) -> DevicePairOutcome {
+        switch connectionState {
+        case .connecting, .retrying, .connected:
+            let isSameSelection = connectionState.selection?.platformIdentifier == platformIdentifier
+            guard !isSameSelection || mayRetryCurrentSelection else { return .ignored }
+        case .picker, .identified, .failed:
+            break
+        }
+
+        let rows = scanState?.rows ?? []
+        guard let selectedRow = rows.first(where: { $0.id == platformIdentifier }) else {
+            phase = .scanning
+            scanState = .failed(
+                localizedAppText("picker.error.device_no_longer_available"),
+                rows: rows
+            )
+            return .unavailable
+        }
+        guard selectedRow.isSupported || selectedRow.isProbeRecommended else { return .ignored }
+
+        let selection = ConnectionSelection(
+            platformIdentifier: selectedRow.id,
+            title: selectedRow.title,
+            route: selectedRow.connectionRoute ?? .electricUnicycle
+        )
+        settings = nil
+        connectionState = .connecting(selection, phase: .discoveringServices)
+        phase = .discoveringServices
+
+        guard performPair(selectedRow) else {
+            connectionState = .picker
+            phase = .scanning
+            scanState = .failed(
+                localizedAppText("picker.error.device_no_longer_available"),
+                rows: rows
+            )
+            return .refused
+        }
+
+        let displayName = Self.meaningfulDeviceName(
+            selectedRow.title,
+            identity: platformIdentifier
+        )
+        let persistedDisplayName = persistedVehicleName(for: platformIdentifier)
+        let selectionChanged = selectedDeviceStore.platformIdentifier != platformIdentifier
+        if selectionChanged {
+            if let displayName {
+                rememberVehicleName(displayName, for: platformIdentifier)
+            } else {
+                selectedDeviceStore.save(platformIdentifier: platformIdentifier)
+            }
+        } else if let displayName, displayName != persistedDisplayName {
+            rememberVehicleName(displayName, for: platformIdentifier)
+        }
+        hasSavedDevice = true
+        return .accepted(selectedRow)
+    }
+
+    func forgetSavedDevice() {
+        try? selectedDeviceStore.clear()
+        hasSavedDevice = false
     }
 
     var selectedRideTitle: String? { connectionState.selection?.title }

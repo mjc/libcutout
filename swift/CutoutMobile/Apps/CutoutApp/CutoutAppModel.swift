@@ -598,69 +598,30 @@ final class CutoutAppModel {
 
     func pair(platformIdentifier: String) -> Bool {
         guard core.rideSessionStateHandle.captureLifecycleSnapshot().canPair else { return false }
-        switch connectionState {
-        case .connecting, .retrying, .connected:
-            let isSameSelection = connectionState.selection?.platformIdentifier == platformIdentifier
-            guard !isSameSelection || liveActivityError != nil else { return false }
-        case .picker, .identified, .failed:
-            break
+        let outcome = device.pair(
+            platformIdentifier: platformIdentifier,
+            mayRetryCurrentSelection: liveActivityError != nil
+        ) { selectedRow in
+            liveActivityError = nil
+            permitsStoredDeviceAutoPairing = true
+            return capture.requestStart(device: CaptureDeviceIdentity(row: selectedRow), description: nil) {
+                core.pair(platformIdentifier: platformIdentifier)
+            }
         }
-        let rows = devicePickerScanState?.rows ?? []
-        guard let selectedRow = rows.first(where: { $0.id == platformIdentifier }) else {
-            device.phase = .scanning
-            device.scanState = .failed(
-                localizedAppText("picker.error.device_no_longer_available"),
-                rows: rows
-            )
+        switch outcome {
+        case .ignored, .unavailable:
             return false
-        }
-        guard selectedRow.isSupported || selectedRow.isProbeRecommended else { return false }
-
-        let selection = ConnectionSelection(
-            platformIdentifier: selectedRow.id,
-            title: selectedRow.title,
-            route: selectedRow.connectionRoute ?? .electricUnicycle
-        )
-        clearSettings()
-        liveActivityError = nil
-        device.connectionState = .connecting(selection, phase: .discoveringServices)
-        permitsStoredDeviceAutoPairing = true
-        device.phase = .discoveringServices
-        let didPair = capture.requestStart(device: CaptureDeviceIdentity(row: selectedRow), description: nil) {
-            core.pair(platformIdentifier: platformIdentifier)
-        }
-        if didPair {
+        case .refused:
+            permitsStoredDeviceAutoPairing = false
+            return false
+        case let .accepted(selectedRow):
             syncPhoneAlarmPreferences()
             drainPhoneAlarmActions()
-            let displayName = DevicePresentationModel.meaningfulDeviceName(
-                selectedRow.title,
-                identity: platformIdentifier
-            )
-            let persistedDisplayName = device.persistedVehicleName(for: platformIdentifier)
-            let selectionChanged = selectedDeviceStore.platformIdentifier != platformIdentifier
-            if selectionChanged {
-                if let displayName {
-                    device.rememberVehicleName(displayName, for: platformIdentifier)
-                } else {
-                    selectedDeviceStore.save(platformIdentifier: platformIdentifier)
-                }
-            } else if let displayName, displayName != persistedDisplayName {
-                device.rememberVehicleName(displayName, for: platformIdentifier)
-            }
-            device.hasSavedDevice = true
             liveActivityIdentity = liveActivityIdentity(for: selectedRow)
             liveActivityGlyph = liveActivityGlyph(for: selectedRow)
             syncLiveActivity()
-        } else {
-            device.connectionState = .picker
-            permitsStoredDeviceAutoPairing = false
-            device.phase = .scanning
-            device.scanState = .failed(
-                localizedAppText("picker.error.device_no_longer_available"),
-                rows: rows
-            )
+            return true
         }
-        return didPair
     }
 
     func recordOnly(platformIdentifier: String, deviceKind: String) -> Bool {
@@ -758,8 +719,7 @@ final class CutoutAppModel {
 
     func forgetSavedDevice() {
         disconnectTransport()
-        try? selectedDeviceStore.clear()
-        device.hasSavedDevice = false
+        device.forgetSavedDevice()
     }
 
     func endLiveActivity(reason: LiveActivityRideLifecycleEndReason = .sessionEnded) {
