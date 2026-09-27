@@ -3,6 +3,29 @@ import CutoutMobileFFI
 import Foundation
 import Observation
 
+/// The Rust-owned ride snapshot and bounded route queries used by live presentation.
+protocol LiveRideQuerying: Sendable {
+    func currentSnapshot() -> MobileRideMapSnapshotDto?
+    func currentSnapshot(atMs: UInt64) -> MobileRideMapSnapshotDto?
+    func projectStoredPoints(
+        rideID: String,
+        budget: UInt32,
+        viewport: MobileGeoBoundsDto?,
+        privacy: MobileRideMapRoutePrivacyPolicy,
+        cancellation: MobileRideMapProjectionCancellation?
+    ) throws -> MobileRideMapRouteProjection
+    func projectCurrentRoutePoints(
+        budget: UInt32,
+        rideID: String?,
+        viewport: MobileGeoBoundsDto?,
+        privacy: MobileRideMapRoutePrivacyPolicy,
+        durableCancellation: MobileRideMapProjectionCancellation?,
+        liveCancellation: MobileLiveRideMapProjectionCancellation?
+    ) throws -> MobileRideMapRouteProjection
+}
+
+extension MobileRideMapState: LiveRideQuerying {}
+
 /// Native lifetime and presentation for the Rust-owned live ride.
 @MainActor
 @Observable
@@ -22,7 +45,7 @@ final class LiveRideModel {
     private(set) var segmentsOmittedByBudget = false
     private(set) var lastDecision: MobileRideMapDecisionDto?
 
-    private let state: MobileRideMapState?
+    private let state: (any LiveRideQuerying)?
     private let now: @MainActor () -> UInt64
     private var restoreTask: Task<Void, Never>?
     private var projectionTask: Task<Void, Never>?
@@ -40,7 +63,7 @@ final class LiveRideModel {
     }
 
     init(
-        state: MobileRideMapState?,
+        state: (any LiveRideQuerying)?,
         storageError: String?,
         availability: MobileRideMapAvailability,
         now: @escaping @MainActor () -> UInt64
@@ -71,7 +94,13 @@ final class LiveRideModel {
         restoreTask = Task { [weak self] in
             do {
                 let projection = try await Self.runCancellableDetached(priority: .userInitiated) {
-                    try state.projectStoredPoints(rideID: rideID, budget: budget)
+                    try state.projectStoredPoints(
+                        rideID: rideID,
+                        budget: budget,
+                        viewport: nil,
+                        privacy: .precise,
+                        cancellation: nil
+                    )
                 }
                 guard !Task.isCancelled, let self,
                     Self.shouldApplyRestoredProjection(
@@ -199,6 +228,8 @@ final class LiveRideModel {
                         try state.projectCurrentRoutePoints(
                             budget: budget,
                             rideID: request.rideID,
+                            viewport: nil,
+                            privacy: .precise,
                             durableCancellation: request.durableCancellation,
                             liveCancellation: request.liveCancellation
                         )
