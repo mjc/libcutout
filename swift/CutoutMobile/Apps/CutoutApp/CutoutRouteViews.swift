@@ -6,43 +6,24 @@ import SwiftUI
 
 struct AppMusicCompactPlayerModifier: ViewModifier {
     let model: CutoutAppModel
-    private enum Sheet: String, Identifiable {
-        case details, settings
-        var id: Self { self }
-    }
-    @State private var presentedSheet: Sheet?
+    @State private var isMusicSettingsPresented = false
 
     func body(content: Content) -> some View {
         content.musicCompactPlayer(
             nowPlaying: model.musicNowPlaying,
+            timeline: model.musicTimelineEvents,
             isHidden: model.isMusicPlayerHidden,
             onCommand: { command in
                 Task { @MainActor in
                     _ = await model.handleMusicCommand(command)
                 }
             },
-            onOpenDetails: { presentedSheet = .details },
-            onOpenSettings: { presentedSheet = .settings },
+            onOpenSettings: { isMusicSettingsPresented = true },
             onDismiss: model.dismissMusicPlayer,
             onRestore: model.restoreMusicPlayer
         )
-        .sheet(item: $presentedSheet) { sheet in
-            switch sheet {
-            case .details:
-                if let nowPlaying = model.musicSettingsNowPlaying {
-                    MusicExpandedPlayer(
-                        nowPlaying: nowPlaying,
-                        timeline: model.musicTimelineEvents,
-                        onCommand: { command in
-                            Task { @MainActor in
-                                _ = await model.handleMusicCommand(command)
-                            }
-                        }
-                    )
-                }
-            case .settings:
-                AppSetupView(model: model, opensMusic: true)
-            }
+        .sheet(isPresented: $isMusicSettingsPresented) {
+            AppSetupView(model: model, opensMusic: true)
         }
     }
 }

@@ -48,7 +48,6 @@ enum MusicHistoryPresentation: Equatable {
         state: MobileMusicHistoryStateDto?,
         error: MobileRideMapError?
     ) {
-        let events = events.listeningHistoryEvents
         if let error {
             self = .unavailable(error)
         } else if let state, state == .humanReadable, !events.isEmpty {
