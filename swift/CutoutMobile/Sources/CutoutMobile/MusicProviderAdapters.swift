@@ -278,7 +278,7 @@ public final class SpotifyProviderAdapter: NSObject {
         self.onChange = onChange
         authorizationNeedsUserAction = false
 #if DEBUG
-        print("spotify_monitor_start allow_authorization=\(allowAuthorization) has_token=\(accessToken != nil) has_session=\(session != nil) session_expired=\(session?.isExpired ?? false)")
+        print("spotify_monitor_start allow_authorization=\(allowAuthorization) has_token=\(accessToken != nil) has_session=\(session != nil) has_refresh_token=\(session.map { !$0.refreshToken.isEmpty } ?? false) session_expired=\(session?.isExpired ?? false)")
 #endif
         guard let configuration else {
             lifecycleState = .unavailable
@@ -342,6 +342,9 @@ public final class SpotifyProviderAdapter: NSObject {
     }
 
     private func beginRenewal(configuration: SPTConfiguration, session: SPTSession) {
+#if DEBUG
+        print("spotify_renewal_start has_refresh_token=\(!session.refreshToken.isEmpty)")
+#endif
         guard let (sessionManager, effect) = makeSessionManager(
             configuration: configuration,
             kind: .renewing
@@ -604,7 +607,11 @@ public final class SpotifyProviderAdapter: NSObject {
     }
 
     private func acceptSession(generation: MobileMusicAuthorizationId, session: SPTSession) {
-        guard finishAuthorizationTransaction(generation: generation) != .stale else { return }
+        let transaction = finishAuthorizationTransaction(generation: generation)
+        guard transaction != .stale else { return }
+#if DEBUG
+        print("spotify_session_accepted transaction=\(transaction) has_refresh_token=\(!session.refreshToken.isEmpty) session_expired=\(session.isExpired)")
+#endif
         self.session = session
         Self.storeSession(session)
         self.accessToken = session.accessToken
@@ -643,7 +650,7 @@ public final class SpotifyProviderAdapter: NSObject {
             lifecycleState = .unauthorized
         }
 #if DEBUG
-        print("spotify_authorization_failed domain=\(domain) code=\(code) description=\(description)")
+        print("spotify_authorization_failed transaction=\(transaction) domain=\(domain) code=\(code) permanent=\(permanent)")
 #endif
         emitChange()
     }
