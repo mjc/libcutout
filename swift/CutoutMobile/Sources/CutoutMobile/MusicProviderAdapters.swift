@@ -24,6 +24,22 @@ enum SpotifyAuthorizationFailure {
     }
 }
 
+struct SpotifyRenewalRetryPolicy {
+    private(set) var automaticRenewalAllowed = true
+
+    mutating func beginMonitoring() {
+        automaticRenewalAllowed = true
+    }
+
+    mutating func renewalFailed() {
+        automaticRenewalAllowed = false
+    }
+
+    mutating func renewalSucceeded() {
+        automaticRenewalAllowed = true
+    }
+}
+
 #if canImport(SpotifyiOS) && os(iOS)
 
 /// Thin main-thread bridge to Spotify's official App Remote SDK. The SDK owns
@@ -148,6 +164,7 @@ public final class SpotifyProviderAdapter: NSObject {
         nowMs: { [weak self] in self?.connectionNowMs ?? 0 }
     )
     private var authorizationNeedsUserAction = false
+    private var renewalRetryPolicy = SpotifyRenewalRetryPolicy()
     private static let playbackScopes: SPTScope = [.userReadPlaybackState, .userModifyPlaybackState]
     private let playbackAPI = SpotifyPlaybackAPI()
     private var webPlayback: SpotifyPlayback?
@@ -289,6 +306,7 @@ public final class SpotifyProviderAdapter: NSObject {
         stopMonitoring()
         self.onChange = onChange
         authorizationNeedsUserAction = false
+        renewalRetryPolicy.beginMonitoring()
 #if DEBUG
         print("spotify_monitor_start allow_authorization=\(allowAuthorization) has_token=\(accessToken != nil) has_session=\(session != nil) has_refresh_token=\(session.map { !$0.refreshToken.isEmpty } ?? false) session_expired=\(session?.isExpired ?? false)")
 #endif
@@ -381,6 +399,7 @@ public final class SpotifyProviderAdapter: NSObject {
             configuration: configuration,
             kind: .renewing
         ) else {
+            renewalRetryPolicy.renewalFailed()
             lifecycleState = .unavailable
             emitChange()
             return
@@ -423,6 +442,7 @@ public final class SpotifyProviderAdapter: NSObject {
             guard transaction != .stale else { return }
             if transaction == .renewing {
                 // A timed-out renewal does not prove the saved session was revoked.
+                self.renewalRetryPolicy.renewalFailed()
                 self.authorizationNeedsUserAction = false
                 self.lifecycleState = .stale
             } else {
@@ -480,6 +500,7 @@ public final class SpotifyProviderAdapter: NSObject {
         else { return }
         if let session {
             if session.isExpired {
+                guard renewalRetryPolicy.automaticRenewalAllowed else { return }
                 beginRenewal(configuration: configuration, session: session)
             } else {
                 accessToken = session.accessToken
@@ -782,6 +803,7 @@ public final class SpotifyProviderAdapter: NSObject {
         print("spotify_session_accepted transaction=\(transaction) has_refresh_token=\(!session.refreshToken.isEmpty) session_expired=\(session.isExpired)")
 #endif
         self.session = session
+        renewalRetryPolicy.renewalSucceeded()
         Self.storeSession(session)
         self.accessToken = session.accessToken
         // Keep the short-lived App Remote credential as a fallback as well as
@@ -807,9 +829,9 @@ public final class SpotifyProviderAdapter: NSObject {
         if SpotifyAuthorizationFailure.preservesSavedSession(
             isRenewal: transaction == .renewing, hasSavedSession: session != nil, rejectedGrant: permanent
         ) {
-            // Transport failures during renewal are recoverable. Keep the
-            // refresh credential and stop this loop so a later foreground or
-            // explicit setup can retry without forcing a reauthorization.
+            // Keep the grant. Retry only after monitoring restarts or the user
+            // explicitly reconnects; the monitor loop must not renew each tick.
+            renewalRetryPolicy.renewalFailed()
             authorizationNeedsUserAction = false
             lifecycleState = .stale
         } else {

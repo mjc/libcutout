@@ -48,6 +48,23 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertTrue(SpotifyAuthorizationFailure.preservesSavedSession(isRenewal: true, hasSavedSession: true, rejectedGrant: false))
     }
 
+    func testSpotifyRenewalFailureWaitsForMonitoringRestartBeforeRetry() {
+        var retryPolicy = SpotifyRenewalRetryPolicy()
+        XCTAssertTrue(retryPolicy.automaticRenewalAllowed)
+
+        retryPolicy.renewalFailed()
+        for _ in 0..<5 {
+            XCTAssertFalse(retryPolicy.automaticRenewalAllowed)
+        }
+
+        retryPolicy.beginMonitoring()
+        XCTAssertTrue(retryPolicy.automaticRenewalAllowed)
+
+        retryPolicy.renewalFailed()
+        retryPolicy.renewalSucceeded()
+        XCTAssertTrue(retryPolicy.automaticRenewalAllowed)
+    }
+
     func testSpotifySettingsOnlyOfferReauthorizationWhenCredentialsAreMissing() {
         XCTAssertFalse(MusicSettingsPresentation.showsReauthorize(
             provider: .spotify, state: nil
