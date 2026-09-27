@@ -325,10 +325,10 @@ struct RideMapCanvasView: View {
                     .offset(x: endpointOffsets.end.width, y: endpointOffsets.end.height)
                 }
             }
-            if showsCurrentMarker, !showsEndMarker, let last = points.last {
+            if showsCurrentMarker, !showsEndMarker, let endPoint {
                 Annotation(
                     "",
-                    coordinate: coordinate(for: last)
+                    coordinate: coordinate(for: endPoint)
                 ) {
                     RideMapRouteMarker(
                         title: localizedAppText("ride_map.current_marker"),

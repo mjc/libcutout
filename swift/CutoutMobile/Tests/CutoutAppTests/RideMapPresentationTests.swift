@@ -389,6 +389,14 @@ final class RideMapPresentationTests: XCTestCase {
             )?.sequence,
             9
         )
+
+        XCTAssertNil(
+            RideMapCanvasView.canonicalEndpointPoint(
+                in: [point(sequence: 4)],
+                sequence: 9,
+                isVisible: false
+            )
+        )
     }
 
     func testSingletonMarkersOnlyRetainDisplayedSingletonSegments() {
