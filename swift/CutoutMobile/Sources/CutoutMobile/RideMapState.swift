@@ -884,6 +884,20 @@ public final class MobileRideMapState: @unchecked Sendable {
         try withCore { map(try $0.observeTelemetry(atMs: atMs)) }
     }
 
+    public func observeTelemetryForVerifiedConnection(
+        connectionState: CutoutSessionStateHandle,
+        token: ConnectionAttemptToken,
+        atMs: UInt64
+    ) throws -> MobileRideMapTelemetryObservation {
+        try withCore {
+            map(try connectionState.observeRideTelemetryForVerifiedConnection(
+                rideMap: $0,
+                token: token,
+                atMs: atMs
+            ))
+        }
+    }
+
     func recordBmsVoltageSamples(
         deviceIdentity: String,
         samples: [MobileStoredBmsVoltageSampleDto]
@@ -892,6 +906,16 @@ public final class MobileRideMapState: @unchecked Sendable {
         try withDatabase {
             try $0.recordBmsVoltageSamples(deviceIdentity: deviceIdentity, samples: samples)
         }
+    }
+
+    /// Reads the Rust-owned preference for future automatic ride starts.
+    public func rideAutostartEnabled() throws -> Bool {
+        try withCore { try $0.rideAutostartEnabled() }
+    }
+
+    /// Saves the preference without changing the current ride.
+    public func setRideAutostartEnabled(_ enabled: Bool) throws {
+        try withCore { try $0.setRideAutostartEnabled(enabled: enabled) }
     }
 
     /// Sets the active ride's bounded music-history retention policy.

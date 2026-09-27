@@ -1,6 +1,21 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "setup.ride_autostart" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Ride autostart" } } }
+    },
+    "setup.ride_autostart.hint" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Start a ride when your wheel connects." } } }
+    },
+    "setup.ride_autostart.load_failed" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Couldn’t load ride autostart." } } }
+    },
+    "setup.ride_autostart.save_failed" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Couldn’t save ride autostart." } } }
+    },
+    "setup.ride_autostart.retry" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Retry" } } }
+    },
     "captures.label_not_recorded" : {
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Label wasn't recorded" } } }
     },

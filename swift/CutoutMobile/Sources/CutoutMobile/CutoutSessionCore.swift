@@ -2135,17 +2135,21 @@ public final class CutoutSessionCore: NSObject {
                     token: token,
                     atMs: receivedAt.rawValue,
                 )
-                if snapshot != nil {
+                if let snapshot {
                     // Admission returns the current ride for repeated notifications too.
                     // Only reset when Rust created a different ride, so reconnects and
                     // telemetry notifications cannot clear the same trip repeatedly.
-                    if snapshot?.rideID != previousRideID {
+                    if snapshot.rideID != previousRideID {
                         _ = self.resetTripMeterForNewRide()
                     }
-                    _ = try rideMapState.observeTelemetry(atMs: receivedAt.rawValue)
-                    if let snapshot = rideMapState.currentSnapshot(atMs: receivedAt.rawValue) {
-                        self.publishRideMapSnapshot(snapshot)
-                    }
+                }
+                _ = try rideMapState.observeTelemetryForVerifiedConnection(
+                    connectionState: self.rustSessionState,
+                    token: token,
+                    atMs: receivedAt.rawValue,
+                )
+                if let snapshot = rideMapState.currentSnapshot(atMs: receivedAt.rawValue) {
+                    self.publishRideMapSnapshot(snapshot)
                 }
                 self.synchronizeRideMapLocationDemand()
             } catch let error as MobileRideMapError where error == .staleConnection {

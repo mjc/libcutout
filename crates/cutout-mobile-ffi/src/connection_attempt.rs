@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use crate::{
     CutoutSessionStateHandle, MobileRideMapCore, MobileRideMapCoreErrorDto,
-    MobileRideMapCoreSnapshotDto, MonotonicTimestamp,
+    MobileRideMapCoreSnapshotDto, MobileRideMapTelemetryObservationDto, MonotonicTimestamp,
 };
 
 /// Identity captured with native callbacks and decoded telemetry.
@@ -206,6 +206,40 @@ impl CutoutSessionStateHandle {
         )
     }
 
+    /// Records telemetry only when the current verified vehicle owns the active ride.
+    ///
+    /// Connection identity and generation are read from the Rust-issued token while the session
+    /// lock is held. The ride-map core rejects notifications from a different vehicle without
+    /// advancing that ride's telemetry freshness.
+    ///
+    /// # Errors
+    ///
+    /// Returns `StaleConnection` when the token is no longer the current verified attempt, or a
+    /// typed ride-map error when durable telemetry metadata cannot be updated.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "UniFFI owns the Arc argument at the binding boundary."
+    )]
+    pub fn observe_ride_telemetry_for_verified_connection(
+        &self,
+        ride_map: Arc<MobileRideMapCore>,
+        token: MobileConnectionAttemptTokenDto,
+        at_ms: u64,
+    ) -> Result<MobileRideMapTelemetryObservationDto, MobileRideMapCoreErrorDto> {
+        let token = token.into();
+        let state = self.lock_inner();
+        let verified = state
+            .session_state()
+            .connection
+            .verified_attempt(&token)
+            .ok_or(MobileRideMapCoreErrorDto::StaleConnection)?;
+        ride_map.observe_telemetry_for_vehicle_on_connection(
+            verified.platform_identifier(),
+            verified.generation(),
+            at_ms,
+        )
+    }
+
     /// Expires pending detection without allowing a late response to promote it.
     pub fn expire_connection_attempt(
         &self,
@@ -298,6 +332,88 @@ mod tests {
                 )
                 .expect_err("replacement must still be verified before admission"),
             MobileRideMapCoreErrorDto::StaleConnection
+        );
+    }
+
+    #[test]
+    fn ride_telemetry_requires_the_verified_vehicle_to_match_the_ride() {
+        let handle = CutoutSessionStateHandle::new();
+        let ride_map = MobileRideMapCore::new();
+        let started = ride_map.start_gps_only(900).unwrap();
+        let token_a = handle
+            .begin_connection_attempt("pev-a".into(), 1_000)
+            .token
+            .unwrap();
+        handle.connection_link_established(token_a.clone());
+        assert!(
+            handle
+                .lock_inner()
+                .session_state_mut()
+                .connection
+                .finish_detection(&token_a.clone().into(), true)
+        );
+
+        let associated_a = handle
+            .ensure_ride_recording_for_verified_connection(ride_map.clone(), token_a.clone(), 1_100)
+            .unwrap()
+            .unwrap();
+        assert_eq!(associated_a.ride_id, started.ride_id);
+        assert_eq!(
+            handle
+                .observe_ride_telemetry_for_verified_connection(ride_map.clone(), token_a, 1_200,)
+                .unwrap(),
+            MobileRideMapTelemetryObservationDto::Observed
+        );
+
+        let token_b = handle
+            .begin_connection_attempt("pev-b".into(), 1_300)
+            .token
+            .unwrap();
+        handle.connection_link_established(token_b.clone());
+        assert!(
+            handle
+                .lock_inner()
+                .session_state_mut()
+                .connection
+                .finish_detection(&token_b.clone().into(), true)
+        );
+        let retained_a = handle
+            .ensure_ride_recording_for_verified_connection(ride_map.clone(), token_b.clone(), 1_400)
+            .unwrap()
+            .unwrap();
+        assert_eq!(retained_a.ride_id, started.ride_id);
+        assert_eq!(retained_a.associated_vehicle.as_deref(), Some("pev-a"));
+        assert_eq!(
+            handle
+                .observe_ride_telemetry_for_verified_connection(ride_map.clone(), token_b, 1_500,)
+                .unwrap(),
+            MobileRideMapTelemetryObservationDto::NotAssociated
+        );
+
+        let token_a_again = handle
+            .begin_connection_attempt("pev-a".into(), 1_600)
+            .token
+            .unwrap();
+        handle.connection_link_established(token_a_again.clone());
+        assert!(
+            handle
+                .lock_inner()
+                .session_state_mut()
+                .connection
+                .finish_detection(&token_a_again.clone().into(), true)
+        );
+        handle
+            .ensure_ride_recording_for_verified_connection(
+                ride_map.clone(),
+                token_a_again.clone(),
+                1_700,
+            )
+            .unwrap();
+        assert_eq!(
+            handle
+                .observe_ride_telemetry_for_verified_connection(ride_map, token_a_again, 1_800)
+                .unwrap(),
+            MobileRideMapTelemetryObservationDto::Observed
         );
     }
 
