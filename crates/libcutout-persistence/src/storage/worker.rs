@@ -274,6 +274,22 @@ impl DatabaseWorker<'_> {
             Command::ClearLastConnectedDevice { reply } => {
                 let _ = reply.send(clear_last_connected_device(connection));
             }
+            Command::RideAutostartEnabled { reply } => {
+                let result = connection.query_row(
+                    "SELECT COALESCE((SELECT autostart_enabled FROM ride_recording_preferences WHERE id = 1), 1)",
+                    [],
+                    |row| row.get::<_, bool>(0),
+                ).map_err(Into::into);
+                let _ = reply.send(result);
+            }
+            Command::SaveRideAutostartEnabled { enabled, reply } => {
+                let result = connection.execute(
+                    "INSERT INTO ride_recording_preferences (id, autostart_enabled) VALUES (1, ?1)
+                     ON CONFLICT(id) DO UPDATE SET autostart_enabled = excluded.autostart_enabled",
+                    [enabled],
+                ).map(|_| ()).map_err(Into::into);
+                let _ = reply.send(result);
+            }
             Command::SavePhoneAlarmPreferences {
                 device_identity,
                 preferences,

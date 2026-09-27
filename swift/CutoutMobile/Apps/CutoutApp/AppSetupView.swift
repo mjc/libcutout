@@ -24,6 +24,36 @@ struct AppSetupView: View {
         NavigationStack(path: $path) {
             Form {
                 Section {
+                    if let enabled = model.rideAutostartEnabled {
+                        Toggle(localizedAppText("setup.ride_autostart"), isOn: Binding(
+                            get: { model.rideAutostartEnabled ?? enabled },
+                            set: { value in
+                                Task { await model.setRideAutostartEnabled(value) }
+                            }
+                        ))
+                        .disabled(model.rideAutostartSettingsBusy)
+                        .accessibilityIdentifier("setup.ride-autostart")
+                        .accessibilityHint(localizedAppText("setup.ride_autostart.hint"))
+                    } else if !model.rideAutostartSettingsError {
+                        LabeledContent(localizedAppText("setup.ride_autostart")) {
+                            ProgressView()
+                        }
+                    }
+                    if model.rideAutostartSettingsError {
+                        Text(localizedAppText(model.rideAutostartEnabled == nil
+                            ? "setup.ride_autostart.load_failed"
+                            : "setup.ride_autostart.save_failed"))
+                            .foregroundStyle(.red)
+                            .accessibilityIdentifier("setup.ride-autostart.error")
+                        if model.rideAutostartEnabled == nil {
+                            Button(localizedAppText("setup.ride_autostart.retry")) {
+                                Task { await model.loadRideAutostartSetting() }
+                            }
+                            .disabled(model.rideAutostartSettingsBusy)
+                        }
+                    }
+                }
+                Section {
                     NavigationLink(value: Destination.phoneAlarms) {
                         LabeledContent {
                             Text(localizedAppText("phone_alarm.summary"))
@@ -53,6 +83,7 @@ struct AppSetupView: View {
                     .accessibilityIdentifier("setup.captures")
                 }
             }
+            .task { await model.loadRideAutostartSetting() }
             .formStyle(.grouped)
             .navigationTitle(localizedAppText("picker.section.setup"))
             .accessibilityIdentifier("setup.screen")

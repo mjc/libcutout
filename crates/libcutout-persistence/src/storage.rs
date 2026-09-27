@@ -2313,6 +2313,22 @@ impl RideDatabase {
         self.request(|reply| Command::ClearLastConnectedDevice { reply })
     }
 
+    /// Loads ride autostart, enabled by default for new and migrated databases.
+    ///
+    /// # Errors
+    /// Returns [`StorageError`] when the worker cannot read the preference.
+    pub fn ride_autostart_enabled(&self) -> Result<bool, StorageError> {
+        self.request(|reply| Command::RideAutostartEnabled { reply })
+    }
+
+    /// Saves whether future eligible connections may start a ride.
+    ///
+    /// # Errors
+    /// Returns [`StorageError`] when the worker cannot commit the preference.
+    pub fn save_ride_autostart_enabled(&self, enabled: bool) -> Result<(), StorageError> {
+        self.request(|reply| Command::SaveRideAutostartEnabled { enabled, reply })
+    }
+
     /// Stores phone-generated alarm preferences for one device.
     ///
     /// # Errors
@@ -3723,6 +3739,13 @@ enum Command {
         reply: Reply<Option<String>>,
     },
     ClearLastConnectedDevice {
+        reply: Reply<()>,
+    },
+    RideAutostartEnabled {
+        reply: Reply<bool>,
+    },
+    SaveRideAutostartEnabled {
+        enabled: bool,
         reply: Reply<()>,
     },
     SavePhoneAlarmPreferences {

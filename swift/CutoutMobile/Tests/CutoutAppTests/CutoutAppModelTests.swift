@@ -592,6 +592,46 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testRideAutostartSetupShowsDurableValueAndRetainsItAfterFailedSave() async throws {
+        let database = try XCTUnwrap(MobileRideMapState.debugDatabase)
+        let state = MobileRideMapState(database: database)
+        let previous = try state.rideAutostartEnabled()
+        defer { try? state.setRideAutostartEnabled(previous) }
+        try state.setRideAutostartEnabled(true)
+        let driver = SessionDriverSpy(rows: [], rideMapState: state)
+        let model = CutoutAppModel(core: driver)
+        XCTAssertNil(model.rideAutostartEnabled)
+        await model.loadRideAutostartSetting()
+        XCTAssertEqual(model.rideAutostartEnabled, true)
+        let saved = await model.setRideAutostartEnabled(false)
+        XCTAssertTrue(saved)
+        XCTAssertEqual(model.rideAutostartEnabled, false)
+        XCTAssertFalse(model.rideAutostartSettingsError)
+
+        let reopenedDriver = SessionDriverSpy(rows: [], rideMapState: MobileRideMapState(database: database))
+        let reopenedModel = CutoutAppModel(core: reopenedDriver)
+        await reopenedModel.loadRideAutostartSetting()
+        XCTAssertEqual(reopenedModel.rideAutostartEnabled, false)
+        reopenedDriver.setRideMapUnavailable(true)
+        let failed = await reopenedModel.setRideAutostartEnabled(true)
+        XCTAssertFalse(failed)
+        XCTAssertEqual(reopenedModel.rideAutostartEnabled, false)
+        XCTAssertTrue(reopenedModel.rideAutostartSettingsError)
+        XCTAssertFalse(reopenedModel.rideAutostartSettingsBusy)
+    }
+
+    @MainActor
+    func testRideAutostartUnavailableStorageDoesNotPretendToSave() async {
+        let model = CutoutAppModel(core: SessionDriverSpy(rows: [], rideMapUnavailable: true))
+        await model.loadRideAutostartSetting()
+        XCTAssertNil(model.rideAutostartEnabled)
+        XCTAssertTrue(model.rideAutostartSettingsError)
+        let saved = await model.setRideAutostartEnabled(false)
+        XCTAssertFalse(saved)
+        XCTAssertNil(model.rideAutostartEnabled)
+    }
+
+    @MainActor
     func testRideMapCommandFailureRemainsVisibleAsTheTypedRustError() {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)

@@ -28,6 +28,41 @@ use super::{
 
 static TEST_LOCK: Mutex<()> = Mutex::new(());
 
+#[test]
+fn ride_autostart_defaults_enabled_and_survives_reopen_and_failed_write() {
+    let _guard = TEST_LOCK.lock().unwrap();
+    let (database, path) = music_test_database("ride-autostart");
+    assert!(database.ride_autostart_enabled().unwrap());
+    database.save_ride_autostart_enabled(false).unwrap();
+    assert!(!database.ride_autostart_enabled().unwrap());
+    database.clone().shutdown().unwrap();
+    assert!(database.save_ride_autostart_enabled(true).is_err());
+    let database = RideDatabase::open(&path).unwrap();
+    assert!(!database.ride_autostart_enabled().unwrap());
+    database.save_ride_autostart_enabled(true).unwrap();
+    database.shutdown().unwrap();
+    let database = RideDatabase::open(&path).unwrap();
+    assert!(database.ride_autostart_enabled().unwrap());
+    close_music_test_database(database, path);
+}
+
+#[test]
+fn ride_autostart_migration_keeps_existing_installs_enabled() {
+    let _guard = TEST_LOCK.lock().unwrap();
+    let (database, path) = music_test_database("ride-autostart-migration");
+    database.shutdown().unwrap();
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch("DROP TABLE IF EXISTS ride_recording_preferences; PRAGMA user_version = 26;")
+        .unwrap();
+    drop(connection);
+    let database = RideDatabase::open(&path).unwrap();
+    assert!(database.ride_autostart_enabled().unwrap());
+    database.save_ride_autostart_enabled(false).unwrap();
+    assert!(!database.ride_autostart_enabled().unwrap());
+    close_music_test_database(database, path);
+}
+
 fn music_event() -> MusicRideEvent {
     MusicRideEvent::new(
         MusicProvider::AppleMusic,
@@ -91,7 +126,7 @@ fn music_v16_migration_preserves_events_without_fabricating_observation_times() 
          ALTER TABLE ride_music_history DROP COLUMN deleted;
          DROP TABLE bms_voltage_samples;
          DROP TABLE phone_alarm_preferences;
-         PRAGMA user_version = 16;",
+         DROP TABLE IF EXISTS ride_recording_preferences; PRAGMA user_version = 16;",
         )
         .unwrap();
     drop(connection);
@@ -127,7 +162,7 @@ fn schema_v19_migration_adds_music_history_state() {
             "ALTER TABLE ride_music_history DROP COLUMN state;
              DROP TABLE bms_voltage_samples;
              DROP TABLE phone_alarm_preferences;
-             PRAGMA user_version = 19;",
+             DROP TABLE IF EXISTS ride_recording_preferences; PRAGMA user_version = 19;",
         )
         .expect("legacy v19 shape creates");
     drop(connection);
@@ -154,7 +189,7 @@ fn pre_music_v16_migration_preserves_existing_capture_tables() {
              DROP TABLE ride_music_history;
              DROP TABLE bms_voltage_samples;
              DROP TABLE phone_alarm_preferences;
-             PRAGMA user_version = 16;",
+             DROP TABLE IF EXISTS ride_recording_preferences; PRAGMA user_version = 16;",
         )
         .unwrap();
     drop(connection);
@@ -309,7 +344,7 @@ fn music_v16_migration_rebuilds_utf8_text_bounds() {
              ALTER TABLE ride_music_history DROP COLUMN deleted;
              DROP TABLE bms_voltage_samples;
              DROP TABLE phone_alarm_preferences;
-             PRAGMA user_version = 16;",
+             DROP TABLE IF EXISTS ride_recording_preferences; PRAGMA user_version = 16;",
         )
         .unwrap();
     drop(connection);
@@ -516,7 +551,7 @@ fn music_v16_migration_rejects_foreign_database_without_mutating_it() {
         .execute_batch(
             "CREATE TABLE unrelated (value TEXT);
          INSERT INTO unrelated VALUES ('keep');
-         PRAGMA user_version = 16;",
+         DROP TABLE IF EXISTS ride_recording_preferences; PRAGMA user_version = 16;",
         )
         .unwrap();
     drop(connection);
@@ -1729,7 +1764,7 @@ fn schema_v21_migration_adds_phone_alarm_preferences() {
     connection
         .execute_batch(
             "DROP TABLE phone_alarm_preferences;
-             PRAGMA user_version = 21;",
+             DROP TABLE IF EXISTS ride_recording_preferences; PRAGMA user_version = 21;",
         )
         .unwrap();
     drop(connection);
@@ -1759,7 +1794,7 @@ fn schema_v23_migration_repairs_phone_alarm_preferences_gap() {
     connection
         .execute_batch(
             "DROP TABLE phone_alarm_preferences;
-             PRAGMA user_version = 23;",
+             DROP TABLE IF EXISTS ride_recording_preferences; PRAGMA user_version = 23;",
         )
         .unwrap();
     drop(connection);
@@ -2678,7 +2713,7 @@ fn recording_schema_migrates_from_25_without_changing_existing_capture() {
     };
     let fresh_schema = schema();
     connection
-        .execute_batch("DROP TABLE pevcap_recordings; PRAGMA user_version = 25;")
+        .execute_batch("DROP TABLE pevcap_recordings; DROP TABLE IF EXISTS ride_recording_preferences; PRAGMA user_version = 25;")
         .unwrap();
     let database = RideDatabase::open(&path).unwrap();
     assert_eq!(schema(), fresh_schema);
@@ -2768,7 +2803,7 @@ fn stored_capture_history_index_is_identical_after_schema_24_migration() {
         )
         .expect("fresh schema has the capture history index");
     connection
-        .execute_batch("DROP INDEX pevcap_imports_history; PRAGMA user_version = 24;")
+        .execute_batch("DROP INDEX pevcap_imports_history; DROP TABLE IF EXISTS ride_recording_preferences; PRAGMA user_version = 24;")
         .unwrap();
     drop(connection);
     RideDatabase::open(&path).unwrap().shutdown().unwrap();
@@ -2820,7 +2855,7 @@ fn stored_capture_history_survives_restart_and_missing_files() {
     database.shutdown().unwrap();
     let connection = Connection::open(&path).unwrap();
     connection
-        .execute_batch("DROP INDEX pevcap_imports_history; PRAGMA user_version = 24;")
+        .execute_batch("DROP INDEX pevcap_imports_history; DROP TABLE IF EXISTS ride_recording_preferences; PRAGMA user_version = 24;")
         .unwrap();
     drop(connection);
     let database = RideDatabase::open(&path).unwrap();
@@ -2948,7 +2983,7 @@ fn schema_fifteen_capture_backfill_preserves_receipts_and_rides() {
                 "DROP TABLE pevcap_capture_chunks; DROP TABLE pevcap_captures;
              DROP TABLE bms_voltage_samples;
              DROP TABLE phone_alarm_preferences;
-             PRAGMA user_version = 15;",
+             DROP TABLE IF EXISTS ride_recording_preferences; PRAGMA user_version = 15;",
             )
             .unwrap();
         drop(connection);
@@ -3755,7 +3790,7 @@ fn version_20_database_adds_device_scoped_bms_history_without_resetting_existing
              DROP TABLE last_connected_device;
              DROP TABLE phone_alarm_preferences;
              PRAGMA application_id = 1129665615;
-             PRAGMA user_version = 20;",
+             DROP TABLE IF EXISTS ride_recording_preferences; PRAGMA user_version = 20;",
         )
         .unwrap();
     drop(connection);
@@ -3808,7 +3843,7 @@ fn version_21_bms_history_preserves_existing_samples_with_legacy_event_identitie
                   pack_index, pack_observation_index, millivolts)
              VALUES ('wheel-a', 1000, 2000, 45, 1, 15, 4193);
              PRAGMA application_id = 1129665615;
-             PRAGMA user_version = 21;",
+             DROP TABLE IF EXISTS ride_recording_preferences; PRAGMA user_version = 21;",
         )
         .unwrap();
     drop(connection);
@@ -3880,7 +3915,7 @@ fn version_20_database_with_v21_bms_shape_runs_the_remaining_migrations() {
                  PRIMARY KEY (device_identity, session_identifier, event_sequence, observation_index)
              );
              PRAGMA application_id = 1129665615;
-             PRAGMA user_version = 20;",
+             DROP TABLE IF EXISTS ride_recording_preferences; PRAGMA user_version = 20;",
         )
         .unwrap();
     drop(connection);
@@ -4223,7 +4258,7 @@ fn schema_v13_spatial_rows_migrate_without_integer_domain_ids() {
              DROP TABLE pevcap_captures;
              DROP TABLE bms_voltage_samples;
              DROP TABLE phone_alarm_preferences;
-             PRAGMA user_version = 13;",
+             DROP TABLE IF EXISTS ride_recording_preferences; PRAGMA user_version = 13;",
         )
         .unwrap();
     drop(connection);
@@ -4301,7 +4336,7 @@ fn schema_v12_singleton_rows_migrate_to_uuid_keys_without_data_loss() {
              DROP TABLE pevcap_captures;
              DROP TABLE bms_voltage_samples;
              DROP TABLE phone_alarm_preferences;
-             PRAGMA user_version = 12;",
+             DROP TABLE IF EXISTS ride_recording_preferences; PRAGMA user_version = 12;",
         )
         .unwrap();
     drop(connection);
@@ -4844,7 +4879,7 @@ fn version_eight_migration_adds_monotonic_ride_start_column() {
             DROP TABLE pevcap_captures;
             DROP TABLE bms_voltage_samples;
             DROP TABLE phone_alarm_preferences;
-            PRAGMA user_version = 8;
+            DROP TABLE IF EXISTS ride_recording_preferences; PRAGMA user_version = 8;
             ",
         )
         .unwrap();

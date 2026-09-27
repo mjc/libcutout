@@ -130,6 +130,9 @@ final class CutoutAppModel {
     private(set) var rideMapLastDecision: MobileRideMapDecisionDto?
     var rideMapMode = RideMapMode.live
     private(set) var rideMapHistoryLoading = false
+    private(set) var rideAutostartEnabled: Bool?
+    private(set) var rideAutostartSettingsBusy = false
+    private(set) var rideAutostartSettingsError = false
     private(set) var musicSettingsNowPlaying: MusicNowPlaying?
     var musicNowPlaying: MusicNowPlaying? {
         isMusicPlayerHidden ? nil : musicSettingsNowPlaying
@@ -987,6 +990,47 @@ final class CutoutAppModel {
             provider: provider,
             identifier: identifier
         )
+    }
+
+    func loadRideAutostartSetting() async {
+        guard !rideAutostartSettingsBusy else { return }
+        guard let state = core.rideMapStateHandle else {
+            rideAutostartSettingsError = true
+            return
+        }
+        rideAutostartSettingsBusy = true
+        defer { rideAutostartSettingsBusy = false }
+        do {
+            rideAutostartEnabled = try await Task.detached(priority: .userInitiated) {
+                try state.rideAutostartEnabled()
+            }.value
+            rideAutostartSettingsError = false
+        } catch {
+            rideAutostartSettingsError = true
+        }
+    }
+
+    @discardableResult
+    func setRideAutostartEnabled(_ enabled: Bool) async -> Bool {
+        guard !rideAutostartSettingsBusy else { return false }
+        guard rideAutostartEnabled != nil, let state = core.rideMapStateHandle else {
+            rideAutostartSettingsError = true
+            return false
+        }
+        rideAutostartSettingsBusy = true
+        defer { rideAutostartSettingsBusy = false }
+        do {
+            // Await the durable result even if Setup closes while SQLite commits.
+            try await Task.detached(priority: .userInitiated) {
+                try state.setRideAutostartEnabled(enabled)
+            }.value
+            rideAutostartEnabled = enabled
+            rideAutostartSettingsError = false
+            return true
+        } catch {
+            rideAutostartSettingsError = true
+            return false
+        }
     }
 
     func setMusicHistoryPolicy(_ policy: MobileMusicHistoryPolicyDto) -> Bool {

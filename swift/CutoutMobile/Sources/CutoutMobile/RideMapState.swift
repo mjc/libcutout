@@ -894,6 +894,16 @@ public final class MobileRideMapState: @unchecked Sendable {
         }
     }
 
+    /// Reads the Rust-owned preference for future automatic ride starts.
+    public func rideAutostartEnabled() throws -> Bool {
+        try withCore { try $0.rideAutostartEnabled() }
+    }
+
+    /// Saves the preference without changing the current ride.
+    public func setRideAutostartEnabled(_ enabled: Bool) throws {
+        try withCore { try $0.setRideAutostartEnabled(enabled: enabled) }
+    }
+
     /// Sets the active ride's bounded music-history retention policy.
     public func setMusicHistoryPolicy(_ policy: MobileMusicHistoryPolicyDto) throws {
         try withCore { try $0.setMusicHistoryPolicy(policy: policy) }
