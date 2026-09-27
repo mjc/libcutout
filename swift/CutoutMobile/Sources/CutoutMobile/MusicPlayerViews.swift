@@ -180,7 +180,7 @@ enum MusicSettingsPresentation {
         provider: MobileMusicProviderDto,
         state: MobileMusicPlaybackStateDto?
     ) -> Bool {
-        provider == .spotify && (state == .unauthorized || state == .stale)
+        provider == .spotify && state == .unauthorized
     }
 }
 

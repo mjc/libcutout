@@ -98,14 +98,14 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertTrue(retryPolicy.automaticRenewalAllowed)
     }
 
-    func testSpotifySettingsOfferReauthorizationForStaleOrUnauthorizedSession() {
+    func testSpotifySettingsOfferReauthorizationOnlyForUnauthorizedSession() {
         XCTAssertFalse(MusicSettingsPresentation.showsReauthorize(
             provider: .spotify, state: nil
         ))
         XCTAssertFalse(MusicSettingsPresentation.showsReauthorize(
             provider: .spotify, state: .disconnected
         ))
-        XCTAssertTrue(MusicSettingsPresentation.showsReauthorize(
+        XCTAssertFalse(MusicSettingsPresentation.showsReauthorize(
             provider: .spotify, state: .stale
         ))
         XCTAssertTrue(MusicSettingsPresentation.showsReauthorize(
