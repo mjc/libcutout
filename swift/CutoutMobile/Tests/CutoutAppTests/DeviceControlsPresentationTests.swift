@@ -24,7 +24,7 @@ final class DeviceControlsPresentationTests: XCTestCase {
         XCTAssertNil(DeviceControlPresentation.actionStatus(.idle))
         XCTAssertEqual(DeviceControlPresentation.status(.failed), "Failed")
         XCTAssertNil(DeviceControlPresentation.status(.sentWithoutConfirmation))
-        XCTAssertEqual(DeviceControlPresentation.refusal(.busy), "The wheel is processing another command.")
+        XCTAssertEqual(DeviceControlPresentation.refusal(.busy), "Wheel busy")
     }
 
     func testSpeedOptionsUseRideUnitsWithoutChangingCanonicalValues() {
@@ -61,15 +61,15 @@ final class DeviceControlsPresentationTests: XCTestCase {
         let expected: [(DeviceSettingGroup, [DeviceSettingID])] = [
             (.interface, [.highBeam, .displayBrightness, .displayUnits, .beeperVolumePercent]),
             (.limits, [.tiltbackSpeed, .pwmTiltback, .lateralTiltLimit, .speedAlarmThreshold, .brakeOverpressureAlarm]),
-            (.riding, [.pedalHardness, .dynamicAssist, .pedalDipCompensation, .pedalAngle, .ridingPreset]),
-            (.modes, [.voltageCorrection, .highSpeedMode, .lowBatteryMode, .transportMode]),
+            (.riding, [.pedalHardness, .dynamicAssist, .pedalDipCompensation, .pedalAngle]),
+            (.modes, [.voltageCorrection]),
         ]
         for (group, ids) in expected {
             XCTAssertEqual(DeviceControlPresentation.settings(Array(descriptors.reversed()), in: group).map(\.id), ids)
         }
         let visible = DeviceControlPresentation.groups.flatMap { DeviceControlPresentation.settings(descriptors, in: $0) }
-        XCTAssertEqual(visible.count, 18)
-        XCTAssertEqual(Set(visible.map(\.id)).count, 18)
+        XCTAssertEqual(visible.count, 14)
+        XCTAssertEqual(Set(visible.map(\.id)).count, 14)
         XCTAssertFalse(visible.contains { $0.id == .chargeLimitDiagnostic })
         XCTAssertTrue(DeviceControlPresentation.settings([makeDescriptor(access: .unverified)], in: .interface).isEmpty)
         XCTAssertEqual(makeDescriptor().writeVerification, .unverified, "Availability must not rewrite verification evidence")
@@ -185,7 +185,7 @@ final class DeviceControlsPresentationTests: XCTestCase {
             )
         }
         XCTAssertEqual(DeviceControlPresentation.error(CutoutSessionError.commandRefused(.missingArm)),
-                       "Stop the wheel before changing this setting. A fresh speed reading is required.")
+                       "Speed unavailable or above limit")
         XCTAssertEqual(DeviceControlPresentation.error(CutoutSessionError.commandRefused(nil)), "Refused")
         XCTAssertEqual(DeviceControlPresentation.error(CutoutSessionError.unexpectedStepError("diagnostic")),
                        "The command could not be sent.")

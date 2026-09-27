@@ -445,15 +445,23 @@ fn arm_stationary_settings<
 ) -> bool {
     let now = MonotonicTimestamp::new(monotonic_ms);
     let snapshot = host.current_snapshot();
-    let Some(speed) = host.session_mut().fresh_settings_speed(now) else {
+    let speed = host.session_mut().fresh_settings_speed(now);
+    let charging = host.session_mut().fresh_settings_charging(now);
+    if speed.is_none() && !charging {
         host.session_mut().clear_arm();
         return false;
-    };
-    if snapshot
+    }
+    let maximum =
+        M::MAX_SETTINGS_SPEED.map_or(0, |speed| speed.as_millimetres_per_second().unsigned_abs());
+    if (snapshot
         .charge_mode
         .is_some_and(|mode| mode.value.is_active())
-        || snapshot.operating_state == Some(RideOperatingState::Charging)
-        || speed_mm_per_second.is_some_and(|reported| reported != speed.as_millimetres_per_second())
+        && !charging)
+        || (snapshot.operating_state == Some(RideOperatingState::Charging) && !charging)
+        || speed_mm_per_second.is_some_and(|reported| {
+            reported.unsigned_abs() > maximum
+                || speed.is_some_and(|speed| reported != speed.as_millimetres_per_second())
+        })
     {
         host.session_mut().clear_arm();
         return false;
@@ -465,7 +473,7 @@ fn arm_stationary_settings<
         RideOperatingStateDto::Riding => RideOperatingState::Riding,
         RideOperatingStateDto::Charging => RideOperatingState::Charging,
     };
-    let Some(arm) = M::arm_settings_write(state, Some(speed), now) else {
+    let Some(arm) = M::arm_settings_write(state, speed, now) else {
         // Failed rearming also cancels work authorized by older ride evidence.
         host.session_mut().clear_arm();
         return false;
@@ -978,6 +986,35 @@ mod tests {
             output,
             SessionOutputDto::Transport(TransportActionDto::Write { .. })
         )));
+    }
+
+    #[test]
+    fn aero_settings_arm_accepts_fresh_charging_evidence_without_moving() {
+        let mut session = new_nosfet_aero_benign_control_session();
+        let _ = session.ingest_checked(&SessionInputDto::LinkUp {
+            monotonic_ms: ms(10),
+            max_write_len: Some(write_len_dto(185)),
+        });
+        let mut frame = hex_literal::hex!(
+            "dc5a5c532a7c000000000000ab41001700000cff\
+             000000000226021ca8f607801afa000080c80000\
+             808080808080022880803080800e310e310e2f0e\
+             2f0e300e2a0e320e2e0e300e310e300e2d0e2f0e\
+             310e2e9e05e3ad"
+        );
+        frame[22..24].copy_from_slice(&1_u16.to_be_bytes());
+        let length = usize::from(frame[3]);
+        let crc = crc32fast::hash(&frame[..length]);
+        frame[length..].copy_from_slice(&crc.to_be_bytes());
+        let _ = session.ingest_checked(&SessionInputDto::Notification {
+            channel: VETERAN_DATA_CHANNEL.as_bytes(),
+            bytes: frame.to_vec(),
+            monotonic_ms: ms(20),
+        });
+
+        assert!(session.arm_settings_writes(RideOperatingStateDto::Charging, Some(0), 20));
+        assert!(!session.arm_settings_writes(RideOperatingStateDto::Charging, Some(501), 20));
+        assert!(!session.arm_settings_writes(RideOperatingStateDto::Charging, Some(0), 60_000));
     }
 
     #[test]

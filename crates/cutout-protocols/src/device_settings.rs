@@ -472,14 +472,17 @@ pub const fn aero_control_profile() -> DeviceControlProfile {
         available,
         Capabilities::from_supported_commands([CommandKind::SetSetting, CommandKind::SoundHorn]),
     )
-    .with_production_commands(available)
+    .with_production_commands(Capabilities::from_supported_commands([
+        CommandKind::SetSetting,
+        CommandKind::SoundHorn,
+        CommandKind::ResetTripMeter,
+    ]))
     .with_settings_adapter(SettingsAdapter::Aero)
     .with_setting_capabilities(
         &[
             SettingId::HighBeam,
             SettingId::TiltbackSpeed,
             SettingId::PwmTiltback,
-            SettingId::RidingPreset,
             SettingId::BrakeOverpressureAlarm,
             SettingId::PedalHardness,
             SettingId::DisplayBrightness,
@@ -490,9 +493,6 @@ pub const fn aero_control_profile() -> DeviceControlProfile {
             SettingId::VoltageCorrection,
             SettingId::ChargeLimitDiagnostic,
             SettingId::DisplayUnits,
-            SettingId::HighSpeedMode,
-            SettingId::LowBatteryMode,
-            SettingId::TransportMode,
             SettingId::SpeedAlarmThreshold,
             SettingId::PedalAngle,
         ],
@@ -864,7 +864,7 @@ mod tests {
         assert!(
             descriptors
                 .iter()
-                .any(|item| item.id == SettingId::RidingPreset)
+                .any(|item| item.id == SettingId::PedalHardness)
         );
         assert!(
             !descriptors
@@ -876,6 +876,14 @@ mod tests {
                 .iter()
                 .any(|item| item.id == SettingId::PedalMode)
         );
+        for id in [
+            SettingId::RidingPreset,
+            SettingId::HighSpeedMode,
+            SettingId::LowBatteryMode,
+            SettingId::TransportMode,
+        ] {
+            assert!(!descriptors.iter().any(|item| item.id == id));
+        }
     }
 
     #[test]
@@ -887,7 +895,6 @@ mod tests {
         for id in [
             SettingId::HighBeam,
             SettingId::PedalAngle,
-            SettingId::RidingPreset,
             SettingId::ChargeLimitDiagnostic,
         ] {
             assert!(
@@ -906,8 +913,6 @@ mod tests {
             SettingId::LateralTiltLimit,
             SettingId::BrakeOverpressureAlarm,
             SettingId::BeeperVolumePercent,
-            SettingId::HighSpeedMode,
-            SettingId::LowBatteryMode,
         ] {
             assert!(
                 aero.iter()
@@ -1061,7 +1066,6 @@ mod tests {
             SettingId::HighBeam,
             SettingId::TiltbackSpeed,
             SettingId::PwmTiltback,
-            SettingId::RidingPreset,
             SettingId::BrakeOverpressureAlarm,
             SettingId::PedalHardness,
             SettingId::DisplayBrightness,
@@ -1071,9 +1075,6 @@ mod tests {
             SettingId::LateralTiltLimit,
             SettingId::VoltageCorrection,
             SettingId::DisplayUnits,
-            SettingId::HighSpeedMode,
-            SettingId::LowBatteryMode,
-            SettingId::TransportMode,
             SettingId::SpeedAlarmThreshold,
             SettingId::PedalAngle,
         ];
@@ -1125,10 +1126,11 @@ mod tests {
             assert!(!values.is_empty());
             for value in values {
                 let command = profile.command(id, value, false).unwrap();
-                assert_eq!(
+                assert!(matches!(
                     command.safety_class(),
                     cutout_core::SafetyClass::StationaryOnly
-                );
+                        | cutout_core::SafetyClass::BenignControl
+                ));
                 for mode in [
                     crate::VeteranCommandMode::Binary,
                     crate::VeteranCommandMode::Ascii,

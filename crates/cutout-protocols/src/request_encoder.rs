@@ -1202,10 +1202,10 @@ mod tests {
             assert_eq!(encoded.payload.as_slice(), expected);
             assert_eq!(encoded.command, command.kind());
             assert_eq!(encoded.mode, WriteMode::WithoutResponse);
-            assert_eq!(
+            assert!(matches!(
                 command.safety_class(),
-                cutout_core::SafetyClass::StationaryOnly
-            );
+                cutout_core::SafetyClass::StationaryOnly | cutout_core::SafetyClass::BenignControl
+            ));
         }
     }
 
@@ -1324,7 +1324,7 @@ mod tests {
         assert_eq!(encoded.mode, WriteMode::WithoutResponse);
         assert_eq!(
             command.safety_class(),
-            cutout_core::SafetyClass::StationaryOnly
+            cutout_core::SafetyClass::BenignControl
         );
     }
 

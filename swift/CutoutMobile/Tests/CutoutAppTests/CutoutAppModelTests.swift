@@ -479,7 +479,7 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(snapshot.connection.readiness, .verified)
         XCTAssertEqual(snapshot.settingDescriptors, core.settings.settingDescriptors)
         XCTAssertEqual(snapshot.descriptor(for: .pwmTiltback)?.access, .writable)
-        XCTAssertEqual(snapshot.settingDescriptors.filter { $0.access == .writable }.count, 18)
+        XCTAssertEqual(snapshot.settingDescriptors.filter { $0.access == .writable }.count, 14)
         XCTAssertFalse(snapshot.validationAuthorized)
         XCTAssertThrowsError(try model.submitDeviceSetting(token: token, id: .pwmTiltback, value: .number(value: 101))) {
             XCTAssertEqual($0 as? DeviceSettingSubmissionError, .InvalidValue)
