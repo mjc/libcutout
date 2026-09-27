@@ -7372,6 +7372,39 @@ fn wall_clock_milliseconds() -> Result<u64, MobileRideMapCoreErrorDto> {
         })
 }
 
+fn observe_telemetry_locked(
+    state: &mut MobileRideMapCoreInner,
+    at_ms: u64,
+) -> Result<MobileRideMapTelemetryObservationDto, MobileRideMapCoreErrorDto> {
+    state.require_ready()?;
+    let at_ms = state.logical_monotonic_milliseconds(at_ms);
+    let mut staged = state.admission_recorder.clone();
+    let mut durable_staged = state.recorder.clone();
+    let observation = staged.observe_telemetry(ride_maps::MonotonicMilliseconds::new(at_ms));
+    if observation == ride_maps::TelemetryObservation::Observed {
+        let _ = durable_staged.observe_telemetry(ride_maps::MonotonicMilliseconds::new(at_ms));
+        if let (Some(database), Some(id)) = (state.database.as_ref(), state.ride_id.clone()) {
+            database
+                .update_ride_map_metadata(
+                    id,
+                    staged.candidate_vehicle().map(str::to_owned),
+                    staged.associated_vehicle().map(str::to_owned),
+                    staged
+                        .associated_at_milliseconds()
+                        .map(ride_maps::MonotonicMilliseconds::as_u64),
+                    staged
+                        .last_telemetry_at_milliseconds()
+                        .map(ride_maps::MonotonicMilliseconds::as_u64),
+                )
+                .map_err(map_core_error)?;
+        }
+        state.revision = state.revision.saturating_add(1);
+    }
+    state.recorder = durable_staged;
+    state.admission_recorder = staged;
+    Ok(observation.into())
+}
+
 #[derive(Debug)]
 struct MobileRideMapCoreInner {
     database: Option<Arc<RideDatabaseHandle>>,
@@ -8960,33 +8993,30 @@ impl MobileRideMapCore {
         at_ms: u64,
     ) -> Result<MobileRideMapTelemetryObservationDto, MobileRideMapCoreErrorDto> {
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        observe_telemetry_locked(&mut state, at_ms)
+    }
+
+    pub(crate) fn observe_telemetry_for_vehicle_on_connection(
+        &self,
+        platform_identifier: &str,
+        connection_generation: u64,
+        at_ms: u64,
+    ) -> Result<MobileRideMapTelemetryObservationDto, MobileRideMapCoreErrorDto> {
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         state.require_ready()?;
-        let at_ms = state.logical_monotonic_milliseconds(at_ms);
-        let mut staged = state.admission_recorder.clone();
-        let mut durable_staged = state.recorder.clone();
-        let observation = staged.observe_telemetry(ride_maps::MonotonicMilliseconds::new(at_ms));
-        if observation == ride_maps::TelemetryObservation::Observed {
-            let _ = durable_staged.observe_telemetry(ride_maps::MonotonicMilliseconds::new(at_ms));
-            if let (Some(database), Some(id)) = (state.database.as_ref(), state.ride_id.clone()) {
-                database
-                    .update_ride_map_metadata(
-                        id,
-                        staged.candidate_vehicle().map(str::to_owned),
-                        staged.associated_vehicle().map(str::to_owned),
-                        staged
-                            .associated_at_milliseconds()
-                            .map(ride_maps::MonotonicMilliseconds::as_u64),
-                        staged
-                            .last_telemetry_at_milliseconds()
-                            .map(ride_maps::MonotonicMilliseconds::as_u64),
-                    )
-                    .map_err(map_core_error)?;
-            }
-            state.revision = state.revision.saturating_add(1);
+        let is_current_vehicle = state.last_connection_transition_generation
+            == Some(connection_generation)
+            && state
+                .last_connected_vehicle
+                .as_ref()
+                .map(|vehicle| vehicle.as_str())
+                == Some(platform_identifier);
+        let is_associated_vehicle =
+            state.recorder.associated_vehicle() == Some(platform_identifier);
+        if !is_current_vehicle || !is_associated_vehicle {
+            return Ok(MobileRideMapTelemetryObservationDto::NotAssociated);
         }
-        state.recorder = durable_staged;
-        state.admission_recorder = staged;
-        Ok(observation.into())
+        observe_telemetry_locked(&mut state, at_ms)
     }
 
     /// Admits one Core Location sample into the active recording.
@@ -18944,6 +18974,10 @@ mod tests {
             MobileRideMapCoreDecisionDto::Accepted { .. }
                 | MobileRideMapCoreDecisionDto::Pending { .. }
         ));
+        assert_eq!(
+            state.observe_telemetry(3_000).unwrap(),
+            MobileRideMapTelemetryObservationDto::Observed
+        );
 
         state.set_ride_autostart_enabled(false).unwrap();
         database
@@ -18964,9 +18998,51 @@ mod tests {
             .unwrap();
         assert_eq!(repeated.ride_id, ride_a.ride_id);
         assert_eq!(repeated.state, MobileRideLifecycleStateDto::Active);
+        assert_eq!(
+            state
+                .observe_telemetry_for_vehicle_on_connection("pev-2", 2, 4_000)
+                .unwrap(),
+            MobileRideMapTelemetryObservationDto::NotAssociated
+        );
+        let last_telemetry = state
+            .inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .admission_recorder
+            .last_telemetry_at_milliseconds()
+            .unwrap()
+            .as_u64();
+        assert_eq!(last_telemetry, 3_000);
+        assert_eq!(
+            state.current_snapshot(5_001).unwrap().telemetry_state,
+            MobileRideMapCoreTelemetryStateDto::AssociatedStale
+        );
+
+        database
+            .remember_selected_device("pev-1".to_owned(), None, 4_100)
+            .unwrap();
+        let returned_to_a = state
+            .ensure_recording_for_vehicle_on_connection("pev-1", 5_500, 3)
+            .unwrap()
+            .unwrap();
+        assert_eq!(returned_to_a.ride_id, ride_a.ride_id);
+        assert_eq!(
+            state
+                .observe_telemetry_for_vehicle_on_connection("pev-1", 3, 5_500)
+                .unwrap(),
+            MobileRideMapTelemetryObservationDto::Observed
+        );
+        assert_eq!(
+            state.current_snapshot(5_500).unwrap().telemetry_state,
+            MobileRideMapCoreTelemetryStateDto::AssociatedFresh
+        );
+
+        database
+            .remember_selected_device("pev-2".to_owned(), None, 5_600)
+            .unwrap();
 
         let fresh = state
-            .ensure_recording_for_vehicle_on_connection("pev-2", 5_000, 3)
+            .ensure_recording_for_vehicle_on_connection("pev-2", 6_000, 4)
             .unwrap()
             .unwrap();
         assert_ne!(fresh.ride_id, ride_a.ride_id);
