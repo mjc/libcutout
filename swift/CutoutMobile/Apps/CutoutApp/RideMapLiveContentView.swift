@@ -231,12 +231,6 @@ private struct RideMapLiveStatusView: View {
             canonicalBackgroundGapCount: canonicalBackgroundGapCount,
             telemetryState: telemetryState
         )
-        if pointsTruncated {
-            Text(localizedAppText("ride_map.live_route_truncated_count", displayPointCount))
-                .font(.caption)
-                .foregroundStyle(PevColors.muted)
-                .accessibilityIdentifier("ride-map.live-truncated")
-        }
     }
 
     private var statusTitle: String {

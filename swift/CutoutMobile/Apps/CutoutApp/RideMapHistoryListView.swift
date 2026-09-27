@@ -40,16 +40,7 @@ struct RideMapHistoryListView: View {
     }
 
     private func rideSubtitle(for ride: MobileRideMapHistorySummaryDto) -> String {
-        let distance = distanceText(for: ride.summary)
-        return "\(distance) · \(Self.pointCountText(ride.summary.pointCount))"
-    }
-
-    static func pointCountText(_ count: UInt64) -> String {
-        // The app catalog wrapper formats CVarArg values but does not evaluate
-        // xcstrings plural substitutions. Keep explicit one/other keys so
-        // translators can provide the correct grammar for each locale.
-        let key = count == 1 ? "ride_map.point_count.one" : "ride_map.point_count.other"
-        return localizedAppText(key, count)
+        distanceText(for: ride.summary)
     }
 
     static func selectionAccessibilityValue(isSelected: Bool) -> String {

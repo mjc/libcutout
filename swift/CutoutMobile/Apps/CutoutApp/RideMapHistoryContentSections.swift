@@ -134,26 +134,14 @@ struct RideMapHistoryRouteSection: View {
             .frame(height: 340)
             .frame(maxWidth: .infinity)
 
-            if pointsTruncated {
-                Text(localizedAppText("ride_map.history_truncated_count", displayPoints.count))
+            if pointsTruncated || segmentsOmittedByBudget {
+                Text(localizedAppText("ride_map.history_map_preview"))
                     .font(.caption)
                     .foregroundStyle(PevColors.muted)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 8)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .accessibilityIdentifier("ride-map.history-truncated")
-            }
-
-            if segmentsOmittedByBudget {
-                Label(
-                    localizedAppText("ride_map.segments_omitted_by_budget"),
-                    systemImage: "exclamationmark.triangle"
-                )
-                .font(.caption)
-                .foregroundStyle(.orange)
-                .padding(.horizontal, 16)
-                .padding(.bottom, 8)
-                .accessibilityIdentifier("ride-map.history-segments-omitted")
+                    .accessibilityIdentifier("ride-map.history-preview")
             }
         }
     }

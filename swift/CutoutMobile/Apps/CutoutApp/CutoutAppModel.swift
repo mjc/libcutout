@@ -2003,7 +2003,6 @@ final class CutoutAppModel {
         rideMapHistoryViewportCancellation?.cancel()
         rideMapHistoryViewportTask?.cancel()
         rideMapHistoryDetailRouteError = nil
-        rideMapHistoryDetailRouteLoading = true
         let cancellation = MobileRideMapProjectionCancellation()
         rideMapHistoryViewportCancellation = cancellation
         guard let viewport else {

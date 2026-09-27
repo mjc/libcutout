@@ -90,6 +90,8 @@ struct RideMapHistoryDetailHeader: View {
 
 struct RideMapHistoryDetailMap: View {
     let points: [MobileRideMapRouteDisplayPoint]
+    let showsRecordedEnd: Bool
+    let showsCurrentMarker: Bool
     let routeID: String
     let projectionVersion: UInt64
     let endpointMetadata: MobileRideMapRouteEndpointMetadata
@@ -107,8 +109,8 @@ struct RideMapHistoryDetailMap: View {
                 routeID: routeID,
                 projectionVersion: projectionVersion,
                 showsStartMarker: true,
-                showsEndMarker: true,
-                showsCurrentMarker: false,
+                showsEndMarker: showsRecordedEnd,
+                showsCurrentMarker: showsCurrentMarker,
                 endpointMetadata: endpointMetadata,
                 cameraRegion: cameraRegion,
                 segments: segments,
@@ -233,7 +235,7 @@ struct RideMapHistoryDetailSummary: View {
                         .foregroundStyle(PevColors.muted)
                 }
                 .accessibilityElement(children: .combine)
-                HStack(alignment: .firstTextBaseline, spacing: 0) {
+                HStack(alignment: .top, spacing: 0) {
                     RideMapDetailMetric(
                         value: distance,
                         label: localizedAppText("ride_map.metric_distance")
@@ -315,13 +317,6 @@ struct RideMapHistoryDetailSummary: View {
                         Text(localizedAppText("music.history.unavailable"))
                     }
                 }
-                if pointsTruncated {
-                    Text(localizedAppText("ride_map.history_truncated_count", displayPointCount))
-                        .font(.caption)
-                        .foregroundStyle(PevColors.muted)
-                        .accessibilityIdentifier("ride-map.detail-truncated")
-                }
-
                 HStack(spacing: 10) {
                     if pointsTruncated || state == .error || state == .emptyViewport {
                         Button(
@@ -373,8 +368,8 @@ struct RideMapDetailMetric: View {
         VStack(alignment: .leading, spacing: 3) {
             Text(value)
                 .font(.title2.weight(.bold).monospacedDigit())
-                .lineLimit(1)
-                .minimumScaleFactor(0.72)
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
             Text(label)
                 .font(.caption)
                 .foregroundStyle(PevColors.muted)

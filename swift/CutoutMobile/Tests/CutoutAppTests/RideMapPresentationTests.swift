@@ -114,11 +114,6 @@ final class RideMapPresentationTests: XCTestCase {
         XCTAssertEqual(RideMapRouteView.liveRouteID(for: snapshot), "ride-b")
     }
 
-    func testHistoryPresentationUsesSingularAndPluralPointStrings() {
-        XCTAssertEqual(RideMapHistoryListView.pointCountText(1), "1 point")
-        XCTAssertEqual(RideMapHistoryListView.pointCountText(2), "2 points")
-    }
-
     func testHistorySelectionAccessibilityTextIsLocalized() {
         XCTAssertEqual(
             RideMapHistoryListView.selectionAccessibilityValue(isSelected: true),
@@ -160,6 +155,19 @@ final class RideMapPresentationTests: XCTestCase {
         XCTAssertNotEqual(initial, replacement)
         XCTAssertTrue(initial.hasPrefix("ride:"))
         XCTAssertTrue(replacement.hasPrefix("ride:"))
+    }
+
+    func testCurrentRideDetailDoesNotLabelItsLatestPointAsTheEnd() {
+        let openStates: [MobileRideMapStateDto] = [.active, .paused, .interrupted]
+        for state in openStates {
+            XCTAssertFalse(RideMapHistoryDetailView.showsRecordedEnd(for: state))
+            XCTAssertTrue(RideMapHistoryDetailView.showsCurrentMarker(for: state))
+        }
+        let terminalStates: [MobileRideMapStateDto] = [.stopped, .saved, .discarded, .imported]
+        for state in terminalStates {
+            XCTAssertTrue(RideMapHistoryDetailView.showsRecordedEnd(for: state))
+            XCTAssertFalse(RideMapHistoryDetailView.showsCurrentMarker(for: state))
+        }
     }
 
     func testHistoryCameraFitIdentityChangesForAReplacementProjection() {
@@ -380,6 +388,14 @@ final class RideMapPresentationTests: XCTestCase {
                 isVisible: true
             )?.sequence,
             9
+        )
+
+        XCTAssertNil(
+            RideMapCanvasView.canonicalEndpointPoint(
+                in: [point(sequence: 4)],
+                sequence: 9,
+                isVisible: false
+            )
         )
     }
 

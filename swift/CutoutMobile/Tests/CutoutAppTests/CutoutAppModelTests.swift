@@ -1031,7 +1031,7 @@ final class CutoutAppModelTests: XCTestCase {
             minimumLongitudeDegrees: -104.90001,
             maximumLongitudeDegrees: -104.89999
         ))
-        XCTAssertTrue(model.rideMapHistoryDetailRouteLoading)
+        XCTAssertFalse(model.rideMapHistoryDetailRouteLoading)
         XCTAssertTrue(model.forgetMusicHistory(for: rideID))
         XCTAssertFalse(model.rideMapHistoryDetailRouteLoading)
         XCTAssertEqual(model.rideMapHistoryDetailProjectionRideID, rideID)
@@ -1088,7 +1088,7 @@ final class CutoutAppModelTests: XCTestCase {
             maximumLongitudeDegrees: -103
         ))
         await Self.waitUntil("empty history detail viewport") {
-            !model.rideMapHistoryDetailRouteLoading
+            model.rideMapHistoryDetailRoutePresence == .emptyViewport
                 && model.rideMapHistoryDetailRouteError == nil
                 && model.rideMapHistoryDetailDisplayPoints.isEmpty
         }
