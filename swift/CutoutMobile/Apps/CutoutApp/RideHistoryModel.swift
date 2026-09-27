@@ -112,8 +112,6 @@ final class RideHistoryModel {
     private(set) var detailRouteLoading = false
     private(set) var selectedRideID: String?
 
-    var onPageUpdated: (() -> Void)?
-
     init(
         stateProvider: @escaping @MainActor () -> (any RideHistoryQuerying)?,
         dateProvider: @escaping @MainActor () -> Date = { Date() },
@@ -594,7 +592,6 @@ final class RideHistoryModel {
                 self.cursor = result.1
                 self.canLoadMore = result.1 != nil
                 self.error = nil
-                self.onPageUpdated?()
                 self.applyQueryResult(
                     requestedRideID: requestedRideID,
                     selectionError: Self.selectionError(
@@ -653,14 +650,12 @@ final class RideHistoryModel {
                 self.cursor = page.nextCursor
                 self.canLoadMore = page.nextCursor != nil
                 self.error = nil
-                self.onPageUpdated?()
             } catch {
                 guard let self,
                     self.accepts(generation: generation, isCancelled: Task.isCancelled)
                 else { return }
                 self.pageTask = nil
                 self.error = Self.mapError(error)
-                self.onPageUpdated?()
             }
         }
     }

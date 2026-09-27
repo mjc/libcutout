@@ -39,6 +39,12 @@ struct RideMapRouteView: View {
         snapshot?.rideID ?? "live"
     }
 
+    private func vehicleName(for identity: String?) -> String? {
+        guard let identity else { return nil }
+        return history.vehicleNames[identity]
+            ?? model.device.rideMapVehicleName(for: identity)
+    }
+
     init(
         model: CutoutAppModel,
         presentation: RideMapPresentationState,
@@ -177,7 +183,7 @@ struct RideMapRouteView: View {
             clearFilters: { history.clearFilters() },
             currentVehicleIdentity: model.device.rideMapVehicleIdentity,
             currentVehicleName: model.device.rideMapVehicleName,
-            vehicleName: model.device.rideMapVehicleName(for:),
+            vehicleName: vehicleName(for:),
             // Detail and list intentionally share the selected route data, but not a
             // viewport projection. A detail pan must not replace the list's display
             // projection while both destinations remain alive in the navigation stack.
@@ -219,7 +225,7 @@ struct RideMapRouteView: View {
                 ensureSelection: { history.ensureSelection(requestedRideID: $0) },
                 retry: { history.reload(selecting: initialHistoryID) },
                 loadRoutePreview: { history.loadRoutePreview() },
-                vehicleName: model.device.rideMapVehicleName(for:),
+                vehicleName: vehicleName(for:),
                 cameraDidChange: { region in
                     history.projectDetailViewport(RideMapCanvasView.geoBounds(for: region))
                 },

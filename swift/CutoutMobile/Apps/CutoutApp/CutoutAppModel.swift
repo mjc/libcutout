@@ -396,9 +396,6 @@ final class CutoutAppModel {
             setRideHistoryError: { rideHistory.setError($0) },
             appleMonitor: appleMusicMonitor
         )
-        self.rideHistory.onPageUpdated = { [weak self] in
-            self?.applyRideHistoryPageResult()
-        }
         self.music.timelineEvents = music.coordinator.recordedEvents
         restoreRideMapState()
         CutoutSessionCallbackRegistrar(core: core).install(
@@ -583,10 +580,6 @@ final class CutoutAppModel {
 
     private func reloadRideHistory() {
         rideHistory.reload()
-    }
-
-    private func applyRideHistoryPageResult() {
-        device.mergeHistoricalVehicleNames(rideHistory.vehicleNames)
     }
 
     private func applyRideMapCommand(_ command: LiveRideCommand) async -> Bool {

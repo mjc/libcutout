@@ -9,7 +9,6 @@ import Observation
 final class DevicePresentationModel {
     private let selectedDeviceStore: DevicePickerSelectionStore
     private var vehicleNameCache = [String: String]()
-    private var historicalVehicleNames = [String: String]()
 
     var protocolIdentityCandidate: DevicePickerDiscoveryCandidate?
 
@@ -72,11 +71,6 @@ final class DevicePresentationModel {
         selectedDeviceStore.save(platformIdentifier: identity, displayName: name)
     }
 
-    func mergeHistoricalVehicleNames(_ names: [String: String]) {
-        historicalVehicleNames.merge(names, uniquingKeysWith: { _, incoming in incoming })
-        vehicleNameCache.merge(names, uniquingKeysWith: { _, incoming in incoming })
-    }
-
     var selectedRideTitle: String? { connectionState.selection?.title }
     var selectedRideIdentifier: String? { connectionState.selection?.platformIdentifier }
     var selectedConnectionRoute: DevicePickerConnectionRoute? { connectionState.selection?.route }
@@ -94,7 +88,7 @@ final class DevicePresentationModel {
     var connectionStatusText: String { connectionState.statusText ?? phase.displayText }
 
     private func vehicleName(for identity: String) -> String? {
-        if let name = historicalVehicleNames[identity] ?? vehicleNameCache[identity] {
+        if let name = vehicleNameCache[identity] {
             return name
         }
         guard let name = selectedDeviceStore.displayName(for: identity) else { return nil }

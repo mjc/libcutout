@@ -2485,7 +2485,7 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testDevicePresentationOwnsPersistedAndHistoricalVehicleNames() throws {
+    func testDevicePresentationOwnsPersistedVehicleNames() throws {
         let suiteName = "CutoutAppModelTests.deviceNames.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
@@ -2498,9 +2498,6 @@ final class CutoutAppModelTests: XCTestCase {
 
         model.rememberVehicleName("NF2557", for: "wheel-1")
         XCTAssertEqual(model.rideMapVehicleName, "NF2557")
-
-        model.mergeHistoricalVehicleNames(["old-wheel": "History name"])
-        XCTAssertEqual(model.rideMapVehicleName(for: "old-wheel"), "History name")
     }
 
     @MainActor
