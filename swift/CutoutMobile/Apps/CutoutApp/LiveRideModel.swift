@@ -48,6 +48,7 @@ final class LiveRideModel {
     private let state: (any LiveRideQuerying)?
     private let now: @MainActor () -> UInt64
     private var restoreTask: Task<Void, Never>?
+    private var restoreCancellation: MobileRideMapProjectionCancellation?
     private var projectionTask: Task<Void, Never>?
     private var durationTask: Task<Void, Never>?
     private var liveCancellation: MobileLiveRideMapProjectionCancellation?
@@ -76,21 +77,26 @@ final class LiveRideModel {
 
     isolated deinit {
         restoreTask?.cancel()
+        restoreCancellation?.cancel()
         projectionTask?.cancel()
         durationTask?.cancel()
         liveCancellation?.cancel()
         durableCancellation?.cancel()
     }
 
-    func restore() {
-        guard let state else { return }
+    @discardableResult
+    func restore() -> Task<Void, Never>? {
+        guard let state else { return nil }
         snapshot = state.currentSnapshot()
         telemetryState = snapshot?.telemetryState
         updateDurationTicker()
         restoreTask?.cancel()
-        guard let rideID = snapshot?.rideID else { return }
+        restoreCancellation?.cancel()
+        guard let rideID = snapshot?.rideID else { return nil }
         let generation = projectionGeneration
         let budget = MobileRideMapLimits.rustOwned.liveTailPointLimit
+        let cancellation = MobileRideMapProjectionCancellation()
+        restoreCancellation = cancellation
         restoreTask = Task { [weak self] in
             do {
                 let projection = try await Self.runCancellableDetached(priority: .userInitiated) {
@@ -99,7 +105,7 @@ final class LiveRideModel {
                         budget: budget,
                         viewport: nil,
                         privacy: .precise,
-                        cancellation: nil
+                        cancellation: cancellation
                     )
                 }
                 guard !Task.isCancelled, let self,
@@ -122,6 +128,7 @@ final class LiveRideModel {
                 self.clearProjection()
             }
         }
+        return restoreTask
     }
 
     func applySnapshot(_ next: MobileRideMapSnapshotDto) {
@@ -181,6 +188,8 @@ final class LiveRideModel {
     func invalidateProjection(clearPoints: Bool) {
         projectionGeneration &+= 1
         projectionEnabled = false
+        restoreTask?.cancel()
+        restoreCancellation?.cancel()
         liveCancellation?.cancel()
         durableCancellation?.cancel()
         if clearPoints {
