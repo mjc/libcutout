@@ -14,19 +14,26 @@ use cutout_protocols::{
 };
 
 #[test]
-fn legacy_pedal_mode_does_not_confirm_the_modern_aero_riding_preset() {
+fn legacy_pedal_mode_does_not_expose_an_unsupported_aero_riding_preset() {
     let profile = aero_control_profile();
     for raw in [-1, 0, 1, 2, 3, 1920, i64::MAX] {
         assert!(read(profile, cutout_protocols::VETERAN_FIELD_PEDALS_MODE, raw).is_empty());
     }
-    let preset = profile
-        .descriptors(false)
-        .into_iter()
-        .find(|descriptor| descriptor.id == SettingId::RidingPreset)
-        .unwrap();
-    assert_eq!(preset.access, SettingAccess::Writable);
-    assert!(!preset.completion.supports_readback());
-    assert_eq!(preset.write_verification, VerificationStatus::Unverified);
+    assert!(
+        profile
+            .descriptors(false)
+            .into_iter()
+            .all(|descriptor| descriptor.id != SettingId::RidingPreset)
+    );
+    assert!(
+        profile
+            .command(
+                SettingId::RidingPreset,
+                DeviceSettingValue::Choice(0),
+                false
+            )
+            .is_err()
+    );
 }
 
 fn read(profile: DeviceControlProfile, field: u16, raw: i64) -> Vec<SettingObservation> {
