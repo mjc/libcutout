@@ -68,7 +68,11 @@ final class MusicIntegrationTests: XCTestCase {
 
     func testUnavailableMusicWithoutAPlayingItemDoesNotOccupyMapSpace() {
         XCTAssertFalse(MusicNowPlaying(provider: .spotify, state: .unavailable).showsCompactPlayer)
-        XCTAssertFalse(MusicNowPlaying(provider: .spotify, state: .disconnected).showsCompactPlayer)
+        for state in [MobileMusicPlaybackStateDto.stopped, .buffering, .interrupted, .disconnected, .stale] {
+            let nowPlaying = MusicNowPlaying(provider: .spotify, state: state)
+            XCTAssertTrue(nowPlaying.showsCompactPlayer, "keep the player during \(state)")
+            XCTAssertFalse(nowPlaying.requiresSetup, "\(state) does not invalidate authorization")
+        }
         XCTAssertTrue(MusicNowPlaying(
             provider: .spotify,
             state: .disconnected,
@@ -248,8 +252,6 @@ final class MusicIntegrationTests: XCTestCase {
         for state in [
             MobileMusicPlaybackStateDto.unauthorized,
             .unavailable,
-            .disconnected,
-            .stale,
         ] {
             XCTAssertTrue(
                 MusicNowPlaying(provider: .spotify, state: state).requiresSetup,
@@ -262,6 +264,8 @@ final class MusicIntegrationTests: XCTestCase {
             .buffering,
             .interrupted,
             .stopped,
+            .disconnected,
+            .stale,
         ] {
             XCTAssertFalse(
                 MusicNowPlaying(provider: .spotify, state: state).requiresSetup,
@@ -892,7 +896,7 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertNotEqual(event(sequence: 0).timelineID, event(sequence: 1).timelineID)
     }
 
-    func testDisconnectTimelineRowDoesNotRepeatTheLastTrackOrShowUnknownTrack() {
+    func testListeningHistoryExcludesDisconnectsAndPreservesTrackMetadata() {
         let event = MobileMusicRideEventDto(
             sequence: 1,
             provider: .spotify,
@@ -905,8 +909,6 @@ final class MusicIntegrationTests: XCTestCase {
             wallClockAtMs: 1_700_000_000_000,
             clockUncertaintyMs: 5
         )
-        XCTAssertEqual(event.timelineItemTitle, "Provider disconnected")
-        XCTAssertEqual(event.timelineSubtitle, "Spotify")
 
         let withoutMetadata = MobileMusicRideEventDto(
             sequence: 2,
@@ -920,7 +922,25 @@ final class MusicIntegrationTests: XCTestCase {
             wallClockAtMs: 1_700_000_001_000,
             clockUncertaintyMs: 5
         )
-        XCTAssertEqual(withoutMetadata.timelineItemTitle, "Provider disconnected")
+        let track = MobileMusicRideEventDto(
+            sequence: 3,
+            provider: .spotify,
+            itemIdentifier: "spotify:track:track-1",
+            title: "Song",
+            artist: "Artist",
+            kind: .itemChanged,
+            observedAtMs: 3_000,
+            monotonicAtMs: 3_000,
+            wallClockAtMs: 1_700_000_002_000,
+            clockUncertaintyMs: 5
+        )
+        let stored = [event, track, withoutMetadata]
+        XCTAssertEqual(stored.listeningHistoryEvents, [track])
+        XCTAssertTrue([event, withoutMetadata].listeningHistoryEvents.isEmpty)
+        XCTAssertEqual(stored.count, 3)
+        XCTAssertEqual(stored.listeningHistoryEvents.first?.itemIdentifier, "spotify:track:track-1")
+        XCTAssertEqual(stored.listeningHistoryEvents.first?.title, "Song")
+        XCTAssertEqual(stored.listeningHistoryEvents.first?.artist, "Artist")
     }
 
     func testNowPlayingProvidesLocalizedArtworkAccessibilityLabel() {

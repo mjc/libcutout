@@ -92,6 +92,28 @@ fn record(
 }
 
 #[test]
+fn saved_history_preserves_identifier_title_and_artist_after_reopen() {
+    let fixture = setup();
+    record(
+        &fixture.core,
+        2_000,
+        2_000,
+        MobileMusicRideEventKindDto::Play,
+    )
+    .unwrap();
+    fixture.core.stop_at(3_000).unwrap();
+    fixture.db.shutdown().unwrap();
+
+    let reopened = open_ride_database(fixture.path.to_string_lossy().into_owned()).unwrap();
+    let events = reopened.music_events(fixture.id.clone()).unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].item_identifier.as_deref(), Some("track"));
+    assert_eq!(events[0].title.as_deref(), Some("Private title"));
+    assert_eq!(events[0].artist.as_deref(), Some("Artist"));
+    reopened.shutdown().unwrap();
+}
+
+#[test]
 fn external_redaction_reaches_active_timeline() {
     let fixture = setup();
     let (db, core, id) = (&fixture.db, &fixture.core, fixture.id.clone());

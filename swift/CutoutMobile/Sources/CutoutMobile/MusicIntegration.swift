@@ -852,11 +852,9 @@ public struct MusicNowPlaying: Equatable, Sendable {
 
     public var showsCompactPlayer: Bool {
         switch state {
-        case .playing, .paused:
+        case .playing, .paused, .stopped, .buffering, .interrupted, .disconnected, .stale:
             true
-        case .disconnected, .stale:
-            item != nil
-        default:
+        case .unauthorized, .unavailable:
             false
         }
     }
@@ -882,12 +880,10 @@ public struct MusicNowPlaying: Equatable, Sendable {
         }
     }
 
-    /// Setup remains available after a provider handoff or failed connection.
-    /// A non-nil snapshot is still useful for showing the truthful lifecycle
-    /// state, but it must not hide the main-screen setup action.
+    /// Playback stopping or a temporary connection gap does not require setup.
     public var requiresSetup: Bool {
         switch state {
-        case .unauthorized, .unavailable, .disconnected, .stale:
+        case .unauthorized, .unavailable:
             true
         default:
             false
@@ -1053,6 +1049,13 @@ private extension MobileMusicRideEventKindDto {
         case .stopped: "stopped"
         case .providerDisconnected: "provider-disconnected"
         }
+    }
+}
+
+public extension Array where Element == MobileMusicRideEventDto {
+    /// Connection diagnostics remain stored but are not listening-history rows.
+    var listeningHistoryEvents: Self {
+        filter { $0.kind != .providerDisconnected }
     }
 }
 
