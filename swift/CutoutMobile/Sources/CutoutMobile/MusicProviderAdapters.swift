@@ -337,6 +337,12 @@ public final class SpotifyProviderAdapter: NSObject {
                 beginRenewal(configuration: configuration, session: session)
             } else {
                 accessToken = session.accessToken
+                if usesWebPlayback {
+                    // Publish the restored connection before the asynchronous
+                    // first read so settings cannot imply a missing connection.
+                    lifecycleState = .buffering
+                    emitChange()
+                }
                 connect(with: session.accessToken)
             }
             return true

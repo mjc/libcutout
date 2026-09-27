@@ -934,10 +934,15 @@ final class MusicIntegrationTests: XCTestCase {
             wallClockAtMs: 1_700_000_002_000,
             clockUncertaintyMs: 5
         )
-        let stored = [event, track, withoutMetadata]
+        var itemlessStop = withoutMetadata
+        itemlessStop.kind = .stopped
+        var identifiedStop = track
+        identifiedStop.kind = .stopped
+        let stored = [event, track, withoutMetadata, itemlessStop]
         XCTAssertEqual(stored.listeningHistoryEvents, [track])
         XCTAssertTrue([event, withoutMetadata].listeningHistoryEvents.isEmpty)
-        XCTAssertEqual(stored.count, 3)
+        XCTAssertEqual(stored.count, 4)
+        XCTAssertEqual([itemlessStop, identifiedStop].listeningHistoryEvents, [identifiedStop])
         XCTAssertEqual(stored.listeningHistoryEvents.first?.itemIdentifier, "spotify:track:track-1")
         XCTAssertEqual(stored.listeningHistoryEvents.first?.title, "Song")
         XCTAssertEqual(stored.listeningHistoryEvents.first?.artist, "Artist")

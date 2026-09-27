@@ -1053,9 +1053,12 @@ private extension MobileMusicRideEventKindDto {
 }
 
 public extension Array where Element == MobileMusicRideEventDto {
-    /// Connection diagnostics remain stored but are not listening-history rows.
+    /// Connection diagnostics and itemless stop events remain stored, not displayed.
     var listeningHistoryEvents: Self {
-        filter { $0.kind != .providerDisconnected }
+        filter {
+            $0.kind != .providerDisconnected
+                && !($0.kind == .stopped && $0.itemIdentifier == nil && $0.title == nil)
+        }
     }
 }
 

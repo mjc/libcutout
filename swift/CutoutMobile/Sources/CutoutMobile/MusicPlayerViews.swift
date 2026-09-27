@@ -372,7 +372,7 @@ private struct MusicExpandedHero: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                if let status = nowPlaying.statusText {
+                if let status = nowPlaying.statusText, status != nowPlaying.title {
                     Text(status)
                         .font(.caption)
                         .foregroundStyle(.secondary)
