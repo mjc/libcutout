@@ -1296,7 +1296,7 @@ final class CutoutAppModelTests: XCTestCase {
         let model = CutoutAppModel(core: driver)
         model.start()
 
-        XCTAssertTrue(model.startProbe(platformIdentifier: row.id))
+        XCTAssertTrue(model.pair(platformIdentifier: row.id))
         XCTAssertEqual(driver.pairedPlatformIdentifiers, [row.id])
         XCTAssertTrue(driver.probedPlatformIdentifiers.isEmpty)
         XCTAssertTrue(driver.recordedPlatformIdentifiers.isEmpty)

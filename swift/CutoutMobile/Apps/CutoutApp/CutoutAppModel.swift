@@ -655,10 +655,6 @@ final class CutoutAppModel {
         return true
     }
 
-    func startProbe(platformIdentifier: String) -> Bool {
-        pair(platformIdentifier: platformIdentifier)
-    }
-
     func appDidEnterBackground() {
         music.sceneDidEnterBackground()
         guard let snapshot = currentLiveActivitySnapshot() else {
