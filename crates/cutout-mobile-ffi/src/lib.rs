@@ -7389,6 +7389,8 @@ struct MobileRideMapCoreInner {
     last_connected_vehicle: Option<ride_maps::VehicleIdentity>,
     last_connection_transition_generation: Option<u64>,
     last_connection_transition_ride_id: Option<MobileRideIdDto>,
+    last_connection_association_generation: Option<u64>,
+    last_connection_association_ride_id: Option<MobileRideIdDto>,
     monotonic_epoch_offset_milliseconds: u64,
     initialization_error: Option<MobileRideMapCoreErrorDto>,
     restoration_state: MobileRideMapRestorationState,
@@ -7717,6 +7719,8 @@ impl MobileRideMapCoreInner {
             last_connected_vehicle: None,
             last_connection_transition_generation: None,
             last_connection_transition_ride_id: None,
+            last_connection_association_generation: None,
+            last_connection_association_ride_id: None,
             monotonic_epoch_offset_milliseconds: 0,
             initialization_error: None,
             restoration_state: if needs_restoration {
@@ -8433,8 +8437,8 @@ impl MobileRideMapCore {
             state.last_connection_transition_generation == Some(generation)
         });
         if connection_generation.is_some_and(|generation| {
-            state.last_connection_transition_generation == Some(generation)
-                && state.last_connection_transition_ride_id == state.ride_id
+            state.last_connection_association_generation == Some(generation)
+                && state.last_connection_association_ride_id == state.ride_id
         }) {
             return Ok(state
                 .recorder
@@ -8460,6 +8464,9 @@ impl MobileRideMapCore {
                 at_ms,
                 automatic_policy,
             )?;
+            // Consume lifecycle admission before attempting association. A timestamp-order
+            // retry must not reapply this policy if preferences change in the meantime.
+            state.remember_connection_admission(connection_generation);
         }
 
         // Remember the admission decision even when autostart is off. Changing the setting
@@ -8467,6 +8474,7 @@ impl MobileRideMapCore {
         // ride_id, so the same generation can still associate with that new ride.
         if state.recorder.state().is_none() {
             state.remember_connection_admission(connection_generation);
+            state.remember_connection_association(connection_generation);
             return if connection_generation.is_some() {
                 Ok(None)
             } else {
@@ -8482,6 +8490,7 @@ impl MobileRideMapCore {
             // Retain the terminal ride and consume this automatic admission decision.
             // A later manual start can still associate because its ride identity is different.
             state.remember_connection_admission(connection_generation);
+            state.remember_connection_association(connection_generation);
             let lifecycle = state
                 .recorder
                 .state()
@@ -8528,10 +8537,7 @@ impl MobileRideMapCore {
                 _ => false,
             })
         {
-            // Lifecycle admission is consumed by generation, but association remains retryable
-            // after transient outcomes such as TimestampOutOfOrder. Only a confirmed or already
-            // confirmed association closes the connection-generation retry window.
-            state.remember_connection_admission(Some(generation));
+            state.remember_connection_association(Some(generation));
         }
         Ok(Some(state.snapshot(lifecycle.into())))
     }
@@ -9298,6 +9304,12 @@ impl MobileRideMapCoreInner {
     fn remember_connection_admission(&mut self, generation: Option<u64>) {
         self.last_connection_transition_generation = generation;
         self.last_connection_transition_ride_id
+            .clone_from(&self.ride_id);
+    }
+
+    fn remember_connection_association(&mut self, generation: Option<u64>) {
+        self.last_connection_association_generation = generation;
+        self.last_connection_association_ride_id
             .clone_from(&self.ride_id);
     }
 
@@ -18925,28 +18937,36 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(associated.ride_id, ride_a.ride_id);
+        assert!(matches!(
+            state
+                .ingest_location(3_000, 1_700_000_003_000, 40.0, -105.0, 3.0)
+                .expect("newer GPS sample is admitted"),
+            MobileRideMapCoreDecisionDto::Accepted { .. }
+                | MobileRideMapCoreDecisionDto::Pending { .. }
+        ));
 
         state.set_ride_autostart_enabled(false).unwrap();
         database
             .remember_selected_device("pev-2".to_owned(), None, 1_500)
             .unwrap();
-        let ignored = state
+        let delayed = state
             .ensure_recording_for_vehicle_on_connection("pev-2", 2_000, 2)
             .unwrap()
             .unwrap();
-        assert_eq!(ignored.ride_id, ride_a.ride_id);
-        assert_eq!(ignored.state, MobileRideLifecycleStateDto::Active);
+        assert_eq!(delayed.ride_id, ride_a.ride_id);
+        assert_eq!(delayed.state, MobileRideLifecycleStateDto::Active);
+        assert_eq!(delayed.associated_vehicle.as_deref(), Some("pev-1"));
 
         state.set_ride_autostart_enabled(true).unwrap();
         let repeated = state
-            .ensure_recording_for_vehicle_on_connection("pev-2", 2_100, 2)
+            .ensure_recording_for_vehicle_on_connection("pev-2", 4_000, 2)
             .unwrap()
             .unwrap();
         assert_eq!(repeated.ride_id, ride_a.ride_id);
         assert_eq!(repeated.state, MobileRideLifecycleStateDto::Active);
 
         let fresh = state
-            .ensure_recording_for_vehicle_on_connection("pev-2", 3_000, 3)
+            .ensure_recording_for_vehicle_on_connection("pev-2", 5_000, 3)
             .unwrap()
             .unwrap();
         assert_ne!(fresh.ride_id, ride_a.ride_id);
