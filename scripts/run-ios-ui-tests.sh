@@ -17,6 +17,7 @@ if [[ "${1:-}" == "--help" ]]; then
 fi
 
 script_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+runner_arguments=("$@")
 smoke_requested=false
 for argument in "$@"; do
   [[ "$argument" == "--smoke" ]] && smoke_requested=true
@@ -159,9 +160,29 @@ if [[ "$selected_tests" == *IncreasedContrast* ]]; then
 fi
 
 destination="${CUTOUT_IOS_TEST_DESTINATION:-${CUTOUT_IOS_SIMULATOR_DESTINATION:-platform=iOS Simulator,name=Cutout iPhone 15 iOS 27,OS=latest}}"
+passed_xcode_options=("$@")
+for ((option_index = 0; option_index < ${#passed_xcode_options[@]}; option_index++)); do
+  if [[ "${passed_xcode_options[$option_index]}" == -destination ]]; then
+    if ((option_index + 1 >= ${#passed_xcode_options[@]})); then
+      echo "-destination requires a value" >&2
+      exit 2
+    fi
+    destination="${passed_xcode_options[$((option_index + 1))]}"
+  fi
+done
 project="${CUTOUT_IOS_APP_PROJECT:-swift/CutoutMobile/CutoutApp.xcodeproj}"
 scheme="${CUTOUT_IOS_APP_SCHEME:-CutoutApp}"
 derived_data="${CUTOUT_IOS_UI_TEST_DERIVED_DATA:-$root/target/xcode-ui-tests}"
+spotify_client_id=""
+if [[ "$destination" == platform=iOS,* ]]; then
+  if [[ "${CUTOUT_IOS_UI_TEST_SECRETSPEC_RESOLVED:-}" != 1 ]]; then
+    export CUTOUT_IOS_UI_TEST_SECRETSPEC_RESOLVED=1
+    exec secretspec run --profile development --scope ios-device-deploy \
+      --reason "Build signed physical iOS UI tests" -- \
+      "$script_directory/run-ios-ui-tests.sh" "${runner_arguments[@]}"
+  fi
+  spotify_client_id="$(cutout_require_spotify_client_id)" || exit
+fi
 lock_directory="$derived_data/.run-ios-ui-tests.lock"
 simulator_device=""
 prior_appearance=""
@@ -257,6 +278,9 @@ if [[ "$destination" == platform=iOS,* ]]; then
   )
 fi
 xcodebuild_args+=("$@")
+if [[ -n "$spotify_client_id" ]]; then
+  xcodebuild_args+=("SPOTIFY_CLIENT_ID=$spotify_client_id")
+fi
 if [[ "$quiet" == true ]]; then
   xcodebuild_args+=(-quiet)
 fi
@@ -353,6 +377,11 @@ if [[ "$mode" == "test" ]]; then
   fi
 
   if [[ "$test_status" -eq 0 ]]; then
+    if [[ -n "$spotify_client_id" ]]; then
+      cutout_verify_embedded_spotify_client_id \
+        "$derived_data/Build/Products/Debug-iphoneos/CutoutApp.app" \
+        "$spotify_client_id" || exit
+    fi
     result_summary="$(/usr/bin/xcrun xcresulttool get test-results summary --path "$result_bundle")"
     test_count="$(cutout_require_complete_ios_ui_test_summary "$result_summary")" || exit 1
     echo "iOS UI tests passed: $test_count in $((SECONDS - test_started_at))s ($result_bundle)"
@@ -362,3 +391,8 @@ if [[ "$mode" == "test" ]]; then
 fi
 
 cargo cutout xcodebuild -- "${xcodebuild_args[@]}" build-for-testing
+if [[ -n "$spotify_client_id" ]]; then
+  cutout_verify_embedded_spotify_client_id \
+    "$derived_data/Build/Products/Debug-iphoneos/CutoutApp.app" \
+    "$spotify_client_id"
+fi

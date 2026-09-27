@@ -113,8 +113,83 @@ fi
 assert_equal "Result.xcresult" "$(basename "$first_result")"
 assert_equal "$tmp/derived-data/TestResults" "$(dirname "$(dirname "$first_result")")"
 
-# A timeout must stop resistant descendants before this runner releases its lock.
+# A physical UI test build must keep the Spotify configuration of the app it replaces.
 mkdir -p "$tmp/bin"
+cat >"$tmp/bin/physical-ui-test-cargo" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+derived_data=""
+client_id=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -derivedDataPath) derived_data="$2"; shift 2 ;;
+    SPOTIFY_CLIENT_ID=*) client_id="${1#SPOTIFY_CLIENT_ID=}"; shift ;;
+    *) shift ;;
+  esac
+done
+[[ "$client_id" == "runner-test-id" ]] || {
+  echo "physical UI test build lost its configured Spotify client ID" >&2
+  exit 1
+}
+product="$derived_data/Build/Products/Debug-iphoneos/CutoutApp.app"
+mkdir -p "$product"
+cat >"$product/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict><key>SpotifyClientID</key><string>$client_id</string></dict></plist>
+PLIST
+EOF
+cat >"$tmp/bin/secretspec" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$1" == run ]]
+shift
+profile=""
+scope=""
+while [[ "$1" != -- ]]; do
+  case "$1" in
+    --profile) profile="$2"; shift 2 ;;
+    --scope) scope="$2"; shift 2 ;;
+    --reason) shift 2 ;;
+    *) exit 2 ;;
+  esac
+done
+[[ "$profile" == development && "$scope" == ios-device-deploy ]]
+shift
+touch "$CUTOUT_UI_TEST_FAKE_KEYRING_USED"
+CUTOUT_SPOTIFY_CLIENT_ID=runner-test-id \
+  CUTOUT_IOS_DEVELOPMENT_TEAM=runner-test-team exec "$@"
+EOF
+cp "$tmp/bin/physical-ui-test-cargo" "$tmp/bin/cargo"
+chmod +x "$tmp/bin/cargo" "$tmp/bin/secretspec"
+if ! env -u CUTOUT_SPOTIFY_CLIENT_ID -u SPOTIFY_CLIENT_ID \
+  -u CUTOUT_IOS_UI_TEST_SECRETSPEC_RESOLVED \
+  PATH="$tmp/bin:$PATH" CUTOUT_SPOTIFY_CLIENT_ID_FILE="$tmp/missing-client-id" \
+  CUTOUT_UI_TEST_FAKE_KEYRING_USED="$tmp/keyring-used" \
+  CUTOUT_IOS_TEST_DESTINATION='platform=iOS,id=physical-test-device' \
+  CUTOUT_IOS_UI_TEST_DERIVED_DATA="$tmp/physical-derived-data" \
+  "$root/scripts/run-ios-ui-tests.sh" --build-only >"$tmp/physical-build.log" 2>&1
+then
+  cat "$tmp/physical-build.log" >&2
+  exit 1
+fi
+[[ -f "$tmp/keyring-used" ]]
+rm "$tmp/keyring-used"
+if ! env -u CUTOUT_SPOTIFY_CLIENT_ID -u SPOTIFY_CLIENT_ID \
+  -u CUTOUT_IOS_UI_TEST_SECRETSPEC_RESOLVED \
+  -u CUTOUT_IOS_TEST_DESTINATION -u CUTOUT_IOS_SIMULATOR_DESTINATION \
+  PATH="$tmp/bin:$PATH" CUTOUT_SPOTIFY_CLIENT_ID_FILE="$tmp/missing-client-id" \
+  CUTOUT_UI_TEST_FAKE_KEYRING_USED="$tmp/keyring-used" \
+  CUTOUT_IOS_UI_TEST_DERIVED_DATA="$tmp/physical-override-derived-data" \
+  "$root/scripts/run-ios-ui-tests.sh" --build-only \
+  -destination 'platform=iOS,id=physical-test-device' >"$tmp/physical-override-build.log" 2>&1
+then
+  cat "$tmp/physical-override-build.log" >&2
+  exit 1
+fi
+[[ -f "$tmp/keyring-used" ]]
+
+# A timeout must stop resistant descendants before this runner releases its lock.
 cp "$root/tests/scripts/fixtures/ui-test-timeout-cargo.sh" "$tmp/bin/cargo"
 chmod +x "$tmp/bin/cargo"
 if PATH="$tmp/bin:$PATH" CUTOUT_TIMEOUT_TEST_DIR="$tmp" \

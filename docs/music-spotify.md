@@ -17,12 +17,15 @@ stay in the iOS adapter.
    Premium account is required for on-demand track playback. In development
    mode, the app owner must have Premium; add any different validation account
    under Users Management before authorizing it.
-3. Supply the client ID through `CUTOUT_SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_ID`,
-   or `~/.config/libcutout/spotify-client-id`. The shared Xcode build helpers
-   pass it as the `SPOTIFY_CLIENT_ID` build setting, which is substituted into
-   `Info.plist` at build time and is never committed. Installable device and
-   archive builds fail instead of silently producing a Spotify-disabled app
-   when it is missing.
+3. Store `CUTOUT_SPOTIFY_CLIENT_ID` in the Devenv SecretSpec development
+   profile's OS keyring. The physical UI test runner and device deployment
+   resolve it with the `ios-device-deploy` scope; ad-hoc export uses its own
+   signing scope. The shared Xcode build helpers pass it as the
+   `SPOTIFY_CLIENT_ID` build setting, which is substituted into `Info.plist`
+   at build time and is never committed. Physical builds fail instead of
+   silently producing a Spotify-disabled app when it is missing. Local Mac
+   builds can also use `CUTOUT_SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_ID`, or
+   `~/.config/libcutout/spotify-client-id` directly.
 4. The app declares the `spotify` query scheme and the `cutout-spotify` URL
    callback scheme. The callback is forwarded through SwiftUI's `onOpenURL`.
 
