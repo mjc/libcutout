@@ -98,7 +98,7 @@ final class MusicPreferencesDeviceUITests: XCTestCase {
             app.buttons["music.open-settings"].tap()
             let status = app.staticTexts["music.connection-status"]
             XCTAssertTrue(status.waitForExistence(timeout: 5), app.debugDescription)
-            XCTFail("Spotify is playing but Map has no player. Status: \(status.label); reauthorize visible: \(app.buttons["music.authorize-spotify"].exists)")
+            XCTFail("Expected Spotify playback, but Map has no player. Status: \(status.label); reauthorize visible: \(app.buttons["music.authorize-spotify"].exists)")
             return
         }
         requirePlayingTitle(in: app)
