@@ -46,13 +46,7 @@ public struct MusicCompactPlayer: View {
             }
             HStack(spacing: 8) {
                 if nowPlaying.requiresSetup {
-                    Button(action: onOpenSettings) {
-                        Label(pevLocalizedText("music.settings.open"), systemImage: "gearshape")
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .tint(PevDashboardColors.yellow)
-                    .accessibilityIdentifier("music.open-settings")
+                    MusicSettingsButton(action: onOpenSettings, controlSize: .small)
                 }
                 Spacer(minLength: 0)
                 MusicTransportControls(nowPlaying: nowPlaying, onCommand: onCommand)
@@ -436,6 +430,23 @@ private struct MusicHistoryPolicyLabel: View {
     }
 }
 
+private struct MusicSettingsButton: View {
+    let action: () -> Void
+    var controlSize: ControlSize = .regular
+
+    var body: some View {
+        Button(action: action) {
+            Label(pevLocalizedText("music.settings.open"), systemImage: "gearshape")
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .buttonStyle(.bordered)
+        .controlSize(controlSize)
+        .tint(PevDashboardColors.primaryText)
+        .accessibilityIdentifier("music.open-settings")
+    }
+}
+
 /// Shared Ride/Map composition for the compact player.
 public struct MusicCompactPlayerInset: ViewModifier {
     public let nowPlaying: MusicNowPlaying?
@@ -467,12 +478,7 @@ public struct MusicCompactPlayerInset: ViewModifier {
                 .buttonStyle(.bordered)
                 .accessibilityIdentifier("music.restore")
             } else {
-                Button(action: onOpenSettings) {
-                    Label(pevLocalizedText("music.settings.open"), systemImage: "gearshape")
-                }
-                .buttonStyle(.bordered)
-                .tint(PevDashboardColors.yellow)
-                .accessibilityIdentifier("music.open-settings")
+                MusicSettingsButton(action: onOpenSettings)
             }
         }
     }
