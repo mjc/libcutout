@@ -16625,7 +16625,7 @@ mod tests {
     }
 
     #[test]
-    fn mobile_ride_marker_ends_as_app_reset_without_a_restored_platform() {
+    fn mobile_ride_marker_preserves_the_ride_without_a_restored_platform() {
         let source = CutoutSessionStateHandle::new();
         let started = source
             .reduce_ride_session(MobileRideSessionInputDto::Start {
@@ -16645,17 +16645,11 @@ mod tests {
 
         assert_eq!(
             recovered.snapshot.phase,
-            MobileRideSessionPhaseDto::Ending {
-                reason: MobileRideSessionEndReasonDto::AppReset,
-            }
+            MobileRideSessionPhaseDto::Reconnecting
         );
-        assert_eq!(
-            recovered.effect,
-            MobileRideSessionEffectDto::EndActivity {
-                identity,
-                reason: MobileRideSessionEndReasonDto::AppReset,
-            }
-        );
+        assert_eq!(recovered.snapshot.identity, Some(identity));
+        assert_eq!(recovered.effect, MobileRideSessionEffectDto::None);
+        assert!(restored.export_ride_session_marker().unwrap().is_some());
     }
 
     #[test]

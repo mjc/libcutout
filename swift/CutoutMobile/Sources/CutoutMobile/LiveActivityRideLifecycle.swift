@@ -18,6 +18,7 @@ public enum LiveActivityRideLifecycleError: Error, Equatable, Sendable {
 public enum LiveActivityRideRecoveryResult: Equatable, Sendable {
     case noPersistedRide
     case adopted
+    case reconnecting
     case ended(requiresUserAction: Bool)
 }
 
@@ -142,6 +143,8 @@ public actor LiveActivityRideLifecycleCoordinator {
                     .adopted
                 case .endActivity:
                     .ended(requiresUserAction: restoredPlatformIdentifier != nil)
+                case .none:
+                    .reconnecting
                 default:
                     .ended(requiresUserAction: false)
                 }

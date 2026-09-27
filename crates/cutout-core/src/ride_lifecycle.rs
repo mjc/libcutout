@@ -360,17 +360,14 @@ impl RideSessionLifecycle {
 
         RideSessionDecision::new(
             Self {
-                phase: RideSessionPhase::Ending(RideSessionEndReason::AppReset),
+                phase: RideSessionPhase::Reconnecting,
                 identity: Some(identity.clone()),
                 pending_identity: None,
-                activity: ActivityProjectionState::Ending,
+                activity: ActivityProjectionState::Unavailable,
                 last_telemetry_at: None,
                 app_presence: RideSessionAppPresence::Foreground,
             },
-            RideSessionEffect::EndActivity {
-                identity,
-                reason: RideSessionEndReason::AppReset,
-            },
+            RideSessionEffect::None,
         )
     }
 
@@ -1040,18 +1037,16 @@ mod tests {
         assert_eq!(resumed.state().phase(), &RideSessionPhase::Starting);
 
         for restored_platform_identifier in [None, Some("aero-2")] {
-            let reset = RideSessionLifecycle::recover(marker.clone(), restored_platform_identifier);
+            let recovered =
+                RideSessionLifecycle::recover(marker.clone(), restored_platform_identifier);
             assert_eq!(
-                reset.effect(),
-                &RideSessionEffect::EndActivity {
-                    identity: identity.clone(),
-                    reason: RideSessionEndReason::AppReset,
-                }
+                recovered.effect(),
+                &RideSessionEffect::None,
+                "transport restoration must not end the logical ride"
             );
-            assert_eq!(
-                reset.state().phase(),
-                &RideSessionPhase::Ending(RideSessionEndReason::AppReset)
-            );
+            assert_eq!(recovered.state().phase(), &RideSessionPhase::Reconnecting);
+            assert_eq!(recovered.state().identity(), Some(&identity));
+            assert_eq!(recovered.state().marker(), Some(marker.clone()));
         }
     }
 

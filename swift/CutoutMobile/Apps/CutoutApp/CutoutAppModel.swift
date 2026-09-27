@@ -1106,6 +1106,8 @@ final class CutoutAppModel {
                     lastLiveActivitySnapshot = snapshot
                     lastLiveActivityUpdate = snapshot == nil ? nil : core.now()
                 }
+            case .reconnecting:
+                break
             case .ended, .noPersistedRide:
                 if restoredPlatformIdentifier == nil,
                     let scanState = devicePickerScanState

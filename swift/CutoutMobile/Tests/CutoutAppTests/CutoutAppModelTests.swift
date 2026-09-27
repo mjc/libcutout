@@ -2960,7 +2960,7 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testRestoredPeripheralDifferentFromPersistedRideEndsTheStaleRideAndResumes() async throws {
+    func testRestoredDifferentPeripheralPreservesRideWithoutReplacingIt() async throws {
         let suiteName = "CutoutAppModelTests.replacedRestoredRide.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
@@ -2985,41 +2985,23 @@ final class CutoutAppModelTests: XCTestCase {
         )
 
         model.start()
-        await Self.waitUntil("mismatched restored ride termination") {
-            if case .ended(reason: .appReset) = driver.rideSessionStateHandle.rideSessionSnapshot().phase {
-                return true
-            }
-            return false
+        await Self.waitUntil("mismatched restored ride recovery") {
+            driver.rideSessionStateHandle.rideSessionSnapshot().phase == .reconnecting
         }
 
         let endReason = await manager.lastEndReason
         let initialStartCount = await manager.startCount
-        XCTAssertEqual(endReason, .sessionEnded)
+        XCTAssertNil(endReason)
         XCTAssertEqual(driver.pairedPlatformIdentifiers, [])
         XCTAssertEqual(driver.disconnectCount, 0)
         XCTAssertEqual(model.selectedRideIdentifier, restoredPlatformIdentifier)
-        XCTAssertEqual(driver.rideSessionStateHandle.rideSessionSnapshot().phase, .ended(reason: .appReset))
+        XCTAssertEqual(driver.rideSessionStateHandle.rideSessionSnapshot().phase, .reconnecting)
         XCTAssertEqual(initialStartCount, 0)
-        XCTAssertNil(markerStore.marker)
-
-        driver.protocolIdentityCandidate = fixture.candidate
-        driver.onProtocolIdentityCandidateChange?(fixture.candidate)
-        driver.onPhaseChange?(.subscribing)
-        driver.onPhaseChange?(.live)
-        await Self.waitUntil("user-selected replacement ride activity") {
-            await manager.startCount == 1
-        }
-        let userActionStartCount = await manager.startCount
-        XCTAssertEqual(userActionStartCount, 1)
-        XCTAssertEqual(model.phase, .live)
-        XCTAssertEqual(
-            model.connectionState.navigationIntent(isRecordOnlyCapture: false),
-            .openRide(.vescOnewheel)
-        )
+        XCTAssertNotNil(markerStore.marker)
     }
 
     @MainActor
-    func testLaunchWithoutARestoredPeripheralEndsThePersistedRideAsAppReset() async throws {
+    func testLaunchWithoutARestoredPeripheralPreservesThePersistedRide() async throws {
         let suiteName = "CutoutAppModelTests.orphanRide.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
@@ -3036,24 +3018,21 @@ final class CutoutAppModelTests: XCTestCase {
         )
 
         model.start()
-        await Self.waitUntil("orphaned ride termination") {
-            if case .ended = driver.rideSessionStateHandle.rideSessionSnapshot().phase {
-                return true
-            }
-            return false
+        await Self.waitUntil("ride recovery") {
+            driver.rideSessionStateHandle.rideSessionSnapshot().phase == .reconnecting
         }
 
         XCTAssertEqual(
             driver.rideSessionStateHandle.rideSessionSnapshot().phase,
-            .ended(reason: .appReset)
+            .reconnecting
         )
         let endReason = await manager.lastEndReason
-        XCTAssertEqual(endReason, .sessionEnded)
-        XCTAssertNil(markerStore.marker)
+        XCTAssertNil(endReason)
+        XCTAssertNotNil(markerStore.marker)
     }
 
     @MainActor
-    func testOrphanRecoveryReplaysAnAlreadyDiscoveredSavedDevice() async throws {
+    func testRideRecoveryDoesNotAutoPairAnAlreadyDiscoveredSavedDevice() async throws {
         let suiteName = "CutoutAppModelTests.orphanReplay.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
@@ -3077,12 +3056,12 @@ final class CutoutAppModelTests: XCTestCase {
         )
 
         model.start()
-        for _ in 0..<200 {
-            if driver.pairedPlatformIdentifiers.isEmpty == false { break }
-            await Task.yield()
+        await Self.waitUntil("persisted ride recovery") {
+            driver.rideSessionStateHandle.rideSessionSnapshot().phase == .reconnecting
         }
 
-        XCTAssertEqual(driver.pairedPlatformIdentifiers, [platformIdentifier])
+        XCTAssertEqual(driver.pairedPlatformIdentifiers, [])
+        XCTAssertNotNil(markerStore.marker)
     }
 
     @MainActor
