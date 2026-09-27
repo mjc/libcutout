@@ -5,6 +5,78 @@ import XCTest
 @testable import CutoutMobile
 
 final class DevicePresentationModelTests: XCTestCase {
+    func testConnectionStateOwnsNavigationIntent() {
+        let selection = ConnectionSelection(
+            platformIdentifier: "vesc-1234",
+            title: "VESC",
+            route: .vescOnewheel
+        )
+
+        XCTAssertEqual(
+            ConnectionState.connected(selection).navigationIntent(isRecordOnlyCapture: false),
+            .openRide(.vescOnewheel)
+        )
+        XCTAssertEqual(
+            ConnectionState.retrying(
+                selection,
+                retry: SessionConnectionRetry(
+                    platformIdentifier: selection.platformIdentifier,
+                    attempt: 1,
+                    deadline: MonotonicMilliseconds(0),
+                    failure: .connectFailed("timed out")
+                )
+            ).navigationIntent(isRecordOnlyCapture: false),
+            .stay
+        )
+        XCTAssertEqual(
+            ConnectionState.failed(selection, .connectFailed("timed out")).navigationIntent(isRecordOnlyCapture: false),
+            .returnToPicker
+        )
+        XCTAssertEqual(
+            ConnectionState.picker.navigationIntent(isRecordOnlyCapture: false),
+            .returnToPicker
+        )
+        XCTAssertEqual(
+            ConnectionState.connected(selection).navigationIntent(isRecordOnlyCapture: true),
+            .openCapture
+        )
+    }
+
+    func testConnectionStateOwnsSelectedDeviceStatusText() {
+        let selection = ConnectionSelection(
+            platformIdentifier: "vesc-1234",
+            title: "VESC",
+            route: .vescOnewheel
+        )
+        let failure = SessionConnectionFailure.connectFailed("timed out")
+
+        XCTAssertEqual(
+            ConnectionState.connecting(selection, phase: .discoveringServices).statusText,
+            SessionConnectionPhase.discoveringServices.displayText
+        )
+        XCTAssertEqual(
+            ConnectionState.retrying(
+                selection,
+                retry: SessionConnectionRetry(
+                    platformIdentifier: selection.platformIdentifier,
+                    attempt: 1,
+                    deadline: MonotonicMilliseconds(0),
+                    failure: failure
+                )
+            ).statusText,
+            localizedAppText("picker.status.retrying")
+        )
+        XCTAssertEqual(
+            ConnectionState.connected(selection).statusText,
+            SessionConnectionPhase.live.displayText
+        )
+        XCTAssertEqual(
+            ConnectionState.failed(selection, failure).statusText,
+            SessionConnectionPhase.failed(failure).displayText
+        )
+        XCTAssertNil(ConnectionState.picker.statusText)
+    }
+
     @MainActor
     func testOwnsPersistedVehicleNames() throws {
         let suiteName = "DevicePresentationModelTests.deviceNames.\(UUID().uuidString)"
