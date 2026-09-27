@@ -4,6 +4,133 @@ import CutoutMobileFFI
 @testable import CutoutMobile
 
 final class MusicIntegrationTests: XCTestCase {
+    func testSpotifyPlaybackTransportPrefersAppRemoteAndUsesWebAsFallback() {
+        XCTAssertEqual(musicPlaybackTransport(appRemoteConnected: true, webPlaybackAuthorized: true), .appRemote)
+        XCTAssertEqual(musicPlaybackTransport(appRemoteConnected: true, webPlaybackAuthorized: false), .appRemote)
+        XCTAssertEqual(musicPlaybackTransport(appRemoteConnected: false, webPlaybackAuthorized: true), .webApi)
+        XCTAssertEqual(musicPlaybackTransport(appRemoteConnected: false, webPlaybackAuthorized: false), .unavailable)
+    }
+
+    func testSpotifyRenewalFailureOnlyRequiresNewAuthorizationForRejectedCredentials() {
+        XCTAssertFalse(SpotifyAuthorizationFailure.requiresNewAuthorization(
+            domain: "NSURLErrorDomain", code: -1202, description: "Server certificate revoked"
+        ))
+        XCTAssertFalse(SpotifyAuthorizationFailure.requiresNewAuthorization(
+            domain: "SPTSessionManagerErrorDomain",
+            code: -1,
+            description: "access token expired during a network timeout"
+        ))
+        XCTAssertFalse(SpotifyAuthorizationFailure.requiresNewAuthorization(
+            domain: "NSURLErrorDomain",
+            code: -1009,
+            description: "The Internet connection appears to be offline"
+        ))
+        XCTAssertFalse(SpotifyAuthorizationFailure.requiresNewAuthorization(
+            domain: "SPTSessionManagerErrorDomain",
+            code: 401,
+            description: "Unauthorized token refresh endpoint"
+        ))
+        XCTAssertFalse(SpotifyAuthorizationFailure.requiresNewAuthorization(
+            domain: "SPTSessionManagerErrorDomain",
+            code: 401,
+            description: "Invalid token"
+        ))
+        XCTAssertTrue(SpotifyAuthorizationFailure.requiresNewAuthorization(
+            domain: "SPTSessionManagerErrorDomain",
+            code: 401,
+            description: "invalid_grant"
+        ))
+        XCTAssertTrue(SpotifyAuthorizationFailure.requiresNewAuthorization(
+            domain: "SPTSessionManagerErrorDomain",
+            code: -1,
+            description: "Refresh token revoked"
+        ))
+    }
+
+    func testSpotifyRenewalFailureClassifiesWrappedRejectedGrantAndTransientCause() {
+        let rejectedGrant = NSError(
+            domain: "SpotifyOAuthErrorDomain",
+            code: 400,
+            userInfo: [NSLocalizedDescriptionKey: "invalid_grant"]
+        )
+        let wrappedGrant = NSError(
+            domain: "SPTSessionManagerErrorDomain",
+            code: -1,
+            userInfo: [NSLocalizedDescriptionKey: "Renew session failed", NSUnderlyingErrorKey: rejectedGrant]
+        )
+        XCTAssertEqual(SpotifyAuthorizationFailure.classify(wrappedGrant), .rejectedGrant)
+
+        let networkError = NSError(
+            domain: NSURLErrorDomain,
+            code: NSURLErrorTimedOut,
+            userInfo: [NSLocalizedDescriptionKey: "The request timed out"]
+        )
+        let wrappedNetwork = NSError(
+            domain: "SPTSessionManagerErrorDomain",
+            code: -1,
+            userInfo: [NSLocalizedDescriptionKey: "Renew session failed", NSUnderlyingErrorKey: networkError]
+        )
+        XCTAssertEqual(SpotifyAuthorizationFailure.classify(wrappedNetwork), .recoverable)
+    }
+
+    func testSpotifyPermissionUpgradeFailureKeepsTheExistingGrant() {
+        XCTAssertTrue(SpotifyAuthorizationFailure.preservesSavedSession(isRenewal: false, hasSavedSession: true, rejectedGrant: true))
+        XCTAssertTrue(SpotifyAuthorizationFailure.preservesSavedSession(isRenewal: false, hasSavedSession: true, rejectedGrant: false))
+        XCTAssertFalse(SpotifyAuthorizationFailure.preservesSavedSession(isRenewal: false, hasSavedSession: false, rejectedGrant: false))
+        XCTAssertFalse(SpotifyAuthorizationFailure.preservesSavedSession(isRenewal: true, hasSavedSession: true, rejectedGrant: true))
+        XCTAssertTrue(SpotifyAuthorizationFailure.preservesSavedSession(isRenewal: true, hasSavedSession: true, rejectedGrant: false))
+    }
+
+    func testSpotifyRenewalFailureWaitsForMonitoringRestartBeforeRetry() {
+        var retryPolicy = SpotifyRenewalRetryPolicy()
+        XCTAssertTrue(retryPolicy.automaticRenewalAllowed)
+
+        retryPolicy.renewalFailed()
+        for _ in 0..<5 {
+            XCTAssertFalse(retryPolicy.automaticRenewalAllowed)
+        }
+
+        retryPolicy.beginMonitoring()
+        XCTAssertTrue(retryPolicy.automaticRenewalAllowed)
+
+        retryPolicy.renewalFailed()
+        retryPolicy.renewalSucceeded()
+        XCTAssertTrue(retryPolicy.automaticRenewalAllowed)
+    }
+
+    func testSpotifySettingsOfferReauthorizationForStaleOrUnauthorizedSession() {
+        XCTAssertFalse(MusicSettingsPresentation.showsReauthorize(
+            provider: .spotify, state: nil
+        ))
+        XCTAssertFalse(MusicSettingsPresentation.showsReauthorize(
+            provider: .spotify, state: .disconnected
+        ))
+        XCTAssertTrue(MusicSettingsPresentation.showsReauthorize(
+            provider: .spotify, state: .stale
+        ))
+        XCTAssertTrue(MusicSettingsPresentation.showsReauthorize(
+            provider: .spotify, state: .unauthorized
+        ))
+        XCTAssertFalse(MusicSettingsPresentation.showsReauthorize(
+            provider: .appleMusic, state: .unauthorized
+        ))
+    }
+
+    func testUnavailableMusicWithoutAPlayingItemDoesNotOccupyMapSpace() {
+        XCTAssertFalse(MusicNowPlaying(provider: .spotify, state: .unavailable).showsCompactPlayer)
+        for state in [MobileMusicPlaybackStateDto.stopped, .buffering, .interrupted, .disconnected, .stale] {
+            let nowPlaying = MusicNowPlaying(provider: .spotify, state: state)
+            XCTAssertTrue(nowPlaying.showsCompactPlayer, "keep the player during \(state)")
+            XCTAssertFalse(nowPlaying.requiresSetup, "\(state) does not invalidate authorization")
+        }
+        XCTAssertTrue(MusicNowPlaying(
+            provider: .spotify,
+            state: .disconnected,
+            item: MobileMusicItemDto(identifier: "track", title: "Song", artist: "Artist")
+        ).showsCompactPlayer)
+        XCTAssertTrue(MusicNowPlaying(provider: .spotify, state: .playing).showsCompactPlayer)
+    }
+
     @MainActor
     private func makeCoordinator(
         rideMapState: MobileRideMapState?
@@ -175,8 +302,6 @@ final class MusicIntegrationTests: XCTestCase {
         for state in [
             MobileMusicPlaybackStateDto.unauthorized,
             .unavailable,
-            .disconnected,
-            .stale,
         ] {
             XCTAssertTrue(
                 MusicNowPlaying(provider: .spotify, state: state).requiresSetup,
@@ -189,6 +314,8 @@ final class MusicIntegrationTests: XCTestCase {
             .buffering,
             .interrupted,
             .stopped,
+            .disconnected,
+            .stale,
         ] {
             XCTAssertFalse(
                 MusicNowPlaying(provider: .spotify, state: state).requiresSetup,
@@ -817,6 +944,58 @@ final class MusicIntegrationTests: XCTestCase {
         }
 
         XCTAssertNotEqual(event(sequence: 0).timelineID, event(sequence: 1).timelineID)
+    }
+
+    func testListeningHistoryExcludesDisconnectsAndPreservesTrackMetadata() {
+        let event = MobileMusicRideEventDto(
+            sequence: 1,
+            provider: .spotify,
+            itemIdentifier: "track-1",
+            title: "A long podcast title",
+            artist: "Artist",
+            kind: .providerDisconnected,
+            observedAtMs: 1_000,
+            monotonicAtMs: 1_000,
+            wallClockAtMs: 1_700_000_000_000,
+            clockUncertaintyMs: 5
+        )
+
+        let withoutMetadata = MobileMusicRideEventDto(
+            sequence: 2,
+            provider: .spotify,
+            itemIdentifier: nil,
+            title: nil,
+            artist: nil,
+            kind: .providerDisconnected,
+            observedAtMs: 2_000,
+            monotonicAtMs: 2_000,
+            wallClockAtMs: 1_700_000_001_000,
+            clockUncertaintyMs: 5
+        )
+        let track = MobileMusicRideEventDto(
+            sequence: 3,
+            provider: .spotify,
+            itemIdentifier: "spotify:track:track-1",
+            title: "Song",
+            artist: "Artist",
+            kind: .itemChanged,
+            observedAtMs: 3_000,
+            monotonicAtMs: 3_000,
+            wallClockAtMs: 1_700_000_002_000,
+            clockUncertaintyMs: 5
+        )
+        var itemlessStop = withoutMetadata
+        itemlessStop.kind = .stopped
+        var identifiedStop = track
+        identifiedStop.kind = .stopped
+        let stored = [event, track, withoutMetadata, itemlessStop]
+        XCTAssertEqual(stored.listeningHistoryEvents, [track])
+        XCTAssertTrue([event, withoutMetadata].listeningHistoryEvents.isEmpty)
+        XCTAssertEqual(stored.count, 4)
+        XCTAssertEqual([itemlessStop, identifiedStop].listeningHistoryEvents, [identifiedStop])
+        XCTAssertEqual(stored.listeningHistoryEvents.first?.itemIdentifier, "spotify:track:track-1")
+        XCTAssertEqual(stored.listeningHistoryEvents.first?.title, "Song")
+        XCTAssertEqual(stored.listeningHistoryEvents.first?.artist, "Artist")
     }
 
     func testNowPlayingProvidesLocalizedArtworkAccessibilityLabel() {

@@ -331,6 +331,8 @@ provisioning profiles remain managed by Xcode. `CUTOUT_IOS_APP_BUNDLE_ID` is
 forwarded when set. For custom launch arguments, use `secretspec run --scope
 ios-device-deploy --profile development -- cargo cutout ios deploy -- --launch-smoke`. The project
 does not commit personal signing values.
+The physical iOS UI test runner resolves the same scope before building and
+checks that the app embeds the configured Spotify client ID.
 
 The live connection tasks run the opt-in macOS CoreBluetooth validators. Set
 `CUTOUT_AERO_VALIDATION_TIMEOUT` for the Aero timeout. Set

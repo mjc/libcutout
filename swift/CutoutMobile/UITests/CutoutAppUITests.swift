@@ -56,7 +56,8 @@ final class MusicPreferencesDeviceUITests: XCTestCase {
         XCTAssertFalse(app.buttons["music.connect-provider"].exists)
         music.tap()
         XCTAssertTrue(app.buttons["music.connect-provider"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["music.authorize-spotify"].exists, "Spotify must already be selected")
+        XCTAssertTrue(app.buttons["music.connect-provider"].label.contains("Spotify"), "Spotify must already be selected")
+        XCTAssertFalse(app.buttons["music.authorize-spotify"].exists, "Cached authorization must not offer a credential reset")
         XCTAssertEqual(app.state, .runningForeground)
         app.buttons["setup.done"].tap()
         XCTAssertTrue(setup.waitForExistence(timeout: 5))
@@ -73,6 +74,36 @@ final class MusicPreferencesDeviceUITests: XCTestCase {
         XCTAssertEqual(app.state, .runningForeground, "Recovery must not open Spotify authorization")
         XCTAssertTrue(app.staticTexts["No active ride"].exists)
     }
+
+    func testSpotifyMapPlaybackRegardlessOfRideState() throws {
+        continueAfterFailure = false
+        guard ProcessInfo.processInfo.environment["CUTOUT_RUN_DEVICE_MUSIC_UI_TESTS"] == "1" else {
+            throw XCTSkip("Requires Spotify playing on the physical iPhone; ride autostart is allowed")
+        }
+        let app = XCUIApplication()
+        app.activate()
+        let done = app.buttons["setup.done"]
+        if done.exists {
+            done.tap()
+        }
+        let openMap = app.buttons["device-picker.open-map"]
+        if openMap.exists {
+            openMap.tap()
+        } else if !app.descendants(matching: .any)["ride-map.screen"].exists,
+                  app.buttons["Map"].exists {
+            app.buttons["Map"].tap()
+        }
+        XCTAssertTrue(app.descendants(matching: .any)["ride-map.screen"].waitForExistence(timeout: 5))
+        if app.buttons["music.open-settings"].exists {
+            app.buttons["music.open-settings"].tap()
+            let status = app.staticTexts["music.connection-status"]
+            XCTAssertTrue(status.waitForExistence(timeout: 5), app.debugDescription)
+            XCTFail("Expected Spotify playback, but Map has no player. Status: \(status.label); reauthorize visible: \(app.buttons["music.authorize-spotify"].exists)")
+            return
+        }
+        requirePlayingTitle(in: app)
+    }
+
     func testSpotifyExplicitConnectionThenMapRecovery() throws {
         continueAfterFailure = false
         guard ProcessInfo.processInfo.environment["CUTOUT_RUN_DEVICE_MUSIC_UI_TESTS"] == "1" else {
@@ -83,7 +114,7 @@ final class MusicPreferencesDeviceUITests: XCTestCase {
         app.launch()
         app.activate()
         openMusicSettings(in: app)
-        XCTAssertTrue(app.buttons["music.authorize-spotify"].exists, "Spotify must already be selected")
+        XCTAssertTrue(app.buttons["music.connect-provider"].label.contains("Spotify"), "Spotify must already be selected")
         app.buttons["music.connect-provider"].tap()
 
         // Existing consent may hand straight back. Never guess at Spotify's
@@ -105,6 +136,9 @@ final class MusicPreferencesDeviceUITests: XCTestCase {
 
         app.terminate()
         app.launch()
+        openMusicSettings(in: app)
+        XCTAssertFalse(app.buttons["music.authorize-spotify"].exists, "Cold launch must retain authorization")
+        app.buttons["setup.done"].tap()
         let map = app.buttons["device-picker.open-map"]
         XCTAssertTrue(map.waitForExistence(timeout: 30), app.debugDescription)
         map.tap()
@@ -125,6 +159,10 @@ final class MusicPreferencesDeviceUITests: XCTestCase {
     }
 
     private func requirePlayingTitle(in app: XCUIApplication) {
+        let restore = app.buttons["music.restore"]
+        if restore.exists {
+            restore.tap()
+        }
         let title = app.staticTexts["music.now-playing-title"]
         let playing = NSPredicate { object, _ in
             guard let title = object as? XCUIElement, title.exists,

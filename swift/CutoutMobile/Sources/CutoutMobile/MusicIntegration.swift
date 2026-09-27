@@ -850,6 +850,15 @@ public struct MusicNowPlaying: Equatable, Sendable {
     }
     public var artist: String { item?.artist ?? providerName }
 
+    public var showsCompactPlayer: Bool {
+        switch state {
+        case .playing, .paused, .stopped, .buffering, .interrupted, .disconnected, .stale:
+            true
+        case .unauthorized, .unavailable:
+            false
+        }
+    }
+
     public var statusText: String? {
         switch state {
         case .playing, .paused:
@@ -871,12 +880,10 @@ public struct MusicNowPlaying: Equatable, Sendable {
         }
     }
 
-    /// Setup remains available after a provider handoff or failed connection.
-    /// A non-nil snapshot is still useful for showing the truthful lifecycle
-    /// state, but it must not hide the main-screen setup action.
+    /// Playback stopping or a temporary connection gap does not require setup.
     public var requiresSetup: Bool {
         switch state {
-        case .unauthorized, .unavailable, .disconnected, .stale:
+        case .unauthorized, .unavailable:
             true
         default:
             false
@@ -1045,6 +1052,16 @@ private extension MobileMusicRideEventKindDto {
     }
 }
 
+public extension Array where Element == MobileMusicRideEventDto {
+    /// Connection diagnostics and itemless stop events remain stored, not displayed.
+    var listeningHistoryEvents: Self {
+        filter {
+            $0.kind != .providerDisconnected
+                && !($0.kind == .stopped && $0.itemIdentifier == nil && $0.title == nil)
+        }
+    }
+}
+
 public extension MobileMusicRideEventDto {
     var timelineID: String {
         [
@@ -1058,7 +1075,17 @@ public extension MobileMusicRideEventDto {
     }
 
     var timelineItemTitle: String {
-        title ?? itemIdentifier ?? pevLocalizedText("music.timeline.unknown_item")
+        if kind == .providerDisconnected {
+            return kind.timelineTitle
+        }
+        return title ?? itemIdentifier ?? pevLocalizedText("music.timeline.unknown_item")
+    }
+
+    var timelineSubtitle: String {
+        if kind == .providerDisconnected {
+            return provider.title
+        }
+        return "\(provider.title) · \(kind.timelineTitle)"
     }
 }
 

@@ -6,23 +6,22 @@ import SwiftUI
 /// neither artwork nor an audio stream crosses the Rust ride boundary.
 public struct MusicCompactPlayer: View {
     public let nowPlaying: MusicNowPlaying
-    public let timeline: [MobileMusicRideEventDto]
     public let onCommand: (MobileMusicCommandDto) -> Void
+    public let onOpenDetails: () -> Void
     public let onOpenSettings: () -> Void
     public let onDismiss: () -> Void
-    @State private var isExpanded = false
     @State private var accessibilityAnnouncementTracker = MusicAccessibilityAnnouncementTracker()
 
     public init(
         nowPlaying: MusicNowPlaying,
-        timeline: [MobileMusicRideEventDto] = [],
         onCommand: @escaping (MobileMusicCommandDto) -> Void,
+        onOpenDetails: @escaping () -> Void,
         onOpenSettings: @escaping () -> Void,
         onDismiss: @escaping () -> Void = {}
     ) {
         self.nowPlaying = nowPlaying
-        self.timeline = timeline
         self.onCommand = onCommand
+        self.onOpenDetails = onOpenDetails
         self.onOpenSettings = onOpenSettings
         self.onDismiss = onDismiss
     }
@@ -37,7 +36,7 @@ public struct MusicCompactPlayer: View {
                         .font(.subheadline.weight(.bold))
                         .accessibilityIdentifier("music.now-playing-title")
                         .accessibilityValue(String(describing: nowPlaying.state))
-                    Text(nowPlaying.statusText ?? nowPlaying.artist)
+                    Text(nowPlaying.statusText == nowPlaying.title ? nowPlaying.artist : nowPlaying.statusText ?? nowPlaying.artist)
                         .lineLimit(1)
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -59,7 +58,7 @@ public struct MusicCompactPlayer: View {
                 MusicPlayerIconButton(
                     systemImage: "ellipsis",
                     label: pevLocalizedText("music.expand"),
-                    action: { isExpanded = true },
+                    action: onOpenDetails,
                     accessibilityIdentifier: "music.expand"
                 )
                 MusicPlayerIconButton(
@@ -80,13 +79,6 @@ public struct MusicCompactPlayer: View {
                 return
             }
             AccessibilityNotification.Announcement(announcement).post()
-        }
-        .sheet(isPresented: $isExpanded) {
-            MusicExpandedPlayer(
-                nowPlaying: nowPlaying,
-                timeline: timeline,
-                onCommand: onCommand
-            )
         }
     }
 
@@ -183,6 +175,15 @@ private struct MusicPlayerIconButton: View {
     }
 }
 
+enum MusicSettingsPresentation {
+    static func showsReauthorize(
+        provider: MobileMusicProviderDto,
+        state: MobileMusicPlaybackStateDto?
+    ) -> Bool {
+        provider == .spotify && (state == .unauthorized || state == .stale)
+    }
+}
+
 private struct MusicTimelineRow: View {
     let event: MobileMusicRideEventDto
 
@@ -191,7 +192,7 @@ private struct MusicTimelineRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(event.timelineItemTitle)
                     .lineLimit(1)
-                Text("\(event.provider.title) · \(event.kind.timelineTitle)")
+                Text(event.timelineSubtitle)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -211,7 +212,7 @@ public struct MusicTimelineRows: View {
     public let events: [MobileMusicRideEventDto]
 
     public init(events: [MobileMusicRideEventDto]) {
-        self.events = events
+        self.events = events.listeningHistoryEvents
     }
 
     public var body: some View {
@@ -233,7 +234,7 @@ public struct MusicExpandedPlayer: View {
         onCommand: @escaping (MobileMusicCommandDto) -> Void
     ) {
         self.nowPlaying = nowPlaying
-        self.timeline = timeline
+        self.timeline = timeline.listeningHistoryEvents
         self.onCommand = onCommand
     }
 
@@ -315,7 +316,10 @@ public struct MusicSettingsView: View {
                 }
                 Button(pevLocalizedText("music.connect_provider", selectedProvider.title), action: onConnect)
                     .accessibilityIdentifier("music.connect-provider")
-                if selectedProvider == .spotify {
+                if MusicSettingsPresentation.showsReauthorize(
+                    provider: selectedProvider,
+                    state: nowPlaying?.state
+                ) {
                     Button(pevLocalizedText("music.authorize_spotify"), action: onAuthorizeSpotify)
                         .accessibilityIdentifier("music.authorize-spotify")
                 }
@@ -368,7 +372,7 @@ private struct MusicExpandedHero: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                if let status = nowPlaying.statusText {
+                if let status = nowPlaying.statusText, status != nowPlaying.title {
                     Text(status)
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -437,20 +441,20 @@ private struct MusicHistoryPolicyLabel: View {
 /// Shared Ride/Map composition for the compact player.
 public struct MusicCompactPlayerInset: ViewModifier {
     public let nowPlaying: MusicNowPlaying?
-    public let timeline: [MobileMusicRideEventDto]
     public let isHidden: Bool
     public let onCommand: (MobileMusicCommandDto) -> Void
+    public let onOpenDetails: () -> Void
     public let onOpenSettings: () -> Void
     public let onDismiss: () -> Void
     public let onRestore: () -> Void
 
     public func body(content: Content) -> some View {
         content.safeAreaInset(edge: .bottom, spacing: 8) {
-            if let nowPlaying {
+            if let nowPlaying, nowPlaying.showsCompactPlayer {
                 MusicCompactPlayer(
                     nowPlaying: nowPlaying,
-                    timeline: timeline,
                     onCommand: onCommand,
+                    onOpenDetails: onOpenDetails,
                     onOpenSettings: onOpenSettings,
                     onDismiss: onDismiss
                 )
@@ -479,18 +483,18 @@ public struct MusicCompactPlayerInset: ViewModifier {
 public extension View {
     func musicCompactPlayer(
         nowPlaying: MusicNowPlaying?,
-        timeline: [MobileMusicRideEventDto] = [],
         isHidden: Bool,
         onCommand: @escaping (MobileMusicCommandDto) -> Void,
+        onOpenDetails: @escaping () -> Void,
         onOpenSettings: @escaping () -> Void,
         onDismiss: @escaping () -> Void,
         onRestore: @escaping () -> Void
     ) -> some View {
         modifier(MusicCompactPlayerInset(
             nowPlaying: nowPlaying,
-            timeline: timeline,
             isHidden: isHidden,
             onCommand: onCommand,
+            onOpenDetails: onOpenDetails,
             onOpenSettings: onOpenSettings,
             onDismiss: onDismiss,
             onRestore: onRestore

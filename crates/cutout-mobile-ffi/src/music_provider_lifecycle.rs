@@ -15,8 +15,9 @@ use cutout_music::ids::{
 use cutout_music::player_request::{MusicPlayerRequestCompletion, MusicPlayerRequestExpiration};
 use cutout_music::provider_lifecycle::{
     MusicConnectionAttemptAdmission, MusicConnectionAttemptEffect, MusicConnectionEffect,
-    MusicProviderLifecycle, MusicProviderWorkState, MusicTransportCompletion,
-    MusicTransportOutcome, MusicTransportOwner,
+    MusicPlaybackTransport, MusicProviderLifecycle, MusicProviderWorkState,
+    MusicTransportCompletion, MusicTransportOutcome, MusicTransportOwner,
+    select_playback_transport,
 };
 use cutout_music::{
     MusicHistoryTransitionAcknowledgement, MusicMonitorRequest, MusicMonitorResume,
@@ -43,6 +44,37 @@ pub fn music_playback_title_key(state: MobileMusicPlaybackStateDto) -> String {
     CoreMusicPlaybackState::from(state)
         .fallback_title_key()
         .to_owned()
+}
+
+/// Playback transport selected from live App Remote and authorization capabilities.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileMusicPlaybackTransport {
+    /// Local Spotify playback control, which also works offline.
+    AppRemote,
+    /// Spotify account playback API fallback.
+    WebApi,
+    /// No authorized playback path is available.
+    Unavailable,
+}
+
+impl From<MusicPlaybackTransport> for MobileMusicPlaybackTransport {
+    fn from(value: MusicPlaybackTransport) -> Self {
+        match value {
+            MusicPlaybackTransport::AppRemote => Self::AppRemote,
+            MusicPlaybackTransport::WebApi => Self::WebApi,
+            MusicPlaybackTransport::Unavailable => Self::Unavailable,
+        }
+    }
+}
+
+/// Chooses local playback first and Web API only when App Remote is unavailable.
+#[uniffi::export]
+#[must_use]
+pub fn music_playback_transport(
+    app_remote_connected: bool,
+    web_playback_authorized: bool,
+) -> MobileMusicPlaybackTransport {
+    select_playback_transport(app_remote_connected, web_playback_authorized).into()
 }
 
 /// User intent for the next foreground provider start.
@@ -218,6 +250,7 @@ boundary_id!(MobileMusicObservationRevision, ObservationRevision);
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum MobileMusicProviderWorkState {
     Active,
+    RemotePolling,
     AuthorizationPending,
     CredentialsAvailable,
     RequiresUserAction,
@@ -956,6 +989,7 @@ impl From<MobileMusicProviderWorkState> for MusicProviderWorkState {
     fn from(value: MobileMusicProviderWorkState) -> Self {
         match value {
             MobileMusicProviderWorkState::Active => Self::Active,
+            MobileMusicProviderWorkState::RemotePolling => Self::RemotePolling,
             MobileMusicProviderWorkState::AuthorizationPending => Self::AuthorizationPending,
             MobileMusicProviderWorkState::CredentialsAvailable => Self::CredentialsAvailable,
             MobileMusicProviderWorkState::RequiresUserAction => Self::RequiresUserAction,
