@@ -8204,6 +8204,21 @@ impl MobileRideMapCoreInner {
     }
 }
 
+fn remember_last_connected_vehicle(
+    state: &mut MobileRideMapCoreInner,
+    identity: &ride_maps::VehicleIdentity,
+    platform_identifier: &str,
+) -> Result<(), MobileRideMapCoreErrorDto> {
+    if let Some(database) = state.database.as_ref() {
+        database
+            .inner
+            .remember_last_connected_device(platform_identifier, wall_clock_milliseconds()?)
+            .map_err(map_storage_core_error)?;
+    }
+    state.last_connected_vehicle = Some(identity.clone());
+    Ok(())
+}
+
 fn apply_connection_recording_policy(
     state: &mut MobileRideMapCoreInner,
     platform_identifier: &str,
@@ -8478,13 +8493,7 @@ impl MobileRideMapCore {
                 .state()
                 .map(|lifecycle| state.snapshot(lifecycle.into())));
         }
-        if let Some(database) = state.database.as_ref() {
-            database
-                .inner
-                .remember_last_connected_device(&platform_identifier, wall_clock_milliseconds()?)
-                .map_err(map_storage_core_error)?;
-        }
-        state.last_connected_vehicle = Some(identity.clone());
+        remember_last_connected_vehicle(&mut state, &identity, &platform_identifier)?;
         let automatic_policy =
             explicit_policy.unwrap_or(state.automatic_policy_for_vehicle(&platform_identifier)?);
         let autostart_disabled = automatic_policy
@@ -9009,7 +9018,7 @@ impl MobileRideMapCore {
             && state
                 .last_connected_vehicle
                 .as_ref()
-                .map(|vehicle| vehicle.as_str())
+                .map(cutout_ride_maps::VehicleIdentity::as_str)
                 == Some(platform_identifier);
         let is_associated_vehicle =
             state.recorder.associated_vehicle() == Some(platform_identifier);
