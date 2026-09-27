@@ -825,7 +825,19 @@ mod tests {
             .iter()
             .filter(|descriptor| descriptor.access == MobileSettingAccessDto::Writable)
             .collect();
-        assert_eq!(writable.len(), 18);
+        assert_eq!(writable.len(), 14);
+        for unsupported in [
+            MobileSettingIdDto::RidingPreset,
+            MobileSettingIdDto::HighSpeedMode,
+            MobileSettingIdDto::LowBatteryMode,
+            MobileSettingIdDto::TransportMode,
+        ] {
+            assert!(
+                writable
+                    .iter()
+                    .all(|descriptor| descriptor.id != unsupported)
+            );
+        }
         for descriptor in writable {
             assert_eq!(
                 descriptor.write_verification,
