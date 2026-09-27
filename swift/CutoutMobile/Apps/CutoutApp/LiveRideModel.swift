@@ -26,6 +26,22 @@ protocol LiveRideQuerying: Sendable {
 
 extension MobileRideMapState: LiveRideQuerying {}
 
+enum LiveRideCommand: Sendable {
+    case startGpsOnly(atMs: UInt64)
+    case pause(atMs: UInt64)
+    case resume(atMs: UInt64)
+    case stop(atMs: UInt64)
+    case save
+    case discard
+
+    var resetsPoints: Bool {
+        switch self {
+        case .startGpsOnly, .discard: true
+        case .pause, .resume, .stop, .save: false
+        }
+    }
+}
+
 /// Native lifetime and presentation for the Rust-owned live ride.
 @MainActor
 @Observable
@@ -47,6 +63,7 @@ final class LiveRideModel {
 
     private let state: (any LiveRideQuerying)?
     private let now: @MainActor () -> UInt64
+    private let executeCommand: @MainActor (LiveRideCommand) async throws -> MobileRideMapSnapshotDto
     private var restoreTask: Task<Void, Never>?
     private var restoreCancellation: MobileRideMapProjectionCancellation?
     private var projectionTask: Task<Void, Never>?
@@ -67,12 +84,16 @@ final class LiveRideModel {
         state: (any LiveRideQuerying)?,
         storageError: String?,
         availability: MobileRideMapAvailability,
-        now: @escaping @MainActor () -> UInt64
+        now: @escaping @MainActor () -> UInt64,
+        executeCommand: @escaping @MainActor (LiveRideCommand) async throws -> MobileRideMapSnapshotDto = { _ in
+            throw MobileRideMapError.noActiveRide
+        }
     ) {
         self.state = state
         self.storageError = storageError
         self.availability = availability
         self.now = now
+        self.executeCommand = executeCommand
     }
 
     isolated deinit {
@@ -178,6 +199,17 @@ final class LiveRideModel {
         updateDurationTicker()
         if resetPoints { invalidateProjection(clearPoints: true) }
         telemetryState = snapshot.telemetryState
+    }
+
+    func perform(_ command: LiveRideCommand) async -> MobileRideMapSnapshotDto? {
+        do {
+            let next = try await executeCommand(command)
+            applyCommandSnapshot(next, resetPoints: command.resetsPoints)
+            return next
+        } catch {
+            setError(appRideMapError(error))
+            return nil
+        }
     }
 
     func refreshDuration() {

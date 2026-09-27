@@ -412,7 +412,23 @@ final class CutoutAppModel {
             state: core.rideMapStateHandle,
             storageError: core.rideMapStorageError,
             availability: core.rideMapAvailability,
-            now: { core.now().rawValue }
+            now: { core.now().rawValue },
+            executeCommand: { command in
+                switch command {
+                case let .startGpsOnly(atMs):
+                    try await core.startRideMapGpsOnly(atMs: atMs)
+                case let .pause(atMs):
+                    try await core.pauseRideMap(atMs: atMs)
+                case let .resume(atMs):
+                    try await core.resumeRideMap(atMs: atMs)
+                case let .stop(atMs):
+                    try await core.stopRideMap(atMs: atMs)
+                case .save:
+                    try await core.saveRideMap()
+                case .discard:
+                    try await core.discardRideMap()
+                }
+            }
         )
         capture = CaptureFeatureModel(
             sessionState: core.rideSessionStateHandle,
@@ -571,9 +587,7 @@ final class CutoutAppModel {
     @discardableResult
     func startGpsOnlyRide() async -> Bool {
         let connectionToken = core.connectionSnapshot.token
-        let started = await applyRideMapCommand(resetPoints: true) {
-            try await core.startRideMapGpsOnly(atMs: currentMonotonicTime.rawValue)
-        }
+        let started = await applyRideMapCommand(.startGpsOnly(atMs: currentMonotonicTime.rawValue))
         guard started else { return false }
         if let connectionToken {
             _ = core.resetTripMeterForNewRide(token: connectionToken)
@@ -590,23 +604,17 @@ final class CutoutAppModel {
 
     @discardableResult
     func pauseRideMap() async -> Bool {
-        await applyRideMapCommand {
-            try await core.pauseRideMap(atMs: currentMonotonicTime.rawValue)
-        }
+        await applyRideMapCommand(.pause(atMs: currentMonotonicTime.rawValue))
     }
 
     @discardableResult
     func resumeRideMap() async -> Bool {
-        await applyRideMapCommand {
-            try await core.resumeRideMap(atMs: currentMonotonicTime.rawValue)
-        }
+        await applyRideMapCommand(.resume(atMs: currentMonotonicTime.rawValue))
     }
 
     @discardableResult
     func stopRideMap() async -> Bool {
-        let stopped = await applyRideMapCommand {
-            try await core.stopRideMap(atMs: currentMonotonicTime.rawValue)
-        }
+        let stopped = await applyRideMapCommand(.stop(atMs: currentMonotonicTime.rawValue))
         if stopped {
             liveRide.invalidateProjection(clearPoints: false)
             music.clearMusicCaptureContext()
@@ -620,7 +628,7 @@ final class CutoutAppModel {
 
     @discardableResult
     func saveRideMap() async -> Bool {
-        guard await applyRideMapCommand({ try await core.saveRideMap() }) else {
+        guard await applyRideMapCommand(.save) else {
             return false
         }
         liveRide.invalidateProjection(clearPoints: false)
@@ -631,7 +639,7 @@ final class CutoutAppModel {
 
     @discardableResult
     func discardRideMap() async -> Bool {
-        guard await applyRideMapCommand({ try await core.discardRideMap() }) else {
+        guard await applyRideMapCommand(.discard) else {
             return false
         }
         liveRide.invalidateProjection(clearPoints: true)
@@ -652,19 +660,10 @@ final class CutoutAppModel {
         )
     }
 
-    private func applyRideMapCommand(
-        resetPoints: Bool = false,
-        _ command: () async throws -> MobileRideMapSnapshotDto
-    ) async -> Bool {
-        do {
-            let snapshot = try await command()
-            core.updateRideLocationDemand(for: snapshot.state)
-            liveRide.applyCommandSnapshot(snapshot, resetPoints: resetPoints)
-            return true
-        } catch {
-            liveRide.setError(appRideMapError(error))
-            return false
-        }
+    private func applyRideMapCommand(_ command: LiveRideCommand) async -> Bool {
+        guard let snapshot = await liveRide.perform(command) else { return false }
+        core.updateRideLocationDemand(for: snapshot.state)
+        return true
     }
 
     func submitDeviceSetting(token: ConnectionAttemptToken, id: DeviceSettingID, value: DeviceSettingValue) throws {
