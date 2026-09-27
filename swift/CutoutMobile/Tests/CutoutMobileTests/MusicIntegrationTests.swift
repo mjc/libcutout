@@ -6,6 +6,9 @@ import CutoutMobileFFI
 final class MusicIntegrationTests: XCTestCase {
     func testSpotifyRenewalFailureOnlyRequiresNewAuthorizationForRejectedCredentials() {
         XCTAssertFalse(SpotifyAuthorizationFailure.requiresNewAuthorization(
+            domain: "NSURLErrorDomain", code: -1202, description: "Server certificate revoked"
+        ))
+        XCTAssertFalse(SpotifyAuthorizationFailure.requiresNewAuthorization(
             domain: "SPTSessionManagerErrorDomain",
             code: -1,
             description: "access token expired during a network timeout"
@@ -35,6 +38,14 @@ final class MusicIntegrationTests: XCTestCase {
             code: -1,
             description: "Refresh token revoked"
         ))
+    }
+
+    func testSpotifyPermissionUpgradeFailureKeepsTheExistingGrant() {
+        XCTAssertTrue(SpotifyAuthorizationFailure.preservesSavedSession(isRenewal: false, hasSavedSession: true, rejectedGrant: true))
+        XCTAssertTrue(SpotifyAuthorizationFailure.preservesSavedSession(isRenewal: false, hasSavedSession: true, rejectedGrant: false))
+        XCTAssertFalse(SpotifyAuthorizationFailure.preservesSavedSession(isRenewal: false, hasSavedSession: false, rejectedGrant: false))
+        XCTAssertFalse(SpotifyAuthorizationFailure.preservesSavedSession(isRenewal: true, hasSavedSession: true, rejectedGrant: true))
+        XCTAssertTrue(SpotifyAuthorizationFailure.preservesSavedSession(isRenewal: true, hasSavedSession: true, rejectedGrant: false))
     }
 
     func testSpotifySettingsOnlyOfferReauthorizationWhenCredentialsAreMissing() {

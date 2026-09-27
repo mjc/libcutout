@@ -218,6 +218,7 @@ boundary_id!(MobileMusicObservationRevision, ObservationRevision);
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum MobileMusicProviderWorkState {
     Active,
+    RemotePolling,
     AuthorizationPending,
     CredentialsAvailable,
     RequiresUserAction,
@@ -956,6 +957,7 @@ impl From<MobileMusicProviderWorkState> for MusicProviderWorkState {
     fn from(value: MobileMusicProviderWorkState) -> Self {
         match value {
             MobileMusicProviderWorkState::Active => Self::Active,
+            MobileMusicProviderWorkState::RemotePolling => Self::RemotePolling,
             MobileMusicProviderWorkState::AuthorizationPending => Self::AuthorizationPending,
             MobileMusicProviderWorkState::CredentialsAvailable => Self::CredentialsAvailable,
             MobileMusicProviderWorkState::RequiresUserAction => Self::RequiresUserAction,

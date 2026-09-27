@@ -697,6 +697,35 @@ fn rust_effects_own_deadlines_and_monitor_continuation() {
 }
 
 #[test]
+fn remote_playback_polling_is_paced_and_stops_when_the_scene_suspends() {
+    let mut lifecycle = MusicProviderLifecycle::default();
+    lifecycle.request_monitor(MusicMonitorRequest::Observe);
+    let monitor = lifecycle.begin_monitor().expect("monitor");
+    assert_eq!(
+        lifecycle
+            .next_monitor_poll(
+                monitor.generation,
+                MusicProviderWorkState::RemotePolling,
+                500
+            )
+            .expect("remote poll")
+            .deadline
+            .as_milliseconds(),
+        5_500,
+    );
+    let _ = lifecycle.suspend();
+    assert!(
+        lifecycle
+            .next_monitor_poll(
+                monitor.generation,
+                MusicProviderWorkState::RemotePolling,
+                500
+            )
+            .is_none()
+    );
+}
+
+#[test]
 fn command_feedback_identity_rejects_older_completion_and_dismissal() {
     let mut lifecycle = MusicProviderLifecycle::default();
     let first = lifecycle.begin_command_feedback().expect("first feedback");

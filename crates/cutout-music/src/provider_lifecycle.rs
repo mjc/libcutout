@@ -48,6 +48,8 @@ pub struct MusicDeadlineEffect<I> {
 pub enum MusicProviderWorkState {
     /// The provider is connected or can produce observations.
     Active,
+    /// Playback is observed through a remote HTTP API rather than local callbacks.
+    RemotePolling,
     /// Provider authorization is still in flight.
     AuthorizationPending,
     /// Credentials remain available for bounded reconnection.
@@ -394,7 +396,14 @@ impl MusicProviderLifecycle {
         }
         Some(MusicDeadlineEffect {
             id: generation,
-            deadline: deadline_after(now_ms, MONITOR_POLL_INTERVAL_MS),
+            deadline: deadline_after(
+                now_ms,
+                if work_state == MusicProviderWorkState::RemotePolling {
+                    5_000
+                } else {
+                    MONITOR_POLL_INTERVAL_MS
+                },
+            ),
         })
     }
 

@@ -1,8 +1,11 @@
 # Spotify music integration
 
-CutOut integrates Spotify through the official `SpotifyiOS` App Remote SDK. The
-Spotify app remains the playback engine; CutOut receives player-state metadata
-and sends the supported previous, play, pause, and next commands. The shared
+CutOut uses the official `SpotifyiOS` SDK for authorization and session renewal.
+New connections request `user-read-playback-state` and
+`user-modify-playback-state` and use Spotify's Web API for playback status and
+the existing previous, play, pause, and next controls. This path works when the
+local App Remote socket refuses connections. Spotify remains the playback
+engine. The shared
 Rust music contract owns validation, transition classification, ride-history
 privacy, and persistence. SDK objects, tokens, artwork bytes, and callbacks
 stay in the iOS adapter.
@@ -33,6 +36,11 @@ The package pins Spotify's official `ios-sdk` Swift package at `5.0.1` and
 links it only for iOS. macOS and builds without a client ID retain the typed
 unavailable/handoff state.
 
+The pinned SDK implements PKCE and renews directly through Spotify's token
+endpoint when `tokenRefreshURL` is nil. `tokenSwapURL` and `tokenRefreshURL`
+are optional backend overrides; CutOut does not need or embed a client secret.
+The SDK session, including its refresh token, stays in Keychain.
+
 ## Lifecycle and policy
 
 Live music observation and reconnect do not require a ride. Scan screen
@@ -44,7 +52,15 @@ cached credentials only. Only an explicit Connect/Reauthorize action grants
 one authorization attempt; returning from Spotify or the background resumes
 observation without granting another authorization attempt.
 
-App Remote disconnects when the app enters the background and reconnects in
+An older App Remote-only grant remains usable until the rider explicitly taps
+Connect to grant the playback API permissions once. Passive restoration never
+upgrades permissions or opens authorization. Web API monitoring requires an
+internet connection, polls every five seconds while foregrounded, honors
+`Retry-After`, and silently renews an access token rejected with HTTP 401.
+Reading playback never starts music. Explicit transport commands address the
+device from the latest playback response and never transfer playback.
+
+For older grants, App Remote disconnects when the app enters the background and reconnects in
 the foreground, including on Map with no active ride. Generic transport or
 wakeup failures retain credentials and use bounded Rust-owned retries. A lost
 player-state callback cannot permanently block subsequent requests. Player-state
@@ -63,3 +79,11 @@ References: [Spotify iOS SDK](https://developer.spotify.com/documentation/ios),
 [Getting Started](https://developer.spotify.com/documentation/ios/getting-started),
 [Application Lifecycle](https://developer.spotify.com/documentation/ios/concepts/application-lifecycle),
 and [Making Remote Calls](https://developer.spotify.com/documentation/ios/tutorials/making-remote-calls).
+
+Web API references: [Playback state](https://developer.spotify.com/documentation/web-api/reference/get-information-about-the-users-current-playback)
+and [Refreshing tokens](https://developer.spotify.com/documentation/web-api/tutorials/refreshing-tokens).
+
+For device validation, a Debug build launched with `--validate-spotify-renewal`
+performs one silent SDK renewal on startup when a playback API grant is saved.
+It does not change the saved expiration or delete credentials. A subsequent
+normal launch verifies restoration of the renewed session.

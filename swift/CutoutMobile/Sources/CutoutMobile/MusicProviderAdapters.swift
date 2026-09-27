@@ -15,7 +15,12 @@ enum SpotifyAuthorizationFailure {
         let text = "\(domain) \(description)".lowercased()
         // A generic 401 can be a misconfigured refresh endpoint or an expired
         // access token. Neither proves that the saved refresh grant was revoked.
-        return text.contains("invalid_grant") || text.contains("revoked")
+        return text.contains("invalid_grant") || (text.contains("refresh token") && text.contains("revoked"))
+    }
+
+    static func preservesSavedSession(isRenewal: Bool, hasSavedSession: Bool, rejectedGrant: Bool) -> Bool {
+        // Failure of a new permission request says nothing about the old grant.
+        isRenewal ? !rejectedGrant : hasSavedSession
     }
 }
 
@@ -143,9 +148,18 @@ public final class SpotifyProviderAdapter: NSObject {
         nowMs: { [weak self] in self?.connectionNowMs ?? 0 }
     )
     private var authorizationNeedsUserAction = false
+    private static let playbackScopes: SPTScope = [.userReadPlaybackState, .userModifyPlaybackState]
+    private let playbackAPI = SpotifyPlaybackAPI()
+    private var webPlayback: SpotifyPlayback?
+    private var webPollTask: Task<Void, Never>?
+    private var webCommandTask: Task<Void, Never>?
+    private var webArtworkTask: Task<Void, Never>?
+    private var webRenewalAttempted = false
+    private var usesWebPlayback: Bool { session?.scope.contains(Self.playbackScopes) == true }
     private var connectionNowMs: UInt64 { UInt64(ProcessInfo.processInfo.systemUptime * 1_000) }
 #if DEBUG
     private var lastObservationDiagnostic: String?
+    private var renewalValidationRequested = ProcessInfo.processInfo.arguments.contains("--validate-spotify-renewal")
 #endif
 
     public override convenience init() {
@@ -304,7 +318,21 @@ public final class SpotifyProviderAdapter: NSObject {
             emitChange()
             return true
         }
+        // The Rust-issued explicit Connect intent may upgrade an older grant.
+        // Passive launch always reuses the existing grant without opening Spotify.
+        if allowAuthorization, !usesWebPlayback {
+            return beginAuthorization(configuration: configuration)
+        }
         if let session {
+#if DEBUG
+            // Opt-in device validation exercises a real silent SDK refresh
+            // without changing the persisted expiration or deleting credentials.
+            if usesWebPlayback, renewalValidationRequested {
+                renewalValidationRequested = false
+                beginRenewal(configuration: configuration, session: session)
+                return true
+            }
+#endif
             if session.isExpired {
                 beginRenewal(configuration: configuration, session: session)
             } else {
@@ -322,21 +350,21 @@ public final class SpotifyProviderAdapter: NSObject {
                 emitChange()
                 return false
             }
-            lifecycleState = .buffering
-            emitChange()
-            guard let (sessionManager, effect) = makeSessionManager(
-                configuration: configuration,
-                kind: .authorizing
-            ) else {
-                lifecycleState = .unavailable
-                emitChange()
-                return false
-            }
-            authorizationGeneration = effect.id
-            sessionManager.initiateSession(with: .appRemoteControl, options: .default, campaign: nil)
-            beginAuthorizationTimeout(effect, kind: .authorizing)
-            return true
+            return beginAuthorization(configuration: configuration)
         }
+    }
+
+    private func beginAuthorization(configuration: SPTConfiguration) -> Bool {
+        lifecycleState = .buffering
+        emitChange()
+        guard let (manager, effect) = makeSessionManager(configuration: configuration, kind: .authorizing) else {
+            lifecycleState = .unavailable
+            emitChange()
+            return false
+        }
+        authorizationGeneration = effect.id
+        manager.initiateSession(with: Self.playbackScopes.union(.appRemoteControl), options: .default, campaign: nil)
+        return true
     }
 
     private func beginRenewal(configuration: SPTConfiguration, session: SPTSession) {
@@ -405,6 +433,14 @@ public final class SpotifyProviderAdapter: NSObject {
 
     public func stopMonitoring() {
         onChange = nil
+        webPollTask?.cancel()
+        webPollTask = nil
+        webCommandTask?.cancel()
+        webCommandTask = nil
+        webArtworkTask?.cancel()
+        webArtworkTask = nil
+        webPlayback = nil
+        webRenewalAttempted = false
         appRemote?.playerAPI?.delegate = nil
         appRemote?.delegate = nil
         appRemote?.disconnect()
@@ -452,6 +488,7 @@ public final class SpotifyProviderAdapter: NSObject {
         if onChange == nil { return .unavailable }
         if authorizationNeedsUserAction { return .requiresUserAction }
         if authorizationGeneration != nil { return .authorizationPending }
+        if usesWebPlayback, accessToken != nil, lifecycleState != .unavailable { return .remotePolling }
         if appRemote?.isConnected == true { return .active }
         if lifecycleState == .unavailable { return .unavailable }
         if accessToken != nil { return .credentialsAvailable }
@@ -484,6 +521,10 @@ public final class SpotifyProviderAdapter: NSObject {
     }
 
     private func connect(with accessToken: String) {
+        if usesWebPlayback {
+            refreshWebPlayback()
+            return
+        }
         guard let configuration,
               let providerGeneration = appRemoteGeneration,
               lifecycle.classifyProviderSession(id: providerGeneration) == .current
@@ -514,6 +555,10 @@ public final class SpotifyProviderAdapter: NSObject {
     /// playing before App Remote connected is reflected without waiting for a
     /// change notification.
     public func refreshPlayerState() {
+        if usesWebPlayback {
+            refreshWebPlayback()
+            return
+        }
         guard appRemote?.isConnected == true else { return }
         let nowMs = connectionNowMs
         if lifecycle.isPlayerStateStale(nowMs: nowMs), lifecycleState != .stale {
@@ -565,7 +610,127 @@ public final class SpotifyProviderAdapter: NSObject {
         }
     }
 
-    /// Handles the redirect URL returned by Spotify after App Remote auth.
+    private func refreshWebPlayback() {
+        guard onChange != nil, authorizationGeneration == nil, webPollTask == nil,
+              let accessToken, let generation = appRemoteGeneration,
+              lifecycle.classifyProviderSession(id: generation) == .current,
+              let requestID = lifecycle.beginPlayerStateRequest(nowMs: connectionNowMs) else { return }
+        let revision = lifecycle.playerStateObservationRevision()
+        webPollTask = Task { [weak self, playbackAPI] in
+            guard let self else { return }
+            defer { if !Task.isCancelled { self.webPollTask = nil } }
+            do {
+                let playback = try await playbackAPI.playback(accessToken: accessToken)
+                guard !Task.isCancelled,
+                      self.lifecycle.classifyProviderSession(id: generation) == .current else { return }
+                guard self.lifecycle.completePlayerStateRequestIfCurrent(
+                    id: requestID, observationRevision: revision, nowMs: self.connectionNowMs
+                ) == .accepted else {
+                    self.lifecycleState = .stale
+                    self.emitChange()
+                    return
+                }
+                guard self.accessToken == accessToken else { return }
+                let previousURI = self.webPlayback?.item?.uri
+                self.webPlayback = playback
+                if previousURI != playback?.item?.uri {
+                    self.webArtworkTask?.cancel()
+                    self.webArtworkTask = nil
+                    self.artwork = self.artworkCache.cachedArtwork(for: playback?.item?.uri)
+                }
+                self.webRenewalAttempted = false
+                self.lifecycle.markPlayerStateObserved(nowMs: self.connectionNowMs)
+                self.lifecycleState = playback.map { $0.isPlaying ? .playing : .paused } ?? .stopped
+#if DEBUG
+                print("spotify_web_playback_received playing=\(playback?.isPlaying ?? false) has_item=\(playback?.item != nil)")
+#endif
+                self.emitChange()
+                self.refreshWebArtwork(generation: generation)
+            } catch {
+                guard !Task.isCancelled,
+                      self.lifecycle.classifyProviderSession(id: generation) == .current else { return }
+                _ = self.lifecycle.completePlayerStateRequestIfCurrent(
+                    id: requestID, observationRevision: revision, nowMs: self.connectionNowMs
+                )
+                guard self.accessToken == accessToken else { return }
+                self.handleWebFailure(error)
+                if case let SpotifyPlaybackAPI.Failure.rateLimited(seconds) = error {
+                    // Honor the server's Retry-After while this one cancellable
+                    // request owns the poll slot. Never retry a playback command.
+                    try? await Task.sleep(for: .seconds(seconds))
+                }
+            }
+        }
+    }
+
+    private func refreshWebArtwork(generation: MobileMusicProviderSessionId) {
+        guard artwork == nil, webArtworkTask == nil,
+              let uri = webPlayback?.item?.uri, let url = webPlayback?.artworkURL else { return }
+        webArtworkTask = Task { [weak self, playbackAPI] in
+            let artwork = try? await playbackAPI.artwork(url: url)
+            guard !Task.isCancelled, let self,
+                  self.lifecycle.classifyProviderSession(id: generation) == .current,
+                  self.webPlayback?.item?.uri == uri else { return }
+            self.webArtworkTask = nil
+            if let artwork {
+                self.artworkCache.insert(artwork, for: uri)
+                self.artwork = artwork
+                self.emitChange()
+            }
+        }
+    }
+
+    private func handleWebFailure(_ error: Error) {
+        switch error {
+        case SpotifyPlaybackAPI.Failure.unauthorized:
+            if !webRenewalAttempted, let configuration, let session {
+                webRenewalAttempted = true
+                beginRenewal(configuration: configuration, session: session)
+                return
+            }
+            // A failed access token does not revoke the persisted refresh grant.
+            lifecycleState = .unavailable
+        case SpotifyPlaybackAPI.Failure.forbidden:
+            lifecycleState = .unavailable
+        default:
+            lifecycleState = .stale
+        }
+#if DEBUG
+        let code = (error as? SpotifyPlaybackAPI.Failure).map { String(describing: $0) } ?? "network"
+        print("spotify_web_playback_failed reason=\(code)")
+#endif
+        emitChange()
+    }
+
+    private func performWebCommand(_ command: MobileMusicCommandDto) async -> MusicCommandOutcome {
+        guard lifecycleState == .playing || lifecycleState == .paused,
+              let deviceID = webPlayback?.device?.id, let accessToken,
+              let generation = appRemoteGeneration,
+              lifecycle.classifyProviderSession(id: generation) == .current else { return .unavailable }
+        return await transport.perform(owner: .provider(providerGeneration: generation), command: command,
+                                       onTerminal: { [weak self] _ in
+                                           self?.webCommandTask?.cancel()
+                                           self?.webCommandTask = nil
+                                       }) { [weak self, playbackAPI] _, completion in
+            guard let self else { completion(false); return }
+            self.webCommandTask = Task { [weak self] in
+                do {
+                    try await playbackAPI.perform(command, accessToken: accessToken, deviceID: deviceID)
+                    guard !Task.isCancelled else { return }
+                    completion(true)
+                } catch {
+                    guard !Task.isCancelled, let self,
+                          self.lifecycle.classifyProviderSession(id: generation) == .current else { return }
+                    if self.accessToken == accessToken {
+                        self.handleWebFailure(error)
+                    }
+                    completion(false)
+                }
+            }
+        }
+    }
+
+    /// Handles the redirect URL returned by Spotify authorization.
     @discardableResult
     public func handleCallback(_ url: URL) -> Bool {
         guard let configuration,
@@ -633,7 +798,9 @@ public final class SpotifyProviderAdapter: NSObject {
         let permanent = SpotifyAuthorizationFailure.requiresNewAuthorization(
             domain: domain, code: code, description: description
         )
-        if transaction == .renewing, !permanent {
+        if SpotifyAuthorizationFailure.preservesSavedSession(
+            isRenewal: transaction == .renewing, hasSavedSession: session != nil, rejectedGrant: permanent
+        ) {
             // Transport failures during renewal are recoverable. Keep the
             // refresh credential and stop this loop so a later foreground or
             // explicit setup can retry without forcing a reauthorization.
@@ -749,6 +916,9 @@ public final class SpotifyProviderAdapter: NSObject {
             guard await UIApplication.shared.open(Self.providerURL) else { return .failed }
             return .accepted
         }
+        if usesWebPlayback {
+            return await performWebCommand(command)
+        }
         guard lifecycleState == .playing || lifecycleState == .paused,
               let playerAPI = appRemote?.playerAPI,
               let bridge = appRemoteBridge,
@@ -777,10 +947,13 @@ public final class SpotifyProviderAdapter: NSObject {
     }
 
     public func observation(observedAtMs: UInt64) -> MusicProviderObservation {
+        if usesWebPlayback, let webPlayback {
+            return MusicProviderObservation(snapshot: webPlayback.snapshot(state: lifecycleState, observedAtMs: observedAtMs), artwork: artwork)
+        }
         let controlsAvailable = lifecycleState == .playing || lifecycleState == .paused
         let snapshot = MobileMusicSnapshotDto(
             provider: .spotify,
-            sessionId: "spotify-app-remote",
+            sessionId: usesWebPlayback ? "spotify-web-api" : "spotify-app-remote",
             state: lifecycleState,
             item: playerState.map {
                 MobileMusicItemDto(
