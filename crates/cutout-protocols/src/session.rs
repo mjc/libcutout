@@ -1670,8 +1670,10 @@ impl crate::control_wire::Model for NosfetAeroModel {
 }
 
 impl SupportsBenignControls for NosfetAeroModel {
-    const CONTROL_CAPABILITIES: Capabilities =
-        Capabilities::from_supported_commands([CommandKind::SoundHorn]);
+    const CONTROL_CAPABILITIES: Capabilities = Capabilities::from_supported_commands([
+        CommandKind::SoundHorn,
+        CommandKind::ResetTripMeter,
+    ]);
 }
 
 impl SupportsSettingsWrites for NosfetAeroModel {
@@ -6026,8 +6028,8 @@ mod tests {
         session.handle(
             SessionInput::Command(DeviceCommand::InvokeAction(
                 cutout_core::DeviceActionRequest {
-                    id: cutout_core::DeviceActionId::ResetTripMeter,
-                    step: cutout_core::DeviceActionStep::Invoke,
+                    id: cutout_core::DeviceActionId::GyroCalibration,
+                    step: cutout_core::DeviceActionStep::PrepareGyroCalibration,
                 },
             )),
             &mut outputs,

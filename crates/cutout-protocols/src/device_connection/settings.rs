@@ -1001,17 +1001,7 @@ mod tests {
                 let step = owner
                     .submit_setting(&token, id, value, MonotonicTimestamp::new(10 + age))
                     .unwrap();
-                let mut writes: Vec<Vec<u8>> = step
-                    .result
-                    .outputs
-                    .iter()
-                    .filter_map(|output| match output {
-                        SessionOutput::Transport(TransportAction::Write { bytes, .. }) => {
-                            Some(bytes.as_slice().to_vec())
-                        }
-                        _ => None,
-                    })
-                    .collect();
+                let mut writes: Vec<_> = write_payloads(&step.result.outputs).collect();
                 if id == SettingId::LateralTiltLimit && accepted {
                     let follow_up = owner
                         .ingest(
@@ -1021,14 +1011,7 @@ mod tests {
                             },
                         )
                         .unwrap();
-                    writes.extend(follow_up.result.outputs.iter().filter_map(
-                        |output| match output {
-                            SessionOutput::Transport(TransportAction::Write { bytes, .. }) => {
-                                Some(bytes.as_slice().to_vec())
-                            }
-                            _ => None,
-                        },
-                    ));
+                    writes.extend(write_payloads(&follow_up.result.outputs));
                 }
                 let should_accept = accepted
                     || cutout_core::DeviceCommand::SetSetting { id, value }.safety_class()
@@ -1057,6 +1040,15 @@ mod tests {
                 );
             }
         }
+    }
+
+    fn write_payloads(outputs: &[SessionOutput]) -> impl Iterator<Item = Vec<u8>> + '_ {
+        outputs.iter().filter_map(|output| match output {
+            SessionOutput::Transport(TransportAction::Write { bytes, .. }) => {
+                Some(bytes.as_slice().to_vec())
+            }
+            _ => None,
+        })
     }
 
     fn assert_ordinary_aero_submission(

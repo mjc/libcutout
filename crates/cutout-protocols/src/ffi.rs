@@ -453,11 +453,11 @@ fn arm_stationary_settings<
     }
     let maximum =
         M::MAX_SETTINGS_SPEED.map_or(0, |speed| speed.as_millimetres_per_second().unsigned_abs());
-    if (snapshot
-        .charge_mode
-        .is_some_and(|mode| mode.value.is_active())
-        && !charging)
-        || (snapshot.operating_state == Some(RideOperatingState::Charging) && !charging)
+    if !charging
+        && (snapshot
+            .charge_mode
+            .is_some_and(|mode| mode.value.is_active())
+            || snapshot.operating_state == Some(RideOperatingState::Charging))
         || speed_mm_per_second.is_some_and(|reported| {
             reported.unsigned_abs() > maximum
                 || speed.is_some_and(|speed| reported != speed.as_millimetres_per_second())
@@ -925,8 +925,8 @@ mod tests {
 
         let result = session.ingest_checked(&SessionInputDto::Command(
             DeviceCommandDto::InvokeAction(cutout_core::DeviceActionRequestDto {
-                id: cutout_core::DeviceActionIdDto::ResetTripMeter,
-                step: cutout_core::DeviceActionStepDto::Invoke,
+                id: cutout_core::DeviceActionIdDto::GyroCalibration,
+                step: cutout_core::DeviceActionStepDto::PrepareGyroCalibration,
             }),
         ));
 
@@ -934,7 +934,7 @@ mod tests {
             result.error,
             Some(ConcreteSessionErrorDto::CommandRefused {
                 refusal: ControlRefusalDto {
-                    command: CommandKindDto::ResetTripMeter,
+                    command: CommandKindDto::GyroCalibration,
                     safety_class: SafetyClassDto::StationaryOnly,
                     reason: ControlRefusalReasonDto::MissingArm,
                 }
@@ -977,8 +977,8 @@ mod tests {
         assert!(!session.arm_settings_writes(RideOperatingStateDto::Parked, Some(0), 60_000));
         let result = session.ingest_checked(&SessionInputDto::Command(
             DeviceCommandDto::InvokeAction(cutout_core::DeviceActionRequestDto {
-                id: cutout_core::DeviceActionIdDto::ResetTripMeter,
-                step: cutout_core::DeviceActionStepDto::Invoke,
+                id: cutout_core::DeviceActionIdDto::GyroCalibration,
+                step: cutout_core::DeviceActionStepDto::PrepareGyroCalibration,
             }),
         ));
         assert!(result.error.is_some());

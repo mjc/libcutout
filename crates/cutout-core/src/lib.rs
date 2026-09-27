@@ -312,17 +312,14 @@ impl DeviceCommand {
     #[must_use]
     pub const fn safety_class(self) -> SafetyClass {
         match self {
-            Self::SetSetting { id, .. }
-                if matches!(
-                    id,
+            Self::SetSetting {
+                id:
                     SettingId::Headlight
-                        | SettingId::HighBeam
-                        | SettingId::DisplayBrightness
-                        | SettingId::DisplayUnits
-                ) =>
-            {
-                SafetyClass::BenignControl
-            }
+                    | SettingId::HighBeam
+                    | SettingId::DisplayBrightness
+                    | SettingId::DisplayUnits,
+                ..
+            } => SafetyClass::BenignControl,
             _ => self.kind().safety_class(),
         }
     }
@@ -665,10 +662,10 @@ impl CommandKind {
             | Self::RequestDiagnostics
             | Self::RequestFaultHistory
             | Self::RequestSettings => SafetyClass::ReadOnly,
-            Self::SetLights | Self::SetTaillight | Self::SoundHorn => SafetyClass::BenignControl,
-            Self::ResetTripMeter | Self::GyroCalibration | Self::SetSetting => {
-                SafetyClass::StationaryOnly
+            Self::SetLights | Self::SetTaillight | Self::SoundHorn | Self::ResetTripMeter => {
+                SafetyClass::BenignControl
             }
+            Self::GyroCalibration | Self::SetSetting => SafetyClass::StationaryOnly,
             Self::SetRawMotorCurrent => SafetyClass::Actuation,
         }
     }
