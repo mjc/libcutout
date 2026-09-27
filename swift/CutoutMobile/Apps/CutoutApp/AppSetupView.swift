@@ -118,7 +118,9 @@ private struct PhoneRideAlarmSettingsView: View {
             if let settings = model.phoneAlarmSettings {
                 let deviceIdentity = settings.deviceIdentity
                 Section(
-                    model.phoneAlarmDeviceName
+                    model.phoneAlarmSettings.flatMap {
+                        model.device.rideMapVehicleName(for: $0.deviceIdentity)
+                    }
                         ?? localizedAppText("ride_map.vehicle_name_unavailable")
                 ) {
                     Toggle(

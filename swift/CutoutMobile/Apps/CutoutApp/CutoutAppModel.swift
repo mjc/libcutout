@@ -23,7 +23,7 @@ typealias RideHistoryDateProvider = @MainActor () -> Date
 @Observable
 final class CutoutAppModel {
 
-    let device = DevicePresentationModel()
+    let device: DevicePresentationModel
     var displayState: RideDisplayState { device.displayState }
     var phase: SessionConnectionPhase { device.phase }
     var devicePickerScanState: DevicePickerScanState? { device.scanState }
@@ -43,59 +43,6 @@ final class CutoutAppModel {
     private(set) var phoneAlarmDeliveryError: String?
 
     var selectedRideTitle: String? { device.selectedRideTitle }
-
-    /// Stable identity/name pair used to relabel persisted ride-history vehicles.
-    /// The persisted selection is the fallback when the connection state has not rebuilt yet.
-    var rideMapVehicleIdentity: String? {
-        connectionState.selection?.platformIdentifier ?? selectedDeviceStore.platformIdentifier
-    }
-
-    var rideMapVehicleName: String? {
-        if let identity = rideMapVehicleIdentity {
-            if let cached = rideMapVehicleNameCache[identity] {
-                return cached
-            }
-            if let persisted = selectedDeviceStore.displayName(for: identity) {
-                rideMapVehicleNameCache[identity] = persisted
-                return persisted
-            }
-        }
-        if let identity = rideMapVehicleIdentity,
-            let candidate = core.protocolIdentityCandidate,
-            candidate.platformIdentifier == identity,
-            candidate.displayName != identity,
-            !candidate.displayName.isEmpty
-        {
-            return candidate.displayName
-        }
-        guard let identity = rideMapVehicleIdentity else {
-            return connectionState.selection?.title
-        }
-        return Self.meaningfulDeviceName(connectionState.selection?.title, identity: identity)
-            ?? Self.meaningfulDeviceName(
-                devicePickerScanState?.rows.first(where: { $0.id == identity })?.title,
-                identity: identity
-            )
-    }
-
-    func rideMapVehicleName(for identity: String?) -> String? {
-        guard let identity else { return nil }
-        if let name = rideHistory.vehicleNames[identity] {
-            return name
-        }
-        if let name = rideMapVehicleNameCache[identity] {
-            return name
-        }
-        if let name = selectedDeviceStore.displayName(for: identity) {
-            rideMapVehicleNameCache[identity] = name
-            return name
-        }
-        return identity == rideMapVehicleIdentity ? rideMapVehicleName : nil
-    }
-
-    var phoneAlarmDeviceName: String? {
-        phoneAlarmSettings.flatMap { rideMapVehicleName(for: $0.deviceIdentity) }
-    }
 
     var phoneAlarmAuthorizationText: String {
         switch phoneAlarmAuthorization {
@@ -256,16 +203,6 @@ final class CutoutAppModel {
         return localizedAppText(key)
     }
 
-    static func meaningfulDeviceName(_ candidate: String?, identity: String) -> String? {
-        guard let candidate,
-            !candidate.isEmpty,
-            candidate != identity
-        else {
-            return nil
-        }
-        return candidate
-    }
-
     var selectedRideIdentifier: String? { device.selectedRideIdentifier }
     var selectedConnectionRoute: DevicePickerConnectionRoute? { device.selectedConnectionRoute }
     var speed: SpeedReadout { device.speed }
@@ -294,7 +231,6 @@ final class CutoutAppModel {
     private var permitsStoredDeviceAutoPairing = true
     private var rideSessionRestorationState = RideSessionRestorationState.complete
     private var restorationMarkerAtLaunch: Data?
-    private var rideMapVehicleNameCache = [String: String]()
     private var musicHistoryRestoreTask: Task<Void, Never>?
     private var musicHistoryRestoreGeneration: UInt64 = 0
     private var phoneAlarmAuthorizationTask: Task<Void, Never>?
@@ -405,6 +341,8 @@ final class CutoutAppModel {
             dateProvider: rideHistoryDateProvider,
             storageErrorProvider: { core.rideMapStorageError }
         )
+        device = DevicePresentationModel(selectedDeviceStore: selectedDeviceStore)
+        device.protocolIdentityCandidate = core.protocolIdentityCandidate
         self.rideHistory = rideHistory
         self.permitsStoredDeviceAutoPairing = permitsStoredDeviceAutoPairing
         self.core = core
@@ -462,12 +400,6 @@ final class CutoutAppModel {
             self?.applyRideHistoryPageResult()
         }
         self.music.timelineEvents = music.coordinator.recordedEvents
-        device.hasSavedDevice = selectedDeviceStore.platformIdentifier != nil
-        if let identity = selectedDeviceStore.platformIdentifier,
-            let name = selectedDeviceStore.displayName(for: identity)
-        {
-            rideMapVehicleNameCache[identity] = name
-        }
         restoreRideMapState()
         CutoutSessionCallbackRegistrar(core: core).install(
             .init(
@@ -654,10 +586,7 @@ final class CutoutAppModel {
     }
 
     private func applyRideHistoryPageResult() {
-        rideMapVehicleNameCache.merge(
-            rideHistory.vehicleNames,
-            uniquingKeysWith: { _, incoming in incoming }
-        )
+        device.mergeHistoricalVehicleNames(rideHistory.vehicleNames)
     }
 
     private func applyRideMapCommand(_ command: LiveRideCommand) async -> Bool {
@@ -710,25 +639,20 @@ final class CutoutAppModel {
         if didPair {
             syncPhoneAlarmPreferences()
             drainPhoneAlarmActions()
-            let displayName = Self.meaningfulDeviceName(
+            let displayName = DevicePresentationModel.meaningfulDeviceName(
                 selectedRow.title,
                 identity: platformIdentifier
             )
-            let persistedDisplayName = selectedDeviceStore.displayName(for: platformIdentifier)
+            let persistedDisplayName = device.persistedVehicleName(for: platformIdentifier)
             let selectionChanged = selectedDeviceStore.platformIdentifier != platformIdentifier
             if selectionChanged {
-                selectedDeviceStore.save(
-                    platformIdentifier: platformIdentifier,
-                    displayName: displayName
-                )
+                if let displayName {
+                    device.rememberVehicleName(displayName, for: platformIdentifier)
+                } else {
+                    selectedDeviceStore.save(platformIdentifier: platformIdentifier)
+                }
             } else if let displayName, displayName != persistedDisplayName {
-                selectedDeviceStore.save(
-                    platformIdentifier: platformIdentifier,
-                    displayName: displayName
-                )
-            }
-            if let displayName, selectionChanged || displayName != persistedDisplayName {
-                rideMapVehicleNameCache[platformIdentifier] = displayName
+                device.rememberVehicleName(displayName, for: platformIdentifier)
             }
             device.hasSavedDevice = true
             liveActivityIdentity = liveActivityIdentity(for: selectedRow)
@@ -865,6 +789,7 @@ final class CutoutAppModel {
     }
 
     func applyProtocolIdentityCandidate(_ candidate: DevicePickerDiscoveryCandidate?) {
+        device.protocolIdentityCandidate = candidate
         guard isRecordOnlyCapture != true else {
             liveActivityIdentity = nil
             liveActivityGlyph = .electricUnicycle
@@ -872,22 +797,16 @@ final class CutoutAppModel {
             return
         }
         if let candidate,
-            let displayName = Self.meaningfulDeviceName(
+            let displayName = DevicePresentationModel.meaningfulDeviceName(
                 candidate.displayName,
                 identity: candidate.platformIdentifier
             )
         {
             // Persist every resolved identity, not only the currently selected one. History can
             // contain rides from an older CoreBluetooth identifier and must still be relabelable.
-            let persistedDisplayName = selectedDeviceStore.displayName(
-                for: candidate.platformIdentifier
-            )
+            let persistedDisplayName = device.persistedVehicleName(for: candidate.platformIdentifier)
             if persistedDisplayName != displayName {
-                selectedDeviceStore.save(
-                    platformIdentifier: candidate.platformIdentifier,
-                    displayName: displayName
-                )
-                rideMapVehicleNameCache[candidate.platformIdentifier] = displayName
+                device.rememberVehicleName(displayName, for: candidate.platformIdentifier)
             }
         }
         if let model = candidate?.support.electricUnicycleModel {
@@ -1047,7 +966,7 @@ final class CutoutAppModel {
             device.connectionState = .identified(
                 ConnectionSelection(
                     platformIdentifier: platformIdentifier,
-                    title: selectedDeviceStore.displayName(for: platformIdentifier)
+                    title: device.persistedVehicleName(for: platformIdentifier)
                         ?? localizedAppText("setup.device"),
                     route: .electricUnicycle
                 ))

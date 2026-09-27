@@ -120,7 +120,7 @@ struct RideMapRouteView: View {
             snapshot: liveRide.snapshot,
             availability: liveRide.availability,
             speed: model.device.speed,
-            vehicleName: model.rideMapVehicleName,
+            vehicleName: model.device.rideMapVehicleName,
             mapError: liveRide.error,
             lastDecision: liveRide.lastDecision,
             telemetryState: liveRide.telemetryState,
@@ -175,9 +175,9 @@ struct RideMapRouteView: View {
             setDateFilter: { history.setDateFilter($0) },
             setVehicleFilter: { history.setVehicleFilter($0) },
             clearFilters: { history.clearFilters() },
-            currentVehicleIdentity: model.rideMapVehicleIdentity,
-            currentVehicleName: model.rideMapVehicleName,
-            vehicleName: model.rideMapVehicleName(for:),
+            currentVehicleIdentity: model.device.rideMapVehicleIdentity,
+            currentVehicleName: model.device.rideMapVehicleName,
+            vehicleName: model.device.rideMapVehicleName(for:),
             // Detail and list intentionally share the selected route data, but not a
             // viewport projection. A detail pan must not replace the list's display
             // projection while both destinations remain alive in the navigation stack.
@@ -219,7 +219,7 @@ struct RideMapRouteView: View {
                 ensureSelection: { history.ensureSelection(requestedRideID: $0) },
                 retry: { history.reload(selecting: initialHistoryID) },
                 loadRoutePreview: { history.loadRoutePreview() },
-                vehicleName: model.rideMapVehicleName(for:),
+                vehicleName: model.device.rideMapVehicleName(for:),
                 cameraDidChange: { region in
                     history.projectDetailViewport(RideMapCanvasView.geoBounds(for: region))
                 },

@@ -2480,8 +2480,27 @@ final class CutoutAppModelTests: XCTestCase {
         model.applyProtocolIdentityCandidate(protocolIdentity)
 
         XCTAssertEqual(model.selectedRideTitle, "wheel-1")
+        XCTAssertEqual(model.device.rideMapVehicleIdentity, "wheel-1")
+        XCTAssertEqual(model.device.rideMapVehicleName, "NF2557")
+    }
+
+    @MainActor
+    func testDevicePresentationOwnsPersistedAndHistoricalVehicleNames() throws {
+        let suiteName = "CutoutAppModelTests.deviceNames.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let selectionStore = DevicePickerSelectionStore(defaults: defaults)
+        selectionStore.save(platformIdentifier: "wheel-1", displayName: "Saved wheel")
+        let model = DevicePresentationModel(selectedDeviceStore: selectionStore)
+
         XCTAssertEqual(model.rideMapVehicleIdentity, "wheel-1")
+        XCTAssertEqual(model.rideMapVehicleName, "Saved wheel")
+
+        model.rememberVehicleName("NF2557", for: "wheel-1")
         XCTAssertEqual(model.rideMapVehicleName, "NF2557")
+
+        model.mergeHistoricalVehicleNames(["old-wheel": "History name"])
+        XCTAssertEqual(model.rideMapVehicleName(for: "old-wheel"), "History name")
     }
 
     @MainActor
@@ -2512,9 +2531,12 @@ final class CutoutAppModelTests: XCTestCase {
 
     @MainActor
     func testRideMapVehicleNameNeverTreatsThePlatformIdentityAsDisplayName() {
-        XCTAssertNil(CutoutAppModel.meaningfulDeviceName("wheel-1", identity: "wheel-1"))
-        XCTAssertNil(CutoutAppModel.meaningfulDeviceName("", identity: "wheel-1"))
-        XCTAssertEqual(CutoutAppModel.meaningfulDeviceName("NF2557", identity: "wheel-1"), "NF2557")
+        XCTAssertNil(DevicePresentationModel.meaningfulDeviceName("wheel-1", identity: "wheel-1"))
+        XCTAssertNil(DevicePresentationModel.meaningfulDeviceName("", identity: "wheel-1"))
+        XCTAssertEqual(
+            DevicePresentationModel.meaningfulDeviceName("NF2557", identity: "wheel-1"),
+            "NF2557"
+        )
     }
 
     @MainActor
