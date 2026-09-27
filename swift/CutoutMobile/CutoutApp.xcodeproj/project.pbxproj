@@ -83,6 +83,7 @@
 		C00100000000000000000002 /* Apps/CutoutApp/TabAccentColors.swift in Sources */ = {isa = PBXBuildFile; fileRef = C00100000000000000000011 /* Apps/CutoutApp/TabAccentColors.swift */; };
 		C00100000000000000000003 /* UITests/TabAccentColorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C00100000000000000000012 /* UITests/TabAccentColorTests.swift */; };
 		D65100000000000000000001 /* MusicFeatureModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D65100000000000000000002 /* MusicFeatureModelTests.swift */; };
+		E75300000000000000000001 /* DevicePresentationModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E75300000000000000000002 /* DevicePresentationModelTests.swift */; };
 		D65100000000000000000004 /* CutoutMobile in Frameworks */ = {isa = PBXBuildFile; productRef = D65100000000000000000005 /* CutoutMobile */; };
 		D65200000000000000000001 /* CutoutMobileFFI in Frameworks */ = {isa = PBXBuildFile; productRef = D65200000000000000000003 /* CutoutMobileFFI */; };
 		D65200000000000000000004 /* CutoutMobileFFI in Frameworks */ = {isa = PBXBuildFile; productRef = D65200000000000000000003 /* CutoutMobileFFI */; };
@@ -196,6 +197,7 @@
 		444444444444444444444411 /* UITests/CutoutAppUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITests/CutoutAppUITests.swift; sourceTree = SOURCE_ROOT; };
 		444444444444444444444412 /* CutoutAppUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CutoutAppUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		D65100000000000000000002 /* MusicFeatureModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/CutoutAppTests/MusicFeatureModelTests.swift; sourceTree = SOURCE_ROOT; };
+		E75300000000000000000002 /* DevicePresentationModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/CutoutAppTests/DevicePresentationModelTests.swift; sourceTree = SOURCE_ROOT; };
 		D65100000000000000000003 /* CutoutAppIOSUnitTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CutoutAppIOSUnitTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		500000000000000000000201 /* Apps/CutoutApp/Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Apps/CutoutApp/Localizable.xcstrings; sourceTree = SOURCE_ROOT; };
 		5EC7F605A4BE4DD590E4C995 /* Apps/CutoutApp/DeviceControlsForm.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/DeviceControlsForm.swift; sourceTree = SOURCE_ROOT; };
@@ -252,6 +254,7 @@
 				111111111111111111111153 /* Products */,
 				444444444444444444444415 /* UITests */,
 				D65100000000000000000002 /* MusicFeatureModelTests.swift */,
+				E75300000000000000000002 /* DevicePresentationModelTests.swift */,
 			);
 			sourceTree = "<group>";
 		};
@@ -629,6 +632,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				D65100000000000000000001 /* MusicFeatureModelTests.swift in Sources */,
+				E75300000000000000000001 /* DevicePresentationModelTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
