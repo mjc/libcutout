@@ -149,6 +149,19 @@ struct RideMapHistoryDetailView: View {
         "\(historyID ?? "history-detail"):fit-\(cameraFitVersion)"
     }
 
+    static func showsRecordedEnd(for state: MobileRideMapStateDto?) -> Bool {
+        switch state {
+        case .stopped, .saved, .discarded, .imported:
+            true
+        default:
+            false
+        }
+    }
+
+    static func showsCurrentMarker(for state: MobileRideMapStateDto?) -> Bool {
+        state?.isOpen == true || state == .interrupted
+    }
+
     @MainActor
     static func activeHistoryID(initialHistoryID: String?, selectedHistoryID: String?) -> String? {
         initialHistoryID ?? selectedHistoryID
@@ -164,6 +177,8 @@ struct RideMapHistoryDetailView: View {
                         if projectionRideID == activeHistoryID {
                             RideMapHistoryDetailMap(
                                 points: displayPoints,
+                                showsRecordedEnd: Self.showsRecordedEnd(for: selectedRide?.state),
+                                showsCurrentMarker: Self.showsCurrentMarker(for: selectedRide?.state),
                                 routeID: Self.routeID(
                                     for: activeHistoryID,
                                     cameraFitVersion: cameraFitVersion

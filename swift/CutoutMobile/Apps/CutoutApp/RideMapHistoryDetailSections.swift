@@ -90,6 +90,8 @@ struct RideMapHistoryDetailHeader: View {
 
 struct RideMapHistoryDetailMap: View {
     let points: [MobileRideMapRouteDisplayPoint]
+    let showsRecordedEnd: Bool
+    let showsCurrentMarker: Bool
     let routeID: String
     let projectionVersion: UInt64
     let endpointMetadata: MobileRideMapRouteEndpointMetadata
@@ -107,8 +109,8 @@ struct RideMapHistoryDetailMap: View {
                 routeID: routeID,
                 projectionVersion: projectionVersion,
                 showsStartMarker: true,
-                showsEndMarker: true,
-                showsCurrentMarker: false,
+                showsEndMarker: showsRecordedEnd,
+                showsCurrentMarker: showsCurrentMarker,
                 endpointMetadata: endpointMetadata,
                 cameraRegion: cameraRegion,
                 segments: segments,

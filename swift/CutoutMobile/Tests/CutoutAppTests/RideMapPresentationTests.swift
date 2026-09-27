@@ -157,6 +157,19 @@ final class RideMapPresentationTests: XCTestCase {
         XCTAssertTrue(replacement.hasPrefix("ride:"))
     }
 
+    func testCurrentRideDetailDoesNotLabelItsLatestPointAsTheEnd() {
+        let openStates: [MobileRideMapStateDto] = [.active, .paused, .interrupted]
+        for state in openStates {
+            XCTAssertFalse(RideMapHistoryDetailView.showsRecordedEnd(for: state))
+            XCTAssertTrue(RideMapHistoryDetailView.showsCurrentMarker(for: state))
+        }
+        let terminalStates: [MobileRideMapStateDto] = [.stopped, .saved, .discarded, .imported]
+        for state in terminalStates {
+            XCTAssertTrue(RideMapHistoryDetailView.showsRecordedEnd(for: state))
+            XCTAssertFalse(RideMapHistoryDetailView.showsCurrentMarker(for: state))
+        }
+    }
+
     func testHistoryCameraFitIdentityChangesForAReplacementProjection() {
         let initial = RideMapCanvasView.cameraFitID(routeID: "ride", fitVersion: 1)
         let replacement = RideMapCanvasView.cameraFitID(routeID: "ride", fitVersion: 2)
