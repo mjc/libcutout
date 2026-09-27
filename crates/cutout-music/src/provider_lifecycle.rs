@@ -30,6 +30,32 @@ const TRANSPORT_TIMEOUT_MS: u64 = 10_000;
 const ARTWORK_TIMEOUT_MS: u64 = 5_000;
 const ARTWORK_RETRY_DELAY_MS: u64 = 1_000;
 
+/// Playback path selected from current provider capabilities.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MusicPlaybackTransport {
+    /// Use Spotify's local App Remote connection, including offline playback.
+    AppRemote,
+    /// Use Spotify's account playback API when local App Remote is unavailable.
+    WebApi,
+    /// No authorized playback transport is currently available.
+    Unavailable,
+}
+
+/// Prefers local playback control and uses the account API only as a fallback.
+#[must_use]
+pub const fn select_playback_transport(
+    app_remote_connected: bool,
+    web_playback_authorized: bool,
+) -> MusicPlaybackTransport {
+    if app_remote_connected {
+        MusicPlaybackTransport::AppRemote
+    } else if web_playback_authorized {
+        MusicPlaybackTransport::WebApi
+    } else {
+        MusicPlaybackTransport::Unavailable
+    }
+}
+
 const fn deadline_after(now_ms: u64, delay_ms: u64) -> MonotonicTimestamp {
     MonotonicTimestamp::new(now_ms).saturating_add_duration(Duration::from_milliseconds(delay_ms))
 }
@@ -921,12 +947,34 @@ impl MusicTransportCompletion {
 
 #[cfg(test)]
 mod tests {
-    use super::{MusicTransportOwner, MusicTransportState};
+    use super::{
+        MusicPlaybackTransport, MusicTransportOwner, MusicTransportState, select_playback_transport,
+    };
     use crate::{
         MusicCommand,
         ids::{ProviderSessionId, TransportRequestId},
     };
     use cutout_core::MonotonicTimestamp;
+
+    #[test]
+    fn playback_transport_prefers_local_remote_and_uses_web_as_fallback() {
+        assert_eq!(
+            select_playback_transport(true, true),
+            MusicPlaybackTransport::AppRemote
+        );
+        assert_eq!(
+            select_playback_transport(true, false),
+            MusicPlaybackTransport::AppRemote
+        );
+        assert_eq!(
+            select_playback_transport(false, true),
+            MusicPlaybackTransport::WebApi
+        );
+        assert_eq!(
+            select_playback_transport(false, false),
+            MusicPlaybackTransport::Unavailable
+        );
+    }
 
     #[test]
     fn exhausted_transport_identity_does_not_create_a_pending_state() {

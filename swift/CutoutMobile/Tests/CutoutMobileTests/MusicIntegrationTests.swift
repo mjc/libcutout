@@ -4,6 +4,13 @@ import CutoutMobileFFI
 @testable import CutoutMobile
 
 final class MusicIntegrationTests: XCTestCase {
+    func testSpotifyPlaybackTransportPrefersAppRemoteAndUsesWebAsFallback() {
+        XCTAssertEqual(musicPlaybackTransport(appRemoteConnected: true, webPlaybackAuthorized: true), .appRemote)
+        XCTAssertEqual(musicPlaybackTransport(appRemoteConnected: true, webPlaybackAuthorized: false), .appRemote)
+        XCTAssertEqual(musicPlaybackTransport(appRemoteConnected: false, webPlaybackAuthorized: true), .webApi)
+        XCTAssertEqual(musicPlaybackTransport(appRemoteConnected: false, webPlaybackAuthorized: false), .unavailable)
+    }
+
     func testSpotifyRenewalFailureOnlyRequiresNewAuthorizationForRejectedCredentials() {
         XCTAssertFalse(SpotifyAuthorizationFailure.requiresNewAuthorization(
             domain: "NSURLErrorDomain", code: -1202, description: "Server certificate revoked"
@@ -40,6 +47,32 @@ final class MusicIntegrationTests: XCTestCase {
         ))
     }
 
+    func testSpotifyRenewalFailureClassifiesWrappedRejectedGrantAndTransientCause() {
+        let rejectedGrant = NSError(
+            domain: "SpotifyOAuthErrorDomain",
+            code: 400,
+            userInfo: [NSLocalizedDescriptionKey: "invalid_grant"]
+        )
+        let wrappedGrant = NSError(
+            domain: "SPTSessionManagerErrorDomain",
+            code: -1,
+            userInfo: [NSLocalizedDescriptionKey: "Renew session failed", NSUnderlyingErrorKey: rejectedGrant]
+        )
+        XCTAssertEqual(SpotifyAuthorizationFailure.classify(wrappedGrant), .rejectedGrant)
+
+        let networkError = NSError(
+            domain: NSURLErrorDomain,
+            code: NSURLErrorTimedOut,
+            userInfo: [NSLocalizedDescriptionKey: "The request timed out"]
+        )
+        let wrappedNetwork = NSError(
+            domain: "SPTSessionManagerErrorDomain",
+            code: -1,
+            userInfo: [NSLocalizedDescriptionKey: "Renew session failed", NSUnderlyingErrorKey: networkError]
+        )
+        XCTAssertEqual(SpotifyAuthorizationFailure.classify(wrappedNetwork), .recoverable)
+    }
+
     func testSpotifyPermissionUpgradeFailureKeepsTheExistingGrant() {
         XCTAssertTrue(SpotifyAuthorizationFailure.preservesSavedSession(isRenewal: false, hasSavedSession: true, rejectedGrant: true))
         XCTAssertTrue(SpotifyAuthorizationFailure.preservesSavedSession(isRenewal: false, hasSavedSession: true, rejectedGrant: false))
@@ -65,14 +98,14 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertTrue(retryPolicy.automaticRenewalAllowed)
     }
 
-    func testSpotifySettingsOnlyOfferReauthorizationWhenCredentialsAreMissing() {
+    func testSpotifySettingsOfferReauthorizationForStaleOrUnauthorizedSession() {
         XCTAssertFalse(MusicSettingsPresentation.showsReauthorize(
             provider: .spotify, state: nil
         ))
         XCTAssertFalse(MusicSettingsPresentation.showsReauthorize(
             provider: .spotify, state: .disconnected
         ))
-        XCTAssertFalse(MusicSettingsPresentation.showsReauthorize(
+        XCTAssertTrue(MusicSettingsPresentation.showsReauthorize(
             provider: .spotify, state: .stale
         ))
         XCTAssertTrue(MusicSettingsPresentation.showsReauthorize(

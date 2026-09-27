@@ -13,11 +13,17 @@ actor SpotifyPlaybackAPI {
     }
 
     typealias Send = @Sendable (URLRequest) async throws -> (Data, HTTPURLResponse)
+    typealias ArtworkSend = @Sendable (URLRequest, Int) async throws -> (Data, HTTPURLResponse)
     private let send: Send
+    private let sendArtwork: ArtworkSend
     private var retryAfter: ContinuousClock.Instant?
 
-    init(send: @escaping Send = SpotifyPlaybackAPI.sendRequest) {
+    init(
+        send: @escaping Send = SpotifyPlaybackAPI.sendRequest,
+        sendArtwork: @escaping ArtworkSend = SpotifyPlaybackAPI.sendArtworkRequest
+    ) {
         self.send = send
+        self.sendArtwork = sendArtwork
     }
 
     private static let session: URLSession = {
@@ -32,6 +38,22 @@ actor SpotifyPlaybackAPI {
     private static func sendRequest(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         let (data, response) = try await session.data(for: request)
         guard let response = response as? HTTPURLResponse else { throw Failure.unavailable }
+        return (data, response)
+    }
+
+    private static func sendArtworkRequest(_ request: URLRequest, maximumBytes: Int) async throws -> (Data, HTTPURLResponse) {
+        let (bytes, response) = try await session.bytes(for: request)
+        guard let response = response as? HTTPURLResponse else { throw Failure.unavailable }
+        guard response.expectedContentLength < 0 || response.expectedContentLength <= Int64(maximumBytes) else {
+            throw Failure.unavailable
+        }
+        var data = Data()
+        data.reserveCapacity(min(maximumBytes, max(0, Int(response.expectedContentLength))))
+        for try await byte in bytes {
+            try Task.checkCancellation()
+            guard data.count < maximumBytes else { throw Failure.unavailable }
+            data.append(byte)
+        }
         return (data, response)
     }
 
@@ -58,7 +80,7 @@ actor SpotifyPlaybackAPI {
 
     func artwork(url: URL) async throws -> MusicArtwork? {
         guard url.scheme == "https", url.user == nil, url.password == nil else { return nil }
-        let (data, response) = try await send(URLRequest(url: url))
+        let (data, response) = try await sendArtwork(URLRequest(url: url), 1_048_576)
         try Task.checkCancellation()
         guard response.statusCode == 200, data.count <= 1_048_576,
               let source = CGImageSourceCreateWithData(data as CFData, nil),

@@ -73,6 +73,19 @@ final class SpotifyPlaybackAPITests: XCTestCase {
         }
     }
 
+    func testArtworkRejectsBodiesOverTheBoundedReceiveLimit() async throws {
+        let api = SpotifyPlaybackAPI(
+            send: { _ in throw SpotifyPlaybackAPI.Failure.unavailable },
+            sendArtwork: { request, maximumBytes in
+                XCTAssertEqual(maximumBytes, 1_048_576)
+                let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                return (Data(count: maximumBytes + 1), response)
+            }
+        )
+        let artwork = try await api.artwork(url: URL(string: "https://images.example/artwork")!)
+        XCTAssertNil(artwork)
+    }
+
     func testHTTPFailuresDistinguishAccessExpiryPermissionsAndRetryAfter() async throws {
         for (status, expected) in [(401, SpotifyPlaybackAPI.Failure.unauthorized), (403, .forbidden),
                                    (429, .rateLimited(seconds: 45)), (500, .unavailable)] {
