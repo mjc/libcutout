@@ -57,12 +57,18 @@ public final class SpotifyProviderAdapter: NSObject {
             _ appRemote: SPTAppRemote,
             didFailConnectionAttemptWithError error: Error?
         ) {
-            let info = (error as NSError?).map { ($0.domain, $0.code) }
+            let nsError = error as NSError?
+            let underlying = nsError?.userInfo[NSUnderlyingErrorKey] as? NSError
+            let root = underlying?.userInfo[NSUnderlyingErrorKey] as? NSError
             owner?.enqueueConnectionFailure(
                 providerGeneration: providerGeneration,
                 attemptID: attemptID,
-                errorDomain: info?.0,
-                errorCode: info?.1
+                errorDomain: nsError?.domain,
+                errorCode: nsError?.code,
+                underlyingDomain: underlying?.domain,
+                underlyingCode: underlying?.code,
+                rootDomain: root?.domain,
+                rootCode: root?.code
             )
         }
 
@@ -272,7 +278,7 @@ public final class SpotifyProviderAdapter: NSObject {
         self.onChange = onChange
         authorizationNeedsUserAction = false
 #if DEBUG
-        print("spotify_monitor_start allow_authorization=\(allowAuthorization) has_token=\(accessToken != nil)")
+        print("spotify_monitor_start allow_authorization=\(allowAuthorization) has_token=\(accessToken != nil) has_session=\(session != nil) session_expired=\(session?.isExpired ?? false)")
 #endif
         guard let configuration else {
             lifecycleState = .unavailable
@@ -681,14 +687,22 @@ public final class SpotifyProviderAdapter: NSObject {
         providerGeneration: MobileMusicProviderSessionId,
         attemptID: MobileMusicConnectionAttemptId,
         errorDomain: String?,
-        errorCode: Int?
+        errorCode: Int?,
+        underlyingDomain: String?,
+        underlyingCode: Int?,
+        rootDomain: String?,
+        rootCode: Int?
     ) {
         Task { @MainActor [weak self] in
             self?.handleAppRemoteConnectionFailure(
                 providerGeneration: providerGeneration,
                 attemptID: attemptID,
                 errorDomain: errorDomain,
-                errorCode: errorCode
+                errorCode: errorCode,
+                underlyingDomain: underlyingDomain,
+                underlyingCode: underlyingCode,
+                rootDomain: rootDomain,
+                rootCode: rootCode
             )
         }
     }
@@ -860,7 +874,11 @@ public final class SpotifyProviderAdapter: NSObject {
         providerGeneration: MobileMusicProviderSessionId,
         attemptID: MobileMusicConnectionAttemptId,
         errorDomain: String?,
-        errorCode: Int?
+        errorCode: Int?,
+        underlyingDomain: String?,
+        underlyingCode: Int?,
+        rootDomain: String?,
+        rootCode: Int?
     ) {
         guard lifecycle.classifyProviderSession(id: providerGeneration) == .current else { return }
         let connection = lifecycle.connectionFailedEffect(id: attemptID, nowMs: connectionNowMs)
@@ -872,7 +890,9 @@ public final class SpotifyProviderAdapter: NSObject {
         lifecycleState = .disconnected
 #if DEBUG
         if let errorDomain, let errorCode {
-            print("spotify_connection_failed domain=\(errorDomain) code=\(errorCode)")
+            let cause = "underlying_domain=\(underlyingDomain ?? "-") underlying_code=\(underlyingCode.map { String($0) } ?? "-")"
+            let rootCause = "root_domain=\(rootDomain ?? "-") root_code=\(rootCode.map { String($0) } ?? "-")"
+            print("spotify_connection_failed domain=\(errorDomain) code=\(errorCode) \(cause) \(rootCause)")
         }
 #endif
         emitChange()
