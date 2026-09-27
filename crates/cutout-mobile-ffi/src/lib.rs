@@ -8450,6 +8450,9 @@ impl MobileRideMapCore {
         state.last_connected_vehicle = Some(identity.clone());
         let automatic_policy =
             explicit_policy.unwrap_or(state.automatic_policy_for_vehicle(&platform_identifier)?);
+        let autostart_disabled = automatic_policy
+            == MobileRideMapAutomaticRecordingPolicyDto::StartAndResume
+            && !state.ride_autostart_enabled()?;
         if !connection_generation_consumed {
             apply_connection_recording_policy(
                 &mut state,
@@ -8521,6 +8524,7 @@ impl MobileRideMapCore {
             && (match association {
                 ride_maps::VehicleAssociation::Associated
                 | ride_maps::VehicleAssociation::AlreadyAssociated => true,
+                ride_maps::VehicleAssociation::IdentityMismatch => autostart_disabled,
                 _ => false,
             })
         {
@@ -18897,6 +18901,58 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(saved.state, MobileRideLifecycleStateDto::Saved);
+        database.shutdown().unwrap();
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn disabled_autostart_does_not_retroactively_admit_same_connection_generation() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-autostart-generation-{}.sqlite",
+            Uuid::new_v4()
+        ));
+        let database = open_ride_database(path.to_string_lossy().into_owned()).unwrap();
+        database
+            .remember_selected_device("pev-1".to_owned(), None, 1_000)
+            .unwrap();
+        let state = restored_database_core(database.clone());
+        let ride_a = state.start_gps_only(900).unwrap();
+        let associated = state
+            .ensure_recording_for_vehicle_on_connection("pev-1", 1_000, 1)
+            .unwrap()
+            .unwrap();
+        assert_eq!(associated.ride_id, ride_a.ride_id);
+
+        state.set_ride_autostart_enabled(false).unwrap();
+        database
+            .remember_selected_device("pev-2".to_owned(), None, 1_500)
+            .unwrap();
+        let ignored = state
+            .ensure_recording_for_vehicle_on_connection("pev-2", 2_000, 2)
+            .unwrap()
+            .unwrap();
+        assert_eq!(ignored.ride_id, ride_a.ride_id);
+        assert_eq!(ignored.state, MobileRideLifecycleStateDto::Active);
+
+        state.set_ride_autostart_enabled(true).unwrap();
+        let repeated = state
+            .ensure_recording_for_vehicle_on_connection("pev-2", 2_100, 2)
+            .unwrap()
+            .unwrap();
+        assert_eq!(repeated.ride_id, ride_a.ride_id);
+        assert_eq!(repeated.state, MobileRideLifecycleStateDto::Active);
+
+        let fresh = state
+            .ensure_recording_for_vehicle_on_connection("pev-2", 3_000, 3)
+            .unwrap()
+            .unwrap();
+        assert_ne!(fresh.ride_id, ride_a.ride_id);
+        assert_eq!(fresh.associated_vehicle.as_deref(), Some("pev-2"));
+        assert_eq!(fresh.state, MobileRideLifecycleStateDto::Active);
+
         database.shutdown().unwrap();
         let _ = fs::remove_file(path);
     }
