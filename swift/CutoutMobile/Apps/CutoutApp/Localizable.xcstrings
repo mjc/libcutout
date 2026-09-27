@@ -2058,13 +2058,13 @@
       "comment" : "Map availability after Core Location reports a recoverable location failure.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Location is temporarily unavailable; Bluetooth capture can continue." } } }
     },
-    "ride_map.history_truncated_count" : {
-      "comment" : "History route warning with the number of points currently projected for map display; the durable route remains complete.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Showing %ld route points; the full route remains stored." } } }
+    "ride_map.history_map_preview" : {
+      "comment" : "History map shows a bounded preview of the stored route.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Route preview" } } }
     },
     "ride_map.segments_omitted_by_budget" : {
-      "comment" : "Warning shown when the bounded route projection omits one or more candidate segments from the map preview.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Some route segments are omitted from this map preview." } } }
+      "comment" : "Short notice that the displayed route is a bounded preview.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Route preview" } } }
     },
     "ride_map.history_loading" : {
       "comment" : "Historical ride detail state while the selected route is being loaded.",
@@ -2233,14 +2233,6 @@
     "ride_map.points" : {
       "comment" : "Ride-map summary label. The placeholder is the admitted point count.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Points: %lld" } } }
-    },
-    "ride_map.point_count.one" : {
-      "comment" : "Ride-map history subtitle for exactly one admitted point.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%lld point" } } }
-    },
-    "ride_map.point_count.other" : {
-      "comment" : "Ride-map history subtitle for zero or multiple admitted points.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%lld points" } } }
     },
     "ride_map.not_following" : {
       "comment" : "Camera state after the user pans or zooms the map.",

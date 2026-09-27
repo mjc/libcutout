@@ -290,7 +290,6 @@ struct RideMapHistoryDetailView: View {
         let distance = distanceText(for: ride.summary)
         let duration = durationText(for: ride.summary)
         let title = localizedAppText("ride_map.detail_title")
-        return
-            "\(title)\n\(distance) · \(duration) · \(RideMapHistoryListView.pointCountText(ride.summary.pointCount))"
+        return "\(title)\n\(distance) · \(duration)"
     }
 }

@@ -114,11 +114,6 @@ final class RideMapPresentationTests: XCTestCase {
         XCTAssertEqual(RideMapRouteView.liveRouteID(for: snapshot), "ride-b")
     }
 
-    func testHistoryPresentationUsesSingularAndPluralPointStrings() {
-        XCTAssertEqual(RideMapHistoryListView.pointCountText(1), "1 point")
-        XCTAssertEqual(RideMapHistoryListView.pointCountText(2), "2 points")
-    }
-
     func testHistorySelectionAccessibilityTextIsLocalized() {
         XCTAssertEqual(
             RideMapHistoryListView.selectionAccessibilityValue(isSelected: true),
