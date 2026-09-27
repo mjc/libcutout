@@ -345,7 +345,7 @@ struct RideMapCanvasView: View {
                 // MapKit's callback, instead of dispatching a delayed reset, keeps a
                 // programmatic recenter from being mistaken for a user pan.
                 isApplyingCamera = false
-            } else {
+            } else if mapPosition.positionedByUser {
                 cameraDidChange(context.region)
             }
         }
