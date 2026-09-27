@@ -916,7 +916,7 @@
     },
     "music.history.privacy" : {
       "comment" : "Music history is optional local metadata, not audio recording.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Listening history is optional and stored on this device. No audio is recorded." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Optional. Stored on this device. No audio is recorded." } } }
     },
     "music.done" : {
       "comment" : "Dismisses the expanded music player.",
@@ -960,7 +960,7 @@
     },
     "music.history.human_readable.explanation" : {
       "comment" : "Explanation for readable music history.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Save track IDs, titles, artists, and playback events with the ride and in PEVCAP captures." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Saves track IDs, titles, artists, and times with rides and PEVCAP captures." } } }
     },
     "music.history.opaque_item" : {
       "comment" : "History policy that saves provider item identifiers only.",
