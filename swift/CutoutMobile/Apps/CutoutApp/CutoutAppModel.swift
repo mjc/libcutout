@@ -738,48 +738,29 @@ final class CutoutAppModel {
     }
 
     func applyProtocolIdentityCandidate(_ candidate: DevicePickerDiscoveryCandidate?) {
-        device.protocolIdentityCandidate = candidate
+        device.applyProtocolIdentityCandidate(
+            candidate,
+            allowsRidePresentation: !isRecordOnlyCapture
+        )
         guard isRecordOnlyCapture != true else {
             liveActivityIdentity = nil
             liveActivityGlyph = .electricUnicycle
             syncLiveActivity()
             return
         }
-        if let candidate,
-            let displayName = DevicePresentationModel.meaningfulDeviceName(
-                candidate.displayName,
-                identity: candidate.platformIdentifier
-            )
-        {
-            // Persist every resolved identity, not only the currently selected one. History can
-            // contain rides from an older CoreBluetooth identifier and must still be relabelable.
-            let persistedDisplayName = device.persistedVehicleName(for: candidate.platformIdentifier)
-            if persistedDisplayName != displayName {
-                device.rememberVehicleName(displayName, for: candidate.platformIdentifier)
-            }
-        }
         if let model = candidate?.support.electricUnicycleModel {
             liveActivityIdentity = .model(model)
             liveActivityGlyph = .electricUnicycle
         }
-        guard let selection = selection(from: candidate) else {
+        guard let candidate,
+            candidate.support.isSupported,
+            candidate.support.connectionRoute != nil
+        else {
             syncLiveActivity()
             return
         }
-        // Advertisement-derived routes only decide which device the user selected. The protocol
-        // detector owns the route once bytes have resolved it.
-        if connectionState.selection?.platformIdentifier == nil
-            || connectionState.selection?.platformIdentifier == selection.platformIdentifier
-        {
-            let resolvedSelection = ConnectionSelection(
-                platformIdentifier: selection.platformIdentifier,
-                title: connectionState.selection?.title ?? selection.title,
-                route: selection.route
-            )
-            device.connectionState = connectionState.replacingSelection(with: resolvedSelection)
-        }
-        if selection.route == .vescOnewheel {
-            liveActivityIdentity = vescRideIdentity(using: selection.title)
+        if candidate.support.connectionRoute == .vescOnewheel {
+            liveActivityIdentity = vescRideIdentity(using: candidate.displayName)
             liveActivityGlyph = .floatwheelAtom
         }
         syncLiveActivity()
@@ -867,7 +848,9 @@ final class CutoutAppModel {
                 syncLiveActivity()
                 break
             }
-            if let selection = selection(from: core.protocolIdentityCandidate) {
+            if let selection = DevicePresentationModel.connectionSelection(
+                from: core.protocolIdentityCandidate
+            ) {
                 device.connectionState = .connected(
                     ConnectionSelection(
                         platformIdentifier: selection.platformIdentifier,
@@ -1129,17 +1112,6 @@ final class CutoutAppModel {
         liveActivityIdentity.map {
             LiveActivityRideSnapshot(identity: $0, glyph: liveActivityGlyph, rideState: rideState, now: core.now())
         }
-    }
-
-    private func selection(from candidate: DevicePickerDiscoveryCandidate?) -> ConnectionSelection? {
-        guard let candidate, candidate.support.isSupported, let route = candidate.support.connectionRoute else {
-            return nil
-        }
-        return ConnectionSelection(
-            platformIdentifier: candidate.platformIdentifier,
-            title: candidate.displayName,
-            route: route
-        )
     }
 
     private func vescRideIdentity(using title: String?) -> LiveActivityRideIdentity {

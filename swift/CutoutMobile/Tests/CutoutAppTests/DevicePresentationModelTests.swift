@@ -133,4 +133,119 @@ final class DevicePresentationModelTests: XCTestCase {
         XCTAssertEqual(store.displayName(for: row.id), row.title)
         XCTAssertTrue(model.hasSavedDevice)
     }
+
+    @MainActor
+    func testProtocolIdentityUpdatesRouteWithoutReplacingSelectedTitle() {
+        let model = DevicePresentationModel()
+        let selection = ConnectionSelection(
+            platformIdentifier: "vesc-1",
+            title: "Little FOCer BT",
+            route: .electricUnicycle
+        )
+        model.connectionState = .connected(selection)
+        let candidate = DevicePickerDiscoveryCandidate(
+            platformIdentifier: "vesc-1",
+            displayName: "VESC stream",
+            productCategory: "VESC Onewheel",
+            evidence: "protocol reply",
+            detail: "VESC device",
+            support: .supported(connectionRoute: .vescOnewheel, electricUnicycleModel: nil),
+            symbolName: "circle.hexagongrid.circle"
+        )
+
+        model.applyProtocolIdentityCandidate(candidate, allowsRidePresentation: true)
+
+        XCTAssertEqual(model.selectedRideTitle, "Little FOCer BT")
+        XCTAssertEqual(model.selectedConnectionRoute, .vescOnewheel)
+    }
+
+    @MainActor
+    func testProtocolIdentityCannotReplaceAnotherSelectedDevice() {
+        let model = DevicePresentationModel()
+        let selection = ConnectionSelection(
+            platformIdentifier: "wheel-2",
+            title: "Selected wheel",
+            route: .electricUnicycle
+        )
+        model.connectionState = .connected(selection)
+        let candidate = DevicePickerDiscoveryCandidate(
+            platformIdentifier: "wheel-1",
+            displayName: "Other wheel",
+            productCategory: "Electric unicycle",
+            evidence: "protocol reply",
+            detail: "Other device",
+            support: .supported(connectionRoute: .vescOnewheel, electricUnicycleModel: nil),
+            symbolName: "circle.hexagongrid.circle"
+        )
+
+        model.applyProtocolIdentityCandidate(candidate, allowsRidePresentation: true)
+
+        XCTAssertEqual(model.selectedRideIdentifier, "wheel-2")
+        XCTAssertEqual(model.selectedRideTitle, "Selected wheel")
+        XCTAssertEqual(model.selectedConnectionRoute, .electricUnicycle)
+    }
+
+    @MainActor
+    func testProtocolIdentityPersistsMeaningfulNamesForUnselectedHistoryDevices() throws {
+        let suiteName = "DevicePresentationModelTests.protocolName.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = DevicePickerSelectionStore(defaults: defaults)
+        let model = DevicePresentationModel(selectedDeviceStore: store)
+        model.connectionState = .connected(
+            ConnectionSelection(
+                platformIdentifier: "current-wheel",
+                title: "Current wheel",
+                route: .electricUnicycle
+            )
+        )
+        let candidate = DevicePickerDiscoveryCandidate(
+            platformIdentifier: "older-core-bluetooth-id",
+            displayName: "NF2557",
+            productCategory: "Electric unicycle",
+            evidence: "protocol reply",
+            detail: "resolved device",
+            support: .supported(connectionRoute: .electricUnicycle, electricUnicycleModel: .aero),
+            symbolName: "circle.hexagongrid.circle"
+        )
+
+        model.applyProtocolIdentityCandidate(candidate, allowsRidePresentation: true)
+
+        XCTAssertEqual(store.displayName(for: candidate.platformIdentifier), "NF2557")
+        XCTAssertEqual(model.selectedRideIdentifier, "current-wheel")
+    }
+
+    @MainActor
+    func testRecordOnlyCaptureDoesNotPersistProtocolIdentityCandidate() throws {
+        let suiteName = "DevicePresentationModelTests.recordOnlyProtocolName.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = DevicePickerSelectionStore(defaults: defaults)
+        let model = DevicePresentationModel(selectedDeviceStore: store)
+        let candidate = DevicePickerDiscoveryCandidate(
+            platformIdentifier: "wheel-1",
+            displayName: "NF2557",
+            productCategory: "Electric unicycle",
+            evidence: "protocol reply",
+            detail: "resolved device",
+            support: .supported(connectionRoute: .electricUnicycle, electricUnicycleModel: .aero),
+            symbolName: "circle.hexagongrid.circle"
+        )
+
+        model.applyProtocolIdentityCandidate(candidate, allowsRidePresentation: false)
+
+        XCTAssertEqual(model.protocolIdentityCandidate, candidate)
+        XCTAssertNil(store.displayName(for: candidate.platformIdentifier))
+        XCTAssertNil(model.selectedRideIdentifier)
+    }
+
+    @MainActor
+    func testMeaningfulDeviceNameRejectsAnIdentityAsItsOwnDisplayName() {
+        XCTAssertNil(DevicePresentationModel.meaningfulDeviceName("wheel-1", identity: "wheel-1"))
+        XCTAssertNil(DevicePresentationModel.meaningfulDeviceName("", identity: "wheel-1"))
+        XCTAssertEqual(
+            DevicePresentationModel.meaningfulDeviceName("NF2557", identity: "wheel-1"),
+            "NF2557"
+        )
+    }
 }

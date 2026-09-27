@@ -78,6 +78,45 @@ final class DevicePresentationModel {
         selectedDeviceStore.save(platformIdentifier: identity, displayName: name)
     }
 
+    func applyProtocolIdentityCandidate(
+        _ candidate: DevicePickerDiscoveryCandidate?,
+        allowsRidePresentation: Bool
+    ) {
+        protocolIdentityCandidate = candidate
+        guard allowsRidePresentation, let candidate else { return }
+
+        if let displayName = Self.meaningfulDeviceName(
+            candidate.displayName,
+            identity: candidate.platformIdentifier
+        ), persistedVehicleName(for: candidate.platformIdentifier) != displayName {
+            rememberVehicleName(displayName, for: candidate.platformIdentifier)
+        }
+
+        guard let selection = Self.connectionSelection(from: candidate) else { return }
+        guard
+            connectionState.selection?.platformIdentifier == nil
+                || connectionState.selection?.platformIdentifier == selection.platformIdentifier
+        else { return }
+
+        let resolvedSelection = ConnectionSelection(
+            platformIdentifier: selection.platformIdentifier,
+            title: connectionState.selection?.title ?? selection.title,
+            route: selection.route
+        )
+        connectionState = connectionState.replacingSelection(with: resolvedSelection)
+    }
+
+    static func connectionSelection(from candidate: DevicePickerDiscoveryCandidate?) -> ConnectionSelection? {
+        guard let candidate, candidate.support.isSupported, let route = candidate.support.connectionRoute else {
+            return nil
+        }
+        return ConnectionSelection(
+            platformIdentifier: candidate.platformIdentifier,
+            title: candidate.displayName,
+            route: route
+        )
+    }
+
     func pair(
         platformIdentifier: String,
         mayRetryCurrentSelection: Bool,
