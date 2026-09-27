@@ -56,7 +56,8 @@ final class MusicPreferencesDeviceUITests: XCTestCase {
         XCTAssertFalse(app.buttons["music.connect-provider"].exists)
         music.tap()
         XCTAssertTrue(app.buttons["music.connect-provider"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["music.authorize-spotify"].exists, "Spotify must already be selected")
+        XCTAssertTrue(app.buttons["music.connect-provider"].label.contains("Spotify"), "Spotify must already be selected")
+        XCTAssertFalse(app.buttons["music.authorize-spotify"].exists, "Cached authorization must not offer a credential reset")
         XCTAssertEqual(app.state, .runningForeground)
         app.buttons["setup.done"].tap()
         XCTAssertTrue(setup.waitForExistence(timeout: 5))
@@ -83,7 +84,7 @@ final class MusicPreferencesDeviceUITests: XCTestCase {
         app.launch()
         app.activate()
         openMusicSettings(in: app)
-        XCTAssertTrue(app.buttons["music.authorize-spotify"].exists, "Spotify must already be selected")
+        XCTAssertTrue(app.buttons["music.connect-provider"].label.contains("Spotify"), "Spotify must already be selected")
         app.buttons["music.connect-provider"].tap()
 
         // Existing consent may hand straight back. Never guess at Spotify's
@@ -105,6 +106,9 @@ final class MusicPreferencesDeviceUITests: XCTestCase {
 
         app.terminate()
         app.launch()
+        openMusicSettings(in: app)
+        XCTAssertFalse(app.buttons["music.authorize-spotify"].exists, "Cold launch must retain authorization")
+        app.buttons["setup.done"].tap()
         let map = app.buttons["device-picker.open-map"]
         XCTAssertTrue(map.waitForExistence(timeout: 30), app.debugDescription)
         map.tap()
