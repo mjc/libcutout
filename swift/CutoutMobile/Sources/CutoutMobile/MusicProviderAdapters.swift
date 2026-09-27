@@ -13,11 +13,9 @@ import Security
 enum SpotifyAuthorizationFailure {
     static func requiresNewAuthorization(domain: String, code: Int, description: String) -> Bool {
         let text = "\(domain) \(description)".lowercased()
-        return code == 401
-            || text.contains("invalid_grant")
-            || text.contains("invalid token")
-            || text.contains("unauthorized")
-            || text.contains("revoked")
+        // A generic 401 can be a misconfigured refresh endpoint or an expired
+        // access token. Neither proves that the saved refresh grant was revoked.
+        return text.contains("invalid_grant") || text.contains("revoked")
     }
 }
 

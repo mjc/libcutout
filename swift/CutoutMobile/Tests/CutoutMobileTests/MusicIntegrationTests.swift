@@ -15,10 +15,25 @@ final class MusicIntegrationTests: XCTestCase {
             code: -1009,
             description: "The Internet connection appears to be offline"
         ))
+        XCTAssertFalse(SpotifyAuthorizationFailure.requiresNewAuthorization(
+            domain: "SPTSessionManagerErrorDomain",
+            code: 401,
+            description: "Unauthorized token refresh endpoint"
+        ))
+        XCTAssertFalse(SpotifyAuthorizationFailure.requiresNewAuthorization(
+            domain: "SPTSessionManagerErrorDomain",
+            code: 401,
+            description: "Invalid token"
+        ))
         XCTAssertTrue(SpotifyAuthorizationFailure.requiresNewAuthorization(
             domain: "SPTSessionManagerErrorDomain",
             code: 401,
             description: "invalid_grant"
+        ))
+        XCTAssertTrue(SpotifyAuthorizationFailure.requiresNewAuthorization(
+            domain: "SPTSessionManagerErrorDomain",
+            code: -1,
+            description: "Refresh token revoked"
         ))
     }
 
