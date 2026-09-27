@@ -84,11 +84,11 @@ final class DeviceSessionTransportTests: XCTestCase {
             let (state, transport, sink) = try makeReadyTransport(writeLimit: 64, clock: MonotonicClock(now: { MonotonicMilliseconds(now) }))
             defer { transport.invalidate() }
             sink.dispositions = [.queued]
-            _ = try transport.submitSetting(.displayBrightness, value: .number(value: 10), at: MonotonicMilliseconds(3))
+            _ = try transport.submitSetting(.voltageCorrection, value: .number(value: 10), at: MonotonicMilliseconds(3))
             now = 2_003
             transport.handlePeripheralIsReadyToSendWithoutResponse()
             XCTAssertTrue(sink.submittedWrites.isEmpty)
-            XCTAssertEqual(state.settings().setting(for: .displayBrightness)?.transport, .cancelled)
+            XCTAssertEqual(state.settings().setting(for: .voltageCorrection)?.transport, .cancelled)
         }
     }
 

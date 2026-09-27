@@ -311,7 +311,17 @@ impl DeviceCommand {
     /// Returns the safety class for this command.
     #[must_use]
     pub const fn safety_class(self) -> SafetyClass {
-        self.kind().safety_class()
+        match self {
+            Self::SetSetting {
+                id:
+                    SettingId::Headlight
+                    | SettingId::HighBeam
+                    | SettingId::DisplayBrightness
+                    | SettingId::DisplayUnits,
+                ..
+            } => SafetyClass::BenignControl,
+            _ => self.kind().safety_class(),
+        }
     }
 
     /// Returns command metadata.
@@ -652,10 +662,10 @@ impl CommandKind {
             | Self::RequestDiagnostics
             | Self::RequestFaultHistory
             | Self::RequestSettings => SafetyClass::ReadOnly,
-            Self::SetLights | Self::SetTaillight | Self::SoundHorn => SafetyClass::BenignControl,
-            Self::ResetTripMeter | Self::GyroCalibration | Self::SetSetting => {
-                SafetyClass::StationaryOnly
+            Self::SetLights | Self::SetTaillight | Self::SoundHorn | Self::ResetTripMeter => {
+                SafetyClass::BenignControl
             }
+            Self::GyroCalibration | Self::SetSetting => SafetyClass::StationaryOnly,
             Self::SetRawMotorCurrent => SafetyClass::Actuation,
         }
     }
@@ -798,7 +808,7 @@ impl DangerousActuationPolicy {
     }
 }
 
-/// Short-lived authorization for a settings write while the vehicle is stationary.
+/// Short-lived authorization for a settings write from bounded low-speed or charging evidence.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct StationarySettingsArm {
     model: &'static str,
@@ -832,7 +842,7 @@ impl StationarySettingsArm {
     }
 }
 
-/// Policy for issuing a short-lived stationary settings authorization.
+/// Policy for issuing a short-lived settings authorization.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct StationarySettingsPolicy {
     /// Model this policy allows.
@@ -843,7 +853,7 @@ pub struct StationarySettingsPolicy {
 }
 
 impl StationarySettingsPolicy {
-    /// Issues an authorization only from an explicitly stationary ride state.
+    /// Issues an authorization from a parked, standing, or charging state.
     #[must_use]
     pub const fn arm(
         self,
@@ -851,16 +861,14 @@ impl StationarySettingsPolicy {
         monotonic_ms: MonotonicTimestamp,
     ) -> Option<StationarySettingsArm> {
         match state {
-            RideOperatingState::Parked | RideOperatingState::Standing => {
-                Some(StationarySettingsArm {
-                    model: self.model,
-                    issued_at_ms: monotonic_ms,
-                    expires_at_ms: monotonic_ms.saturating_add_duration(self.arm_duration),
-                })
-            }
-            RideOperatingState::Unknown
-            | RideOperatingState::Riding
-            | RideOperatingState::Charging => None,
+            RideOperatingState::Parked
+            | RideOperatingState::Standing
+            | RideOperatingState::Charging => Some(StationarySettingsArm {
+                model: self.model,
+                issued_at_ms: monotonic_ms,
+                expires_at_ms: monotonic_ms.saturating_add_duration(self.arm_duration),
+            }),
+            RideOperatingState::Unknown | RideOperatingState::Riding => None,
         }
     }
 
@@ -6506,18 +6514,18 @@ pub enum RideOperatingState {
 }
 
 impl RideOperatingState {
-    /// Resolves explicit protocol state before charging and measured-speed fallbacks.
+    /// Charging evidence wins over parked/speed state; otherwise use explicit state.
     #[must_use]
     pub fn resolve(
         reported: Option<Self>,
         charge_mode: Option<ChargeMode>,
         speed: Option<Speed>,
     ) -> Self {
-        if let Some(state) = reported.filter(|state| *state != Self::Unknown) {
-            return state;
-        }
         if charge_mode == Some(ChargeMode::Charging) {
             return Self::Charging;
+        }
+        if let Some(state) = reported.filter(|state| *state != Self::Unknown) {
+            return state;
         }
         match speed.map(Speed::as_millimetres_per_second) {
             Some(0) => Self::Standing,
@@ -10945,7 +10953,7 @@ mod tests {
         assert!(
             policy
                 .arm(crate::RideOperatingState::Charging, ms(10))
-                .is_none()
+                .is_some()
         );
         assert!(
             policy
@@ -10975,7 +10983,7 @@ mod tests {
                     Some(max_speed),
                     ms(10)
                 )
-                .is_none()
+                .is_some()
         );
         assert!(
             policy
@@ -10986,6 +10994,26 @@ mod tests {
                     ms(10)
                 )
                 .is_some()
+        );
+    }
+
+    #[test]
+    fn charging_evidence_overrides_parked_state_and_zero_speed() {
+        assert_eq!(
+            crate::RideOperatingState::resolve(
+                Some(crate::RideOperatingState::Parked),
+                Some(crate::ChargeMode::Charging),
+                Some(Speed::from_millimetres_per_second(0)),
+            ),
+            crate::RideOperatingState::Charging,
+        );
+        assert_eq!(
+            crate::RideOperatingState::resolve(
+                Some(crate::RideOperatingState::Parked),
+                Some(crate::ChargeMode::NotCharging),
+                Some(Speed::from_millimetres_per_second(0)),
+            ),
+            crate::RideOperatingState::Parked,
         );
     }
 

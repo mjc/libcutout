@@ -1670,8 +1670,10 @@ impl crate::control_wire::Model for NosfetAeroModel {
 }
 
 impl SupportsBenignControls for NosfetAeroModel {
-    const CONTROL_CAPABILITIES: Capabilities =
-        Capabilities::from_supported_commands([CommandKind::SoundHorn]);
+    const CONTROL_CAPABILITIES: Capabilities = Capabilities::from_supported_commands([
+        CommandKind::SoundHorn,
+        CommandKind::ResetTripMeter,
+    ]);
 }
 
 impl SupportsSettingsWrites for NosfetAeroModel {
@@ -2140,6 +2142,7 @@ pub struct StationarySettingsWriteSession<
     monotonic_ms: MonotonicTimestamp,
     pending_sequence: Option<PendingSettingsSequence>,
     latest_settings_speed: Option<(cutout_core::Speed, MonotonicTimestamp)>,
+    latest_settings_charge_mode: Option<(cutout_core::ChargeMode, MonotonicTimestamp)>,
     settings_cancellation_generation: u64,
 }
 
@@ -2165,6 +2168,7 @@ where
             monotonic_ms: self.monotonic_ms,
             pending_sequence: self.pending_sequence.clone(),
             latest_settings_speed: self.latest_settings_speed,
+            latest_settings_charge_mode: self.latest_settings_charge_mode,
             settings_cancellation_generation: self.settings_cancellation_generation,
         }
     }
@@ -2180,6 +2184,7 @@ impl<M: ReadOnlyModelSpec + SupportsSettingsWrites + SupportsBenignControls> Def
             monotonic_ms: MonotonicTimestamp::new(0),
             pending_sequence: None,
             latest_settings_speed: None,
+            latest_settings_charge_mode: None,
             settings_cancellation_generation: 0,
         }
     }
@@ -2197,6 +2202,7 @@ impl<M: ReadOnlyModelSpec + SupportsSettingsWrites + SupportsBenignControls>
             monotonic_ms: MonotonicTimestamp::new(0),
             pending_sequence: None,
             latest_settings_speed: None,
+            latest_settings_charge_mode: None,
             settings_cancellation_generation: 0,
         }
     }
@@ -2265,16 +2271,16 @@ impl<M: ReadOnlyModelSpec + SupportsSettingsWrites + SupportsBenignControls>
         authorization: SettingWriteAuthorization,
         at: MonotonicTimestamp,
     ) -> bool {
+        let speed = self.fresh_settings_speed(at);
+        let maximum = M::MAX_SETTINGS_SPEED.map_or(0, |maximum| {
+            maximum.as_millimetres_per_second().unsigned_abs()
+        });
         authorization.cancellation_generation == self.settings_cancellation_generation
             && self.arm.is_some()
             && at >= authorization.arm.issued_at_ms()
             && authorization.arm.is_valid_for(M::MODEL, at)
-            && self.fresh_settings_speed(at).is_some_and(|speed| {
-                speed.as_millimetres_per_second().unsigned_abs()
-                    <= M::MAX_SETTINGS_SPEED.map_or(0, |maximum| {
-                        maximum.as_millimetres_per_second().unsigned_abs()
-                    })
-            })
+            && speed.is_none_or(|speed| speed.as_millimetres_per_second().unsigned_abs() <= maximum)
+            && (speed.is_some() || self.fresh_settings_charging(at))
     }
 
     pub(crate) fn fresh_settings_speed(
@@ -2285,6 +2291,16 @@ impl<M: ReadOnlyModelSpec + SupportsSettingsWrites + SupportsBenignControls>
         (now >= observed_at
             && now.saturating_duration_since(observed_at) <= cutout_core::Duration::from_seconds(2))
         .then_some(speed)
+    }
+
+    pub(crate) fn fresh_settings_charging(&self, now: MonotonicTimestamp) -> bool {
+        self.latest_settings_charge_mode
+            .is_some_and(|(mode, observed_at)| {
+                mode.is_active()
+                    && now >= observed_at
+                    && now.saturating_duration_since(observed_at)
+                        <= cutout_core::Duration::from_seconds(2)
+            })
     }
 
     fn observe_settings_telemetry(&mut self, outputs: &[SessionOutput]) {
@@ -2307,17 +2323,27 @@ impl<M: ReadOnlyModelSpec + SupportsSettingsWrites + SupportsBenignControls>
                     }
                 }
             }
-            if delta.charge_mode.is_some_and(|mode| mode.value.is_active())
-                || delta.operating_state == Some(cutout_core::RideOperatingState::Charging)
+            if let Some(mode) = delta.charge_mode
+                && self
+                    .latest_settings_charge_mode
+                    .is_none_or(|(_, at)| delta.at_ms >= at)
             {
-                self.clear_arm();
+                let was_charging = self
+                    .latest_settings_charge_mode
+                    .is_some_and(|(previous, _)| previous.is_active());
+                self.latest_settings_charge_mode = Some((mode.value, delta.at_ms));
+                if was_charging && !mode.value.is_active() {
+                    self.clear_arm();
+                }
             }
         }
     }
 
     fn handle_tick(&mut self, monotonic_ms: MonotonicTimestamp, output: &mut Vec<SessionOutput>) {
         self.monotonic_ms = monotonic_ms;
-        if self.latest_settings_speed.is_some() && self.fresh_settings_speed(monotonic_ms).is_none()
+        if (self.latest_settings_speed.is_some() || self.latest_settings_charge_mode.is_some())
+            && self.fresh_settings_speed(monotonic_ms).is_none()
+            && !self.fresh_settings_charging(monotonic_ms)
         {
             self.clear_arm();
         }
@@ -2462,6 +2488,42 @@ impl<M: ReadOnlyModelSpec + SupportsSettingsWrites + SupportsBenignControls>
             },
         )));
     }
+
+    fn handle_benign_setting(&mut self, command: DeviceCommand, output: &mut Vec<SessionOutput>) {
+        let kind = command.kind();
+        if !M::WRITE_CAPABILITIES.supports_command_kind(kind) || self.pending_sequence.is_some() {
+            output.push(SessionOutput::Event(DeviceEvent::ControlRefusal(
+                ControlRefusal {
+                    command: kind,
+                    safety_class: command.safety_class(),
+                    reason: if self.pending_sequence.is_some() {
+                        ControlRefusalReason::Busy
+                    } else {
+                        ControlRefusalReason::UnsupportedCommand
+                    },
+                },
+            )));
+            return;
+        }
+        let context = self.read_only.decoder.control_encoding_context();
+        let encoded = <M::WireDialect as crate::control_wire::Dialect>::select(command, context)
+            .and_then(|selection| selection.single(command));
+        if let Some(encoded) = encoded {
+            output.push(SessionOutput::Transport(TransportAction::Write {
+                channel: M::WRITE_CHANNEL,
+                bytes: encoded.payload,
+                mode: encoded.mode,
+            }));
+        } else {
+            output.push(SessionOutput::Event(DeviceEvent::ControlRefusal(
+                ControlRefusal {
+                    command: kind,
+                    safety_class: command.safety_class(),
+                    reason: ControlRefusalReason::UnsupportedCommand,
+                },
+            )));
+        }
+    }
 }
 
 impl<M: ReadOnlyModelSpec + SupportsSettingsWrites + SupportsBenignControls> ProtocolSession
@@ -2475,12 +2537,18 @@ impl<M: ReadOnlyModelSpec + SupportsSettingsWrites + SupportsBenignControls> Pro
             SessionInput::LinkDown | SessionInput::LinkUp(_) => {
                 self.clear_arm();
                 self.latest_settings_speed = None;
+                self.latest_settings_charge_mode = None;
                 self.read_only.handle(input, output);
             }
             SessionInput::Command(command)
                 if command.safety_class() == SafetyClass::StationaryOnly =>
             {
                 self.handle_stationary_command(command, output);
+            }
+            SessionInput::Command(command @ DeviceCommand::SetSetting { .. })
+                if command.safety_class() == SafetyClass::BenignControl =>
+            {
+                self.handle_benign_setting(command, output);
             }
             SessionInput::Command(command)
                 if command.safety_class() == SafetyClass::BenignControl =>
@@ -5395,6 +5463,38 @@ mod tests {
     }
 
     #[test]
+    fn aero_benign_setting_writes_without_a_stationary_arm() {
+        let mut session = StationarySettingsWriteSession::<NosfetAeroModel>::default();
+        let mut output = Vec::new();
+        session.handle(
+            SessionInput::Command(DeviceCommand::SetSetting {
+                id: cutout_core::SettingId::DisplayBrightness,
+                value: cutout_core::DeviceSettingValue::Number(50),
+            }),
+            &mut output,
+        );
+        assert!(output.iter().any(|item| matches!(
+            item,
+            SessionOutput::Transport(TransportAction::Write { .. })
+        )));
+        output.clear();
+        session.handle(
+            SessionInput::Command(DeviceCommand::SetSetting {
+                id: cutout_core::SettingId::HighSpeedMode,
+                value: cutout_core::DeviceSettingValue::Boolean(true),
+            }),
+            &mut output,
+        );
+        assert!(output.iter().any(|item| matches!(
+            item,
+            SessionOutput::Event(DeviceEvent::ControlRefusal(ControlRefusal {
+                reason: ControlRefusalReason::MissingArm,
+                ..
+            }))
+        )));
+    }
+
+    #[test]
     fn aero_stationary_settings_session_writes_documented_pedal_mode() {
         let mut session = StationarySettingsWriteSession::<NosfetAeroModel>::default();
         let mut output = Vec::new();
@@ -5928,8 +6028,8 @@ mod tests {
         session.handle(
             SessionInput::Command(DeviceCommand::InvokeAction(
                 cutout_core::DeviceActionRequest {
-                    id: cutout_core::DeviceActionId::ResetTripMeter,
-                    step: cutout_core::DeviceActionStep::Invoke,
+                    id: cutout_core::DeviceActionId::GyroCalibration,
+                    step: cutout_core::DeviceActionStep::PrepareGyroCalibration,
                 },
             )),
             &mut outputs,

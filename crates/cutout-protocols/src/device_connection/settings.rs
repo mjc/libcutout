@@ -400,7 +400,7 @@ mod tests {
         }
     }
 
-    fn queued_brightness() -> (
+    fn queued_voltage_correction() -> (
         DeviceConnectionSession,
         ConnectionAttemptToken,
         Vec<u8>,
@@ -415,7 +415,7 @@ mod tests {
         let step = owner
             .submit_setting(
                 &token,
-                SettingId::DisplayBrightness,
+                SettingId::VoltageCorrection,
                 DeviceSettingValue::Number(10),
                 MonotonicTimestamp::new(3),
             )
@@ -425,7 +425,7 @@ mod tests {
             .settings_snapshot()
             .settings
             .into_iter()
-            .find(|setting| setting.id == SettingId::DisplayBrightness)
+            .find(|setting| setting.id == SettingId::VoltageCorrection)
             .unwrap()
             .request_id
             .unwrap();
@@ -434,7 +434,7 @@ mod tests {
 
     #[test]
     fn queued_setting_authorization_expires_without_rearming_or_a_tick() {
-        let (mut owner, token, frame, request) = queued_brightness();
+        let (mut owner, token, frame, request) = queued_voltage_correction();
         assert!(owner.setting_transport_is_current(&token, request, MonotonicTimestamp::new(4)));
         assert!(!owner.setting_transport_is_current(
             &token,
@@ -460,7 +460,7 @@ mod tests {
 
     #[test]
     fn queued_setting_authorization_is_revoked_by_motion_even_after_rearming() {
-        let (mut owner, token, frame, request) = queued_brightness();
+        let (mut owner, token, frame, request) = queued_voltage_correction();
         let mut moving = frame.clone();
         moving[6..8].copy_from_slice(&34_u16.to_be_bytes());
         replay_nf2557(&mut owner, &token, &[moving], 4);
@@ -479,12 +479,12 @@ mod tests {
 
     #[test]
     fn queued_setting_authorization_rejects_replaced_terminal_and_reconnected_requests() {
-        let (mut owner, token, _, request) = queued_brightness();
+        let (mut owner, token, _, request) = queued_voltage_correction();
         owner
             .submit_setting(
                 &token,
-                SettingId::DisplayBrightness,
-                DeviceSettingValue::Number(20),
+                SettingId::VoltageCorrection,
+                DeviceSettingValue::Number(11),
                 MonotonicTimestamp::new(4),
             )
             .unwrap();
@@ -493,14 +493,14 @@ mod tests {
             .settings_snapshot()
             .settings
             .into_iter()
-            .find(|setting| setting.id == SettingId::DisplayBrightness)
+            .find(|setting| setting.id == SettingId::VoltageCorrection)
             .unwrap()
             .request_id
             .unwrap();
         assert!(owner.setting_transport_is_current(&token, next, MonotonicTimestamp::new(4)));
         assert!(owner.mark_setting_transport(
             &token,
-            SettingId::DisplayBrightness,
+            SettingId::VoltageCorrection,
             next,
             cutout_core::SettingTransportStatus::Cancelled,
             MonotonicTimestamp::new(4)
@@ -792,12 +792,12 @@ mod tests {
     }
 
     #[test]
-    fn nf2557_high_beam_requires_fresh_session_speed_even_after_a_previous_write() {
+    fn nf2557_high_beam_does_not_require_stationary_evidence() {
         let notifications = nf2557_notifications();
         for enabled in [false, true] {
             let (mut owner, token) = connected_nf2557(&notifications);
             for at in [2, 2_011] {
-                let refused = owner
+                let accepted = owner
                     .submit_setting(
                         &token,
                         SettingId::HighBeam,
@@ -805,11 +805,8 @@ mod tests {
                         MonotonicTimestamp::new(at),
                     )
                     .unwrap();
-                assert_eq!(
-                    refused.result.error.unwrap().reason,
-                    cutout_core::ControlRefusalReason::MissingArm
-                );
-                assert!(!refused.result.outputs.iter().any(|output| matches!(
+                assert!(accepted.result.error.is_none());
+                assert!(accepted.result.outputs.iter().any(|output| matches!(
                     output,
                     SessionOutput::Transport(TransportAction::Write { .. })
                 )));
@@ -821,7 +818,7 @@ mod tests {
                     .unwrap();
                 assert_eq!(light.current, None);
                 assert_eq!(light.requested, Some(DeviceSettingValue::Boolean(enabled)));
-                assert_eq!(light.status, SettingCommandStatus::Refused);
+                assert_eq!(light.status, SettingCommandStatus::SentWithoutConfirmation);
                 if at == 2 {
                     replay_nf2557(&mut owner, &token, &notifications, 10);
                     let accepted = owner
@@ -1004,17 +1001,7 @@ mod tests {
                 let step = owner
                     .submit_setting(&token, id, value, MonotonicTimestamp::new(10 + age))
                     .unwrap();
-                let mut writes: Vec<Vec<u8>> = step
-                    .result
-                    .outputs
-                    .iter()
-                    .filter_map(|output| match output {
-                        SessionOutput::Transport(TransportAction::Write { bytes, .. }) => {
-                            Some(bytes.as_slice().to_vec())
-                        }
-                        _ => None,
-                    })
-                    .collect();
+                let mut writes: Vec<_> = write_payloads(&step.result.outputs).collect();
                 if id == SettingId::LateralTiltLimit && accepted {
                     let follow_up = owner
                         .ingest(
@@ -1024,21 +1011,17 @@ mod tests {
                             },
                         )
                         .unwrap();
-                    writes.extend(follow_up.result.outputs.iter().filter_map(
-                        |output| match output {
-                            SessionOutput::Transport(TransportAction::Write { bytes, .. }) => {
-                                Some(bytes.as_slice().to_vec())
-                            }
-                            _ => None,
-                        },
-                    ));
+                    writes.extend(write_payloads(&follow_up.result.outputs));
                 }
+                let should_accept = accepted
+                    || cutout_core::DeviceCommand::SetSetting { id, value }.safety_class()
+                        == cutout_core::SafetyClass::BenignControl;
                 assert_eq!(
                     step.result.error.is_none(),
-                    accepted,
+                    should_accept,
                     "{id:?} speed={speed:?} age={age}"
                 );
-                if accepted {
+                if should_accept {
                     assert_ordinary_aero_submission(
                         &profile,
                         &owner,
@@ -1057,6 +1040,15 @@ mod tests {
                 );
             }
         }
+    }
+
+    fn write_payloads(outputs: &[SessionOutput]) -> impl Iterator<Item = Vec<u8>> + '_ {
+        outputs.iter().filter_map(|output| match output {
+            SessionOutput::Transport(TransportAction::Write { bytes, .. }) => {
+                Some(bytes.as_slice().to_vec())
+            }
+            _ => None,
+        })
     }
 
     fn assert_ordinary_aero_submission(

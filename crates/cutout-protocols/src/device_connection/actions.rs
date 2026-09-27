@@ -182,8 +182,9 @@ mod tests {
     fn actual_gyro_progress_advances_only_current_attempt_and_never_claims_completion() {
         let mut owner = DeviceConnectionSession::default();
         let token = super::super::tests::connected_aero(&mut owner);
+        assert!(owner.authorize_validation(&token));
         let _ = owner.ingest(&token, &gyro_readback(128, 2));
-        assert!(!owner.validation_authorized());
+        assert!(owner.validation_authorized());
         let step = owner
             .submit_action(
                 &token,
@@ -254,22 +255,21 @@ mod tests {
     }
 
     #[test]
-    fn ordinary_aero_actions_preserve_evidence_roles_and_stationary_guards() {
+    fn trip_reset_preserves_evidence_without_requiring_stationary_speed() {
         let profile = crate::aero_control_profile();
         assert_eq!(
-            profile.action_descriptors(false),
-            profile.action_descriptors(true)
+            profile
+                .action_descriptors(false)
+                .into_iter()
+                .find(|item| item.id == DeviceActionId::GyroCalibration)
+                .unwrap()
+                .access,
+            crate::ActionAccess::Unverified
         );
-        for (id, role) in [
-            (
-                DeviceActionId::ResetTripMeter,
-                crate::ActionRole::Destructive,
-            ),
-            (
-                DeviceActionId::GyroCalibration,
-                crate::ActionRole::Procedure,
-            ),
-        ] {
+        for (id, role) in [(
+            DeviceActionId::ResetTripMeter,
+            crate::ActionRole::Destructive,
+        )] {
             let descriptor = profile
                 .action_descriptors(false)
                 .into_iter()
@@ -305,10 +305,10 @@ mod tests {
                     .submit_action(&token, id, MonotonicTimestamp::new(10 + age))
                     .unwrap();
                 assert!(
-                    step.result.error.is_some(),
+                    step.result.error.is_none(),
                     "{id:?} speed={speed:?} age={age}"
                 );
-                assert!(!step.result.outputs.iter().any(|output| matches!(
+                assert!(step.result.outputs.iter().any(|output| matches!(
                     output,
                     SessionOutput::Transport(TransportAction::Write { .. })
                 )));

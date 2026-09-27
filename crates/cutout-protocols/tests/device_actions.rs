@@ -55,7 +55,7 @@ fn ordinary_aero_actions_preserve_roles_and_write_verification() {
     assert_eq!(gyro.help_key, "actions.gyro_calibration.help");
     assert_eq!(gyro.role, ActionRole::Procedure);
     assert_eq!(gyro.confirmation, ActionConfirmation::ProgressReadback);
-    assert_eq!(gyro.access, ActionAccess::Available);
+    assert_eq!(gyro.access, ActionAccess::Unverified);
     assert_eq!(gyro.write_verification, VerificationStatus::Unverified);
 
     let actions = DeviceActionsState::default();
@@ -76,6 +76,10 @@ fn ordinary_aero_actions_preserve_roles_and_write_verification() {
     );
     assert_eq!(
         profile.action_command(gyro, false),
+        Err(cutout_protocols::ActionRequestError::Unverified)
+    );
+    assert_eq!(
+        profile.action_command(gyro, true),
         Ok(DeviceCommand::InvokeAction(DeviceActionRequest {
             id: DeviceActionId::GyroCalibration,
             step: DeviceActionStep::PrepareGyroCalibration,
