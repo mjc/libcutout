@@ -10,6 +10,17 @@ import Security
 @preconcurrency import SpotifyiOS
 #endif
 
+enum SpotifyAuthorizationFailure {
+    static func requiresNewAuthorization(domain: String, code: Int, description: String) -> Bool {
+        let text = "\(domain) \(description)".lowercased()
+        return code == 401
+            || text.contains("invalid_grant")
+            || text.contains("invalid token")
+            || text.contains("unauthorized")
+            || text.contains("revoked")
+    }
+}
+
 #if canImport(SpotifyiOS) && os(iOS)
 
 /// Thin main-thread bridge to Spotify's official App Remote SDK. The SDK owns
@@ -369,10 +380,12 @@ public final class SpotifyProviderAdapter: NSObject {
             guard let self else { return }
             let transaction = self.finishAuthorizationTransaction(generation: effect.id)
             guard transaction != .stale else { return }
-            self.authorizationNeedsUserAction = true
             if transaction == .renewing {
+                // A timed-out renewal does not prove the saved session was revoked.
+                self.authorizationNeedsUserAction = false
                 self.lifecycleState = .stale
             } else {
+                self.authorizationNeedsUserAction = true
                 self.session = nil
                 self.accessToken = nil
                 Self.storeSession(nil)
@@ -606,12 +619,14 @@ public final class SpotifyProviderAdapter: NSObject {
     ) {
         let transaction = finishAuthorizationTransaction(generation: generation)
         guard transaction != .stale else { return }
-        let permanent = isPermanentAuthorizationFailure(domain: domain, code: code, description: description)
+        let permanent = SpotifyAuthorizationFailure.requiresNewAuthorization(
+            domain: domain, code: code, description: description
+        )
         if transaction == .renewing, !permanent {
             // Transport failures during renewal are recoverable. Keep the
             // refresh credential and stop this loop so a later foreground or
             // explicit setup can retry without forcing a reauthorization.
-            authorizationNeedsUserAction = true
+            authorizationNeedsUserAction = false
             lifecycleState = .stale
         } else {
             authorizationNeedsUserAction = true
@@ -648,16 +663,6 @@ public final class SpotifyProviderAdapter: NSObject {
         sessionManagerBridge = nil
         sessionManager = nil
         authorizationGeneration = nil
-    }
-
-    private func isPermanentAuthorizationFailure(domain: String, code: Int, description: String) -> Bool {
-        let text = "\(domain) \(description)".lowercased()
-        return code == 401
-            || text.contains("invalid_grant")
-            || text.contains("invalid token")
-            || text.contains("unauthorized")
-            || text.contains("revoked")
-            || text.contains("expired")
     }
 
     private nonisolated func enqueueConnectionEstablished(

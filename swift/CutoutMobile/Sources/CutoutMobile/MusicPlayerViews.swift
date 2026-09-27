@@ -183,6 +183,15 @@ private struct MusicPlayerIconButton: View {
     }
 }
 
+enum MusicSettingsPresentation {
+    static func showsReauthorize(
+        provider: MobileMusicProviderDto,
+        state: MobileMusicPlaybackStateDto?
+    ) -> Bool {
+        provider == .spotify && state == .unauthorized
+    }
+}
+
 private struct MusicTimelineRow: View {
     let event: MobileMusicRideEventDto
 
@@ -191,7 +200,7 @@ private struct MusicTimelineRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(event.timelineItemTitle)
                     .lineLimit(1)
-                Text("\(event.provider.title) · \(event.kind.timelineTitle)")
+                Text(event.timelineSubtitle)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -315,7 +324,10 @@ public struct MusicSettingsView: View {
                 }
                 Button(pevLocalizedText("music.connect_provider", selectedProvider.title), action: onConnect)
                     .accessibilityIdentifier("music.connect-provider")
-                if selectedProvider == .spotify {
+                if MusicSettingsPresentation.showsReauthorize(
+                    provider: selectedProvider,
+                    state: nowPlaying?.state
+                ) {
                     Button(pevLocalizedText("music.authorize_spotify"), action: onAuthorizeSpotify)
                         .accessibilityIdentifier("music.authorize-spotify")
                 }
@@ -446,7 +458,7 @@ public struct MusicCompactPlayerInset: ViewModifier {
 
     public func body(content: Content) -> some View {
         content.safeAreaInset(edge: .bottom, spacing: 8) {
-            if let nowPlaying {
+            if let nowPlaying, nowPlaying.showsCompactPlayer {
                 MusicCompactPlayer(
                     nowPlaying: nowPlaying,
                     timeline: timeline,

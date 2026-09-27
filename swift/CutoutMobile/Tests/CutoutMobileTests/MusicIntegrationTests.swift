@@ -4,6 +4,53 @@ import CutoutMobileFFI
 @testable import CutoutMobile
 
 final class MusicIntegrationTests: XCTestCase {
+    func testSpotifyRenewalFailureOnlyRequiresNewAuthorizationForRejectedCredentials() {
+        XCTAssertFalse(SpotifyAuthorizationFailure.requiresNewAuthorization(
+            domain: "SPTSessionManagerErrorDomain",
+            code: -1,
+            description: "access token expired during a network timeout"
+        ))
+        XCTAssertFalse(SpotifyAuthorizationFailure.requiresNewAuthorization(
+            domain: "NSURLErrorDomain",
+            code: -1009,
+            description: "The Internet connection appears to be offline"
+        ))
+        XCTAssertTrue(SpotifyAuthorizationFailure.requiresNewAuthorization(
+            domain: "SPTSessionManagerErrorDomain",
+            code: 401,
+            description: "invalid_grant"
+        ))
+    }
+
+    func testSpotifySettingsOnlyOfferReauthorizationWhenCredentialsAreMissing() {
+        XCTAssertFalse(MusicSettingsPresentation.showsReauthorize(
+            provider: .spotify, state: nil
+        ))
+        XCTAssertFalse(MusicSettingsPresentation.showsReauthorize(
+            provider: .spotify, state: .disconnected
+        ))
+        XCTAssertFalse(MusicSettingsPresentation.showsReauthorize(
+            provider: .spotify, state: .stale
+        ))
+        XCTAssertTrue(MusicSettingsPresentation.showsReauthorize(
+            provider: .spotify, state: .unauthorized
+        ))
+        XCTAssertFalse(MusicSettingsPresentation.showsReauthorize(
+            provider: .appleMusic, state: .unauthorized
+        ))
+    }
+
+    func testUnavailableMusicWithoutAPlayingItemDoesNotOccupyMapSpace() {
+        XCTAssertFalse(MusicNowPlaying(provider: .spotify, state: .unavailable).showsCompactPlayer)
+        XCTAssertFalse(MusicNowPlaying(provider: .spotify, state: .disconnected).showsCompactPlayer)
+        XCTAssertTrue(MusicNowPlaying(
+            provider: .spotify,
+            state: .disconnected,
+            item: MobileMusicItemDto(identifier: "track", title: "Song", artist: "Artist")
+        ).showsCompactPlayer)
+        XCTAssertTrue(MusicNowPlaying(provider: .spotify, state: .playing).showsCompactPlayer)
+    }
+
     @MainActor
     private func makeCoordinator(
         rideMapState: MobileRideMapState?
@@ -817,6 +864,37 @@ final class MusicIntegrationTests: XCTestCase {
         }
 
         XCTAssertNotEqual(event(sequence: 0).timelineID, event(sequence: 1).timelineID)
+    }
+
+    func testDisconnectTimelineRowDoesNotRepeatTheLastTrackOrShowUnknownTrack() {
+        let event = MobileMusicRideEventDto(
+            sequence: 1,
+            provider: .spotify,
+            itemIdentifier: "track-1",
+            title: "A long podcast title",
+            artist: "Artist",
+            kind: .providerDisconnected,
+            observedAtMs: 1_000,
+            monotonicAtMs: 1_000,
+            wallClockAtMs: 1_700_000_000_000,
+            clockUncertaintyMs: 5
+        )
+        XCTAssertEqual(event.timelineItemTitle, "Provider disconnected")
+        XCTAssertEqual(event.timelineSubtitle, "Spotify")
+
+        let withoutMetadata = MobileMusicRideEventDto(
+            sequence: 2,
+            provider: .spotify,
+            itemIdentifier: nil,
+            title: nil,
+            artist: nil,
+            kind: .providerDisconnected,
+            observedAtMs: 2_000,
+            monotonicAtMs: 2_000,
+            wallClockAtMs: 1_700_000_001_000,
+            clockUncertaintyMs: 5
+        )
+        XCTAssertEqual(withoutMetadata.timelineItemTitle, "Provider disconnected")
     }
 
     func testNowPlayingProvidesLocalizedArtworkAccessibilityLabel() {

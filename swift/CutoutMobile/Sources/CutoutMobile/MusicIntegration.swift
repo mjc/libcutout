@@ -850,6 +850,17 @@ public struct MusicNowPlaying: Equatable, Sendable {
     }
     public var artist: String { item?.artist ?? providerName }
 
+    public var showsCompactPlayer: Bool {
+        switch state {
+        case .playing, .paused:
+            true
+        case .disconnected, .stale:
+            item != nil
+        default:
+            false
+        }
+    }
+
     public var statusText: String? {
         switch state {
         case .playing, .paused:
@@ -1058,7 +1069,17 @@ public extension MobileMusicRideEventDto {
     }
 
     var timelineItemTitle: String {
-        title ?? itemIdentifier ?? pevLocalizedText("music.timeline.unknown_item")
+        if kind == .providerDisconnected {
+            return kind.timelineTitle
+        }
+        return title ?? itemIdentifier ?? pevLocalizedText("music.timeline.unknown_item")
+    }
+
+    var timelineSubtitle: String {
+        if kind == .providerDisconnected {
+            return provider.title
+        }
+        return "\(provider.title) · \(kind.timelineTitle)"
     }
 }
 
