@@ -73,21 +73,18 @@ func lightingColorSelection(
 }
 
 struct DevicePickerRouteView: View {
-    let model: CutoutAppModel
+    let device: DevicePresentationModel
     let pair: (DevicePickerRow) -> Void
     let navigate: (CutoutAppRoute) -> Void
-    @State private var isSetupPresented = false
+    let openSetup: () -> Void
 
     var body: some View {
         DevicePickerView(
-            scanState: model.device.scanState,
-            connectionPhase: model.device.phase,
+            scanState: device.scanState,
+            connectionPhase: device.phase,
             pair: pair,
-            openSetup: { isSetupPresented = true }
+            openSetup: openSetup
         )
-        .sheet(isPresented: $isSetupPresented) {
-            AppSetupView(model: model)
-        }
         .safeAreaInset(edge: .bottom, spacing: 12) {
             HStack {
                 Button {

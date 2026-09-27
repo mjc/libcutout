@@ -14,6 +14,7 @@ struct ContentView: View {
     @Binding private var navigationPath: [CutoutAppRoute]
     @AccessibilityFocusState private var focusedRoute: CutoutAppRoute?
     @State private var connectionAnnouncements = ConnectionAccessibilityAnnouncements()
+    @State private var isSetupPresented = false
     @Environment(\.openURL) private var openURL
 
     init(
@@ -38,10 +39,15 @@ struct ContentView: View {
                 PevColors.pageBackground
                     .ignoresSafeArea()
 
-                DevicePickerRouteView(model: model, pair: pair, navigate: navigate)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                    .accessibilityLabel(localizedAppText("picker.title"))
-                    .accessibilityFocused($focusedRoute, equals: .devicePicker)
+                DevicePickerRouteView(
+                    device: model.device,
+                    pair: pair,
+                    navigate: navigate,
+                    openSetup: { isSetupPresented = true }
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .accessibilityLabel(localizedAppText("picker.title"))
+                .accessibilityFocused($focusedRoute, equals: .devicePicker)
             }
             .navigationDestination(for: CutoutAppRoute.self) { destination in
                 destinationContent(for: destination)
@@ -50,6 +56,9 @@ struct ContentView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(PevColors.pageBackground.ignoresSafeArea())
+        .sheet(isPresented: $isSetupPresented) {
+            AppSetupView(model: model)
+        }
         .safeAreaInset(edge: .top) {
             if let presentation = model.liveActivityError?.failurePresentation {
                 liveActivityFailureBanner(presentation)

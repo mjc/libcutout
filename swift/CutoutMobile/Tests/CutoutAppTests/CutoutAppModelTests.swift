@@ -863,7 +863,8 @@ final class CutoutAppModelTests: XCTestCase {
     func testPickerAndCaptureRoutesDoNotObserveRideTelemetry() {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)
-        let picker = DevicePickerRouteView(model: model, pair: { _ in }, navigate: { _ in })
+        let picker = DevicePickerRouteView(
+            device: model.device, pair: { _ in }, navigate: { _ in }, openSetup: {})
         let capture = CaptureRouteView(capture: model.capture)
 
         XCTAssertFalse(
@@ -874,6 +875,20 @@ final class CutoutAppModelTests: XCTestCase {
             observesChange({ _ = capture.body }) {
                 driver.onDisplayStateChange?(RideDisplayState(notificationCount: 2))
             })
+    }
+
+    @MainActor
+    func testPickerRouteObservesScanCallbackThroughDeviceOwner() {
+        let driver = SessionDriverSpy(rows: [])
+        let model = CutoutAppModel(core: driver)
+        let picker = DevicePickerRouteView(
+            device: model.device, pair: { _ in }, navigate: { _ in }, openSetup: {})
+
+        XCTAssertTrue(
+            observesChange({ _ = picker.body }) {
+                driver.onScanStateChange?(DevicePickerScanState(status: .scanning, rows: []))
+            }
+        )
     }
 
     @MainActor
@@ -920,7 +935,10 @@ final class CutoutAppModelTests: XCTestCase {
             })
         XCTAssertFalse(
             observesProgressChange {
-                _ = DevicePickerRouteView(model: $0, pair: { _ in }, navigate: { _ in }).body
+                _ =
+                    DevicePickerRouteView(
+                        device: $0.device, pair: { _ in }, navigate: { _ in }, openSetup: {}
+                    ).body
             })
         XCTAssertFalse(
             observesProgressChange {
