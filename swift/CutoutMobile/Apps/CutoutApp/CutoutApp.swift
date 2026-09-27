@@ -70,9 +70,9 @@ struct CutoutApp: App {
                 CutoutNavigationCommands(
                     navigationTabs: navigationTabs,
                     currentRoute: currentRoute,
-                    connectionRoute: model.selectedConnectionRoute,
+                    connectionRoute: model.device.selectedConnectionRoute,
                     navigationPath: $navigationPath,
-                    canDisconnect: model.selectedConnectionRoute != nil,
+                    canDisconnect: model.device.selectedConnectionRoute != nil,
                     disconnect: model.disconnectTransport
                 )
             }

@@ -159,6 +159,21 @@ final class CutoutAppModelTests: XCTestCase {
         )
     }
 
+    @MainActor
+    func testPhaseCallbackInvalidatesNestedDevicePresentation() {
+        let driver = SessionDriverSpy(rows: [])
+        let model = CutoutAppModel(core: driver)
+        let device = model.device
+
+        XCTAssertTrue(
+            observesChange({ _ = device.phase }) {
+                driver.onPhaseChange?(.scanning)
+            }
+        )
+        XCTAssertIdentical(model.device, device)
+        XCTAssertEqual(device.phase, .scanning)
+    }
+
     #if !os(iOS)
         @MainActor
         func testMusicMonitoringStartsWhenHistoryIsDisabled() {

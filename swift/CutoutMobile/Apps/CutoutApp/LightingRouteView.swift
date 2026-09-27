@@ -868,6 +868,7 @@ private struct LightingPairingSheet: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
             .background(
-                (model.connectionState == .ready ? PevColors.green : PevColors.yellow).opacity(0.14), in: Capsule())
+                (model.connectionState == .ready ? PevColors.green : PevColors.yellow).opacity(0.14),
+                in: Capsule())
     }
 }

@@ -50,6 +50,7 @@
 		300000000000000000000032 /* Apps/CutoutApp/RideHistoryModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000032 /* Apps/CutoutApp/RideHistoryModel.swift */; };
 		300000000000000000000034 /* Apps/CutoutApp/LiveRideModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000034 /* Apps/CutoutApp/LiveRideModel.swift */; };
 		300000000000000000000035 /* Apps/CutoutApp/AppRideMapError.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000035 /* Apps/CutoutApp/AppRideMapError.swift */; };
+		300000000000000000000036 /* Apps/CutoutApp/DevicePresentationModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000036 /* Apps/CutoutApp/DevicePresentationModel.swift */; };
 		30000000000000000000001F /* Apps/CutoutApp/PevDashboardPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000001F /* Apps/CutoutApp/PevDashboardPresentation.swift */; };
 		300000000000000000000020 /* Apps/CutoutApp/AppLocalization.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000020 /* Apps/CutoutApp/AppLocalization.swift */; };
 		300000000000000000000021 /* Apps/CutoutApp/ConnectionPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000021 /* Apps/CutoutApp/ConnectionPresentation.swift */; };
@@ -170,6 +171,7 @@
 		400000000000000000000032 /* Apps/CutoutApp/RideHistoryModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/RideHistoryModel.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000034 /* Apps/CutoutApp/LiveRideModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/LiveRideModel.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000035 /* Apps/CutoutApp/AppRideMapError.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/AppRideMapError.swift; sourceTree = SOURCE_ROOT; };
+		400000000000000000000036 /* Apps/CutoutApp/DevicePresentationModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/DevicePresentationModel.swift; sourceTree = SOURCE_ROOT; };
 		40000000000000000000001F /* Apps/CutoutApp/PevDashboardPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/PevDashboardPresentation.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000020 /* Apps/CutoutApp/AppLocalization.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/AppLocalization.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000021 /* Apps/CutoutApp/ConnectionPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/ConnectionPresentation.swift; sourceTree = SOURCE_ROOT; };
@@ -286,6 +288,7 @@
 				400000000000000000000032 /* Apps/CutoutApp/RideHistoryModel.swift */,
 				400000000000000000000034 /* Apps/CutoutApp/LiveRideModel.swift */,
 				400000000000000000000035 /* Apps/CutoutApp/AppRideMapError.swift */,
+				400000000000000000000036 /* Apps/CutoutApp/DevicePresentationModel.swift */,
 				40000000000000000000001F /* Apps/CutoutApp/PevDashboardPresentation.swift */,
 				400000000000000000000020 /* Apps/CutoutApp/AppLocalization.swift */,
 				400000000000000000000021 /* Apps/CutoutApp/ConnectionPresentation.swift */,
@@ -568,6 +571,7 @@
 				300000000000000000000032 /* Apps/CutoutApp/RideHistoryModel.swift in Sources */,
 				300000000000000000000034 /* Apps/CutoutApp/LiveRideModel.swift in Sources */,
 				300000000000000000000035 /* Apps/CutoutApp/AppRideMapError.swift in Sources */,
+				300000000000000000000036 /* Apps/CutoutApp/DevicePresentationModel.swift in Sources */,
 				30000000000000000000001F /* Apps/CutoutApp/PevDashboardPresentation.swift in Sources */,
 				300000000000000000000020 /* Apps/CutoutApp/AppLocalization.swift in Sources */,
 				300000000000000000000021 /* Apps/CutoutApp/ConnectionPresentation.swift in Sources */,

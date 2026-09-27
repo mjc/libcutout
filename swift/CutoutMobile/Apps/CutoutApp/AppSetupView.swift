@@ -40,7 +40,7 @@ struct AppSetupView: View {
                     }
                     .accessibilityIdentifier("setup.music")
                 }
-                if model.hasSavedDevice {
+                if model.device.hasSavedDevice {
                     Section(localizedAppText("setup.device")) {
                         Button(localizedAppText("picker.saved_device.forget"), role: .destructive) {
                             model.forgetSavedDevice()

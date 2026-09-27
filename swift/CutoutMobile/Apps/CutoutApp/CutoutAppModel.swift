@@ -23,29 +23,26 @@ typealias RideHistoryDateProvider = @MainActor () -> Date
 @Observable
 final class CutoutAppModel {
 
-    private(set) var displayState = RideDisplayState()
-    private(set) var phase = SessionConnectionPhase.starting
-    private(set) var devicePickerScanState: DevicePickerScanState?
-    private(set) var connectionState = ConnectionState.picker
-    private(set) var faultHistoryReadback: FaultHistoryReadback?
-    private(set) var bmsSnapshot: BmsSnapshot?
-    private(set) var phoneLocationReadback = PhoneLocationReadback(
-        snapshot: MobilePhoneLocationSnapshotDto(latestSample: nil, gpsSpeed: nil)
-    )
+    let device = DevicePresentationModel()
+    var displayState: RideDisplayState { device.displayState }
+    var phase: SessionConnectionPhase { device.phase }
+    var devicePickerScanState: DevicePickerScanState? { device.scanState }
+    var connectionState: ConnectionState { device.connectionState }
+    var faultHistoryReadback: FaultHistoryReadback? { device.faultHistoryReadback }
+    var bmsSnapshot: BmsSnapshot? { device.bmsSnapshot }
+    var phoneLocationReadback: PhoneLocationReadback { device.phoneLocationReadback }
     let liveRide: LiveRideModel
     let music: MusicFeatureModel
     private(set) var liveActivityError: LiveActivityRideLifecycleError?
     let capture: CaptureFeatureModel
     var isRecordOnlyCapture: Bool { capture.isManualCapture }
-    private(set) var hasSavedDevice = false
-    private(set) var settings: DeviceSettings?
+    var hasSavedDevice: Bool { device.hasSavedDevice }
+    var settings: DeviceSettings? { device.settings }
     private(set) var phoneAlarmSettings: MobilePhoneAlarmPreferencesDto?
     private(set) var phoneAlarmAuthorization = PhoneRideAlarmAuthorization.unavailable
     private(set) var phoneAlarmDeliveryError: String?
 
-    var selectedRideTitle: String? {
-        connectionState.selection?.title
-    }
+    var selectedRideTitle: String? { device.selectedRideTitle }
 
     /// Stable identity/name pair used to relabel persisted ride-history vehicles.
     /// The persisted selection is the fallback when the connection state has not rebuilt yet.
@@ -269,39 +266,18 @@ final class CutoutAppModel {
         return candidate
     }
 
-    var selectedRideIdentifier: String? {
-        connectionState.selection?.platformIdentifier
-    }
-    var selectedConnectionRoute: DevicePickerConnectionRoute? {
-        connectionState.selection?.route
-    }
-
-    var speed: SpeedReadout {
-        displayState.speed
-    }
+    var selectedRideIdentifier: String? { device.selectedRideIdentifier }
+    var selectedConnectionRoute: DevicePickerConnectionRoute? { device.selectedConnectionRoute }
+    var speed: SpeedReadout { device.speed }
 
     var currentMonotonicTime: MonotonicMilliseconds {
         core.now()
     }
 
-    var rideState: EucRideScreenState {
-        EucRideScreenState(phase: phase, displayState: displayState)
-    }
-
-    var eucRidePresentationState: EucRideScreenState? {
-        guard selectedRideTitle != nil || phase != .starting || displayState.notificationCount != 0 else {
-            return nil
-        }
-        return rideState
-    }
-
-    var vescRideSnapshot: VescRideSnapshot? {
-        VescRideSnapshot(displayState: displayState, title: selectedRideTitle)
-    }
-
-    var connectionStatusText: String {
-        connectionState.statusText ?? phase.displayText
-    }
+    var rideState: EucRideScreenState { device.rideState }
+    var eucRidePresentationState: EucRideScreenState? { device.eucRidePresentationState }
+    var vescRideSnapshot: VescRideSnapshot? { device.vescRideSnapshot }
+    var connectionStatusText: String { device.connectionStatusText }
 
     private let core: any CutoutSessionDriving
     let rideHistory: RideHistoryModel
@@ -470,7 +446,7 @@ final class CutoutAppModel {
             self?.applyRideHistoryPageResult()
         }
         self.music.timelineEvents = music.coordinator.recordedEvents
-        hasSavedDevice = selectedDeviceStore.platformIdentifier != nil
+        device.hasSavedDevice = selectedDeviceStore.platformIdentifier != nil
         if let identity = selectedDeviceStore.platformIdentifier,
             let name = selectedDeviceStore.displayName(for: identity)
         {
@@ -480,7 +456,7 @@ final class CutoutAppModel {
         CutoutSessionCallbackRegistrar(core: core).install(
             .init(
                 displayState: { [weak self] displayState in
-                    self?.displayState = displayState
+                    self?.device.displayState = displayState
                     self?.syncLiveActivity()
                 },
                 phase: { [weak self] phase in
@@ -502,16 +478,17 @@ final class CutoutAppModel {
                         self.core.rideSessionStateHandle.connectionAttemptSnapshot().revision
                             == snapshot.connection.revision
                     else { return }
-                    self.settings = snapshot
+                    self.device.settings = snapshot
                 },
                 faultHistory: { [weak self] faultHistoryReadback in
-                    self?.faultHistoryReadback = faultHistoryReadback
+                    self?.device.faultHistoryReadback = faultHistoryReadback
                 },
                 bmsSnapshot: { [weak self] bmsSnapshot in
-                    self?.bmsSnapshot = bmsSnapshot
+                    self?.device.bmsSnapshot = bmsSnapshot
                 },
                 phoneLocation: { [weak self] snapshot, receivedAt in
-                    self?.phoneLocationReadback = PhoneLocationReadback(snapshot: snapshot, receivedAt: receivedAt)
+                    self?.device.phoneLocationReadback = PhoneLocationReadback(
+                        snapshot: snapshot, receivedAt: receivedAt)
                 },
                 rideMapDecision: { [weak self] snapshot, decision in
                     self?.liveRide.applyDecision(snapshot: snapshot, decision: decision)
@@ -709,8 +686,8 @@ final class CutoutAppModel {
         }
         let rows = devicePickerScanState?.rows ?? []
         guard let selectedRow = rows.first(where: { $0.id == platformIdentifier }) else {
-            phase = .scanning
-            devicePickerScanState = .failed(
+            device.phase = .scanning
+            device.scanState = .failed(
                 localizedAppText("picker.error.device_no_longer_available"),
                 rows: rows
             )
@@ -725,9 +702,9 @@ final class CutoutAppModel {
         )
         clearSettings()
         liveActivityError = nil
-        connectionState = .connecting(selection, phase: .discoveringServices)
+        device.connectionState = .connecting(selection, phase: .discoveringServices)
         permitsStoredDeviceAutoPairing = true
-        phase = .discoveringServices
+        device.phase = .discoveringServices
         let didPair = capture.requestStart(device: CaptureDeviceIdentity(row: selectedRow), description: nil) {
             core.pair(platformIdentifier: platformIdentifier)
         }
@@ -754,15 +731,15 @@ final class CutoutAppModel {
             if let displayName, selectionChanged || displayName != persistedDisplayName {
                 rideMapVehicleNameCache[platformIdentifier] = displayName
             }
-            hasSavedDevice = true
+            device.hasSavedDevice = true
             liveActivityIdentity = liveActivityIdentity(for: selectedRow)
             liveActivityGlyph = liveActivityGlyph(for: selectedRow)
             syncLiveActivity()
         } else {
-            connectionState = .picker
+            device.connectionState = .picker
             permitsStoredDeviceAutoPairing = false
-            phase = .scanning
-            devicePickerScanState = .failed(
+            device.phase = .scanning
+            device.scanState = .failed(
                 localizedAppText("picker.error.device_no_longer_available"),
                 rows: rows
             )
@@ -779,9 +756,11 @@ final class CutoutAppModel {
             .replacingOccurrences(of: "\r", with: " ")
             .replacingOccurrences(of: "=", with: " ")
         let annotations = annotationKind.isEmpty ? [] : ["capture_description=\(annotationKind)"]
-        let device = devicePickerScanState?.rows.first { $0.id == platformIdentifier }.map(CaptureDeviceIdentity.init)
-        let didStart = capture.requestStart(device: device, description: annotationKind.isEmpty ? nil : annotationKind)
-        {
+        let captureIdentity = devicePickerScanState?.rows.first { $0.id == platformIdentifier }.map(
+            CaptureDeviceIdentity.init)
+        let didStart = capture.requestStart(
+            device: captureIdentity, description: annotationKind.isEmpty ? nil : annotationKind
+        ) {
             core.recordOnly(
                 platformIdentifier: platformIdentifier,
                 note: "user-initiated Bluetooth capture",
@@ -791,7 +770,7 @@ final class CutoutAppModel {
         guard didStart else { return false }
         capture.apply(.lifecycle(core.rideSessionStateHandle.captureLifecycleSnapshot()))
 
-        connectionState = .picker
+        device.connectionState = .picker
         permitsStoredDeviceAutoPairing = false
         liveActivityIdentity = nil
         liveActivityGlyph = .electricUnicycle
@@ -848,8 +827,8 @@ final class CutoutAppModel {
         phoneAlarmSettings = nil
         endLiveActivity(reason: .disconnected)
         capture.clearLabels()
-        connectionState = .picker
-        phase = .scanning
+        device.connectionState = .picker
+        device.phase = .scanning
         liveActivityIdentity = nil
         liveActivityGlyph = .electricUnicycle
         permitsStoredDeviceAutoPairing = false
@@ -858,13 +837,13 @@ final class CutoutAppModel {
     }
 
     private func clearSettings() {
-        settings = nil
+        device.settings = nil
     }
 
     func forgetSavedDevice() {
         disconnectTransport()
         try? selectedDeviceStore.clear()
-        hasSavedDevice = false
+        device.hasSavedDevice = false
     }
 
     func endLiveActivity(reason: LiveActivityRideLifecycleEndReason = .sessionEnded) {
@@ -930,7 +909,7 @@ final class CutoutAppModel {
                 title: connectionState.selection?.title ?? selection.title,
                 route: selection.route
             )
-            connectionState = connectionState.replacingSelection(with: resolvedSelection)
+            device.connectionState = connectionState.replacingSelection(with: resolvedSelection)
         }
         if selection.route == .vescOnewheel {
             liveActivityIdentity = vescRideIdentity(using: selection.title)
@@ -940,7 +919,7 @@ final class CutoutAppModel {
     }
 
     private func handleScanStateChange(_ scanState: DevicePickerScanState) {
-        devicePickerScanState = scanState
+        device.scanState = scanState
         if let row = scanState.rows.first(where: { $0.id == capture.device?.platformIdentifier }) {
             capture.updateDevice(row)
         }
@@ -992,14 +971,14 @@ final class CutoutAppModel {
                 break
             }
         }
-        self.phase = phase
+        self.device.phase = phase
         if phase != .live {
             clearSettings()
         }
         switch phase {
         case .connecting, .discoveringServices, .subscribing:
             if let selection = connectionState.selection {
-                connectionState = .connecting(selection, phase: phase)
+                device.connectionState = .connecting(selection, phase: phase)
             }
         case .live:
             if core.isRecordOnlyConnection {
@@ -1007,7 +986,7 @@ final class CutoutAppModel {
                 // attempt must never silently turn a known wheel into the capture screen when
                 // protocol detection times out (for example while the wheel is powered off).
                 if let selection = connectionState.selection {
-                    connectionState = .failed(
+                    device.connectionState = .failed(
                         selection,
                         .identificationFailed(.timedOut)
                     )
@@ -1016,28 +995,28 @@ final class CutoutAppModel {
                     syncLiveActivity()
                     break
                 }
-                connectionState = .picker
+                device.connectionState = .picker
                 liveActivityIdentity = nil
                 syncLiveActivity()
                 break
             }
             if let selection = selection(from: core.protocolIdentityCandidate) {
-                connectionState = .connected(
+                device.connectionState = .connected(
                     ConnectionSelection(
                         platformIdentifier: selection.platformIdentifier,
                         title: connectionState.selection?.title ?? selection.title,
                         route: selection.route
                     ))
             } else if let selection = connectionState.selection {
-                connectionState = .connected(selection)
+                device.connectionState = .connected(selection)
             }
         case let .failed(failure):
             guard let selection = connectionState.selection else { return }
-            connectionState = .failed(selection, failure)
+            device.connectionState = .failed(selection, failure)
             let rows = devicePickerScanState?.rows ?? []
-            devicePickerScanState = .failed(phase.displayText, rows: rows)
+            device.scanState = .failed(phase.displayText, rows: rows)
         case .bluetoothPermissionDenied, .bluetoothUnavailable:
-            connectionState = .picker
+            device.connectionState = .picker
         case .starting, .scanning:
             break
         }
@@ -1048,9 +1027,9 @@ final class CutoutAppModel {
             selection.platformIdentifier == retry.platformIdentifier
         else { return }
         if case .failed = phase {
-            phase = .discoveringServices
+            device.phase = .discoveringServices
         }
-        connectionState = .retrying(selection, retry: retry)
+        device.connectionState = .retrying(selection, retry: retry)
         syncLiveActivity()
     }
 
@@ -1066,7 +1045,7 @@ final class CutoutAppModel {
             return
         }
         if let platformIdentifier {
-            connectionState = .identified(
+            device.connectionState = .identified(
                 ConnectionSelection(
                     platformIdentifier: platformIdentifier,
                     title: selectedDeviceStore.displayName(for: platformIdentifier)

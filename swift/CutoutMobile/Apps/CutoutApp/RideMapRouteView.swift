@@ -119,7 +119,7 @@ struct RideMapRouteView: View {
             segments: liveRide.segments,
             snapshot: liveRide.snapshot,
             availability: liveRide.availability,
-            speed: model.speed,
+            speed: model.device.speed,
             vehicleName: model.rideMapVehicleName,
             mapError: liveRide.error,
             lastDecision: liveRide.lastDecision,

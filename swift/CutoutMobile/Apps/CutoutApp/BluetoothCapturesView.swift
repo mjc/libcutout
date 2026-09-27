@@ -71,7 +71,7 @@ struct BluetoothCapturesView: View {
         .accessibilityIdentifier("captures.home")
         .sheet(isPresented: $isNewCapturePresented, onDismiss: openStartedCapture) {
             CaptureDeviceSelectionView(
-                sections: (model.devicePickerScanState ?? DevicePickerScanState(status: .idle, rows: [])).sections,
+                sections: (model.device.scanState ?? DevicePickerScanState(status: .idle, rows: [])).sections,
                 start: start
             )
         }

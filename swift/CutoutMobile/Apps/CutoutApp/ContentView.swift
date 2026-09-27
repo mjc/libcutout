@@ -63,12 +63,12 @@ struct ContentView: View {
                 AccessibilityNotification.Announcement(announcement).post()
             }
         }
-        .onChange(of: model.phase) { _, phase in
+        .onChange(of: model.device.phase) { _, phase in
             if let announcement = connectionAnnouncements.next(for: phase) {
                 AccessibilityNotification.Announcement(announcement).post()
             }
         }
-        .onChange(of: model.connectionState) { _, state in
+        .onChange(of: model.device.connectionState) { _, state in
             if let announcement = connectionAnnouncements.next(for: state) {
                 AccessibilityNotification.Announcement(announcement).post()
             }
@@ -83,15 +83,15 @@ struct ContentView: View {
                 break
             }
         }
-        .onChange(of: model.devicePickerScanState?.status) { _, _ in
-            guard let scanState = model.devicePickerScanState,
+        .onChange(of: model.device.scanState?.status) { _, _ in
+            guard let scanState = model.device.scanState,
                 let announcement = connectionAnnouncements.next(for: scanState)
             else {
                 return
             }
             AccessibilityNotification.Announcement(announcement).post()
         }
-        .onChange(of: model.bmsSnapshot?.accessibilityAlertLevel) { _, level in
+        .onChange(of: model.device.bmsSnapshot?.accessibilityAlertLevel) { _, level in
             if let announcement = level?.accessibilityAnnouncement {
                 AccessibilityNotification.Announcement(announcement).post()
             }
@@ -149,7 +149,8 @@ struct ContentView: View {
     }
 
     private func selectTarget(_ target: PevNavigationTarget) {
-        navigate(to: route.destination(forNavigationTarget: target, connectionRoute: model.selectedConnectionRoute))
+        navigate(
+            to: route.destination(forNavigationTarget: target, connectionRoute: model.device.selectedConnectionRoute))
     }
 
     private func navigate(to route: CutoutAppRoute) {
@@ -171,7 +172,7 @@ struct ContentView: View {
 
     @ViewBuilder
     private func destinationContent(for destination: CutoutAppRoute) -> some View {
-        if case .lighting = destination, model.selectedConnectionRoute == nil {
+        if case .lighting = destination, model.device.selectedConnectionRoute == nil {
             LightingRouteView(model: lighting, rideModel: model)
                 .toolbar {
                     ToolbarItem(placement: .navigation) {
@@ -189,12 +190,15 @@ struct ContentView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .accessibilityFocused($focusedRoute, equals: destination)
-        } else if isRideMapDetail(destination) || (destination == .rideMap && model.selectedConnectionRoute == nil) {
+        } else if isRideMapDetail(destination)
+            || (destination == .rideMap && model.device.selectedConnectionRoute == nil)
+        {
             mapDestinationContent(for: destination)
         } else {
             let tabs = TabView(selection: tabSelection) {
                 ForEach(availableTabs) { tab in
-                    if let tabRoute = destination.destination(for: tab, connectionRoute: model.selectedConnectionRoute)
+                    if let tabRoute = destination.destination(
+                        for: tab, connectionRoute: model.device.selectedConnectionRoute)
                     {
                         Tab(value: tab.id) {
                             destinationSurface(
@@ -246,7 +250,7 @@ struct ContentView: View {
             for: destination,
             usesConnectedShell: Self.usesConnectedMapShell(
                 for: destination,
-                isConnected: model.selectedConnectionRoute != nil
+                isConnected: model.device.selectedConnectionRoute != nil
             )
         )
     }
@@ -305,8 +309,8 @@ struct ContentView: View {
                     rideMapPresentation.mode = .history
                     navigate(to: .rideMapDetail(rideID: rideID))
                 },
-                showsNavigationHeader: model.selectedConnectionRoute == nil,
-                showBackButton: model.selectedConnectionRoute == nil,
+                showsNavigationHeader: model.device.selectedConnectionRoute == nil,
+                showBackButton: model.device.selectedConnectionRoute == nil,
                 back: { navigate(to: .devicePicker) })
         case let .rideMapDetail(rideID):
             RideMapRouteView(
@@ -343,7 +347,7 @@ struct ContentView: View {
     }
 
     private var availableTabs: [PevScreenTab] {
-        route.availableNavigationTabs(for: model.selectedConnectionRoute)
+        route.availableNavigationTabs(for: model.device.selectedConnectionRoute)
     }
 
     private var tabSelection: Binding<PevScreenTabID> {
@@ -363,7 +367,7 @@ struct ContentView: View {
 
     private var tabAccent: Color {
         #if os(iOS)
-            switch Self.accentKind(selectedConnectionRoute: model.selectedConnectionRoute, route: route) {
+            switch Self.accentKind(selectedConnectionRoute: model.device.selectedConnectionRoute, route: route) {
             case .purple:
                 Color(uiColor: TabAccentColors.purple)
             case .yellow:

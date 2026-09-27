@@ -80,8 +80,8 @@ struct DevicePickerRouteView: View {
 
     var body: some View {
         DevicePickerView(
-            scanState: model.devicePickerScanState,
-            connectionPhase: model.phase,
+            scanState: model.device.scanState,
+            connectionPhase: model.device.phase,
             pair: pair,
             openSetup: { isSetupPresented = true }
         )
@@ -124,12 +124,12 @@ struct EucRideRouteView: View {
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { _ in
             EucRideScreenView(
-                rideState: model.eucRidePresentationState,
-                rideTitle: model.selectedRideTitle,
+                rideState: model.device.eucRidePresentationState,
+                rideTitle: model.device.selectedRideTitle,
                 now: model.currentMonotonicTime,
                 captureStatusText: model.capture.status?.displayText,
-                connectionStatusText: model.connectionStatusText,
-                phoneLocationReadback: model.phoneLocationReadback
+                connectionStatusText: model.device.connectionStatusText,
+                phoneLocationReadback: model.device.phoneLocationReadback
             )
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("dashboard.screen.eucRide")
@@ -186,11 +186,11 @@ struct EucPackRouteView: View {
 
     var body: some View {
         if let screen = bmsScreen {
-            let rideState = screen.bmsContentOrUnavailable.kind == .noData ? model.rideState : nil
+            let rideState = screen.bmsContentOrUnavailable.kind == .noData ? model.device.rideState : nil
             BmsScreenView(
                 screen: screen,
                 rideState: rideState,
-                bmsSnapshot: model.bmsSnapshot,
+                bmsSnapshot: model.device.bmsSnapshot,
                 selectedGroupIndex: selectedGroupIndex,
                 showGroupDetail: { groupIndex in
                     navigate(.eucPack(.bmsCellDetail(groupIndex)))
@@ -201,14 +201,14 @@ struct EucPackRouteView: View {
             )
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("dashboard.screen.\(screen.id.rawValue)")
-            .onChange(of: model.bmsSnapshot?.groups.map(\.index), initial: true) { _, groupIndices in
+            .onChange(of: model.device.bmsSnapshot?.groups.map(\.index), initial: true) { _, groupIndices in
                 guard !packScreen.hasAvailableSelectedGroup(in: groupIndices) else { return }
                 navigate(.eucPack(.root))
             }
-            .onChange(of: model.bmsSnapshot?.availability, initial: true) { _, availability in
+            .onChange(of: model.device.bmsSnapshot?.availability, initial: true) { _, availability in
                 guard packScreen == .root else { return }
                 guard availability == .available, rootScreenID == nil,
-                    let snapshot = model.bmsSnapshot
+                    let snapshot = model.device.bmsSnapshot
                 else {
                     if availability == nil || availability == .unavailable || availability == .unsupported {
                         rootScreenID = nil
@@ -223,14 +223,14 @@ struct EucPackRouteView: View {
     private var bmsScreen: PevScreen? {
         if let screenID = packScreen.screenID {
             catalog.screen(id: screenID).map {
-                catalog.presentedScreen(for: $0, liveBmsSnapshot: model.bmsSnapshot)
+                catalog.presentedScreen(for: $0, liveBmsSnapshot: model.device.bmsSnapshot)
             }
         } else if let rootScreenID,
             let rootScreen = catalog.screen(id: rootScreenID)
         {
-            catalog.presentedScreen(for: rootScreen, liveBmsSnapshot: model.bmsSnapshot)
+            catalog.presentedScreen(for: rootScreen, liveBmsSnapshot: model.device.bmsSnapshot)
         } else {
-            catalog.presentedBmsScreen(liveBmsSnapshot: model.bmsSnapshot)
+            catalog.presentedBmsScreen(liveBmsSnapshot: model.device.bmsSnapshot)
         }
     }
 }
@@ -240,7 +240,7 @@ struct EucTuneRouteView: View {
 
     var body: some View {
         Group {
-            if let snapshot = model.settings {
+            if let snapshot = model.device.settings {
                 DeviceControlsForm(
                     snapshot: snapshot,
                     submitSetting: model.submitDeviceSetting,
@@ -261,11 +261,11 @@ struct VescRideRouteView: View {
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { _ in
             VescRideScreenView(
-                liveSnapshot: model.vescRideSnapshot,
-                phase: model.phase,
+                liveSnapshot: model.device.vescRideSnapshot,
+                phase: model.device.phase,
                 now: model.currentMonotonicTime,
                 captureStatusText: model.capture.status?.displayText,
-                connectionStatusText: model.connectionStatusText
+                connectionStatusText: model.device.connectionStatusText
             )
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("dashboard.screen.vescRide")
@@ -279,11 +279,11 @@ struct VescDebugRouteView: View {
 
     var body: some View {
         VescDebugScreenView(
-            snapshot: model.vescRideSnapshot,
-            phase: model.phase,
-            notificationCount: model.displayState.notificationCount,
+            snapshot: model.device.vescRideSnapshot,
+            phase: model.device.phase,
+            notificationCount: model.device.displayState.notificationCount,
             captureStatusText: model.capture.status?.displayText,
-            connectionStatusText: model.connectionStatusText
+            connectionStatusText: model.device.connectionStatusText
         )
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("dashboard.screen.vescDebug")
