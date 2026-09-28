@@ -1003,21 +1003,21 @@ public final class SpotifyProviderAdapter: NSObject {
     @MainActor
     public func perform(_ command: MobileMusicCommandDto) async -> MusicCommandOutcome {
         if case .openProvider = command {
-            if appRemote?.isConnected != true,
-               let session,
-               !session.isExpired,
-               accessToken != nil,
-               let onChange
-            {
-                return beginAppRemoteHandoff(onChange: onChange)
-            }
             guard await UIApplication.shared.open(Self.providerURL) else { return .failed }
             return .accepted
+        }
+        if command == .play,
+           appRemote?.isConnected != true,
+           let session,
+           !session.isExpired,
+           let onChange
+        {
+            return beginAppRemoteHandoff(onChange: onChange)
         }
         if selectedPlaybackTransport == .webApi {
             return await performWebCommand(command)
         }
-        guard lifecycleState == .playing || lifecycleState == .paused,
+        guard lifecycleState == .playing || lifecycleState == .paused || command == .play,
               let playerAPI = appRemote?.playerAPI,
               let bridge = appRemoteBridge,
               let connectionID = establishedConnectionID,
@@ -1049,6 +1049,7 @@ public final class SpotifyProviderAdapter: NSObject {
             return MusicProviderObservation(snapshot: webPlayback.snapshot(state: lifecycleState, observedAtMs: observedAtMs), artwork: artwork)
         }
         let controlsAvailable = lifecycleState == .playing || lifecycleState == .paused
+        let canReconnect = session.map { !$0.isExpired } ?? false
         let snapshot = MobileMusicSnapshotDto(
             provider: .spotify,
             sessionId: selectedPlaybackTransport == .webApi ? "spotify-web-api" : "spotify-app-remote",
@@ -1065,7 +1066,9 @@ public final class SpotifyProviderAdapter: NSObject {
             observedAtMs: observedAtMs,
             capabilities: MobileMusicCapabilitiesDto(
                 previous: controlsAvailable && playerState?.playbackRestrictions.canSkipPrevious == true,
-                play: lifecycleState == .paused,
+                play: lifecycleState == .paused || (canReconnect && (
+                    lifecycleState == .stopped || lifecycleState == .disconnected || lifecycleState == .stale
+                )),
                 pause: lifecycleState == .playing,
                 next: controlsAvailable && playerState?.playbackRestrictions.canSkipNext == true,
                 openProvider: true

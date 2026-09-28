@@ -921,7 +921,7 @@ public struct MusicNowPlaying: Equatable, Sendable {
             artwork: artwork,
             capabilities: .init(
                 previous: false,
-                play: false,
+                play: provider == .spotify && capabilities.openProvider,
                 pause: false,
                 next: false,
                 openProvider: capabilities.openProvider
@@ -934,6 +934,8 @@ public struct MusicNowPlaying: Equatable, Sendable {
         case .playing where capabilities.pause: .pause
         case .paused where capabilities.play: .play
         case .stopped where capabilities.play: .play
+        case .disconnected where capabilities.play: .play
+        case .stale where capabilities.play: .play
         default: nil
         }
     }
@@ -1123,7 +1125,7 @@ public struct MusicProviderObservation: Equatable, Sendable {
                 observedAtMs: nextObservedAtMs,
                 capabilities: .init(
                     previous: false,
-                    play: false,
+                    play: snapshot.provider == .spotify && snapshot.capabilities.openProvider,
                     pause: false,
                     next: false,
                     openProvider: snapshot.capabilities.openProvider
