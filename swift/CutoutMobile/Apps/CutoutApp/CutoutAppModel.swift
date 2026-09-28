@@ -716,6 +716,17 @@ final class CutoutAppModel {
         }
 #endif
         guard let nowPlaying = musicNowPlaying else {
+#if canImport(SpotifyiOS) && os(iOS)
+            if command == .play, selectedMusicProvider == .spotify {
+                return finishMusicCommand(
+                    await spotifyMusicProvider.perform(.play, onChange: { [weak self] in
+                        self?.refreshMusicSnapshot()
+                    }),
+                    provider: commandProvider,
+                    requestID: feedbackRequestID
+                )
+            }
+#endif
             return finishMusicCommand(
                 .unavailable,
                 provider: commandProvider,

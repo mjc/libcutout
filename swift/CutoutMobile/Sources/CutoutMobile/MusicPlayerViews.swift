@@ -452,6 +452,7 @@ private struct MusicHistoryPolicyLabel: View {
 /// Shared Ride/Map composition for the compact player.
 public struct MusicCompactPlayerInset: ViewModifier {
     public let nowPlaying: MusicNowPlaying?
+    public let selectedProvider: MobileMusicProviderDto
     public let isHidden: Bool
     public let onCommand: (MobileMusicCommandDto) -> Void
     public let onOpenDetails: () -> Void
@@ -479,6 +480,31 @@ public struct MusicCompactPlayerInset: ViewModifier {
                 }
                 .buttonStyle(.bordered)
                 .accessibilityIdentifier("music.restore")
+            } else if selectedProvider == .spotify {
+                HStack(spacing: 12) {
+                    Image(systemName: "music.note")
+                        .foregroundStyle(PevDashboardColors.yellow)
+                    Text("Spotify")
+                        .font(.subheadline.weight(.semibold))
+                    Spacer(minLength: 0)
+                    MusicPlayerIconButton(
+                        systemImage: "play.fill",
+                        label: pevLocalizedText("music.play"),
+                        action: { onCommand(.play) },
+                        accessibilityIdentifier: "music.play",
+                        isProminent: true
+                    )
+                    MusicPlayerIconButton(
+                        systemImage: "gearshape",
+                        label: pevLocalizedText("music.settings.open"),
+                        action: onOpenSettings,
+                        accessibilityIdentifier: "music.open-settings"
+                    )
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 20))
+                .padding(.horizontal, 12)
             } else {
                 Button(action: onOpenSettings) {
                     Label(pevLocalizedText("music.settings.open"), systemImage: "gearshape")
@@ -494,6 +520,7 @@ public struct MusicCompactPlayerInset: ViewModifier {
 public extension View {
     func musicCompactPlayer(
         nowPlaying: MusicNowPlaying?,
+        selectedProvider: MobileMusicProviderDto,
         isHidden: Bool,
         onCommand: @escaping (MobileMusicCommandDto) -> Void,
         onOpenDetails: @escaping () -> Void,
@@ -503,6 +530,7 @@ public extension View {
     ) -> some View {
         modifier(MusicCompactPlayerInset(
             nowPlaying: nowPlaying,
+            selectedProvider: selectedProvider,
             isHidden: isHidden,
             onCommand: onCommand,
             onOpenDetails: onOpenDetails,

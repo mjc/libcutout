@@ -15,6 +15,7 @@ struct AppMusicCompactPlayerModifier: ViewModifier {
     func body(content: Content) -> some View {
         content.musicCompactPlayer(
             nowPlaying: model.musicNowPlaying,
+            selectedProvider: model.selectedMusicProvider,
             isHidden: model.isMusicPlayerHidden,
             onCommand: { command in
                 Task { @MainActor in
