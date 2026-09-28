@@ -377,11 +377,6 @@ public final class SpotifyProviderAdapter: NSObject {
             connect(with: token)
             return true
         }
-        // The Rust-issued explicit Connect intent may upgrade an older grant.
-        // Passive launch always reuses the existing grant without opening Spotify.
-        if allowAuthorization, usesWebPlayback, let session, !session.isExpired {
-            return beginAppRemoteHandoff(onChange: onChange, restartMonitoring: false) == .accepted
-        }
         if allowAuthorization, !usesWebPlayback {
             return beginAuthorization(configuration: configuration)
         }
