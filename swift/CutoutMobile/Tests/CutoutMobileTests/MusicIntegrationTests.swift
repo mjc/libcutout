@@ -148,6 +148,20 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertTrue(MusicNowPlaying(provider: .spotify, state: .playing).showsCompactPlayer)
     }
 
+    func testRecoverableSpotifyUnavailableStateKeepsPlayInsteadOfSetup() {
+        let nowPlaying = MusicNowPlaying(
+            provider: .spotify,
+            state: .unavailable,
+            item: .init(identifier: "spotify:track:example", title: "Last song", artist: "Artist"),
+            capabilities: .init(previous: false, play: true, pause: false, next: false, openProvider: true)
+        )
+
+        XCTAssertTrue(nowPlaying.showsCompactPlayer)
+        XCTAssertFalse(nowPlaying.requiresSetup)
+        XCTAssertEqual(nowPlaying.playPauseCommand, .play)
+        XCTAssertTrue(nowPlaying.isCommandAvailable(.play))
+    }
+
     @MainActor
     private func makeCoordinator(
         rideMapState: MobileRideMapState?

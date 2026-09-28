@@ -857,6 +857,8 @@ public struct MusicNowPlaying: Equatable, Sendable {
         switch state {
         case .playing, .paused, .stopped, .buffering, .interrupted, .disconnected, .stale:
             true
+        case .unavailable where provider == .spotify && capabilities.play:
+            true
         case .unauthorized, .unavailable:
             false
         }
@@ -888,8 +890,10 @@ public struct MusicNowPlaying: Equatable, Sendable {
     /// Playback stopping or a temporary connection gap does not require setup.
     public var requiresSetup: Bool {
         switch state {
-        case .unauthorized, .unavailable:
+        case .unauthorized:
             true
+        case .unavailable:
+            !(provider == .spotify && capabilities.play)
         default:
             false
         }
@@ -939,6 +943,7 @@ public struct MusicNowPlaying: Equatable, Sendable {
         case .stopped where capabilities.play: .play
         case .disconnected where capabilities.play: .play
         case .stale where capabilities.play: .play
+        case .unavailable where provider == .spotify && capabilities.play: .play
         default: nil
         }
     }
