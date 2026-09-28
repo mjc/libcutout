@@ -81,6 +81,19 @@ struct CutoutApp: App {
 
     @ViewBuilder
     private var rootView: some View {
+#if DEBUG && os(iOS)
+        if CommandLine.arguments.contains("--spotify-local-probe") {
+            SpotifyLocalProbeView()
+        } else {
+            applicationRootView
+        }
+#else
+        applicationRootView
+#endif
+    }
+
+    @ViewBuilder
+    private var applicationRootView: some View {
         if let model, let lighting {
             ContentView(
                 model: model,
@@ -107,6 +120,9 @@ struct CutoutApp: App {
 
     @MainActor
     private func openApplication() async {
+#if DEBUG && os(iOS)
+        guard !CommandLine.arguments.contains("--spotify-local-probe") else { return }
+#endif
         guard model == nil else { return }
         startupError = nil
         do {
