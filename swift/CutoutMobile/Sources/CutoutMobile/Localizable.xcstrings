@@ -902,6 +902,10 @@
       "comment" : "Opens the provider app. Placeholder is the provider name.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Open %@" } } }
     },
+    "music.open_to_resume" : {
+      "comment" : "The last track is known but Spotify has no active player to control. Placeholder is the provider name.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Open %@ to resume" } } }
+    },
     "music.state.not_connected" : {
       "comment" : "No current provider connection has been requested.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Not connected" } } }

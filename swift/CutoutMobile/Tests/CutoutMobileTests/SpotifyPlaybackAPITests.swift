@@ -58,6 +58,30 @@ final class SpotifyPlaybackAPITests: XCTestCase {
         XCTAssertFalse(snapshot.capabilities.pause)
     }
 
+    func testNoActivePlayerKeepsLastTrackWithoutExposingPlaybackControls() async throws {
+        let previous = try JSONDecoder().decode(SpotifyPlayback.self, from: Self.track)
+        let api = SpotifyPlaybackAPI { request in
+            XCTAssertEqual(request.httpMethod, "GET")
+            return (Data(), HTTPURLResponse(url: request.url!, statusCode: 204, httpVersion: nil, headerFields: nil)!)
+        }
+        let response = try await api.playback(accessToken: "test-token")
+        let playback = response ?? previous.withoutActiveDevice
+        let snapshot = playback.snapshot(state: .stopped, observedAtMs: 20)
+        XCTAssertEqual(snapshot.item?.identifier, "spotify:track:abc")
+        XCTAssertEqual(snapshot.item?.title, "A track")
+        XCTAssertEqual(snapshot.item?.artist, "An artist")
+        XCTAssertNil(playback.device)
+        XCTAssertFalse(snapshot.capabilities.play)
+        XCTAssertFalse(snapshot.capabilities.pause)
+        XCTAssertFalse(snapshot.capabilities.previous)
+        XCTAssertFalse(snapshot.capabilities.next)
+        XCTAssertTrue(snapshot.capabilities.openProvider)
+        let presentation = MusicNowPlaying(snapshot: snapshot)
+        XCTAssertEqual(presentation.title, "A track")
+        XCTAssertEqual(presentation.statusText, "Open Spotify to resume")
+        XCTAssertFalse(presentation.requiresSetup)
+    }
+
     func testCommandsTargetTheObservedDeviceAndNeverTransferPlayback() async throws {
         for (command, method, path) in [(MobileMusicCommandDto.play, "PUT", "play"), (.pause, "PUT", "pause"),
                                         (.next, "POST", "next"), (.previous, "POST", "previous")] {

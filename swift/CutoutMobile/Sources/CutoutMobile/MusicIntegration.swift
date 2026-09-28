@@ -868,7 +868,9 @@ public struct MusicNowPlaying: Equatable, Sendable {
         case .interrupted:
             pevLocalizedText("music.state.interrupted")
         case .stopped:
-            pevLocalizedText("music.state.stopped")
+            provider == .spotify && item != nil
+                ? pevLocalizedText("music.open_to_resume", providerName)
+                : pevLocalizedText("music.state.stopped")
         case .unauthorized:
             pevLocalizedText("music.state.authorization_required")
         case .unavailable:

@@ -167,6 +167,10 @@ struct SpotifyPlayback: Decodable, Sendable {
         case progressMs = "progress_ms"
     }
 
+    var withoutActiveDevice: Self {
+        Self(device: nil, isPlaying: false, progressMs: progressMs, item: item, actions: nil)
+    }
+
     func snapshot(state: MobileMusicPlaybackStateDto, observedAtMs: UInt64) -> MobileMusicSnapshotDto {
         let knownItem = item.flatMap { item -> MobileMusicItemDto? in
             guard item.type == "track" || item.type == "episode", let uri = item.uri else { return nil }
