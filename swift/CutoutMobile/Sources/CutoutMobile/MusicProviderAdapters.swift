@@ -1018,6 +1018,7 @@ public final class SpotifyProviderAdapter: NSObject {
     public func perform(
         _ command: MobileMusicCommandDto,
         onChange: (@MainActor () -> Void)? = nil,
+        onHandoffStarted: (@MainActor () -> Void)? = nil,
         onCommandFailure: (@MainActor () -> Void)? = nil
     ) async -> MusicCommandOutcome {
         if case .openProvider = command {
@@ -1034,6 +1035,7 @@ public final class SpotifyProviderAdapter: NSObject {
         {
             return beginAppRemoteHandoff(
                 onChange: changeHandler,
+                onStarted: onHandoffStarted,
                 onResumeFailure: onCommandFailure
             )
         }
@@ -1054,6 +1056,7 @@ public final class SpotifyProviderAdapter: NSObject {
             {
                 return beginAppRemoteHandoff(
                     onChange: changeHandler,
+                    onStarted: onHandoffStarted,
                     onResumeFailure: onCommandFailure
                 )
             }
@@ -1144,6 +1147,7 @@ public final class SpotifyProviderAdapter: NSObject {
 
     private func beginAppRemoteHandoff(
         onChange: @escaping @MainActor () -> Void,
+        onStarted: (@MainActor () -> Void)?,
         onResumeFailure: (@MainActor () -> Void)?,
         restartMonitoring: Bool = true
     ) -> MusicCommandOutcome {
@@ -1172,6 +1176,7 @@ public final class SpotifyProviderAdapter: NSObject {
             self.finishAppRemoteHandoff(id: handoffID, state: .disconnected, disconnect: true)
         }
 
+        onStarted?()
         let handoff = SPTAppRemote(configuration: configuration, logLevel: .error)
         appRemoteHandoff = handoff
         handoff.authorizeAndPlayURI("") { [weak self] installed in

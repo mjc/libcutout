@@ -132,6 +132,28 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testHandoffFailureUsesPostRestartFeedbackAndCannotReplaceANewerCommand() {
+        let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
+        let request = MusicCommandFeedbackRequest(id: model.beginMusicCommandFeedback())
+        let beforeProviderRestart = try! XCTUnwrap(request.id)
+
+        // The provider restart invalidates the initial request; the handoff
+        // replaces it with a request that remains current after the restart.
+        request.id = model.beginMusicCommandFeedback()
+        let handoffRequest = try! XCTUnwrap(request.id)
+        _ = model.finishMusicCommand(.failed, provider: .appleMusic, requestID: beforeProviderRestart)
+        XCTAssertNil(model.musicCommandStatusText)
+
+        _ = model.finishMusicCommand(.failed, provider: .appleMusic, requestID: handoffRequest)
+        XCTAssertEqual(model.musicCommandStatusText, pevLocalizedText("music.command.failed"))
+
+        let newerRequest = try! XCTUnwrap(model.beginMusicCommandFeedback())
+        _ = model.finishMusicCommand(.failed, provider: .appleMusic, requestID: handoffRequest)
+        XCTAssertEqual(model.musicCommandFeedback?.requestID, newerRequest)
+        XCTAssertNil(model.musicCommandStatusText)
+    }
+
+    @MainActor
     func testSystemAlertDismissalClearsCurrentMusicCommandFeedback() {
         let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
         let requestID = try! XCTUnwrap(model.beginMusicCommandFeedback())

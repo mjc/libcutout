@@ -15,6 +15,15 @@ private enum RideSessionRestorationState {
     case recovering
 }
 
+@MainActor
+final class MusicCommandFeedbackRequest {
+    var id: MobileMusicCommandFeedbackId?
+
+    init(id: MobileMusicCommandFeedbackId?) {
+        self.id = id
+    }
+}
+
 struct MusicHistoryQueryResult: Equatable, Sendable {
     let events: [MobileMusicRideEventDto]
     let state: MobileMusicHistoryStateDto?
@@ -696,7 +705,7 @@ final class CutoutAppModel {
     @discardableResult
     func handleMusicCommand(_ command: MobileMusicCommandDto) async -> MusicCommandOutcome {
         let commandProvider = selectedMusicProvider
-        let feedbackRequestID = beginMusicCommandFeedback()
+        let feedbackRequest = MusicCommandFeedbackRequest(id: beginMusicCommandFeedback())
 #if canImport(MediaPlayer) && os(iOS)
         // Opening the selected provider is a settings action, not a transport
         // capability. It must work before any playback snapshot has arrived.
@@ -705,13 +714,13 @@ final class CutoutAppModel {
                 return finishMusicCommand(
                     await spotifyMusicProvider.perform(.openProvider),
                     provider: commandProvider,
-                    requestID: feedbackRequestID
+                    requestID: feedbackRequest.id
                 )
             }
             return finishMusicCommand(
                 await appleMusicProvider.perform(.openProvider),
                 provider: commandProvider,
-                requestID: feedbackRequestID
+                requestID: feedbackRequest.id
             )
         }
 #endif
@@ -721,26 +730,28 @@ final class CutoutAppModel {
                 return finishMusicCommand(
                     await spotifyMusicProvider.perform(.play, onChange: { [weak self] in
                         self?.refreshMusicSnapshot()
+                    }, onHandoffStarted: { [weak self] in
+                        feedbackRequest.id = self?.beginMusicCommandFeedback()
                     }, onCommandFailure: { [weak self] in
                         guard let self else { return }
-                        _ = self.finishMusicCommand(.failed, provider: commandProvider, requestID: feedbackRequestID)
+                        _ = self.finishMusicCommand(.failed, provider: commandProvider, requestID: feedbackRequest.id)
                     }),
                     provider: commandProvider,
-                    requestID: feedbackRequestID
+                    requestID: feedbackRequest.id
                 )
             }
 #endif
             return finishMusicCommand(
                 .unavailable,
                 provider: commandProvider,
-                requestID: feedbackRequestID
+                requestID: feedbackRequest.id
             )
         }
         guard nowPlaying.isCommandAvailable(command) else {
             return finishMusicCommand(
                 .refused,
                 provider: commandProvider,
-                requestID: feedbackRequestID
+                requestID: feedbackRequest.id
             )
         }
 #if canImport(MediaPlayer) && os(iOS)
@@ -748,9 +759,11 @@ final class CutoutAppModel {
         if nowPlaying.provider == .spotify {
             outcome = await spotifyMusicProvider.perform(command, onChange: { [weak self] in
                 self?.refreshMusicSnapshot()
+            }, onHandoffStarted: { [weak self] in
+                feedbackRequest.id = self?.beginMusicCommandFeedback()
             }, onCommandFailure: { [weak self] in
                 guard let self else { return }
-                _ = self.finishMusicCommand(.failed, provider: commandProvider, requestID: feedbackRequestID)
+                _ = self.finishMusicCommand(.failed, provider: commandProvider, requestID: feedbackRequest.id)
             })
         } else {
             outcome = await appleMusicProvider.perform(command)
@@ -761,13 +774,13 @@ final class CutoutAppModel {
         return finishMusicCommand(
             outcome,
             provider: commandProvider,
-            requestID: feedbackRequestID
+            requestID: feedbackRequest.id
         )
 #else
         return finishMusicCommand(
             .unavailable,
             provider: commandProvider,
-            requestID: feedbackRequestID
+            requestID: feedbackRequest.id
         )
 #endif
     }
