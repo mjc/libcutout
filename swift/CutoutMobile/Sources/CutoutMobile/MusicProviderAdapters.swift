@@ -58,6 +58,25 @@ struct SpotifyRenewalRetryPolicy {
     }
 }
 
+struct SpotifyAppRemotePlayIntent {
+    private(set) var handoffID: UUID?
+
+    mutating func begin(handoffID: UUID) {
+        self.handoffID = handoffID
+    }
+
+    mutating func consume(handoffID: UUID) -> Bool {
+        guard self.handoffID == handoffID else { return false }
+        self.handoffID = nil
+        return true
+    }
+
+    mutating func cancel(handoffID: UUID? = nil) {
+        guard handoffID == nil || self.handoffID == handoffID else { return }
+        self.handoffID = nil
+    }
+}
+
 #if canImport(SpotifyiOS) && os(iOS)
 
 /// Thin main-thread bridge to Spotify's official App Remote SDK. The SDK owns
@@ -166,7 +185,7 @@ public final class SpotifyProviderAdapter: NSObject {
     private var appRemoteBridge: AppRemoteBridge?
     private var appRemoteHandoff: SPTAppRemote?
     private var appRemoteHandoffPending = false
-    private var appRemoteHandoffPlayPending = false
+    private var appRemoteHandoffPlayIntent = SpotifyAppRemotePlayIntent()
     private var appRemoteHandoffID: UUID?
     private var appRemoteHandoffToken: String?
     private var establishedConnectionID: MobileMusicEstablishedConnectionId?
@@ -809,10 +828,8 @@ public final class SpotifyProviderAdapter: NSObject {
                 }
                 return true
             }
-            if let appRemoteHandoffID { effects.cancel(.handoff(appRemoteHandoffID)) }
             appRemoteHandoff = nil
             appRemoteHandoffPending = false
-            appRemoteHandoffID = nil
             if onChange != nil, let generation = appRemoteGeneration,
                lifecycle.classifyProviderSession(id: generation) == .current {
                 connect(with: token)
@@ -1124,13 +1141,13 @@ public final class SpotifyProviderAdapter: NSObject {
         guard !appRemoteHandoffPending, let configuration else { return .unavailable }
 
         appRemoteHandoffPending = true
-        appRemoteHandoffPlayPending = true
         let handoffID = UUID()
+        appRemoteHandoffPlayIntent.begin(handoffID: handoffID)
         appRemoteHandoffID = handoffID
         appRemoteHandoffToken = nil
         guard !restartMonitoring || startMonitoring(allowAuthorization: false, onChange: onChange) else {
             appRemoteHandoffPending = false
-            appRemoteHandoffPlayPending = false
+            appRemoteHandoffPlayIntent.cancel(handoffID: handoffID)
             appRemoteHandoffID = nil
             return .unavailable
         }
@@ -1162,7 +1179,7 @@ public final class SpotifyProviderAdapter: NSObject {
         if disconnect { appRemoteHandoff?.disconnect() }
         appRemoteHandoff = nil
         appRemoteHandoffPending = false
-        appRemoteHandoffPlayPending = false
+        appRemoteHandoffPlayIntent.cancel(handoffID: id)
         appRemoteHandoffID = nil
         appRemoteHandoffToken = nil
         lifecycleState = state
@@ -1174,7 +1191,7 @@ public final class SpotifyProviderAdapter: NSObject {
         if disconnect { appRemoteHandoff?.disconnect() }
         appRemoteHandoff = nil
         appRemoteHandoffPending = false
-        appRemoteHandoffPlayPending = false
+        appRemoteHandoffPlayIntent.cancel()
         appRemoteHandoffID = nil
         appRemoteHandoffToken = nil
     }
@@ -1247,8 +1264,13 @@ public final class SpotifyProviderAdapter: NSObject {
                 }
             }
         })
-        if appRemoteHandoffPlayPending, let playerAPI = appRemote.playerAPI {
-            appRemoteHandoffPlayPending = false
+        if let handoffID = appRemoteHandoffPlayIntent.handoffID,
+           let playerAPI = appRemote.playerAPI,
+           appRemoteHandoffPlayIntent.consume(handoffID: handoffID) {
+            if appRemoteHandoffID == handoffID {
+                effects.cancel(.handoff(handoffID))
+                appRemoteHandoffID = nil
+            }
             playerAPI.resume { [weak self] _, error in
                 guard error != nil else { return }
                 Task { @MainActor [weak self] in
@@ -1280,6 +1302,7 @@ public final class SpotifyProviderAdapter: NSObject {
         guard connection.callback == .accepted else { return }
         transport.apply(connection.transport)
         detachAppRemote(providerGeneration: providerGeneration, attemptID: attemptID)
+        retireAppRemoteHandoff(disconnect: false)
         // App Remote reports transport and wakeup failures here too. A generic
         // connection failure is not evidence that the credential was rejected.
         lifecycleState = .disconnected
@@ -1479,6 +1502,10 @@ public final class SpotifyProviderAdapter: NSObject {
         Self.storeAccessToken(nil)
         Self.storeSession(nil)
         authorizationNeedsUserAction = true
+    }
+
+    public func cancelPendingPlayHandoff() {
+        retireAppRemoteHandoff(disconnect: true)
     }
 
     private func emitChange() {

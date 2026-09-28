@@ -975,6 +975,13 @@ public struct MusicNowPlaying: Equatable, Sendable {
     }
 }
 
+func shouldShowSpotifyStartupPlayer(
+    selectedProvider: MobileMusicProviderDto,
+    nowPlaying: MusicNowPlaying?
+) -> Bool {
+    selectedProvider == .spotify && nowPlaying == nil
+}
+
 /// Deduplicates VoiceOver announcements while the provider is polled.
 private struct MusicAccessibilityAnnouncementKey: Equatable {
     let provider: MobileMusicProviderDto

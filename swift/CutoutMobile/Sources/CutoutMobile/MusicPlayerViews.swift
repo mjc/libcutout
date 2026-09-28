@@ -480,7 +480,10 @@ public struct MusicCompactPlayerInset: ViewModifier {
                 }
                 .buttonStyle(.bordered)
                 .accessibilityIdentifier("music.restore")
-            } else if selectedProvider == .spotify {
+            } else if shouldShowSpotifyStartupPlayer(
+                selectedProvider: selectedProvider,
+                nowPlaying: nowPlaying
+            ) {
                 HStack(spacing: 12) {
                     Image(systemName: "music.note")
                         .foregroundStyle(PevDashboardColors.yellow)

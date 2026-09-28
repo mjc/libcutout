@@ -817,6 +817,11 @@ final class CutoutAppModel {
 
     func selectMusicProvider(_ provider: MobileMusicProviderDto) {
         let previousProvider = selectedMusicProvider
+#if canImport(SpotifyiOS) && os(iOS)
+        if previousProvider != provider {
+            spotifyMusicProvider.cancelPendingPlayHandoff()
+        }
+#endif
         musicCoordinator.resetProviderCorrelation()
         musicProviderLifecycle.invalidateCommandFeedback()
         musicCommandFeedback = nil

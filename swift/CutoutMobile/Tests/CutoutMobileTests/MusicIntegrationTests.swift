@@ -11,6 +11,35 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertEqual(musicPlaybackTransport(appRemoteConnected: false, webPlaybackAuthorized: false), .unavailable)
     }
 
+    func testSpotifyStartupPlayerAppearsOnlyBeforeTheFirstSnapshot() {
+        XCTAssertTrue(shouldShowSpotifyStartupPlayer(selectedProvider: .spotify, nowPlaying: nil))
+        XCTAssertFalse(shouldShowSpotifyStartupPlayer(
+            selectedProvider: .spotify,
+            nowPlaying: MusicNowPlaying(provider: .spotify, state: .unauthorized)
+        ))
+        XCTAssertFalse(shouldShowSpotifyStartupPlayer(selectedProvider: .appleMusic, nowPlaying: nil))
+    }
+
+    func testSpotifyHandoffPlayIntentIsBoundedAndConsumedOnce() {
+        let firstHandoff = UUID()
+        let laterHandoff = UUID()
+        var intent = SpotifyAppRemotePlayIntent()
+
+        intent.begin(handoffID: firstHandoff)
+        XCTAssertEqual(intent.handoffID, firstHandoff)
+        XCTAssertFalse(intent.consume(handoffID: laterHandoff))
+
+        // A failed connection or provider change cancels the original intent.
+        intent.cancel(handoffID: firstHandoff)
+        XCTAssertNil(intent.handoffID)
+        XCTAssertFalse(intent.consume(handoffID: firstHandoff))
+
+        intent.begin(handoffID: laterHandoff)
+        XCTAssertTrue(intent.consume(handoffID: laterHandoff))
+        XCTAssertNil(intent.handoffID)
+        XCTAssertFalse(intent.consume(handoffID: laterHandoff))
+    }
+
     func testSpotifyRenewalFailureOnlyRequiresNewAuthorizationForRejectedCredentials() {
         XCTAssertFalse(SpotifyAuthorizationFailure.requiresNewAuthorization(
             domain: "NSURLErrorDomain", code: -1202, description: "Server certificate revoked"
