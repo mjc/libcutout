@@ -434,6 +434,7 @@ public final class MusicProviderEffectExecutor {
         case transport
         case artwork
         case artworkRetry
+        case handoff
     }
 
     public enum Key: Hashable, Sendable {
@@ -445,6 +446,7 @@ public final class MusicProviderEffectExecutor {
         case transport(MobileMusicTransportRequestId)
         case artwork(MobileMusicArtworkRequestId)
         case artworkRetry(MobileMusicArtworkRetryId)
+        case handoff(UUID)
 
         var namespace: Namespace {
             switch self {
@@ -456,6 +458,7 @@ public final class MusicProviderEffectExecutor {
             case .transport: .transport
             case .artwork: .artwork
             case .artworkRetry: .artworkRetry
+            case .handoff: .handoff
             }
         }
     }
@@ -854,6 +857,8 @@ public struct MusicNowPlaying: Equatable, Sendable {
         switch state {
         case .playing, .paused, .stopped, .buffering, .interrupted, .disconnected, .stale:
             true
+        case .unavailable where provider == .spotify && capabilities.play:
+            true
         case .unauthorized, .unavailable:
             false
         }
@@ -868,7 +873,9 @@ public struct MusicNowPlaying: Equatable, Sendable {
         case .interrupted:
             pevLocalizedText("music.state.interrupted")
         case .stopped:
-            pevLocalizedText("music.state.stopped")
+            provider == .spotify && item != nil
+                ? pevLocalizedText("music.open_to_resume", providerName)
+                : pevLocalizedText("music.state.stopped")
         case .unauthorized:
             pevLocalizedText("music.state.authorization_required")
         case .unavailable:
@@ -883,8 +890,10 @@ public struct MusicNowPlaying: Equatable, Sendable {
     /// Playback stopping or a temporary connection gap does not require setup.
     public var requiresSetup: Bool {
         switch state {
-        case .unauthorized, .unavailable:
+        case .unauthorized:
             true
+        case .unavailable:
+            !(provider == .spotify && capabilities.play)
         default:
             false
         }
@@ -919,7 +928,7 @@ public struct MusicNowPlaying: Equatable, Sendable {
             artwork: artwork,
             capabilities: .init(
                 previous: false,
-                play: false,
+                play: provider == .spotify && capabilities.openProvider,
                 pause: false,
                 next: false,
                 openProvider: capabilities.openProvider
@@ -932,6 +941,9 @@ public struct MusicNowPlaying: Equatable, Sendable {
         case .playing where capabilities.pause: .pause
         case .paused where capabilities.play: .play
         case .stopped where capabilities.play: .play
+        case .disconnected where capabilities.play: .play
+        case .stale where capabilities.play: .play
+        case .unavailable where provider == .spotify && capabilities.play: .play
         default: nil
         }
     }
@@ -961,6 +973,13 @@ public struct MusicNowPlaying: Equatable, Sendable {
     public func supports(_ command: MobileMusicCommandDto) -> Bool {
         capabilities.supports(command)
     }
+}
+
+func shouldShowSpotifyStartupPlayer(
+    selectedProvider: MobileMusicProviderDto,
+    nowPlaying: MusicNowPlaying?
+) -> Bool {
+    selectedProvider == .spotify && nowPlaying == nil
 }
 
 /// Deduplicates VoiceOver announcements while the provider is polled.
@@ -1121,7 +1140,7 @@ public struct MusicProviderObservation: Equatable, Sendable {
                 observedAtMs: nextObservedAtMs,
                 capabilities: .init(
                     previous: false,
-                    play: false,
+                    play: snapshot.provider == .spotify && snapshot.capabilities.openProvider,
                     pause: false,
                     next: false,
                     openProvider: snapshot.capabilities.openProvider

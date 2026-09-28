@@ -411,7 +411,8 @@ impl MusicProviderLifecycle {
         now_ms: u64,
     ) -> Option<MusicDeadlineEffect<MonitorId>> {
         if self.monitor_generation.classify(generation) == CallbackEpochMatch::Stale
-            || self.connection.recovery_exhausted_at(now_ms)
+            || (work_state == MusicProviderWorkState::CredentialsAvailable
+                && self.connection.recovery_exhausted_at(now_ms))
             || (match work_state {
                 MusicProviderWorkState::RequiresUserAction
                 | MusicProviderWorkState::Unavailable => true,

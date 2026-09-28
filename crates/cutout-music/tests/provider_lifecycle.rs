@@ -646,6 +646,84 @@ fn lost_connection_callbacks_exhaust_recovery_and_stop_monitor_polling() {
 }
 
 #[test]
+fn local_connection_exhaustion_does_not_stop_remote_playback_polling() {
+    for callback_arrives in [true, false] {
+        let mut lifecycle = MusicProviderLifecycle::default();
+        lifecycle.request_monitor(MusicMonitorRequest::Observe);
+        let monitor = lifecycle.begin_monitor().expect("monitor");
+        let _provider = lifecycle
+            .begin_provider_session()
+            .expect("provider session");
+
+        for now_ms in [0, 12_000, 24_000] {
+            let attempt = begin_connection(&mut lifecycle, now_ms).attempt_id;
+            if callback_arrives {
+                assert_eq!(
+                    lifecycle
+                        .connection_failed_effect(attempt, now_ms + 100)
+                        .callback,
+                    MusicConnectionCallback::Accepted,
+                );
+            }
+        }
+        assert_eq!(
+            lifecycle.begin_connection_attempt(36_000),
+            MusicConnectionAttemptAdmission::Exhausted,
+        );
+        assert!(
+            lifecycle
+                .next_monitor_poll(
+                    monitor.generation,
+                    MusicProviderWorkState::CredentialsAvailable,
+                    36_000
+                )
+                .is_none()
+        );
+
+        assert!(
+            lifecycle
+                .next_monitor_poll(
+                    monitor.generation,
+                    MusicProviderWorkState::AuthorizationPending,
+                    36_000,
+                )
+                .is_some()
+        );
+
+        for now_ms in [36_000, 41_000, 66_000, 300_000] {
+            let poll = lifecycle
+                .next_monitor_poll(
+                    monitor.generation,
+                    MusicProviderWorkState::RemotePolling,
+                    now_ms,
+                )
+                .expect("Web playback must outlive local connection retries");
+            assert_eq!(poll.deadline.as_milliseconds(), now_ms + 5_000);
+            let request = lifecycle
+                .begin_player_state_request(now_ms)
+                .expect("playback request");
+            let revision = lifecycle.player_state_observation_revision();
+            assert_eq!(
+                lifecycle.complete_player_state_request_if_current(request, revision, now_ms + 100),
+                cutout_music::player_request::MusicPlayerRequestCompletion::Accepted,
+            );
+            lifecycle.mark_player_state_observed(now_ms + 100);
+        }
+
+        let _ = lifecycle.suspend();
+        assert!(
+            lifecycle
+                .next_monitor_poll(
+                    monitor.generation,
+                    MusicProviderWorkState::RemotePolling,
+                    300_100
+                )
+                .is_none()
+        );
+    }
+}
+
+#[test]
 fn rust_effects_own_deadlines_and_monitor_continuation() {
     let mut lifecycle = MusicProviderLifecycle::default();
     lifecycle.request_monitor(MusicMonitorRequest::Observe);

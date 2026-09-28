@@ -132,6 +132,34 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testHandoffFailureSurvivesAppResumeAndCannotReplaceANewerCommand() {
+        let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
+        model.selectMusicProvider(.spotify)
+        model.start()
+        let request = MusicCommandFeedbackRequest(id: model.beginMusicCommandFeedback())
+        model.registerSpotifyHandoffFeedbackRequest(request)
+        let beforeHandoff = try! XCTUnwrap(request.id)
+
+        model.beginSpotifyHandoffFeedback(request, provider: .spotify)
+        let handoffRequest = try! XCTUnwrap(request.id)
+        _ = model.finishMusicCommand(.failed, provider: .spotify, requestID: beforeHandoff)
+        XCTAssertNil(model.musicCommandStatusText)
+
+        model.appDidEnterBackground()
+        model.appDidBecomeActive()
+        _ = model.finishMusicCommand(.failed, provider: .spotify, requestID: handoffRequest)
+        XCTAssertNil(model.musicCommandStatusText)
+
+        model.finishSpotifyHandoffFailure(request, provider: .spotify)
+        XCTAssertEqual(model.musicCommandStatusText, pevLocalizedText("music.command.failed"))
+
+        let newer = MusicCommandFeedbackRequest(id: model.beginMusicCommandFeedback())
+        model.registerSpotifyHandoffFeedbackRequest(newer)
+        model.finishSpotifyHandoffFailure(request, provider: .spotify)
+        XCTAssertEqual(model.musicCommandFeedback?.outcome, .accepted)
+    }
+
+    @MainActor
     func testSystemAlertDismissalClearsCurrentMusicCommandFeedback() {
         let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
         let requestID = try! XCTUnwrap(model.beginMusicCommandFeedback())

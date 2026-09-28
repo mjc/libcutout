@@ -15,6 +15,15 @@ private enum RideSessionRestorationState {
     case recovering
 }
 
+@MainActor
+final class MusicCommandFeedbackRequest {
+    var id: MobileMusicCommandFeedbackId?
+
+    init(id: MobileMusicCommandFeedbackId?) {
+        self.id = id
+    }
+}
+
 struct MusicHistoryQueryResult: Equatable, Sendable {
     let events: [MobileMusicRideEventDto]
     let state: MobileMusicHistoryStateDto?
@@ -146,6 +155,7 @@ final class CutoutAppModel {
     private var musicObservationError: MobileRideMapError?
     private var musicHistoryPersistenceError: MobileRideMapError?
     private(set) var musicCommandFeedback: MusicCommandFeedback?
+    private var activeSpotifyHandoffFeedbackRequest: MusicCommandFeedbackRequest?
 
     var musicCommandStatusText: String? {
         musicCommandFeedback?.messageKey.map { pevLocalizedText($0) }
@@ -696,7 +706,8 @@ final class CutoutAppModel {
     @discardableResult
     func handleMusicCommand(_ command: MobileMusicCommandDto) async -> MusicCommandOutcome {
         let commandProvider = selectedMusicProvider
-        let feedbackRequestID = beginMusicCommandFeedback()
+        let feedbackRequest = MusicCommandFeedbackRequest(id: beginMusicCommandFeedback())
+        registerSpotifyHandoffFeedbackRequest(feedbackRequest)
 #if canImport(MediaPlayer) && os(iOS)
         // Opening the selected provider is a settings action, not a transport
         // capability. It must work before any playback snapshot has arrived.
@@ -705,34 +716,55 @@ final class CutoutAppModel {
                 return finishMusicCommand(
                     await spotifyMusicProvider.perform(.openProvider),
                     provider: commandProvider,
-                    requestID: feedbackRequestID
+                    requestID: feedbackRequest.id
                 )
             }
             return finishMusicCommand(
                 await appleMusicProvider.perform(.openProvider),
                 provider: commandProvider,
-                requestID: feedbackRequestID
+                requestID: feedbackRequest.id
             )
         }
 #endif
         guard let nowPlaying = musicNowPlaying else {
+#if canImport(SpotifyiOS) && os(iOS)
+            if command == .play, selectedMusicProvider == .spotify {
+                return finishMusicCommand(
+                    await spotifyMusicProvider.perform(.play, onChange: { [weak self] in
+                        self?.refreshMusicSnapshot()
+                    }, onHandoffStarted: { [weak self] in
+                        self?.beginSpotifyHandoffFeedback(feedbackRequest, provider: commandProvider)
+                    }, onCommandFailure: { [weak self] in
+                        self?.finishSpotifyHandoffFailure(feedbackRequest, provider: commandProvider)
+                    }),
+                    provider: commandProvider,
+                    requestID: feedbackRequest.id
+                )
+            }
+#endif
             return finishMusicCommand(
                 .unavailable,
                 provider: commandProvider,
-                requestID: feedbackRequestID
+                requestID: feedbackRequest.id
             )
         }
         guard nowPlaying.isCommandAvailable(command) else {
             return finishMusicCommand(
                 .refused,
                 provider: commandProvider,
-                requestID: feedbackRequestID
+                requestID: feedbackRequest.id
             )
         }
 #if canImport(MediaPlayer) && os(iOS)
         let outcome: MusicCommandOutcome
         if nowPlaying.provider == .spotify {
-            outcome = await spotifyMusicProvider.perform(command)
+            outcome = await spotifyMusicProvider.perform(command, onChange: { [weak self] in
+                self?.refreshMusicSnapshot()
+            }, onHandoffStarted: { [weak self] in
+                self?.beginSpotifyHandoffFeedback(feedbackRequest, provider: commandProvider)
+            }, onCommandFailure: { [weak self] in
+                self?.finishSpotifyHandoffFailure(feedbackRequest, provider: commandProvider)
+            })
         } else {
             outcome = await appleMusicProvider.perform(command)
         }
@@ -742,13 +774,13 @@ final class CutoutAppModel {
         return finishMusicCommand(
             outcome,
             provider: commandProvider,
-            requestID: feedbackRequestID
+            requestID: feedbackRequest.id
         )
 #else
         return finishMusicCommand(
             .unavailable,
             provider: commandProvider,
-            requestID: feedbackRequestID
+            requestID: feedbackRequest.id
         )
 #endif
     }
@@ -787,6 +819,31 @@ final class CutoutAppModel {
         return outcome
     }
 
+    func finishSpotifyHandoffFailure(
+        _ request: MusicCommandFeedbackRequest,
+        provider: MobileMusicProviderDto
+    ) {
+        guard activeSpotifyHandoffFeedbackRequest === request,
+              selectedMusicProvider == provider,
+              let requestID = beginMusicCommandFeedback() else { return }
+        request.id = requestID
+        _ = finishMusicCommand(.failed, provider: provider, requestID: requestID)
+        activeSpotifyHandoffFeedbackRequest = nil
+    }
+
+    func registerSpotifyHandoffFeedbackRequest(_ request: MusicCommandFeedbackRequest) {
+        activeSpotifyHandoffFeedbackRequest = request
+    }
+
+    func beginSpotifyHandoffFeedback(
+        _ request: MusicCommandFeedbackRequest,
+        provider: MobileMusicProviderDto
+    ) {
+        guard activeSpotifyHandoffFeedbackRequest === request,
+              selectedMusicProvider == provider else { return }
+        request.id = beginMusicCommandFeedback()
+    }
+
     func dismissMusicPlayer() {
         musicPlayerVisibilityStore.setHidden(true)
         isMusicPlayerHidden = true
@@ -804,6 +861,12 @@ final class CutoutAppModel {
 
     func selectMusicProvider(_ provider: MobileMusicProviderDto) {
         let previousProvider = selectedMusicProvider
+#if canImport(SpotifyiOS) && os(iOS)
+        if previousProvider != provider {
+            spotifyMusicProvider.cancelPendingPlayHandoff()
+        }
+#endif
+        activeSpotifyHandoffFeedbackRequest = nil
         musicCoordinator.resetProviderCorrelation()
         musicProviderLifecycle.invalidateCommandFeedback()
         musicCommandFeedback = nil

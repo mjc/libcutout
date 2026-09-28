@@ -11,6 +11,35 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertEqual(musicPlaybackTransport(appRemoteConnected: false, webPlaybackAuthorized: false), .unavailable)
     }
 
+    func testSpotifyStartupPlayerAppearsOnlyBeforeTheFirstSnapshot() {
+        XCTAssertTrue(shouldShowSpotifyStartupPlayer(selectedProvider: .spotify, nowPlaying: nil))
+        XCTAssertFalse(shouldShowSpotifyStartupPlayer(
+            selectedProvider: .spotify,
+            nowPlaying: MusicNowPlaying(provider: .spotify, state: .unauthorized)
+        ))
+        XCTAssertFalse(shouldShowSpotifyStartupPlayer(selectedProvider: .appleMusic, nowPlaying: nil))
+    }
+
+    func testSpotifyHandoffPlayIntentIsBoundedAndConsumedOnce() {
+        let firstHandoff = UUID()
+        let laterHandoff = UUID()
+        var intent = SpotifyAppRemotePlayIntent()
+
+        intent.begin(handoffID: firstHandoff)
+        XCTAssertEqual(intent.handoffID, firstHandoff)
+        XCTAssertFalse(intent.consume(handoffID: laterHandoff))
+
+        // A failed connection or provider change cancels the original intent.
+        intent.cancel(handoffID: firstHandoff)
+        XCTAssertNil(intent.handoffID)
+        XCTAssertFalse(intent.consume(handoffID: firstHandoff))
+
+        intent.begin(handoffID: laterHandoff)
+        XCTAssertTrue(intent.consume(handoffID: laterHandoff))
+        XCTAssertNil(intent.handoffID)
+        XCTAssertFalse(intent.consume(handoffID: laterHandoff))
+    }
+
     func testSpotifyRenewalFailureOnlyRequiresNewAuthorizationForRejectedCredentials() {
         XCTAssertFalse(SpotifyAuthorizationFailure.requiresNewAuthorization(
             domain: "NSURLErrorDomain", code: -1202, description: "Server certificate revoked"
@@ -98,14 +127,14 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertTrue(retryPolicy.automaticRenewalAllowed)
     }
 
-    func testSpotifySettingsOfferReauthorizationForStaleOrUnauthorizedSession() {
+    func testSpotifySettingsOfferReauthorizationOnlyForUnauthorizedSession() {
         XCTAssertFalse(MusicSettingsPresentation.showsReauthorize(
             provider: .spotify, state: nil
         ))
         XCTAssertFalse(MusicSettingsPresentation.showsReauthorize(
             provider: .spotify, state: .disconnected
         ))
-        XCTAssertTrue(MusicSettingsPresentation.showsReauthorize(
+        XCTAssertFalse(MusicSettingsPresentation.showsReauthorize(
             provider: .spotify, state: .stale
         ))
         XCTAssertTrue(MusicSettingsPresentation.showsReauthorize(
@@ -113,6 +142,23 @@ final class MusicIntegrationTests: XCTestCase {
         ))
         XCTAssertFalse(MusicSettingsPresentation.showsReauthorize(
             provider: .appleMusic, state: .unauthorized
+        ))
+    }
+
+    func testLostSpotifyUpdatesKeepTheTrackAndOfferReconnect() {
+        let nowPlaying = MusicNowPlaying(
+            provider: .spotify,
+            state: .stale,
+            item: .init(identifier: "spotify:track:example", title: "Last song", artist: "Artist")
+        )
+        XCTAssertEqual(nowPlaying.title, "Last song")
+        XCTAssertEqual(nowPlaying.statusText, "Can’t get playback")
+        XCTAssertFalse(nowPlaying.requiresSetup)
+        XCTAssertEqual(MusicSettingsPresentation.connectionActionTitle(
+            provider: nowPlaying.provider, state: nowPlaying.state
+        ), "Reconnect Spotify")
+        XCTAssertFalse(MusicSettingsPresentation.showsReauthorize(
+            provider: nowPlaying.provider, state: nowPlaying.state
         ))
     }
 
@@ -129,6 +175,20 @@ final class MusicIntegrationTests: XCTestCase {
             item: MobileMusicItemDto(identifier: "track", title: "Song", artist: "Artist")
         ).showsCompactPlayer)
         XCTAssertTrue(MusicNowPlaying(provider: .spotify, state: .playing).showsCompactPlayer)
+    }
+
+    func testRecoverableSpotifyUnavailableStateKeepsPlayInsteadOfSetup() {
+        let nowPlaying = MusicNowPlaying(
+            provider: .spotify,
+            state: .unavailable,
+            item: .init(identifier: "spotify:track:example", title: "Last song", artist: "Artist"),
+            capabilities: .init(previous: false, play: true, pause: false, next: false, openProvider: true)
+        )
+
+        XCTAssertTrue(nowPlaying.showsCompactPlayer)
+        XCTAssertFalse(nowPlaying.requiresSetup)
+        XCTAssertEqual(nowPlaying.playPauseCommand, .play)
+        XCTAssertTrue(nowPlaying.isCommandAvailable(.play))
     }
 
     @MainActor
