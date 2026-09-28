@@ -1023,6 +1023,7 @@ public final class SpotifyProviderAdapter: NSObject {
                let providerGeneration,
                appRemoteGeneration == providerGeneration,
                lifecycle.classifyProviderSession(id: providerGeneration) == .current,
+               authorizationGeneration == nil,
                session != nil,
                !authorizationNeedsUserAction,
                appRemote?.isConnected != true,
