@@ -86,8 +86,12 @@ final class SpotifyLocalProbe: NSObject, @preconcurrency SPTAppRemoteDelegate, @
 
     func togglePlayback() {
         guard isConnected, let player = remote?.playerAPI else { return }
-        if isPaused { player.resume(nil) }
-        else { player.pause(nil) }
+        let callback: SPTAppRemoteCallback = { [weak self] _, error in
+            guard let error else { return }
+            Task { @MainActor [weak self] in self?.showError(error) }
+        }
+        if isPaused { player.resume(callback) }
+        else { player.pause(callback) }
     }
 
     func appRemoteDidEstablishConnection(_ appRemote: SPTAppRemote) {
@@ -144,8 +148,11 @@ final class SpotifyLocalProbe: NSObject, @preconcurrency SPTAppRemoteDelegate, @
 public struct SpotifyLocalProbeView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var probe = SpotifyLocalProbe()
+    @Binding private var callbackURL: URL?
 
-    public init() {}
+    public init(callbackURL: Binding<URL?>) {
+        _callbackURL = callbackURL
+    }
 
     public var body: some View {
         NavigationStack {
@@ -172,7 +179,11 @@ public struct SpotifyLocalProbeView: View {
         }
         .onAppear { probe.setActive(scenePhase == .active) }
         .onChange(of: scenePhase) { probe.setActive(scenePhase == .active) }
-        .onOpenURL { probe.handleURL($0) }
+        .onChange(of: callbackURL) { _, url in
+            guard let url else { return }
+            probe.handleURL(url)
+            callbackURL = nil
+        }
     }
 }
 #endif

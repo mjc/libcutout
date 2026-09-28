@@ -83,7 +83,7 @@ struct CutoutApp: App {
     private var rootView: some View {
 #if DEBUG && os(iOS)
         if CommandLine.arguments.contains("--spotify-local-probe") {
-            SpotifyLocalProbeView()
+            SpotifyLocalProbeView(callbackURL: $pendingMusicURL)
         } else {
             applicationRootView
         }
