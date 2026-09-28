@@ -155,6 +155,7 @@ final class CutoutAppModel {
     private var musicObservationError: MobileRideMapError?
     private var musicHistoryPersistenceError: MobileRideMapError?
     private(set) var musicCommandFeedback: MusicCommandFeedback?
+    private var activeSpotifyHandoffFeedbackRequest: MusicCommandFeedbackRequest?
 
     var musicCommandStatusText: String? {
         musicCommandFeedback?.messageKey.map { pevLocalizedText($0) }
@@ -706,6 +707,7 @@ final class CutoutAppModel {
     func handleMusicCommand(_ command: MobileMusicCommandDto) async -> MusicCommandOutcome {
         let commandProvider = selectedMusicProvider
         let feedbackRequest = MusicCommandFeedbackRequest(id: beginMusicCommandFeedback())
+        registerSpotifyHandoffFeedbackRequest(feedbackRequest)
 #if canImport(MediaPlayer) && os(iOS)
         // Opening the selected provider is a settings action, not a transport
         // capability. It must work before any playback snapshot has arrived.
@@ -731,10 +733,9 @@ final class CutoutAppModel {
                     await spotifyMusicProvider.perform(.play, onChange: { [weak self] in
                         self?.refreshMusicSnapshot()
                     }, onHandoffStarted: { [weak self] in
-                        feedbackRequest.id = self?.beginMusicCommandFeedback()
+                        self?.beginSpotifyHandoffFeedback(feedbackRequest, provider: commandProvider)
                     }, onCommandFailure: { [weak self] in
-                        guard let self else { return }
-                        _ = self.finishMusicCommand(.failed, provider: commandProvider, requestID: feedbackRequest.id)
+                        self?.finishSpotifyHandoffFailure(feedbackRequest, provider: commandProvider)
                     }),
                     provider: commandProvider,
                     requestID: feedbackRequest.id
@@ -760,10 +761,9 @@ final class CutoutAppModel {
             outcome = await spotifyMusicProvider.perform(command, onChange: { [weak self] in
                 self?.refreshMusicSnapshot()
             }, onHandoffStarted: { [weak self] in
-                feedbackRequest.id = self?.beginMusicCommandFeedback()
+                self?.beginSpotifyHandoffFeedback(feedbackRequest, provider: commandProvider)
             }, onCommandFailure: { [weak self] in
-                guard let self else { return }
-                _ = self.finishMusicCommand(.failed, provider: commandProvider, requestID: feedbackRequest.id)
+                self?.finishSpotifyHandoffFailure(feedbackRequest, provider: commandProvider)
             })
         } else {
             outcome = await appleMusicProvider.perform(command)
@@ -819,6 +819,31 @@ final class CutoutAppModel {
         return outcome
     }
 
+    func finishSpotifyHandoffFailure(
+        _ request: MusicCommandFeedbackRequest,
+        provider: MobileMusicProviderDto
+    ) {
+        guard activeSpotifyHandoffFeedbackRequest === request,
+              selectedMusicProvider == provider,
+              let requestID = beginMusicCommandFeedback() else { return }
+        request.id = requestID
+        _ = finishMusicCommand(.failed, provider: provider, requestID: requestID)
+        activeSpotifyHandoffFeedbackRequest = nil
+    }
+
+    func registerSpotifyHandoffFeedbackRequest(_ request: MusicCommandFeedbackRequest) {
+        activeSpotifyHandoffFeedbackRequest = request
+    }
+
+    func beginSpotifyHandoffFeedback(
+        _ request: MusicCommandFeedbackRequest,
+        provider: MobileMusicProviderDto
+    ) {
+        guard activeSpotifyHandoffFeedbackRequest === request,
+              selectedMusicProvider == provider else { return }
+        request.id = beginMusicCommandFeedback()
+    }
+
     func dismissMusicPlayer() {
         musicPlayerVisibilityStore.setHidden(true)
         isMusicPlayerHidden = true
@@ -841,6 +866,7 @@ final class CutoutAppModel {
             spotifyMusicProvider.cancelPendingPlayHandoff()
         }
 #endif
+        activeSpotifyHandoffFeedbackRequest = nil
         musicCoordinator.resetProviderCorrelation()
         musicProviderLifecycle.invalidateCommandFeedback()
         musicCommandFeedback = nil

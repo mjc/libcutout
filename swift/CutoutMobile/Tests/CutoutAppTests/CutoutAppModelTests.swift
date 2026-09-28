@@ -132,25 +132,31 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testHandoffFailureUsesPostRestartFeedbackAndCannotReplaceANewerCommand() {
+    func testHandoffFailureSurvivesAppResumeAndCannotReplaceANewerCommand() {
         let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
+        model.selectMusicProvider(.spotify)
+        model.start()
         let request = MusicCommandFeedbackRequest(id: model.beginMusicCommandFeedback())
-        let beforeProviderRestart = try! XCTUnwrap(request.id)
+        model.registerSpotifyHandoffFeedbackRequest(request)
+        let beforeHandoff = try! XCTUnwrap(request.id)
 
-        // The provider restart invalidates the initial request; the handoff
-        // replaces it with a request that remains current after the restart.
-        request.id = model.beginMusicCommandFeedback()
+        model.beginSpotifyHandoffFeedback(request, provider: .spotify)
         let handoffRequest = try! XCTUnwrap(request.id)
-        _ = model.finishMusicCommand(.failed, provider: .appleMusic, requestID: beforeProviderRestart)
+        _ = model.finishMusicCommand(.failed, provider: .spotify, requestID: beforeHandoff)
         XCTAssertNil(model.musicCommandStatusText)
 
-        _ = model.finishMusicCommand(.failed, provider: .appleMusic, requestID: handoffRequest)
+        model.appDidEnterBackground()
+        model.appDidBecomeActive()
+        _ = model.finishMusicCommand(.failed, provider: .spotify, requestID: handoffRequest)
+        XCTAssertNil(model.musicCommandStatusText)
+
+        model.finishSpotifyHandoffFailure(request, provider: .spotify)
         XCTAssertEqual(model.musicCommandStatusText, pevLocalizedText("music.command.failed"))
 
-        let newerRequest = try! XCTUnwrap(model.beginMusicCommandFeedback())
-        _ = model.finishMusicCommand(.failed, provider: .appleMusic, requestID: handoffRequest)
-        XCTAssertEqual(model.musicCommandFeedback?.requestID, newerRequest)
-        XCTAssertNil(model.musicCommandStatusText)
+        let newer = MusicCommandFeedbackRequest(id: model.beginMusicCommandFeedback())
+        model.registerSpotifyHandoffFeedbackRequest(newer)
+        model.finishSpotifyHandoffFailure(request, provider: .spotify)
+        XCTAssertEqual(model.musicCommandFeedback?.outcome, .accepted)
     }
 
     @MainActor
