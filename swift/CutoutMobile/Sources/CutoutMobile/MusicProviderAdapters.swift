@@ -1018,7 +1018,18 @@ public final class SpotifyProviderAdapter: NSObject {
             return beginAppRemoteHandoff(onChange: onChange)
         }
         if selectedPlaybackTransport == .webApi {
-            return await performWebCommand(command)
+            let outcome = await performWebCommand(command)
+            if command == .play,
+               outcome != .accepted,
+               lifecycleState == .stale,
+               appRemote?.isConnected != true,
+               let session,
+               !session.isExpired,
+               let onChange
+            {
+                return beginAppRemoteHandoff(onChange: onChange)
+            }
+            return outcome
         }
         guard lifecycleState == .playing || lifecycleState == .paused || command == .play,
               let playerAPI = appRemote?.playerAPI,
