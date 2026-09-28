@@ -32,18 +32,22 @@ final class MusicProviderEffectExecutorTests: XCTestCase {
         effects.cancelAll()
     }
 
-    func testNamespaceCancellationStopsOnlyMatchingRustIssuedEffects() async {
+    func testNamespaceCancellationStopsOnlyMatchingEffects() async {
         let lifecycle = MobileMusicProviderLifecycle()
         let effects = MusicProviderEffectExecutor()
         let provider = try! XCTUnwrap(lifecycle.beginProviderSession())
         let playerState = try! XCTUnwrap(lifecycle.beginPlayerStateRequest(nowMs: 0))
         effects.run(.provider(provider)) { try? await Task.sleep(for: .seconds(30)) }
         effects.run(.playerState(playerState)) { try? await Task.sleep(for: .seconds(30)) }
+        let handoffID = UUID()
+        effects.run(.handoff(handoffID)) { try? await Task.sleep(for: .seconds(30)) }
 
         effects.cancelAll(in: .playerState)
+        effects.cancelAll(in: .handoff)
 
         XCTAssertTrue(effects.isRunning(.provider(provider)))
         XCTAssertFalse(effects.isRunning(.playerState(playerState)))
+        XCTAssertFalse(effects.isRunning(.handoff(handoffID)))
         effects.cancelAll()
     }
 }

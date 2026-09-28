@@ -188,6 +188,7 @@ public final class SpotifyProviderAdapter: NSObject {
     private var authorizationNeedsUserAction = false
     private var renewalRetryPolicy = SpotifyRenewalRetryPolicy()
     private static let playbackScopes: SPTScope = [.userReadPlaybackState, .userModifyPlaybackState]
+    private static let appRemoteHandoffTimeoutMs: UInt64 = 60_000
     private let playbackAPI = SpotifyPlaybackAPI()
     private var webPlayback: SpotifyPlayback?
     private var webPollTask: Task<Void, Never>?
@@ -807,13 +808,12 @@ public final class SpotifyProviderAdapter: NSObject {
         if appRemoteHandoffPending, let handoff = appRemoteHandoff {
             let parameters = handoff.authorizationParameters(from: url)
             guard let token = parameters?[SPTAppRemoteAccessTokenKey], !token.isEmpty else {
-                appRemoteHandoff = nil
-                appRemoteHandoffPending = false
-                appRemoteHandoffID = nil
-                lifecycleState = .unavailable
-                emitChange()
+                if let appRemoteHandoffID {
+                    finishAppRemoteHandoff(id: appRemoteHandoffID, state: .disconnected, disconnect: true)
+                }
                 return true
             }
+            if let appRemoteHandoffID { effects.cancel(.handoff(appRemoteHandoffID)) }
             appRemoteHandoff = nil
             appRemoteHandoffPending = false
             appRemoteHandoffID = nil
@@ -1006,7 +1006,10 @@ public final class SpotifyProviderAdapter: NSObject {
             guard await UIApplication.shared.open(Self.providerURL) else { return .failed }
             return .accepted
         }
+        let webCanResume = selectedPlaybackTransport == .webApi
+            && webPlayback?.snapshot(state: lifecycleState, observedAtMs: connectionNowMs).capabilities.play == true
         if command == .play,
+           !webCanResume,
            appRemote?.isConnected != true,
            let session,
            !session.isExpired,
@@ -1046,7 +1049,28 @@ public final class SpotifyProviderAdapter: NSObject {
 
     public func observation(observedAtMs: UInt64) -> MusicProviderObservation {
         if selectedPlaybackTransport == .webApi, let webPlayback {
-            return MusicProviderObservation(snapshot: webPlayback.snapshot(state: lifecycleState, observedAtMs: observedAtMs), artwork: artwork)
+            var snapshot = webPlayback.snapshot(state: lifecycleState, observedAtMs: observedAtMs)
+            let canReconnect = session.map { !$0.isExpired } ?? false
+            if canReconnect,
+               lifecycleState == .stopped || lifecycleState == .disconnected || lifecycleState == .stale {
+                snapshot = MobileMusicSnapshotDto(
+                    provider: snapshot.provider,
+                    sessionId: snapshot.sessionId,
+                    state: snapshot.state,
+                    item: snapshot.item,
+                    positionMilliseconds: snapshot.positionMilliseconds,
+                    durationMilliseconds: snapshot.durationMilliseconds,
+                    observedAtMs: snapshot.observedAtMs,
+                    capabilities: .init(
+                        previous: snapshot.capabilities.previous,
+                        play: true,
+                        pause: snapshot.capabilities.pause,
+                        next: snapshot.capabilities.next,
+                        openProvider: snapshot.capabilities.openProvider
+                    )
+                )
+            }
+            return MusicProviderObservation(snapshot: snapshot, artwork: artwork)
         }
         let controlsAvailable = lifecycleState == .playing || lifecycleState == .paused
         let canReconnect = session.map { !$0.isExpired } ?? false
@@ -1093,20 +1117,46 @@ public final class SpotifyProviderAdapter: NSObject {
             return .unavailable
         }
 
+        effects.run(
+            .handoff(handoffID),
+            until: connectionNowMs + Self.appRemoteHandoffTimeoutMs,
+            nowMs: { [weak self] in self?.connectionNowMs ?? 0 }
+        ) { [weak self] in
+            guard let self, self.appRemoteHandoffID == handoffID else { return }
+            self.finishAppRemoteHandoff(id: handoffID, state: .disconnected, disconnect: true)
+        }
+
         let handoff = SPTAppRemote(configuration: configuration, logLevel: .error)
         appRemoteHandoff = handoff
         handoff.authorizeAndPlayURI("") { [weak self] installed in
             guard !installed else { return }
             Task { @MainActor [weak self] in
                 guard let self, self.appRemoteHandoffID == handoffID else { return }
-                self.appRemoteHandoff = nil
-                self.appRemoteHandoffPending = false
-                self.appRemoteHandoffID = nil
-                self.lifecycleState = .unavailable
-                self.emitChange()
+                self.finishAppRemoteHandoff(id: handoffID, state: .disconnected, disconnect: true)
             }
         }
         return .accepted
+    }
+
+    private func finishAppRemoteHandoff(id: UUID, state: MobileMusicPlaybackStateDto, disconnect: Bool) {
+        guard appRemoteHandoffID == id else { return }
+        effects.cancel(.handoff(id))
+        if disconnect { appRemoteHandoff?.disconnect() }
+        appRemoteHandoff = nil
+        appRemoteHandoffPending = false
+        appRemoteHandoffID = nil
+        appRemoteHandoffToken = nil
+        lifecycleState = state
+        emitChange()
+    }
+
+    private func retireAppRemoteHandoff(disconnect: Bool) {
+        if let appRemoteHandoffID { effects.cancel(.handoff(appRemoteHandoffID)) }
+        if disconnect { appRemoteHandoff?.disconnect() }
+        appRemoteHandoff = nil
+        appRemoteHandoffPending = false
+        appRemoteHandoffID = nil
+        appRemoteHandoffToken = nil
     }
 
     public func unavailableSnapshot(observedAtMs: UInt64) -> MobileMusicSnapshotDto {
@@ -1386,6 +1436,7 @@ public final class SpotifyProviderAdapter: NSObject {
     /// Called only by the explicit Reauthorize Spotify account action.
     public func clearAuthorization() {
         stopMonitoring()
+        retireAppRemoteHandoff(disconnect: true)
         invalidateAuthorizationTransaction()
         webPlayback = nil
         artwork = nil

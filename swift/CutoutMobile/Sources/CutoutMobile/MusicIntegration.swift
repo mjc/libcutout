@@ -434,6 +434,7 @@ public final class MusicProviderEffectExecutor {
         case transport
         case artwork
         case artworkRetry
+        case handoff
     }
 
     public enum Key: Hashable, Sendable {
@@ -445,6 +446,7 @@ public final class MusicProviderEffectExecutor {
         case transport(MobileMusicTransportRequestId)
         case artwork(MobileMusicArtworkRequestId)
         case artworkRetry(MobileMusicArtworkRetryId)
+        case handoff(UUID)
 
         var namespace: Namespace {
             switch self {
@@ -456,6 +458,7 @@ public final class MusicProviderEffectExecutor {
             case .transport: .transport
             case .artwork: .artwork
             case .artworkRetry: .artworkRetry
+            case .handoff: .handoff
             }
         }
     }
