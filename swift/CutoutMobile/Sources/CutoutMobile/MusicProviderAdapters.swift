@@ -996,33 +996,34 @@ public final class SpotifyProviderAdapter: NSObject {
     }
 
     @MainActor
-    public func perform(_ command: MobileMusicCommandDto) async -> MusicCommandOutcome {
+    public func perform(
+        _ command: MobileMusicCommandDto,
+        onChange: (@MainActor () -> Void)? = nil
+    ) async -> MusicCommandOutcome {
         if case .openProvider = command {
             guard await UIApplication.shared.open(Self.providerURL) else { return .failed }
             return .accepted
         }
+        let changeHandler = onChange ?? self.onChange
         let webCanResume = selectedPlaybackTransport == .webApi
             && webPlayback?.snapshot(state: lifecycleState, observedAtMs: connectionNowMs).capabilities.play == true
         if command == .play,
            !webCanResume,
            appRemote?.isConnected != true,
-           let session,
-           !session.isExpired,
-           let onChange
+           let changeHandler
         {
-            return beginAppRemoteHandoff(onChange: onChange)
+            return beginAppRemoteHandoff(onChange: changeHandler)
         }
         if selectedPlaybackTransport == .webApi {
             let outcome = await performWebCommand(command)
             if command == .play,
-               outcome != .accepted,
-               lifecycleState == .stale,
+               outcome == .failed,
+               session != nil,
+               !authorizationNeedsUserAction,
                appRemote?.isConnected != true,
-               let session,
-               !session.isExpired,
-               let onChange
+               let changeHandler
             {
-                return beginAppRemoteHandoff(onChange: onChange)
+                return beginAppRemoteHandoff(onChange: changeHandler)
             }
             return outcome
         }
@@ -1056,9 +1057,10 @@ public final class SpotifyProviderAdapter: NSObject {
     public func observation(observedAtMs: UInt64) -> MusicProviderObservation {
         if selectedPlaybackTransport == .webApi, let webPlayback {
             var snapshot = webPlayback.snapshot(state: lifecycleState, observedAtMs: observedAtMs)
-            let canReconnect = session.map { !$0.isExpired } ?? false
+            let canReconnect = session != nil && configuration != nil
             if canReconnect,
-               lifecycleState == .stopped || lifecycleState == .disconnected || lifecycleState == .stale {
+               lifecycleState == .stopped || lifecycleState == .disconnected
+                   || lifecycleState == .stale || lifecycleState == .unavailable {
                 snapshot = MobileMusicSnapshotDto(
                     provider: snapshot.provider,
                     sessionId: snapshot.sessionId,
@@ -1079,7 +1081,7 @@ public final class SpotifyProviderAdapter: NSObject {
             return MusicProviderObservation(snapshot: snapshot, artwork: artwork)
         }
         let controlsAvailable = lifecycleState == .playing || lifecycleState == .paused
-        let canReconnect = session.map { !$0.isExpired } ?? false
+        let canReconnect = session != nil && configuration != nil
         let snapshot = MobileMusicSnapshotDto(
             provider: .spotify,
             sessionId: selectedPlaybackTransport == .webApi ? "spotify-web-api" : "spotify-app-remote",
@@ -1097,7 +1099,8 @@ public final class SpotifyProviderAdapter: NSObject {
             capabilities: MobileMusicCapabilitiesDto(
                 previous: controlsAvailable && playerState?.playbackRestrictions.canSkipPrevious == true,
                 play: lifecycleState == .paused || (canReconnect && (
-                    lifecycleState == .stopped || lifecycleState == .disconnected || lifecycleState == .stale
+                    lifecycleState == .stopped || lifecycleState == .disconnected
+                        || lifecycleState == .stale || lifecycleState == .unavailable
                 )),
                 pause: lifecycleState == .playing,
                 next: controlsAvailable && playerState?.playbackRestrictions.canSkipNext == true,
