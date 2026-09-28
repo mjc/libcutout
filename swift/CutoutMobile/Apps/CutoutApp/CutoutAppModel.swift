@@ -721,6 +721,9 @@ final class CutoutAppModel {
                 return finishMusicCommand(
                     await spotifyMusicProvider.perform(.play, onChange: { [weak self] in
                         self?.refreshMusicSnapshot()
+                    }, onCommandFailure: { [weak self] in
+                        guard let self else { return }
+                        _ = self.finishMusicCommand(.failed, provider: commandProvider, requestID: feedbackRequestID)
                     }),
                     provider: commandProvider,
                     requestID: feedbackRequestID
@@ -745,6 +748,9 @@ final class CutoutAppModel {
         if nowPlaying.provider == .spotify {
             outcome = await spotifyMusicProvider.perform(command, onChange: { [weak self] in
                 self?.refreshMusicSnapshot()
+            }, onCommandFailure: { [weak self] in
+                guard let self else { return }
+                _ = self.finishMusicCommand(.failed, provider: commandProvider, requestID: feedbackRequestID)
             })
         } else {
             outcome = await appleMusicProvider.perform(command)
