@@ -166,6 +166,7 @@ public final class SpotifyProviderAdapter: NSObject {
     private var appRemoteBridge: AppRemoteBridge?
     private var appRemoteHandoff: SPTAppRemote?
     private var appRemoteHandoffPending = false
+    private var appRemoteHandoffPlayPending = false
     private var appRemoteHandoffID: UUID?
     private var appRemoteHandoffToken: String?
     private var establishedConnectionID: MobileMusicEstablishedConnectionId?
@@ -1123,11 +1124,13 @@ public final class SpotifyProviderAdapter: NSObject {
         guard !appRemoteHandoffPending, let configuration else { return .unavailable }
 
         appRemoteHandoffPending = true
+        appRemoteHandoffPlayPending = true
         let handoffID = UUID()
         appRemoteHandoffID = handoffID
         appRemoteHandoffToken = nil
         guard !restartMonitoring || startMonitoring(allowAuthorization: false, onChange: onChange) else {
             appRemoteHandoffPending = false
+            appRemoteHandoffPlayPending = false
             appRemoteHandoffID = nil
             return .unavailable
         }
@@ -1159,6 +1162,7 @@ public final class SpotifyProviderAdapter: NSObject {
         if disconnect { appRemoteHandoff?.disconnect() }
         appRemoteHandoff = nil
         appRemoteHandoffPending = false
+        appRemoteHandoffPlayPending = false
         appRemoteHandoffID = nil
         appRemoteHandoffToken = nil
         lifecycleState = state
@@ -1170,6 +1174,7 @@ public final class SpotifyProviderAdapter: NSObject {
         if disconnect { appRemoteHandoff?.disconnect() }
         appRemoteHandoff = nil
         appRemoteHandoffPending = false
+        appRemoteHandoffPlayPending = false
         appRemoteHandoffID = nil
         appRemoteHandoffToken = nil
     }
@@ -1242,6 +1247,20 @@ public final class SpotifyProviderAdapter: NSObject {
                 }
             }
         })
+        if appRemoteHandoffPlayPending, let playerAPI = appRemote.playerAPI {
+            appRemoteHandoffPlayPending = false
+            playerAPI.resume { [weak self] _, error in
+                guard error != nil else { return }
+                Task { @MainActor [weak self] in
+                    guard let self,
+                          self.lifecycle.classifyProviderSession(id: providerGeneration) == .current,
+                          self.lifecycle.classifyConnection(id: attemptID, nowMs: self.connectionNowMs) == .accepted else { return }
+#if DEBUG
+                    print("spotify_handoff_resume_failed")
+#endif
+                }
+            }
+        }
         refreshPlayerState()
         emitChange()
     }
