@@ -1,6 +1,6 @@
 //! Capture lifecycle through the existing session-state owner.
 
-use crate::CutoutSessionStateHandle;
+use crate::{CutoutSessionStateHandle, MobileCaptureWriteOutcomeDto};
 use cutout_core::{
     CaptureAttemptSnapshot, CaptureFinishToken, CaptureGeneration, CaptureOrigin, CaptureStage,
 };
@@ -31,6 +31,19 @@ capture_enum!(
     Saved,
     Failed
 );
+
+/// Rust's decision for how the session should handle one capture-writer result.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileCaptureWriteDecisionDto {
+    /// Keep processing the session; the writer accepted the event.
+    Continue,
+    /// Metadata admission rejected the event, but the writer remains usable.
+    Rejected,
+    /// The current writer failed and native failure effects should run.
+    FailWriter,
+    /// The failed result did not belong to the current capture attempt.
+    StaleFailure,
+}
 
 /// One Rust-issued writer attempt, not a connection or device identity.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
@@ -178,6 +191,25 @@ impl CutoutSessionStateHandle {
             .writer_failed(generation.into())
     }
 
+    /// Applies a writer result to the Rust-owned capture lifecycle.
+    pub fn apply_capture_write_outcome(
+        &self,
+        generation: Option<MobileCaptureGenerationDto>,
+        outcome: MobileCaptureWriteOutcomeDto,
+    ) -> MobileCaptureWriteDecisionDto {
+        match outcome {
+            MobileCaptureWriteOutcomeDto::Accepted => MobileCaptureWriteDecisionDto::Continue,
+            MobileCaptureWriteOutcomeDto::Rejected => MobileCaptureWriteDecisionDto::Rejected,
+            MobileCaptureWriteOutcomeDto::Failed => {
+                if generation.is_some_and(|generation| self.capture_writer_failed(generation)) {
+                    MobileCaptureWriteDecisionDto::FailWriter
+                } else {
+                    MobileCaptureWriteDecisionDto::StaleFailure
+                }
+            }
+        }
+    }
+
     /// Detaches active ownership while the consumed writer finishes.
     pub fn retire_capture_writer(&self, generation: MobileCaptureGenerationDto) -> bool {
         self.lock_inner()
@@ -233,6 +265,52 @@ mod tests {
             handle.capture_lifecycle_snapshot().attempt.unwrap().stage,
             MobileCaptureStageDto::SaveFailed
         );
+    }
+
+    #[test]
+    fn capture_write_outcomes_use_the_rust_owned_writer_lifecycle() {
+        let handle = CutoutSessionStateHandle::new();
+        let generation = handle
+            .begin_capture(MobileCaptureOriginDto::Manual)
+            .unwrap();
+        assert!(handle.capture_writer_started(generation));
+
+        assert_eq!(
+            handle.apply_capture_write_outcome(
+                Some(generation),
+                MobileCaptureWriteOutcomeDto::Accepted
+            ),
+            MobileCaptureWriteDecisionDto::Continue
+        );
+        assert_eq!(
+            handle.apply_capture_write_outcome(
+                Some(generation),
+                MobileCaptureWriteOutcomeDto::Rejected
+            ),
+            MobileCaptureWriteDecisionDto::Rejected
+        );
+        assert_eq!(
+            handle.apply_capture_write_outcome(
+                Some(generation),
+                MobileCaptureWriteOutcomeDto::Failed
+            ),
+            MobileCaptureWriteDecisionDto::FailWriter
+        );
+        assert_eq!(
+            handle.capture_lifecycle_snapshot().attempt.unwrap().stage,
+            MobileCaptureStageDto::SaveFailed
+        );
+    }
+
+    #[test]
+    fn capture_write_failure_without_its_generation_is_stale() {
+        let handle = CutoutSessionStateHandle::new();
+
+        assert_eq!(
+            handle.apply_capture_write_outcome(None, MobileCaptureWriteOutcomeDto::Failed),
+            MobileCaptureWriteDecisionDto::StaleFailure
+        );
+        assert!(handle.capture_lifecycle_snapshot().attempt.is_none());
     }
 
     #[test]

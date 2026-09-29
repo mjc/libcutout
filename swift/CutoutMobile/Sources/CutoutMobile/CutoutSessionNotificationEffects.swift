@@ -1,3 +1,4 @@
+import CutoutMobileFFI
 import Foundation
 
 /// The side effects sequenced around one Rust-produced notification step.
@@ -5,7 +6,7 @@ import Foundation
 /// The production implementation remains owned by `CutoutSessionCore`; tests can inject a
 /// recorder without constructing CoreBluetooth, Core Location, or a ride-map database.
 struct CutoutSessionNotificationEffects {
-    let applyActions: ([SessionAction]) -> Void
+    let applyActions: ([SessionAction]) -> [MobileCaptureWriteOutcomeDto]
     let observeRideMapConnection: (MonotonicMilliseconds) -> Void
     let persistBmsSamples: ([BmsRawVoltageObservation]) -> Void
     let reduceDisplayState:
@@ -14,7 +15,7 @@ struct CutoutSessionNotificationEffects {
         ) -> RideDisplayState
 
     init(
-        applyActions: @escaping ([SessionAction]) -> Void,
+        applyActions: @escaping ([SessionAction]) -> [MobileCaptureWriteOutcomeDto],
         observeRideMapConnection: @escaping (MonotonicMilliseconds) -> Void,
         persistBmsSamples: @escaping ([BmsRawVoltageObservation]) -> Void,
         reduceDisplayState: @escaping (

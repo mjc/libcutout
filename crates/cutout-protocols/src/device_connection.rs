@@ -88,6 +88,40 @@ mod tests {
     }
 
     #[test]
+    fn admitted_retry_replaces_attempt_and_resets_device_scoped_state() {
+        let mut owner = DeviceConnectionSession::default();
+        let previous = begin(&mut owner, "A");
+        let cutout_core::ConnectionRetryDecision::Scheduled(retry) = owner
+            .state
+            .connection
+            .request_retry(&previous, MonotonicTimestamp::new(100), 500)
+        else {
+            panic!("current attempt should receive a retry");
+        };
+
+        let current = owner
+            .admit_retry(retry.token(), retry.deadline())
+            .expect("retry admitted at its deadline");
+
+        assert!(!owner.state.connection.is_current(&previous));
+        assert!(owner.state.connection.is_current(&current));
+        assert_eq!(current.platform_identifier(), "A");
+        assert_eq!(
+            owner.snapshot().connection.readiness,
+            ConnectionReadiness::Pending
+        );
+        assert!(owner.snapshot().identity.is_none());
+        assert_eq!(
+            owner
+                .state
+                .discovery()
+                .selected_platform_identifier
+                .as_deref(),
+            Some("A")
+        );
+    }
+
+    #[test]
     fn stale_attempt_cannot_mutate_detector_or_probe_state() {
         let mut owner = DeviceConnectionSession::default();
         let previous = begin(&mut owner, "A");
@@ -674,19 +708,34 @@ impl DeviceConnectionSession {
 
     /// Replaces all device-scoped state before native work for the new attempt.
     pub fn begin_attempt(&mut self, platform_identifier: String, at: MonotonicTimestamp) {
+        self.reset_for_attempt(&platform_identifier, at);
+        self.state.connection.begin(platform_identifier, at);
+    }
+
+    /// Admits a Rust-approved retry and resets device-scoped state before native work.
+    pub fn admit_retry(
+        &mut self,
+        retry: cutout_core::ConnectionRetryToken,
+        at: MonotonicTimestamp,
+    ) -> Option<ConnectionAttemptToken> {
+        let token = self.state.connection.admit_retry(retry, at)?;
+        self.reset_for_attempt(token.platform_identifier(), at);
+        Some(token)
+    }
+
+    fn reset_for_attempt(&mut self, platform_identifier: &str, at: MonotonicTimestamp) {
         self.retain_detection();
         self.last_input_at = at;
         self.vesc_board_profile = None;
         self.validation_grant = None;
         self.state.reset_device_identity();
         self.state
-            .select_discovered_platform(platform_identifier.clone());
+            .select_discovered_platform(platform_identifier.to_owned());
         self.state.settings = DeviceSettingsState::default();
         self.setting_operations.clear();
         self.state.actions.disconnect();
         self.detector = DeviceDetectionSession::default();
         self.device = None;
-        self.state.connection.begin(platform_identifier, at);
     }
 
     /// Supplies saved controller geometry for this pending attempt without asserting identity.

@@ -20,6 +20,7 @@ private final class CaptureRecorderSpy: CutoutSessionCaptureRecording {
     #endif
     private(set) var finishCount = 0
     private(set) var publishFailureCount = 0
+    var onPublishFailure: (() -> Void)?
 
     func start(
         generation: CaptureGeneration,
@@ -59,7 +60,10 @@ private final class CaptureRecorderSpy: CutoutSessionCaptureRecording {
         )
     }
 
-    func publishFailure() { publishFailureCount += 1 }
+    func publishFailure() {
+        publishFailureCount += 1
+        onPublishFailure?()
+    }
     func writerStatus() -> MobileCaptureWriterStatusDto? { nil }
 
     func recordNotification(
@@ -412,13 +416,65 @@ final class CutoutSessionCoreTests: XCTestCase {
         capture.recordLinkUpResult = .failed
         let core = CutoutSessionCore(
             clock: MonotonicClock(now: { MonotonicMilliseconds(100) }),
+            testScript: CutoutSessionTestScript(
+                candidate: scriptedVescCandidate,
+                telemetry: TelemetrySnapshot(),
+                connectionDelayMilliseconds: 0
+            ),
             captureRecorder: capture
         )
+        XCTAssertTrue(core.recordOnly(platformIdentifier: scriptedVescCandidate.platformIdentifier))
 
         core.applyLinkUpStep(CoreBluetoothSessionStep(operations: [], snapshot: nil))
 
         XCTAssertEqual(core.phase, .subscribing)
         XCTAssertEqual(capture.publishFailureCount, 1)
+        XCTAssertEqual(capture.finishCount, 1)
+    }
+
+    func testLinkUpCaptureFailureIsAppliedAfterDisplayReductionAndPhaseChange() {
+        var events = [String]()
+        let capture = CaptureRecorderSpy()
+        capture.recordLinkUpResult = .failed
+        let effects = CutoutSessionNotificationEffects(
+            applyActions: { _ in
+                events.append("actions")
+                return []
+            },
+            observeRideMapConnection: { _ in events.append("map") },
+            persistBmsSamples: { _ in events.append("bms") },
+            reduceDisplayState: { state, snapshot, receivedAt, _ in
+                events.append("display")
+                return state.reducingLinkUpSnapshot(snapshot, receivedAt: receivedAt)
+            }
+        )
+        let core = CutoutSessionCore(
+            clock: MonotonicClock(now: { MonotonicMilliseconds(100) }),
+            testScript: CutoutSessionTestScript(
+                candidate: scriptedVescCandidate,
+                telemetry: TelemetrySnapshot(),
+                connectionDelayMilliseconds: 0
+            ),
+            notificationEffects: effects,
+            captureRecorder: capture
+        )
+        XCTAssertTrue(core.recordOnly(platformIdentifier: scriptedVescCandidate.platformIdentifier))
+        var phaseWhenCaptureFailed: SessionConnectionPhase?
+        capture.onPublishFailure = {
+            events.append("capture-failure")
+            phaseWhenCaptureFailed = core.phase
+        }
+
+        core.applyLinkUpStep(
+            CoreBluetoothSessionStep(
+                operations: [],
+                snapshot: TelemetrySnapshot(at: MonotonicMilliseconds(100), speed: speedValue(1_234))
+            )
+        )
+
+        XCTAssertEqual(events, ["actions", "map", "bms", "display", "capture-failure"])
+        XCTAssertEqual(phaseWhenCaptureFailed, .subscribing)
+        XCTAssertEqual(core.displayState.speed.millimetersPerSecond, 1_234)
         XCTAssertEqual(capture.finishCount, 1)
     }
 
@@ -428,8 +484,14 @@ final class CutoutSessionCoreTests: XCTestCase {
         let receivedAt = MonotonicMilliseconds(42)
         let core = CutoutSessionCore(
             clock: MonotonicClock(now: { receivedAt }),
+            testScript: CutoutSessionTestScript(
+                candidate: scriptedVescCandidate,
+                telemetry: TelemetrySnapshot(),
+                connectionDelayMilliseconds: 0
+            ),
             captureRecorder: capture
         )
+        XCTAssertTrue(core.recordOnly(platformIdentifier: scriptedVescCandidate.platformIdentifier))
         let snapshot = TelemetrySnapshot(at: receivedAt, speed: speedValue(1_234))
 
         core.applyLinkUpStep(CoreBluetoothSessionStep(operations: [], snapshot: snapshot))
@@ -665,55 +727,31 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(core.captureElapsedMilliseconds(since: startedAt), 2_001)
     }
 
-    func testConnectionReconnectPolicyBoundsJitteredBackoff() {
-        XCTAssertEqual(ConnectionReconnectPolicy.delayMilliseconds(attempt: 1, jitter: 0), 200)
-        XCTAssertEqual(ConnectionReconnectPolicy.delayMilliseconds(attempt: 2, jitter: 0.5), 500)
-        XCTAssertEqual(ConnectionReconnectPolicy.delayMilliseconds(attempt: 3, jitter: 1), 1_200)
-        XCTAssertNil(ConnectionReconnectPolicy.delayMilliseconds(attempt: 4, jitter: 0.5))
-    }
-
-    func testReconnectSchedulerCancelsSupersededAndExplicitRetries() {
+    func testReconnectTimerCancelsSupersededAndExplicitWork() {
         let scheduler = RecordingReconnectScheduler()
-        let reconnects = ConnectionReconnectController(scheduler: scheduler)
+        let timer = ConnectionReconnectController(scheduler: scheduler)
         var completed = [String]()
 
         XCTAssertEqual(
-            reconnects.schedule(jitter: 0) { completed.append("first") },
-            ConnectionReconnectSchedule(attempt: 1, delayMilliseconds: 200)
+            timer.schedule(after: 200) { completed.append("first") },
+            ConnectionReconnectSchedule(delayMilliseconds: 200)
         )
         XCTAssertEqual(
-            reconnects.schedule(jitter: 0.5) { completed.append("second") },
-            ConnectionReconnectSchedule(attempt: 2, delayMilliseconds: 500)
+            timer.schedule(after: 500) { completed.append("second") },
+            ConnectionReconnectSchedule(delayMilliseconds: 500)
         )
 
         scheduler.runAll()
         XCTAssertEqual(completed, ["second"])
 
         XCTAssertEqual(
-            reconnects.schedule(jitter: 1) { completed.append("cancelled") },
-            ConnectionReconnectSchedule(attempt: 3, delayMilliseconds: 1_200)
+            timer.schedule(after: 1_200) { completed.append("cancelled") },
+            ConnectionReconnectSchedule(delayMilliseconds: 1_200)
         )
-        reconnects.cancel()
+        timer.cancel()
         scheduler.runAll()
 
         XCTAssertEqual(completed, ["second"])
-        XCTAssertEqual(reconnects.attempt, 0)
-    }
-
-    func testReconnectExhaustionCancelsTheLastPendingRetry() {
-        let scheduler = RecordingReconnectScheduler()
-        let reconnects = ConnectionReconnectController(scheduler: scheduler)
-        var completed = [String]()
-
-        XCTAssertNotNil(reconnects.schedule(jitter: 0) { completed.append("first") })
-        XCTAssertNotNil(reconnects.schedule(jitter: 0) { completed.append("second") })
-        XCTAssertNotNil(reconnects.schedule(jitter: 0) { completed.append("third") })
-        XCTAssertNil(reconnects.schedule(jitter: 0) { completed.append("exhausted") })
-
-        scheduler.runAll()
-
-        XCTAssertTrue(completed.isEmpty)
-        XCTAssertEqual(reconnects.attempt, ConnectionReconnectPolicy.maximumAttempts + 1)
     }
 
     func testNordicNotificationUUIDsRemainFullWidthForPevcap() {
@@ -1181,8 +1219,9 @@ final class CutoutSessionCoreTests: XCTestCase {
     @MainActor
     func testTransportTerminationPreservesVerifiedWheelIdentityAcrossRetries() {
         let scheduler = RecordingReconnectScheduler()
+        let now = Mutex(MonotonicMilliseconds(1_000))
         let core = CutoutSessionCore(
-            clock: MonotonicClock { MonotonicMilliseconds(1_000) },
+            clock: MonotonicClock { now.withLock { $0 } },
             testScript: CutoutSessionTestScript(
                 candidate: scriptedAeroCandidate,
                 telemetry: nil,
@@ -1195,12 +1234,13 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertTrue(core.pair(platformIdentifier: scriptedAeroCandidate.platformIdentifier))
         XCTAssertEqual(core.electricUnicycleModel, .aero)
 
-        for _ in 0..<2 {
+        for deadline in [UInt64(1_200), 1_600] {
             core.handleTransportTermination(
                 platformIdentifier: scriptedAeroCandidate.platformIdentifier,
                 error: nil,
                 reconnect: {}
             )
+            now.withLock { $0 = MonotonicMilliseconds(deadline) }
             scheduler.runAll()
             XCTAssertEqual(core.electricUnicycleModel, .aero)
             XCTAssertFalse(core.isRecordOnlyConnection)
@@ -1213,10 +1253,11 @@ final class CutoutSessionCoreTests: XCTestCase {
     @MainActor
     func testTransportTerminationUsesTheSharedReconnectTransition() {
         let scheduler = RecordingReconnectScheduler()
+        let now = Mutex(MonotonicMilliseconds(1_000))
         let retry = expectation(description: "transport termination schedules retry")
         var reconnectCount = 0
         let core = CutoutSessionCore(
-            clock: MonotonicClock { MonotonicMilliseconds(1_000) },
+            clock: MonotonicClock { now.withLock { $0 } },
             testScript: CutoutSessionTestScript(
                 candidate: scriptedVescCandidate,
                 telemetry: nil,
@@ -1229,6 +1270,7 @@ final class CutoutSessionCoreTests: XCTestCase {
             XCTAssertEqual(scheduled.platformIdentifier, self.scriptedVescCandidate.platformIdentifier)
             XCTAssertEqual(scheduled.attempt, 1)
             XCTAssertEqual(scheduled.deadline, MonotonicMilliseconds(1_200))
+            now.withLock { $0 = MonotonicMilliseconds(scheduled.deadline.rawValue - 1) }
             retry.fulfill()
         }
 
@@ -1245,6 +1287,10 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(core.phase, .discoveringServices)
         XCTAssertEqual(reconnectCount, 0)
 
+        scheduler.runAll()
+        XCTAssertEqual(reconnectCount, 0)
+
+        now.withLock { $0 = MonotonicMilliseconds(1_200) }
         scheduler.runAll()
         XCTAssertEqual(reconnectCount, 1)
     }
@@ -1332,9 +1378,10 @@ final class CutoutSessionCoreTests: XCTestCase {
     @MainActor
     func testTransportTerminationExhaustionCannotRunAnOlderReconnect() {
         let scheduler = RecordingReconnectScheduler()
+        let now = Mutex(MonotonicMilliseconds(1_000))
         var reconnectCount = 0
         let core = CutoutSessionCore(
-            clock: MonotonicClock { MonotonicMilliseconds(1_000) },
+            clock: MonotonicClock { now.withLock { $0 } },
             testScript: CutoutSessionTestScript(
                 candidate: scriptedVescCandidate,
                 telemetry: nil,
@@ -1346,22 +1393,21 @@ final class CutoutSessionCoreTests: XCTestCase {
 
         core.start()
         XCTAssertTrue(core.pair(platformIdentifier: scriptedVescCandidate.platformIdentifier))
-        for _ in 0...ConnectionReconnectPolicy.maximumAttempts {
+        for deadline in [UInt64(1_200), 1_600, 2_400, 2_400] {
             core.handleTransportTermination(
                 platformIdentifier: scriptedVescCandidate.platformIdentifier,
                 error: nil,
                 reconnect: { reconnectCount += 1 }
             )
+            now.withLock { $0 = MonotonicMilliseconds(deadline) }
+            scheduler.runAll()
         }
 
-        scheduler.runAll()
-
-        XCTAssertEqual(core.phase, .live)
-        XCTAssertTrue(core.isRecordOnlyConnection)
-        XCTAssertEqual(core.connectionSnapshot.readiness, .recordOnly)
-        XCTAssertNil(core.rideSessionStateHandle.deviceSessionSnapshot().identity)
+        XCTAssertEqual(core.phase, .failed(.connectFailed("unknown error")))
+        XCTAssertFalse(core.isRecordOnlyConnection)
+        XCTAssertEqual(core.connectionSnapshot.readiness, .failed)
+        XCTAssertEqual(reconnectCount, 3)
         XCTAssertEqual(core.scanState.rows, [scriptedVescCandidate.pickerRow])
-        XCTAssertEqual(reconnectCount, 0)
     }
 
     func testRecordOnlyMissingCandidateReturnsFalse() {
@@ -1646,7 +1692,10 @@ final class CutoutSessionCoreTests: XCTestCase {
     func testNotificationEffectsRunBeforeDisplayPublicationInOneCanonicalOrder() {
         var events = [String]()
         let effects = CutoutSessionNotificationEffects(
-            applyActions: { _ in events.append("actions") },
+            applyActions: { _ in
+                events.append("actions")
+                return []
+            },
             observeRideMapConnection: { _ in events.append("map") },
             persistBmsSamples: { _ in events.append("bms") },
             reduceDisplayState: { state, snapshot, receivedAt, updateKind in
@@ -1679,10 +1728,53 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(core.displayState.lastUpdate, MonotonicMilliseconds(42))
     }
 
+    func testCaptureWriterFailureIsAppliedAfterNotificationDisplayReduction() {
+        var events = [String]()
+        let capture = CaptureRecorderSpy()
+        capture.onPublishFailure = { events.append("capture-failure") }
+        let effects = CutoutSessionNotificationEffects(
+            applyActions: { _ in
+                events.append("actions")
+                return [.failed]
+            },
+            observeRideMapConnection: { _ in events.append("map") },
+            persistBmsSamples: { _ in events.append("bms") },
+            reduceDisplayState: { state, snapshot, receivedAt, _ in
+                events.append("display")
+                return state.reducing(snapshot: snapshot, receivedAt: receivedAt)
+            }
+        )
+        let core = CutoutSessionCore(
+            clock: MonotonicClock(now: { MonotonicMilliseconds(100) }),
+            testScript: CutoutSessionTestScript(
+                candidate: scriptedVescCandidate,
+                telemetry: TelemetrySnapshot(),
+                connectionDelayMilliseconds: 0
+            ),
+            notificationEffects: effects,
+            captureRecorder: capture
+        )
+        XCTAssertTrue(core.recordOnly(platformIdentifier: scriptedVescCandidate.platformIdentifier))
+
+        core.applyNotificationStep(
+            CoreBluetoothSessionStep(operations: [], snapshot: TelemetrySnapshot(speed: speedValue(1_234))),
+            receivedAt: MonotonicMilliseconds(42)
+        )
+
+        XCTAssertEqual(events, ["actions", "map", "bms", "display", "capture-failure"])
+        XCTAssertEqual(core.displayState.speed.millimetersPerSecond, 1_234)
+        XCTAssertEqual(core.phase, .live)
+        XCTAssertEqual(capture.publishFailureCount, 1)
+        XCTAssertEqual(capture.finishCount, 1)
+    }
+
     func testLinkUpRunsSharedEffectsBeforeOneNonNotificationDisplayReduction() {
         var events = [String]()
         let effects = CutoutSessionNotificationEffects(
-            applyActions: { _ in events.append("actions") },
+            applyActions: { _ in
+                events.append("actions")
+                return []
+            },
             observeRideMapConnection: { _ in events.append("map") },
             persistBmsSamples: { _ in events.append("bms") },
             reduceDisplayState: { state, snapshot, receivedAt, updateKind in

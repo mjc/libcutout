@@ -2,7 +2,7 @@
 
 use cutout_core::{
     ConnectionAttemptSnapshot, ConnectionAttemptToken, ConnectionReadiness,
-    ConnectionTransportState,
+    ConnectionRetryDecision, ConnectionTransportState,
 };
 use std::sync::Arc;
 
@@ -67,6 +67,49 @@ pub struct MobileConnectionAttemptSnapshotDto {
     pub deadline_ms: Option<u64>,
 }
 
+/// Retry approved by Rust, including the timer identity and monotonic deadline.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileConnectionRetryDto {
+    /// Fences timer callbacks after cancellation or replacement.
+    pub token: u64,
+    /// One-based consecutive retry number.
+    pub attempt: u32,
+    /// Device identity to reconnect through `CoreBluetooth`.
+    pub platform_identifier: String,
+    /// Earliest monotonic time at which Rust will admit this retry.
+    pub deadline_ms: u64,
+}
+
+/// Typed result of Rust reconnect policy.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileConnectionRetryDecisionDto {
+    /// Schedule a native timer, then ask Rust to admit it when it fires.
+    Scheduled { retry: MobileConnectionRetryDto },
+    /// The configured number of consecutive retries has been exhausted.
+    Exhausted { attempt: u32 },
+    /// This attempt no longer owns the reconnect request.
+    Rejected,
+}
+
+impl From<ConnectionRetryDecision> for MobileConnectionRetryDecisionDto {
+    fn from(value: ConnectionRetryDecision) -> Self {
+        match value {
+            ConnectionRetryDecision::Scheduled(retry) => Self::Scheduled {
+                retry: MobileConnectionRetryDto {
+                    token: retry.token().value(),
+                    attempt: u32::from(retry.attempt()),
+                    platform_identifier: retry.platform_identifier().to_owned(),
+                    deadline_ms: retry.deadline().get(),
+                },
+            },
+            ConnectionRetryDecision::Exhausted { attempt } => Self::Exhausted {
+                attempt: u32::from(attempt),
+            },
+            ConnectionRetryDecision::Rejected => Self::Rejected,
+        }
+    }
+}
+
 impl From<MobileConnectionAttemptTokenDto> for ConnectionAttemptToken {
     fn from(value: MobileConnectionAttemptTokenDto) -> Self {
         Self::new(value.generation, value.platform_identifier)
@@ -109,6 +152,57 @@ impl From<&ConnectionAttemptSnapshot> for MobileConnectionAttemptSnapshotDto {
 
 #[uniffi::export]
 impl CutoutSessionStateHandle {
+    /// Requests a reconnect decision from Rust; `jitter_permille` supplies platform entropy only.
+    pub fn request_connection_retry(
+        &self,
+        token: MobileConnectionAttemptTokenDto,
+        now_ms: u64,
+        jitter_permille: u16,
+    ) -> MobileConnectionRetryDecisionDto {
+        let mut inner = self.lock_inner();
+        inner
+            .session_state_mut()
+            .connection
+            .request_retry(
+                &token.into(),
+                MonotonicTimestamp::new(now_ms),
+                jitter_permille,
+            )
+            .into()
+    }
+
+    /// Admits a timer only after its Rust-owned monotonic deadline.
+    pub fn admit_connection_retry(
+        &self,
+        token: u64,
+        now_ms: u64,
+    ) -> Option<MobileConnectionAttemptSnapshotDto> {
+        let mut inner = self.lock_inner();
+        let admitted = inner.admit_retry(
+            cutout_core::ConnectionRetryToken::new(token),
+            MonotonicTimestamp::new(now_ms),
+        );
+        admitted.map(|_| inner.session_state().connection.snapshot().into())
+    }
+
+    /// Cancels only the matching timer and clears its consecutive retry budget.
+    pub fn cancel_connection_retry(&self, token: u64) -> bool {
+        self.lock_inner()
+            .session_state_mut()
+            .connection
+            .cancel_retry(cutout_core::ConnectionRetryToken::new(token))
+    }
+
+    /// Returns the Rust deadline for a still-pending retry timer.
+    #[must_use]
+    pub fn connection_retry_deadline(&self, token: u64) -> Option<u64> {
+        self.lock_inner()
+            .session_state()
+            .connection
+            .retry_deadline(cutout_core::ConnectionRetryToken::new(token))
+            .map(MonotonicTimestamp::get)
+    }
+
     /// Accepts a native link callback for its captured attempt.
     pub fn connection_link_established(
         &self,
@@ -266,6 +360,47 @@ mod tests {
         assert!(handle.verified_connection_attempt_is_current(token.clone()));
         handle.begin_connection_attempt("A".into(), 20);
         assert!(!handle.verified_connection_attempt_is_current(token.clone()));
+        assert!(!handle.connection_attempt_is_current(token));
+    }
+
+    #[test]
+    fn retry_ffi_requires_the_rust_deadline_and_returns_a_new_attempt() {
+        let handle = CutoutSessionStateHandle::new();
+        let initial = handle.begin_connection_attempt("A".into(), 100);
+        let token = initial.token.expect("attempt token");
+        handle.connection_link_established(token.clone());
+        {
+            let mut inner = handle.lock_inner();
+            assert!(
+                inner
+                    .session_state_mut()
+                    .connection
+                    .finish_detection(&token.clone().into(), true)
+            );
+        }
+
+        let MobileConnectionRetryDecisionDto::Scheduled { retry } =
+            handle.request_connection_retry(token.clone(), 1_000, 500)
+        else {
+            panic!("verified connection should schedule its first retry");
+        };
+        assert_eq!(retry.platform_identifier, "A");
+        assert_eq!(retry.attempt, 1);
+        assert_eq!(retry.deadline_ms, 1_250);
+        assert!(handle.admit_connection_retry(retry.token, 1_249).is_none());
+
+        let admitted = handle
+            .admit_connection_retry(retry.token, retry.deadline_ms)
+            .expect("timer admitted at Rust deadline");
+        assert_eq!(admitted.readiness, MobileConnectionReadinessDto::Pending);
+        assert_eq!(
+            admitted.transport,
+            MobileConnectionTransportStateDto::Connecting
+        );
+        assert_ne!(
+            admitted.token.expect("new token").generation,
+            token.generation
+        );
         assert!(!handle.connection_attempt_is_current(token));
     }
 
