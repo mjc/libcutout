@@ -24,7 +24,7 @@ enum ProtocolDetectionFinishDecision: Equatable {
     case evaluateResolvedEvidence
 
     init(resolution: DeviceDetectionResolution) {
-        self = resolution.protocolFamily == nil ? .awaitPassiveEvidence : .evaluateResolvedEvidence
+        self = resolution.awaitsPassiveEvidence ? .awaitPassiveEvidence : .evaluateResolvedEvidence
     }
 }
 

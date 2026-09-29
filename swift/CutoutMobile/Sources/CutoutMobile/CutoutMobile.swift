@@ -115,6 +115,7 @@ public enum DeviceDetectionPendingProbe: Equatable, Hashable, Sendable {
 
 public struct DeviceDetectionResolution: Equatable, Hashable, Sendable {
     public let protocolFamily: DeviceDetectionProtocolFamily?
+    public let awaitsPassiveEvidence: Bool
     public let protocolConflict: Bool
     public let veteranProtocolModelID: UInt16?
     public let advertisedName: Data?
@@ -126,6 +127,7 @@ public struct DeviceDetectionResolution: Equatable, Hashable, Sendable {
 
     init(_ record: DeviceDetectionResolutionRecord) {
         self.protocolFamily = record.protocolFamily.map(DeviceDetectionProtocolFamily.init)
+        self.awaitsPassiveEvidence = record.awaitsPassiveEvidence
         self.protocolConflict = record.protocolConflict
         self.veteranProtocolModelID = record.veteranProtocolModelId
         self.advertisedName = record.advertisedName
@@ -199,6 +201,7 @@ extension DeviceDetectionResolution {
     ) -> DiscoveryCandidate {
         let resolution = DeviceDetectionResolutionRecord(
             protocolFamily: protocolFamily.map(\.dto),
+            awaitsPassiveEvidence: awaitsPassiveEvidence,
             protocolConflict: protocolConflict,
             veteranProtocolModelId: veteranProtocolModelID,
             advertisedName: advertisedName,

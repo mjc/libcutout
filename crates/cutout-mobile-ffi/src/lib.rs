@@ -1687,6 +1687,9 @@ pub struct DeviceDetectionResolutionRecord {
     /// Resolved protocol family, when known.
     pub protocol_family: Option<MobileProtocolFamilyDto>,
 
+    /// Rust-owned decision to keep waiting for passive protocol frames.
+    pub awaits_passive_evidence: bool,
+
     /// Strong wire evidence reported incompatible protocol families.
     pub protocol_conflict: bool,
 
@@ -12355,6 +12358,7 @@ impl From<&DeviceDetectionResolution> for DeviceDetectionResolutionRecord {
     fn from(resolution: &DeviceDetectionResolution) -> Self {
         Self {
             protocol_family: mobile_protocol_family_from_detection(resolution.protocol),
+            awaits_passive_evidence: resolution.awaits_passive_evidence(),
             protocol_conflict: resolution.protocol == ProtocolFamilyState::Conflict,
             veteran_protocol_model_id: match resolution.staged.protocol_model {
                 ProtocolModelIdentityEvidence::ModelId(identity)
@@ -17442,6 +17446,7 @@ mod tests {
             "Veteran stream".to_owned(),
             DeviceDetectionResolutionRecord {
                 protocol_family: Some(MobileProtocolFamilyDto::VeteranLeaperkimNosfet),
+                awaits_passive_evidence: false,
                 protocol_conflict: false,
                 veteran_protocol_model_id: None,
                 advertised_name: None,
@@ -17478,6 +17483,7 @@ mod tests {
             "Begode stream".to_owned(),
             DeviceDetectionResolutionRecord {
                 protocol_family: Some(MobileProtocolFamilyDto::BegodeGotway),
+                awaits_passive_evidence: false,
                 protocol_conflict: false,
                 veteran_protocol_model_id: None,
                 advertised_name: None,
@@ -17520,6 +17526,7 @@ mod tests {
                 "Detected device".to_owned(),
                 DeviceDetectionResolutionRecord {
                     protocol_family: Some(family),
+                    awaits_passive_evidence: false,
                     protocol_conflict: false,
                     veteran_protocol_model_id: None,
                     advertised_name: Some(misleading_name),
@@ -17548,6 +17555,7 @@ mod tests {
             "VESC stream".to_owned(),
             DeviceDetectionResolutionRecord {
                 protocol_family: Some(MobileProtocolFamilyDto::Vesc),
+                awaits_passive_evidence: false,
                 protocol_conflict: false,
                 veteran_protocol_model_id: None,
                 advertised_name: None,
@@ -17574,11 +17582,13 @@ mod tests {
     #[test]
     fn mobile_device_detection_session_projects_mixed_family_conflict() {
         let session = CutoutSessionStateHandle::new();
+        assert!(session.resolution().awaits_passive_evidence);
         let veteran_frame = synthetic_veteran_frame_with_model_id(43);
         let begode_frame = hex_literal::hex!("55aa17750538007602eefb64f4941481000900185a5a5a5a");
         let _ = session.observe_notification(veteran_frame.to_vec());
 
         let resolution = session.observe_notification(begode_frame.to_vec());
+        assert!(!resolution.awaits_passive_evidence);
         let candidate = mobile_discovery_candidate_from_begode_detection_resolution(
             "ios-local-conflict".to_owned(),
             "Conflicting wheel".to_owned(),

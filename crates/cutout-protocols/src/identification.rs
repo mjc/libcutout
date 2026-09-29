@@ -299,6 +299,22 @@ pub struct DeviceDetectionResolution {
     pub malformed_probe_response: Option<PendingProbe>,
 }
 
+impl DeviceDetectionResolution {
+    /// Whether protocol detection should keep the connection attempt pending for passive frames.
+    #[must_use]
+    pub const fn awaits_passive_evidence(&self) -> bool {
+        match self.protocol {
+            ProtocolFamilyState::Unknown => {
+                self.missing_probe_response.is_none() && self.malformed_probe_response.is_none()
+            }
+            ProtocolFamilyState::VeteranLeaperkimNosfet
+            | ProtocolFamilyState::BegodeGotway
+            | ProtocolFamilyState::Vesc
+            | ProtocolFamilyState::Conflict => false,
+        }
+    }
+}
+
 /// Incremental device-detection event.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DeviceDetectionEvent<'a> {
@@ -1966,6 +1982,7 @@ mod tests {
         );
         assert_eq!(resolution.model_banner, None);
         assert_eq!(resolution.staged.model, None);
+        assert!(!resolution.awaits_passive_evidence());
     }
 
     #[test]
@@ -2010,6 +2027,7 @@ mod tests {
             Some(b"Falcon\0".as_slice())
         );
         assert_eq!(resolution.staged.model, None);
+        assert!(!resolution.awaits_passive_evidence());
     }
 
     #[test]
@@ -2121,10 +2139,18 @@ mod tests {
         assert_eq!(update.staged.confidence, IdentityConfidence::NoMatch);
         assert_eq!(update.staged.outcome, StagedIdentityOutcome::Conflict);
         assert_eq!(update.staged.model, None);
+        assert!(!update.awaits_passive_evidence());
         assert_eq!(
             update.staged.protocol_model,
             ProtocolModelIdentityEvidence::Missing
         );
+    }
+
+    #[test]
+    fn caller_owned_detection_session_waits_for_passive_protocol_evidence_when_unresolved() {
+        let session = DeviceDetectionSession::new();
+
+        assert!(session.resolution().awaits_passive_evidence());
     }
 
     #[test]

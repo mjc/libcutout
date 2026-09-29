@@ -160,6 +160,12 @@ final class DeviceDetectionSessionTests: XCTestCase {
             conflict.probeDisposition(platformIdentifier: "conflict", displayName: "Unknown EUC"),
             .refuse(.conflictingEvidence)
         )
+        for terminalResolution in [missing, malformed, conflict] {
+            XCTAssertEqual(
+                ProtocolDetectionFinishDecision(resolution: terminalResolution),
+                .evaluateResolvedEvidence
+            )
+        }
     }
 
     func testAttemptScopedIdentificationProbeOutcomeDistinguishesProbeNeededAndUnsupported() {
@@ -327,6 +333,7 @@ final class DeviceDetectionSessionTests: XCTestCase {
                 displayName: "Veteran stream",
                 resolution: DeviceDetectionResolutionRecord(
                     protocolFamily: .veteranLeaperkimNosfet,
+                    awaitsPassiveEvidence: false,
                     protocolConflict: false,
                     veteranProtocolModelId: nil,
                     advertisedName: nil,
@@ -351,6 +358,7 @@ final class DeviceDetectionSessionTests: XCTestCase {
         let resolution = DeviceDetectionResolution(
             DeviceDetectionResolutionRecord(
                 protocolFamily: .veteranLeaperkimNosfet,
+                awaitsPassiveEvidence: false,
                 protocolConflict: false,
                 veteranProtocolModelId: nil,
                 advertisedName: nil,
@@ -386,6 +394,7 @@ final class DeviceDetectionSessionTests: XCTestCase {
                 displayName: "Begode stream",
                 resolution: DeviceDetectionResolutionRecord(
                     protocolFamily: .begodeGotway,
+                    awaitsPassiveEvidence: false,
                     protocolConflict: false,
                     veteranProtocolModelId: nil,
                     advertisedName: nil,
@@ -413,6 +422,7 @@ final class DeviceDetectionSessionTests: XCTestCase {
                 displayName: "VESC stream",
                 resolution: DeviceDetectionResolutionRecord(
                     protocolFamily: .vesc,
+                    awaitsPassiveEvidence: false,
                     protocolConflict: false,
                     veteranProtocolModelId: nil,
                     advertisedName: nil,
