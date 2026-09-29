@@ -282,6 +282,23 @@ public final class DeviceDetectionSession {
         return DeviceDetectionResolution(resolution)
     }
 
+    func observeBegodeProbeWrite(
+        bytes: Data,
+        at startedAt: MonotonicMilliseconds
+    ) -> DeviceDetectionPendingProbe? {
+        let probe: MobilePendingProbeDto?
+        if let token = currentToken {
+            probe = inner.observeBegodeProbeWriteForAttemptAt(
+                token: token,
+                bytes: bytes,
+                startedAtMs: startedAt.rawValue
+            )
+        } else {
+            probe = inner.observeBegodeProbeWriteAt(bytes: bytes, startedAtMs: startedAt.rawValue)
+        }
+        return probe.map(DeviceDetectionPendingProbe.init)
+    }
+
     func beginIdentificationProbe(at startedAt: MonotonicMilliseconds) -> IdentificationProbeOutcome {
         let outcome: CutoutMobileFFI.MobileIdentificationProbeOutcomeDto
         if let token = currentToken {

@@ -349,6 +349,15 @@ pub enum DeviceDetectionEvent<'a> {
     },
 }
 
+/// Identifies the pending response for one canonical Begode probe request payload.
+#[must_use]
+pub fn begode_probe_for_request_payload(payload: &[u8]) -> Option<PendingProbe> {
+    crate::begode_identification_probes()
+        .into_iter()
+        .find(|probe| probe.payload.as_slice() == payload)
+        .map(|probe| probe.probe)
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct NotificationDecision<'a> {
     protocol: ProtocolFamilyState,
@@ -1415,6 +1424,20 @@ mod tests {
             panic!("expected firmware query after direct name query")
         };
         assert_eq!(writes[0].probe, PendingProbe::BegodeFirmware);
+    }
+
+    #[test]
+    fn begode_probe_request_payload_maps_to_its_pending_response() {
+        for encoded in crate::begode_identification_probes() {
+            assert_eq!(
+                crate::begode_probe_for_request_payload(encoded.payload.as_slice()),
+                Some(encoded.probe)
+            );
+        }
+
+        assert_eq!(crate::begode_probe_for_request_payload(b""), None);
+        assert_eq!(crate::begode_probe_for_request_payload(b"N?"), None);
+        assert_eq!(crate::begode_probe_for_request_payload(b"X"), None);
     }
 
     #[test]

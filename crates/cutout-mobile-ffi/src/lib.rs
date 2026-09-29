@@ -1028,6 +1028,19 @@ impl CutoutSessionStateHandle {
             .unwrap_or_else(|| self.resolution())
     }
 
+    /// Records a recognized Begode probe write and returns its response kind.
+    #[allow(clippy::needless_pass_by_value, reason = "UniFFI exports owned bytes")]
+    pub fn observe_begode_probe_write_at(
+        &self,
+        bytes: Vec<u8>,
+        started_at_ms: u64,
+    ) -> Option<MobilePendingProbeDto> {
+        let probe = cutout_protocols::begode_probe_for_request_payload(&bytes)?;
+        let mut state = self.lock_inner();
+        state.observe_probe_write_at_unscoped(probe, MonotonicTimestamp::new(started_at_ms))?;
+        Some(probe.into())
+    }
+
     pub fn observe_begode_name_probe(&self) -> DeviceDetectionResolutionRecord {
         self.observe_begode_name_probe_unscoped()
             .unwrap_or_else(|| self.resolution())
@@ -1860,6 +1873,19 @@ impl CutoutSessionStateHandle {
             &token.into(),
             DeviceDetectionEvent::Notification { bytes: &bytes },
         )
+    }
+
+    /// Records a recognized Begode probe write for the current connection attempt.
+    #[allow(clippy::needless_pass_by_value, reason = "UniFFI exports owned bytes")]
+    pub fn observe_begode_probe_write_for_attempt_at(
+        &self,
+        token: MobileConnectionAttemptTokenDto,
+        bytes: Vec<u8>,
+        started_at_ms: u64,
+    ) -> Option<MobilePendingProbeDto> {
+        let probe = cutout_protocols::begode_probe_for_request_payload(&bytes)?;
+        self.observe_probe_write_at(&token.into(), probe, started_at_ms)?;
+        Some(probe.into())
     }
 
     /// Records that the caller issued a Begode `N` name probe.

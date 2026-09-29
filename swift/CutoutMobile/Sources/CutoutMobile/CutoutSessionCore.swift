@@ -3397,36 +3397,20 @@ extension CutoutSessionCore {
     }
 
     func observeDetectionProbeWrite(channel: BluetoothUuid, bytes: Data) {
-        guard isReadOnlyBegodeProbeWrite(channel: channel, bytes: bytes) else {
+        guard channel.bluetooth16Value == 0xffe1,
+            let probe = deviceDetectionSession.observeBegodeProbeWrite(bytes: bytes, at: clock.now())
+        else {
             return
         }
-        switch bytes.first {
-        case UInt8(ascii: "N")?:
-            _ = deviceDetectionSession.observeBegodeNameProbe(at: clock.now())
-            scheduleBegodeProbeExpiry()
-            annotateDetection("begode_probe_write=model")
-        case UInt8(ascii: "V")?:
-            _ = deviceDetectionSession.observeBegodeFirmwareProbe(at: clock.now())
-            scheduleBegodeProbeExpiry()
-            annotateDetection("begode_probe_write=firmware")
-        case UInt8(ascii: "M")?:
-            _ = deviceDetectionSession.observeBegodeImuProbe(at: clock.now())
-            scheduleBegodeProbeExpiry()
-            annotateDetection("begode_probe_write=imu")
-        default:
-            break
-        }
-    }
 
-    func isReadOnlyBegodeProbeWrite(channel: BluetoothUuid, bytes: Data) -> Bool {
-        guard channel.bluetooth16Value == 0xffe1, bytes.count == 1 else {
-            return false
-        }
-        return switch bytes.first {
-        case UInt8(ascii: "N")?, UInt8(ascii: "V")?, UInt8(ascii: "M")?:
-            true
-        default:
-            false
+        scheduleBegodeProbeExpiry()
+        switch probe {
+        case .begodeName:
+            annotateDetection("begode_probe_write=model")
+        case .begodeFirmware:
+            annotateDetection("begode_probe_write=firmware")
+        case .begodeImu:
+            annotateDetection("begode_probe_write=imu")
         }
     }
 
