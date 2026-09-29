@@ -283,7 +283,7 @@ final class CutoutSessionCaptureRecorder: CutoutSessionCaptureRecording {
     ) -> MobileCaptureWriteOutcomeDto {
         if let builder {
             let outcome = builder.recordNotificationWithContextAndSemanticTelemetry(
-                monotonicMs: MobileMonotonicMillisDto(milliseconds: elapsedMilliseconds()),
+                monotonicMs: MobileMonotonicMillisDto(milliseconds: clock.now().rawValue),
                 characteristic: characteristic.bytes,
                 service: service.bytes,
                 bytes: bytes,
@@ -325,14 +325,14 @@ final class CutoutSessionCaptureRecorder: CutoutSessionCaptureRecording {
     func recordLinkUp(maxWriteLength: UInt16?) -> MobileCaptureWriteOutcomeDto {
         guard let builder else { return .accepted }
         return builder.recordLinkUp(
-            monotonicMs: MobileMonotonicMillisDto(milliseconds: elapsedMilliseconds()),
+            monotonicMs: MobileMonotonicMillisDto(milliseconds: clock.now().rawValue),
             maxWriteLen: maxWriteLength.map(MobileTransportWriteLimitDto.init(bytes:))
         )
     }
 
     func recordLinkDown() -> MobileCaptureWriteOutcomeDto {
         builder?.recordLinkDown(
-            monotonicMs: MobileMonotonicMillisDto(milliseconds: elapsedMilliseconds())
+            monotonicMs: MobileMonotonicMillisDto(milliseconds: clock.now().rawValue)
         ) ?? .accepted
     }
 
@@ -380,8 +380,9 @@ final class CutoutSessionCaptureRecorder: CutoutSessionCaptureRecording {
         bytes: Data,
         writeID: UInt64
     ) -> (CoreBluetoothWriteDisposition) -> MobileCaptureWriteOutcomeDto {
-        guard let builder, let startedAt else { return { _ in .accepted } }
-        return { [weak self, builder] disposition in
+        guard let builder else { return { _ in .accepted } }
+        let clock = self.clock
+        return { [builder, clock] disposition in
             let captured: MobilePevcapWriteDispositionDto
             switch disposition {
             case .queued: captured = .queued
@@ -389,9 +390,8 @@ final class CutoutSessionCaptureRecorder: CutoutSessionCaptureRecording {
             case .rejected: captured = .rejected
             case .cancelled: captured = .cancelled
             }
-            let elapsed = self?.elapsedMilliseconds(since: startedAt) ?? 0
             return builder.recordWriteWithoutResponseReceipt(
-                monotonicMs: MobileMonotonicMillisDto(milliseconds: elapsed),
+                monotonicMs: MobileMonotonicMillisDto(milliseconds: clock.now().rawValue),
                 characteristic: channel.bytes,
                 bytes: bytes,
                 writeId: writeID,

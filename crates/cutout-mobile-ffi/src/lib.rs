@@ -12627,6 +12627,10 @@ impl From<MobilePevcapWriteDispositionDto> for cutout_core::PevcapWriteDispositi
 }
 
 /// Mobile-facing builder for a PEVCAP capture export.
+///
+/// Native callers provide absolute monotonic uptime in milliseconds. This Rust owner converts
+/// transport events and telemetry timestamps to offsets from the fixed capture origin before
+/// persisting them.
 #[derive(Debug, uniffi::Object)]
 pub struct MobilePevcapCaptureBuilder {
     wall_clock_start_unix_ms: WallClockUnixTimestamp,
@@ -12833,6 +12837,36 @@ fn pevcap_music_event_for_policy(
 struct PendingPevcapMusicContext {
     event: PevcapMusicEvent,
     monotonic_at_ms: u64,
+}
+
+fn capture_relative_timestamp(
+    builder: &MobilePevcapCaptureBuilder,
+    monotonic_ms: MobileMonotonicMillisDto,
+) -> Result<MonotonicTimestamp, MobileCaptureWriteOutcomeDto> {
+    let writer = builder
+        .writer
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    match &*writer {
+        CaptureWriterSlot::Recording(_) => {}
+        slot => {
+            return Err(slot
+                .stopped_write_outcome()
+                .unwrap_or(MobileCaptureWriteOutcomeDto::Failed));
+        }
+    }
+    drop(writer);
+
+    let started_at_ms = (*builder
+        .capture_start_monotonic_ms
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner))
+    .ok_or(MobileCaptureWriteOutcomeDto::Failed)?;
+    let elapsed_ms = monotonic_ms
+        .milliseconds
+        .checked_sub(started_at_ms)
+        .ok_or(MobileCaptureWriteOutcomeDto::Rejected)?;
+    Ok(MonotonicTimestamp::new(elapsed_ms))
 }
 
 #[uniffi::export]
@@ -13095,12 +13129,24 @@ impl MobilePevcapCaptureBuilder {
         true
     }
 
-    /// Sets the Rust-owned monotonic origin used for capture-relative event timestamps.
+    /// Sets the absolute monotonic origin before starting the writer; it cannot later change.
     pub fn set_capture_start_monotonic_ms(&self, monotonic_ms: u64) -> bool {
-        *self
+        let writer = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
+        match &*writer {
+            CaptureWriterSlot::Ready => {}
+            CaptureWriterSlot::Recording(_)
+            | CaptureWriterSlot::Finalizing
+            | CaptureWriterSlot::Complete(_) => return false,
+        }
+
+        let mut started_at_ms = self
             .capture_start_monotonic_ms
             .lock()
-            .unwrap_or_else(PoisonError::into_inner) = Some(monotonic_ms);
+            .unwrap_or_else(PoisonError::into_inner);
+        if started_at_ms.is_some() {
+            return false;
+        }
+        *started_at_ms = Some(monotonic_ms);
         true
     }
 
@@ -13216,8 +13262,12 @@ impl MobilePevcapCaptureBuilder {
         monotonic_ms: MobileMonotonicMillisDto,
         max_write_len: Option<MobileTransportWriteLimitDto>,
     ) -> MobileCaptureWriteOutcomeDto {
+        let monotonic_ms = match capture_relative_timestamp(self, monotonic_ms) {
+            Ok(timestamp) => timestamp,
+            Err(outcome) => return outcome,
+        };
         self.send_record(PevcapRecord::link_up(
-            monotonic_ms.into_core(),
+            monotonic_ms,
             max_write_len.map(|value| TransportWriteLimit::from_bytes(value.bytes)),
         ))
     }
@@ -13227,7 +13277,11 @@ impl MobilePevcapCaptureBuilder {
         &self,
         monotonic_ms: MobileMonotonicMillisDto,
     ) -> MobileCaptureWriteOutcomeDto {
-        self.send_record(PevcapRecord::link_down(monotonic_ms.into_core()))
+        let monotonic_ms = match capture_relative_timestamp(self, monotonic_ms) {
+            Ok(timestamp) => timestamp,
+            Err(outcome) => return outcome,
+        };
+        self.send_record(PevcapRecord::link_down(monotonic_ms))
     }
 
     /// Records outbound write-without-response bytes.
@@ -13238,8 +13292,12 @@ impl MobilePevcapCaptureBuilder {
         characteristic: Vec<u8>,
         bytes: Vec<u8>,
     ) -> MobileCaptureWriteOutcomeDto {
+        let monotonic_ms = match capture_relative_timestamp(self, monotonic_ms) {
+            Ok(timestamp) => timestamp,
+            Err(outcome) => return outcome,
+        };
         self.send_record(PevcapRecord::outbound_write(
-            monotonic_ms.into_core(),
+            monotonic_ms,
             mobile_gatt_channel(&characteristic),
             WriteMode::WithoutResponse,
             bytes,
@@ -13261,8 +13319,12 @@ impl MobilePevcapCaptureBuilder {
         write_id: u64,
         disposition: MobilePevcapWriteDispositionDto,
     ) -> MobileCaptureWriteOutcomeDto {
+        let monotonic_ms = match capture_relative_timestamp(self, monotonic_ms) {
+            Ok(timestamp) => timestamp,
+            Err(outcome) => return outcome,
+        };
         let mut record = PevcapRecord::outbound_write(
-            monotonic_ms.into_core(),
+            monotonic_ms,
             mobile_gatt_channel(&characteristic),
             WriteMode::WithoutResponse,
             bytes,
@@ -13283,8 +13345,12 @@ impl MobilePevcapCaptureBuilder {
         service: Vec<u8>,
         bytes: Vec<u8>,
     ) -> MobileCaptureWriteOutcomeDto {
+        let monotonic_ms = match capture_relative_timestamp(self, monotonic_ms) {
+            Ok(timestamp) => timestamp,
+            Err(outcome) => return outcome,
+        };
         self.send_record(PevcapRecord::inbound_notification(
-            monotonic_ms.into_core(),
+            monotonic_ms,
             mobile_gatt_channel(&characteristic),
             mobile_gatt_channel(&service),
             bytes,
@@ -13378,8 +13444,12 @@ impl MobilePevcapCaptureBuilder {
         phone_location: Option<MobilePhoneLocationSampleDto>,
         music: Option<MobilePevcapMusicEventDto>,
     ) -> MobileCaptureWriteOutcomeDto {
+        let capture_timestamp = match capture_relative_timestamp(self, monotonic_ms) {
+            Ok(timestamp) => timestamp,
+            Err(outcome) => return outcome,
+        };
         let mut record = PevcapRecord::inbound_notification(
-            monotonic_ms.into_core(),
+            capture_timestamp,
             mobile_gatt_channel(&characteristic),
             mobile_gatt_channel(&service),
             bytes,
@@ -13387,7 +13457,18 @@ impl MobilePevcapCaptureBuilder {
         if let Some(telemetry) = telemetry {
             record = record.with_telemetry(raw_telemetry_from_mobile(telemetry));
         }
-        if let Some(snapshot) = semantic_telemetry {
+        if let Some(mut snapshot) = semantic_telemetry {
+            let capture_start_ms = self
+                .capture_start_monotonic_ms
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .expect("an active capture has a monotonic origin");
+            snapshot.at_ms = snapshot.at_ms.and_then(|timestamp| {
+                timestamp
+                    .milliseconds
+                    .checked_sub(capture_start_ms)
+                    .map(|milliseconds| MobileMonotonicMillisDto { milliseconds })
+            });
             let Ok(snapshot_json) = serde_json::to_string(&snapshot) else {
                 return MobileCaptureWriteOutcomeDto::Failed;
             };
@@ -13402,7 +13483,7 @@ impl MobilePevcapCaptureBuilder {
         if let Some(location) = phone_location.and_then(MobilePhoneLocationSampleDto::canonical) {
             record = record.with_phone_location(location.pevcap_location());
         }
-        if let Ok(Some(music)) = self.resolve_music_context(music, monotonic_ms.milliseconds) {
+        if let Ok(Some(music)) = self.resolve_music_context(music, capture_timestamp.get()) {
             record = record
                 .with_music(music)
                 .expect("inbound records accept music metadata");
@@ -13425,8 +13506,12 @@ impl MobilePevcapCaptureBuilder {
         if let Some(outcome) = self.stopped_write_outcome() {
             return outcome;
         }
+        let receipt_monotonic_ms = match capture_relative_timestamp(self, receipt_monotonic_ms) {
+            Ok(timestamp) => timestamp,
+            Err(outcome) => return outcome,
+        };
         let location = PevcapLocationSample::from_raw_observation(
-            receipt_monotonic_ms.into_core(),
+            receipt_monotonic_ms,
             sample.pevcap_location(),
             simulated,
             produced_by_accessory,
@@ -19347,6 +19432,7 @@ mod tests {
             None,
         );
 
+        assert!(builder.set_capture_start_monotonic_ms(0));
         assert!(builder.start_writer(path.to_string_lossy().into_owned()));
         let service = vec![
             0x00, 0x00, 0xff, 0xe0, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0x80, 0x5f, 0x9b,
@@ -19493,6 +19579,7 @@ mod tests {
             "ios-corebluetooth".into(),
             None,
         );
+        assert!(builder.set_capture_start_monotonic_ms(0));
         assert!(builder.set_music_history_policy(MobileMusicHistoryPolicyDto::HumanReadable));
         assert!(builder.set_music_context(Some(MobilePevcapMusicEventDto {
             provider: MobileMusicProviderDto::AppleMusic,
@@ -19555,6 +19642,7 @@ mod tests {
             "ios-corebluetooth".into(),
             None,
         );
+        assert!(builder.set_capture_start_monotonic_ms(0));
         assert!(builder.set_music_history_policy(MobileMusicHistoryPolicyDto::HumanReadable));
         assert!(builder.set_music_context(Some(MobilePevcapMusicEventDto {
             provider: MobileMusicProviderDto::Spotify,
@@ -19648,6 +19736,7 @@ mod tests {
             "ios-corebluetooth".into(),
             None,
         );
+        assert!(builder.set_capture_start_monotonic_ms(0));
         assert!(builder.set_music_history_policy(MobileMusicHistoryPolicyDto::HumanReadable));
         assert!(builder.start_writer(path.to_string_lossy().into_owned()));
         assert_eq!(
@@ -19694,15 +19783,28 @@ mod tests {
             "ios-corebluetooth".into(),
             None,
         );
+        assert!(builder.set_capture_start_monotonic_ms(100));
         assert!(builder.start_writer(path.to_string_lossy().into_owned()));
         assert_eq!(
             builder.record_notification_with_context_and_semantic_telemetry(
-                ms(9),
+                ms(109),
                 vec![0; 16],
                 vec![1; 16],
                 vec![0xab],
                 None,
-                Some(charge_estimator_snapshot(8, PowerFlowDirection::Charging)),
+                Some(charge_estimator_snapshot(108, PowerFlowDirection::Charging)),
+                None,
+            ),
+            MobileCaptureWriteOutcomeDto::Accepted
+        );
+        assert_eq!(
+            builder.record_notification_with_context_and_semantic_telemetry(
+                ms(110),
+                vec![0; 16],
+                vec![1; 16],
+                vec![0xac],
+                None,
+                Some(charge_estimator_snapshot(99, PowerFlowDirection::Charging)),
                 None,
             ),
             MobileCaptureWriteOutcomeDto::Accepted
@@ -19729,8 +19831,78 @@ mod tests {
         assert_eq!(telemetry.library_version, env!("CARGO_PKG_VERSION"));
         let snapshot: serde_json::Value =
             serde_json::from_str(&telemetry.snapshot_json).expect("snapshot JSON is valid");
+        assert_eq!(snapshot["at_ms"]["milliseconds"], 8);
         assert_eq!(snapshot["voltage"]["value"]["value"], 95_000);
         assert_eq!(snapshot["battery_current"]["value"]["value"], -2_000);
+        let prior_snapshot = capture.records[1]
+            .semantic_telemetry
+            .as_ref()
+            .expect("telemetry values are retained without a pre-capture timestamp");
+        assert_eq!(prior_snapshot.observed_at_ms, None);
+        let prior_snapshot_json: serde_json::Value =
+            serde_json::from_str(&prior_snapshot.snapshot_json).expect("snapshot JSON is valid");
+        assert!(prior_snapshot_json["at_ms"].is_null());
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn mobile_capture_builder_offsets_transport_events_from_capture_start() {
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-capture-relative-events-{}-{}.jsonl",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let builder = MobilePevcapCaptureBuilder::new(
+            wc(1_700_000_000_000),
+            "ios-corebluetooth".into(),
+            None,
+        );
+        assert!(builder.set_capture_start_monotonic_ms(100));
+        assert!(builder.start_writer(path.to_string_lossy().into_owned()));
+        assert!(!builder.set_capture_start_monotonic_ms(200));
+
+        assert_eq!(
+            builder.record_notification(ms(99), vec![0; 16], vec![1; 16], vec![0]),
+            MobileCaptureWriteOutcomeDto::Rejected
+        );
+
+        assert_eq!(
+            builder.record_link_up(ms(104), None),
+            MobileCaptureWriteOutcomeDto::Accepted
+        );
+        assert_eq!(
+            builder.record_notification(ms(109), vec![0; 16], vec![1; 16], vec![0xab]),
+            MobileCaptureWriteOutcomeDto::Accepted
+        );
+        assert_eq!(
+            builder.record_write_without_response_receipt(
+                ms(112),
+                vec![0; 16],
+                vec![0xcd],
+                1,
+                MobilePevcapWriteDispositionDto::Submitted,
+            ),
+            MobileCaptureWriteOutcomeDto::Accepted
+        );
+        assert_eq!(
+            builder.record_link_down(ms(118)),
+            MobileCaptureWriteOutcomeDto::Accepted
+        );
+        assert!(builder.finish_writer());
+
+        let capture = PevcapCapture::decode(
+            &fs::read(&path).expect("capture exists"),
+            PevcapEncoding::Jsonl,
+        )
+        .expect("capture decodes");
+        assert_eq!(
+            capture
+                .records
+                .iter()
+                .map(|event| event.monotonic_ms.get())
+                .collect::<Vec<_>>(),
+            [4, 9, 12, 18]
+        );
         let _ = fs::remove_file(path);
     }
 
@@ -19788,6 +19960,7 @@ mod tests {
             "ios-corebluetooth".into(),
             None,
         );
+        assert!(builder.set_capture_start_monotonic_ms(0));
         assert!(builder.set_music_history_policy(MobileMusicHistoryPolicyDto::HumanReadable));
         assert!(builder.set_music_context(Some(MobilePevcapMusicEventDto {
             provider: MobileMusicProviderDto::AppleMusic,
@@ -19860,6 +20033,7 @@ mod tests {
             "ios-corebluetooth".into(),
             None,
         );
+        assert!(builder.set_capture_start_monotonic_ms(0));
         assert!(builder.set_music_history_policy(MobileMusicHistoryPolicyDto::HumanReadable));
         assert!(builder.set_music_context(Some(MobilePevcapMusicEventDto {
             provider: MobileMusicProviderDto::AppleMusic,
@@ -19997,6 +20171,7 @@ mod tests {
             ));
             let first =
                 MobilePevcapCaptureBuilder::new(wc(1_700_000_000_000), "first-device".into(), None);
+            assert!(first.set_capture_start_monotonic_ms(0));
             assert!(first.start_writer(path.to_string_lossy().into_owned()));
             assert_eq!(
                 first.record_link_up(ms(1), None),
@@ -20076,6 +20251,7 @@ mod tests {
         let capture_path = directory.join("capture.jsonl");
         let database = open_ride_database(database_path.to_string_lossy().into_owned()).unwrap();
         let builder = MobilePevcapCaptureBuilder::new(wc(1_700_000_000_000), "phone".into(), None);
+        assert!(builder.set_capture_start_monotonic_ms(0));
         builder.set_database(Arc::clone(&database));
         assert!(builder.start_writer(capture_path.to_string_lossy().into_owned()));
         assert_eq!(
@@ -20586,6 +20762,7 @@ mod tests {
         let first = std::env::temp_dir().join(format!("capture-first-{}.jsonl", Uuid::new_v4()));
         let second = std::env::temp_dir().join(format!("capture-second-{}.jsonl", Uuid::new_v4()));
         let builder = MobilePevcapCaptureBuilder::new(wc(1_700_000_000_000), "phone".into(), None);
+        assert!(builder.set_capture_start_monotonic_ms(0));
         assert!(builder.start_writer(first.to_string_lossy().into_owned()));
         assert!(!builder.start_writer(second.to_string_lossy().into_owned()));
         assert!(!second.exists());
@@ -20623,6 +20800,7 @@ mod tests {
     fn mobile_capture_keeps_recording_past_a_day() {
         let path = std::env::temp_dir().join(format!("capture-long-{}.jsonl", Uuid::new_v4()));
         let builder = MobilePevcapCaptureBuilder::new(wc(1234), "wheel-a".into(), None);
+        assert!(builder.set_capture_start_monotonic_ms(0));
         assert!(builder.start_writer(path.to_string_lossy().into_owned()));
         assert_eq!(
             builder.record_link_up(ms(0), None),
@@ -20667,6 +20845,7 @@ mod tests {
             None,
         );
 
+        assert!(builder.set_capture_start_monotonic_ms(0));
         assert!(builder.start_writer(path.to_string_lossy().into_owned()));
         assert_eq!(
             builder.record_link_up(ms(1), None),
@@ -20707,6 +20886,7 @@ mod tests {
             "ios-corebluetooth".into(),
             None,
         );
+        assert!(builder.set_capture_start_monotonic_ms(0));
         assert_eq!(
             builder.record_write_without_response_receipt(
                 ms(1),
@@ -20791,6 +20971,7 @@ mod tests {
             "ios-corebluetooth".into(),
             None,
         );
+        assert!(builder.set_capture_start_monotonic_ms(0));
         assert!(builder.start_writer(path.to_string_lossy().into_owned()));
 
         for index in 0..1_024 {
@@ -20850,6 +21031,7 @@ mod tests {
             "ios-corebluetooth".into(),
             None,
         );
+        assert!(builder.set_capture_start_monotonic_ms(0));
         assert!(builder.start_writer(path.to_string_lossy().into_owned()));
         assert_eq!(
             builder.record_link_up(ms(1), None),
@@ -20896,6 +21078,7 @@ mod tests {
                 "ios-corebluetooth".into(),
                 None,
             );
+            assert!(builder.set_capture_start_monotonic_ms(0));
             assert!(builder.start_writer(path.to_string_lossy().into_owned()));
 
             let record_count = minutes * 60 * NOTIFICATIONS_PER_SECOND;
@@ -21475,6 +21658,7 @@ mod tests {
             "ios-corebluetooth".into(),
             None,
         );
+        assert!(builder.set_capture_start_monotonic_ms(0));
         assert!(builder.start_writer(artifact_path.to_string_lossy().into_owned()));
         assert_eq!(
             builder.record_location_sample(
