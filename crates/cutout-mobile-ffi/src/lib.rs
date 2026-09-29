@@ -12966,7 +12966,7 @@ impl MobilePevcapCaptureBuilder {
         })
     }
 
-    /// Starts the Rust-owned streaming writer for a new JSONL capture.
+    /// Starts the Rust-owned streaming writer after its immutable monotonic capture origin is set.
     ///
     /// Returns `false` if the path already exists, preserving the existing capture.
     pub fn start_writer(&self, path: String) -> bool {
@@ -12978,6 +12978,14 @@ impl MobilePevcapCaptureBuilder {
         let CaptureWriterSlot::Ready = *slot else {
             return false;
         };
+        if self
+            .capture_start_monotonic_ms
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_none()
+        {
+            return false;
+        }
         let metadata = self.metadata();
         let database = self
             .database
@@ -19907,6 +19915,32 @@ mod tests {
     }
 
     #[test]
+    fn mobile_capture_writer_requires_a_monotonic_origin_before_start() {
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-capture-origin-required-{}-{}.jsonl",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let builder = MobilePevcapCaptureBuilder::new(
+            wc(1_700_000_000_000),
+            "ios-corebluetooth".into(),
+            None,
+        );
+
+        let started_without_origin = builder.start_writer(path.to_string_lossy().into_owned());
+        if started_without_origin {
+            assert!(builder.finish_writer());
+            let _ = fs::remove_file(&path);
+        }
+        assert!(!started_without_origin);
+
+        assert!(builder.set_capture_start_monotonic_ms(100));
+        assert!(builder.start_writer(path.to_string_lossy().into_owned()));
+        assert!(builder.finish_writer());
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
     fn mobile_capture_writer_persists_independent_music_without_ble_frames() {
         let path = std::env::temp_dir().join(format!(
             "cutout-mobile-writer-independent-music-{}-{}.jsonl",
@@ -19920,6 +19954,7 @@ mod tests {
             None,
         );
         assert!(builder.set_music_history_policy(MobileMusicHistoryPolicyDto::HumanReadable));
+        assert!(builder.set_capture_start_monotonic_ms(0));
         assert!(builder.start_writer(path.to_string_lossy().into_owned()));
         for (index, track_id) in ["track-1", "track-2"].into_iter().enumerate() {
             assert_eq!(
@@ -20115,6 +20150,7 @@ mod tests {
         let path =
             std::env::temp_dir().join(format!("capture-label-capacity-{}.jsonl", Uuid::new_v4()));
         let builder = MobilePevcapCaptureBuilder::new(wc(1_700_000_000_000), "phone".into(), None);
+        assert!(builder.set_capture_start_monotonic_ms(0));
         for index in 0..cutout_core::PEVCAP_MAX_ANNOTATIONS - 2 {
             assert_eq!(
                 builder.add_annotation(format!("note={index}")),
@@ -20187,6 +20223,7 @@ mod tests {
                 "second-device".into(),
                 None,
             );
+            assert!(second.set_capture_start_monotonic_ms(0));
             let started = second.start_writer(path.to_string_lossy().into_owned());
             assert!(!second.finish_writer());
 
@@ -20226,6 +20263,7 @@ mod tests {
             None,
         );
 
+        assert!(builder.set_capture_start_monotonic_ms(0));
         assert!(!builder.start_writer(path.to_string_lossy().into_owned()));
         let status = builder.writer_status();
         assert!(status.failed);
@@ -20436,6 +20474,7 @@ mod tests {
         let database = open_ride_database(database_path.to_string_lossy().into_owned()).unwrap();
         let builder = MobilePevcapCaptureBuilder::new(wc(1_700_000_000_000), "phone".into(), None);
         builder.set_database(Arc::clone(&database));
+        assert!(builder.set_capture_start_monotonic_ms(0));
         assert!(builder.start_writer(capture_path.to_string_lossy().into_owned()));
         fs::write(&capture_path, b"existing user file").unwrap();
 
@@ -20490,6 +20529,7 @@ mod tests {
         };
         assert_eq!(retain(), Err(MobileRideDatabaseError::CaptureNotFinished));
         let source = directory.join("capture.jsonl");
+        assert!(builder.set_capture_start_monotonic_ms(0));
         assert!(builder.start_writer(source.to_string_lossy().into_owned()));
         assert!(builder.flush_writer());
         assert_eq!(retain(), Err(MobileRideDatabaseError::CaptureNotFinished));
@@ -20536,6 +20576,7 @@ mod tests {
         let builder =
             MobilePevcapCaptureBuilder::new(wc(1_700_000_000_000), "wheel-a".into(), None);
         builder.set_database(Arc::clone(&database));
+        assert!(builder.set_capture_start_monotonic_ms(0));
         assert!(builder.start_writer(source.to_string_lossy().into_owned()));
 
         let completion =
@@ -20575,6 +20616,7 @@ mod tests {
         let builder =
             MobilePevcapCaptureBuilder::new(wc(1_700_000_000_000), "wheel-a".into(), None);
         builder.set_database(Arc::clone(&database));
+        assert!(builder.set_capture_start_monotonic_ms(0));
         assert!(builder.start_writer(source.to_string_lossy().into_owned()));
 
         let gate = Arc::new(std::sync::Barrier::new(3));
@@ -20632,6 +20674,7 @@ mod tests {
         let builder =
             MobilePevcapCaptureBuilder::new(wc(1_700_000_000_000), "wheel-a".into(), None);
         builder.set_database(Arc::clone(&database));
+        assert!(builder.set_capture_start_monotonic_ms(0));
         assert!(builder.start_writer(source.to_string_lossy().into_owned()));
 
         let completion = builder.finish_writer_and_publish_capture(None);
@@ -20656,6 +20699,7 @@ mod tests {
         let source = directory.join("capture.jsonl");
         let builder =
             MobilePevcapCaptureBuilder::new(wc(1_700_000_000_000), "wheel-a".into(), None);
+        assert!(builder.set_capture_start_monotonic_ms(0));
         assert!(builder.start_writer(source.to_string_lossy().into_owned()));
 
         let completion =
@@ -20684,6 +20728,7 @@ mod tests {
         let builder =
             MobilePevcapCaptureBuilder::new(wc(1_700_000_000_000), "wheel-a".into(), None);
         assert!(builder.set_database(Arc::clone(&database)));
+        assert!(builder.set_capture_start_monotonic_ms(0));
         assert!(
             builder.start_writer(
                 directory
@@ -20726,6 +20771,7 @@ mod tests {
         let builder =
             MobilePevcapCaptureBuilder::new(wc(1_700_000_000_000), "wheel-a".into(), None);
         builder.set_database(Arc::clone(&database));
+        assert!(builder.set_capture_start_monotonic_ms(0));
         assert!(builder.start_writer(source.to_string_lossy().into_owned()));
 
         let failed =
