@@ -3122,7 +3122,7 @@ extension CutoutSessionCore: CBPeripheralDelegate {
             return
         }
         let detectionResolution = observeDetectionNotification(channel: channel, bytes: value)
-        if rustSessionState.connectionAttemptSnapshot().readiness == .conflicted {
+        if detectionResolution.protocolConflict {
             setPhase(.failed(.identificationFailed(.conflictingEvidence)))
             finishCaptureAfterLinkDown()
             return

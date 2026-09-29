@@ -2972,7 +2972,7 @@ final class CutoutSessionCoreTests: XCTestCase {
     }
 
     func testBegodeProbeResponseUpdatesProtocolIdentityCandidate() {
-        let core = CutoutSessionCore()
+        let core = CutoutSessionCore(clock: MonotonicClock(now: { MonotonicMilliseconds(1_000) }))
         let channel = BluetoothUuid.bluetooth16(0xffe1)
         var observedCandidates: [DevicePickerDiscoveryCandidate?] = []
         core.onProtocolIdentityCandidateChange = { observedCandidates.append($0) }
