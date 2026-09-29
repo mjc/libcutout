@@ -503,7 +503,7 @@ public final class CutoutSessionCore: NSObject {
     private let clock: MonotonicClock
     private let wallClock: @Sendable () -> Date
     private var diagnosticLog = BoundedDiagnosticLog(capacity: 2_048)
-    private let bleQueue = DispatchQueue(label: "io.cutout.corebluetooth")
+    private let bleQueue: DispatchQueue
     private let bleQueueKey = DispatchSpecificKey<Void>()
     private let rustSessionState: CutoutSessionStateHandle
     private let databaseForCapturePublication: RideDatabaseHandle?
@@ -773,7 +773,8 @@ public final class CutoutSessionCore: NSObject {
             captureRecorder: (any CutoutSessionCaptureRecording)? = nil,
             displayPublisher: (any CutoutSessionDisplayPublishing)? = nil,
             phoneLocationAdapter: (any CutoutSessionPhoneLocationAdapting)? = nil,
-            rideMapRecorder: (any CutoutSessionRideMapRecording)? = nil
+            rideMapRecorder: (any CutoutSessionRideMapRecording)? = nil,
+            bleQueue: DispatchQueue = DispatchQueue(label: "io.cutout.corebluetooth")
         ) {
             let rustSessionState =
                 database.map {
@@ -789,6 +790,7 @@ public final class CutoutSessionCore: NSObject {
             self.clock = clock
             self.wallClock = wallClock
             self.rideMapStateForInitialization = rideMapState
+            self.bleQueue = bleQueue
             self.testScript = testScript
             self.captureDirectoryForTesting = testScript.map { _ in FileManager.default.temporaryDirectory }
             self.reconnectController = ConnectionReconnectController(scheduler: reconnectScheduler)
@@ -824,6 +826,7 @@ public final class CutoutSessionCore: NSObject {
             )
             self.clock = clock
             self.wallClock = wallClock
+            self.bleQueue = DispatchQueue(label: "io.cutout.corebluetooth")
             self.rideMapStateForInitialization = rideMapState
             self.reconnectController = ConnectionReconnectController(scheduler: MainQueueReconnectScheduler())
             self.reconnectJitter = { Double.random(in: 0...1) }
@@ -3828,18 +3831,21 @@ extension CutoutSessionCore {
         locationEffects.ingest(update)
     }
 
-    private func handleCaptureLocationWriteResult(_ captureResult: CaptureLocationWriteResult) {
-        if captureResult.outcome != .accepted, let generation = captureResult.generation {
-            onBleQueue {
-                guard self.captureGeneration == generation else { return }
-                switch captureResult.outcome {
-                case .accepted:
-                    break
-                case .rejected:
-                    self.record("capture_warning=location_batch_rejected")
-                case .failed:
-                    _ = self.acceptCaptureWrite(.failed)
-                }
+    func handleCaptureLocationWriteResult(_ captureResult: CaptureLocationWriteResult) {
+        guard captureResult.outcome != .accepted,
+            let generation = captureResult.generation
+        else {
+            return
+        }
+
+        let writerFailed = captureResult.outcome == .failed
+        let reference = WeakCutoutSessionCoreReference(self)
+        bleQueue.async { [reference, generation, writerFailed] in
+            guard let core = reference.value, core.captureGeneration == generation else { return }
+            if writerFailed {
+                _ = core.acceptCaptureWrite(.failed)
+            } else {
+                core.record("capture_warning=location_batch_rejected")
             }
         }
     }

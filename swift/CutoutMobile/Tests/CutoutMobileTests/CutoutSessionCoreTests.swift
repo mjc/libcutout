@@ -173,6 +173,37 @@ final class CutoutSessionCoreTests: XCTestCase {
         }
     }
 
+    func testCaptureLocationFailureDoesNotWaitForBleQueue() {
+        let bleQueue = DispatchQueue(label: "io.cutout.test-blocked-ble")
+        let core = CutoutSessionCore(clock: MonotonicClock(), bleQueue: bleQueue)
+        let bleQueueEntered = DispatchSemaphore(value: 0)
+        let releaseBleQueue = DispatchSemaphore(value: 0)
+        let handlerReturned = DispatchSemaphore(value: 0)
+        let bleQueueDrained = DispatchSemaphore(value: 0)
+
+        bleQueue.async {
+            bleQueueEntered.signal()
+            releaseBleQueue.wait()
+        }
+        XCTAssertEqual(bleQueueEntered.wait(timeout: .now() + 5), .success)
+
+        Thread.detachNewThread {
+            core.handleCaptureLocationWriteResult(
+                CaptureLocationWriteResult(generation: .legacy, outcome: .failed)
+            )
+            handlerReturned.signal()
+        }
+        XCTAssertEqual(
+            handlerReturned.wait(timeout: .now() + 5),
+            .success,
+            "location callback handling must not wait for the BLE queue"
+        )
+
+        releaseBleQueue.signal()
+        bleQueue.async { bleQueueDrained.signal() }
+        XCTAssertEqual(bleQueueDrained.wait(timeout: .now() + 5), .success)
+    }
+
     #if canImport(CoreBluetooth)
         func testStaleCharacteristicErrorIsIgnoredBeforeCurrentCallbackFailure() {
             let subscribed = NSObject()
