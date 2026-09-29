@@ -147,7 +147,7 @@ in
   '';
 
   tasks."test:swift-package" = swiftTask ''
-    cargo cutout swift -- test --package-path "$DEVENV_ROOT/swift/CutoutMobile"
+    bash "$DEVENV_ROOT/scripts/run-swift-package-tests.sh"
   '';
 
   tasks."validate:aero-live-connection" =
