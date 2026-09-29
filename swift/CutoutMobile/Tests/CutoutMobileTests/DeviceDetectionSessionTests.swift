@@ -73,7 +73,7 @@ final class DeviceDetectionSessionTests: XCTestCase {
         XCTAssertNotEqual(rows[0].useActionAccessibilityLabel, rows[1].useActionAccessibilityLabel)
     }
 
-    func testProbeDispositionPromotesOnlyRustResolvedModels() {
+    func testRustDiscoveryCandidateCarriesResolvedProtocolAndModel() {
         let begode = DeviceDetectionSession()
         _ = begode.observeBegodeNameProbe()
         let falcon = begode.observeNotification(bytes: Data("NAME=Falcon".utf8))
@@ -82,20 +82,18 @@ final class DeviceDetectionSessionTests: XCTestCase {
         let aero = veteran.observeNotification(bytes: syntheticVeteranFrameWithModelId43())
 
         XCTAssertEqual(
-            falcon.probeDisposition(platformIdentifier: "begode", displayName: "Unknown EUC"),
-            .promote(.falcon)
-        )
-        XCTAssertEqual(
-            aero.probeDisposition(platformIdentifier: "veteran", displayName: "Unknown EUC"),
-            .promote(.aero)
-        )
-        XCTAssertEqual(
-            DeviceDetectionSession().resolution.probeDisposition(
-                platformIdentifier: "unknown",
-                displayName: "Unknown EUC"
+            DevicePickerCandidateSupport(
+                falcon.discoveryCandidate(platformIdentifier: "begode", displayName: "Unknown EUC")
             ),
-            .pending
+            .supported(connectionRoute: .electricUnicycle, electricUnicycleModel: .falcon)
         )
+        XCTAssertEqual(
+            DevicePickerCandidateSupport(
+                aero.discoveryCandidate(platformIdentifier: "veteran", displayName: "Unknown EUC")
+            ),
+            .supported(connectionRoute: .electricUnicycle, electricUnicycleModel: .aero)
+        )
+        XCTAssertTrue(DeviceDetectionSession().resolution.awaitsPassiveEvidence)
     }
 
     func testFragmentedVeteranStreamPromotesAeroThroughFFI() {
@@ -108,8 +106,10 @@ final class DeviceDetectionSessionTests: XCTestCase {
 
         XCTAssertEqual(resolution.protocolFamily, .veteranLeaperkimNosfet)
         XCTAssertEqual(
-            resolution.probeDisposition(platformIdentifier: "wheel", displayName: "Unknown EUC"),
-            .promote(.aero)
+            DevicePickerCandidateSupport(
+                resolution.discoveryCandidate(platformIdentifier: "wheel", displayName: "Unknown EUC")
+            ),
+            .supported(connectionRoute: .electricUnicycle, electricUnicycleModel: .aero)
         )
     }
 
@@ -130,7 +130,7 @@ final class DeviceDetectionSessionTests: XCTestCase {
         )
     }
 
-    func testProbeDispositionRefusesMissingMalformedAndConflictingEvidence() {
+    func testRustDiscoveryCandidateClassifiesTerminalProbeResults() {
         let missingSession = DeviceDetectionSession()
         _ = missingSession.observeBegodeNameProbe()
         let missing = missingSession.observeBegodeNameProbeTimeout()
@@ -149,16 +149,22 @@ final class DeviceDetectionSessionTests: XCTestCase {
         )
 
         XCTAssertEqual(
-            missing.probeDisposition(platformIdentifier: "missing", displayName: "Unknown EUC"),
-            .refuse(.timedOut)
+            DevicePickerCandidateSupport(
+                missing.discoveryCandidate(platformIdentifier: "missing", displayName: "Unknown EUC")
+            ),
+            .unknownRecordable(disabledReason: "Missing Begode probe response")
         )
         XCTAssertEqual(
-            malformed.probeDisposition(platformIdentifier: "malformed", displayName: "Unknown EUC"),
-            .refuse(.malformedResponse)
+            DevicePickerCandidateSupport(
+                malformed.discoveryCandidate(platformIdentifier: "malformed", displayName: "Unknown EUC")
+            ),
+            .unknownRecordable(disabledReason: "Malformed Begode probe response")
         )
         XCTAssertEqual(
-            conflict.probeDisposition(platformIdentifier: "conflict", displayName: "Unknown EUC"),
-            .refuse(.conflictingEvidence)
+            DevicePickerCandidateSupport(
+                conflict.discoveryCandidate(platformIdentifier: "conflict", displayName: "Unknown EUC")
+            ),
+            .conflicting(disabledReason: "Conflicting identity evidence")
         )
         for terminalResolution in [missing, malformed, conflict] {
             XCTAssertEqual(
@@ -371,19 +377,23 @@ final class DeviceDetectionSessionTests: XCTestCase {
         )
 
         XCTAssertEqual(
-            resolution.connectionDisposition(
-                platformIdentifier: "ios-local-aero",
-                displayName: "NF2557"
+            DevicePickerCandidateSupport(
+                resolution.discoveryCandidate(
+                    platformIdentifier: "ios-local-aero",
+                    displayName: "NF2557"
+                )
             ),
-            .refuse(.timedOut)
+            .probeRecommended(disabledReason: "Veteran/NOSFET model identity probe required")
         )
         XCTAssertEqual(
-            resolution.connectionDisposition(
-                platformIdentifier: "ios-local-aero",
-                displayName: "NF2557",
-                allowClosestMatch: true
+            DevicePickerCandidateSupport(
+                resolution.discoveryCandidate(
+                    platformIdentifier: "ios-local-aero",
+                    displayName: "NF2557",
+                    allowClosestMatch: true
+                )
             ),
-            .promote(route: .electricUnicycle, model: .aero)
+            .supported(connectionRoute: .electricUnicycle, electricUnicycleModel: .aero)
         )
     }
 

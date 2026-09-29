@@ -146,54 +146,7 @@ public enum IdentificationProbeFailure: Equatable, Hashable, Sendable {
     case unsupported
 }
 
-public enum IdentificationProbeResolutionDisposition: Equatable, Hashable, Sendable {
-    case pending
-    case promote(ElectricUnicycleModel)
-    case refuse(IdentificationProbeFailure)
-}
-
-public enum ProtocolDetectionResolutionDisposition: Equatable, Sendable {
-    case pending
-    case promote(route: DevicePickerConnectionRoute, model: ElectricUnicycleModel?)
-    case refuse(IdentificationProbeFailure)
-}
-
 extension DeviceDetectionResolution {
-    public func connectionDisposition(
-        platformIdentifier: String,
-        displayName: String,
-        allowClosestMatch: Bool = false
-    ) -> ProtocolDetectionResolutionDisposition {
-        if protocolConflict {
-            return .refuse(.conflictingEvidence)
-        }
-        guard protocolFamily != nil else {
-            if malformedProbeResponse != nil {
-                return .refuse(.malformedResponse)
-            }
-            if missingProbeResponse != nil {
-                return .refuse(.timedOut)
-            }
-            return .pending
-        }
-        let support = DevicePickerCandidateSupport(
-            discoveryCandidate(
-                platformIdentifier: platformIdentifier,
-                displayName: displayName,
-                allowClosestMatch: allowClosestMatch
-            ))
-        guard let route = support.connectionRoute else {
-            if malformedProbeResponse != nil {
-                return .refuse(.malformedResponse)
-            }
-            if missingProbeResponse != nil {
-                return .refuse(.timedOut)
-            }
-            return .pending
-        }
-        return .promote(route: route, model: support.electricUnicycleModel)
-    }
-
     public func discoveryCandidate(
         platformIdentifier: String,
         displayName: String,
@@ -225,27 +178,6 @@ extension DeviceDetectionResolution {
         )
     }
 
-    public func probeDisposition(
-        platformIdentifier: String,
-        displayName: String
-    ) -> IdentificationProbeResolutionDisposition {
-        if protocolConflict {
-            return .refuse(.conflictingEvidence)
-        }
-        if malformedProbeResponse != nil {
-            return .refuse(.malformedResponse)
-        }
-        if missingProbeResponse != nil {
-            return .refuse(.timedOut)
-        }
-        let support = DevicePickerCandidateSupport(
-            discoveryCandidate(
-                platformIdentifier: platformIdentifier,
-                displayName: displayName
-            ))
-        return support.electricUnicycleModel.map(IdentificationProbeResolutionDisposition.promote)
-            ?? .pending
-    }
 }
 
 public enum DeviceDetectionGattRole: Equatable, Hashable, Sendable {
