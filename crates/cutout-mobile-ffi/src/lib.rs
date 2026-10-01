@@ -47,8 +47,7 @@ use cutout_core::{
     BatteryCurrent as CoreBatteryCurrent, BatteryCurrentReadingDto, BatteryInfoDto,
     BatteryLevel as CoreBatteryLevel, BatteryLevelBasis, BatteryLevelReadingDto,
     BatteryPageKindDto, BatteryReadbackAvailabilityDto, BatteryReadbackDto,
-    BegodeBeeperVolume as CoreBegodeBeeperVolume, BegodeLedModeSetting as CoreBegodeLedModeSetting,
-    BegodeMaxSpeed as CoreBegodeMaxSpeed, BluetoothServiceUuid as CoreBluetoothServiceUuid,
+    BluetoothServiceUuid as CoreBluetoothServiceUuid,
     CameraClockUncertainty as CoreCameraClockUncertainty,
     CameraMediaCaptureTiming as CoreCameraMediaCaptureTiming,
     CameraMediaProvenance as CoreCameraMediaProvenance,
@@ -58,10 +57,9 @@ use cutout_core::{
     CameraSourceKind as CoreCameraSourceKind, Capacity, ChargeEstimateError, ChargeEstimateInput,
     ChargeEstimateResetReason, ChargeEstimateState, ChargeEstimateUnavailableReason, ChargeFlow,
     ChargeMode, ChargeModeDto, ChargeModeReadingDto, ChargeProfileIdentity, ChargeSessionIdentity,
-    ChargeTimeEstimate, CommandKindDto, ControlRefusalReason as CoreControlRefusalReason,
-    ControlRefusalReasonDto, CutoutSessionState, DeviceCommand as CoreDeviceCommand,
-    DeviceCommandDto, DeviceConnectionIntent as CoreDeviceConnectionIntent, DeviceEvent,
-    DiscoveryCandidateSnapshot, DiscoveryCandidateSupport as CoreDiscoveryCandidateSupport,
+    ChargeTimeEstimate, ControlRefusalReasonDto,
+    DeviceConnectionIntent as CoreDeviceConnectionIntent, DiscoveryCandidateSnapshot,
+    DiscoveryCandidateSupport as CoreDiscoveryCandidateSupport,
     DiscoveryConnectionRoute as CoreDiscoveryConnectionRoute,
     DiscoveryElectricUnicycleModel as CoreDiscoveryElectricUnicycleModel,
     DiscoveryManufacturerDataSummary as CoreDiscoveryManufacturerDataSummary,
@@ -116,14 +114,9 @@ use cutout_protocols::{
     NovatekSessionError, NovatekStillCaptureCommand, NovatekStoragePresence, PendingProbe,
     ProtocolFamilyClassification, ProtocolFamilyState, ProtocolModelIdentityEvidence, RtspError,
     RtspPreviewSession, StagedIdentityInput, StagedIdentityOutcome,
-    VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS, VETERAN_FIELD_CHARGE_MODE,
-    VETERAN_FIELD_PEDALS_MODE, VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
-    VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, VescBatteryType as CoreVescBatteryType,
-    VescBoardProfile as CoreVescBoardProfile, VescReadOnlySession as CoreVescReadOnlySession,
-    VideoClockRate, VideoConfiguration, VideoFrame, begode_identification_probes,
-    closest_known_model, identify_known_model, is_r3_pro_firmware,
-    new_nosfet_aero_benign_control_session, parse_read_only_snapshot,
-    try_new_begode_falcon_benign_control_session,
+    VescBatteryType as CoreVescBatteryType, VescBoardProfile as CoreVescBoardProfile,
+    VescReadOnlySession as CoreVescReadOnlySession, VideoClockRate, VideoConfiguration, VideoFrame,
+    closest_known_model, identify_known_model, is_r3_pro_firmware, parse_read_only_snapshot,
 };
 use cutout_ride_maps as ride_maps;
 use libcutout_persistence as persistence;
@@ -16140,6 +16133,7 @@ fn round_f64_to_i32(value: f64) -> i32 {
             std::cmp::Ordering::Equal => return candidate,
         }
     }
+    0
 }
 
 impl From<MobileSessionInputDto> for SessionInputDto {
