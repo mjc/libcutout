@@ -873,6 +873,7 @@ private struct HistoricalRideQuery: RideHistoryQuerying {
             generation: CaptureGeneration,
             action: MobileCaptureLabelActionDto
         ) throws -> [MobileCaptureLabelDto] { [] }
+        func annotateCapture(key: String, value: String) -> Bool { false }
         func updateMusicCapturePolicy(_ policy: MobileMusicHistoryPolicyDto) {}
         func updateMusicCaptureObservation(_ observation: MobilePevcapMusicEventDto?) {}
         func flushCapture() async -> Bool { true }

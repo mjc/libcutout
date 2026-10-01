@@ -46,7 +46,7 @@ protocol CutoutSessionDriving: AnyObject {
     func setDeviceControlsValidation(token: ConnectionAttemptToken, authorized: Bool) throws
     func now() -> MonotonicMilliseconds
     @discardableResult
-    func resetTripMeterForNewRide() -> Bool
+    func resetTripMeterForNewRide(token: ConnectionAttemptToken) -> Bool
 
     func resetRideMapLocationAdmission()
     func startRideMapGpsOnly(atMs: UInt64, musicHistoryPolicy: MobileMusicHistoryPolicyDto) async throws
@@ -94,7 +94,7 @@ extension CutoutSessionDriving {
     var rideMapStateHandle: MobileRideMapState? { nil }
 
     @discardableResult
-    func resetTripMeterForNewRide() -> Bool { false }
+    func resetTripMeterForNewRide(token: ConnectionAttemptToken) -> Bool { false }
 
     var rideMapStorageError: String? {
         guard let state = rideMapStateHandle else { return "Rust ride database is unavailable" }

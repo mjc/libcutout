@@ -3447,6 +3447,9 @@ private final class SessionDriverSpy: CutoutSessionDriving {
         onCaptureEvent?(.started(generation: CaptureGeneration(rawValue: generation.value), fileURL: captureURL))
         return true
     }
+
+    func annotateCapture(key _: String, value _: String) -> Bool { false }
+
     private let captureURL = URL(fileURLWithPath: "/tmp/manual-capture.jsonl")
 
     func emitCaptureEvent(_ event: CaptureEvent) {
@@ -3517,6 +3520,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
 
     @discardableResult
     func resetTripMeterForNewRide(token: ConnectionAttemptToken) -> Bool {
+        guard rideSessionStateHandle.connectionAttemptSnapshot().token == token else { return false }
         tripMeterResetCount += 1
         return true
     }
