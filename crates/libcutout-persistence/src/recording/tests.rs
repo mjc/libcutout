@@ -1,4 +1,7 @@
-use super::{RecordingError, RideRecordingSession};
+use super::{
+    LocationAuthorization, LocationAvailability, LocationDemand, LocationEnvironment,
+    RecordingError, RideRecordingSession,
+};
 use crate::RideDatabase;
 use cutout_music::MusicHistoryPolicy;
 use cutout_ride_maps::{RideEvent, RideLifecycleState};
@@ -91,4 +94,96 @@ fn invalid_transition_preserves_the_published_recording() {
         Err(RecordingError::InvalidTransition)
     );
     assert_eq!(session.snapshot(), Some(&started));
+}
+
+#[test]
+fn location_demand_tracks_recording_lifecycle() {
+    let mut session = RideRecordingSession::new(None);
+    let environment = LocationEnvironment {
+        authorization: LocationAuthorization::Always,
+        services_enabled: true,
+        temporarily_unavailable: false,
+    };
+    session.observe_location_environment(environment);
+    assert_eq!(session.location_acquisition().demand, LocationDemand::Idle);
+
+    session.start_gps_only(1_000, None).unwrap();
+    assert_eq!(
+        session.location_acquisition().demand,
+        LocationDemand::Record
+    );
+
+    session.transition(RideEvent::Pause, 2_000).unwrap();
+    assert_eq!(session.location_acquisition().demand, LocationDemand::Idle);
+
+    session.transition(RideEvent::Resume, 3_000).unwrap();
+    assert_eq!(
+        session.location_acquisition().demand,
+        LocationDemand::Record
+    );
+
+    session.transition(RideEvent::Stop, 4_000).unwrap();
+    assert_eq!(session.location_acquisition().demand, LocationDemand::Idle);
+}
+
+#[test]
+fn location_availability_separates_permission_services_and_provider_failure() {
+    let mut session = RideRecordingSession::new(None);
+    session.start_gps_only(1_000, None).unwrap();
+    let cases = [
+        (
+            LocationAuthorization::NotDetermined,
+            true,
+            false,
+            LocationAvailability::PermissionRequired,
+            LocationDemand::RequestPermission,
+        ),
+        (
+            LocationAuthorization::Denied,
+            true,
+            false,
+            LocationAvailability::Denied,
+            LocationDemand::Idle,
+        ),
+        (
+            LocationAuthorization::Restricted,
+            true,
+            false,
+            LocationAvailability::Restricted,
+            LocationDemand::Idle,
+        ),
+        (
+            LocationAuthorization::Always,
+            false,
+            false,
+            LocationAvailability::ServicesDisabled,
+            LocationDemand::Idle,
+        ),
+        (
+            LocationAuthorization::WhenInUse,
+            true,
+            false,
+            LocationAvailability::Ready,
+            LocationDemand::Record,
+        ),
+        (
+            LocationAuthorization::Always,
+            true,
+            true,
+            LocationAvailability::TemporarilyUnavailable,
+            LocationDemand::Record,
+        ),
+    ];
+
+    for (authorization, services_enabled, temporarily_unavailable, availability, demand) in cases {
+        session.observe_location_environment(LocationEnvironment {
+            authorization,
+            services_enabled,
+            temporarily_unavailable,
+        });
+        let acquisition = session.location_acquisition();
+        assert_eq!(acquisition.availability, availability);
+        assert_eq!(acquisition.demand, demand);
+        assert_eq!(acquisition.revision, session.snapshot().unwrap().revision);
+    }
 }

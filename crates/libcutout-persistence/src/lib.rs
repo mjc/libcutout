@@ -18,7 +18,10 @@ pub use capture_writer::{
     CaptureWriteOutcome, CaptureWriter, CaptureWriterFinish, CaptureWriterIngress,
     CaptureWriterMonitor, CaptureWriterStatus, SavedCaptureArtifact,
 };
-pub use recording::{RecordingError, RecordingSnapshot, RecordingToken, RideRecordingSession};
+pub use recording::{
+    LocationAcquisition, LocationAuthorization, LocationAvailability, LocationDemand,
+    LocationEnvironment, RecordingError, RecordingSnapshot, RecordingToken, RideRecordingSession,
+};
 pub use storage::*;
 
 #[cfg(test)]

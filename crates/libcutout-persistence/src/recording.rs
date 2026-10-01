@@ -9,6 +9,74 @@ use crate::{RideDatabase, RideId};
 #[cfg(test)]
 mod tests;
 
+/// Platform permission evidence for location acquisition.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum LocationAuthorization {
+    /// The platform has not reported a permission decision.
+    #[default]
+    NotDetermined,
+    /// The rider denied location access.
+    Denied,
+    /// Platform policy restricts location access.
+    Restricted,
+    /// Foreground location access is authorized.
+    WhenInUse,
+    /// Background location access is authorized.
+    Always,
+}
+
+/// Location-service observations supplied by the native adapter.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LocationEnvironment {
+    /// Current platform permission.
+    pub authorization: LocationAuthorization,
+    /// Whether system location services are enabled.
+    pub services_enabled: bool,
+    /// Whether the provider has reported a recoverable acquisition failure.
+    pub temporarily_unavailable: bool,
+}
+
+/// Why a ride can or cannot currently receive location updates.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LocationAvailability {
+    /// Platform observations have not arrived yet.
+    Checking,
+    /// Location acquisition is permitted and available.
+    Ready,
+    /// An active recording needs a location permission request.
+    PermissionRequired,
+    /// The rider denied location access.
+    Denied,
+    /// Platform policy restricts location access.
+    Restricted,
+    /// System location services are disabled.
+    ServicesDisabled,
+    /// Location updates may recover while acquisition remains requested.
+    TemporarilyUnavailable,
+}
+
+/// Native acquisition work requested by the Rust recording owner.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LocationDemand {
+    /// No location updates or permission prompt are needed.
+    Idle,
+    /// An active recording needs a location permission request.
+    RequestPermission,
+    /// Keep location updates active for the current recording.
+    Record,
+}
+
+/// Immutable location status and acquisition intent for one owner revision.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LocationAcquisition {
+    /// Revision shared with the recording owner.
+    pub revision: u64,
+    /// Reason location is available or unavailable.
+    pub availability: LocationAvailability,
+    /// Required native acquisition work.
+    pub demand: LocationDemand,
+}
+
 /// Correlates acquired input with a ride and its recording generation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RecordingToken {
@@ -61,6 +129,7 @@ pub struct RideRecordingSession {
     revision: u64,
     generation: u64,
     snapshot: Option<RecordingSnapshot>,
+    location_environment: Option<LocationEnvironment>,
 }
 
 impl RideRecordingSession {
@@ -73,6 +142,63 @@ impl RideRecordingSession {
             revision: 0,
             generation: 0,
             snapshot: None,
+            location_environment: None,
+        }
+    }
+
+    /// Updates native location evidence without changing the ride lifecycle.
+    pub fn observe_location_environment(&mut self, environment: LocationEnvironment) {
+        if self.location_environment != Some(environment) {
+            self.location_environment = Some(environment);
+            self.revision = self.revision.saturating_add(1);
+            if let Some(snapshot) = &mut self.snapshot {
+                snapshot.revision = self.revision;
+            }
+        }
+    }
+
+    /// Projects native acquisition work from location evidence and the current ride lifecycle.
+    #[must_use]
+    pub fn location_acquisition(&self) -> LocationAcquisition {
+        let availability = match self.location_environment {
+            None => LocationAvailability::Checking,
+            Some(environment) if !environment.services_enabled => {
+                LocationAvailability::ServicesDisabled
+            }
+            Some(LocationEnvironment {
+                authorization: LocationAuthorization::NotDetermined,
+                ..
+            }) => LocationAvailability::PermissionRequired,
+            Some(LocationEnvironment {
+                authorization: LocationAuthorization::Denied,
+                ..
+            }) => LocationAvailability::Denied,
+            Some(LocationEnvironment {
+                authorization: LocationAuthorization::Restricted,
+                ..
+            }) => LocationAvailability::Restricted,
+            Some(LocationEnvironment {
+                authorization: LocationAuthorization::WhenInUse | LocationAuthorization::Always,
+                temporarily_unavailable: true,
+                ..
+            }) => LocationAvailability::TemporarilyUnavailable,
+            Some(_) => LocationAvailability::Ready,
+        };
+        let demand = if self.recorder.state() == Some(RideLifecycleState::Active) {
+            match availability {
+                LocationAvailability::Ready | LocationAvailability::TemporarilyUnavailable => {
+                    LocationDemand::Record
+                }
+                LocationAvailability::PermissionRequired => LocationDemand::RequestPermission,
+                _ => LocationDemand::Idle,
+            }
+        } else {
+            LocationDemand::Idle
+        };
+        LocationAcquisition {
+            revision: self.revision,
+            availability,
+            demand,
         }
     }
 
