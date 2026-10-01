@@ -1,7 +1,7 @@
 //! Recording state shared by persistence owners and the mobile command boundary.
 
 use cutout_ride_maps::{
-    MonotonicMilliseconds, RideLifecycleState, RideMapRecorder, VehicleIdentity,
+    MonotonicMilliseconds, RideEvent, RideLifecycleState, RideMapRecorder, VehicleIdentity,
 };
 
 use crate::{RideDatabase, RideId};
@@ -37,6 +37,12 @@ pub enum RecordingError {
     /// A recording is already active or paused.
     #[error("a ride is already recording")]
     AlreadyRecording,
+    /// No ride is available for a lifecycle transition.
+    #[error("no active ride")]
+    NoActiveRide,
+    /// The requested transition is invalid for the current lifecycle state.
+    #[error("invalid ride transition")]
+    InvalidTransition,
     /// Durable changes must be prepared and completed through an asynchronous command.
     #[error("database-backed recording requires an asynchronous command")]
     DatabaseCommandRequired,
@@ -109,6 +115,52 @@ impl RideRecordingSession {
                 generation: self.generation,
             }),
             state: RideLifecycleState::Active,
+        };
+        self.snapshot = Some(snapshot.clone());
+        Ok(snapshot)
+    }
+
+    /// Applies a lifecycle event to an in-memory recording.
+    ///
+    /// Database-backed lifecycle changes must be prepared and completed through the asynchronous
+    /// command boundary so the in-memory state is published only after durable acknowledgement.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RecordingError::DatabaseCommandRequired`] when storage is configured,
+    /// [`RecordingError::NoActiveRide`] when no ride exists, or
+    /// [`RecordingError::InvalidTransition`] when the event is not valid for the current state.
+    pub fn transition(
+        &mut self,
+        event: RideEvent,
+        at_milliseconds: u64,
+    ) -> Result<RecordingSnapshot, RecordingError> {
+        if self.database.is_some() {
+            return Err(RecordingError::DatabaseCommandRequired);
+        }
+        let current = self.recorder.state().ok_or(RecordingError::NoActiveRide)?;
+        let ride_id = self
+            .snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.ride_id)
+            .ok_or(RecordingError::NoActiveRide)?;
+        let transition = current
+            .transition(event)
+            .map_err(|_| RecordingError::InvalidTransition)?;
+        self.recorder
+            .apply_transition_at(transition, MonotonicMilliseconds::new(at_milliseconds))
+            .map_err(|_| RecordingError::InvalidTransition)?;
+        self.revision = self.revision.saturating_add(1);
+        self.generation = self.generation.saturating_add(1);
+        let state = transition.next();
+        let snapshot = RecordingSnapshot {
+            ride_id,
+            revision: self.revision,
+            recording_token: (state == RideLifecycleState::Active).then_some(RecordingToken {
+                ride_id,
+                generation: self.generation,
+            }),
+            state,
         };
         self.snapshot = Some(snapshot.clone());
         Ok(snapshot)
