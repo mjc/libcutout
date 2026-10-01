@@ -472,7 +472,7 @@ final class CutoutSessionCoreTests: XCTestCase {
                 events.append("actions")
                 return []
             },
-            observeRideMapConnection: { _ in events.append("map") },
+            observeRideMapConnection: { _, _ in events.append("map") },
             persistBmsSamples: { _ in events.append("bms") },
             reduceDisplayState: { state, snapshot, receivedAt, _ in
                 events.append("display")
@@ -1686,6 +1686,46 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(core.scanState.sections.probeRecommended.map(\.title), ["device-ffe0"])
     }
 
+    func testNotificationAdmissionForwardsTheDecodedConnectionAttempt() throws {
+        var observedAttempts = [ConnectionAttemptToken?]()
+        let effects = CutoutSessionNotificationEffects(
+            applyActions: { _ in [] },
+            observeRideMapConnection: { attempt, _ in observedAttempts.append(attempt) },
+            persistBmsSamples: { _ in },
+            reduceDisplayState: { state, snapshot, receivedAt, _ in
+                state.reducing(snapshot: snapshot, receivedAt: receivedAt)
+            }
+        )
+        let core = CutoutSessionCore(
+            clock: MonotonicClock(now: { MonotonicMilliseconds(100) }),
+            notificationEffects: effects
+        )
+        let capturedAttempt = try XCTUnwrap(
+            core.rideSessionStateHandle
+                .beginConnectionAttempt(platformIdentifier: "captured", nowMs: 1)
+                .token
+        )
+        let replacementAttempt = try XCTUnwrap(
+            core.rideSessionStateHandle
+                .beginConnectionAttempt(platformIdentifier: "replacement", nowMs: 2)
+                .token
+        )
+
+        core.applyNotificationStep(
+            CoreBluetoothSessionStep(operations: [], snapshot: nil, connectionAttempt: capturedAttempt),
+            receivedAt: MonotonicMilliseconds(3)
+        )
+        core.applyNotificationStep(
+            CoreBluetoothSessionStep(operations: [], snapshot: nil),
+            receivedAt: MonotonicMilliseconds(4)
+        )
+
+        XCTAssertEqual(observedAttempts.count, 2)
+        XCTAssertEqual(observedAttempts[0], capturedAttempt)
+        XCTAssertNil(observedAttempts[1])
+        XCTAssertEqual(core.connectionSnapshot.token, replacementAttempt)
+    }
+
     func testApplyNotificationStepMarksLiveAndUpdatesDisplayState() {
         let core = CutoutSessionCore()
         let snapshot = TelemetrySnapshot(
@@ -1742,7 +1782,7 @@ final class CutoutSessionCoreTests: XCTestCase {
                 events.append("actions")
                 return []
             },
-            observeRideMapConnection: { _ in events.append("map") },
+            observeRideMapConnection: { _, _ in events.append("map") },
             persistBmsSamples: { _ in events.append("bms") },
             reduceDisplayState: { state, snapshot, receivedAt, updateKind in
                 events.append("display")
@@ -1783,7 +1823,7 @@ final class CutoutSessionCoreTests: XCTestCase {
                 events.append("actions")
                 return [.failed]
             },
-            observeRideMapConnection: { _ in events.append("map") },
+            observeRideMapConnection: { _, _ in events.append("map") },
             persistBmsSamples: { _ in events.append("bms") },
             reduceDisplayState: { state, snapshot, receivedAt, _ in
                 events.append("display")
@@ -1821,7 +1861,7 @@ final class CutoutSessionCoreTests: XCTestCase {
                 events.append("actions")
                 return []
             },
-            observeRideMapConnection: { _ in events.append("map") },
+            observeRideMapConnection: { _, _ in events.append("map") },
             persistBmsSamples: { _ in events.append("bms") },
             reduceDisplayState: { state, snapshot, receivedAt, updateKind in
                 events.append("display")

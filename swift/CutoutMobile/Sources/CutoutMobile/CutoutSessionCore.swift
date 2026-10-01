@@ -538,8 +538,8 @@ public final class CutoutSessionCore: NSObject {
             applyActions: { [weak self] actions in
                 actions.compactMap { self?.applySessionAction($0) }
             },
-            observeRideMapConnection: { [weak self] receivedAt in
-                self?.observeRideMapConnection(at: receivedAt)
+            observeRideMapConnection: { [weak self] token, receivedAt in
+                self?.observeRideMapConnection(at: receivedAt, token: token)
             },
             persistBmsSamples: { [weak self] observations in
                 self?.persistBmsSamples(observations)
@@ -794,7 +794,7 @@ public final class CutoutSessionCore: NSObject {
         rideMapRecorder.start {
             queue.async {
                 guard let core = reference.value else { return }
-                core.observeRideMapConnection(at: core.clock.now())
+                core.observeRideMapConnection(at: core.clock.now(), token: core.connectionSnapshot.token)
             }
         }
         publishRideMapAvailabilityOnMain()
@@ -1311,7 +1311,12 @@ public final class CutoutSessionCore: NSObject {
                 }
             let actions = testScript.bmsSnapshot.map { [SessionAction.withBmsSnapshot($0)] } ?? []
             applyNotificationStep(
-                CoreBluetoothSessionStep(operations: [], snapshot: telemetry, actions: actions),
+                CoreBluetoothSessionStep(
+                    operations: [],
+                    snapshot: telemetry,
+                    actions: actions,
+                    connectionAttempt: token
+                ),
                 receivedAt: receivedAt
             )
             scheduleTestTelemetryUpdateIfNeeded(testScript, token: token)
@@ -1367,7 +1372,11 @@ public final class CutoutSessionCore: NSObject {
                 self?.onBleQueue {
                     guard let self, self.rustSessionState.connectionAttemptIsCurrent(token: token) else { return }
                     self.applyNotificationStep(
-                        CoreBluetoothSessionStep(operations: [], snapshot: telemetry),
+                        CoreBluetoothSessionStep(
+                            operations: [],
+                            snapshot: telemetry,
+                            connectionAttempt: token
+                        ),
                         receivedAt: self.clock.now()
                     )
                 }
@@ -1569,7 +1578,7 @@ public final class CutoutSessionCore: NSObject {
             action.kind == .bmsSnapshot ? action.bmsSnapshot : nil
         }.flatMap(\.rawObservations)
         let captureOutcomes = notificationEffects.applyActions(step.actions)
-        notificationEffects.observeRideMapConnection(receivedAt)
+        notificationEffects.observeRideMapConnection(step.connectionAttempt, receivedAt)
         notificationEffects.persistBmsSamples(bmsObservations)
         let snapshot = step.snapshot
         displayState = notificationEffects.reduceDisplayState(
@@ -2284,9 +2293,11 @@ public final class CutoutSessionCore: NSObject {
         captureRecorder.publishFailure()
     }
 
-    private func observeRideMapConnection(at receivedAt: MonotonicMilliseconds) {
-        let snapshot = connectionSnapshot
-        guard let token = snapshot.token else { return }
+    private func observeRideMapConnection(
+        at receivedAt: MonotonicMilliseconds,
+        token: ConnectionAttemptToken?
+    ) {
+        guard let token else { return }
         let queue = bleQueue
         let reference = WeakCutoutSessionCoreReference(self)
         rideMapRecorder.observeConnection(
