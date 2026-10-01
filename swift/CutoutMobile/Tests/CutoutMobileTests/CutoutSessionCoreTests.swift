@@ -1441,6 +1441,21 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(core.scanState.rows, [scriptedVescCandidate.pickerRow])
     }
 
+    func testComparedDisconnectRejectsAReplacementConnectionGeneration() throws {
+        let core = CutoutSessionCore(
+            testScript: CutoutSessionTestScript(
+                candidate: scriptedVescCandidate, telemetry: nil, connectionDelayMilliseconds: 60_000
+            ))
+        let first = core.rideSessionStateHandle.beginConnectionAttempt(platformIdentifier: "first", nowMs: 0)
+        let replacement = core.rideSessionStateHandle.beginConnectionAttempt(
+            platformIdentifier: "replacement", nowMs: 1)
+
+        XCTAssertFalse(core.disconnectAndScan(expectedGeneration: first.generation))
+        XCTAssertEqual(core.rideSessionStateHandle.connectionAttemptSnapshot().token, replacement.token)
+        XCTAssertTrue(core.disconnectAndScan(expectedGeneration: replacement.generation))
+        XCTAssertNil(core.rideSessionStateHandle.connectionAttemptSnapshot().token)
+    }
+
     func testRecordOnlyMissingCandidateReturnsFalse() {
         let core = CutoutSessionCore()
 

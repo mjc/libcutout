@@ -4669,6 +4669,9 @@ pub enum MobileRideMapCoreErrorDto {
     /// The connection attempt is no longer the current verified attempt.
     #[error("stale verified connection attempt")]
     StaleConnection,
+    /// The captured ride recording is no longer the active recording.
+    #[error("stale ride recording command")]
+    StaleRideCommand,
     /// A verified-connection admission is awaiting its ordered database outcome.
     #[error("verified connection admission is pending")]
     AdmissionPending,
@@ -10278,13 +10281,43 @@ impl MobileRideMapCore {
     ///
     /// # Errors
     ///
-    /// Returns a storage or readiness error without changing the active ride.
+    /// Returns an error when the captured active recording is no longer current, or when
+    /// storage rejects the durable pause.
     pub fn prepare_disconnect(
         &self,
+        expected: Option<MobileRideMapRecordingTokenDto>,
         at_ms: u64,
     ) -> Result<Option<MobileRideMapCoreSnapshotDto>, MobileRideMapCoreErrorDto> {
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         state.require_ready()?;
+        let expected = expected
+            .map(|token| {
+                let ride_id = Uuid::parse_str(&token.ride_id)
+                    .map(persistence::RideId::from_uuid)
+                    .map_err(|_| MobileRideMapCoreErrorDto::StaleRideCommand)?;
+                Ok::<_, MobileRideMapCoreErrorDto>(persistence::RecordingToken {
+                    ride_id,
+                    generation: token.generation,
+                })
+            })
+            .transpose()?;
+        let current = if state.recorder.state() == Some(ride_maps::RideLifecycleState::Active) {
+            Some(persistence::RecordingToken {
+                ride_id: parse_mobile_ride_id(
+                    state
+                        .ride_id
+                        .as_ref()
+                        .ok_or(MobileRideMapCoreErrorDto::NoActiveRide)?,
+                )
+                .map_err(map_core_error)?,
+                generation: state.generation,
+            })
+        } else {
+            None
+        };
+        if current != expected {
+            return Err(MobileRideMapCoreErrorDto::StaleRideCommand);
+        }
         match state.recorder.state() {
             Some(ride_maps::RideLifecycleState::Active) => state
                 .transition_inner_at(MobileRideEventDto::Pause, at_ms)
@@ -22032,7 +22065,7 @@ mod tests {
         let active = state.start_gps_only(1_000).expect("ride starts");
 
         let paused = state
-            .prepare_disconnect(2_000)
+            .prepare_disconnect(active.recording_token.clone(), 2_000)
             .expect("durable pause succeeds before disconnect")
             .expect("active ride exists");
 
@@ -22051,7 +22084,11 @@ mod tests {
         let active = state.start_gps_only(3_000).expect("second ride starts");
         database.shutdown().expect("database worker stops");
 
-        assert!(state.prepare_disconnect(4_000).is_err());
+        assert!(
+            state
+                .prepare_disconnect(active.recording_token, 4_000)
+                .is_err()
+        );
         assert_eq!(
             state.current_snapshot(4_000).unwrap().state,
             MobileRideLifecycleStateDto::Active
@@ -22061,6 +22098,30 @@ mod tests {
             active.ride_id
         );
         let _ = fs::remove_file(failed_path);
+    }
+
+    #[test]
+    fn mobile_ride_map_core_rejects_disconnect_for_a_replaced_recording() {
+        let state = MobileRideMapCore::new();
+        let captured = state.start_gps_only(1_000).expect("ride starts");
+        let captured_token = captured.recording_token.clone();
+        state.stop(2_000).expect("first ride stops");
+        state.save().expect("first ride saves");
+        let replacement = state.start_gps_only(3_000).expect("replacement starts");
+
+        let error = state
+            .prepare_disconnect(captured_token, 4_000)
+            .expect_err("stale disconnect must not pause the replacement ride");
+
+        assert_eq!(error, MobileRideMapCoreErrorDto::StaleRideCommand);
+        assert_eq!(
+            state.current_snapshot(4_000).unwrap().recording_token,
+            replacement.recording_token
+        );
+        assert_eq!(
+            state.current_snapshot(4_000).unwrap().state,
+            MobileRideLifecycleStateDto::Active
+        );
     }
 
     #[test]

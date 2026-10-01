@@ -786,8 +786,13 @@ final class CutoutAppModel {
 
     @discardableResult
     func disconnectTransport() async -> Bool {
+        let expectedRecordingToken = core.rideMapStateHandle?.currentSnapshot(atMs: core.now().rawValue)?.recordingToken
+        let connectionGeneration = core.connectionSnapshot.generation
         do {
-            try await core.prepareRideMapForDisconnect()
+            try await core.prepareRideMapForDisconnect(
+                expectedRecordingToken: expectedRecordingToken,
+                connectionGeneration: connectionGeneration
+            )
             rideMapCheckpointError = nil
         } catch let error as MobileRideMapError {
             rideMapCheckpointError = error
@@ -796,6 +801,7 @@ final class CutoutAppModel {
             rideMapCheckpointError = .storageError(error.localizedDescription)
             return false
         }
+        guard core.disconnectAndScan(expectedGeneration: connectionGeneration) else { return false }
         applyPhoneAlarmActions(core.rideSessionStateHandle.deactivatePhoneAlarmDevice())
         phoneAlarmSettings = nil
         endLiveActivity(reason: .disconnected)
@@ -806,7 +812,6 @@ final class CutoutAppModel {
         liveActivityGlyph = .electricUnicycle
         permitsStoredDeviceAutoPairing = false
         clearSettings()
-        core.disconnectAndScan()
         return true
     }
 

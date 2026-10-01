@@ -2060,6 +2060,28 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testDisconnectDoesNotPauseAReplacementRide() async throws {
+        let driver = SessionDriverSpy(rows: [])
+        let original = try await driver.startRideMapGpsOnly(atMs: 1_000, musicHistoryPolicy: .disabled)
+        driver.nowValue = 2_000
+        driver.disconnectPreparation = {
+            _ = try await driver.rideMapState.performLifecycleCommand(event: .stop, atMs: 2_000)
+            _ = try await driver.rideMapState.performLifecycleCommand(event: .save, atMs: 3_000)
+            _ = try await driver.startRideMapGpsOnly(atMs: 4_000, musicHistoryPolicy: .disabled)
+            driver.nowValue = 5_000
+        }
+        let model = CutoutAppModel(core: driver)
+
+        let disconnected = await model.disconnectTransport()
+
+        XCTAssertFalse(disconnected)
+        XCTAssertEqual(model.rideMapCheckpointError, .staleCommand)
+        XCTAssertEqual(driver.disconnectCount, 0)
+        XCTAssertEqual(driver.rideMapState.currentSnapshot()?.state, .active)
+        XCTAssertNotEqual(driver.rideMapState.currentSnapshot()?.rideID, original.rideID)
+    }
+
+    @MainActor
     func testDetectedProtocolReplacesAdvertisementDerivedConnectionRoute() {
         let row = DevicePickerRow(
             id: "ambiguous-device",
@@ -3445,9 +3467,13 @@ private final class SessionDriverSpy: CutoutSessionDriving {
         checkpointCount += 1
         try await checkpointOperation?()
     }
-    func prepareRideMapForDisconnect() async throws {
+    func prepareRideMapForDisconnect(
+        expectedRecordingToken: MobileRideMapRecordingTokenDto?,
+        connectionGeneration _: UInt64
+    ) async throws {
         disconnectPreparationCount += 1
         try await disconnectPreparation?()
+        _ = try rideMapState.prepareDisconnect(expected: expectedRecordingToken, atMs: nowValue)
     }
     func flushCapture() async -> Bool {
         flushCaptureCount += 1

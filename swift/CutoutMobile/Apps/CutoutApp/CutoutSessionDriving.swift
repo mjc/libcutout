@@ -40,6 +40,7 @@ protocol CutoutSessionDriving: AnyObject {
     func flushCapture() async -> Bool
     func finishCapture() async -> Bool
     func disconnectAndScan()
+    func disconnectAndScan(expectedGeneration: UInt64) -> Bool
     func submitDeviceSetting(token: ConnectionAttemptToken, id: DeviceSettingID, value: DeviceSettingValue) throws
     func submitDeviceAction(token: ConnectionAttemptToken, id: DeviceActionID) throws
     func setDeviceControlsValidation(token: ConnectionAttemptToken, authorized: Bool) throws
@@ -52,7 +53,10 @@ protocol CutoutSessionDriving: AnyObject {
     func startRideMapGpsOnly(atMs: UInt64, musicHistoryPolicy: MobileMusicHistoryPolicyDto) async throws
         -> MobileRideMapSnapshotDto
     func pauseRideMap(atMs: UInt64) async throws -> MobileRideMapSnapshotDto
-    func prepareRideMapForDisconnect() async throws
+    func prepareRideMapForDisconnect(
+        expectedRecordingToken: MobileRideMapRecordingTokenDto?,
+        connectionGeneration: UInt64
+    ) async throws
     func resumeRideMap(atMs: UInt64) async throws -> MobileRideMapSnapshotDto
     func stopRideMap(atMs: UInt64) async throws -> MobileRideMapSnapshotDto
     func saveRideMap() async throws -> MobileRideMapSnapshotDto
@@ -64,7 +68,16 @@ extension CutoutSessionCore: CutoutSessionDriving {}
 
 extension CutoutSessionDriving {
     func checkpointRideMap() async throws {}
-    func prepareRideMapForDisconnect() async throws {}
+    func prepareRideMapForDisconnect(
+        expectedRecordingToken: MobileRideMapRecordingTokenDto?,
+        connectionGeneration: UInt64
+    ) async throws {}
+
+    func disconnectAndScan(expectedGeneration: UInt64) -> Bool {
+        guard connectionSnapshot.generation == expectedGeneration else { return false }
+        disconnectAndScan()
+        return true
+    }
 
     var connectionSnapshot: ConnectionSnapshot {
         rideSessionStateHandle.connectionAttemptSnapshot()

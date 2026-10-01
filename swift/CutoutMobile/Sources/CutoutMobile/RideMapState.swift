@@ -34,6 +34,7 @@ public enum MobileRideMapError: Error, Equatable, Hashable, Sendable {
     case locationBatchTooLarge
     case invalidVehicleIdentity
     case staleConnection
+    case staleCommand
     case admissionPending
     case invalidRouteProjection
     case invalidMusicInput(String)
@@ -995,8 +996,11 @@ public final class MobileRideMapState: @unchecked Sendable {
     }
 
     /// Pauses an active ride before an explicit user-requested transport disconnect.
-    public func prepareDisconnect(atMs: UInt64) throws -> MobileRideMapSnapshotDto? {
-        try withCore { try $0.prepareDisconnect(atMs: atMs).map(mapSnapshot) }
+    public func prepareDisconnect(
+        expected: MobileRideMapRecordingTokenDto?,
+        atMs: UInt64
+    ) throws -> MobileRideMapSnapshotDto? {
+        try withCore { try $0.prepareDisconnect(expected: expected, atMs: atMs).map(mapSnapshot) }
     }
 
     public func resume(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
@@ -1885,6 +1889,7 @@ public final class MobileRideMapState: @unchecked Sendable {
         case .LocationBatchTooLarge: return .locationBatchTooLarge
         case .InvalidVehicleIdentity: return .invalidVehicleIdentity
         case .StaleConnection: return .staleConnection
+        case .StaleRideCommand: return .staleCommand
         case .AdmissionPending: return .admissionPending
         case .InvalidRouteProjection: return .invalidRouteProjection
         case .Cancelled: return .cancelled

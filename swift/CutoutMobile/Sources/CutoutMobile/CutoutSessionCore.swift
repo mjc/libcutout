@@ -1015,6 +1015,17 @@ public final class CutoutSessionCore: NSObject {
         onBleQueue { disconnectAndScanOnBleQueue() }
     }
 
+    @discardableResult
+    public func disconnectAndScan(expectedGeneration: UInt64) -> Bool {
+        onBleQueue {
+            guard rustSessionState.connectionAttemptSnapshot().generation == expectedGeneration else {
+                return false
+            }
+            disconnectAndScanOnBleQueue()
+            return true
+        }
+    }
+
     public func submitDeviceSetting(token: ConnectionAttemptToken, id: DeviceSettingID, value: DeviceSettingValue)
         throws
     {
@@ -3809,8 +3820,14 @@ extension CutoutSessionCore {
     }
 
     /// Persists an active ride pause before explicit transport teardown.
-    public func prepareRideMapForDisconnect() async throws {
-        try await rideMapRecorder.prepareForDisconnect()
+    public func prepareRideMapForDisconnect(
+        expectedRecordingToken: MobileRideMapRecordingTokenDto?,
+        connectionGeneration: UInt64
+    ) async throws {
+        guard connectionSnapshot.generation == connectionGeneration else {
+            throw MobileRideMapError.staleConnection
+        }
+        try await rideMapRecorder.prepareForDisconnect(expected: expectedRecordingToken)
     }
 
     /// Clears the Rust-owned location context before starting a new capture.

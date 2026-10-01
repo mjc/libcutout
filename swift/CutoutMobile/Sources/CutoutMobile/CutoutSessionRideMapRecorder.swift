@@ -31,7 +31,7 @@ protocol CutoutSessionRideMapRecording: AnyObject {
     func startGpsOnly(atMs: UInt64, musicHistoryPolicy: MobileMusicHistoryPolicyDto) async throws
         -> MobileRideMapSnapshotDto
     func pause(atMs: UInt64) async throws -> MobileRideMapSnapshotDto
-    func prepareForDisconnect() async throws
+    func prepareForDisconnect(expected: MobileRideMapRecordingTokenDto?) async throws
     func resume(atMs: UInt64) async throws -> MobileRideMapSnapshotDto
     func stop(atMs: UInt64) async throws -> MobileRideMapSnapshotDto
     func save() async throws -> MobileRideMapSnapshotDto
@@ -112,9 +112,14 @@ actor CutoutSessionRideMapRecorder: CutoutSessionRideMapRecording {
         return snapshot
     }
 
-    func prepareForDisconnect() async throws {
+    func prepareForDisconnect(expected: MobileRideMapRecordingTokenDto?) async throws {
         guard state != nil else { return }
-        guard let snapshot = try requireState().prepareDisconnect(atMs: clock.now().rawValue) else {
+        guard
+            let snapshot = try requireState().prepareDisconnect(
+                expected: expected,
+                atMs: clock.now().rawValue
+            )
+        else {
             return
         }
         synchronizeLocationDemand()
