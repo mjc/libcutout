@@ -511,6 +511,8 @@ public struct MobileRideMapSnapshotDto: Equatable, Hashable, Sendable {
     public let revision: UInt64
     /// Token captured with an active recording for asynchronous location callbacks.
     public let recordingToken: MobileRideMapRecordingTokenDto?
+    /// Rust-owned lifecycle identity used to target commands at this displayed ride.
+    public let commandToken: MobileRideMapCommandTokenDto?
     public let state: MobileRideMapStateDto
     public let allowedActions: [MobileRideMapActionDto]
     public let telemetryState: MobileRideMapTelemetryStateDto
@@ -523,6 +525,7 @@ public struct MobileRideMapSnapshotDto: Equatable, Hashable, Sendable {
         rideID: String,
         revision: UInt64 = 0,
         recordingToken: MobileRideMapRecordingTokenDto? = nil,
+        commandToken: MobileRideMapCommandTokenDto? = nil,
         state: MobileRideMapStateDto,
         allowedActions: [MobileRideMapActionDto] = [],
         telemetryState: MobileRideMapTelemetryStateDto = .unknown,
@@ -534,6 +537,7 @@ public struct MobileRideMapSnapshotDto: Equatable, Hashable, Sendable {
         self.rideID = rideID
         self.revision = revision
         self.recordingToken = recordingToken
+        self.commandToken = commandToken
         self.state = state
         self.allowedActions = allowedActions
         self.telemetryState = telemetryState
@@ -934,9 +938,10 @@ public final class MobileRideMapState: @unchecked Sendable {
 
     public func beginLifecycleCommand(
         event: MobileRideEventDto,
+        expected: MobileRideMapCommandTokenDto,
         atMs: UInt64
     ) throws -> MobileRideMapLifecycleCommand {
-        try withCore { try $0.beginLifecycleCommand(event: event, atMs: atMs) }
+        try withCore { try $0.beginLifecycleCommand(event: event, expected: expected, atMs: atMs) }
     }
 
     public func pollLifecycleCommand(
@@ -952,9 +957,10 @@ public final class MobileRideMapState: @unchecked Sendable {
 
     public func performLifecycleCommand(
         event: MobileRideEventDto,
+        expected: MobileRideMapCommandTokenDto,
         atMs: UInt64
     ) async throws -> MobileRideMapSnapshotDto {
-        try await completeLifecycleCommand(beginLifecycleCommand(event: event, atMs: atMs))
+        try await completeLifecycleCommand(beginLifecycleCommand(event: event, expected: expected, atMs: atMs))
     }
 
     private func completeLifecycleCommand(
@@ -1607,6 +1613,7 @@ public final class MobileRideMapState: @unchecked Sendable {
             rideID: snapshot.rideId,
             revision: snapshot.revision,
             recordingToken: snapshot.recordingToken,
+            commandToken: snapshot.commandToken,
             state: mapState(snapshot.state),
             allowedActions: snapshot.allowedActions.compactMap(mapAction),
             telemetryState: map(snapshot.telemetryState),

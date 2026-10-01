@@ -34,9 +34,16 @@ final class RideMapStateTests: XCTestCase {
         let started = try state.startGpsOnly(atMs: 1_000)
         XCTAssertEqual(started.recordingToken?.rideId, started.rideID)
         XCTAssertNotNil(started.recordingToken)
+        XCTAssertEqual(started.commandToken?.rideId, started.rideID)
+        XCTAssertEqual(started.commandToken?.generation, started.recordingToken?.generation)
 
         let stopped = try state.stop(atMs: 2_000)
         XCTAssertNil(stopped.recordingToken)
+        XCTAssertEqual(stopped.commandToken?.rideId, stopped.rideID)
+        XCTAssertGreaterThan(
+            try XCTUnwrap(stopped.commandToken?.generation),
+            try XCTUnwrap(started.commandToken?.generation)
+        )
     }
 
     func testLocationBatchOutcomeCarriesItsMatchingSnapshot() throws {

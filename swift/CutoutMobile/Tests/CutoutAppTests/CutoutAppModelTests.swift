@@ -2065,8 +2065,16 @@ final class CutoutAppModelTests: XCTestCase {
         let original = try await driver.startRideMapGpsOnly(atMs: 1_000, musicHistoryPolicy: .disabled)
         driver.nowValue = 2_000
         driver.disconnectPreparation = {
-            _ = try await driver.rideMapState.performLifecycleCommand(event: .stop, atMs: 2_000)
-            _ = try await driver.rideMapState.performLifecycleCommand(event: .save, atMs: 3_000)
+            let stopped = try await driver.rideMapState.performLifecycleCommand(
+                event: .stop,
+                expected: try XCTUnwrap(original.commandToken),
+                atMs: 2_000
+            )
+            _ = try await driver.rideMapState.performLifecycleCommand(
+                event: .save,
+                expected: try XCTUnwrap(stopped.commandToken),
+                atMs: 3_000
+            )
             _ = try await driver.startRideMapGpsOnly(atMs: 4_000, musicHistoryPolicy: .disabled)
             driver.nowValue = 5_000
         }
@@ -3528,24 +3536,24 @@ private final class SessionDriverSpy: CutoutSessionDriving {
         return snapshot
     }
 
-    func pauseRideMap(atMs: UInt64) async throws -> MobileRideMapSnapshotDto {
-        try await rideMapState.performLifecycleCommand(event: .pause, atMs: atMs)
+    func pauseRideMap(expected: MobileRideMapCommandTokenDto, atMs: UInt64) async throws -> MobileRideMapSnapshotDto {
+        try await rideMapState.performLifecycleCommand(event: .pause, expected: expected, atMs: atMs)
     }
 
-    func resumeRideMap(atMs: UInt64) async throws -> MobileRideMapSnapshotDto {
-        try await rideMapState.performLifecycleCommand(event: .resume, atMs: atMs)
+    func resumeRideMap(expected: MobileRideMapCommandTokenDto, atMs: UInt64) async throws -> MobileRideMapSnapshotDto {
+        try await rideMapState.performLifecycleCommand(event: .resume, expected: expected, atMs: atMs)
     }
 
-    func stopRideMap(atMs: UInt64) async throws -> MobileRideMapSnapshotDto {
-        try await rideMapState.performLifecycleCommand(event: .stop, atMs: atMs)
+    func stopRideMap(expected: MobileRideMapCommandTokenDto, atMs: UInt64) async throws -> MobileRideMapSnapshotDto {
+        try await rideMapState.performLifecycleCommand(event: .stop, expected: expected, atMs: atMs)
     }
 
-    func saveRideMap() async throws -> MobileRideMapSnapshotDto {
-        try await rideMapState.performLifecycleCommand(event: .save, atMs: nowValue)
+    func saveRideMap(expected: MobileRideMapCommandTokenDto) async throws -> MobileRideMapSnapshotDto {
+        try await rideMapState.performLifecycleCommand(event: .save, expected: expected, atMs: nowValue)
     }
 
-    func discardRideMap() async throws -> MobileRideMapSnapshotDto {
-        try await rideMapState.performLifecycleCommand(event: .discard, atMs: nowValue)
+    func discardRideMap(expected: MobileRideMapCommandTokenDto) async throws -> MobileRideMapSnapshotDto {
+        try await rideMapState.performLifecycleCommand(event: .discard, expected: expected, atMs: nowValue)
     }
 
     func submitDeviceSetting(token: ConnectionAttemptToken, id: DeviceSettingID, value: DeviceSettingValue) throws {

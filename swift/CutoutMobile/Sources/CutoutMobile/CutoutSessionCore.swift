@@ -3805,24 +3805,30 @@ extension CutoutSessionCore {
         try await rideMapRecorder.startGpsOnly(atMs: atMs, musicHistoryPolicy: musicHistoryPolicy)
     }
 
-    public func pauseRideMap(atMs: UInt64) async throws -> MobileRideMapSnapshotDto {
-        try await rideMapRecorder.pause(atMs: atMs)
+    public func pauseRideMap(expected: MobileRideMapCommandTokenDto, atMs: UInt64) async throws
+        -> MobileRideMapSnapshotDto
+    {
+        try await rideMapRecorder.pause(expected: expected, atMs: atMs)
     }
 
-    public func resumeRideMap(atMs: UInt64) async throws -> MobileRideMapSnapshotDto {
-        try await rideMapRecorder.resume(atMs: atMs)
+    public func resumeRideMap(expected: MobileRideMapCommandTokenDto, atMs: UInt64) async throws
+        -> MobileRideMapSnapshotDto
+    {
+        try await rideMapRecorder.resume(expected: expected, atMs: atMs)
     }
 
-    public func stopRideMap(atMs: UInt64) async throws -> MobileRideMapSnapshotDto {
-        try await rideMapRecorder.stop(atMs: atMs)
+    public func stopRideMap(expected: MobileRideMapCommandTokenDto, atMs: UInt64) async throws
+        -> MobileRideMapSnapshotDto
+    {
+        try await rideMapRecorder.stop(expected: expected, atMs: atMs)
     }
 
-    public func saveRideMap() async throws -> MobileRideMapSnapshotDto {
-        try await rideMapRecorder.save()
+    public func saveRideMap(expected: MobileRideMapCommandTokenDto) async throws -> MobileRideMapSnapshotDto {
+        try await rideMapRecorder.save(expected: expected)
     }
 
-    public func discardRideMap() async throws -> MobileRideMapSnapshotDto {
-        try await rideMapRecorder.discard()
+    public func discardRideMap(expected: MobileRideMapCommandTokenDto) async throws -> MobileRideMapSnapshotDto {
+        try await rideMapRecorder.discard(expected: expected)
     }
 
     /// Waits for ride-map writes already queued in Rust, leaving the active ride unchanged.

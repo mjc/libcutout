@@ -30,12 +30,12 @@ protocol CutoutSessionRideMapRecording: AnyObject {
     func ingestLocation(_ update: PhoneLocationUpdate)
     func startGpsOnly(atMs: UInt64, musicHistoryPolicy: MobileMusicHistoryPolicyDto) async throws
         -> MobileRideMapSnapshotDto
-    func pause(atMs: UInt64) async throws -> MobileRideMapSnapshotDto
+    func pause(expected: MobileRideMapCommandTokenDto, atMs: UInt64) async throws -> MobileRideMapSnapshotDto
     func prepareForDisconnect(expected: MobileRideMapRecordingTokenDto?) async throws
-    func resume(atMs: UInt64) async throws -> MobileRideMapSnapshotDto
-    func stop(atMs: UInt64) async throws -> MobileRideMapSnapshotDto
-    func save() async throws -> MobileRideMapSnapshotDto
-    func discard() async throws -> MobileRideMapSnapshotDto
+    func resume(expected: MobileRideMapCommandTokenDto, atMs: UInt64) async throws -> MobileRideMapSnapshotDto
+    func stop(expected: MobileRideMapCommandTokenDto, atMs: UInt64) async throws -> MobileRideMapSnapshotDto
+    func save(expected: MobileRideMapCommandTokenDto) async throws -> MobileRideMapSnapshotDto
+    func discard(expected: MobileRideMapCommandTokenDto) async throws -> MobileRideMapSnapshotDto
     func checkpoint() async throws
 }
 
@@ -106,8 +106,8 @@ actor CutoutSessionRideMapRecorder: CutoutSessionRideMapRecording {
         return snapshot
     }
 
-    func pause(atMs: UInt64) async throws -> MobileRideMapSnapshotDto {
-        let snapshot = try await transition(.pause, atMs: atMs)
+    func pause(expected: MobileRideMapCommandTokenDto, atMs: UInt64) async throws -> MobileRideMapSnapshotDto {
+        let snapshot = try await transition(.pause, expected: expected, atMs: atMs)
         synchronizeLocationDemand()
         return snapshot
     }
@@ -126,26 +126,26 @@ actor CutoutSessionRideMapRecorder: CutoutSessionRideMapRecording {
         publishSnapshot(snapshot)
     }
 
-    func resume(atMs: UInt64) async throws -> MobileRideMapSnapshotDto {
-        let snapshot = try await transition(.resume, atMs: atMs)
+    func resume(expected: MobileRideMapCommandTokenDto, atMs: UInt64) async throws -> MobileRideMapSnapshotDto {
+        let snapshot = try await transition(.resume, expected: expected, atMs: atMs)
         synchronizeLocationDemand()
         return snapshot
     }
 
-    func stop(atMs: UInt64) async throws -> MobileRideMapSnapshotDto {
-        let snapshot = try await transition(.stop, atMs: atMs)
+    func stop(expected: MobileRideMapCommandTokenDto, atMs: UInt64) async throws -> MobileRideMapSnapshotDto {
+        let snapshot = try await transition(.stop, expected: expected, atMs: atMs)
         synchronizeLocationDemand()
         return snapshot
     }
 
-    func save() async throws -> MobileRideMapSnapshotDto {
-        let snapshot = try await transition(.save, atMs: clock.now().rawValue)
+    func save(expected: MobileRideMapCommandTokenDto) async throws -> MobileRideMapSnapshotDto {
+        let snapshot = try await transition(.save, expected: expected, atMs: clock.now().rawValue)
         synchronizeLocationDemand()
         return snapshot
     }
 
-    func discard() async throws -> MobileRideMapSnapshotDto {
-        let snapshot = try await transition(.discard, atMs: clock.now().rawValue)
+    func discard(expected: MobileRideMapCommandTokenDto) async throws -> MobileRideMapSnapshotDto {
+        let snapshot = try await transition(.discard, expected: expected, atMs: clock.now().rawValue)
         synchronizeLocationDemand()
         return snapshot
     }
@@ -161,10 +161,11 @@ actor CutoutSessionRideMapRecorder: CutoutSessionRideMapRecording {
 
     private func transition(
         _ event: MobileRideEventDto,
+        expected: MobileRideMapCommandTokenDto,
         atMs: UInt64
     ) async throws -> MobileRideMapSnapshotDto {
         let state = try requireState()
-        return try await state.performLifecycleCommand(event: event, atMs: atMs)
+        return try await state.performLifecycleCommand(event: event, expected: expected, atMs: atMs)
     }
 
     nonisolated func observeConnection(

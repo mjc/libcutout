@@ -362,16 +362,16 @@ final class CutoutAppModel {
                 switch command {
                 case let .startGpsOnly(atMs, musicHistoryPolicy):
                     try await core.startRideMapGpsOnly(atMs: atMs, musicHistoryPolicy: musicHistoryPolicy)
-                case let .pause(atMs):
-                    try await core.pauseRideMap(atMs: atMs)
-                case let .resume(atMs):
-                    try await core.resumeRideMap(atMs: atMs)
-                case let .stop(atMs):
-                    try await core.stopRideMap(atMs: atMs)
-                case .save:
-                    try await core.saveRideMap()
-                case .discard:
-                    try await core.discardRideMap()
+                case let .pause(expected, atMs):
+                    try await core.pauseRideMap(expected: expected, atMs: atMs)
+                case let .resume(expected, atMs):
+                    try await core.resumeRideMap(expected: expected, atMs: atMs)
+                case let .stop(expected, atMs):
+                    try await core.stopRideMap(expected: expected, atMs: atMs)
+                case let .save(expected):
+                    try await core.saveRideMap(expected: expected)
+                case let .discard(expected):
+                    try await core.discardRideMap(expected: expected)
                 }
             }
         )
@@ -585,17 +585,20 @@ final class CutoutAppModel {
 
     @discardableResult
     func pauseRideMap() async -> Bool {
-        await applyRideMapCommand(.pause(atMs: currentMonotonicTime.rawValue))
+        guard let expected = rideMapCommandToken() else { return false }
+        return await applyRideMapCommand(.pause(expected: expected, atMs: currentMonotonicTime.rawValue))
     }
 
     @discardableResult
     func resumeRideMap() async -> Bool {
-        await applyRideMapCommand(.resume(atMs: currentMonotonicTime.rawValue))
+        guard let expected = rideMapCommandToken() else { return false }
+        return await applyRideMapCommand(.resume(expected: expected, atMs: currentMonotonicTime.rawValue))
     }
 
     @discardableResult
     func stopRideMap() async -> Bool {
-        let stopped = await applyRideMapCommand(.stop(atMs: currentMonotonicTime.rawValue))
+        guard let expected = rideMapCommandToken() else { return false }
+        let stopped = await applyRideMapCommand(.stop(expected: expected, atMs: currentMonotonicTime.rawValue))
         if stopped {
             liveRide.invalidateProjection(clearPoints: false)
             music.clearMusicCaptureContext()
@@ -609,7 +612,8 @@ final class CutoutAppModel {
 
     @discardableResult
     func saveRideMap() async -> Bool {
-        guard await applyRideMapCommand(.save) else {
+        guard let expected = rideMapCommandToken() else { return false }
+        guard await applyRideMapCommand(.save(expected: expected)) else {
             return false
         }
         liveRide.invalidateProjection(clearPoints: false)
@@ -620,7 +624,8 @@ final class CutoutAppModel {
 
     @discardableResult
     func discardRideMap() async -> Bool {
-        guard await applyRideMapCommand(.discard) else {
+        guard let expected = rideMapCommandToken() else { return false }
+        guard await applyRideMapCommand(.discard(expected: expected)) else {
             return false
         }
         liveRide.invalidateProjection(clearPoints: true)
@@ -638,6 +643,14 @@ final class CutoutAppModel {
         guard let snapshot = await liveRide.perform(command) else { return false }
         core.updateRideLocationDemand(for: snapshot.state)
         return true
+    }
+
+    private func rideMapCommandToken() -> MobileRideMapCommandTokenDto? {
+        guard let token = liveRide.snapshot?.commandToken else {
+            liveRide.setError(.noActiveRide)
+            return nil
+        }
+        return token
     }
 
     func submitDeviceSetting(token: ConnectionAttemptToken, id: DeviceSettingID, value: DeviceSettingValue) throws {

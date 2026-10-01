@@ -888,19 +888,25 @@ private struct HistoricalRideQuery: RideHistoryQuerying {
         {
             throw MobileRideMapError.storageError("ride map unavailable")
         }
-        func pauseRideMap(atMs: UInt64) async throws -> MobileRideMapSnapshotDto {
+        func pauseRideMap(expected _: MobileRideMapCommandTokenDto, atMs _: UInt64) async throws
+            -> MobileRideMapSnapshotDto
+        {
             throw MobileRideMapError.storageError("ride map unavailable")
         }
-        func resumeRideMap(atMs: UInt64) async throws -> MobileRideMapSnapshotDto {
+        func resumeRideMap(expected _: MobileRideMapCommandTokenDto, atMs _: UInt64) async throws
+            -> MobileRideMapSnapshotDto
+        {
             throw MobileRideMapError.storageError("ride map unavailable")
         }
-        func stopRideMap(atMs: UInt64) async throws -> MobileRideMapSnapshotDto {
+        func stopRideMap(expected _: MobileRideMapCommandTokenDto, atMs _: UInt64) async throws
+            -> MobileRideMapSnapshotDto
+        {
             throw MobileRideMapError.storageError("ride map unavailable")
         }
-        func saveRideMap() async throws -> MobileRideMapSnapshotDto {
+        func saveRideMap(expected _: MobileRideMapCommandTokenDto) async throws -> MobileRideMapSnapshotDto {
             throw MobileRideMapError.storageError("ride map unavailable")
         }
-        func discardRideMap() async throws -> MobileRideMapSnapshotDto {
+        func discardRideMap(expected _: MobileRideMapCommandTokenDto) async throws -> MobileRideMapSnapshotDto {
             throw MobileRideMapError.storageError("ride map unavailable")
         }
     }

@@ -4806,6 +4806,15 @@ pub struct MobileRideMapRecordingTokenDto {
     pub generation: u64,
 }
 
+/// Rust-owned identity used to target commands at the lifecycle snapshot shown to the rider.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileRideMapCommandTokenDto {
+    /// Ride the command was issued for.
+    pub ride_id: String,
+    /// Generation of the lifecycle snapshot; unlike revision, telemetry does not change it.
+    pub generation: u64,
+}
+
 /// Immutable snapshot of the Rust-owned recording.
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct MobileRideMapCoreSnapshotDto {
@@ -4815,6 +4824,8 @@ pub struct MobileRideMapCoreSnapshotDto {
     pub revision: u64,
     /// Correlation token for inputs acquired while this ride is recording.
     pub recording_token: Option<MobileRideMapRecordingTokenDto>,
+    /// Correlation token for lifecycle commands targeting this ride snapshot.
+    pub command_token: Option<MobileRideMapCommandTokenDto>,
     /// Current durable lifecycle state.
     pub state: MobileRideLifecycleStateDto,
     /// Rust-owned actions for this state; Start creates a new recording.
@@ -9429,6 +9440,13 @@ impl MobileRideMapCoreInner {
                     generation: self.generation,
                 }
             }),
+            command_token: self
+                .ride_id
+                .as_ref()
+                .map(|ride_id| MobileRideMapCommandTokenDto {
+                    ride_id: mobile_ride_id_string(ride_id),
+                    generation: self.generation,
+                }),
             state,
             allowed_actions: map_ride_lifecycle_state(state)
                 .recording_actions()
@@ -9785,6 +9803,7 @@ impl MobileRideMapCore {
     fn begin_lifecycle_command_inner(
         self: &Arc<Self>,
         event: MobileRideEventDto,
+        expected: MobileRideMapCommandTokenDto,
         at_ms: u64,
     ) -> Result<Arc<MobileRideMapLifecycleCommand>, MobileRideMapCoreErrorDto> {
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
@@ -9793,6 +9812,15 @@ impl MobileRideMapCore {
             .ride_id
             .clone()
             .ok_or(MobileRideMapCoreErrorDto::NoActiveRide)?;
+        let MobileRideMapCommandTokenDto {
+            ride_id: expected_ride_id,
+            generation: expected_generation,
+        } = expected;
+        if expected_ride_id != mobile_ride_id_string(&ride_id)
+            || expected_generation != state.generation
+        {
+            return Err(MobileRideMapCoreErrorDto::StaleRideCommand);
+        }
         let current = state
             .recorder
             .state()
@@ -10034,9 +10062,10 @@ impl MobileRideMapCore {
     pub fn begin_lifecycle_command(
         self: &Arc<Self>,
         event: MobileRideEventDto,
+        expected: MobileRideMapCommandTokenDto,
         at_ms: u64,
     ) -> Result<Arc<MobileRideMapLifecycleCommand>, MobileRideMapCoreErrorDto> {
-        self.begin_lifecycle_command_inner(event, at_ms)
+        self.begin_lifecycle_command_inner(event, expected, at_ms)
     }
 
     /// Creates a Rust-owned map state without durable storage, for deterministic UI tests.
@@ -15908,12 +15937,17 @@ mod tests {
     fn lifecycle_command_barrier_holds_until_poll_applies_transition() {
         let core = MobileRideMapCore::new();
         core.start_gps_only(1_000).expect("GPS-only ride starts");
+        let command_token = core
+            .current_snapshot(1_000)
+            .expect("snapshot remains available")
+            .command_token
+            .expect("ride has a command token");
         let command = core
-            .begin_lifecycle_command(MobileRideEventDto::Pause, 1_100)
+            .begin_lifecycle_command(MobileRideEventDto::Pause, command_token.clone(), 1_100)
             .expect("pause command is accepted");
 
         assert!(matches!(
-            core.begin_lifecycle_command(MobileRideEventDto::Resume, 1_200),
+            core.begin_lifecycle_command(MobileRideEventDto::Resume, command_token, 1_200),
             Err(MobileRideMapCoreErrorDto::AdmissionPending)
         ));
         assert_eq!(
@@ -15932,6 +15966,36 @@ mod tests {
             command.poll().expect("terminal result is cached"),
             MobileRideMapLifecyclePollDto::Completed { .. }
         ));
+    }
+
+    #[test]
+    fn lifecycle_command_rejects_a_token_from_a_replaced_ride() {
+        let core = MobileRideMapCore::new();
+        core.start_gps_only(1_000)
+            .expect("first GPS-only ride starts");
+        let old_token = core
+            .current_snapshot(1_000)
+            .expect("first ride snapshot exists")
+            .command_token
+            .expect("active ride has a recording token");
+
+        let stop = core
+            .begin_lifecycle_command(MobileRideEventDto::Stop, old_token.clone(), 1_100)
+            .expect("stop applies to the displayed ride");
+        stop.poll().expect("stop completes");
+        core.start_gps_only(1_200).expect("replacement ride starts");
+
+        assert_eq!(
+            core.begin_lifecycle_command(MobileRideEventDto::Pause, old_token, 1_300)
+                .err(),
+            Some(MobileRideMapCoreErrorDto::StaleRideCommand)
+        );
+        assert_eq!(
+            core.current_snapshot(1_300)
+                .expect("replacement snapshot remains available")
+                .state,
+            MobileRideLifecycleStateDto::Active
+        );
     }
 
     #[test]

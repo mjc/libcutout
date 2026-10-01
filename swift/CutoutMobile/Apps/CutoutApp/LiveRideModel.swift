@@ -28,11 +28,11 @@ extension MobileRideMapState: LiveRideQuerying {}
 
 enum LiveRideCommand: Sendable {
     case startGpsOnly(atMs: UInt64, musicHistoryPolicy: MobileMusicHistoryPolicyDto)
-    case pause(atMs: UInt64)
-    case resume(atMs: UInt64)
-    case stop(atMs: UInt64)
-    case save
-    case discard
+    case pause(expected: MobileRideMapCommandTokenDto, atMs: UInt64)
+    case resume(expected: MobileRideMapCommandTokenDto, atMs: UInt64)
+    case stop(expected: MobileRideMapCommandTokenDto, atMs: UInt64)
+    case save(expected: MobileRideMapCommandTokenDto)
+    case discard(expected: MobileRideMapCommandTokenDto)
 
     var resetsPoints: Bool {
         switch self {
