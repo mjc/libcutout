@@ -3800,6 +3800,11 @@ extension CutoutSessionCore {
         try await rideMapRecorder.discard()
     }
 
+    /// Waits for ride-map writes already queued in Rust, leaving the active ride unchanged.
+    public func checkpointRideMap() async throws {
+        try await rideMapRecorder.checkpoint()
+    }
+
     /// Clears the Rust-owned location context before starting a new capture.
     @MainActor
     public func resetRideMapLocationAdmission() {

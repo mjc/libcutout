@@ -34,6 +34,7 @@ protocol CutoutSessionRideMapRecording: AnyObject {
     func stop(atMs: UInt64) async throws -> MobileRideMapSnapshotDto
     func save() async throws -> MobileRideMapSnapshotDto
     func discard() async throws -> MobileRideMapSnapshotDto
+    func checkpoint() async throws
 }
 
 /// Owns Rust ride-map state and storage effects on one serial executor. Protocol truth remains in Core.
@@ -129,6 +130,15 @@ actor CutoutSessionRideMapRecorder: CutoutSessionRideMapRecording {
         let snapshot = try await transition(.discard, atMs: clock.now().rawValue)
         synchronizeLocationDemand()
         return snapshot
+    }
+
+    func checkpoint() async throws {
+        let state = try requireState()
+        let outcomes = try await state.checkpoint()
+        guard !Task.isCancelled else { return }
+        if !outcomes.isEmpty {
+            publishDecisions(RideMapDecisionBatch(outcomes: outcomes))
+        }
     }
 
     private func transition(

@@ -4767,6 +4767,54 @@ fn queued_live_ride_start_does_not_wait_for_a_busy_sqlite_worker() {
 }
 
 #[test]
+fn ride_checkpoint_waits_for_preceding_location_writes() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-ride-checkpoint-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database
+        .create_started_live_ride(1_000, 100, Some("wheel-a"))
+        .unwrap();
+
+    let (entered_sender, entered_receiver) = std::sync::mpsc::sync_channel(0);
+    let (release_sender, release_receiver) = std::sync::mpsc::sync_channel(0);
+    let location = LocationSample::new(
+        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        1_001,
+        1_700_000_000_001,
+        None,
+        LocationSource::Live,
+    );
+    let pending_location = database
+        .enqueue_location_with_worker_gate_for_test(
+            ride,
+            location,
+            RideMapSegmentId::new(0),
+            RouteTelemetryState::GpsOnly,
+            entered_sender,
+            release_receiver,
+        )
+        .unwrap();
+    entered_receiver
+        .recv_timeout(Duration::from_secs(1))
+        .expect("location write reaches the deliberate worker gate");
+
+    let mut checkpoint = database.queue_ride_checkpoint().unwrap();
+    assert!(checkpoint.try_result().is_none());
+
+    release_sender.send(()).unwrap();
+    checkpoint.wait_result().unwrap();
+    assert_eq!(
+        pending_location.wait_result().unwrap().unwrap().admission(),
+        LocationAdmission::Accepted
+    );
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn queued_ride_restore_snapshot_does_not_wait_for_a_busy_sqlite_worker() {
     let _guard = test_guard();
     let path = std::env::temp_dir().join(format!(

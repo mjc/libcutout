@@ -11033,6 +11033,41 @@ impl MobileRideMapCore {
             .collect()
     }
 
+    /// Waits until every location write already queued to SQLite has settled, then drains its
+    /// request-correlated outcomes without changing the ride lifecycle.
+    ///
+    /// The caller should invoke this on a background executor. New core operations cannot queue
+    /// through this handle while the barrier is pending.
+    ///
+    /// # Errors
+    ///
+    /// Returns a storage error if the database worker cannot accept or complete the barrier.
+    pub fn checkpoint(
+        &self,
+    ) -> Result<Vec<MobileRideMapCoreOutcomeDto>, MobileRideMapCoreErrorDto> {
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        state.require_ready()?;
+        if let Some(database) = state.database.as_ref() {
+            database
+                .inner
+                .queue_ride_checkpoint()
+                .map_err(map_storage_core_error)?
+                .wait_result()
+                .map_err(map_storage_core_error)?;
+        }
+        let at_milliseconds = state
+            .recorder
+            .recording_timing()
+            .last_monotonic_milliseconds()
+            .as_u64();
+        let mut outcomes = state
+            .settled_location_outcomes
+            .drain(..)
+            .collect::<Vec<_>>();
+        outcomes.extend(state.poll_location_write_outcomes(at_milliseconds));
+        Ok(outcomes)
+    }
+
     /// Drains durable location results with the matching Rust projection snapshot.
     pub fn poll_location_write_outcomes(
         &self,
@@ -22411,10 +22446,7 @@ mod tests {
         let _guard = RIDE_DATABASE_TEST_LOCK
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        let path = std::env::temp_dir().join(format!(
-            "cutout-autostart-generation-{}.sqlite",
-            Uuid::new_v4()
-        ));
+        let path = autostart_generation_test_database_path();
         let database = open_ride_database(path.to_string_lossy().into_owned()).unwrap();
         database
             .remember_selected_device("pev-1".to_owned(), None, 1_000)
@@ -22515,6 +22547,13 @@ mod tests {
 
         database.shutdown().unwrap();
         let _ = fs::remove_file(path);
+    }
+
+    fn autostart_generation_test_database_path() -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "cutout-autostart-generation-{}.sqlite",
+            Uuid::new_v4()
+        ))
     }
 
     #[test]

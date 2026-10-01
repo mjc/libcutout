@@ -1622,6 +1622,14 @@ pub struct PendingBmsVoltageWrite {
     consumed: bool,
 }
 
+/// Pollable barrier that completes after every earlier storage command has settled.
+#[must_use = "poll or wait for the ride checkpoint to complete"]
+#[derive(Debug)]
+pub struct PendingRideCheckpoint {
+    response: Receiver<Result<(), StorageError>>,
+    consumed: bool,
+}
+
 /// A live music transition accepted by the bounded worker but not yet committed.
 #[must_use = "poll or wait for the durable music event result"]
 #[derive(Debug)]
@@ -2237,6 +2245,41 @@ impl PendingBmsVoltageWrite {
     }
 }
 
+impl PendingRideCheckpoint {
+    /// Returns the barrier result when all earlier worker commands have settled.
+    ///
+    /// `None` means that the worker has not reached this barrier yet. A terminal result is
+    /// returned at most once.
+    pub fn try_result(&mut self) -> Option<Result<(), StorageError>> {
+        if self.consumed {
+            return None;
+        }
+        match self.response.try_recv() {
+            Ok(result) => {
+                self.consumed = true;
+                Some(result)
+            }
+            Err(mpsc::TryRecvError::Empty) => None,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.consumed = true;
+                Some(Err(StorageError::ResponseDropped))
+            }
+        }
+    }
+
+    /// Waits for all earlier storage commands to settle.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::ResponseDropped`] if the worker disappears before reaching the
+    /// barrier, or the first error reported by an earlier queued command.
+    pub fn wait_result(self) -> Result<(), StorageError> {
+        self.response
+            .recv()
+            .map_err(|_| StorageError::ResponseDropped)?
+    }
+}
+
 impl PendingMusicEventWrite {
     /// Returns the durable result when the worker has completed the event.
     ///
@@ -2618,6 +2661,24 @@ impl RideDatabase {
             reply,
         })?;
         Ok(PendingLiveRideCreation {
+            response,
+            consumed: false,
+        })
+    }
+
+    /// Queues a barrier behind all work already submitted to the database worker.
+    ///
+    /// When the returned handle completes, every preceding queued write has committed or
+    /// reported its failure. Commands submitted later are not included in the barrier.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::QueueFull`] when the bounded queue is saturated or
+    /// [`StorageError::WorkerStopped`] when the worker is unavailable.
+    pub fn queue_ride_checkpoint(&self) -> Result<PendingRideCheckpoint, StorageError> {
+        let (reply, response) = response_channel();
+        self.enqueue(Command::RideCheckpoint { reply })?;
+        Ok(PendingRideCheckpoint {
             response,
             consumed: false,
         })
@@ -4841,6 +4902,9 @@ enum Command {
         reply: Reply<()>,
     },
     Shutdown {
+        reply: Reply<()>,
+    },
+    RideCheckpoint {
         reply: Reply<()>,
     },
 }

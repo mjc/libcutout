@@ -698,6 +698,19 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testGpsOnlyBackgroundCheckpointsWithoutChangingTheActiveRide() async {
+        let driver = SessionDriverSpy(rows: [])
+        let model = CutoutAppModel(core: driver)
+        let started = await model.startGpsOnlyRide()
+        XCTAssertTrue(started)
+
+        model.appDidEnterBackground()
+        await Self.waitUntil("GPS-only ride checkpoint") { driver.checkpointCount == 1 }
+
+        XCTAssertEqual(model.liveRide.snapshot?.state, .active)
+    }
+
+    @MainActor
     func testRejectedRideMapStartDoesNotResetLocationAdmission() async {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)
@@ -3264,6 +3277,8 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     private(set) var recordedPlatformIdentifiers = [String]()
     private(set) var captureAnnotations = [String]()
     private(set) var flushCaptureCount = 0
+    private(set) var checkpointCount = 0
+    var checkpointOperation: (() async throws -> Void)?
     var duringFlush: (() -> Void)?
     var duringFlushAwait: (@MainActor () async -> Void)?
     private(set) var disconnectCount = 0
@@ -3365,6 +3380,10 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     }
     func updateMusicCapturePolicy(_: MobileMusicHistoryPolicyDto) {}
     func updateMusicCaptureObservation(_: MobilePevcapMusicEventDto?) {}
+    func checkpointRideMap() async throws {
+        checkpointCount += 1
+        try await checkpointOperation?()
+    }
     func flushCapture() async -> Bool {
         flushCaptureCount += 1
         duringFlush?()

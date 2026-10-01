@@ -1358,6 +1358,17 @@ public final class MobileRideMapState: @unchecked Sendable {
         guard let core else { return [] }
         return core.pollLocationWriteOutcomes(atMilliseconds: atMs).map(mapOutcome)
     }
+
+    /// Waits for Rust's queued-write barrier off the caller's executor and returns every outcome
+    /// settled by that barrier.
+    public func checkpoint() async throws -> [MobileRideMapOutcomeDto] {
+        guard let core else { return [] }
+        let outcomes = try await Task.detached(priority: .utility) {
+            try core.checkpoint()
+        }.value
+        return outcomes.map(mapOutcome)
+    }
+
     public var hasPendingLocationWrites: Bool {
         core?.hasPendingLocationWrites() ?? false
     }

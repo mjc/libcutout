@@ -765,6 +765,9 @@ impl DatabaseWorker<'_> {
                 let _ = reply.send(Ok(()));
                 return ControlFlow::Break(());
             }
+            Command::RideCheckpoint { reply } => {
+                let _ = reply.send(Ok(()));
+            }
             Command::Shutdown { reply } => {
                 worker_alive.store(false, Ordering::Release);
                 let _ = reply.send(Ok(()));

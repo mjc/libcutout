@@ -55,11 +55,14 @@ protocol CutoutSessionDriving: AnyObject {
     func stopRideMap(atMs: UInt64) async throws -> MobileRideMapSnapshotDto
     func saveRideMap() async throws -> MobileRideMapSnapshotDto
     func discardRideMap() async throws -> MobileRideMapSnapshotDto
+    func checkpointRideMap() async throws
 }
 
 extension CutoutSessionCore: CutoutSessionDriving {}
 
 extension CutoutSessionDriving {
+    func checkpointRideMap() async throws {}
+
     var connectionSnapshot: ConnectionSnapshot {
         rideSessionStateHandle.connectionAttemptSnapshot()
     }

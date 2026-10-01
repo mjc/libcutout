@@ -34,6 +34,7 @@ final class CutoutAppModel {
     let liveRide: LiveRideModel
     let music: MusicFeatureModel
     private(set) var liveActivityError: LiveActivityRideLifecycleError?
+    private(set) var rideMapCheckpointError: MobileRideMapError?
     private(set) var rideAutostartEnabled: Bool?
     private(set) var rideAutostartSettingsBusy = false
     private(set) var rideAutostartSettingsError = false
@@ -44,6 +45,9 @@ final class CutoutAppModel {
     private(set) var phoneAlarmSettings: MobilePhoneAlarmPreferencesDto?
     private(set) var phoneAlarmAuthorization = PhoneRideAlarmAuthorization.unavailable
     private(set) var phoneAlarmDeliveryError: String?
+    private var rideMapCheckpointTask: Task<Void, Never>?
+    private var rideMapCheckpointLease: RideBackgroundTask?
+    private var rideMapCheckpointGeneration: UInt64 = 0
 
     var selectedRideTitle: String? { device.selectedRideTitle }
 
@@ -701,6 +705,7 @@ final class CutoutAppModel {
 
     func appDidEnterBackground() {
         music.sceneDidEnterBackground()
+        checkpointRideMapForBackground()
         guard let snapshot = currentLiveActivitySnapshot() else {
             guard isRecordOnlyCapture else { return }
             let capture = self.capture
@@ -720,6 +725,42 @@ final class CutoutAppModel {
             )
             self?.liveActivityError = await liveActivityCoordinator.lastError
         }
+    }
+
+    private func checkpointRideMapForBackground() {
+        guard rideMapCheckpointTask == nil else { return }
+        rideMapCheckpointGeneration &+= 1
+        let generation = rideMapCheckpointGeneration
+        rideMapCheckpointLease = RideBackgroundTask { [weak self] in
+            self?.cancelRideMapCheckpoint(generation: generation)
+        }
+        let core = core
+        rideMapCheckpointTask = Task { [weak self] in
+            do {
+                try await core.checkpointRideMap()
+                guard self?.rideMapCheckpointGeneration == generation else { return }
+                self?.rideMapCheckpointError = nil
+            } catch let error as MobileRideMapError {
+                guard self?.rideMapCheckpointGeneration == generation else { return }
+                self?.rideMapCheckpointError = error
+            } catch {
+                guard self?.rideMapCheckpointGeneration == generation else { return }
+                self?.rideMapCheckpointError = .storageError(error.localizedDescription)
+            }
+            guard let self, self.rideMapCheckpointGeneration == generation else { return }
+            self.rideMapCheckpointTask = nil
+            self.rideMapCheckpointLease?.end()
+            self.rideMapCheckpointLease = nil
+        }
+    }
+
+    private func cancelRideMapCheckpoint(generation: UInt64) {
+        guard rideMapCheckpointGeneration == generation else { return }
+        rideMapCheckpointGeneration &+= 1
+        rideMapCheckpointTask?.cancel()
+        rideMapCheckpointTask = nil
+        rideMapCheckpointLease?.end()
+        rideMapCheckpointLease = nil
     }
 
     func appDidBecomeActive() {
