@@ -2585,6 +2585,28 @@ impl RideDatabase {
         monotonic_created_at_ms: u64,
         candidate_vehicle: Option<&str>,
     ) -> Result<PendingLiveRideCreation, StorageError> {
+        self.queue_create_started_live_ride_with_music_policy(
+            created_at_ms,
+            monotonic_created_at_ms,
+            candidate_vehicle,
+            None,
+        )
+    }
+
+    /// Queues a live ride and its initial music-history privacy policy as one transaction.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::QueueFull`] when the bounded queue is saturated,
+    /// [`StorageError::WorkerStopped`] when the worker is unavailable, or a validation or
+    /// transaction error when the ride and policy cannot be committed together.
+    pub fn queue_create_started_live_ride_with_music_policy(
+        &self,
+        created_at_ms: u64,
+        monotonic_created_at_ms: u64,
+        candidate_vehicle: Option<&str>,
+        music_history_policy: Option<MusicHistoryPolicy>,
+    ) -> Result<PendingLiveRideCreation, StorageError> {
         let candidate_vehicle =
             normalize_optional_stored_text(candidate_vehicle, "candidate vehicle")?;
         let (reply, response) = response_channel();
@@ -2592,6 +2614,7 @@ impl RideDatabase {
             created_at_ms,
             monotonic_created_at_ms,
             candidate_vehicle,
+            music_history_policy,
             reply,
         })?;
         Ok(PendingLiveRideCreation {
@@ -4488,6 +4511,7 @@ enum Command {
         created_at_ms: u64,
         monotonic_created_at_ms: u64,
         candidate_vehicle: Option<String>,
+        music_history_policy: Option<MusicHistoryPolicy>,
         reply: Reply<RideId>,
     },
     SettleRecoveredRide {
@@ -5161,6 +5185,7 @@ fn create_started_live_ride(
     created_at_ms: u64,
     monotonic_created_at_ms: u64,
     candidate_vehicle: Option<&str>,
+    music_history_policy: Option<MusicHistoryPolicy>,
 ) -> Result<RideId, StorageError> {
     let transaction = connection.transaction()?;
     let ride_id = create_started_live_ride_in_transaction(
@@ -5169,6 +5194,9 @@ fn create_started_live_ride(
         monotonic_created_at_ms,
         candidate_vehicle,
     )?;
+    if let Some(policy) = music_history_policy {
+        apply_music_history_policy(&transaction, ride_id, policy)?;
+    }
     transaction.commit()?;
     Ok(ride_id)
 }

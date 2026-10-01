@@ -212,6 +212,7 @@ impl DatabaseWorker<'_> {
                 created_at_ms,
                 monotonic_created_at_ms,
                 candidate_vehicle,
+                music_history_policy,
                 reply,
             } => {
                 let _ = reply.send(create_started_live_ride(
@@ -219,6 +220,7 @@ impl DatabaseWorker<'_> {
                     created_at_ms,
                     monotonic_created_at_ms,
                     candidate_vehicle.as_deref(),
+                    music_history_policy,
                 ));
             }
             Command::SettleRecoveredRide {

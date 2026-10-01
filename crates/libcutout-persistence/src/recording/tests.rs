@@ -1,5 +1,6 @@
 use super::{RecordingError, RideRecordingSession};
 use crate::RideDatabase;
+use cutout_music::MusicHistoryPolicy;
 use cutout_ride_maps::{RideEvent, RideLifecycleState};
 
 #[test]
@@ -28,6 +29,28 @@ fn database_backed_start_requires_async_coordination_without_publishing_a_ride()
         Err(RecordingError::DatabaseCommandRequired)
     );
     assert_eq!(session.snapshot(), None);
+    database.shutdown().unwrap();
+}
+
+#[test]
+fn queued_ride_creation_commits_its_music_history_policy_atomically() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = RideDatabase::open(&directory.path().join("recording.sqlite")).unwrap();
+
+    let pending = database
+        .queue_create_started_live_ride_with_music_policy(
+            1_000,
+            10,
+            None,
+            Some(MusicHistoryPolicy::HumanReadable),
+        )
+        .unwrap();
+    let ride_id = pending.wait_result().unwrap();
+
+    assert_eq!(
+        database.music_history_policy(ride_id).unwrap(),
+        MusicHistoryPolicy::HumanReadable
+    );
     database.shutdown().unwrap();
 }
 
