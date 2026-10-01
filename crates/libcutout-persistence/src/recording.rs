@@ -130,6 +130,8 @@ pub struct RideRecordingSession {
     generation: u64,
     snapshot: Option<RecordingSnapshot>,
     location_environment: Option<LocationEnvironment>,
+    diagnostic_capture_generation: u64,
+    diagnostic_capture_location_active: bool,
 }
 
 impl RideRecordingSession {
@@ -143,6 +145,8 @@ impl RideRecordingSession {
             generation: 0,
             snapshot: None,
             location_environment: None,
+            diagnostic_capture_generation: 0,
+            diagnostic_capture_location_active: false,
         }
     }
 
@@ -154,6 +158,25 @@ impl RideRecordingSession {
             if let Some(snapshot) = &mut self.snapshot {
                 snapshot.revision = self.revision;
             }
+        }
+    }
+
+    /// Records whether a diagnostic capture generation requires location updates.
+    ///
+    /// A closed generation cannot be reopened, and delayed observations from older captures are
+    /// ignored so they cannot restart GPS after a later capture has taken ownership.
+    pub fn observe_diagnostic_capture_location(&mut self, generation: u64, active: bool) {
+        if generation < self.diagnostic_capture_generation
+            || (generation == self.diagnostic_capture_generation
+                && (!self.diagnostic_capture_location_active || active))
+        {
+            return;
+        }
+        self.diagnostic_capture_generation = generation;
+        self.diagnostic_capture_location_active = active;
+        self.revision = self.revision.saturating_add(1);
+        if let Some(snapshot) = &mut self.snapshot {
+            snapshot.revision = self.revision;
         }
     }
 
@@ -184,7 +207,9 @@ impl RideRecordingSession {
             }) => LocationAvailability::TemporarilyUnavailable,
             Some(_) => LocationAvailability::Ready,
         };
-        let demand = if self.recorder.state() == Some(RideLifecycleState::Active) {
+        let demand = if self.recorder.state() == Some(RideLifecycleState::Active)
+            || self.diagnostic_capture_location_active
+        {
             match availability {
                 LocationAvailability::Ready | LocationAvailability::TemporarilyUnavailable => {
                     LocationDemand::Record

@@ -187,3 +187,37 @@ fn location_availability_separates_permission_services_and_provider_failure() {
         assert_eq!(acquisition.revision, session.snapshot().unwrap().revision);
     }
 }
+
+#[test]
+fn diagnostic_location_generation_rejects_stale_and_reopened_captures() {
+    let mut session = RideRecordingSession::new(None);
+    session.observe_location_environment(LocationEnvironment {
+        authorization: LocationAuthorization::Always,
+        services_enabled: true,
+        temporarily_unavailable: false,
+    });
+
+    session.observe_diagnostic_capture_location(1, true);
+    assert_eq!(
+        session.location_acquisition().demand,
+        LocationDemand::Record
+    );
+
+    session.observe_diagnostic_capture_location(0, true);
+    assert_eq!(
+        session.location_acquisition().demand,
+        LocationDemand::Record
+    );
+
+    session.observe_diagnostic_capture_location(1, false);
+    assert_eq!(session.location_acquisition().demand, LocationDemand::Idle);
+
+    session.observe_diagnostic_capture_location(1, true);
+    assert_eq!(session.location_acquisition().demand, LocationDemand::Idle);
+
+    session.observe_diagnostic_capture_location(2, true);
+    assert_eq!(
+        session.location_acquisition().demand,
+        LocationDemand::Record
+    );
+}
