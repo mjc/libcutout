@@ -1,6 +1,7 @@
-import XCTest
 import CutoutMobileFFI
 import SwiftUI
+import XCTest
+
 @testable import CutoutMobile
 
 final class PevScreenCatalogTests: XCTestCase {
@@ -23,9 +24,12 @@ final class PevScreenCatalogTests: XCTestCase {
                 advertisedNameText: name, advertisedServiceUuids: [], manufacturerData: [], rssiDbm: nil
             )
         }
-        let state = DevicePickerScanState(status: .scanning, discoverySnapshot: DiscoverySnapshot(
-            observations: Array(observations.reversed()), pickerCandidates: candidates, selectedPlatformIdentifier: nil
-        ))
+        let state = DevicePickerScanState(
+            status: .scanning,
+            discoverySnapshot: DiscoverySnapshot(
+                observations: Array(observations.reversed()), pickerCandidates: candidates,
+                selectedPlatformIdentifier: nil
+            ))
 
         XCTAssertEqual(state.rows.map(\.id), identifiers)
         XCTAssertEqual(state.rows.map(\.title), ["Begode Falcon", "Begode Falcon"])
@@ -96,10 +100,11 @@ final class PevScreenCatalogTests: XCTestCase {
                 .vescDebug,
             ]
         )
-        XCTAssertTrue(PevScreenCatalog.live.screens.allSatisfy { screen in
-            screen.secondaryValue == unavailable
-                && screen.bmsContent == nil
-        })
+        XCTAssertTrue(
+            PevScreenCatalog.live.screens.allSatisfy { screen in
+                screen.secondaryValue == unavailable
+                    && screen.bmsContent == nil
+            })
     }
 
     func testScreenWithoutBmsContentUsesTheLocalizedUnavailableBmsPresentation() {
@@ -128,7 +133,8 @@ final class PevScreenCatalogTests: XCTestCase {
         XCTAssertEqual(catalog.screen(id: .bmsUnknownTopology)?.subtitle, "Topology unavailable")
         XCTAssertEqual(catalog.screen(id: .vescDebug)?.title, "VESC state")
         XCTAssertEqual(pevLocalizedText("bms.chip.bms_online", Int64(2)), "2 BMS online")
-        XCTAssertEqual(pevLocalizedText("bms.subtitle.controller_estimate", "6S pack"), "6S pack · controller-only estimate")
+        XCTAssertEqual(
+            pevLocalizedText("bms.subtitle.controller_estimate", "6S pack"), "6S pack · controller-only estimate")
     }
 
     func testBmsDisplayModeTitlesResolveFromThePackageCatalog() {
@@ -183,7 +189,8 @@ final class PevScreenCatalogTests: XCTestCase {
             pevLocalizedText("euc.failure.characteristic_discovery", "link dropped"),
             "Characteristic discovery failed: link dropped"
         )
-        XCTAssertEqual(pevLocalizedText("euc.failure.notification", "link dropped"), "Notification failed: link dropped")
+        XCTAssertEqual(
+            pevLocalizedText("euc.failure.notification", "link dropped"), "Notification failed: link dropped")
         XCTAssertEqual(
             pevLocalizedText("euc.failure.notification_ingest", "link dropped"),
             "Notification ingest failed: link dropped"
@@ -254,13 +261,15 @@ final class PevScreenCatalogTests: XCTestCase {
                         detail: "",
                         state: DevicePickerRowState(action: .use),
                         symbolName: "bolt"
-                    ),
+                    )
                 ]
             ).statusText,
             "Bluetooth scan complete"
         )
-        XCTAssertEqual(DevicePickerScanState(status: .bluetoothUnavailable, rows: []).statusText, "Bluetooth unavailable")
-        XCTAssertEqual(DevicePickerScanState(status: .permissionDenied, rows: []).statusText, "Bluetooth permission denied")
+        XCTAssertEqual(
+            DevicePickerScanState(status: .bluetoothUnavailable, rows: []).statusText, "Bluetooth unavailable")
+        XCTAssertEqual(
+            DevicePickerScanState(status: .permissionDenied, rows: []).statusText, "Bluetooth permission denied")
     }
 
     func testRideTabsNavigateToTheirProductionSurfaces() {
@@ -472,14 +481,15 @@ final class PevScreenCatalogTests: XCTestCase {
         ]
         let content = PevBmsContent(
             kind: .cellMapInline,
-            snapshot: BmsSnapshot(topology: BmsTopology(
-                layoutLabel: "Test pack",
-                seriesGroupCount: nil,
-                parallelCount: nil,
-                packCount: 1,
-                bmsCount: 1,
-                confidence: .unverified
-            )),
+            snapshot: BmsSnapshot(
+                topology: BmsTopology(
+                    layoutLabel: "Test pack",
+                    seriesGroupCount: nil,
+                    parallelCount: nil,
+                    packCount: 1,
+                    bmsCount: 1,
+                    confidence: .unverified
+                )),
             chips: chips,
             modes: [.rawTable, .overview]
         )

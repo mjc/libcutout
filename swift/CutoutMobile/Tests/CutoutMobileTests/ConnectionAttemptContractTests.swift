@@ -1,10 +1,13 @@
 import CutoutMobileFFI
 import Foundation
 import XCTest
+
 @testable import CutoutMobile
 
 final class ConnectionAttemptContractTests: XCTestCase {
-    private let vescReply = Data([2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101, 114, 104, 97, 115, 104, 0, 38, 208, 3])
+    private let vescReply = Data([
+        2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101, 114, 104, 97, 115, 104, 0, 38, 208, 3,
+    ])
 
     func testSameDeviceRetryRejectsOldProtocolCallbacks() throws {
         let state = CutoutSessionStateHandle()

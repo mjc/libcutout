@@ -289,7 +289,7 @@ public struct PevBmsContent: Equatable, Hashable, Sendable {
             kind: .noData,
             snapshot: snapshot,
             chips: [
-                PevBmsChip(id: .availability, title: pevLocalizedText("bms.chip.no_live_bms"), accent: .yellow),
+                PevBmsChip(id: .availability, title: pevLocalizedText("bms.chip.no_live_bms"), accent: .yellow)
             ]
         )
     }
@@ -300,10 +300,12 @@ public struct PevBmsContent: Equatable, Hashable, Sendable {
 
     public static func live(with liveSnapshot: BmsSnapshot, preferredScreenID: PevScreenID) -> Self {
         let resolvedKind = PevBmsScreenKind(liveSnapshot: liveSnapshot, preferredScreenID: preferredScreenID)
-        let selectedGroupIndex = resolvedKind == .cellDetail
+        let selectedGroupIndex =
+            resolvedKind == .cellDetail
             ? liveSnapshot.lowestGroupIndex ?? liveSnapshot.groups.first?.index
             : nil
-        let highlightedGroupIndices = selectedGroupIndex.map { [$0] } ?? liveSnapshot.lowestGroupIndex.map { [$0] } ?? []
+        let highlightedGroupIndices =
+            selectedGroupIndex.map { [$0] } ?? liveSnapshot.lowestGroupIndex.map { [$0] } ?? []
         let chips = resolvedKind.liveChips(snapshot: liveSnapshot, selectedGroupIndex: selectedGroupIndex)
         let modes = resolvedKind.liveModes(snapshot: liveSnapshot)
 
@@ -318,8 +320,8 @@ public struct PevBmsContent: Equatable, Hashable, Sendable {
     }
 }
 
-private extension PevBmsScreenKind {
-    init(liveSnapshot: BmsSnapshot, preferredScreenID: PevScreenID? = nil) {
+extension PevBmsScreenKind {
+    fileprivate init(liveSnapshot: BmsSnapshot, preferredScreenID: PevScreenID? = nil) {
         if let preferredScreenID, let explicitKind = Self(explicitScreenID: preferredScreenID) {
             self = explicitKind
             return
@@ -349,7 +351,7 @@ private extension PevBmsScreenKind {
         self = .overview
     }
 
-    init?(explicitScreenID: PevScreenID) {
+    fileprivate init?(explicitScreenID: PevScreenID) {
         switch explicitScreenID {
         case .bmsOverview:
             self = .overview
@@ -368,7 +370,7 @@ private extension PevBmsScreenKind {
         }
     }
 
-    func liveTitle(snapshot: BmsSnapshot) -> String {
+    fileprivate func liveTitle(snapshot: BmsSnapshot) -> String {
         switch self {
         case .overview:
             pevLocalizedText("bms.title.pack_overview")
@@ -384,7 +386,7 @@ private extension PevBmsScreenKind {
         }
     }
 
-    func liveSubtitle(snapshot: BmsSnapshot, fallback: String) -> String {
+    fileprivate func liveSubtitle(snapshot: BmsSnapshot, fallback: String) -> String {
         switch self {
         case .noData:
             pevLocalizedText("bms.subtitle.controller_estimate", snapshot.topologyDisplayLabel)
@@ -393,7 +395,7 @@ private extension PevBmsScreenKind {
         }
     }
 
-    func liveSecondaryValue(snapshot: BmsSnapshot, fallback: String) -> String {
+    fileprivate func liveSecondaryValue(snapshot: BmsSnapshot, fallback: String) -> String {
         switch self {
         case .noData:
             snapshot.captureActionState ?? fallback
@@ -402,12 +404,16 @@ private extension PevBmsScreenKind {
         }
     }
 
-    func liveChips(snapshot: BmsSnapshot, selectedGroupIndex: Int?) -> [PevBmsChip] {
+    fileprivate func liveChips(snapshot: BmsSnapshot, selectedGroupIndex: Int?) -> [PevBmsChip] {
         switch self {
         case .overview:
             var chips = [PevBmsChip(id: .topology, title: snapshot.topologyDisplayLabel, accent: .yellow)]
             if snapshot.topology.bmsCount > 0 {
-                chips.append(PevBmsChip(id: .bmsStatus, title: pevLocalizedText("bms.chip.bms_online", Int64(snapshot.topology.bmsCount)), accent: .green))
+                chips.append(
+                    PevBmsChip(
+                        id: .bmsStatus,
+                        title: pevLocalizedText("bms.chip.bms_online", Int64(snapshot.topology.bmsCount)),
+                        accent: .green))
             }
             return chips
         case .cellMapInline, .cellMapScrollable:
@@ -418,21 +424,27 @@ private extension PevBmsScreenKind {
         case .cellDetail:
             return [
                 PevBmsChip(id: .liveReadback, title: pevLocalizedText("bms.chip.live_readback"), accent: .cyan),
-                PevBmsChip(id: .selectedGroup, title: selectedGroupIndex.map { pevLocalizedText("bms.chip.group", Int64($0)) } ?? pevLocalizedText("bms.chip.selected_group"), accent: .orange),
+                PevBmsChip(
+                    id: .selectedGroup,
+                    title: selectedGroupIndex.map { pevLocalizedText("bms.chip.group", Int64($0)) }
+                        ?? pevLocalizedText("bms.chip.selected_group"), accent: .orange),
             ]
         case .unknownTopology:
             return [
                 PevBmsChip(id: .dataStatus, title: pevLocalizedText("bms.chip.partial_data"), accent: .orange),
-                PevBmsChip(id: .topologyStatus, title: pevLocalizedText("bms.chip.topology_unverified"), accent: .orange),
+                PevBmsChip(
+                    id: .topologyStatus, title: pevLocalizedText("bms.chip.topology_unverified"), accent: .orange),
             ]
         case .noData:
             return [
-                PevBmsChip(id: .captureStatus, title: snapshot.captureActionState ?? pevLocalizedText("bms.chip.limited_data"), accent: .yellow),
+                PevBmsChip(
+                    id: .captureStatus, title: snapshot.captureActionState ?? pevLocalizedText("bms.chip.limited_data"),
+                    accent: .yellow)
             ]
         }
     }
 
-    func liveModes(snapshot: BmsSnapshot) -> [PevBmsMode] {
+    fileprivate func liveModes(snapshot: BmsSnapshot) -> [PevBmsMode] {
         switch self {
         case .cellMapInline:
             snapshot.inlineCellMapModes
@@ -525,37 +537,37 @@ public struct DevicePickerRow: Equatable, Hashable, Sendable, Identifiable {
 
 public typealias PevPickerRow = DevicePickerRow
 
-public extension DevicePickerRow {
-    var secondaryIdentity: String? {
+extension DevicePickerRow {
+    public var secondaryIdentity: String? {
         guard let advertisedName, !advertisedName.isEmpty, advertisedName != title else { return nil }
         return advertisedName
     }
 
-    var isSupported: Bool {
+    public var isSupported: Bool {
         section == .supported
     }
 
-    var isUnsupported: Bool {
+    public var isUnsupported: Bool {
         section == .recordOnly
     }
 
-    var isManual: Bool {
+    public var isManual: Bool {
         section == .manual
     }
 
-    var isProbeRecommended: Bool {
+    public var isProbeRecommended: Bool {
         section == .probeFirst
     }
 
-    var captureActionTitle: String {
+    public var captureActionTitle: String {
         pevLocalizedText(isProbeRecommended ? "picker.row.action.use" : "picker.action.start_capture")
     }
 
-    var useActionAccessibilityLabel: String {
+    public var useActionAccessibilityLabel: String {
         pevLocalizedText("picker.action.use_device", accessibilityDeviceName)
     }
 
-    var captureActionAccessibilityLabel: String {
+    public var captureActionAccessibilityLabel: String {
         pevLocalizedText("picker.action.capture_for_device", captureActionTitle, accessibilityDeviceName)
     }
 
@@ -565,8 +577,8 @@ public extension DevicePickerRow {
     }
 }
 
-public extension DevicePickerRowState {
-    init(action: DiscoveryCandidateAction) {
+extension DevicePickerRowState {
+    public init(action: DiscoveryCandidateAction) {
         switch action {
         case .use:
             self = .supported(action: pevLocalizedText("picker.row.action.use"))
@@ -583,20 +595,20 @@ public extension DevicePickerRowState {
         }
     }
 
-    var actionTitle: String {
+    public var actionTitle: String {
         switch self {
         case .supported(let action), .probeRecommended(let action), .unsupported(let action), .manual(let action):
             action
         }
     }
 
-    var isSupported: Bool {
+    public var isSupported: Bool {
         if case .supported = self { true } else { false }
     }
 }
 
-public extension DevicePickerRowSection {
-    init(state: DevicePickerRowState) {
+extension DevicePickerRowSection {
+    public init(state: DevicePickerRowState) {
         switch state {
         case .supported:
             self = .supported
@@ -609,7 +621,7 @@ public extension DevicePickerRowSection {
         }
     }
 
-    init(section: DiscoveryCandidateSection) {
+    public init(section: DiscoveryCandidateSection) {
         switch section {
         case .supported:
             self = .supported
@@ -651,8 +663,8 @@ public enum DevicePickerCandidateSupport: Equatable, Hashable, Sendable {
     case unsupported(disabledReason: String)
 }
 
-public extension DevicePickerCandidateSupport {
-    init(_ dto: DiscoveryCandidate) {
+extension DevicePickerCandidateSupport {
+    public init(_ dto: DiscoveryCandidate) {
         switch dto.support {
         case .supported:
             self = .supported(
@@ -679,8 +691,8 @@ public extension DevicePickerCandidateSupport {
     }
 }
 
-private extension DevicePickerConnectionRoute {
-    init(_ route: DiscoveryConnectionRoute) {
+extension DevicePickerConnectionRoute {
+    fileprivate init(_ route: DiscoveryConnectionRoute) {
         switch route {
         case .electricUnicycle:
             self = .electricUnicycle
@@ -731,11 +743,12 @@ public struct DevicePickerDiscoveryCandidate: Equatable, Hashable, Sendable {
     }
 
     public init(advertisement: CoreBluetoothAdvertisement) {
-        self.init(candidate: mobileDiscoveryCandidateFromAdvertisement(
-            platformIdentifier: advertisement.peripheralIdentifier.rawValue,
-            localName: advertisement.localName,
-            advertisedServiceUuids: advertisement.advertisedServiceUuids.map(DiscoveryServiceUuid.init)
-        ), advertisedName: advertisement.localName)
+        self.init(
+            candidate: mobileDiscoveryCandidateFromAdvertisement(
+                platformIdentifier: advertisement.peripheralIdentifier.rawValue,
+                localName: advertisement.localName,
+                advertisedServiceUuids: advertisement.advertisedServiceUuids.map(DiscoveryServiceUuid.init)
+            ), advertisedName: advertisement.localName)
     }
 
     public init(candidate: DiscoveryCandidate, advertisedName: String? = nil) {
@@ -781,35 +794,38 @@ public struct DevicePickerDiscoveryCandidate: Equatable, Hashable, Sendable {
     }
 }
 
-public extension DevicePickerCandidateSupport {
-    var isSupported: Bool {
+extension DevicePickerCandidateSupport {
+    public var isSupported: Bool {
         switch self {
         case .supported:
             true
-        case .probeRecommended, .unknownRecordable, .knownUnsupported, .ambiguous, .conflicting, .rejectedNoise, .manualEntry, .unsupported:
+        case .probeRecommended, .unknownRecordable, .knownUnsupported, .ambiguous, .conflicting, .rejectedNoise,
+            .manualEntry, .unsupported:
             false
         }
     }
 
-    var connectionRoute: DevicePickerConnectionRoute? {
+    public var connectionRoute: DevicePickerConnectionRoute? {
         switch self {
         case .supported(let connectionRoute, _):
             connectionRoute
-        case .probeRecommended, .unknownRecordable, .knownUnsupported, .ambiguous, .conflicting, .rejectedNoise, .manualEntry, .unsupported:
+        case .probeRecommended, .unknownRecordable, .knownUnsupported, .ambiguous, .conflicting, .rejectedNoise,
+            .manualEntry, .unsupported:
             nil
         }
     }
 
-    var electricUnicycleModel: ElectricUnicycleModel? {
+    public var electricUnicycleModel: ElectricUnicycleModel? {
         switch self {
         case .supported(_, let electricUnicycleModel):
             electricUnicycleModel
-        case .probeRecommended, .unknownRecordable, .knownUnsupported, .ambiguous, .conflicting, .rejectedNoise, .manualEntry, .unsupported:
+        case .probeRecommended, .unknownRecordable, .knownUnsupported, .ambiguous, .conflicting, .rejectedNoise,
+            .manualEntry, .unsupported:
             nil
         }
     }
 
-    var pickerRowState: DevicePickerRowState {
+    public var pickerRowState: DevicePickerRowState {
         switch self {
         case .supported:
             DevicePickerRowState(action: .use)
@@ -901,8 +917,8 @@ public struct DevicePickerScanState: Equatable, Hashable, Sendable {
     }
 }
 
-public extension DevicePickerScanState {
-    func storedSupportedRow(platformIdentifier: String?) -> DevicePickerRow? {
+extension DevicePickerScanState {
+    public func storedSupportedRow(platformIdentifier: String?) -> DevicePickerRow? {
         guard let platformIdentifier else { return nil }
         return rows.first { $0.id == platformIdentifier && $0.isSupported }
     }
@@ -1002,20 +1018,38 @@ public struct PevScreenCatalog: Equatable, Hashable, Sendable {
             title: pevLocalizedText("bms.title.battery"),
             subtitle: pevLocalizedText("bms.layout.no_live_readback"),
             secondaryValue: pevLocalizedText("bms.secondary.no_live_bms"),
-            bmsContent: content,
+            bmsContent: content
         )
     }
 
     public static let live = PevScreenCatalog(screens: [
-        liveScreen(id: .eucRide, title: pevLocalizedText("dashboard.title.euc_ride"), subtitle: pevLocalizedText("dashboard.subtitle.live_telemetry")),
-        liveScreen(id: .bmsOverview, title: pevLocalizedText("bms.title.battery"), subtitle: pevLocalizedText("bms.subtitle.live_readback")),
-        liveScreen(id: .bmsCellMap6S, title: pevLocalizedText("bms.title.cell_map"), subtitle: pevLocalizedText("bms.subtitle.live_readback")),
-        liveScreen(id: .bmsCellMap40S, title: pevLocalizedText("bms.title.cell_map"), subtitle: pevLocalizedText("bms.subtitle.live_readback")),
-        liveScreen(id: .bmsCellDetail, title: pevLocalizedText("bms.title.cell_detail"), subtitle: pevLocalizedText("bms.subtitle.live_readback")),
-        liveScreen(id: .bmsUnknownTopology, title: pevLocalizedText("bms.title.battery"), subtitle: pevLocalizedText("bms.subtitle.topology_unavailable")),
-        liveScreen(id: .bmsNoData, title: pevLocalizedText("bms.title.battery"), subtitle: pevLocalizedText("bms.layout.no_live_readback")),
-        liveScreen(id: .vescRide, title: pevLocalizedText("dashboard.title.vesc_ride"), subtitle: pevLocalizedText("dashboard.subtitle.live_telemetry")),
-        liveScreen(id: .vescDebug, title: pevLocalizedText("dashboard.title.vesc_state"), subtitle: pevLocalizedText("dashboard.subtitle.live_telemetry"))
+        liveScreen(
+            id: .eucRide, title: pevLocalizedText("dashboard.title.euc_ride"),
+            subtitle: pevLocalizedText("dashboard.subtitle.live_telemetry")),
+        liveScreen(
+            id: .bmsOverview, title: pevLocalizedText("bms.title.battery"),
+            subtitle: pevLocalizedText("bms.subtitle.live_readback")),
+        liveScreen(
+            id: .bmsCellMap6S, title: pevLocalizedText("bms.title.cell_map"),
+            subtitle: pevLocalizedText("bms.subtitle.live_readback")),
+        liveScreen(
+            id: .bmsCellMap40S, title: pevLocalizedText("bms.title.cell_map"),
+            subtitle: pevLocalizedText("bms.subtitle.live_readback")),
+        liveScreen(
+            id: .bmsCellDetail, title: pevLocalizedText("bms.title.cell_detail"),
+            subtitle: pevLocalizedText("bms.subtitle.live_readback")),
+        liveScreen(
+            id: .bmsUnknownTopology, title: pevLocalizedText("bms.title.battery"),
+            subtitle: pevLocalizedText("bms.subtitle.topology_unavailable")),
+        liveScreen(
+            id: .bmsNoData, title: pevLocalizedText("bms.title.battery"),
+            subtitle: pevLocalizedText("bms.layout.no_live_readback")),
+        liveScreen(
+            id: .vescRide, title: pevLocalizedText("dashboard.title.vesc_ride"),
+            subtitle: pevLocalizedText("dashboard.subtitle.live_telemetry")),
+        liveScreen(
+            id: .vescDebug, title: pevLocalizedText("dashboard.title.vesc_state"),
+            subtitle: pevLocalizedText("dashboard.subtitle.live_telemetry")),
     ])
 
     private static func liveScreen(id: PevScreenID, title: String, subtitle: String) -> PevScreen {
@@ -1028,8 +1062,8 @@ public struct PevScreenCatalog: Equatable, Hashable, Sendable {
     }
 }
 
-private extension PevScreenID {
-    var isBmsScreen: Bool {
+extension PevScreenID {
+    fileprivate var isBmsScreen: Bool {
         switch self {
         case .bmsOverview, .bmsCellMap6S, .bmsCellMap40S, .bmsCellDetail, .bmsUnknownTopology, .bmsNoData:
             true
@@ -1039,8 +1073,8 @@ private extension PevScreenID {
     }
 }
 
-private extension PevBmsScreenKind {
-    var presentationScreenID: PevScreenID {
+extension PevBmsScreenKind {
+    fileprivate var presentationScreenID: PevScreenID {
         switch self {
         case .overview:
             .bmsOverview

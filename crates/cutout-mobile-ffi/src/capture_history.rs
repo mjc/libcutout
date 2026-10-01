@@ -1,11 +1,12 @@
 //! Capture-history projection through the existing database handle.
 
 use crate::{
-    CaptureWriterSlot, MobileCaptureArtifactIdDto, MobileCaptureOriginDto,
-    MobilePevcapCaptureBuilder, MobilePevcapEncodingDto, MobilePevcapImportReceiptDto,
-    MobileRideDatabaseError, MobileRideIdDto, MobileVerifiedStringDto,
-    MobileWallClockUnixMillisDto, RideDatabaseHandle, map_ride_database_error,
-    mobile_pevcap_receipt, mobile_query_limit, mobile_ride_id, persistence,
+    CaptureJsonlExport, CaptureWriterFinish, CaptureWriterSlot, MobileCaptureArtifactIdDto,
+    MobileCaptureOriginDto, MobilePevcapCaptureBuilder, MobilePevcapEncodingDto,
+    MobilePevcapImportReceiptDto, MobileRideDatabaseError, MobileRideIdDto,
+    MobileVerifiedStringDto, MobileWallClockUnixMillisDto, RideDatabaseHandle,
+    map_ride_database_error, mobile_pevcap_receipt, mobile_query_limit, mobile_ride_id,
+    persistence,
 };
 use std::sync::{Arc, PoisonError};
 
@@ -94,11 +95,19 @@ impl RideDatabaseHandle {
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner);
             match &*slot {
-                CaptureWriterSlot::Complete(Ok(artifact)) => artifact.clone(),
+                CaptureWriterSlot::Complete(Ok(CaptureWriterFinish::FileSaved(artifact))) => {
+                    (**artifact).clone()
+                }
+                CaptureWriterSlot::Complete(Ok(CaptureWriterFinish::DatabaseFinished {
+                    jsonl_export: CaptureJsonlExport::Available(artifact),
+                    ..
+                })) => (**artifact).clone(),
                 CaptureWriterSlot::Ready
                 | CaptureWriterSlot::Recording(_)
                 | CaptureWriterSlot::Finalizing
-                | CaptureWriterSlot::Complete(Err(_)) => {
+                | CaptureWriterSlot::Complete(
+                    Ok(CaptureWriterFinish::DatabaseFinished { .. }) | Err(_),
+                ) => {
                     return Err(MobileRideDatabaseError::CaptureNotFinished);
                 }
             }

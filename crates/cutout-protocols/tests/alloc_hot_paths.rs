@@ -137,7 +137,13 @@ fn allocation_hot_paths_do_not_allocate() {
         let result = decoder
             .feed_result(REFLOAT_IDS_FRAME, |_| {})
             .expect("fixture frame decodes");
-        assert_eq!(result, RefloatStreamResult::Replies(1));
+        assert_eq!(
+            result,
+            RefloatStreamResult::Replies {
+                count: 1,
+                malformed_frames: false,
+            }
+        );
     });
 }
 
@@ -291,7 +297,7 @@ fn vesc_parser_owned_results_do_not_allocate() {
         let result = vesc_decoder
             .feed_result(&VESC_VALUES)
             .expect("VESC fixture parses");
-        assert!(matches!(result, VescReadOnlyStreamResult::Replies(_)));
+        assert!(matches!(result, VescReadOnlyStreamResult::Replies { .. }));
     });
 
     let (mut vesc, mut vesc_output) = linked_session::<VescGenericModel>();

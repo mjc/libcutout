@@ -1,8 +1,9 @@
 import SwiftUI
+
 #if os(iOS)
-import UIKit
+    import UIKit
 #elseif os(macOS)
-import AppKit
+    import AppKit
 #endif
 
 extension LiveActivityRideValue {
@@ -16,21 +17,21 @@ extension LiveActivityRideValue {
 
 private enum PevLiveActivitySystemColors {
     #if os(iOS)
-    static let background = Color(uiColor: .systemBackground)
-    static let accent = Color(uiColor: .systemPurple)
-    static let accent2 = Color(uiColor: .systemPink)
-    static let connected = Color(uiColor: .systemGreen)
-    static let warning = Color(uiColor: .systemOrange)
-    static let critical = Color(uiColor: .systemRed)
-    static let orange = Color(uiColor: .systemOrange)
+        static let background = Color(uiColor: .systemBackground)
+        static let accent = Color(uiColor: .systemPurple)
+        static let accent2 = Color(uiColor: .systemPink)
+        static let connected = Color(uiColor: .systemGreen)
+        static let warning = Color(uiColor: .systemOrange)
+        static let critical = Color(uiColor: .systemRed)
+        static let orange = Color(uiColor: .systemOrange)
     #elseif os(macOS)
-    static let background = Color(nsColor: .windowBackgroundColor)
-    static let accent = Color(nsColor: .systemPurple)
-    static let accent2 = Color(nsColor: .systemPink)
-    static let connected = Color(nsColor: .systemGreen)
-    static let warning = Color(nsColor: .systemOrange)
-    static let critical = Color(nsColor: .systemRed)
-    static let orange = Color(nsColor: .systemOrange)
+        static let background = Color(nsColor: .windowBackgroundColor)
+        static let accent = Color(nsColor: .systemPurple)
+        static let accent2 = Color(nsColor: .systemPink)
+        static let connected = Color(nsColor: .systemGreen)
+        static let warning = Color(nsColor: .systemOrange)
+        static let critical = Color(nsColor: .systemRed)
+        static let orange = Color(nsColor: .systemOrange)
     #endif
 }
 
@@ -115,7 +116,10 @@ public struct PevLiveActivityHeader: View {
                 .lineLimit(1)
                 .layoutPriority(1)
             Circle()
-                .fill(snapshot.connectionState == .connected ? PevLiveActivityPalette.connected : PevLiveActivityPalette.warning)
+                .fill(
+                    snapshot.connectionState == .connected
+                        ? PevLiveActivityPalette.connected : PevLiveActivityPalette.warning
+                )
                 .frame(width: 7, height: 7)
                 .accessibilityHidden(true)
         }
@@ -279,7 +283,8 @@ public struct PevLiveActivityMetricGrid: View {
     public var body: some View {
         Grid(horizontalSpacing: 0, verticalSpacing: 0) {
             GridRow {
-                metricCell(role: .battery, value: snapshot.battery, tint: PevLiveActivityPalette.connected, showProgress: true)
+                metricCell(
+                    role: .battery, value: snapshot.battery, tint: PevLiveActivityPalette.connected, showProgress: true)
                 metricCell(role: .packVoltage, value: snapshot.packVoltage, tint: PevLiveActivityPalette.primaryText)
                 metricCell(role: .pwm, value: snapshot.pwm, tint: PevLiveActivityPalette.accent2, showProgress: true)
             }
@@ -289,7 +294,8 @@ public struct PevLiveActivityMetricGrid: View {
                 metricCell(role: .distance, value: snapshot.distance, tint: PevLiveActivityPalette.primaryText)
             }
             GridRow {
-                metricCell(role: .chargeEstimate, value: snapshot.chargeEstimate, tint: PevLiveActivityPalette.connected)
+                metricCell(
+                    role: .chargeEstimate, value: snapshot.chargeEstimate, tint: PevLiveActivityPalette.connected)
                 if snapshot.headroomSeverity == .nominal {
                     metricCell(role: .headroom, value: snapshot.headroom, tint: PevLiveActivityPalette.orange)
                 } else {

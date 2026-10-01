@@ -1,7 +1,8 @@
-import XCTest
-@testable import CutoutApp
 import CutoutMobile
 import CutoutMobileFFI
+import XCTest
+
+@testable import CutoutApp
 
 @MainActor
 final class PevScreenThemeTests: XCTestCase {
@@ -477,9 +478,11 @@ final class PevScreenThemeTests: XCTestCase {
         )
         let tiles = liveDashboardTiles(from: state, telemetry: telemetry)
 
-        XCTAssertEqual(tiles.map(\.kind), [
-            .batteryLevel, .packVoltage, .power, .thermal, .limpHomeRange,
-        ])
+        XCTAssertEqual(
+            tiles.map(\.kind),
+            [
+                .batteryLevel, .packVoltage, .power, .thermal, .limpHomeRange,
+            ])
         XCTAssertEqual(
             tiles.first { $0.kind == .power }?.metricValue,
             .available(display: "0.00", accessibility: "0.00")
@@ -727,14 +730,15 @@ final class PevScreenThemeTests: XCTestCase {
             (.flywheel, "Flywheel test"),
         ] {
             XCTAssertEqual(
-                vescRideSubtitle(VescRideSnapshot(
-                    title: "VESC",
-                    vehicleKind: .float,
-                    subProtocol: .refloat,
-                    controllerState: .unknown,
-                    operatingState: .riding,
-                    operatingMode: mode
-                )),
+                vescRideSubtitle(
+                    VescRideSnapshot(
+                        title: "VESC",
+                        vehicleKind: .float,
+                        subProtocol: .refloat,
+                        controllerState: .unknown,
+                        operatingState: .riding,
+                        operatingMode: mode
+                    )),
                 expected
             )
         }
@@ -945,15 +949,19 @@ final class PevScreenThemeTests: XCTestCase {
             connectionStatusText: nil
         )
 
-        XCTAssertEqual(view.dashboardTiles.map(\.label), [
-            "voltage", "motor current", "board angle", "controller",
-        ])
-        XCTAssertEqual(view.dashboardTiles.map(\.detail), [
-            "battery 71% reported · current 12.4 A",
-            "discharging",
-            "nose down · balance 0.5°",
-            "motor 49.0 °C",
-        ])
+        XCTAssertEqual(
+            view.dashboardTiles.map(\.label),
+            [
+                "voltage", "motor current", "board angle", "controller",
+            ])
+        XCTAssertEqual(
+            view.dashboardTiles.map(\.detail),
+            [
+                "battery 71% reported · current 12.4 A",
+                "discharging",
+                "nose down · balance 0.5°",
+                "motor 49.0 °C",
+            ])
         XCTAssertEqual(localizedAppText("vesc.metric.battery_voltage"), "voltage")
         XCTAssertEqual(
             localizedAppText("vesc.battery_detail.reported_current", "71%", "12.4"),
@@ -1054,26 +1062,31 @@ final class PevScreenThemeTests: XCTestCase {
 
     @MainActor
     func testBmsAlertIndicatorAlwaysShowsNonNominalSeverity() {
-        XCTAssertEqual(BmsAlertIndicator.systemImageName(
-            for: .critical,
-            differentiateWithoutColor: false
-        ), "exclamationmark.triangle")
-        XCTAssertEqual(BmsAlertIndicator.systemImageName(
-            for: .critical,
-            differentiateWithoutColor: true
-        ), "exclamationmark.triangle.fill")
-        XCTAssertEqual(BmsAlertIndicator.systemImageName(
-            for: .warning,
-            differentiateWithoutColor: false
-        ), "exclamationmark.triangle")
-        XCTAssertEqual(BmsAlertIndicator.systemImageName(
-            for: .unknown,
-            differentiateWithoutColor: false
-        ), "questionmark.circle")
-        XCTAssertNil(BmsAlertIndicator.systemImageName(
-            for: .nominal,
-            differentiateWithoutColor: true
-        ))
+        XCTAssertEqual(
+            BmsAlertIndicator.systemImageName(
+                for: .critical,
+                differentiateWithoutColor: false
+            ), "exclamationmark.triangle")
+        XCTAssertEqual(
+            BmsAlertIndicator.systemImageName(
+                for: .critical,
+                differentiateWithoutColor: true
+            ), "exclamationmark.triangle.fill")
+        XCTAssertEqual(
+            BmsAlertIndicator.systemImageName(
+                for: .warning,
+                differentiateWithoutColor: false
+            ), "exclamationmark.triangle")
+        XCTAssertEqual(
+            BmsAlertIndicator.systemImageName(
+                for: .unknown,
+                differentiateWithoutColor: false
+            ), "questionmark.circle")
+        XCTAssertNil(
+            BmsAlertIndicator.systemImageName(
+                for: .nominal,
+                differentiateWithoutColor: true
+            ))
     }
 
     @MainActor

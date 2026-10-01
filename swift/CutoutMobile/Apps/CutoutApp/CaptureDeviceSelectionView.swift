@@ -61,7 +61,7 @@ private struct CaptureStartView: View {
             }
             Section {
                 TextField(localizedAppText("captures.description"), text: $description, axis: .vertical)
-                    .lineLimit(2 ... 5)
+                    .lineLimit(2...5)
                     .accessibilityIdentifier("captures.description")
             } footer: {
                 Text(localizedAppText("captures.description_hint"))

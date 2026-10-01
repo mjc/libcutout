@@ -4,7 +4,8 @@ import XCTest
 final class MusicCommandAlertOwnershipTests: XCTestCase {
     func testMusicCommandFeedbackHasOneAlertOwnerAtTheAppRoot() throws {
         let testFile = URL(fileURLWithPath: #filePath)
-        let appSources = testFile
+        let appSources =
+            testFile
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()

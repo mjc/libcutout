@@ -86,7 +86,6 @@ public struct PevDashboardKeyValueRows: View {
     }
 }
 
-
 public struct PevDashboardSectionLabel: View {
     let title: String
     let font: Font
@@ -108,7 +107,7 @@ public struct PevDashboardSectionLabel: View {
     }
 }
 
-fileprivate struct PevDashboardStatusPillPresentation {
+private struct PevDashboardStatusPillPresentation {
     let fill: Color
     let foreground: Color
     let stroke: Color?
@@ -262,7 +261,6 @@ public struct PevDashboardStatusPill: View {
             .accessibilityValue(accessibilityValueText)
     }
 }
-
 
 public struct PevDashboardScanningPill: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion

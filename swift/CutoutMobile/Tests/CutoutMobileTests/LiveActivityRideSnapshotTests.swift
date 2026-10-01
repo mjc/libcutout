@@ -1,32 +1,35 @@
-import XCTest
 import CutoutMobileFFI
+import XCTest
+
 @testable import CutoutMobile
 
 final class LiveActivityRideSnapshotTests: XCTestCase {
     func testChargeEstimateDisplayNamesPreserveCollectingAndNearFullStates() {
-        let collecting = ChargeEstimateState(MobileChargeEstimateStateDto(
-            kind: .collectingSamples,
-            estimate: nil,
-            voltageSag: nil,
-            unavailableReason: nil,
-            error: nil,
-            resetReason: nil,
-            samples: 2,
-            observedFor: MobileDurationDto(milliseconds: 15_000)
-        ))
+        let collecting = ChargeEstimateState(
+            MobileChargeEstimateStateDto(
+                kind: .collectingSamples,
+                estimate: nil,
+                voltageSag: nil,
+                unavailableReason: nil,
+                error: nil,
+                resetReason: nil,
+                samples: 2,
+                observedFor: MobileDurationDto(milliseconds: 15_000)
+            ))
         XCTAssertEqual(collecting.displayValue, "estimating")
         XCTAssertEqual(collecting.displayDetail, "estimating charge time · 2 samples")
 
-        let nearFull = ChargeEstimateState(MobileChargeEstimateStateDto(
-            kind: .unavailable,
-            estimate: nil,
-            voltageSag: nil,
-            unavailableReason: .fullOrNearFull,
-            error: nil,
-            resetReason: nil,
-            samples: 0,
-            observedFor: MobileDurationDto(milliseconds: 0)
-        ))
+        let nearFull = ChargeEstimateState(
+            MobileChargeEstimateStateDto(
+                kind: .unavailable,
+                estimate: nil,
+                voltageSag: nil,
+                unavailableReason: .fullOrNearFull,
+                error: nil,
+                resetReason: nil,
+                samples: 0,
+                observedFor: MobileDurationDto(milliseconds: 0)
+            ))
         XCTAssertEqual(nearFull.displayValue, "near full")
         XCTAssertEqual(nearFull.displayDetail, "near full")
     }
@@ -48,16 +51,17 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
     }
 
     func testStaleChargeEstimateIsHiddenWhileDisconnected() {
-        let staleEstimate = ChargeEstimateState(MobileChargeEstimateStateDto(
-            kind: .stale,
-            estimate: nil,
-            voltageSag: nil,
-            unavailableReason: nil,
-            error: nil,
-            resetReason: nil,
-            samples: 3,
-            observedFor: MobileDurationDto(milliseconds: 30_000)
-        ))
+        let staleEstimate = ChargeEstimateState(
+            MobileChargeEstimateStateDto(
+                kind: .stale,
+                estimate: nil,
+                voltageSag: nil,
+                unavailableReason: nil,
+                error: nil,
+                resetReason: nil,
+                samples: 3,
+                observedFor: MobileDurationDto(milliseconds: 30_000)
+            ))
         let rideState = liveRideState(
             speed: nil,
             telemetry: TelemetrySnapshot(chargeEstimate: staleEstimate)
@@ -104,16 +108,17 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
             calculatedAt: MobileMonotonicMillisDto(milliseconds: 4_000),
             validUntil: MobileMonotonicMillisDto(milliseconds: 5_000)
         )
-        let state = ChargeEstimateState(MobileChargeEstimateStateDto(
-            kind: .available,
-            estimate: estimate,
-            voltageSag: nil,
-            unavailableReason: nil,
-            error: .arithmeticOverflow,
-            resetReason: .profileChanged,
-            samples: 5,
-            observedFor: MobileDurationDto(milliseconds: 30_000)
-        ))
+        let state = ChargeEstimateState(
+            MobileChargeEstimateStateDto(
+                kind: .available,
+                estimate: estimate,
+                voltageSag: nil,
+                unavailableReason: nil,
+                error: .arithmeticOverflow,
+                resetReason: .profileChanged,
+                samples: 5,
+                observedFor: MobileDurationDto(milliseconds: 30_000)
+            ))
 
         let wrappedEstimate = try XCTUnwrap(state.estimate)
         let basis: BatteryLevelBasis = wrappedEstimate.batteryLevelBasis
@@ -292,12 +297,14 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
             snapshot.battery,
             .available(label: "Battery", value: "68", unit: "%", normalizedProgress: 0.68, source: .liveTelemetry)
         )
-        XCTAssertEqual(snapshot.packVoltage, .available(label: "Voltage", value: "118.4", unit: "V", source: .liveTelemetry))
+        XCTAssertEqual(
+            snapshot.packVoltage, .available(label: "Voltage", value: "118.4", unit: "V", source: .liveTelemetry))
         XCTAssertEqual(
             snapshot.pwm,
             .available(label: "PWM", value: "54", unit: "%", normalizedProgress: 0.54, source: .liveTelemetry)
         )
-        XCTAssertEqual(snapshot.distance, .available(label: "Distance", value: "7.8", unit: "mi", source: .liveTelemetry))
+        XCTAssertEqual(
+            snapshot.distance, .available(label: "Distance", value: "7.8", unit: "mi", source: .liveTelemetry))
         XCTAssertEqual(snapshot.headroom.value, "Headroom good")
         XCTAssertEqual(snapshot.headroomSeverity, .nominal)
         XCTAssertEqual(snapshot.temperature, .available(label: "Temp", value: "34", unit: "°C", source: .liveTelemetry))
@@ -444,7 +451,8 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
         )
 
         XCTAssertEqual(snapshot.glyph, .floatwheelAtom)
-        XCTAssertEqual(snapshot.packVoltage, .available(label: "Voltage", value: "61.8", unit: "V", source: .liveTelemetry))
+        XCTAssertEqual(
+            snapshot.packVoltage, .available(label: "Voltage", value: "61.8", unit: "V", source: .liveTelemetry))
         XCTAssertEqual(snapshot.temperature, .available(label: "Temp", value: "27", unit: "°C", source: .liveTelemetry))
     }
 
@@ -633,11 +641,20 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
 
     func testPercentProgressComesFromAvailableAndStaleValues() {
         let values: [(LiveActivityRideValue, Double?)] = [
-            (.available(label: "Battery", value: "68", unit: "%", normalizedProgress: 0.68, source: .liveTelemetry), 0.68),
+            (
+                .available(label: "Battery", value: "68", unit: "%", normalizedProgress: 0.68, source: .liveTelemetry),
+                0.68
+            ),
             (.stale(label: "PWM", value: "42", unit: "%", normalizedProgress: 0.42, source: .liveTelemetry), 0.42),
-            (.available(label: "Battery", value: "120", unit: "%", normalizedProgress: 1.2, source: .liveTelemetry), 1.0),
+            (
+                .available(label: "Battery", value: "120", unit: "%", normalizedProgress: 1.2, source: .liveTelemetry),
+                1.0
+            ),
             (.available(label: "PWM", value: "-8", unit: "%", normalizedProgress: -0.08, source: .liveTelemetry), 0.0),
-            (.available(label: "Voltage", value: "68", unit: "V", normalizedProgress: 0.68, source: .liveTelemetry), nil),
+            (
+                .available(label: "Voltage", value: "68", unit: "V", normalizedProgress: 0.68, source: .liveTelemetry),
+                nil
+            ),
             (.unavailable(label: "Battery", unit: "%"), nil),
             (.deferred(label: "PWM", unit: "%"), nil),
         ]
@@ -647,9 +664,19 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
 
     func testPwmPresentationUsesDutyAndAStrictCriticalThreshold() {
         let values: [(LiveActivityRideValue, LiveActivityRidePwmSeverity)] = [
-            (.available(label: "PWM", value: "80", unit: "%", normalizedProgress: 0.80, source: .liveTelemetry), .nominal),
-            (.available(label: "PWM", value: "not parsed", unit: "%", normalizedProgress: 0.801, source: .liveTelemetry), .critical),
-            (.available(label: "PWM", value: "120", unit: "%", normalizedProgress: 1.2, source: .liveTelemetry), .critical),
+            (
+                .available(label: "PWM", value: "80", unit: "%", normalizedProgress: 0.80, source: .liveTelemetry),
+                .nominal
+            ),
+            (
+                .available(
+                    label: "PWM", value: "not parsed", unit: "%", normalizedProgress: 0.801, source: .liveTelemetry),
+                .critical
+            ),
+            (
+                .available(label: "PWM", value: "120", unit: "%", normalizedProgress: 1.2, source: .liveTelemetry),
+                .critical
+            ),
             (.unavailable(label: "PWM", unit: "%"), .unavailable),
         ]
 
@@ -716,10 +743,26 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
 
     func testSpeedGaugeProgressComesFromTypedNumericState() {
         let values: [(LiveActivityRideValue, Double?)] = [
-            (.available(label: "Speed", value: "not parsed", unit: "mph", normalizedProgress: 0.5, source: .liveTelemetry), 0.5),
-            (.stale(label: "Speed", value: "not parsed", unit: "mph", normalizedProgress: 0.25, source: .liveTelemetry), 0.25),
-            (.available(label: "Speed", value: "not parsed", unit: "mph", normalizedProgress: 2, source: .liveTelemetry), 1.0),
-            (.available(label: "Speed", value: "not parsed", unit: "mph", normalizedProgress: -1, source: .liveTelemetry), 0.0),
+            (
+                .available(
+                    label: "Speed", value: "not parsed", unit: "mph", normalizedProgress: 0.5, source: .liveTelemetry),
+                0.5
+            ),
+            (
+                .stale(
+                    label: "Speed", value: "not parsed", unit: "mph", normalizedProgress: 0.25, source: .liveTelemetry),
+                0.25
+            ),
+            (
+                .available(
+                    label: "Speed", value: "not parsed", unit: "mph", normalizedProgress: 2, source: .liveTelemetry),
+                1.0
+            ),
+            (
+                .available(
+                    label: "Speed", value: "not parsed", unit: "mph", normalizedProgress: -1, source: .liveTelemetry),
+                0.0
+            ),
             (.unavailable(label: "Speed", unit: "mph"), nil),
             (.available(label: "Speed", value: "--", unit: "mph", source: .liveTelemetry), nil),
         ]

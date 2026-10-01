@@ -1,5 +1,6 @@
-import XCTest
 import CutoutMobileFFI
+import XCTest
+
 @testable import CutoutMobile
 
 final class PhoneLocationReadbackTests: XCTestCase {
@@ -54,6 +55,7 @@ final class PhoneLocationReadbackTests: XCTestCase {
     func testCoreLocationSamplePreservesAccuracyMetricsAtTheBoundary() {
         let sample = MobilePhoneLocationSampleDto(
             wallClockUnixMs: 1_700_000_000_000,
+            sourceTimestampUnixSeconds: nil,
             latitudeDegrees: 39.7,
             longitudeDegrees: -104.9,
             altitudeMeters: 1_600,
@@ -78,6 +80,7 @@ final class PhoneLocationReadbackTests: XCTestCase {
     private func snapshot(sampleTime: UInt64, speed: Int32?) -> MobilePhoneLocationSnapshotDto {
         let sample = MobilePhoneLocationSampleDto(
             wallClockUnixMs: sampleTime,
+            sourceTimestampUnixSeconds: nil,
             latitudeDegrees: 39.7,
             longitudeDegrees: -104.9,
             altitudeMeters: 1_600,

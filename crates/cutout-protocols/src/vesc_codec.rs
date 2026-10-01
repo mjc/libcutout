@@ -41,7 +41,12 @@ pub enum VescReadOnlyStreamResult {
     Buffered,
 
     /// The decoder completed one or more bounded read-only replies.
-    Replies(ArrayVec<VescReadOnlyReply, VESC_MAX_STREAM_REPLIES>),
+    Replies {
+        /// Replies decoded before the bounded result filled.
+        replies: ArrayVec<VescReadOnlyReply, VESC_MAX_STREAM_REPLIES>,
+        /// Whether malformed framing or a malformed frame was skipped in this feed.
+        malformed_frames: bool,
+    },
 }
 
 #[cfg(test)]
@@ -50,7 +55,7 @@ impl VescReadOnlyStreamResult {
     fn into_replies(self) -> ArrayVec<VescReadOnlyReply, VESC_MAX_STREAM_REPLIES> {
         match self {
             Self::Buffered => ArrayVec::new(),
-            Self::Replies(replies) => replies,
+            Self::Replies { replies, .. } => replies,
         }
     }
 }
@@ -1040,7 +1045,8 @@ impl VescReadOnlyStreamDecoder {
                 Ok(None) => break,
                 Err(_error) => {
                     saw_invalid_frame = true;
-                    self.read_position += 1;
+                    let discarded_len = recoverable_frame_len(frame).unwrap_or(1);
+                    self.read_position += discarded_len;
                 }
             }
         }
@@ -1050,7 +1056,10 @@ impl VescReadOnlyStreamDecoder {
         Ok(if replies.is_empty() {
             VescReadOnlyStreamResult::Buffered
         } else {
-            VescReadOnlyStreamResult::Replies(replies)
+            VescReadOnlyStreamResult::Replies {
+                replies,
+                malformed_frames: saw_invalid_frame,
+            }
         })
     }
 
@@ -1423,6 +1432,22 @@ fn voltage_from_deci_volts(value: i16) -> Voltage {
 
 fn frame_len(bytes: &[u8]) -> Result<Option<usize>, VescCodecError> {
     frame_parts(bytes).map(|parts| parts.map(|(_payload_start, _payload_len, len)| len))
+}
+
+fn recoverable_frame_len(bytes: &[u8]) -> Option<usize> {
+    let (header_len, payload_len): (usize, usize) = match bytes.first().copied()? {
+        VESC_FRAME_START_SHORT => (2, usize::from(*bytes.get(1)?)),
+        VESC_FRAME_START_LONG => {
+            let length = bytes.get(1..3)?.try_into().ok()?;
+            (3, usize::from(u16::from_be_bytes(length)))
+        }
+        _ => return None,
+    };
+    let total_len = header_len.checked_add(payload_len)?.checked_add(3)?;
+    (total_len <= VESC_MAX_FRAME_LEN
+        && bytes.len() >= total_len
+        && bytes.get(total_len - 1) == Some(&VESC_FRAME_END))
+    .then_some(total_len)
 }
 
 fn frame_parts(bytes: &[u8]) -> Result<Option<(usize, usize, usize)>, VescCodecError> {
@@ -2205,7 +2230,10 @@ mod tests {
 
         assert_eq!(
             decoder.feed_result(&frame),
-            Ok(VescReadOnlyStreamResult::Replies(expected_replies))
+            Ok(VescReadOnlyStreamResult::Replies {
+                replies: expected_replies,
+                malformed_frames: false,
+            })
         );
     }
 
@@ -2220,7 +2248,11 @@ mod tests {
             let feed_result = decoder
                 .feed_result(&[byte])
                 .expect("single-byte feed succeeds");
-            if let VescReadOnlyStreamResult::Replies(feed_replies) = feed_result {
+            if let VescReadOnlyStreamResult::Replies {
+                replies: feed_replies,
+                ..
+            } = feed_result
+            {
                 for reply in feed_replies {
                     replies.try_push(reply).expect("fixture emits one reply");
                 }
@@ -2249,7 +2281,11 @@ mod tests {
 
         for chunk in input.chunks(7) {
             let feed_result = decoder.feed_result(chunk).expect("chunk feed succeeds");
-            if let VescReadOnlyStreamResult::Replies(feed_replies) = feed_result {
+            if let VescReadOnlyStreamResult::Replies {
+                replies: feed_replies,
+                ..
+            } = feed_result
+            {
                 for reply in feed_replies {
                     replies
                         .try_push(reply)
@@ -2303,6 +2339,27 @@ mod tests {
                 .into_replies()
                 .as_slice(),
             &[expected]
+        );
+    }
+
+    #[test]
+    fn stream_decoder_recovers_after_bad_checksum_before_valid_frame() {
+        let valid = selective_values_frame();
+        let mut corrupt = valid;
+        let checksum_index = corrupt.len() - 2;
+        corrupt[checksum_index] ^= 0xff;
+        let mut input = ArrayVec::<u8, 64>::new();
+        input.try_extend_from_slice(&corrupt).unwrap();
+        input.try_extend_from_slice(&valid).unwrap();
+        let mut decoder = VescReadOnlyStreamDecoder::new();
+
+        assert_eq!(
+            decoder
+                .feed_result(&input)
+                .expect("valid frame after bad checksum is still decoded")
+                .into_replies()
+                .as_slice(),
+            &[VescReadOnlyCodec::decode_reply(&valid).unwrap()]
         );
     }
 
@@ -2377,7 +2434,11 @@ mod tests {
 
         for chunk in live_full_values_ble_uart_chunks() {
             let feed_result = decoder.feed_result(chunk).expect("chunk feed succeeds");
-            if let VescReadOnlyStreamResult::Replies(feed_replies) = feed_result {
+            if let VescReadOnlyStreamResult::Replies {
+                replies: feed_replies,
+                ..
+            } = feed_result
+            {
                 for reply in feed_replies {
                     replies
                         .try_push(reply)

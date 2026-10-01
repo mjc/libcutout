@@ -2,9 +2,9 @@ import CutoutMobile
 import Foundation
 
 #if SWIFT_PACKAGE
-let appLocalizationBundle = Bundle.module
+    let appLocalizationBundle = Bundle.module
 #else
-let appLocalizationBundle = Bundle.main
+    let appLocalizationBundle = Bundle.main
 #endif
 
 func localizedAppText(_ key: String, _ arguments: CVarArg...) -> String {

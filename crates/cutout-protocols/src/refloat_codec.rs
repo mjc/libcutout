@@ -63,7 +63,12 @@ pub enum RefloatStreamResult {
     Buffered,
 
     /// The decoder completed this many read-only replies.
-    Replies(usize),
+    Replies {
+        /// Number of complete replies emitted in this feed.
+        count: usize,
+        /// Whether a malformed frame was skipped before a reply was decoded.
+        malformed_frames: bool,
+    },
 }
 
 /// Borrowed Refloat package reply delivered while decoding a frame.
@@ -496,7 +501,10 @@ impl RefloatStreamDecoder {
         Ok(if reply_count == 0 {
             RefloatStreamResult::Buffered
         } else {
-            RefloatStreamResult::Replies(reply_count)
+            RefloatStreamResult::Replies {
+                count: reply_count,
+                malformed_frames: first_error.is_some(),
+            }
         })
     }
 
@@ -1077,6 +1085,32 @@ mod tests {
     }
 
     #[test]
+    fn stream_decoder_reports_malformed_frame_with_following_valid_reply() {
+        let mut decoder = RefloatStreamDecoder::new();
+        let ids = custom_app_frame(&ids_payload());
+        feed_captured(&mut decoder, &ids).expect("field ids decode");
+
+        let valid = custom_app_frame(&realtime_payload());
+        let mut corrupt = valid.clone();
+        let checksum_index = corrupt.len() - 2;
+        corrupt[checksum_index] ^= 0xff;
+        let mut input = ArrayVec::<u8, REFLOAT_MAX_FRAME_LEN>::new();
+        input.try_extend_from_slice(&corrupt).unwrap();
+        input.try_extend_from_slice(&valid).unwrap();
+
+        let (result, replies) = feed_captured(&mut decoder, &input).expect("valid reply survives");
+
+        assert_eq!(
+            result,
+            RefloatStreamResult::Replies {
+                count: 1,
+                malformed_frames: true,
+            }
+        );
+        assert_eq!(replies.len(), 1);
+    }
+
+    #[test]
     fn decodes_live_realtime_ids_long_frame() {
         let mut decoder = RefloatStreamDecoder::new();
         let mut result = RefloatStreamResult::Buffered;
@@ -1085,7 +1119,13 @@ mod tests {
             (result, replies) = feed_captured(&mut decoder, chunk).expect("live ids chunk decodes");
         }
 
-        assert_eq!(result, RefloatStreamResult::Replies(1));
+        assert_eq!(
+            result,
+            RefloatStreamResult::Replies {
+                count: 1,
+                malformed_frames: false,
+            }
+        );
         assert!(matches!(
             replies.as_slice(),
             [CapturedReply::RealtimeFieldIds(_)]

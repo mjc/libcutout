@@ -1,5 +1,6 @@
-import XCTest
 import CutoutMobileFFI
+import XCTest
+
 @testable import CutoutMobile
 
 final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
@@ -72,7 +73,7 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
         XCTAssertNotNil(markerStore.marker)
     }
 
-    func testPersistedRideRecoveryEndsTheOrphanWithoutARestoredPeripheral() async throws {
+    func testPersistedRideRecoveryPreservesRideWithoutARestoredPeripheral() async throws {
         let suiteName = "LiveActivityRideLifecycleCoordinatorTests.orphan.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
@@ -94,11 +95,11 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
             snapshot: nil
         )
 
-        XCTAssertEqual(recovered, .ended(requiresUserAction: false))
-        XCTAssertEqual(restoredState.rideSessionSnapshot().phase, .ended(reason: .appReset))
+        XCTAssertEqual(recovered, .reconnecting)
+        XCTAssertEqual(restoredState.rideSessionSnapshot().phase, .reconnecting)
         let events = await manager.recordedEvents()
-        XCTAssertEqual(events, [.end(.sessionEnded)])
-        XCTAssertNil(markerStore.marker)
+        XCTAssertEqual(events, [])
+        XCTAssertNotNil(markerStore.marker)
     }
 
     func testCoordinatorPublishesActivityKitStartIntoSharedRustLifecycle() async {

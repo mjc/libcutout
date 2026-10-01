@@ -35,7 +35,8 @@ enum EucPackScreen: Hashable {
 
     func hasAvailableSelectedGroup(in groupIndices: [Int]?) -> Bool {
         guard case let .bmsCellDetail(selectedGroupIndex?) = self,
-              let groupIndices else {
+            let groupIndices
+        else {
             return true
         }
         return groupIndices.contains(selectedGroupIndex)
@@ -154,17 +155,20 @@ enum CutoutAppRoute: Hashable {
         switch self {
         case .rideMap, .rideMapDetail:
             guard let connectionRoute else {
-                return [PevScreenTab(
-                    id: .map,
-                    title: pevLocalizedText("tab.map"),
-                    isSelected: true,
-                    destinationTarget: .rideMap
-                )]
+                return [
+                    PevScreenTab(
+                        id: .map,
+                        title: pevLocalizedText("tab.map"),
+                        isSelected: true,
+                        destinationTarget: .rideMap
+                    )
+                ]
             }
-            let tabs = switch connectionRoute {
-            case .electricUnicycle: PevRideTabs.eucRideTabs()
-            case .vescOnewheel: PevRideTabs.vescRideTabs()
-            }
+            let tabs =
+                switch connectionRoute {
+                case .electricUnicycle: PevRideTabs.eucRideTabs()
+                case .vescOnewheel: PevRideTabs.vescRideTabs()
+                }
             return tabs.map { tab in
                 PevScreenTab(
                     id: tab.id,

@@ -146,15 +146,22 @@ struct BmsNoDataTelemetryCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            PevDashboardSectionLabel(title: localizedAppText("bms.no_data.what_we_can_see"), font: .caption.weight(.bold))
+            PevDashboardSectionLabel(
+                title: localizedAppText("bms.no_data.what_we_can_see"), font: .caption.weight(.bold))
             PevDashboardGrid(
                 adaptiveMinimumColumnWidth: 100,
                 columnSpacing: 18,
                 spacing: 18
             ) {
-                BmsNoDataMetric(metricValue: voltageMetricValue, unit: RideUnits.voltageUnit, label: localizedAppText("bms.no_data.pack_voltage"))
-                BmsNoDataMetric(metricValue: rideSagMetricValue, unit: RideUnits.voltageUnit, label: localizedAppText("bms.no_data.ride_sag"))
-                BmsNoDataMetric(metricValue: loadMetricValue, unit: RideUnits.currentUnit, label: localizedAppText("bms.no_data.load_now"))
+                BmsNoDataMetric(
+                    metricValue: voltageMetricValue, unit: RideUnits.voltageUnit,
+                    label: localizedAppText("bms.no_data.pack_voltage"))
+                BmsNoDataMetric(
+                    metricValue: rideSagMetricValue, unit: RideUnits.voltageUnit,
+                    label: localizedAppText("bms.no_data.ride_sag"))
+                BmsNoDataMetric(
+                    metricValue: loadMetricValue, unit: RideUnits.currentUnit,
+                    label: localizedAppText("bms.no_data.load_now"))
             }
         }
         .padding(.horizontal, 20)
@@ -169,7 +176,8 @@ struct BmsNoDataUnknownsCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            PevDashboardSectionLabel(title: localizedAppText("bms.no_data.what_is_unknown"), font: .caption.weight(.bold))
+            PevDashboardSectionLabel(
+                title: localizedAppText("bms.no_data.what_is_unknown"), font: .caption.weight(.bold))
             ForEach(rows) { row in
                 Text(row.text)
                     .font(.body)

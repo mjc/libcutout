@@ -58,7 +58,7 @@ use cutout_protocols::{
     select_begode_pack_voltage_profile_from_annotations, validate_begode_pack_evidence,
 };
 use libcutout_persistence::RideDatabase;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::cli::{
     AeroSetting, AeroWriteArgs, CaptureArgs, Cli, Command, DashboardArgs, PevcapArgs,
@@ -3040,7 +3040,13 @@ fn print_vesc_replies_jsonl(
         };
         match decoder.feed_result(bytes.as_raw_bytes()) {
             Ok(VescReadOnlyStreamResult::Buffered) => {}
-            Ok(VescReadOnlyStreamResult::Replies(replies)) => {
+            Ok(VescReadOnlyStreamResult::Replies {
+                replies,
+                malformed_frames,
+            }) => {
+                if malformed_frames {
+                    warn!("skipped malformed VESC frame while recovering the stream");
+                }
                 for reply in replies {
                     if vesc_reply_matches(expected_command, &reply) {
                         replies_seen = replies_seen.saturating_add(1);
@@ -3180,7 +3186,14 @@ fn print_refloat_replies_jsonl(
             }
         });
         match result {
-            Ok(RefloatStreamResult::Buffered | RefloatStreamResult::Replies(_)) => {}
+            Ok(RefloatStreamResult::Buffered) => {}
+            Ok(RefloatStreamResult::Replies {
+                malformed_frames, ..
+            }) => {
+                if malformed_frames {
+                    warn!("skipped malformed Refloat frame while recovering the stream");
+                }
+            }
             Err(
                 cutout_protocols::RefloatCodecError::UnexpectedVescCommand
                 | cutout_protocols::RefloatCodecError::UnexpectedPackageInterface,

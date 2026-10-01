@@ -33,7 +33,9 @@ final class CoreBluetoothConnectionAttempt: NSObject, CBPeripheralDelegate {
         deliver(peripheral) { $0.peripheral(peripheral, didUpdateValueFor: characteristic, error: error) }
     }
 
-    func peripheral(_ peripheral: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic, error: Error?) {
+    func peripheral(
+        _ peripheral: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic, error: Error?
+    ) {
         deliver(peripheral) { $0.peripheral(peripheral, didUpdateNotificationStateFor: characteristic, error: error) }
     }
 }

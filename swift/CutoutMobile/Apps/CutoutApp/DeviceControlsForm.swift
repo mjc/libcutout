@@ -67,7 +67,9 @@ struct DeviceControlsForm: View {
                     state: snapshot.setting(for: descriptor.id),
                     isEnabled: canInteract
                 ) { value in
-                    guard let token = snapshot.connection.token else { throw DeviceSettingSubmissionError.ConnectionUnavailable }
+                    guard let token = snapshot.connection.token else {
+                        throw DeviceSettingSubmissionError.ConnectionUnavailable
+                    }
                     try submitSetting(token, descriptor.id, value)
                 }
                 .padding(.vertical, 12)
@@ -82,7 +84,9 @@ struct DeviceControlsForm: View {
                 state: snapshot.actions.first { $0.id == descriptor.id },
                 isEnabled: canInteract
             ) {
-                guard let token = snapshot.connection.token else { throw DeviceActionSubmissionError.ConnectionUnavailable }
+                guard let token = snapshot.connection.token else {
+                    throw DeviceActionSubmissionError.ConnectionUnavailable
+                }
                 try submitAction(token, descriptor.id)
             }
             .padding(.vertical, 12)
@@ -136,19 +140,24 @@ private struct DeviceSettingRow: View {
                 applyButton
             case let .number(minimum, maximum, step, _, _, canDisable):
                 titleAndValue
-                let layout = dynamicTypeSize.isAccessibilitySize
+                let layout =
+                    dynamicTypeSize.isAccessibilitySize
                     ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
                     : AnyLayout(HStackLayout(spacing: 12))
                 layout {
                     if minimum < maximum, step > 0 {
-                        Slider(value: Binding(get: {
-                            if case let .number(value) = draft ?? state?.current {
-                                return Double(min(max(value, minimum), maximum))
-                            }
-                            return Double(minimum)
-                        }, set: { value in
-                            edit(.number(value: Int32(value.rounded())))
-                        }), in: Double(minimum)...Double(maximum), step: Double(step))
+                        Slider(
+                            value: Binding(
+                                get: {
+                                    if case let .number(value) = draft ?? state?.current {
+                                        return Double(min(max(value, minimum), maximum))
+                                    }
+                                    return Double(minimum)
+                                },
+                                set: { value in
+                                    edit(.number(value: Int32(value.rounded())))
+                                }), in: Double(minimum)...Double(maximum), step: Double(step)
+                        )
                         .accessibilityLabel(localizedAppText(descriptor.labelKey))
                         .accessibilityValue(displayedValue)
                         .accessibilityIdentifier("settings.slider.\(descriptor.id)")
@@ -158,7 +167,9 @@ private struct DeviceSettingRow: View {
                 }
                 HStack(spacing: 12) {
                     if canDisable {
-                        Button { edit(.disabled) } label: {
+                        Button {
+                            edit(.disabled)
+                        } label: {
                             Text(localizedAppText("settings.choice.off")).frame(minWidth: 44, minHeight: 44)
                         }
                         .buttonStyle(.borderless)
@@ -268,9 +279,13 @@ private struct DeviceSettingRow: View {
         Stepper {
             Text(localizedAppText(descriptor.labelKey))
         } onIncrement: {
-            edit(DeviceControlPresentation.steppedValue(draft: draft, current: state?.current, control: descriptor.control, increasing: true))
+            edit(
+                DeviceControlPresentation.steppedValue(
+                    draft: draft, current: state?.current, control: descriptor.control, increasing: true))
         } onDecrement: {
-            edit(DeviceControlPresentation.steppedValue(draft: draft, current: state?.current, control: descriptor.control, increasing: false))
+            edit(
+                DeviceControlPresentation.steppedValue(
+                    draft: draft, current: state?.current, control: descriptor.control, increasing: false))
         }
         .labelsHidden()
         .fixedSize(horizontal: true, vertical: false)
@@ -286,7 +301,8 @@ private struct DeviceSettingRow: View {
     }
 
     private func booleanButton(_ value: Bool) -> some View {
-        let selected = DeviceControlPresentation.booleanSelection(state, submissionError: editing.submissionError) == value
+        let selected =
+            DeviceControlPresentation.booleanSelection(state, submissionError: editing.submissionError) == value
         return Button {
             send(.boolean(value: value))
         } label: {
@@ -297,9 +313,18 @@ private struct DeviceSettingRow: View {
                 .background(selected ? PevColors.yellow.opacity(0.2) : .clear, in: .rect(cornerRadius: 10))
         }
         .buttonStyle(.borderless)
-        .accessibilityLabel(localizedAppText("controls.boolean.action", localizedAppText(descriptor.labelKey), DeviceControlPresentation.value(.boolean(value: value), control: .boolean)))
+        .accessibilityLabel(
+            localizedAppText(
+                "controls.boolean.action", localizedAppText(descriptor.labelKey),
+                DeviceControlPresentation.value(.boolean(value: value), control: .boolean))
+        )
         .accessibilityAddTraits(selected ? [.isSelected] : [])
-        .accessibilityValue(selected ? localizedAppText(state?.current == .boolean(value: value) ? "controls.accessibility.reported" : "controls.accessibility.requested") : "")
+        .accessibilityValue(
+            selected
+                ? localizedAppText(
+                    state?.current == .boolean(value: value)
+                        ? "controls.accessibility.reported" : "controls.accessibility.requested") : ""
+        )
         .accessibilityIdentifier("settings.\(value ? "on" : "off").\(descriptor.id)")
     }
 
@@ -364,7 +389,8 @@ struct DeviceSettingDraft {
     }
 
     func label(_ state: DeviceSettingSnapshot?) -> String {
-        let accepted = value != nil && value == submittedValue && value == state?.requested
+        let accepted =
+            value != nil && value == submittedValue && value == state?.requested
             && state?.status != .idle && state?.status != .refused && state?.transport != .rejected
         return localizedAppText(accepted ? "settings.value.requested" : "settings.value.draft")
     }
@@ -436,7 +462,9 @@ enum DeviceControlPresentation {
         }
     }
 
-    static func settings(_ descriptors: [DeviceSettingDescriptor], in group: DeviceSettingGroup) -> [DeviceSettingDescriptor] {
+    static func settings(_ descriptors: [DeviceSettingDescriptor], in group: DeviceSettingGroup)
+        -> [DeviceSettingDescriptor]
+    {
         descriptors.filter { $0.group == group && $0.access == .writable }.sorted { $0.order < $1.order }
     }
 
@@ -450,7 +478,8 @@ enum DeviceControlPresentation {
 
     static func booleanSelection(_ state: DeviceSettingSnapshot?, submissionError: String? = nil) -> Bool? {
         if submissionError == nil, state?.transport != .rejected,
-           acceptsRequestedSelection(state?.status), case let .boolean(value) = state?.requested {
+            acceptsRequestedSelection(state?.status), case let .boolean(value) = state?.requested
+        {
             return value
         }
         if case let .boolean(value) = state?.current { return value }
@@ -459,9 +488,12 @@ enum DeviceControlPresentation {
 
     /// Adjust a local draft on the descriptor's fixed-point lattice. Readback
     /// can seed an edit, but never becomes a draft before a user interaction.
-    static func steppedValue(draft: DeviceSettingValue?, current: DeviceSettingValue?, control: DeviceSettingControl, increasing: Bool) -> DeviceSettingValue? {
+    static func steppedValue(
+        draft: DeviceSettingValue?, current: DeviceSettingValue?, control: DeviceSettingControl, increasing: Bool
+    ) -> DeviceSettingValue? {
         guard case let .number(minimum, maximum, step, _, _, _) = control,
-              minimum <= maximum, step > 0 else { return nil }
+            minimum <= maximum, step > 0
+        else { return nil }
         // Unknown wheel state is not a default. Do not manufacture the
         // minimum as a first draft from a +/− tap. Explicit Off is a known
         // value, so it can step back onto the numeric lattice.
@@ -510,7 +542,8 @@ enum DeviceControlPresentation {
             return localizedAppText(value ? "controls.on" : "settings.choice.off")
         case let .choice(id):
             guard case let .choices(choices) = control,
-                  let choice = choices.first(where: { $0.id == id }) else {
+                let choice = choices.first(where: { $0.id == id })
+            else {
                 return "—"
             }
             return localizedAppText(choice.labelKey)
@@ -579,7 +612,8 @@ enum DeviceControlPresentation {
             return Feedback(text: refusal(reason), isError: true)
         }
         guard let text = status(state.status, transport: state.transport) else { return nil }
-        let isError = state.status == .refused || state.status == .failed
+        let isError =
+            state.status == .refused || state.status == .failed
             || state.transport == .rejected || state.transport == .cancelled
             || (state.status == .timedOut && state.transport != .accepted && state.transport != .queued)
         return Feedback(text: text, isError: isError)

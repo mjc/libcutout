@@ -1,5 +1,5 @@
-import Foundation
 import CutoutMobileFFI
+import Foundation
 
 /// Stores opaque, Rust-owned ride-session marker bytes for process relaunch reconciliation.
 // UserDefaults documents its accessors as thread-safe, but does not declare Sendable.

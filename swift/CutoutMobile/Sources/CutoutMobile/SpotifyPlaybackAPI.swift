@@ -41,7 +41,9 @@ actor SpotifyPlaybackAPI {
         return (data, response)
     }
 
-    private static func sendArtworkRequest(_ request: URLRequest, maximumBytes: Int) async throws -> (Data, HTTPURLResponse) {
+    private static func sendArtworkRequest(_ request: URLRequest, maximumBytes: Int) async throws -> (
+        Data, HTTPURLResponse
+    ) {
         let (bytes, response) = try await session.bytes(for: request)
         guard let response = response as? HTTPURLResponse else { throw Failure.unavailable }
         guard response.expectedContentLength < 0 || response.expectedContentLength <= Int64(maximumBytes) else {
@@ -58,8 +60,9 @@ actor SpotifyPlaybackAPI {
     }
 
     func playback(accessToken: String) async throws -> SpotifyPlayback? {
-        let data = try await request(path: "", method: "GET", accessToken: accessToken,
-                                     query: [URLQueryItem(name: "additional_types", value: "track,episode")])
+        let data = try await request(
+            path: "", method: "GET", accessToken: accessToken,
+            query: [URLQueryItem(name: "additional_types", value: "track,episode")])
         guard !data.isEmpty else { return nil }
         return try JSONDecoder().decode(SpotifyPlayback.self, from: data)
     }
@@ -74,8 +77,9 @@ actor SpotifyPlaybackAPI {
         case .next: (path, method) = ("/next", "POST")
         case .openProvider: throw Failure.unavailable
         }
-        _ = try await request(path: path, method: method, accessToken: accessToken,
-                              query: [URLQueryItem(name: "device_id", value: deviceID)])
+        _ = try await request(
+            path: path, method: method, accessToken: accessToken,
+            query: [URLQueryItem(name: "device_id", value: deviceID)])
     }
 
     func artwork(url: URL) async throws -> MusicArtwork? {
@@ -83,16 +87,20 @@ actor SpotifyPlaybackAPI {
         let (data, response) = try await sendArtwork(URLRequest(url: url), 1_048_576)
         try Task.checkCancellation()
         guard response.statusCode == 200, data.count <= 1_048_576,
-              let source = CGImageSourceCreateWithData(data as CFData, nil),
-              let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
-                  kCGImageSourceCreateThumbnailFromImageAlways: true,
-                  kCGImageSourceThumbnailMaxPixelSize: 256,
-                  kCGImageSourceCreateThumbnailWithTransform: true,
-              ] as CFDictionary) else { return nil }
+            let source = CGImageSourceCreateWithData(data as CFData, nil),
+            let image = CGImageSourceCreateThumbnailAtIndex(
+                source, 0,
+                [
+                    kCGImageSourceCreateThumbnailFromImageAlways: true,
+                    kCGImageSourceThumbnailMaxPixelSize: 256,
+                    kCGImageSourceCreateThumbnailWithTransform: true,
+                ] as CFDictionary)
+        else { return nil }
         return MusicArtwork(image: image)
     }
 
-    private func request(path: String, method: String, accessToken: String, query: [URLQueryItem]) async throws -> Data {
+    private func request(path: String, method: String, accessToken: String, query: [URLQueryItem]) async throws -> Data
+    {
         if let retryAfter, retryAfter > .now {
             let remaining = ContinuousClock.now.duration(to: retryAfter).components
             throw Failure.rateLimited(seconds: Double(remaining.seconds) + Double(remaining.attoseconds) / 1e18)
@@ -134,7 +142,10 @@ struct SpotifyPlayback: Decodable, Sendable {
     struct Item: Decodable, Sendable {
         struct Artist: Decodable, Sendable { let name: String }
         struct Show: Decodable, Sendable { let name: String }
-        struct Image: Decodable, Sendable { let url: URL; let width: Int? }
+        struct Image: Decodable, Sendable {
+            let url: URL
+            let width: Int?
+        }
         struct Album: Decodable, Sendable { let images: [Image]? }
         let uri: String?
         let name: String?
@@ -174,10 +185,12 @@ struct SpotifyPlayback: Decodable, Sendable {
     func snapshot(state: MobileMusicPlaybackStateDto, observedAtMs: UInt64) -> MobileMusicSnapshotDto {
         let knownItem = item.flatMap { item -> MobileMusicItemDto? in
             guard item.type == "track" || item.type == "episode", let uri = item.uri else { return nil }
-            return MobileMusicItemDto(identifier: uri, title: item.name,
-                                      artist: item.artists?.map(\.name).joined(separator: ", ") ?? item.show?.name)
+            return MobileMusicItemDto(
+                identifier: uri, title: item.name,
+                artist: item.artists?.map(\.name).joined(separator: ", ") ?? item.show?.name)
         }
-        let controls = (state == .playing || state == .paused)
+        let controls =
+            (state == .playing || state == .paused)
             && device?.id != nil && device?.isRestricted != true
         func allowed(_ action: String) -> Bool { controls && actions?.disallows?[action] != true }
         return MobileMusicSnapshotDto(
@@ -185,10 +198,11 @@ struct SpotifyPlayback: Decodable, Sendable {
             positionMilliseconds: progressMs.flatMap(UInt64.init(exactly:)),
             durationMilliseconds: item?.durationMs.flatMap(UInt64.init(exactly:)),
             observedAtMs: observedAtMs,
-            capabilities: .init(previous: allowed("skipping_prev"),
-                                play: state == .paused && allowed("resuming"),
-                                pause: state == .playing && allowed("pausing"),
-                                next: allowed("skipping_next"), openProvider: true)
+            capabilities: .init(
+                previous: allowed("skipping_prev"),
+                play: state == .paused && allowed("resuming"),
+                pause: state == .playing && allowed("pausing"),
+                next: allowed("skipping_next"), openProvider: true)
         )
     }
 }

@@ -32,8 +32,8 @@ struct EucRideScreenView: View {
 
     var statusTone: PevDashboardStatusPillTone {
         guard rideState?.phase == .live,
-              let warningState,
-              warningState.severity == .normal
+            let warningState,
+            warningState.severity == .normal
         else { return .warning }
         return .eucRide
     }
@@ -73,7 +73,7 @@ struct EucRideScreenView: View {
             statusTone: statusTone,
             captureStatusText: captureStatusText,
             speedReadout: speedReadout,
-            speedCaption: localizedAppText("euc.speed.caption"),
+            speedCaption: localizedAppText("euc.speed.caption")
         ) {
             if let warningCard {
                 EucRideWarningSection(

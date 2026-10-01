@@ -2,14 +2,16 @@
 
 use cutout_core::{
     ConnectionAttemptSnapshot, ConnectionAttemptToken, ConnectionReadiness,
-    ConnectionTransportState,
+    ConnectionRetryDecision, ConnectionTransportState,
 };
 use std::sync::Arc;
 
 use crate::{
-    CutoutSessionStateHandle, MobileRideMapCore, MobileRideMapCoreErrorDto,
-    MobileRideMapCoreSnapshotDto, MobileRideMapTelemetryObservationDto, MonotonicTimestamp,
+    CutoutSessionStateHandle, MobileRideMapConnectionAdmission, MobileRideMapCore,
+    MobileRideMapCoreErrorDto, MobileRideMapTelemetryObservationDto, MonotonicTimestamp,
 };
+#[cfg(test)]
+use crate::{MobileRideMapAdmissionPollDto, MobileRideMapCoreSnapshotDto};
 
 /// Identity captured with native callbacks and decoded telemetry.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
@@ -31,7 +33,7 @@ pub enum MobileConnectionReadinessDto {
     Verified,
     /// Identification ended; raw capture alone remains available.
     RecordOnly,
-    /// Capture storage or a previously verified connection failed.
+    /// A previously verified transport or session failed.
     Failed,
     /// A verified decoder observed contradictory protocol evidence.
     Conflicted,
@@ -63,6 +65,49 @@ pub struct MobileConnectionAttemptSnapshotDto {
     pub transport: MobileConnectionTransportStateDto,
     /// Monotonic whole-attempt deadline in milliseconds.
     pub deadline_ms: Option<u64>,
+}
+
+/// Retry approved by Rust, including the timer identity and monotonic deadline.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileConnectionRetryDto {
+    /// Fences timer callbacks after cancellation or replacement.
+    pub token: u64,
+    /// One-based consecutive retry number.
+    pub attempt: u32,
+    /// Device identity to reconnect through `CoreBluetooth`.
+    pub platform_identifier: String,
+    /// Earliest monotonic time at which Rust will admit this retry.
+    pub deadline_ms: u64,
+}
+
+/// Typed result of Rust reconnect policy.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileConnectionRetryDecisionDto {
+    /// Schedule a native timer, then ask Rust to admit it when it fires.
+    Scheduled { retry: MobileConnectionRetryDto },
+    /// The configured number of consecutive retries has been exhausted.
+    Exhausted { attempt: u32 },
+    /// This attempt no longer owns the reconnect request.
+    Rejected,
+}
+
+impl From<ConnectionRetryDecision> for MobileConnectionRetryDecisionDto {
+    fn from(value: ConnectionRetryDecision) -> Self {
+        match value {
+            ConnectionRetryDecision::Scheduled(retry) => Self::Scheduled {
+                retry: MobileConnectionRetryDto {
+                    token: retry.token().value(),
+                    attempt: u32::from(retry.attempt()),
+                    platform_identifier: retry.platform_identifier().to_owned(),
+                    deadline_ms: retry.deadline().get(),
+                },
+            },
+            ConnectionRetryDecision::Exhausted { attempt } => Self::Exhausted {
+                attempt: u32::from(attempt),
+            },
+            ConnectionRetryDecision::Rejected => Self::Rejected,
+        }
+    }
 }
 
 impl From<MobileConnectionAttemptTokenDto> for ConnectionAttemptToken {
@@ -107,6 +152,57 @@ impl From<&ConnectionAttemptSnapshot> for MobileConnectionAttemptSnapshotDto {
 
 #[uniffi::export]
 impl CutoutSessionStateHandle {
+    /// Requests a reconnect decision from Rust; `jitter_permille` supplies platform entropy only.
+    pub fn request_connection_retry(
+        &self,
+        token: MobileConnectionAttemptTokenDto,
+        now_ms: u64,
+        jitter_permille: u16,
+    ) -> MobileConnectionRetryDecisionDto {
+        let mut inner = self.lock_inner();
+        inner
+            .session_state_mut()
+            .connection
+            .request_retry(
+                &token.into(),
+                MonotonicTimestamp::new(now_ms),
+                jitter_permille,
+            )
+            .into()
+    }
+
+    /// Admits a timer only after its Rust-owned monotonic deadline.
+    pub fn admit_connection_retry(
+        &self,
+        token: u64,
+        now_ms: u64,
+    ) -> Option<MobileConnectionAttemptSnapshotDto> {
+        let mut inner = self.lock_inner();
+        let admitted = inner.admit_retry(
+            cutout_core::ConnectionRetryToken::new(token),
+            MonotonicTimestamp::new(now_ms),
+        );
+        admitted.map(|_| inner.session_state().connection.snapshot().into())
+    }
+
+    /// Cancels only the matching timer and clears its consecutive retry budget.
+    pub fn cancel_connection_retry(&self, token: u64) -> bool {
+        self.lock_inner()
+            .session_state_mut()
+            .connection
+            .cancel_retry(cutout_core::ConnectionRetryToken::new(token))
+    }
+
+    /// Returns the Rust deadline for a still-pending retry timer.
+    #[must_use]
+    pub fn connection_retry_deadline(&self, token: u64) -> Option<u64> {
+        self.lock_inner()
+            .session_state()
+            .connection
+            .retry_deadline(cutout_core::ConnectionRetryToken::new(token))
+            .map(MonotonicTimestamp::get)
+    }
+
     /// Accepts a native link callback for its captured attempt.
     pub fn connection_link_established(
         &self,
@@ -172,38 +268,41 @@ impl CutoutSessionStateHandle {
             .is_verified(&token.into())
     }
 
-    /// Atomically admits one verified connection to the Rust-owned ride-map core.
+    /// Atomically enqueues one verified connection admission in the Rust-owned ride-map core.
     ///
-    /// The session-state lock remains held while the map core consumes the token, so connection
-    /// invalidation cannot race between verification and ride admission. Swift supplies only the
-    /// Rust-issued attempt token; it cannot choose a separate identity or automatic policy.
+    /// The session-state lock remains held through ordered enqueue, so connection invalidation
+    /// cannot race between verification and admission. SQLite completion is polled separately,
+    /// after this method releases the session lock. Swift supplies only the Rust-issued token.
     ///
     /// # Errors
     ///
     /// Returns `StaleConnection` when the token is no longer the current verified attempt, or a
-    /// typed ride-map error when the map core cannot admit the connection.
+    /// typed ride-map error when the map core cannot enqueue the connection.
     #[allow(
         clippy::needless_pass_by_value,
         reason = "UniFFI owns the Arc argument at the binding boundary."
     )]
-    pub fn ensure_ride_recording_for_verified_connection(
+    pub fn begin_ride_recording_for_verified_connection(
         &self,
         ride_map: Arc<MobileRideMapCore>,
         token: MobileConnectionAttemptTokenDto,
         at_ms: u64,
-    ) -> Result<Option<MobileRideMapCoreSnapshotDto>, MobileRideMapCoreErrorDto> {
+    ) -> Result<Arc<MobileRideMapConnectionAdmission>, MobileRideMapCoreErrorDto> {
         let token = token.into();
-        let state = self.lock_inner();
-        let verified = state
-            .session_state()
-            .connection
-            .verified_attempt(&token)
-            .ok_or(MobileRideMapCoreErrorDto::StaleConnection)?;
-        ride_map.ensure_recording_for_vehicle_on_connection(
-            verified.platform_identifier(),
-            at_ms,
-            verified.generation(),
-        )
+        let pending = {
+            let state = self.lock_inner();
+            let verified = state
+                .session_state()
+                .connection
+                .verified_attempt(&token)
+                .ok_or(MobileRideMapCoreErrorDto::StaleConnection)?;
+            ride_map.begin_verified_connection_admission(
+                verified.platform_identifier(),
+                at_ms,
+                verified.generation(),
+            )?
+        };
+        Ok(MobileRideMapConnectionAdmission::new(ride_map, pending))
     }
 
     /// Records telemetry only when the current verified vehicle owns the active ride.
@@ -270,21 +369,26 @@ impl CutoutSessionStateHandle {
         inner.transport_failed(&token.into());
         inner.session_state().connection.snapshot().into()
     }
-
-    /// Invalidates a capture that can no longer preserve incoming evidence.
-    pub fn fail_connection_capture(
-        &self,
-        token: MobileConnectionAttemptTokenDto,
-    ) -> MobileConnectionAttemptSnapshotDto {
-        let mut inner = self.lock_inner();
-        inner.fail_capture(&token.into());
-        inner.session_state().connection.snapshot().into()
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn complete_admission(
+        admission: &MobileRideMapConnectionAdmission,
+    ) -> Option<MobileRideMapCoreSnapshotDto> {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            match admission.poll().expect("admission completes") {
+                MobileRideMapAdmissionPollDto::Completed { snapshot } => return snapshot,
+                MobileRideMapAdmissionPollDto::Pending => {
+                    assert!(std::time::Instant::now() < deadline, "admission timed out");
+                    std::thread::yield_now();
+                }
+            }
+        }
+    }
 
     #[test]
     fn queued_admission_reads_identity_and_verification_atomically() {
@@ -309,6 +413,47 @@ mod tests {
     }
 
     #[test]
+    fn retry_ffi_requires_the_rust_deadline_and_returns_a_new_attempt() {
+        let handle = CutoutSessionStateHandle::new();
+        let initial = handle.begin_connection_attempt("A".into(), 100);
+        let token = initial.token.expect("attempt token");
+        handle.connection_link_established(token.clone());
+        {
+            let mut inner = handle.lock_inner();
+            assert!(
+                inner
+                    .session_state_mut()
+                    .connection
+                    .finish_detection(&token.clone().into(), true)
+            );
+        }
+
+        let MobileConnectionRetryDecisionDto::Scheduled { retry } =
+            handle.request_connection_retry(token.clone(), 1_000, 500)
+        else {
+            panic!("verified connection should schedule its first retry");
+        };
+        assert_eq!(retry.platform_identifier, "A");
+        assert_eq!(retry.attempt, 1);
+        assert_eq!(retry.deadline_ms, 1_250);
+        assert!(handle.admit_connection_retry(retry.token, 1_249).is_none());
+
+        let admitted = handle
+            .admit_connection_retry(retry.token, retry.deadline_ms)
+            .expect("timer admitted at Rust deadline");
+        assert_eq!(admitted.readiness, MobileConnectionReadinessDto::Pending);
+        assert_eq!(
+            admitted.transport,
+            MobileConnectionTransportStateDto::Connecting
+        );
+        assert_ne!(
+            admitted.token.expect("new token").generation,
+            token.generation
+        );
+        assert!(!handle.connection_attempt_is_current(token));
+    }
+
+    #[test]
     fn stale_verified_connection_is_rejected_before_ride_admission() {
         let handle = CutoutSessionStateHandle::new();
         let snapshot = handle.begin_connection_attempt("A".into(), 10);
@@ -316,7 +461,7 @@ mod tests {
 
         assert_eq!(
             handle
-                .ensure_ride_recording_for_verified_connection(MobileRideMapCore::new(), token, 20)
+                .begin_ride_recording_for_verified_connection(MobileRideMapCore::new(), token, 20)
                 .expect_err("pending connection cannot enter the ride path"),
             MobileRideMapCoreErrorDto::StaleConnection
         );
@@ -325,7 +470,7 @@ mod tests {
         let replacement_token = replacement.token.unwrap();
         assert_eq!(
             handle
-                .ensure_ride_recording_for_verified_connection(
+                .begin_ride_recording_for_verified_connection(
                     MobileRideMapCore::new(),
                     replacement_token,
                     40
@@ -353,10 +498,10 @@ mod tests {
                 .finish_detection(&token_a.clone().into(), true)
         );
 
-        let associated_a = handle
-            .ensure_ride_recording_for_verified_connection(ride_map.clone(), token_a.clone(), 1_100)
-            .unwrap()
+        let admission_a = handle
+            .begin_ride_recording_for_verified_connection(ride_map.clone(), token_a.clone(), 1_100)
             .unwrap();
+        let associated_a = complete_admission(&admission_a).unwrap();
         assert_eq!(associated_a.ride_id, started.ride_id);
         assert_eq!(
             handle
@@ -377,10 +522,10 @@ mod tests {
                 .connection
                 .finish_detection(&token_b.clone().into(), true)
         );
-        let retained_a = handle
-            .ensure_ride_recording_for_verified_connection(ride_map.clone(), token_b.clone(), 1_400)
-            .unwrap()
+        let admission_b = handle
+            .begin_ride_recording_for_verified_connection(ride_map.clone(), token_b.clone(), 1_400)
             .unwrap();
+        let retained_a = complete_admission(&admission_b).unwrap();
         assert_eq!(retained_a.ride_id, started.ride_id);
         assert_eq!(retained_a.associated_vehicle.as_deref(), Some("pev-a"));
         assert_eq!(
@@ -402,18 +547,91 @@ mod tests {
                 .connection
                 .finish_detection(&token_a_again.clone().into(), true)
         );
-        handle
-            .ensure_ride_recording_for_verified_connection(
+        let admission_a_again = handle
+            .begin_ride_recording_for_verified_connection(
                 ride_map.clone(),
                 token_a_again.clone(),
                 1_700,
             )
             .unwrap();
+        let _ = complete_admission(&admission_a_again);
         assert_eq!(
             handle
                 .observe_ride_telemetry_for_verified_connection(ride_map, token_a_again, 1_800)
                 .unwrap(),
             MobileRideMapTelemetryObservationDto::Observed
+        );
+    }
+
+    #[test]
+    fn verified_admission_releases_session_lock_after_ordered_enqueue() {
+        let handle = CutoutSessionStateHandle::new();
+        let initial = handle.begin_connection_attempt("A".into(), 10);
+        let token = initial.token.unwrap();
+        handle.connection_link_established(token.clone());
+        {
+            let mut inner = handle.lock_inner();
+            assert!(
+                inner
+                    .session_state_mut()
+                    .connection
+                    .finish_detection(&token.clone().into(), true)
+            );
+        }
+        assert!(handle.verified_connection_attempt_is_current(token.clone()));
+
+        let ride_map = MobileRideMapCore::new();
+        let (entered_sender, entered_receiver) = std::sync::mpsc::sync_channel(1);
+        let (release_sender, release_receiver) = std::sync::mpsc::sync_channel(1);
+        MobileRideMapCore::install_verified_connection_admission_test_gate(
+            entered_sender,
+            release_receiver,
+        );
+
+        let task_handle = Arc::clone(&handle);
+        let task_map = Arc::clone(&ride_map);
+        let admission = task_handle
+            .begin_ride_recording_for_verified_connection(task_map, token.clone(), 20)
+            .expect("verified connection enqueues admission without waiting for SQLite");
+        let task_admission = Arc::clone(&admission);
+        let poll = std::thread::spawn(move || task_admission.poll());
+        entered_receiver
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .expect("admission polling reaches the held terminal-result boundary");
+        assert_eq!(
+            ride_map
+                .pause(21)
+                .expect_err("lifecycle cannot overtake the pending admission"),
+            MobileRideMapCoreErrorDto::AdmissionPending
+        );
+
+        let disconnect_handle = Arc::clone(&handle);
+        let (disconnected_sender, disconnected_receiver) = std::sync::mpsc::sync_channel(1);
+        let disconnect = std::thread::spawn(move || {
+            let revision = disconnect_handle.disconnect_connection_attempt().revision;
+            let _ = disconnected_sender.send(revision);
+        });
+        let disconnected_revision =
+            disconnected_receiver.recv_timeout(std::time::Duration::from_secs(1));
+        release_sender.send(()).unwrap();
+        let completed = MobileRideMapAdmissionPollDto::Completed { snapshot: None };
+        assert_eq!(poll.join().unwrap().unwrap(), completed);
+        assert_eq!(admission.poll().unwrap(), completed);
+        assert!(disconnect.join().is_ok());
+        assert!(
+            disconnected_revision.expect("disconnect must not wait for SQLite completion")
+                > initial.revision
+        );
+        assert!(!handle.verified_connection_attempt_is_current(token));
+        assert_eq!(
+            ride_map
+                .inner
+                .lock()
+                .unwrap()
+                .last_connected_vehicle
+                .as_ref()
+                .map(cutout_ride_maps::VehicleIdentity::as_str),
+            Some("A")
         );
     }
 

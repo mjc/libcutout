@@ -24,6 +24,9 @@ devenv tasks run validate:aero-live-connection
 devenv shell -- cutout-melk-live
 ```
 
+Swift package test output is always saved under `target/test-logs/` when run
+through `devenv tasks run test:swift-package`.
+
 Format Rust and Nix with `devenv shell -- treefmt`. The treefmt hook uses the
 same configuration. `treefmt --ci` formats files and fails if it changes them;
 it is not a read-only check.

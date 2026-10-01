@@ -1,55 +1,59 @@
 import SwiftUI
+
 #if os(iOS)
-import UIKit
+    import UIKit
 #elseif os(macOS)
-import AppKit
+    import AppKit
 #endif
 
 private enum PevSystemColors {
     #if os(iOS)
-    static let pageBackground = Color(uiColor: .systemBackground)
-    static let disabledFill = pageBackground
-    static let brand = Color(uiColor: UIColor { traits in
-        traits.userInterfaceStyle == .dark
-            ? UIColor(red: 1.0, green: 0.84, blue: 0.15, alpha: 1)
-            : UIColor(red: 0.48, green: 0.29, blue: 0.0, alpha: 1)
-    })
-    static let yellow = Color(red: 1, green: 0.8, blue: 0)
-    static let cyan = Color(uiColor: .systemCyan)
-    static let orange = Color(uiColor: .systemOrange)
-    static let red = Color(uiColor: .systemRed)
-    static let teal = Color(uiColor: .systemTeal)
-    static let brown = Color(uiColor: .systemBrown)
-    static let cardFill = Color(uiColor: .secondarySystemBackground)
-    static let primaryText = Color(uiColor: .label)
-    static let mutedText = Color(uiColor: .label)
-    static let green = Color(uiColor: .systemGreen)
-    static let purple = Color(uiColor: .systemPurple)
-    static let nominal = Color(uiColor: UIColor { traits in
-        traits.userInterfaceStyle == .dark
-            ? .systemGreen
-            : UIColor(red: 0.0, green: 0.38, blue: 0.16, alpha: 1)
-    })
+        static let pageBackground = Color(uiColor: .systemBackground)
+        static let disabledFill = pageBackground
+        static let brand = Color(
+            uiColor: UIColor { traits in
+                traits.userInterfaceStyle == .dark
+                    ? UIColor(red: 1.0, green: 0.84, blue: 0.15, alpha: 1)
+                    : UIColor(red: 0.48, green: 0.29, blue: 0.0, alpha: 1)
+            })
+        static let yellow = Color(red: 1, green: 0.8, blue: 0)
+        static let cyan = Color(uiColor: .systemCyan)
+        static let orange = Color(uiColor: .systemOrange)
+        static let red = Color(uiColor: .systemRed)
+        static let teal = Color(uiColor: .systemTeal)
+        static let brown = Color(uiColor: .systemBrown)
+        static let cardFill = Color(uiColor: .secondarySystemBackground)
+        static let primaryText = Color(uiColor: .label)
+        static let mutedText = Color(uiColor: .label)
+        static let green = Color(uiColor: .systemGreen)
+        static let purple = Color(uiColor: .systemPurple)
+        static let nominal = Color(
+            uiColor: UIColor { traits in
+                traits.userInterfaceStyle == .dark
+                    ? .systemGreen
+                    : UIColor(red: 0.0, green: 0.38, blue: 0.16, alpha: 1)
+            })
     #elseif os(macOS)
-    static let pageBackground = Color(nsColor: .windowBackgroundColor)
-    static let disabledFill = pageBackground
-    static let brand = Color(nsColor: NSColor(name: nil) { appearance in
-        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            ? NSColor(red: 1.0, green: 0.84, blue: 0.15, alpha: 1)
-            : NSColor(red: 0.48, green: 0.29, blue: 0.0, alpha: 1)
-    })
-    static let yellow = Color(red: 1, green: 0.8, blue: 0)
-    static let cyan = Color(nsColor: .systemCyan)
-    static let orange = Color(nsColor: .systemOrange)
-    static let red = Color(nsColor: .systemRed)
-    static let teal = Color(nsColor: .systemTeal)
-    static let brown = Color(nsColor: .systemBrown)
-    static let cardFill = Color(nsColor: .underPageBackgroundColor)
-    static let primaryText = Color(nsColor: .labelColor)
-    static let mutedText = Color(nsColor: .labelColor)
-    static let green = Color(nsColor: .systemGreen)
-    static let purple = Color(nsColor: .systemPurple)
-    static let nominal = Color(nsColor: .systemGreen)
+        static let pageBackground = Color(nsColor: .windowBackgroundColor)
+        static let disabledFill = pageBackground
+        static let brand = Color(
+            nsColor: NSColor(name: nil) { appearance in
+                appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                    ? NSColor(red: 1.0, green: 0.84, blue: 0.15, alpha: 1)
+                    : NSColor(red: 0.48, green: 0.29, blue: 0.0, alpha: 1)
+            })
+        static let yellow = Color(red: 1, green: 0.8, blue: 0)
+        static let cyan = Color(nsColor: .systemCyan)
+        static let orange = Color(nsColor: .systemOrange)
+        static let red = Color(nsColor: .systemRed)
+        static let teal = Color(nsColor: .systemTeal)
+        static let brown = Color(nsColor: .systemBrown)
+        static let cardFill = Color(nsColor: .underPageBackgroundColor)
+        static let primaryText = Color(nsColor: .labelColor)
+        static let mutedText = Color(nsColor: .labelColor)
+        static let green = Color(nsColor: .systemGreen)
+        static let purple = Color(nsColor: .systemPurple)
+        static let nominal = Color(nsColor: .systemGreen)
     #endif
 }
 

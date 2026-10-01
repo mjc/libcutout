@@ -14,29 +14,29 @@ struct AppMusicCompactPlayerModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content.musicCompactPlayer(
-            nowPlaying: model.musicNowPlaying,
-            selectedProvider: model.selectedMusicProvider,
-            isHidden: model.isMusicPlayerHidden,
+            nowPlaying: model.music.nowPlaying,
+            selectedProvider: model.music.selectedProvider,
+            isHidden: model.music.isPlayerHidden,
             onCommand: { command in
                 Task { @MainActor in
-                    _ = await model.handleMusicCommand(command)
+                    _ = await model.music.handleCommand(command)
                 }
             },
             onOpenDetails: { presentedSheet = .details },
             onOpenSettings: { presentedSheet = .settings },
-            onDismiss: model.dismissMusicPlayer,
-            onRestore: model.restoreMusicPlayer
+            onDismiss: model.music.dismissPlayer,
+            onRestore: model.music.restorePlayer
         )
         .sheet(item: $presentedSheet) { sheet in
             switch sheet {
             case .details:
-                if let nowPlaying = model.musicSettingsNowPlaying {
+                if let nowPlaying = model.music.settingsNowPlaying {
                     MusicExpandedPlayer(
                         nowPlaying: nowPlaying,
-                        timeline: model.musicTimelineEvents,
+                        timeline: model.music.timelineEvents,
                         onCommand: { command in
                             Task { @MainActor in
-                                _ = await model.handleMusicCommand(command)
+                                _ = await model.music.handleCommand(command)
                             }
                         }
                     )
@@ -93,21 +93,18 @@ func lightingColorSelection(
 }
 
 struct DevicePickerRouteView: View {
-    let model: CutoutAppModel
+    let device: DevicePresentationModel
     let pair: (DevicePickerRow) -> Void
     let navigate: (CutoutAppRoute) -> Void
-    @State private var isSetupPresented = false
+    let openSetup: () -> Void
 
     var body: some View {
         DevicePickerView(
-            scanState: model.devicePickerScanState,
-            connectionPhase: model.phase,
+            scanState: device.scanState,
+            connectionPhase: device.phase,
             pair: pair,
-            openSetup: { isSetupPresented = true }
+            openSetup: openSetup
         )
-        .sheet(isPresented: $isSetupPresented) {
-            AppSetupView(model: model)
-        }
         .safeAreaInset(edge: .bottom, spacing: 12) {
             HStack {
                 Button {
@@ -144,12 +141,12 @@ struct EucRideRouteView: View {
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { _ in
             EucRideScreenView(
-                rideState: model.eucRidePresentationState,
-                rideTitle: model.selectedRideTitle,
+                rideState: model.device.eucRidePresentationState,
+                rideTitle: model.device.selectedRideTitle,
                 now: model.currentMonotonicTime,
-                captureStatusText: model.captureStatusText,
-                connectionStatusText: model.connectionStatusText,
-                phoneLocationReadback: model.phoneLocationReadback
+                captureStatusText: model.capture.status?.displayText,
+                connectionStatusText: model.device.connectionStatusText,
+                phoneLocationReadback: model.device.phoneLocationReadback
             )
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("dashboard.screen.eucRide")
@@ -159,12 +156,12 @@ struct EucRideRouteView: View {
 }
 
 struct CaptureRouteView: View {
-    let model: CutoutAppModel
-    let finishCapture: () -> Void
+    let capture: CaptureFeatureModel
 
     var body: some View {
-        if model.capture.activeGeneration == nil, model.capture.status != nil,
-           let artifact = model.capture.completed.first(where: { $0.id == model.capture.latestGeneration }) {
+        if capture.activeGeneration == nil, capture.status != nil,
+            let artifact = capture.completed.first(where: { $0.id == capture.latestGeneration })
+        {
             CaptureArtifactDetailView(artifact: artifact)
         } else {
             recording
@@ -173,26 +170,30 @@ struct CaptureRouteView: View {
 
     private var recording: some View {
         CaptureRecordingScreen(
-            deviceKind: model.capture.device?.title ?? model.capture.deviceKind,
-            advertisedName: model.capture.device?.advertisedName,
-            captureStatusText: model.capture.recordingSummary,
-            captureStatusTone: model.capture.status?.statusStripTone ?? .nominal,
-            captureProgress: model.capture.progress,
-            activeLabels: model.capture.activeLabels,
-            annotationErrorText: model.capture.annotationErrorText,
-            dismissAnnotationError: model.capture.dismissAnnotationError,
-            isFinishing: model.capture.isFinishing,
-            canFinish: model.isRecordOnlyCapture,
-            canAnnotate: model.capture.canAnnotate,
-            finishCapture: finishCapture,
-            startCaptureLabel: model.startCaptureLabel,
-            stopCaptureLabel: model.stopCaptureLabel
+            deviceKind: capture.device?.title ?? capture.deviceKind,
+            advertisedName: capture.device?.advertisedName,
+            captureStatusText: capture.recordingSummary,
+            captureStatusTone: capture.status?.statusStripTone ?? .nominal,
+            captureProgress: capture.progress,
+            activeLabels: capture.activeLabels,
+            annotationErrorText: capture.annotationErrorText,
+            dismissAnnotationError: capture.dismissAnnotationError,
+            isFinishing: capture.isFinishing,
+            canFinish: capture.isManualCapture,
+            canAnnotate: capture.canAnnotate,
+            finishCapture: finish,
+            startCaptureLabel: capture.startLabel,
+            stopCaptureLabel: capture.stopLabel
         )
+    }
+
+    private func finish() {
+        Task { @MainActor in _ = await capture.finish() }
     }
 }
 
 struct EucPackRouteView: View {
-    let model: CutoutAppModel
+    let device: DevicePresentationModel
     let packScreen: EucPackScreen
     let selectedGroupIndex: Int?
     let navigate: (CutoutAppRoute) -> Void
@@ -202,11 +203,11 @@ struct EucPackRouteView: View {
 
     var body: some View {
         if let screen = bmsScreen {
-            let rideState = screen.bmsContentOrUnavailable.kind == .noData ? model.rideState : nil
+            let rideState = screen.bmsContentOrUnavailable.kind == .noData ? device.rideState : nil
             BmsScreenView(
                 screen: screen,
                 rideState: rideState,
-                bmsSnapshot: model.bmsSnapshot,
+                bmsSnapshot: device.bmsSnapshot,
                 selectedGroupIndex: selectedGroupIndex,
                 showGroupDetail: { groupIndex in
                     navigate(.eucPack(.bmsCellDetail(groupIndex)))
@@ -217,14 +218,15 @@ struct EucPackRouteView: View {
             )
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("dashboard.screen.\(screen.id.rawValue)")
-            .onChange(of: model.bmsSnapshot?.groups.map(\.index), initial: true) { _, groupIndices in
+            .onChange(of: device.bmsSnapshot?.groups.map(\.index), initial: true) { _, groupIndices in
                 guard !packScreen.hasAvailableSelectedGroup(in: groupIndices) else { return }
                 navigate(.eucPack(.root))
             }
-            .onChange(of: model.bmsSnapshot?.availability, initial: true) { _, availability in
+            .onChange(of: device.bmsSnapshot?.availability, initial: true) { _, availability in
                 guard packScreen == .root else { return }
                 guard availability == .available, rootScreenID == nil,
-                      let snapshot = model.bmsSnapshot else {
+                    let snapshot = device.bmsSnapshot
+                else {
                     if availability == nil || availability == .unavailable || availability == .unsupported {
                         rootScreenID = nil
                     }
@@ -238,30 +240,34 @@ struct EucPackRouteView: View {
     private var bmsScreen: PevScreen? {
         if let screenID = packScreen.screenID {
             catalog.screen(id: screenID).map {
-                catalog.presentedScreen(for: $0, liveBmsSnapshot: model.bmsSnapshot)
+                catalog.presentedScreen(for: $0, liveBmsSnapshot: device.bmsSnapshot)
             }
         } else if let rootScreenID,
-                  let rootScreen = catalog.screen(id: rootScreenID) {
-            catalog.presentedScreen(for: rootScreen, liveBmsSnapshot: model.bmsSnapshot)
+            let rootScreen = catalog.screen(id: rootScreenID)
+        {
+            catalog.presentedScreen(for: rootScreen, liveBmsSnapshot: device.bmsSnapshot)
         } else {
-            catalog.presentedBmsScreen(liveBmsSnapshot: model.bmsSnapshot)
+            catalog.presentedBmsScreen(liveBmsSnapshot: device.bmsSnapshot)
         }
     }
 }
 
 struct EucTuneRouteView: View {
-    let model: CutoutAppModel
+    let device: DevicePresentationModel
+    let submitSetting: (ConnectionAttemptToken, DeviceSettingID, DeviceSettingValue) throws -> Void
+    let submitAction: (ConnectionAttemptToken, DeviceActionID) throws -> Void
 
     var body: some View {
         Group {
-            if let snapshot = model.settings {
+            if let snapshot = device.settings {
                 DeviceControlsForm(
                     snapshot: snapshot,
-                    submitSetting: model.submitDeviceSetting,
-                    submitAction: model.submitDeviceAction
+                    submitSetting: submitSetting,
+                    submitAction: submitAction
                 )
             } else {
-                ContentUnavailableView(localizedAppText("settings.readback.unavailable"), systemImage: "slider.horizontal.3")
+                ContentUnavailableView(
+                    localizedAppText("settings.readback.unavailable"), systemImage: "slider.horizontal.3")
             }
         }
         .accessibilityIdentifier("settings.screen.eucTune")
@@ -274,11 +280,11 @@ struct VescRideRouteView: View {
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { _ in
             VescRideScreenView(
-                liveSnapshot: model.vescRideSnapshot,
-                phase: model.phase,
+                liveSnapshot: model.device.vescRideSnapshot,
+                phase: model.device.phase,
                 now: model.currentMonotonicTime,
-                captureStatusText: model.captureStatusText,
-                connectionStatusText: model.connectionStatusText
+                captureStatusText: model.capture.status?.displayText,
+                connectionStatusText: model.device.connectionStatusText
             )
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("dashboard.screen.vescRide")
@@ -288,23 +294,24 @@ struct VescRideRouteView: View {
 }
 
 struct VescDebugRouteView: View {
-    let model: CutoutAppModel
+    let device: DevicePresentationModel
+    let capture: CaptureFeatureModel
 
     var body: some View {
         VescDebugScreenView(
-            snapshot: model.vescRideSnapshot,
-            phase: model.phase,
-            notificationCount: model.displayState.notificationCount,
-            captureStatusText: model.captureStatusText,
-            connectionStatusText: model.connectionStatusText
+            snapshot: device.vescRideSnapshot,
+            phase: device.phase,
+            notificationCount: device.displayState.notificationCount,
+            captureStatusText: capture.status?.displayText,
+            connectionStatusText: device.connectionStatusText
         )
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("dashboard.screen.vescDebug")
     }
 }
 
-private extension MelkLightingPeripheralState {
-    var persistedConnectionState: MobileRgbLightingConnectionStateDto? {
+extension MelkLightingPeripheralState {
+    fileprivate var persistedConnectionState: MobileRgbLightingConnectionStateDto? {
         switch self {
         case .idle:
             nil
@@ -317,7 +324,7 @@ private extension MelkLightingPeripheralState {
         }
     }
 
-    var invalidatesPendingCommand: Bool {
+    fileprivate var invalidatesPendingCommand: Bool {
         switch self {
         case .retrying, .disconnected, .failed:
             true
@@ -619,7 +626,8 @@ final class LightingRouteModel {
     func setSchedule(_ schedule: MobileMelkScheduleDto, now: Date = Date(), calendar: Calendar = .current) -> Bool {
         let parts = calendar.dateComponents([.hour, .minute, .second, .weekday], from: now)
         guard let hour = parts.hour, let minute = parts.minute, let second = parts.second,
-              let weekday = parts.weekday else { return false }
+            let weekday = parts.weekday
+        else { return false }
         let clock = MobileMelkClockDto(
             hour: UInt8(hour), minute: UInt8(minute), second: UInt8(second),
             weekday: UInt8((weekday + 5) % 7 + 1)
@@ -842,12 +850,14 @@ final class LightingRouteModel {
 
     private func restoreIfEligible() {
         guard restoreEnabled, !restoreAttempted,
-              let peripheralIdentifier,
-              persistence.platformIdentifier == peripheralIdentifier else {
+            let peripheralIdentifier,
+            persistence.platformIdentifier == peripheralIdentifier
+        else {
             return
         }
         guard let candidate = persistence.restoreCandidate(),
-              candidate.platformIdentifier == peripheralIdentifier else {
+            candidate.platformIdentifier == peripheralIdentifier
+        else {
             if !persistence.isCompatibleWithCurrentProfile {
                 restoreAttempted = true
                 controlError = localizedAppText("lighting.error.restore_incompatible")
@@ -879,7 +889,8 @@ extension MelkLightingPeripheralState {
         case .scanning: localizedAppText("lighting.state.scanning")
         case .connecting: localizedAppText("lighting.state.connecting")
         case let .retrying(attempt, delayMilliseconds):
-            localizedAppText("lighting.state.retrying", Int64(attempt), Int64(max(1, Int((delayMilliseconds + 999) / 1000))))
+            localizedAppText(
+                "lighting.state.retrying", Int64(attempt), Int64(max(1, Int((delayMilliseconds + 999) / 1000))))
         case .discovering: localizedAppText("lighting.state.discovering")
         case .ready: localizedAppText("lighting.state.ready")
         case .disconnected: localizedAppText("lighting.state.disconnected")
@@ -897,8 +908,8 @@ extension MelkLightingPeripheralState {
     }
 }
 
-private extension MelkLightingCommandStatus {
-    var displayText: String {
+extension MelkLightingCommandStatus {
+    fileprivate var displayText: String {
         switch self {
         case .idle: localizedAppText("lighting.command.idle")
         case .requested: localizedAppText("lighting.command.requested")
@@ -907,7 +918,7 @@ private extension MelkLightingCommandStatus {
         }
     }
 
-    var symbolName: String {
+    fileprivate var symbolName: String {
         switch self {
         case .idle: "circle"
         case .requested: "clock"

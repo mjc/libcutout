@@ -1,12 +1,247 @@
-import XCTest
-import CutoutMobileFFI
 import CoreLocation
-#if canImport(CoreBluetooth)
-import CoreBluetooth
-#endif
+import CutoutMobileFFI
+import Synchronization
+import XCTest
+
 @testable import CutoutMobile
 
+#if canImport(CoreBluetooth)
+    import CoreBluetooth
+#endif
+
+private final class CaptureRecorderSpy: CutoutSessionCaptureRecording {
+    var currentGeneration: CaptureGeneration? = .legacy
+    var activeFileURL: URL?
+    var hasWriter = true
+    var currentMusicObservation: MobilePevcapMusicEventDto?
+    var recordLinkUpResult: MobileCaptureWriteOutcomeDto = .accepted
+    #if DEBUG
+        var finishWriterGate: (() -> Void)?
+    #endif
+    private(set) var finishCount = 0
+    private(set) var publishFailureCount = 0
+    var onPublishFailure: (() -> Void)?
+
+    func start(
+        generation: CaptureGeneration,
+        platformIdentifier _: String,
+        advertisedServices _: [BluetoothUuid],
+        directory _: URL,
+        reason _: String,
+        annotations _: [String],
+        evidence _: String,
+        origin _: MobileCaptureOriginDto,
+        advertisedName _: String?
+    ) -> Bool {
+        currentGeneration = generation
+        hasWriter = true
+        return true
+    }
+
+    func startSynthetic(generation: CaptureGeneration, fileURL: URL, progress _: CaptureProgress) {
+        currentGeneration = generation
+        activeFileURL = fileURL
+    }
+
+    func finishSynthetic() { activeFileURL = nil }
+    func publishStarted() {}
+    func resetMusicContext() { currentMusicObservation = nil }
+    func addAnnotation(_: String) -> MobileCaptureWriteOutcomeDto { .accepted }
+    func changeLabel(_: MobileCaptureLabelActionDto) throws -> [MobileCaptureLabelDto] { [] }
+    func flushWriter() -> Bool { true }
+
+    func publishProgress() -> CaptureProgress {
+        CaptureProgress(
+            elapsedMilliseconds: 0,
+            notificationCount: 0,
+            fileSizeBytes: 0,
+            queuedMessageCount: 0,
+            writerError: nil
+        )
+    }
+
+    func publishFailure() {
+        publishFailureCount += 1
+        onPublishFailure?()
+    }
+    func writerStatus() -> MobileCaptureWriterStatusDto? { nil }
+
+    func recordNotification(
+        characteristic _: BluetoothUuid,
+        service _: BluetoothUuid,
+        bytes _: Data,
+        telemetry _: RawTelemetryReadback?,
+        semanticTelemetry _: MobileTelemetrySnapshotDto?
+    ) -> MobileCaptureWriteOutcomeDto { .accepted }
+
+    func recordLocationUpdate(_: PhoneLocationUpdate) -> CaptureLocationWriteResult {
+        CaptureLocationWriteResult(generation: currentGeneration, outcome: .accepted)
+    }
+
+    func recordLinkUp(maxWriteLength _: UInt16?) -> MobileCaptureWriteOutcomeDto { recordLinkUpResult }
+    func recordLinkDown() -> MobileCaptureWriteOutcomeDto { .accepted }
+    func recordMusicObservation(_: MobilePevcapMusicEventDto?) -> MobileCaptureWriteOutcomeDto { .accepted }
+    func updateMusicPolicy(_: MobileMusicHistoryPolicyDto) -> MobileCaptureWriteOutcomeDto { .accepted }
+
+    func setResolvedIdentity(
+        _: MobileResolvedIdentityDto,
+        evidence _: String?,
+        detail _: String?
+    ) -> MobileCaptureWriteOutcomeDto { .accepted }
+
+    func addGattFingerprint(_: MobileGattFingerprintDto) -> MobileCaptureWriteOutcomeDto { .accepted }
+
+    func makeWriteReceiptRecorder(
+        channel _: BluetoothUuid,
+        bytes _: Data,
+        writeID _: UInt64
+    ) -> (CoreBluetoothWriteDisposition) -> MobileCaptureWriteOutcomeDto { { _ in .accepted } }
+
+    func finish(publishesResult _: Bool, priorWriteSucceeded _: Bool) {
+        finishCount += 1
+        hasWriter = false
+        currentGeneration = nil
+    }
+
+    func elapsedMilliseconds() -> UInt64 { 0 }
+    func elapsedMilliseconds(since _: MonotonicMilliseconds) -> UInt64 { 0 }
+}
+
 final class CutoutSessionCoreTests: XCTestCase {
+    func testLocationEffectsRouteUnchangedUpdateInOrderAndIsolateCaptureFailures() {
+        let sample = MobilePhoneLocationSampleDto(
+            wallClockUnixMs: 1_700_000_000_025,
+            sourceTimestampUnixSeconds: nil,
+            latitudeDegrees: 39.739_235_8,
+            longitudeDegrees: -104.990_251,
+            altitudeMeters: 1_609.344,
+            horizontalAccuracyMeters: 0.8,
+            verticalAccuracyMeters: 1.2,
+            speedMetersPerSecond: 4.470_400_25,
+            speedAccuracyMetersPerSecond: 0.25,
+            courseDegrees: 271.5,
+            courseAccuracyDegrees: 3.0
+        )
+        let update = PhoneLocationUpdate(
+            receiptMonotonic: MonotonicMilliseconds(125),
+            receiptWallClock: Date(timeIntervalSince1970: 1_700_000_000.125),
+            samples: [sample]
+        )
+        let expectedOutcomes: [MobileCaptureWriteOutcomeDto] = [.accepted, .rejected, .failed]
+
+        for (index, outcome) in expectedOutcomes.enumerated() {
+            var events: [String] = []
+            var captureUpdate: PhoneLocationUpdate?
+            var rideMapUpdate: PhoneLocationUpdate?
+            let result = CaptureLocationWriteResult(
+                generation: CaptureGeneration(rawValue: UInt64(index + 1)),
+                outcome: outcome
+            )
+            let effects = CutoutSessionLocationEffects(
+                recordCaptureUpdate: { received in
+                    events.append("capture")
+                    captureUpdate = received
+                    return result
+                },
+                ingestRideMapUpdate: { received in
+                    events.append("ride-map")
+                    rideMapUpdate = received
+                },
+                handleCaptureResult: { received in
+                    events.append("result")
+                    XCTAssertEqual(received.outcome, outcome)
+                    XCTAssertEqual(received.generation, result.generation)
+                }
+            )
+            let core = CutoutSessionCore(
+                clock: MonotonicClock(),
+                locationEffects: effects
+            )
+
+            core.handlePhoneLocationUpdate(update)
+
+            XCTAssertEqual(events, ["capture", "result", "ride-map"])
+            for received in [captureUpdate, rideMapUpdate].compactMap({ $0 }) {
+                XCTAssertEqual(received.receiptMonotonic, update.receiptMonotonic)
+                XCTAssertEqual(received.receiptWallClock, update.receiptWallClock)
+                XCTAssertEqual(received.samples.count, update.samples.count)
+                XCTAssertEqual(received.samples.first?.latitudeDegrees, sample.latitudeDegrees)
+                XCTAssertEqual(received.samples.first?.longitudeDegrees, sample.longitudeDegrees)
+            }
+            XCTAssertNotNil(captureUpdate)
+            XCTAssertNotNil(rideMapUpdate)
+        }
+    }
+
+    func testCaptureLocationFailureDoesNotWaitForBleQueue() {
+        let bleQueue = DispatchQueue(label: "io.cutout.test-blocked-ble")
+        let core = CutoutSessionCore(clock: MonotonicClock(), bleQueue: bleQueue)
+        let bleQueueEntered = DispatchSemaphore(value: 0)
+        let releaseBleQueue = DispatchSemaphore(value: 0)
+        let handlerReturned = DispatchSemaphore(value: 0)
+        let bleQueueDrained = DispatchSemaphore(value: 0)
+
+        bleQueue.async {
+            bleQueueEntered.signal()
+            releaseBleQueue.wait()
+        }
+        XCTAssertEqual(bleQueueEntered.wait(timeout: .now() + 5), .success)
+
+        Thread.detachNewThread {
+            core.handleCaptureLocationWriteResult(
+                CaptureLocationWriteResult(generation: .legacy, outcome: .failed)
+            )
+            handlerReturned.signal()
+        }
+        XCTAssertEqual(
+            handlerReturned.wait(timeout: .now() + 5),
+            .success,
+            "location callback handling must not wait for the BLE queue"
+        )
+
+        releaseBleQueue.signal()
+        bleQueue.async { bleQueueDrained.signal() }
+        XCTAssertEqual(bleQueueDrained.wait(timeout: .now() + 5), .success)
+    }
+
+    #if canImport(CoreBluetooth)
+        func testStaleCharacteristicErrorIsIgnoredBeforeCurrentCallbackFailure() {
+            let subscribed = NSObject()
+            let stale = NSObject()
+            let staleError = NSError(domain: "stale-characteristic", code: 1)
+            let currentError = NSError(domain: "current-characteristic", code: 2)
+
+            let staleResult = coreBluetoothCallbackDisposition(
+                subscribed: subscribed,
+                callback: stale,
+                error: staleError
+            )
+            guard case .ignored = staleResult else {
+                return XCTFail("a stale characteristic callback must be ignored before its error")
+            }
+
+            let currentErrorResult = coreBluetoothCallbackDisposition(
+                subscribed: subscribed,
+                callback: subscribed,
+                error: currentError
+            )
+            guard case .failed(let receivedError) = currentErrorResult else {
+                return XCTFail("an error from the subscribed characteristic must fail the callback")
+            }
+            XCTAssertEqual((receivedError as NSError).code, currentError.code)
+
+            let acceptedResult = coreBluetoothCallbackDisposition(
+                subscribed: subscribed,
+                callback: subscribed,
+                error: nil
+            )
+            guard case .accepted = acceptedResult else {
+                XCTFail("an error-free callback from the subscribed characteristic must be accepted")
+                return
+            }
+        }
+    #endif
+
     func testDefaultSessionProvidesCanonicalRideHistory() throws {
         let core = CutoutSessionCore()
         let state = try XCTUnwrap(core.rideMapStateHandle)
@@ -22,27 +257,180 @@ final class CutoutSessionCoreTests: XCTestCase {
         }
     }
 
-    #if canImport(CoreBluetooth)
-    func testCoreBluetoothRestorationPolicyOptsInAndSelectsOnlySavedDevice() {
-        XCTAssertEqual(
-            CoreBluetoothRestorationPolicy.centralManagerOptions[CBCentralManagerOptionRestoreIdentifierKey]
-                as? String,
-            "io.cutout.central"
+    func testFinishedCaptureIsPublishedThroughTheExistingRustDatabase() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let database = try XCTUnwrap(MobileRideMapState.debugDatabase)
+        let platformIdentifier = "capture-test-\(UUID().uuidString)"
+
+        let completed = expectation(description: "finished capture is published")
+        let completion = Mutex<CaptureWriterCompletion?>(nil)
+        let recorder = CutoutSessionCaptureRecorder(
+            clock: MonotonicClock(now: { MonotonicMilliseconds(100) }),
+            wallClock: { Date(timeIntervalSince1970: 1_700_000_000) },
+            database: database,
+            publish: { _ in },
+            onWriterCompletion: { value in
+                completion.withLock { $0 = value }
+                completed.fulfill()
+            }
         )
-        XCTAssertEqual(
-            CoreBluetoothRestorationPolicy.selectedPlatformIdentifier(
-                savedPlatformIdentifier: "wheel-b",
-                restoredPlatformIdentifiers: ["wheel-a", "wheel-b"]
-            ),
-            "wheel-b"
-        )
-        XCTAssertNil(
-            CoreBluetoothRestorationPolicy.selectedPlatformIdentifier(
-                savedPlatformIdentifier: "wheel-c",
-                restoredPlatformIdentifiers: ["wheel-a", "wheel-b"]
+
+        XCTAssertTrue(
+            recorder.start(
+                generation: CaptureGeneration(rawValue: 1),
+                platformIdentifier: platformIdentifier,
+                advertisedServices: [],
+                directory: directory,
+                reason: "manual_test",
+                annotations: [],
+                evidence: "simulator_fixture",
+                origin: .manual,
+                advertisedName: "VESC BLE UART"
             )
         )
+        let location = MobilePhoneLocationSampleDto(
+            wallClockUnixMs: 1_700_000_000_025,
+            sourceTimestampUnixSeconds: nil,
+            latitudeDegrees: 39.739_235_8,
+            longitudeDegrees: -104.990_251,
+            altitudeMeters: 1_609.344,
+            horizontalAccuracyMeters: 0.8,
+            verticalAccuracyMeters: 1.2,
+            speedMetersPerSecond: 4.470_400_25,
+            speedAccuracyMetersPerSecond: 0.25,
+            courseDegrees: 271.5,
+            courseAccuracyDegrees: 3.0
+        )
+        let locationWrite = recorder.recordLocationUpdate(
+            PhoneLocationUpdate(
+                receiptMonotonic: MonotonicMilliseconds(125),
+                receiptWallClock: Date(timeIntervalSince1970: 1_700_000_000.125),
+                samples: [location]
+            )
+        )
+        XCTAssertEqual(locationWrite.generation, CaptureGeneration(rawValue: 1))
+        XCTAssertEqual(locationWrite.outcome, .accepted)
+        recorder.finish(publishesResult: true, priorWriteSucceeded: true)
+
+        await fulfillment(of: [completed], timeout: 5)
+        let result = try XCTUnwrap(completion.withLock { $0 })
+        XCTAssertTrue(result.succeeded)
+        XCTAssertTrue(result.databasePublicationSucceeded == true)
+        let captureText = try String(contentsOf: XCTUnwrap(result.fileURL), encoding: .utf8)
+        XCTAssertTrue(captureText.contains("\"location\":"))
+        XCTAssertFalse(captureText.contains("\"phone_location\":"))
+
+        let page = try database.listPevcapCaptures(cursor: nil, limit: 500)
+        let recording = try XCTUnwrap(
+            page.captures.compactMap(\.recording).first { $0.platformIdentifier == platformIdentifier }
+        )
+        XCTAssertEqual(recording.origin, .manual)
+        XCTAssertEqual(recording.advertisedName, "VESC BLE UART")
+        XCTAssertEqual(recording.platformIdentifier, platformIdentifier)
     }
+
+    func testFinishWithoutPublishingDoesNotReadPublicationClockOrNotifyCompletion() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let database = try XCTUnwrap(MobileRideMapState.debugDatabase)
+        let completion = expectation(description: "non-publishing finish does not notify")
+        completion.isInverted = true
+        let wallClockReadCount = Mutex(0)
+        let recorder = CutoutSessionCaptureRecorder(
+            clock: MonotonicClock(now: { MonotonicMilliseconds(100) }),
+            wallClock: {
+                wallClockReadCount.withLock { $0 += 1 }
+                return Date(timeIntervalSince1970: 1_700_000_000)
+            },
+            database: database,
+            publish: { _ in },
+            onWriterCompletion: { _ in completion.fulfill() }
+        )
+
+        XCTAssertTrue(
+            recorder.start(
+                generation: CaptureGeneration(rawValue: 1),
+                platformIdentifier: "capture-test-\(UUID().uuidString)",
+                advertisedServices: [],
+                directory: directory,
+                reason: "manual_test",
+                annotations: [],
+                evidence: "simulator_fixture",
+                origin: .manual,
+                advertisedName: nil
+            )
+        )
+        let readsBeforeFinish = wallClockReadCount.withLock { $0 }
+        recorder.finish(publishesResult: false, priorWriteSucceeded: true)
+
+        await fulfillment(of: [completion], timeout: 0.1)
+        XCTAssertEqual(wallClockReadCount.withLock { $0 }, readsBeforeFinish)
+    }
+
+    func testDatabasePublicationFailureRetainsTheFinishedCaptureFile() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let database = try XCTUnwrap(MobileRideMapState.debugDatabase)
+        let completed = expectation(description: "failed database publication still completes file capture")
+        let completion = Mutex<CaptureWriterCompletion?>(nil)
+        let recorder = CutoutSessionCaptureRecorder(
+            clock: MonotonicClock(now: { MonotonicMilliseconds(100) }),
+            wallClock: { Date(timeIntervalSince1970: 1_700_000_000) },
+            database: database,
+            publish: { _ in },
+            onWriterCompletion: { value in
+                completion.withLock { $0 = value }
+                completed.fulfill()
+            }
+        )
+
+        XCTAssertTrue(
+            recorder.start(
+                generation: CaptureGeneration(rawValue: 1),
+                platformIdentifier: "capture-test-\(UUID().uuidString)",
+                advertisedServices: [],
+                directory: directory,
+                reason: "manual_test",
+                annotations: [],
+                evidence: "simulator_fixture",
+                origin: .manual,
+                advertisedName: String(repeating: "x", count: 513)
+            )
+        )
+        recorder.finish(publishesResult: true, priorWriteSucceeded: true)
+
+        await fulfillment(of: [completed], timeout: 5)
+        let result = try XCTUnwrap(completion.withLock { $0 })
+        XCTAssertTrue(result.succeeded)
+        XCTAssertFalse(result.databasePublicationSucceeded ?? true)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: try XCTUnwrap(result.fileURL).path))
+    }
+
+    #if canImport(CoreBluetooth)
+        func testCoreBluetoothRestorationPolicyOptsInAndSelectsOnlySavedDevice() {
+            XCTAssertEqual(
+                CoreBluetoothRestorationPolicy.centralManagerOptions[CBCentralManagerOptionRestoreIdentifierKey]
+                    as? String,
+                "io.cutout.central"
+            )
+            XCTAssertEqual(
+                CoreBluetoothRestorationPolicy.selectedPlatformIdentifier(
+                    savedPlatformIdentifier: "wheel-b",
+                    restoredPlatformIdentifiers: ["wheel-a", "wheel-b"]
+                ),
+                "wheel-b"
+            )
+            XCTAssertNil(
+                CoreBluetoothRestorationPolicy.selectedPlatformIdentifier(
+                    savedPlatformIdentifier: "wheel-c",
+                    restoredPlatformIdentifiers: ["wheel-a", "wheel-b"]
+                )
+            )
+        }
     #endif
 
     func testBoundedDiagnosticLogRetainsNewestRecordsAndCountsDroppedHistory() {
@@ -52,6 +440,135 @@ final class CutoutSessionCoreTests: XCTestCase {
 
         XCTAssertEqual(log.values, ["two", "three", "four"])
         XCTAssertEqual(log.droppedCount, 1)
+    }
+
+    func testLinkUpCaptureFailureDoesNotFailTheConnection() {
+        let capture = CaptureRecorderSpy()
+        capture.recordLinkUpResult = .failed
+        let core = CutoutSessionCore(
+            clock: MonotonicClock(now: { MonotonicMilliseconds(100) }),
+            testScript: CutoutSessionTestScript(
+                candidate: scriptedVescCandidate,
+                telemetry: TelemetrySnapshot(),
+                connectionDelayMilliseconds: 0
+            ),
+            captureRecorder: capture
+        )
+        XCTAssertTrue(core.recordOnly(platformIdentifier: scriptedVescCandidate.platformIdentifier))
+
+        core.applyLinkUpStep(CoreBluetoothSessionStep(operations: [], snapshot: nil))
+
+        XCTAssertEqual(core.phase, .subscribing)
+        XCTAssertEqual(capture.publishFailureCount, 1)
+        XCTAssertEqual(capture.finishCount, 1)
+    }
+
+    func testLinkUpCaptureFailureIsAppliedAfterDisplayReductionAndPhaseChange() {
+        var events = [String]()
+        let capture = CaptureRecorderSpy()
+        capture.recordLinkUpResult = .failed
+        let effects = CutoutSessionNotificationEffects(
+            applyActions: { _ in
+                events.append("actions")
+                return []
+            },
+            observeRideMapConnection: { _ in events.append("map") },
+            persistBmsSamples: { _ in events.append("bms") },
+            reduceDisplayState: { state, snapshot, receivedAt, _ in
+                events.append("display")
+                return state.reducingLinkUpSnapshot(snapshot, receivedAt: receivedAt)
+            }
+        )
+        let core = CutoutSessionCore(
+            clock: MonotonicClock(now: { MonotonicMilliseconds(100) }),
+            testScript: CutoutSessionTestScript(
+                candidate: scriptedVescCandidate,
+                telemetry: TelemetrySnapshot(),
+                connectionDelayMilliseconds: 0
+            ),
+            notificationEffects: effects,
+            captureRecorder: capture
+        )
+        XCTAssertTrue(core.recordOnly(platformIdentifier: scriptedVescCandidate.platformIdentifier))
+        var phaseWhenCaptureFailed: SessionConnectionPhase?
+        capture.onPublishFailure = {
+            events.append("capture-failure")
+            phaseWhenCaptureFailed = core.phase
+        }
+
+        core.applyLinkUpStep(
+            CoreBluetoothSessionStep(
+                operations: [],
+                snapshot: TelemetrySnapshot(at: MonotonicMilliseconds(100), speed: speedValue(1_234))
+            )
+        )
+
+        XCTAssertEqual(events, ["actions", "map", "bms", "display", "capture-failure"])
+        XCTAssertEqual(phaseWhenCaptureFailed, .subscribing)
+        XCTAssertEqual(core.displayState.speed.millimetersPerSecond, 1_234)
+        XCTAssertEqual(capture.finishCount, 1)
+    }
+
+    func testLinkUpSnapshotIsReducedWhenCaptureRecordingFails() {
+        let capture = CaptureRecorderSpy()
+        capture.recordLinkUpResult = .failed
+        let receivedAt = MonotonicMilliseconds(42)
+        let core = CutoutSessionCore(
+            clock: MonotonicClock(now: { receivedAt }),
+            testScript: CutoutSessionTestScript(
+                candidate: scriptedVescCandidate,
+                telemetry: TelemetrySnapshot(),
+                connectionDelayMilliseconds: 0
+            ),
+            captureRecorder: capture
+        )
+        XCTAssertTrue(core.recordOnly(platformIdentifier: scriptedVescCandidate.platformIdentifier))
+        let snapshot = TelemetrySnapshot(at: receivedAt, speed: speedValue(1_234))
+
+        core.applyLinkUpStep(CoreBluetoothSessionStep(operations: [], snapshot: snapshot))
+
+        XCTAssertEqual(core.displayState.speed.millimetersPerSecond, 1_234)
+        XCTAssertEqual(core.displayState.telemetry, snapshot)
+        XCTAssertEqual(core.displayState.notificationCount, 0)
+        XCTAssertEqual(core.displayState.lastUpdate, receivedAt)
+        XCTAssertTrue(core.hasObservedSpeedSnapshot)
+        XCTAssertEqual(core.phase, .subscribing)
+        XCTAssertEqual(capture.publishFailureCount, 1)
+        XCTAssertEqual(capture.finishCount, 1)
+    }
+
+    func testLinkUpWithoutSnapshotDoesNotRefreshStaleTelemetry() {
+        let previousSnapshot = TelemetrySnapshot(speed: speedValue(1_234))
+        let previous = RideDisplayState(
+            speed: SpeedReadout(snapshot: previousSnapshot),
+            telemetry: previousSnapshot,
+            notificationCount: 7,
+            lastUpdate: MonotonicMilliseconds(12)
+        )
+
+        let updated = previous.reducingLinkUpSnapshot(
+            nil,
+            receivedAt: MonotonicMilliseconds(42)
+        )
+
+        XCTAssertEqual(updated, previous)
+    }
+
+    func testLinkUpWithoutTelemetryTimestampDoesNotRefreshStaleTelemetry() {
+        let previousSnapshot = TelemetrySnapshot(speed: speedValue(8_000))
+        let previous = RideDisplayState(
+            speed: SpeedReadout(snapshot: previousSnapshot),
+            telemetry: previousSnapshot,
+            notificationCount: 3,
+            lastUpdate: MonotonicMilliseconds(20)
+        )
+
+        let updated = previous.reducingLinkUpSnapshot(
+            TelemetrySnapshot(),
+            receivedAt: MonotonicMilliseconds(42)
+        )
+
+        XCTAssertEqual(updated, previous)
     }
 
     @MainActor
@@ -75,12 +592,12 @@ final class CutoutSessionCoreTests: XCTestCase {
     }
 
     func testMonotonicClockUsesItsInjectedUptimeSource() {
-        var now = MonotonicMilliseconds(100)
-        let clock = MonotonicClock(now: { now })
+        let now = Mutex<MonotonicMilliseconds>(MonotonicMilliseconds(100))
+        let clock = MonotonicClock(now: { now.withLock { $0 } })
 
         XCTAssertEqual(clock.now(), MonotonicMilliseconds(100))
 
-        now = MonotonicMilliseconds(250)
+        now.withLock { $0 = MonotonicMilliseconds(250) }
         XCTAssertEqual(clock.now(), MonotonicMilliseconds(250))
     }
 
@@ -95,7 +612,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         )
     }
 
-
+    @MainActor
     func testPhoneLocationReadbackTracksAValidSampleWithoutAnActiveRide() {
         let core = CutoutSessionCore()
         let location = CLLocation(
@@ -116,6 +633,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(core.phoneLocationSnapshot.latestSample?.longitudeDegrees, -104.9903)
     }
 
+    @MainActor
     func testAuthorizationChangePublishesRideMapAvailabilityWithoutLocationDemand() {
         let core = CutoutSessionCore()
         var publications = 0
@@ -124,6 +642,29 @@ final class CutoutSessionCoreTests: XCTestCase {
         core.locationManagerDidChangeAuthorization(CLLocationManager())
 
         XCTAssertEqual(publications, 1)
+    }
+
+    @MainActor
+    func testAuthorizationRefreshPreservesRustStorageFailure() async {
+        let unavailable = expectation(description: "Rust storage failure is published")
+        let core = CutoutSessionCore(
+            rideMapState: MobileRideMapState(storageUnavailable: "map database unavailable")
+        )
+        var lastAvailability: MobileRideMapAvailability?
+        var observedStorageFailure = false
+        core.onRideMapAvailabilityChange = { availability in
+            lastAvailability = availability
+            if availability == .storageUnavailable && !observedStorageFailure {
+                observedStorageFailure = true
+                unavailable.fulfill()
+            }
+        }
+
+        core.start()
+        await fulfillment(of: [unavailable], timeout: 2)
+
+        core.locationManagerDidChangeAuthorization(CLLocationManager())
+        XCTAssertEqual(lastAvailability, .storageUnavailable)
     }
 
     private static func location(timestamp: Date, latitude: CLLocationDegrees) -> CLLocation {
@@ -140,11 +681,11 @@ final class CutoutSessionCoreTests: XCTestCase {
         )
     }
 
-
     func testPhoneLocationStateClearPreventsCrossCaptureContext() {
         let state = MobilePhoneLocationState()
         let sample = MobilePhoneLocationSampleDto(
             wallClockUnixMs: 1_700_000_000_000,
+            sourceTimestampUnixSeconds: nil,
             latitudeDegrees: 39.7392,
             longitudeDegrees: -104.9903,
             altitudeMeters: 1_600,
@@ -168,7 +709,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         let database = try XCTUnwrap(MobileRideMapState.debugDatabase)
 
         let state = MobileRideMapState(database: database)
-        _ = try state.restore(atMs: 0)
+        _ = try await state.restoreCommand(atMs: 0)
         defer {
             _ = try? state.stop(atMs: 200)
             _ = try? state.discard()
@@ -197,78 +738,51 @@ final class CutoutSessionCoreTests: XCTestCase {
             try? await Task.sleep(for: .milliseconds(1))
         }
 
-
         guard case let .accepted(acceptedPoint) = accepted else {
             return XCTFail("pending location did not produce a durable acceptance")
         }
         XCTAssertEqual(acceptedPoint, point)
     }
 
-
     func testCaptureElapsedTimeUsesTheInjectedMonotonicClockAtExactBoundaries() {
-        var now = MonotonicMilliseconds(2_999)
-        let core = CutoutSessionCore(clock: MonotonicClock { now })
+        let now = Mutex<MonotonicMilliseconds>(MonotonicMilliseconds(2_999))
+        let core = CutoutSessionCore(clock: MonotonicClock { now.withLock { $0 } })
         let startedAt = MonotonicMilliseconds(1_000)
 
         XCTAssertEqual(core.captureElapsedMilliseconds(since: startedAt), 1_999)
 
-        now = MonotonicMilliseconds(3_000)
+        now.withLock { $0 = MonotonicMilliseconds(3_000) }
         XCTAssertEqual(core.captureElapsedMilliseconds(since: startedAt), 2_000)
 
-        now = MonotonicMilliseconds(3_001)
+        now.withLock { $0 = MonotonicMilliseconds(3_001) }
         XCTAssertEqual(core.captureElapsedMilliseconds(since: startedAt), 2_001)
     }
 
-    func testConnectionReconnectPolicyBoundsJitteredBackoff() {
-        XCTAssertEqual(ConnectionReconnectPolicy.delayMilliseconds(attempt: 1, jitter: 0), 200)
-        XCTAssertEqual(ConnectionReconnectPolicy.delayMilliseconds(attempt: 2, jitter: 0.5), 500)
-        XCTAssertEqual(ConnectionReconnectPolicy.delayMilliseconds(attempt: 3, jitter: 1), 1_200)
-        XCTAssertNil(ConnectionReconnectPolicy.delayMilliseconds(attempt: 4, jitter: 0.5))
-    }
-
-
-    func testReconnectSchedulerCancelsSupersededAndExplicitRetries() {
+    func testReconnectTimerCancelsSupersededAndExplicitWork() {
         let scheduler = RecordingReconnectScheduler()
-        let reconnects = ConnectionReconnectController(scheduler: scheduler)
+        let timer = ConnectionReconnectController(scheduler: scheduler)
         var completed = [String]()
 
         XCTAssertEqual(
-            reconnects.schedule(jitter: 0) { completed.append("first") },
-            ConnectionReconnectSchedule(attempt: 1, delayMilliseconds: 200)
+            timer.schedule(after: 200) { completed.append("first") },
+            ConnectionReconnectSchedule(delayMilliseconds: 200)
         )
         XCTAssertEqual(
-            reconnects.schedule(jitter: 0.5) { completed.append("second") },
-            ConnectionReconnectSchedule(attempt: 2, delayMilliseconds: 500)
+            timer.schedule(after: 500) { completed.append("second") },
+            ConnectionReconnectSchedule(delayMilliseconds: 500)
         )
 
         scheduler.runAll()
         XCTAssertEqual(completed, ["second"])
 
         XCTAssertEqual(
-            reconnects.schedule(jitter: 1) { completed.append("cancelled") },
-            ConnectionReconnectSchedule(attempt: 3, delayMilliseconds: 1_200)
+            timer.schedule(after: 1_200) { completed.append("cancelled") },
+            ConnectionReconnectSchedule(delayMilliseconds: 1_200)
         )
-        reconnects.cancel()
+        timer.cancel()
         scheduler.runAll()
 
         XCTAssertEqual(completed, ["second"])
-        XCTAssertEqual(reconnects.attempt, 0)
-    }
-
-    func testReconnectExhaustionCancelsTheLastPendingRetry() {
-        let scheduler = RecordingReconnectScheduler()
-        let reconnects = ConnectionReconnectController(scheduler: scheduler)
-        var completed = [String]()
-
-        XCTAssertNotNil(reconnects.schedule(jitter: 0) { completed.append("first") })
-        XCTAssertNotNil(reconnects.schedule(jitter: 0) { completed.append("second") })
-        XCTAssertNotNil(reconnects.schedule(jitter: 0) { completed.append("third") })
-        XCTAssertNil(reconnects.schedule(jitter: 0) { completed.append("exhausted") })
-
-        scheduler.runAll()
-
-        XCTAssertTrue(completed.isEmpty)
-        XCTAssertEqual(reconnects.attempt, ConnectionReconnectPolicy.maximumAttempts + 1)
     }
 
     func testNordicNotificationUUIDsRemainFullWidthForPevcap() {
@@ -279,10 +793,11 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(BluetoothUuid(coreBluetoothUuid: notify)?.bytes.count, 16)
         XCTAssertEqual(
             BluetoothUuid(coreBluetoothUuid: service)?.bytes,
-            BluetoothUuid(Data([
-                0x6e, 0x40, 0x00, 0x01, 0xb5, 0xa3, 0xf3, 0x93,
-                0xe0, 0xa9, 0xe5, 0x0e, 0x24, 0xdc, 0xca, 0x9e,
-            ]))?.bytes
+            BluetoothUuid(
+                Data([
+                    0x6e, 0x40, 0x00, 0x01, 0xb5, 0xa3, 0xf3, 0x93,
+                    0xe0, 0xa9, 0xe5, 0x0e, 0x24, 0xdc, 0xca, 0x9e,
+                ]))?.bytes
         )
     }
 
@@ -350,20 +865,22 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertFalse(core.pair(platformIdentifier: "ios-local-missing"))
     }
 
+    @MainActor
     func testScriptedProbeTimeoutFailsWithoutPublishingLive() {
         let failed = expectation(description: "probe timeout is published")
         let live = expectation(description: "probe timeout never publishes live")
         live.isInverted = true
-        let core = CutoutSessionCore(testScript: CutoutSessionTestScript(
-            candidate: scriptedProbeCandidate,
-            telemetry: nil,
-            identificationProbeFailure: .timedOut,
-            detectedSupport: .supported(
-                connectionRoute: .electricUnicycle,
-                electricUnicycleModel: .aero
-            ),
-            connectionDelayMilliseconds: 0
-        ))
+        let core = CutoutSessionCore(
+            testScript: CutoutSessionTestScript(
+                candidate: scriptedProbeCandidate,
+                telemetry: nil,
+                identificationProbeFailure: .timedOut,
+                detectedSupport: .supported(
+                    connectionRoute: .electricUnicycle,
+                    electricUnicycleModel: .aero
+                ),
+                connectionDelayMilliseconds: 0
+            ))
         core.onPhaseChange = { phase in
             if phase == .failed(.identificationFailed(.timedOut)) {
                 failed.fulfill()
@@ -381,6 +898,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertNil(core.displayState.speed.millimetersPerSecond)
     }
 
+    @MainActor
     func testScriptedSessionUsesTheCorePublicationPath() {
         let live = expectation(description: "scripted session reaches live")
         let core = CutoutSessionCore(
@@ -406,14 +924,16 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(core.displayState.speed.millimetersPerSecond, 8_000)
     }
 
+    @MainActor
     func testLiveScriptRetainsItsPickerRowAfterPublishingIdentity() {
         let live = expectation(description: "scripted session reaches live")
-        let core = CutoutSessionCore(testScript: CutoutSessionTestScript(
-            candidate: scriptedVescCandidate,
-            telemetry: TelemetrySnapshot(speed: speedValue(8_000)),
-            startsLive: true,
-            connectionDelayMilliseconds: 0
-        ))
+        let core = CutoutSessionCore(
+            testScript: CutoutSessionTestScript(
+                candidate: scriptedVescCandidate,
+                telemetry: TelemetrySnapshot(speed: speedValue(8_000)),
+                startsLive: true,
+                connectionDelayMilliseconds: 0
+            ))
         var publishedRows = [[DevicePickerRow]]()
         core.onScanStateChange = { publishedRows.append($0.rows) }
         core.onPhaseChange = { phase in
@@ -427,54 +947,62 @@ final class CutoutSessionCoreTests: XCTestCase {
     }
 
     #if DEBUG
-    func testScriptedControlsUseProtocolEvidenceAndFenceReplacementRequests() throws {
-        let live = expectation(description: "generic session reaches live twice")
-        live.expectedFulfillmentCount = 2
-        var frame = Data(repeating: 0, count: 42)
-        frame.replaceSubrange(0..<4, with: [0xdc, 0x5a, 0x5c, 38])
-        frame.replaceSubrange(28..<30, with: [0xa7, 0xf8])
-        let core = CutoutSessionCore(testScript: CutoutSessionTestScript(
-            candidate: scriptedAeroCandidate, telemetry: TelemetrySnapshot(speed: speedValue(0)),
-            protocolNotifications: [frame], connectionDelayMilliseconds: 0
-        ))
-        var oldToken: ConnectionAttemptToken?
-        var newToken: ConnectionAttemptToken?
-        core.onPhaseChange = { phase in
-            guard phase == .live else { return }
-            if oldToken == nil {
-                oldToken = core.connectionSnapshot.token
-                core.disconnectAndScan()
-                XCTAssertTrue(core.pair(platformIdentifier: self.scriptedAeroCandidate.platformIdentifier))
-            } else {
-                newToken = core.connectionSnapshot.token
+        @MainActor
+        func testScriptedControlsUseProtocolEvidenceAndFenceReplacementRequests() throws {
+            let live = expectation(description: "generic session reaches live twice")
+            live.expectedFulfillmentCount = 2
+            var frame = Data(repeating: 0, count: 42)
+            frame.replaceSubrange(0..<4, with: [0xdc, 0x5a, 0x5c, 38])
+            frame.replaceSubrange(28..<30, with: [0xa7, 0xf8])
+            let core = CutoutSessionCore(
+                testScript: CutoutSessionTestScript(
+                    candidate: scriptedAeroCandidate, telemetry: TelemetrySnapshot(speed: speedValue(0)),
+                    protocolNotifications: [frame], connectionDelayMilliseconds: 0
+                ))
+            var oldToken: ConnectionAttemptToken?
+            var newToken: ConnectionAttemptToken?
+            core.onPhaseChange = { phase in
+                guard phase == .live else { return }
+                if oldToken == nil {
+                    oldToken = core.connectionSnapshot.token
+                    core.disconnectAndScan()
+                    XCTAssertTrue(core.pair(platformIdentifier: self.scriptedAeroCandidate.platformIdentifier))
+                } else {
+                    newToken = core.connectionSnapshot.token
+                }
+                live.fulfill()
             }
-            live.fulfill()
+            core.start()
+            XCTAssertTrue(core.pair(platformIdentifier: scriptedAeroCandidate.platformIdentifier))
+            wait(for: [live], timeout: 2)
+            let first = try XCTUnwrap(oldToken)
+            let current = try XCTUnwrap(newToken)
+            XCTAssertNotEqual(first.generation, current.generation)
+            XCTAssertFalse(core.resetTripMeterForNewRide(token: first))
+            let before = core.settings
+            XCTAssertThrowsError(
+                try core.submitDeviceSetting(token: first, id: .highBeam, value: .boolean(value: true))
+            ) {
+                XCTAssertEqual($0 as? DeviceSettingSubmissionError, .ConnectionUnavailable)
+            }
+            XCTAssertEqual(core.settings.settings, before.settings)
+            XCTAssertThrowsError(
+                try core.submitDeviceSetting(token: current, id: .pwmTiltback, value: .number(value: 101))
+            ) {
+                XCTAssertEqual($0 as? DeviceSettingSubmissionError, .InvalidValue)
+            }
+            try core.submitDeviceSetting(token: current, id: .pwmTiltback, value: .number(value: 80))
+            XCTAssertFalse(core.settings.validationAuthorized)
+            try core.submitDeviceSetting(token: current, id: .highBeam, value: .boolean(value: true))
+            let highBeam = try XCTUnwrap(core.settings.setting(for: .highBeam))
+            XCTAssertEqual(highBeam.requested, .boolean(value: true))
+            XCTAssertEqual(highBeam.status, .sentWithoutConfirmation)
+            XCTAssertNil(highBeam.current)
+            core.disconnectAndScan()
         }
-        core.start()
-        XCTAssertTrue(core.pair(platformIdentifier: scriptedAeroCandidate.platformIdentifier))
-        wait(for: [live], timeout: 2)
-        let first = try XCTUnwrap(oldToken)
-        let current = try XCTUnwrap(newToken)
-        XCTAssertNotEqual(first.generation, current.generation)
-        let before = core.settings
-        XCTAssertThrowsError(try core.submitDeviceSetting(token: first, id: .highBeam, value: .boolean(value: true))) {
-            XCTAssertEqual($0 as? DeviceSettingSubmissionError, .ConnectionUnavailable)
-        }
-        XCTAssertEqual(core.settings.settings, before.settings)
-        XCTAssertThrowsError(try core.submitDeviceSetting(token: current, id: .pwmTiltback, value: .number(value: 101))) {
-            XCTAssertEqual($0 as? DeviceSettingSubmissionError, .InvalidValue)
-        }
-        try core.submitDeviceSetting(token: current, id: .pwmTiltback, value: .number(value: 80))
-        XCTAssertFalse(core.settings.validationAuthorized)
-        try core.submitDeviceSetting(token: current, id: .highBeam, value: .boolean(value: true))
-        let highBeam = try XCTUnwrap(core.settings.setting(for: .highBeam))
-        XCTAssertEqual(highBeam.requested, .boolean(value: true))
-        XCTAssertEqual(highBeam.status, .sentWithoutConfirmation)
-        XCTAssertNil(highBeam.current)
-        core.disconnectAndScan()
-    }
     #endif
 
+    @MainActor
     func testScriptedBluetoothUnavailableSessionPublishesNoPickerRows() {
         assertScriptedInitialBluetoothState(
             .unavailable,
@@ -483,6 +1011,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         )
     }
 
+    @MainActor
     func testScriptedBluetoothPermissionDeniedSessionPublishesNoPickerRows() {
         assertScriptedInitialBluetoothState(
             .permissionDenied,
@@ -491,6 +1020,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         )
     }
 
+    @MainActor
     private func assertScriptedInitialBluetoothState(
         _ initialBluetoothState: CutoutSessionTestInitialBluetoothState,
         phase expectedPhase: SessionConnectionPhase,
@@ -517,6 +1047,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(core.scanState, expectedScanState)
     }
 
+    @MainActor
     func testExplicitDisconnectCancelsTheScriptedLateLiveCallback() {
         let live = expectation(description: "late scripted callback is ignored")
         live.isInverted = true
@@ -543,6 +1074,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertNil(core.displayState.speed.millimetersPerSecond)
     }
 
+    @MainActor
     func testScriptedLiveConnectionStartsRideMapAndPublishesSnapshot() throws {
         let live = expectation(description: "scripted session reaches live")
         let rideStarted = expectation(description: "ride-map recording starts")
@@ -557,10 +1089,12 @@ final class CutoutSessionCoreTests: XCTestCase {
             testScript: CutoutSessionTestScript(
                 candidate: scriptedVescCandidate,
                 telemetry: TelemetrySnapshot(speed: speedValue(8_000)),
-                protocolNotifications: [Data([
-                    2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101,
-                    114, 104, 97, 115, 104, 0, 38, 208, 3,
-                ])],
+                protocolNotifications: [
+                    Data([
+                        2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101,
+                        114, 104, 97, 115, 104, 0, 38, 208, 3,
+                    ])
+                ],
                 startsLive: true,
                 connectionDelayMilliseconds: 0
             ),
@@ -580,6 +1114,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(core.rideMapStateHandle?.currentSnapshot()?.state, .active)
     }
 
+    @MainActor
     func testProductionLocationPathPublishesAcceptedRideMapPoint() throws {
         let live = expectation(description: "scripted session reaches live")
         let recording = expectation(description: "durable recording accepts locations")
@@ -595,10 +1130,12 @@ final class CutoutSessionCoreTests: XCTestCase {
             testScript: CutoutSessionTestScript(
                 candidate: scriptedVescCandidate,
                 telemetry: TelemetrySnapshot(speed: speedValue(8_000)),
-                protocolNotifications: [Data([
-                    2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101,
-                    114, 104, 97, 115, 104, 0, 38, 208, 3,
-                ])],
+                protocolNotifications: [
+                    Data([
+                        2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101,
+                        114, 104, 97, 115, 104, 0, 38, 208, 3,
+                    ])
+                ],
                 startsLive: true,
                 connectionDelayMilliseconds: 0
             ),
@@ -632,6 +1169,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         wait(for: [pointAccepted], timeout: 2)
     }
 
+    @MainActor
     func testScriptedSessionPublishesReconnectAndReturnsLive() {
         let retry = expectation(description: "scripted session schedules reconnect")
         let live = expectation(description: "scripted session returns live")
@@ -709,10 +1247,12 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertTrue(core.isRecordOnlyConnection)
     }
 
+    @MainActor
     func testTransportTerminationPreservesVerifiedWheelIdentityAcrossRetries() {
         let scheduler = RecordingReconnectScheduler()
+        let now = Mutex(MonotonicMilliseconds(1_000))
         let core = CutoutSessionCore(
-            clock: MonotonicClock { MonotonicMilliseconds(1_000) },
+            clock: MonotonicClock { now.withLock { $0 } },
             testScript: CutoutSessionTestScript(
                 candidate: scriptedAeroCandidate,
                 telemetry: nil,
@@ -725,12 +1265,13 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertTrue(core.pair(platformIdentifier: scriptedAeroCandidate.platformIdentifier))
         XCTAssertEqual(core.electricUnicycleModel, .aero)
 
-        for _ in 0..<2 {
+        for deadline in [UInt64(1_200), 1_600] {
             core.handleTransportTermination(
                 platformIdentifier: scriptedAeroCandidate.platformIdentifier,
                 error: nil,
                 reconnect: {}
             )
+            now.withLock { $0 = MonotonicMilliseconds(deadline) }
             scheduler.runAll()
             XCTAssertEqual(core.electricUnicycleModel, .aero)
             XCTAssertFalse(core.isRecordOnlyConnection)
@@ -740,12 +1281,14 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertNil(core.electricUnicycleModel)
     }
 
+    @MainActor
     func testTransportTerminationUsesTheSharedReconnectTransition() {
         let scheduler = RecordingReconnectScheduler()
+        let now = Mutex(MonotonicMilliseconds(1_000))
         let retry = expectation(description: "transport termination schedules retry")
         var reconnectCount = 0
         let core = CutoutSessionCore(
-            clock: MonotonicClock { MonotonicMilliseconds(1_000) },
+            clock: MonotonicClock { now.withLock { $0 } },
             testScript: CutoutSessionTestScript(
                 candidate: scriptedVescCandidate,
                 telemetry: nil,
@@ -758,6 +1301,7 @@ final class CutoutSessionCoreTests: XCTestCase {
             XCTAssertEqual(scheduled.platformIdentifier, self.scriptedVescCandidate.platformIdentifier)
             XCTAssertEqual(scheduled.attempt, 1)
             XCTAssertEqual(scheduled.deadline, MonotonicMilliseconds(1_200))
+            now.withLock { $0 = MonotonicMilliseconds(scheduled.deadline.rawValue - 1) }
             retry.fulfill()
         }
 
@@ -775,6 +1319,10 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(reconnectCount, 0)
 
         scheduler.runAll()
+        XCTAssertEqual(reconnectCount, 0)
+
+        now.withLock { $0 = MonotonicMilliseconds(1_200) }
+        scheduler.runAll()
         XCTAssertEqual(reconnectCount, 1)
     }
 
@@ -783,7 +1331,8 @@ final class CutoutSessionCoreTests: XCTestCase {
             let scheduler = RecordingReconnectScheduler()
             let core = CutoutSessionCore(
                 clock: MonotonicClock { MonotonicMilliseconds(1_000) },
-                testScript: CutoutSessionTestScript(candidate: scriptedVescCandidate, telemetry: nil, connectionDelayMilliseconds: 60_000),
+                testScript: CutoutSessionTestScript(
+                    candidate: scriptedVescCandidate, telemetry: nil, connectionDelayMilliseconds: 60_000),
                 reconnectScheduler: scheduler,
                 reconnectJitter: { 0 }
             )
@@ -801,7 +1350,8 @@ final class CutoutSessionCoreTests: XCTestCase {
         let scheduler = RecordingReconnectScheduler()
         let core = CutoutSessionCore(
             clock: MonotonicClock { MonotonicMilliseconds(1_000) },
-            testScript: CutoutSessionTestScript(candidate: scriptedVescCandidate, telemetry: nil, connectionDelayMilliseconds: 60_000),
+            testScript: CutoutSessionTestScript(
+                candidate: scriptedVescCandidate, telemetry: nil, connectionDelayMilliseconds: 60_000),
             reconnectScheduler: scheduler,
             reconnectJitter: { 0 }
         )
@@ -814,6 +1364,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(core.connectionSnapshot.readiness, .disconnected)
     }
 
+    @MainActor
     func testBluetoothStateChangesClearPickerCancelReconnectAndRestoreScanning() {
         let scheduler = RecordingReconnectScheduler()
         var reconnectCount = 0
@@ -855,11 +1406,13 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(scanCount, 1)
     }
 
+    @MainActor
     func testTransportTerminationExhaustionCannotRunAnOlderReconnect() {
         let scheduler = RecordingReconnectScheduler()
+        let now = Mutex(MonotonicMilliseconds(1_000))
         var reconnectCount = 0
         let core = CutoutSessionCore(
-            clock: MonotonicClock { MonotonicMilliseconds(1_000) },
+            clock: MonotonicClock { now.withLock { $0 } },
             testScript: CutoutSessionTestScript(
                 candidate: scriptedVescCandidate,
                 telemetry: nil,
@@ -871,22 +1424,21 @@ final class CutoutSessionCoreTests: XCTestCase {
 
         core.start()
         XCTAssertTrue(core.pair(platformIdentifier: scriptedVescCandidate.platformIdentifier))
-        for _ in 0...ConnectionReconnectPolicy.maximumAttempts {
+        for deadline in [UInt64(1_200), 1_600, 2_400, 2_400] {
             core.handleTransportTermination(
                 platformIdentifier: scriptedVescCandidate.platformIdentifier,
                 error: nil,
                 reconnect: { reconnectCount += 1 }
             )
+            now.withLock { $0 = MonotonicMilliseconds(deadline) }
+            scheduler.runAll()
         }
 
-        scheduler.runAll()
-
-        XCTAssertEqual(core.phase, .live)
-        XCTAssertTrue(core.isRecordOnlyConnection)
-        XCTAssertEqual(core.connectionSnapshot.readiness, .recordOnly)
-        XCTAssertNil(core.rideSessionStateHandle.deviceSessionSnapshot().identity)
+        XCTAssertEqual(core.phase, .failed(.connectFailed("unknown error")))
+        XCTAssertFalse(core.isRecordOnlyConnection)
+        XCTAssertEqual(core.connectionSnapshot.readiness, .failed)
+        XCTAssertEqual(reconnectCount, 3)
         XCTAssertEqual(core.scanState.rows, [scriptedVescCandidate.pickerRow])
-        XCTAssertEqual(reconnectCount, 0)
     }
 
     func testRecordOnlyMissingCandidateReturnsFalse() {
@@ -899,9 +1451,10 @@ final class CutoutSessionCoreTests: XCTestCase {
         let blockedDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try Data("not a directory".utf8).write(to: blockedDirectory)
         defer { try? FileManager.default.removeItem(at: blockedDirectory) }
-        let core = CutoutSessionCore(testScript: CutoutSessionTestScript(
-            candidate: scriptedVescCandidate, telemetry: nil, connectionDelayMilliseconds: 0
-        ))
+        let core = CutoutSessionCore(
+            testScript: CutoutSessionTestScript(
+                candidate: scriptedVescCandidate, telemetry: nil, connectionDelayMilliseconds: 0
+            ))
         core.captureDirectoryForTesting = blockedDirectory
         let failed = expectation(description: "writer constructor failure is published")
         core.onCaptureEvent = { event in
@@ -921,14 +1474,18 @@ final class CutoutSessionCoreTests: XCTestCase {
     }
 
     func testNativePairingCannotReplaceManualCaptureWithoutAppGuard() async throws {
-        let core = CutoutSessionCore(testScript: CutoutSessionTestScript(
-            candidate: scriptedVescCandidate, telemetry: nil, connectionDelayMilliseconds: 0
-        ))
+        let core = CutoutSessionCore(
+            testScript: CutoutSessionTestScript(
+                candidate: scriptedVescCandidate, telemetry: nil, connectionDelayMilliseconds: 0
+            ))
         let started = expectation(description: "manual writer starts")
         let finished = expectation(description: "manual writer completes")
         var url: URL?
         core.onCaptureEvent = { event in
-            if case let .started(_, fileURL) = event { url = fileURL; started.fulfill() }
+            if case let .started(_, fileURL) = event {
+                url = fileURL
+                started.fulfill()
+            }
             if case .finished = event { finished.fulfill() }
         }
         XCTAssertTrue(core.recordOnly(platformIdentifier: scriptedVescCandidate.platformIdentifier))
@@ -948,11 +1505,12 @@ final class CutoutSessionCoreTests: XCTestCase {
     func testSuccessfulScriptedRecordOnlyFlushUsesTheRealWriter() async throws {
         let started = expectation(description: "real capture writer starts")
         var captureURL: URL?
-        let core = CutoutSessionCore(testScript: CutoutSessionTestScript(
-            candidate: scriptedVescCandidate,
-            telemetry: nil,
-            connectionDelayMilliseconds: 0
-        ))
+        let core = CutoutSessionCore(
+            testScript: CutoutSessionTestScript(
+                candidate: scriptedVescCandidate,
+                telemetry: nil,
+                connectionDelayMilliseconds: 0
+            ))
         core.onCaptureEvent = { event in
             if case let .started(generation, fileURL) = event {
                 XCTAssertGreaterThan(generation.rawValue, 0)
@@ -961,11 +1519,12 @@ final class CutoutSessionCoreTests: XCTestCase {
             }
         }
 
-        XCTAssertTrue(core.recordOnly(
-            platformIdentifier: scriptedVescCandidate.platformIdentifier,
-            note: "durability test",
-            annotations: ["durability=background"]
-        ))
+        XCTAssertTrue(
+            core.recordOnly(
+                platformIdentifier: scriptedVescCandidate.platformIdentifier,
+                note: "durability test",
+                annotations: ["durability=background"]
+            ))
         await fulfillment(of: [started], timeout: 1)
         let url = try XCTUnwrap(captureURL)
         defer { try? FileManager.default.removeItem(at: url) }
@@ -987,9 +1546,10 @@ final class CutoutSessionCoreTests: XCTestCase {
         let finished = expectation(description: "writer durably completes")
         var captureURL: URL?
         var captureGeneration: CaptureGeneration?
-        let core = CutoutSessionCore(testScript: CutoutSessionTestScript(
-            candidate: scriptedVescCandidate, telemetry: nil, connectionDelayMilliseconds: 0
-        ))
+        let core = CutoutSessionCore(
+            testScript: CutoutSessionTestScript(
+                candidate: scriptedVescCandidate, telemetry: nil, connectionDelayMilliseconds: 0
+            ))
         XCTAssertEqual(core.captureDirectoryForTesting, FileManager.default.temporaryDirectory)
         XCTAssertNil(CutoutSessionCore(clock: MonotonicClock()).captureDirectoryForTesting)
         core.onCaptureEvent = { event in
@@ -1003,10 +1563,11 @@ final class CutoutSessionCoreTests: XCTestCase {
             default: break
             }
         }
-        XCTAssertTrue(core.recordOnly(
-            platformIdentifier: scriptedVescCandidate.platformIdentifier,
-            annotations: ["note=first", "note=second"]
-        ))
+        XCTAssertTrue(
+            core.recordOnly(
+                platformIdentifier: scriptedVescCandidate.platformIdentifier,
+                annotations: ["note=first", "note=second"]
+            ))
         await fulfillment(of: [started], timeout: 2)
         let generation = try XCTUnwrap(captureGeneration)
         let url = try XCTUnwrap(captureURL)
@@ -1015,13 +1576,18 @@ final class CutoutSessionCoreTests: XCTestCase {
             url.deletingLastPathComponent().resolvingSymlinksInPath(),
             FileManager.default.temporaryDirectory.resolvingSymlinksInPath()
         )
-        XCTAssertThrowsError(try core.changeCaptureLabel(
-            generation: .init(rawValue: generation.rawValue + 1), action: .start(label: .lowBeamOn)
-        ))
-        XCTAssertEqual(try core.changeCaptureLabel(generation: generation, action: .start(label: .lowBeamOn)), [.lowBeamOn])
+        XCTAssertThrowsError(
+            try core.changeCaptureLabel(
+                generation: .init(rawValue: generation.rawValue + 1), action: .start(label: .lowBeamOn)
+            ))
+        XCTAssertEqual(
+            try core.changeCaptureLabel(generation: generation, action: .start(label: .lowBeamOn)), [.lowBeamOn])
         XCTAssertFalse(core.annotateCapture(key: "note", value: "no room"))
-        XCTAssertThrowsError(try core.changeCaptureLabel(generation: generation, action: .start(label: .lowBeamOff))) { error in
-            guard case MobileCaptureAnnotationError.CapacityReached = error else { return XCTFail("Unexpected error: \(error)") }
+        XCTAssertThrowsError(try core.changeCaptureLabel(generation: generation, action: .start(label: .lowBeamOff))) {
+            error in
+            guard case MobileCaptureAnnotationError.CapacityReached = error else {
+                return XCTFail("Unexpected error: \(error)")
+            }
         }
         let saved = await core.finishCapture()
         XCTAssertTrue(saved)
@@ -1035,11 +1601,12 @@ final class CutoutSessionCoreTests: XCTestCase {
 
     func testMusicObservationBeforeCaptureIsRetainedUntilWriterStarts() async {
         let started = expectation(description: "real capture writer starts")
-        let core = CutoutSessionCore(testScript: CutoutSessionTestScript(
-            candidate: scriptedVescCandidate,
-            telemetry: nil,
-            connectionDelayMilliseconds: 0
-        ))
+        let core = CutoutSessionCore(
+            testScript: CutoutSessionTestScript(
+                candidate: scriptedVescCandidate,
+                telemetry: nil,
+                connectionDelayMilliseconds: 0
+            ))
         core.onCaptureEvent = { event in
             if case .started = event {
                 started.fulfill()
@@ -1129,6 +1696,146 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(core.displayState.telemetry?.powerFlow, .negativeUnknown)
         XCTAssertEqual(core.displayState.notificationCount, 1)
         XCTAssertEqual(core.displayState.lastUpdate, receivedAt)
+    }
+
+    func testRideMapStorageFailureDoesNotSuppressDisplayReduction() {
+        let core = CutoutSessionCore(
+            rideMapState: MobileRideMapState(storageUnavailable: "map database unavailable")
+        )
+        let snapshot = TelemetrySnapshot(
+            speed: speedValue(2_468),
+            operatingState: .riding,
+            voltage: voltageValue(50_400)
+        )
+
+        core.applyNotificationStep(
+            CoreBluetoothSessionStep(operations: [], snapshot: snapshot),
+            receivedAt: MonotonicMilliseconds(84)
+        )
+
+        XCTAssertEqual(core.phase, .live)
+        XCTAssertEqual(core.displayState.speed.millimetersPerSecond, 2_468)
+        XCTAssertEqual(core.displayState.telemetry?.voltage, Voltage(value: 50_400))
+        XCTAssertEqual(core.displayState.notificationCount, 1)
+        XCTAssertEqual(core.displayState.lastUpdate, MonotonicMilliseconds(84))
+    }
+
+    func testNotificationEffectsRunBeforeDisplayPublicationInOneCanonicalOrder() {
+        var events = [String]()
+        let effects = CutoutSessionNotificationEffects(
+            applyActions: { _ in
+                events.append("actions")
+                return []
+            },
+            observeRideMapConnection: { _ in events.append("map") },
+            persistBmsSamples: { _ in events.append("bms") },
+            reduceDisplayState: { state, snapshot, receivedAt, updateKind in
+                events.append("display")
+                switch updateKind {
+                case .linkUp:
+                    return state.reducingLinkUpSnapshot(snapshot, receivedAt: receivedAt)
+                case .notification:
+                    return state.reducing(snapshot: snapshot, receivedAt: receivedAt)
+                }
+            }
+        )
+        let core = CutoutSessionCore(
+            clock: MonotonicClock(now: { MonotonicMilliseconds(100) }),
+            notificationEffects: effects
+        )
+
+        core.applyNotificationStep(
+            CoreBluetoothSessionStep(
+                operations: [],
+                snapshot: TelemetrySnapshot(speed: speedValue(1_234)),
+                actions: [.event()]
+            ),
+            receivedAt: MonotonicMilliseconds(42)
+        )
+
+        XCTAssertEqual(events, ["actions", "map", "bms", "display"])
+        XCTAssertEqual(core.displayState.speed.millimetersPerSecond, 1_234)
+        XCTAssertEqual(core.displayState.notificationCount, 1)
+        XCTAssertEqual(core.displayState.lastUpdate, MonotonicMilliseconds(42))
+    }
+
+    func testCaptureWriterFailureIsAppliedAfterNotificationDisplayReduction() {
+        var events = [String]()
+        let capture = CaptureRecorderSpy()
+        capture.onPublishFailure = { events.append("capture-failure") }
+        let effects = CutoutSessionNotificationEffects(
+            applyActions: { _ in
+                events.append("actions")
+                return [.failed]
+            },
+            observeRideMapConnection: { _ in events.append("map") },
+            persistBmsSamples: { _ in events.append("bms") },
+            reduceDisplayState: { state, snapshot, receivedAt, _ in
+                events.append("display")
+                return state.reducing(snapshot: snapshot, receivedAt: receivedAt)
+            }
+        )
+        let core = CutoutSessionCore(
+            clock: MonotonicClock(now: { MonotonicMilliseconds(100) }),
+            testScript: CutoutSessionTestScript(
+                candidate: scriptedVescCandidate,
+                telemetry: TelemetrySnapshot(),
+                connectionDelayMilliseconds: 0
+            ),
+            notificationEffects: effects,
+            captureRecorder: capture
+        )
+        XCTAssertTrue(core.recordOnly(platformIdentifier: scriptedVescCandidate.platformIdentifier))
+
+        core.applyNotificationStep(
+            CoreBluetoothSessionStep(operations: [], snapshot: TelemetrySnapshot(speed: speedValue(1_234))),
+            receivedAt: MonotonicMilliseconds(42)
+        )
+
+        XCTAssertEqual(events, ["actions", "map", "bms", "display", "capture-failure"])
+        XCTAssertEqual(core.displayState.speed.millimetersPerSecond, 1_234)
+        XCTAssertEqual(core.phase, .live)
+        XCTAssertEqual(capture.publishFailureCount, 1)
+        XCTAssertEqual(capture.finishCount, 1)
+    }
+
+    func testLinkUpRunsSharedEffectsBeforeOneNonNotificationDisplayReduction() {
+        var events = [String]()
+        let effects = CutoutSessionNotificationEffects(
+            applyActions: { _ in
+                events.append("actions")
+                return []
+            },
+            observeRideMapConnection: { _ in events.append("map") },
+            persistBmsSamples: { _ in events.append("bms") },
+            reduceDisplayState: { state, snapshot, receivedAt, updateKind in
+                events.append("display")
+                switch updateKind {
+                case .linkUp:
+                    return state.reducingLinkUpSnapshot(snapshot, receivedAt: receivedAt)
+                case .notification:
+                    return state.reducing(snapshot: snapshot, receivedAt: receivedAt)
+                }
+            }
+        )
+        let capture = CaptureRecorderSpy()
+        let receivedAt = MonotonicMilliseconds(100)
+        let core = CutoutSessionCore(
+            clock: MonotonicClock(now: { receivedAt }),
+            notificationEffects: effects,
+            captureRecorder: capture
+        )
+        let snapshot = TelemetrySnapshot(at: receivedAt, speed: speedValue(2_468))
+
+        core.applyLinkUpStep(CoreBluetoothSessionStep(operations: [], snapshot: snapshot))
+
+        XCTAssertEqual(events, ["actions", "map", "bms", "display"])
+        XCTAssertEqual(core.displayState.speed.millimetersPerSecond, 2_468)
+        XCTAssertEqual(core.displayState.telemetry, snapshot)
+        XCTAssertEqual(core.displayState.notificationCount, 0)
+        XCTAssertEqual(core.displayState.lastUpdate, receivedAt)
+        XCTAssertTrue(core.hasObservedSpeedSnapshot)
+        XCTAssertEqual(core.phase, .subscribing)
     }
 
     func testApplyNotificationStepPublishesDisplayStateOnMainThread() {
@@ -1252,18 +1959,19 @@ final class CutoutSessionCoreTests: XCTestCase {
     }
 
     func testVescRideSnapshotUsesProtocolDecodedSafetyState() throws {
-        let snapshot = try XCTUnwrap(VescRideSnapshot(
-            displayState: RideDisplayState(
-                telemetry: TelemetrySnapshot(
-                    speed: speedValue(19_000),
-                    operatingState: .riding,
-                    vescOperatingMode: .handtest,
-                    vescWarning: .dutyPushback,
-                    vescStopReason: .pitch
-                )
-            ),
-            title: nil
-        ))
+        let snapshot = try XCTUnwrap(
+            VescRideSnapshot(
+                displayState: RideDisplayState(
+                    telemetry: TelemetrySnapshot(
+                        speed: speedValue(19_000),
+                        operatingState: .riding,
+                        vescOperatingMode: .handtest,
+                        vescWarning: .dutyPushback,
+                        vescStopReason: .pitch
+                    )
+                ),
+                title: nil
+            ))
 
         XCTAssertEqual(snapshot.warning, .dutyPushback)
         XCTAssertEqual(snapshot.stopReason, .pitch)
@@ -1410,7 +2118,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(snapshot.motorTemperature, temperatureValue(49_000))
     }
 
-func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
+    func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         let telemetry = TelemetrySnapshot(
             operatingState: .parked,
             voltage: voltageValue(61_000),
@@ -1449,18 +2157,21 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         let idleNoiseTelemetry = TelemetrySnapshot(operatingState: .riding, pwm: dutyCycle(10))
         let loadedTelemetry = TelemetrySnapshot(operatingState: .riding, pwm: dutyCycle(230))
 
-        let balanced = try XCTUnwrap(VescRideSnapshot(
-            displayState: RideDisplayState(telemetry: balancedTelemetry, notificationCount: 1),
-            title: nil
-        ))
-        let idleNoise = try XCTUnwrap(VescRideSnapshot(
-            displayState: RideDisplayState(telemetry: idleNoiseTelemetry, notificationCount: 1),
-            title: nil
-        ))
-        let loaded = try XCTUnwrap(VescRideSnapshot(
-            displayState: RideDisplayState(telemetry: loadedTelemetry, notificationCount: 1),
-            title: nil
-        ))
+        let balanced = try XCTUnwrap(
+            VescRideSnapshot(
+                displayState: RideDisplayState(telemetry: balancedTelemetry, notificationCount: 1),
+                title: nil
+            ))
+        let idleNoise = try XCTUnwrap(
+            VescRideSnapshot(
+                displayState: RideDisplayState(telemetry: idleNoiseTelemetry, notificationCount: 1),
+                title: nil
+            ))
+        let loaded = try XCTUnwrap(
+            VescRideSnapshot(
+                displayState: RideDisplayState(telemetry: loadedTelemetry, notificationCount: 1),
+                title: nil
+            ))
 
         XCTAssertEqual(balanced.dutyCycle, dutyCycle(0))
         XCTAssertEqual(balanced.dutyHeadroom, batteryLevelValue(100))
@@ -1479,10 +2190,11 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
     func testVescRideSnapshotMarksParkedHeadroomNotApplicableWithoutProgress() throws {
         let telemetry = TelemetrySnapshot(operatingState: .parked, pwm: dutyCycle(10))
 
-        let snapshot = try XCTUnwrap(VescRideSnapshot(
-            displayState: RideDisplayState(telemetry: telemetry, notificationCount: 1),
-            title: nil
-        ))
+        let snapshot = try XCTUnwrap(
+            VescRideSnapshot(
+                displayState: RideDisplayState(telemetry: telemetry, notificationCount: 1),
+                title: nil
+            ))
 
         XCTAssertEqual(snapshot.dutyCycle, dutyCycle(10))
         XCTAssertNil(snapshot.dutyHeadroom)
@@ -1501,10 +2213,11 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
     func testVescRideSnapshotKeepsMissingDutyHeadroomUnavailable() throws {
         let telemetry = TelemetrySnapshot(operatingState: .parked, voltage: voltageValue(62_800))
 
-        let snapshot = try XCTUnwrap(VescRideSnapshot(
-            displayState: RideDisplayState(telemetry: telemetry, notificationCount: 1),
-            title: nil
-        ))
+        let snapshot = try XCTUnwrap(
+            VescRideSnapshot(
+                displayState: RideDisplayState(telemetry: telemetry, notificationCount: 1),
+                title: nil
+            ))
 
         XCTAssertNil(snapshot.dutyCycle)
         XCTAssertNil(snapshot.dutyHeadroom)
@@ -1623,30 +2336,6 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertNotEqual(snapshot.title, "Fungineers X7")
     }
 
-    func testVescDebugSnapshotKeepsGuardrailAndReadOnlyStateTyped() {
-        let snapshot = VescDebugSnapshot(
-            profileTitle: "Profile: Street stable",
-            transportDetail: "VESC Express · FW 6.x · UART bridge",
-            dutyCycle: dutyCycle(820),
-            maxSeenDutyCycle: dutyCycle(870),
-            packVoltage: voltageValue(75_400),
-            batteryCurrentLimit: batteryCurrentValue(45_000),
-            motorCurrentLimit: phaseCurrentValue(90_000),
-            lastFault: "FAULT_CODE_NONE",
-            inputApp: "ADC + balance",
-            canStatus: "single controller",
-            logging: "local CSV armed",
-            writeGuardrail: .policyRefusal
-        )
-
-        XCTAssertEqual(snapshot.dutyCycle, dutyCycle(820))
-        XCTAssertEqual(snapshot.maxSeenDutyCycle, dutyCycle(870))
-        XCTAssertEqual(snapshot.packVoltage, voltageValue(75_400))
-        XCTAssertEqual(snapshot.batteryCurrentLimit, batteryCurrentValue(45_000))
-        XCTAssertEqual(snapshot.motorCurrentLimit, phaseCurrentValue(90_000))
-        XCTAssertEqual(snapshot.writeGuardrail, .policyRefusal)
-    }
-
     func testSpeedObservationRemainsStickyAcrossTelemetryWithoutSpeed() {
         let core = CutoutSessionCore()
         let speedSnapshot = TelemetrySnapshot(
@@ -1698,7 +2387,6 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertEqual(core.displayState.notificationCount, 2)
         XCTAssertEqual(core.displayState.lastUpdate, MonotonicMilliseconds(99))
     }
-
 
     func testFaultHistoryReadbackUpdatesCurrentSessionStateUntilDisconnect() {
         let core = CutoutSessionCore()
@@ -1853,7 +2541,7 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
                     packIndex: nil,
                     packObservationIndex: nil,
                     voltage: Voltage(value: 4_209)
-                )
+                ),
             ],
             wallClockMilliseconds: 2_000,
             sessionIdentifier: "test-session"
@@ -1920,20 +2608,33 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
 
     func testBmsSnapshotReplacesPriorRustProjection() {
         let core = CutoutSessionCore()
-        let topology = BmsTopology(layoutLabel: "unverified", seriesGroupCount: nil, parallelCount: nil, packCount: 1, bmsCount: 1, confidence: .unverified)
+        let topology = BmsTopology(
+            layoutLabel: "unverified", seriesGroupCount: nil, parallelCount: nil, packCount: 1, bmsCount: 1,
+            confidence: .unverified)
         func receive(_ snapshot: BmsSnapshot, at: UInt64) {
             core.applyNotificationStep(
                 CoreBluetoothSessionStep(operations: [], snapshot: nil, actions: [.withBmsSnapshot(snapshot)]),
                 receivedAt: MonotonicMilliseconds(at)
             )
         }
-        receive(BmsSnapshot(topology: topology, pageSelector: 6, cellDelta: VoltageDelta(value: 0), lowestGroupIndex: 46, observedGroupCount: 1, highestGroupIndex: 46, groups: [BmsGroupSnapshot(index: 46, voltage: Voltage(value: 4_200))]), at: 1)
-        receive(BmsSnapshot(topology: topology, pageSelector: 2, cellDelta: VoltageDelta(value: 20), lowestGroupIndex: 16, observedGroupCount: 2, highestGroupIndex: 46, groups: [BmsGroupSnapshot(index: 16, voltage: Voltage(value: 4_180))]), at: 2)
+        receive(
+            BmsSnapshot(
+                topology: topology, pageSelector: 6, cellDelta: VoltageDelta(value: 0), lowestGroupIndex: 46,
+                observedGroupCount: 1, highestGroupIndex: 46,
+                groups: [BmsGroupSnapshot(index: 46, voltage: Voltage(value: 4_200))]), at: 1)
+        receive(
+            BmsSnapshot(
+                topology: topology, pageSelector: 2, cellDelta: VoltageDelta(value: 20), lowestGroupIndex: 16,
+                observedGroupCount: 2, highestGroupIndex: 46,
+                groups: [BmsGroupSnapshot(index: 16, voltage: Voltage(value: 4_180))]), at: 2)
         XCTAssertEqual(core.bmsSnapshot?.cellDelta, VoltageDelta(value: 20))
         XCTAssertEqual(core.bmsSnapshot?.lowestGroupIndex, 16)
         XCTAssertEqual(core.bmsSnapshot?.highestGroupIndex, 46)
         XCTAssertEqual(core.bmsSnapshot?.observedGroupCount, 2)
-        receive(BmsSnapshot(topology: topology, pageSelector: 3, cellDelta: VoltageDelta(value: 20), lowestGroupIndex: 16, observedGroupCount: 2, highestGroupIndex: 46, highestTemperature: Temperature(value: 21_000)), at: 3)
+        receive(
+            BmsSnapshot(
+                topology: topology, pageSelector: 3, cellDelta: VoltageDelta(value: 20), lowestGroupIndex: 16,
+                observedGroupCount: 2, highestGroupIndex: 46, highestTemperature: Temperature(value: 21_000)), at: 3)
         XCTAssertEqual(core.bmsSnapshot?.cellDelta, VoltageDelta(value: 20))
         XCTAssertEqual(core.bmsSnapshot?.groups.map(\.index), [])
     }
@@ -2124,11 +2825,12 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
     }
 
     func testPevcapIdentityUsesProtocolConfirmedCandidate() {
-        let candidate = DevicePickerDiscoveryCandidate(candidate: mobileDiscoveryCandidateFromVeteranProtocolIdentity(
-            platformIdentifier: "ios-local-aero",
-            displayName: "NF2557",
-            modelId: 43
-        ))
+        let candidate = DevicePickerDiscoveryCandidate(
+            candidate: mobileDiscoveryCandidateFromVeteranProtocolIdentity(
+                platformIdentifier: "ios-local-aero",
+                displayName: "NF2557",
+                modelId: 43
+            ))
 
         let identity = captureResolvedIdentity(protocolIdentityCandidate: candidate)
 
@@ -2192,7 +2894,6 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertEqual(core.phase, .failed(.missingWriteChannel))
     }
 
-
     func testIdentificationProbeTransportSubscribesBeforeOrderedWrites() {
         let sink = RecordingOperationSink()
         let transport = IdentificationProbeTransportCoordinator(
@@ -2203,11 +2904,13 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertEqual(sink.events, [.subscribe])
         XCTAssertEqual(transport.notificationsEnabled(at: MonotonicMilliseconds(1), using: sink), .unsupported)
         XCTAssertEqual(sink.events, [.subscribe])
-        _ = transport.observeNotification(channel: .bluetooth16(0xffe1), bytes: Data([
-            0x55, 0xaa, 0x17, 0x75, 0x05, 0x38, 0x00, 0x76,
-            0x02, 0xee, 0xfb, 0x64, 0xf4, 0x94, 0x14, 0x81,
-            0x00, 0x09, 0x00, 0x18, 0x5a, 0x5a, 0x5a, 0x5a,
-        ]))
+        _ = transport.observeNotification(
+            channel: .bluetooth16(0xffe1),
+            bytes: Data([
+                0x55, 0xaa, 0x17, 0x75, 0x05, 0x38, 0x00, 0x76,
+                0x02, 0xee, 0xfb, 0x64, 0xf4, 0x94, 0x14, 0x81,
+                0x00, 0x09, 0x00, 0x18, 0x5a, 0x5a, 0x5a, 0x5a,
+            ]))
 
         let outcome = transport.notificationsEnabled(
             at: MonotonicMilliseconds(42),
@@ -2269,7 +2972,7 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
     }
 
     func testBegodeProbeResponseUpdatesProtocolIdentityCandidate() {
-        let core = CutoutSessionCore()
+        let core = CutoutSessionCore(clock: MonotonicClock(now: { MonotonicMilliseconds(1_000) }))
         let channel = BluetoothUuid.bluetooth16(0xffe1)
         var observedCandidates: [DevicePickerDiscoveryCandidate?] = []
         core.onProtocolIdentityCandidateChange = { observedCandidates.append($0) }
@@ -2299,11 +3002,12 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertEqual(core.scanState.rows.first?.id, "ios-local-falcon")
         XCTAssertTrue(core.scanState.rows.first?.detail.contains("Typed Begode Falcon") == true)
 
-        core.observeAdvertisement(CoreBluetoothAdvertisement(
-            peripheralIdentifier: CoreBluetoothPeripheralIdentifier("ios-local-falcon"),
-            localName: "Typed Begode Falcon",
-            advertisedServiceUuids: [.bluetooth16(0xFFE0)]
-        ))
+        core.observeAdvertisement(
+            CoreBluetoothAdvertisement(
+                peripheralIdentifier: CoreBluetoothPeripheralIdentifier("ios-local-falcon"),
+                localName: "Typed Begode Falcon",
+                advertisedServiceUuids: [.bluetooth16(0xFFE0)]
+            ))
         XCTAssertEqual(core.scanState.rows.first?.title, "Begode Falcon")
         let projected = core.scanState
         XCTAssertEqual(core.scanState, projected, "Reading scan state is a pure projection")
@@ -2397,12 +3101,15 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         core.observeDetectionNotification(channel: channel, bytes: Data(Array(frame.dropFirst(20))))
 
         XCTAssertEqual(core.protocolIdentityCandidate?.displayName, "Mystery Wheel")
-        XCTAssertEqual(core.protocolIdentityCandidate?.detail, "Begode/Gotway protocol detected; model identity probe required")
+        XCTAssertEqual(
+            core.protocolIdentityCandidate?.detail, "Begode/Gotway protocol detected; model identity probe required")
         XCTAssertEqual(
             core.protocolIdentityCandidate?.support,
             .probeRecommended(disabledReason: "Begode/Gotway model identity probe required")
         )
-        XCTAssertEqual(observedCandidates.compactMap { $0?.detail }, ["Begode/Gotway protocol detected; model identity probe required"])
+        XCTAssertEqual(
+            observedCandidates.compactMap { $0?.detail },
+            ["Begode/Gotway protocol detected; model identity probe required"])
         XCTAssertEqual(
             core.records.last,
             "protocol_identity=Begode/Gotway protocol detected; model identity probe required"
@@ -2454,7 +3161,8 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         let channel = BluetoothUuid.bluetooth16(0xffe1)
 
         core.observeDetectionProbeWrite(channel: channel, bytes: Data("N".utf8))
-        core.observeDetectionNotification(channel: channel, bytes: Data([0x4e, 0x41, 0x4d, 0x45, 0x3d, 0x46, 0x61, 0x6c, 0x63, 0x6f, 0x6e, 0x00]))
+        core.observeDetectionNotification(
+            channel: channel, bytes: Data([0x4e, 0x41, 0x4d, 0x45, 0x3d, 0x46, 0x61, 0x6c, 0x63, 0x6f, 0x6e, 0x00]))
 
         XCTAssertTrue(core.records.contains("begode_probe_malformed=model"))
         XCTAssertFalse(core.records.contains("begode_probe_missing=model"))
@@ -2467,7 +3175,8 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         core.observeDetectionProbeWrite(channel: channel, bytes: Data("N".utf8))
         core.observeDetectionProbeWrite(channel: channel, bytes: Data("V".utf8))
         core.observeDetectionProbeWrite(channel: channel, bytes: Data("M".utf8))
-        core.observeDetectionNotification(channel: channel, bytes: Data([0x4e, 0x41, 0x4d, 0x45, 0x3d, 0x46, 0x61, 0x6c, 0x63, 0x6f, 0x6e, 0x00]))
+        core.observeDetectionNotification(
+            channel: channel, bytes: Data([0x4e, 0x41, 0x4d, 0x45, 0x3d, 0x46, 0x61, 0x6c, 0x63, 0x6f, 0x6e, 0x00]))
 
         XCTAssertTrue(core.records.contains("begode_probe_malformed=model"))
         XCTAssertFalse(core.records.contains("begode_probe_missing=model"))
@@ -2488,21 +3197,21 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
     }
 
     func testBegodeProbeResponsesExpireOnlyAfterMonotonicDeadline() {
-        var now = MonotonicMilliseconds(1_000)
-        let core = CutoutSessionCore(clock: MonotonicClock(now: { now }))
+        let now = Mutex<MonotonicMilliseconds>(MonotonicMilliseconds(1_000))
+        let core = CutoutSessionCore(clock: MonotonicClock(now: { now.withLock { $0 } }))
         let channel = BluetoothUuid.bluetooth16(0xffe1)
 
         core.observeDetectionProbeWrite(channel: channel, bytes: Data("N".utf8))
 
-        now = MonotonicMilliseconds(2_999)
+        now.withLock { $0 = MonotonicMilliseconds(2_999) }
         core.expireOutstandingBegodeProbeResponses()
         XCTAssertFalse(core.records.contains("begode_probe_missing=model"))
 
-        now = MonotonicMilliseconds(3_000)
+        now.withLock { $0 = MonotonicMilliseconds(3_000) }
         core.expireOutstandingBegodeProbeResponses()
         XCTAssertFalse(core.records.contains("begode_probe_missing=model"))
 
-        now = MonotonicMilliseconds(3_001)
+        now.withLock { $0 = MonotonicMilliseconds(3_001) }
         core.expireOutstandingBegodeProbeResponses()
         XCTAssertTrue(core.records.contains("begode_probe_missing=model"))
     }
@@ -2519,8 +3228,8 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
     }
 
     func testAnsweredBegodeProbeDoesNotHideOtherMissingResponses() {
-        var now = MonotonicMilliseconds(1_000)
-        let core = CutoutSessionCore(clock: MonotonicClock(now: { now }))
+        let now = Mutex<MonotonicMilliseconds>(MonotonicMilliseconds(1_000))
+        let core = CutoutSessionCore(clock: MonotonicClock(now: { now.withLock { $0 } }))
         let channel = BluetoothUuid.bluetooth16(0xffe1)
 
         core.observeDetectionProbeWrite(channel: channel, bytes: Data("N".utf8))
@@ -2528,7 +3237,7 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         core.observeDetectionProbeWrite(channel: channel, bytes: Data("M".utf8))
         core.observeDetectionNotification(channel: channel, bytes: Data("NAME=Falcon".utf8))
 
-        now = MonotonicMilliseconds(3_003)
+        now.withLock { $0 = MonotonicMilliseconds(3_003) }
         core.expireOutstandingBegodeProbeResponses()
 
         XCTAssertFalse(core.records.contains("begode_probe_missing=model"))
@@ -3183,7 +3892,8 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
             symbolName: "circle.hexagongrid.circle"
         )
     }
-    func testCoreLocationSentinelsBecomeTypedAbsenceBeforeForwarding() throws {
+    @MainActor
+    func testCoreLocationSentinelsNormalizeInRustSnapshotAndForwardRawBatch() throws {
         let location = CLLocation(
             coordinate: CLLocationCoordinate2D(latitude: 39.7392, longitude: -104.9903),
             altitude: 1_609,
@@ -3193,7 +3903,20 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
             speed: -1,
             timestamp: Date(timeIntervalSince1970: 1_700_000_000)
         )
-        let core = CutoutSessionCore()
+        var capturedUpdate: PhoneLocationUpdate?
+        var rideMapUpdate: PhoneLocationUpdate?
+        let locationEffects = CutoutSessionLocationEffects(
+            recordCaptureUpdate: { update in
+                capturedUpdate = update
+                return CaptureLocationWriteResult(generation: nil, outcome: .accepted)
+            },
+            ingestRideMapUpdate: { rideMapUpdate = $0 },
+            handleCaptureResult: { _ in }
+        )
+        let core = CutoutSessionCore(
+            clock: MonotonicClock(),
+            locationEffects: locationEffects
+        )
 
         core.locationManager(CLLocationManager(), didUpdateLocations: [location])
 
@@ -3204,6 +3927,17 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertNil(sample.courseDegrees)
         XCTAssertNil(sample.speedAccuracyMetersPerSecond)
         XCTAssertNil(sample.courseAccuracyDegrees)
+
+        for forwarded in [capturedUpdate, rideMapUpdate].compactMap({ $0?.samples.first }) {
+            XCTAssertEqual(forwarded.horizontalAccuracyMeters, -1)
+            XCTAssertEqual(forwarded.verticalAccuracyMeters, -1)
+            XCTAssertEqual(forwarded.speedMetersPerSecond, -1)
+            XCTAssertEqual(forwarded.speedAccuracyMetersPerSecond, -1)
+            XCTAssertEqual(forwarded.courseDegrees, -1)
+            XCTAssertEqual(forwarded.courseAccuracyDegrees, -1)
+        }
+        XCTAssertNotNil(capturedUpdate)
+        XCTAssertNotNil(rideMapUpdate)
     }
 }
 
@@ -3271,7 +4005,10 @@ private final class RecordingOperationSink: CoreBluetoothOperationSink {
         recordedEvents.append(.subscribe)
     }
 
-    func writeWithoutResponse(channel: BluetoothUuid, bytes: Data, isCurrent: @escaping () -> Bool, onReceipt: @escaping (CoreBluetoothWriteDisposition) -> Void) -> CoreBluetoothWriteDisposition {
+    func writeWithoutResponse(
+        channel: BluetoothUuid, bytes: Data, isCurrent: @escaping () -> Bool,
+        onReceipt: @escaping (CoreBluetoothWriteDisposition) -> Void
+    ) -> CoreBluetoothWriteDisposition {
         guard isCurrent() else {
             onReceipt(.cancelled)
             return .cancelled
@@ -3344,16 +4081,21 @@ private func dutyCycle(_ permille: Int16) -> DutyCycle {
     DutyCycle(permille: permille)
 }
 
-private final class TestMonotonicClock {
-    var now: MonotonicMilliseconds
+private final class TestMonotonicClock: Sendable {
+    private let storage: Mutex<MonotonicMilliseconds>
+
+    var now: MonotonicMilliseconds {
+        get { storage.withLock { $0 } }
+        set { storage.withLock { $0 = newValue } }
+    }
 
     init(_ now: MonotonicMilliseconds) {
-        self.now = now
+        storage = Mutex(now)
     }
 }
 
-private extension [EucRideVisibleFieldCoverage] {
-    func source(for field: EucRideVisibleField) -> EucRideVisibleFieldSource? {
+extension [EucRideVisibleFieldCoverage] {
+    fileprivate func source(for field: EucRideVisibleField) -> EucRideVisibleFieldSource? {
         first { $0.field == field }?.source
     }
 }

@@ -1,6 +1,7 @@
-import XCTest
-@testable import CutoutMobile
 import CutoutMobileFFI
+import XCTest
+
+@testable import CutoutMobile
 
 @MainActor
 final class AppleMusicObservationBridgeTests: XCTestCase {
@@ -250,7 +251,6 @@ final class AppleMusicObservationBridgeTests: XCTestCase {
         XCTAssertEqual(refreshCallCount, 0)
     }
 
-
     func testSceneSuspensionEmitsOneRustOwnedObservationGap() async {
         let service = AppleMusicObservationServiceSpy()
         let rustLifecycle = MobileMusicProviderLifecycle()
@@ -295,7 +295,7 @@ final class AppleMusicObservationBridgeTests: XCTestCase {
         line: UInt = #line,
         _ condition: @escaping @MainActor () -> Bool
     ) async {
-        for _ in 0 ..< maxTurns {
+        for _ in 0..<maxTurns {
             if condition() { return }
             await Task.yield()
         }

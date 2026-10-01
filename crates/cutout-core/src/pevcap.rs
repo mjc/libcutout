@@ -75,7 +75,7 @@ pub const PEVCAP_MAGIC: [u8; 8] = *b"PEVCAP\0\0";
 pub const PEVCAP_VERSION_MAJOR: u16 = 1;
 
 /// Current minor PEVCAP format version.
-pub const PEVCAP_VERSION_MINOR: u16 = 2;
+pub const PEVCAP_VERSION_MINOR: u16 = 3;
 
 /// PEVCAP version that introduced the independent location stream.
 pub const PEVCAP_VERSION_MINOR_LOCATIONS: u16 = 1;
@@ -642,8 +642,8 @@ pub enum PevcapEvent {
 
     /// A location observation that decoded structurally but failed canonical validation.
     ///
-    /// Streaming importers may skip this event while retaining the typed reason for diagnostics;
-    /// the original line or payload remains available in the managed PEVCAP artifact.
+    /// The raw observation remains attached so callers can retain it as evidence while excluding
+    /// it from route admission.
     LocationRejected(PevcapLocationRejection),
 }
 
@@ -1312,11 +1312,11 @@ impl<R: Read> PevcapReader<R> {
 
 #[cfg(feature = "serde")]
 fn location_event(location: PevcapLocationJson) -> PevcapEvent {
-    let receipt_monotonic_ms = MonotonicTimestamp::new(location.receipt_monotonic_ms);
-    match location.try_into_location() {
-        Ok(location) => PevcapEvent::Location(location),
+    let observation = location.into_raw_observation();
+    match observation.location.canonical() {
+        Ok(_) => PevcapEvent::Location(observation),
         Err(reason) => PevcapEvent::LocationRejected(PevcapLocationRejection {
-            receipt_monotonic_ms,
+            observation,
             reason,
         }),
     }
@@ -1976,11 +1976,40 @@ pub struct PevcapRecord {
     /// Typed protocol-native telemetry decoded from the same inbound notification.
     pub telemetry: Option<RawTelemetryReadback>,
 
+    /// Semantic telemetry snapshot associated with this notification.
+    pub semantic_telemetry: Option<PevcapSemanticTelemetry>,
+
     /// Optional music observation correlated with this capture frame.
     pub music: Option<PevcapMusicEvent>,
 
     /// Latest phone location sample when this BLE record was received.
     pub phone_location: Option<PevcapPhoneLocation>,
+}
+
+/// Provenance of a semantic telemetry snapshot attached to a capture event.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
+pub enum PevcapTelemetryProvenance {
+    /// Snapshot emitted by the Rust live session while ingesting this event.
+    LiveSession,
+    /// Snapshot derived by replaying captured protocol evidence.
+    Replay,
+}
+
+/// Versioned semantic snapshot serialized by Rust and correlated to its source event.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PevcapSemanticTelemetry {
+    /// Snapshot observation time, independent of the event receipt time.
+    pub observed_at_ms: Option<MonotonicTimestamp>,
+    /// Whether this came from live session processing or a later replay.
+    pub provenance: PevcapTelemetryProvenance,
+    /// Version of the typed snapshot JSON contract.
+    pub snapshot_schema_version: u16,
+    /// Rust library version that produced or replayed the snapshot.
+    pub library_version: String,
+    /// JSON object containing the Rust-owned typed snapshot.
+    pub snapshot_json: String,
 }
 
 /// Bounded music metadata correlated with one PEVCAP frame.
@@ -2049,29 +2078,141 @@ pub struct PevcapPhoneLocation {
     /// Sample timestamp reported by the mobile platform.
     pub wall_clock_unix_ms: u64,
     /// WGS84 latitude in degrees.
+    #[cfg_attr(feature = "serde", serde(with = "serde_float_bits"))]
     pub latitude_degrees: f64,
     /// WGS84 longitude in degrees.
+    #[cfg_attr(feature = "serde", serde(with = "serde_float_bits"))]
     pub longitude_degrees: f64,
     /// Altitude above mean sea level in meters.
+    #[cfg_attr(feature = "serde", serde(with = "serde_float_bits"))]
     pub altitude_meters: f64,
     /// Horizontal accuracy in meters, when Core Location reported it.
-    #[cfg_attr(feature = "serde", serde(default))]
+    #[cfg_attr(feature = "serde", serde(default, with = "serde_optional_float_bits"))]
     pub horizontal_accuracy_meters: Option<f64>,
     /// Vertical accuracy in meters, when Core Location reported it.
-    #[cfg_attr(feature = "serde", serde(default))]
+    #[cfg_attr(feature = "serde", serde(default, with = "serde_optional_float_bits"))]
     pub vertical_accuracy_meters: Option<f64>,
     /// Platform-reported speed in meters per second, when available.
-    #[cfg_attr(feature = "serde", serde(default))]
+    #[cfg_attr(feature = "serde", serde(default, with = "serde_optional_float_bits"))]
     pub speed_meters_per_second: Option<f64>,
     /// Platform-reported speed accuracy in meters per second, when available.
-    #[cfg_attr(feature = "serde", serde(default))]
+    #[cfg_attr(feature = "serde", serde(default, with = "serde_optional_float_bits"))]
     pub speed_accuracy_meters_per_second: Option<f64>,
     /// Platform-reported direction of travel in degrees, when available.
-    #[cfg_attr(feature = "serde", serde(default))]
+    #[cfg_attr(feature = "serde", serde(default, with = "serde_optional_float_bits"))]
     pub course_degrees: Option<f64>,
     /// Platform-reported course accuracy in degrees, when available.
-    #[cfg_attr(feature = "serde", serde(default))]
+    #[cfg_attr(feature = "serde", serde(default, with = "serde_optional_float_bits"))]
     pub course_accuracy_degrees: Option<f64>,
+}
+
+#[cfg(feature = "serde")]
+mod serde_float_bits {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
+    use std::ops::Deref;
+
+    pub(super) fn serialize<S, T>(value: T, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+        T: Deref<Target = f64>,
+    {
+        if value.is_finite() {
+            serializer.serialize_f64(*value)
+        } else {
+            serializer.serialize_str(&format!("f64:0x{:016x}", value.to_bits()))
+        }
+    }
+
+    pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<f64, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = EncodedF64::deserialize(deserializer)?;
+        Ok(value.0)
+    }
+
+    pub(super) struct EncodedF64(pub(super) f64);
+
+    impl Serialize for EncodedF64 {
+        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+        {
+            serialize(&self.0, serializer)
+        }
+    }
+
+    impl<'de> Deserialize<'de> for EncodedF64 {
+        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            struct FloatBitsVisitor;
+
+            impl de::Visitor<'_> for FloatBitsVisitor {
+                type Value = f64;
+
+                fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                    formatter.write_str("a finite JSON number or an f64 bit-pattern string")
+                }
+
+                fn visit_f64<E>(self, value: f64) -> Result<Self::Value, E> {
+                    Ok(value)
+                }
+
+                fn visit_i64<E: de::Error>(self, value: i64) -> Result<Self::Value, E> {
+                    value.to_string().parse().map_err(de::Error::custom)
+                }
+
+                fn visit_u64<E: de::Error>(self, value: u64) -> Result<Self::Value, E> {
+                    value.to_string().parse().map_err(de::Error::custom)
+                }
+
+                fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+                where
+                    E: de::Error,
+                {
+                    let bits = value
+                        .strip_prefix("f64:0x")
+                        .ok_or_else(|| E::custom("expected f64:0x bit-pattern string"))?;
+                    if bits.len() != 16 {
+                        return Err(E::custom("f64 bit-pattern must contain 16 hex digits"));
+                    }
+                    u64::from_str_radix(bits, 16)
+                        .map(f64::from_bits)
+                        .map_err(E::custom)
+                }
+            }
+
+            deserializer.deserialize_any(FloatBitsVisitor).map(Self)
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+mod serde_optional_float_bits {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::ops::Deref;
+
+    use super::serde_float_bits::EncodedF64;
+
+    pub(super) fn serialize<S, T>(value: T, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+        T: Deref<Target = Option<f64>>,
+    {
+        value
+            .as_ref()
+            .map(|value| EncodedF64(*value))
+            .serialize(serializer)
+    }
+
+    pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<Option<f64>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Option::<EncodedF64>::deserialize(deserializer).map(|value| value.map(|value| value.0))
+    }
 }
 
 /// A required-field failure while canonicalizing a phone-location observation.
@@ -2143,19 +2284,72 @@ impl PevcapPhoneLocation {
 /// boundary. The nested phone location retains the source timestamp reported by Core Location.
 /// Keeping both timestamps makes delayed and batched delivery observable without coupling the
 /// location stream to transport notification records.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug)]
 pub struct PevcapLocationSample {
     /// Capture-relative receipt time.
     pub receipt_monotonic_ms: MonotonicTimestamp,
 
-    /// Validated source observation and its source wall-clock timestamp.
+    /// Calibrated capture-relative source time, when a callback clock anchor was available.
+    pub source_monotonic_offset_ms: Option<i64>,
+
+    /// Source observation and its source wall-clock timestamp.
     pub location: PevcapPhoneLocation,
+
+    /// Exact source timestamp in Unix seconds, when supplied by the platform.
+    pub source_timestamp_unix_seconds: Option<f64>,
 
     /// Whether Core Location marked this observation as software-simulated, when available.
     pub simulated: Option<bool>,
 
     /// Whether Core Location marked this observation as produced by an accessory, when available.
     pub produced_by_accessory: Option<bool>,
+}
+
+impl PartialEq for PevcapLocationSample {
+    fn eq(&self, other: &Self) -> bool {
+        self.receipt_monotonic_ms == other.receipt_monotonic_ms
+            && self.source_monotonic_offset_ms == other.source_monotonic_offset_ms
+            && self.location == other.location
+            && option_f64_bits_eq(
+                self.source_timestamp_unix_seconds,
+                other.source_timestamp_unix_seconds,
+            )
+            && self.simulated == other.simulated
+            && self.produced_by_accessory == other.produced_by_accessory
+    }
+}
+
+impl Eq for PevcapLocationSample {}
+
+/// Calibrates a Core Location source timestamp against its callback's monotonic and wall-clock
+/// anchors, relative to capture start.
+///
+/// A source observation may predate capture start even though its callback arrives afterward;
+/// negative offsets are therefore preserved. `None` means the calibrated offset cannot fit in
+/// the persisted signed millisecond representation.
+#[must_use]
+pub fn calibrate_location_source_offset_ms(
+    capture_started_at: MonotonicTimestamp,
+    receipt_monotonic_ms: MonotonicTimestamp,
+    receipt_wall_clock_unix_ms: u64,
+    source_wall_clock_unix_ms: u64,
+) -> Option<i64> {
+    let offset = i128::from(receipt_monotonic_ms.get()) + i128::from(source_wall_clock_unix_ms)
+        - i128::from(receipt_wall_clock_unix_ms)
+        - i128::from(capture_started_at.get());
+    i64::try_from(offset).ok()
+}
+
+/// Converts a positive finite Unix timestamp in seconds into persisted whole milliseconds.
+#[must_use]
+pub fn unix_milliseconds_from_seconds(timestamp: f64) -> Option<u64> {
+    if !timestamp.is_finite() || timestamp <= 0.0 {
+        return None;
+    }
+
+    let duration = std::time::Duration::try_from_secs_f64(timestamp).ok()?;
+    let milliseconds = u64::try_from(duration.as_millis()).ok()?;
+    (milliseconds > 0).then_some(milliseconds)
 }
 
 impl PevcapLocationSample {
@@ -2173,10 +2367,47 @@ impl PevcapLocationSample {
     ) -> Result<Self, PevcapPhoneLocationError> {
         Ok(Self {
             receipt_monotonic_ms,
+            source_monotonic_offset_ms: None,
             location: location.canonical()?,
+            source_timestamp_unix_seconds: None,
             simulated,
             produced_by_accessory,
         })
+    }
+
+    /// Retains a raw platform observation for capture before semantic validation.
+    ///
+    /// Use this at ingestion boundaries where rejected source values must remain available as
+    /// evidence. Consumers that need a usable route point must validate `location` separately.
+    #[must_use]
+    pub const fn from_raw_observation(
+        receipt_monotonic_ms: MonotonicTimestamp,
+        location: PevcapPhoneLocation,
+        simulated: Option<bool>,
+        produced_by_accessory: Option<bool>,
+    ) -> Self {
+        Self {
+            receipt_monotonic_ms,
+            source_monotonic_offset_ms: None,
+            location,
+            source_timestamp_unix_seconds: None,
+            simulated,
+            produced_by_accessory,
+        }
+    }
+
+    /// Sets the source timestamp calibrated from a callback's monotonic/wall-clock anchor.
+    #[must_use]
+    pub const fn with_source_monotonic_offset_ms(mut self, offset_ms: Option<i64>) -> Self {
+        self.source_monotonic_offset_ms = offset_ms;
+        self
+    }
+
+    /// Retains the original source timestamp independently from its normalized wall-clock value.
+    #[must_use]
+    pub fn with_source_timestamp_unix_seconds(mut self, timestamp: Option<f64>) -> Self {
+        self.source_timestamp_unix_seconds = timestamp;
+        self
     }
 
     /// Returns the standalone JSONL line used by the streaming capture writer.
@@ -2196,8 +2427,8 @@ impl PevcapLocationSample {
 /// Why a structurally decoded PEVCAP location could not become a canonical sample.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PevcapLocationRejection {
-    /// Capture-relative receipt time decoded from the location event.
-    pub receipt_monotonic_ms: MonotonicTimestamp,
+    /// Unmodified source observation, including its receipt and calibrated timestamps.
+    pub observation: PevcapLocationSample,
 
     /// Canonicalization failure for the source location.
     pub reason: PevcapPhoneLocationError,
@@ -2253,6 +2484,13 @@ impl PevcapRecord {
         self
     }
 
+    /// Attaches the semantic snapshot produced for this notification.
+    #[must_use]
+    pub fn with_semantic_telemetry(mut self, telemetry: PevcapSemanticTelemetry) -> Self {
+        self.semantic_telemetry = Some(telemetry);
+        self
+    }
+
     /// Attaches the latest phone location sample to this notification.
     #[must_use]
     pub fn with_phone_location(mut self, location: PevcapPhoneLocation) -> Self {
@@ -2290,6 +2528,7 @@ impl PevcapRecord {
             write_receipt: None,
             bytes: Bytes::new(),
             telemetry: None,
+            semantic_telemetry: None,
             music: None,
             phone_location: None,
         }
@@ -2309,6 +2548,7 @@ impl PevcapRecord {
             write_receipt: None,
             bytes: Bytes::new(),
             telemetry: None,
+            semantic_telemetry: None,
             music: None,
             phone_location: None,
         }
@@ -2333,6 +2573,7 @@ impl PevcapRecord {
             write_receipt: None,
             bytes: bytes.into(),
             telemetry: None,
+            semantic_telemetry: None,
             music: None,
             phone_location: None,
         }
@@ -2372,6 +2613,7 @@ impl PevcapRecord {
             write_receipt: None,
             bytes: bytes.into(),
             telemetry: None,
+            semantic_telemetry: None,
             music: None,
             phone_location: None,
         }
@@ -2788,12 +3030,7 @@ impl PevcapCapture {
                             version: decoded_version,
                         });
                     }
-                    locations.push(location.try_into_location().map_err(|source| {
-                        PevcapJsonlError::Location {
-                            line: line_number,
-                            source,
-                        }
-                    })?);
+                    locations.push(location.into_raw_observation());
                 }
                 PevcapJsonlLine::Music { music } => {
                     if header.is_none() {
@@ -2991,8 +3228,7 @@ impl PevcapCapture {
                         section: PevcapBinarySection::Location,
                         source,
                     })?
-                    .try_into_location()
-                    .map_err(PevcapBinaryError::Location)?;
+                    .into_raw_observation();
                 locations.push(location);
             }
         }
@@ -3972,9 +4208,47 @@ struct PevcapRecordJson {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     telemetry: Option<RawTelemetryReadback>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    semantic_telemetry: Option<PevcapSemanticTelemetryJson>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     music: Option<PevcapMusicEventJson>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     phone_location: Option<PevcapPhoneLocation>,
+}
+
+#[cfg(feature = "serde")]
+#[derive(Deserialize, Serialize)]
+struct PevcapSemanticTelemetryJson {
+    observed_at_ms: Option<u64>,
+    provenance: PevcapTelemetryProvenance,
+    snapshot_schema_version: u16,
+    library_version: String,
+    snapshot_json: String,
+}
+
+#[cfg(feature = "serde")]
+impl From<&PevcapSemanticTelemetry> for PevcapSemanticTelemetryJson {
+    fn from(telemetry: &PevcapSemanticTelemetry) -> Self {
+        Self {
+            observed_at_ms: telemetry.observed_at_ms.map(MonotonicTimestamp::get),
+            provenance: telemetry.provenance,
+            snapshot_schema_version: telemetry.snapshot_schema_version,
+            library_version: telemetry.library_version.clone(),
+            snapshot_json: telemetry.snapshot_json.clone(),
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+impl From<PevcapSemanticTelemetryJson> for PevcapSemanticTelemetry {
+    fn from(telemetry: PevcapSemanticTelemetryJson) -> Self {
+        Self {
+            observed_at_ms: telemetry.observed_at_ms.map(MonotonicTimestamp::new),
+            provenance: telemetry.provenance,
+            snapshot_schema_version: telemetry.snapshot_schema_version,
+            library_version: telemetry.library_version,
+            snapshot_json: telemetry.snapshot_json,
+        }
+    }
 }
 
 #[cfg(feature = "serde")]
@@ -4052,6 +4326,14 @@ struct PevcapLocationJson {
     receipt_monotonic_ms: u64,
     location: PevcapPhoneLocation,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    source_monotonic_offset_ms: Option<i64>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "serde_optional_float_bits"
+    )]
+    source_timestamp_unix_seconds: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     simulated: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     produced_by_accessory: Option<bool>,
@@ -4063,6 +4345,8 @@ impl From<&PevcapLocationSample> for PevcapLocationJson {
         Self {
             receipt_monotonic_ms: sample.receipt_monotonic_ms.as_milliseconds(),
             location: sample.location,
+            source_monotonic_offset_ms: sample.source_monotonic_offset_ms,
+            source_timestamp_unix_seconds: sample.source_timestamp_unix_seconds,
             simulated: sample.simulated,
             produced_by_accessory: sample.produced_by_accessory,
         }
@@ -4071,13 +4355,24 @@ impl From<&PevcapLocationSample> for PevcapLocationJson {
 
 #[cfg(feature = "serde")]
 impl PevcapLocationJson {
-    fn try_into_location(self) -> Result<PevcapLocationSample, PevcapPhoneLocationError> {
-        PevcapLocationSample::new(
+    fn try_into_location(mut self) -> Result<PevcapLocationSample, PevcapPhoneLocationError> {
+        if let Some(timestamp) = self.source_timestamp_unix_seconds {
+            self.location.wall_clock_unix_ms =
+                unix_milliseconds_from_seconds(timestamp).unwrap_or_default();
+        }
+        self.location.canonical()?;
+        Ok(self.into_raw_observation())
+    }
+
+    fn into_raw_observation(self) -> PevcapLocationSample {
+        PevcapLocationSample::from_raw_observation(
             MonotonicTimestamp::new(self.receipt_monotonic_ms),
             self.location,
             self.simulated,
             self.produced_by_accessory,
         )
+        .with_source_monotonic_offset_ms(self.source_monotonic_offset_ms)
+        .with_source_timestamp_unix_seconds(self.source_timestamp_unix_seconds)
     }
 }
 
@@ -4095,6 +4390,10 @@ impl From<&PevcapRecord> for PevcapRecordJson {
             write_receipt: record.write_receipt,
             bytes: record.bytes.clone(),
             telemetry: record.telemetry.clone(),
+            semantic_telemetry: record
+                .semantic_telemetry
+                .as_ref()
+                .map(PevcapSemanticTelemetryJson::from),
             music: record.music.as_ref().map(PevcapMusicEventJson::from),
             phone_location: record.phone_location,
         }
@@ -4121,6 +4420,7 @@ impl PevcapRecordJson {
             write_receipt: self.write_receipt,
             bytes: self.bytes,
             telemetry: self.telemetry,
+            semantic_telemetry: self.semantic_telemetry.map(Into::into),
             music,
             phone_location: self.phone_location,
         })
@@ -4300,6 +4600,68 @@ mod tests {
         WallClockUnixTimestamp::new(value)
     }
 
+    #[test]
+    fn location_source_time_calibration_preserves_batches_across_callback_anchors() {
+        let capture_started_at = ms(100);
+        let first_callback_wall_clock = 1_700_000_000_010;
+        let first_callback_monotonic = ms(120);
+
+        assert_eq!(
+            calibrate_location_source_offset_ms(
+                capture_started_at,
+                first_callback_monotonic,
+                first_callback_wall_clock,
+                1_700_000_000_008,
+            ),
+            Some(18)
+        );
+        assert_eq!(
+            calibrate_location_source_offset_ms(
+                capture_started_at,
+                first_callback_monotonic,
+                first_callback_wall_clock,
+                1_700_000_000_009,
+            ),
+            Some(19)
+        );
+        assert_eq!(
+            calibrate_location_source_offset_ms(
+                capture_started_at,
+                ms(130),
+                1_700_000_000_013,
+                1_700_000_000_010,
+            ),
+            Some(27)
+        );
+    }
+
+    #[test]
+    fn location_source_time_calibration_keeps_negative_offsets_and_rejects_overflow() {
+        assert_eq!(
+            calibrate_location_source_offset_ms(ms(200), ms(220), 1_000, 950),
+            Some(-30)
+        );
+        assert_eq!(
+            calibrate_location_source_offset_ms(ms(0), ms(u64::MAX), 0, u64::MAX),
+            None
+        );
+    }
+
+    #[test]
+    fn source_timestamp_seconds_convert_to_checked_unix_milliseconds() {
+        assert_eq!(
+            unix_milliseconds_from_seconds(1_700_000_000.123_9),
+            Some(1_700_000_000_123)
+        );
+        assert_eq!(unix_milliseconds_from_seconds(0.000_9), None);
+        assert_eq!(unix_milliseconds_from_seconds(0.001_9), Some(1));
+        assert_eq!(unix_milliseconds_from_seconds(0.0), None);
+        assert_eq!(unix_milliseconds_from_seconds(-1.0), None);
+        assert_eq!(unix_milliseconds_from_seconds(f64::NAN), None);
+        assert_eq!(unix_milliseconds_from_seconds(f64::INFINITY), None);
+        assert_eq!(unix_milliseconds_from_seconds(f64::MAX), None);
+    }
+
     const fn write_len(value: u16) -> TransportWriteLimit {
         TransportWriteLimit::from_bytes(value)
     }
@@ -4414,7 +4776,7 @@ mod tests {
         assert_eq!(PEVCAP_MAGIC, *b"PEVCAP\0\0");
         assert_eq!(
             PevcapFormatVersion::current(),
-            PevcapFormatVersion { major: 1, minor: 2 }
+            PevcapFormatVersion { major: 1, minor: 3 }
         );
     }
 
@@ -4446,6 +4808,37 @@ mod tests {
         assert_eq!(music.monotonic_at, ms(17));
         assert_eq!(music.wall_clock_unix_ms, wc(1_700_000_000_042));
         assert!(!encoded.contains("track_position_ms"));
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn pevcap_semantic_telemetry_round_trips_with_its_own_observation_time() {
+        let mut capture = sample_pevcap_capture();
+        capture.records[1] =
+            capture.records[1]
+                .clone()
+                .with_semantic_telemetry(PevcapSemanticTelemetry {
+                    observed_at_ms: Some(ms(8)),
+                    provenance: PevcapTelemetryProvenance::LiveSession,
+                    snapshot_schema_version: 1,
+                    library_version: "test-build".to_owned(),
+                    snapshot_json: r#"{"speed":{"value":1234,"unit":"millimeters_per_second"}}"#
+                        .to_owned(),
+                });
+
+        let encoded = capture.to_jsonl().expect("capture serializes");
+        let decoded = PevcapCapture::from_jsonl(&encoded).expect("capture decodes");
+
+        assert_eq!(decoded, capture);
+        assert_eq!(decoded.records[1].monotonic_ms, ms(9));
+        assert_eq!(
+            decoded.records[1]
+                .semantic_telemetry
+                .as_ref()
+                .expect("semantic snapshot is retained")
+                .observed_at_ms,
+            Some(ms(8))
+        );
     }
 
     #[cfg(feature = "serde")]
@@ -4780,6 +5173,8 @@ mod tests {
         let capture = sample_pevcap_capture();
         let invalid_location = PevcapLocationJson {
             receipt_monotonic_ms: 11,
+            source_monotonic_offset_ms: None,
+            source_timestamp_unix_seconds: None,
             location: PevcapPhoneLocation {
                 wall_clock_unix_ms: 1_725_000_123_467,
                 latitude_degrees: 91.0,
@@ -4795,6 +5190,12 @@ mod tests {
             simulated: None,
             produced_by_accessory: None,
         };
+        let rejected_observation = PevcapLocationSample::from_raw_observation(
+            ms(11),
+            invalid_location.location,
+            invalid_location.simulated,
+            invalid_location.produced_by_accessory,
+        );
         let input = format!(
             "{}\n{}\n",
             capture
@@ -4812,11 +5213,79 @@ mod tests {
         assert_eq!(
             reader.next_event().expect("rejection should be observable"),
             Some(PevcapEvent::LocationRejected(PevcapLocationRejection {
-                receipt_monotonic_ms: ms(11),
+                observation: rejected_observation,
                 reason: PevcapPhoneLocationError::InvalidLatitude,
             }))
         );
         assert_eq!(reader.next_event().expect("stream should finish"), None);
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn owned_capture_round_trips_invalid_location_float_bits_in_both_encodings() {
+        let mut capture = sample_pevcap_capture();
+        let latitude = f64::from_bits(0x7ff8_0000_0000_0042);
+        let speed = f64::NEG_INFINITY;
+        let source_timestamp = f64::from_bits(0x7ff8_0000_0000_0077);
+        capture.locations.push(
+            PevcapLocationSample::from_raw_observation(
+                ms(11),
+                PevcapPhoneLocation {
+                    wall_clock_unix_ms: 1_725_000_123_467,
+                    latitude_degrees: latitude,
+                    longitude_degrees: -104.9,
+                    altitude_meters: 1_600.0,
+                    horizontal_accuracy_meters: Some(-1.0),
+                    vertical_accuracy_meters: None,
+                    speed_meters_per_second: Some(speed),
+                    speed_accuracy_meters_per_second: None,
+                    course_degrees: Some(0.0),
+                    course_accuracy_degrees: None,
+                },
+                Some(false),
+                Some(true),
+            )
+            .with_source_timestamp_unix_seconds(Some(source_timestamp)),
+        );
+
+        for encoding in [PevcapEncoding::Jsonl, PevcapEncoding::Binary] {
+            let encoded = capture.encode(encoding).expect("raw capture should encode");
+            let decoded = PevcapCapture::decode(&encoded, encoding)
+                .expect("invalid source values remain structurally readable");
+            let observation = decoded
+                .locations
+                .last()
+                .expect("invalid observation is retained");
+            assert_eq!(
+                observation.location.latitude_degrees.to_bits(),
+                latitude.to_bits()
+            );
+            assert_eq!(
+                observation
+                    .source_timestamp_unix_seconds
+                    .expect("raw source timestamp remains present")
+                    .to_bits(),
+                source_timestamp.to_bits()
+            );
+            assert_eq!(
+                observation
+                    .location
+                    .horizontal_accuracy_meters
+                    .unwrap()
+                    .to_bits(),
+                (-1.0_f64).to_bits()
+            );
+            assert_eq!(
+                observation
+                    .location
+                    .speed_meters_per_second
+                    .unwrap()
+                    .to_bits(),
+                speed.to_bits()
+            );
+            assert_eq!(observation.simulated, Some(false));
+            assert_eq!(observation.produced_by_accessory, Some(true));
+        }
     }
 
     #[cfg(feature = "serde")]
@@ -6148,7 +6617,7 @@ mod tests {
         assert!(matches!(
             error,
             PevcapBinaryError::UnsupportedVersion {
-                version: PevcapFormatVersion { major: 2, minor: 2 }
+                version: PevcapFormatVersion { major: 2, minor: 3 }
             }
         ));
     }

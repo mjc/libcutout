@@ -1,13 +1,15 @@
 use super::{MapPointId, SpatialRowId, StorageError};
 use rusqlite::{Connection, OptionalExtension, params};
 
-pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 27;
+pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 35;
 const APPLICATION_ID: i64 = 0x4355_544f;
 
+fn schema_pragmas(version: i64) -> String {
+    format!("PRAGMA application_id = {APPLICATION_ID}; PRAGMA user_version = {version};")
+}
+
 fn current_schema_pragmas() -> String {
-    format!(
-        "PRAGMA application_id = {APPLICATION_ID}; PRAGMA user_version = {CURRENT_SCHEMA_VERSION};"
-    )
+    schema_pragmas(CURRENT_SCHEMA_VERSION)
 }
 
 pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
@@ -48,6 +50,14 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         24 => migrate_v24_to_current(connection)?,
         25 => migrate_v25_to_current(connection)?,
         26 => migrate_v26_to_current(connection)?,
+        27 => migrate_v27_to_current(connection)?,
+        28 => migrate_v28_to_current(connection)?,
+        29 => migrate_v29_to_current(connection)?,
+        30 => migrate_v30_to_current(connection)?,
+        31 => migrate_v31_to_current(connection)?,
+        32 => migrate_v32_to_current(connection)?,
+        33 => migrate_v33_to_current(connection)?,
+        34 => migrate_v34_to_current(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -69,7 +79,38 @@ fn initialize_current_schema(connection: &Connection) -> Result<(), StorageError
         return Err(StorageError::InvalidDatabaseIdentity);
     }
     connection.execute_batch("BEGIN IMMEDIATE;")?;
-    if let Err(error) = create_current_schema(connection) {
+    if let Err(error) = create_current_schema(connection)
+        .and_then(|()| {
+            connection
+                .execute_batch(super::live_capture::SCHEMA)
+                .map_err(Into::into)
+        })
+        .and_then(|()| {
+            connection
+                .execute_batch(super::live_capture::LOCATION_SCHEMA)
+                .map_err(Into::into)
+        })
+        .and_then(|()| {
+            connection
+                .execute_batch(super::live_capture::BLE_SCHEMA)
+                .map_err(Into::into)
+        })
+        .and_then(|()| {
+            connection
+                .execute_batch(super::live_capture::BLE_RAW_TELEMETRY_SCHEMA)
+                .map_err(Into::into)
+        })
+        .and_then(|()| {
+            connection
+                .execute_batch(super::live_capture::BLE_SEMANTIC_TELEMETRY_SCHEMA)
+                .map_err(Into::into)
+        })
+        .and_then(|()| {
+            connection
+                .execute_batch(RIDE_RECORDING_PREFERENCES_SCHEMA)
+                .map_err(Into::into)
+        })
+    {
         let _ = connection.execute_batch("ROLLBACK;");
         return Err(error);
     }
@@ -506,6 +547,11 @@ fn migrate_v3_to_current(connection: &mut Connection) -> Result<(), StorageError
         DROP TABLE ride_session_marker_legacy;
         ",
     )?;
+    transaction.execute_batch(super::live_capture::SCHEMA)?;
+    transaction.execute_batch(super::live_capture::LOCATION_SCHEMA)?;
+    transaction.execute_batch(super::live_capture::BLE_SCHEMA)?;
+    transaction.execute_batch(super::live_capture::BLE_RAW_TELEMETRY_SCHEMA)?;
+    transaction.execute_batch(super::live_capture::BLE_SEMANTIC_TELEMETRY_SCHEMA)?;
     transaction.execute_batch(&current_schema_pragmas())?;
     transaction.commit()?;
     Ok(())
@@ -1192,7 +1238,7 @@ fn migrate_v25_to_current(connection: &mut Connection) -> Result<(), StorageErro
 }
 
 const RIDE_RECORDING_PREFERENCES_SCHEMA: &str = "
-    CREATE TABLE ride_recording_preferences (
+    CREATE TABLE IF NOT EXISTS ride_recording_preferences (
         id INTEGER PRIMARY KEY CHECK (id = 1),
         autostart_enabled INTEGER NOT NULL CHECK (autostart_enabled IN (0, 1))
     );";
@@ -1200,8 +1246,134 @@ const RIDE_RECORDING_PREFERENCES_SCHEMA: &str = "
 fn migrate_v26_to_current(connection: &mut Connection) -> Result<(), StorageError> {
     let transaction = connection.transaction()?;
     transaction.execute_batch(RIDE_RECORDING_PREFERENCES_SCHEMA)?;
-    transaction.execute_batch(&current_schema_pragmas())?;
+    ensure_live_capture_sessions_schema(&transaction)?;
+    transaction.execute_batch(&schema_pragmas(28))?;
     transaction.commit()?;
+    migrate_v28_to_current(connection)
+}
+
+fn migrate_v27_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction()?;
+    ensure_live_capture_sessions_schema(&transaction)?;
+    transaction.execute_batch(RIDE_RECORDING_PREFERENCES_SCHEMA)?;
+    transaction.execute_batch(&schema_pragmas(28))?;
+    transaction.commit()?;
+    migrate_v28_to_current(connection)
+}
+
+fn migrate_v28_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction()?;
+    transaction.execute_batch(super::live_capture::LOCATION_SCHEMA)?;
+    transaction.execute_batch(super::live_capture::BLE_SCHEMA)?;
+    transaction.execute_batch(super::live_capture::BLE_RAW_TELEMETRY_SCHEMA)?;
+    transaction.execute_batch(super::live_capture::BLE_SEMANTIC_TELEMETRY_SCHEMA)?;
+    finish_migration(&transaction)?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn ensure_live_capture_sessions_schema(connection: &Connection) -> Result<(), StorageError> {
+    if table_exists(connection, "live_capture_sessions")? {
+        if !table_has_column(connection, "live_capture_sessions", "integrity")? {
+            connection.execute_batch(
+                "ALTER TABLE live_capture_sessions
+                     ADD COLUMN integrity TEXT NOT NULL DEFAULT 'unknown'
+                         CHECK (integrity IN ('complete', 'incomplete', 'unknown'));",
+            )?;
+        }
+        if !table_has_column(connection, "live_capture_sessions", "dropped_messages")? {
+            connection.execute_batch(
+                "ALTER TABLE live_capture_sessions
+                     ADD COLUMN dropped_messages INTEGER NOT NULL DEFAULT 0
+                         CHECK (dropped_messages >= 0);",
+            )?;
+        }
+    }
+    connection.execute_batch(super::live_capture::SCHEMA)?;
+    Ok(())
+}
+
+fn migrate_v29_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction()?;
+    transaction.execute_batch(
+        "ALTER TABLE live_capture_location_observations
+             RENAME TO live_capture_location_observations_v29;",
+    )?;
+    transaction.execute_batch(super::live_capture::LOCATION_SCHEMA)?;
+    transaction.execute_batch(
+        "INSERT INTO live_capture_location_observations
+         (capture_id, sequence, latitude_degrees, longitude_degrees, altitude_meters,
+          horizontal_accuracy_meters, vertical_accuracy_meters, speed_meters_per_second,
+          speed_accuracy_meters_per_second, course_degrees, course_accuracy_degrees,
+          simulated, produced_by_accessory, validation_state, validation_reason, route_admission)
+         SELECT capture_id, sequence, latitude_degrees, longitude_degrees, altitude_meters,
+                horizontal_accuracy_meters, vertical_accuracy_meters, speed_meters_per_second,
+                speed_accuracy_meters_per_second, course_degrees, course_accuracy_degrees,
+                simulated, produced_by_accessory, validation_state, validation_reason,
+                route_admission
+         FROM live_capture_location_observations_v29;
+         DROP TABLE live_capture_location_observations_v29;",
+    )?;
+    transaction.execute_batch(super::live_capture::BLE_SCHEMA)?;
+    transaction.execute_batch(super::live_capture::BLE_RAW_TELEMETRY_SCHEMA)?;
+    transaction.execute_batch(super::live_capture::BLE_SEMANTIC_TELEMETRY_SCHEMA)?;
+    finish_migration(&transaction)?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn migrate_v30_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction()?;
+    transaction.execute_batch(
+        "ALTER TABLE live_capture_location_observations
+             ADD COLUMN raw_source_timestamp_bits BLOB
+                 CHECK (raw_source_timestamp_bits IS NULL OR length(raw_source_timestamp_bits) = 8);",
+    )?;
+    transaction.execute_batch(super::live_capture::BLE_SCHEMA)?;
+    transaction.execute_batch(super::live_capture::BLE_RAW_TELEMETRY_SCHEMA)?;
+    transaction.execute_batch(super::live_capture::BLE_SEMANTIC_TELEMETRY_SCHEMA)?;
+    finish_migration(&transaction)?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn migrate_v32_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction()?;
+    transaction.execute_batch(super::live_capture::BLE_RAW_TELEMETRY_SCHEMA)?;
+    transaction.execute_batch(super::live_capture::BLE_SEMANTIC_TELEMETRY_SCHEMA)?;
+    finish_migration(&transaction)?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn migrate_v33_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction()?;
+    transaction.execute_batch(super::live_capture::BLE_SEMANTIC_TELEMETRY_SCHEMA)?;
+    finish_migration(&transaction)?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn migrate_v31_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction()?;
+    transaction.execute_batch(super::live_capture::BLE_SCHEMA)?;
+    transaction.execute_batch(super::live_capture::BLE_RAW_TELEMETRY_SCHEMA)?;
+    transaction.execute_batch(super::live_capture::BLE_SEMANTIC_TELEMETRY_SCHEMA)?;
+    finish_migration(&transaction)?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn migrate_v34_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction()?;
+    finish_migration(&transaction)?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn finish_migration(transaction: &rusqlite::Transaction<'_>) -> Result<(), StorageError> {
+    transaction.execute_batch(RIDE_RECORDING_PREFERENCES_SCHEMA)?;
+    transaction.execute_batch(&current_schema_pragmas())?;
     Ok(())
 }
 
@@ -1239,6 +1411,12 @@ pub(super) fn verify_current_schema(connection: &Connection) -> Result<(), Stora
         "pevcap_captures",
         "pevcap_capture_chunks",
         "pevcap_recordings",
+        "live_capture_sessions",
+        "live_capture_events",
+        "live_capture_location_observations",
+        "live_capture_ble_observations",
+        "live_capture_ble_raw_telemetry_fields",
+        "live_capture_ble_semantic_telemetry",
         "trails",
         "trail_segments",
         "trail_segment_spatial_keys",
@@ -1259,6 +1437,11 @@ pub(super) fn verify_current_schema(connection: &Connection) -> Result<(), Stora
         if !exists {
             return Err(StorageError::InvalidDatabaseIdentity);
         }
+    }
+    if !table_has_column(connection, "live_capture_sessions", "integrity")?
+        || !table_has_column(connection, "live_capture_sessions", "dropped_messages")?
+    {
+        return Err(StorageError::InvalidDatabaseIdentity);
     }
     verify_singleton_schema(connection, "selected_device", "platform_identifier")?;
     verify_singleton_schema(connection, "last_connected_device", "platform_identifier")?;
@@ -1362,4 +1545,268 @@ fn verify_device_schema(connection: &Connection) -> Result<(), StorageError> {
         return Err(StorageError::InvalidDatabaseIdentity);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn schema_v30_migration_adds_raw_location_source_timestamp_bits() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(&format!(
+                "CREATE TABLE live_capture_location_observations (raw_float_bits BLOB);
+                 PRAGMA application_id = {APPLICATION_ID};
+                 PRAGMA user_version = 30;"
+            ))
+            .unwrap();
+
+        migrate(&mut connection).unwrap();
+
+        let version: i64 = connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, CURRENT_SCHEMA_VERSION);
+        assert!(
+            table_has_column(
+                &connection,
+                "live_capture_location_observations",
+                "raw_source_timestamp_bits"
+            )
+            .unwrap()
+        );
+        assert!(table_exists(&connection, "live_capture_ble_observations").unwrap());
+    }
+
+    #[test]
+    fn schema_v31_migration_adds_structured_live_ble_rows() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(&format!(
+                "PRAGMA application_id = {APPLICATION_ID};
+                 PRAGMA user_version = 31;"
+            ))
+            .unwrap();
+
+        migrate(&mut connection).unwrap();
+
+        assert!(table_exists(&connection, "live_capture_ble_observations").unwrap());
+        assert_eq!(
+            connection
+                .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                .unwrap(),
+            CURRENT_SCHEMA_VERSION
+        );
+    }
+
+    #[test]
+    fn schema_v32_migration_adds_queryable_raw_telemetry_fields() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        initialize_current_schema(&connection).unwrap();
+        connection
+            .execute_batch(
+                "DROP TABLE live_capture_ble_raw_telemetry_fields;
+                 DROP TABLE live_capture_ble_semantic_telemetry;
+                 PRAGMA user_version = 32;",
+            )
+            .unwrap();
+
+        migrate(&mut connection).unwrap();
+
+        assert!(table_exists(&connection, "live_capture_ble_raw_telemetry_fields").unwrap());
+        assert!(table_exists(&connection, "live_capture_ble_semantic_telemetry").unwrap());
+        assert_eq!(
+            connection
+                .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                .unwrap(),
+            CURRENT_SCHEMA_VERSION
+        );
+    }
+
+    #[test]
+    fn schema_v33_migration_adds_semantic_capture_telemetry() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        initialize_current_schema(&connection).unwrap();
+        connection
+            .execute_batch(
+                "DROP TABLE live_capture_ble_semantic_telemetry;
+                 PRAGMA user_version = 33;",
+            )
+            .unwrap();
+
+        migrate(&mut connection).unwrap();
+
+        assert!(table_exists(&connection, "live_capture_ble_semantic_telemetry").unwrap());
+        assert_eq!(
+            connection
+                .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                .unwrap(),
+            CURRENT_SCHEMA_VERSION
+        );
+    }
+
+    #[test]
+    fn schema_v27_migration_preserves_rows_with_unknown_integrity() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE live_capture_sessions (
+                     capture_id TEXT PRIMARY KEY NOT NULL,
+                     state TEXT NOT NULL,
+                     header_json BLOB NOT NULL,
+                     started_at_ms INTEGER NOT NULL,
+                     finished_at_ms INTEGER,
+                     next_sequence INTEGER NOT NULL,
+                     stored_bytes INTEGER NOT NULL
+                 );
+                 INSERT INTO live_capture_sessions
+                     (capture_id, state, header_json, started_at_ms, finished_at_ms,
+                      next_sequence, stored_bytes)
+                 VALUES ('00000000-0000-0000-0000-000000000001', 'finished', X'7B7D',
+                         100, 120, 0, 2);
+                 PRAGMA application_id = 1129665615;
+                 PRAGMA user_version = 27;",
+            )
+            .unwrap();
+
+        migrate(&mut connection).unwrap();
+
+        let migrated: (String, i64, String, i64) = connection
+            .query_row(
+                "SELECT capture_id, started_at_ms, integrity, dropped_messages
+                 FROM live_capture_sessions",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            migrated,
+            (
+                "00000000-0000-0000-0000-000000000001".to_owned(),
+                100,
+                "unknown".to_owned(),
+                0
+            )
+        );
+        assert_eq!(
+            connection
+                .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                .unwrap(),
+            CURRENT_SCHEMA_VERSION
+        );
+    }
+
+    #[test]
+    fn main_v27_schema_preserves_ride_recording_preference_when_capture_tables_are_added() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        initialize_current_schema(&connection).unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO ride_recording_preferences (id, autostart_enabled) VALUES (1, 0);
+                 DROP TABLE live_capture_ble_semantic_telemetry;
+                 DROP TABLE live_capture_ble_raw_telemetry_fields;
+                 DROP TABLE live_capture_ble_observations;
+                 DROP TABLE live_capture_location_observations;
+                 DROP TABLE live_capture_events;
+                 DROP TABLE live_capture_sessions;
+                 PRAGMA user_version = 27;",
+            )
+            .unwrap();
+
+        migrate(&mut connection).unwrap();
+
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT autostart_enabled FROM ride_recording_preferences WHERE id = 1",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            0
+        );
+        assert!(table_exists(&connection, "live_capture_sessions").unwrap());
+        assert_eq!(
+            connection
+                .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                .unwrap(),
+            CURRENT_SCHEMA_VERSION
+        );
+    }
+
+    #[test]
+    fn v26_live_capture_schema_repairs_missing_session_columns_and_tables() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE live_capture_sessions (
+                     capture_id TEXT PRIMARY KEY NOT NULL,
+                     state TEXT NOT NULL,
+                     header_json BLOB NOT NULL,
+                     started_at_ms INTEGER NOT NULL,
+                     finished_at_ms INTEGER,
+                     next_sequence INTEGER NOT NULL,
+                     stored_bytes INTEGER NOT NULL
+                 );",
+            )
+            .unwrap();
+
+        ensure_live_capture_sessions_schema(&connection).unwrap();
+
+        assert!(table_has_column(&connection, "live_capture_sessions", "integrity").unwrap());
+        assert!(
+            table_has_column(&connection, "live_capture_sessions", "dropped_messages").unwrap()
+        );
+        assert!(table_exists(&connection, "live_capture_events").unwrap());
+    }
+
+    #[test]
+    fn schema_v34_migration_adds_ride_recording_preferences() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        initialize_current_schema(&connection).unwrap();
+        connection
+            .execute_batch(
+                "DROP TABLE ride_recording_preferences;
+                 PRAGMA user_version = 34;",
+            )
+            .unwrap();
+
+        migrate(&mut connection).unwrap();
+
+        assert!(table_exists(&connection, "ride_recording_preferences").unwrap());
+        assert_eq!(
+            connection
+                .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                .unwrap(),
+            CURRENT_SCHEMA_VERSION
+        );
+    }
+
+    #[test]
+    fn schema_v28_migration_adds_structured_live_location_rows() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE live_capture_events (
+                     capture_id TEXT NOT NULL,
+                     sequence INTEGER NOT NULL,
+                     PRIMARY KEY (capture_id, sequence)
+                 ) WITHOUT ROWID;
+                 PRAGMA application_id = 1129665615;
+                 PRAGMA user_version = 28;",
+            )
+            .unwrap();
+
+        migrate(&mut connection).unwrap();
+
+        assert!(table_exists(&connection, "live_capture_location_observations").unwrap());
+        assert!(table_exists(&connection, "live_capture_ble_observations").unwrap());
+        assert_eq!(
+            connection
+                .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                .unwrap(),
+            CURRENT_SCHEMA_VERSION
+        );
+    }
 }

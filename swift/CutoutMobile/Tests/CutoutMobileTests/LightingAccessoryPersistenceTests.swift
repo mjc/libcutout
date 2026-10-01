@@ -1,6 +1,7 @@
+import CutoutMobileFFI
 import Foundation
 import XCTest
-import CutoutMobileFFI
+
 @testable import CutoutMobile
 
 final class LightingAccessoryPersistenceTests: XCTestCase {
@@ -188,13 +189,14 @@ final class LightingAccessoryPersistenceTests: XCTestCase {
 
         let store = LightingAccessoryPersistence(defaults: defaults)
         XCTAssertTrue(store.ensureRecord(platformIdentifier: "55555555-5555-5555-5555-555555555555"))
-        try store.confirm(MobileMelkLightingRestoreStateDto(
-            powerOn: true,
-            red: 1,
-            green: 2,
-            blue: 3,
-            brightness: 4
-        ))
+        try store.confirm(
+            MobileMelkLightingRestoreStateDto(
+                powerOn: true,
+                red: 1,
+                green: 2,
+                blue: 3,
+                brightness: 4
+            ))
 
         XCTAssertFalse(store.ensureRecord(platformIdentifier: "55555555-5555-5555-5555-555555555555"))
         XCTAssertTrue(store.ensureRecord(platformIdentifier: "66666666-6666-6666-6666-666666666666"))

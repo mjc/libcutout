@@ -1,12 +1,12 @@
-public extension BmsGroupSnapshot {
-    var accessibilityLabel: String {
+extension BmsGroupSnapshot {
+    public var accessibilityLabel: String {
         guard let label, !label.isEmpty else {
             return pevLocalizedText("bms.accessibility.group", Int64(index))
         }
         return pevLocalizedText("bms.accessibility.group_named", Int64(index), label)
     }
 
-    var accessibilityValue: String {
+    public var accessibilityValue: String {
         var parts = [
             voltage.map {
                 pevLocalizedText(
@@ -28,13 +28,13 @@ public extension BmsGroupSnapshot {
         return parts.formatted(.list(type: .and))
     }
 
-    var detailSelectionAccessibilityHint: String {
+    public var detailSelectionAccessibilityHint: String {
         pevLocalizedText("bms.accessibility.show_details")
     }
 }
 
-public extension BmsAlertLevel {
-    var accessibilityValue: String {
+extension BmsAlertLevel {
+    public var accessibilityValue: String {
         switch self {
         case .nominal:
             pevLocalizedText("bms.accessibility.status.nominal")

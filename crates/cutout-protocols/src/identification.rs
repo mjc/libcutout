@@ -299,6 +299,22 @@ pub struct DeviceDetectionResolution {
     pub malformed_probe_response: Option<PendingProbe>,
 }
 
+impl DeviceDetectionResolution {
+    /// Whether protocol detection should keep the connection attempt pending for passive frames.
+    #[must_use]
+    pub const fn awaits_passive_evidence(&self) -> bool {
+        match self.protocol {
+            ProtocolFamilyState::Unknown => {
+                self.missing_probe_response.is_none() && self.malformed_probe_response.is_none()
+            }
+            ProtocolFamilyState::VeteranLeaperkimNosfet
+            | ProtocolFamilyState::BegodeGotway
+            | ProtocolFamilyState::Vesc
+            | ProtocolFamilyState::Conflict => false,
+        }
+    }
+}
+
 /// Incremental device-detection event.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DeviceDetectionEvent<'a> {
@@ -331,6 +347,15 @@ pub enum DeviceDetectionEvent<'a> {
         /// Probe kind.
         probe: PendingProbe,
     },
+}
+
+/// Identifies the pending response for one canonical Begode probe request payload.
+#[must_use]
+pub fn begode_probe_for_request_payload(payload: &[u8]) -> Option<PendingProbe> {
+    crate::begode_identification_probes()
+        .into_iter()
+        .find(|probe| probe.payload.as_slice() == payload)
+        .map(|probe| probe.probe)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -454,7 +479,9 @@ impl DeviceDetectionSession {
             }
         }
         let vesc_reply = match self.vesc_decoder.feed_result(bytes) {
-            Ok(VescReadOnlyStreamResult::Replies(ref replies)) if !replies.is_empty() => true,
+            Ok(VescReadOnlyStreamResult::Replies { ref replies, .. }) if !replies.is_empty() => {
+                true
+            }
             _ => false,
         };
         let bytes = veteran_frame.as_ref().map_or_else(
@@ -1400,6 +1427,20 @@ mod tests {
     }
 
     #[test]
+    fn begode_probe_request_payload_maps_to_its_pending_response() {
+        for encoded in crate::begode_identification_probes() {
+            assert_eq!(
+                crate::begode_probe_for_request_payload(encoded.payload.as_slice()),
+                Some(encoded.probe)
+            );
+        }
+
+        assert_eq!(crate::begode_probe_for_request_payload(b""), None);
+        assert_eq!(crate::begode_probe_for_request_payload(b"N?"), None);
+        assert_eq!(crate::begode_probe_for_request_payload(b"X"), None);
+    }
+
+    #[test]
     fn identification_timeouts_advance_once_and_conflicts_stop_remaining_queries() {
         let mut session = DeviceDetectionSession::new();
         session.observe(DeviceDetectionEvent::Notification {
@@ -1964,6 +2005,7 @@ mod tests {
         );
         assert_eq!(resolution.model_banner, None);
         assert_eq!(resolution.staged.model, None);
+        assert!(!resolution.awaits_passive_evidence());
     }
 
     #[test]
@@ -2008,6 +2050,7 @@ mod tests {
             Some(b"Falcon\0".as_slice())
         );
         assert_eq!(resolution.staged.model, None);
+        assert!(!resolution.awaits_passive_evidence());
     }
 
     #[test]
@@ -2119,10 +2162,18 @@ mod tests {
         assert_eq!(update.staged.confidence, IdentityConfidence::NoMatch);
         assert_eq!(update.staged.outcome, StagedIdentityOutcome::Conflict);
         assert_eq!(update.staged.model, None);
+        assert!(!update.awaits_passive_evidence());
         assert_eq!(
             update.staged.protocol_model,
             ProtocolModelIdentityEvidence::Missing
         );
+    }
+
+    #[test]
+    fn caller_owned_detection_session_waits_for_passive_protocol_evidence_when_unresolved() {
+        let session = DeviceDetectionSession::new();
+
+        assert!(session.resolution().awaits_passive_evidence());
     }
 
     #[test]

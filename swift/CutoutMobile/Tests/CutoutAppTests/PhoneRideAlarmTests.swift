@@ -2,6 +2,7 @@ import CutoutMobile
 import CutoutMobileFFI
 import Foundation
 import XCTest
+
 @testable import CutoutApp
 
 final class PhoneRideAlarmTests: XCTestCase {
@@ -83,7 +84,7 @@ final class PhoneRideAlarmTests: XCTestCase {
                 deviceIdentity: firstIdentity
             )
         }
-        for _ in 0 ..< 1_000 where !delivery.hasPendingAuthorizationRequest {
+        for _ in 0..<1_000 where !delivery.hasPendingAuthorizationRequest {
             await Task.yield()
         }
         XCTAssertTrue(delivery.hasPendingAuthorizationRequest)
@@ -107,7 +108,7 @@ final class PhoneRideAlarmTests: XCTestCase {
             ),
             phoneAlarmDelivery: delivery
         )
-        for _ in 0 ..< 1_000 where !delivery.hasSuspendedRefresh {
+        for _ in 0..<1_000 where !delivery.hasSuspendedRefresh {
             await Task.yield()
         }
         XCTAssertTrue(delivery.hasSuspendedRefresh)
@@ -118,13 +119,13 @@ final class PhoneRideAlarmTests: XCTestCase {
             sounds: true,
             quietly: false
         )
-        for _ in 0 ..< 1_000 where model.phoneAlarmAuthorization != expected {
+        for _ in 0..<1_000 where model.phoneAlarmAuthorization != expected {
             await Task.yield()
         }
         XCTAssertEqual(model.phoneAlarmAuthorization, expected)
 
         delivery.resolveSuspendedRefresh(.notDetermined)
-        for _ in 0 ..< 20 { await Task.yield() }
+        for _ in 0..<20 { await Task.yield() }
 
         XCTAssertEqual(model.phoneAlarmAuthorization, expected)
     }
@@ -140,20 +141,22 @@ final class PhoneRideAlarmTests: XCTestCase {
             event: .pwmDuty(dutyPercent: 80, headroomPercent: 20),
             playsSound: true
         )
-        model.applyPhoneAlarmActions(MobilePhoneAlarmActionsDto(
-            schedule: [request],
-            cancelRequestIds: []
-        ))
-        for _ in 0 ..< 1_000 where delivery.pendingRequests.isEmpty {
+        model.applyPhoneAlarmActions(
+            MobilePhoneAlarmActionsDto(
+                schedule: [request],
+                cancelRequestIds: []
+            ))
+        for _ in 0..<1_000 where delivery.pendingRequests.isEmpty {
             await Task.yield()
         }
         XCTAssertEqual(delivery.pendingRequests.first?.id, request.id)
-        model.applyPhoneAlarmActions(MobilePhoneAlarmActionsDto(
-            schedule: [],
-            cancelRequestIds: [request.id]
-        ))
+        model.applyPhoneAlarmActions(
+            MobilePhoneAlarmActionsDto(
+                schedule: [],
+                cancelRequestIds: [request.id]
+            ))
         delivery.resolveAllDeliveries()
-        for _ in 0 ..< 20 { await Task.yield() }
+        for _ in 0..<20 { await Task.yield() }
 
         XCTAssertEqual(delivery.cancelledRequestIDs, [request.id, request.id])
     }

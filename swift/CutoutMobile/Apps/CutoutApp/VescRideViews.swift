@@ -47,7 +47,7 @@ struct VescRideScreenView: View {
             captureStatusText: captureStatusText,
             speedReadout: presentation.speedReadout,
             speedCaption: localizedAppText("vesc.speed.caption"),
-            allowsVerticalScroll: true,
+            allowsVerticalScroll: true
         ) {
 
             if prioritizesMetrics {
@@ -96,8 +96,8 @@ struct VescRideScreenView: View {
                     detail: warningCard.detail,
                     tone: .vesc
                 )
-                    .accessibilityIdentifier("vesc.warning.active")
-                    .padding(.top, 10)
+                .accessibilityIdentifier("vesc.warning.active")
+                .padding(.top, 10)
             }
 
             if let footpad = liveSnapshot?.footpad {

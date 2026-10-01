@@ -17,7 +17,9 @@ struct VescDebugScreenView: View {
     }
 
     var body: some View {
-        PevDashboardScaffold(sectionTitle: localizedAppText("vesc.debug.section"), bottomPadding: 20, showsHeader: false) {
+        PevDashboardScaffold(
+            sectionTitle: localizedAppText("vesc.debug.section"), bottomPadding: 20, showsHeader: false
+        ) {
             PevScreenTitleBlock(
                 title: snapshot?.title ?? localizedAppText("vesc.debug.title"),
                 subtitle: captureStatusText ?? connectionStatusText ?? phase.displayText

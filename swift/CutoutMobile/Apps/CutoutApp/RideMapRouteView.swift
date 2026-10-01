@@ -1,11 +1,17 @@
-import SwiftUI
+import CutoutMobile
 import MapKit
 import Observation
-import CutoutMobile
+import SwiftUI
 
 @MainActor
 @Observable
 final class RideMapPresentationState {
+    enum Mode: String {
+        case live
+        case history
+    }
+
+    var mode: Mode = .live
     var liveMapPosition: MapCameraPosition = .automatic
     var historyMapPosition: MapCameraPosition = .automatic
     var detailMapPosition: MapCameraPosition = .automatic
@@ -17,6 +23,8 @@ final class RideMapPresentationState {
 
 struct RideMapRouteView: View {
     @Bindable var model: CutoutAppModel
+    @Bindable var liveRide: LiveRideModel
+    @Bindable var history: RideHistoryModel
     @Bindable var presentation: RideMapPresentationState
     private let openHistory: ((String) -> Void)?
     private let closeDetail: (() -> Void)?
@@ -31,6 +39,12 @@ struct RideMapRouteView: View {
         snapshot?.rideID ?? "live"
     }
 
+    private func vehicleName(for identity: String?) -> String? {
+        guard let identity else { return nil }
+        return history.vehicleNames[identity]
+            ?? model.device.rideMapVehicleName(for: identity)
+    }
+
     init(
         model: CutoutAppModel,
         presentation: RideMapPresentationState,
@@ -43,6 +57,8 @@ struct RideMapRouteView: View {
         back: (() -> Void)? = nil
     ) {
         self._model = Bindable(wrappedValue: model)
+        self._liveRide = Bindable(wrappedValue: model.liveRide)
+        self._history = Bindable(wrappedValue: model.rideHistory)
         self._presentation = Bindable(wrappedValue: presentation)
         self.openHistory = openHistory
         self.closeDetail = closeDetail
@@ -63,9 +79,9 @@ struct RideMapRouteView: View {
                 }
 
                 HStack(spacing: 0) {
-                    Picker(localizedAppText("navigation.section.map"), selection: $model.rideMapMode) {
-                        Text(localizedAppText("ride_map.mode.live")).tag(CutoutAppModel.RideMapMode.live)
-                        Text(localizedAppText("ride_map.mode.history")).tag(CutoutAppModel.RideMapMode.history)
+                    Picker(localizedAppText("navigation.section.map"), selection: $presentation.mode) {
+                        Text(localizedAppText("ride_map.mode.live")).tag(RideMapPresentationState.Mode.live)
+                        Text(localizedAppText("ride_map.mode.history")).tag(RideMapPresentationState.Mode.history)
                     }
                     .pickerStyle(.segmented)
                 }
@@ -78,7 +94,7 @@ struct RideMapRouteView: View {
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("ride-map.mode-picker")
 
-                if model.rideMapMode == .live {
+                if presentation.mode == .live {
                     liveContent
                 } else {
                     historyContent
@@ -90,85 +106,84 @@ struct RideMapRouteView: View {
         .foregroundStyle(PevColors.primaryText)
         .accessibilityIdentifier("ride-map.screen")
         .appMusicCompactPlayer(model: model)
-#if os(iOS)
-        // Ride Detail owns its compact header so it remains attached to the map
-        // when the destination is pushed from either Map entry path. Leaving the
-        // NavigationStack bar visible creates a second title band and pushes the
-        // detail content toward the middle of the screen.
-        .toolbar(.hidden, for: .navigationBar)
-#endif
+        #if os(iOS)
+            // Ride Detail owns its compact header so it remains attached to the map
+            // when the destination is pushed from either Map entry path. Leaving the
+            // NavigationStack bar visible creates a second title band and pushes the
+            // detail content toward the middle of the screen.
+            .toolbar(.hidden, for: .navigationBar)
+        #endif
     }
 
     private var liveContent: some View {
         RideMapLiveContentView(
-            displayPoints: model.rideMapLiveDisplayPoints,
-            routeID: Self.liveRouteID(for: model.rideMapSnapshot),
-            projectionVersion: model.rideMapLiveProjectionVersion,
-            endpointMetadata: model.rideMapLiveEndpointMetadata,
-            cameraRegion: model.rideMapLiveCameraRegion,
-            segments: model.rideMapLiveSegments,
-            snapshot: model.rideMapSnapshot,
-            availability: model.rideMapAvailability,
-            speed: model.speed,
-            vehicleName: model.rideMapVehicleName,
-            mapError: model.rideMapLiveError,
-            lastDecision: model.rideMapLastDecision,
-            telemetryState: model.rideMapLiveTelemetryState,
-            pointsTruncated: model.rideMapLivePointsTruncated,
-            segmentsOmittedByBudget: model.rideMapLiveSegmentsOmittedByBudget,
-            canonicalBackgroundGapCount: model.rideMapLiveBackgroundGapCount,
+            displayPoints: liveRide.displayPoints,
+            routeID: Self.liveRouteID(for: liveRide.snapshot),
+            projectionVersion: liveRide.projectionVersion,
+            endpointMetadata: liveRide.endpointMetadata,
+            cameraRegion: liveRide.cameraRegion,
+            segments: liveRide.segments,
+            snapshot: liveRide.snapshot,
+            availability: liveRide.availability,
+            speed: model.device.speed,
+            vehicleName: model.device.rideMapVehicleName,
+            mapError: liveRide.error,
+            lastDecision: liveRide.lastDecision,
+            telemetryState: liveRide.telemetryState,
+            pointsTruncated: liveRide.pointsTruncated,
+            segmentsOmittedByBudget: liveRide.segmentsOmittedByBudget,
+            canonicalBackgroundGapCount: liveRide.backgroundGapCount,
             mapPosition: $presentation.liveMapPosition,
             isApplyingCamera: $presentation.liveIsApplyingCamera,
             followsLatestPoint: $presentation.followsLatestPoint,
-            pause: { _ = model.pauseRideMap() },
-            resume: { _ = model.resumeRideMap() },
-            save: { _ = model.saveRideMap() },
-            stop: { _ = model.stopRideMap() },
-            start: { _ = model.startGpsOnlyRide() },
-            discard: { _ = model.discardRideMap() }
+            pause: { Task { _ = await model.pauseRideMap() } },
+            resume: { Task { _ = await model.resumeRideMap() } },
+            save: { Task { _ = await model.saveRideMap() } },
+            stop: { Task { _ = await model.stopRideMap() } },
+            start: { Task { _ = await model.startGpsOnlyRide() } },
+            discard: { Task { _ = await model.discardRideMap() } }
         )
     }
 
     private var historyContent: some View {
         RideMapHistoryContentView(
-            isRecording: model.isRideMapRecording,
-            isPaused: model.rideMapSnapshot?.state == .paused,
-            rides: model.filteredRideMapHistory,
-            searchText: $model.rideMapHistorySearchText,
-            canLoadMore: model.rideMapHistoryCanLoadMore,
-            displayPoints: model.rideMapHistoryDisplayPoints,
-            cameraRegion: model.rideMapHistoryCameraRegion,
-            endpointMetadata: model.rideMapHistoryEndpointMetadata,
-            segments: model.rideMapHistorySegments,
-            contextRoutes: model.rideMapHistoryContextRoutes,
-            cameraFitVersion: model.rideMapHistoryCameraFitVersion,
-            projectionVersion: model.rideMapHistoryProjectionVersion,
-            pointsTruncated: model.rideMapHistoryPointsTruncated,
-            segmentsOmittedByBudget: model.rideMapHistorySegmentsOmittedByBudget,
-            isLoading: model.rideMapHistoryLoading,
-            isRouteLoading: model.rideMapHistoryRouteLoading,
-            historyError: model.rideMapHistoryError,
-            routeError: model.rideMapHistoryRouteError,
-            selectedRideID: model.selectedRideMapHistoryID,
-            dateFilter: model.rideMapHistoryDateFilter,
-            vehicleFilter: model.rideMapHistoryVehicleFilter,
-            vehicleFilterOptions: model.rideMapHistoryVehicleIdentities,
+            isRecording: liveRide.snapshot?.state == .active,
+            isPaused: liveRide.snapshot?.state == .paused,
+            rides: history.rides,
+            searchText: $history.searchText,
+            canLoadMore: history.canLoadMore,
+            displayPoints: history.displayPoints,
+            cameraRegion: history.cameraRegion,
+            endpointMetadata: history.endpointMetadata,
+            segments: history.segments,
+            cameraFitVersion: history.cameraFitVersion,
+            projectionVersion: history.projectionVersion,
+            pointsTruncated: history.pointsTruncated,
+            segmentsOmittedByBudget: history.segmentsOmittedByBudget,
+            isLoading: history.isLoading,
+            isRouteLoading: history.routeLoading,
+            historyError: history.error,
+            routeError: history.routeError,
+            selectedRideID: history.selectedRideID,
+            dateFilter: history.dateFilter,
+            vehicleFilter: history.vehicleFilter,
+            vehicleFilterOptions: history.vehicleIdentities,
             select: { rideID in
-                model.rideMapMode = .history
-                model.selectRideMapHistory(rideID)
+                presentation.mode = .history
+                history.selectFromHistoryList(rideID)
                 openHistory?(rideID)
             },
-            load: { model.loadRideMapHistory(selecting: model.selectedRideMapHistoryID) },
-            loadMore: { model.loadMoreRideMapHistory() },
+            load: { history.reload(selecting: history.selectedRideID) },
+            loadMore: { history.loadMore() },
             returnToLive: {
-                model.rideMapMode = .live
+                presentation.mode = .live
             },
-            setDateFilter: { model.setRideMapHistoryDateFilter($0) },
-            setVehicleFilter: { model.setRideMapHistoryVehicleFilter($0) },
-            clearFilters: { model.clearRideMapHistoryFilters() },
-            currentVehicleIdentity: model.rideMapVehicleIdentity,
-            currentVehicleName: model.rideMapVehicleName,
-            vehicleName: model.rideMapVehicleName(for:),
+            setDateFilter: { history.setDateFilter($0) },
+            setVehicleFilter: { history.setVehicleFilter($0) },
+            clearFilters: { history.clearFilters() },
+            currentVehicleIdentity: model.device.rideMapVehicleIdentity,
+            currentVehicleName: model.device.rideMapVehicleName,
+            vehicleName: vehicleName(for:),
             // Detail and list intentionally share the selected route data, but not a
             // viewport projection. A detail pan must not replace the list's display
             // projection while both destinations remain alive in the navigation stack.
@@ -183,37 +198,36 @@ struct RideMapRouteView: View {
         if let initialHistoryID {
             RideMapHistoryDetailView(
                 initialHistoryID: initialHistoryID,
-                rides: model.rideMapHistory,
-                displayPoints: model.rideMapHistoryDetailDisplayPoints,
-                routePresence: model.rideMapHistoryDetailRoutePresence,
+                rides: history.rides,
+                displayPoints: history.detailDisplayPoints,
+                routePresence: history.detailRoutePresence,
                 music: RideMapHistoryMusicDetail(
                     rideID: initialHistoryID,
-                    events: model.rideMapHistoryDetailMusicTimeline,
-                    timelineUnavailable: model.rideMapHistoryDetailMusicTimelineUnavailable,
-                    state: model.rideMapHistoryDetailMusicState,
-                    error: model.rideMapHistoryDetailMusicError,
-                    forgetMusicHistory: { model.forgetMusicHistory(for: $0) }
+                    events: history.detailMusicTimeline,
+                    timelineUnavailable: history.detailMusicTimelineUnavailable,
+                    state: history.detailMusicState,
+                    error: history.detailMusicError,
+                    forgetMusicHistory: { await model.music.forgetHistory(for: $0) }
                 ),
-                projectionRideID: model.rideMapHistoryDetailProjectionRideID,
-                cameraRegion: model.rideMapHistoryDetailCameraRegion,
-                endpointMetadata: model.rideMapHistoryDetailEndpointMetadata,
-                segments: model.rideMapHistoryDetailSegments,
-                projectionVersion: model.rideMapHistoryDetailProjectionVersion,
-                cameraFitVersion: model.rideMapHistoryDetailCameraFitVersion,
-                pointsTruncated: model.rideMapHistoryDetailPointsTruncated,
-                segmentsOmittedByBudget: model.rideMapHistoryDetailSegmentsOmittedByBudget,
-                canonicalBackgroundGapCount: model.rideMapHistoryDetailBackgroundGapCount,
-                historyError: model.rideMapHistoryError,
-                routeError: model.rideMapHistoryDetailRouteError,
-                isLoading: model.rideMapHistoryDetailRouteLoading,
-                selectedHistoryID: model.selectedRideMapHistoryID,
-                select: { model.selectRideMapHistory($0) },
-                load: { model.loadRideMapHistory(selecting: initialHistoryID) },
-                retry: { model.loadRideMapHistory(selecting: initialHistoryID) },
-                loadRoutePreview: { model.loadRoutePreviewMapHistory() },
-                vehicleName: model.rideMapVehicleName(for:),
+                projectionRideID: history.detailProjectionRideID,
+                cameraRegion: history.detailCameraRegion,
+                endpointMetadata: history.detailEndpointMetadata,
+                segments: history.detailSegments,
+                projectionVersion: history.detailProjectionVersion,
+                cameraFitVersion: history.detailCameraFitVersion,
+                pointsTruncated: history.detailPointsTruncated,
+                segmentsOmittedByBudget: history.detailSegmentsOmittedByBudget,
+                canonicalBackgroundGapCount: history.detailBackgroundGapCount,
+                historyError: history.error,
+                routeError: history.detailRouteError,
+                isLoading: history.detailRouteLoading,
+                selectedHistoryID: history.selectedRideID,
+                ensureSelection: { history.ensureSelection(requestedRideID: $0) },
+                retry: { history.reload(selecting: initialHistoryID) },
+                loadRoutePreview: { history.loadRoutePreview() },
+                vehicleName: vehicleName(for:),
                 cameraDidChange: { region in
-                    model.projectRideMapHistoryDetailViewport(RideMapCanvasView.geoBounds(for: region))
+                    history.projectDetailViewport(RideMapCanvasView.geoBounds(for: region))
                 },
                 mapPosition: $presentation.detailMapPosition,
                 isApplyingCamera: $presentation.detailIsApplyingCamera,

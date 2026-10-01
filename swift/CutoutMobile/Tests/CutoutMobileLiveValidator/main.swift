@@ -3,6 +3,7 @@ import Foundation
 
 @main
 struct CutoutMobileLiveValidator {
+    @MainActor
     static func main() {
         let environment = ProcessInfo.processInfo.environment
         let status = LiveValidatorInvocation.run(
@@ -25,6 +26,7 @@ private func writeRecord(_ record: String) {
 
 // Connection smoke check only. Protocol discovery can still transmit probes;
 // this is neither passive capture nor settings acceptance (LIBCU-505/836).
+@MainActor
 private final class CutoutLiveValidator {
     private let timeout: TimeInterval
     private let targetFilter: String?

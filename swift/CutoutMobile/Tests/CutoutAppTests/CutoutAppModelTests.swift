@@ -1,11 +1,31 @@
-import XCTest
 import CoreLocation
-import Foundation
-@testable import CutoutApp
-@testable import CutoutMobile
 import CutoutMobileFFI
+import Foundation
 import Observation
 import Synchronization
+import XCTest
+
+@testable import CutoutApp
+@testable import CutoutMobile
+
+private struct SharedVescReplayFixture: Decodable {
+    struct Notification: Decodable {
+        let channel: [UInt8]
+        let bytes: [UInt8]
+        let speedMillimetresPerSecond: Int64?
+        let voltageMillivolts: Int64?
+
+        enum CodingKeys: String, CodingKey {
+            case channel
+            case bytes
+            case speedMillimetresPerSecond = "speed_mmps"
+            case voltageMillivolts = "voltage_mv"
+        }
+    }
+
+    let version: Int
+    let notifications: [Notification]
+}
 
 final class CutoutAppModelTests: XCTestCase {
     private static let priorCaptureProgress = CaptureProgress(
@@ -43,6 +63,25 @@ final class CutoutAppModelTests: XCTestCase {
         return decision
     }
 
+    private static func settleAdmission(
+        _ state: MobileRideMapState,
+        _ admission: MobileRideMapConnectionAdmission,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) async throws -> MobileRideMapSnapshotDto? {
+        let deadline = ContinuousClock.now + .seconds(10)
+        while ContinuousClock.now < deadline, !Task.isCancelled {
+            switch try state.pollVerifiedConnectionAdmission(admission) {
+            case .pending:
+                try? await Task.sleep(for: .milliseconds(1))
+            case let .completed(snapshot):
+                return snapshot
+            }
+        }
+        XCTFail("timed out waiting for verified ride-map admission", file: file, line: line)
+        return nil
+    }
+
     @MainActor
     private static func waitUntil(
         _ description: String,
@@ -51,11 +90,27 @@ final class CutoutAppModelTests: XCTestCase {
         line: UInt = #line,
         condition: @escaping @MainActor () async -> Bool
     ) async {
-        for _ in 0 ..< maxTurns {
+        for _ in 0..<maxTurns {
             if await condition() { return }
             await Task.yield()
         }
         XCTFail("timed out waiting for \(description)", file: file, line: line)
+    }
+
+    private func loadSharedVescReplayFixture() throws -> SharedVescReplayFixture {
+        let repositoryRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let fixtureURL =
+            repositoryRoot
+            .appendingPathComponent("crates/cutout-mobile-ffi/tests/fixtures/vesc-replay-v1.json")
+        return try JSONDecoder().decode(
+            SharedVescReplayFixture.self,
+            from: Data(contentsOf: fixtureURL)
+        )
     }
 
     override func setUp() {
@@ -77,226 +132,92 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testOpaqueSpotifyLocalIdentifierIsNotCopiedIntoPevcap() {
-        XCTAssertNil(
-            CutoutAppModel.pevcapTrackIdentifier(
-                policy: .opaqueItem,
-                provider: .spotify,
-                identifier: "spotify:local:artist:album:track"
-            )
-        )
+    func testSessionCallbacksHaveOneExplicitRegistrationOrder() {
+        let driver = SessionDriverSpy(rows: [])
+        _ = CutoutAppModel(core: driver)
+
         XCTAssertEqual(
-            CutoutAppModel.pevcapTrackIdentifier(
-                policy: .opaqueItem,
-                provider: .spotify,
-                identifier: "spotify:track:catalog-id"
-            ),
-            "spotify:track:catalog-id"
+            driver.callbackRegistrationEvents,
+            [
+                "displayState",
+                "phase",
+                "reconnectScheduled",
+                "scanState",
+                "settings",
+                "phoneAlarmActions",
+                "faultHistory",
+                "bmsSnapshot",
+                "phoneLocation",
+                "rideMapDecision",
+                "rideMapSnapshot",
+                "rideMapError",
+                "rideMapAvailability",
+                "protocolIdentity",
+                "bluetoothRestoration",
+                "captureEvent",
+            ]
         )
-        XCTAssertEqual(
-            CutoutAppModel.pevcapTrackIdentifier(
-                policy: .humanReadable,
-                provider: .spotify,
-                identifier: "spotify:local:artist:album:track"
-            ),
-            "spotify:local:artist:album:track"
+    }
+
+    @MainActor
+    func testPhaseCallbackInvalidatesNestedDevicePresentation() {
+        let driver = SessionDriverSpy(rows: [])
+        let model = CutoutAppModel(core: driver)
+        let device = model.device
+
+        XCTAssertTrue(
+            observesChange({ _ = device.phase }) {
+                driver.onPhaseChange?(.scanning)
+            }
         )
+        XCTAssertIdentical(model.device, device)
+        XCTAssertEqual(device.phase, .scanning)
     }
 
-#if !os(iOS)
-    @MainActor
-    func testUnavailableMusicCommandPublishesVisibleFeedback() async {
-        let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
-
-        let outcome = await model.handleMusicCommand(.play)
-        XCTAssertEqual(outcome, .unavailable)
-        XCTAssertEqual(model.musicCommandStatusText, pevLocalizedText("music.command.unavailable"))
-    }
-
-    @MainActor
-    func testOlderSameProviderCompletionAndDismissalCannotReplaceNewerFeedback() {
-        let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
-        let first = try! XCTUnwrap(model.beginMusicCommandFeedback())
-        let second = try! XCTUnwrap(model.beginMusicCommandFeedback())
-
-        _ = model.finishMusicCommand(.failed, provider: .appleMusic, requestID: first)
-        XCTAssertNil(model.musicCommandStatusText)
-
-        _ = model.finishMusicCommand(.refused, provider: .appleMusic, requestID: second)
-        XCTAssertEqual(model.musicCommandStatusText, pevLocalizedText("music.command.refused"))
-
-        model.dismissMusicCommandFeedback(requestID: first)
-        XCTAssertEqual(model.musicCommandStatusText, pevLocalizedText("music.command.refused"))
-        model.dismissMusicCommandFeedback(requestID: second)
-        XCTAssertNil(model.musicCommandStatusText)
-    }
-
-    @MainActor
-    func testHandoffFailureSurvivesAppResumeAndCannotReplaceANewerCommand() {
-        let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
-        model.selectMusicProvider(.spotify)
-        model.start()
-        let request = MusicCommandFeedbackRequest(id: model.beginMusicCommandFeedback())
-        model.registerSpotifyHandoffFeedbackRequest(request)
-        let beforeHandoff = try! XCTUnwrap(request.id)
-
-        model.beginSpotifyHandoffFeedback(request, provider: .spotify)
-        let handoffRequest = try! XCTUnwrap(request.id)
-        _ = model.finishMusicCommand(.failed, provider: .spotify, requestID: beforeHandoff)
-        XCTAssertNil(model.musicCommandStatusText)
-
-        model.appDidEnterBackground()
-        model.appDidBecomeActive()
-        _ = model.finishMusicCommand(.failed, provider: .spotify, requestID: handoffRequest)
-        XCTAssertNil(model.musicCommandStatusText)
-
-        model.finishSpotifyHandoffFailure(request, provider: .spotify)
-        XCTAssertEqual(model.musicCommandStatusText, pevLocalizedText("music.command.failed"))
-
-        let newer = MusicCommandFeedbackRequest(id: model.beginMusicCommandFeedback())
-        model.registerSpotifyHandoffFeedbackRequest(newer)
-        model.finishSpotifyHandoffFailure(request, provider: .spotify)
-        XCTAssertEqual(model.musicCommandFeedback?.outcome, .accepted)
-    }
-
-    @MainActor
-    func testSystemAlertDismissalClearsCurrentMusicCommandFeedback() {
-        let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
-        let requestID = try! XCTUnwrap(model.beginMusicCommandFeedback())
-        _ = model.finishMusicCommand(.failed, provider: .appleMusic, requestID: requestID)
-
-        model.dismissMusicCommandFeedback()
-
-        XCTAssertNil(model.musicCommandFeedback)
-    }
-
-    @MainActor
-    func testProviderSwitchClearsMusicCommandFeedbackProjection() {
-        let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
-        let requestID = try! XCTUnwrap(model.beginMusicCommandFeedback())
-        _ = model.finishMusicCommand(.failed, provider: .appleMusic, requestID: requestID)
-        XCTAssertNotNil(model.musicCommandFeedback)
-
-        model.selectMusicProvider(.spotify)
-
-        XCTAssertNil(model.musicCommandFeedback)
-    }
-
-    @MainActor
-    func testMusicSetupShowsUnavailableOnUnsupportedPlatform() {
-        let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
-
-        model.connectMusic()
-
-        XCTAssertEqual(model.musicNowPlaying?.state, .unavailable)
-        XCTAssertEqual(model.musicNowPlaying?.provider, .appleMusic)
-    }
-
-    @MainActor
-    func testMusicMonitoringStartsWhenHistoryIsDisabled() {
-        let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
-
-        XCTAssertEqual(model.musicHistoryPolicy, .disabled)
-        model.start()
-
-        XCTAssertEqual(model.musicNowPlaying?.provider, .appleMusic)
-        XCTAssertEqual(model.musicNowPlaying?.state, .unavailable)
-    }
-
-    @MainActor
-    func testMusicMonitoringWaitsForActiveSceneAfterStartup() {
-        let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
-
-        model.start(sceneIsActive: false)
-
-        XCTAssertNil(model.musicNowPlaying)
-
-        model.appDidBecomeActive()
-
-        XCTAssertEqual(model.musicNowPlaying?.provider, .appleMusic)
-        XCTAssertEqual(model.musicNowPlaying?.state, .unavailable)
-    }
-
-    @MainActor
-    func testValidObservationClearsRecoveredValidationErrorWithoutATransition() {
-        let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
-        let capabilities = MobileMusicCapabilitiesDto(
-            previous: true,
-            play: false,
-            pause: true,
-            next: true,
-            openProvider: true
-        )
-        func snapshot(
-            observedAtMs: UInt64,
-            positionMilliseconds: UInt64?,
-            durationMilliseconds: UInt64?
-        ) -> MobileMusicSnapshotDto {
-            MobileMusicSnapshotDto(
-                provider: .appleMusic,
-                sessionId: "session",
-                state: .playing,
-                item: MobileMusicItemDto(
-                    identifier: "track-1",
-                    title: "Song",
-                    artist: "Artist"
-                ),
-                positionMilliseconds: positionMilliseconds,
-                durationMilliseconds: durationMilliseconds,
-                observedAtMs: observedAtMs,
-                capabilities: capabilities
+    #if !os(iOS)
+        @MainActor
+        func testMusicMonitoringStartsWhenHistoryIsDisabled() {
+            let monitoringPreference = MusicMonitoringPreferenceStore()
+            let previousPreference = monitoringPreference.isEnabled
+            monitoringPreference.setEnabled(true)
+            defer { monitoringPreference.setEnabled(previousPreference) }
+            let model = CutoutAppModel(
+                core: SessionDriverSpy(rows: []),
+                musicMonitoringPreferenceStore: monitoringPreference
             )
+
+            XCTAssertEqual(model.music.historyPolicy, .disabled)
+            model.start()
+
+            XCTAssertEqual(model.music.nowPlaying?.provider, .appleMusic)
+            XCTAssertEqual(model.music.nowPlaying?.state, .unavailable)
         }
 
-        XCTAssertTrue(model.ingestMusicObservation(MusicProviderObservation(
-            snapshot: snapshot(
-                observedAtMs: 1,
-                positionMilliseconds: 10,
-                durationMilliseconds: 100
+        @MainActor
+        func testMusicMonitoringWaitsForActiveSceneAfterStartup() {
+            let monitoringPreference = MusicMonitoringPreferenceStore()
+            let previousPreference = monitoringPreference.isEnabled
+            monitoringPreference.setEnabled(true)
+            defer { monitoringPreference.setEnabled(previousPreference) }
+            let model = CutoutAppModel(
+                core: SessionDriverSpy(rows: []),
+                musicMonitoringPreferenceStore: monitoringPreference
             )
-        )))
-        XCTAssertFalse(model.ingestMusicObservation(MusicProviderObservation(
-            snapshot: snapshot(
-                observedAtMs: 2,
-                positionMilliseconds: 101,
-                durationMilliseconds: 100
-            )
-        )))
-        XCTAssertNotNil(model.musicHistorySaveError)
-        XCTAssertEqual(model.musicSettingsNowPlaying?.state, .stale)
-        XCTAssertFalse(model.musicSettingsNowPlaying?.capabilities.pause ?? true)
 
-        XCTAssertTrue(model.ingestMusicObservation(MusicProviderObservation(
-            snapshot: snapshot(
-                observedAtMs: 3,
-                positionMilliseconds: 10,
-                durationMilliseconds: 100
-            )
-        )))
-        XCTAssertNil(model.musicHistorySaveError)
-        XCTAssertEqual(model.musicSettingsNowPlaying?.state, .playing)
-        XCTAssertTrue(model.musicSettingsNowPlaying?.capabilities.pause ?? false)
-    }
-#endif
+            model.start(sceneIsActive: false)
+
+            XCTAssertNil(model.music.nowPlaying)
+
+            model.appDidBecomeActive()
+
+            XCTAssertEqual(model.music.nowPlaying?.provider, .appleMusic)
+            XCTAssertEqual(model.music.nowPlaying?.state, .unavailable)
+        }
+
+    #endif
 
     @MainActor
-    func testMusicHistoryDefaultIsLoadedForFutureRides() throws {
-        let suiteName = "CutoutAppMusicHistoryTests-\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
-        defer { defaults.removePersistentDomain(forName: suiteName) }
-        let policyStore = MusicHistoryPolicyStore(defaults: defaults)
-        policyStore.set(.opaqueItem)
-
-        let model = CutoutAppModel(
-            core: SessionDriverSpy(rows: [], rideMapUnavailable: true),
-            musicHistoryPolicyStore: policyStore
-        )
-
-        XCTAssertEqual(model.musicHistoryPolicy, .opaqueItem)
-    }
-
-    @MainActor
-    func testMusicHistoryDefaultIsAppliedToEachNewRide() throws {
+    func testMusicHistoryDefaultIsAppliedToEachNewRide() async throws {
         for policy in [MobileMusicHistoryPolicyDto.opaqueItem, .humanReadable] {
             let suiteName = "CutoutAppMusicHistoryNewRide-\(UUID().uuidString)"
             let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
@@ -308,158 +229,14 @@ final class CutoutAppModelTests: XCTestCase {
                 musicHistoryPolicyStore: policyStore
             )
 
-            XCTAssertTrue(model.setMusicHistoryPolicy(policy))
+            let policySaved = await model.music.setHistoryPolicyAsync(policy)
+            XCTAssertTrue(policySaved)
             XCTAssertEqual(policyStore.policy, policy)
-            XCTAssertTrue(model.startGpsOnlyRide())
-            XCTAssertEqual(model.musicHistoryPolicy, policy)
+            let started = await model.startGpsOnlyRide()
+            XCTAssertTrue(started)
+            XCTAssertEqual(model.music.historyPolicy, policy)
             XCTAssertEqual(driver.rideMapState.currentMusicHistoryPolicy(), policy)
         }
-    }
-
-    @MainActor
-    func testForgetActiveMusicHistoryClearsLivePolicyAndTimeline() throws {
-        let driver = SessionDriverSpy(rows: [])
-        let model = CutoutAppModel(core: driver)
-        XCTAssertTrue(model.startGpsOnlyRide())
-        XCTAssertTrue(model.setMusicHistoryPolicy(.humanReadable))
-
-        let snapshot = MobileMusicSnapshotDto(
-            provider: .appleMusic,
-            sessionId: "session",
-            state: .playing,
-            item: MobileMusicItemDto(identifier: "track-1", title: "Song", artist: "Artist"),
-            positionMilliseconds: nil,
-            durationMilliseconds: nil,
-            observedAtMs: 1,
-            capabilities: MobileMusicCapabilitiesDto(
-                previous: false,
-                play: false,
-                pause: true,
-                next: true,
-                openProvider: true
-            )
-        )
-        XCTAssertTrue(
-            model.ingestMusicObservation(
-                MusicProviderObservation(snapshot: snapshot),
-                wallClockAtMs: 1_700_000_000_000,
-                clockUncertaintyMs: 5
-            )
-        )
-        let rideID = try XCTUnwrap(model.rideMapSnapshot?.rideID)
-        XCTAssertFalse(model.musicTimelineEvents.isEmpty)
-
-        XCTAssertTrue(model.forgetMusicHistory(for: rideID))
-
-        XCTAssertEqual(model.musicHistoryPolicy, .disabled)
-        XCTAssertTrue(model.musicTimelineEvents.isEmpty)
-        XCTAssertEqual(driver.rideMapState.currentMusicHistoryPolicy(), .disabled)
-        XCTAssertTrue(driver.rideMapState.currentMusicEvents().isEmpty)
-    }
-
-    @MainActor
-    func testForgetActiveMusicHistoryDoesNotChangeFutureDefault() throws {
-        let suiteName = "CutoutAppMusicHistoryFutureDefault-\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
-        defer { defaults.removePersistentDomain(forName: suiteName) }
-        let policyStore = MusicHistoryPolicyStore(defaults: defaults)
-        policyStore.set(.humanReadable)
-
-        let driver = SessionDriverSpy(rows: [])
-        let model = CutoutAppModel(core: driver, musicHistoryPolicyStore: policyStore)
-        XCTAssertTrue(model.startGpsOnlyRide())
-        let rideID = try XCTUnwrap(model.rideMapSnapshot?.rideID)
-
-        XCTAssertTrue(model.forgetMusicHistory(for: rideID))
-        XCTAssertEqual(model.musicHistoryPolicy, .disabled)
-        XCTAssertEqual(policyStore.policy, .humanReadable)
-        XCTAssertTrue(model.stopRideMap())
-        XCTAssertTrue(model.startGpsOnlyRide())
-        XCTAssertEqual(model.musicHistoryPolicy, .humanReadable)
-        XCTAssertEqual(driver.rideMapState.currentMusicHistoryPolicy(), .humanReadable)
-    }
-
-    @MainActor
-    func testLoweringActiveMusicPolicyRedactsVisibleTimeline() {
-        let driver = SessionDriverSpy(rows: [])
-        let model = CutoutAppModel(core: driver)
-        XCTAssertTrue(model.startGpsOnlyRide())
-        XCTAssertTrue(model.setMusicHistoryPolicy(.humanReadable))
-
-        let snapshot = MobileMusicSnapshotDto(
-            provider: .appleMusic,
-            sessionId: "session",
-            state: .playing,
-            item: MobileMusicItemDto(identifier: "track-1", title: "Song", artist: "Artist"),
-            positionMilliseconds: nil,
-            durationMilliseconds: nil,
-            observedAtMs: 1,
-            capabilities: MobileMusicCapabilitiesDto(
-                previous: false,
-                play: false,
-                pause: true,
-                next: true,
-                openProvider: true
-            )
-        )
-        XCTAssertTrue(model.ingestMusicObservation(MusicProviderObservation(snapshot: snapshot)))
-        XCTAssertEqual(model.musicTimelineEvents.first?.title, "Song")
-
-        XCTAssertTrue(model.setMusicHistoryPolicy(.opaqueItem))
-
-        XCTAssertEqual(model.musicTimelineEvents.count, 1)
-        XCTAssertNil(driver.rideMapState.currentMusicEvents().first?.title)
-        XCTAssertNil(model.musicTimelineEvents.first?.title)
-        XCTAssertNil(model.musicTimelineEvents.first?.artist)
-
-        let sameTrackAtALaterObservation = MobileMusicSnapshotDto(
-            provider: snapshot.provider,
-            sessionId: snapshot.sessionId,
-            state: snapshot.state,
-            item: snapshot.item,
-            positionMilliseconds: snapshot.positionMilliseconds,
-            durationMilliseconds: snapshot.durationMilliseconds,
-            observedAtMs: 2,
-            capabilities: snapshot.capabilities
-        )
-        XCTAssertTrue(
-            model.ingestMusicObservation(
-                MusicProviderObservation(snapshot: sameTrackAtALaterObservation)
-            )
-        )
-        XCTAssertEqual(model.musicTimelineEvents.count, 1)
-    }
-
-    @MainActor
-    func testRestoringPlayerAfterHiddenProviderSwitchDoesNotShowPreviousProvider() {
-        let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
-        model.restoreMusicPlayer()
-
-        let snapshot = MobileMusicSnapshotDto(
-            provider: .appleMusic,
-            sessionId: "session",
-            state: .playing,
-            item: MobileMusicItemDto(identifier: "track-1", title: "Song", artist: "Artist"),
-            positionMilliseconds: nil,
-            durationMilliseconds: nil,
-            observedAtMs: 1,
-            capabilities: MobileMusicCapabilitiesDto(
-                previous: false,
-                play: false,
-                pause: true,
-                next: true,
-                openProvider: true
-            )
-        )
-        _ = model.ingestMusicObservation(MusicProviderObservation(snapshot: snapshot))
-        model.dismissMusicPlayer()
-        model.selectMusicProvider(.spotify)
-
-        model.restoreMusicPlayer()
-
-        XCTAssertEqual(model.musicNowPlaying?.provider, .spotify)
-        XCTAssertEqual(model.musicNowPlaying?.state, .unavailable)
-        XCTAssertNil(model.musicNowPlaying?.item)
     }
 
     private func clear(
@@ -492,10 +269,11 @@ final class CutoutAppModelTests: XCTestCase {
         var frame = Data(repeating: 0, count: 42)
         frame.replaceSubrange(0..<4, with: [0xdc, 0x5a, 0x5c, 38])
         frame.replaceSubrange(28..<30, with: [0xa7, 0xf8])
-        let core = CutoutSessionCore(testScript: CutoutSessionTestScript(
-            candidate: fixture.candidate, telemetry: fixture.testScript.telemetry,
-            protocolNotifications: [frame], connectionDelayMilliseconds: 0
-        ))
+        let core = CutoutSessionCore(
+            testScript: CutoutSessionTestScript(
+                candidate: fixture.candidate, telemetry: fixture.testScript.telemetry,
+                protocolNotifications: [frame], connectionDelayMilliseconds: 0
+            ))
         let model = CutoutAppModel(core: core)
         model.start()
         XCTAssertTrue(model.pair(platformIdentifier: fixture.candidate.platformIdentifier))
@@ -509,7 +287,8 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(snapshot.descriptor(for: .pwmTiltback)?.access, .writable)
         XCTAssertEqual(snapshot.settingDescriptors.filter { $0.access == .writable }.count, 14)
         XCTAssertFalse(snapshot.validationAuthorized)
-        XCTAssertThrowsError(try model.submitDeviceSetting(token: token, id: .pwmTiltback, value: .number(value: 101))) {
+        XCTAssertThrowsError(try model.submitDeviceSetting(token: token, id: .pwmTiltback, value: .number(value: 101)))
+        {
             XCTAssertEqual($0 as? DeviceSettingSubmissionError, .InvalidValue)
         }
         try model.submitDeviceSetting(token: token, id: .pwmTiltback, value: .number(value: 80))
@@ -520,10 +299,97 @@ final class CutoutAppModelTests: XCTestCase {
         let highBeam = try XCTUnwrap(model.settings?.setting(for: .highBeam))
         XCTAssertEqual(highBeam.status, .sentWithoutConfirmation)
         XCTAssertNil(highBeam.current)
-        core.onPhaseChange?(.failed(.sessionFailed("write channel unavailable")))
+        let tune = EucTuneRouteView(
+            device: model.device,
+            submitSetting: model.submitDeviceSetting,
+            submitAction: model.submitDeviceAction
+        )
+        XCTAssertTrue(
+            observesChange({ _ = tune.body }) {
+                core.onPhaseChange?(.failed(.sessionFailed("write channel unavailable")))
+            }
+        )
         core.onSettingsChange?(snapshot)
         XCTAssertNil(model.settings)
         core.disconnectAndScan()
+    }
+
+    @MainActor
+    func testVescNotificationReachesRideAndDebugThroughTheAppRunner() async throws {
+        let fixture = CutoutUITestSessionFixture.vesc
+        let replay = try loadSharedVescReplayFixture()
+        XCTAssertEqual(replay.version, 1)
+        XCTAssertFalse(replay.notifications.isEmpty)
+        XCTAssertTrue(
+            replay.notifications.allSatisfy {
+                Data($0.channel) == BluetoothUuid.vescNordicUartNotify.bytes
+            })
+        let finalSample = try XCTUnwrap(replay.notifications.last)
+        let expectedSpeed = try XCTUnwrap(finalSample.speedMillimetresPerSecond)
+        let expectedVoltage = try XCTUnwrap(finalSample.voltageMillivolts)
+        let script = CutoutSessionTestScript(
+            candidate: fixture.candidate,
+            telemetry: nil,
+            protocolNotifications: replay.notifications.map { Data($0.bytes) },
+            protocolDetectionNotifications: [
+                Data([
+                    2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101, 114,
+                    104, 97, 115, 104, 0, 38, 208, 3,
+                ])
+            ],
+            appliesProtocolNotificationSteps: true,
+            protocolNotificationIntervalMilliseconds: 1,
+            connectionDelayMilliseconds: 0
+        )
+        let core = CutoutSessionCore(testScript: script)
+        core.configureVescBoard(
+            profile: VescBoardProfile(
+                motorPolePairs: 15,
+                gearRatioDenominator: 1,
+                wheelCircumference: Distance(value: 2_100),
+                batteryType: .liIon,
+                batteryCells: 15,
+                batteryParallelCells: 1,
+                batteryCellModel: .unknown,
+                chargeProfile: nil,
+                reportsBatteryCurrent: true
+            ))
+        let model = CutoutAppModel(core: core)
+
+        model.start()
+        XCTAssertTrue(model.pair(platformIdentifier: fixture.candidate.platformIdentifier))
+        await Self.waitUntil("VESC notification reaches app projections") {
+            model.phase == .live
+                && model.displayState.telemetry?.speed.map { Int64($0.value) } == expectedSpeed
+                && model.displayState.telemetry?.voltage.map { Int64($0.value) } == expectedVoltage
+        }
+        XCTAssertEqual(model.phase, .live)
+        XCTAssertGreaterThanOrEqual(
+            model.displayState.notificationCount,
+            UInt64(replay.notifications.count)
+        )
+
+        let telemetry = try XCTUnwrap(model.displayState.telemetry)
+        XCTAssertNotNil(telemetry.speed)
+        XCTAssertNotNil(telemetry.voltage)
+        XCTAssertEqual(telemetry.speed.map { Int64($0.value) }, expectedSpeed)
+        XCTAssertEqual(telemetry.voltage.map { Int64($0.value) }, expectedVoltage)
+
+        let ride = try XCTUnwrap(model.vescRideSnapshot)
+        XCTAssertEqual(ride.boardSpeed, telemetry.speed)
+        XCTAssertEqual(ride.batteryVoltage, telemetry.voltage)
+        XCTAssertEqual(ride.batteryCurrent, telemetry.batteryCurrent)
+
+        let debugRows = vescDebugRows(
+            ride,
+            phase: model.phase,
+            notificationCount: model.displayState.notificationCount
+        )
+        let voltageRow = try XCTUnwrap(debugRows.first { $0.id == "voltage" })
+        if case .available = voltageRow.metricValue {
+        } else {
+            XCTFail("VESC debug voltage must be populated")
+        }
     }
 
     @MainActor
@@ -543,14 +409,15 @@ final class CutoutAppModelTests: XCTestCase {
             )
         )
         let route = EucPackRouteView(
-            model: model,
+            device: model.device,
             packScreen: .root,
             selectedGroupIndex: nil,
             navigate: { _ in }
         )
-        XCTAssertFalse(observesChange({ _ = route.body }) {
-            driver.onDisplayStateChange?(RideDisplayState(notificationCount: 1))
-        })
+        XCTAssertFalse(
+            observesChange({ _ = route.body }) {
+                driver.onDisplayStateChange?(RideDisplayState(notificationCount: 1))
+            })
     }
 
     @MainActor
@@ -558,15 +425,45 @@ final class CutoutAppModelTests: XCTestCase {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)
         let route = EucPackRouteView(
-            model: model,
+            device: model.device,
             packScreen: .root,
             selectedGroupIndex: nil,
             navigate: { _ in }
         )
 
-        XCTAssertTrue(observesChange({ _ = route.body }) {
-            driver.onDisplayStateChange?(RideDisplayState(notificationCount: 1))
-        })
+        XCTAssertTrue(
+            observesChange({ _ = route.body }) {
+                driver.onDisplayStateChange?(RideDisplayState(notificationCount: 1))
+            })
+    }
+
+    @MainActor
+    func testVescDebugRouteObservesTelemetryButNotBms() {
+        let driver = SessionDriverSpy(rows: [])
+        let model = CutoutAppModel(core: driver)
+        let route = VescDebugRouteView(device: model.device, capture: model.capture)
+
+        XCTAssertFalse(
+            observesChange({ _ = route.body }) {
+                driver.onBmsSnapshotChange?(
+                    BmsSnapshot(
+                        topology: BmsTopology(
+                            layoutLabel: "20S1P",
+                            seriesGroupCount: 20,
+                            parallelCount: 1,
+                            packCount: 1,
+                            bmsCount: 1,
+                            confidence: .verified
+                        )
+                    )
+                )
+            }
+        )
+        XCTAssertTrue(
+            observesChange({ _ = route.body }) {
+                driver.onDisplayStateChange?(RideDisplayState(notificationCount: 1))
+            }
+        )
     }
 
     @MainActor
@@ -580,287 +477,241 @@ final class CutoutAppModelTests: XCTestCase {
             ).token
         )
         _ = connectionState.connectionLinkEstablished(token: token)
-        _ = connectionState.observeConnectionNotification(token: token, bytes: Data([
-            2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101, 114, 104, 97, 115, 104,
-            0, 38, 208, 3,
-        ]))
+        _ = connectionState.observeConnectionNotification(
+            token: token,
+            bytes: Data([
+                2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101, 114, 104, 97, 115, 104,
+                0, 38, 208, 3,
+            ]))
         _ = connectionState.resolveDeviceSession(
             token: token,
             identificationComplete: true,
             nowMs: 200
         )
-        _ = try driver.rideMapState.ensureRecordingForVerifiedConnection(
-            connectionState: connectionState,
-            token: token,
-            atMs: 200
+        _ = try await Self.settleAdmission(
+            driver.rideMapState,
+            try driver.rideMapState.beginVerifiedConnectionAdmission(
+                connectionState: connectionState,
+                token: token,
+                atMs: 200
+            )
         )
         _ = try driver.rideMapState.startGpsOnly(atMs: 100)
-        _ = await Self.settle(driver.rideMapState, try driver.rideMapState.ingestLocation(
-            monotonicMs: 100,
-            wallClockUnixMs: 1_700_000_000_100,
-            latitudeDegrees: 39.7392,
-            longitudeDegrees: -104.9903,
-            horizontalAccuracyMeters: 5
-        ))
-        _ = try driver.rideMapState.ensureRecordingForVerifiedConnection(
-            connectionState: connectionState,
-            token: token,
-            atMs: 200
+        _ = await Self.settle(
+            driver.rideMapState,
+            try driver.rideMapState.ingestLocation(
+                monotonicMs: 100,
+                wallClockUnixMs: 1_700_000_000_100,
+                latitudeDegrees: 39.7392,
+                longitudeDegrees: -104.9903,
+                horizontalAccuracyMeters: 5
+            ))
+        _ = try await Self.settleAdmission(
+            driver.rideMapState,
+            try driver.rideMapState.beginVerifiedConnectionAdmission(
+                connectionState: connectionState,
+                token: token,
+                atMs: 200
+            )
         )
 
         let model = CutoutAppModel(core: driver)
 
-        XCTAssertEqual(model.rideMapSnapshot?.associatedVehicle, "pev-restored")
-        XCTAssertEqual(model.rideMapSnapshot?.summary.pointCount, 1)
-        XCTAssertEqual(model.rideMapLiveTelemetryState, .associatedNoTelemetry)
+        XCTAssertEqual(model.liveRide.snapshot?.associatedVehicle, "pev-restored")
+        XCTAssertEqual(model.liveRide.snapshot?.summary.pointCount, 1)
+        XCTAssertEqual(model.liveRide.telemetryState, .associatedNoTelemetry)
         await Self.waitUntil("restored ride-map projection") {
-            !model.rideMapLiveDisplayPoints.isEmpty
+            !model.liveRide.displayPoints.isEmpty
         }
-        XCTAssertEqual(model.rideMapLiveDisplayPoints.count, 1)
+        XCTAssertEqual(model.liveRide.displayPoints.count, 1)
     }
 
     @MainActor
-    func testRideAutostartSetupShowsDurableValueAndRetainsItAfterFailedSave() async throws {
-        let database = try XCTUnwrap(MobileRideMapState.debugDatabase)
-        let state = MobileRideMapState(database: database)
-        let previous = try state.rideAutostartEnabled()
-        defer { try? state.setRideAutostartEnabled(previous) }
-        try state.setRideAutostartEnabled(true)
-        let driver = SessionDriverSpy(rows: [], rideMapState: state)
-        let model = CutoutAppModel(core: driver)
-        XCTAssertNil(model.rideAutostartEnabled)
-        await model.loadRideAutostartSetting()
-        XCTAssertEqual(model.rideAutostartEnabled, true)
-        let saved = await model.setRideAutostartEnabled(false)
-        XCTAssertTrue(saved)
-        XCTAssertEqual(model.rideAutostartEnabled, false)
-        XCTAssertFalse(model.rideAutostartSettingsError)
-
-        let reopenedDriver = SessionDriverSpy(rows: [], rideMapState: MobileRideMapState(database: database))
-        let reopenedModel = CutoutAppModel(core: reopenedDriver)
-        await reopenedModel.loadRideAutostartSetting()
-        XCTAssertEqual(reopenedModel.rideAutostartEnabled, false)
-        reopenedDriver.setRideMapUnavailable(true)
-        let failed = await reopenedModel.setRideAutostartEnabled(true)
-        XCTAssertFalse(failed)
-        XCTAssertEqual(reopenedModel.rideAutostartEnabled, false)
-        XCTAssertTrue(reopenedModel.rideAutostartSettingsError)
-        XCTAssertFalse(reopenedModel.rideAutostartSettingsBusy)
-    }
-
-    @MainActor
-    func testRideAutostartUnavailableStorageDoesNotPretendToSave() async {
-        let model = CutoutAppModel(core: SessionDriverSpy(rows: [], rideMapUnavailable: true))
-        await model.loadRideAutostartSetting()
-        XCTAssertNil(model.rideAutostartEnabled)
-        XCTAssertTrue(model.rideAutostartSettingsError)
-        let saved = await model.setRideAutostartEnabled(false)
-        XCTAssertFalse(saved)
-        XCTAssertNil(model.rideAutostartEnabled)
-    }
-
-    @MainActor
-    func testRideMapCommandFailureRemainsVisibleAsTheTypedRustError() {
+    func testRideMapCommandFailureRemainsVisibleAsTheTypedRustError() async {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)
 
-        XCTAssertFalse(model.pauseRideMap())
-        XCTAssertEqual(model.rideMapError, .noActiveRide)
-        XCTAssertEqual(model.rideMapLiveError, .noActiveRide)
-        XCTAssertNil(model.rideMapHistoryError)
-        XCTAssertNil(model.rideMapHistoryRouteError)
+        let paused = await model.pauseRideMap()
+        XCTAssertFalse(paused)
+        XCTAssertEqual(model.liveRide.error, .noActiveRide)
+        XCTAssertNil(model.rideHistory.error)
+        XCTAssertNil(model.rideHistory.routeError)
     }
 
     @MainActor
-    func testHistoryStorageFailureDoesNotLookLikeAnEmptyHistory() async {
-        let driver = SessionDriverSpy(rows: [], rideMapUnavailable: true)
-        let model = CutoutAppModel(core: driver)
+    func testMusicDeletionRejectsLateHistoryViewportSuccessAndFailure() async throws {
+        for failAfterRelease in [false, true] {
+            let driver = SessionDriverSpy(rows: [])
+            let query = GatedRideHistoryQuery(
+                base: driver.rideMapState,
+                failAfterRelease: failAfterRelease
+            )
+            let model = CutoutAppModel(
+                core: driver,
+                rideHistoryQueryProvider: { query }
+            )
+            let started = await model.startGpsOnlyRide()
+            XCTAssertTrue(started)
+            XCTAssertTrue(model.music.setHistoryPolicy(.humanReadable))
+            _ = await Self.settle(
+                driver.rideMapState,
+                try driver.rideMapState.ingestLocation(
+                    monotonicMs: 100,
+                    wallClockUnixMs: 1_700_000_000_100,
+                    latitudeDegrees: 39.7000,
+                    longitudeDegrees: -104.9000,
+                    horizontalAccuracyMeters: 5
+                ))
+            _ = await Self.settle(
+                driver.rideMapState,
+                try driver.rideMapState.ingestLocation(
+                    monotonicMs: 1_100,
+                    wallClockUnixMs: 1_700_000_001_100,
+                    latitudeDegrees: 39.7001,
+                    longitudeDegrees: -104.9000,
+                    horizontalAccuracyMeters: 5
+                ))
+            let snapshot = MobileMusicSnapshotDto(
+                provider: .appleMusic,
+                sessionId: "session",
+                state: .playing,
+                item: MobileMusicItemDto(identifier: "track-1", title: "Song", artist: "Artist"),
+                positionMilliseconds: nil,
+                durationMilliseconds: nil,
+                observedAtMs: 1,
+                capabilities: MobileMusicCapabilitiesDto(
+                    previous: false,
+                    play: false,
+                    pause: true,
+                    next: true,
+                    openProvider: true
+                )
+            )
+            XCTAssertTrue(
+                model.music.ingestObservation(
+                    MusicProviderObservation(snapshot: snapshot),
+                    wallClockAtMs: 1_700_000_000_500,
+                    clockUncertaintyMs: 5
+                ))
+            let rideID = try XCTUnwrap(model.liveRide.snapshot?.rideID)
+            XCTAssertFalse(driver.rideMapState.currentMusicEvents().isEmpty)
+            let stopped = await model.stopRideMap()
+            let saved = await model.saveRideMap()
+            XCTAssertTrue(stopped)
+            XCTAssertTrue(saved)
+            XCTAssertFalse(try driver.rideMapState.storedMusicHistory(rideID: rideID).events.isEmpty)
+            await Self.waitUntil("music-history route before gated viewport") {
+                model.rideHistory.selectedRideID == rideID
+                    && !model.rideHistory.detailMusicTimeline.isEmpty
+                    && !model.rideHistory.routeLoading
+            }
+            XCTAssertEqual(model.rideHistory.selectedRideID, rideID)
+            XCTAssertFalse(model.rideHistory.routeLoading)
+            XCTAssertFalse(model.rideHistory.detailRouteLoading)
+            XCTAssertFalse(model.rideHistory.detailMusicTimeline.isEmpty)
+            let historyPoints = model.rideHistory.displayPoints
+            let detailPoints = model.rideHistory.detailDisplayPoints
+            XCTAssertFalse(historyPoints.isEmpty)
+            XCTAssertFalse(detailPoints.isEmpty)
 
-        model.loadRideMapHistory()
-        await Task.yield()
+            query.armNextProjection()
+            model.rideHistory.projectDetailViewport(
+                MobileGeoBoundsDto(
+                    minimumLatitudeDegrees: 39.70009,
+                    maximumLatitudeDegrees: 39.70011,
+                    minimumLongitudeDegrees: -104.90001,
+                    maximumLongitudeDegrees: -104.89999
+                ))
+            let gatedProjectionStarted = await query.waitUntilGatedProjectionStarts()
+            XCTAssertTrue(gatedProjectionStarted)
 
-        XCTAssertEqual(model.rideMapHistoryError, .storageError("Rust ride database is unavailable"))
-        XCTAssertNil(model.rideMapLiveError)
-        XCTAssertFalse(model.rideMapHistoryLoading)
-    }
+            let didForget = await model.music.forgetHistory(for: rideID)
+            XCTAssertTrue(didForget)
+            XCTAssertFalse(model.rideHistory.routeLoading)
+            XCTAssertFalse(model.rideHistory.detailRouteLoading)
+            XCTAssertEqual(model.rideHistory.detailProjectionRideID, rideID)
+            XCTAssertEqual(model.rideHistory.displayPoints, historyPoints)
+            XCTAssertEqual(model.rideHistory.detailDisplayPoints, detailPoints)
+            XCTAssertTrue(model.rideHistory.detailMusicTimeline.isEmpty)
+            XCTAssertNil(model.rideHistory.detailMusicState)
 
-    @MainActor
-    func testHistoryReloadFailureRetainsThePreviouslySelectedRoute() async throws {
-        let driver = SessionDriverSpy(rows: [])
-        let state = driver.rideMapState
-        _ = try state.startGpsOnly(atMs: 100)
-        _ = await Self.settle(state, try state.ingestLocation(
-            monotonicMs: 100,
-            wallClockUnixMs: 1_700_000_000_100,
-            latitudeDegrees: 39.7000,
-            longitudeDegrees: -104.9000,
-            horizontalAccuracyMeters: 5
-        ))
-        _ = await Self.settle(state, try state.ingestLocation(
-            monotonicMs: 1_100,
-            wallClockUnixMs: 1_700_000_001_100,
-            latitudeDegrees: 39.7001,
-            longitudeDegrees: -104.9000,
-            horizontalAccuracyMeters: 5
-        ))
-        _ = try state.stop(atMs: 1_100)
-        let rideID = try state.save().rideID
+            query.releaseGatedProjection()
+            let gatedProjectionFinished = await query.waitUntilGatedProjectionFinishes()
+            XCTAssertTrue(gatedProjectionFinished)
+            for _ in 0..<20 {
+                await Task.yield()
+            }
+            XCTAssertFalse(model.rideHistory.routeLoading)
+            XCTAssertFalse(model.rideHistory.detailRouteLoading)
+            XCTAssertNil(model.rideHistory.routeError)
+            XCTAssertNil(model.rideHistory.detailRouteError)
+            XCTAssertEqual(model.rideHistory.displayPoints, historyPoints)
+            XCTAssertEqual(model.rideHistory.detailDisplayPoints, detailPoints)
+            XCTAssertTrue(model.rideHistory.detailMusicTimeline.isEmpty)
+            XCTAssertNil(model.rideHistory.detailMusicState)
 
-        let model = CutoutAppModel(core: driver)
-        model.setRideMapHistoryDateFilter(.allTime)
-        model.loadRideMapHistory(selecting: rideID)
-        await Self.waitUntil("selected history route before reload failure", maxTurns: 100_000) {
-            model.selectedRideMapHistoryID == rideID
-                && model.rideMapHistoryDisplayPoints.isEmpty == false
-                && !model.rideMapHistoryRouteLoading
+            let priorDetailProjectionVersion = model.rideHistory.detailProjectionVersion
+            model.rideHistory.projectDetailViewport(
+                MobileGeoBoundsDto(
+                    minimumLatitudeDegrees: 39.70009,
+                    maximumLatitudeDegrees: 39.70011,
+                    minimumLongitudeDegrees: -104.90001,
+                    maximumLongitudeDegrees: -104.89999
+                ))
+            await Self.waitUntil("post-deletion detail projection") {
+                !model.rideHistory.detailRouteLoading
+                    && model.rideHistory.detailProjectionVersion > priorDetailProjectionVersion
+            }
+            XCTAssertNil(model.rideHistory.detailRouteError)
+            XCTAssertEqual(model.rideHistory.displayPoints, historyPoints)
+            XCTAssertEqual(model.rideHistory.detailDisplayPoints.count, 1)
+            XCTAssertTrue(model.rideHistory.detailMusicTimeline.isEmpty)
+            XCTAssertNil(model.rideHistory.detailMusicState)
         }
-
-        driver.setRideMapUnavailable(true)
-        model.loadRideMapHistory(selecting: rideID)
-        await Task.yield()
-
-        XCTAssertFalse(model.rideMapHistoryDisplayPoints.isEmpty)
-        XCTAssertEqual(model.selectedRideMapHistoryID, rideID)
-        XCTAssertEqual(model.rideMapHistoryDetailProjectionRideID, rideID)
-        XCTAssertEqual(
-            model.rideMapHistoryRouteError,
-            .storageError("Rust ride database is unavailable")
-        )
-        XCTAssertEqual(
-            model.rideMapHistoryDetailRouteError,
-            .storageError("Rust ride database is unavailable")
-        )
     }
 
     @MainActor
-    func testHistoryDetailLoadGenerationRejectsDeletedOrReplacedSelection() {
-        XCTAssertTrue(
-            CutoutAppModel.shouldApplyHistoryDetailLoad(
-                rideID: "ride-a",
-                selectedRideID: "ride-a",
-                loadGeneration: 3,
-                currentGeneration: 3,
-                isCancelled: false
-            )
-        )
-        XCTAssertFalse(
-            CutoutAppModel.shouldApplyHistoryDetailLoad(
-                rideID: "ride-a",
-                selectedRideID: "ride-a",
-                loadGeneration: 3,
-                currentGeneration: 4,
-                isCancelled: false
-            )
-        )
-        XCTAssertFalse(
-            CutoutAppModel.shouldApplyHistoryDetailLoad(
-                rideID: "ride-a",
-                selectedRideID: "ride-b",
-                loadGeneration: 3,
-                currentGeneration: 3,
-                isCancelled: false
-            )
-        )
-    }
-
-    @MainActor
-    func testHistoryQueryGenerationRejectsLateReloadOrPageResults() {
-        XCTAssertTrue(
-            CutoutAppModel.shouldApplyHistoryQuery(
-                generation: 7,
-                currentGeneration: 7,
-                isCancelled: false
-            )
-        )
-        XCTAssertFalse(
-            CutoutAppModel.shouldApplyHistoryQuery(
-                generation: 7,
-                currentGeneration: 8,
-                isCancelled: false
-            )
-        )
-        XCTAssertFalse(
-            CutoutAppModel.shouldApplyHistoryQuery(
-                generation: 7,
-                currentGeneration: 7,
-                isCancelled: true
-            )
-        )
-    }
-
-    @MainActor
-    func testLateHistoryDetailViewportCannotRestoreInvalidatedProjection() {
-        XCTAssertTrue(
-            CutoutAppModel.shouldApplyHistoryDetailViewport(
-                rideID: "ride-a",
-                selectedRideID: "ride-a",
-                expectedProjectionRideID: "ride-a",
-                currentProjectionRideID: "ride-a",
-                loadGeneration: 3,
-                currentGeneration: 3,
-                isCancelled: false
-            )
-        )
-        XCTAssertFalse(
-            CutoutAppModel.shouldApplyHistoryDetailViewport(
-                rideID: "ride-a",
-                selectedRideID: "ride-a",
-                expectedProjectionRideID: "ride-a",
-                currentProjectionRideID: nil,
-                loadGeneration: 3,
-                currentGeneration: 4,
-                isCancelled: false
-            )
-        )
-        XCTAssertFalse(
-            CutoutAppModel.shouldApplyHistoryDetailViewport(
-                rideID: "ride-a",
-                selectedRideID: "ride-a",
-                expectedProjectionRideID: "ride-a",
-                currentProjectionRideID: "ride-b",
-                loadGeneration: 3,
-                currentGeneration: 3,
-                isCancelled: false
-            )
-        )
-    }
-
-    @MainActor
-    func testRideMapLifecycleControlsUpdateRecordingState() {
+    func testRideMapLifecycleControlsUpdateRecordingState() async {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)
 
-        XCTAssertFalse(model.isRideMapRecording)
-        XCTAssertTrue(model.startGpsOnlyRide())
-        XCTAssertEqual(driver.tripMeterResetCount, 1)
+        XCTAssertFalse(model.liveRide.snapshot?.state == .active)
+        let started = await model.startGpsOnlyRide()
+        XCTAssertTrue(started)
+        XCTAssertEqual(driver.tripMeterResetCount, 0)
         XCTAssertEqual(driver.resetRideMapLocationAdmissionCount, 1)
-        XCTAssertTrue(model.isRideMapRecording)
+        XCTAssertTrue(model.liveRide.snapshot?.state == .active)
         XCTAssertEqual(driver.rideLocationDemandStates, [.active])
-        XCTAssertTrue(model.pauseRideMap())
-        XCTAssertFalse(model.isRideMapRecording)
-        XCTAssertTrue(model.isRideMapPaused)
+        let paused = await model.pauseRideMap()
+        XCTAssertTrue(paused)
+        XCTAssertFalse(model.liveRide.snapshot?.state == .active)
+        XCTAssertTrue(model.liveRide.snapshot?.state == .paused)
         XCTAssertEqual(driver.rideLocationDemandStates, [.active, .paused])
-        XCTAssertTrue(model.resumeRideMap())
+        let resumed = await model.resumeRideMap()
+        XCTAssertTrue(resumed)
         XCTAssertEqual(driver.rideLocationDemandStates, [.active, .paused, .active])
-        XCTAssertTrue(model.stopRideMap())
-        XCTAssertFalse(model.isRideMapRecording)
-        XCTAssertFalse(model.isRideMapPaused)
+        let stopped = await model.stopRideMap()
+        XCTAssertTrue(stopped)
+        XCTAssertFalse(model.liveRide.snapshot?.state == .active)
+        XCTAssertFalse(model.liveRide.snapshot?.state == .paused)
         XCTAssertEqual(driver.rideLocationDemandStates.last, .stopped)
     }
 
     @MainActor
-    func testRejectedRideMapStartDoesNotResetLocationAdmission() {
+    func testRejectedRideMapStartDoesNotResetLocationAdmission() async {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)
 
-        XCTAssertTrue(model.startGpsOnlyRide())
+        let started = await model.startGpsOnlyRide()
+        XCTAssertTrue(started)
         XCTAssertEqual(driver.resetRideMapLocationAdmissionCount, 1)
 
-        XCTAssertFalse(model.startGpsOnlyRide())
+        let restarted = await model.startGpsOnlyRide()
+        XCTAssertFalse(restarted)
         XCTAssertEqual(
             driver.tripMeterResetCount,
-            1,
-            "a rejected start must not reset the device trip meter"
+            0,
+            "GPS-only rides without a verified BLE attempt must not reset the device trip meter"
         )
         XCTAssertEqual(
             driver.resetRideMapLocationAdmissionCount,
@@ -870,274 +721,9 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testHistoryReloadPreservesTheSelectedRideWhenItStillMatches() {
-        XCTAssertEqual(
-            CutoutAppModel.preferredHistorySelection(
-                requestedID: nil,
-                currentID: "ride-2",
-                summaryIDs: ["ride-1", "ride-2"]
-            ),
-            "ride-2"
-        )
-        XCTAssertEqual(
-            CutoutAppModel.preferredHistorySelection(
-                requestedID: "ride-3",
-                currentID: "ride-2",
-                summaryIDs: ["ride-1", "ride-3"]
-            ),
-            "ride-3"
-        )
-        XCTAssertEqual(
-            CutoutAppModel.preferredHistorySelection(
-                requestedID: nil,
-                currentID: "ride-missing",
-                summaryIDs: ["ride-1", "ride-2"]
-            ),
-            "ride-1"
-        )
-        XCTAssertNil(
-            CutoutAppModel.preferredHistorySelection(
-                requestedID: "ride-missing",
-                currentID: "ride-2",
-                summaryIDs: ["ride-1", "ride-2"]
-            )
-        )
-        XCTAssertEqual(
-            CutoutAppModel.historySelectionError(
-                requestedID: "ride-missing",
-                summaryIDs: ["ride-1", "ride-2"]
-            ),
-            .rideNotFound
-        )
-        XCTAssertNil(
-            CutoutAppModel.historySelectionError(
-                requestedID: "ride-2",
-                summaryIDs: ["ride-1", "ride-2"]
-            )
-        )
-    }
-
-    @MainActor
-    func testHistoryPageAppendDoesNotDuplicateExistingRides() {
-        XCTAssertEqual(
-            CutoutAppModel.appendingUniqueHistory(
-                existing: ["ride-1", "ride-2"],
-                incoming: ["ride-2", "ride-3", "ride-1", "ride-4"],
-                id: { $0 }
-            ),
-            ["ride-1", "ride-2", "ride-3", "ride-4"]
-        )
-    }
-
-    @MainActor
-    func testHistoryRoutePreviewActionLoadsTheLargestBoundedPreview() async throws {
-        let driver = SessionDriverSpy(rows: [])
-        let state = driver.rideMapState
-        _ = try state.startGpsOnly(atMs: 100)
-        for index in 0 ... 4_096 {
-            _ = await Self.settle(state, try state.ingestLocation(
-                monotonicMs: 100 + UInt64(index) * 1_000,
-                wallClockUnixMs: 1_700_000_000_100 + UInt64(index) * 1_000,
-                latitudeDegrees: 39.7000 + Double(index) * 0.00001,
-                longitudeDegrees: -104.9000,
-                horizontalAccuracyMeters: 5
-            ))
-        }
-        _ = try state.stop(atMs: 4_096_100)
-        let rideID = try state.save().rideID
-
-        let model = CutoutAppModel(core: driver)
-        model.setRideMapHistoryDateFilter(.allTime)
-        model.loadRideMapHistory(selecting: rideID)
-        await Self.waitUntil("bounded history route preview", maxTurns: 100_000) {
-            model.selectedRideMapHistoryID == rideID
-                && model.rideMapHistoryDisplayPoints.count == 512
-                && !model.rideMapHistoryRouteLoading
-        }
-
-        XCTAssertTrue(model.rideMapHistoryPointsTruncated)
-        let initialCameraFitVersion = model.rideMapHistoryDetailCameraFitVersion
-        model.loadRoutePreviewMapHistory()
-        await Self.waitUntil("largest bounded history route preview", maxTurns: 100_000) {
-            model.rideMapHistoryDisplayPoints.count == 4_097
-                && !model.rideMapHistoryRouteLoading
-        }
-
-        XCTAssertEqual(model.rideMapHistoryDisplayPoints.count, 4_097)
-        XCTAssertFalse(model.rideMapHistoryPointsTruncated)
-        XCTAssertNotEqual(
-            model.rideMapHistoryDetailCameraFitVersion,
-            initialCameraFitVersion
-        )
-    }
-
-    @MainActor
-    func testHistorySelectionDoesNotLoadSupplementaryMapContext() async throws {
-        let driver = SessionDriverSpy(rows: [])
-        let state = driver.rideMapState
-
-        func saveRide(startingAt startMs: UInt64) async throws -> String {
-            _ = try state.startGpsOnly(atMs: startMs)
-            _ = await Self.settle(state, try state.ingestLocation(
-                monotonicMs: startMs,
-                wallClockUnixMs: 1_700_000_000_000 + startMs,
-                latitudeDegrees: 39.7000,
-                longitudeDegrees: -104.9000,
-                horizontalAccuracyMeters: 5
-            ))
-            _ = await Self.settle(state, try state.ingestLocation(
-                monotonicMs: startMs + 1_000,
-                wallClockUnixMs: 1_700_000_001_000 + startMs,
-                latitudeDegrees: 39.7001,
-                longitudeDegrees: -104.9000,
-                horizontalAccuracyMeters: 5
-            ))
-            _ = try state.stop(atMs: startMs + 1_000)
-            return try state.save().rideID
-        }
-
-        _ = try await saveRide(startingAt: 100)
-        let selectedRideID = try await saveRide(startingAt: 10_000)
-        let model = CutoutAppModel(core: driver)
-        model.setRideMapHistoryDateFilter(.allTime)
-        model.loadRideMapHistory(selecting: selectedRideID)
-
-        await Self.waitUntil("selected history route", maxTurns: 100_000) {
-            model.selectedRideMapHistoryID == selectedRideID
-                && !model.rideMapHistoryRouteLoading
-        }
-        try await Task.sleep(for: .milliseconds(100))
-
-        XCTAssertNil(model.rideMapHistoryContextProjection)
-        XCTAssertTrue(model.rideMapHistoryContextRoutes.isEmpty)
-    }
-
-    @MainActor
-    func testDetailViewportProjectionDoesNotReplaceHistoryProjection() async throws {
-        let driver = SessionDriverSpy(rows: [])
-        let state = driver.rideMapState
-        _ = try state.startGpsOnly(atMs: 100)
-        _ = await Self.settle(state, try state.ingestLocation(
-            monotonicMs: 100,
-            wallClockUnixMs: 1_700_000_000_100,
-            latitudeDegrees: 39.7000,
-            longitudeDegrees: -104.9000,
-            horizontalAccuracyMeters: 5
-        ))
-        _ = await Self.settle(state, try state.ingestLocation(
-            monotonicMs: 1_100,
-            wallClockUnixMs: 1_700_000_001_100,
-            latitudeDegrees: 39.7001,
-            longitudeDegrees: -104.9000,
-            horizontalAccuracyMeters: 5
-        ))
-        _ = try state.stop(atMs: 1_100)
-        let rideID = try state.save().rideID
-
-        let model = CutoutAppModel(core: driver)
-        model.setRideMapHistoryDateFilter(.allTime)
-        let initialHistoryProjectionVersion = model.rideMapHistoryProjectionVersion
-        let initialDetailProjectionVersion = model.rideMapHistoryDetailProjectionVersion
-        model.loadRideMapHistory(selecting: rideID)
-        await Self.waitUntil("history route selection", maxTurns: 100_000) {
-            model.selectedRideMapHistoryID == rideID
-                && model.rideMapHistoryDisplayPoints.isEmpty == false
-        }
-        XCTAssertEqual(model.selectedRideMapHistoryID, rideID)
-        let historyPoints = model.rideMapHistoryDisplayPoints
-        XCTAssertEqual(historyPoints.count, 2)
-        XCTAssertEqual(model.rideMapHistoryDetailRoutePresence, .visible)
-        XCTAssertFalse(model.rideMapHistoryDetailDisplayPoints.isEmpty)
-        let selectedHistoryProjectionVersion = model.rideMapHistoryProjectionVersion
-        XCTAssertGreaterThan(selectedHistoryProjectionVersion, initialHistoryProjectionVersion)
-        let selectedDetailProjectionVersion = model.rideMapHistoryDetailProjectionVersion
-        XCTAssertGreaterThan(selectedDetailProjectionVersion, initialDetailProjectionVersion)
-
-        model.projectRideMapHistoryDetailViewport(MobileGeoBoundsDto(
-            minimumLatitudeDegrees: 39.70009,
-            maximumLatitudeDegrees: 39.70011,
-            minimumLongitudeDegrees: -104.90001,
-            maximumLongitudeDegrees: -104.89999
-        ))
-        XCTAssertFalse(model.rideMapHistoryDetailRouteLoading)
-        XCTAssertTrue(model.forgetMusicHistory(for: rideID))
-        XCTAssertFalse(model.rideMapHistoryDetailRouteLoading)
-        XCTAssertEqual(model.rideMapHistoryDetailProjectionRideID, rideID)
-        XCTAssertFalse(model.rideMapHistoryDetailDisplayPoints.isEmpty)
-
-        model.selectRideMapHistory(rideID)
-        await Self.waitUntil("same-shape history route reprojection", maxTurns: 100_000) {
-            model.rideMapHistoryProjectionVersion > selectedHistoryProjectionVersion
-        }
-        XCTAssertEqual(model.rideMapHistoryDisplayPoints, historyPoints)
-
-        model.projectRideMapHistoryDetailViewport(MobileGeoBoundsDto(
-            minimumLatitudeDegrees: 39.70009,
-            maximumLatitudeDegrees: 39.70011,
-            minimumLongitudeDegrees: -104.90001,
-            maximumLongitudeDegrees: -104.89999
-        ))
-        await Self.waitUntil("detail viewport projection", maxTurns: 100_000) {
-            model.rideMapHistoryDetailDisplayPoints.count == 1
-        }
-
-        XCTAssertEqual(model.rideMapHistoryDetailDisplayPoints.count, 1)
-        XCTAssertEqual(model.rideMapHistoryDisplayPoints, historyPoints)
-        XCTAssertGreaterThan(
-            model.rideMapHistoryDetailProjectionVersion,
-            selectedDetailProjectionVersion
-        )
-
-        model.projectRideMapHistoryDetailViewport(nil)
-        await Self.waitUntil("nil history detail viewport error") {
-            !model.rideMapHistoryDetailRouteLoading
-                && model.rideMapHistoryDetailRouteError == .invalidRouteProjection
-        }
-        XCTAssertTrue(model.rideMapHistoryDetailDisplayPoints.isEmpty)
-        XCTAssertEqual(model.rideMapHistoryDisplayPoints, historyPoints)
-
-        model.projectRideMapHistoryDetailViewport(MobileGeoBoundsDto(
-            minimumLatitudeDegrees: 40,
-            maximumLatitudeDegrees: 39,
-            minimumLongitudeDegrees: -104.90001,
-            maximumLongitudeDegrees: -104.89999
-        ))
-        await Self.waitUntil("invalid history detail viewport error") {
-            model.rideMapHistoryDetailRouteError != nil
-        }
-        XCTAssertNotNil(model.rideMapHistoryDetailRouteError)
-        XCTAssertNil(model.rideMapHistoryRouteError)
-        XCTAssertFalse(model.rideMapHistoryDetailRouteLoading)
-
-        model.projectRideMapHistoryDetailViewport(MobileGeoBoundsDto(
-            minimumLatitudeDegrees: 40,
-            maximumLatitudeDegrees: 41,
-            minimumLongitudeDegrees: -104,
-            maximumLongitudeDegrees: -103
-        ))
-        await Self.waitUntil("empty history detail viewport") {
-            model.rideMapHistoryDetailRoutePresence == .emptyViewport
-                && model.rideMapHistoryDetailRouteError == nil
-                && model.rideMapHistoryDetailDisplayPoints.isEmpty
-        }
-        XCTAssertEqual(model.rideMapHistoryDetailRoutePresence, .emptyViewport)
-        XCTAssertNil(model.rideMapHistoryDetailRouteError)
-        XCTAssertEqual(model.rideMapHistoryDetailProjectionRideID, rideID)
-
-        driver.setRideMapUnavailable(true)
-        model.selectRideMapHistory(rideID)
-        await Self.waitUntil("same-ride selection failure") {
-            !model.rideMapHistoryRouteLoading
-                && model.rideMapHistoryRouteError != nil
-        }
-        XCTAssertTrue(model.rideMapHistoryDisplayPoints.isEmpty)
-        XCTAssertTrue(model.rideMapHistoryDetailDisplayPoints.isEmpty)
-    }
-
-    @MainActor
     func testLiveProjectionGenerationRejectsStaleOrDisabledResults() {
         XCTAssertTrue(
-            CutoutAppModel.shouldApplyLiveProjection(
+            LiveRideModel.shouldApplyProjection(
                 generation: 3,
                 currentGeneration: 3,
                 enabled: true,
@@ -1146,7 +732,7 @@ final class CutoutAppModelTests: XCTestCase {
             )
         )
         XCTAssertFalse(
-            CutoutAppModel.shouldApplyLiveProjection(
+            LiveRideModel.shouldApplyProjection(
                 generation: 2,
                 currentGeneration: 3,
                 enabled: true,
@@ -1155,7 +741,7 @@ final class CutoutAppModelTests: XCTestCase {
             )
         )
         XCTAssertFalse(
-            CutoutAppModel.shouldApplyLiveProjection(
+            LiveRideModel.shouldApplyProjection(
                 generation: 3,
                 currentGeneration: 3,
                 enabled: false,
@@ -1164,7 +750,7 @@ final class CutoutAppModelTests: XCTestCase {
             )
         )
         XCTAssertFalse(
-            CutoutAppModel.shouldApplyLiveProjection(
+            LiveRideModel.shouldApplyProjection(
                 generation: 3,
                 currentGeneration: 3,
                 enabled: true,
@@ -1173,7 +759,7 @@ final class CutoutAppModelTests: XCTestCase {
             )
         )
         XCTAssertTrue(
-            CutoutAppModel.shouldApplyLiveProjection(
+            LiveRideModel.shouldApplyProjection(
                 generation: 4,
                 currentGeneration: 4,
                 enabled: true,
@@ -1207,38 +793,41 @@ final class CutoutAppModelTests: XCTestCase {
             recordingToken: MobileRideMapRecordingTokenDto(rideId: "ride-b", generation: 4)
         )
 
-        XCTAssertFalse(CutoutAppModel.shouldApplyRideMapError(
-            context: staleRide,
-            currentSnapshot: current
-        ))
-        XCTAssertFalse(CutoutAppModel.shouldApplyRideMapError(
-            context: staleGeneration,
-            currentSnapshot: current
-        ))
-        XCTAssertTrue(CutoutAppModel.shouldApplyRideMapError(
-            context: currentRide,
-            currentSnapshot: current
-        ))
+        XCTAssertFalse(
+            LiveRideModel.shouldApplyError(
+                context: staleRide,
+                currentSnapshot: current
+            ))
+        XCTAssertFalse(
+            LiveRideModel.shouldApplyError(
+                context: staleGeneration,
+                currentSnapshot: current
+            ))
+        XCTAssertTrue(
+            LiveRideModel.shouldApplyError(
+                context: currentRide,
+                currentSnapshot: current
+            ))
     }
 
     @MainActor
     func testRestoredProjectionDoesNotReplaceNewerLiveState() {
         XCTAssertTrue(
-            CutoutAppModel.shouldApplyRestoredLiveProjection(
+            LiveRideModel.shouldApplyRestoredProjection(
                 restorationGeneration: 3,
                 currentGeneration: 3,
                 liveProjectionEnabled: false
             )
         )
         XCTAssertFalse(
-            CutoutAppModel.shouldApplyRestoredLiveProjection(
+            LiveRideModel.shouldApplyRestoredProjection(
                 restorationGeneration: 2,
                 currentGeneration: 3,
                 liveProjectionEnabled: false
             )
         )
         XCTAssertFalse(
-            CutoutAppModel.shouldApplyRestoredLiveProjection(
+            LiveRideModel.shouldApplyRestoredProjection(
                 restorationGeneration: 3,
                 currentGeneration: 3,
                 liveProjectionEnabled: true
@@ -1249,14 +838,16 @@ final class CutoutAppModelTests: XCTestCase {
     func testRouteProjectionUsesRustBoundedProjection() async throws {
         let state = MobileRideMapState()
         _ = try state.startGpsOnly(atMs: 100)
-        for sequence in 0 ..< 10 {
-            _ = await Self.settle(state, try state.ingestLocation(
-                monotonicMs: UInt64(1_000 + sequence * 1_000),
-                wallClockUnixMs: UInt64(1_700_000_000_000 + sequence * 1_000),
-                latitudeDegrees: 39.7 + Double(sequence) / 10_000,
-                longitudeDegrees: -104.9 - Double(sequence) / 10_000,
-                horizontalAccuracyMeters: 5
-            ))
+        for sequence in 0..<10 {
+            _ = await Self.settle(
+                state,
+                try state.ingestLocation(
+                    monotonicMs: UInt64(1_000 + sequence * 1_000),
+                    wallClockUnixMs: UInt64(1_700_000_000_000 + sequence * 1_000),
+                    latitudeDegrees: 39.7 + Double(sequence) / 10_000,
+                    longitudeDegrees: -104.9 - Double(sequence) / 10_000,
+                    horizontalAccuracyMeters: 5
+                ))
         }
 
         let projection = try state.projectPoints(budget: 4)
@@ -1269,62 +860,35 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testDetailViewportPreservesSourceBudgetOmission() {
-        XCTAssertTrue(
-            CutoutAppModel.detailPointsAreTruncated(
-                sourcePointsOmittedByBudget: true,
-                viewportPointsOmittedByBudget: false
-            )
-        )
-        XCTAssertTrue(
-            CutoutAppModel.detailPointsAreTruncated(
-                sourcePointsOmittedByBudget: false,
-                viewportPointsOmittedByBudget: true
-            )
-        )
-        XCTAssertFalse(
-            CutoutAppModel.detailPointsAreTruncated(
-                sourcePointsOmittedByBudget: false,
-                viewportPointsOmittedByBudget: false
-            )
-        )
-    }
-
-    @MainActor
-    func testDetailViewportPreservesSourceSegmentBudgetOmission() {
-        XCTAssertTrue(
-            CutoutAppModel.detailSegmentsAreOmitted(
-                sourceSegmentsOmittedByBudget: true,
-                viewportSegmentsOmittedByBudget: false
-            )
-        )
-        XCTAssertTrue(
-            CutoutAppModel.detailSegmentsAreOmitted(
-                sourceSegmentsOmittedByBudget: false,
-                viewportSegmentsOmittedByBudget: true
-            )
-        )
-        XCTAssertFalse(
-            CutoutAppModel.detailSegmentsAreOmitted(
-                sourceSegmentsOmittedByBudget: false,
-                viewportSegmentsOmittedByBudget: false
-            )
-        )
-    }
-
-    @MainActor
     func testPickerAndCaptureRoutesDoNotObserveRideTelemetry() {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)
-        let picker = DevicePickerRouteView(model: model, pair: { _ in }, navigate: { _ in })
-        let capture = CaptureRouteView(model: model, finishCapture: {})
+        let picker = DevicePickerRouteView(
+            device: model.device, pair: { _ in }, navigate: { _ in }, openSetup: {})
+        let capture = CaptureRouteView(capture: model.capture)
 
-        XCTAssertFalse(observesChange({ _ = picker.body }) {
-            driver.onDisplayStateChange?(RideDisplayState(notificationCount: 1))
-        })
-        XCTAssertFalse(observesChange({ _ = capture.body }) {
-            driver.onDisplayStateChange?(RideDisplayState(notificationCount: 2))
-        })
+        XCTAssertFalse(
+            observesChange({ _ = picker.body }) {
+                driver.onDisplayStateChange?(RideDisplayState(notificationCount: 1))
+            })
+        XCTAssertFalse(
+            observesChange({ _ = capture.body }) {
+                driver.onDisplayStateChange?(RideDisplayState(notificationCount: 2))
+            })
+    }
+
+    @MainActor
+    func testPickerRouteObservesScanCallbackThroughDeviceOwner() {
+        let driver = SessionDriverSpy(rows: [])
+        let model = CutoutAppModel(core: driver)
+        let picker = DevicePickerRouteView(
+            device: model.device, pair: { _ in }, navigate: { _ in }, openSetup: {})
+
+        XCTAssertTrue(
+            observesChange({ _ = picker.body }) {
+                driver.onScanStateChange?(DevicePickerScanState(status: .scanning, rows: []))
+            }
+        )
     }
 
     @MainActor
@@ -1336,55 +900,58 @@ final class CutoutAppModelTests: XCTestCase {
             let driver = SessionDriverSpy(rows: [])
             let model = CutoutAppModel(core: driver)
             if withAvailableBms {
-                driver.onBmsSnapshotChange?(BmsSnapshot(
-                    topology: BmsTopology(
-                        layoutLabel: "20S1P",
-                        seriesGroupCount: 20,
-                        parallelCount: 1,
-                        packCount: 1,
-                        bmsCount: 1,
-                        confidence: .verified
-                    )
-                ))
+                driver.onBmsSnapshotChange?(
+                    BmsSnapshot(
+                        topology: BmsTopology(
+                            layoutLabel: "20S1P",
+                            seriesGroupCount: 20,
+                            parallelCount: 1,
+                            packCount: 1,
+                            bmsCount: 1,
+                            confidence: .verified
+                        )
+                    ))
             }
             let fileURL = URL(fileURLWithPath: "/tmp/ride.cutout")
             model.deliverCaptureEvent(.started(fileURL: fileURL))
             model.deliverCaptureEvent(.progress(Self.priorCaptureProgress))
 
             return observesChange({ render(model) }) {
-                model.deliverCaptureEvent(.progress(CaptureProgress(
-                    elapsedMilliseconds: 64_000,
-                    notificationCount: 42,
-                    fileSizeBytes: 16_384,
-                    queuedMessageCount: 1,
-                    writerError: nil
-                )))
+                model.deliverCaptureEvent(
+                    .progress(
+                        CaptureProgress(
+                            elapsedMilliseconds: 64_000,
+                            notificationCount: 42,
+                            fileSizeBytes: 16_384,
+                            queuedMessageCount: 1,
+                            writerError: nil
+                        )))
             }
         }
 
-        XCTAssertTrue(observesProgressChange {
-            _ = CaptureRouteView(model: $0, finishCapture: {}).body
-        })
-        XCTAssertFalse(observesProgressChange {
-            _ = DevicePickerRouteView(model: $0, pair: { _ in }, navigate: { _ in }).body
-        })
-        XCTAssertFalse(observesProgressChange {
-            _ = EucPackRouteView(model: $0, packScreen: .root, selectedGroupIndex: nil, navigate: { _ in }).body
-        })
-        XCTAssertFalse(observesProgressChange(withAvailableBms: true) {
-            _ = EucPackRouteView(model: $0, packScreen: .root, selectedGroupIndex: nil, navigate: { _ in }).body
-        })
-    }
-
-    func testCaptureQuickLabelProvidesOneStatefulActionName() {
-        XCTAssertEqual(CaptureQuickLabel.ride.actionTitle(isActive: false), "Start Ride")
-        XCTAssertEqual(CaptureQuickLabel.ride.actionTitle(isActive: true), "Stop Ride")
-    }
-
-    func testCaptureActionToneFollowsTheStatefulAction() {
-        XCTAssertEqual(CaptureActionButtonTone.forState(isActive: false), .start)
-        XCTAssertEqual(CaptureActionButtonTone.forState(isActive: true), .stop)
-        XCTAssertEqual(CaptureActionButtonTone.finish, .finish)
+        XCTAssertTrue(
+            observesProgressChange {
+                _ = CaptureRouteView(capture: $0.capture).body
+            })
+        XCTAssertFalse(
+            observesProgressChange {
+                _ =
+                    DevicePickerRouteView(
+                        device: $0.device, pair: { _ in }, navigate: { _ in }, openSetup: {}
+                    ).body
+            })
+        XCTAssertFalse(
+            observesProgressChange {
+                _ =
+                    EucPackRouteView(device: $0.device, packScreen: .root, selectedGroupIndex: nil, navigate: { _ in })
+                    .body
+            })
+        XCTAssertFalse(
+            observesProgressChange(withAvailableBms: true) {
+                _ =
+                    EucPackRouteView(device: $0.device, packScreen: .root, selectedGroupIndex: nil, navigate: { _ in })
+                    .body
+            })
     }
 
     @MainActor
@@ -1393,17 +960,6 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertTrue(model.recordOnly(platformIdentifier: "unknown-device", deviceKind: " "))
         XCTAssertNil(model.capture.deviceKind)
         XCTAssertTrue(model.capture.isUserInitiated)
-    }
-
-    func testCaptureQuickLabelsResolveCatalogTitlesForVisibleAndAccessibleActions() {
-        for label in CaptureQuickLabel.allCases {
-            XCTAssertFalse(label.title.hasPrefix("capture.label."))
-            XCTAssertFalse(label.actionTitle(isActive: false).hasPrefix("capture.label."))
-            XCTAssertFalse(label.actionTitle(isActive: true).hasPrefix("capture.label."))
-        }
-        XCTAssertEqual(CaptureQuickLabel.lowBeamOn.title, "Low beam on")
-        XCTAssertEqual(CaptureQuickLabel.lowBeamOn.actionTitle(isActive: false), "Start Low beam on")
-        XCTAssertEqual(CaptureQuickLabel.lowBeamOn.actionTitle(isActive: true), "Stop Low beam on")
     }
 
     @MainActor
@@ -1451,7 +1007,7 @@ final class CutoutAppModelTests: XCTestCase {
                     state: DevicePickerRowState(action: .use),
                     symbolName: "circle.hexagongrid.circle",
                     connectionRoute: .vescOnewheel
-                ),
+                )
             ]
         )
         let model = CutoutAppModel(core: driver)
@@ -1544,7 +1100,7 @@ final class CutoutAppModelTests: XCTestCase {
                     state: DevicePickerRowState(action: .use),
                     symbolName: "circle.hexagongrid.circle",
                     connectionRoute: .vescOnewheel
-                ),
+                )
             ]
         )
         let model = CutoutAppModel(
@@ -1573,7 +1129,7 @@ final class CutoutAppModelTests: XCTestCase {
                     state: DevicePickerRowState(action: .use),
                     symbolName: "circle.hexagongrid.circle",
                     connectionRoute: .vescOnewheel
-                ),
+                )
             ]
         )
         let model = CutoutAppModel(core: driver)
@@ -1682,7 +1238,7 @@ final class CutoutAppModelTests: XCTestCase {
                     state: DevicePickerRowState(action: .use),
                     symbolName: "circle.hexagongrid.circle",
                     connectionRoute: .vescOnewheel
-                ),
+                )
             ],
             pairingSucceeds: false
         )
@@ -1716,7 +1272,7 @@ final class CutoutAppModelTests: XCTestCase {
                     detail: "Device 1234",
                     state: DevicePickerRowState(action: .probe),
                     symbolName: "questionmark.circle"
-                ),
+                )
             ]
         )
         let model = CutoutAppModel(core: driver)
@@ -1740,7 +1296,7 @@ final class CutoutAppModelTests: XCTestCase {
         let model = CutoutAppModel(core: driver)
         model.start()
 
-        XCTAssertTrue(model.startProbe(platformIdentifier: row.id))
+        XCTAssertTrue(model.pair(platformIdentifier: row.id))
         XCTAssertEqual(driver.pairedPlatformIdentifiers, [row.id])
         XCTAssertTrue(driver.probedPlatformIdentifiers.isEmpty)
         XCTAssertTrue(driver.recordedPlatformIdentifiers.isEmpty)
@@ -2078,78 +1634,6 @@ final class CutoutAppModelTests: XCTestCase {
         )
     }
 
-    func testConnectionStateOwnsNavigationIntent() {
-        let selection = ConnectionSelection(
-            platformIdentifier: "vesc-1234",
-            title: "VESC",
-            route: .vescOnewheel
-        )
-
-        XCTAssertEqual(
-            ConnectionState.connected(selection).navigationIntent(isRecordOnlyCapture: false),
-            .openRide(.vescOnewheel)
-        )
-        XCTAssertEqual(
-            ConnectionState.retrying(
-                selection,
-                retry: SessionConnectionRetry(
-                    platformIdentifier: selection.platformIdentifier,
-                    attempt: 1,
-                    deadline: MonotonicMilliseconds(0),
-                    failure: .connectFailed("timed out")
-                )
-            ).navigationIntent(isRecordOnlyCapture: false),
-            .stay
-        )
-        XCTAssertEqual(
-            ConnectionState.failed(selection, .connectFailed("timed out")).navigationIntent(isRecordOnlyCapture: false),
-            .returnToPicker
-        )
-        XCTAssertEqual(
-            ConnectionState.picker.navigationIntent(isRecordOnlyCapture: false),
-            .returnToPicker
-        )
-        XCTAssertEqual(
-            ConnectionState.connected(selection).navigationIntent(isRecordOnlyCapture: true),
-            .openCapture
-        )
-    }
-
-    func testConnectionStateOwnsSelectedDeviceStatusText() {
-        let selection = ConnectionSelection(
-            platformIdentifier: "vesc-1234",
-            title: "VESC",
-            route: .vescOnewheel
-        )
-        let failure = SessionConnectionFailure.connectFailed("timed out")
-
-        XCTAssertEqual(
-            ConnectionState.connecting(selection, phase: .discoveringServices).statusText,
-            SessionConnectionPhase.discoveringServices.displayText
-        )
-        XCTAssertEqual(
-            ConnectionState.retrying(
-                selection,
-                retry: SessionConnectionRetry(
-                    platformIdentifier: selection.platformIdentifier,
-                    attempt: 1,
-                    deadline: MonotonicMilliseconds(0),
-                    failure: failure
-                )
-            ).statusText,
-            localizedAppText("picker.status.retrying")
-        )
-        XCTAssertEqual(
-            ConnectionState.connected(selection).statusText,
-            SessionConnectionPhase.live.displayText
-        )
-        XCTAssertEqual(
-            ConnectionState.failed(selection, failure).statusText,
-            SessionConnectionPhase.failed(failure).displayText
-        )
-        XCTAssertNil(ConnectionState.picker.statusText)
-    }
-
     @MainActor
     func testRecordOnlyCaptureKeepsTheRememberedDevice() {
         let store = DevicePickerSelectionStore()
@@ -2244,21 +1728,25 @@ final class CutoutAppModelTests: XCTestCase {
         let model = CutoutAppModel(core: driver)
         XCTAssertTrue(model.recordOnly(platformIdentifier: "wheel-a", deviceKind: ""))
         let generation = CaptureGeneration(rawValue: 1)
-        driver.emitCaptureEvent(.started(generation: generation, fileURL: URL(fileURLWithPath: "/tmp/manual-capture.jsonl")))
-        let saved = await model.finishCapture()
+        driver.emitCaptureEvent(
+            .started(generation: generation, fileURL: URL(fileURLWithPath: "/tmp/manual-capture.jsonl")))
+        let saved = await model.capture.finish()
         XCTAssertFalse(saved)
         for tick in 1...3 {
-            driver.emitCaptureEvent(.progress(generation: generation, CaptureProgress(
-                elapsedMilliseconds: UInt64(tick * 1_000), notificationCount: UInt64(tick),
-                fileSizeBytes: 128, queuedMessageCount: 0,
-                writerError: tick == 2 ? "disk full" : nil
-            )))
+            driver.emitCaptureEvent(
+                .progress(
+                    generation: generation,
+                    CaptureProgress(
+                        elapsedMilliseconds: UInt64(tick * 1_000), notificationCount: UInt64(tick),
+                        fileSizeBytes: 128, queuedMessageCount: 0,
+                        writerError: tick == 2 ? "disk full" : nil
+                    )))
             XCTAssertEqual(model.capture.status, .failed)
             XCTAssertEqual(model.capture.recordingSummary, localizedAppText("captures.save_failed"))
             XCTAssertFalse(model.capture.isFinishing)
             XCTAssertEqual(model.capture.activeGeneration, generation)
         }
-        let retried = await model.finishCapture()
+        let retried = await model.capture.finish()
         XCTAssertFalse(retried)
         XCTAssertEqual(driver.flushCaptureCount, 2)
         XCTAssertEqual(driver.disconnectCount, 0)
@@ -2308,13 +1796,42 @@ final class CutoutAppModelTests: XCTestCase {
         let model = CutoutAppModel(core: driver)
 
         XCTAssertTrue(model.recordOnly(platformIdentifier: "unknown-device", deviceKind: "Unknown device"))
-        let firstFinishSucceeded = await model.finishCapture()
-        let secondFinishSucceeded = await model.finishCapture()
+        let firstFinishSucceeded = await model.capture.finish()
+        let secondFinishSucceeded = await model.capture.finish()
         XCTAssertTrue(firstFinishSucceeded)
         XCTAssertFalse(secondFinishSucceeded)
 
         XCTAssertEqual(driver.flushCaptureCount, 1)
         XCTAssertEqual(driver.disconnectCount, 1)
+    }
+
+    @MainActor
+    func testCaptureFinishOutlivesAppModelShutdown() async throws {
+        let driver = SessionDriverSpy(rows: [])
+        var model: CutoutAppModel? = CutoutAppModel(core: driver)
+        weak let weakModel = model
+        XCTAssertTrue(model?.recordOnly(platformIdentifier: "wheel-a", deviceKind: "") == true)
+        let capture = try XCTUnwrap(model?.capture)
+        let flushEntered = expectation(description: "capture finish owns the suspended flush")
+        var releaseFlush: CheckedContinuation<Void, Never>?
+        driver.duringFlushAwait = {
+            flushEntered.fulfill()
+            await withCheckedContinuation { releaseFlush = $0 }
+        }
+
+        let finishWaiter = Task { @MainActor in await capture.finish() }
+        await fulfillment(of: [flushEntered], timeout: 2)
+        model = nil
+
+        XCTAssertNil(weakModel)
+        XCTAssertTrue(capture.isFinishing)
+        XCTAssertEqual(driver.flushCaptureCount, 1)
+        releaseFlush?.resume()
+        let finishSucceeded = await finishWaiter.value
+
+        XCTAssertTrue(finishSucceeded)
+        XCTAssertEqual(driver.disconnectCount, 1)
+        driver.duringFlushAwait = nil
     }
 
     @MainActor
@@ -2324,9 +1841,10 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertTrue(model.recordOnly(platformIdentifier: "first", deviceKind: "First"))
         model.deliverCaptureEvent(.started(generation: .init(rawValue: 1), fileURL: URL(fileURLWithPath: "/tmp/first")))
         driver.duringFlush = {
-            model.deliverCaptureEvent(.started(generation: .init(rawValue: 2), fileURL: URL(fileURLWithPath: "/tmp/second")))
+            model.deliverCaptureEvent(
+                .started(generation: .init(rawValue: 2), fileURL: URL(fileURLWithPath: "/tmp/second")))
         }
-        let accepted = await model.finishCapture()
+        let accepted = await model.capture.finish()
         XCTAssertFalse(accepted)
         XCTAssertEqual(driver.disconnectCount, 0)
         XCTAssertEqual(model.capture.activeGeneration, .init(rawValue: 2))
@@ -2338,7 +1856,7 @@ final class CutoutAppModelTests: XCTestCase {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)
         model.deliverCaptureEvent(.started(fileURL: URL(fileURLWithPath: "/tmp/automatic")))
-        let accepted = await model.finishCapture()
+        let accepted = await model.capture.finish()
         XCTAssertFalse(accepted)
         XCTAssertEqual(driver.disconnectCount, 0)
         XCTAssertEqual(driver.flushCaptureCount, 0)
@@ -2350,28 +1868,12 @@ final class CutoutAppModelTests: XCTestCase {
         let model = CutoutAppModel(core: driver)
 
         XCTAssertTrue(model.recordOnly(platformIdentifier: "unknown-device", deviceKind: "Unknown device"))
-        let finishSucceeded = await model.finishCapture()
+        let finishSucceeded = await model.capture.finish()
         XCTAssertFalse(finishSucceeded)
 
         XCTAssertEqual(driver.flushCaptureCount, 1)
         XCTAssertEqual(driver.disconnectCount, 0)
         XCTAssertEqual(model.capture.status, .failed)
-    }
-
-    @MainActor
-    func testFlushFailureMarksOnlyAnActiveCaptureFailed() async {
-        let driver = SessionDriverSpy(rows: [], flushSucceeds: false)
-        let model = CutoutAppModel(core: driver)
-
-        let inactiveFlushSucceeded = await model.flushCapture()
-        XCTAssertFalse(inactiveFlushSucceeded)
-        XCTAssertNil(model.capture.status)
-
-        model.deliverCaptureEvent(.started(fileURL: URL(fileURLWithPath: "/tmp/capture.jsonl")))
-        let activeFlushSucceeded = await model.flushCapture()
-        XCTAssertFalse(activeFlushSucceeded)
-        XCTAssertEqual(model.capture.status, .failed)
-        XCTAssertEqual(driver.flushCaptureCount, 2)
     }
 
     @MainActor
@@ -2392,29 +1894,29 @@ final class CutoutAppModelTests: XCTestCase {
         )
         driver.onPhaseChange?(.subscribing)
         driver.onPhaseChange?(.live)
-        for _ in 0 ..< 20 {
+        for _ in 0..<20 {
             if driver.rideSessionStateHandle.rideSessionSnapshot().phase == .active { break }
             await Task.yield()
         }
 
         model.appDidEnterBackground()
-        for _ in 0 ..< 20 {
+        for _ in 0..<20 {
             if driver.flushCaptureCount == 1 { break }
             await Task.yield()
         }
         model.appDidEnterBackground()
-        for _ in 0 ..< 5 { await Task.yield() }
+        for _ in 0..<5 { await Task.yield() }
 
         XCTAssertEqual(driver.flushCaptureCount, 1)
         XCTAssertEqual(driver.rideSessionStateHandle.rideSessionSnapshot().appPresence, .background)
 
         model.appDidBecomeActive()
-        for _ in 0 ..< 20 {
+        for _ in 0..<20 {
             if driver.rideSessionStateHandle.rideSessionSnapshot().appPresence == .foreground { break }
             await Task.yield()
         }
         model.appDidEnterBackground()
-        for _ in 0 ..< 20 {
+        for _ in 0..<20 {
             if driver.flushCaptureCount == 2 { break }
             await Task.yield()
         }
@@ -2430,7 +1932,7 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertTrue(model.recordOnly(platformIdentifier: "unknown-device", deviceKind: "Unknown device"))
 
         model.appDidEnterBackground()
-        for _ in 0 ..< 20 {
+        for _ in 0..<20 {
             if driver.flushCaptureCount == 1 { break }
             await Task.yield()
         }
@@ -2520,102 +2022,6 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(model.selectedRideTitle, "Previously connected")
     }
 
-    func testCaptureStatusAnnouncesOnlyMeaningfulTransitions() {
-        XCTAssertEqual(
-            CaptureStatus.labelStarted(label: "Ride", notificationCount: 3, fileName: "ride.cutout")
-                .accessibilityAnnouncement,
-            "Ride capture started"
-        )
-        XCTAssertEqual(
-            CaptureStatus.labelStopped(label: "Ride", notificationCount: 4, fileName: "ride.cutout")
-                .accessibilityAnnouncement,
-            "Ride capture stopped"
-        )
-        XCTAssertEqual(CaptureStatus.saved(fileName: "ride.cutout").accessibilityAnnouncement, "Capture saved")
-        XCTAssertEqual(CaptureStatus.failed.accessibilityAnnouncement, "Capture failed")
-        XCTAssertNil(
-            CaptureStatus.recording(label: "Ride", notificationCount: 200, fileName: "ride.cutout")
-                .accessibilityAnnouncement
-        )
-        XCTAssertNil(CaptureStatus.recordingLocally(fileName: "ride.cutout").accessibilityAnnouncement)
-    }
-
-    func testCaptureStatusPreservesVisibleLifecycleText() {
-        XCTAssertEqual(
-            CaptureStatus.recordingLocally(fileName: "ride.cutout").displayText,
-            "Recording locally: ride.cutout"
-        )
-        XCTAssertEqual(
-            CaptureStatus.recording(label: nil, notificationCount: 2, fileName: nil).displayText,
-            "Recording: 2 notifications"
-        )
-        XCTAssertEqual(
-            CaptureStatus.recording(label: "Ride", notificationCount: 3, fileName: "ride.cutout").displayText,
-            "Ride: 3 notifications → ride.cutout"
-        )
-        XCTAssertEqual(
-            CaptureStatus.labelStarted(label: "Ride", notificationCount: 3, fileName: "ride.cutout").displayText,
-            "Ride started: 3 notifications → ride.cutout"
-        )
-        XCTAssertEqual(
-            CaptureStatus.labelStopped(label: "Ride", notificationCount: 4, fileName: nil).displayText,
-            "Ride stopped"
-        )
-        XCTAssertEqual(
-            CaptureStatus.saved(fileName: "ride.cutout").displayText,
-            "Saved capture: ride.cutout"
-        )
-    }
-
-    func testCaptureStatusMarksFinalizationFailure() {
-        XCTAssertEqual(CaptureStatus.failed.statusStripTone, .critical)
-        XCTAssertEqual(CaptureStatus.recordingLocally(fileName: "capture.jsonl").statusStripTone, .nominal)
-    }
-
-    @MainActor
-    func testCaptureStatusConsumesTypedCoreEvents() {
-        let model = CutoutAppModel()
-        let fileURL = URL(fileURLWithPath: "/tmp/ride.cutout")
-
-        model.deliverCaptureEvent(.started(fileURL: fileURL))
-        XCTAssertEqual(model.capture.status, .recordingLocally(fileName: "ride.cutout"))
-
-        model.deliverCaptureEvent(.notificationRecorded)
-        XCTAssertEqual(
-            model.capture.status,
-            .recording(label: nil, notificationCount: 1, fileName: "ride.cutout")
-        )
-
-        model.deliverCaptureEvent(.finished(fileURL: fileURL))
-        XCTAssertEqual(model.capture.status, .saved(fileName: "ride.cutout"))
-
-        model.deliverCaptureEvent(.started(fileURL: fileURL))
-        model.deliverCaptureEvent(.failed)
-        XCTAssertEqual(model.capture.status, .failed)
-    }
-
-    @MainActor
-    func testCaptureProgressPreservesWriterHealthAndFileMetadata() {
-        let model = CutoutAppModel()
-        let fileURL = URL(fileURLWithPath: "/tmp/ride.cutout")
-        let progress = CaptureProgress(
-            elapsedMilliseconds: 63_000,
-            notificationCount: 42,
-            fileSizeBytes: 12_288,
-            queuedMessageCount: 2,
-            writerError: nil
-        )
-
-        model.deliverCaptureEvent(.started(fileURL: fileURL))
-        model.deliverCaptureEvent(.progress(progress))
-
-        XCTAssertEqual(model.capture.progress, progress)
-        XCTAssertEqual(
-            model.capture.status,
-            .recording(label: nil, notificationCount: 42, fileName: "ride.cutout")
-        )
-    }
-
     @MainActor
     func testWriterProgressDoesNotRepublishAnUnchangedRideCaptureSummary() {
         let model = CutoutAppModel()
@@ -2638,9 +2044,10 @@ final class CutoutAppModelTests: XCTestCase {
         model.deliverCaptureEvent(.started(fileURL: fileURL))
         model.deliverCaptureEvent(.progress(initial))
 
-        XCTAssertFalse(observesChange({ _ = model.captureStatusText }) {
-            model.deliverCaptureEvent(.progress(updated))
-        })
+        XCTAssertFalse(
+            observesChange({ _ = model.capture.status?.displayText }) {
+                model.deliverCaptureEvent(.progress(updated))
+            })
         XCTAssertEqual(model.capture.progress, updated)
 
         let visibleSummaryChange = CaptureProgress(
@@ -2650,59 +2057,10 @@ final class CutoutAppModelTests: XCTestCase {
             queuedMessageCount: 1,
             writerError: nil
         )
-        XCTAssertTrue(observesChange({ _ = model.captureStatusText }) {
-            model.deliverCaptureEvent(.progress(visibleSummaryChange))
-        })
-    }
-
-    func testCaptureSessionDetailsExposeTypedWriterHealth() {
-        let healthyProgress = CaptureProgress(
-            elapsedMilliseconds: 63_000,
-            notificationCount: 42,
-            fileSizeBytes: 12_288,
-            queuedMessageCount: 0,
-            writerError: nil
-        )
-        let failedProgress = CaptureProgress(
-            elapsedMilliseconds: 63_000,
-            notificationCount: 42,
-            fileSizeBytes: 12_288,
-            queuedMessageCount: 0,
-            writerError: "queue overrun"
-        )
-        let healthyRows = captureSessionDetailRows(progress: healthyProgress)
-        let failedRows = captureSessionDetailRows(progress: failedProgress)
-
-        XCTAssertEqual(healthyProgress.writerHealth, .healthy)
-        XCTAssertEqual(failedProgress.writerHealth, .failed)
-        XCTAssertEqual(healthyRows[0].metricValue, healthyProgress.elapsedMetricValue)
-        XCTAssertEqual(healthyRows[1].metricValue, healthyProgress.notificationCountMetricValue)
-        XCTAssertEqual(healthyRows[2].metricValue, healthyProgress.fileSizeMetricValue)
-        XCTAssertEqual(healthyRows[3].metricValue, healthyProgress.queuedMessageCountMetricValue)
-        XCTAssertEqual(
-            healthyRows[4].metricValue,
-            healthyProgress.writerHealth.metricValue(display: "Healthy")
-        )
-        XCTAssertEqual(
-            failedRows[4].metricValue,
-            failedProgress.writerHealth.metricValue(display: "Failed")
-        )
-
-        XCTAssertEqual(
-            healthyRows.map(\.id),
-            [
-                "capture-elapsed",
-                "capture-packets",
-                "capture-file-size",
-                "capture-queued-messages",
-                "capture-writer-health",
-            ]
-        )
-        XCTAssertEqual(healthyRows[3].label, "Pending writes")
-        XCTAssertEqual(healthyRows[3].accessibilityValueText, "0")
-        XCTAssertEqual(healthyRows.last?.label, "Writer")
-        XCTAssertEqual(healthyRows.last?.accessibilityValueText, "Healthy")
-        XCTAssertEqual(failedRows.last?.accessibilityValueText, "Failed")
+        XCTAssertTrue(
+            observesChange({ _ = model.capture.status?.displayText }) {
+                model.deliverCaptureEvent(.progress(visibleSummaryChange))
+            })
     }
 
     @MainActor
@@ -2713,47 +2071,18 @@ final class CutoutAppModelTests: XCTestCase {
 
         model.deliverCaptureEvent(.started(fileURL: priorCapture))
         model.deliverCaptureEvent(.progress(priorProgress))
-        model.startCaptureLabel(.ride)
-        XCTAssertEqual(model.capture.status, .labelStarted(label: "Ride", notificationCount: 42, fileName: "prior.cutout"))
+        model.capture.startLabel(.ride)
+        XCTAssertEqual(
+            model.capture.status, .labelStarted(label: "Ride", notificationCount: 42, fileName: "prior.cutout"))
         XCTAssertEqual(model.capture.progress, priorProgress)
         XCTAssertEqual(model.capture.activeLabels, [.ride])
 
         XCTAssertFalse(model.recordOnly(platformIdentifier: "unknown-device", deviceKind: "Unknown device"))
 
-        XCTAssertEqual(model.capture.status, .labelStarted(label: "Ride", notificationCount: 42, fileName: "prior.cutout"))
+        XCTAssertEqual(
+            model.capture.status, .labelStarted(label: "Ride", notificationCount: 42, fileName: "prior.cutout"))
         XCTAssertEqual(model.capture.progress, priorProgress)
         XCTAssertEqual(model.capture.activeLabels, [.ride])
-    }
-
-    @MainActor
-    func testLateCaptureTerminalEventsCannotReplaceTheCurrentGeneration() {
-        let model = CutoutAppModel()
-        let first = CaptureGeneration(rawValue: 1)
-        let second = CaptureGeneration(rawValue: 2)
-        let firstURL = URL(fileURLWithPath: "/tmp/first.cutout")
-        let secondURL = URL(fileURLWithPath: "/tmp/second.cutout")
-        let progress = CaptureProgress(
-            elapsedMilliseconds: 1_000,
-            notificationCount: 7,
-            fileSizeBytes: 128,
-            queuedMessageCount: 0,
-            writerError: nil
-        )
-
-        model.deliverCaptureEvent(.started(generation: first, fileURL: firstURL))
-        model.deliverCaptureEvent(.started(generation: second, fileURL: secondURL))
-        model.deliverCaptureEvent(.progress(generation: second, progress))
-        model.deliverCaptureEvent(.finished(generation: first, fileURL: firstURL))
-        XCTAssertEqual(
-            model.capture.status,
-            .recording(label: nil, notificationCount: 7, fileName: "second.cutout")
-        )
-        model.deliverCaptureEvent(.failed(generation: first))
-
-        XCTAssertEqual(
-            model.capture.status,
-            .recording(label: nil, notificationCount: 7, fileName: "second.cutout")
-        )
     }
 
     @MainActor
@@ -2785,7 +2114,7 @@ final class CutoutAppModelTests: XCTestCase {
                     XCTAssertEqual(progress.notificationCount, 0)
                     progressed.fulfill()
                 }
-            case .finished:
+            case .finished, .databaseFinished:
                 XCTAssertGreaterThanOrEqual(finalProgress?.elapsedMilliseconds ?? 0, 1_000)
                 completed.fulfill()
             case .failed:
@@ -2803,10 +2132,11 @@ final class CutoutAppModelTests: XCTestCase {
     @MainActor
     func testRealCaptureTimerPreservesFailedSaveAndAllowsRetry() async throws {
         let fixture = CutoutUITestSessionFixture.unknownDevice
-        let core = CutoutSessionCore(testScript: CutoutSessionTestScript(
-            candidate: fixture.candidate, telemetry: nil,
-            flushCaptureSucceeds: false, connectionDelayMilliseconds: 0
-        ))
+        let core = CutoutSessionCore(
+            testScript: CutoutSessionTestScript(
+                candidate: fixture.candidate, telemetry: nil,
+                flushCaptureSucceeds: false, connectionDelayMilliseconds: 0
+            ))
         let model = CutoutAppModel(core: core)
         let started = expectation(description: "real writer starts")
         let ticks = expectation(description: "timer keeps failed save visible")
@@ -2818,23 +2148,28 @@ final class CutoutAppModelTests: XCTestCase {
         core.onCaptureEvent = { event in
             model.applyCaptureEvent(event)
             switch event {
-            case let .started(_, fileURL): url = fileURL; started.fulfill()
+            case let .started(_, fileURL):
+                url = fileURL
+                started.fulfill()
             case let .progress(_, progress) where failedSave && progress.elapsedMilliseconds >= 1_000:
                 XCTAssertEqual(model.capture.status, .failed)
                 XCTAssertFalse(model.capture.isFinishing)
-                if receivedTicks < 2 { receivedTicks += 1; ticks.fulfill() }
-            case .finished: finished.fulfill()
+                if receivedTicks < 2 {
+                    receivedTicks += 1
+                    ticks.fulfill()
+                }
+            case .finished, .databaseFinished: finished.fulfill()
             default: break
             }
         }
         XCTAssertTrue(model.recordOnly(platformIdentifier: fixture.candidate.platformIdentifier, deviceKind: ""))
         await fulfillment(of: [started], timeout: 2)
-        let saved = await model.finishCapture()
+        let saved = await model.capture.finish()
         XCTAssertFalse(saved)
         failedSave = true
         await fulfillment(of: [ticks], timeout: 4)
         failedSave = false
-        let retried = await model.finishCapture()
+        let retried = await model.capture.finish()
         XCTAssertFalse(retried)
         XCTAssertTrue(model.isRecordOnlyCapture)
         core.disconnectAndScan()
@@ -2854,14 +2189,18 @@ final class CutoutAppModelTests: XCTestCase {
         core.onCaptureEvent = { event in
             model.applyCaptureEvent(event)
             if case .started = event { started.fulfill() }
-            if case let .finished(_, fileURL) = event { url = fileURL; completed.fulfill() }
+            if case let .finished(_, fileURL) = event {
+                url = fileURL
+                completed.fulfill()
+            }
             if case .failed = event { XCTFail("closing labels must remain writable") }
         }
         XCTAssertTrue(model.recordOnly(platformIdentifier: fixture.candidate.platformIdentifier, deviceKind: ""))
         await fulfillment(of: [started], timeout: 2)
-        model.startCaptureLabel(.ride)
-        model.startCaptureLabel(.balance)
-        core.handleTransportTermination(platformIdentifier: fixture.candidate.platformIdentifier, error: nil, reconnect: {})
+        model.capture.startLabel(.ride)
+        model.capture.startLabel(.balance)
+        core.handleTransportTermination(
+            platformIdentifier: fixture.candidate.platformIdentifier, error: nil, reconnect: {})
         await fulfillment(of: [completed], timeout: 3)
         let fileURL = try XCTUnwrap(url)
         defer { try? FileManager.default.removeItem(at: fileURL) }
@@ -2875,11 +2214,12 @@ final class CutoutAppModelTests: XCTestCase {
     @MainActor
     private func assertDelayedCaptureFinalization(priorWriteSucceeded: Bool) async throws {
         let fixture = CutoutUITestSessionFixture.euc
-        let core = CutoutSessionCore(testScript: CutoutSessionTestScript(
-            candidate: fixture.candidate,
-            telemetry: fixture.testScript.telemetry,
-            connectionDelayMilliseconds: 0
-        ))
+        let core = CutoutSessionCore(
+            testScript: CutoutSessionTestScript(
+                candidate: fixture.candidate,
+                telemetry: fixture.testScript.telemetry,
+                connectionDelayMilliseconds: 0
+            ))
         let model = CutoutAppModel(core: core)
         let firstStarted = expectation(description: "capture A starts")
         let secondStarted = expectation(description: "capture B starts")
@@ -2904,13 +2244,17 @@ final class CutoutAppModelTests: XCTestCase {
                     secondFileName = fileURL.lastPathComponent
                     secondStarted.fulfill()
                 }
-            case let .finished(generation, _), let .failed(generation):
+            case let .finished(generation, _), let .databaseFinished(generation, _), let .failed(generation):
                 if generation == firstGeneration {
                     firstTerminal.fulfill()
-                    XCTAssertEqual(
-                        model.capture.status,
-                        .recording(label: nil, notificationCount: 0, fileName: secondFileName)
-                    )
+                    if let secondFileName {
+                        XCTAssertEqual(
+                            model.capture.status,
+                            .recording(label: nil, notificationCount: 0, fileName: secondFileName)
+                        )
+                    } else {
+                        XCTFail("capture B should have started before capture A finalized")
+                    }
                 }
             case .notificationRecorded, .progress, .lifecycle:
                 break
@@ -2928,17 +2272,18 @@ final class CutoutAppModelTests: XCTestCase {
 
         XCTAssertTrue(core.recordOnly(platformIdentifier: fixture.candidate.platformIdentifier))
         await fulfillment(of: [secondStarted], timeout: 2)
+        let activeFileName = try XCTUnwrap(secondFileName)
         XCTAssertNotEqual(firstGeneration, secondGeneration)
         XCTAssertEqual(
             model.capture.status,
-            .recording(label: nil, notificationCount: 0, fileName: secondFileName)
+            .recording(label: nil, notificationCount: 0, fileName: activeFileName)
         )
 
         releaseFinish.signal()
         await fulfillment(of: [firstTerminal], timeout: 2)
         XCTAssertEqual(
             model.capture.status,
-            .recording(label: nil, notificationCount: 0, fileName: secondFileName)
+            .recording(label: nil, notificationCount: 0, fileName: activeFileName)
         )
         core.captureFinishWriterGate = nil
         core.disconnectAndScan()
@@ -2955,34 +2300,14 @@ final class CutoutAppModelTests: XCTestCase {
 
         model.deliverCaptureEvent(.started(fileURL: priorCapture))
         model.deliverCaptureEvent(.progress(priorProgress))
-        model.startCaptureLabel(.ride)
+        model.capture.startLabel(.ride)
 
         XCTAssertFalse(model.recordOnly(platformIdentifier: "missing-device", deviceKind: "Unknown device"))
 
-        XCTAssertEqual(model.capture.status, .labelStarted(label: "Ride", notificationCount: 42, fileName: "prior.cutout"))
+        XCTAssertEqual(
+            model.capture.status, .labelStarted(label: "Ride", notificationCount: 42, fileName: "prior.cutout"))
         XCTAssertEqual(model.capture.progress, priorProgress)
         XCTAssertEqual(model.capture.activeLabels, [.ride])
-    }
-
-    @MainActor
-    func testCaptureLabelActionsIgnoreInvalidRepeatedTransitions() {
-        let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
-
-        model.stopCaptureLabel(.ride)
-        XCTAssertNil(model.captureStatusText)
-        XCTAssertTrue(model.capture.activeLabels.isEmpty)
-
-        model.deliverCaptureEvent(.started(fileURL: URL(fileURLWithPath: "/tmp/labels.jsonl")))
-        model.startCaptureLabel(.ride)
-        XCTAssertEqual(model.capture.status, .labelStarted(label: "Ride", notificationCount: 0, fileName: "labels.jsonl"))
-        XCTAssertEqual(model.capture.activeLabels, [.ride])
-
-        model.stopCaptureLabel(.ride)
-        XCTAssertEqual(model.capture.status, .labelStopped(label: "Ride", notificationCount: 0, fileName: "labels.jsonl"))
-        XCTAssertTrue(model.capture.activeLabels.isEmpty)
-
-        model.stopCaptureLabel(.ride)
-        XCTAssertEqual(model.capture.status, .labelStopped(label: "Ride", notificationCount: 0, fileName: "labels.jsonl"))
     }
 
     @MainActor
@@ -2999,11 +2324,13 @@ final class CutoutAppModelTests: XCTestCase {
             let model = CutoutAppModel(core: driver)
 
             model.deliverCaptureEvent(.started(fileURL: URL(fileURLWithPath: "/tmp/labels.jsonl")))
-            model.startCaptureLabel(active)
-            model.startCaptureLabel(replacement)
+            model.capture.startLabel(active)
+            model.capture.startLabel(replacement)
 
             XCTAssertEqual(model.capture.activeLabels, [replacement])
-            XCTAssertEqual(model.capture.status, .labelStarted(label: replacement.title, notificationCount: 0, fileName: "labels.jsonl"))
+            XCTAssertEqual(
+                model.capture.status,
+                .labelStarted(label: replacement.title, notificationCount: 0, fileName: "labels.jsonl"))
             XCTAssertEqual(
                 driver.captureAnnotations,
                 [
@@ -3013,154 +2340,6 @@ final class CutoutAppModelTests: XCTestCase {
                 ]
             )
         }
-    }
-
-    @MainActor
-    func testProtocolIdentityCandidateDoesNotOverwriteSelectedRideTitle() {
-        let model = CutoutAppModel()
-        let supported = DevicePickerCandidateSupport.supported(
-            connectionRoute: .vescOnewheel,
-            electricUnicycleModel: nil
-        )
-        let first = DevicePickerDiscoveryCandidate(
-            platformIdentifier: "vesc-1",
-            displayName: "Little FOCer BT",
-            productCategory: "VESC Onewheel",
-            evidence: "advertisement",
-            detail: "Little FOCer BT",
-            support: supported,
-            symbolName: "circle.hexagongrid.circle"
-        )
-        let second = DevicePickerDiscoveryCandidate(
-            platformIdentifier: "vesc-1",
-            displayName: "VESC stream",
-            productCategory: "VESC Onewheel",
-            evidence: "advertisement",
-            detail: "VESC device",
-            support: supported,
-            symbolName: "circle.hexagongrid.circle"
-        )
-
-        model.applyProtocolIdentityCandidate(first)
-        XCTAssertEqual(model.selectedRideTitle, "Little FOCer BT")
-
-        model.applyProtocolIdentityCandidate(second)
-        XCTAssertEqual(model.selectedRideTitle, "Little FOCer BT")
-    }
-
-    @MainActor
-    func testRideMapVehicleNameRematchesTheCurrentProtocolIdentity() {
-        let driver = SessionDriverSpy(rows: [])
-        let model = CutoutAppModel(core: driver)
-        let supported = DevicePickerCandidateSupport.supported(
-            connectionRoute: .electricUnicycle,
-            electricUnicycleModel: .aero
-        )
-        let persistedName = DevicePickerDiscoveryCandidate(
-            platformIdentifier: "wheel-1",
-            displayName: "wheel-1",
-            productCategory: "Electric unicycle",
-            evidence: "restored selection",
-            detail: "restored selection",
-            support: supported,
-            symbolName: "circle.hexagongrid.circle"
-        )
-        let protocolIdentity = DevicePickerDiscoveryCandidate(
-            platformIdentifier: "wheel-1",
-            displayName: "NF2557",
-            productCategory: "Electric unicycle",
-            evidence: "Veteran protocol model id",
-            detail: "NOSFET Aero confirmed by model id 43",
-            support: supported,
-            symbolName: "circle.hexagongrid.circle"
-        )
-        driver.protocolIdentityCandidate = protocolIdentity
-
-        model.applyProtocolIdentityCandidate(persistedName)
-        XCTAssertEqual(model.selectedRideTitle, "wheel-1")
-        model.applyProtocolIdentityCandidate(protocolIdentity)
-
-        XCTAssertEqual(model.selectedRideTitle, "wheel-1")
-        XCTAssertEqual(model.rideMapVehicleIdentity, "wheel-1")
-        XCTAssertEqual(model.rideMapVehicleName, "NF2557")
-    }
-
-    @MainActor
-    func testProtocolIdentityCandidatePersistsNamesForHistoryIdentities() throws {
-        let suiteName = "CutoutAppModelTests.\(#function).\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
-        defer { defaults.removePersistentDomain(forName: suiteName) }
-        let store = DevicePickerSelectionStore(defaults: defaults)
-        let model = CutoutAppModel(core: SessionDriverSpy(rows: []), selectedDeviceStore: store)
-        let supported = DevicePickerCandidateSupport.supported(
-            connectionRoute: .electricUnicycle,
-            electricUnicycleModel: .aero
-        )
-        let candidate = DevicePickerDiscoveryCandidate(
-            platformIdentifier: "old-core-bluetooth-id",
-            displayName: "NF2557",
-            productCategory: "Electric unicycle",
-            evidence: "advertisement",
-            detail: "resolved device",
-            support: supported,
-            symbolName: "circle.hexagongrid.circle"
-        )
-
-        model.applyProtocolIdentityCandidate(candidate)
-
-        XCTAssertEqual(store.displayName(for: "old-core-bluetooth-id"), "NF2557")
-    }
-
-    @MainActor
-    func testRideMapVehicleNameNeverTreatsThePlatformIdentityAsDisplayName() {
-        XCTAssertNil(CutoutAppModel.meaningfulDeviceName("wheel-1", identity: "wheel-1"))
-        XCTAssertNil(CutoutAppModel.meaningfulDeviceName("", identity: "wheel-1"))
-        XCTAssertEqual(CutoutAppModel.meaningfulDeviceName("NF2557", identity: "wheel-1"), "NF2557")
-    }
-
-    @MainActor
-    func testHistoryVehicleNamesUseRustDeviceOptionsAndSummaryNamesWhenDisconnected() {
-        let summary = MobileRideMapHistorySummaryDto(
-            rideID: "ride-1",
-            state: .saved,
-            summary: MobileRideMapSummaryDto(
-                pointCount: 1,
-                distanceMeters: 1,
-                durationMilliseconds: 1_000
-            ),
-            segmentCount: 1,
-            createdAtMilliseconds: 1,
-            candidateVehicle: nil,
-            associatedVehicle: "corebluetooth-old",
-            associatedVehicleName: "NF2557",
-            telemetryState: .associatedNoTelemetry
-        )
-        let options = [
-            MobileRideMapHistoryVehicleOptionDto(
-                platformIdentifier: "corebluetooth-old",
-                displayName: "NF2557"
-            ),
-            MobileRideMapHistoryVehicleOptionDto(
-                platformIdentifier: "corebluetooth-new",
-                displayName: "NF2557"
-            ),
-        ]
-
-        let names = CutoutAppModel.historyVehicleNames(
-            options,
-            summaries: [summary]
-        )
-
-        XCTAssertEqual(names["corebluetooth-old"], "NF2557")
-        XCTAssertEqual(names["corebluetooth-new"], "NF2557")
-        XCTAssertEqual(summary.vehicleDisplayName, "NF2557")
-        XCTAssertEqual(
-            CutoutAppModel.mergeRideMapHistoryVehicleIdentities(
-                existing: options.map(\.platformIdentifier),
-                incoming: []
-            ),
-            ["corebluetooth-new", "corebluetooth-old"]
-        )
     }
 
     @MainActor
@@ -3308,15 +2487,17 @@ final class CutoutAppModelTests: XCTestCase {
         )
         driver.onPhaseChange?(.subscribing)
         driver.onPhaseChange?(.live)
-        for _ in 0 ..< 200 {
+        for _ in 0..<200 {
             if driver.rideSessionStateHandle.rideSessionSnapshot().phase == .active { break }
             await Task.yield()
         }
         XCTAssertEqual(driver.rideSessionStateHandle.rideSessionSnapshot().phase, .active)
         driver.onPhaseChange?(.bluetoothUnavailable(rawState: 4))
 
-        for _ in 0 ..< 200 {
-            if case .ended(reason: .unrecoverableSessionFailure) = driver.rideSessionStateHandle.rideSessionSnapshot().phase {
+        for _ in 0..<200 {
+            if case .ended(reason: .unrecoverableSessionFailure) = driver.rideSessionStateHandle.rideSessionSnapshot()
+                .phase
+            {
                 break
             }
             await Task.yield()
@@ -3349,13 +2530,13 @@ final class CutoutAppModelTests: XCTestCase {
         )
         driver.onPhaseChange?(.subscribing)
         driver.onPhaseChange?(.live)
-        for _ in 0 ..< 200 {
+        for _ in 0..<200 {
             if driver.rideSessionStateHandle.rideSessionSnapshot().phase == .active { break }
             await Task.yield()
         }
 
         driver.onPhaseChange?(.failed(.connectFailed("retries exhausted")))
-        for _ in 0 ..< 200 {
+        for _ in 0..<200 {
             if case .ended = driver.rideSessionStateHandle.rideSessionSnapshot().phase { break }
             await Task.yield()
         }
@@ -3397,9 +2578,12 @@ final class CutoutAppModelTests: XCTestCase {
         driver.onPhaseChange?(.subscribing)
         driver.onPhaseChange?(.live)
 
-        for _ in 0 ..< 200 {
+        for _ in 0..<200 {
             if await manager.lastStartedSnapshot?.connectionState == .connected,
-               driver.rideSessionStateHandle.rideSessionSnapshot().phase == .active { break }
+                driver.rideSessionStateHandle.rideSessionSnapshot().phase == .active
+            {
+                break
+            }
             await Task.yield()
         }
         let identity = driver.rideSessionStateHandle.rideSessionSnapshot().identity
@@ -3413,9 +2597,12 @@ final class CutoutAppModelTests: XCTestCase {
                 failure: .connectFailed("timed out")
             )
         )
-        for _ in 0 ..< 200 {
+        for _ in 0..<200 {
             if driver.rideSessionStateHandle.rideSessionSnapshot().phase == .reconnecting,
-               await manager.lastUpdatedSnapshot?.connectionState == .stale { break }
+                await manager.lastUpdatedSnapshot?.connectionState == .stale
+            {
+                break
+            }
             await Task.yield()
         }
 
@@ -3438,7 +2625,7 @@ final class CutoutAppModelTests: XCTestCase {
             )
         )
         driver.onPhaseChange?(.live)
-        for _ in 0 ..< 200 {
+        for _ in 0..<200 {
             if driver.rideSessionStateHandle.rideSessionSnapshot().phase == .active { break }
             await Task.yield()
         }
@@ -3491,8 +2678,8 @@ final class CutoutAppModelTests: XCTestCase {
         await Self.waitUntil("restored ride identity") {
             let snapshot = driver.rideSessionStateHandle.rideSessionSnapshot()
             guard snapshot.identity == started.snapshot.identity,
-                  snapshot.phase == .active,
-                  markerStore.marker != nil
+                snapshot.phase == .active,
+                markerStore.marker != nil
             else { return false }
             return await manager.startCount == 1
         }
@@ -3585,7 +2772,7 @@ final class CutoutAppModelTests: XCTestCase {
 
         model.start()
         XCTAssertTrue(model.pair(platformIdentifier: platformIdentifier))
-        for _ in 0 ..< 200 {
+        for _ in 0..<200 {
             if markerStore.marker != nil { break }
             await Task.yield()
         }
@@ -3598,7 +2785,7 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testRestoredPeripheralDifferentFromPersistedRideEndsTheStaleRideAndResumes() async throws {
+    func testRestoredDifferentPeripheralPreservesRideWithoutReplacingIt() async throws {
         let suiteName = "CutoutAppModelTests.replacedRestoredRide.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
@@ -3623,41 +2810,23 @@ final class CutoutAppModelTests: XCTestCase {
         )
 
         model.start()
-        await Self.waitUntil("mismatched restored ride termination") {
-            if case .ended(reason: .appReset) = driver.rideSessionStateHandle.rideSessionSnapshot().phase {
-                return true
-            }
-            return false
+        await Self.waitUntil("mismatched restored ride recovery") {
+            driver.rideSessionStateHandle.rideSessionSnapshot().phase == .reconnecting
         }
 
         let endReason = await manager.lastEndReason
         let initialStartCount = await manager.startCount
-        XCTAssertEqual(endReason, .sessionEnded)
+        XCTAssertNil(endReason)
         XCTAssertEqual(driver.pairedPlatformIdentifiers, [])
         XCTAssertEqual(driver.disconnectCount, 0)
         XCTAssertEqual(model.selectedRideIdentifier, restoredPlatformIdentifier)
-        XCTAssertEqual(driver.rideSessionStateHandle.rideSessionSnapshot().phase, .ended(reason: .appReset))
+        XCTAssertEqual(driver.rideSessionStateHandle.rideSessionSnapshot().phase, .reconnecting)
         XCTAssertEqual(initialStartCount, 0)
-        XCTAssertNil(markerStore.marker)
-
-        driver.protocolIdentityCandidate = fixture.candidate
-        driver.onProtocolIdentityCandidateChange?(fixture.candidate)
-        driver.onPhaseChange?(.subscribing)
-        driver.onPhaseChange?(.live)
-        await Self.waitUntil("user-selected replacement ride activity") {
-            await manager.startCount == 1
-        }
-        let userActionStartCount = await manager.startCount
-        XCTAssertEqual(userActionStartCount, 1)
-        XCTAssertEqual(model.phase, .live)
-        XCTAssertEqual(
-            model.connectionState.navigationIntent(isRecordOnlyCapture: false),
-            .openRide(.vescOnewheel)
-        )
+        XCTAssertNotNil(markerStore.marker)
     }
 
     @MainActor
-    func testLaunchWithoutARestoredPeripheralEndsThePersistedRideAsAppReset() async throws {
+    func testLaunchWithoutARestoredPeripheralPreservesThePersistedRide() async throws {
         let suiteName = "CutoutAppModelTests.orphanRide.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
@@ -3674,24 +2843,21 @@ final class CutoutAppModelTests: XCTestCase {
         )
 
         model.start()
-        await Self.waitUntil("orphaned ride termination") {
-            if case .ended = driver.rideSessionStateHandle.rideSessionSnapshot().phase {
-                return true
-            }
-            return false
+        await Self.waitUntil("ride recovery") {
+            driver.rideSessionStateHandle.rideSessionSnapshot().phase == .reconnecting
         }
 
         XCTAssertEqual(
             driver.rideSessionStateHandle.rideSessionSnapshot().phase,
-            .ended(reason: .appReset)
+            .reconnecting
         )
         let endReason = await manager.lastEndReason
-        XCTAssertEqual(endReason, .sessionEnded)
-        XCTAssertNil(markerStore.marker)
+        XCTAssertNil(endReason)
+        XCTAssertNotNil(markerStore.marker)
     }
 
     @MainActor
-    func testOrphanRecoveryReplaysAnAlreadyDiscoveredSavedDevice() async throws {
+    func testRideRecoveryDoesNotAutoPairAnAlreadyDiscoveredSavedDevice() async throws {
         let suiteName = "CutoutAppModelTests.orphanReplay.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
@@ -3715,12 +2881,12 @@ final class CutoutAppModelTests: XCTestCase {
         )
 
         model.start()
-        for _ in 0 ..< 200 {
-            if driver.pairedPlatformIdentifiers.isEmpty == false { break }
-            await Task.yield()
+        await Self.waitUntil("persisted ride recovery") {
+            driver.rideSessionStateHandle.rideSessionSnapshot().phase == .reconnecting
         }
 
-        XCTAssertEqual(driver.pairedPlatformIdentifiers, [platformIdentifier])
+        XCTAssertEqual(driver.pairedPlatformIdentifiers, [])
+        XCTAssertNotNil(markerStore.marker)
     }
 
     @MainActor
@@ -3731,7 +2897,7 @@ final class CutoutAppModelTests: XCTestCase {
 
         model.start()
         driver.onPhaseChange?(.scanning)
-        for _ in 0 ..< 20 {
+        for _ in 0..<20 {
             if await manager.lastEndReason != nil { break }
             await Task.yield()
         }
@@ -3896,6 +3062,48 @@ final class CutoutAppModelTests: XCTestCase {
         }
     }
     @MainActor
+    func testRideAutostartSetupShowsDurableValueAndRetainsItAfterFailedSave() async throws {
+        let database = try XCTUnwrap(MobileRideMapState.debugDatabase)
+        let state = MobileRideMapState(database: database)
+        let previous = try state.rideAutostartEnabled()
+        defer { try? state.setRideAutostartEnabled(previous) }
+        try state.setRideAutostartEnabled(true)
+        let driver = SessionDriverSpy(rows: [], rideMapState: state)
+        let model = CutoutAppModel(core: driver)
+        XCTAssertNil(model.rideAutostartEnabled)
+        await model.loadRideAutostartSetting()
+        XCTAssertEqual(model.rideAutostartEnabled, true)
+        let saved = await model.setRideAutostartEnabled(false)
+        XCTAssertTrue(saved)
+        XCTAssertEqual(model.rideAutostartEnabled, false)
+        XCTAssertFalse(model.rideAutostartSettingsError)
+
+        let reopenedDriver = SessionDriverSpy(
+            rows: [], rideMapState: MobileRideMapState(database: database)
+        )
+        let reopenedModel = CutoutAppModel(core: reopenedDriver)
+        await reopenedModel.loadRideAutostartSetting()
+        XCTAssertEqual(reopenedModel.rideAutostartEnabled, false)
+        reopenedDriver.setRideMapUnavailable(true)
+        let failed = await reopenedModel.setRideAutostartEnabled(true)
+        XCTAssertFalse(failed)
+        XCTAssertEqual(reopenedModel.rideAutostartEnabled, false)
+        XCTAssertTrue(reopenedModel.rideAutostartSettingsError)
+        XCTAssertFalse(reopenedModel.rideAutostartSettingsBusy)
+    }
+
+    @MainActor
+    func testRideAutostartUnavailableStorageDoesNotPretendToSave() async {
+        let model = CutoutAppModel(core: SessionDriverSpy(rows: [], rideMapUnavailable: true))
+        await model.loadRideAutostartSetting()
+        XCTAssertNil(model.rideAutostartEnabled)
+        XCTAssertTrue(model.rideAutostartSettingsError)
+        let saved = await model.setRideAutostartEnabled(false)
+        XCTAssertFalse(saved)
+        XCTAssertNil(model.rideAutostartEnabled)
+    }
+
+    @MainActor
     func testProductionRideMapDecisionReachesAppModelWithoutMapMounted() async throws {
         let fixture = CutoutUITestSessionFixture.autoVescLiveActivity
         let suiteName = "CutoutAppModelTests.rideMapAutoStart.\(UUID().uuidString)"
@@ -3914,7 +3122,7 @@ final class CutoutAppModelTests: XCTestCase {
         core.start()
         XCTAssertTrue(core.pair(platformIdentifier: fixture.candidate.platformIdentifier))
         await Self.waitUntil("production ride-map recording") {
-            model.phase == .live && model.rideMapSnapshot?.state == .active
+            model.phase == .live && model.liveRide.snapshot?.state == .active
         }
         let connection = core.rideSessionStateHandle.connectionAttemptSnapshot()
         XCTAssertEqual(connection.readiness, .verified)
@@ -3936,11 +3144,11 @@ final class CutoutAppModelTests: XCTestCase {
             ]
         )
         await Self.waitUntil("app-model ride-map decision") {
-            guard case .accepted? = model.rideMapLastDecision else { return false }
+            guard case .accepted? = model.liveRide.lastDecision else { return false }
             return true
         }
         await Self.waitUntil("app-model live projection") {
-            !model.rideMapLiveDisplayPoints.isEmpty
+            !model.liveRide.displayPoints.isEmpty
         }
     }
 }
@@ -4002,21 +3210,43 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     private var rideMapUnavailable: Bool
     var rideMapStateHandle: MobileRideMapState? { rideMapUnavailable ? nil : rideMapState }
     let rideMapAvailability: MobileRideMapAvailability = .ready
-    var onDisplayStateChange: ((RideDisplayState) -> Void)?
-    var onPhaseChange: ((SessionConnectionPhase) -> Void)?
-    var onReconnectScheduled: ((SessionConnectionRetry) -> Void)?
-    var onCaptureEvent: ((CaptureEvent) -> Void)?
-    var onScanStateChange: ((DevicePickerScanState) -> Void)?
-    var onSettingsChange: ((DeviceSettings) -> Void)?
-    var onFaultHistoryReadbackChange: ((FaultHistoryReadback?) -> Void)?
-    var onBmsSnapshotChange: ((BmsSnapshot?) -> Void)?
-    var onPhoneLocationSnapshotChange: ((MobilePhoneLocationSnapshotDto, MonotonicMilliseconds) -> Void)?
-    var onRideMapDecisionChange: ((MobileRideMapSnapshotDto, MobileRideMapDecisionDto) -> Void)?
-    var onRideMapSnapshotChange: ((MobileRideMapSnapshotDto) -> Void)?
-    var onRideMapErrorChange: ((MobileRideMapErrorEvent) -> Void)?
-    var onRideMapAvailabilityChange: ((MobileRideMapAvailability) -> Void)?
-    var onProtocolIdentityCandidateChange: ((DevicePickerDiscoveryCandidate?) -> Void)?
-    var onBluetoothRestorationResolved: ((String?) -> Void)?
+    var callbackRegistrationEvents = [String]()
+    var onPhoneAlarmActionsAvailable: ((MobilePhoneAlarmActionsDto) -> Void)? {
+        didSet { recordCallbackRegistration("phoneAlarmActions") }
+    }
+    var onDisplayStateChange: ((RideDisplayState) -> Void)? { didSet { recordCallbackRegistration("displayState") } }
+    var onPhaseChange: ((SessionConnectionPhase) -> Void)? { didSet { recordCallbackRegistration("phase") } }
+    var onReconnectScheduled: ((SessionConnectionRetry) -> Void)? {
+        didSet { recordCallbackRegistration("reconnectScheduled") }
+    }
+    var onCaptureEvent: ((CaptureEvent) -> Void)? { didSet { recordCallbackRegistration("captureEvent") } }
+    var onScanStateChange: ((DevicePickerScanState) -> Void)? { didSet { recordCallbackRegistration("scanState") } }
+    var onSettingsChange: ((DeviceSettings) -> Void)? { didSet { recordCallbackRegistration("settings") } }
+    var onFaultHistoryReadbackChange: ((FaultHistoryReadback?) -> Void)? {
+        didSet { recordCallbackRegistration("faultHistory") }
+    }
+    var onBmsSnapshotChange: ((BmsSnapshot?) -> Void)? { didSet { recordCallbackRegistration("bmsSnapshot") } }
+    var onPhoneLocationSnapshotChange: ((MobilePhoneLocationSnapshotDto, MonotonicMilliseconds) -> Void)? {
+        didSet { recordCallbackRegistration("phoneLocation") }
+    }
+    var onRideMapDecisionChange: ((MobileRideMapSnapshotDto, MobileRideMapDecisionDto) -> Void)? {
+        didSet { recordCallbackRegistration("rideMapDecision") }
+    }
+    var onRideMapSnapshotChange: ((MobileRideMapSnapshotDto) -> Void)? {
+        didSet { recordCallbackRegistration("rideMapSnapshot") }
+    }
+    var onRideMapErrorChange: ((MobileRideMapErrorEvent) -> Void)? {
+        didSet { recordCallbackRegistration("rideMapError") }
+    }
+    var onRideMapAvailabilityChange: ((MobileRideMapAvailability) -> Void)? {
+        didSet { recordCallbackRegistration("rideMapAvailability") }
+    }
+    var onProtocolIdentityCandidateChange: ((DevicePickerDiscoveryCandidate?) -> Void)? {
+        didSet { recordCallbackRegistration("protocolIdentity") }
+    }
+    var onBluetoothRestorationResolved: ((String?) -> Void)? {
+        didSet { recordCallbackRegistration("bluetoothRestoration") }
+    }
     var protocolIdentityCandidate: DevicePickerDiscoveryCandidate?
     var isRecordOnlyConnection = false
     var electricUnicycleModel: ElectricUnicycleModel?
@@ -4035,11 +3265,16 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     private(set) var captureAnnotations = [String]()
     private(set) var flushCaptureCount = 0
     var duringFlush: (() -> Void)?
+    var duringFlushAwait: (@MainActor () async -> Void)?
     private(set) var disconnectCount = 0
     private(set) var tripMeterResetCount = 0
     private(set) var resetRideMapLocationAdmissionCount = 0
     private(set) var rideLocationDemandStates = [MobileRideMapStateDto]()
     var nowValue: UInt64 = 0
+
+    private func recordCallbackRegistration(_ name: String) {
+        callbackRegistrationEvents.append(name)
+    }
 
     init(
         rows: [DevicePickerRow],
@@ -4056,7 +3291,8 @@ private final class SessionDriverSpy: CutoutSessionDriving {
         self.restoredPlatformIdentifier = restoredPlatformIdentifier
         self.notifyBluetoothRestorationOnStart = notifyBluetoothRestorationOnStart
         self.rideMapUnavailable = rideMapUnavailable
-        let state = rideMapState
+        let state =
+            rideMapState
             ?? RustPersistenceStore.shared.map(MobileRideMapState.init(database:))
             ?? MobileRideMapState()
         if state.currentSnapshot() != nil {
@@ -4110,7 +3346,9 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     }
     private var captureLabelState = MobileCaptureLabels()
     private var captureLabelGeneration: CaptureGeneration?
-    func changeCaptureLabel(generation: CaptureGeneration, action: MobileCaptureLabelActionDto) throws -> [MobileCaptureLabelDto] {
+    func changeCaptureLabel(generation: CaptureGeneration, action: MobileCaptureLabelActionDto) throws
+        -> [MobileCaptureLabelDto]
+    {
         guard rideSessionStateHandle.captureLifecycleSnapshot().attempt?.generation.value == generation.rawValue else {
             throw MobileCaptureAnnotationError.NotRecording
         }
@@ -4130,6 +3368,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     func flushCapture() async -> Bool {
         flushCaptureCount += 1
         duringFlush?()
+        await duringFlushAwait?()
         if !flushSucceeds, let generation = rideSessionStateHandle.captureLifecycleSnapshot().attempt?.generation {
             _ = rideSessionStateHandle.captureWriterFailed(generation: generation)
             onCaptureEvent?(.lifecycle(rideSessionStateHandle.captureLifecycleSnapshot()))
@@ -4139,7 +3378,8 @@ private final class SessionDriverSpy: CutoutSessionDriving {
 
     func finishCapture() async -> Bool {
         guard let generation = rideSessionStateHandle.captureLifecycleSnapshot().attempt?.generation,
-              let token = rideSessionStateHandle.beginCaptureFinish(generation: generation) else { return false }
+            let token = rideSessionStateHandle.beginCaptureFinish(generation: generation)
+        else { return false }
         onCaptureEvent?(.lifecycle(rideSessionStateHandle.captureLifecycleSnapshot()))
         let flushed = await flushCapture()
         let accepted = rideSessionStateHandle.finishCaptureFlush(token: token, succeeded: flushed)
@@ -4156,7 +3396,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     }
 
     @discardableResult
-    func resetTripMeterForNewRide() -> Bool {
+    func resetTripMeterForNewRide(token: ConnectionAttemptToken) -> Bool {
         tripMeterResetCount += 1
         return true
     }
@@ -4167,6 +3407,30 @@ private final class SessionDriverSpy: CutoutSessionDriving {
 
     func updateRideLocationDemand(for state: MobileRideMapStateDto) {
         rideLocationDemandStates.append(state)
+    }
+
+    func startRideMapGpsOnly(atMs: UInt64) async throws -> MobileRideMapSnapshotDto {
+        try await rideMapState.startGpsOnlyCommand(atMs: atMs)
+    }
+
+    func pauseRideMap(atMs: UInt64) async throws -> MobileRideMapSnapshotDto {
+        try await rideMapState.performLifecycleCommand(event: .pause, atMs: atMs)
+    }
+
+    func resumeRideMap(atMs: UInt64) async throws -> MobileRideMapSnapshotDto {
+        try await rideMapState.performLifecycleCommand(event: .resume, atMs: atMs)
+    }
+
+    func stopRideMap(atMs: UInt64) async throws -> MobileRideMapSnapshotDto {
+        try await rideMapState.performLifecycleCommand(event: .stop, atMs: atMs)
+    }
+
+    func saveRideMap() async throws -> MobileRideMapSnapshotDto {
+        try await rideMapState.performLifecycleCommand(event: .save, atMs: nowValue)
+    }
+
+    func discardRideMap() async throws -> MobileRideMapSnapshotDto {
+        try await rideMapState.performLifecycleCommand(event: .discard, atMs: nowValue)
     }
 
     func submitDeviceSetting(token: ConnectionAttemptToken, id: DeviceSettingID, value: DeviceSettingValue) throws {

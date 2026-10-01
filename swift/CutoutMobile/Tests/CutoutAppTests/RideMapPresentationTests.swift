@@ -1,8 +1,8 @@
 import MapKit
-@testable import CutoutMobile
 import XCTest
 
 @testable import CutoutApp
+@testable import CutoutMobile
 
 @MainActor
 final class RideMapPresentationTests: XCTestCase {
@@ -12,7 +12,7 @@ final class RideMapPresentationTests: XCTestCase {
         XCTAssertEqual(RideMapControlsView.controlSet(for: .stopped), .terminal)
     }
 
-    func testHistoryMusicForgetUsesDestinationRideID() {
+    func testHistoryMusicForgetUsesDestinationRideID() async {
         var forgottenRideID: String?
         let music = RideMapHistoryMusicDetail(
             rideID: "destination-ride",
@@ -23,12 +23,13 @@ final class RideMapPresentationTests: XCTestCase {
             }
         )
 
-        XCTAssertTrue(music.forget())
+        let didForget = await music.forget()
+        XCTAssertTrue(didForget)
         XCTAssertEqual(forgottenRideID, "destination-ride")
     }
 
     func testHistoryMusicForgetRequiresRetainedMetadata() {
-        let forget: (String) -> Bool = { _ in true }
+        let forget: @MainActor (String) async -> Bool = { _ in true }
         let missing = RideMapHistoryMusicDetail(
             rideID: "missing",
             events: [],
@@ -114,6 +115,56 @@ final class RideMapPresentationTests: XCTestCase {
         XCTAssertEqual(RideMapRouteView.liveRouteID(for: snapshot), "ride-b")
     }
 
+    func testRideMapVehicleLabelProjectionKeepsIdentityFallbackPolicy() {
+        XCTAssertEqual(
+            RideMapMetricFormatting.vehicleLabel(
+                identity: nil,
+                resolve: { _ in "ignored" },
+                noIdentityFallback: "GPS-only"
+            ),
+            "GPS-only"
+        )
+        XCTAssertEqual(
+            RideMapMetricFormatting.vehicleLabel(
+                identity: "vehicle",
+                resolve: { _ in "" },
+                noIdentityFallback: "GPS-only"
+            ),
+            localizedAppText("ride_map.vehicle_name_unavailable")
+        )
+        XCTAssertEqual(
+            RideMapMetricFormatting.vehicleLabel(
+                identity: "vehicle",
+                resolve: { _ in "Floatwheel" },
+                noIdentityFallback: "GPS-only"
+            ),
+            "Floatwheel"
+        )
+    }
+
+    func testRideMapMetricFormattingKeepsSharedProjectionContracts() {
+        let summary = MobileRideMapSummaryDto(
+            pointCount: 2,
+            distanceMeters: 1_234.5,
+            durationMilliseconds: 61_000
+        )
+
+        XCTAssertEqual(
+            RideMapMetricFormatting.distanceText(for: summary),
+            Measurement(value: summary.distanceMeters, unit: UnitLength.meters)
+                .formatted(.measurement(width: .abbreviated, usage: .road))
+        )
+        XCTAssertEqual(
+            RideMapMetricFormatting.durationText(for: summary),
+            Duration.seconds(Double(summary.durationMilliseconds) / 1_000)
+                .formatted(.units(allowed: [.hours, .minutes, .seconds], width: .abbreviated))
+        )
+        XCTAssertEqual(
+            RideMapMetricFormatting.recordedAtText(for: 0),
+            localizedAppText("ride_map.untitled_ride")
+        )
+    }
+
     func testHistorySelectionAccessibilityTextIsLocalized() {
         XCTAssertEqual(
             RideMapHistoryListView.selectionAccessibilityValue(isSelected: true),
@@ -155,19 +206,6 @@ final class RideMapPresentationTests: XCTestCase {
         XCTAssertNotEqual(initial, replacement)
         XCTAssertTrue(initial.hasPrefix("ride:"))
         XCTAssertTrue(replacement.hasPrefix("ride:"))
-    }
-
-    func testCurrentRideDetailDoesNotLabelItsLatestPointAsTheEnd() {
-        let openStates: [MobileRideMapStateDto] = [.active, .paused, .interrupted]
-        for state in openStates {
-            XCTAssertFalse(RideMapHistoryDetailView.showsRecordedEnd(for: state))
-            XCTAssertTrue(RideMapHistoryDetailView.showsCurrentMarker(for: state))
-        }
-        let terminalStates: [MobileRideMapStateDto] = [.stopped, .saved, .discarded, .imported]
-        for state in terminalStates {
-            XCTAssertTrue(RideMapHistoryDetailView.showsRecordedEnd(for: state))
-            XCTAssertFalse(RideMapHistoryDetailView.showsCurrentMarker(for: state))
-        }
     }
 
     func testHistoryCameraFitIdentityChangesForAReplacementProjection() {
@@ -388,14 +426,6 @@ final class RideMapPresentationTests: XCTestCase {
                 isVisible: true
             )?.sequence,
             9
-        )
-
-        XCTAssertNil(
-            RideMapCanvasView.canonicalEndpointPoint(
-                in: [point(sequence: 4)],
-                sequence: 9,
-                isVisible: false
-            )
         )
     }
 

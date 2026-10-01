@@ -1,6 +1,7 @@
+import CutoutMobileFFI
 import Foundation
 import XCTest
-import CutoutMobileFFI
+
 @testable import CutoutMobile
 
 final class VoltageSagModelStoreTests: XCTestCase {
@@ -40,29 +41,30 @@ final class VoltageSagModelStoreTests: XCTestCase {
     }
 
     func testSagVerificationUsesPublicVerificationState() throws {
-        let state = ChargeEstimateState(MobileChargeEstimateStateDto(
-            kind: .collectingSamples,
-            estimate: nil,
-            voltageSag: MobileVoltageSagEstimateDto(
-                deltaMillivolts: -1_250,
-                loadCurrent: BatteryCurrentReading(
-                    value: BatteryCurrent(value: 10_000),
-                    source: .reported,
-                    quality: .known,
-                    verification: .hardwareVerified
+        let state = ChargeEstimateState(
+            MobileChargeEstimateStateDto(
+                kind: .collectingSamples,
+                estimate: nil,
+                voltageSag: MobileVoltageSagEstimateDto(
+                    deltaMillivolts: -1_250,
+                    loadCurrent: BatteryCurrentReading(
+                        value: BatteryCurrent(value: 10_000),
+                        source: .reported,
+                        quality: .known,
+                        verification: .hardwareVerified
+                    ),
+                    effectiveResistanceMilliohms: 125,
+                    observations: 7,
+                    confidence: .medium,
+                    calculatedAt: MobileMonotonicMillisDto(milliseconds: 1_000),
+                    validUntil: MobileMonotonicMillisDto(milliseconds: 3_000)
                 ),
-                effectiveResistanceMilliohms: 125,
-                observations: 7,
-                confidence: .medium,
-                calculatedAt: MobileMonotonicMillisDto(milliseconds: 1_000),
-                validUntil: MobileMonotonicMillisDto(milliseconds: 3_000)
-            ),
-            unavailableReason: nil,
-            error: nil,
-            resetReason: nil,
-            samples: 0,
-            observedFor: MobileDurationDto(milliseconds: 0)
-        ))
+                unavailableReason: nil,
+                error: nil,
+                resetReason: nil,
+                samples: 0,
+                observedFor: MobileDurationDto(milliseconds: 0)
+            ))
 
         XCTAssertEqual(
             try XCTUnwrap(state.voltageSag).loadCurrentVerification,
@@ -88,10 +90,12 @@ final class VoltageSagModelStoreTests: XCTestCase {
             TelemetrySnapshot(voltage: Voltage(value: 84_000)).packVoltageDetail,
             .sagUnavailable
         )
-        guard case let .voltageSag(packSag) = TelemetrySnapshot(
-            voltage: Voltage(value: 84_000),
-            chargeEstimate: state
-        ).packVoltageDetail else {
+        guard
+            case let .voltageSag(packSag) = TelemetrySnapshot(
+                voltage: Voltage(value: 84_000),
+                chargeEstimate: state
+            ).packVoltageDetail
+        else {
             return XCTFail("expected the source-owned pack voltage sag detail")
         }
         XCTAssertEqual(packSag, sag)

@@ -39,7 +39,9 @@ public struct PevLiveActivityValueCell: View {
                     valueText
                     if let unit = value.unit {
                         Text(unit)
-                            .font(compact ? .system(size: compactUnitSize, weight: .semibold) : .caption.weight(.semibold))
+                            .font(
+                                compact ? .system(size: compactUnitSize, weight: .semibold) : .caption.weight(.semibold)
+                            )
                             .foregroundStyle(PevLiveActivityPalette.secondaryText)
                     }
                 }
@@ -75,7 +77,10 @@ public struct PevLiveActivityValueCell: View {
 
     private var valueText: some View {
         Text(value.displayValue)
-            .font(compact ? .system(size: compactValueSize, weight: .semibold, design: .rounded) : .headline.weight(.semibold))
+            .font(
+                compact
+                    ? .system(size: compactValueSize, weight: .semibold, design: .rounded) : .headline.weight(.semibold)
+            )
             .foregroundStyle(value.state == .available ? availableValueColor : PevLiveActivityPalette.secondaryText)
             .lineLimit(1)
     }

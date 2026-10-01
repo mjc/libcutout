@@ -36,22 +36,19 @@ public struct MusicCompactPlayer: View {
                         .font(.subheadline.weight(.bold))
                         .accessibilityIdentifier("music.now-playing-title")
                         .accessibilityValue(String(describing: nowPlaying.state))
-                    Text(nowPlaying.statusText == nowPlaying.title ? nowPlaying.artist : nowPlaying.statusText ?? nowPlaying.artist)
-                        .lineLimit(1)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    Text(
+                        nowPlaying.statusText == nowPlaying.title
+                            ? nowPlaying.artist : nowPlaying.statusText ?? nowPlaying.artist
+                    )
+                    .lineLimit(1)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 }
                 .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
             }
             HStack(spacing: 8) {
                 if nowPlaying.requiresSetup {
-                    Button(action: onOpenSettings) {
-                        Label(pevLocalizedText("music.settings.open"), systemImage: "gearshape")
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .tint(PevDashboardColors.yellow)
-                    .accessibilityIdentifier("music.open-settings")
+                    MusicSettingsButton(action: onOpenSettings, controlSize: .small)
                 }
                 Spacer(minLength: 0)
                 MusicTransportControls(nowPlaying: nowPlaying, onCommand: onCommand)
@@ -180,7 +177,8 @@ enum MusicSettingsPresentation {
         provider: MobileMusicProviderDto,
         state: MobileMusicPlaybackStateDto?
     ) -> String {
-        let key = state == .stale || state == .disconnected
+        let key =
+            state == .stale || state == .disconnected
             ? "music.reconnect_provider" : "music.connect_provider"
         return pevLocalizedText(key, provider.title)
     }
@@ -323,10 +321,12 @@ public struct MusicSettingsView: View {
                         .foregroundStyle(.secondary)
                         .accessibilityIdentifier("music.connection-status")
                 }
-                Button(MusicSettingsPresentation.connectionActionTitle(
-                    provider: selectedProvider, state: nowPlaying?.state
-                ), action: onConnect)
-                    .accessibilityIdentifier("music.connect-provider")
+                Button(
+                    MusicSettingsPresentation.connectionActionTitle(
+                        provider: selectedProvider, state: nowPlaying?.state
+                    ), action: onConnect
+                )
+                .accessibilityIdentifier("music.connect-provider")
                 if MusicSettingsPresentation.showsReauthorize(
                     provider: selectedProvider,
                     state: nowPlaying?.state
@@ -435,7 +435,9 @@ private struct MusicArtworkPlaceholder: View {
             .font(size >= 64 ? .largeTitle : .title3)
             .foregroundStyle(PevDashboardColors.yellow)
             .frame(width: size, height: size)
-            .background(PevDashboardColors.yellow.opacity(0.16), in: RoundedRectangle(cornerRadius: size >= 64 ? 16 : 12))
+            .background(
+                PevDashboardColors.yellow.opacity(0.16), in: RoundedRectangle(cornerRadius: size >= 64 ? 16 : 12)
+            )
             .accessibilityHidden(true)
     }
 }
@@ -446,6 +448,23 @@ private struct MusicHistoryPolicyLabel: View {
     var body: some View {
         Text(policy.title)
             .accessibilityIdentifier("music.history-policy.\(policy.musicAccessibilityIdentifier)")
+    }
+}
+
+private struct MusicSettingsButton: View {
+    let action: () -> Void
+    var controlSize: ControlSize = .regular
+
+    var body: some View {
+        Button(action: action) {
+            Label(pevLocalizedText("music.settings.open"), systemImage: "gearshape")
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .buttonStyle(.bordered)
+        .controlSize(controlSize)
+        .tint(PevDashboardColors.primaryText)
+        .accessibilityIdentifier("music.open-settings")
     }
 }
 
@@ -509,19 +528,14 @@ public struct MusicCompactPlayerInset: ViewModifier {
                 .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 20))
                 .padding(.horizontal, 12)
             } else {
-                Button(action: onOpenSettings) {
-                    Label(pevLocalizedText("music.settings.open"), systemImage: "gearshape")
-                }
-                .buttonStyle(.bordered)
-                .tint(PevDashboardColors.yellow)
-                .accessibilityIdentifier("music.open-settings")
+                MusicSettingsButton(action: onOpenSettings)
             }
         }
     }
 }
 
-public extension View {
-    func musicCompactPlayer(
+extension View {
+    public func musicCompactPlayer(
         nowPlaying: MusicNowPlaying?,
         selectedProvider: MobileMusicProviderDto,
         isHidden: Bool,
@@ -531,15 +545,17 @@ public extension View {
         onDismiss: @escaping () -> Void,
         onRestore: @escaping () -> Void
     ) -> some View {
-        modifier(MusicCompactPlayerInset(
-            nowPlaying: nowPlaying,
-            selectedProvider: selectedProvider,
-            isHidden: isHidden,
-            onCommand: onCommand,
-            onOpenDetails: onOpenDetails,
-            onOpenSettings: onOpenSettings,
-            onDismiss: onDismiss,
-            onRestore: onRestore
-        ))
+        modifier(
+            MusicCompactPlayerInset(
+                nowPlaying: nowPlaying,
+                selectedProvider: selectedProvider,
+                isHidden: isHidden,
+                onCommand: onCommand,
+                onOpenDetails: onOpenDetails,
+                onOpenSettings: onOpenSettings,
+                onDismiss: onDismiss,
+                onRestore: onRestore
+            )
+        )
     }
 }

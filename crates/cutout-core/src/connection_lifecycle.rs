@@ -12,6 +12,73 @@ pub struct ConnectionAttemptToken {
     platform_identifier: String,
 }
 
+/// Identity of one Rust-approved reconnect timer.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ConnectionRetryToken(u64);
+
+impl ConnectionRetryToken {
+    /// Constructs a token at an FFI boundary. Callers should retain, not mint, tokens.
+    #[must_use]
+    pub const fn new(value: u64) -> Self {
+        Self(value)
+    }
+
+    /// Returns the retry identity for native timer correlation.
+    #[must_use]
+    pub const fn value(self) -> u64 {
+        self.0
+    }
+}
+
+/// One retry timer decision made by the connection lifecycle.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ConnectionRetry {
+    token: ConnectionRetryToken,
+    attempt: u8,
+    deadline: MonotonicTimestamp,
+    platform_identifier: String,
+}
+
+impl ConnectionRetry {
+    /// Returns the identity required to admit this timer when it fires.
+    #[must_use]
+    pub const fn token(&self) -> ConnectionRetryToken {
+        self.token
+    }
+
+    /// Returns the one-based retry number.
+    #[must_use]
+    pub const fn attempt(&self) -> u8 {
+        self.attempt
+    }
+
+    /// Returns the earliest monotonic time at which this retry may start.
+    #[must_use]
+    pub const fn deadline(&self) -> MonotonicTimestamp {
+        self.deadline
+    }
+
+    /// Returns the platform identity selected for the failed connection.
+    #[must_use]
+    pub fn platform_identifier(&self) -> &str {
+        &self.platform_identifier
+    }
+}
+
+/// Result of asking Rust whether another reconnect should be scheduled.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ConnectionRetryDecision {
+    /// Retry is permitted after the returned monotonic deadline.
+    Scheduled(ConnectionRetry),
+    /// The retry budget is exhausted; the attempt is the next number that would be used.
+    Exhausted {
+        /// The next retry number, beyond the configured limit.
+        attempt: u8,
+    },
+    /// The supplied connection no longer owns this retry sequence.
+    Rejected,
+}
+
 /// Borrowed proof that an attempt is current, connected, and protocol-verified.
 ///
 /// The proof is tied to the lifecycle borrow that produced it. Callers must obtain a new proof
@@ -72,7 +139,7 @@ pub enum ConnectionReadiness {
     Verified,
     /// Detection ended without proof; only capture is permitted.
     RecordOnly,
-    /// Capture storage or a previously verified session failed.
+    /// A previously verified transport or session failed.
     Failed,
     /// A verified session observed protocol evidence that conflicts with its decoder.
     Conflicted,
@@ -111,11 +178,26 @@ pub struct ConnectionAttemptSnapshot {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ConnectionAttemptLifecycle {
     snapshot: ConnectionAttemptSnapshot,
+    retry_attempt: u8,
+    retry_token: u64,
+    failed_attempt: Option<ConnectionAttemptToken>,
+    pending_retry: Option<ConnectionRetry>,
 }
 
 impl ConnectionAttemptLifecycle {
     /// Starts an attempt and retires the previous attempt, even for the same device.
     pub fn begin(
+        &mut self,
+        platform_identifier: String,
+        at: MonotonicTimestamp,
+    ) -> ConnectionAttemptToken {
+        self.retry_attempt = 0;
+        self.failed_attempt = None;
+        self.pending_retry = None;
+        self.begin_attempt(platform_identifier, at)
+    }
+
+    fn begin_attempt(
         &mut self,
         platform_identifier: String,
         at: MonotonicTimestamp,
@@ -128,6 +210,109 @@ impl ConnectionAttemptLifecycle {
         self.snapshot.deadline = Some(MonotonicTimestamp::new(at.get().saturating_add(15_000)));
         self.snapshot.revision = self.snapshot.revision.wrapping_add(1);
         token
+    }
+
+    /// Requests the next reconnect using Rust-owned attempt limits and backoff.
+    ///
+    /// `jitter_permille` is platform-provided entropy in the inclusive range 0..=1000; policy,
+    /// retry count, and deadline remain owned here.
+    pub fn request_retry(
+        &mut self,
+        failed: &ConnectionAttemptToken,
+        at: MonotonicTimestamp,
+        jitter_permille: u16,
+    ) -> ConnectionRetryDecision {
+        if self.pending_retry.is_some() {
+            return ConnectionRetryDecision::Rejected;
+        }
+
+        let can_retry = match self.snapshot.readiness {
+            ConnectionReadiness::Pending
+            | ConnectionReadiness::Verified
+            | ConnectionReadiness::RecordOnly
+            | ConnectionReadiness::Failed => true,
+            ConnectionReadiness::Disconnected | ConnectionReadiness::Conflicted => false,
+        };
+        let is_active_failure = self.is_current(failed) && can_retry;
+        if !is_active_failure && self.failed_attempt.as_ref() != Some(failed) {
+            return ConnectionRetryDecision::Rejected;
+        }
+
+        let attempt = self.retry_attempt.saturating_add(1);
+        if attempt > 3 {
+            if self.is_current(failed) {
+                self.snapshot.generation = self.snapshot.generation.wrapping_add(1);
+                self.snapshot.revision = self.snapshot.revision.wrapping_add(1);
+                self.snapshot.token = None;
+                self.snapshot.deadline = None;
+                self.snapshot.readiness = ConnectionReadiness::Failed;
+                self.snapshot.transport = ConnectionTransportState::Disconnected;
+            }
+            self.failed_attempt = Some(failed.clone());
+            self.retry_attempt = attempt;
+            return ConnectionRetryDecision::Exhausted { attempt };
+        }
+
+        let identifier = failed.platform_identifier().to_owned();
+        if self.is_current(failed) {
+            self.snapshot.deadline = None;
+            self.snapshot.readiness = ConnectionReadiness::Failed;
+            self.snapshot.transport = ConnectionTransportState::Disconnected;
+            self.snapshot.revision = self.snapshot.revision.wrapping_add(1);
+        }
+        self.failed_attempt = Some(failed.clone());
+        self.retry_attempt = attempt;
+        self.retry_token = self.retry_token.wrapping_add(1);
+
+        let jitter = u64::from(jitter_permille.min(1_000));
+        let base_ms = 250_u64.saturating_mul(1_u64 << (attempt - 1));
+        let delay_ms = base_ms
+            .saturating_mul(800_000 + 400 * jitter)
+            .saturating_add(500_000)
+            / 1_000_000;
+        let retry = ConnectionRetry {
+            token: ConnectionRetryToken::new(self.retry_token),
+            attempt,
+            deadline: MonotonicTimestamp::new(at.get().saturating_add(delay_ms)),
+            platform_identifier: identifier,
+        };
+        self.pending_retry = Some(retry.clone());
+        ConnectionRetryDecision::Scheduled(retry)
+    }
+
+    /// Starts an approved retry only when its current timer has reached the Rust deadline.
+    pub fn admit_retry(
+        &mut self,
+        token: ConnectionRetryToken,
+        at: MonotonicTimestamp,
+    ) -> Option<ConnectionAttemptToken> {
+        let retry = self.pending_retry.as_ref()?;
+        if retry.token != token || at < retry.deadline {
+            return None;
+        }
+        let retry = self.pending_retry.take()?;
+        self.failed_attempt = None;
+        Some(self.begin_attempt(retry.platform_identifier, at))
+    }
+
+    /// Cancels the matching pending retry and resets its consecutive-failure budget.
+    pub fn cancel_retry(&mut self, token: ConnectionRetryToken) -> bool {
+        if self.pending_retry.as_ref().map(|retry| retry.token) != Some(token) {
+            return false;
+        }
+        self.pending_retry = None;
+        self.retry_attempt = 0;
+        self.failed_attempt = None;
+        true
+    }
+
+    /// Returns the pending timer's deadline only to its owner.
+    #[must_use]
+    pub fn retry_deadline(&self, token: ConnectionRetryToken) -> Option<MonotonicTimestamp> {
+        self.pending_retry
+            .as_ref()
+            .filter(|retry| retry.token == token)
+            .map(|retry| retry.deadline)
     }
 
     /// Checks ownership without modifying the attempt or detector.
@@ -170,6 +355,11 @@ impl ConnectionAttemptLifecycle {
         } else {
             ConnectionReadiness::RecordOnly
         };
+        if verified {
+            self.retry_attempt = 0;
+            self.failed_attempt = None;
+            self.pending_retry = None;
+        }
         self.snapshot.deadline = None;
         self.snapshot.revision = self.snapshot.revision.wrapping_add(1);
         true
@@ -185,6 +375,9 @@ impl ConnectionAttemptLifecycle {
 
     /// Invalidates the current attempt before native cancellation or replacement.
     pub fn disconnect(&mut self) {
+        self.retry_attempt = 0;
+        self.failed_attempt = None;
+        self.pending_retry = None;
         self.snapshot.generation = self.snapshot.generation.wrapping_add(1);
         self.snapshot.revision = self.snapshot.revision.wrapping_add(1);
         self.snapshot.token = None;
@@ -225,7 +418,10 @@ impl ConnectionAttemptLifecycle {
             return self.finish_detection(token, false);
         }
         if self.snapshot.readiness == ConnectionReadiness::Verified {
-            self.fail_capture(token);
+            let failed = token.clone();
+            self.disconnect();
+            self.failed_attempt = Some(failed);
+            self.snapshot.readiness = ConnectionReadiness::Failed;
             return true;
         }
         false
@@ -242,16 +438,6 @@ impl ConnectionAttemptLifecycle {
         self.snapshot.deadline = None;
         self.snapshot.readiness = ConnectionReadiness::Conflicted;
         self.snapshot.transport = ConnectionTransportState::Disconnected;
-        true
-    }
-
-    /// Retires the attempt when capture storage can no longer preserve its evidence.
-    pub fn fail_capture(&mut self, token: &ConnectionAttemptToken) -> bool {
-        if !self.is_current(token) {
-            return false;
-        }
-        self.disconnect();
-        self.snapshot.readiness = ConnectionReadiness::Failed;
         true
     }
 
@@ -401,5 +587,81 @@ mod tests {
         );
         assert!(!lifecycle.is_current(&token));
         assert!(!lifecycle.conflict(&token));
+    }
+
+    #[test]
+    fn reconnect_retry_deadline_and_admission_are_owned_by_rust() {
+        let mut lifecycle = ConnectionAttemptLifecycle::default();
+        let first = lifecycle.begin("A".into(), MonotonicTimestamp::new(100));
+        assert!(lifecycle.connected(&first));
+        assert!(lifecycle.finish_detection(&first, true));
+
+        let retry = lifecycle.request_retry(&first, MonotonicTimestamp::new(1_000), 500);
+        let ConnectionRetryDecision::Scheduled(retry) = retry else {
+            panic!("verified connection should schedule its first retry");
+        };
+        assert_eq!(retry.attempt(), 1);
+        assert_eq!(retry.deadline(), MonotonicTimestamp::new(1_250));
+        assert_eq!(retry.platform_identifier(), "A");
+        assert!(lifecycle.is_current(&first));
+        assert_eq!(
+            lifecycle.snapshot().transport,
+            ConnectionTransportState::Disconnected
+        );
+
+        assert!(
+            lifecycle
+                .admit_retry(retry.token(), MonotonicTimestamp::new(1_249))
+                .is_none()
+        );
+        let second = lifecycle
+            .admit_retry(retry.token(), MonotonicTimestamp::new(1_250))
+            .expect("retry is admitted at its deadline");
+        assert_eq!(second.platform_identifier(), "A");
+        assert!(!lifecycle.is_current(&first));
+        assert!(lifecycle.is_current(&second));
+        assert_eq!(
+            lifecycle.snapshot().transport,
+            ConnectionTransportState::Connecting
+        );
+    }
+
+    #[test]
+    fn retry_exhaustion_and_stale_timer_cannot_start_a_connection() {
+        let mut lifecycle = ConnectionAttemptLifecycle::default();
+        let mut attempt = lifecycle.begin("A".into(), MonotonicTimestamp::new(0));
+
+        for expected in 1..=3 {
+            let decision = lifecycle.request_retry(
+                &attempt,
+                MonotonicTimestamp::new(u64::from(expected) * 1_000),
+                500,
+            );
+            let ConnectionRetryDecision::Scheduled(retry) = decision else {
+                panic!("retry {expected} should be scheduled");
+            };
+            assert_eq!(retry.attempt(), expected);
+            let stale = retry.token();
+            attempt = lifecycle
+                .admit_retry(stale, retry.deadline())
+                .expect("scheduled retry should be admitted");
+            assert!(lifecycle.connected(&attempt));
+            assert!(lifecycle.finish_detection(&attempt, false));
+        }
+
+        let fourth = lifecycle.request_retry(&attempt, MonotonicTimestamp::new(10_000), 500);
+        assert_eq!(fourth, ConnectionRetryDecision::Exhausted { attempt: 4 });
+        assert!(
+            lifecycle
+                .admit_retry(
+                    ConnectionRetryToken::new(u64::MAX),
+                    MonotonicTimestamp::new(u64::MAX)
+                )
+                .is_none()
+        );
+        assert_eq!(
+            lifecycle.snapshot().transport,
+            ConnectionTransportState::Disconnected
+        );
     }
 }

@@ -68,7 +68,7 @@ public struct PevDashboardGrid<Content: View>: View {
                         )
                     ),
                     spacing: columnSpacing
-                ),
+                )
             ]
         }
     }

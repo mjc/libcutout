@@ -1,7 +1,8 @@
 import CoreBluetooth
 import CutoutMobileFFI
-@testable import CutoutMobile
 import XCTest
+
+@testable import CutoutMobile
 
 final class MelkLightingSessionTests: XCTestCase {
     func testMELKGattUuidPreservesTheBluetoothBaseUuidAcrossTheFFIBoundary() throws {

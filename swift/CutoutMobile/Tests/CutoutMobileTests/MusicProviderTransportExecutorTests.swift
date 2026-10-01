@@ -1,5 +1,6 @@
 import CutoutMobileFFI
 import XCTest
+
 @testable import CutoutMobile
 
 @MainActor
