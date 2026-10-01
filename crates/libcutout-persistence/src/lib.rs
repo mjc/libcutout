@@ -11,12 +11,14 @@
 
 mod capture_writer;
 mod pevcap_limits;
+mod recording;
 mod storage;
 pub use capture_writer::{
     CAPTURE_LOCATION_BATCH_CAPACITY, CaptureArtifactId, CaptureJsonlExport, CaptureMetadata,
     CaptureWriteOutcome, CaptureWriter, CaptureWriterFinish, CaptureWriterIngress,
     CaptureWriterMonitor, CaptureWriterStatus, SavedCaptureArtifact,
 };
+pub use recording::{RecordingError, RecordingSnapshot, RecordingToken, RideRecordingSession};
 pub use storage::*;
 
 #[cfg(test)]

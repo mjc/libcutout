@@ -70,6 +70,22 @@ fn ride_autostart_migration_keeps_existing_installs_enabled() {
     close_music_test_database(database, path);
 }
 
+#[test]
+fn recording_session_starts_gps_only_and_returns_an_acquisition_token() {
+    let mut session = crate::RideRecordingSession::new(None);
+
+    let snapshot = session
+        .start_gps_only(1_000, None)
+        .expect("GPS-only ride starts without durable storage");
+
+    assert_eq!(snapshot.state, RideLifecycleState::Active);
+    assert_eq!(snapshot.revision, 1);
+    assert_eq!(
+        snapshot.recording_token.map(|token| token.generation),
+        Some(1)
+    );
+}
+
 fn music_event() -> MusicRideEvent {
     MusicRideEvent::new(
         MusicProvider::AppleMusic,
