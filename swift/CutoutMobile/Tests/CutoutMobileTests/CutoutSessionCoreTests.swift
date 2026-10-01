@@ -1519,19 +1519,24 @@ final class CutoutSessionCoreTests: XCTestCase {
 
     func testSuccessfulScriptedRecordOnlyFlushUsesTheRealWriter() async throws {
         let started = expectation(description: "real capture writer starts")
+        let finished = expectation(description: "diagnostic capture releases location demand")
         var captureURL: URL?
+        let rideMapState = MobileRideMapState()
         let core = CutoutSessionCore(
             testScript: CutoutSessionTestScript(
                 candidate: scriptedVescCandidate,
                 telemetry: nil,
                 connectionDelayMilliseconds: 0
-            ))
+            ),
+            rideMapState: rideMapState
+        )
         core.onCaptureEvent = { event in
             if case let .started(generation, fileURL) = event {
                 XCTAssertGreaterThan(generation.rawValue, 0)
                 captureURL = fileURL
                 started.fulfill()
             }
+            if case .finished = event { finished.fulfill() }
         }
 
         XCTAssertTrue(
@@ -1544,6 +1549,18 @@ final class CutoutSessionCoreTests: XCTestCase {
         let url = try XCTUnwrap(captureURL)
         defer { try? FileManager.default.removeItem(at: url) }
 
+        let locationEnvironment = MobileRideMapLocationEnvironmentDto(
+            authorization: .whenInUse,
+            servicesEnabled: true,
+            temporarilyUnavailable: false
+        )
+        XCTAssertNil(rideMapState.currentSnapshot())
+        XCTAssertEqual(
+            try rideMapState.observeLocationEnvironment(locationEnvironment).demand,
+            .record,
+            "diagnostic capture requests location even without an active ride"
+        )
+
         let flushSucceeded = await core.flushCapture()
         XCTAssertTrue(flushSucceeded)
         let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
@@ -1554,6 +1571,12 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertFalse(capture.contains("capture_evidence=hardware_tested"))
 
         core.disconnectAndScan()
+        await fulfillment(of: [finished], timeout: 1)
+        XCTAssertEqual(
+            try rideMapState.observeLocationEnvironment(locationEnvironment).demand,
+            .idle,
+            "finishing the capture releases its location demand"
+        )
     }
 
     func testRejectedLabelReplacementKeepsRealCaptureSavable() async throws {

@@ -77,6 +77,53 @@ pub struct LocationAcquisition {
     pub demand: LocationDemand,
 }
 
+/// Native location evidence and generation-fenced diagnostic-capture demand.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct LocationAcquisitionState {
+    environment: Option<LocationEnvironment>,
+    diagnostic_capture_generation: u64,
+    diagnostic_capture_active: bool,
+}
+
+impl LocationAcquisitionState {
+    /// Replaces native permission/provider evidence when it changes.
+    pub fn observe_environment(&mut self, environment: LocationEnvironment) -> bool {
+        if self.environment == Some(environment) {
+            return false;
+        }
+        self.environment = Some(environment);
+        true
+    }
+
+    /// Updates diagnostic capture demand, rejecting stale or already-closed generations.
+    pub fn observe_diagnostic_capture(&mut self, generation: u64, active: bool) -> bool {
+        if generation < self.diagnostic_capture_generation
+            || (generation == self.diagnostic_capture_generation
+                && (!self.diagnostic_capture_active || active))
+        {
+            return false;
+        }
+        self.diagnostic_capture_generation = generation;
+        self.diagnostic_capture_active = active;
+        true
+    }
+
+    /// Selects native acquisition work from the current ride and diagnostic-capture state.
+    #[must_use]
+    pub fn acquisition(
+        &self,
+        revision: u64,
+        lifecycle: Option<RideLifecycleState>,
+    ) -> LocationAcquisition {
+        location_acquisition_for(
+            revision,
+            lifecycle,
+            self.environment,
+            self.diagnostic_capture_active,
+        )
+    }
+}
+
 /// Applies the shared location policy to a lifecycle snapshot and native environment.
 #[must_use]
 pub fn location_acquisition_for(
@@ -180,9 +227,7 @@ pub struct RideRecordingSession {
     revision: u64,
     generation: u64,
     snapshot: Option<RecordingSnapshot>,
-    location_environment: Option<LocationEnvironment>,
-    diagnostic_capture_generation: u64,
-    diagnostic_capture_location_active: bool,
+    location_acquisition: LocationAcquisitionState,
 }
 
 impl RideRecordingSession {
@@ -195,16 +240,13 @@ impl RideRecordingSession {
             revision: 0,
             generation: 0,
             snapshot: None,
-            location_environment: None,
-            diagnostic_capture_generation: 0,
-            diagnostic_capture_location_active: false,
+            location_acquisition: LocationAcquisitionState::default(),
         }
     }
 
     /// Updates native location evidence without changing the ride lifecycle.
     pub fn observe_location_environment(&mut self, environment: LocationEnvironment) {
-        if self.location_environment != Some(environment) {
-            self.location_environment = Some(environment);
+        if self.location_acquisition.observe_environment(environment) {
             self.revision = self.revision.saturating_add(1);
             if let Some(snapshot) = &mut self.snapshot {
                 snapshot.revision = self.revision;
@@ -217,29 +259,22 @@ impl RideRecordingSession {
     /// A closed generation cannot be reopened, and delayed observations from older captures are
     /// ignored so they cannot restart GPS after a later capture has taken ownership.
     pub fn observe_diagnostic_capture_location(&mut self, generation: u64, active: bool) {
-        if generation < self.diagnostic_capture_generation
-            || (generation == self.diagnostic_capture_generation
-                && (!self.diagnostic_capture_location_active || active))
+        if self
+            .location_acquisition
+            .observe_diagnostic_capture(generation, active)
         {
-            return;
-        }
-        self.diagnostic_capture_generation = generation;
-        self.diagnostic_capture_location_active = active;
-        self.revision = self.revision.saturating_add(1);
-        if let Some(snapshot) = &mut self.snapshot {
-            snapshot.revision = self.revision;
+            self.revision = self.revision.saturating_add(1);
+            if let Some(snapshot) = &mut self.snapshot {
+                snapshot.revision = self.revision;
+            }
         }
     }
 
     /// Projects native acquisition work from location evidence and the current ride lifecycle.
     #[must_use]
     pub fn location_acquisition(&self) -> LocationAcquisition {
-        location_acquisition_for(
-            self.revision,
-            self.recorder.state(),
-            self.location_environment,
-            self.diagnostic_capture_location_active,
-        )
+        self.location_acquisition
+            .acquisition(self.revision, self.recorder.state())
     }
 
     /// Returns the last published recording, or `None` before a recording starts.

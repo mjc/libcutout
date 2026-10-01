@@ -8307,7 +8307,7 @@ struct MobileRideMapCoreInner {
     ride_id: Option<MobileRideIdDto>,
     revision: u64,
     generation: u64,
-    location_environment: Option<persistence::LocationEnvironment>,
+    location_acquisition_state: persistence::LocationAcquisitionState,
     recorder: ride_maps::RideMapRecorder,
     admission_recorder: ride_maps::RideMapRecorder,
     music_history_policy: CoreMusicHistoryPolicy,
@@ -9245,7 +9245,7 @@ impl MobileRideMapCoreInner {
             ride_id: None,
             revision: 0,
             generation: 0,
-            location_environment: None,
+            location_acquisition_state: persistence::LocationAcquisitionState::default(),
             recorder: ride_maps::RideMapRecorder::new(),
             admission_recorder: ride_maps::RideMapRecorder::new(),
             music_history_policy: CoreMusicHistoryPolicy::Disabled,
@@ -9556,13 +9556,9 @@ impl MobileRideMapCoreInner {
     }
 
     fn location_acquisition(&self) -> MobileRideMapLocationAcquisitionDto {
-        persistence::location_acquisition_for(
-            self.revision,
-            self.recorder.state(),
-            self.location_environment,
-            false,
-        )
-        .into()
+        self.location_acquisition_state
+            .acquisition(self.revision, self.recorder.state())
+            .into()
     }
 
     fn snapshot(&self, state: MobileRideLifecycleStateDto) -> MobileRideMapCoreSnapshotDto {
@@ -10262,8 +10258,26 @@ impl MobileRideMapCore {
     ) -> MobileRideMapLocationAcquisitionDto {
         let environment = persistence::LocationEnvironment::from(environment);
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        if state.location_environment != Some(environment) {
-            state.location_environment = Some(environment);
+        if state
+            .location_acquisition_state
+            .observe_environment(environment)
+        {
+            state.revision = state.revision.saturating_add(1);
+        }
+        state.location_acquisition()
+    }
+
+    /// Updates generation-fenced diagnostic-capture location demand.
+    pub fn observe_diagnostic_capture_location(
+        &self,
+        generation: MobileCaptureGenerationDto,
+        active: bool,
+    ) -> MobileRideMapLocationAcquisitionDto {
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        if state
+            .location_acquisition_state
+            .observe_diagnostic_capture(generation.value, active)
+        {
             state.revision = state.revision.saturating_add(1);
         }
         state.location_acquisition()
@@ -16174,6 +16188,27 @@ mod tests {
             paused.location_acquisition.demand,
             MobileRideMapLocationDemandDto::Idle
         );
+    }
+
+    #[test]
+    fn diagnostic_capture_keeps_location_demand_after_ride_pause() {
+        let core = MobileRideMapCore::new();
+        core.observe_location_environment(MobileRideMapLocationEnvironmentDto {
+            authorization: MobileRideMapLocationAuthorizationDto::WhenInUse,
+            services_enabled: true,
+            temporarily_unavailable: false,
+        });
+
+        let generation = MobileCaptureGenerationDto { value: 2 };
+        let active = core.observe_diagnostic_capture_location(generation, true);
+        assert_eq!(active.demand, MobileRideMapLocationDemandDto::Record);
+
+        let closed = core.observe_diagnostic_capture_location(generation, false);
+        assert_eq!(closed.demand, MobileRideMapLocationDemandDto::Idle);
+
+        let stale =
+            core.observe_diagnostic_capture_location(MobileCaptureGenerationDto { value: 1 }, true);
+        assert_eq!(stale.demand, MobileRideMapLocationDemandDto::Idle);
     }
 
     #[test]

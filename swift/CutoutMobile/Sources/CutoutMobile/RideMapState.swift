@@ -954,6 +954,15 @@ public final class MobileRideMapState: @unchecked Sendable {
         try withCore { $0.observeLocationEnvironment(environment: environment) }
     }
 
+    public func observeDiagnosticCaptureLocation(
+        generation: MobileCaptureGenerationDto,
+        active: Bool
+    ) throws -> MobileRideMapLocationAcquisitionDto {
+        try withCore {
+            $0.observeDiagnosticCaptureLocation(generation: generation, active: active)
+        }
+    }
+
     public func pollLifecycleCommand(
         _ command: MobileRideMapLifecycleCommand
     ) throws -> MobileRideMapLifecycleState {

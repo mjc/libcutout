@@ -2493,6 +2493,7 @@ public final class CutoutSessionCore: NSObject {
             return false
         }
         _ = rustSessionState.captureWriterStarted(generation: identity)
+        observeDiagnosticCaptureLocation(generation: generation, active: true)
         captureRecorder.publishStarted()
         startCaptureProgressUpdates()
         if let fileURL = captureRecorder.activeFileURL { record("capture_file=\(fileURL.path)") }
@@ -2614,7 +2615,20 @@ public final class CutoutSessionCore: NSObject {
         captureProgressTimer = nil
         publishCaptureProgress()
         _ = rustSessionState.retireCaptureWriter(generation: completedCaptureGeneration.dto)
+        observeDiagnosticCaptureLocation(generation: completedCaptureGeneration, active: false)
         captureRecorder.finish(publishesResult: true, priorWriteSucceeded: priorWriteSucceeded)
+    }
+
+    private func observeDiagnosticCaptureLocation(generation: CaptureGeneration, active: Bool) {
+        guard let rideMapStateForInitialization else { return }
+        _ = try? rideMapStateForInitialization.observeDiagnosticCaptureLocation(
+            generation: generation.dto,
+            active: active
+        )
+        let reference = WeakCutoutSessionCoreReference(self)
+        Task { @MainActor in
+            reference.value?.publishRideMapAvailabilityOnMain()
+        }
     }
 
     private func handleCaptureWriterCompletion(_ completion: CaptureWriterCompletion) {
