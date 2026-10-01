@@ -1,3 +1,4 @@
+import CutoutMobileFFI
 import Foundation
 
 /// Presents Rust ride-map results without owning the ride-map database or admission rules.
@@ -6,7 +7,7 @@ final class CutoutSessionRideMapPresentation {
     private let onDecision: (MobileRideMapSnapshotDto, MobileRideMapDecisionDto) -> Void
     private let onError: (MobileRideMapErrorEvent) -> Void
     private let onAvailability: (MobileRideMapAvailability) -> Void
-    private let onLocationDemand: (MobileRideMapStateDto) -> Void
+    private let onLocationDemand: (MobileRideMapLocationDemandDto) -> Void
     private(set) var latestSnapshot: MobileRideMapSnapshotDto?
 
     init(
@@ -14,7 +15,7 @@ final class CutoutSessionRideMapPresentation {
         onDecision: @escaping (MobileRideMapSnapshotDto, MobileRideMapDecisionDto) -> Void,
         onError: @escaping (MobileRideMapErrorEvent) -> Void,
         onAvailability: @escaping (MobileRideMapAvailability) -> Void,
-        onLocationDemand: @escaping (MobileRideMapStateDto) -> Void
+        onLocationDemand: @escaping (MobileRideMapLocationDemandDto) -> Void
     ) {
         self.onSnapshot = onSnapshot
         self.onDecision = onDecision
@@ -25,7 +26,7 @@ final class CutoutSessionRideMapPresentation {
 
     func publishSnapshot(_ snapshot: MobileRideMapSnapshotDto) {
         latestSnapshot = snapshot
-        onLocationDemand(snapshot.state)
+        onLocationDemand(snapshot.locationAcquisition?.demand ?? .idle)
         onSnapshot(snapshot)
     }
 

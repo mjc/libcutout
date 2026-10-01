@@ -50,7 +50,7 @@ actor CutoutSessionRideMapRecorder: CutoutSessionRideMapRecording {
     private let publishError: @Sendable (MobileRideMapError, MobileRideMapErrorContext) -> Void
     private let publishAvailability: @Sendable (MobileRideMapError?, Bool) -> Void
     private let recordDiagnostic: @Sendable (String) -> Void
-    private let onLocationDemand: @Sendable (Bool) -> Void
+    private let onLocationDemand: @Sendable (MobileRideMapLocationDemandDto) -> Void
     private var writePoller: DispatchSourceTimer?
     private var pendingConnectionAdmissions: [PendingRideMapConnectionAdmission] = []
     private var restorationStarted = false
@@ -67,7 +67,7 @@ actor CutoutSessionRideMapRecorder: CutoutSessionRideMapRecording {
         publishError: @escaping @Sendable (MobileRideMapError, MobileRideMapErrorContext) -> Void,
         publishAvailability: @escaping @Sendable (MobileRideMapError?, Bool) -> Void,
         recordDiagnostic: @escaping @Sendable (String) -> Void,
-        onLocationDemand: @escaping @Sendable (Bool) -> Void
+        onLocationDemand: @escaping @Sendable (MobileRideMapLocationDemandDto) -> Void
     ) {
         self.state = state
         self.clock = clock
@@ -384,8 +384,8 @@ actor CutoutSessionRideMapRecorder: CutoutSessionRideMapRecording {
     }
 
     private func synchronizeLocationDemand() {
-        let active = state?.currentSnapshot(atMs: clock.now().rawValue)?.state == .active
-        onLocationDemand(active)
+        let demand = state?.currentSnapshot(atMs: clock.now().rawValue)?.locationAcquisition?.demand ?? .idle
+        onLocationDemand(demand)
     }
 
     private func requireState() throws -> MobileRideMapState {

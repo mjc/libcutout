@@ -513,6 +513,8 @@ public struct MobileRideMapSnapshotDto: Equatable, Hashable, Sendable {
     public let recordingToken: MobileRideMapRecordingTokenDto?
     /// Rust-owned lifecycle identity used to target commands at this displayed ride.
     public let commandToken: MobileRideMapCommandTokenDto?
+    /// Rust-selected native location effects and availability for this ride snapshot.
+    public let locationAcquisition: MobileRideMapLocationAcquisitionDto?
     public let state: MobileRideMapStateDto
     public let allowedActions: [MobileRideMapActionDto]
     public let telemetryState: MobileRideMapTelemetryStateDto
@@ -526,6 +528,7 @@ public struct MobileRideMapSnapshotDto: Equatable, Hashable, Sendable {
         revision: UInt64 = 0,
         recordingToken: MobileRideMapRecordingTokenDto? = nil,
         commandToken: MobileRideMapCommandTokenDto? = nil,
+        locationAcquisition: MobileRideMapLocationAcquisitionDto? = nil,
         state: MobileRideMapStateDto,
         allowedActions: [MobileRideMapActionDto] = [],
         telemetryState: MobileRideMapTelemetryStateDto = .unknown,
@@ -538,6 +541,7 @@ public struct MobileRideMapSnapshotDto: Equatable, Hashable, Sendable {
         self.revision = revision
         self.recordingToken = recordingToken
         self.commandToken = commandToken
+        self.locationAcquisition = locationAcquisition
         self.state = state
         self.allowedActions = allowedActions
         self.telemetryState = telemetryState
@@ -942,6 +946,12 @@ public final class MobileRideMapState: @unchecked Sendable {
         atMs: UInt64
     ) throws -> MobileRideMapLifecycleCommand {
         try withCore { try $0.beginLifecycleCommand(event: event, expected: expected, atMs: atMs) }
+    }
+
+    public func observeLocationEnvironment(
+        _ environment: MobileRideMapLocationEnvironmentDto
+    ) throws -> MobileRideMapLocationAcquisitionDto {
+        try withCore { $0.observeLocationEnvironment(environment: environment) }
     }
 
     public func pollLifecycleCommand(
@@ -1614,6 +1624,7 @@ public final class MobileRideMapState: @unchecked Sendable {
             revision: snapshot.revision,
             recordingToken: snapshot.recordingToken,
             commandToken: snapshot.commandToken,
+            locationAcquisition: snapshot.locationAcquisition,
             state: mapState(snapshot.state),
             allowedActions: snapshot.allowedActions.compactMap(mapAction),
             telemetryState: map(snapshot.telemetryState),

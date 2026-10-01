@@ -4815,6 +4815,133 @@ pub struct MobileRideMapCommandTokenDto {
     pub generation: u64,
 }
 
+/// Native location-service evidence passed to Rust before applying acquisition effects.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileRideMapLocationEnvironmentDto {
+    /// Permission state reported by Core Location.
+    pub authorization: MobileRideMapLocationAuthorizationDto,
+    /// Whether the operating system has location services enabled.
+    pub services_enabled: bool,
+    /// Whether the provider reported a recoverable unavailability.
+    pub temporarily_unavailable: bool,
+}
+
+/// Native location authorization reported to the Rust recording owner.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileRideMapLocationAuthorizationDto {
+    /// The rider has not chosen a permission level.
+    NotDetermined,
+    /// The rider denied location access.
+    Denied,
+    /// System policy restricts location access.
+    Restricted,
+    /// Location is available while the app is in use.
+    WhenInUse,
+    /// Location is available in the background.
+    Always,
+}
+
+/// Native acquisition action selected by the Rust recording owner.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileRideMapLocationDemandDto {
+    /// Stop location updates and do not request permission.
+    Idle,
+    /// Ask Core Location for when-in-use permission.
+    RequestPermission,
+    /// Keep location updates active for the ride.
+    Record,
+}
+
+/// Rust's interpretation of native location evidence and required acquisition effect.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileRideMapLocationAcquisitionDto {
+    /// Lifecycle revision used to derive the decision.
+    pub revision: u64,
+    /// Availability state derived by Rust.
+    pub availability: MobileRideMapAvailabilityDto,
+    /// Native location effect selected by Rust.
+    pub demand: MobileRideMapLocationDemandDto,
+}
+
+/// Location availability projected by the Rust recording owner.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileRideMapAvailabilityDto {
+    /// No native location environment has been observed yet.
+    Checking,
+    /// Location services and permission are available.
+    Ready,
+    /// An active recording needs a permission request.
+    PermissionRequired,
+    /// The rider denied location access.
+    Denied,
+    /// System policy restricted location access.
+    Restricted,
+    /// System location services are disabled.
+    ServicesDisabled,
+    /// Location may recover without changing the permission or service state.
+    TemporarilyUnavailable,
+}
+
+impl From<MobileRideMapLocationEnvironmentDto> for persistence::LocationEnvironment {
+    fn from(environment: MobileRideMapLocationEnvironmentDto) -> Self {
+        Self {
+            authorization: match environment.authorization {
+                MobileRideMapLocationAuthorizationDto::NotDetermined => {
+                    persistence::LocationAuthorization::NotDetermined
+                }
+                MobileRideMapLocationAuthorizationDto::Denied => {
+                    persistence::LocationAuthorization::Denied
+                }
+                MobileRideMapLocationAuthorizationDto::Restricted => {
+                    persistence::LocationAuthorization::Restricted
+                }
+                MobileRideMapLocationAuthorizationDto::WhenInUse => {
+                    persistence::LocationAuthorization::WhenInUse
+                }
+                MobileRideMapLocationAuthorizationDto::Always => {
+                    persistence::LocationAuthorization::Always
+                }
+            },
+            services_enabled: environment.services_enabled,
+            temporarily_unavailable: environment.temporarily_unavailable,
+        }
+    }
+}
+
+impl From<persistence::LocationAcquisition> for MobileRideMapLocationAcquisitionDto {
+    fn from(acquisition: persistence::LocationAcquisition) -> Self {
+        Self {
+            revision: acquisition.revision,
+            availability: match acquisition.availability {
+                persistence::LocationAvailability::Checking => {
+                    MobileRideMapAvailabilityDto::Checking
+                }
+                persistence::LocationAvailability::Ready => MobileRideMapAvailabilityDto::Ready,
+                persistence::LocationAvailability::PermissionRequired => {
+                    MobileRideMapAvailabilityDto::PermissionRequired
+                }
+                persistence::LocationAvailability::Denied => MobileRideMapAvailabilityDto::Denied,
+                persistence::LocationAvailability::Restricted => {
+                    MobileRideMapAvailabilityDto::Restricted
+                }
+                persistence::LocationAvailability::ServicesDisabled => {
+                    MobileRideMapAvailabilityDto::ServicesDisabled
+                }
+                persistence::LocationAvailability::TemporarilyUnavailable => {
+                    MobileRideMapAvailabilityDto::TemporarilyUnavailable
+                }
+            },
+            demand: match acquisition.demand {
+                persistence::LocationDemand::Idle => MobileRideMapLocationDemandDto::Idle,
+                persistence::LocationDemand::RequestPermission => {
+                    MobileRideMapLocationDemandDto::RequestPermission
+                }
+                persistence::LocationDemand::Record => MobileRideMapLocationDemandDto::Record,
+            },
+        }
+    }
+}
+
 /// Immutable snapshot of the Rust-owned recording.
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct MobileRideMapCoreSnapshotDto {
@@ -4826,6 +4953,8 @@ pub struct MobileRideMapCoreSnapshotDto {
     pub recording_token: Option<MobileRideMapRecordingTokenDto>,
     /// Correlation token for lifecycle commands targeting this ride snapshot.
     pub command_token: Option<MobileRideMapCommandTokenDto>,
+    /// Rust-owned native location policy for this recording snapshot.
+    pub location_acquisition: MobileRideMapLocationAcquisitionDto,
     /// Current durable lifecycle state.
     pub state: MobileRideLifecycleStateDto,
     /// Rust-owned actions for this state; Start creates a new recording.
@@ -8178,6 +8307,7 @@ struct MobileRideMapCoreInner {
     ride_id: Option<MobileRideIdDto>,
     revision: u64,
     generation: u64,
+    location_environment: Option<persistence::LocationEnvironment>,
     recorder: ride_maps::RideMapRecorder,
     admission_recorder: ride_maps::RideMapRecorder,
     music_history_policy: CoreMusicHistoryPolicy,
@@ -9115,6 +9245,7 @@ impl MobileRideMapCoreInner {
             ride_id: None,
             revision: 0,
             generation: 0,
+            location_environment: None,
             recorder: ride_maps::RideMapRecorder::new(),
             admission_recorder: ride_maps::RideMapRecorder::new(),
             music_history_policy: CoreMusicHistoryPolicy::Disabled,
@@ -9424,6 +9555,16 @@ impl MobileRideMapCoreInner {
         }
     }
 
+    fn location_acquisition(&self) -> MobileRideMapLocationAcquisitionDto {
+        persistence::location_acquisition_for(
+            self.revision,
+            self.recorder.state(),
+            self.location_environment,
+            false,
+        )
+        .into()
+    }
+
     fn snapshot(&self, state: MobileRideLifecycleStateDto) -> MobileRideMapCoreSnapshotDto {
         MobileRideMapCoreSnapshotDto {
             ride_id: self
@@ -9447,6 +9588,7 @@ impl MobileRideMapCoreInner {
                     ride_id: mobile_ride_id_string(ride_id),
                     generation: self.generation,
                 }),
+            location_acquisition: self.location_acquisition(),
             state,
             allowed_actions: map_ride_lifecycle_state(state)
                 .recording_actions()
@@ -10111,6 +10253,20 @@ impl MobileRideMapCore {
             .inner
             .save_ride_autostart_enabled(enabled)
             .map_err(map_storage_core_error)
+    }
+
+    /// Updates native location evidence and returns Rust's acquisition decision.
+    pub fn observe_location_environment(
+        &self,
+        environment: MobileRideMapLocationEnvironmentDto,
+    ) -> MobileRideMapLocationAcquisitionDto {
+        let environment = persistence::LocationEnvironment::from(environment);
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        if state.location_environment != Some(environment) {
+            state.location_environment = Some(environment);
+            state.revision = state.revision.saturating_add(1);
+        }
+        state.location_acquisition()
     }
 
     /// Returns the active ride snapshot, if one exists.
@@ -15995,6 +16151,28 @@ mod tests {
                 .expect("replacement snapshot remains available")
                 .state,
             MobileRideLifecycleStateDto::Active
+        );
+    }
+
+    #[test]
+    fn mobile_ride_snapshot_exposes_rust_owned_location_demand() {
+        let core = MobileRideMapCore::new();
+        core.observe_location_environment(MobileRideMapLocationEnvironmentDto {
+            authorization: MobileRideMapLocationAuthorizationDto::WhenInUse,
+            services_enabled: true,
+            temporarily_unavailable: false,
+        });
+
+        let active = core.start_gps_only(1_000).expect("GPS-only ride starts");
+        assert_eq!(
+            active.location_acquisition.demand,
+            MobileRideMapLocationDemandDto::Record
+        );
+
+        let paused = core.pause(1_100).expect("active ride pauses");
+        assert_eq!(
+            paused.location_acquisition.demand,
+            MobileRideMapLocationDemandDto::Idle
         );
     }
 

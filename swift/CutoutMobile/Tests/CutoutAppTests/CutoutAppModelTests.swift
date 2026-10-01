@@ -706,20 +706,20 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(driver.tripMeterResetCount, 0)
         XCTAssertEqual(driver.resetRideMapLocationAdmissionCount, 1)
         XCTAssertTrue(model.liveRide.snapshot?.state == .active)
-        XCTAssertEqual(driver.rideLocationDemandStates, [.active])
+        XCTAssertEqual(driver.rideLocationDemandStates, [.record])
         let paused = await model.pauseRideMap()
         XCTAssertTrue(paused)
         XCTAssertFalse(model.liveRide.snapshot?.state == .active)
         XCTAssertTrue(model.liveRide.snapshot?.state == .paused)
-        XCTAssertEqual(driver.rideLocationDemandStates, [.active, .paused])
+        XCTAssertEqual(driver.rideLocationDemandStates, [.record, .idle])
         let resumed = await model.resumeRideMap()
         XCTAssertTrue(resumed)
-        XCTAssertEqual(driver.rideLocationDemandStates, [.active, .paused, .active])
+        XCTAssertEqual(driver.rideLocationDemandStates, [.record, .idle, .record])
         let stopped = await model.stopRideMap()
         XCTAssertTrue(stopped)
         XCTAssertFalse(model.liveRide.snapshot?.state == .active)
         XCTAssertFalse(model.liveRide.snapshot?.state == .paused)
-        XCTAssertEqual(driver.rideLocationDemandStates.last, .stopped)
+        XCTAssertEqual(driver.rideLocationDemandStates.last, .idle)
     }
 
     @MainActor
@@ -3375,7 +3375,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     private(set) var disconnectCount = 0
     private(set) var tripMeterResetCount = 0
     private(set) var resetRideMapLocationAdmissionCount = 0
-    private(set) var rideLocationDemandStates = [MobileRideMapStateDto]()
+    private(set) var rideLocationDemandStates = [MobileRideMapLocationDemandDto]()
     var nowValue: UInt64 = 0
 
     private func recordCallbackRegistration(_ name: String) {
@@ -3405,6 +3405,13 @@ private final class SessionDriverSpy: CutoutSessionDriving {
             _ = try? state.discard()
         }
         self.rideMapState = state
+        _ = try? state.observeLocationEnvironment(
+            MobileRideMapLocationEnvironmentDto(
+                authorization: .whenInUse,
+                servicesEnabled: true,
+                temporarilyUnavailable: false
+            )
+        )
     }
 
     func setRideMapUnavailable(_ unavailable: Bool) {
@@ -3523,8 +3530,8 @@ private final class SessionDriverSpy: CutoutSessionDriving {
         resetRideMapLocationAdmissionCount += 1
     }
 
-    func updateRideLocationDemand(for state: MobileRideMapStateDto) {
-        rideLocationDemandStates.append(state)
+    func updateRideLocationDemand(_ demand: MobileRideMapLocationDemandDto) {
+        rideLocationDemandStates.append(demand)
     }
 
     func startRideMapGpsOnly(atMs: UInt64, musicHistoryPolicy: MobileMusicHistoryPolicyDto) async throws

@@ -77,6 +77,57 @@ pub struct LocationAcquisition {
     pub demand: LocationDemand,
 }
 
+/// Applies the shared location policy to a lifecycle snapshot and native environment.
+#[must_use]
+pub fn location_acquisition_for(
+    revision: u64,
+    lifecycle: Option<RideLifecycleState>,
+    environment: Option<LocationEnvironment>,
+    diagnostic_capture_location_active: bool,
+) -> LocationAcquisition {
+    let availability = match environment {
+        None => LocationAvailability::Checking,
+        Some(environment) if !environment.services_enabled => {
+            LocationAvailability::ServicesDisabled
+        }
+        Some(LocationEnvironment {
+            authorization: LocationAuthorization::NotDetermined,
+            ..
+        }) => LocationAvailability::PermissionRequired,
+        Some(LocationEnvironment {
+            authorization: LocationAuthorization::Denied,
+            ..
+        }) => LocationAvailability::Denied,
+        Some(LocationEnvironment {
+            authorization: LocationAuthorization::Restricted,
+            ..
+        }) => LocationAvailability::Restricted,
+        Some(LocationEnvironment {
+            authorization: LocationAuthorization::WhenInUse | LocationAuthorization::Always,
+            temporarily_unavailable: true,
+            ..
+        }) => LocationAvailability::TemporarilyUnavailable,
+        Some(_) => LocationAvailability::Ready,
+    };
+    let demand =
+        if lifecycle == Some(RideLifecycleState::Active) || diagnostic_capture_location_active {
+            match availability {
+                LocationAvailability::Ready | LocationAvailability::TemporarilyUnavailable => {
+                    LocationDemand::Record
+                }
+                LocationAvailability::PermissionRequired => LocationDemand::RequestPermission,
+                _ => LocationDemand::Idle,
+            }
+        } else {
+            LocationDemand::Idle
+        };
+    LocationAcquisition {
+        revision,
+        availability,
+        demand,
+    }
+}
+
 /// Correlates acquired input with a ride and its recording generation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RecordingToken {
@@ -183,48 +234,12 @@ impl RideRecordingSession {
     /// Projects native acquisition work from location evidence and the current ride lifecycle.
     #[must_use]
     pub fn location_acquisition(&self) -> LocationAcquisition {
-        let availability = match self.location_environment {
-            None => LocationAvailability::Checking,
-            Some(environment) if !environment.services_enabled => {
-                LocationAvailability::ServicesDisabled
-            }
-            Some(LocationEnvironment {
-                authorization: LocationAuthorization::NotDetermined,
-                ..
-            }) => LocationAvailability::PermissionRequired,
-            Some(LocationEnvironment {
-                authorization: LocationAuthorization::Denied,
-                ..
-            }) => LocationAvailability::Denied,
-            Some(LocationEnvironment {
-                authorization: LocationAuthorization::Restricted,
-                ..
-            }) => LocationAvailability::Restricted,
-            Some(LocationEnvironment {
-                authorization: LocationAuthorization::WhenInUse | LocationAuthorization::Always,
-                temporarily_unavailable: true,
-                ..
-            }) => LocationAvailability::TemporarilyUnavailable,
-            Some(_) => LocationAvailability::Ready,
-        };
-        let demand = if self.recorder.state() == Some(RideLifecycleState::Active)
-            || self.diagnostic_capture_location_active
-        {
-            match availability {
-                LocationAvailability::Ready | LocationAvailability::TemporarilyUnavailable => {
-                    LocationDemand::Record
-                }
-                LocationAvailability::PermissionRequired => LocationDemand::RequestPermission,
-                _ => LocationDemand::Idle,
-            }
-        } else {
-            LocationDemand::Idle
-        };
-        LocationAcquisition {
-            revision: self.revision,
-            availability,
-            demand,
-        }
+        location_acquisition_for(
+            self.revision,
+            self.recorder.state(),
+            self.location_environment,
+            self.diagnostic_capture_location_active,
+        )
     }
 
     /// Returns the last published recording, or `None` before a recording starts.

@@ -882,7 +882,7 @@ private struct HistoricalRideQuery: RideHistoryQuerying {
         }
         func submitDeviceAction(token: ConnectionAttemptToken, id: DeviceActionID) throws {}
         func now() -> MonotonicMilliseconds { MonotonicMilliseconds(0) }
-        func updateRideLocationDemand(for state: MobileRideMapStateDto) {}
+        func updateRideLocationDemand(_: MobileRideMapLocationDemandDto) {}
         func startRideMapGpsOnly(atMs: UInt64, musicHistoryPolicy: MobileMusicHistoryPolicyDto) async throws
             -> MobileRideMapSnapshotDto
         {

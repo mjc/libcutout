@@ -49,7 +49,7 @@ protocol CutoutSessionDriving: AnyObject {
     func resetTripMeterForNewRide(token: ConnectionAttemptToken) -> Bool
 
     func resetRideMapLocationAdmission()
-    func updateRideLocationDemand(for state: MobileRideMapStateDto)
+    func updateRideLocationDemand(_ demand: MobileRideMapLocationDemandDto)
     func startRideMapGpsOnly(atMs: UInt64, musicHistoryPolicy: MobileMusicHistoryPolicyDto) async throws
         -> MobileRideMapSnapshotDto
     func pauseRideMap(expected: MobileRideMapCommandTokenDto, atMs: UInt64) async throws -> MobileRideMapSnapshotDto

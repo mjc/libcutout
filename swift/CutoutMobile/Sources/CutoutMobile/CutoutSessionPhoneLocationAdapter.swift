@@ -14,7 +14,7 @@ protocol CutoutSessionPhoneLocationAdapting: AnyObject {
     var authorizationStatus: CLAuthorizationStatus { get }
     func start()
     func clear()
-    func updateDemand(_ demanded: Bool)
+    func updateDemand(_ demand: MobileRideMapLocationDemandDto)
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager)
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation])
 }
@@ -27,7 +27,7 @@ final class CutoutSessionPhoneLocationAdapter: NSObject, CutoutSessionPhoneLocat
     private let onSnapshot: @MainActor (MobilePhoneLocationSnapshotDto, MonotonicMilliseconds) -> Void
     private let onLocationUpdate: @MainActor (PhoneLocationUpdate) -> Void
     private let onAvailabilityChange: @MainActor () -> Void
-    private var locationUpdatesDemanded = false
+    private var locationDemand = MobileRideMapLocationDemandDto.idle
     private var locationManagerUpdatesStarted = false
     private var didRequestWhenInUseAuthorization = false
     private var state = MobilePhoneLocationState()
@@ -70,13 +70,13 @@ final class CutoutSessionPhoneLocationAdapter: NSObject, CutoutSessionPhoneLocat
         state.clear()
     }
 
-    func updateDemand(_ demanded: Bool) {
-        locationUpdatesDemanded = demanded
+    func updateDemand(_ demand: MobileRideMapLocationDemandDto) {
+        locationDemand = demand
         #if os(iOS)
-            locationManager.allowsBackgroundLocationUpdates = demanded
+            locationManager.allowsBackgroundLocationUpdates = demand == .record
         #endif
 
-        guard demanded else {
+        guard demand != .idle else {
             stopUpdatesIfNeeded()
             return
         }
@@ -86,19 +86,26 @@ final class CutoutSessionPhoneLocationAdapter: NSObject, CutoutSessionPhoneLocat
             return
         }
 
-        switch locationManager.authorizationStatus {
-        case .notDetermined:
+        switch (demand, locationManager.authorizationStatus) {
+        case (.requestPermission, .notDetermined):
             guard !didRequestWhenInUseAuthorization else { return }
             didRequestWhenInUseAuthorization = true
             locationManager.requestWhenInUseAuthorization()
-        case .authorizedAlways, .authorizedWhenInUse:
+        case (.requestPermission, _), (.record, .notDetermined):
+            onAvailabilityChange()
+        case (.record, .authorizedAlways), (.record, .authorizedWhenInUse):
             locationManager.startUpdatingLocation()
             locationManagerUpdatesStarted = true
-        case .denied, .restricted:
+        case (.record, .denied), (.record, .restricted):
             stopUpdatesIfNeeded()
             onAvailabilityChange()
-        @unknown default:
+        case (.record, _):
             stopUpdatesIfNeeded()
+            onAvailabilityChange()
+        case (.idle, _):
+            stopUpdatesIfNeeded()
+        case (.requestPermission, .authorizedAlways), (.requestPermission, .authorizedWhenInUse),
+            (.requestPermission, .denied), (.requestPermission, .restricted):
             onAvailabilityChange()
         }
     }
@@ -106,7 +113,7 @@ final class CutoutSessionPhoneLocationAdapter: NSObject, CutoutSessionPhoneLocat
     nonisolated func locationManagerDidChangeAuthorization(_: CLLocationManager) {
         MainActor.assumeIsolated {
             onAvailabilityChange()
-            updateDemand(locationUpdatesDemanded)
+            updateDemand(locationDemand)
         }
     }
 

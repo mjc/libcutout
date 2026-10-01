@@ -605,9 +605,9 @@ public final class CutoutSessionCore: NSObject {
                 recordDiagnostic: { message in
                     reference.value?.recordRideMapDiagnostic(message)
                 },
-                onLocationDemand: { active in
+                onLocationDemand: { demand in
                     Task { @MainActor in
-                        reference.value?.phoneLocationAdapter.updateDemand(active)
+                        reference.value?.phoneLocationAdapter.updateDemand(demand)
                     }
                 }
             )
@@ -644,8 +644,8 @@ public final class CutoutSessionCore: NSObject {
         onAvailability: { [weak self] availability in
             self?.publishOnMain { self?.onRideMapAvailabilityChange?(availability) }
         },
-        onLocationDemand: { [weak self] state in
-            self?.updateRideLocationDemand(for: state)
+        onLocationDemand: { [weak self] demand in
+            self?.updateRideLocationDemand(demand)
         }
     )
     private var didResolveBluetoothRestoration = false
@@ -2364,25 +2364,52 @@ public final class CutoutSessionCore: NSObject {
 
     @MainActor
     private func publishRideMapAvailabilityOnMain() {
+        let authorization: MobileRideMapLocationAuthorizationDto
+        switch phoneLocationAdapter.authorizationStatus {
+        case .notDetermined:
+            authorization = .notDetermined
+        case .denied:
+            authorization = .denied
+        case .restricted:
+            authorization = .restricted
+        case .authorizedWhenInUse:
+            authorization = .whenInUse
+        case .authorizedAlways:
+            authorization = .always
+        @unknown default:
+            authorization = .restricted
+        }
+        let environment = MobileRideMapLocationEnvironmentDto(
+            authorization: authorization,
+            servicesEnabled: CLLocationManager.locationServicesEnabled(),
+            temporarilyUnavailable: false
+        )
+        let acquisition = try? rideMapStateForInitialization?.observeLocationEnvironment(environment)
+        phoneLocationAdapter.updateDemand(acquisition?.demand ?? .idle)
+
         let availability: MobileRideMapAvailability
         if rideMapStorageStatus.error != nil {
             availability = .storageUnavailable
         } else if !rideMapStorageStatus.isReady {
             availability = .checking
-        } else if !CLLocationManager.locationServicesEnabled() {
-            availability = .servicesDisabled
         } else {
-            switch phoneLocationAdapter.authorizationStatus {
-            case .notDetermined:
-                availability = .permissionRequired
-            case .authorizedAlways, .authorizedWhenInUse:
+            switch acquisition?.availability {
+            case .checking:
+                availability = .checking
+            case .ready:
                 availability = .ready
+            case .permissionRequired:
+                availability = .permissionRequired
             case .denied:
                 availability = .denied
             case .restricted:
                 availability = .restricted
-            @unknown default:
+            case .servicesDisabled:
+                availability = .servicesDisabled
+            case .temporarilyUnavailable:
                 availability = .locationUnavailable
+            case nil:
+                availability = .checking
             }
         }
         rideMapPresentation.publishAvailability(availability)
@@ -3758,8 +3785,8 @@ extension CutoutSessionCore {
 
 extension CutoutSessionCore {
     @MainActor
-    public func updateRideLocationDemand(for state: MobileRideMapStateDto) {
-        phoneLocationAdapter.updateDemand(state == .active)
+    public func updateRideLocationDemand(_ demand: MobileRideMapLocationDemandDto) {
+        phoneLocationAdapter.updateDemand(demand)
     }
 
     @MainActor
