@@ -3805,6 +3805,11 @@ extension CutoutSessionCore {
         try await rideMapRecorder.checkpoint()
     }
 
+    /// Persists an active ride pause before explicit transport teardown.
+    public func prepareRideMapForDisconnect() async throws {
+        try await rideMapRecorder.prepareForDisconnect()
+    }
+
     /// Clears the Rust-owned location context before starting a new capture.
     @MainActor
     public func resetRideMapLocationAdmission() {

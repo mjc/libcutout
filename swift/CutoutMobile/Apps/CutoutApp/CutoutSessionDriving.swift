@@ -51,6 +51,7 @@ protocol CutoutSessionDriving: AnyObject {
     func updateRideLocationDemand(for state: MobileRideMapStateDto)
     func startRideMapGpsOnly(atMs: UInt64) async throws -> MobileRideMapSnapshotDto
     func pauseRideMap(atMs: UInt64) async throws -> MobileRideMapSnapshotDto
+    func prepareRideMapForDisconnect() async throws
     func resumeRideMap(atMs: UInt64) async throws -> MobileRideMapSnapshotDto
     func stopRideMap(atMs: UInt64) async throws -> MobileRideMapSnapshotDto
     func saveRideMap() async throws -> MobileRideMapSnapshotDto
@@ -62,6 +63,7 @@ extension CutoutSessionCore: CutoutSessionDriving {}
 
 extension CutoutSessionDriving {
     func checkpointRideMap() async throws {}
+    func prepareRideMapForDisconnect() async throws {}
 
     var connectionSnapshot: ConnectionSnapshot {
         rideSessionStateHandle.connectionAttemptSnapshot()

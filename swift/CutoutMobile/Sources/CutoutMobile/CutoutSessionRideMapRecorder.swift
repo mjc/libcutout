@@ -30,6 +30,7 @@ protocol CutoutSessionRideMapRecording: AnyObject {
     func ingestLocation(_ update: PhoneLocationUpdate)
     func startGpsOnly(atMs: UInt64) async throws -> MobileRideMapSnapshotDto
     func pause(atMs: UInt64) async throws -> MobileRideMapSnapshotDto
+    func prepareForDisconnect() async throws
     func resume(atMs: UInt64) async throws -> MobileRideMapSnapshotDto
     func stop(atMs: UInt64) async throws -> MobileRideMapSnapshotDto
     func save() async throws -> MobileRideMapSnapshotDto
@@ -106,6 +107,15 @@ actor CutoutSessionRideMapRecorder: CutoutSessionRideMapRecording {
         let snapshot = try await transition(.pause, atMs: atMs)
         synchronizeLocationDemand()
         return snapshot
+    }
+
+    func prepareForDisconnect() async throws {
+        guard state != nil else { return }
+        guard let snapshot = try requireState().prepareDisconnect(atMs: clock.now().rawValue) else {
+            return
+        }
+        synchronizeLocationDemand()
+        publishSnapshot(snapshot)
     }
 
     func resume(atMs: UInt64) async throws -> MobileRideMapSnapshotDto {

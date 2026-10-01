@@ -1332,17 +1332,21 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testDisconnectKeepsSavedDeviceUntilExplicitForget() {
+    func testDisconnectKeepsSavedDeviceUntilExplicitForget() async {
         let store = DevicePickerSelectionStore()
         store.save(platformIdentifier: "saved-device")
         defer { clear(store) }
-        let model = CutoutAppModel()
+        let model = CutoutAppModel(
+            core: SessionDriverSpy(rows: []),
+            selectedDeviceStore: store
+        )
 
-        model.disconnectTransport()
+        let disconnected = await model.disconnectTransport()
+        XCTAssertTrue(disconnected)
 
         XCTAssertEqual(store.platformIdentifier, "saved-device")
 
-        model.forgetSavedDevice()
+        await model.forgetSavedDevice()
 
         XCTAssertNil(store.platformIdentifier)
     }
@@ -1958,7 +1962,7 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testDisconnectIgnoresLateConnectionCallbacks() {
+    func testDisconnectIgnoresLateConnectionCallbacks() async {
         let row = DevicePickerRow(
             id: "vesc-1234",
             title: "VESC",
@@ -1982,7 +1986,8 @@ final class CutoutAppModelTests: XCTestCase {
         model.start()
         XCTAssertTrue(model.pair(platformIdentifier: row.id))
 
-        model.disconnectTransport()
+        let disconnected = await model.disconnectTransport()
+        XCTAssertTrue(disconnected)
         XCTAssertEqual(model.phase, .scanning)
         driver.onPhaseChange?(.scanning)
         driver.onPhaseChange?(.discoveringServices)
@@ -2000,6 +2005,33 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(model.phase, .scanning)
         XCTAssertNil(model.selectedRideTitle)
         XCTAssertNil(model.selectedConnectionRoute)
+    }
+
+    @MainActor
+    func testDisconnectDoesNotTearDownWhenDurableRidePauseFails() async {
+        let row = DevicePickerRow(
+            id: "disconnect-pause-failure",
+            title: "Test wheel",
+            subtitle: "VESC Onewheel",
+            detail: "Device 1234",
+            state: DevicePickerRowState(action: .use),
+            symbolName: "circle.hexagongrid.circle",
+            connectionRoute: .vescOnewheel
+        )
+        let driver = SessionDriverSpy(rows: [row])
+        driver.disconnectPreparation = { throw MobileRideMapError.storageError("disk unavailable") }
+        let model = CutoutAppModel(core: driver)
+        model.start()
+        XCTAssertTrue(model.pair(platformIdentifier: row.id))
+        let phaseBeforeDisconnect = model.phase
+
+        let disconnected = await model.disconnectTransport()
+        XCTAssertFalse(disconnected)
+
+        XCTAssertEqual(driver.disconnectPreparationCount, 1)
+        XCTAssertEqual(driver.disconnectCount, 0)
+        XCTAssertEqual(model.phase, phaseBeforeDisconnect)
+        XCTAssertEqual(model.rideMapCheckpointError, .storageError("disk unavailable"))
     }
 
     @MainActor
@@ -3279,6 +3311,8 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     private(set) var flushCaptureCount = 0
     private(set) var checkpointCount = 0
     var checkpointOperation: (() async throws -> Void)?
+    private(set) var disconnectPreparationCount = 0
+    var disconnectPreparation: (() async throws -> Void)?
     var duringFlush: (() -> Void)?
     var duringFlushAwait: (@MainActor () async -> Void)?
     private(set) var disconnectCount = 0
@@ -3383,6 +3417,10 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     func checkpointRideMap() async throws {
         checkpointCount += 1
         try await checkpointOperation?()
+    }
+    func prepareRideMapForDisconnect() async throws {
+        disconnectPreparationCount += 1
+        try await disconnectPreparation?()
     }
     func flushCapture() async -> Bool {
         flushCaptureCount += 1

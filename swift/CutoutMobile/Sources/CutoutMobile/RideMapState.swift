@@ -987,6 +987,11 @@ public final class MobileRideMapState: @unchecked Sendable {
         try transition { try $0.pauseAt(atMs: atMs) }
     }
 
+    /// Pauses an active ride before an explicit user-requested transport disconnect.
+    public func prepareDisconnect(atMs: UInt64) throws -> MobileRideMapSnapshotDto? {
+        try withCore { try $0.prepareDisconnect(atMs: atMs).map(mapSnapshot) }
+    }
+
     public func resume(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
         try transition { try $0.resumeAt(atMs: atMs) }
     }

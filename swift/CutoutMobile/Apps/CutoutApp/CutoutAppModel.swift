@@ -780,7 +780,18 @@ final class CutoutAppModel {
         }
     }
 
-    func disconnectTransport() {
+    @discardableResult
+    func disconnectTransport() async -> Bool {
+        do {
+            try await core.prepareRideMapForDisconnect()
+            rideMapCheckpointError = nil
+        } catch let error as MobileRideMapError {
+            rideMapCheckpointError = error
+            return false
+        } catch {
+            rideMapCheckpointError = .storageError(error.localizedDescription)
+            return false
+        }
         applyPhoneAlarmActions(core.rideSessionStateHandle.deactivatePhoneAlarmDevice())
         phoneAlarmSettings = nil
         endLiveActivity(reason: .disconnected)
@@ -792,14 +803,15 @@ final class CutoutAppModel {
         permitsStoredDeviceAutoPairing = false
         clearSettings()
         core.disconnectAndScan()
+        return true
     }
 
     private func clearSettings() {
         device.settings = nil
     }
 
-    func forgetSavedDevice() {
-        disconnectTransport()
+    func forgetSavedDevice() async {
+        guard await disconnectTransport() else { return }
         device.forgetSavedDevice()
     }
 

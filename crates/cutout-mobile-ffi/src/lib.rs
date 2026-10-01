@@ -10263,6 +10263,29 @@ impl MobileRideMapCore {
         self.transition_at(MobileRideEventDto::Pause, at_ms)
     }
 
+    /// Durably pauses an active ride before a rider-requested transport disconnect.
+    ///
+    /// Paused, stopped, saved, and absent rides are left unchanged. Automatic transport loss
+    /// must not call this operation. The transition is published only after storage accepts it.
+    ///
+    /// # Errors
+    ///
+    /// Returns a storage or readiness error without changing the active ride.
+    pub fn prepare_disconnect(
+        &self,
+        at_ms: u64,
+    ) -> Result<Option<MobileRideMapCoreSnapshotDto>, MobileRideMapCoreErrorDto> {
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        state.require_ready()?;
+        match state.recorder.state() {
+            Some(ride_maps::RideLifecycleState::Active) => state
+                .transition_inner_at(MobileRideEventDto::Pause, at_ms)
+                .map(Some),
+            Some(lifecycle) => Ok(Some(state.snapshot_at_logical(lifecycle.into(), at_ms))),
+            None => Ok(None),
+        }
+    }
+
     /// Evaluates the pause transition at the supplied monotonic timestamp.
     ///
     /// # Errors
@@ -21980,6 +22003,52 @@ mod tests {
                 .expect_err("stopped rides cannot resume"),
             MobileRideMapCoreErrorDto::InvalidTransition
         );
+    }
+
+    #[test]
+    fn mobile_ride_map_core_pauses_before_explicit_disconnect_and_preserves_state_on_failure() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-map-disconnect-{}.sqlite3",
+            Uuid::new_v4()
+        ));
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+        let state = restored_database_core(database.clone());
+        let active = state.start_gps_only(1_000).expect("ride starts");
+
+        let paused = state
+            .prepare_disconnect(2_000)
+            .expect("durable pause succeeds before disconnect")
+            .expect("active ride exists");
+
+        assert_eq!(paused.state, MobileRideLifecycleStateDto::Paused);
+        assert_eq!(paused.ride_id, active.ride_id);
+        database.shutdown().expect("database shuts down");
+        let _ = fs::remove_file(path);
+
+        let failed_path = std::env::temp_dir().join(format!(
+            "cutout-mobile-map-disconnect-failure-{}.sqlite3",
+            Uuid::new_v4()
+        ));
+        let database = open_ride_database(failed_path.to_string_lossy().into_owned())
+            .expect("failure-test database opens");
+        let state = restored_database_core(database.clone());
+        let active = state.start_gps_only(3_000).expect("second ride starts");
+        database.shutdown().expect("database worker stops");
+
+        assert!(state.prepare_disconnect(4_000).is_err());
+        assert_eq!(
+            state.current_snapshot(4_000).unwrap().state,
+            MobileRideLifecycleStateDto::Active
+        );
+        assert_eq!(
+            state.current_snapshot(4_000).unwrap().ride_id,
+            active.ride_id
+        );
+        let _ = fs::remove_file(failed_path);
     }
 
     #[test]

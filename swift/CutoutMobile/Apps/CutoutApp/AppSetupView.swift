@@ -79,7 +79,7 @@ struct AppSetupView: View {
                 if model.device.hasSavedDevice {
                     Section(localizedAppText("setup.device")) {
                         Button(localizedAppText("picker.saved_device.forget"), role: .destructive) {
-                            model.forgetSavedDevice()
+                            Task { @MainActor in await model.forgetSavedDevice() }
                         }
                         .accessibilityIdentifier("setup.forget-saved-device")
                     }

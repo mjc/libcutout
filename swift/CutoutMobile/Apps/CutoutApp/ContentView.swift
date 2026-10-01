@@ -175,8 +175,10 @@ struct ContentView: View {
     }
 
     private func disconnectAndReturnToPicker() {
-        model.disconnectTransport()
-        navigate(to: .devicePicker)
+        Task { @MainActor in
+            guard await model.disconnectTransport() else { return }
+            navigate(to: .devicePicker)
+        }
     }
 
     @ViewBuilder
