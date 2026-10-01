@@ -640,8 +640,7 @@ final class CutoutAppModel {
     }
 
     private func applyRideMapCommand(_ command: LiveRideCommand) async -> Bool {
-        guard let snapshot = await liveRide.perform(command) else { return false }
-        core.updateRideLocationDemand(snapshot.locationAcquisition?.demand ?? .idle)
+        guard await liveRide.perform(command) != nil else { return false }
         return true
     }
 

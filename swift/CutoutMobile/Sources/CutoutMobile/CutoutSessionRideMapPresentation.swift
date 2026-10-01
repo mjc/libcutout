@@ -7,26 +7,22 @@ final class CutoutSessionRideMapPresentation {
     private let onDecision: (MobileRideMapSnapshotDto, MobileRideMapDecisionDto) -> Void
     private let onError: (MobileRideMapErrorEvent) -> Void
     private let onAvailability: (MobileRideMapAvailability) -> Void
-    private let onLocationDemand: (MobileRideMapLocationDemandDto) -> Void
     private(set) var latestSnapshot: MobileRideMapSnapshotDto?
 
     init(
         onSnapshot: @escaping (MobileRideMapSnapshotDto) -> Void,
         onDecision: @escaping (MobileRideMapSnapshotDto, MobileRideMapDecisionDto) -> Void,
         onError: @escaping (MobileRideMapErrorEvent) -> Void,
-        onAvailability: @escaping (MobileRideMapAvailability) -> Void,
-        onLocationDemand: @escaping (MobileRideMapLocationDemandDto) -> Void
+        onAvailability: @escaping (MobileRideMapAvailability) -> Void
     ) {
         self.onSnapshot = onSnapshot
         self.onDecision = onDecision
         self.onError = onError
         self.onAvailability = onAvailability
-        self.onLocationDemand = onLocationDemand
     }
 
     func publishSnapshot(_ snapshot: MobileRideMapSnapshotDto) {
         latestSnapshot = snapshot
-        onLocationDemand(snapshot.locationAcquisition?.demand ?? .idle)
         onSnapshot(snapshot)
     }
 

@@ -605,9 +605,9 @@ public final class CutoutSessionCore: NSObject {
                 recordDiagnostic: { message in
                     reference.value?.recordRideMapDiagnostic(message)
                 },
-                onLocationDemand: { demand in
+                onLocationDemandChanged: {
                     Task { @MainActor in
-                        reference.value?.phoneLocationAdapter.updateDemand(demand)
+                        reference.value?.publishRideMapAvailabilityOnMain()
                     }
                 }
             )
@@ -643,9 +643,6 @@ public final class CutoutSessionCore: NSObject {
         },
         onAvailability: { [weak self] availability in
             self?.publishOnMain { self?.onRideMapAvailabilityChange?(availability) }
-        },
-        onLocationDemand: { [weak self] demand in
-            self?.updateRideLocationDemand(demand)
         }
     )
     private var didResolveBluetoothRestoration = false
@@ -2339,6 +2336,7 @@ public final class CutoutSessionCore: NSObject {
     @MainActor
     private func publishRideMapSnapshot(_ snapshot: MobileRideMapSnapshotDto) {
         rideMapPresentation.publishSnapshot(snapshot)
+        publishRideMapAvailabilityOnMain()
     }
 
     @MainActor
@@ -3784,11 +3782,6 @@ extension CutoutSessionCore {
 }
 
 extension CutoutSessionCore {
-    @MainActor
-    public func updateRideLocationDemand(_ demand: MobileRideMapLocationDemandDto) {
-        phoneLocationAdapter.updateDemand(demand)
-    }
-
     @MainActor
     public func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         phoneLocationAdapter.locationManagerDidChangeAuthorization(manager)
