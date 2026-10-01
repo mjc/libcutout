@@ -28,7 +28,8 @@ protocol CutoutSessionRideMapRecording: AnyObject {
         resetTripMeter: @escaping @Sendable (ConnectionAttemptToken) -> Void
     )
     func ingestLocation(_ update: PhoneLocationUpdate)
-    func startGpsOnly(atMs: UInt64) async throws -> MobileRideMapSnapshotDto
+    func startGpsOnly(atMs: UInt64, musicHistoryPolicy: MobileMusicHistoryPolicyDto) async throws
+        -> MobileRideMapSnapshotDto
     func pause(atMs: UInt64) async throws -> MobileRideMapSnapshotDto
     func prepareForDisconnect() async throws
     func resume(atMs: UInt64) async throws -> MobileRideMapSnapshotDto
@@ -96,9 +97,11 @@ actor CutoutSessionRideMapRecorder: CutoutSessionRideMapRecording {
         }
     }
 
-    func startGpsOnly(atMs: UInt64) async throws -> MobileRideMapSnapshotDto {
+    func startGpsOnly(atMs: UInt64, musicHistoryPolicy: MobileMusicHistoryPolicyDto) async throws
+        -> MobileRideMapSnapshotDto
+    {
         let state = try requireState()
-        let snapshot = try await state.startGpsOnlyCommand(atMs: atMs)
+        let snapshot = try await state.startGpsOnlyCommand(atMs: atMs, musicHistoryPolicy: musicHistoryPolicy)
         synchronizeLocationDemand()
         return snapshot
     }

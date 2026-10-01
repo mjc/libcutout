@@ -891,12 +891,19 @@ public final class MobileRideMapState: @unchecked Sendable {
         }
     }
 
-    public func beginStartGpsOnlyCommand(atMs: UInt64) throws -> MobileRideMapLifecycleCommand {
-        try withCore { try $0.beginStartGpsOnlyCommand(atMs: atMs) }
+    public func beginStartGpsOnlyCommand(
+        atMs: UInt64,
+        musicHistoryPolicy: MobileMusicHistoryPolicyDto
+    ) throws -> MobileRideMapLifecycleCommand {
+        try withCore { try $0.beginStartGpsOnlyCommand(atMs: atMs, musicHistoryPolicy: musicHistoryPolicy) }
     }
 
-    public func startGpsOnlyCommand(atMs: UInt64) async throws -> MobileRideMapSnapshotDto {
-        try await completeLifecycleCommand(beginStartGpsOnlyCommand(atMs: atMs))
+    public func startGpsOnlyCommand(
+        atMs: UInt64,
+        musicHistoryPolicy: MobileMusicHistoryPolicyDto
+    ) async throws -> MobileRideMapSnapshotDto {
+        try await completeLifecycleCommand(
+            beginStartGpsOnlyCommand(atMs: atMs, musicHistoryPolicy: musicHistoryPolicy))
     }
 
     public func beginVerifiedConnectionAdmission(

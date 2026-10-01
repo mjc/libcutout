@@ -6,6 +6,74 @@ import XCTest
 
 @MainActor
 final class MusicFeatureModelTests: XCTestCase {
+    func testNewRideHistoryAdoptionReadsRustPolicyWithoutWritingSavedDefault() async throws {
+        let suite = try makeDefaults()
+        defer { suite.defaults.removePersistentDomain(forName: suite.name) }
+        let policyStore = MusicHistoryPolicyStore(defaults: suite.defaults)
+        policyStore.set(.humanReadable)
+        let state = MobileRideMapState()
+        _ = try await state.startGpsOnlyCommand(atMs: 100, musicHistoryPolicy: .opaqueItem)
+        var captureWasCleared = false
+        let model = makeModel(
+            state: state,
+            defaults: suite.defaults,
+            historyPolicyStore: policyStore,
+            updateCaptureObservation: { captureWasCleared = $0 == nil }
+        )
+        model.setHistoryPersistenceError(.storageError("previous ride failure"))
+
+        let error = await model.adoptHistoryForNewRideAsync()
+
+        XCTAssertNil(error)
+        XCTAssertTrue(captureWasCleared)
+        XCTAssertEqual(model.historyPolicy, .opaqueItem)
+        XCTAssertEqual(state.currentMusicHistoryPolicy(), .opaqueItem)
+        XCTAssertEqual(policyStore.policy, .humanReadable)
+        XCTAssertTrue(model.timelineEvents.isEmpty)
+        XCTAssertFalse(model.historyUnavailable)
+        XCTAssertNil(model.historySaveError)
+    }
+
+    func testNewRideHistoryAdoptionPreservesDeletedHistory() async throws {
+        let suite = try makeDefaults()
+        defer { suite.defaults.removePersistentDomain(forName: suite.name) }
+        let policyStore = MusicHistoryPolicyStore(defaults: suite.defaults)
+        policyStore.set(.humanReadable)
+        let state = MobileRideMapState()
+        _ = try await state.startGpsOnlyCommand(atMs: 100, musicHistoryPolicy: .humanReadable)
+        try await state.deleteCurrentMusicHistoryAsync()
+        let model = makeModel(state: state, defaults: suite.defaults, historyPolicyStore: policyStore)
+
+        let error = await model.adoptHistoryForNewRideAsync()
+
+        XCTAssertNil(error)
+        XCTAssertEqual(state.currentMusicHistory()?.status, .deleted)
+        XCTAssertEqual(state.currentMusicHistoryPolicy(), .disabled)
+        XCTAssertEqual(model.historyPolicy, .disabled)
+        XCTAssertTrue(model.timelineEvents.isEmpty)
+        XCTAssertEqual(policyStore.policy, .humanReadable)
+    }
+
+    func testNewRideHistoryReadbackFailureRemainsVisibleAndClearsTimeline() async throws {
+        let suite = try makeDefaults()
+        defer { suite.defaults.removePersistentDomain(forName: suite.name) }
+        let state = MobileRideMapState(storageUnavailable: "history storage unavailable")
+        var reportedError: MobileRideMapError?
+        let model = makeModel(
+            state: state,
+            defaults: suite.defaults,
+            setRideHistoryError: { reportedError = $0 }
+        )
+
+        let error = await model.adoptHistoryForNewRideAsync()
+
+        XCTAssertEqual(error, .storageError("history storage unavailable"))
+        XCTAssertEqual(reportedError, error)
+        XCTAssertEqual(model.historySaveError, error)
+        XCTAssertEqual(model.historyPolicy, .disabled)
+        XCTAssertTrue(model.timelineEvents.isEmpty)
+    }
+
     func testSpotifyPlayWithoutSnapshotStillDispatchesExplicitProviderCommand() async throws {
         let suite = try makeDefaults()
         defer { suite.defaults.removePersistentDomain(forName: suite.name) }
@@ -815,7 +883,9 @@ private struct HistoricalRideQuery: RideHistoryQuerying {
         func submitDeviceAction(token: ConnectionAttemptToken, id: DeviceActionID) throws {}
         func now() -> MonotonicMilliseconds { MonotonicMilliseconds(0) }
         func updateRideLocationDemand(for state: MobileRideMapStateDto) {}
-        func startRideMapGpsOnly(atMs: UInt64) async throws -> MobileRideMapSnapshotDto {
+        func startRideMapGpsOnly(atMs: UInt64, musicHistoryPolicy: MobileMusicHistoryPolicyDto) async throws
+            -> MobileRideMapSnapshotDto
+        {
             throw MobileRideMapError.storageError("ride map unavailable")
         }
         func pauseRideMap(atMs: UInt64) async throws -> MobileRideMapSnapshotDto {

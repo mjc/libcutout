@@ -27,7 +27,7 @@ protocol LiveRideQuerying: Sendable {
 extension MobileRideMapState: LiveRideQuerying {}
 
 enum LiveRideCommand: Sendable {
-    case startGpsOnly(atMs: UInt64)
+    case startGpsOnly(atMs: UInt64, musicHistoryPolicy: MobileMusicHistoryPolicyDto)
     case pause(atMs: UInt64)
     case resume(atMs: UInt64)
     case stop(atMs: UInt64)

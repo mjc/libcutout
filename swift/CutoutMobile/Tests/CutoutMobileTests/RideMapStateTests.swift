@@ -10,6 +10,24 @@ private let vescReply: [UInt8] = [
 ]
 
 final class RideMapStateTests: XCTestCase {
+    func testGpsOnlyCommandPublishesSavedMusicPolicyWithCreatedRide() async throws {
+        for policy in [MobileMusicHistoryPolicyDto.disabled, .opaqueItem, .humanReadable] {
+            let state = MobileRideMapState()
+            let started = try await state.startGpsOnlyCommand(atMs: 1_000, musicHistoryPolicy: policy)
+
+            XCTAssertEqual(started.state, .active)
+            XCTAssertEqual(state.currentSnapshot()?.rideID, started.rideID)
+            XCTAssertEqual(state.currentMusicHistoryPolicy(), policy)
+            let history = try await state.currentMusicHistoryAsync()
+            XCTAssertTrue(history?.events.isEmpty ?? true)
+            switch policy {
+            case .disabled: XCTAssertEqual(history?.status, .disabled)
+            case .opaqueItem: XCTAssertEqual(history?.status, .redacted)
+            case .humanReadable: XCTAssertEqual(history?.status, .available)
+            }
+        }
+    }
+
     func testActiveSnapshotCarriesAsyncLocationRecordingToken() throws {
         let state = MobileRideMapState()
 

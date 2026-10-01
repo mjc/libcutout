@@ -7643,6 +7643,7 @@ struct PendingMobileRideStart {
     command_id: u64,
     at_ms: u64,
     candidate_vehicle: Option<String>,
+    music_history_policy: CoreMusicHistoryPolicy,
     storage: Option<persistence::PendingLiveRideCreation>,
     created_ride_id: Option<MobileRideIdDto>,
 }
@@ -9851,6 +9852,7 @@ impl MobileRideMapCore {
     fn begin_start_gps_only_command_inner(
         self: &Arc<Self>,
         at_ms: u64,
+        music_history_policy: CoreMusicHistoryPolicy,
     ) -> Result<Arc<MobileRideMapLifecycleCommand>, MobileRideMapCoreErrorDto> {
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         state.require_ready()?;
@@ -9881,10 +9883,11 @@ impl MobileRideMapCore {
             .map(|database| {
                 database
                     .inner
-                    .queue_create_started_live_ride(
+                    .queue_create_started_live_ride_with_music_policy(
                         wall_clock_milliseconds()?,
                         at_ms,
                         candidate_vehicle.as_deref(),
+                        Some(music_history_policy),
                     )
                     .map_err(map_storage_core_error)
             })
@@ -9897,6 +9900,7 @@ impl MobileRideMapCore {
                 command_id,
                 at_ms,
                 candidate_vehicle,
+                music_history_policy,
                 storage,
                 created_ride_id: None,
             }),
@@ -9925,6 +9929,9 @@ impl MobileRideMapCore {
             pending.candidate_vehicle.as_deref(),
             Some(ride_id),
         );
+        if result.is_ok() {
+            state.apply_music_history_policy(pending.music_history_policy);
+        }
         state.pending_lifecycle_command_id = None;
         result
     }
@@ -10010,8 +10017,9 @@ impl MobileRideMapCore {
     pub fn begin_start_gps_only_command(
         self: &Arc<Self>,
         at_ms: u64,
+        music_history_policy: MobileMusicHistoryPolicyDto,
     ) -> Result<Arc<MobileRideMapLifecycleCommand>, MobileRideMapCoreErrorDto> {
-        self.begin_start_gps_only_command_inner(at_ms)
+        self.begin_start_gps_only_command_inner(at_ms, music_history_policy.into())
     }
 
     /// Queues a timestamped lifecycle transition and returns before SQLite completes it.
@@ -15897,12 +15905,12 @@ mod tests {
     fn gps_only_start_is_published_only_when_its_command_is_polled() {
         let core = MobileRideMapCore::new();
         let command = core
-            .begin_start_gps_only_command(1_000)
+            .begin_start_gps_only_command(1_000, MobileMusicHistoryPolicyDto::HumanReadable)
             .expect("start command is accepted");
 
         assert!(core.current_snapshot(1_000).is_none());
         assert!(matches!(
-            core.begin_start_gps_only_command(1_001),
+            core.begin_start_gps_only_command(1_001, MobileMusicHistoryPolicyDto::Disabled),
             Err(MobileRideMapCoreErrorDto::AdmissionPending)
         ));
         let MobileRideMapLifecyclePollDto::Completed { snapshot } =
@@ -15912,6 +15920,10 @@ mod tests {
         };
         assert_eq!(snapshot.state, MobileRideLifecycleStateDto::Active);
         assert_eq!(core.current_snapshot(1_000), Some(snapshot.clone()));
+        assert_eq!(
+            core.current_music_history_policy(),
+            MobileMusicHistoryPolicyDto::HumanReadable
+        );
         assert_eq!(
             command.poll().expect("terminal result is cached"),
             MobileRideMapLifecyclePollDto::Completed { snapshot }

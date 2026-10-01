@@ -360,8 +360,8 @@ final class CutoutAppModel {
             now: { core.now().rawValue },
             executeCommand: { command in
                 switch command {
-                case let .startGpsOnly(atMs):
-                    try await core.startRideMapGpsOnly(atMs: atMs)
+                case let .startGpsOnly(atMs, musicHistoryPolicy):
+                    try await core.startRideMapGpsOnly(atMs: atMs, musicHistoryPolicy: musicHistoryPolicy)
                 case let .pause(atMs):
                     try await core.pauseRideMap(atMs: atMs)
                 case let .resume(atMs):
@@ -564,13 +564,17 @@ final class CutoutAppModel {
     @discardableResult
     func startGpsOnlyRide() async -> Bool {
         let connectionToken = core.connectionSnapshot.token
-        let started = await applyRideMapCommand(.startGpsOnly(atMs: currentMonotonicTime.rawValue))
+        let started = await applyRideMapCommand(
+            .startGpsOnly(
+                atMs: currentMonotonicTime.rawValue,
+                musicHistoryPolicy: music.historyPolicyStore.policy
+            ))
         guard started else { return false }
         if let connectionToken {
             _ = core.resetTripMeterForNewRide(token: connectionToken)
         }
         core.resetRideMapLocationAdmission()
-        if let error = await music.applyHistoryForNewRideAsync() {
+        if let error = await music.adoptHistoryForNewRideAsync() {
             liveRide.setError(error)
             guard core.rideMapStateHandle?.currentSnapshot() != nil else {
                 return false

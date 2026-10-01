@@ -218,7 +218,7 @@ final class CutoutAppModelTests: XCTestCase {
 
     @MainActor
     func testMusicHistoryDefaultIsAppliedToEachNewRide() async throws {
-        for policy in [MobileMusicHistoryPolicyDto.opaqueItem, .humanReadable] {
+        for policy in [MobileMusicHistoryPolicyDto.disabled, .opaqueItem, .humanReadable] {
             let suiteName = "CutoutAppMusicHistoryNewRide-\(UUID().uuidString)"
             let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
             defer { defaults.removePersistentDomain(forName: suiteName) }
@@ -229,14 +229,39 @@ final class CutoutAppModelTests: XCTestCase {
                 musicHistoryPolicyStore: policyStore
             )
 
-            let policySaved = await model.music.setHistoryPolicyAsync(policy)
-            XCTAssertTrue(policySaved)
+            policyStore.set(policy)
             XCTAssertEqual(policyStore.policy, policy)
             let started = await model.startGpsOnlyRide()
             XCTAssertTrue(started)
+            XCTAssertEqual(driver.gpsOnlyPolicyAtCompletion, policy)
             XCTAssertEqual(model.music.historyPolicy, policy)
             XCTAssertEqual(driver.rideMapState.currentMusicHistoryPolicy(), policy)
+            XCTAssertTrue(model.music.timelineEvents.isEmpty)
+            XCTAssertNil(model.music.historySaveError)
         }
+    }
+
+    @MainActor
+    func testGpsOnlyStartAdoptsCreatedPolicyWithoutWritingChangedDefaultAgain() async throws {
+        let suiteName = "CutoutAppMusicHistoryAtomicStart-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let policyStore = MusicHistoryPolicyStore(defaults: defaults)
+        policyStore.set(.humanReadable)
+        let driver = SessionDriverSpy(rows: [])
+        driver.duringGpsOnlyCompletion = { policyStore.set(.disabled) }
+        let model = CutoutAppModel(core: driver, musicHistoryPolicyStore: policyStore)
+
+        let started = await model.startGpsOnlyRide()
+
+        XCTAssertTrue(started)
+        XCTAssertEqual(driver.gpsOnlyPolicyAtCompletion, .humanReadable)
+        XCTAssertEqual(policyStore.policy, .disabled)
+        XCTAssertEqual(driver.rideMapState.currentMusicHistoryPolicy(), .humanReadable)
+        XCTAssertEqual(model.music.historyPolicy, .humanReadable)
+        XCTAssertEqual(driver.rideMapState.currentMusicHistory()?.status, .available)
+        XCTAssertTrue(model.music.timelineEvents.isEmpty)
+        XCTAssertNil(model.music.historySaveError)
     }
 
     private func clear(
@@ -3311,6 +3336,8 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     private(set) var flushCaptureCount = 0
     private(set) var checkpointCount = 0
     var checkpointOperation: (() async throws -> Void)?
+    private(set) var gpsOnlyPolicyAtCompletion: MobileMusicHistoryPolicyDto?
+    var duringGpsOnlyCompletion: (() -> Void)?
     private(set) var disconnectPreparationCount = 0
     var disconnectPreparation: (() async throws -> Void)?
     var duringFlush: (() -> Void)?
@@ -3466,8 +3493,13 @@ private final class SessionDriverSpy: CutoutSessionDriving {
         rideLocationDemandStates.append(state)
     }
 
-    func startRideMapGpsOnly(atMs: UInt64) async throws -> MobileRideMapSnapshotDto {
-        try await rideMapState.startGpsOnlyCommand(atMs: atMs)
+    func startRideMapGpsOnly(atMs: UInt64, musicHistoryPolicy: MobileMusicHistoryPolicyDto) async throws
+        -> MobileRideMapSnapshotDto
+    {
+        let snapshot = try await rideMapState.startGpsOnlyCommand(atMs: atMs, musicHistoryPolicy: musicHistoryPolicy)
+        gpsOnlyPolicyAtCompletion = rideMapState.currentMusicHistoryPolicy()
+        duringGpsOnlyCompletion?()
+        return snapshot
     }
 
     func pauseRideMap(atMs: UInt64) async throws -> MobileRideMapSnapshotDto {

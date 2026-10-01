@@ -3776,8 +3776,11 @@ extension CutoutSessionCore {
         }
     }
 
-    public func startRideMapGpsOnly(atMs: UInt64) async throws -> MobileRideMapSnapshotDto {
-        try await rideMapRecorder.startGpsOnly(atMs: atMs)
+    public func startRideMapGpsOnly(
+        atMs: UInt64,
+        musicHistoryPolicy: MobileMusicHistoryPolicyDto
+    ) async throws -> MobileRideMapSnapshotDto {
+        try await rideMapRecorder.startGpsOnly(atMs: atMs, musicHistoryPolicy: musicHistoryPolicy)
     }
 
     public func pauseRideMap(atMs: UInt64) async throws -> MobileRideMapSnapshotDto {

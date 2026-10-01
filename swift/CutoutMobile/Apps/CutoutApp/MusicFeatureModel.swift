@@ -224,34 +224,26 @@ final class MusicFeatureModel {
         updateCapturePolicy(policy)
     }
 
-    func applyHistoryForNewRideAsync() async -> MobileRideMapError? {
+    /// Adopts the history Rust created atomically with the ride; this must never write a policy.
+    func adoptHistoryForNewRideAsync() async -> MobileRideMapError? {
         updateCaptureObservation(nil)
-        let defaultPolicy = historyPolicyStore.policy
-        historyPolicy = defaultPolicy
+        timelineEvents = []
+        historyPolicy = rideMapState?.currentMusicHistoryPolicy() ?? .disabled
+        historyUnavailable = false
+        clearHistoryErrors()
+        coordinator.restoreHistoryPolicy(historyPolicy)
+        updateCapturePolicy(historyPolicy)
         do {
-            try await coordinator.setHistoryPolicyAsync(defaultPolicy)
-            historyUnavailable = false
-            clearHistoryErrors()
-            coordinator.restoreHistoryPolicy(defaultPolicy)
-            if defaultPolicy == .disabled {
-                timelineEvents = []
-            } else {
-                timelineEvents = try await coordinator.recordedEventsAsync()
-            }
-            updateCapturePolicy(defaultPolicy)
+            synchronizeHistory(try await rideMapState?.currentMusicHistoryAsync())
             return nil
         } catch {
             let mappedError = appRideMapError(error)
+            setHistoryPersistenceError(mappedError)
             setRideHistoryError(mappedError)
             guard rideMapState?.currentSnapshot() != nil else {
-                historyPolicy = .disabled
-                historyUnavailable = false
-                coordinator.restoreHistoryPolicy(.disabled)
-                timelineEvents = []
+                synchronizeHistory(nil)
+                setHistoryPersistenceError(mappedError)
                 return mappedError
-            }
-            if let history = try? await rideMapState?.currentMusicHistoryAsync() {
-                synchronizeHistory(history)
             }
             return mappedError
         }
