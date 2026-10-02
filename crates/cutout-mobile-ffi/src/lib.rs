@@ -209,6 +209,8 @@ pub enum MobileCameraClockUncertaintyDto {
 /// Camera-media provenance submitted by a mobile adapter after a bounded download.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileCameraMediaProvenanceInput {
+    /// Rust-issued identity of the capture active when the download began.
+    pub capture_generation: MobileCaptureGenerationDto,
     /// Camera source identity.
     pub source: MobileCameraSourceKindDto,
     /// Camera-reported media path.
@@ -270,6 +272,9 @@ pub enum MobileCameraMediaProvenanceError {
     /// The ride capture name exceeds Rust's bound.
     #[error("ride capture file name is too long")]
     RideCaptureFileNameTooLong,
+    /// The capture generation is no longer active.
+    #[error("camera media result belongs to a stale capture generation")]
+    StaleCaptureGeneration,
 }
 
 /// Lifecycle observation emitted by a platform RTSP transport.
@@ -2764,11 +2769,17 @@ impl CutoutSessionStateHandle {
         &self,
         input: MobileCameraMediaProvenanceInput,
     ) -> Result<(), MobileCameraMediaProvenanceError> {
+        let generation = input.capture_generation.into();
         let record = input.into_core()?;
-        self.lock_inner()
+        let mut inner = self.lock_inner();
+        if inner
             .session_state_mut()
-            .record_camera_media_provenance(record);
-        Ok(())
+            .record_camera_media_provenance(generation, record)
+        {
+            Ok(())
+        } else {
+            Err(MobileCameraMediaProvenanceError::StaleCaptureGeneration)
+        }
     }
 
     /// Returns bounded camera-media provenance retained by the Rust session.

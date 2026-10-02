@@ -2,6 +2,7 @@ import java.io.File
 import uniffi.cutout_mobile_ffi.CutoutSessionStateHandle
 import uniffi.cutout_mobile_ffi.MobileCameraClockUncertaintyDto
 import uniffi.cutout_mobile_ffi.MobileCameraMediaProvenanceInput
+import uniffi.cutout_mobile_ffi.MobileCaptureOriginDto
 import uniffi.cutout_mobile_ffi.MobileCameraPreviewStateDto
 import uniffi.cutout_mobile_ffi.MobileCameraPreviewEventDto
 import uniffi.cutout_mobile_ffi.MobileCameraPreviewFileSink
@@ -91,10 +92,15 @@ fun main() {
     check(novatekSnapshot.media.single().path == "A:\\Novatek\\Movie\\clip.TS")
 
     CutoutSessionStateHandle().use { cameraState ->
+        val captureGeneration =
+            cameraState.beginCapture(MobileCaptureOriginDto.MANUAL)
+                ?: error("capture start should be admitted")
+        check(cameraState.captureWriterStarted(captureGeneration))
         cameraState.reduceCameraPreview(MobileCameraPreviewEventDto.STARTED)
         cameraState.reduceCameraPreview(MobileCameraPreviewEventDto.FRAME_RECEIVED)
         cameraState.recordCameraMediaProvenance(
             MobileCameraMediaProvenanceInput(
+                captureGeneration = captureGeneration,
                 source = MobileCameraSourceKindDto.NOVATEK_R3_PRO,
                 cameraPath = "A:\\Novatek\\Movie\\clip.TS",
                 sizeBytes = 42UL,

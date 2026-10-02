@@ -325,7 +325,20 @@ struct ContentView: View {
         case .capture:
             CaptureRouteView(capture: model.capture)
         case .camera:
-            CameraRouteContainerView()
+            CameraRouteContainerView(
+                annotateCapture: { model.annotateCapture(key: $0, value: $1) },
+                recordMediaReference: { fileName, generation, source, media, localURL in
+                    model.recordCameraMediaReference(
+                        captureFileName: fileName,
+                        captureGeneration: generation,
+                        source: source,
+                        media: media,
+                        localURL: localURL
+                    )
+                },
+                currentCaptureIdentity: model.currentCameraCaptureIdentity,
+                sessionState: model.cameraSessionStateHandle
+            )
         case .rideMap:
             RideMapRouteView(
                 model: model, presentation: rideMapPresentation,

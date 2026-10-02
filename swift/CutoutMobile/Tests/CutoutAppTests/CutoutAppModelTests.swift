@@ -1001,6 +1001,7 @@ final class CutoutAppModelTests: XCTestCase {
         let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
         XCTAssertTrue(model.recordOnly(platformIdentifier: "unknown-device", deviceKind: " "))
         let captureFileName = try XCTUnwrap(model.capture.fileName)
+        let captureGeneration = try XCTUnwrap(model.capture.activeGeneration)
         let original = CameraMediaEvidence(
             name: "original.mp4",
             path: "/DCIM/FILE001.MP4",
@@ -1021,9 +1022,17 @@ final class CutoutAppModelTests: XCTestCase {
         let replacementURL = URL(fileURLWithPath: "/tmp/replacement-camera-download.mov")
 
         model.recordCameraMediaReference(
-            captureFileName: captureFileName, media: original, localURL: firstURL)
+            captureFileName: captureFileName,
+            captureGeneration: captureGeneration,
+            media: original,
+            localURL: firstURL
+        )
         model.recordCameraMediaReference(
-            captureFileName: captureFileName, media: replacement, localURL: replacementURL)
+            captureFileName: captureFileName,
+            captureGeneration: captureGeneration,
+            media: replacement,
+            localURL: replacementURL
+        )
 
         XCTAssertEqual(model.cameraMediaReferences.count, 1)
         XCTAssertEqual(model.cameraMediaReferences[0].localURL, replacementURL)

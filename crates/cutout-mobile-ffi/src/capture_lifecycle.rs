@@ -327,4 +327,52 @@ mod tests {
         owner.complete_capture_writer(generation, false);
         assert!(owner.capture_lifecycle_snapshot().can_start);
     }
+
+    #[test]
+    fn camera_media_provenance_requires_the_generation_that_is_current_at_completion() {
+        let owner = CutoutSessionStateHandle::new();
+        let first = owner.begin_capture(MobileCaptureOriginDto::Manual).unwrap();
+        assert!(owner.capture_writer_started(first));
+
+        assert!(
+            owner
+                .record_camera_media_provenance(camera_media_provenance(first))
+                .is_ok()
+        );
+        assert_eq!(owner.camera_media_provenance().len(), 1);
+
+        assert!(owner.retire_capture_writer(first));
+        assert!(owner.complete_capture_writer(first, true));
+        let current = owner.begin_capture(MobileCaptureOriginDto::Manual).unwrap();
+        assert!(owner.capture_writer_started(current));
+
+        assert_eq!(
+            owner.record_camera_media_provenance(camera_media_provenance(first)),
+            Err(crate::MobileCameraMediaProvenanceError::StaleCaptureGeneration)
+        );
+        assert_eq!(owner.camera_media_provenance().len(), 1);
+        assert!(
+            owner
+                .record_camera_media_provenance(camera_media_provenance(current))
+                .is_ok()
+        );
+        assert_eq!(owner.camera_media_provenance().len(), 2);
+    }
+
+    fn camera_media_provenance(
+        generation: MobileCaptureGenerationDto,
+    ) -> crate::MobileCameraMediaProvenanceInput {
+        crate::MobileCameraMediaProvenanceInput {
+            capture_generation: generation,
+            source: crate::MobileCameraSourceKindDto::NovatekR3Pro,
+            camera_path: "A:\\Novatek\\Movie\\clip.TS".into(),
+            size_bytes: 42,
+            camera_timecode: 7,
+            camera_time: "2025/01/01 00:00:00".into(),
+            ride_capture_file_name: format!("ride-{}.pevcap", generation.value),
+            captured_at_monotonic_ms: 100,
+            captured_at_wall_clock_ms: 200,
+            clock_uncertainty: crate::MobileCameraClockUncertaintyDto::Unknown,
+        }
+    }
 }

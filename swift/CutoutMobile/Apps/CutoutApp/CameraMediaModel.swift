@@ -14,10 +14,9 @@ final class CameraMediaModel {
     private(set) var thumbnailErrorKey: String?
 
     @ObservationIgnored private let adapter: CameraLocalNetworkAdapter
-    @ObservationIgnored private let annotateCapture: ((String, String) -> Void)?
     @ObservationIgnored private let recordMediaReference:
-        ((String, CameraSourceKind, CameraMediaEvidence, URL) -> Void)?
-    @ObservationIgnored private let currentCaptureFileName: (() -> String?)?
+        ((String, CaptureGeneration, CameraSourceKind, CameraMediaEvidence, URL) -> Void)?
+    @ObservationIgnored private let currentCaptureIdentity: (() -> (fileName: String, generation: CaptureGeneration)?)?
     @ObservationIgnored private var mediaDownloadTask: Task<Void, Never>?
     @ObservationIgnored private var thumbnailTask: Task<Void, Never>?
     @ObservationIgnored private var mediaDownloadGeneration: UInt64 = 0
@@ -27,14 +26,13 @@ final class CameraMediaModel {
 
     init(
         adapter: CameraLocalNetworkAdapter = CameraLocalNetworkAdapter(),
-        annotateCapture: ((String, String) -> Void)? = nil,
-        recordMediaReference: ((String, CameraSourceKind, CameraMediaEvidence, URL) -> Void)? = nil,
-        currentCaptureFileName: (() -> String?)? = nil
+        recordMediaReference:
+            ((String, CaptureGeneration, CameraSourceKind, CameraMediaEvidence, URL) -> Void)? = nil,
+        currentCaptureIdentity: (() -> (fileName: String, generation: CaptureGeneration)?)? = nil
     ) {
         self.adapter = adapter
-        self.annotateCapture = annotateCapture
         self.recordMediaReference = recordMediaReference
-        self.currentCaptureFileName = currentCaptureFileName
+        self.currentCaptureIdentity = currentCaptureIdentity
     }
 
     func prepareForEvidenceRefresh() {
@@ -52,7 +50,7 @@ final class CameraMediaModel {
         }
 
         let destination = mediaOutputURL(for: media)
-        let captureFileName = currentCaptureFileName?()
+        let captureIdentity = currentCaptureIdentity?()
         mediaDownloadTask?.cancel()
         mediaDownloadGeneration &+= 1
         let generation = mediaDownloadGeneration
@@ -77,9 +75,14 @@ final class CameraMediaModel {
                 guard generation == mediaDownloadGeneration else { return }
                 downloadedMediaURL = destination
                 downloadedMediaPath = media.path
-                annotateCapture?("camera_media_file", media.name)
-                if let captureFileName {
-                    recordMediaReference?(captureFileName, .novatekR3Pro, media, destination)
+                if let captureIdentity {
+                    recordMediaReference?(
+                        captureIdentity.fileName,
+                        captureIdentity.generation,
+                        .novatekR3Pro,
+                        media,
+                        destination
+                    )
                 }
             } catch is CancellationError {
                 // Cancellation is an expected user action, not a transfer error.

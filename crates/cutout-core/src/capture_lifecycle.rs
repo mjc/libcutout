@@ -116,6 +116,21 @@ impl CaptureSessionLifecycle {
         self.current
     }
 
+    /// Whether an asynchronous result still belongs to an active capture.
+    #[must_use]
+    pub fn admits_result(&self, generation: CaptureGeneration) -> bool {
+        match self.current {
+            Some(attempt) if attempt.generation == generation => match attempt.stage {
+                CaptureStage::Recording
+                | CaptureStage::Saving
+                | CaptureStage::SaveFailed
+                | CaptureStage::Finalizing => true,
+                CaptureStage::Starting | CaptureStage::Saved | CaptureStage::Failed => false,
+            },
+            _ => false,
+        }
+    }
+
     /// New recordings may start only after the previous writer has been retired.
     #[must_use]
     pub fn can_start(&self) -> bool {
@@ -270,6 +285,21 @@ mod tests {
         let generation = owner.begin(origin).unwrap();
         assert!(owner.writer_started(generation));
         (owner, generation)
+    }
+
+    #[test]
+    fn only_the_current_live_capture_generation_admits_associated_results() {
+        let (mut owner, first) = recording(CaptureOrigin::Manual);
+        assert!(owner.admits_result(first));
+
+        assert!(owner.retire(first));
+        assert!(owner.complete(first, true));
+        let second = owner.begin(CaptureOrigin::Manual).unwrap();
+        assert!(owner.writer_started(second));
+
+        assert!(!owner.admits_result(first));
+        assert!(owner.admits_result(second));
+        assert!(!owner.admits_result(CaptureGeneration::new(second.get() + 1)));
     }
 
     #[test]

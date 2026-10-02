@@ -74,9 +74,17 @@ impl CutoutSessionState {
         &self.camera_provenance
     }
 
-    /// Records one validated camera-media association.
-    pub fn record_camera_media_provenance(&mut self, record: CameraMediaProvenance) {
+    /// Records one validated camera-media association for its active capture.
+    pub fn record_camera_media_provenance(
+        &mut self,
+        generation: crate::CaptureGeneration,
+        record: CameraMediaProvenance,
+    ) -> bool {
+        if !self.capture.admits_result(generation) {
+            return false;
+        }
         self.camera_provenance.record_media(record);
+        true
     }
 
     /// Returns the current identity state without cloning the whole root.

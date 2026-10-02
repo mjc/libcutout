@@ -54,8 +54,17 @@ final class CutoutAppModel {
 
     /// Supplies the active capture identity to the camera route without
     /// giving the view ownership of capture state.
-    var currentCameraCaptureFileName: () -> String? {
-        { [weak self] in self?.capture.fileName }
+    var currentCameraCaptureIdentity: () -> (fileName: String, generation: CaptureGeneration)? {
+        { [weak self] in
+            guard
+                let self,
+                let fileName = self.capture.fileName,
+                let generation = self.capture.activeGeneration
+            else {
+                return nil
+            }
+            return (fileName, generation)
+        }
     }
 
     /// Exposes Rust-owned camera/session state to the camera route.
@@ -246,14 +255,16 @@ final class CutoutAppModel {
     /// was captured when the operation started.
     func recordCameraMediaReference(
         captureFileName: String,
+        captureGeneration: CaptureGeneration,
         source: CameraSourceKind = .novatekR3Pro,
         media: CameraMediaEvidence,
         localURL: URL
     ) {
         guard !captureFileName.isEmpty else { return }
-        guard capture.activeGeneration != nil else { return }
+        guard capture.activeGeneration == captureGeneration else { return }
         guard captureFileName == capture.fileName else { return }
         let input = MobileCameraMediaProvenanceInput(
+            captureGeneration: captureGeneration.dto,
             source: source.mobileDto,
             cameraPath: media.path,
             sizeBytes: media.sizeBytes,
@@ -280,7 +291,9 @@ final class CutoutAppModel {
         }
 
         let reference = CameraMediaReference(provenance: provenance, localURL: localURL)
-        guard captureFileName == capture.fileName else { return }
+        guard capture.activeGeneration == captureGeneration,
+            captureFileName == capture.fileName
+        else { return }
         if let existingIndex = cameraMediaReferences.firstIndex(where: {
             $0.source.mobileDto == provenance.source
                 && $0.rideCaptureFileName == provenance.rideCaptureFileName
@@ -297,24 +310,6 @@ final class CutoutAppModel {
                     && reference.cameraPath == retained.cameraPath
             }
         }
-    }
-
-    func recordCameraMediaReference(
-        source: CameraSourceKind,
-        media: CameraMediaEvidence,
-        localURL: URL
-    ) {
-        guard let captureFileName = capture.fileName else { return }
-        recordCameraMediaReference(
-            captureFileName: captureFileName,
-            source: source,
-            media: media,
-            localURL: localURL
-        )
-    }
-
-    func recordCameraMediaReference(media: CameraMediaEvidence, localURL: URL) {
-        recordCameraMediaReference(source: .novatekR3Pro, media: media, localURL: localURL)
     }
 
     private let core: any CutoutSessionDriving
