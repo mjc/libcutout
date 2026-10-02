@@ -49,17 +49,18 @@ use cutout_core::{
     BatteryPageKindDto, BatteryReadbackAvailabilityDto, BatteryReadbackDto,
     BluetoothServiceUuid as CoreBluetoothServiceUuid,
     CameraClockUncertainty as CoreCameraClockUncertainty,
+    CameraDiscoveryToken as CoreCameraDiscoveryToken,
     CameraMediaCaptureTiming as CoreCameraMediaCaptureTiming,
     CameraMediaProvenance as CoreCameraMediaProvenance,
     CameraMediaProvenanceError as CoreCameraMediaProvenanceError,
     CameraOnboardRecordingState as CoreCameraOnboardRecordingState,
-    CameraPreviewState as CoreCameraPreviewState, CameraSessionToken as CoreCameraSessionToken,
-    CameraSourceKind as CoreCameraSourceKind, Capacity, ChargeEstimateError, ChargeEstimateInput,
-    ChargeEstimateResetReason, ChargeEstimateState, ChargeEstimateUnavailableReason, ChargeFlow,
-    ChargeMode, ChargeModeDto, ChargeModeReadingDto, ChargeProfileIdentity, ChargeSessionIdentity,
-    ChargeTimeEstimate, ControlRefusalReasonDto,
-    DeviceConnectionIntent as CoreDeviceConnectionIntent, DiscoveryCandidateSnapshot,
-    DiscoveryCandidateSupport as CoreDiscoveryCandidateSupport,
+    CameraPreviewState as CoreCameraPreviewState, CameraPreviewToken as CoreCameraPreviewToken,
+    CameraSessionToken as CoreCameraSessionToken, CameraSourceKind as CoreCameraSourceKind,
+    Capacity, ChargeEstimateError, ChargeEstimateInput, ChargeEstimateResetReason,
+    ChargeEstimateState, ChargeEstimateUnavailableReason, ChargeFlow, ChargeMode, ChargeModeDto,
+    ChargeModeReadingDto, ChargeProfileIdentity, ChargeSessionIdentity, ChargeTimeEstimate,
+    ControlRefusalReasonDto, DeviceConnectionIntent as CoreDeviceConnectionIntent,
+    DiscoveryCandidateSnapshot, DiscoveryCandidateSupport as CoreDiscoveryCandidateSupport,
     DiscoveryConnectionRoute as CoreDiscoveryConnectionRoute,
     DiscoveryElectricUnicycleModel as CoreDiscoveryElectricUnicycleModel,
     DiscoveryManufacturerDataSummary as CoreDiscoveryManufacturerDataSummary,
@@ -109,8 +110,9 @@ use cutout_protocols::{
     ConcreteSessionStepResultDto, DeviceDetectionEvent, DeviceDetectionResolution, DeviceFamily,
     H264FileSink, IdentityBannerEvidence, NOSFET_AERO_REGISTRY_ENTRY, NovatekCapabilityError,
     NovatekCommandOutcome, NovatekConfiguration, NovatekConfigurationError, NovatekHttpOrigin,
-    NovatekMediaPathError, NovatekMediaThumbnailError, NovatekOriginError, NovatekProfileError,
-    NovatekR3V1Profile, NovatekR3V1Session, NovatekReadCommand, NovatekRecordingCommand,
+    NovatekMediaDownloadAuthorizationError, NovatekMediaDownloadOperations, NovatekMediaPathError,
+    NovatekMediaThumbnailError, NovatekOriginError, NovatekProfileError, NovatekR3V1Profile,
+    NovatekR3V1Session, NovatekReadCommand, NovatekReadOnlySnapshot, NovatekRecordingCommand,
     NovatekSessionError, NovatekStillCaptureCommand, NovatekStoragePresence, PendingProbe,
     ProtocolFamilyClassification, ProtocolFamilyState, ProtocolModelIdentityEvidence, RtspError,
     RtspPreviewSession, StagedIdentityInput, StagedIdentityOutcome,
@@ -186,6 +188,48 @@ impl From<MobileCameraSessionTokenDto> for CoreCameraSessionToken {
     }
 }
 
+/// Opaque identity for asynchronous work belonging to one preview lifecycle.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileCameraPreviewTokenDto {
+    /// Preview generation captured when the asynchronous work began.
+    pub generation: u64,
+}
+
+impl From<CoreCameraPreviewToken> for MobileCameraPreviewTokenDto {
+    fn from(token: CoreCameraPreviewToken) -> Self {
+        Self {
+            generation: token.generation(),
+        }
+    }
+}
+
+impl From<MobileCameraPreviewTokenDto> for CoreCameraPreviewToken {
+    fn from(token: MobileCameraPreviewTokenDto) -> Self {
+        Self::new(token.generation)
+    }
+}
+
+/// Opaque identity for asynchronous camera discovery work.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileCameraDiscoveryTokenDto {
+    /// Discovery generation captured when the operation began.
+    pub generation: u64,
+}
+
+impl From<CoreCameraDiscoveryToken> for MobileCameraDiscoveryTokenDto {
+    fn from(token: CoreCameraDiscoveryToken) -> Self {
+        Self {
+            generation: token.generation(),
+        }
+    }
+}
+
+impl From<MobileCameraDiscoveryTokenDto> for CoreCameraDiscoveryToken {
+    fn from(token: MobileCameraDiscoveryTokenDto) -> Self {
+        Self::new(token.generation)
+    }
+}
+
 /// Camera source identity attached to media provenance.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum MobileCameraSourceKindDto {
@@ -206,9 +250,11 @@ pub enum MobileCameraClockUncertaintyDto {
     Milliseconds { value: u64 },
 }
 
-/// Camera-media provenance submitted by a mobile adapter after a bounded download.
+/// Camera-media provenance for sources other than the Rust-authorized Novatek path.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileCameraMediaProvenanceInput {
+    /// Rust-issued identity of the capture active when the download began.
+    pub capture_generation: MobileCaptureGenerationDto,
     /// Camera source identity.
     pub source: MobileCameraSourceKindDto,
     /// Camera-reported media path.
@@ -252,7 +298,7 @@ pub struct MobileCameraMediaProvenanceDto {
     pub clock_uncertainty: MobileCameraClockUncertaintyDto,
 }
 
-/// Failure returned when a mobile adapter submits unbounded camera provenance.
+/// Failure returned when a mobile adapter submits invalid camera provenance.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
 pub enum MobileCameraMediaProvenanceError {
     /// The camera path is empty.
@@ -270,6 +316,12 @@ pub enum MobileCameraMediaProvenanceError {
     /// The ride capture name exceeds Rust's bound.
     #[error("ride capture file name is too long")]
     RideCaptureFileNameTooLong,
+    /// The capture generation is no longer active.
+    #[error("camera media result belongs to a stale capture generation")]
+    StaleCaptureGeneration,
+    /// Novatek media provenance must be committed by consuming a download operation.
+    #[error("Novatek provenance requires a completed authorized media download")]
+    RequiresAuthorizedDownload,
 }
 
 /// Lifecycle observation emitted by a platform RTSP transport.
@@ -865,6 +917,86 @@ pub struct MobileNovatekMediaEntryDto {
     pub attributes: u32,
 }
 
+/// Rust-authorized media target for one native `URLSession` download.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileNovatekMediaDownloadRequestDto {
+    /// One-shot Rust operation identity.
+    pub operation_id: u64,
+    /// Validated relative camera URL target.
+    pub target: String,
+    /// Expected file size retained from command `3015`.
+    pub size_bytes: u64,
+}
+
+/// Ride-capture association attached to a completed authorized download.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileNovatekMediaDownloadAssociationInput {
+    /// Capture active when the native download began.
+    pub capture_generation: MobileCaptureGenerationDto,
+    /// Capture file name observed when the download began.
+    pub ride_capture_file_name: String,
+    /// Host monotonic time associated with the completed download.
+    pub captured_at_monotonic_ms: u64,
+    /// Host wall-clock time associated with the completed download.
+    pub captured_at_wall_clock_ms: u64,
+    /// Explicit camera/phone clock uncertainty.
+    pub clock_uncertainty: MobileCameraClockUncertaintyDto,
+}
+
+/// Native transfer result bound to one Rust-authorized media operation.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileNovatekMediaDownloadCompletionInput {
+    /// One-shot Rust operation identity returned by authorization.
+    pub operation_id: u64,
+    /// Actual temporary-file size measured by the native adapter.
+    pub actual_size: u64,
+    /// Optional ride-capture association to commit with this result.
+    pub association: Option<MobileNovatekMediaDownloadAssociationInput>,
+}
+
+/// Result returned after consuming a completed authorized media operation.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileNovatekMediaDownloadResultDto {
+    /// Exact media metadata retained from the camera inventory.
+    pub media: MobileNovatekMediaEntryDto,
+    /// Provenance committed by Rust when a capture association was supplied.
+    pub provenance: Option<MobileCameraMediaProvenanceDto>,
+}
+
+/// Failure while authorizing a Rust-retained media record for download.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
+pub enum MobileNovatekMediaDownloadAuthorizationError {
+    /// No validated Novatek session is retained.
+    #[error("no retained Novatek media session")]
+    SessionUnavailable,
+    /// The requested path is absent from the retained inventory.
+    #[error("media is not in the retained Novatek inventory")]
+    MediaNotRetained,
+    /// The retained path cannot be mapped to a safe HTTP target.
+    #[error("media path is invalid")]
+    InvalidPath,
+    /// The operation identifier space is exhausted.
+    #[error("media download operation identity exhausted")]
+    OperationIdExhausted,
+}
+
+/// Failure while consuming one authorized Novatek media download.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
+pub enum MobileNovatekMediaDownloadCompletionError {
+    /// The operation is unknown, stale, replaced, or already consumed.
+    #[error("media download operation is stale or already consumed")]
+    StaleOperation,
+    /// The downloaded file length differs from retained camera evidence.
+    #[error("downloaded media size differs from retained evidence")]
+    SizeMismatch { expected: u64, actual: u64 },
+    /// The capture changed while the native transfer was in flight.
+    #[error("camera media result belongs to a stale capture generation")]
+    StaleCaptureGeneration,
+    /// Association data does not satisfy the Rust provenance bounds.
+    #[error("invalid camera media association")]
+    InvalidProvenance,
+}
+
 /// Bounded, read-only Novatek evidence collected for the R3 Pro profile.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileNovatekReadOnlySnapshotDto {
@@ -948,6 +1080,9 @@ pub enum MobileNovatekSessionError {
     /// The reported firmware exceeds the bounded identity representation.
     #[error("Novatek firmware version is too long")]
     FirmwareVersionTooLong,
+    /// One or more read-only responses were invalid or exceeded parser bounds.
+    #[error("invalid Novatek read-only response")]
+    InvalidResponse,
     /// The supplied configuration exceeds Rust's fixed bound.
     #[error("Novatek configuration is too large")]
     ConfigurationTooLarge,
@@ -1161,7 +1296,11 @@ pub fn mobile_parse_novatek_read_only_snapshot(
         &media_response,
     )
     .map_err(|_| MobileNovatekParseError::InvalidResponse)?;
-    Ok(MobileNovatekReadOnlySnapshotDto {
+    Ok(novatek_snapshot_dto(&snapshot))
+}
+
+fn novatek_snapshot_dto(snapshot: &NovatekReadOnlySnapshot) -> MobileNovatekReadOnlySnapshotDto {
+    MobileNovatekReadOnlySnapshotDto {
         firmware_version: snapshot.firmware().as_str().to_owned(),
         movie_rtsp_uri: snapshot.live_view().movie().as_str().to_owned(),
         photo_rtsp_uri: snapshot.live_view().photo().as_str().to_owned(),
@@ -1188,7 +1327,7 @@ pub fn mobile_parse_novatek_read_only_snapshot(
                 attributes: entry.attributes(),
             })
             .collect(),
-    })
+    }
 }
 
 /// Parses a bounded Novatek command response without inferring state change.
@@ -1893,13 +2032,14 @@ type MobileSessionState = cutout_protocols::DeviceConnectionSession;
 #[derive(Debug)]
 struct RetainedNovatekSession {
     profile: NovatekR3V1Session,
-    read_only_snapshot: MobileNovatekReadOnlySnapshotDto,
+    read_only_snapshot: NovatekReadOnlySnapshot,
 }
 
 #[derive(Debug, Default)]
 struct NovatekCameraSessionState {
     generation: NovatekSessionGeneration,
     retained: Option<RetainedNovatekSession>,
+    media_downloads: NovatekMediaDownloadOperations,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -1915,9 +2055,10 @@ impl NovatekCameraSessionState {
     fn replace_read_only(
         &mut self,
         profile: NovatekR3V1Session,
-        read_only_snapshot: MobileNovatekReadOnlySnapshotDto,
+        read_only_snapshot: NovatekReadOnlySnapshot,
     ) {
         self.generation.advance();
+        self.media_downloads.clear();
         self.retained = Some(RetainedNovatekSession {
             profile,
             read_only_snapshot,
@@ -1926,6 +2067,7 @@ impl NovatekCameraSessionState {
 
     fn clear(&mut self) {
         self.generation.advance();
+        self.media_downloads.clear();
         self.retained = None;
     }
 
@@ -1997,10 +2139,100 @@ impl NovatekCameraSessionState {
         self.retained.as_ref().is_some_and(|session| {
             session
                 .read_only_snapshot
-                .media
+                .media()
+                .entries()
                 .iter()
-                .any(|entry| entry.path == path && entry.size_bytes == size_bytes)
+                .any(|entry| entry.path() == path && entry.size_bytes() == size_bytes)
         })
+    }
+
+    fn authorize_media_download(
+        &mut self,
+        path: &str,
+    ) -> Result<MobileNovatekMediaDownloadRequestDto, MobileNovatekMediaDownloadAuthorizationError>
+    {
+        let session = self
+            .retained
+            .as_ref()
+            .ok_or(MobileNovatekMediaDownloadAuthorizationError::SessionUnavailable)?;
+        let authorization = self
+            .media_downloads
+            .authorize(session.read_only_snapshot.media(), path)
+            .map_err(|error| match error {
+                NovatekMediaDownloadAuthorizationError::MediaNotRetained => {
+                    MobileNovatekMediaDownloadAuthorizationError::MediaNotRetained
+                }
+                NovatekMediaDownloadAuthorizationError::InvalidPath(_) => {
+                    MobileNovatekMediaDownloadAuthorizationError::InvalidPath
+                }
+                NovatekMediaDownloadAuthorizationError::OperationIdExhausted => {
+                    MobileNovatekMediaDownloadAuthorizationError::OperationIdExhausted
+                }
+            })?;
+        Ok(MobileNovatekMediaDownloadRequestDto {
+            operation_id: authorization.id().get(),
+            target: authorization.target().as_str().to_owned(),
+            size_bytes: authorization.entry().size_bytes(),
+        })
+    }
+
+    fn complete_media_download(
+        &mut self,
+        operation_id: u64,
+        actual_size: u64,
+    ) -> Result<MobileNovatekMediaEntryDto, MobileNovatekMediaDownloadCompletionError> {
+        let entry = self
+            .media_downloads
+            .consume_id(operation_id)
+            .ok_or(MobileNovatekMediaDownloadCompletionError::StaleOperation)?;
+        let entry = entry.entry();
+        if actual_size != entry.size_bytes() {
+            return Err(MobileNovatekMediaDownloadCompletionError::SizeMismatch {
+                expected: entry.size_bytes(),
+                actual: actual_size,
+            });
+        }
+        Ok(MobileNovatekMediaEntryDto {
+            name: entry.name().to_owned(),
+            path: entry.path().to_owned(),
+            size_bytes: entry.size_bytes(),
+            timecode: entry.timecode(),
+            time: entry.time().to_owned(),
+            attributes: entry.attributes(),
+        })
+    }
+
+    fn cancel_media_download(&mut self, operation_id: u64) -> bool {
+        self.media_downloads.cancel_id(operation_id)
+    }
+
+    fn media_provenance_for_download(
+        &self,
+        operation_id: u64,
+        association: &MobileNovatekMediaDownloadAssociationInput,
+    ) -> Result<CoreCameraMediaProvenance, MobileNovatekMediaDownloadCompletionError> {
+        let entry = self
+            .media_downloads
+            .authorized_entry_id(operation_id)
+            .ok_or(MobileNovatekMediaDownloadCompletionError::StaleOperation)?;
+        CoreCameraMediaProvenance::new(
+            CoreCameraSourceKind::NovatekR3Pro,
+            entry.path(),
+            entry.size_bytes(),
+            entry.timecode(),
+            entry.time(),
+            &association.ride_capture_file_name,
+            CoreCameraMediaCaptureTiming {
+                captured_at_monotonic: MonotonicTimestamp::new(
+                    association.captured_at_monotonic_ms,
+                ),
+                captured_at_wall_clock: WallClockUnixTimestamp::new(
+                    association.captured_at_wall_clock_ms,
+                ),
+                clock_uncertainty: association.clock_uncertainty.into(),
+            },
+        )
+        .map_err(|_| MobileNovatekMediaDownloadCompletionError::InvalidProvenance)
     }
 
     fn media_thumbnail_target(
@@ -2557,34 +2789,46 @@ impl CutoutSessionStateHandle {
         self.lock_inner().session_state().camera().to_owned().into()
     }
 
-    /// Replaces the retained Novatek proof and complete bounded read-only snapshot.
-    ///
-    /// The snapshot is retained by Rust so command and media authorization do
-    /// not depend on a second Swift-owned copy of protocol evidence.
+    /// Parses, validates, and retains the camera's read-only responses in one Rust operation.
+    /// The returned DTO is a display projection; Swift never submits it back as authority.
     ///
     /// # Errors
     ///
-    /// Returns an error when the origin, firmware, or command evidence fails
-    /// the verified R3V1 session checks.
+    /// Returns an error when a response is malformed or the origin, firmware,
+    /// or command evidence fails the verified R3V1 session checks.
     #[allow(clippy::needless_pass_by_value)]
     pub fn configure_novatek_read_only_session(
         &self,
         origin: MobileNovatekHttpOriginDto,
-        snapshot: MobileNovatekReadOnlySnapshotDto,
-    ) -> Result<(), MobileNovatekSessionError> {
+        firmware_response: Vec<u8>,
+        live_view_response: Vec<u8>,
+        configuration_response: Vec<u8>,
+        storage_response: Vec<u8>,
+        media_response: Vec<u8>,
+    ) -> Result<MobileNovatekReadOnlySnapshotDto, MobileNovatekSessionError> {
+        let snapshot = parse_read_only_snapshot(
+            &firmware_response,
+            &live_view_response,
+            &configuration_response,
+            &storage_response,
+            &media_response,
+        )
+        .map_err(|_| MobileNovatekSessionError::InvalidResponse)?;
         let session = build_novatek_session(
             &origin,
-            &snapshot.firmware_version,
+            snapshot.firmware().as_str(),
             snapshot
-                .configuration
+                .configuration()
+                .statuses()
                 .iter()
-                .map(|status| (status.command_id, status.status)),
+                .map(|status| (status.command_id().get(), status.status().get())),
         )?;
+        let dto = novatek_snapshot_dto(&snapshot);
         self.novatek_session
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .replace_read_only(session, snapshot);
-        Ok(())
+        Ok(dto)
     }
 
     /// Drops the retained Novatek proof and its command capabilities.
@@ -2603,6 +2847,76 @@ impl CutoutSessionStateHandle {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .media_is_current(&path, size_bytes)
+    }
+
+    /// Authorizes a download only for an exact retained command `3015` entry.
+    /// Reauthorizing the same path invalidates its earlier operation ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when there is no retained session, the path is absent,
+    /// or the camera path cannot be mapped to a safe HTTP target.
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn authorize_novatek_media_download(
+        &self,
+        path: String,
+    ) -> Result<MobileNovatekMediaDownloadRequestDto, MobileNovatekMediaDownloadAuthorizationError>
+    {
+        self.novatek_session
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .authorize_media_download(&path)
+    }
+
+    /// Cancels one pending native media transfer authorization.
+    pub fn cancel_novatek_media_download(&self, operation_id: u64) -> bool {
+        self.novatek_session
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .cancel_media_download(operation_id)
+    }
+
+    /// Consumes a successful native download and returns retained camera metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the operation is stale, replaced, already
+    /// consumed, or the downloaded file does not match the retained size.
+    pub fn complete_novatek_media_download(
+        &self,
+        input: MobileNovatekMediaDownloadCompletionInput,
+    ) -> Result<MobileNovatekMediaDownloadResultDto, MobileNovatekMediaDownloadCompletionError>
+    {
+        let mut novatek_session = self
+            .novatek_session
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let provenance_record = input
+            .association
+            .as_ref()
+            .map(|association| {
+                novatek_session.media_provenance_for_download(input.operation_id, association)
+            })
+            .transpose()?;
+        let media =
+            novatek_session.complete_media_download(input.operation_id, input.actual_size)?;
+        drop(novatek_session);
+
+        let provenance =
+            if let (Some(association), Some(record)) = (input.association, provenance_record) {
+                let provenance = MobileCameraMediaProvenanceDto::from(&record);
+                if !self
+                    .lock_inner()
+                    .session_state_mut()
+                    .record_camera_media_provenance(association.capture_generation.into(), record)
+                {
+                    return Err(MobileNovatekMediaDownloadCompletionError::StaleCaptureGeneration);
+                }
+                Some(provenance)
+            } else {
+                None
+            };
+        Ok(MobileNovatekMediaDownloadResultDto { media, provenance })
     }
 
     /// Builds a thumbnail target only from current Rust-retained R3V1 evidence.
@@ -2701,12 +3015,58 @@ impl CutoutSessionStateHandle {
             .is_current(token.into())
     }
 
-    /// Retires asynchronous camera work without changing presentation truth.
-    pub fn advance_camera_generation(&self) {
+    /// Captures an identity for asynchronous camera discovery work.
+    #[must_use]
+    pub fn camera_discovery_token(&self) -> MobileCameraDiscoveryTokenDto {
+        self.lock_inner()
+            .session_state()
+            .camera()
+            .discovery_token()
+            .into()
+    }
+
+    /// Returns whether discovery work still belongs to the current path epoch.
+    #[must_use]
+    pub fn camera_discovery_token_is_current(&self, token: MobileCameraDiscoveryTokenDto) -> bool {
+        self.lock_inner()
+            .session_state()
+            .camera()
+            .is_discovery_current(token.into())
+    }
+
+    /// Retires pending camera discovery after a native path observation.
+    pub fn advance_camera_discovery_generation(&self) {
         self.lock_inner()
             .session_state_mut()
             .camera_mut()
-            .advance_generation();
+            .advance_discovery_generation();
+    }
+
+    /// Captures an identity for asynchronous foreground preview work.
+    #[must_use]
+    pub fn camera_preview_token(&self) -> MobileCameraPreviewTokenDto {
+        self.lock_inner()
+            .session_state()
+            .camera()
+            .preview_token()
+            .into()
+    }
+
+    /// Returns whether asynchronous work still belongs to the preview lifecycle.
+    #[must_use]
+    pub fn camera_preview_token_is_current(&self, token: MobileCameraPreviewTokenDto) -> bool {
+        self.lock_inner()
+            .session_state()
+            .camera()
+            .is_preview_current(token.into())
+    }
+
+    /// Retires preview work without invalidating unrelated camera operations.
+    pub fn advance_camera_preview_generation(&self) {
+        self.lock_inner()
+            .session_state_mut()
+            .camera_mut()
+            .advance_preview_generation();
     }
 
     /// Retires the camera lifecycle and returns it to its non-optimistic baseline.
@@ -2764,11 +3124,20 @@ impl CutoutSessionStateHandle {
         &self,
         input: MobileCameraMediaProvenanceInput,
     ) -> Result<(), MobileCameraMediaProvenanceError> {
+        if input.source == MobileCameraSourceKindDto::NovatekR3Pro {
+            return Err(MobileCameraMediaProvenanceError::RequiresAuthorizedDownload);
+        }
+        let generation = input.capture_generation.into();
         let record = input.into_core()?;
-        self.lock_inner()
+        let mut inner = self.lock_inner();
+        if inner
             .session_state_mut()
-            .record_camera_media_provenance(record);
-        Ok(())
+            .record_camera_media_provenance(generation, record)
+        {
+            Ok(())
+        } else {
+            Err(MobileCameraMediaProvenanceError::StaleCaptureGeneration)
+        }
     }
 
     /// Returns bounded camera-media provenance retained by the Rust session.
@@ -18112,7 +18481,7 @@ mod tests {
     }
 
     #[test]
-    fn camera_session_state_handle_rejects_command_response_after_lifecycle_advance() {
+    fn camera_session_state_handle_rejects_command_response_after_lifecycle_invalidation() {
         let handle = CutoutSessionStateHandle::new();
         configure_test_novatek_session(&handle, &[(1001, 0)]);
         let request = handle
@@ -18125,7 +18494,7 @@ mod tests {
             )
             .expect("still capture is advertised");
 
-        handle.advance_camera_generation();
+        handle.invalidate_camera_lifecycle();
 
         assert_eq!(
             handle.complete_novatek_command(
@@ -18180,70 +18549,386 @@ mod tests {
         );
     }
 
+    struct NovatekResponseFixtures {
+        firmware: Vec<u8>,
+        live_view: Vec<u8>,
+        configuration: Vec<u8>,
+        storage: Vec<u8>,
+        media: Vec<u8>,
+    }
+
     fn configure_test_novatek_session(
         handle: &CutoutSessionStateHandle,
         configuration: &[(u16, u16)],
     ) {
+        let NovatekResponseFixtures {
+            firmware,
+            live_view,
+            configuration,
+            storage,
+            media,
+        } = test_novatek_responses(configuration, false);
         handle
             .configure_novatek_read_only_session(
                 MobileNovatekHttpOriginDto {
                     address: "192.168.1.254".to_owned(),
                     port: 80,
                 },
-                MobileNovatekReadOnlySnapshotDto {
-                    firmware_version: "R3V1.1_20240411".to_owned(),
-                    movie_rtsp_uri: "rtsp://192.168.1.254/movie".to_owned(),
-                    photo_rtsp_uri: "rtsp://192.168.1.254/photo".to_owned(),
-                    configuration: configuration
-                        .iter()
-                        .map(|&(command_id, status)| MobileNovatekCommandStatusDto {
-                            command_id,
-                            status,
-                        })
-                        .collect(),
-                    storage_present: true,
-                    media: Vec::new(),
-                },
+                firmware,
+                live_view,
+                configuration,
+                storage,
+                media,
             )
             .expect("validated R3V1 evidence establishes the session");
+    }
+
+    fn test_novatek_responses(
+        configuration: &[(u16, u16)],
+        include_media: bool,
+    ) -> NovatekResponseFixtures {
+        use std::fmt::Write as _;
+
+        let mut statuses = String::new();
+        for (command, status) in configuration {
+            write!(statuses, "<Cmd>{command}</Cmd><Status>{status}</Status>")
+                .expect("writing to String cannot fail");
+        }
+        let media = if include_media {
+            r"<LIST><File><NAME>clip.TS</NAME><FPATH>A:\Novatek\Movie\clip.TS</FPATH><SIZE>42</SIZE><TIMECODE>7</TIMECODE><TIME>2025/01/01 00:00:00</TIME><ATTR>32</ATTR></File></LIST>".to_owned()
+        } else {
+            "<LIST></LIST>".to_owned()
+        };
+        NovatekResponseFixtures {
+            firmware: b"<Function><Cmd>3012</Cmd><Status>0</Status><String>R3V1.1_20240411</String></Function>".to_vec(),
+            live_view: b"<LIST><MovieLiveViewLink>rtsp://192.168.1.254/movie</MovieLiveViewLink><PhotoLiveViewLink>rtsp://192.168.1.254/photo</PhotoLiveViewLink></LIST>".to_vec(),
+            configuration: format!("<Function>{statuses}</Function>").into_bytes(),
+            storage: b"<Function><Cmd>3024</Cmd><Status>0</Status><Value>1</Value></Function>".to_vec(),
+            media: media.into_bytes(),
+        }
+    }
+
+    fn novatek_download_association(
+        capture_generation: MobileCaptureGenerationDto,
+    ) -> MobileNovatekMediaDownloadAssociationInput {
+        MobileNovatekMediaDownloadAssociationInput {
+            capture_generation,
+            ride_capture_file_name: "ride.gpx".to_owned(),
+            captured_at_monotonic_ms: 10,
+            captured_at_wall_clock_ms: 20,
+            clock_uncertainty: MobileCameraClockUncertaintyDto::Unknown,
+        }
     }
 
     #[test]
     fn camera_session_state_handle_owns_read_only_media_evidence() {
         let handle = CutoutSessionStateHandle::new();
-        let snapshot = MobileNovatekReadOnlySnapshotDto {
-            firmware_version: "R3V1.1_20240411".to_owned(),
-            movie_rtsp_uri: "rtsp://192.168.1.254/xxx.mov".to_owned(),
-            photo_rtsp_uri: "rtsp://192.168.1.254/xxx.mov".to_owned(),
-            configuration: vec![MobileNovatekCommandStatusDto {
-                command_id: 2001,
-                status: 0,
-            }],
-            storage_present: true,
-            media: vec![MobileNovatekMediaEntryDto {
-                name: "clip.TS".to_owned(),
-                path: "A:\\Novatek\\Movie\\clip.TS".to_owned(),
-                size_bytes: 42,
-                timecode: 7,
-                time: "2025/01/01 00:00:00".to_owned(),
-                attributes: 32,
-            }],
-        };
+        let NovatekResponseFixtures {
+            firmware,
+            live_view,
+            configuration,
+            storage,
+            media,
+        } = test_novatek_responses(&[(2001, 0)], true);
         handle
             .configure_novatek_read_only_session(
                 MobileNovatekHttpOriginDto {
                     address: "192.168.1.254".to_owned(),
                     port: 80,
                 },
-                snapshot.clone(),
+                firmware,
+                live_view,
+                configuration,
+                storage,
+                media,
             )
             .expect("validated read-only evidence establishes the session");
 
         assert!(handle.novatek_media_is_current("A:\\Novatek\\Movie\\clip.TS".to_owned(), 42));
         assert!(!handle.novatek_media_is_current("A:\\Novatek\\Movie\\other.TS".to_owned(), 42));
 
+        let stale = handle
+            .authorize_novatek_media_download("A:\\Novatek\\Movie\\clip.TS".to_owned())
+            .expect("retained media is authorized");
+        let current = handle
+            .authorize_novatek_media_download("A:\\Novatek\\Movie\\clip.TS".to_owned())
+            .expect("reauthorization replaces the pending operation");
+        let capture_generation = handle
+            .begin_capture(MobileCaptureOriginDto::Manual)
+            .expect("capture lifecycle issues its generation");
+        assert!(handle.capture_writer_started(capture_generation));
+        assert_eq!(
+            stale.target, "/Novatek/Movie/clip.TS",
+            "the URL target comes from Rust's path mapping"
+        );
+        assert_eq!(
+            handle.complete_novatek_media_download(MobileNovatekMediaDownloadCompletionInput {
+                operation_id: stale.operation_id,
+                actual_size: 42,
+                association: Some(novatek_download_association(capture_generation)),
+            }),
+            Err(MobileNovatekMediaDownloadCompletionError::StaleOperation)
+        );
+        let completion =
+            handle.complete_novatek_media_download(MobileNovatekMediaDownloadCompletionInput {
+                operation_id: current.operation_id,
+                actual_size: 42,
+                association: Some(novatek_download_association(capture_generation)),
+            });
+        assert_eq!(
+            completion.map(|result| {
+                (
+                    result.media.path,
+                    result.media.timecode,
+                    result.provenance.expect("capture association is committed"),
+                )
+            }),
+            Ok((
+                "A:\\Novatek\\Movie\\clip.TS".to_owned(),
+                7,
+                MobileCameraMediaProvenanceDto {
+                    source: MobileCameraSourceKindDto::NovatekR3Pro,
+                    camera_path: "A:\\Novatek\\Movie\\clip.TS".to_owned(),
+                    size_bytes: 42,
+                    camera_timecode: 7,
+                    camera_time: "2025/01/01 00:00:00".to_owned(),
+                    ride_capture_file_name: "ride.gpx".to_owned(),
+                    captured_at_monotonic_ms: 10,
+                    captured_at_wall_clock_ms: 20,
+                    clock_uncertainty: MobileCameraClockUncertaintyDto::Unknown,
+                },
+            ))
+        );
+        assert_eq!(
+            handle.complete_novatek_media_download(MobileNovatekMediaDownloadCompletionInput {
+                operation_id: current.operation_id,
+                actual_size: 42,
+                association: Some(novatek_download_association(capture_generation)),
+            }),
+            Err(MobileNovatekMediaDownloadCompletionError::StaleOperation)
+        );
+
         handle.clear_novatek_session();
         assert!(!handle.novatek_media_is_current("A:\\Novatek\\Movie\\clip.TS".to_owned(), 42));
+    }
+
+    #[test]
+    fn cancelling_media_download_authorization_retires_one_shot_id() {
+        let handle = CutoutSessionStateHandle::new();
+        let NovatekResponseFixtures {
+            firmware,
+            live_view,
+            configuration,
+            storage,
+            media,
+        } = test_novatek_responses(&[(2001, 0)], true);
+        handle
+            .configure_novatek_read_only_session(
+                MobileNovatekHttpOriginDto {
+                    address: "192.168.1.254".to_owned(),
+                    port: 80,
+                },
+                firmware,
+                live_view,
+                configuration,
+                storage,
+                media,
+            )
+            .expect("validated read-only evidence establishes the session");
+        let request = handle
+            .authorize_novatek_media_download("A:\\Novatek\\Movie\\clip.TS".to_owned())
+            .expect("retained media is authorized");
+
+        assert!(handle.cancel_novatek_media_download(request.operation_id));
+        assert!(!handle.cancel_novatek_media_download(request.operation_id));
+        assert_eq!(
+            handle.complete_novatek_media_download(MobileNovatekMediaDownloadCompletionInput {
+                operation_id: request.operation_id,
+                actual_size: request.size_bytes,
+                association: None,
+            }),
+            Err(MobileNovatekMediaDownloadCompletionError::StaleOperation)
+        );
+    }
+
+    #[test]
+    fn invalid_capture_association_does_not_consume_media_download_authorization() {
+        let handle = CutoutSessionStateHandle::new();
+        let NovatekResponseFixtures {
+            firmware,
+            live_view,
+            configuration,
+            storage,
+            media,
+        } = test_novatek_responses(&[(2001, 0)], true);
+        handle
+            .configure_novatek_read_only_session(
+                MobileNovatekHttpOriginDto {
+                    address: "192.168.1.254".to_owned(),
+                    port: 80,
+                },
+                firmware,
+                live_view,
+                configuration,
+                storage,
+                media,
+            )
+            .expect("validated R3V1 evidence establishes the session");
+        let capture_generation = handle
+            .begin_capture(MobileCaptureOriginDto::Manual)
+            .expect("capture lifecycle issues its generation");
+        assert!(handle.capture_writer_started(capture_generation));
+        let request = handle
+            .authorize_novatek_media_download("A:\\Novatek\\Movie\\clip.TS".to_owned())
+            .expect("listed media is authorized");
+        let mut invalid_association = novatek_download_association(capture_generation);
+        invalid_association.ride_capture_file_name.clear();
+
+        assert_eq!(
+            handle.complete_novatek_media_download(MobileNovatekMediaDownloadCompletionInput {
+                operation_id: request.operation_id,
+                actual_size: request.size_bytes,
+                association: Some(invalid_association),
+            }),
+            Err(MobileNovatekMediaDownloadCompletionError::InvalidProvenance)
+        );
+        assert!(
+            handle
+                .complete_novatek_media_download(MobileNovatekMediaDownloadCompletionInput {
+                    operation_id: request.operation_id,
+                    actual_size: request.size_bytes,
+                    association: Some(novatek_download_association(capture_generation)),
+                })
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn preview_retirement_preserves_unrelated_command_and_download_operations() {
+        let handle = CutoutSessionStateHandle::new();
+        let NovatekResponseFixtures {
+            firmware,
+            live_view,
+            configuration,
+            storage,
+            media,
+        } = test_novatek_responses(&[(2001, 0)], true);
+        handle
+            .configure_novatek_read_only_session(
+                MobileNovatekHttpOriginDto {
+                    address: "192.168.1.254".to_owned(),
+                    port: 80,
+                },
+                firmware,
+                live_view,
+                configuration,
+                storage,
+                media,
+            )
+            .expect("validated read-only evidence establishes the session");
+
+        let command = handle
+            .authorize_novatek_command(
+                MobileNovatekHttpOriginDto {
+                    address: "192.168.1.254".to_owned(),
+                    port: 80,
+                },
+                MobileNovatekCommandDto::StartRecording,
+            )
+            .expect("recording command is advertised");
+        let download = handle
+            .authorize_novatek_media_download("A:\\Novatek\\Movie\\clip.TS".to_owned())
+            .expect("listed media is authorized");
+        let camera_token = handle.camera_session_token();
+        let preview_token = handle.camera_preview_token();
+
+        handle.advance_camera_preview_generation();
+
+        assert!(!handle.camera_preview_token_is_current(preview_token));
+        assert!(handle.camera_session_token_is_current(camera_token));
+        assert_eq!(
+            handle.complete_novatek_command(
+                command,
+                br"<Function><Cmd>2001</Cmd><Status>0</Status></Function>".to_vec(),
+            ),
+            Ok(MobileNovatekCommandOutcomeDto::Acknowledged)
+        );
+        assert_eq!(
+            handle
+                .complete_novatek_media_download(MobileNovatekMediaDownloadCompletionInput {
+                    operation_id: download.operation_id,
+                    actual_size: 42,
+                    association: None,
+                })
+                .expect("preview retirement must not invalidate a download")
+                .media
+                .path,
+            "A:\\Novatek\\Movie\\clip.TS"
+        );
+    }
+
+    #[test]
+    fn novatek_provenance_cannot_be_submitted_without_consuming_a_download_operation() {
+        let handle = CutoutSessionStateHandle::new();
+        let result = handle.record_camera_media_provenance(MobileCameraMediaProvenanceInput {
+            capture_generation: MobileCaptureGenerationDto { value: 1 },
+            source: MobileCameraSourceKindDto::NovatekR3Pro,
+            camera_path: "A:\\Novatek\\Movie\\unlisted.TS".to_owned(),
+            size_bytes: 1,
+            camera_timecode: 99,
+            camera_time: "forged".to_owned(),
+            ride_capture_file_name: "ride.pevcap".to_owned(),
+            captured_at_monotonic_ms: 1,
+            captured_at_wall_clock_ms: 1,
+            clock_uncertainty: MobileCameraClockUncertaintyDto::Unknown,
+        });
+
+        assert_eq!(
+            result,
+            Err(MobileCameraMediaProvenanceError::RequiresAuthorizedDownload)
+        );
+    }
+
+    #[test]
+    fn replacing_novatek_evidence_invalidates_pending_download_operations() {
+        let handle = CutoutSessionStateHandle::new();
+        let origin = MobileNovatekHttpOriginDto {
+            address: "192.168.1.254".to_owned(),
+            port: 80,
+        };
+        let configure = || {
+            let NovatekResponseFixtures {
+                firmware,
+                live_view,
+                configuration,
+                storage,
+                media,
+            } = test_novatek_responses(&[(2016, 0)], true);
+            handle
+                .configure_novatek_read_only_session(
+                    origin.clone(),
+                    firmware,
+                    live_view,
+                    configuration,
+                    storage,
+                    media,
+                )
+                .expect("valid camera responses establish the session")
+        };
+        configure();
+        let authorization = handle
+            .authorize_novatek_media_download("A:\\Novatek\\Movie\\clip.TS".to_owned())
+            .expect("listed camera media is authorized");
+        configure();
+
+        assert_eq!(
+            handle.complete_novatek_media_download(MobileNovatekMediaDownloadCompletionInput {
+                operation_id: authorization.operation_id,
+                actual_size: 42,
+                association: None,
+            }),
+            Err(MobileNovatekMediaDownloadCompletionError::StaleOperation)
+        );
     }
 
     #[test]
@@ -18253,35 +18938,44 @@ mod tests {
             address: "192.168.1.254".to_owned(),
             port: 80,
         };
-        let snapshot = |status| MobileNovatekReadOnlySnapshotDto {
-            firmware_version: "R3V1.1_20240411".to_owned(),
-            movie_rtsp_uri: "rtsp://192.168.1.254/xxx.mov".to_owned(),
-            photo_rtsp_uri: "rtsp://192.168.1.254/xxx.mov".to_owned(),
-            configuration: vec![MobileNovatekCommandStatusDto {
-                command_id: 4001,
-                status,
-            }],
-            storage_present: true,
-            media: vec![MobileNovatekMediaEntryDto {
-                name: "clip.TS".to_owned(),
-                path: "A:\\Novatek\\Movie\\clip.TS".to_owned(),
-                size_bytes: 42,
-                timecode: 7,
-                time: "2025/01/01 00:00:00".to_owned(),
-                attributes: 32,
-            }],
-        };
-
+        let NovatekResponseFixtures {
+            firmware,
+            live_view,
+            configuration,
+            storage,
+            media,
+        } = test_novatek_responses(&[(4001, 7)], true);
         handle
-            .configure_novatek_read_only_session(origin.clone(), snapshot(7))
+            .configure_novatek_read_only_session(
+                origin.clone(),
+                firmware,
+                live_view,
+                configuration,
+                storage,
+                media,
+            )
             .expect("bounded R3V1 evidence is retained");
         assert_eq!(
             handle.novatek_media_thumbnail_target("A:\\Novatek\\Movie\\clip.TS".to_owned(), 42),
             Err(MobileNovatekThumbnailTargetError::CapabilityNotAdvertised)
         );
 
+        let NovatekResponseFixtures {
+            firmware,
+            live_view,
+            configuration,
+            storage,
+            media,
+        } = test_novatek_responses(&[(4001, 0)], true);
         handle
-            .configure_novatek_read_only_session(origin.clone(), snapshot(0))
+            .configure_novatek_read_only_session(
+                origin.clone(),
+                firmware,
+                live_view,
+                configuration,
+                storage,
+                media,
+            )
             .expect("acknowledged thumbnail capability is retained");
         assert_eq!(
             handle
@@ -18304,34 +18998,27 @@ mod tests {
     #[test]
     fn novatek_session_state_replaces_profile_and_media_evidence_together() {
         let mut state = NovatekCameraSessionState::default();
-        let snapshot = MobileNovatekReadOnlySnapshotDto {
-            firmware_version: "R3V1.1_20240411".to_owned(),
-            movie_rtsp_uri: "rtsp://192.168.1.254/xxx.mov".to_owned(),
-            photo_rtsp_uri: "rtsp://192.168.1.254/xxx.mov".to_owned(),
-            configuration: vec![MobileNovatekCommandStatusDto {
-                command_id: 2001,
-                status: 0,
-            }],
-            storage_present: true,
-            media: vec![MobileNovatekMediaEntryDto {
-                name: "clip.TS".to_owned(),
-                path: "A:\\Novatek\\Movie\\clip.TS".to_owned(),
-                size_bytes: 42,
-                timecode: 7,
-                time: "2025/01/01 00:00:00".to_owned(),
-                attributes: 32,
-            }],
-        };
+        let NovatekResponseFixtures {
+            firmware,
+            live_view,
+            configuration,
+            storage,
+            media,
+        } = test_novatek_responses(&[(2001, 0)], true);
+        let snapshot =
+            parse_read_only_snapshot(&firmware, &live_view, &configuration, &storage, &media)
+                .expect("captured responses parse as bounded evidence");
         let profile = build_novatek_session(
             &MobileNovatekHttpOriginDto {
                 address: "192.168.1.254".to_owned(),
                 port: 80,
             },
-            &snapshot.firmware_version,
+            snapshot.firmware().as_str(),
             snapshot
-                .configuration
+                .configuration()
+                .statuses()
                 .iter()
-                .map(|status| (status.command_id, status.status)),
+                .map(|status| (status.command_id().get(), status.status().get())),
         )
         .expect("read-only evidence establishes a valid profile");
 

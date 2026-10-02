@@ -49,14 +49,22 @@ final class CutoutAppModel {
     private var rideMapCheckpointLease: RideBackgroundTask?
     private var rideMapCheckpointGeneration: UInt64 = 0
     private(set) var cameraMediaReferences: [CameraMediaReference] = []
-    private static let maximumCameraMediaReferences = 64
 
     var selectedRideTitle: String? { device.selectedRideTitle }
 
     /// Supplies the active capture identity to the camera route without
     /// giving the view ownership of capture state.
-    var currentCameraCaptureFileName: () -> String? {
-        { [weak self] in self?.capture.fileName }
+    var currentCameraCaptureIdentity: () -> (fileName: String, generation: CaptureGeneration)? {
+        { [weak self] in
+            guard
+                let self,
+                let fileName = self.capture.fileName,
+                let generation = self.capture.activeGeneration
+            else {
+                return nil
+            }
+            return (fileName, generation)
+        }
     }
 
     /// Exposes Rust-owned camera/session state to the camera route.
@@ -247,70 +255,46 @@ final class CutoutAppModel {
     /// was captured when the operation started.
     func recordCameraMediaReference(
         captureFileName: String,
-        source: CameraSourceKind = .novatekR3Pro,
-        media: CameraMediaEvidence,
+        captureGeneration: CaptureGeneration,
+        provenance: MobileCameraMediaProvenanceDto,
         localURL: URL
     ) {
         guard !captureFileName.isEmpty else { return }
-        guard capture.activeGeneration != nil else { return }
+        guard capture.activeGeneration == captureGeneration else { return }
         guard captureFileName == capture.fileName else { return }
-        guard
-            !cameraMediaReferences.contains(where: {
-                $0.source == source
-                    && $0.rideCaptureFileName == captureFileName
-                    && $0.cameraPath == media.path
-            })
-        else { return }
-
-        let input = MobileCameraMediaProvenanceInput(
-            source: source.mobileDto,
-            cameraPath: media.path,
-            sizeBytes: media.sizeBytes,
-            cameraTimecode: media.timecode,
-            cameraTime: media.time,
-            rideCaptureFileName: captureFileName,
-            capturedAtMonotonicMs: currentMonotonicTime.rawValue,
-            capturedAtWallClockMs: UInt64(max(0, Date().timeIntervalSince1970 * 1_000)),
-            clockUncertainty: .unknown
-        )
+        guard provenance.rideCaptureFileName == captureFileName else { return }
         let sessionState = core.rideSessionStateHandle
-        guard (try? sessionState.recordCameraMediaProvenance(input: input)) != nil else {
-            return
-        }
+        let provenanceRecords = sessionState.cameraMediaProvenance()
         guard
-            let provenance = sessionState.cameraMediaProvenance().first(where: {
-                $0.source == source.mobileDto
-                    && $0.cameraPath == media.path
+            let retainedProvenance = provenanceRecords.first(where: {
+                $0 == provenance
+                    && $0.source == .novatekR3Pro
                     && $0.rideCaptureFileName == captureFileName
             })
         else {
             return
         }
 
-        let reference = CameraMediaReference(provenance: provenance, localURL: localURL)
-        guard captureFileName == capture.fileName else { return }
-        cameraMediaReferences.append(reference)
-        if cameraMediaReferences.count > Self.maximumCameraMediaReferences {
-            cameraMediaReferences.removeFirst()
+        let reference = CameraMediaReference(provenance: retainedProvenance, localURL: localURL)
+        guard capture.activeGeneration == captureGeneration,
+            captureFileName == capture.fileName
+        else { return }
+        if let existingIndex = cameraMediaReferences.firstIndex(where: {
+            $0.source.mobileDto == retainedProvenance.source
+                && $0.rideCaptureFileName == retainedProvenance.rideCaptureFileName
+                && $0.cameraPath == retainedProvenance.cameraPath
+        }) {
+            cameraMediaReferences[existingIndex] = reference
+        } else {
+            cameraMediaReferences.append(reference)
         }
-    }
-
-    func recordCameraMediaReference(
-        source: CameraSourceKind,
-        media: CameraMediaEvidence,
-        localURL: URL
-    ) {
-        guard let captureFileName = capture.fileName else { return }
-        recordCameraMediaReference(
-            captureFileName: captureFileName,
-            source: source,
-            media: media,
-            localURL: localURL
-        )
-    }
-
-    func recordCameraMediaReference(media: CameraMediaEvidence, localURL: URL) {
-        recordCameraMediaReference(source: .novatekR3Pro, media: media, localURL: localURL)
+        cameraMediaReferences.removeAll { reference in
+            !provenanceRecords.contains { retained in
+                reference.source.mobileDto == retained.source
+                    && reference.rideCaptureFileName == retained.rideCaptureFileName
+                    && reference.cameraPath == retained.cameraPath
+            }
+        }
     }
 
     private let core: any CutoutSessionDriving

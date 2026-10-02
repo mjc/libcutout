@@ -710,6 +710,160 @@ pub struct NovatekMediaEntry {
     attributes: u32,
 }
 
+/// Rust-issued identity for one pending Novatek media download.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct NovatekMediaDownloadOperationId(u64);
+
+impl NovatekMediaDownloadOperationId {
+    /// Returns the opaque numeric identity for binding adapters.
+    #[must_use]
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+}
+
+/// One Rust-authorized transfer target and its exact retained inventory entry.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NovatekMediaDownloadAuthorization {
+    id: NovatekMediaDownloadOperationId,
+    target: NovatekMediaDownloadTarget,
+    entry: NovatekMediaEntry,
+}
+
+impl NovatekMediaDownloadAuthorization {
+    /// Returns the one-shot operation identity.
+    #[must_use]
+    pub const fn id(&self) -> NovatekMediaDownloadOperationId {
+        self.id
+    }
+
+    /// Returns the validated relative HTTP target.
+    #[must_use]
+    pub fn target(&self) -> &NovatekMediaDownloadTarget {
+        &self.target
+    }
+
+    /// Returns the exact camera metadata authorized for this transfer.
+    #[must_use]
+    pub const fn entry(&self) -> &NovatekMediaEntry {
+        &self.entry
+    }
+}
+
+/// One-shot authorizations for media entries in a retained camera inventory.
+#[derive(Debug, Default)]
+pub struct NovatekMediaDownloadOperations {
+    next_id: u64,
+    pending: Vec<NovatekMediaDownloadAuthorization>,
+}
+
+impl NovatekMediaDownloadOperations {
+    /// Authorizes an exact path from the supplied Rust-retained media list.
+    /// Reauthorizing the same path replaces its prior pending operation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the path is absent or cannot be mapped to a safe
+    /// HTTP target, or when the operation identity space is exhausted.
+    pub fn authorize(
+        &mut self,
+        media: &NovatekMediaList,
+        path: &str,
+    ) -> Result<NovatekMediaDownloadAuthorization, NovatekMediaDownloadAuthorizationError> {
+        let entry = media
+            .entries()
+            .iter()
+            .find(|entry| entry.path() == path)
+            .ok_or(NovatekMediaDownloadAuthorizationError::MediaNotRetained)?;
+        let target = media_download_target(entry.path())
+            .map_err(NovatekMediaDownloadAuthorizationError::InvalidPath)?;
+        let next_id = self
+            .next_id
+            .checked_add(1)
+            .ok_or(NovatekMediaDownloadAuthorizationError::OperationIdExhausted)?;
+        self.next_id = next_id;
+        self.pending.retain(|pending| pending.entry.path() != path);
+        let authorization = NovatekMediaDownloadAuthorization {
+            id: NovatekMediaDownloadOperationId(next_id),
+            target,
+            entry: entry.clone(),
+        };
+        self.pending.push(authorization.clone());
+        Ok(authorization)
+    }
+
+    /// Consumes an authorization exactly once and returns its retained entry.
+    #[must_use]
+    pub fn consume(
+        &mut self,
+        id: NovatekMediaDownloadOperationId,
+    ) -> Option<NovatekMediaDownloadEntry> {
+        let index = self.pending.iter().position(|pending| pending.id == id)?;
+        let authorization = self.pending.remove(index);
+        Some(NovatekMediaDownloadEntry(authorization.entry))
+    }
+
+    /// Consumes a binding-projected identity without exposing its constructor.
+    #[must_use]
+    pub fn consume_id(&mut self, id: u64) -> Option<NovatekMediaDownloadEntry> {
+        self.consume(NovatekMediaDownloadOperationId(id))
+    }
+
+    /// Cancels one pending operation without consuming or returning its metadata.
+    pub fn cancel(&mut self, id: NovatekMediaDownloadOperationId) -> bool {
+        let Some(index) = self.pending.iter().position(|pending| pending.id == id) else {
+            return false;
+        };
+        self.pending.remove(index);
+        true
+    }
+
+    /// Cancels one binding-projected identity without exposing its constructor.
+    pub fn cancel_id(&mut self, id: u64) -> bool {
+        self.cancel(NovatekMediaDownloadOperationId(id))
+    }
+
+    /// Returns retained metadata for an active operation without consuming it.
+    #[must_use]
+    pub fn authorized_entry_id(&self, id: u64) -> Option<&NovatekMediaEntry> {
+        self.pending
+            .iter()
+            .find(|authorization| authorization.id.get() == id)
+            .map(NovatekMediaDownloadAuthorization::entry)
+    }
+
+    /// Invalidates all outstanding operations when the inventory is replaced.
+    pub fn clear(&mut self) {
+        self.pending.clear();
+    }
+}
+
+/// Media metadata returned after a one-shot download authorization is consumed.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NovatekMediaDownloadEntry(NovatekMediaEntry);
+
+impl NovatekMediaDownloadEntry {
+    /// Returns the retained camera media metadata.
+    #[must_use]
+    pub const fn entry(&self) -> &NovatekMediaEntry {
+        &self.0
+    }
+}
+
+/// Why a Novatek media download could not be authorized.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum NovatekMediaDownloadAuthorizationError {
+    /// The requested path does not occur in the retained camera inventory.
+    #[error("media is not in the retained camera inventory")]
+    MediaNotRetained,
+    /// The retained path cannot be converted to a safe HTTP target.
+    #[error("media path is invalid")]
+    InvalidPath(NovatekMediaPathError),
+    /// The monotonic operation identifier cannot be advanced further.
+    #[error("media download operation identity exhausted")]
+    OperationIdExhausted,
+}
+
 /// Validated HTTP path for a file served by the camera's embedded web server.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NovatekMediaDownloadTarget(ArrayString<NOVATEK_MAX_MEDIA_PATH_BYTES>);
@@ -2053,6 +2207,98 @@ mod tests {
         assert_eq!(
             media.entries()[1].path(),
             r"A:\Novatek\Photo\20251021191727_001681.JPG"
+        );
+    }
+
+    #[test]
+    fn media_download_authorization_uses_retained_metadata_and_is_one_shot() {
+        let media = parse_media_list_response(br"<LIST><File><NAME>clip.TS</NAME><FPATH>A:\Novatek\Movie\clip.TS</FPATH><SIZE>42</SIZE><TIMECODE>7</TIMECODE><TIME>2025/01/01 00:00:00</TIME><ATTR>32</ATTR></File></LIST>")
+            .expect("fixture is valid");
+        let mut operations = NovatekMediaDownloadOperations::default();
+        let authorization = operations
+            .authorize(&media, r"A:\Novatek\Movie\clip.TS")
+            .expect("listed path is authorized");
+
+        assert_eq!(authorization.target().as_str(), "/Novatek/Movie/clip.TS");
+        assert_eq!(authorization.entry().timecode(), 7);
+        let consumed = operations
+            .consume(authorization.id())
+            .expect("authorized operation can be consumed");
+        assert_eq!(consumed.entry(), &media.entries()[0]);
+        assert_eq!(operations.consume(authorization.id()), None);
+    }
+
+    #[test]
+    fn media_download_reauthorization_replaces_only_the_same_pending_path() {
+        let media = parse_media_list_response(br"<LIST><File><NAME>one.TS</NAME><FPATH>A:\Novatek\Movie\one.TS</FPATH><SIZE>42</SIZE><TIMECODE>7</TIMECODE><TIME>2025/01/01 00:00:00</TIME><ATTR>32</ATTR></File><File><NAME>two.TS</NAME><FPATH>A:\Novatek\Movie\two.TS</FPATH><SIZE>24</SIZE><TIMECODE>8</TIMECODE><TIME>2025/01/01 00:00:01</TIME><ATTR>32</ATTR></File></LIST>")
+            .expect("fixture is valid");
+        let mut operations = NovatekMediaDownloadOperations::default();
+        let first = operations
+            .authorize(&media, r"A:\Novatek\Movie\one.TS")
+            .expect("first authorization");
+        let unrelated = operations
+            .authorize(&media, r"A:\Novatek\Movie\two.TS")
+            .expect("unrelated authorization");
+        let replacement = operations
+            .authorize(&media, r"A:\Novatek\Movie\one.TS")
+            .expect("reauthorization replaces the earlier operation");
+
+        assert_eq!(operations.consume(first.id()), None);
+        assert_eq!(
+            operations.consume(unrelated.id()).unwrap().entry().path(),
+            r"A:\Novatek\Movie\two.TS"
+        );
+        assert_eq!(
+            operations.consume(replacement.id()).unwrap().entry().path(),
+            r"A:\Novatek\Movie\one.TS"
+        );
+    }
+
+    #[test]
+    fn cancelling_media_download_removes_only_its_authorization() {
+        let media = parse_media_list_response(br"<LIST><File><NAME>one.TS</NAME><FPATH>A:\Novatek\Movie\one.TS</FPATH><SIZE>42</SIZE><TIMECODE>7</TIMECODE><TIME>2025/01/01 00:00:00</TIME><ATTR>32</ATTR></File><File><NAME>two.TS</NAME><FPATH>A:\Novatek\Movie\two.TS</FPATH><SIZE>24</SIZE><TIMECODE>8</TIMECODE><TIME>2025/01/01 00:00:01</TIME><ATTR>32</ATTR></File></LIST>")
+            .expect("fixture is valid");
+        let mut operations = NovatekMediaDownloadOperations::default();
+        let cancelled = operations
+            .authorize(&media, r"A:\Novatek\Movie\one.TS")
+            .expect("first authorization");
+        let retained = operations
+            .authorize(&media, r"A:\Novatek\Movie\two.TS")
+            .expect("second authorization");
+
+        assert!(operations.cancel(cancelled.id()));
+        assert!(!operations.cancel(cancelled.id()));
+        assert_eq!(
+            operations
+                .authorized_entry_id(retained.id().get())
+                .map(NovatekMediaEntry::path),
+            Some(r"A:\Novatek\Movie\two.TS")
+        );
+    }
+
+    #[test]
+    fn replacing_the_media_inventory_invalidates_pending_downloads() {
+        let media = parse_media_list_response(br"<LIST><File><NAME>clip.TS</NAME><FPATH>A:\Novatek\Movie\clip.TS</FPATH><SIZE>42</SIZE><TIMECODE>7</TIMECODE><TIME>2025/01/01 00:00:00</TIME><ATTR>32</ATTR></File></LIST>")
+            .expect("fixture is valid");
+        let mut operations = NovatekMediaDownloadOperations::default();
+        let authorization = operations
+            .authorize(&media, r"A:\Novatek\Movie\clip.TS")
+            .expect("listed path is authorized");
+
+        operations.clear();
+
+        assert_eq!(operations.consume(authorization.id()), None);
+    }
+
+    #[test]
+    fn media_download_authorization_rejects_unlisted_paths() {
+        let media =
+            parse_media_list_response(br"<LIST></LIST>").expect("empty camera inventory is valid");
+        let mut operations = NovatekMediaDownloadOperations::default();
+
+        assert_eq!(
+            operations.authorize(&media, r"A:\Novatek\Movie\clip.TS"),
+            Err(NovatekMediaDownloadAuthorizationError::MediaNotRetained)
         );
     }
 

@@ -12,8 +12,8 @@ import SwiftUI
 struct CameraRouteContainerView: View {
     let close: (() -> Void)?
     let annotateCapture: ((String, String) -> Void)?
-    let recordMediaReference: ((String, CameraSourceKind, CameraMediaEvidence, URL) -> Void)?
-    let currentCaptureFileName: (() -> String?)?
+    let recordMediaReference: ((String, CaptureGeneration, MobileCameraMediaProvenanceDto, URL) -> Void)?
+    let currentCaptureIdentity: (() -> (fileName: String, generation: CaptureGeneration)?)?
     @State private var adapter = CameraLocalNetworkAdapter()
     @State private var previewRenderer = CameraPreviewRenderer()
     @State private var controlModel: CameraControlModel
@@ -28,14 +28,15 @@ struct CameraRouteContainerView: View {
     init(
         close: (() -> Void)? = nil,
         annotateCapture: ((String, String) -> Void)? = nil,
-        recordMediaReference: ((String, CameraSourceKind, CameraMediaEvidence, URL) -> Void)? = nil,
-        currentCaptureFileName: (() -> String?)? = nil,
+        recordMediaReference:
+            ((String, CaptureGeneration, MobileCameraMediaProvenanceDto, URL) -> Void)? = nil,
+        currentCaptureIdentity: (() -> (fileName: String, generation: CaptureGeneration)?)? = nil,
         sessionState: CutoutSessionStateHandle = CutoutSessionStateHandle()
     ) {
         self.close = close
         self.annotateCapture = annotateCapture
         self.recordMediaReference = recordMediaReference
-        self.currentCaptureFileName = currentCaptureFileName
+        self.currentCaptureIdentity = currentCaptureIdentity
         let adapter = CameraLocalNetworkAdapter(sessionState: sessionState)
         _adapter = State(initialValue: adapter)
         _controlModel = State(
@@ -43,9 +44,8 @@ struct CameraRouteContainerView: View {
         )
         let mediaModel = CameraMediaModel(
             adapter: adapter,
-            annotateCapture: annotateCapture,
             recordMediaReference: recordMediaReference,
-            currentCaptureFileName: currentCaptureFileName
+            currentCaptureIdentity: currentCaptureIdentity
         )
         _mediaModel = State(initialValue: mediaModel)
         _discoveryModel = State(

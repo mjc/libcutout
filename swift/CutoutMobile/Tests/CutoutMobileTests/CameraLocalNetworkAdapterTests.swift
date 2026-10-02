@@ -3,6 +3,17 @@ import XCTest
 
 @testable import CutoutMobile
 
+private actor CameraReadOnlyFetchCounter {
+    private var count = 0
+
+    func next() -> Int {
+        count += 1
+        return count
+    }
+
+    var value: Int { count }
+}
+
 final class CameraLocalNetworkAdapterTests: XCTestCase {
     func testCameraPathRequiresWiFiBeforeCameraConfiguration() {
         XCTAssertEqual(
@@ -67,7 +78,7 @@ final class CameraLocalNetworkAdapterTests: XCTestCase {
         )
         let adapter = CameraLocalNetworkAdapter()
 
-        adapter.apply(readOnlyEvidence: CameraReadOnlyEvidence(snapshot))
+        applyTestEvidence(CameraReadOnlyEvidence(snapshot), to: adapter)
 
         XCTAssertEqual(adapter.presentation.connection, .connected)
         XCTAssertEqual(adapter.presentation.profileName, "FreedConn R3 Pro · Novatek")
@@ -295,7 +306,7 @@ final class CameraLocalNetworkAdapterTests: XCTestCase {
     }
 
     @MainActor
-    func testSatisfiedWiFiPathInvalidatesEvidenceAfterAPathObservation() {
+    func testSatisfiedWiFiPathObservationPreservesEstablishedCameraEvidence() {
         let adapter = CameraLocalNetworkAdapter()
         let evidence = CameraReadOnlyEvidence(
             MobileNovatekReadOnlySnapshotDto(
@@ -306,12 +317,71 @@ final class CameraLocalNetworkAdapterTests: XCTestCase {
                 storagePresent: true,
                 media: []
             ))
-        adapter.apply(readOnlyEvidence: evidence)
+        applyTestEvidence(evidence, to: adapter)
 
         adapter.apply(pathStatus: .satisfied, usesWiFi: true)
 
-        XCTAssertEqual(adapter.presentation.connection, .notConfigured)
+        XCTAssertEqual(adapter.presentation.connection, .connected)
+        XCTAssertEqual(adapter.readOnlyEvidence, evidence)
+    }
+
+    @MainActor
+    func testChangedNetworkPathRetiresEstablishedCameraAuthority() {
+        let adapter = CameraLocalNetworkAdapter()
+        let evidence = cameraEvidence(advertisedCommandIDs: [1001, 2001])
+        applyTestEvidence(evidence, to: adapter)
+        adapter.observePreview(.live)
+
+        adapter.apply(pathStatus: .satisfied, usesWiFi: true, networkPathChanged: true)
+
         XCTAssertNil(adapter.readOnlyEvidence)
+        XCTAssertEqual(adapter.presentation.connection, .notConfigured)
+        XCTAssertNil(adapter.sessionState.novatekSessionOrigin())
+        XCTAssertEqual(adapter.sessionState.cameraSnapshot().preview, .stopped)
+    }
+
+    @MainActor
+    func testSatisfiedWiFiObservationDuringDiscoveryRejectsOldEvidence() async {
+        let adapter = CameraLocalNetworkAdapter()
+        let responses: [String: Data] = [
+            "3012": Data("<Function><Cmd>3012</Cmd><Status>0</Status><String>R3V1.1_20240411</String></Function>".utf8),
+            "2019": Data(
+                "<LIST><MovieLiveViewLink>rtsp://192.168.1.254/xxx.mov</MovieLiveViewLink><PhotoLiveViewLink>rtsp://192.168.1.254/xxx.mov</PhotoLiveViewLink></LIST>"
+                    .utf8
+            ),
+            "3014": Data("<Function><Cmd>2016</Cmd><Status>0</Status></Function>".utf8),
+            "3024": Data("<Function><Cmd>3024</Cmd><Status>0</Status><Value>1</Value></Function>".utf8),
+            "3015": Data("<LIST></LIST>".utf8),
+        ]
+        let fetchCounter = CameraReadOnlyFetchCounter()
+
+        do {
+            _ = try await adapter.loadReadOnlyEvidence(
+                address: "192.168.1.254",
+                port: 80
+            ) { url in
+                if await fetchCounter.next() == 2 {
+                    await MainActor.run {
+                        adapter.apply(pathStatus: .satisfied, usesWiFi: true)
+                    }
+                }
+                let command = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first {
+                    $0.name == "cmd"
+                }?.value
+                return responses[command!]!
+            }
+            XCTFail("a path observation during discovery must retire the in-flight response set")
+        } catch let error as CameraReadOnlyRequestError {
+            XCTAssertEqual(error, .pathUnavailable)
+        } catch {
+            XCTFail("unexpected error: \(error)")
+        }
+
+        let fetchCount = await fetchCounter.value
+        XCTAssertEqual(fetchCount, 5)
+        XCTAssertNil(adapter.readOnlyEvidence)
+        XCTAssertNil(adapter.sessionState.novatekSessionOrigin())
+        XCTAssertEqual(adapter.presentation.connection, .notConfigured)
     }
 
     @MainActor
@@ -352,6 +422,44 @@ final class CameraLocalNetworkAdapterTests: XCTestCase {
     }
 
     @MainActor
+    func testReadOnlyDiscoveryCannotCommitAcrossSatisfiedPathObservation() async {
+        let adapter = CameraLocalNetworkAdapter()
+        let responses: [String: Data] = [
+            "3012": Data("<Function><Cmd>3012</Cmd><Status>0</Status><String>R3V1.1_20240411</String></Function>".utf8),
+            "2019": Data(
+                "<LIST><MovieLiveViewLink>rtsp://192.168.1.254/xxx.mov</MovieLiveViewLink><PhotoLiveViewLink>rtsp://192.168.1.254/xxx.mov</PhotoLiveViewLink></LIST>"
+                    .utf8),
+            "3014": Data("<Function><Cmd>2016</Cmd><Status>0</Status></Function>".utf8),
+            "3024": Data("<Function><Cmd>3024</Cmd><Status>0</Status><Value>1</Value></Function>".utf8),
+            "3015": Data("<LIST></LIST>".utf8),
+        ]
+
+        do {
+            _ = try await adapter.loadReadOnlyEvidence(
+                address: "192.168.1.254",
+                port: 80
+            ) { url in
+                let command = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first {
+                    $0.name == "cmd"
+                }?.value
+                if command == "3012" {
+                    await adapter.apply(pathStatus: .satisfied, usesWiFi: true)
+                }
+                return responses[command!]!
+            }
+            XCTFail("discovery from the prior path observation must not publish a session")
+        } catch let error as CameraReadOnlyRequestError {
+            XCTAssertEqual(error, .pathUnavailable)
+        } catch {
+            XCTFail("unexpected error: \(error)")
+        }
+
+        XCTAssertNil(adapter.readOnlyEvidence)
+        XCTAssertEqual(adapter.presentation.connection, .notConfigured)
+        XCTAssertNil(adapter.sessionState.novatekSessionOrigin())
+    }
+
+    @MainActor
     func testPreviewAndRecordingObservationsShareRustStateWithoutInference() {
         let session = CutoutSessionStateHandle()
         let adapter = CameraLocalNetworkAdapter(sessionState: session)
@@ -384,7 +492,7 @@ final class CameraLocalNetworkAdapterTests: XCTestCase {
     @MainActor
     func testPreviewStartRejectsInvalidURIWithoutClaimingBuffering() async {
         let adapter = CameraLocalNetworkAdapter()
-        adapter.apply(readOnlyEvidence: cameraEvidence(advertisedCommandIDs: []), origin: testCameraOrigin)
+        applyTestEvidence(cameraEvidence(advertisedCommandIDs: []), to: adapter)
 
         do {
             try await adapter.startPreview(uri: "http://192.168.1.254/xxx.mov")
@@ -397,7 +505,7 @@ final class CameraLocalNetworkAdapterTests: XCTestCase {
     @MainActor
     func testPreviewStartRejectsRTSPUriFromDifferentSelectedOriginBeforeNetwork() async {
         let adapter = CameraLocalNetworkAdapter()
-        adapter.apply(readOnlyEvidence: cameraEvidence(advertisedCommandIDs: []), origin: testCameraOrigin)
+        applyTestEvidence(cameraEvidence(advertisedCommandIDs: []), to: adapter)
 
         do {
             try await adapter.startPreview(
@@ -416,7 +524,7 @@ final class CameraLocalNetworkAdapterTests: XCTestCase {
     @MainActor
     func testPreviewStartRejectsRTSPUriUserinfoBeforeNetwork() async {
         let adapter = CameraLocalNetworkAdapter()
-        adapter.apply(readOnlyEvidence: cameraEvidence(advertisedCommandIDs: []), origin: testCameraOrigin)
+        applyTestEvidence(cameraEvidence(advertisedCommandIDs: []), to: adapter)
 
         do {
             try await adapter.startPreview(
@@ -442,7 +550,7 @@ final class CameraLocalNetworkAdapterTests: XCTestCase {
                 media: []
             ))
         let origin = try mobileValidateNovatekHttpOrigin(address: "192.168.1.254", port: 80)
-        adapter.apply(readOnlyEvidence: evidence, origin: origin)
+        applyTestEvidence(evidence, to: adapter, origin: origin)
 
         do {
             try await adapter.startPreview(
@@ -459,7 +567,7 @@ final class CameraLocalNetworkAdapterTests: XCTestCase {
     @MainActor
     func testPreviewFileDestinationIsCreatedOnlyAfterRTSPNegotiation() async {
         let adapter = CameraLocalNetworkAdapter()
-        adapter.apply(readOnlyEvidence: cameraEvidence(advertisedCommandIDs: []), origin: testCameraOrigin)
+        applyTestEvidence(cameraEvidence(advertisedCommandIDs: []), to: adapter)
         let path = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("cutout-camera-\(UUID().uuidString).h264")
 
@@ -510,13 +618,13 @@ final class CameraLocalNetworkAdapterTests: XCTestCase {
 
         let requestedURL = DownloadURLCapture()
         let adapter = CameraLocalNetworkAdapter()
-        adapter.apply(readOnlyEvidence: cameraEvidence(advertisedCommandIDs: []), origin: testCameraOrigin)
+        applyTestEvidence(cameraEvidence(advertisedCommandIDs: []), to: adapter)
         try await adapter.downloadMedia(
             address: "192.168.1.254",
             port: 80,
             media: media,
             to: destination
-        ) { url in
+        ) { url, _ in
             await requestedURL.record(url)
             return source
         }
@@ -527,9 +635,36 @@ final class CameraLocalNetworkAdapterTests: XCTestCase {
     }
 
     @MainActor
+    func testCancelledMediaInstallationLeavesTemporaryFileUnmoved() async throws {
+        let source = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("cutout-camera-cancelled-source-\(UUID().uuidString).tmp")
+        let destination = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("cutout-camera-cancelled-destination-\(UUID().uuidString).TS")
+        try Data([1, 2, 3, 4]).write(to: source)
+        defer {
+            try? FileManager.default.removeItem(at: source)
+            try? FileManager.default.removeItem(at: destination)
+        }
+
+        let installation = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            try await CameraLocalNetworkAdapter.installMedia(from: source, to: destination)
+        }
+        do {
+            try await installation.value
+            XCTFail("a cancelled installation must not move its temporary file")
+        } catch is CancellationError {
+            XCTAssertTrue(FileManager.default.fileExists(atPath: source.path))
+            XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+        } catch {
+            XCTFail("unexpected error: \(error)")
+        }
+    }
+
+    @MainActor
     func testMediaDownloadCannotInstallFileAfterWiFiLoss() async {
         let adapter = CameraLocalNetworkAdapter()
-        adapter.apply(readOnlyEvidence: cameraEvidence(advertisedCommandIDs: []), origin: testCameraOrigin)
+        applyTestEvidence(cameraEvidence(advertisedCommandIDs: []), to: adapter)
         let media = CameraMediaEvidence(
             name: "clip.TS",
             path: #"A:\Novatek\Movie\clip.TS"#,
@@ -554,7 +689,7 @@ final class CameraLocalNetworkAdapterTests: XCTestCase {
                 port: 80,
                 media: media,
                 to: destination
-            ) { _ in
+            ) { _, _ in
                 await adapter.apply(pathStatus: .unavailable, usesWiFi: false)
                 return source
             }
@@ -578,7 +713,7 @@ final class CameraLocalNetworkAdapterTests: XCTestCase {
             attributes: 32
         )
         let adapter = CameraLocalNetworkAdapter()
-        adapter.apply(readOnlyEvidence: cameraEvidence(advertisedCommandIDs: []), origin: testCameraOrigin)
+        applyTestEvidence(cameraEvidence(advertisedCommandIDs: []), to: adapter)
 
         do {
             _ = try await adapter.fetchMediaThumbnail(
@@ -609,7 +744,7 @@ final class CameraLocalNetworkAdapterTests: XCTestCase {
         )
         let requestedURL = DownloadURLCapture()
         let adapter = CameraLocalNetworkAdapter()
-        adapter.apply(readOnlyEvidence: cameraEvidence(advertisedCommandIDs: [4001]), origin: testCameraOrigin)
+        applyTestEvidence(cameraEvidence(advertisedCommandIDs: [4001]), to: adapter)
 
         let thumbnail = try await adapter.fetchMediaThumbnail(
             address: "192.168.1.254",
@@ -629,7 +764,7 @@ final class CameraLocalNetworkAdapterTests: XCTestCase {
     @MainActor
     func testMediaThumbnailCannotPublishAfterWiFiLoss() async {
         let adapter = CameraLocalNetworkAdapter()
-        adapter.apply(readOnlyEvidence: cameraEvidence(advertisedCommandIDs: [4001]), origin: testCameraOrigin)
+        applyTestEvidence(cameraEvidence(advertisedCommandIDs: [4001]), to: adapter)
         let media = CameraMediaEvidence(
             name: "clip.TS",
             path: #"A:\Novatek\Movie\clip.TS"#,
@@ -659,7 +794,7 @@ final class CameraLocalNetworkAdapterTests: XCTestCase {
     @MainActor
     func testMediaThumbnailRejectsAnOversizedResponse() async {
         let adapter = CameraLocalNetworkAdapter()
-        adapter.apply(readOnlyEvidence: cameraEvidence(advertisedCommandIDs: [4001]), origin: testCameraOrigin)
+        applyTestEvidence(cameraEvidence(advertisedCommandIDs: [4001]), to: adapter)
         let media = CameraMediaEvidence(
             name: "clip.TS",
             path: #"A:\Novatek\Movie\clip.TS"#,
@@ -706,15 +841,17 @@ final class CameraLocalNetworkAdapterTests: XCTestCase {
         }
 
         let adapter = CameraLocalNetworkAdapter()
-        adapter.apply(
-            readOnlyEvidence: cameraEvidence(advertisedCommandIDs: [], mediaSizeBytes: 5), origin: testCameraOrigin)
+        applyTestEvidence(
+            cameraEvidence(advertisedCommandIDs: [], mediaSizeBytes: 5),
+            to: adapter
+        )
         do {
             try await adapter.downloadMedia(
                 address: "192.168.1.254",
                 port: 80,
                 media: media,
                 to: destination
-            ) { _ in source }
+            ) { _, _ in source }
             XCTFail("a downloaded file with the wrong size must not be installed")
         } catch let error as CameraMediaDownloadError {
             XCTAssertEqual(error, .sizeMismatch(expected: 5, actual: 4))
@@ -766,23 +903,20 @@ final class CameraLocalNetworkAdapterTests: XCTestCase {
             .appendingPathComponent("cutout-camera-download-\(UUID().uuidString).TS")
 
         let adapter = CameraLocalNetworkAdapter()
-        adapter.apply(
-            readOnlyEvidence: cameraEvidence(advertisedCommandIDs: [], mediaPath: media.path),
-            origin: testCameraOrigin
-        )
+        applyTestEvidence(cameraEvidence(advertisedCommandIDs: []), to: adapter)
         do {
             try await adapter.downloadMedia(
                 address: "192.168.1.254",
                 port: 80,
                 media: media,
                 to: destination
-            ) { _ in
+            ) { _, _ in
                 XCTFail("unsafe camera paths must not reach the fetcher")
                 return destination
             }
             XCTFail("unsafe camera path should be rejected")
         } catch let error as CameraMediaDownloadError {
-            XCTAssertEqual(error, .invalidPath)
+            XCTAssertEqual(error, .pathUnavailable)
         } catch {
             XCTFail("unexpected error: \(error)")
         }
@@ -793,7 +927,7 @@ final class CameraLocalNetworkAdapterTests: XCTestCase {
     func testOnboardRecordingRequestUsesExplicitStartAndStopTargetsWithoutInference() async throws {
         let adapter = CameraLocalNetworkAdapter()
         let capture = RecordingRequestCapture()
-        adapter.apply(readOnlyEvidence: cameraEvidence(advertisedCommandIDs: [2001]), origin: testCameraOrigin)
+        applyTestEvidence(cameraEvidence(advertisedCommandIDs: [2001]), to: adapter)
 
         let startOutcome = try await adapter.requestOnboardRecording(
             address: "192.168.1.254",
@@ -827,7 +961,7 @@ final class CameraLocalNetworkAdapterTests: XCTestCase {
     @MainActor
     func testCameraCommandOutcomesDistinguishRefusalTimeoutAndFailure() async throws {
         let adapter = CameraLocalNetworkAdapter()
-        adapter.apply(readOnlyEvidence: cameraEvidence(advertisedCommandIDs: [1001, 2001]), origin: testCameraOrigin)
+        applyTestEvidence(cameraEvidence(advertisedCommandIDs: [1001, 2001]), to: adapter)
 
         let refused = try await adapter.requestStillCapture(
             address: "192.168.1.254",
@@ -932,7 +1066,7 @@ final class CameraLocalNetworkAdapterTests: XCTestCase {
     @MainActor
     func testCameraCommandCannotPublishResponseAfterWiFiLoss() async {
         let adapter = CameraLocalNetworkAdapter()
-        adapter.apply(readOnlyEvidence: cameraEvidence(advertisedCommandIDs: [1001, 2001]), origin: testCameraOrigin)
+        applyTestEvidence(cameraEvidence(advertisedCommandIDs: [1001, 2001]), to: adapter)
 
         do {
             _ = try await adapter.requestStillCapture(
@@ -953,20 +1087,14 @@ final class CameraLocalNetworkAdapterTests: XCTestCase {
     @MainActor
     func testCameraCommandCannotPublishResponseAfterReadOnlySessionReplacement() async {
         let adapter = CameraLocalNetworkAdapter()
-        adapter.apply(
-            readOnlyEvidence: cameraEvidence(advertisedCommandIDs: [1001, 2001]),
-            origin: testCameraOrigin
-        )
+        applyTestEvidence(cameraEvidence(advertisedCommandIDs: [1001, 2001]), to: adapter)
 
         do {
             _ = try await adapter.requestStillCapture(
                 address: "192.168.1.254",
                 port: 80
             ) { _ in
-                await adapter.apply(
-                    readOnlyEvidence: cameraEvidence(advertisedCommandIDs: [1001, 2001]),
-                    origin: testCameraOrigin
-                )
+                await applyTestEvidence(cameraEvidence(advertisedCommandIDs: [1001, 2001]), to: adapter)
                 return Data("<Function><Cmd>1001</Cmd><Status>0</Status></Function>".utf8)
             }
             XCTFail("a response authorized by a replaced read-only session must not be published")
@@ -978,34 +1106,26 @@ final class CameraLocalNetworkAdapterTests: XCTestCase {
     }
 
     @MainActor
-    func testCameraCommandCannotPublishResponseAfterPreviewStops() async {
+    func testCameraCommandResponseRemainsValidAfterPreviewStops() async throws {
         let adapter = CameraLocalNetworkAdapter()
-        adapter.apply(
-            readOnlyEvidence: cameraEvidence(advertisedCommandIDs: [1001, 2001]),
-            origin: testCameraOrigin
-        )
+        applyTestEvidence(cameraEvidence(advertisedCommandIDs: [1001, 2001]), to: adapter)
 
-        do {
-            _ = try await adapter.requestStillCapture(
-                address: "192.168.1.254",
-                port: 80
-            ) { _ in
-                await adapter.stopPreview()
-                return Data("<Function><Cmd>1001</Cmd><Status>0</Status></Function>".utf8)
-            }
-            XCTFail("a command response fetched after preview stops must not be published")
-        } catch let error as CameraCommandRequestError {
-            XCTAssertEqual(error, .pathUnavailable)
-        } catch {
-            XCTFail("unexpected error: \(error)")
+        let outcome = try await adapter.requestStillCapture(
+            address: "192.168.1.254",
+            port: 80
+        ) { _ in
+            await adapter.stopPreview()
+            return Data("<Function><Cmd>1001</Cmd><Status>0</Status></Function>".utf8)
         }
+
+        XCTAssertEqual(outcome, .acknowledged)
     }
 
     @MainActor
     func testCameraCommandRejectsASecondRequestWhileTheFirstIsInFlight() async throws {
         let adapter = CameraLocalNetworkAdapter()
         let gate = CameraCommandGate()
-        adapter.apply(readOnlyEvidence: cameraEvidence(advertisedCommandIDs: [1001, 2001]), origin: testCameraOrigin)
+        applyTestEvidence(cameraEvidence(advertisedCommandIDs: [1001, 2001]), to: adapter)
         let first = Task { @MainActor in
             try await adapter.requestStillCapture(
                 address: "192.168.1.254",
@@ -1061,7 +1181,7 @@ final class CameraLocalNetworkAdapterTests: XCTestCase {
     func testStillCaptureRequestUsesExplicitTargetWithoutClaimingMediaReadback() async throws {
         let capture = RecordingRequestCapture()
         let adapter = CameraLocalNetworkAdapter()
-        adapter.apply(readOnlyEvidence: cameraEvidence(advertisedCommandIDs: [1001]), origin: testCameraOrigin)
+        applyTestEvidence(cameraEvidence(advertisedCommandIDs: [1001]), to: adapter)
 
         let _ = try await adapter.requestStillCapture(
             address: "192.168.1.254",
@@ -1110,6 +1230,45 @@ private let testCameraOrigin: MobileNovatekHttpOriginDto = {
         preconditionFailure("valid camera test origin rejected: \(error)")
     }
 }()
+
+@MainActor
+private func applyTestEvidence(
+    _ evidence: CameraReadOnlyEvidence,
+    to adapter: CameraLocalNetworkAdapter,
+    origin: MobileNovatekHttpOriginDto = testCameraOrigin
+) {
+    let snapshot = evidence.dto
+    let statuses =
+        snapshot.configuration.isEmpty
+        ? [MobileNovatekCommandStatusDto(commandId: 2016, status: 0)]
+        : snapshot.configuration
+    let configuration =
+        statuses
+        .map { "<Cmd>\($0.commandId)</Cmd><Status>\($0.status)</Status>" }
+        .joined()
+    let media = snapshot.media.map {
+        "<File><NAME>\($0.name)</NAME><FPATH>\($0.path)</FPATH><SIZE>\($0.sizeBytes)</SIZE><TIMECODE>\($0.timecode)</TIMECODE><TIME>\($0.time)</TIME><ATTR>\($0.attributes)</ATTR></File>"
+    }.joined()
+    do {
+        _ = try adapter.sessionState.configureNovatekReadOnlySession(
+            origin: origin,
+            firmwareResponse: Data(
+                "<Function><Cmd>3012</Cmd><Status>0</Status><String>\(snapshot.firmwareVersion)</String></Function>"
+                    .utf8),
+            liveViewResponse: Data(
+                "<LIST><MovieLiveViewLink>\(snapshot.movieRtspUri)</MovieLiveViewLink><PhotoLiveViewLink>\(snapshot.photoRtspUri)</PhotoLiveViewLink></LIST>"
+                    .utf8),
+            configurationResponse: Data("<Function>\(configuration)</Function>".utf8),
+            storageResponse: Data(
+                "<Function><Cmd>3024</Cmd><Status>0</Status><Value>\(snapshot.storagePresent ? 1 : 0)</Value></Function>"
+                    .utf8),
+            mediaResponse: Data("<LIST>\(media)</LIST>".utf8)
+        )
+        adapter.apply(readOnlyEvidence: evidence)
+    } catch {
+        XCTFail("test evidence failed Rust validation: \(error)")
+    }
+}
 
 private actor DownloadURLCapture {
     private var recordedURL: URL?

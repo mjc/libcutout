@@ -2,17 +2,18 @@ import java.io.File
 import uniffi.cutout_mobile_ffi.CutoutSessionStateHandle
 import uniffi.cutout_mobile_ffi.MobileCameraClockUncertaintyDto
 import uniffi.cutout_mobile_ffi.MobileCameraMediaProvenanceInput
+import uniffi.cutout_mobile_ffi.MobileCaptureOriginDto
 import uniffi.cutout_mobile_ffi.MobileCameraPreviewStateDto
 import uniffi.cutout_mobile_ffi.MobileCameraPreviewEventDto
 import uniffi.cutout_mobile_ffi.MobileCameraPreviewFileSink
 import uniffi.cutout_mobile_ffi.MobileCameraSourceKindDto
 import uniffi.cutout_mobile_ffi.MobileCameraVideoFrameDto
 import uniffi.cutout_mobile_ffi.MobileNovatekMediaPathException
-import uniffi.cutout_mobile_ffi.MobileNovatekCommandStatusDto
 import uniffi.cutout_mobile_ffi.MobileNovatekCommandOutcomeDto
 import uniffi.cutout_mobile_ffi.MobileNovatekHttpOriginDto
 import uniffi.cutout_mobile_ffi.MobileNovatekCommandDto
-import uniffi.cutout_mobile_ffi.MobileNovatekReadOnlySnapshotDto
+import uniffi.cutout_mobile_ffi.MobileNovatekMediaDownloadAssociationInput
+import uniffi.cutout_mobile_ffi.MobileNovatekMediaDownloadCompletionInput
 import uniffi.cutout_mobile_ffi.mobileParseNovatekReadOnlySnapshot
 import uniffi.cutout_mobile_ffi.mobileNovatekMediaDownloadTarget
 import uniffi.cutout_mobile_ffi.MobileGattFingerprintDto
@@ -91,11 +92,50 @@ fun main() {
     check(novatekSnapshot.media.single().path == "A:\\Novatek\\Movie\\clip.TS")
 
     CutoutSessionStateHandle().use { cameraState ->
+        val captureGeneration =
+            cameraState.beginCapture(MobileCaptureOriginDto.MANUAL)
+                ?: error("capture start should be admitted")
+        check(cameraState.captureWriterStarted(captureGeneration))
         cameraState.reduceCameraPreview(MobileCameraPreviewEventDto.STARTED)
         cameraState.reduceCameraPreview(MobileCameraPreviewEventDto.FRAME_RECEIVED)
+        val origin = MobileNovatekHttpOriginDto(
+            address = "192.168.1.254",
+            port = 80u.toUShort(),
+        )
+        cameraState.configureNovatekReadOnlySession(
+            origin = origin,
+            firmwareResponse = "<Function><Cmd>3012</Cmd><Status>0</Status><String>R3V1.1_20240411</String></Function>"
+                .encodeToByteArray(),
+            liveViewResponse = "<LIST><MovieLiveViewLink>rtsp://192.168.1.254/movie</MovieLiveViewLink><PhotoLiveViewLink>rtsp://192.168.1.254/photo</PhotoLiveViewLink></LIST>"
+                .encodeToByteArray(),
+            configurationResponse = "<Function><Cmd>2016</Cmd><Status>0</Status></Function>"
+                .encodeToByteArray(),
+            storageResponse = "<Function><Cmd>3024</Cmd><Status>0</Status><Value>1</Value></Function>"
+                .encodeToByteArray(),
+            mediaResponse = "<LIST><File><NAME>clip.TS</NAME><FPATH>A:\\Novatek\\Movie\\clip.TS</FPATH><SIZE>42</SIZE><TIMECODE>7</TIMECODE><TIME>2025/01/01 00:00:00</TIME><ATTR>32</ATTR></File></LIST>"
+                .encodeToByteArray(),
+        )
+        val authorized = cameraState.authorizeNovatekMediaDownload("A:\\Novatek\\Movie\\clip.TS")
+        check(authorized.target == "/Novatek/Movie/clip.TS")
+        val completed = cameraState.completeNovatekMediaDownload(
+            MobileNovatekMediaDownloadCompletionInput(
+                operationId = authorized.operationId,
+                actualSize = 42UL,
+                association = MobileNovatekMediaDownloadAssociationInput(
+                    captureGeneration = captureGeneration,
+                    rideCaptureFileName = "ride.pevcap",
+                    capturedAtMonotonicMs = 100UL,
+                    capturedAtWallClockMs = 200UL,
+                    clockUncertainty = MobileCameraClockUncertaintyDto.Unknown,
+                ),
+            ),
+        )
+        check(completed.media.timecode == 7UL)
+        check(completed.provenance?.cameraTimecode == 7UL)
         cameraState.recordCameraMediaProvenance(
             MobileCameraMediaProvenanceInput(
-                source = MobileCameraSourceKindDto.NOVATEK_R3_PRO,
+                captureGeneration = captureGeneration,
+                source = MobileCameraSourceKindDto.FIXTURE,
                 cameraPath = "A:\\Novatek\\Movie\\clip.TS",
                 sizeBytes = 42UL,
                 cameraTimecode = 7UL,
@@ -107,7 +147,9 @@ fun main() {
             ),
         )
         check(cameraState.cameraSnapshot().preview == MobileCameraPreviewStateDto.LIVE)
-        val provenance = cameraState.cameraMediaProvenance().single()
+        val provenance = cameraState.cameraMediaProvenance().single {
+            it.source == MobileCameraSourceKindDto.NOVATEK_R3_PRO
+        }
         check(provenance.source == MobileCameraSourceKindDto.NOVATEK_R3_PRO)
         check(provenance.cameraPath == "A:\\Novatek\\Movie\\clip.TS")
         check(provenance.sizeBytes == 42UL)
@@ -118,7 +160,7 @@ fun main() {
         check(provenance.capturedAtWallClockMs == 200UL)
         check(
             provenance.clockUncertainty ==
-                MobileCameraClockUncertaintyDto.Milliseconds(500UL),
+                MobileCameraClockUncertaintyDto.Unknown,
         )
     }
 
@@ -139,23 +181,15 @@ fun main() {
         )
         session.configureNovatekReadOnlySession(
             origin = cameraOrigin,
-            snapshot = MobileNovatekReadOnlySnapshotDto(
-                firmwareVersion = "R3V1.1_20240411",
-                movieRtspUri = "rtsp://192.168.1.254/movie",
-                photoRtspUri = "rtsp://192.168.1.254/photo",
-                configuration = listOf(
-                    MobileNovatekCommandStatusDto(
-                        commandId = 2001u.toUShort(),
-                        status = 0u.toUShort(),
-                    ),
-                    MobileNovatekCommandStatusDto(
-                        commandId = 1001u.toUShort(),
-                        status = 0u.toUShort(),
-                    ),
-                ),
-                storagePresent = true,
-                media = emptyList(),
-            ),
+            firmwareResponse = "<Function><Cmd>3012</Cmd><Status>0</Status><String>R3V1.1_20240411</String></Function>"
+                .encodeToByteArray(),
+            liveViewResponse = "<LIST><MovieLiveViewLink>rtsp://192.168.1.254/movie</MovieLiveViewLink><PhotoLiveViewLink>rtsp://192.168.1.254/photo</PhotoLiveViewLink></LIST>"
+                .encodeToByteArray(),
+            configurationResponse = "<Function><Cmd>2001</Cmd><Status>0</Status><Cmd>1001</Cmd><Status>0</Status></Function>"
+                .encodeToByteArray(),
+            storageResponse = "<Function><Cmd>3024</Cmd><Status>0</Status><Value>1</Value></Function>"
+                .encodeToByteArray(),
+            mediaResponse = "<LIST></LIST>".encodeToByteArray(),
         )
         val startRequest = session.authorizeNovatekCommand(
             cameraOrigin,

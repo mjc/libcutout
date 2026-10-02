@@ -202,7 +202,7 @@ public enum CameraMediaDownloadError: Error, Equatable, Sendable {
 ///
 /// Ownership of the returned file transfers to the adapter, which removes it
 /// unless the file is moved to the requested destination.
-public typealias CameraMediaDownloadFetcher = @Sendable (URL) async throws -> URL
+public typealias CameraMediaDownloadFetcher = @Sendable (URL, UInt64) async throws -> URL
 
 /// Receives encoded preview frames for a platform-native renderer.
 ///
@@ -235,8 +235,9 @@ public final class CameraLocalNetworkAdapter {
     public private(set) var readOnlyEvidence: CameraReadOnlyEvidence?
     public private(set) var savedPreviewFileURL: URL?
 
-    private let sessionState: CutoutSessionStateHandle
+    let sessionState: CutoutSessionStateHandle
     private var monitor: NWPathMonitor?
+    private var hasObservedPath = false
     private var previewSession: MobileCameraPreviewSession?
     private var previewFileSink: MobileCameraPreviewFileSink?
     private var previewFileState = CameraPreviewFileState(destination: nil)
@@ -244,8 +245,6 @@ public final class CameraLocalNetworkAdapter {
     private var previewFrameHandler: CameraPreviewFrameHandler?
     private var previewConfigurationHandler: CameraPreviewConfigurationHandler?
     private var commandInFlight = false
-    private var pathObservationGeneration: UInt64 = 0
-    private var evidencePathObservationGeneration: UInt64 = 0
     private let monitorQueue = DispatchQueue(label: "org.cutout.camera-local-network")
 
     public init(
@@ -265,13 +264,8 @@ public final class CameraLocalNetworkAdapter {
 
         let monitor = NWPathMonitor(requiredInterfaceType: .wifi)
         monitor.pathUpdateHandler = { [weak self] path in
-            let status: CameraLocalNetworkPathStatus =
-                path.status == .satisfied
-                ? .satisfied
-                : .unavailable
-            let usesWiFi = path.usesInterfaceType(.wifi)
             Task { @MainActor [weak self] in
-                self?.apply(pathStatus: status, usesWiFi: usesWiFi)
+                self?.apply(path: path)
             }
         }
         monitor.start(queue: monitorQueue)
@@ -283,6 +277,7 @@ public final class CameraLocalNetworkAdapter {
         invalidateCameraLifecycle()
         monitor?.cancel()
         monitor = nil
+        hasObservedPath = false
         readOnlyEvidence = nil
         presentation = .initial
     }
@@ -292,28 +287,20 @@ public final class CameraLocalNetworkAdapter {
     /// The response proves a local camera connection and storage state. It
     /// does not prove that a foreground RTSP preview or onboard recording is
     /// active, so those presentation values remain unchanged.
-    public func apply(
-        readOnlyEvidence evidence: CameraReadOnlyEvidence,
-        origin: MobileNovatekHttpOriginDto? = nil
-    ) {
+    public func apply(readOnlyEvidence evidence: CameraReadOnlyEvidence) {
         guard evidence.isR3ProProfile else {
-            invalidateCameraLifecycle()
+            markUnsupportedProfile()
+            return
+        }
+        guard sessionState.novatekSessionOrigin() != nil else {
             readOnlyEvidence = nil
-            presentation.connection = .unsupported
+            presentation.connection = .notConfigured
             presentation.profileName = nil
             presentation.storage = .unknown
             refreshCameraState()
             return
         }
         readOnlyEvidence = evidence
-        sessionState.clearNovatekSession()
-        if let origin {
-            try? sessionState.configureNovatekReadOnlySession(
-                origin: origin,
-                snapshot: evidence.dto
-            )
-        }
-        evidencePathObservationGeneration = pathObservationGeneration
         presentation.connection = .connected
         presentation.profileName = "FreedConn R3 Pro · Novatek"
         presentation.storage = evidence.storagePresent ? .present : .missing
@@ -366,7 +353,7 @@ public final class CameraLocalNetworkAdapter {
         expectedAddress: String?
     ) async throws {
         stopPreview()
-        let token = sessionState.cameraSessionToken()
+        let token = sessionState.cameraPreviewToken()
         let session: MobileCameraPreviewSession
         guard let readOnlyOrigin = sessionState.novatekSessionOrigin() else {
             throw CameraReadOnlyRequestError.pathUnavailable
@@ -498,7 +485,7 @@ public final class CameraLocalNetworkAdapter {
     }
 
     private func terminatePreviewAfterTask(
-        token: MobileCameraSessionTokenDto,
+        token: MobileCameraPreviewTokenDto,
         session: MobileCameraPreviewSession,
         fileSink: MobileCameraPreviewFileSink?
     ) -> Bool {
@@ -512,12 +499,12 @@ public final class CameraLocalNetworkAdapter {
         return true
     }
 
-    private func isCurrentPreview(token: MobileCameraSessionTokenDto) -> Bool {
-        sessionState.cameraSessionTokenIsCurrent(token: token)
+    private func isCurrentPreview(token: MobileCameraPreviewTokenDto) -> Bool {
+        sessionState.cameraPreviewTokenIsCurrent(token: token)
     }
 
     private func requireCurrentPreview(
-        token: MobileCameraSessionTokenDto,
+        token: MobileCameraPreviewTokenDto,
         session: MobileCameraPreviewSession,
         fileSink: MobileCameraPreviewFileSink?
     ) throws {
@@ -530,7 +517,7 @@ public final class CameraLocalNetworkAdapter {
 
     /// Stops the foreground preview lifecycle.
     public func stopPreview() {
-        sessionState.advanceCameraGeneration()
+        sessionState.advanceCameraPreviewGeneration()
         previewTask?.cancel()
         previewTask = nil
         previewSession?.stop()
@@ -561,6 +548,7 @@ public final class CameraLocalNetworkAdapter {
         }
         clearReadOnlyEvidence()
         let requestToken = sessionState.cameraSessionToken()
+        let discoveryToken = sessionState.cameraDiscoveryToken()
         let origin = try mobileValidateNovatekHttpOrigin(address: address, port: port)
         observeDiscoveryStarted()
 
@@ -570,22 +558,29 @@ public final class CameraLocalNetworkAdapter {
         let storage = try await fetch(try requestURL(origin: origin, command: .storagePresent))
         let media = try await fetch(try requestURL(origin: origin, command: .mediaList))
 
-        let snapshot = try mobileParseNovatekReadOnlySnapshot(
-            firmwareResponse: firmware,
-            liveViewResponse: liveView,
-            configurationResponse: configuration,
-            storageResponse: storage,
-            mediaResponse: media
-        )
-        guard isCurrentCameraRequest(requestToken) else {
+        guard isCurrentCameraRequest(requestToken),
+            sessionState.cameraDiscoveryTokenIsCurrent(token: discoveryToken)
+        else {
             throw CameraReadOnlyRequestError.pathUnavailable
         }
-        let evidence = CameraReadOnlyEvidence(snapshot)
-        guard evidence.isR3ProProfile else {
-            apply(readOnlyEvidence: evidence, origin: origin)
+        let snapshot: MobileNovatekReadOnlySnapshotDto
+        do {
+            snapshot = try sessionState.configureNovatekReadOnlySession(
+                origin: origin,
+                firmwareResponse: firmware,
+                liveViewResponse: liveView,
+                configurationResponse: configuration,
+                storageResponse: storage,
+                mediaResponse: media
+            )
+        } catch MobileNovatekSessionError.UnsupportedFirmware {
+            markUnsupportedProfile()
             throw CameraReadOnlyRequestError.unsupportedProfile
+        } catch {
+            throw error
         }
-        apply(readOnlyEvidence: evidence, origin: origin)
+        let evidence = CameraReadOnlyEvidence(snapshot)
+        apply(readOnlyEvidence: evidence)
         return evidence
     }
 
@@ -615,24 +610,27 @@ public final class CameraLocalNetworkAdapter {
         port: UInt16,
         media: CameraMediaEvidence,
         to destination: URL,
+        association: MobileNovatekMediaDownloadAssociationInput? = nil,
         fetch: @escaping CameraMediaDownloadFetcher
-    ) async throws {
+    ) async throws -> MobileNovatekMediaDownloadResultDto {
         let requestToken = sessionState.cameraSessionToken()
         let origin = try mobileValidateNovatekHttpOrigin(address: address, port: port)
         guard readOnlyOriginMatches(origin) else {
             throw CameraMediaDownloadError.originMismatch
         }
-        guard
-            sessionState.novatekMediaIsCurrent(
-                path: media.path,
-                sizeBytes: media.sizeBytes
-            )
-        else {
+        let request: MobileNovatekMediaDownloadRequestDto
+        do {
+            request = try sessionState.authorizeNovatekMediaDownload(path: media.path)
+        } catch {
             throw CameraMediaDownloadError.pathUnavailable
         }
-        let temporaryURL = try await Self.fetchMedia(
+        defer {
+            _ = sessionState.cancelNovatekMediaDownload(operationId: request.operationId)
+        }
+        let (temporaryURL, actualSize) = try await Self.fetchMedia(
             origin: origin,
-            media: media,
+            target: request.target,
+            expectedSize: request.sizeBytes,
             destination: destination,
             fetch: fetch
         )
@@ -640,21 +638,33 @@ public final class CameraLocalNetworkAdapter {
         guard isCurrentCameraRequest(requestToken) else {
             throw CameraMediaDownloadError.pathUnavailable
         }
+        try Task.checkCancellation()
         try await Self.installMedia(from: temporaryURL, to: destination)
+        do {
+            try Task.checkCancellation()
+            return try sessionState.completeNovatekMediaDownload(
+                input: MobileNovatekMediaDownloadCompletionInput(
+                    operationId: request.operationId,
+                    actualSize: actualSize,
+                    association: association
+                )
+            )
+        } catch is CancellationError {
+            try? FileManager.default.removeItem(at: destination)
+            throw CancellationError()
+        } catch {
+            try? FileManager.default.removeItem(at: destination)
+            throw CameraMediaDownloadError.pathUnavailable
+        }
     }
 
     private nonisolated static func fetchMedia(
         origin: MobileNovatekHttpOriginDto,
-        media: CameraMediaEvidence,
+        target: String,
+        expectedSize: UInt64,
         destination: URL,
         fetch: @escaping CameraMediaDownloadFetcher
-    ) async throws -> URL {
-        let target: String
-        do {
-            target = try mobileNovatekMediaDownloadTarget(path: media.path)
-        } catch {
-            throw CameraMediaDownloadError.invalidPath
-        }
+    ) async throws -> (URL, UInt64) {
         let url: URL
         do {
             guard let requestURL = URL(string: "http://\(origin.address):\(origin.port)\(target)") else {
@@ -669,7 +679,7 @@ public final class CameraLocalNetworkAdapter {
         }
 
         try Task.checkCancellation()
-        let temporaryURL = try await fetch(url)
+        let temporaryURL = try await fetch(url, expectedSize)
         var keepTemporaryFile = false
         defer {
             if !keepTemporaryFile {
@@ -684,20 +694,21 @@ public final class CameraLocalNetworkAdapter {
             throw CameraMediaDownloadError.moveFailed
         }
         let actualSize = fileSize.uint64Value
-        guard actualSize == media.sizeBytes else {
+        guard actualSize == expectedSize else {
             throw CameraMediaDownloadError.sizeMismatch(
-                expected: media.sizeBytes,
+                expected: expectedSize,
                 actual: actualSize
             )
         }
         keepTemporaryFile = true
-        return temporaryURL
+        return (temporaryURL, actualSize)
     }
 
-    private nonisolated static func installMedia(
+    nonisolated static func installMedia(
         from temporaryURL: URL,
         to destination: URL
     ) async throws {
+        try Task.checkCancellation()
         do {
             try FileManager.default.moveItem(at: temporaryURL, to: destination)
         } catch {
@@ -769,19 +780,21 @@ public final class CameraLocalNetworkAdapter {
         address: String,
         port: UInt16,
         media: CameraMediaEvidence,
-        to destination: URL
-    ) async throws {
+        to destination: URL,
+        association: MobileNovatekMediaDownloadAssociationInput? = nil
+    ) async throws -> MobileNovatekMediaDownloadResultDto {
         let origin = try mobileValidateNovatekHttpOrigin(address: address, port: port)
         return try await downloadMedia(
             address: address,
             port: port,
             media: media,
-            to: destination
-        ) { url in
+            to: destination,
+            association: association
+        ) { url, expectedSize in
             try await cameraDownload(
                 from: url,
                 origin: origin,
-                maximumBytes: media.sizeBytes
+                maximumBytes: expectedSize
             )
         }
     }
@@ -904,11 +917,26 @@ public final class CameraLocalNetworkAdapter {
         }
     }
 
-    func apply(pathStatus: CameraLocalNetworkPathStatus, usesWiFi: Bool) {
-        pathObservationGeneration &+= 1
-        if readOnlyEvidence != nil,
-            evidencePathObservationGeneration != pathObservationGeneration
-        {
+    func apply(path: NWPath) {
+        // NWPathMonitor reports network updates, not peer identity. A later update can
+        // represent a different endpoint even when NWPath's visible route properties match.
+        let networkPathChanged = hasObservedPath || readOnlyEvidence != nil
+        hasObservedPath = true
+        let status: CameraLocalNetworkPathStatus = path.status == .satisfied ? .satisfied : .unavailable
+        apply(
+            pathStatus: status,
+            usesWiFi: path.usesInterfaceType(.wifi),
+            networkPathChanged: networkPathChanged
+        )
+    }
+
+    func apply(
+        pathStatus: CameraLocalNetworkPathStatus,
+        usesWiFi: Bool,
+        networkPathChanged: Bool = false
+    ) {
+        sessionState.advanceCameraDiscoveryGeneration()
+        if networkPathChanged || pathStatus != .satisfied || !usesWiFi {
             clearReadOnlyEvidence()
         }
         let nextConnection = cameraConnectionPresentation(
@@ -917,7 +945,6 @@ public final class CameraLocalNetworkAdapter {
             hasReadOnlyEvidence: readOnlyEvidence != nil
         )
         guard pathStatus == .satisfied, usesWiFi else {
-            clearReadOnlyEvidence()
             presentation.connection = nextConnection
             return
         }
@@ -936,10 +963,21 @@ public final class CameraLocalNetworkAdapter {
 
     private func clearReadOnlyEvidence() {
         invalidateCameraLifecycle()
+        sessionState.clearNovatekSession()
         readOnlyEvidence = nil
         presentation.connection = .notConfigured
         presentation.profileName = nil
         presentation.storage = .unknown
+    }
+
+    private func markUnsupportedProfile() {
+        invalidateCameraLifecycle()
+        sessionState.clearNovatekSession()
+        readOnlyEvidence = nil
+        presentation.connection = .unsupported
+        presentation.profileName = nil
+        presentation.storage = .unknown
+        refreshCameraState()
     }
 
     private func invalidateCameraLifecycle() {

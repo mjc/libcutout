@@ -1,4 +1,5 @@
 import CutoutMobile
+import CutoutMobileFFI
 import Foundation
 import Observation
 
@@ -14,10 +15,9 @@ final class CameraMediaModel {
     private(set) var thumbnailErrorKey: String?
 
     @ObservationIgnored private let adapter: CameraLocalNetworkAdapter
-    @ObservationIgnored private let annotateCapture: ((String, String) -> Void)?
     @ObservationIgnored private let recordMediaReference:
-        ((String, CameraSourceKind, CameraMediaEvidence, URL) -> Void)?
-    @ObservationIgnored private let currentCaptureFileName: (() -> String?)?
+        ((String, CaptureGeneration, MobileCameraMediaProvenanceDto, URL) -> Void)?
+    @ObservationIgnored private let currentCaptureIdentity: (() -> (fileName: String, generation: CaptureGeneration)?)?
     @ObservationIgnored private var mediaDownloadTask: Task<Void, Never>?
     @ObservationIgnored private var thumbnailTask: Task<Void, Never>?
     @ObservationIgnored private var mediaDownloadGeneration: UInt64 = 0
@@ -27,14 +27,13 @@ final class CameraMediaModel {
 
     init(
         adapter: CameraLocalNetworkAdapter = CameraLocalNetworkAdapter(),
-        annotateCapture: ((String, String) -> Void)? = nil,
-        recordMediaReference: ((String, CameraSourceKind, CameraMediaEvidence, URL) -> Void)? = nil,
-        currentCaptureFileName: (() -> String?)? = nil
+        recordMediaReference:
+            ((String, CaptureGeneration, MobileCameraMediaProvenanceDto, URL) -> Void)? = nil,
+        currentCaptureIdentity: (() -> (fileName: String, generation: CaptureGeneration)?)? = nil
     ) {
         self.adapter = adapter
-        self.annotateCapture = annotateCapture
         self.recordMediaReference = recordMediaReference
-        self.currentCaptureFileName = currentCaptureFileName
+        self.currentCaptureIdentity = currentCaptureIdentity
     }
 
     func prepareForEvidenceRefresh() {
@@ -52,7 +51,7 @@ final class CameraMediaModel {
         }
 
         let destination = mediaOutputURL(for: media)
-        let captureFileName = currentCaptureFileName?()
+        let captureIdentity = currentCaptureIdentity?()
         mediaDownloadTask?.cancel()
         mediaDownloadGeneration &+= 1
         let generation = mediaDownloadGeneration
@@ -68,18 +67,32 @@ final class CameraMediaModel {
                 }
             }
             do {
-                try await adapter.downloadMedia(
+                let association = captureIdentity.map {
+                    MobileNovatekMediaDownloadAssociationInput(
+                        captureGeneration: $0.generation.dto,
+                        rideCaptureFileName: $0.fileName,
+                        capturedAtMonotonicMs: DispatchTime.now().uptimeNanoseconds / 1_000_000,
+                        capturedAtWallClockMs: UInt64(max(0, Date().timeIntervalSince1970 * 1_000)),
+                        clockUncertainty: .unknown
+                    )
+                }
+                let result = try await adapter.downloadMedia(
                     address: address,
                     port: portNumber,
                     media: media,
-                    to: destination
+                    to: destination,
+                    association: association
                 )
                 guard generation == mediaDownloadGeneration else { return }
                 downloadedMediaURL = destination
-                downloadedMediaPath = media.path
-                annotateCapture?("camera_media_file", media.name)
-                if let captureFileName {
-                    recordMediaReference?(captureFileName, .novatekR3Pro, media, destination)
+                downloadedMediaPath = result.media.path
+                if let captureIdentity, let provenance = result.provenance {
+                    recordMediaReference?(
+                        captureIdentity.fileName,
+                        captureIdentity.generation,
+                        provenance,
+                        destination
+                    )
                 }
             } catch is CancellationError {
                 // Cancellation is an expected user action, not a transfer error.
