@@ -8,7 +8,8 @@ use std::sync::Arc;
 
 use crate::{
     CutoutSessionStateHandle, MobileRideMapConnectionAdmission, MobileRideMapCore,
-    MobileRideMapCoreErrorDto, MobileRideMapTelemetryObservationDto, MonotonicTimestamp,
+    MobileRideMapCoreErrorDto, MobileRideMapSpeedObservationDto,
+    MobileRideMapTelemetryObservationDto, MonotonicTimestamp,
 };
 #[cfg(test)]
 use crate::{MobileRideMapAdmissionPollDto, MobileRideMapCoreSnapshotDto};
@@ -324,6 +325,7 @@ impl CutoutSessionStateHandle {
         ride_map: Arc<MobileRideMapCore>,
         token: MobileConnectionAttemptTokenDto,
         at_ms: u64,
+        speed_observation: Option<MobileRideMapSpeedObservationDto>,
     ) -> Result<MobileRideMapTelemetryObservationDto, MobileRideMapCoreErrorDto> {
         let token = token.into();
         let state = self.lock_inner();
@@ -336,6 +338,7 @@ impl CutoutSessionStateHandle {
             verified.platform_identifier(),
             verified.generation(),
             at_ms,
+            speed_observation,
         )
     }
 
@@ -374,6 +377,10 @@ impl CutoutSessionStateHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        MobileRideEventDto, MobileRideMapLifecycleCommand, MobileRideMapLifecyclePollDto,
+        MobileRideMapSpeedDto, MobileRideMapSpeedSourceDto,
+    };
 
     fn complete_admission(
         admission: &MobileRideMapConnectionAdmission,
@@ -388,6 +395,45 @@ mod tests {
                 }
             }
         }
+    }
+
+    fn complete_lifecycle(command: &MobileRideMapLifecycleCommand) {
+        loop {
+            match command.poll().expect("lifecycle command completes") {
+                MobileRideMapLifecyclePollDto::Pending => std::thread::yield_now(),
+                MobileRideMapLifecyclePollDto::Completed { .. } => return,
+            }
+        }
+    }
+
+    fn admit_verified_connection(
+        handle: &CutoutSessionStateHandle,
+        ride_map: Arc<MobileRideMapCore>,
+        platform_identifier: &str,
+        at_ms: u64,
+    ) -> (
+        MobileConnectionAttemptTokenDto,
+        MobileRideMapCoreSnapshotDto,
+    ) {
+        let token = handle
+            .begin_connection_attempt(platform_identifier.to_owned(), at_ms)
+            .token
+            .expect("connection attempt gets a token");
+        handle.connection_link_established(token.clone());
+        assert!(
+            handle
+                .lock_inner()
+                .session_state_mut()
+                .connection
+                .finish_detection(&token.clone().into(), true)
+        );
+        let admission = handle
+            .begin_ride_recording_for_verified_connection(ride_map, token.clone(), at_ms + 100)
+            .expect("verified connection is admitted");
+        (
+            token,
+            complete_admission(&admission).expect("ride is available"),
+        )
     }
 
     #[test]
@@ -485,81 +531,165 @@ mod tests {
         let handle = CutoutSessionStateHandle::new();
         let ride_map = MobileRideMapCore::new();
         let started = ride_map.start_gps_only(900).unwrap();
-        let token_a = handle
-            .begin_connection_attempt("pev-a".into(), 1_000)
-            .token
-            .unwrap();
-        handle.connection_link_established(token_a.clone());
-        assert!(
-            handle
-                .lock_inner()
-                .session_state_mut()
-                .connection
-                .finish_detection(&token_a.clone().into(), true)
-        );
-
-        let admission_a = handle
-            .begin_ride_recording_for_verified_connection(ride_map.clone(), token_a.clone(), 1_100)
-            .unwrap();
-        let associated_a = complete_admission(&admission_a).unwrap();
+        let (token_a, associated_a) =
+            admit_verified_connection(&handle, ride_map.clone(), "pev-a", 1_000);
         assert_eq!(associated_a.ride_id, started.ride_id);
         assert_eq!(
             handle
-                .observe_ride_telemetry_for_verified_connection(ride_map.clone(), token_a, 1_200,)
+                .observe_ride_telemetry_for_verified_connection(
+                    ride_map.clone(),
+                    token_a.clone(),
+                    1_200,
+                    Some(MobileRideMapSpeedObservationDto {
+                        millimetres_per_second: 5_000,
+                        observed_at_ms: 1_200,
+                    }),
+                )
                 .unwrap(),
             MobileRideMapTelemetryObservationDto::Observed
         );
-
-        let token_b = handle
-            .begin_connection_attempt("pev-b".into(), 1_300)
-            .token
-            .unwrap();
-        handle.connection_link_established(token_b.clone());
-        assert!(
-            handle
-                .lock_inner()
-                .session_state_mut()
-                .connection
-                .finish_detection(&token_b.clone().into(), true)
+        assert_eq!(
+            ride_map.current_snapshot(1_200).unwrap().live_speed,
+            MobileRideMapSpeedDto {
+                millimetres_per_second: 5_000,
+                source: MobileRideMapSpeedSourceDto::Vehicle,
+            }
         );
-        let admission_b = handle
-            .begin_ride_recording_for_verified_connection(ride_map.clone(), token_b.clone(), 1_400)
-            .unwrap();
-        let retained_a = complete_admission(&admission_b).unwrap();
+        let (token_b, retained_a) =
+            admit_verified_connection(&handle, ride_map.clone(), "pev-b", 1_300);
         assert_eq!(retained_a.ride_id, started.ride_id);
         assert_eq!(retained_a.associated_vehicle.as_deref(), Some("pev-a"));
         assert_eq!(
             handle
-                .observe_ride_telemetry_for_verified_connection(ride_map.clone(), token_b, 1_500,)
+                .observe_ride_telemetry_for_verified_connection(
+                    ride_map.clone(),
+                    token_b,
+                    1_500,
+                    Some(MobileRideMapSpeedObservationDto {
+                        millimetres_per_second: 9_000,
+                        observed_at_ms: 1_500,
+                    }),
+                )
                 .unwrap(),
             MobileRideMapTelemetryObservationDto::NotAssociated
         );
+        assert_eq!(
+            ride_map.current_snapshot(1_500).unwrap().live_speed,
+            MobileRideMapSpeedDto {
+                millimetres_per_second: 5_000,
+                source: MobileRideMapSpeedSourceDto::Vehicle,
+            }
+        );
 
-        let token_a_again = handle
-            .begin_connection_attempt("pev-a".into(), 1_600)
+        let (token_a_again, _) =
+            admit_verified_connection(&handle, ride_map.clone(), "pev-a", 1_600);
+        assert_eq!(
+            handle
+                .observe_ride_telemetry_for_verified_connection(
+                    ride_map.clone(),
+                    token_a_again.clone(),
+                    1_800,
+                    Some(MobileRideMapSpeedObservationDto {
+                        millimetres_per_second: 0,
+                        observed_at_ms: 1_800,
+                    }),
+                )
+                .unwrap(),
+            MobileRideMapTelemetryObservationDto::Observed
+        );
+        assert_eq!(
+            ride_map.current_snapshot(1_800).unwrap().live_speed,
+            MobileRideMapSpeedDto {
+                millimetres_per_second: 0,
+                source: MobileRideMapSpeedSourceDto::Vehicle,
+            }
+        );
+    }
+
+    #[test]
+    fn queued_speed_from_before_async_resume_is_not_reused() {
+        let handle = CutoutSessionStateHandle::new();
+        let ride_map = MobileRideMapCore::new();
+        ride_map.start_gps_only(900).unwrap();
+        let token = handle
+            .begin_connection_attempt("pev-a".into(), 1_000)
             .token
             .unwrap();
-        handle.connection_link_established(token_a_again.clone());
+        handle.connection_link_established(token.clone());
         assert!(
             handle
                 .lock_inner()
                 .session_state_mut()
                 .connection
-                .finish_detection(&token_a_again.clone().into(), true)
+                .finish_detection(&token.clone().into(), true)
         );
-        let admission_a_again = handle
-            .begin_ride_recording_for_verified_connection(
+        let admission = handle
+            .begin_ride_recording_for_verified_connection(ride_map.clone(), token.clone(), 1_100)
+            .unwrap();
+        complete_admission(&admission).unwrap();
+        handle
+            .observe_ride_telemetry_for_verified_connection(
                 ride_map.clone(),
-                token_a_again.clone(),
-                1_700,
+                token.clone(),
+                1_200,
+                Some(MobileRideMapSpeedObservationDto {
+                    millimetres_per_second: 5_000,
+                    observed_at_ms: 1_200,
+                }),
             )
             .unwrap();
-        let _ = complete_admission(&admission_a_again);
+
+        let pause_token = ride_map
+            .current_snapshot(1_200)
+            .unwrap()
+            .command_token
+            .unwrap();
+        let pause = ride_map
+            .begin_lifecycle_command(MobileRideEventDto::Pause, pause_token, 1_250)
+            .unwrap();
+        complete_lifecycle(&pause);
+        let resume_token = ride_map
+            .current_snapshot(1_250)
+            .unwrap()
+            .command_token
+            .unwrap();
+        let resume = ride_map
+            .begin_lifecycle_command(MobileRideEventDto::Resume, resume_token, 1_600)
+            .unwrap();
+        complete_lifecycle(&resume);
+
+        handle
+            .observe_ride_telemetry_for_verified_connection(
+                ride_map.clone(),
+                token.clone(),
+                1_700,
+                Some(MobileRideMapSpeedObservationDto {
+                    millimetres_per_second: 4_000,
+                    observed_at_ms: 1_200,
+                }),
+            )
+            .unwrap();
         assert_eq!(
-            handle
-                .observe_ride_telemetry_for_verified_connection(ride_map, token_a_again, 1_800)
-                .unwrap(),
-            MobileRideMapTelemetryObservationDto::Observed
+            ride_map.current_snapshot(1_700).unwrap().live_speed.source,
+            MobileRideMapSpeedSourceDto::Unavailable
+        );
+        handle
+            .observe_ride_telemetry_for_verified_connection(
+                ride_map.clone(),
+                token,
+                1_800,
+                Some(MobileRideMapSpeedObservationDto {
+                    millimetres_per_second: -2_000,
+                    observed_at_ms: 1_800,
+                }),
+            )
+            .unwrap();
+        assert_eq!(
+            ride_map.current_snapshot(1_800).unwrap().live_speed,
+            MobileRideMapSpeedDto {
+                millimetres_per_second: -2_000,
+                source: MobileRideMapSpeedSourceDto::Vehicle,
+            }
         );
     }
 

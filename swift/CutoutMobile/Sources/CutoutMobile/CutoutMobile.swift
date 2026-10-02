@@ -4862,6 +4862,8 @@ public struct CoreBluetoothSessionStep: Equatable, Hashable, Sendable {
     public let operations: [CoreBluetoothPlannedOperation]
     public let snapshot: TelemetrySnapshot?
     public let semanticTelemetry: MobileTelemetrySnapshotDto?
+    /// New vehicle-speed sample only, retaining Rust's original sample time.
+    public let speedObservation: MobileRideMapSpeedObservationDto?
     public let actions: [SessionAction]
     public let captureContext: CoreBluetoothCaptureContext?
 
@@ -4869,6 +4871,7 @@ public struct CoreBluetoothSessionStep: Equatable, Hashable, Sendable {
         operations: [CoreBluetoothPlannedOperation],
         snapshot: TelemetrySnapshot?,
         semanticTelemetry: MobileTelemetrySnapshotDto? = nil,
+        speedObservation: MobileRideMapSpeedObservationDto? = nil,
         actions: [SessionAction] = [],
         captureContext: CoreBluetoothCaptureContext? = nil,
         connectionAttempt: ConnectionAttemptToken? = nil
@@ -4877,6 +4880,7 @@ public struct CoreBluetoothSessionStep: Equatable, Hashable, Sendable {
         self.operations = operations
         self.snapshot = snapshot
         self.semanticTelemetry = semanticTelemetry
+        self.speedObservation = speedObservation
         self.actions = actions
         self.captureContext = captureContext
     }

@@ -20,8 +20,9 @@ pub use capture_writer::{
 };
 pub use recording::{
     LocationAcquisition, LocationAcquisitionState, LocationAuthorization, LocationAvailability,
-    LocationDemand, LocationEnvironment, RecordingError, RecordingSnapshot, RecordingToken,
-    RideRecordingSession, location_acquisition_for,
+    LocationDemand, LocationEnvironment, RecordingError, RecordingSnapshot, RecordingSpeed,
+    RecordingSpeedSource, RecordingSpeedState, RecordingToken, RideRecordingSession,
+    location_acquisition_for,
 };
 pub use storage::*;
 

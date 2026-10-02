@@ -1,6 +1,6 @@
 use super::{
     LocationAuthorization, LocationAvailability, LocationDemand, LocationEnvironment,
-    RecordingError, RideRecordingSession,
+    RecordingError, RecordingSpeedSource, RecordingSpeedState, RideRecordingSession,
 };
 use crate::RideDatabase;
 use cutout_music::MusicHistoryPolicy;
@@ -219,5 +219,68 @@ fn diagnostic_location_generation_rejects_stale_and_reopened_captures() {
     assert_eq!(
         session.location_acquisition().demand,
         LocationDemand::Record
+    );
+}
+
+#[test]
+fn live_speed_prefers_vehicle_zero_then_falls_back_to_fresh_gps() {
+    let mut speed = RecordingSpeedState::default();
+    speed.observe_vehicle(Some(0), 1_000, 7);
+    speed.observe_phone_gps(Some(8.5), 1_100, 7);
+
+    assert_eq!(
+        speed.selected_at(RideLifecycleState::Active, 7, 1_500),
+        Some(super::RecordingSpeed {
+            millimetres_per_second: 0,
+            source: RecordingSpeedSource::Vehicle,
+        })
+    );
+    assert_eq!(
+        speed.selected_at(RideLifecycleState::Active, 7, 3_100),
+        Some(super::RecordingSpeed {
+            millimetres_per_second: 8_500,
+            source: RecordingSpeedSource::PhoneGps,
+        })
+    );
+}
+
+#[test]
+fn live_speed_is_unavailable_when_paused_or_after_ride_generation_changes() {
+    let mut speed = RecordingSpeedState::default();
+    speed.observe_vehicle(Some(4_000), 1_000, 7);
+    speed.observe_phone_gps(Some(2.0), 1_000, 7);
+
+    assert_eq!(
+        speed.selected_at(RideLifecycleState::Paused, 7, 1_100),
+        None
+    );
+    assert_eq!(
+        speed.selected_at(RideLifecycleState::Active, 8, 1_100),
+        None
+    );
+}
+
+#[test]
+fn live_speed_preserves_signed_vehicle_direction() {
+    let mut speed = RecordingSpeedState::default();
+    speed.observe_vehicle(Some(-4_000), 1_000, 7);
+
+    assert_eq!(
+        speed.selected_at(RideLifecycleState::Active, 7, 1_100),
+        Some(super::RecordingSpeed {
+            millimetres_per_second: -4_000,
+            source: RecordingSpeedSource::Vehicle,
+        })
+    );
+}
+
+#[test]
+fn live_speed_ignores_invalid_observations() {
+    let mut speed = RecordingSpeedState::default();
+    speed.observe_phone_gps(Some(f64::NAN), 1_000, 7);
+
+    assert_eq!(
+        speed.selected_at(RideLifecycleState::Active, 7, 1_100),
+        None
     );
 }

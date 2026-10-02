@@ -472,7 +472,7 @@ final class CutoutSessionCoreTests: XCTestCase {
                 events.append("actions")
                 return []
             },
-            observeRideMapConnection: { _, _ in events.append("map") },
+            observeRideMapConnection: { _, _, _ in events.append("map") },
             persistBmsSamples: { _ in events.append("bms") },
             reduceDisplayState: { state, snapshot, receivedAt, _ in
                 events.append("display")
@@ -1711,9 +1711,13 @@ final class CutoutSessionCoreTests: XCTestCase {
 
     func testNotificationAdmissionForwardsTheDecodedConnectionAttempt() throws {
         var observedAttempts = [ConnectionAttemptToken?]()
+        var observedSpeeds = [MobileRideMapSpeedObservationDto?]()
         let effects = CutoutSessionNotificationEffects(
             applyActions: { _ in [] },
-            observeRideMapConnection: { attempt, _ in observedAttempts.append(attempt) },
+            observeRideMapConnection: { attempt, _, speed in
+                observedAttempts.append(attempt)
+                observedSpeeds.append(speed)
+            },
             persistBmsSamples: { _ in },
             reduceDisplayState: { state, snapshot, receivedAt, _ in
                 state.reducing(snapshot: snapshot, receivedAt: receivedAt)
@@ -1735,7 +1739,13 @@ final class CutoutSessionCoreTests: XCTestCase {
         )
 
         core.applyNotificationStep(
-            CoreBluetoothSessionStep(operations: [], snapshot: nil, connectionAttempt: capturedAttempt),
+            CoreBluetoothSessionStep(
+                operations: [],
+                snapshot: TelemetrySnapshot(speed: speedValue(2_468)),
+                speedObservation: MobileRideMapSpeedObservationDto(
+                    millimetresPerSecond: 2_468, observedAtMs: 2),
+                connectionAttempt: capturedAttempt
+            ),
             receivedAt: MonotonicMilliseconds(3)
         )
         core.applyNotificationStep(
@@ -1746,6 +1756,10 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(observedAttempts.count, 2)
         XCTAssertEqual(observedAttempts[0], capturedAttempt)
         XCTAssertNil(observedAttempts[1])
+        XCTAssertEqual(
+            observedSpeeds[0],
+            MobileRideMapSpeedObservationDto(millimetresPerSecond: 2_468, observedAtMs: 2))
+        XCTAssertNil(observedSpeeds[1])
         XCTAssertEqual(core.connectionSnapshot.token, replacementAttempt)
     }
 
@@ -1805,7 +1819,7 @@ final class CutoutSessionCoreTests: XCTestCase {
                 events.append("actions")
                 return []
             },
-            observeRideMapConnection: { _, _ in events.append("map") },
+            observeRideMapConnection: { _, _, _ in events.append("map") },
             persistBmsSamples: { _ in events.append("bms") },
             reduceDisplayState: { state, snapshot, receivedAt, updateKind in
                 events.append("display")
@@ -1846,7 +1860,7 @@ final class CutoutSessionCoreTests: XCTestCase {
                 events.append("actions")
                 return [.failed]
             },
-            observeRideMapConnection: { _, _ in events.append("map") },
+            observeRideMapConnection: { _, _, _ in events.append("map") },
             persistBmsSamples: { _ in events.append("bms") },
             reduceDisplayState: { state, snapshot, receivedAt, _ in
                 events.append("display")
@@ -1884,7 +1898,7 @@ final class CutoutSessionCoreTests: XCTestCase {
                 events.append("actions")
                 return []
             },
-            observeRideMapConnection: { _, _ in events.append("map") },
+            observeRideMapConnection: { _, _, _ in events.append("map") },
             persistBmsSamples: { _ in events.append("bms") },
             reduceDisplayState: { state, snapshot, receivedAt, updateKind in
                 events.append("display")

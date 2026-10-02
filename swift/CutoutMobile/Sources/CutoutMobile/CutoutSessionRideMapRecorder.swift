@@ -10,6 +10,7 @@ private struct PendingRideMapConnectionAdmission {
     let previousRideID: String?
     let atMs: UInt64
     let token: ConnectionAttemptToken
+    let speedObservation: MobileRideMapSpeedObservationDto?
     let connectionState: CutoutSessionStateHandle
     let resetTripMeter: @Sendable (ConnectionAttemptToken) -> Void
 }
@@ -24,6 +25,7 @@ protocol CutoutSessionRideMapRecording: AnyObject {
     func observeConnection(
         at receivedAt: MonotonicMilliseconds,
         token: ConnectionAttemptToken,
+        speedObservation: MobileRideMapSpeedObservationDto?,
         connectionState: CutoutSessionStateHandle,
         resetTripMeter: @escaping @Sendable (ConnectionAttemptToken) -> Void
     )
@@ -171,6 +173,7 @@ actor CutoutSessionRideMapRecorder: CutoutSessionRideMapRecording {
     nonisolated func observeConnection(
         at receivedAt: MonotonicMilliseconds,
         token: ConnectionAttemptToken,
+        speedObservation: MobileRideMapSpeedObservationDto?,
         connectionState: CutoutSessionStateHandle,
         resetTripMeter: @escaping @Sendable (ConnectionAttemptToken) -> Void
     ) {
@@ -192,6 +195,7 @@ actor CutoutSessionRideMapRecorder: CutoutSessionRideMapRecording {
                             previousRideID: previousRideID,
                             atMs: receivedAt.rawValue,
                             token: token,
+                            speedObservation: speedObservation,
                             connectionState: connectionState,
                             resetTripMeter: resetTripMeter
                         )
@@ -309,7 +313,8 @@ actor CutoutSessionRideMapRecorder: CutoutSessionRideMapRecording {
                     _ = try state.observeTelemetryForVerifiedConnection(
                         connectionState: pending.connectionState,
                         token: pending.token,
-                        atMs: pending.atMs
+                        atMs: pending.atMs,
+                        speedObservation: pending.speedObservation
                     )
                     if let snapshot = state.currentSnapshot(atMs: pending.atMs) ?? admissionSnapshot {
                         publishSnapshot(snapshot)

@@ -2625,6 +2625,9 @@ pub struct TelemetrySnapshotDto {
     /// Host monotonic timestamp for the latest update, when known.
     pub at_ms: Option<MonotonicMillisDto>,
 
+    /// Host monotonic timestamp of the delta that last supplied speed, when known.
+    pub speed_observed_at_ms: Option<MonotonicMillisDto>,
+
     /// Reported or calculated speed in millimeters per second.
     pub speed: Option<SpeedReadingDto>,
 
@@ -2696,6 +2699,9 @@ impl From<TelemetrySnapshot> for TelemetrySnapshotDto {
     fn from(snapshot: TelemetrySnapshot) -> Self {
         Self {
             at_ms: snapshot.at_ms.map(MonotonicMillisDto::from_core),
+            speed_observed_at_ms: snapshot
+                .speed_observed_at_ms
+                .map(MonotonicMillisDto::from_core),
             speed: snapshot.speed.map(Into::into),
             voltage: snapshot.voltage.map(Into::into),
             battery_current: snapshot.battery_current.map(Into::into),
@@ -3275,6 +3281,7 @@ mod tests {
     fn telemetry_snapshot_dto_preserves_optional_fields() {
         let snapshot = TelemetrySnapshot {
             at_ms: Some(MonotonicTimestamp::new(42)),
+            speed_observed_at_ms: Some(MonotonicTimestamp::new(42)),
             speed: Some(Measured::reported(Speed::from_millimetres_per_second(
                 1_200,
             ))),

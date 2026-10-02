@@ -1321,6 +1321,7 @@ dependencies = [
  "divan",
  "gungraun",
  "hex",
+ "num-traits",
  "rusqlite",
  "serde_json",
  "sha2",

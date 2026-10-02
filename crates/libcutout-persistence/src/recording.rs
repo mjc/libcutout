@@ -3,6 +3,7 @@
 use cutout_ride_maps::{
     MonotonicMilliseconds, RideEvent, RideLifecycleState, RideMapRecorder, VehicleIdentity,
 };
+use num_traits::ToPrimitive;
 
 use crate::{RideDatabase, RideId};
 
@@ -83,6 +84,121 @@ pub struct LocationAcquisitionState {
     environment: Option<LocationEnvironment>,
     diagnostic_capture_generation: u64,
     diagnostic_capture_active: bool,
+}
+
+/// Source selected for a live ride-speed readout.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RecordingSpeedSource {
+    /// Speed decoded from the associated vehicle.
+    Vehicle,
+    /// Speed reported by the phone location provider.
+    PhoneGps,
+}
+
+/// A fresh live speed and its observation source.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RecordingSpeed {
+    /// Signed speed in millimetres per second.
+    pub millimetres_per_second: i32,
+    /// Source of the selected observation.
+    pub source: RecordingSpeedSource,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct SpeedObservation {
+    millimetres_per_second: i32,
+    observed_at_milliseconds: u64,
+    recording_generation: u64,
+}
+
+/// Selects fresh, ride-correlated speed from vehicle telemetry and phone GPS.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RecordingSpeedState {
+    vehicle: Option<SpeedObservation>,
+    phone_gps: Option<SpeedObservation>,
+}
+
+impl RecordingSpeedState {
+    /// Replaces the vehicle observation when its speed is valid.
+    pub fn observe_vehicle(
+        &mut self,
+        millimetres_per_second: Option<i32>,
+        at_milliseconds: u64,
+        recording_generation: u64,
+    ) {
+        if let Some(millimetres_per_second) = millimetres_per_second {
+            if self.vehicle.is_some_and(|previous| {
+                previous.recording_generation == recording_generation
+                    && previous.observed_at_milliseconds > at_milliseconds
+            }) {
+                return;
+            }
+            self.vehicle = Some(SpeedObservation {
+                millimetres_per_second,
+                observed_at_milliseconds: at_milliseconds,
+                recording_generation,
+            });
+        }
+    }
+
+    /// Replaces the phone observation when its speed is finite, non-negative, and representable.
+    pub fn observe_phone_gps(
+        &mut self,
+        metres_per_second: Option<f64>,
+        at_milliseconds: u64,
+        recording_generation: u64,
+    ) {
+        let Some(speed) = metres_per_second.filter(|speed| speed.is_finite() && *speed >= 0.0)
+        else {
+            return;
+        };
+        let millimetres_per_second = speed * 1_000.0;
+        if millimetres_per_second > f64::from(i32::MAX) {
+            return;
+        }
+        let Some(millimetres_per_second) = millimetres_per_second.round().to_i32() else {
+            return;
+        };
+        self.phone_gps = Some(SpeedObservation {
+            millimetres_per_second,
+            observed_at_milliseconds: at_milliseconds,
+            recording_generation,
+        });
+    }
+
+    /// Selects fresh vehicle speed first, falling back to fresh GPS speed.
+    #[must_use]
+    pub fn selected_at(
+        &self,
+        lifecycle: RideLifecycleState,
+        recording_generation: u64,
+        at_milliseconds: u64,
+    ) -> Option<RecordingSpeed> {
+        if lifecycle != RideLifecycleState::Active {
+            return None;
+        }
+        let fresh = |observation: SpeedObservation| {
+            (observation.recording_generation == recording_generation
+                && at_milliseconds >= observation.observed_at_milliseconds
+                && at_milliseconds.saturating_sub(observation.observed_at_milliseconds)
+                    <= cutout_ride_maps::TELEMETRY_FRESHNESS_MILLISECONDS)
+                .then_some(observation.millimetres_per_second)
+        };
+        self.vehicle
+            .and_then(fresh)
+            .map(|millimetres_per_second| RecordingSpeed {
+                millimetres_per_second,
+                source: RecordingSpeedSource::Vehicle,
+            })
+            .or_else(|| {
+                self.phone_gps
+                    .and_then(fresh)
+                    .map(|millimetres_per_second| RecordingSpeed {
+                        millimetres_per_second,
+                        source: RecordingSpeedSource::PhoneGps,
+                    })
+            })
+    }
 }
 
 impl LocationAcquisitionState {

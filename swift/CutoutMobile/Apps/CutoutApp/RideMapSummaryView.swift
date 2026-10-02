@@ -130,7 +130,11 @@ struct RideMapSummaryView: View {
         )
         RideMapMetric(
             value: Self.speedText(for: speed),
-            label: localizedAppText("ride_map.metric_speed")
+            label: localizedAppText(
+                snapshot.liveSpeed?.source == .phoneGps
+                    ? "euc.metric.gps_speed"
+                    : "ride_map.metric_speed"
+            )
         )
     }
 }

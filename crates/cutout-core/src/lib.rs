@@ -7364,6 +7364,9 @@ pub struct TelemetrySnapshot {
     /// Timestamp of the latest applied delta.
     pub at_ms: Option<MonotonicTimestamp>,
 
+    /// Timestamp of the delta that last supplied speed, retained across unrelated deltas.
+    pub speed_observed_at_ms: Option<MonotonicTimestamp>,
+
     /// Latest known speed in millimeters per second.
     pub speed: Option<Measured<Speed>>,
 
@@ -7438,6 +7441,7 @@ impl TelemetrySnapshot {
 
         if delta.speed.is_some() {
             self.speed = delta.speed;
+            self.speed_observed_at_ms = Some(delta.at_ms);
         }
         if delta.voltage.is_some() {
             self.voltage = delta.voltage;
@@ -9419,6 +9423,7 @@ mod tests {
         snapshot.apply_delta(second);
 
         assert_eq!(snapshot.at_ms, Some(ms(150)));
+        assert_eq!(snapshot.speed_observed_at_ms, Some(ms(100)));
         assert_eq!(
             snapshot.speed,
             Some(Measured::reported(Speed::from_millimetres_per_second(
@@ -9457,6 +9462,7 @@ mod tests {
         });
 
         assert_eq!(snapshot.at_ms, Some(ms(150)));
+        assert_eq!(snapshot.speed_observed_at_ms, Some(ms(100)));
         assert_eq!(
             snapshot.speed,
             Some(Measured::reported(Speed::from_millimetres_per_second(

@@ -213,6 +213,9 @@ final class CutoutAppModel {
     var selectedRideIdentifier: String? { device.selectedRideIdentifier }
     var selectedConnectionRoute: DevicePickerConnectionRoute? { device.selectedConnectionRoute }
     var speed: SpeedReadout { device.speed }
+    var rideMapSpeed: SpeedReadout {
+        SpeedReadout(millimetersPerSecond: liveRide.snapshot?.liveSpeed?.millimetresPerSecond)
+    }
 
     var currentMonotonicTime: MonotonicMilliseconds {
         core.now()

@@ -538,8 +538,9 @@ public final class CutoutSessionCore: NSObject {
             applyActions: { [weak self] actions in
                 actions.compactMap { self?.applySessionAction($0) }
             },
-            observeRideMapConnection: { [weak self] token, receivedAt in
-                self?.observeRideMapConnection(at: receivedAt, token: token)
+            observeRideMapConnection: { [weak self] token, receivedAt, speedObservation in
+                self?.observeRideMapConnection(
+                    at: receivedAt, token: token, speedObservation: speedObservation)
             },
             persistBmsSamples: { [weak self] observations in
                 self?.persistBmsSamples(observations)
@@ -1575,9 +1576,13 @@ public final class CutoutSessionCore: NSObject {
             action.kind == .bmsSnapshot ? action.bmsSnapshot : nil
         }.flatMap(\.rawObservations)
         let captureOutcomes = notificationEffects.applyActions(step.actions)
-        notificationEffects.observeRideMapConnection(step.connectionAttempt, receivedAt)
-        notificationEffects.persistBmsSamples(bmsObservations)
         let snapshot = step.snapshot
+        notificationEffects.observeRideMapConnection(
+            step.connectionAttempt,
+            receivedAt,
+            step.speedObservation
+        )
+        notificationEffects.persistBmsSamples(bmsObservations)
         displayState = notificationEffects.reduceDisplayState(
             displayState,
             snapshot,
@@ -2292,7 +2297,8 @@ public final class CutoutSessionCore: NSObject {
 
     private func observeRideMapConnection(
         at receivedAt: MonotonicMilliseconds,
-        token: ConnectionAttemptToken?
+        token: ConnectionAttemptToken?,
+        speedObservation: MobileRideMapSpeedObservationDto? = nil
     ) {
         guard let token else { return }
         let queue = bleQueue
@@ -2300,6 +2306,7 @@ public final class CutoutSessionCore: NSObject {
         rideMapRecorder.observeConnection(
             at: receivedAt,
             token: token,
+            speedObservation: speedObservation,
             connectionState: rustSessionState,
             resetTripMeter: { token in
                 queue.async {

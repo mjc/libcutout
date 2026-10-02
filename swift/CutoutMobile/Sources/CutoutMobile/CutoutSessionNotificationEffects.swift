@@ -7,7 +7,8 @@ import Foundation
 /// recorder without constructing CoreBluetooth, Core Location, or a ride-map database.
 struct CutoutSessionNotificationEffects {
     let applyActions: ([SessionAction]) -> [MobileCaptureWriteOutcomeDto]
-    let observeRideMapConnection: (ConnectionAttemptToken?, MonotonicMilliseconds) -> Void
+    let observeRideMapConnection:
+        (ConnectionAttemptToken?, MonotonicMilliseconds, MobileRideMapSpeedObservationDto?) -> Void
     let persistBmsSamples: ([BmsRawVoltageObservation]) -> Void
     let reduceDisplayState:
         (
@@ -16,7 +17,9 @@ struct CutoutSessionNotificationEffects {
 
     init(
         applyActions: @escaping ([SessionAction]) -> [MobileCaptureWriteOutcomeDto],
-        observeRideMapConnection: @escaping (ConnectionAttemptToken?, MonotonicMilliseconds) -> Void,
+        observeRideMapConnection: @escaping (
+            ConnectionAttemptToken?, MonotonicMilliseconds, MobileRideMapSpeedObservationDto?
+        ) -> Void,
         persistBmsSamples: @escaping ([BmsRawVoltageObservation]) -> Void,
         reduceDisplayState: @escaping (
             RideDisplayState, TelemetrySnapshot?, MonotonicMilliseconds, RideDisplayUpdateKind

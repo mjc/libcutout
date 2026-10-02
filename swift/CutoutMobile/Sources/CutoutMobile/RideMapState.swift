@@ -519,6 +519,7 @@ public struct MobileRideMapSnapshotDto: Equatable, Hashable, Sendable {
     public let allowedActions: [MobileRideMapActionDto]
     public let telemetryState: MobileRideMapTelemetryStateDto
     public let summary: MobileRideMapSummaryDto
+    public let liveSpeed: MobileRideMapSpeedDto?
     public let segmentCount: UInt64
     public let associatedVehicle: String?
     public let recordedBoundsAvailable: Bool
@@ -533,6 +534,7 @@ public struct MobileRideMapSnapshotDto: Equatable, Hashable, Sendable {
         allowedActions: [MobileRideMapActionDto] = [],
         telemetryState: MobileRideMapTelemetryStateDto = .unknown,
         summary: MobileRideMapSummaryDto,
+        liveSpeed: MobileRideMapSpeedDto? = nil,
         segmentCount: UInt64,
         associatedVehicle: String?,
         recordedBoundsAvailable: Bool = false
@@ -546,6 +548,7 @@ public struct MobileRideMapSnapshotDto: Equatable, Hashable, Sendable {
         self.allowedActions = allowedActions
         self.telemetryState = telemetryState
         self.summary = summary
+        self.liveSpeed = liveSpeed
         self.segmentCount = segmentCount
         self.associatedVehicle = associatedVehicle
         self.recordedBoundsAvailable = recordedBoundsAvailable
@@ -1051,14 +1054,16 @@ public final class MobileRideMapState: @unchecked Sendable {
     public func observeTelemetryForVerifiedConnection(
         connectionState: CutoutSessionStateHandle,
         token: ConnectionAttemptToken,
-        atMs: UInt64
+        atMs: UInt64,
+        speedObservation: MobileRideMapSpeedObservationDto?
     ) throws -> MobileRideMapTelemetryObservation {
         try withCore {
             map(
                 try connectionState.observeRideTelemetryForVerifiedConnection(
                     rideMap: $0,
                     token: token,
-                    atMs: atMs
+                    atMs: atMs,
+                    speedObservation: speedObservation
                 ))
         }
     }
@@ -1633,7 +1638,11 @@ public final class MobileRideMapState: @unchecked Sendable {
             revision: snapshot.revision,
             recordingToken: snapshot.recordingToken,
             commandToken: snapshot.commandToken,
-            locationAcquisition: snapshot.locationAcquisition,
+            locationAcquisition: MobileRideMapLocationAcquisitionDto(
+                revision: snapshot.revision,
+                availability: snapshot.locationAcquisition.availability,
+                demand: snapshot.locationAcquisition.demand
+            ),
             state: mapState(snapshot.state),
             allowedActions: snapshot.allowedActions.compactMap(mapAction),
             telemetryState: map(snapshot.telemetryState),
@@ -1642,6 +1651,7 @@ public final class MobileRideMapState: @unchecked Sendable {
                 distanceMeters: snapshot.summary.distanceMeters,
                 durationMilliseconds: snapshot.summary.durationMilliseconds
             ),
+            liveSpeed: snapshot.liveSpeed.source == .unavailable ? nil : snapshot.liveSpeed,
             segmentCount: snapshot.segmentCount,
             associatedVehicle: snapshot.associatedVehicle,
             recordedBoundsAvailable: snapshot.recordedBoundsAvailable

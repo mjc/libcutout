@@ -3651,6 +3651,9 @@ pub struct MobileTelemetrySnapshotDto {
     /// Snapshot timestamp.
     pub at_ms: Option<MobileMonotonicMillisDto>,
 
+    /// Timestamp of the most recent delta that supplied the retained speed value.
+    pub speed_observed_at_ms: Option<MobileMonotonicMillisDto>,
+
     /// Reported or calculated speed.
     pub speed: Option<SpeedReading>,
 
@@ -3725,6 +3728,15 @@ pub struct MobileTelemetrySnapshotDto {
 
     /// Estimated battery percent.
     pub battery_level_estimated: Option<BatteryLevelReading>,
+}
+
+/// One vehicle-speed observation with its original monotonic sample timestamp.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileRideMapSpeedObservationDto {
+    /// Signed speed in millimetres per second.
+    pub millimetres_per_second: i32,
+    /// Monotonic time at which the speed was observed, not callback receipt time.
+    pub observed_at_ms: u64,
 }
 
 /// Source of a projected live rider power value.
@@ -4797,6 +4809,35 @@ pub struct MobileRideMapCoreSummaryDto {
     pub duration_milliseconds: u64,
 }
 
+/// Source selected by Rust for a live ride-speed readout.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileRideMapSpeedSourceDto {
+    /// No fresh speed is currently available.
+    Unavailable,
+    /// Speed decoded from the associated vehicle.
+    Vehicle,
+    /// Speed reported by phone GPS.
+    PhoneGps,
+}
+
+/// Fresh speed selected from ride-correlated vehicle and phone observations.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileRideMapSpeedDto {
+    /// Signed speed in millimetres per second.
+    pub millimetres_per_second: i32,
+    /// Source of the selected observation.
+    pub source: MobileRideMapSpeedSourceDto,
+}
+
+impl Default for MobileRideMapSpeedDto {
+    fn default() -> Self {
+        Self {
+            millimetres_per_second: 0,
+            source: MobileRideMapSpeedSourceDto::Unavailable,
+        }
+    }
+}
+
 /// Snapshot of the Rust-owned live map recording.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileRideMapRecordingTokenDto {
@@ -4861,6 +4902,24 @@ pub struct MobileRideMapLocationAcquisitionDto {
     pub availability: MobileRideMapAvailabilityDto,
     /// Native location effect selected by Rust.
     pub demand: MobileRideMapLocationDemandDto,
+}
+
+/// Location status embedded in a snapshot, whose parent supplies the shared revision.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileRideMapSnapshotLocationAcquisitionDto {
+    /// Availability state derived by Rust.
+    pub availability: MobileRideMapAvailabilityDto,
+    /// Native location effect selected by Rust.
+    pub demand: MobileRideMapLocationDemandDto,
+}
+
+impl From<MobileRideMapLocationAcquisitionDto> for MobileRideMapSnapshotLocationAcquisitionDto {
+    fn from(acquisition: MobileRideMapLocationAcquisitionDto) -> Self {
+        Self {
+            availability: acquisition.availability,
+            demand: acquisition.demand,
+        }
+    }
 }
 
 /// Location availability projected by the Rust recording owner.
@@ -4942,6 +5001,20 @@ impl From<persistence::LocationAcquisition> for MobileRideMapLocationAcquisition
     }
 }
 
+impl From<persistence::RecordingSpeed> for MobileRideMapSpeedDto {
+    fn from(speed: persistence::RecordingSpeed) -> Self {
+        Self {
+            millimetres_per_second: speed.millimetres_per_second,
+            source: match speed.source {
+                persistence::RecordingSpeedSource::Vehicle => MobileRideMapSpeedSourceDto::Vehicle,
+                persistence::RecordingSpeedSource::PhoneGps => {
+                    MobileRideMapSpeedSourceDto::PhoneGps
+                }
+            },
+        }
+    }
+}
+
 /// Immutable snapshot of the Rust-owned recording.
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct MobileRideMapCoreSnapshotDto {
@@ -4954,7 +5027,7 @@ pub struct MobileRideMapCoreSnapshotDto {
     /// Correlation token for lifecycle commands targeting this ride snapshot.
     pub command_token: Option<MobileRideMapCommandTokenDto>,
     /// Rust-owned native location policy for this recording snapshot.
-    pub location_acquisition: MobileRideMapLocationAcquisitionDto,
+    pub location_acquisition: MobileRideMapSnapshotLocationAcquisitionDto,
     /// Current durable lifecycle state.
     pub state: MobileRideLifecycleStateDto,
     /// Rust-owned actions for this state; Start creates a new recording.
@@ -4963,6 +5036,8 @@ pub struct MobileRideMapCoreSnapshotDto {
     pub telemetry_state: MobileRideMapCoreTelemetryStateDto,
     /// Current route summary.
     pub summary: MobileRideMapCoreSummaryDto,
+    /// Fresh live speed selected by Rust, or none when unavailable.
+    pub live_speed: MobileRideMapSpeedDto,
     /// Rust-owned number of admitted route segments.
     pub segment_count: u64,
     /// Associated vehicle platform identifier, when available.
@@ -8307,7 +8382,9 @@ struct MobileRideMapCoreInner {
     ride_id: Option<MobileRideIdDto>,
     revision: u64,
     generation: u64,
+    speed_generation_started_at_ms: u64,
     location_acquisition_state: persistence::LocationAcquisitionState,
+    speed: persistence::RecordingSpeedState,
     recorder: ride_maps::RideMapRecorder,
     admission_recorder: ride_maps::RideMapRecorder,
     music_history_policy: CoreMusicHistoryPolicy,
@@ -9057,6 +9134,20 @@ impl MobileRideMapCoreInner {
                 sample.longitude_degrees,
                 horizontal_accuracy_meters,
             )?;
+            let location_admitted = match &decision {
+                MobileRideMapCoreDecisionDto::Accepted { .. }
+                | MobileRideMapCoreDecisionDto::Pending { .. } => true,
+                MobileRideMapCoreDecisionDto::Rejected { .. }
+                | MobileRideMapCoreDecisionDto::Ignored { .. }
+                | MobileRideMapCoreDecisionDto::StorageError { .. } => false,
+            };
+            if location_admitted {
+                self.speed.observe_phone_gps(
+                    sample.speed_meters_per_second,
+                    self.logical_monotonic_milliseconds(monotonic_ms),
+                    self.generation,
+                );
+            }
             let Some(snapshot) = self.snapshot_for_outcome(receipt_monotonic_ms) else {
                 break;
             };
@@ -9245,7 +9336,9 @@ impl MobileRideMapCoreInner {
             ride_id: None,
             revision: 0,
             generation: 0,
+            speed_generation_started_at_ms: 0,
             location_acquisition_state: persistence::LocationAcquisitionState::default(),
+            speed: persistence::RecordingSpeedState::default(),
             recorder: ride_maps::RideMapRecorder::new(),
             admission_recorder: ride_maps::RideMapRecorder::new(),
             music_history_policy: CoreMusicHistoryPolicy::Disabled,
@@ -9561,6 +9654,20 @@ impl MobileRideMapCoreInner {
             .into()
     }
 
+    fn live_speed(
+        &self,
+        lifecycle: MobileRideLifecycleStateDto,
+        at_milliseconds: u64,
+    ) -> Option<MobileRideMapSpeedDto> {
+        self.speed
+            .selected_at(
+                map_ride_lifecycle_state(lifecycle),
+                self.generation,
+                at_milliseconds,
+            )
+            .map(Into::into)
+    }
+
     fn snapshot(&self, state: MobileRideLifecycleStateDto) -> MobileRideMapCoreSnapshotDto {
         MobileRideMapCoreSnapshotDto {
             ride_id: self
@@ -9584,7 +9691,7 @@ impl MobileRideMapCoreInner {
                     ride_id: mobile_ride_id_string(ride_id),
                     generation: self.generation,
                 }),
-            location_acquisition: self.location_acquisition(),
+            location_acquisition: self.location_acquisition().into(),
             state,
             allowed_actions: map_ride_lifecycle_state(state)
                 .recording_actions()
@@ -9600,6 +9707,15 @@ impl MobileRideMapCoreInner {
                 )
                 .into(),
             summary: self.summary(),
+            live_speed: self
+                .live_speed(
+                    state,
+                    self.recorder
+                        .recording_timing()
+                        .last_monotonic_milliseconds()
+                        .as_u64(),
+                )
+                .unwrap_or_default(),
             segment_count: self.recorder.segment_count().as_u64(),
             associated_vehicle: self.recorder.associated_vehicle().map(str::to_owned),
             recorded_bounds_available: map_ride_lifecycle_state(state).has_recorded_bounds(),
@@ -9629,6 +9745,7 @@ impl MobileRideMapCoreInner {
             .recorder
             .duration_milliseconds_at(ride_maps::MonotonicMilliseconds::new(at_milliseconds))
             .as_u64();
+        snapshot.live_speed = self.live_speed(state, at_milliseconds).unwrap_or_default();
         snapshot
     }
 
@@ -9690,6 +9807,8 @@ impl MobileRideMapCoreInner {
         self.ride_id = Some(id);
         self.revision = self.revision.saturating_add(1);
         self.generation = self.generation.saturating_add(1);
+        self.speed = persistence::RecordingSpeedState::default();
+        self.speed_generation_started_at_ms = at_ms;
         self.reset_music_history_policy();
         self.music_restore_failed = false;
         self.pending_location_writes.clear();
@@ -10142,6 +10261,9 @@ impl MobileRideMapCore {
         }
         state.revision = state.revision.saturating_add(1);
         state.generation = state.generation.saturating_add(1);
+        if pending.event == MobileRideEventDto::Resume {
+            state.speed_generation_started_at_ms = pending.logical_at_ms;
+        }
         let snapshot =
             state.snapshot_at_logical(pending.transition.next().into(), pending.logical_at_ms);
         match pending.event {
@@ -11164,6 +11286,7 @@ impl MobileRideMapCore {
         platform_identifier: &str,
         connection_generation: u64,
         at_ms: u64,
+        speed_observation: Option<MobileRideMapSpeedObservationDto>,
     ) -> Result<MobileRideMapTelemetryObservationDto, MobileRideMapCoreErrorDto> {
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         state.require_ready()?;
@@ -11179,7 +11302,29 @@ impl MobileRideMapCore {
         if !is_current_vehicle || !is_associated_vehicle {
             return Ok(MobileRideMapTelemetryObservationDto::NotAssociated);
         }
-        observe_telemetry_locked(&mut state, at_ms)
+        let observation = observe_telemetry_locked(&mut state, at_ms)?;
+        let telemetry_accepted = match observation {
+            MobileRideMapTelemetryObservationDto::Observed
+            | MobileRideMapTelemetryObservationDto::AlreadyObserved => true,
+            MobileRideMapTelemetryObservationDto::NotAssociated
+            | MobileRideMapTelemetryObservationDto::TimestampOutOfOrder
+            | MobileRideMapTelemetryObservationDto::RideNotOpen
+            | MobileRideMapTelemetryObservationDto::Unknown => false,
+        };
+        if telemetry_accepted {
+            let generation = state.generation;
+            if let Some(speed) = speed_observation {
+                let observed_at_ms = state.logical_monotonic_milliseconds(speed.observed_at_ms);
+                if observed_at_ms >= state.speed_generation_started_at_ms {
+                    state.speed.observe_vehicle(
+                        Some(speed.millimetres_per_second),
+                        observed_at_ms,
+                        generation,
+                    );
+                }
+            }
+        }
+        Ok(observation)
     }
 
     /// Admits one Core Location sample into the active recording.
@@ -11614,6 +11759,9 @@ impl MobileRideMapCoreInner {
             .map_err(|_| MobileRideMapCoreErrorDto::InvalidTransition)?;
         self.revision = self.revision.saturating_add(1);
         self.generation = self.generation.saturating_add(1);
+        if event == MobileRideEventDto::Resume {
+            self.speed_generation_started_at_ms = at_milliseconds;
+        }
         Ok(self.snapshot(transition.next().into()))
     }
     fn transition_inner_at(
@@ -11656,6 +11804,9 @@ impl MobileRideMapCoreInner {
             .map_err(|_| MobileRideMapCoreErrorDto::InvalidTransition)?;
         self.revision = self.revision.saturating_add(1);
         self.generation = self.generation.saturating_add(1);
+        if event == MobileRideEventDto::Resume {
+            self.speed_generation_started_at_ms = at_milliseconds;
+        }
         Ok(self.snapshot_at_logical(transition.next().into(), at_milliseconds))
     }
 
@@ -11707,6 +11858,9 @@ impl MobileRideMapCoreInner {
         }
         self.revision = self.revision.saturating_add(1);
         self.generation = self.generation.saturating_add(1);
+        if event == MobileRideEventDto::Resume {
+            self.speed_generation_started_at_ms = logical_at_ms;
+        }
         Ok(())
     }
 }
@@ -15153,6 +15307,9 @@ impl From<TelemetrySnapshotDto> for MobileTelemetrySnapshotDto {
         Self {
             at_ms: snapshot
                 .at_ms
+                .map(MobileMonotonicMillisDto::from_core_ffi_timestamp),
+            speed_observed_at_ms: snapshot
+                .speed_observed_at_ms
                 .map(MobileMonotonicMillisDto::from_core_ffi_timestamp),
             speed: snapshot.speed.map(Into::into),
             operating_state,
@@ -21735,6 +21892,7 @@ mod tests {
     ) -> MobileTelemetrySnapshotDto {
         MobileTelemetrySnapshotDto {
             at_ms: Some(MobileMonotonicMillisDto { milliseconds: at }),
+            speed_observed_at_ms: None,
             speed: None,
             operating_state: RideOperatingState::Charging,
             vesc_operating_mode: None,
@@ -22860,6 +23018,35 @@ mod tests {
         let _ = fs::remove_file(path);
     }
 
+    fn assert_unassociated_connection_does_not_refresh_telemetry(
+        state: &MobileRideMapCore,
+        platform_identifier: &str,
+        connection_generation: u64,
+        at_ms: u64,
+        expected_last_telemetry: u64,
+    ) {
+        assert_eq!(
+            state
+                .observe_telemetry_for_vehicle_on_connection(
+                    platform_identifier,
+                    connection_generation,
+                    at_ms,
+                    None,
+                )
+                .unwrap(),
+            MobileRideMapTelemetryObservationDto::NotAssociated
+        );
+        let last_telemetry = state
+            .inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .admission_recorder
+            .last_telemetry_at_milliseconds()
+            .unwrap()
+            .as_u64();
+        assert_eq!(last_telemetry, expected_last_telemetry);
+    }
+
     #[test]
     fn disabled_autostart_does_not_retroactively_admit_same_connection_generation() {
         let _guard = RIDE_DATABASE_TEST_LOCK
@@ -22913,21 +23100,7 @@ mod tests {
             .unwrap();
         assert_eq!(repeated.ride_id, ride_a.ride_id);
         assert_eq!(repeated.state, MobileRideLifecycleStateDto::Active);
-        assert_eq!(
-            state
-                .observe_telemetry_for_vehicle_on_connection("pev-2", 2, 4_000)
-                .unwrap(),
-            MobileRideMapTelemetryObservationDto::NotAssociated
-        );
-        let last_telemetry = state
-            .inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .admission_recorder
-            .last_telemetry_at_milliseconds()
-            .unwrap()
-            .as_u64();
-        assert_eq!(last_telemetry, 3_000);
+        assert_unassociated_connection_does_not_refresh_telemetry(&state, "pev-2", 2, 4_000, 3_000);
         assert_eq!(
             state.current_snapshot(5_001).unwrap().telemetry_state,
             MobileRideMapCoreTelemetryStateDto::AssociatedStale
@@ -22943,7 +23116,15 @@ mod tests {
         assert_eq!(returned_to_a.ride_id, ride_a.ride_id);
         assert_eq!(
             state
-                .observe_telemetry_for_vehicle_on_connection("pev-1", 3, 5_500)
+                .observe_telemetry_for_vehicle_on_connection(
+                    "pev-1",
+                    3,
+                    5_500,
+                    Some(MobileRideMapSpeedObservationDto {
+                        millimetres_per_second: 5_000,
+                        observed_at_ms: 5_500,
+                    }),
+                )
                 .unwrap(),
             MobileRideMapTelemetryObservationDto::Observed
         );
@@ -24542,6 +24723,76 @@ mod tests {
         assert_eq!(outcome.snapshot.ride_id, started.ride_id);
         assert!(outcome.snapshot.revision > started.revision);
         assert_eq!(outcome.snapshot.summary.point_count, 1);
+    }
+
+    #[test]
+    fn location_batch_updates_live_gps_speed_only_after_location_admission() {
+        let state = MobileRideMapCore::new();
+        let started = state
+            .start_gps_only(1_000)
+            .expect("GPS-only recording starts");
+        let accepted = MobilePhoneLocationSampleDto {
+            wall_clock_unix_ms: 1_700_000_001_000,
+            source_timestamp_unix_seconds: None,
+            latitude_degrees: 40.0,
+            longitude_degrees: -105.0,
+            altitude_meters: 1_600.0,
+            horizontal_accuracy_meters: Some(3.0),
+            vertical_accuracy_meters: None,
+            speed_meters_per_second: Some(6.25),
+            speed_accuracy_meters_per_second: None,
+            course_degrees: None,
+            course_accuracy_degrees: None,
+        };
+        let accepted_outcomes = state
+            .ingest_location_batch_with_outcomes(
+                started.recording_token.clone(),
+                1_000,
+                1_700_000_001_000,
+                vec![accepted],
+            )
+            .expect("valid location is admitted");
+        assert!(matches!(
+            accepted_outcomes.as_slice(),
+            [MobileRideMapCoreOutcomeDto {
+                decision: MobileRideMapCoreDecisionDto::Accepted { .. },
+                ..
+            }]
+        ));
+
+        let rejected = MobilePhoneLocationSampleDto {
+            wall_clock_unix_ms: 1_700_000_001_800,
+            horizontal_accuracy_meters: Some(101.0),
+            speed_meters_per_second: Some(18.5),
+            ..accepted
+        };
+        let rejected_outcomes = state
+            .ingest_location_batch_with_outcomes(
+                started.recording_token,
+                1_800,
+                1_700_000_001_800,
+                vec![rejected],
+            )
+            .expect("inaccurate location is rejected");
+
+        assert!(matches!(
+            rejected_outcomes.as_slice(),
+            [MobileRideMapCoreOutcomeDto {
+                decision: MobileRideMapCoreDecisionDto::Rejected {
+                    reason: MobileRideMapDecisionReasonDto::AccuracyTooLow,
+                },
+                ..
+            }]
+        ));
+        assert_eq!(
+            state
+                .current_snapshot(2_000)
+                .map(|snapshot| snapshot.live_speed),
+            Some(MobileRideMapSpeedDto {
+                millimetres_per_second: 6_250,
+                source: MobileRideMapSpeedSourceDto::PhoneGps,
+            })
+        );
     }
 
     #[test]

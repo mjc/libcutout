@@ -265,6 +265,14 @@ final class DeviceSessionTransport: @unchecked Sendable {
             operations: operations,
             snapshot: TelemetrySnapshot(step.telemetry, chargeEstimate: chargeEstimate),
             semanticTelemetry: step.telemetry,
+            speedObservation: step.telemetry.speed.flatMap { speed in
+                step.telemetry.speedObservedAtMs.map { observedAt in
+                    MobileRideMapSpeedObservationDto(
+                        millimetresPerSecond: speed.value.value,
+                        observedAtMs: observedAt.milliseconds
+                    )
+                }
+            },
             actions: actions,
             captureContext: context,
             connectionAttempt: step.session.connection.token
