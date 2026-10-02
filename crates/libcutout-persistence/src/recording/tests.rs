@@ -189,6 +189,61 @@ fn location_availability_separates_permission_services_and_provider_failure() {
 }
 
 #[test]
+fn location_recovery_action_is_selected_by_rust_for_active_recording() {
+    let mut session = RideRecordingSession::new(None);
+    session.start_gps_only(1_000, None).unwrap();
+
+    let cases = [
+        (
+            LocationEnvironment {
+                authorization: LocationAuthorization::NotDetermined,
+                services_enabled: true,
+                temporarily_unavailable: false,
+            },
+            super::LocationRecoveryAction::RequestPermission,
+        ),
+        (
+            LocationEnvironment {
+                authorization: LocationAuthorization::Denied,
+                services_enabled: true,
+                temporarily_unavailable: false,
+            },
+            super::LocationRecoveryAction::OpenSettings,
+        ),
+        (
+            LocationEnvironment {
+                authorization: LocationAuthorization::Always,
+                services_enabled: false,
+                temporarily_unavailable: false,
+            },
+            super::LocationRecoveryAction::OpenSettings,
+        ),
+        (
+            LocationEnvironment {
+                authorization: LocationAuthorization::Restricted,
+                services_enabled: true,
+                temporarily_unavailable: false,
+            },
+            super::LocationRecoveryAction::None,
+        ),
+    ];
+
+    for (environment, expected_action) in cases {
+        session.observe_location_environment(environment);
+        assert_eq!(
+            session.location_acquisition().recovery_action,
+            expected_action
+        );
+    }
+
+    session.transition(RideEvent::Pause, 2_000).unwrap();
+    assert_eq!(
+        session.location_acquisition().recovery_action,
+        super::LocationRecoveryAction::None
+    );
+}
+
+#[test]
 fn diagnostic_location_generation_rejects_stale_and_reopened_captures() {
     let mut session = RideRecordingSession::new(None);
     session.observe_location_environment(LocationEnvironment {

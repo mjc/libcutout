@@ -2067,6 +2067,10 @@
       "comment" : "Map availability when Core Location permission was denied.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Location access is denied. Enable it in Settings to record a route." } } }
     },
+    "ride_map.open_settings" : {
+      "comment" : "Button that opens app settings when Rust selects location recovery through Settings.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Open location settings" } } }
+    },
     "ride_map.location_restricted" : {
       "comment" : "Map availability when Core Location is restricted by the system.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Location access is restricted on this device." } } }

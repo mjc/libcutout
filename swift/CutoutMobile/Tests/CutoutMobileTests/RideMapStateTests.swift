@@ -46,6 +46,30 @@ final class RideMapStateTests: XCTestCase {
         )
     }
 
+    func testSnapshotCarriesRustSelectedLocationRecoveryAction() throws {
+        let state = MobileRideMapState()
+        _ = try state.startGpsOnly(atMs: 1_000)
+
+        let denied = try state.observeLocationEnvironment(
+            MobileRideMapLocationEnvironmentDto(
+                authorization: .denied,
+                servicesEnabled: true,
+                temporarilyUnavailable: false
+            ))
+
+        XCTAssertEqual(denied.recoveryAction, .openSettings)
+        XCTAssertEqual(
+            state.currentSnapshot(atMs: 1_100)?.locationAcquisition?.recoveryAction,
+            .openSettings
+        )
+
+        let paused = try state.pause(atMs: 1_200)
+        XCTAssertEqual(
+            paused.locationAcquisition?.recoveryAction,
+            MobileRideMapLocationRecoveryActionDto.none
+        )
+    }
+
     func testLocationBatchOutcomeCarriesItsMatchingSnapshot() throws {
         let state = MobileRideMapState()
         let started = try state.startGpsOnly(atMs: 100)

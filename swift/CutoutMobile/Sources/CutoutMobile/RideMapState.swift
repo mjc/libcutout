@@ -1641,7 +1641,8 @@ public final class MobileRideMapState: @unchecked Sendable {
             locationAcquisition: MobileRideMapLocationAcquisitionDto(
                 revision: snapshot.revision,
                 availability: snapshot.locationAcquisition.availability,
-                demand: snapshot.locationAcquisition.demand
+                demand: snapshot.locationAcquisition.demand,
+                recoveryAction: snapshot.locationAcquisition.recoveryAction
             ),
             state: mapState(snapshot.state),
             allowedActions: snapshot.allowedActions.compactMap(mapAction),

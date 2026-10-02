@@ -67,6 +67,17 @@ pub enum LocationDemand {
     Record,
 }
 
+/// Native action that can recover the current location acquisition state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LocationRecoveryAction {
+    /// No user action or permission prompt is currently appropriate.
+    None,
+    /// Ask the platform for location permission.
+    RequestPermission,
+    /// Open system settings so the rider can restore location access.
+    OpenSettings,
+}
+
 /// Immutable location status and acquisition intent for one owner revision.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct LocationAcquisition {
@@ -76,6 +87,8 @@ pub struct LocationAcquisition {
     pub availability: LocationAvailability,
     /// Required native acquisition work.
     pub demand: LocationDemand,
+    /// Native action selected by Rust to recover the current acquisition state.
+    pub recovery_action: LocationRecoveryAction,
 }
 
 /// Native location evidence and generation-fenced diagnostic-capture demand.
@@ -272,22 +285,35 @@ pub fn location_acquisition_for(
         }) => LocationAvailability::TemporarilyUnavailable,
         Some(_) => LocationAvailability::Ready,
     };
-    let demand =
-        if lifecycle == Some(RideLifecycleState::Active) || diagnostic_capture_location_active {
-            match availability {
-                LocationAvailability::Ready | LocationAvailability::TemporarilyUnavailable => {
-                    LocationDemand::Record
-                }
-                LocationAvailability::PermissionRequired => LocationDemand::RequestPermission,
-                _ => LocationDemand::Idle,
+    let acquisition_requested =
+        lifecycle == Some(RideLifecycleState::Active) || diagnostic_capture_location_active;
+    let demand = if acquisition_requested {
+        match availability {
+            LocationAvailability::Ready | LocationAvailability::TemporarilyUnavailable => {
+                LocationDemand::Record
             }
-        } else {
-            LocationDemand::Idle
-        };
+            LocationAvailability::PermissionRequired => LocationDemand::RequestPermission,
+            _ => LocationDemand::Idle,
+        }
+    } else {
+        LocationDemand::Idle
+    };
+    let recovery_action = if acquisition_requested {
+        match availability {
+            LocationAvailability::PermissionRequired => LocationRecoveryAction::RequestPermission,
+            LocationAvailability::Denied | LocationAvailability::ServicesDisabled => {
+                LocationRecoveryAction::OpenSettings
+            }
+            _ => LocationRecoveryAction::None,
+        }
+    } else {
+        LocationRecoveryAction::None
+    };
     LocationAcquisition {
         revision,
         availability,
         demand,
+        recovery_action,
     }
 }
 

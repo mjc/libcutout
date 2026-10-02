@@ -6371,6 +6371,17 @@ pub enum MobileRideMapLocationDemandDto {
     Record,
 }
 
+/// Recovery action selected by the Rust recording owner for native location access.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileRideMapLocationRecoveryActionDto {
+    /// No recovery action is currently appropriate.
+    None,
+    /// Ask Core Location for when-in-use permission.
+    RequestPermission,
+    /// Open app settings so the rider can restore location access.
+    OpenSettings,
+}
+
 /// Rust's interpretation of native location evidence and required acquisition effect.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileRideMapLocationAcquisitionDto {
@@ -6380,6 +6391,8 @@ pub struct MobileRideMapLocationAcquisitionDto {
     pub availability: MobileRideMapAvailabilityDto,
     /// Native location effect selected by Rust.
     pub demand: MobileRideMapLocationDemandDto,
+    /// Permission or settings action selected by Rust.
+    pub recovery_action: MobileRideMapLocationRecoveryActionDto,
 }
 
 /// Location status embedded in a snapshot, whose parent supplies the shared revision.
@@ -6389,6 +6402,8 @@ pub struct MobileRideMapSnapshotLocationAcquisitionDto {
     pub availability: MobileRideMapAvailabilityDto,
     /// Native location effect selected by Rust.
     pub demand: MobileRideMapLocationDemandDto,
+    /// Permission or settings action selected by Rust.
+    pub recovery_action: MobileRideMapLocationRecoveryActionDto,
 }
 
 impl From<MobileRideMapLocationAcquisitionDto> for MobileRideMapSnapshotLocationAcquisitionDto {
@@ -6396,6 +6411,7 @@ impl From<MobileRideMapLocationAcquisitionDto> for MobileRideMapSnapshotLocation
         Self {
             availability: acquisition.availability,
             demand: acquisition.demand,
+            recovery_action: acquisition.recovery_action,
         }
     }
 }
@@ -6474,6 +6490,17 @@ impl From<persistence::LocationAcquisition> for MobileRideMapLocationAcquisition
                     MobileRideMapLocationDemandDto::RequestPermission
                 }
                 persistence::LocationDemand::Record => MobileRideMapLocationDemandDto::Record,
+            },
+            recovery_action: match acquisition.recovery_action {
+                persistence::LocationRecoveryAction::None => {
+                    MobileRideMapLocationRecoveryActionDto::None
+                }
+                persistence::LocationRecoveryAction::RequestPermission => {
+                    MobileRideMapLocationRecoveryActionDto::RequestPermission
+                }
+                persistence::LocationRecoveryAction::OpenSettings => {
+                    MobileRideMapLocationRecoveryActionDto::OpenSettings
+                }
             },
         }
     }
@@ -17807,7 +17834,7 @@ mod tests {
     fn mobile_ride_snapshot_exposes_rust_owned_location_demand() {
         let core = MobileRideMapCore::new();
         core.observe_location_environment(MobileRideMapLocationEnvironmentDto {
-            authorization: MobileRideMapLocationAuthorizationDto::WhenInUse,
+            authorization: MobileRideMapLocationAuthorizationDto::NotDetermined,
             services_enabled: true,
             temporarily_unavailable: false,
         });
@@ -17815,13 +17842,31 @@ mod tests {
         let active = core.start_gps_only(1_000).expect("GPS-only ride starts");
         assert_eq!(
             active.location_acquisition.demand,
-            MobileRideMapLocationDemandDto::Record
+            MobileRideMapLocationDemandDto::RequestPermission
+        );
+        assert_eq!(
+            active.location_acquisition.recovery_action,
+            MobileRideMapLocationRecoveryActionDto::RequestPermission
+        );
+
+        let denied = core.observe_location_environment(MobileRideMapLocationEnvironmentDto {
+            authorization: MobileRideMapLocationAuthorizationDto::Denied,
+            services_enabled: true,
+            temporarily_unavailable: false,
+        });
+        assert_eq!(
+            denied.recovery_action,
+            MobileRideMapLocationRecoveryActionDto::OpenSettings
         );
 
         let paused = core.pause(1_100).expect("active ride pauses");
         assert_eq!(
             paused.location_acquisition.demand,
             MobileRideMapLocationDemandDto::Idle
+        );
+        assert_eq!(
+            paused.location_acquisition.recovery_action,
+            MobileRideMapLocationRecoveryActionDto::None
         );
     }
 

@@ -2,6 +2,10 @@ import CutoutMobile
 import MapKit
 import SwiftUI
 
+#if os(iOS)
+    import UIKit
+#endif
+
 struct RideMapLiveContentView: View {
     let displayPoints: [MobileRideMapRouteDisplayPoint]
     let routeID: String
@@ -169,6 +173,8 @@ struct RideMapLiveContentView: View {
 }
 
 private struct RideMapLiveStatusView: View {
+    @Environment(\.openURL) private var openURL
+
     let displayPointCount: Int
     let snapshot: MobileRideMapSnapshotDto?
     let availability: MobileRideMapAvailability
@@ -208,6 +214,18 @@ private struct RideMapLiveStatusView: View {
                 .foregroundStyle(.orange)
                 .accessibilityIdentifier("ride-map.location-availability")
         }
+
+        #if os(iOS)
+            if snapshot?.locationAcquisition?.recoveryAction == .openSettings {
+                Button {
+                    openLocationSettings()
+                } label: {
+                    Label(localizedAppText("ride_map.open_settings"), systemImage: "gear")
+                }
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("ride-map.location-settings")
+            }
+        #endif
 
         if mapError != nil {
             Label(
@@ -257,6 +275,13 @@ private struct RideMapLiveStatusView: View {
             localizedAppText("ride_map.no_active")
         }
     }
+
+    #if os(iOS)
+        private func openLocationSettings() {
+            guard let settingsURL = URL(string: UIApplication.openSettingsURLString) else { return }
+            openURL(settingsURL)
+        }
+    #endif
 
     private var availabilityText: String {
         switch availability {
