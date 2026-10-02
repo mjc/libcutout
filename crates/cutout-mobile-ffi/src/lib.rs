@@ -2180,6 +2180,35 @@ impl NovatekCameraSessionState {
         })
     }
 
+    fn media_provenance_for_download(
+        &self,
+        operation_id: u64,
+        association: &MobileNovatekMediaDownloadAssociationInput,
+    ) -> Result<CoreCameraMediaProvenance, MobileNovatekMediaDownloadCompletionError> {
+        let entry = self
+            .media_downloads
+            .authorized_entry_id(operation_id)
+            .ok_or(MobileNovatekMediaDownloadCompletionError::StaleOperation)?;
+        CoreCameraMediaProvenance::new(
+            CoreCameraSourceKind::NovatekR3Pro,
+            entry.path(),
+            entry.size_bytes(),
+            entry.timecode(),
+            entry.time(),
+            &association.ride_capture_file_name,
+            CoreCameraMediaCaptureTiming {
+                captured_at_monotonic: MonotonicTimestamp::new(
+                    association.captured_at_monotonic_ms,
+                ),
+                captured_at_wall_clock: WallClockUnixTimestamp::new(
+                    association.captured_at_wall_clock_ms,
+                ),
+                clock_uncertainty: association.clock_uncertainty.into(),
+            },
+        )
+        .map_err(|_| MobileNovatekMediaDownloadCompletionError::InvalidProvenance)
+    }
+
     fn media_thumbnail_target(
         &self,
         path: &str,
@@ -2824,42 +2853,35 @@ impl CutoutSessionStateHandle {
         input: MobileNovatekMediaDownloadCompletionInput,
     ) -> Result<MobileNovatekMediaDownloadResultDto, MobileNovatekMediaDownloadCompletionError>
     {
-        let media = self
+        let mut novatek_session = self
             .novatek_session
             .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .complete_media_download(input.operation_id, input.actual_size)?;
-        let provenance = if let Some(association) = input.association {
-            let record = CoreCameraMediaProvenance::new(
-                CoreCameraSourceKind::NovatekR3Pro,
-                &media.path,
-                media.size_bytes,
-                media.timecode,
-                &media.time,
-                &association.ride_capture_file_name,
-                CoreCameraMediaCaptureTiming {
-                    captured_at_monotonic: MonotonicTimestamp::new(
-                        association.captured_at_monotonic_ms,
-                    ),
-                    captured_at_wall_clock: WallClockUnixTimestamp::new(
-                        association.captured_at_wall_clock_ms,
-                    ),
-                    clock_uncertainty: association.clock_uncertainty.into(),
-                },
-            )
-            .map_err(|_| MobileNovatekMediaDownloadCompletionError::InvalidProvenance)?;
-            let provenance = MobileCameraMediaProvenanceDto::from(&record);
-            if !self
-                .lock_inner()
-                .session_state_mut()
-                .record_camera_media_provenance(association.capture_generation.into(), record)
-            {
-                return Err(MobileNovatekMediaDownloadCompletionError::StaleCaptureGeneration);
-            }
-            Some(provenance)
-        } else {
-            None
-        };
+            .unwrap_or_else(PoisonError::into_inner);
+        let provenance_record = input
+            .association
+            .as_ref()
+            .map(|association| {
+                novatek_session.media_provenance_for_download(input.operation_id, association)
+            })
+            .transpose()?;
+        let media =
+            novatek_session.complete_media_download(input.operation_id, input.actual_size)?;
+        drop(novatek_session);
+
+        let provenance =
+            if let (Some(association), Some(record)) = (input.association, provenance_record) {
+                let provenance = MobileCameraMediaProvenanceDto::from(&record);
+                if !self
+                    .lock_inner()
+                    .session_state_mut()
+                    .record_camera_media_provenance(association.capture_generation.into(), record)
+                {
+                    return Err(MobileNovatekMediaDownloadCompletionError::StaleCaptureGeneration);
+                }
+                Some(provenance)
+            } else {
+                None
+            };
         Ok(MobileNovatekMediaDownloadResultDto { media, provenance })
     }
 
@@ -18627,6 +18649,58 @@ mod tests {
 
         handle.clear_novatek_session();
         assert!(!handle.novatek_media_is_current("A:\\Novatek\\Movie\\clip.TS".to_owned(), 42));
+    }
+
+    #[test]
+    fn invalid_capture_association_does_not_consume_media_download_authorization() {
+        let handle = CutoutSessionStateHandle::new();
+        let NovatekResponseFixtures {
+            firmware,
+            live_view,
+            configuration,
+            storage,
+            media,
+        } = test_novatek_responses(&[(2001, 0)], true);
+        handle
+            .configure_novatek_read_only_session(
+                MobileNovatekHttpOriginDto {
+                    address: "192.168.1.254".to_owned(),
+                    port: 80,
+                },
+                firmware,
+                live_view,
+                configuration,
+                storage,
+                media,
+            )
+            .expect("validated R3V1 evidence establishes the session");
+        let capture_generation = handle
+            .begin_capture(MobileCaptureOriginDto::Manual)
+            .expect("capture lifecycle issues its generation");
+        assert!(handle.capture_writer_started(capture_generation));
+        let request = handle
+            .authorize_novatek_media_download("A:\\Novatek\\Movie\\clip.TS".to_owned())
+            .expect("listed media is authorized");
+        let mut invalid_association = novatek_download_association(capture_generation);
+        invalid_association.ride_capture_file_name.clear();
+
+        assert_eq!(
+            handle.complete_novatek_media_download(MobileNovatekMediaDownloadCompletionInput {
+                operation_id: request.operation_id,
+                actual_size: request.size_bytes,
+                association: Some(invalid_association),
+            }),
+            Err(MobileNovatekMediaDownloadCompletionError::InvalidProvenance)
+        );
+        assert!(
+            handle
+                .complete_novatek_media_download(MobileNovatekMediaDownloadCompletionInput {
+                    operation_id: request.operation_id,
+                    actual_size: request.size_bytes,
+                    association: Some(novatek_download_association(capture_generation)),
+                })
+                .is_ok()
+        );
     }
 
     #[test]

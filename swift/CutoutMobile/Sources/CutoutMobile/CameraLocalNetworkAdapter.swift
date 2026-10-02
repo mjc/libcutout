@@ -699,10 +699,11 @@ public final class CameraLocalNetworkAdapter {
         return (temporaryURL, actualSize)
     }
 
-    private nonisolated static func installMedia(
+    nonisolated static func installMedia(
         from temporaryURL: URL,
         to destination: URL
     ) async throws {
+        try Task.checkCancellation()
         do {
             try FileManager.default.moveItem(at: temporaryURL, to: destination)
         } catch {

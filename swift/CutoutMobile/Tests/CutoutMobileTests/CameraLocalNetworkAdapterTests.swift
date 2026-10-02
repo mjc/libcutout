@@ -527,6 +527,33 @@ final class CameraLocalNetworkAdapterTests: XCTestCase {
     }
 
     @MainActor
+    func testCancelledMediaInstallationLeavesTemporaryFileUnmoved() async throws {
+        let source = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("cutout-camera-cancelled-source-\(UUID().uuidString).tmp")
+        let destination = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("cutout-camera-cancelled-destination-\(UUID().uuidString).TS")
+        try Data([1, 2, 3, 4]).write(to: source)
+        defer {
+            try? FileManager.default.removeItem(at: source)
+            try? FileManager.default.removeItem(at: destination)
+        }
+
+        let installation = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            try await CameraLocalNetworkAdapter.installMedia(from: source, to: destination)
+        }
+        do {
+            try await installation.value
+            XCTFail("a cancelled installation must not move its temporary file")
+        } catch is CancellationError {
+            XCTAssertTrue(FileManager.default.fileExists(atPath: source.path))
+            XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+        } catch {
+            XCTFail("unexpected error: \(error)")
+        }
+    }
+
+    @MainActor
     func testMediaDownloadCannotInstallFileAfterWiFiLoss() async {
         let adapter = CameraLocalNetworkAdapter()
         applyTestEvidence(cameraEvidence(advertisedCommandIDs: []), to: adapter)

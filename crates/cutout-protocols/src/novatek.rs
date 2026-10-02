@@ -809,6 +809,15 @@ impl NovatekMediaDownloadOperations {
         self.consume(NovatekMediaDownloadOperationId(id))
     }
 
+    /// Returns retained metadata for an active operation without consuming it.
+    #[must_use]
+    pub fn authorized_entry_id(&self, id: u64) -> Option<&NovatekMediaEntry> {
+        self.pending
+            .iter()
+            .find(|authorization| authorization.id.get() == id)
+            .map(NovatekMediaDownloadAuthorization::entry)
+    }
+
     /// Invalidates all outstanding operations when the inventory is replaced.
     pub fn clear(&mut self) {
         self.pending.clear();
