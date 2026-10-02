@@ -326,7 +326,6 @@ struct ContentView: View {
             CaptureRouteView(capture: model.capture)
         case .camera:
             CameraRouteContainerView(
-                annotateCapture: { model.annotateCapture(key: $0, value: $1) },
                 recordMediaReference: { fileName, generation, source, media, localURL in
                     model.recordCameraMediaReference(
                         captureFileName: fileName,
