@@ -99,10 +99,7 @@ in
     cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
   '';
 
-  tasks."project:test".exec = ''
-    cargo nextest run --workspace --locked
-    cargo test --workspace --doc --locked
-  '';
+  tasks."project:test".exec = "bash scripts/run-rust-workspace-tests.sh";
 
   # One deterministic test entry point for local use and CI. Keep live-device
   # validators and deployment tasks opt-in because they require external state.
