@@ -8,11 +8,11 @@ use cutout_ride_maps::{
     AverageSpeedMillimetresPerSecond, Coordinate, LocationAdmission, LocationSample,
     LocationSource, MAX_LIVE_ROUTE_POINTS, RideEvent, RideLifecycleState, RideMapPoint,
     RideMapRecorder, RideMapSegmentId, RidePointCount, RidePointSequence, RideSegmentStartReason,
-    RideSummary, RouteCameraRegion, RouteDisplayBudget, RouteDisplayPoint, RouteEndpointMetadata,
-    RoutePrivacyPolicy, RouteProjectionAccumulator, RouteSegmentDisplayMetadata,
-    RouteTelemetryState, RouteViewport, TransitionError, VehicleIdentity,
-    WallClockUnixMilliseconds, count_segment_runs, route_camera_region,
-    route_camera_region_with_privacy, route_segment_display_metadata,
+    RideSummary, RouteCameraBounds, RouteCameraRegion, RouteDisplayBudget, RouteDisplayPoint,
+    RouteEndpointMetadata, RoutePrivacyPolicy, RouteProjectionAccumulator,
+    RouteSegmentDisplayMetadata, RouteTelemetryState, RouteViewport, TransitionError,
+    VehicleIdentity, WallClockUnixMilliseconds, count_segment_runs, route_camera_region,
+    route_segment_display_metadata,
 };
 use hex::encode as hex_encode;
 use rusqlite::{Connection, ErrorCode, OptionalExtension, params};
@@ -8568,7 +8568,7 @@ fn canonical_route_camera_region(
         cancellation,
     )?;
     let mut rows = projection_sqlite(statement.query([ride_id]), cancellation)?;
-    let mut coordinates = Vec::new();
+    let mut bounds = RouteCameraBounds::new();
     while let Some(row) = projection_sqlite(rows.next(), cancellation)? {
         projection_checkpoint(cancellation)?;
         let coordinate =
@@ -8579,9 +8579,9 @@ fn canonical_route_camera_region(
                     Box::new(error),
                 )
             })?;
-        coordinates.push(coordinate);
+        bounds.include_with_privacy(coordinate, privacy);
     }
-    Ok(route_camera_region_with_privacy(coordinates, privacy))
+    Ok(bounds.region())
 }
 
 fn project_route_candidates(

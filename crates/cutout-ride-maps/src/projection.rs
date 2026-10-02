@@ -150,6 +150,11 @@ impl RouteCameraBounds {
         self.last_longitude = Some(longitude);
     }
 
+    /// Applies route privacy to one coordinate before adding it to the camera bounds.
+    pub fn include_with_privacy(&mut self, coordinate: Coordinate, privacy: RoutePrivacyPolicy) {
+        self.include(privacy.project(coordinate).0);
+    }
+
     /// Returns the padded whole-route camera region, or `None` when no coordinates were added.
     #[must_use]
     pub fn region(self) -> Option<RouteCameraRegion> {

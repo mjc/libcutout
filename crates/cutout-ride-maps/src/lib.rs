@@ -53,7 +53,8 @@ mod tests {
         RideSummary, RouteCameraBounds, RouteDisplayBudget, RoutePrivacyClass, RoutePrivacyGridE7,
         RoutePrivacyPolicy, RouteProjectionError, RouteTelemetryState, RouteViewport,
         TransitionError, VehicleIdentity, WallClockUnixMilliseconds, project_route_points,
-        project_route_points_cancellable, route_camera_region, route_endpoint_metadata,
+        project_route_points_cancellable, route_camera_region, route_camera_region_with_privacy,
+        route_endpoint_metadata,
     };
 
     #[test]
@@ -447,6 +448,24 @@ mod tests {
         assert!((region.center_longitude_degrees() + 105.0).abs() < f64::EPSILON);
         assert!((region.latitude_span_degrees() - 0.002).abs() < f64::EPSILON);
         assert!((region.longitude_span_degrees() - 0.002).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn route_camera_bounds_apply_privacy_to_each_coordinate() {
+        let points = [
+            Coordinate::from_degrees(10.02, 179.91).unwrap(),
+            Coordinate::from_degrees(10.21, -179.91).unwrap(),
+        ];
+        let privacy = RoutePrivacyPolicy::grid(RoutePrivacyGridE7::new(1_000_000).unwrap());
+        let mut bounds = RouteCameraBounds::new();
+        for point in points {
+            bounds.include_with_privacy(point, privacy);
+        }
+
+        assert_eq!(
+            bounds.region(),
+            route_camera_region_with_privacy(points, privacy)
+        );
     }
 
     #[test]
