@@ -295,7 +295,7 @@ final class CameraLocalNetworkAdapterTests: XCTestCase {
     }
 
     @MainActor
-    func testSatisfiedWiFiPathInvalidatesEvidenceAfterAPathObservation() {
+    func testSatisfiedWiFiPathObservationPreservesEstablishedCameraEvidence() {
         let adapter = CameraLocalNetworkAdapter()
         let evidence = CameraReadOnlyEvidence(
             MobileNovatekReadOnlySnapshotDto(
@@ -306,12 +306,12 @@ final class CameraLocalNetworkAdapterTests: XCTestCase {
                 storagePresent: true,
                 media: []
             ))
-        adapter.apply(readOnlyEvidence: evidence)
+        applyTestEvidence(evidence, to: adapter)
 
         adapter.apply(pathStatus: .satisfied, usesWiFi: true)
 
-        XCTAssertEqual(adapter.presentation.connection, .notConfigured)
-        XCTAssertNil(adapter.readOnlyEvidence)
+        XCTAssertEqual(adapter.presentation.connection, .connected)
+        XCTAssertEqual(adapter.readOnlyEvidence, evidence)
     }
 
     @MainActor
@@ -349,6 +349,44 @@ final class CameraLocalNetworkAdapterTests: XCTestCase {
             XCTAssertNil(adapter.readOnlyEvidence)
             XCTAssertEqual(adapter.presentation.connection, .wifiRequired)
         }
+    }
+
+    @MainActor
+    func testReadOnlyDiscoveryCannotCommitAcrossSatisfiedPathObservation() async {
+        let adapter = CameraLocalNetworkAdapter()
+        let responses: [String: Data] = [
+            "3012": Data("<Function><Cmd>3012</Cmd><Status>0</Status><String>R3V1.1_20240411</String></Function>".utf8),
+            "2019": Data(
+                "<LIST><MovieLiveViewLink>rtsp://192.168.1.254/xxx.mov</MovieLiveViewLink><PhotoLiveViewLink>rtsp://192.168.1.254/xxx.mov</PhotoLiveViewLink></LIST>"
+                    .utf8),
+            "3014": Data("<Function><Cmd>2016</Cmd><Status>0</Status></Function>".utf8),
+            "3024": Data("<Function><Cmd>3024</Cmd><Status>0</Status><Value>1</Value></Function>".utf8),
+            "3015": Data("<LIST></LIST>".utf8),
+        ]
+
+        do {
+            _ = try await adapter.loadReadOnlyEvidence(
+                address: "192.168.1.254",
+                port: 80
+            ) { url in
+                let command = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first {
+                    $0.name == "cmd"
+                }?.value
+                if command == "3012" {
+                    await adapter.apply(pathStatus: .satisfied, usesWiFi: true)
+                }
+                return responses[command!]!
+            }
+            XCTFail("discovery from the prior path observation must not publish a session")
+        } catch let error as CameraReadOnlyRequestError {
+            XCTAssertEqual(error, .pathUnavailable)
+        } catch {
+            XCTFail("unexpected error: \(error)")
+        }
+
+        XCTAssertNil(adapter.readOnlyEvidence)
+        XCTAssertEqual(adapter.presentation.connection, .notConfigured)
+        XCTAssertNil(adapter.sessionState.novatekSessionOrigin())
     }
 
     @MainActor

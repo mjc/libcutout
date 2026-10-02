@@ -263,6 +263,7 @@ pub struct CameraSessionState {
     onboard_recording: CameraOnboardRecordingState,
     generation: u64,
     preview_generation: u64,
+    discovery_generation: u64,
     revision: u64,
 }
 
@@ -275,6 +276,12 @@ pub struct CameraSessionToken {
 /// Opaque identity for asynchronous work belonging to one preview lifecycle.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CameraPreviewToken {
+    generation: u64,
+}
+
+/// Opaque identity for asynchronous camera discovery work.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CameraDiscoveryToken {
     generation: u64,
 }
 
@@ -306,6 +313,20 @@ impl CameraPreviewToken {
     }
 }
 
+impl CameraDiscoveryToken {
+    /// Creates a token at a foreign-function boundary.
+    #[must_use]
+    pub const fn new(generation: u64) -> Self {
+        Self { generation }
+    }
+
+    /// Returns the discovery generation carried by this token.
+    #[must_use]
+    pub const fn generation(self) -> u64 {
+        self.generation
+    }
+}
+
 impl CameraSessionState {
     /// Returns the current foreground preview state.
     #[must_use]
@@ -329,6 +350,12 @@ impl CameraSessionState {
     #[must_use]
     pub const fn preview_generation(self) -> u64 {
         self.preview_generation
+    }
+
+    /// Returns the current discovery generation.
+    #[must_use]
+    pub const fn discovery_generation(self) -> u64 {
+        self.discovery_generation
     }
 
     /// Returns the monotonic state revision.
@@ -365,6 +392,20 @@ impl CameraSessionState {
         self.preview_generation == token.generation
     }
 
+    /// Captures an identity for asynchronous camera discovery work.
+    #[must_use]
+    pub const fn discovery_token(self) -> CameraDiscoveryToken {
+        CameraDiscoveryToken {
+            generation: self.discovery_generation,
+        }
+    }
+
+    /// Returns whether discovery work still belongs to the current path epoch.
+    #[must_use]
+    pub const fn is_discovery_current(self, token: CameraDiscoveryToken) -> bool {
+        self.discovery_generation == token.generation
+    }
+
     /// Retires asynchronous work without changing presentation truth.
     pub fn advance_generation(&mut self) {
         self.generation = self.generation.wrapping_add(1);
@@ -377,10 +418,17 @@ impl CameraSessionState {
         self.revision = self.revision.wrapping_add(1);
     }
 
+    /// Retires in-flight discovery without invalidating unrelated camera work.
+    pub fn advance_discovery_generation(&mut self) {
+        self.discovery_generation = self.discovery_generation.wrapping_add(1);
+        self.revision = self.revision.wrapping_add(1);
+    }
+
     /// Retires the lifecycle and returns camera state to its non-optimistic baseline.
     pub fn invalidate(&mut self) {
         self.advance_generation();
         self.advance_preview_generation();
+        self.advance_discovery_generation();
         self.preview = CameraPreviewState::Stopped;
         self.onboard_recording = CameraOnboardRecordingState::Unknown;
     }
@@ -576,6 +624,20 @@ mod tests {
 
         assert!(state.is_current(camera_token));
         assert!(!state.is_preview_current(preview_token));
+    }
+
+    #[test]
+    fn path_observation_retires_discovery_without_invalidating_other_camera_work() {
+        let mut state = CameraSessionState::default();
+        let camera_token = state.token();
+        let preview_token = state.preview_token();
+        let discovery_token = state.discovery_token();
+
+        state.advance_discovery_generation();
+
+        assert!(state.is_current(camera_token));
+        assert!(state.is_preview_current(preview_token));
+        assert!(!state.is_discovery_current(discovery_token));
     }
 
     #[test]

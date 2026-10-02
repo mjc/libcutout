@@ -49,6 +49,7 @@ use cutout_core::{
     BatteryPageKindDto, BatteryReadbackAvailabilityDto, BatteryReadbackDto,
     BluetoothServiceUuid as CoreBluetoothServiceUuid,
     CameraClockUncertainty as CoreCameraClockUncertainty,
+    CameraDiscoveryToken as CoreCameraDiscoveryToken,
     CameraMediaCaptureTiming as CoreCameraMediaCaptureTiming,
     CameraMediaProvenance as CoreCameraMediaProvenance,
     CameraMediaProvenanceError as CoreCameraMediaProvenanceError,
@@ -204,6 +205,27 @@ impl From<CoreCameraPreviewToken> for MobileCameraPreviewTokenDto {
 
 impl From<MobileCameraPreviewTokenDto> for CoreCameraPreviewToken {
     fn from(token: MobileCameraPreviewTokenDto) -> Self {
+        Self::new(token.generation)
+    }
+}
+
+/// Opaque identity for asynchronous camera discovery work.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileCameraDiscoveryTokenDto {
+    /// Discovery generation captured when the operation began.
+    pub generation: u64,
+}
+
+impl From<CoreCameraDiscoveryToken> for MobileCameraDiscoveryTokenDto {
+    fn from(token: CoreCameraDiscoveryToken) -> Self {
+        Self {
+            generation: token.generation(),
+        }
+    }
+}
+
+impl From<MobileCameraDiscoveryTokenDto> for CoreCameraDiscoveryToken {
+    fn from(token: MobileCameraDiscoveryTokenDto) -> Self {
         Self::new(token.generation)
     }
 }
@@ -2979,6 +3001,33 @@ impl CutoutSessionStateHandle {
             .session_state()
             .camera()
             .is_current(token.into())
+    }
+
+    /// Captures an identity for asynchronous camera discovery work.
+    #[must_use]
+    pub fn camera_discovery_token(&self) -> MobileCameraDiscoveryTokenDto {
+        self.lock_inner()
+            .session_state()
+            .camera()
+            .discovery_token()
+            .into()
+    }
+
+    /// Returns whether discovery work still belongs to the current path epoch.
+    #[must_use]
+    pub fn camera_discovery_token_is_current(&self, token: MobileCameraDiscoveryTokenDto) -> bool {
+        self.lock_inner()
+            .session_state()
+            .camera()
+            .is_discovery_current(token.into())
+    }
+
+    /// Retires pending camera discovery after a native path observation.
+    pub fn advance_camera_discovery_generation(&self) {
+        self.lock_inner()
+            .session_state_mut()
+            .camera_mut()
+            .advance_discovery_generation();
     }
 
     /// Captures an identity for asynchronous foreground preview work.

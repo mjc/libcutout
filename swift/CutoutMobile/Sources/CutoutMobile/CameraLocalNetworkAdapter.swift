@@ -244,8 +244,6 @@ public final class CameraLocalNetworkAdapter {
     private var previewFrameHandler: CameraPreviewFrameHandler?
     private var previewConfigurationHandler: CameraPreviewConfigurationHandler?
     private var commandInFlight = false
-    private var pathObservationGeneration: UInt64 = 0
-    private var evidencePathObservationGeneration: UInt64 = 0
     private let monitorQueue = DispatchQueue(label: "org.cutout.camera-local-network")
 
     public init(
@@ -306,7 +304,6 @@ public final class CameraLocalNetworkAdapter {
             return
         }
         readOnlyEvidence = evidence
-        evidencePathObservationGeneration = pathObservationGeneration
         presentation.connection = .connected
         presentation.profileName = "FreedConn R3 Pro · Novatek"
         presentation.storage = evidence.storagePresent ? .present : .missing
@@ -554,6 +551,7 @@ public final class CameraLocalNetworkAdapter {
         }
         clearReadOnlyEvidence()
         let requestToken = sessionState.cameraSessionToken()
+        let discoveryToken = sessionState.cameraDiscoveryToken()
         let origin = try mobileValidateNovatekHttpOrigin(address: address, port: port)
         observeDiscoveryStarted()
 
@@ -563,7 +561,9 @@ public final class CameraLocalNetworkAdapter {
         let storage = try await fetch(try requestURL(origin: origin, command: .storagePresent))
         let media = try await fetch(try requestURL(origin: origin, command: .mediaList))
 
-        guard isCurrentCameraRequest(requestToken) else {
+        guard isCurrentCameraRequest(requestToken),
+            sessionState.cameraDiscoveryTokenIsCurrent(token: discoveryToken)
+        else {
             throw CameraReadOnlyRequestError.pathUnavailable
         }
         let snapshot: MobileNovatekReadOnlySnapshotDto
@@ -913,12 +913,7 @@ public final class CameraLocalNetworkAdapter {
     }
 
     func apply(pathStatus: CameraLocalNetworkPathStatus, usesWiFi: Bool) {
-        pathObservationGeneration &+= 1
-        if readOnlyEvidence != nil,
-            evidencePathObservationGeneration != pathObservationGeneration
-        {
-            clearReadOnlyEvidence()
-        }
+        sessionState.advanceCameraDiscoveryGeneration()
         let nextConnection = cameraConnectionPresentation(
             pathStatus: pathStatus,
             usesWiFi: usesWiFi,
