@@ -49,7 +49,6 @@ final class CutoutAppModel {
     private var rideMapCheckpointLease: RideBackgroundTask?
     private var rideMapCheckpointGeneration: UInt64 = 0
     private(set) var cameraMediaReferences: [CameraMediaReference] = []
-    private static let maximumCameraMediaReferences = 64
 
     var selectedRideTitle: String? { device.selectedRideTitle }
 
@@ -254,14 +253,6 @@ final class CutoutAppModel {
         guard !captureFileName.isEmpty else { return }
         guard capture.activeGeneration != nil else { return }
         guard captureFileName == capture.fileName else { return }
-        guard
-            !cameraMediaReferences.contains(where: {
-                $0.source == source
-                    && $0.rideCaptureFileName == captureFileName
-                    && $0.cameraPath == media.path
-            })
-        else { return }
-
         let input = MobileCameraMediaProvenanceInput(
             source: source.mobileDto,
             cameraPath: media.path,
@@ -277,8 +268,9 @@ final class CutoutAppModel {
         guard (try? sessionState.recordCameraMediaProvenance(input: input)) != nil else {
             return
         }
+        let provenanceRecords = sessionState.cameraMediaProvenance()
         guard
-            let provenance = sessionState.cameraMediaProvenance().first(where: {
+            let provenance = provenanceRecords.first(where: {
                 $0.source == source.mobileDto
                     && $0.cameraPath == media.path
                     && $0.rideCaptureFileName == captureFileName
@@ -289,9 +281,21 @@ final class CutoutAppModel {
 
         let reference = CameraMediaReference(provenance: provenance, localURL: localURL)
         guard captureFileName == capture.fileName else { return }
-        cameraMediaReferences.append(reference)
-        if cameraMediaReferences.count > Self.maximumCameraMediaReferences {
-            cameraMediaReferences.removeFirst()
+        if let existingIndex = cameraMediaReferences.firstIndex(where: {
+            $0.source.mobileDto == provenance.source
+                && $0.rideCaptureFileName == provenance.rideCaptureFileName
+                && $0.cameraPath == provenance.cameraPath
+        }) {
+            cameraMediaReferences[existingIndex] = reference
+        } else {
+            cameraMediaReferences.append(reference)
+        }
+        cameraMediaReferences.removeAll { reference in
+            !provenanceRecords.contains { retained in
+                reference.source.mobileDto == retained.source
+                    && reference.rideCaptureFileName == retained.rideCaptureFileName
+                    && reference.cameraPath == retained.cameraPath
+            }
         }
     }
 

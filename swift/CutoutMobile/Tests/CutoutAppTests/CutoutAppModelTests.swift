@@ -997,6 +997,42 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testRedownloadingCameraMediaReplacesItsLocalReferenceAndProvenance() throws {
+        let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
+        XCTAssertTrue(model.recordOnly(platformIdentifier: "unknown-device", deviceKind: " "))
+        let captureFileName = try XCTUnwrap(model.capture.fileName)
+        let original = CameraMediaEvidence(
+            name: "original.mp4",
+            path: "/DCIM/FILE001.MP4",
+            sizeBytes: 100,
+            timecode: 10,
+            time: "10:00:00",
+            attributes: 0
+        )
+        let replacement = CameraMediaEvidence(
+            name: "replacement.mp4",
+            path: original.path,
+            sizeBytes: 200,
+            timecode: 20,
+            time: "10:00:01",
+            attributes: 0
+        )
+        let firstURL = URL(fileURLWithPath: "/tmp/first-camera-download.mov")
+        let replacementURL = URL(fileURLWithPath: "/tmp/replacement-camera-download.mov")
+
+        model.recordCameraMediaReference(
+            captureFileName: captureFileName, media: original, localURL: firstURL)
+        model.recordCameraMediaReference(
+            captureFileName: captureFileName, media: replacement, localURL: replacementURL)
+
+        XCTAssertEqual(model.cameraMediaReferences.count, 1)
+        XCTAssertEqual(model.cameraMediaReferences[0].localURL, replacementURL)
+        XCTAssertEqual(model.cameraMediaReferences[0].sizeBytes, replacement.sizeBytes)
+        XCTAssertEqual(model.cameraMediaReferences[0].cameraTimecode, replacement.timecode)
+        XCTAssertEqual(model.cameraMediaReferences[0].cameraTime, replacement.time)
+    }
+
+    @MainActor
     func testPairFailureIsVisibleInsteadOfDoingNothing() {
         let model = CutoutAppModel()
 
