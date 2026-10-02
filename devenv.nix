@@ -256,6 +256,8 @@ in
     bash tests/scripts/run-ios-ui-tests.sh
     bash tests/fixtures/ffi-freshness/run.sh
     bash tests/fixtures/ffi-production/run.sh
+    scripts/probe-novatek-camera.sh --self-test
+    scripts/probe-novatek-camera-controls.sh --self-test
   '';
   tasks."build:ios-app" = swiftTask ''
     cargo cutout xcodebuild -- \
