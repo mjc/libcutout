@@ -359,7 +359,7 @@ public final class CameraLocalNetworkAdapter {
         expectedAddress: String?
     ) async throws {
         stopPreview()
-        let token = sessionState.cameraSessionToken()
+        let token = sessionState.cameraPreviewToken()
         let session: MobileCameraPreviewSession
         guard let readOnlyOrigin = sessionState.novatekSessionOrigin() else {
             throw CameraReadOnlyRequestError.pathUnavailable
@@ -491,7 +491,7 @@ public final class CameraLocalNetworkAdapter {
     }
 
     private func terminatePreviewAfterTask(
-        token: MobileCameraSessionTokenDto,
+        token: MobileCameraPreviewTokenDto,
         session: MobileCameraPreviewSession,
         fileSink: MobileCameraPreviewFileSink?
     ) -> Bool {
@@ -505,12 +505,12 @@ public final class CameraLocalNetworkAdapter {
         return true
     }
 
-    private func isCurrentPreview(token: MobileCameraSessionTokenDto) -> Bool {
-        sessionState.cameraSessionTokenIsCurrent(token: token)
+    private func isCurrentPreview(token: MobileCameraPreviewTokenDto) -> Bool {
+        sessionState.cameraPreviewTokenIsCurrent(token: token)
     }
 
     private func requireCurrentPreview(
-        token: MobileCameraSessionTokenDto,
+        token: MobileCameraPreviewTokenDto,
         session: MobileCameraPreviewSession,
         fileSink: MobileCameraPreviewFileSink?
     ) throws {
@@ -523,7 +523,7 @@ public final class CameraLocalNetworkAdapter {
 
     /// Stops the foreground preview lifecycle.
     public func stopPreview() {
-        sessionState.advanceCameraGeneration()
+        sessionState.advanceCameraPreviewGeneration()
         previewTask?.cancel()
         previewTask = nil
         previewSession?.stop()

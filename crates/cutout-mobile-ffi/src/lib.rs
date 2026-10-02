@@ -53,13 +53,13 @@ use cutout_core::{
     CameraMediaProvenance as CoreCameraMediaProvenance,
     CameraMediaProvenanceError as CoreCameraMediaProvenanceError,
     CameraOnboardRecordingState as CoreCameraOnboardRecordingState,
-    CameraPreviewState as CoreCameraPreviewState, CameraSessionToken as CoreCameraSessionToken,
-    CameraSourceKind as CoreCameraSourceKind, Capacity, ChargeEstimateError, ChargeEstimateInput,
-    ChargeEstimateResetReason, ChargeEstimateState, ChargeEstimateUnavailableReason, ChargeFlow,
-    ChargeMode, ChargeModeDto, ChargeModeReadingDto, ChargeProfileIdentity, ChargeSessionIdentity,
-    ChargeTimeEstimate, ControlRefusalReasonDto,
-    DeviceConnectionIntent as CoreDeviceConnectionIntent, DiscoveryCandidateSnapshot,
-    DiscoveryCandidateSupport as CoreDiscoveryCandidateSupport,
+    CameraPreviewState as CoreCameraPreviewState, CameraPreviewToken as CoreCameraPreviewToken,
+    CameraSessionToken as CoreCameraSessionToken, CameraSourceKind as CoreCameraSourceKind,
+    Capacity, ChargeEstimateError, ChargeEstimateInput, ChargeEstimateResetReason,
+    ChargeEstimateState, ChargeEstimateUnavailableReason, ChargeFlow, ChargeMode, ChargeModeDto,
+    ChargeModeReadingDto, ChargeProfileIdentity, ChargeSessionIdentity, ChargeTimeEstimate,
+    ControlRefusalReasonDto, DeviceConnectionIntent as CoreDeviceConnectionIntent,
+    DiscoveryCandidateSnapshot, DiscoveryCandidateSupport as CoreDiscoveryCandidateSupport,
     DiscoveryConnectionRoute as CoreDiscoveryConnectionRoute,
     DiscoveryElectricUnicycleModel as CoreDiscoveryElectricUnicycleModel,
     DiscoveryManufacturerDataSummary as CoreDiscoveryManufacturerDataSummary,
@@ -183,6 +183,27 @@ impl From<CoreCameraSessionToken> for MobileCameraSessionTokenDto {
 
 impl From<MobileCameraSessionTokenDto> for CoreCameraSessionToken {
     fn from(token: MobileCameraSessionTokenDto) -> Self {
+        Self::new(token.generation)
+    }
+}
+
+/// Opaque identity for asynchronous work belonging to one preview lifecycle.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileCameraPreviewTokenDto {
+    /// Preview generation captured when the asynchronous work began.
+    pub generation: u64,
+}
+
+impl From<CoreCameraPreviewToken> for MobileCameraPreviewTokenDto {
+    fn from(token: CoreCameraPreviewToken) -> Self {
+        Self {
+            generation: token.generation(),
+        }
+    }
+}
+
+impl From<MobileCameraPreviewTokenDto> for CoreCameraPreviewToken {
+    fn from(token: MobileCameraPreviewTokenDto) -> Self {
         Self::new(token.generation)
     }
 }
@@ -2938,12 +2959,31 @@ impl CutoutSessionStateHandle {
             .is_current(token.into())
     }
 
-    /// Retires asynchronous camera work without changing presentation truth.
-    pub fn advance_camera_generation(&self) {
+    /// Captures an identity for asynchronous foreground preview work.
+    #[must_use]
+    pub fn camera_preview_token(&self) -> MobileCameraPreviewTokenDto {
+        self.lock_inner()
+            .session_state()
+            .camera()
+            .preview_token()
+            .into()
+    }
+
+    /// Returns whether asynchronous work still belongs to the preview lifecycle.
+    #[must_use]
+    pub fn camera_preview_token_is_current(&self, token: MobileCameraPreviewTokenDto) -> bool {
+        self.lock_inner()
+            .session_state()
+            .camera()
+            .is_preview_current(token.into())
+    }
+
+    /// Retires preview work without invalidating unrelated camera operations.
+    pub fn advance_camera_preview_generation(&self) {
         self.lock_inner()
             .session_state_mut()
             .camera_mut()
-            .advance_generation();
+            .advance_preview_generation();
     }
 
     /// Retires the camera lifecycle and returns it to its non-optimistic baseline.
@@ -18358,7 +18398,7 @@ mod tests {
     }
 
     #[test]
-    fn camera_session_state_handle_rejects_command_response_after_lifecycle_advance() {
+    fn camera_session_state_handle_rejects_command_response_after_lifecycle_invalidation() {
         let handle = CutoutSessionStateHandle::new();
         configure_test_novatek_session(&handle, &[(1001, 0)]);
         let request = handle
@@ -18371,7 +18411,7 @@ mod tests {
             )
             .expect("still capture is advertised");
 
-        handle.advance_camera_generation();
+        handle.invalidate_camera_lifecycle();
 
         assert_eq!(
             handle.complete_novatek_command(
@@ -18587,6 +18627,70 @@ mod tests {
 
         handle.clear_novatek_session();
         assert!(!handle.novatek_media_is_current("A:\\Novatek\\Movie\\clip.TS".to_owned(), 42));
+    }
+
+    #[test]
+    fn preview_retirement_preserves_unrelated_command_and_download_operations() {
+        let handle = CutoutSessionStateHandle::new();
+        let NovatekResponseFixtures {
+            firmware,
+            live_view,
+            configuration,
+            storage,
+            media,
+        } = test_novatek_responses(&[(2001, 0)], true);
+        handle
+            .configure_novatek_read_only_session(
+                MobileNovatekHttpOriginDto {
+                    address: "192.168.1.254".to_owned(),
+                    port: 80,
+                },
+                firmware,
+                live_view,
+                configuration,
+                storage,
+                media,
+            )
+            .expect("validated read-only evidence establishes the session");
+
+        let command = handle
+            .authorize_novatek_command(
+                MobileNovatekHttpOriginDto {
+                    address: "192.168.1.254".to_owned(),
+                    port: 80,
+                },
+                MobileNovatekCommandDto::StartRecording,
+            )
+            .expect("recording command is advertised");
+        let download = handle
+            .authorize_novatek_media_download("A:\\Novatek\\Movie\\clip.TS".to_owned())
+            .expect("listed media is authorized");
+        let camera_token = handle.camera_session_token();
+        let preview_token = handle.camera_preview_token();
+
+        handle.advance_camera_preview_generation();
+
+        assert!(!handle.camera_preview_token_is_current(preview_token));
+        assert!(handle.camera_session_token_is_current(camera_token));
+        assert_eq!(
+            handle.complete_novatek_command(
+                command,
+                br"<Function><Cmd>2001</Cmd><Status>0</Status></Function>".to_vec(),
+            ),
+            Ok(MobileNovatekCommandOutcomeDto::Acknowledged)
+        );
+        assert_eq!(
+            handle
+                .complete_novatek_media_download(MobileNovatekMediaDownloadCompletionInput {
+                    operation_id: download.operation_id,
+                    actual_size: 42,
+                    association: None,
+                })
+                .expect("preview retirement must not invalidate a download")
+                .media
+                .path,
+            "A:\\Novatek\\Movie\\clip.TS"
+        );
     }
 
     #[test]

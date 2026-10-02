@@ -262,12 +262,19 @@ pub struct CameraSessionState {
     preview: CameraPreviewState,
     onboard_recording: CameraOnboardRecordingState,
     generation: u64,
+    preview_generation: u64,
     revision: u64,
 }
 
 /// Opaque identity for asynchronous work belonging to one camera lifecycle.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CameraSessionToken {
+    generation: u64,
+}
+
+/// Opaque identity for asynchronous work belonging to one preview lifecycle.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CameraPreviewToken {
     generation: u64,
 }
 
@@ -279,6 +286,20 @@ impl CameraSessionToken {
     }
 
     /// Returns the lifecycle generation carried by this token.
+    #[must_use]
+    pub const fn generation(self) -> u64 {
+        self.generation
+    }
+}
+
+impl CameraPreviewToken {
+    /// Creates a token at a foreign-function boundary.
+    #[must_use]
+    pub const fn new(generation: u64) -> Self {
+        Self { generation }
+    }
+
+    /// Returns the preview generation carried by this token.
     #[must_use]
     pub const fn generation(self) -> u64 {
         self.generation
@@ -304,6 +325,12 @@ impl CameraSessionState {
         self.generation
     }
 
+    /// Returns the current preview lifecycle generation.
+    #[must_use]
+    pub const fn preview_generation(self) -> u64 {
+        self.preview_generation
+    }
+
     /// Returns the monotonic state revision.
     #[must_use]
     pub const fn revision(self) -> u64 {
@@ -324,15 +351,36 @@ impl CameraSessionState {
         self.generation == token.generation
     }
 
+    /// Captures an identity for asynchronous preview work.
+    #[must_use]
+    pub const fn preview_token(self) -> CameraPreviewToken {
+        CameraPreviewToken {
+            generation: self.preview_generation,
+        }
+    }
+
+    /// Returns whether asynchronous work still belongs to this preview lifecycle.
+    #[must_use]
+    pub const fn is_preview_current(self, token: CameraPreviewToken) -> bool {
+        self.preview_generation == token.generation
+    }
+
     /// Retires asynchronous work without changing presentation truth.
     pub fn advance_generation(&mut self) {
         self.generation = self.generation.wrapping_add(1);
         self.revision = self.revision.wrapping_add(1);
     }
 
+    /// Retires asynchronous preview work without invalidating camera operations.
+    pub fn advance_preview_generation(&mut self) {
+        self.preview_generation = self.preview_generation.wrapping_add(1);
+        self.revision = self.revision.wrapping_add(1);
+    }
+
     /// Retires the lifecycle and returns camera state to its non-optimistic baseline.
     pub fn invalidate(&mut self) {
         self.advance_generation();
+        self.advance_preview_generation();
         self.preview = CameraPreviewState::Stopped;
         self.onboard_recording = CameraOnboardRecordingState::Unknown;
     }
@@ -519,15 +567,29 @@ mod tests {
     }
 
     #[test]
+    fn retiring_preview_work_does_not_invalidate_camera_session_work() {
+        let mut state = CameraSessionState::default();
+        let camera_token = state.token();
+        let preview_token = state.preview_token();
+
+        state.advance_preview_generation();
+
+        assert!(state.is_current(camera_token));
+        assert!(!state.is_preview_current(preview_token));
+    }
+
+    #[test]
     fn invalidating_camera_session_resets_truth_and_retires_tokens() {
         let mut state = CameraSessionState::default();
         let token = state.token();
+        let preview_token = state.preview_token();
         state.observe_preview(CameraPreviewState::Live);
         state.observe_onboard_recording(CameraOnboardRecordingState::Recording);
 
         state.invalidate();
 
         assert!(!state.is_current(token));
+        assert!(!state.is_preview_current(preview_token));
         assert_eq!(state.preview(), CameraPreviewState::Stopped);
         assert_eq!(
             state.onboard_recording(),
