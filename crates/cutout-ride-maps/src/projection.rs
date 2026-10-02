@@ -137,7 +137,13 @@ impl RouteCameraBounds {
         let longitude = i64::from(coordinate.longitude().as_i32());
         let longitude = self.last_longitude.map_or(longitude, |last| {
             let delta = longitude - last;
-            longitude - (delta + 1_800_000_000).div_euclid(3_600_000_000) * 3_600_000_000
+            if delta > 1_800_000_000 {
+                longitude - 3_600_000_000
+            } else if delta < -1_800_000_000 {
+                longitude + 3_600_000_000
+            } else {
+                longitude
+            }
         });
         self.minimum_longitude = Some(
             self.minimum_longitude

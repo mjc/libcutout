@@ -436,6 +436,32 @@ mod tests {
     }
 
     #[test]
+    fn route_camera_bounds_do_not_accumulate_exact_antipodal_ties() {
+        for longitudes in [
+            [0.0, 180.0, 0.0].as_slice(),
+            [0.0, -180.0, 0.0].as_slice(),
+            [0.0, 180.0, 0.0, 180.0].as_slice(),
+        ] {
+            let coordinates = longitudes
+                .iter()
+                .map(|longitude| Coordinate::from_degrees(0.0, *longitude).unwrap())
+                .collect::<Vec<_>>();
+            let mut bounds = RouteCameraBounds::new();
+            for coordinate in &coordinates {
+                bounds.include(*coordinate);
+            }
+
+            let streamed = bounds.region().unwrap();
+            let live = route_camera_region(coordinates).unwrap();
+            assert_eq!(
+                streamed.longitude_span_degrees(),
+                live.longitude_span_degrees()
+            );
+            assert!((streamed.longitude_span_degrees() - 243.0).abs() < f64::EPSILON);
+        }
+    }
+
+    #[test]
     fn route_camera_bounds_are_absent_when_empty_and_cover_one_point() {
         assert!(RouteCameraBounds::new().region().is_none());
 
