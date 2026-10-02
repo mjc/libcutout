@@ -453,9 +453,9 @@ mod tests {
 
             let streamed = bounds.region().unwrap();
             let live = route_camera_region(coordinates).unwrap();
-            assert_eq!(
-                streamed.longitude_span_degrees(),
-                live.longitude_span_degrees()
+            assert!(
+                (streamed.longitude_span_degrees() - live.longitude_span_degrees()).abs()
+                    < f64::EPSILON
             );
             assert!((streamed.longitude_span_degrees() - 243.0).abs() < f64::EPSILON);
         }
