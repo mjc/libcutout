@@ -93,6 +93,96 @@ pub fn route_camera_region(
     })
 }
 
+/// O(1)-memory bounds for a whole ride, accumulated in route order.
+///
+/// Longitude is unwrapped as each coordinate arrives so routes crossing the antimeridian keep
+/// their short continuous interval without retaining every longitude.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RouteCameraBounds {
+    minimum_latitude: Option<LatitudeE7>,
+    maximum_latitude: Option<LatitudeE7>,
+    minimum_longitude: Option<i64>,
+    maximum_longitude: Option<i64>,
+    last_longitude: Option<i64>,
+}
+
+impl RouteCameraBounds {
+    /// Creates empty route bounds.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            minimum_latitude: None,
+            maximum_latitude: None,
+            minimum_longitude: None,
+            maximum_longitude: None,
+            last_longitude: None,
+        }
+    }
+
+    /// Includes one coordinate after the caller applies the route's privacy policy.
+    pub fn include(&mut self, coordinate: Coordinate) {
+        self.minimum_latitude = Some(
+            self.minimum_latitude
+                .map_or(coordinate.latitude(), |value| {
+                    value.min(coordinate.latitude())
+                }),
+        );
+        self.maximum_latitude = Some(
+            self.maximum_latitude
+                .map_or(coordinate.latitude(), |value| {
+                    value.max(coordinate.latitude())
+                }),
+        );
+
+        let longitude = i64::from(coordinate.longitude().as_i32());
+        let longitude = self.last_longitude.map_or(longitude, |last| {
+            let delta = longitude - last;
+            longitude - (delta + 1_800_000_000).div_euclid(3_600_000_000) * 3_600_000_000
+        });
+        self.minimum_longitude = Some(
+            self.minimum_longitude
+                .map_or(longitude, |value| value.min(longitude)),
+        );
+        self.maximum_longitude = Some(
+            self.maximum_longitude
+                .map_or(longitude, |value| value.max(longitude)),
+        );
+        self.last_longitude = Some(longitude);
+    }
+
+    /// Returns the padded whole-route camera region, or `None` when no coordinates were added.
+    #[must_use]
+    pub fn region(self) -> Option<RouteCameraRegion> {
+        let minimum_latitude = self.minimum_latitude?.as_i32();
+        let maximum_latitude = self.maximum_latitude?.as_i32();
+        let minimum_longitude = self.minimum_longitude?;
+        let maximum_longitude = self.maximum_longitude?;
+        let center_longitude = normalize_longitude_e7((minimum_longitude + maximum_longitude) / 2);
+        let center = Coordinate::from_fixed_parts(
+            i32::try_from((i64::from(minimum_latitude) + i64::from(maximum_latitude)) / 2).ok()?,
+            center_longitude,
+        )
+        .ok()?;
+
+        #[allow(clippy::cast_precision_loss)]
+        Some(RouteCameraRegion {
+            center_latitude: center.latitude(),
+            center_longitude: center.longitude(),
+            latitude_span_e7: camera_span_e7(
+                f64::from(maximum_latitude - minimum_latitude) / 10_000_000.0 * 1.35,
+            ),
+            longitude_span_e7: camera_span_e7(
+                (maximum_longitude - minimum_longitude) as f64 / 10_000_000.0 * 1.35,
+            ),
+        })
+    }
+}
+
+#[allow(clippy::cast_possible_truncation)]
+fn normalize_longitude_e7(value: i64) -> i32 {
+    ((value + 1_800_000_000).rem_euclid(3_600_000_000) - 1_800_000_000) as i32
+}
+
 /// Computes a camera region from the complete canonical coordinate set after applying privacy.
 ///
 /// This is intentionally separate from bounded display projection: a display budget may omit

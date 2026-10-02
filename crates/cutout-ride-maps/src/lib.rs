@@ -33,12 +33,12 @@ pub use recording::{
 };
 mod projection;
 pub use projection::{
-    MAX_ROUTE_DISPLAY_POINTS, RouteCameraRegion, RouteDisplayBudget, RouteDisplayPoint,
-    RouteEndpointMetadata, RoutePrivacyClass, RoutePrivacyGridE7, RoutePrivacyPolicy,
-    RouteProjectionAccumulator, RouteProjectionError, RouteSegmentDisplayMetadata, RouteViewport,
-    count_segment_runs, project_route_points, project_route_points_cancellable,
-    project_route_points_from_iter, route_camera_region, route_camera_region_with_privacy,
-    route_endpoint_metadata, route_segment_display_metadata,
+    MAX_ROUTE_DISPLAY_POINTS, RouteCameraBounds, RouteCameraRegion, RouteDisplayBudget,
+    RouteDisplayPoint, RouteEndpointMetadata, RoutePrivacyClass, RoutePrivacyGridE7,
+    RoutePrivacyPolicy, RouteProjectionAccumulator, RouteProjectionError,
+    RouteSegmentDisplayMetadata, RouteViewport, count_segment_runs, project_route_points,
+    project_route_points_cancellable, project_route_points_from_iter, route_camera_region,
+    route_camera_region_with_privacy, route_endpoint_metadata, route_segment_display_metadata,
 };
 
 #[cfg(test)]
@@ -50,10 +50,10 @@ mod tests {
         LatitudeE7, LocationAdmission, LocationSample, LocationSource, LongitudeE7,
         MAX_ROUTE_DISPLAY_POINTS, MonotonicMilliseconds, RideEvent, RideLifecycleState,
         RideMapPoint, RideMapRecorder, RideMapSegmentId, RidePointCount, RidePointSequence,
-        RideSummary, RouteDisplayBudget, RoutePrivacyClass, RoutePrivacyGridE7, RoutePrivacyPolicy,
-        RouteProjectionError, RouteTelemetryState, RouteViewport, TransitionError, VehicleIdentity,
-        WallClockUnixMilliseconds, project_route_points, project_route_points_cancellable,
-        route_camera_region, route_endpoint_metadata,
+        RideSummary, RouteCameraBounds, RouteDisplayBudget, RoutePrivacyClass, RoutePrivacyGridE7,
+        RoutePrivacyPolicy, RouteProjectionError, RouteTelemetryState, RouteViewport,
+        TransitionError, VehicleIdentity, WallClockUnixMilliseconds, project_route_points,
+        project_route_points_cancellable, route_camera_region, route_endpoint_metadata,
     };
 
     #[test]
@@ -406,6 +406,47 @@ mod tests {
         assert!((region.latitude_span_degrees() - 0.002).abs() < f64::EPSILON);
         assert!((region.longitude_span_degrees() - 0.002).abs() < f64::EPSILON);
         assert_eq!(region.centered_on(coordinate), region);
+    }
+
+    #[test]
+    fn route_camera_bounds_keep_positive_longitude_routes_visible() {
+        let mut bounds = RouteCameraBounds::new();
+        bounds.include(Coordinate::from_degrees(10.0, 100.0).unwrap());
+        bounds.include(Coordinate::from_degrees(20.0, 170.0).unwrap());
+
+        let region = bounds.region().unwrap();
+        assert!((region.center_latitude_degrees() - 15.0).abs() < f64::EPSILON);
+        assert!((region.center_longitude_degrees() - 135.0).abs() < f64::EPSILON);
+        assert!((region.latitude_span_degrees() - 13.5).abs() < f64::EPSILON);
+        assert!((region.longitude_span_degrees() - 94.5).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn route_camera_bounds_keep_route_ordered_antimeridian_interval() {
+        let mut bounds = RouteCameraBounds::new();
+        bounds.include(Coordinate::from_degrees(10.0, 179.9).unwrap());
+        bounds.include(Coordinate::from_degrees(10.2, -179.9).unwrap());
+
+        let region = bounds.region().unwrap();
+        assert!((region.center_latitude_degrees() - 10.1).abs() < f64::EPSILON);
+        assert!(region.center_longitude_degrees().abs() > 179.9);
+        assert!((region.longitude_span_degrees() - 0.27).abs() < 0.000_001);
+        assert!((region.latitude_span_degrees() - 0.27).abs() < 0.000_001);
+    }
+
+    #[test]
+    fn route_camera_bounds_are_absent_when_empty_and_cover_one_point() {
+        assert!(RouteCameraBounds::new().region().is_none());
+
+        let coordinate = Coordinate::from_degrees(40.0, -105.0).unwrap();
+        let mut bounds = RouteCameraBounds::new();
+        bounds.include(coordinate);
+        let region = bounds.region().unwrap();
+
+        assert!((region.center_latitude_degrees() - 40.0).abs() < f64::EPSILON);
+        assert!((region.center_longitude_degrees() + 105.0).abs() < f64::EPSILON);
+        assert!((region.latitude_span_degrees() - 0.002).abs() < f64::EPSILON);
+        assert!((region.longitude_span_degrees() - 0.002).abs() < f64::EPSILON);
     }
 
     #[test]
