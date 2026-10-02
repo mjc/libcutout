@@ -583,23 +583,72 @@ final class RideMapStateTests: XCTestCase {
         )
     }
 
-    func testMapStateSeparatesVehiclesAndRejectsTelemetryFromThePreviousVehicle() throws {
+    func testMapStateRejectsStaleTelemetryWithoutReassigningAnOpenRide() async throws {
         let state = MobileRideMapState()
-        let first = try state.ensureRecordingForVehicle(platformIdentifier: "pev-1", atMs: 100)
+        let connectionState = CutoutSessionStateHandle()
+        _ = try state.startGpsOnly(atMs: 100)
+
+        func verify(_ identifier: String, atMs: UInt64) throws -> ConnectionAttemptToken {
+            let token = try XCTUnwrap(
+                connectionState.beginConnectionAttempt(platformIdentifier: identifier, nowMs: atMs).token
+            )
+            _ = connectionState.connectionLinkEstablished(token: token)
+            _ = connectionState.observeConnectionNotification(token: token, bytes: Data(vescReply))
+            _ = connectionState.resolveDeviceSession(
+                token: token,
+                identificationComplete: false,
+                nowMs: atMs + 1
+            )
+            return token
+        }
+
+        let firstToken = try verify("pev-1", atMs: 100)
+        let firstAdmission = try state.beginVerifiedConnectionAdmission(
+            connectionState: connectionState,
+            token: firstToken,
+            atMs: 200
+        )
+        let firstResult = try await settleAdmission(state, firstAdmission)
+        let first = try XCTUnwrap(firstResult)
+        XCTAssertEqual(first.associatedVehicle, "pev-1")
         XCTAssertEqual(
-            try state.observeTelemetry(platformIdentifier: "pev-1", atMs: 200),
+            try state.observeTelemetryForVerifiedConnection(
+                connectionState: connectionState,
+                token: firstToken,
+                atMs: 200,
+                speedObservation: nil
+            ),
             .observed
         )
-        let second = try state.ensureRecordingForVehicle(platformIdentifier: "pev-2", atMs: 300)
-        XCTAssertNotEqual(first.rideID, second.rideID)
-        XCTAssertEqual(second.associatedVehicle, "pev-2")
-        XCTAssertEqual(
-            try state.observeTelemetry(platformIdentifier: "pev-1", atMs: 400),
-            .identityMismatch
+
+        let secondToken = try verify("pev-2", atMs: 300)
+        let secondAdmission = try state.beginVerifiedConnectionAdmission(
+            connectionState: connectionState,
+            token: secondToken,
+            atMs: 300
         )
+        let secondResult = try await settleAdmission(state, secondAdmission)
+        let second = try XCTUnwrap(secondResult)
+        XCTAssertEqual(first.rideID, second.rideID)
+        XCTAssertEqual(second.associatedVehicle, "pev-1")
+        XCTAssertThrowsError(
+            try state.observeTelemetryForVerifiedConnection(
+                connectionState: connectionState,
+                token: firstToken,
+                atMs: 400,
+                speedObservation: nil
+            )
+        ) { error in
+            XCTAssertEqual(error as? MobileRideMapError, .staleConnection)
+        }
         XCTAssertEqual(
-            try state.observeTelemetry(platformIdentifier: "pev-2", atMs: 500),
-            .observed
+            try state.observeTelemetryForVerifiedConnection(
+                connectionState: connectionState,
+                token: secondToken,
+                atMs: 500,
+                speedObservation: nil
+            ),
+            .notAssociated
         )
     }
 

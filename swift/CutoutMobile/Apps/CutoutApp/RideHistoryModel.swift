@@ -849,8 +849,6 @@ final class RideHistoryModel {
         selectedRideID: String?,
         loadGeneration: UInt64,
         currentGeneration: UInt64,
-        viewportLoadGeneration: UInt64,
-        currentViewportLoadGeneration: UInt64,
         isCancelled: Bool
     ) -> Bool {
         !isCancelled && loadGeneration == currentGeneration && selectedRideID == rideID
@@ -863,6 +861,8 @@ final class RideHistoryModel {
         currentProjectionRideID: String?,
         loadGeneration: UInt64,
         currentGeneration: UInt64,
+        viewportLoadGeneration: UInt64,
+        currentViewportLoadGeneration: UInt64,
         isCancelled: Bool
     ) -> Bool {
         !isCancelled

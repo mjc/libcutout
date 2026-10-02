@@ -2320,6 +2320,7 @@ final class CutoutAppModelTests: XCTestCase {
         let firstStarted = expectation(description: "capture A starts")
         let secondStarted = expectation(description: "capture B starts")
         let firstTerminal = expectation(description: "capture A finalizes")
+        firstTerminal.isInverted = true
         let finishEntered = expectation(description: "capture A finalization is held")
         let releaseFinish = DispatchSemaphore(value: 0)
         var firstGeneration: CaptureGeneration?

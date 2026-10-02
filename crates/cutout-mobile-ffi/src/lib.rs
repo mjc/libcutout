@@ -13138,20 +13138,16 @@ fn project_live_route_points(
         source_point_count,
         source_segment_count,
         background_gap_count,
-        camera_region,
     ) = {
         let state = core.inner.lock().unwrap_or_else(PoisonError::into_inner);
         state.require_ready()?;
         (
             state.recorder.points().to_vec(),
             state.recorder.first_point_sequence(),
-            state
-                .current_snapshot(0)
-                .map_or(0, |snapshot| snapshot.revision),
+            state.revision,
             state.recorder.point_count(),
             state.recorder.segment_count().as_u64(),
             state.recorder.background_gap_count().as_u64(),
-            state.current_camera_region(privacy),
         )
     };
     if is_cancelled() {

@@ -116,27 +116,27 @@ final class CutoutSessionCoreTests: XCTestCase {
         )
         let current = MobileRideMapSnapshotDto(
             rideID: "ride-a",
+            revision: 4,
             state: .active,
             summary: summary,
             segmentCount: 0,
-            associatedVehicle: nil,
-            revision: 4
+            associatedVehicle: nil
         )
         let older = MobileRideMapSnapshotDto(
             rideID: "ride-a",
+            revision: 3,
             state: .paused,
             summary: summary,
             segmentCount: 0,
-            associatedVehicle: nil,
-            revision: 3
+            associatedVehicle: nil
         )
         let replacement = MobileRideMapSnapshotDto(
             rideID: "ride-b",
+            revision: 1,
             state: .active,
             summary: summary,
             segmentCount: 0,
-            associatedVehicle: nil,
-            revision: 1
+            associatedVehicle: nil
         )
 
         XCTAssertFalse(
@@ -1806,6 +1806,50 @@ final class CutoutSessionCoreTests: XCTestCase {
             MobileRideMapSpeedObservationDto(millimetresPerSecond: 2_468, observedAtMs: 2))
         XCTAssertNil(observedSpeeds[1])
         XCTAssertEqual(core.connectionSnapshot.token, replacementAttempt)
+    }
+
+    @MainActor
+    func testRideAdmissionRejectsDecodedStepFromReplacedConnectionAttempt() async throws {
+        let state = MobileRideMapState()
+        let connectionState = CutoutSessionStateHandle()
+
+        func verify(_ identifier: String, atMs: UInt64) throws -> ConnectionAttemptToken {
+            let token = try XCTUnwrap(
+                connectionState.beginConnectionAttempt(platformIdentifier: identifier, nowMs: atMs).token
+            )
+            _ = connectionState.connectionLinkEstablished(token: token)
+            _ = connectionState.observeConnectionNotification(
+                token: token,
+                bytes: Data([
+                    2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101,
+                    114, 104, 97, 115, 104, 0, 38, 208, 3,
+                ])
+            )
+            _ = connectionState.resolveDeviceSession(
+                token: token,
+                identificationComplete: false,
+                nowMs: atMs + 1
+            )
+            XCTAssertTrue(connectionState.verifiedConnectionAttemptIsCurrent(token: token))
+            return token
+        }
+
+        let firstAttempt = try verify("first", atMs: 1)
+        let replacementAttempt = try verify("replacement", atMs: 3)
+        XCTAssertThrowsError(
+            try state.observeTelemetryForVerifiedConnection(
+                connectionState: connectionState,
+                token: firstAttempt,
+                atMs: 4,
+                speedObservation: MobileRideMapSpeedObservationDto(
+                    millimetresPerSecond: 1_234,
+                    observedAtMs: 4
+                )
+            )
+        ) { error in
+            XCTAssertEqual(error as? MobileRideMapError, .staleConnection)
+        }
+        XCTAssertTrue(connectionState.verifiedConnectionAttemptIsCurrent(token: replacementAttempt))
     }
 
     func testApplyNotificationStepMarksLiveAndUpdatesDisplayState() {

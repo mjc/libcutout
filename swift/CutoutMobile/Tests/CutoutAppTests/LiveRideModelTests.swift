@@ -7,6 +7,107 @@ import XCTest
 
 final class LiveRideModelTests: XCTestCase {
     @MainActor
+    func testNewRideClearsThePreviousRideProjection() async throws {
+        let state = MobileRideMapState()
+        let connectionState = CutoutSessionStateHandle()
+        let model = LiveRideModel(
+            state: state,
+            storageError: nil,
+            availability: .ready,
+            now: { 200 }
+        )
+        _ = try state.startGpsOnly(atMs: 100)
+
+        func verify(_ identifier: String, atMs: UInt64) throws -> ConnectionAttemptToken {
+            let token = try XCTUnwrap(
+                connectionState.beginConnectionAttempt(platformIdentifier: identifier, nowMs: atMs).token
+            )
+            _ = connectionState.connectionLinkEstablished(token: token)
+            _ = connectionState.observeConnectionNotification(
+                token: token,
+                bytes: Data([
+                    2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101,
+                    114, 104, 97, 115, 104, 0, 38, 208, 3,
+                ])
+            )
+            _ = connectionState.resolveDeviceSession(
+                token: token,
+                identificationComplete: false,
+                nowMs: atMs + 1
+            )
+            return token
+        }
+
+        let firstAttempt = try verify("pev-1", atMs: 200)
+        let firstAdmission = try state.beginVerifiedConnectionAdmission(
+            connectionState: connectionState,
+            token: firstAttempt,
+            atMs: 200
+        )
+        let firstResult = try await Self.settleAdmission(state, firstAdmission)
+        let first = try XCTUnwrap(firstResult)
+        model.applySnapshot(first)
+
+        let decision = try state.ingestLocation(
+            monotonicMs: 200,
+            wallClockUnixMs: 1_700_000_000_200,
+            latitudeDegrees: 39.7392,
+            longitudeDegrees: -104.9903,
+            horizontalAccuracyMeters: 4
+        )
+        var settledDecision = decision
+        if case .pending = decision {
+            let deadline = ContinuousClock.now + .seconds(10)
+            while ContinuousClock.now < deadline, !Task.isCancelled {
+                if let terminal = state.pollLocationWrites().first {
+                    settledDecision = terminal
+                    break
+                }
+                try await Task.sleep(for: .milliseconds(1))
+            }
+        }
+        guard case .accepted = settledDecision else {
+            return XCTFail("expected the first vehicle's route point to be accepted")
+        }
+        model.applyDecision(snapshot: first, decision: settledDecision)
+
+        let projectionDeadline = ContinuousClock.now + .seconds(10)
+        while model.displayPoints.isEmpty && ContinuousClock.now < projectionDeadline {
+            await Task.yield()
+        }
+        XCTAssertFalse(model.displayPoints.isEmpty)
+        XCTAssertNotNil(model.cameraRegion)
+        XCTAssertNotNil(model.lastDecision)
+
+        _ = try state.stop(atMs: 300)
+        let second = try state.startGpsOnly(atMs: 400)
+        XCTAssertNotEqual(first.rideID, second.rideID)
+        model.applySnapshot(second)
+
+        XCTAssertEqual(model.snapshot?.rideID, second.rideID)
+        XCTAssertTrue(model.displayPoints.isEmpty)
+        XCTAssertNil(model.cameraRegion)
+        XCTAssertNil(model.lastDecision)
+    }
+
+    private static func settleAdmission(
+        _ state: MobileRideMapState,
+        _ admission: MobileRideMapConnectionAdmission
+    ) async throws -> MobileRideMapSnapshotDto? {
+        let deadline = ContinuousClock.now + .seconds(10)
+        while ContinuousClock.now < deadline, !Task.isCancelled {
+            switch try state.pollVerifiedConnectionAdmission(admission) {
+            case .pending:
+                try await Task.sleep(for: .milliseconds(1))
+            case let .completed(snapshot):
+                return snapshot
+            }
+        }
+        XCTFail("timed out waiting for verified ride-map admission")
+        return nil
+    }
+
+    @MainActor
     func testHeldRestoreCannotReplaceNewRecordingAndCancelsRustQuery() async throws {
         let state = MobileRideMapState()
         _ = try state.startGpsOnly(atMs: 1_000)

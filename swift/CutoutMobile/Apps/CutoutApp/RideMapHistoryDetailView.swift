@@ -175,10 +175,10 @@ struct RideMapHistoryDetailView: View {
                                 cameraRegion: cameraRegion,
                                 segments: segments,
                                 state: routeState,
-                                // Projection version changes when the bounded preview is
-                                // replaced by the canonical route, so it must be part of
-                                // the fit identity even though the ride ID is unchanged.
-                                cameraFitID: "projection-\(projectionVersion)",
+                                cameraFitID: Self.routeID(
+                                    for: activeHistoryID,
+                                    cameraFitVersion: cameraFitVersion
+                                ),
                                 mapPosition: $mapPosition,
                                 isApplyingCamera: $isApplyingCamera,
                                 cameraDidChange: cameraDidChange
