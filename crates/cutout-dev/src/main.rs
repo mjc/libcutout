@@ -1631,6 +1631,24 @@ mod tests {
     }
 
     #[test]
+    fn ios_source_plist_matches_location_metadata_policy() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../swift/CutoutMobile/Apps/CutoutApp/Info.plist");
+        let source = fs::read_to_string(path).unwrap();
+
+        assert!(source.contains("<key>NSLocationWhenInUseUsageDescription</key>"));
+        for key in [
+            "NSLocationAlwaysUsageDescription",
+            "NSLocationAlwaysAndWhenInUseUsageDescription",
+        ] {
+            assert!(
+                !source.contains(&format!("<key>{key}</key>")),
+                "source Info.plist declares rejected location key {key}"
+            );
+        }
+    }
+
+    #[test]
     fn ios_privacy_manifest_rejects_missing_reasons_and_tracking() {
         let valid = serde_json::json!({
             "NSPrivacyTracking": false,
