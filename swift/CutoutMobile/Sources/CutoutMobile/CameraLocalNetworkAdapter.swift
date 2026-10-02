@@ -237,6 +237,7 @@ public final class CameraLocalNetworkAdapter {
 
     let sessionState: CutoutSessionStateHandle
     private var monitor: NWPathMonitor?
+    private var hasObservedPath = false
     private var previewSession: MobileCameraPreviewSession?
     private var previewFileSink: MobileCameraPreviewFileSink?
     private var previewFileState = CameraPreviewFileState(destination: nil)
@@ -263,13 +264,8 @@ public final class CameraLocalNetworkAdapter {
 
         let monitor = NWPathMonitor(requiredInterfaceType: .wifi)
         monitor.pathUpdateHandler = { [weak self] path in
-            let status: CameraLocalNetworkPathStatus =
-                path.status == .satisfied
-                ? .satisfied
-                : .unavailable
-            let usesWiFi = path.usesInterfaceType(.wifi)
             Task { @MainActor [weak self] in
-                self?.apply(pathStatus: status, usesWiFi: usesWiFi)
+                self?.apply(path: path)
             }
         }
         monitor.start(queue: monitorQueue)
@@ -281,6 +277,7 @@ public final class CameraLocalNetworkAdapter {
         invalidateCameraLifecycle()
         monitor?.cancel()
         monitor = nil
+        hasObservedPath = false
         readOnlyEvidence = nil
         presentation = .initial
     }
@@ -627,6 +624,9 @@ public final class CameraLocalNetworkAdapter {
         } catch {
             throw CameraMediaDownloadError.pathUnavailable
         }
+        defer {
+            _ = sessionState.cancelNovatekMediaDownload(operationId: request.operationId)
+        }
         let (temporaryURL, actualSize) = try await Self.fetchMedia(
             origin: origin,
             target: request.target,
@@ -638,8 +638,10 @@ public final class CameraLocalNetworkAdapter {
         guard isCurrentCameraRequest(requestToken) else {
             throw CameraMediaDownloadError.pathUnavailable
         }
+        try Task.checkCancellation()
         try await Self.installMedia(from: temporaryURL, to: destination)
         do {
+            try Task.checkCancellation()
             return try sessionState.completeNovatekMediaDownload(
                 input: MobileNovatekMediaDownloadCompletionInput(
                     operationId: request.operationId,
@@ -647,6 +649,9 @@ public final class CameraLocalNetworkAdapter {
                     association: association
                 )
             )
+        } catch is CancellationError {
+            try? FileManager.default.removeItem(at: destination)
+            throw CancellationError()
         } catch {
             try? FileManager.default.removeItem(at: destination)
             throw CameraMediaDownloadError.pathUnavailable
@@ -912,15 +917,34 @@ public final class CameraLocalNetworkAdapter {
         }
     }
 
-    func apply(pathStatus: CameraLocalNetworkPathStatus, usesWiFi: Bool) {
+    func apply(path: NWPath) {
+        // NWPathMonitor reports network updates, not peer identity. A later update can
+        // represent a different endpoint even when NWPath's visible route properties match.
+        let networkPathChanged = hasObservedPath || readOnlyEvidence != nil
+        hasObservedPath = true
+        let status: CameraLocalNetworkPathStatus = path.status == .satisfied ? .satisfied : .unavailable
+        apply(
+            pathStatus: status,
+            usesWiFi: path.usesInterfaceType(.wifi),
+            networkPathChanged: networkPathChanged
+        )
+    }
+
+    func apply(
+        pathStatus: CameraLocalNetworkPathStatus,
+        usesWiFi: Bool,
+        networkPathChanged: Bool = false
+    ) {
         sessionState.advanceCameraDiscoveryGeneration()
+        if networkPathChanged || pathStatus != .satisfied || !usesWiFi {
+            clearReadOnlyEvidence()
+        }
         let nextConnection = cameraConnectionPresentation(
             pathStatus: pathStatus,
             usesWiFi: usesWiFi,
             hasReadOnlyEvidence: readOnlyEvidence != nil
         )
         guard pathStatus == .satisfied, usesWiFi else {
-            clearReadOnlyEvidence()
             presentation.connection = nextConnection
             return
         }

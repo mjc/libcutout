@@ -2202,6 +2202,10 @@ impl NovatekCameraSessionState {
         })
     }
 
+    fn cancel_media_download(&mut self, operation_id: u64) -> bool {
+        self.media_downloads.cancel_id(operation_id)
+    }
+
     fn media_provenance_for_download(
         &self,
         operation_id: u64,
@@ -2862,6 +2866,14 @@ impl CutoutSessionStateHandle {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .authorize_media_download(&path)
+    }
+
+    /// Cancels one pending native media transfer authorization.
+    pub fn cancel_novatek_media_download(&self, operation_id: u64) -> bool {
+        self.novatek_session
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .cancel_media_download(operation_id)
     }
 
     /// Consumes a successful native download and returns retained camera metadata.
@@ -18698,6 +18710,45 @@ mod tests {
 
         handle.clear_novatek_session();
         assert!(!handle.novatek_media_is_current("A:\\Novatek\\Movie\\clip.TS".to_owned(), 42));
+    }
+
+    #[test]
+    fn cancelling_media_download_authorization_retires_one_shot_id() {
+        let handle = CutoutSessionStateHandle::new();
+        let NovatekResponseFixtures {
+            firmware,
+            live_view,
+            configuration,
+            storage,
+            media,
+        } = test_novatek_responses(&[(2001, 0)], true);
+        handle
+            .configure_novatek_read_only_session(
+                MobileNovatekHttpOriginDto {
+                    address: "192.168.1.254".to_owned(),
+                    port: 80,
+                },
+                firmware,
+                live_view,
+                configuration,
+                storage,
+                media,
+            )
+            .expect("validated read-only evidence establishes the session");
+        let request = handle
+            .authorize_novatek_media_download("A:\\Novatek\\Movie\\clip.TS".to_owned())
+            .expect("retained media is authorized");
+
+        assert!(handle.cancel_novatek_media_download(request.operation_id));
+        assert!(!handle.cancel_novatek_media_download(request.operation_id));
+        assert_eq!(
+            handle.complete_novatek_media_download(MobileNovatekMediaDownloadCompletionInput {
+                operation_id: request.operation_id,
+                actual_size: request.size_bytes,
+                association: None,
+            }),
+            Err(MobileNovatekMediaDownloadCompletionError::StaleOperation)
+        );
     }
 
     #[test]

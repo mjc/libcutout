@@ -3,6 +3,17 @@ import XCTest
 
 @testable import CutoutMobile
 
+private actor CameraReadOnlyFetchCounter {
+    private var count = 0
+
+    func next() -> Int {
+        count += 1
+        return count
+    }
+
+    var value: Int { count }
+}
+
 final class CameraLocalNetworkAdapterTests: XCTestCase {
     func testCameraPathRequiresWiFiBeforeCameraConfiguration() {
         XCTAssertEqual(
@@ -312,6 +323,65 @@ final class CameraLocalNetworkAdapterTests: XCTestCase {
 
         XCTAssertEqual(adapter.presentation.connection, .connected)
         XCTAssertEqual(adapter.readOnlyEvidence, evidence)
+    }
+
+    @MainActor
+    func testChangedNetworkPathRetiresEstablishedCameraAuthority() {
+        let adapter = CameraLocalNetworkAdapter()
+        let evidence = cameraEvidence(advertisedCommandIDs: [1001, 2001])
+        applyTestEvidence(evidence, to: adapter)
+        adapter.observePreview(.live)
+
+        adapter.apply(pathStatus: .satisfied, usesWiFi: true, networkPathChanged: true)
+
+        XCTAssertNil(adapter.readOnlyEvidence)
+        XCTAssertEqual(adapter.presentation.connection, .notConfigured)
+        XCTAssertNil(adapter.sessionState.novatekSessionOrigin())
+        XCTAssertEqual(adapter.sessionState.cameraSnapshot().preview, .stopped)
+    }
+
+    @MainActor
+    func testSatisfiedWiFiObservationDuringDiscoveryRejectsOldEvidence() async {
+        let adapter = CameraLocalNetworkAdapter()
+        let responses: [String: Data] = [
+            "3012": Data("<Function><Cmd>3012</Cmd><Status>0</Status><String>R3V1.1_20240411</String></Function>".utf8),
+            "2019": Data(
+                "<LIST><MovieLiveViewLink>rtsp://192.168.1.254/xxx.mov</MovieLiveViewLink><PhotoLiveViewLink>rtsp://192.168.1.254/xxx.mov</PhotoLiveViewLink></LIST>"
+                    .utf8
+            ),
+            "3014": Data("<Function><Cmd>2016</Cmd><Status>0</Status></Function>".utf8),
+            "3024": Data("<Function><Cmd>3024</Cmd><Status>0</Status><Value>1</Value></Function>".utf8),
+            "3015": Data("<LIST></LIST>".utf8),
+        ]
+        let fetchCounter = CameraReadOnlyFetchCounter()
+
+        do {
+            _ = try await adapter.loadReadOnlyEvidence(
+                address: "192.168.1.254",
+                port: 80
+            ) { url in
+                if await fetchCounter.next() == 2 {
+                    await MainActor.run {
+                        adapter.apply(pathStatus: .satisfied, usesWiFi: true)
+                    }
+                }
+                let command = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first {
+                    $0.name == "cmd"
+                }?.value
+                return responses[command!]!
+            }
+            XCTFail("a path observation during discovery must retire the in-flight response set")
+        } catch let error as CameraReadOnlyRequestError {
+            XCTAssertEqual(error, .pathUnavailable)
+        } catch {
+            XCTFail("unexpected error: \(error)")
+        }
+
+        let fetchCount = await fetchCounter.value
+        XCTAssertEqual(fetchCount, 5)
+        XCTAssertNil(adapter.readOnlyEvidence)
+        XCTAssertNil(adapter.sessionState.novatekSessionOrigin())
+        XCTAssertEqual(adapter.presentation.connection, .notConfigured)
     }
 
     @MainActor

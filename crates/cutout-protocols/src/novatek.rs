@@ -809,6 +809,20 @@ impl NovatekMediaDownloadOperations {
         self.consume(NovatekMediaDownloadOperationId(id))
     }
 
+    /// Cancels one pending operation without consuming or returning its metadata.
+    pub fn cancel(&mut self, id: NovatekMediaDownloadOperationId) -> bool {
+        let Some(index) = self.pending.iter().position(|pending| pending.id == id) else {
+            return false;
+        };
+        self.pending.remove(index);
+        true
+    }
+
+    /// Cancels one binding-projected identity without exposing its constructor.
+    pub fn cancel_id(&mut self, id: u64) -> bool {
+        self.cancel(NovatekMediaDownloadOperationId(id))
+    }
+
     /// Returns retained metadata for an active operation without consuming it.
     #[must_use]
     pub fn authorized_entry_id(&self, id: u64) -> Option<&NovatekMediaEntry> {
@@ -2237,6 +2251,28 @@ mod tests {
         assert_eq!(
             operations.consume(replacement.id()).unwrap().entry().path(),
             r"A:\Novatek\Movie\one.TS"
+        );
+    }
+
+    #[test]
+    fn cancelling_media_download_removes_only_its_authorization() {
+        let media = parse_media_list_response(br"<LIST><File><NAME>one.TS</NAME><FPATH>A:\Novatek\Movie\one.TS</FPATH><SIZE>42</SIZE><TIMECODE>7</TIMECODE><TIME>2025/01/01 00:00:00</TIME><ATTR>32</ATTR></File><File><NAME>two.TS</NAME><FPATH>A:\Novatek\Movie\two.TS</FPATH><SIZE>24</SIZE><TIMECODE>8</TIMECODE><TIME>2025/01/01 00:00:01</TIME><ATTR>32</ATTR></File></LIST>")
+            .expect("fixture is valid");
+        let mut operations = NovatekMediaDownloadOperations::default();
+        let cancelled = operations
+            .authorize(&media, r"A:\Novatek\Movie\one.TS")
+            .expect("first authorization");
+        let retained = operations
+            .authorize(&media, r"A:\Novatek\Movie\two.TS")
+            .expect("second authorization");
+
+        assert!(operations.cancel(cancelled.id()));
+        assert!(!operations.cancel(cancelled.id()));
+        assert_eq!(
+            operations
+                .authorized_entry_id(retained.id().get())
+                .map(NovatekMediaEntry::path),
+            Some(r"A:\Novatek\Movie\two.TS")
         );
     }
 
