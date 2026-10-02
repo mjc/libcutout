@@ -326,12 +326,11 @@ struct ContentView: View {
             CaptureRouteView(capture: model.capture)
         case .camera:
             CameraRouteContainerView(
-                recordMediaReference: { fileName, generation, source, media, localURL in
+                recordMediaReference: { fileName, generation, provenance, localURL in
                     model.recordCameraMediaReference(
                         captureFileName: fileName,
                         captureGeneration: generation,
-                        source: source,
-                        media: media,
+                        provenance: provenance,
                         localURL: localURL
                     )
                 },

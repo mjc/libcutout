@@ -998,39 +998,73 @@ final class CutoutAppModelTests: XCTestCase {
 
     @MainActor
     func testRedownloadingCameraMediaReplacesItsLocalReferenceAndProvenance() throws {
-        let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
+        let core = SessionDriverSpy(rows: [])
+        let model = CutoutAppModel(core: core)
         XCTAssertTrue(model.recordOnly(platformIdentifier: "unknown-device", deviceKind: " "))
+        let origin = try mobileValidateNovatekHttpOrigin(address: "192.168.1.254", port: 80)
         let captureFileName = try XCTUnwrap(model.capture.fileName)
         let captureGeneration = try XCTUnwrap(model.capture.activeGeneration)
-        let original = CameraMediaEvidence(
-            name: "original.mp4",
-            path: "/DCIM/FILE001.MP4",
+        let original = MobileNovatekMediaEntryDto(
+            name: "original.TS",
+            path: #"A:\Novatek\Movie\FILE001.TS"#,
             sizeBytes: 100,
             timecode: 10,
-            time: "10:00:00",
-            attributes: 0
+            time: "2025/01/01 10:00:00",
+            attributes: 32
         )
-        let replacement = CameraMediaEvidence(
-            name: "replacement.mp4",
+        let replacement = MobileNovatekMediaEntryDto(
+            name: "replacement.TS",
             path: original.path,
             sizeBytes: 200,
             timecode: 20,
-            time: "10:00:01",
-            attributes: 0
+            time: "2025/01/01 10:00:01",
+            attributes: 32
         )
         let firstURL = URL(fileURLWithPath: "/tmp/first-camera-download.mov")
         let replacementURL = URL(fileURLWithPath: "/tmp/replacement-camera-download.mov")
 
+        func completeDownload(_ media: MobileNovatekMediaEntryDto) throws -> MobileCameraMediaProvenanceDto {
+            let state = core.rideSessionStateHandle
+            let mediaResponse =
+                "<LIST><File><NAME>\(media.name)</NAME><FPATH>\(media.path)</FPATH><SIZE>\(media.sizeBytes)</SIZE><TIMECODE>\(media.timecode)</TIMECODE><TIME>\(media.time)</TIME><ATTR>\(media.attributes)</ATTR></File></LIST>"
+            try state.configureNovatekReadOnlySession(
+                origin: origin,
+                firmwareResponse: Data(
+                    "<Function><Cmd>3012</Cmd><Status>0</Status><String>R3V1.1_20240411</String></Function>".utf8),
+                liveViewResponse: Data(
+                    "<LIST><MovieLiveViewLink>rtsp://192.168.1.254/movie</MovieLiveViewLink><PhotoLiveViewLink>rtsp://192.168.1.254/photo</PhotoLiveViewLink></LIST>"
+                        .utf8),
+                configurationResponse: Data("<Function><Cmd>2016</Cmd><Status>0</Status></Function>".utf8),
+                storageResponse: Data("<Function><Cmd>3024</Cmd><Status>0</Status><Value>1</Value></Function>".utf8),
+                mediaResponse: Data(mediaResponse.utf8)
+            )
+            let authorization = try state.authorizeNovatekMediaDownload(path: media.path)
+            let association = MobileNovatekMediaDownloadAssociationInput(
+                captureGeneration: captureGeneration.dto,
+                rideCaptureFileName: captureFileName,
+                capturedAtMonotonicMs: media.timecode,
+                capturedAtWallClockMs: media.timecode,
+                clockUncertainty: .unknown
+            )
+            return try state.completeNovatekMediaDownload(
+                input: MobileNovatekMediaDownloadCompletionInput(
+                    operationId: authorization.operationId,
+                    actualSize: media.sizeBytes,
+                    association: association
+                )
+            ).provenance!
+        }
+
         model.recordCameraMediaReference(
             captureFileName: captureFileName,
             captureGeneration: captureGeneration,
-            media: original,
+            provenance: try completeDownload(original),
             localURL: firstURL
         )
         model.recordCameraMediaReference(
             captureFileName: captureFileName,
             captureGeneration: captureGeneration,
-            media: replacement,
+            provenance: try completeDownload(replacement),
             localURL: replacementURL
         )
 

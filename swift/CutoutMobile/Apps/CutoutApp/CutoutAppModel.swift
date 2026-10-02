@@ -256,48 +256,33 @@ final class CutoutAppModel {
     func recordCameraMediaReference(
         captureFileName: String,
         captureGeneration: CaptureGeneration,
-        source: CameraSourceKind = .novatekR3Pro,
-        media: CameraMediaEvidence,
+        provenance: MobileCameraMediaProvenanceDto,
         localURL: URL
     ) {
         guard !captureFileName.isEmpty else { return }
         guard capture.activeGeneration == captureGeneration else { return }
         guard captureFileName == capture.fileName else { return }
-        let input = MobileCameraMediaProvenanceInput(
-            captureGeneration: captureGeneration.dto,
-            source: source.mobileDto,
-            cameraPath: media.path,
-            sizeBytes: media.sizeBytes,
-            cameraTimecode: media.timecode,
-            cameraTime: media.time,
-            rideCaptureFileName: captureFileName,
-            capturedAtMonotonicMs: currentMonotonicTime.rawValue,
-            capturedAtWallClockMs: UInt64(max(0, Date().timeIntervalSince1970 * 1_000)),
-            clockUncertainty: .unknown
-        )
+        guard provenance.rideCaptureFileName == captureFileName else { return }
         let sessionState = core.rideSessionStateHandle
-        guard (try? sessionState.recordCameraMediaProvenance(input: input)) != nil else {
-            return
-        }
         let provenanceRecords = sessionState.cameraMediaProvenance()
         guard
-            let provenance = provenanceRecords.first(where: {
-                $0.source == source.mobileDto
-                    && $0.cameraPath == media.path
+            let retainedProvenance = provenanceRecords.first(where: {
+                $0 == provenance
+                    && $0.source == .novatekR3Pro
                     && $0.rideCaptureFileName == captureFileName
             })
         else {
             return
         }
 
-        let reference = CameraMediaReference(provenance: provenance, localURL: localURL)
+        let reference = CameraMediaReference(provenance: retainedProvenance, localURL: localURL)
         guard capture.activeGeneration == captureGeneration,
             captureFileName == capture.fileName
         else { return }
         if let existingIndex = cameraMediaReferences.firstIndex(where: {
-            $0.source.mobileDto == provenance.source
-                && $0.rideCaptureFileName == provenance.rideCaptureFileName
-                && $0.cameraPath == provenance.cameraPath
+            $0.source.mobileDto == retainedProvenance.source
+                && $0.rideCaptureFileName == retainedProvenance.rideCaptureFileName
+                && $0.cameraPath == retainedProvenance.cameraPath
         }) {
             cameraMediaReferences[existingIndex] = reference
         } else {

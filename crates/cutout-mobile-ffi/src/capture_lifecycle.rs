@@ -364,7 +364,7 @@ mod tests {
     ) -> crate::MobileCameraMediaProvenanceInput {
         crate::MobileCameraMediaProvenanceInput {
             capture_generation: generation,
-            source: crate::MobileCameraSourceKindDto::NovatekR3Pro,
+            source: crate::MobileCameraSourceKindDto::Fixture,
             camera_path: "A:\\Novatek\\Movie\\clip.TS".into(),
             size_bytes: 42,
             camera_timecode: 7,

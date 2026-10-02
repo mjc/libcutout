@@ -1,4 +1,5 @@
 import CutoutMobile
+import CutoutMobileFFI
 import Foundation
 import Observation
 
@@ -15,7 +16,7 @@ final class CameraMediaModel {
 
     @ObservationIgnored private let adapter: CameraLocalNetworkAdapter
     @ObservationIgnored private let recordMediaReference:
-        ((String, CaptureGeneration, CameraSourceKind, CameraMediaEvidence, URL) -> Void)?
+        ((String, CaptureGeneration, MobileCameraMediaProvenanceDto, URL) -> Void)?
     @ObservationIgnored private let currentCaptureIdentity: (() -> (fileName: String, generation: CaptureGeneration)?)?
     @ObservationIgnored private var mediaDownloadTask: Task<Void, Never>?
     @ObservationIgnored private var thumbnailTask: Task<Void, Never>?
@@ -27,7 +28,7 @@ final class CameraMediaModel {
     init(
         adapter: CameraLocalNetworkAdapter = CameraLocalNetworkAdapter(),
         recordMediaReference:
-            ((String, CaptureGeneration, CameraSourceKind, CameraMediaEvidence, URL) -> Void)? = nil,
+            ((String, CaptureGeneration, MobileCameraMediaProvenanceDto, URL) -> Void)? = nil,
         currentCaptureIdentity: (() -> (fileName: String, generation: CaptureGeneration)?)? = nil
     ) {
         self.adapter = adapter
@@ -66,21 +67,30 @@ final class CameraMediaModel {
                 }
             }
             do {
-                try await adapter.downloadMedia(
+                let association = captureIdentity.map {
+                    MobileNovatekMediaDownloadAssociationInput(
+                        captureGeneration: $0.generation.dto,
+                        rideCaptureFileName: $0.fileName,
+                        capturedAtMonotonicMs: DispatchTime.now().uptimeNanoseconds / 1_000_000,
+                        capturedAtWallClockMs: UInt64(max(0, Date().timeIntervalSince1970 * 1_000)),
+                        clockUncertainty: .unknown
+                    )
+                }
+                let result = try await adapter.downloadMedia(
                     address: address,
                     port: portNumber,
                     media: media,
-                    to: destination
+                    to: destination,
+                    association: association
                 )
                 guard generation == mediaDownloadGeneration else { return }
                 downloadedMediaURL = destination
-                downloadedMediaPath = media.path
-                if let captureIdentity {
+                downloadedMediaPath = result.media.path
+                if let captureIdentity, let provenance = result.provenance {
                     recordMediaReference?(
                         captureIdentity.fileName,
                         captureIdentity.generation,
-                        .novatekR3Pro,
-                        media,
+                        provenance,
                         destination
                     )
                 }

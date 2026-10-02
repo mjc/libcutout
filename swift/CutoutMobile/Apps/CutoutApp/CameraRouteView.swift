@@ -12,7 +12,7 @@ import SwiftUI
 struct CameraRouteContainerView: View {
     let close: (() -> Void)?
     let annotateCapture: ((String, String) -> Void)?
-    let recordMediaReference: ((String, CaptureGeneration, CameraSourceKind, CameraMediaEvidence, URL) -> Void)?
+    let recordMediaReference: ((String, CaptureGeneration, MobileCameraMediaProvenanceDto, URL) -> Void)?
     let currentCaptureIdentity: (() -> (fileName: String, generation: CaptureGeneration)?)?
     @State private var adapter = CameraLocalNetworkAdapter()
     @State private var previewRenderer = CameraPreviewRenderer()
@@ -29,7 +29,7 @@ struct CameraRouteContainerView: View {
         close: (() -> Void)? = nil,
         annotateCapture: ((String, String) -> Void)? = nil,
         recordMediaReference:
-            ((String, CaptureGeneration, CameraSourceKind, CameraMediaEvidence, URL) -> Void)? = nil,
+            ((String, CaptureGeneration, MobileCameraMediaProvenanceDto, URL) -> Void)? = nil,
         currentCaptureIdentity: (() -> (fileName: String, generation: CaptureGeneration)?)? = nil,
         sessionState: CutoutSessionStateHandle = CutoutSessionStateHandle()
     ) {
