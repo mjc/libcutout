@@ -539,29 +539,15 @@ impl MelkLightingProfile {
             .collect()
     }
 
-    /// Returns whether an advertised name belongs to this profile family.
-    #[must_use]
-    pub fn name_matches(name: &str) -> bool {
-        let bytes = name.trim().as_bytes();
-        let Some(model) = bytes.get(..9) else {
-            return false;
-        };
-        model.eq_ignore_ascii_case(b"MELK-OC21")
-            && (match bytes.get(9) {
-                None | Some(b' ' | b'\t') => true,
-                _ => false,
-            })
-    }
-
     /// Returns the Rust-owned reference effect grouping for mobile clients.
     #[must_use]
     pub const fn effect_groups() -> &'static [MelkLightingEffectGroup] {
         &MELK_EFFECT_GROUPS
     }
-    /// Selects the candidate profile only when family name and GATT evidence agree.
+    /// Selects the profile from GATT evidence. Advertised names are display metadata.
     #[must_use]
-    pub fn identify(name: &str, evidence: MelkGattEvidence) -> Option<Self> {
-        (Self::name_matches(name) && evidence == MelkGattEvidence::observed()).then_some(Self)
+    pub fn identify(_name: &str, evidence: MelkGattEvidence) -> Option<Self> {
+        (evidence == MelkGattEvidence::observed()).then_some(Self)
     }
 
     /// Returns the candidate write and confirmation policy.
@@ -987,7 +973,7 @@ mod tests {
     }
 
     #[test]
-    fn selects_melk_only_with_family_name_and_complete_gatt_evidence() {
+    fn selects_melk_with_complete_gatt_evidence_regardless_of_name() {
         let evidence = MelkGattEvidence::observed();
 
         assert_eq!(
@@ -995,8 +981,8 @@ mod tests {
             Some(MelkLightingProfile)
         );
         assert_eq!(
-            MelkLightingProfile::identify("Govee_H607C_D635", evidence),
-            None
+            MelkLightingProfile::identify("aero lights", evidence),
+            Some(MelkLightingProfile)
         );
         assert_eq!(
             MelkLightingProfile::identify(
@@ -1011,10 +997,10 @@ mod tests {
     }
 
     #[test]
-    fn rejects_unknown_melk_models_even_with_matching_gatt() {
+    fn admits_renamed_and_unnamed_melk_devices() {
         assert_eq!(
-            MelkLightingProfile::identify("MELK-OC99  6A", MelkGattEvidence::observed()),
-            None
+            MelkLightingProfile::identify("", MelkGattEvidence::observed()),
+            Some(MelkLightingProfile)
         );
     }
 

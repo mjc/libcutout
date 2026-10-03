@@ -383,6 +383,7 @@ fn initializing_core_with_name(
         rssi: -60,
     });
     if preferred_identifier.is_none() {
+        verify_probe(&core, ID, callback_name);
         core.select_candidate(ID.into());
     }
     core.drain_actions();
@@ -947,59 +948,6 @@ fn radio_off_refuses_candidate_selection_and_late_scan_results() {
     assert!(core.drain_candidates().is_empty());
 }
 
-#[test]
-fn discovery_filters_supported_names_and_releases_other_peripherals() {
-    for (name, supported) in [
-        (Some("MELK-OC21"), true),
-        (Some("MELK-OC21  6A"), true),
-        (Some(" melk-oc21\t6a "), true),
-        (Some("mika-m1"), false),
-        (Some("AirPods Pro"), false),
-        (Some("AiDot-28EC"), false),
-        (Some("MELK-OC99"), false),
-        (Some("MELK-OC210"), false),
-        (Some("MELK-OC21X"), false),
-        (Some("MELK"), false),
-        (Some(""), false),
-        (Some(" \t "), false),
-        (None, false),
-    ] {
-        let core = scanning_core();
-        core.handle(MobileMelkLightingSessionEventDto::Discovered {
-            name: name.map(str::to_owned),
-            platform_identifier: ID.into(),
-            rssi: -60,
-        });
-        let candidates = core.drain_candidates();
-        assert_eq!(candidates.len(), usize::from(supported), "name={name:?}");
-        assert!(
-            core.drain_actions().is_empty(),
-            "discovery requires selection"
-        );
-        assert_eq!(
-            core.drain_candidate_removals(),
-            if supported {
-                vec![]
-            } else {
-                vec![ID.to_owned()]
-            },
-            "the native adapter must release rejected peripherals: name={name:?}"
-        );
-        core.select_candidate(ID.into());
-        assert_eq!(
-            core.drain_actions()
-                .iter()
-                .any(|action| matches!(action, MobileMelkLightingSessionActionDto::Connect { .. })),
-            supported,
-            "name={name:?}"
-        );
-        assert!(
-            !core.set_power(true),
-            "a name is not verified GATT evidence"
-        );
-    }
-}
-
 fn scanning_core() -> std::sync::Arc<MobileMelkLightingSessionCore> {
     let core = MobileMelkLightingSessionCore::new();
     core.start(None);
@@ -1032,22 +980,20 @@ fn discovery_refuses_malformed_platform_identifiers() {
 }
 
 #[test]
-fn discovery_withdraws_a_candidate_whose_name_no_longer_matches() {
+fn changed_names_do_not_remove_protocol_verified_candidates() {
     let core = scanning_core();
-    for name in ["MELK-OC21", "AiDot-28EC"] {
-        core.handle(MobileMelkLightingSessionEventDto::Discovered {
-            name: Some(name.into()),
-            platform_identifier: ID.into(),
-            rssi: -60,
-        });
-    }
-    assert!(
-        core.drain_candidates().is_empty(),
-        "withdraw pending rows too"
+    discover_verified(&core, ID, Some("MELK-OC21"));
+    core.drain_candidates();
+    core.handle(MobileMelkLightingSessionEventDto::Discovered {
+        name: Some("aero lights".into()),
+        platform_identifier: ID.into(),
+        rssi: -40,
+    });
+    assert_eq!(
+        core.drain_candidates()[0].name.as_deref(),
+        Some("aero lights")
     );
-    assert_eq!(core.drain_candidate_removals(), [ID.to_owned()]);
-    core.select_candidate(ID.into());
-    assert!(core.drain_actions().is_empty());
+    assert!(core.drain_candidate_removals().is_empty());
 }
 
 #[test]
@@ -1079,11 +1025,7 @@ fn unsupported_gatt_withdraws_the_selected_candidate_before_rescanning() {
         action, MobileMelkLightingSessionActionDto::CancelConnect { platform_identifier }
             if platform_identifier == ID
     )));
-    assert!(
-        actions
-            .iter()
-            .any(|action| matches!(action, MobileMelkLightingSessionActionDto::Scan))
-    );
+    // Scanning remains active while the read-only probe runs.
     assert!(
         !actions
             .iter()
@@ -1095,24 +1037,12 @@ fn unsupported_gatt_withdraws_the_selected_candidate_before_rescanning() {
 }
 
 #[test]
-fn matching_gatt_does_not_admit_an_incompatible_connected_name() {
-    for preferred_identifier in [None, Some(ID)] {
-        let core = initializing_core_with_name(preferred_identifier, Some("AiDot-28EC"));
-        assert!(!core.snapshot().notification_ready);
-        assert!(!core.set_power(true));
-        if preferred_identifier.is_some() {
-            assert_eq!(
-                core.snapshot().state,
-                MobileMelkLightingSessionStateDto::Failed {
-                    reason: "invalid MELK profile".into()
-                }
-            );
-        } else {
-            assert_eq!(
-                core.snapshot().state,
-                MobileMelkLightingSessionStateDto::Scanning
-            );
-        }
+fn matching_gatt_admits_every_connected_name() {
+    for name in [Some("aero lights"), Some("AiDot-28EC"), None] {
+        let core = initializing_core_with_name(Some(ID), name);
+        finish_initialization(&core);
+        assert!(core.snapshot().notification_ready);
+        assert!(core.set_power(true));
     }
 }
 
@@ -1133,7 +1063,11 @@ fn candidate_cap_reports_every_identifier_that_must_be_removed() {
             platform_identifier: identifier.clone(),
             rssi: -60,
         });
+        if identifier != &identifiers[32] {
+            verify_probe(&core, identifier, Some("aero lights"));
+        }
         core.drain_candidates();
+        core.drain_actions();
     }
 
     assert_eq!(
@@ -1161,4 +1095,217 @@ fn candidate_cap_reports_every_identifier_that_must_be_removed() {
         core.snapshot().state,
         MobileMelkLightingSessionStateDto::Connecting
     );
+}
+
+#[test]
+fn discovery_probes_without_listing_or_writing_until_gatt_is_verified() {
+    for name in [Some("aero lights"), Some("MELK-OC99"), None] {
+        let core = scanning_core();
+        core.handle(MobileMelkLightingSessionEventDto::Discovered {
+            name: name.map(str::to_owned),
+            platform_identifier: ID.into(),
+            rssi: -40,
+        });
+        assert!(core.drain_candidates().is_empty());
+        assert!(core.drain_actions().iter().any(|action| matches!(action,
+            MobileMelkLightingSessionActionDto::Connect { platform_identifier } if platform_identifier == ID)));
+        core.handle(MobileMelkLightingSessionEventDto::Connected {
+            name: name.map(str::to_owned),
+            platform_identifier: ID.into(),
+        });
+        core.handle(MobileMelkLightingSessionEventDto::ServicesDiscovered {
+            service_uuids: vec![cutout_protocols::MELK_SERVICE_CHANNEL.as_uuid().into()],
+            error: None,
+        });
+        core.handle(
+            MobileMelkLightingSessionEventDto::CharacteristicsDiscovered {
+                name: name.map(str::to_owned),
+                service_uuid: cutout_protocols::MELK_SERVICE_CHANNEL.as_uuid().into(),
+                characteristics: vec![
+                    MobileMelkLightingCharacteristicEvidenceDto {
+                        uuid: cutout_protocols::MELK_WRITE_CHANNEL.as_uuid().into(),
+                        write_without_response: true,
+                        notify_or_indicate: false,
+                    },
+                    MobileMelkLightingCharacteristicEvidenceDto {
+                        uuid: cutout_protocols::MELK_NOTIFY_CHANNEL.as_uuid().into(),
+                        write_without_response: false,
+                        notify_or_indicate: true,
+                    },
+                ],
+                error: None,
+            },
+        );
+        assert_eq!(core.drain_candidates().len(), 1);
+        assert!(!core.drain_actions().iter().any(|action| matches!(
+            action,
+            MobileMelkLightingSessionActionDto::Write { .. }
+                | MobileMelkLightingSessionActionDto::Subscribe { .. }
+        )));
+        assert!(!core.set_power(true));
+        core.select_candidate(ID.into());
+        assert_eq!(
+            core.snapshot().state,
+            MobileMelkLightingSessionStateDto::Connecting
+        );
+    }
+}
+
+fn discover_verified(core: &MobileMelkLightingSessionCore, id: &str, name: Option<&str>) {
+    core.handle(MobileMelkLightingSessionEventDto::Discovered {
+        name: name.map(str::to_owned),
+        platform_identifier: id.into(),
+        rssi: -60,
+    });
+    verify_probe(core, id, name);
+    core.drain_actions();
+}
+
+fn verify_probe(core: &MobileMelkLightingSessionCore, id: &str, name: Option<&str>) {
+    core.handle(MobileMelkLightingSessionEventDto::Connected {
+        name: name.map(str::to_owned),
+        platform_identifier: id.into(),
+    });
+    core.handle(MobileMelkLightingSessionEventDto::ServicesDiscovered {
+        service_uuids: vec![cutout_protocols::MELK_SERVICE_CHANNEL.as_uuid().into()],
+        error: None,
+    });
+    core.handle(
+        MobileMelkLightingSessionEventDto::CharacteristicsDiscovered {
+            name: name.map(str::to_owned),
+            service_uuid: cutout_protocols::MELK_SERVICE_CHANNEL.as_uuid().into(),
+            characteristics: vec![
+                MobileMelkLightingCharacteristicEvidenceDto {
+                    uuid: cutout_protocols::MELK_WRITE_CHANNEL.as_uuid().into(),
+                    write_without_response: true,
+                    notify_or_indicate: false,
+                },
+                MobileMelkLightingCharacteristicEvidenceDto {
+                    uuid: cutout_protocols::MELK_NOTIFY_CHANNEL.as_uuid().into(),
+                    write_without_response: false,
+                    notify_or_indicate: true,
+                },
+            ],
+            error: None,
+        },
+    );
+}
+
+#[test]
+fn probes_advance_past_noise_failure_and_timeout_without_writes() {
+    for failure in 0..3 {
+        let core = scanning_core();
+        let next = "22222222-2222-2222-2222-222222222222";
+        for id in [ID, next] {
+            core.handle(MobileMelkLightingSessionEventDto::Discovered {
+                name: None,
+                platform_identifier: id.into(),
+                rssi: -40,
+            });
+        }
+        core.drain_actions();
+        match failure {
+            0 => core.handle(MobileMelkLightingSessionEventDto::ConnectFailed {
+                reason: "unreachable".into(),
+            }),
+            1 => core.handle(MobileMelkLightingSessionEventDto::TimerFired {
+                timer: MobileMelkLightingTimerDto::ConnectionAttempt,
+                can_send: false,
+            }),
+            _ => {
+                core.handle(MobileMelkLightingSessionEventDto::Connected {
+                    name: None,
+                    platform_identifier: ID.into(),
+                });
+                core.handle(MobileMelkLightingSessionEventDto::ServicesDiscovered {
+                    service_uuids: vec![],
+                    error: None,
+                });
+            }
+        }
+        assert!(core.drain_candidates().is_empty());
+        let actions = core.drain_actions();
+        assert!(actions.iter().any(|action| matches!(action, MobileMelkLightingSessionActionDto::Connect { platform_identifier } if platform_identifier == next)));
+        assert!(
+            !actions
+                .iter()
+                .any(|action| matches!(action, MobileMelkLightingSessionActionDto::Write { .. }))
+        );
+        verify_probe(&core, next, None);
+        assert_eq!(core.drain_candidates()[0].platform_identifier, next);
+    }
+}
+
+#[test]
+fn unpaired_platform_restoration_cannot_select_another_vehicles_accessory() {
+    let core = scanning_core();
+    core.handle(MobileMelkLightingSessionEventDto::Restored {
+        name: Some("aero lights".into()),
+        platform_identifier: ID.into(),
+        connected: true,
+        pending: false,
+    });
+    assert!(core.drain_actions().is_empty());
+    assert_eq!(core.snapshot().platform_identifier, None);
+}
+
+#[test]
+fn choosing_verified_lights_interrupts_an_unrelated_probe() {
+    let core = scanning_core();
+    discover_verified(&core, ID, None);
+    let other = "22222222-2222-2222-2222-222222222222";
+    core.handle(MobileMelkLightingSessionEventDto::Discovered {
+        name: None,
+        platform_identifier: other.into(),
+        rssi: -20,
+    });
+    core.drain_actions();
+    core.select_candidate(ID.into());
+    let actions = core.drain_actions();
+    assert!(actions.iter().any(|action| matches!(action, MobileMelkLightingSessionActionDto::CancelConnect { platform_identifier } if platform_identifier == other)));
+    assert!(actions.iter().any(|action| matches!(action, MobileMelkLightingSessionActionDto::Connect { platform_identifier } if platform_identifier == ID)));
+    assert_eq!(core.snapshot().platform_identifier.as_deref(), Some(ID));
+}
+
+#[test]
+fn first_pairing_renamed_lights_requires_selection_and_full_initialization() {
+    let core = initializing_core_with_name(None, Some("aero lights"));
+    assert!(!core.set_power(true));
+    finish_initialization(&core);
+    assert_eq!(
+        core.snapshot().state,
+        MobileMelkLightingSessionStateDto::Ready
+    );
+    assert_eq!(core.snapshot().name.as_deref(), Some("aero lights"));
+    assert!(core.set_power(true));
+}
+
+#[test]
+fn temporary_probe_failure_does_not_hide_a_device_for_the_session() {
+    for timed_out in [false, true] {
+        let core = scanning_core();
+        core.handle(MobileMelkLightingSessionEventDto::Discovered {
+            name: None,
+            platform_identifier: ID.into(),
+            rssi: -40,
+        });
+        core.drain_actions();
+        if timed_out {
+            core.handle(MobileMelkLightingSessionEventDto::TimerFired {
+                timer: MobileMelkLightingTimerDto::ConnectionAttempt,
+                can_send: false,
+            });
+        } else {
+            core.handle(MobileMelkLightingSessionEventDto::ConnectFailed {
+                reason: "busy".into(),
+            });
+        }
+        core.drain_actions();
+        core.handle(MobileMelkLightingSessionEventDto::Discovered {
+            name: Some("aero lights".into()),
+            platform_identifier: ID.into(),
+            rssi: -40,
+        });
+        assert!(core.drain_actions().iter().any(|action| matches!(action, MobileMelkLightingSessionActionDto::Connect { platform_identifier } if platform_identifier == ID)));
+    }
 }

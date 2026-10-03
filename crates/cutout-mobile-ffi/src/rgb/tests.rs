@@ -63,7 +63,7 @@ fn profile_catalog_and_fingerprint_are_owned_by_rust() {
 }
 
 #[test]
-fn profile_requires_name_and_complete_gatt_evidence() {
+fn profile_requires_complete_gatt_evidence_without_a_name_filter() {
     let result = MobileMelkLightingProfile::new(
         "MELK-OC21  6A".to_owned(),
         MobileMelkLightingGattEvidence {
@@ -85,10 +85,7 @@ fn profile_requires_name_and_complete_gatt_evidence() {
             notify_or_indicate: true,
         },
     );
-    assert!(matches!(
-        result,
-        Err(MobileMelkLightingError::InvalidGattEvidence)
-    ));
+    assert!(result.is_ok());
 }
 
 #[test]

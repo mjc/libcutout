@@ -278,14 +278,10 @@ import Foundation
             rssi: NSNumber
         ) {
             onQueue {
-                guard central === self.central, self.peripheral == nil else { return }
+                guard central === self.central else { return }
                 let name = (advertisementData[CBAdvertisementDataLocalNameKey] as? String) ?? peripheral.name
                 let identifier = peripheral.identifier.uuidString
                 onAdvertisement?(name, identifier, rssi.intValue)
-                guard
-                    preferredPlatformIdentifier != nil
-                        || name?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-                else { return }
                 discoveredPeripherals[identifier] = peripheral
                 core.handle(event: .discovered(name: name, platformIdentifier: identifier, rssi: Int32(rssi.intValue)))
                 syncCore()
@@ -342,8 +338,9 @@ import Foundation
                 let restoredPeripheral =
                     preferred.flatMap { identifier in
                         restored.first(where: { $0.identifier == identifier })
-                    } ?? (preferredPlatformIdentifier == nil ? restored.first : nil)
+                    }
                 guard let restoredPeripheral else {
+                    for candidate in restored { central.cancelPeripheralConnection(candidate) }
                     peripheral = nil
                     peripheralName = nil
                     peripheralIdentifier = nil
@@ -479,7 +476,8 @@ import Foundation
                 case .restartTransport:
                     restartTransport()
                 case .scan:
-                    central.scanForPeripherals(withServices: nil)
+                    central.scanForPeripherals(
+                        withServices: nil, options: [CBCentralManagerScanOptionAllowDuplicatesKey: true])
                 case .stopScan:
                     central.stopScan()
                 case let .restorePeripheral(identifier):
