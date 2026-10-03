@@ -10,8 +10,17 @@ Commands are based on [dave-code-ruiz/elkbledom](https://github.com/dave-code-ru
 specifically `models.json`, `definitions.json`, `model.py`, and `elkbledom.py`.
 The user's nRF Connect inventory establishes FFF0 service, FFF3 read/write
 without response, and FFF4 notify. The advertisement does not include FFF0:
-scan without a service filter, surface named candidates for inspection, then
-check identity and discovered GATT roles before selecting the typed profile.
+scan without a service filter. Rust admits picker candidates only when the
+platform UUID is valid and the name matches an implemented profile (currently
+`MELK-OC21`, case-insensitive, with an optional whitespace-delimited suffix).
+Unrelated, unnamed, and unsupported-model advertisements are excluded. Names
+are discovery hints: identity and discovered GATT roles must still agree before
+selecting the typed profile. Remembered accessories reconnect by UUID even when
+their local name is absent, then pass the same GATT verification.
+Rust retains up to 32 candidates, updates existing candidates at capacity, and
+reports rejected, withdrawn, or overflow identifiers to the UI and native
+peripheral cache. A candidate rejected during GATT discovery is removed before
+scanning resumes.
 The same upstream integration documents a MELK initialization handshake: send
 `7e 07 83`, wait one second, then send `7e 04 04`. Production performs this
 one-time sequence after FFF3 discovery and before admitting user commands; it is

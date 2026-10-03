@@ -169,32 +169,37 @@ impl SessionReducer {
         }
     }
 
-    fn is_melk_name(name: Option<&str>) -> bool {
-        name.is_some_and(|value| value.trim().to_ascii_lowercase().starts_with("melk"))
-    }
-
     fn accepts(&self, identifier: &str) -> bool {
+        let Ok(identifier) = uuid::Uuid::parse_str(identifier) else {
+            return false;
+        };
         !self.invalid_preferred_identifier
             && self
                 .preferred_identifier
                 .as_deref()
-                .is_none_or(|preferred| {
-                    uuid::Uuid::parse_str(preferred).ok() == uuid::Uuid::parse_str(identifier).ok()
-                })
+                .is_none_or(|preferred| uuid::Uuid::parse_str(preferred).ok() == Some(identifier))
     }
 
     fn accepts_discovery(&self, name: Option<&str>, identifier: &str) -> bool {
         self.accepts(identifier)
             && (self.preferred_identifier.is_some()
-                || name.map(str::trim).is_some_and(|v| !v.is_empty()))
+                || name.is_some_and(MelkLightingProfile::name_matches))
+    }
+
+    fn discard_candidate(&mut self, identifier: String) {
+        self.candidates.remove(&identifier);
+        self.candidates_out
+            .retain(|candidate| candidate.platform_identifier != identifier);
+        self.candidate_removals_out.push_back(identifier);
     }
 
     fn reject_candidate(&mut self, reason: String) {
         if let Some(identifier) = self.selected_identifier.clone() {
             self.actions
                 .push_back(MobileMelkLightingSessionActionDto::CancelConnect {
-                    platform_identifier: identifier,
+                    platform_identifier: identifier.clone(),
                 });
+            self.discard_candidate(identifier);
         }
         if self.preferred_identifier.is_none() {
             self.selected_identifier = None;
@@ -510,22 +515,14 @@ impl SessionReducer {
                     || self.selected_identifier.is_some()
                     || !self.accepts_discovery(name.as_deref(), &platform_identifier)
                 {
+                    self.discard_candidate(platform_identifier);
                     return;
                 }
                 if self.candidates.len() >= MAX_CANDIDATES
                     && !self.candidates.contains_key(&platform_identifier)
                 {
-                    let Some(evicted) = self
-                        .candidates
-                        .iter()
-                        .find(|(_, candidate)| !Self::is_melk_name(candidate.name.as_deref()))
-                        .map(|(id, _)| id.clone())
-                    else {
-                        self.candidate_removals_out.push_back(platform_identifier);
-                        return;
-                    };
-                    self.candidates.remove(&evicted);
-                    self.candidate_removals_out.push_back(evicted);
+                    self.discard_candidate(platform_identifier);
+                    return;
                 }
                 let candidate = MobileMelkLightingSessionCandidateDto {
                     platform_identifier: platform_identifier.clone(),
