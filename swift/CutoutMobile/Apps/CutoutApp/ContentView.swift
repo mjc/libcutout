@@ -35,24 +35,11 @@ struct ContentView: View {
 
     var body: some View {
         NavigationStack(path: $navigationPath) {
-            ZStack {
-                PevColors.pageBackground
-                    .ignoresSafeArea()
-
-                DevicePickerRouteView(
-                    device: model.device,
-                    pair: pair,
-                    navigate: navigate,
-                    openSetup: { isSetupPresented = true }
-                )
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                .accessibilityLabel(localizedAppText("picker.title"))
-                .accessibilityFocused($focusedRoute, equals: .devicePicker)
-            }
-            .navigationDestination(for: CutoutAppRoute.self) { destination in
-                destinationContent(for: destination)
-                    .navigationBarBackButtonHidden(destination != .capture)
-            }
+            destinationContent(for: .devicePicker)
+                .navigationDestination(for: CutoutAppRoute.self) { destination in
+                    destinationContent(for: destination)
+                        .navigationBarBackButtonHidden(destination != .capture)
+                }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(PevColors.pageBackground.ignoresSafeArea())
@@ -193,7 +180,7 @@ struct ContentView: View {
                     }
                 }
                 .accessibilityFocused($focusedRoute, equals: destination)
-        } else if destination == .capture || destination == .camera {
+        } else if destination == .capture {
             ZStack {
                 PevColors.pageBackground
                     .ignoresSafeArea()
@@ -204,7 +191,7 @@ struct ContentView: View {
         } else if isRideMapDetail(destination)
             || (destination == .rideMap && model.device.selectedConnectionRoute == nil)
         {
-            mapDestinationContent(for: destination)
+            destinationSurface(for: destination)
         } else {
             let tabs = TabView(selection: tabSelection) {
                 ForEach(availableTabs) { tab in
@@ -212,10 +199,7 @@ struct ContentView: View {
                         for: tab, connectionRoute: model.device.selectedConnectionRoute)
                     {
                         Tab(value: tab.id) {
-                            destinationSurface(
-                                for: tabRoute,
-                                usesConnectedShell: true
-                            )
+                            destinationSurface(for: tabRoute)
                         } label: {
                             Label(tab.title, systemImage: tab.id.systemImage)
                         }
@@ -243,50 +227,17 @@ struct ContentView: View {
         destination == .rideMap || isRideMapDetail(destination)
     }
 
-    @MainActor
-    static func usesConnectedMapShell(
-        for destination: CutoutAppRoute,
-        isConnected: Bool
-    ) -> Bool {
-        destination == .rideMap && isConnected
-    }
-
-    /// Shared map presentation shell for connected tabs and the home-route entry.
-    /// The only intentional difference between those paths is the surrounding tab or
-    /// navigation chrome; Map content, safe-area ownership, and accessibility context
-    /// stay in one place.
     @ViewBuilder
-    private func mapDestinationContent(for destination: CutoutAppRoute) -> some View {
-        destinationSurface(
-            for: destination,
-            usesConnectedShell: Self.usesConnectedMapShell(
-                for: destination,
-                isConnected: model.device.selectedConnectionRoute != nil
-            )
-        )
-    }
-
-    @ViewBuilder
-    private func destinationSurface(
-        for destination: CutoutAppRoute,
-        usesConnectedShell: Bool
-    ) -> some View {
+    private func destinationSurface(for destination: CutoutAppRoute) -> some View {
         ZStack {
             PevColors.pageBackground
                 .ignoresSafeArea()
-            if usesConnectedShell {
-                PevAppShell(
-                    sectionTitle: appSectionTitle(for: destination),
-                    disconnect: disconnectAndReturnToPicker,
-                    openCamera: { navigate(to: .camera) }
-                ) {
-                    routedContent(for: destination)
-                }
+            if destination == .camera || destination == .devicePicker {
+                routedContent(for: destination)
             } else {
                 PevAppShell(
                     sectionTitle: appSectionTitle(for: destination),
-                    disconnect: disconnectAndReturnToPicker,
-                    openCamera: { navigate(to: .camera) }
+                    disconnect: disconnectAndReturnToPicker
                 ) {
                     routedContent(for: destination)
                 }
@@ -356,7 +307,13 @@ struct ContentView: View {
                 closeDetail: closeRideMapDetail
             )
         case .devicePicker:
-            EmptyView()
+            DevicePickerRouteView(
+                device: model.device,
+                pair: pair,
+                navigate: navigate,
+                openSetup: { isSetupPresented = true }
+            )
+            .accessibilityLabel(localizedAppText("picker.title"))
         }
     }
 
@@ -379,7 +336,7 @@ struct ContentView: View {
         case .rideMap, .rideMapDetail:
             localizedAppText("navigation.section.map")
         case .devicePicker:
-            localizedAppText("navigation.section.ride")
+            localizedAppText("picker.title")
         }
     }
 
@@ -441,6 +398,10 @@ struct ContentView: View {
 extension PevScreenTabID {
     fileprivate var systemImage: String {
         switch self {
+        case .devices:
+            "bolt.horizontal.circle"
+        case .camera:
+            "video"
         case .ride:
             "speedometer"
         case .lighting:

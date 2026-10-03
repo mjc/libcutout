@@ -50,7 +50,6 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(localizedAppText("bms.overview.balancing"), "Balancing")
         XCTAssertEqual(localizedAppText("bms.overview.fault_state"), "Fault state")
         XCTAssertEqual(localizedAppText("bms.overview.pack_telemetry"), "Pack telemetry")
-        XCTAssertEqual(localizedAppText("bms.unknown.title"), "Do not pretend certainty")
         XCTAssertEqual(localizedAppText("bms.unknown.reported_voltage"), "Reported voltage")
         XCTAssertEqual(localizedAppText("bms.unknown.cell_count"), "Cell count")
         XCTAssertEqual(localizedAppText("bms.unknown.temperatures"), "Temperatures")
@@ -120,7 +119,7 @@ final class CutoutAppRouteTests: XCTestCase {
         )
         XCTAssertEqual(
             localizedAppText("camera.connection.bluetooth_warning"),
-            "Camera Wi-Fi may interfere with Bluetooth audio. Ride telemetry continues independently."
+            "Camera Wi-Fi may interrupt Bluetooth audio."
         )
         XCTAssertEqual(
             localizedAppText("camera.command.timed_out"),
@@ -128,14 +127,13 @@ final class CutoutAppRouteTests: XCTestCase {
         )
         XCTAssertEqual(
             localizedAppText("camera.error.unsupported_profile"),
-            "Camera firmware is not the verified R3 Pro profile."
+            "This camera firmware is not supported."
         )
         XCTAssertEqual(
             localizedAppText("camera.error.origin_mismatch"),
-            "Camera address changed; reload camera status before requesting media or control."
+            "Camera address changed. Read camera status again."
         )
         XCTAssertEqual(localizedAppText("camera.preview.export"), "Export preview")
-        XCTAssertEqual(localizedAppText("camera.action.back"), "Back to ride")
         XCTAssertEqual(
             localizedAppText("bms.no_data.pack_estimate_accessibility_value", "71", "Derived from voltage curve"),
             "71%. Derived from voltage curve"
@@ -269,34 +267,45 @@ final class CutoutAppRouteTests: XCTestCase {
         )
     }
 
-    func testOpeningCameraPreservesTheConnectedRouteForReturnNavigation() {
-        XCTAssertEqual(
-            CutoutAppRoute.navigationPath(openingCameraFrom: .eucRide),
-            [.eucRide, .camera]
-        )
-        XCTAssertEqual(
-            CutoutAppRoute.navigationPath(openingCameraFrom: .vescDebug),
-            [.vescDebug, .camera]
-        )
-        XCTAssertEqual(
-            CutoutAppRoute.navigationPath(openingCameraFrom: .devicePicker),
-            [.camera]
-        )
-        XCTAssertEqual(
-            CutoutAppRoute.navigationPath(openingCameraFrom: .camera),
-            [.camera]
-        )
+    func testCameraTabKeepsRideNavigationForBothDeviceFamilies() throws {
+        for connectionRoute in [DevicePickerConnectionRoute.electricUnicycle, .vescOnewheel] {
+            let cameraTabs = CutoutAppRoute.camera.availableNavigationTabs(for: connectionRoute)
+            XCTAssertEqual(cameraTabs.filter(\.isSelected).map(\.id), [.camera])
+            let rideTab = try XCTUnwrap(cameraTabs.first(where: { $0.id == .ride }))
+            let rideRoute = CutoutAppRoute.route(for: connectionRoute)
+            XCTAssertEqual(CutoutAppRoute.camera.destination(for: rideTab, connectionRoute: connectionRoute), rideRoute)
+            let cameraTab = try XCTUnwrap(
+                rideRoute.availableNavigationTabs(for: connectionRoute).first(where: {
+                    $0.id == .camera
+                }))
+            XCTAssertEqual(rideRoute.destination(for: cameraTab, connectionRoute: connectionRoute), .camera)
+        }
     }
+
+    func testCameraTabWorksWithoutARideConnectionAndReturnsToDevices() throws {
+        let tabs = CutoutAppRoute.camera.availableNavigationTabs(for: nil)
+        XCTAssertEqual(tabs.filter(\.isSelected).map(\.id), [.camera])
+        let devices = try XCTUnwrap(tabs.first(where: { $0.id == .devices }))
+        XCTAssertEqual(CutoutAppRoute.camera.destination(for: devices), .devicePicker)
+        let camera = try XCTUnwrap(
+            CutoutAppRoute.devicePicker.availableNavigationTabs(for: nil).first(where: {
+                $0.id == .camera
+            }))
+        XCTAssertEqual(CutoutAppRoute.devicePicker.destination(for: camera), .camera)
+        XCTAssertEqual(
+            CutoutAppRoute.devicePicker.availableNavigationTabs(for: nil).filter(\.isSelected).map(\.id), [.devices])
+    }
+
     func testRouteOwnsTheSameTabsUsedByWindowCommandsAndContent() {
-        XCTAssertTrue(CutoutAppRoute.devicePicker.navigationTabs(for: nil).isEmpty)
+        XCTAssertEqual(CutoutAppRoute.devicePicker.navigationTabs(for: nil).map(\.id), [.devices, .camera])
         XCTAssertTrue(CutoutAppRoute.capture.navigationTabs(for: nil).isEmpty)
         XCTAssertEqual(
             CutoutAppRoute.eucRide.navigationTabs(for: .electricUnicycle).map(\.id),
-            [.ride, .lighting, .pack, .map, .tune]
+            [.ride, .lighting, .pack, .camera, .map, .tune]
         )
         XCTAssertEqual(
             CutoutAppRoute.vescRide.navigationTabs(for: .vescOnewheel).map(\.id),
-            [.ride, .lighting, .debug, .map, .logs]
+            [.ride, .lighting, .debug, .camera, .map, .logs]
         )
         XCTAssertTrue(
             CutoutAppRoute.eucPack(.bmsOverview)
@@ -330,23 +339,23 @@ final class CutoutAppRouteTests: XCTestCase {
     func testNativeNavigationOmitsUnavailableDestinations() {
         XCTAssertEqual(
             CutoutAppRoute.eucRide.availableNavigationTabs(for: .electricUnicycle).map(\.id),
-            [.ride, .lighting, .pack, .map, .tune]
+            [.ride, .lighting, .pack, .camera, .map, .tune]
         )
         XCTAssertEqual(
             CutoutAppRoute.eucPack(.bmsOverview).availableNavigationTabs(for: .electricUnicycle).map(\.id),
-            [.ride, .lighting, .pack, .map, .tune]
+            [.ride, .lighting, .pack, .camera, .map, .tune]
         )
         XCTAssertEqual(
             CutoutAppRoute.vescRide.availableNavigationTabs(for: .vescOnewheel).map(\.id),
-            [.ride, .lighting, .debug, .map]
+            [.ride, .lighting, .debug, .camera, .map]
         )
         XCTAssertEqual(
             CutoutAppRoute.vescDebug.availableNavigationTabs(for: .vescOnewheel).map(\.id),
-            [.ride, .lighting, .debug, .map]
+            [.ride, .lighting, .debug, .camera, .map]
         )
-        XCTAssertTrue(CutoutAppRoute.devicePicker.availableNavigationTabs(for: nil).isEmpty)
+        XCTAssertEqual(CutoutAppRoute.devicePicker.availableNavigationTabs(for: nil).map(\.id), [.devices, .camera])
         XCTAssertTrue(CutoutAppRoute.capture.availableNavigationTabs(for: nil).isEmpty)
-        XCTAssertTrue(CutoutAppRoute.camera.availableNavigationTabs(for: nil).isEmpty)
+        XCTAssertEqual(CutoutAppRoute.camera.availableNavigationTabs(for: nil).map(\.id), [.devices, .camera])
     }
 
     func testDisconnectedMapKeepsMapCommandAvailable() {
@@ -360,6 +369,7 @@ final class CutoutAppRouteTests: XCTestCase {
     func testConnectionLossKeepsStandaloneMapNavigation() {
         XCTAssertTrue(CutoutAppRoute.rideMap.preservesNavigationOnConnectionLoss)
         XCTAssertTrue(CutoutAppRoute.capture.preservesNavigationOnConnectionLoss)
+        XCTAssertTrue(CutoutAppRoute.camera.preservesNavigationOnConnectionLoss)
         XCTAssertTrue(CutoutAppRoute.rideMapDetail(rideID: "ride-1").preservesNavigationOnConnectionLoss)
         XCTAssertFalse(CutoutAppRoute.eucRide.preservesNavigationOnConnectionLoss)
     }
@@ -375,8 +385,8 @@ final class CutoutAppRouteTests: XCTestCase {
         let vescTabs = CutoutAppRoute.rideMapDetail(rideID: "ride-1")
             .availableNavigationTabs(for: .vescOnewheel)
 
-        XCTAssertEqual(eucTabs.map(\.id), [.ride, .lighting, .pack, .map, .tune])
-        XCTAssertEqual(vescTabs.map(\.id), [.ride, .lighting, .debug, .map])
+        XCTAssertEqual(eucTabs.map(\.id), [.ride, .lighting, .pack, .camera, .map, .tune])
+        XCTAssertEqual(vescTabs.map(\.id), [.ride, .lighting, .debug, .camera, .map])
         XCTAssertEqual(eucTabs.first(where: { $0.isSelected })?.id, .map)
         XCTAssertEqual(vescTabs.first(where: { $0.isSelected })?.id, .map)
     }
@@ -387,8 +397,9 @@ final class CutoutAppRouteTests: XCTestCase {
 
         XCTAssertEqual(nestedPackRoute.destination(for: tabs[0]), .eucRide)
         XCTAssertEqual(nestedPackRoute.destination(for: tabs[2]), nestedPackRoute)
-        XCTAssertEqual(nestedPackRoute.destination(for: tabs[3]), .rideMap)
-        XCTAssertEqual(nestedPackRoute.destination(for: tabs[4]), .eucTune)
+        XCTAssertEqual(nestedPackRoute.destination(for: tabs[3]), .camera)
+        XCTAssertEqual(nestedPackRoute.destination(for: tabs[4]), .rideMap)
+        XCTAssertEqual(nestedPackRoute.destination(for: tabs[5]), .eucTune)
         XCTAssertEqual(
             CutoutAppRoute.vescDebug.destination(
                 for: CutoutAppRoute.vescDebug.availableNavigationTabs(for: .vescOnewheel)[2]
@@ -398,7 +409,7 @@ final class CutoutAppRouteTests: XCTestCase {
     }
 
     func testUnavailableTabHasNoDestination() {
-        let unavailableLogsTab = CutoutAppRoute.vescRide.navigationTabs(for: .vescOnewheel)[4]
+        let unavailableLogsTab = CutoutAppRoute.vescRide.navigationTabs(for: .vescOnewheel)[5]
 
         XCTAssertNil(CutoutAppRoute.vescRide.destination(for: unavailableLogsTab))
     }

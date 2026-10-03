@@ -166,6 +166,8 @@ struct CutoutNavigationCommands: Commands {
 
     nonisolated static func shortcut(for tabID: PevScreenTabID) -> Character {
         switch tabID {
+        case .devices: "0"
+        case .camera: "8"
         case .ride: "1"
         case .lighting: "7"
         case .pack: "2"

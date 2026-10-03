@@ -371,24 +371,71 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testCameraSurfaceReturnsToTheRideWithoutCameraNetwork() {
-        XCTAssertTrue(pairAvailableDevice(.vesc))
-        let ride = app.descendants(matching: .any)["dashboard.screen.vescRide"]
+        assertCameraTabReturnsToRide(.vesc)
+    }
+
+    func testEucCameraTabReturnsToRideWithoutCameraNetwork() {
+        assertCameraTabReturnsToRide(.euc)
+    }
+
+    func testEucCameraTabKeepsMapReachableThroughMore() {
+        XCTAssertTrue(pairAvailableDevice(.euc))
+        XCTAssertTrue(app.descendants(matching: .any)["dashboard.screen.eucRide"].waitForExistence(timeout: 20))
+        tapNavigationTab("map", title: "Map")
+        XCTAssertTrue(app.descendants(matching: .any)["ride-map.screen"].waitForExistence(timeout: 5))
+        app.tabBars.buttons["dashboard.nav.camera"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["camera.screen"].waitForExistence(timeout: 5))
+        app.tabBars.buttons["dashboard.nav.ride"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["dashboard.screen.eucRide"].waitForExistence(timeout: 5))
+        disconnectIfConnected()
+    }
+
+    func testEucCameraTabKeepsTuneReachableThroughMore() {
+        XCTAssertTrue(pairAvailableDevice(.euc))
+        XCTAssertTrue(app.descendants(matching: .any)["dashboard.screen.eucRide"].waitForExistence(timeout: 20))
+        app.tabBars.buttons["dashboard.nav.camera"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["camera.screen"].waitForExistence(timeout: 5))
+        tapNavigationTab("tune", title: "Tune")
+        XCTAssertTrue(app.descendants(matching: .any)["settings.screen.eucTune"].waitForExistence(timeout: 5))
+        app.tabBars.buttons["dashboard.nav.ride"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["dashboard.screen.eucRide"].waitForExistence(timeout: 5))
+        disconnectIfConnected()
+    }
+
+    func testPickerSurfaceCameraTabReturnsToDevicesWithoutConnecting() {
+        let picker = app.descendants(matching: .any)["device-picker.screen"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 10), app.debugDescription)
+        let cameraTab = app.tabBars.buttons["dashboard.nav.camera"]
+        XCTAssertTrue(cameraTab.isHittable, app.debugDescription)
+        cameraTab.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["camera.screen"].waitForExistence(timeout: 5))
+        let devicesTab = app.tabBars.buttons["dashboard.nav.devices"]
+        XCTAssertTrue(devicesTab.isHittable, app.debugDescription)
+        devicesTab.tap()
+        XCTAssertTrue(picker.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(cameraTab.isHittable)
+        XCTAssertFalse(app.buttons["dashboard.disconnect"].exists)
+    }
+
+    private func assertCameraTabReturnsToRide(_ family: ConnectedDeviceFamily) {
+        XCTAssertTrue(pairAvailableDevice(family))
+        let ride = app.descendants(matching: .any)[family.screenIdentifier]
         XCTAssertTrue(ride.waitForExistence(timeout: 20), app.debugDescription)
 
-        let cameraButton = app.buttons["dashboard.camera"]
+        let cameraButton = app.tabBars.buttons["dashboard.nav.camera"]
         XCTAssertTrue(cameraButton.waitForExistence(timeout: 5), app.debugDescription)
         XCTAssertTrue(cameraButton.isHittable)
         cameraButton.tap()
 
         let camera = app.descendants(matching: .any)["camera.screen"]
         XCTAssertTrue(camera.waitForExistence(timeout: 5), app.debugDescription)
-        let back = app.buttons["camera.back"]
-        XCTAssertTrue(back.waitForExistence(timeout: 5), app.debugDescription)
-        XCTAssertTrue(back.isHittable)
-        back.tap()
+        let rideTab = app.tabBars.buttons["dashboard.nav.ride"]
+        XCTAssertTrue(rideTab.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(rideTab.isHittable)
+        rideTab.tap()
 
         XCTAssertTrue(ride.waitForExistence(timeout: 5), app.debugDescription)
-        XCTAssertFalse(camera.exists)
+        XCTAssertTrue(app.buttons["dashboard.disconnect"].isHittable)
         disconnectIfConnected()
     }
 
@@ -1010,9 +1057,7 @@ final class CutoutAppUITests: XCTestCase {
             return
         }
         defer { disconnectIfConnected() }
-        let tuneTab = app.tabBars.buttons["dashboard.nav.tune"]
-        XCTAssertTrue(tuneTab.waitForExistence(timeout: 5))
-        tuneTab.tap()
+        tapNavigationTab("tune", title: "Tune")
         let screen = app.descendants(matching: .any)["settings.screen.eucTune"]
         XCTAssertTrue(screen.waitForExistence(timeout: 5))
 
@@ -4103,6 +4148,21 @@ final class CutoutAppUITests: XCTestCase {
         button.tap()
         return true
     }
+
+    private func tapNavigationTab(_ id: String, title: String) {
+        let tab = app.tabBars.buttons["dashboard.nav.\(id)"]
+        if tab.exists {
+            XCTAssertTrue(tab.isHittable, app.debugDescription)
+            tab.tap()
+        } else {
+            let more = app.tabBars.buttons["More"]
+            XCTAssertTrue(more.waitForExistence(timeout: 5), app.debugDescription)
+            more.tap()
+            let row = app.tables.cells.containing(.staticText, identifier: title).firstMatch
+            XCTAssertTrue(row.waitForExistence(timeout: 5), app.debugDescription)
+            row.tap()
+        }
+    }
 }
 
 private enum ConnectedDeviceFamily: Equatable {
@@ -4132,8 +4192,8 @@ private enum ConnectedDeviceFamily: Equatable {
 
     var tabNames: [String] {
         switch self {
-        case .euc: ["ride", "lighting", "pack", "map", "tune"]
-        case .vesc: ["ride", "lighting", "debug", "map"]
+        case .euc: ["ride", "lighting", "pack", "camera"]
+        case .vesc: ["ride", "lighting", "debug", "camera", "map"]
         }
     }
 

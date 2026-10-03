@@ -10,7 +10,6 @@ import SwiftUI
 #endif
 
 struct CameraRouteContainerView: View {
-    let close: (() -> Void)?
     let annotateCapture: ((String, String) -> Void)?
     let recordMediaReference: ((String, CaptureGeneration, MobileCameraMediaProvenanceDto, URL) -> Void)?
     let currentCaptureIdentity: (() -> (fileName: String, generation: CaptureGeneration)?)?
@@ -26,14 +25,12 @@ struct CameraRouteContainerView: View {
     @Environment(\.scenePhase) private var scenePhase
 
     init(
-        close: (() -> Void)? = nil,
         annotateCapture: ((String, String) -> Void)? = nil,
         recordMediaReference:
             ((String, CaptureGeneration, MobileCameraMediaProvenanceDto, URL) -> Void)? = nil,
         currentCaptureIdentity: (() -> (fileName: String, generation: CaptureGeneration)?)? = nil,
         sessionState: CutoutSessionStateHandle = CutoutSessionStateHandle()
     ) {
-        self.close = close
         self.annotateCapture = annotateCapture
         self.recordMediaReference = recordMediaReference
         self.currentCaptureIdentity = currentCaptureIdentity
@@ -59,7 +56,6 @@ struct CameraRouteContainerView: View {
 
     var body: some View {
         CameraRouteView(
-            onClose: close,
             presentation: adapter.presentation,
             readOnlyEvidence: adapter.readOnlyEvidence,
             movieRTSPURI: adapter.readOnlyEvidence?.movieRTSPURI,
@@ -175,7 +171,6 @@ func cameraMediaLocalFileComponent(_ name: String) -> String {
 }
 
 struct CameraRouteView: View {
-    let onClose: (() -> Void)?
     let presentation: CameraPresentation
     let readOnlyEvidence: CameraReadOnlyEvidence?
     let movieRTSPURI: String?
@@ -201,7 +196,6 @@ struct CameraRouteView: View {
     let stopPreview: (() -> Void)?
 
     init(
-        onClose: (() -> Void)? = nil,
         presentation: CameraPresentation = .initial,
         readOnlyEvidence: CameraReadOnlyEvidence? = nil,
         movieRTSPURI: String? = nil,
@@ -225,7 +219,6 @@ struct CameraRouteView: View {
         savePreview: (() -> Void)? = nil,
         stopPreview: (() -> Void)? = nil
     ) {
-        self.onClose = onClose
         self.presentation = presentation
         self.readOnlyEvidence = readOnlyEvidence
         self.movieRTSPURI = movieRTSPURI
@@ -257,14 +250,6 @@ struct CameraRouteView: View {
             bottomPadding: 32,
             horizontalPadding: 20
         ) {
-            if let onClose {
-                Button(action: onClose) {
-                    Label(localizedAppText("camera.action.back"), systemImage: "chevron.left")
-                }
-                .buttonStyle(.bordered)
-                .accessibilityIdentifier("camera.back")
-            }
-
             if #available(iOS 26, macOS 26, *) {
                 GlassEffectContainer(spacing: 16) {
                     cameraCards
