@@ -103,7 +103,7 @@ final class RideHistoryModelTests: XCTestCase {
 
     @MainActor
     func testRecentFilterUsesInjectedCurrentTime() async throws {
-        let fixedNow = Date(timeIntervalSince1970: 1_700_000_000)
+        let fixedNow = Date(timeIntervalSince1970: 1_790_942_400)
         let query = GatedRideHistoryQuery(
             base: MobileRideMapState(),
             failAfterRelease: false
@@ -124,6 +124,12 @@ final class RideHistoryModelTests: XCTestCase {
         let nowMilliseconds = UInt64(fixedNow.timeIntervalSince1970 * 1_000)
         let expectedCutoff = nowMilliseconds - MobileRideMapLimits.rustOwned.historyRecentWindowMilliseconds
         XCTAssertEqual(filter.createdAfterMilliseconds, expectedCutoff)
+        let september27Noon = UInt64(Date(timeIntervalSince1970: 1_790_510_400).timeIntervalSince1970 * 1_000)
+        XCTAssertGreaterThanOrEqual(september27Noon, expectedCutoff)
+        XCTAssertLessThanOrEqual(
+            nowMilliseconds - september27Noon,
+            MobileRideMapLimits.rustOwned.historyRecentWindowMilliseconds
+        )
         XCTAssertNil(filter.vehicleIdentity)
         XCTAssertNil(filter.searchText)
     }

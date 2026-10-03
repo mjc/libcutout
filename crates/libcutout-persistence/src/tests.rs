@@ -6174,6 +6174,48 @@ fn filtered_ride_history_queries_stay_rust_owned_and_bounded() {
 }
 
 #[test]
+fn rolling_ride_history_window_includes_recent_days_and_its_inclusive_boundary() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-rolling-history-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+
+    // October 2, 2026 UTC minus 30 * 24 hours. A ride from September 27
+    // is comfortably inside the rolling window; the exact cutoff is included.
+    let now_ms = 1_790_942_400_000;
+    let cutoff_ms = now_ms - 2_592_000_000;
+    let before_cutoff = database
+        .create_ride(RideSource::Live, cutoff_ms - 1)
+        .unwrap();
+    let at_cutoff = database.create_ride(RideSource::Live, cutoff_ms).unwrap();
+    let september_27 = database
+        .create_ride(RideSource::Live, 1_790_510_400_000)
+        .unwrap();
+    for ride in [before_cutoff, at_cutoff, september_27] {
+        database.transition(ride, RideEvent::Start).unwrap();
+        database.transition(ride, RideEvent::Stop).unwrap();
+        database.transition(ride, RideEvent::Save).unwrap();
+    }
+
+    let page = database
+        .list_rides_filtered(
+            None,
+            QueryLimit::new(10).unwrap(),
+            RideHistoryQuery::new(Some(cutoff_ms), None, None),
+        )
+        .unwrap();
+    assert_eq!(
+        page.rides().iter().map(RideRecord::id).collect::<Vec<_>>(),
+        vec![september_27, at_cutoff]
+    );
+
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn filtered_history_escapes_like_wildcards() {
     let _guard = test_guard();
     let path = std::env::temp_dir().join(format!(
