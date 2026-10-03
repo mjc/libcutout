@@ -251,14 +251,23 @@ in
     '';
     after = [ "check:xcode-ios" ];
   };
-  tasks."test:shell-regressions".exec = ''
-    bash tests/scripts/swift-package-common.sh
-    bash tests/scripts/run-ios-ui-tests.sh
-    bash tests/fixtures/ffi-freshness/run.sh
-    bash tests/fixtures/ffi-production/run.sh
-    scripts/probe-novatek-camera.sh --self-test
-    scripts/probe-novatek-camera-controls.sh --self-test
-  '';
+  tasks."test:shell-regressions" = {
+    # The production FFI fixture temporarily changes Rust source. Run it after
+    # native checks so it cannot invalidate their captured source generations.
+    after = [
+      "test:swift-package"
+      "test:ios-music-monitor"
+      "build:ios-ui-tests"
+    ];
+    exec = ''
+      bash tests/scripts/swift-package-common.sh
+      bash tests/scripts/run-ios-ui-tests.sh
+      bash tests/fixtures/ffi-freshness/run.sh
+      bash tests/fixtures/ffi-production/run.sh
+      scripts/probe-novatek-camera.sh --self-test
+      scripts/probe-novatek-camera-controls.sh --self-test
+    '';
+  };
   tasks."build:ios-app" = swiftTask ''
     cargo cutout xcodebuild -- \
       -project "$DEVENV_ROOT/swift/CutoutMobile/CutoutApp.xcodeproj" \
