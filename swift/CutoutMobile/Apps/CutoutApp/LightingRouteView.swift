@@ -747,6 +747,7 @@ private struct LightingPairingSheet: View {
                         )
                     )
                     .tint(PevColors.cyan)
+                    .disabled(!model.canEditMetadata)
                     .accessibilityIdentifier("lighting.restore-toggle")
                     Text(localizedAppText("lighting.restore.explanation"))
                         .font(.footnote)

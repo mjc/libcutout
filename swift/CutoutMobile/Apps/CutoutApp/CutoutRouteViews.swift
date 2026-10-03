@@ -806,6 +806,7 @@ final class LightingRouteModel {
     }
 
     func setRestoreEnabled(_ enabled: Bool) {
+        guard canEditMetadata else { return }
         restoreEnabled = enabled
         persistence.setRestoreEnabled(enabled)
         if enabled {

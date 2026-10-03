@@ -1471,6 +1471,23 @@ final class CutoutAppRouteTests: XCTestCase {
     }
 
     @MainActor
+    func testRestoreToggleCannotBeEnabledBeforeAnAccessoryExists() throws {
+        let suiteName = "CutoutAppRouteTests.restoreBeforePairing"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let model = LightingRouteModel(
+            session: TestLightingSession(),
+            persistence: LightingAccessoryPersistence(defaults: defaults)
+        )
+
+        XCTAssertFalse(model.canEditMetadata)
+        model.setRestoreEnabled(true)
+
+        XCTAssertFalse(model.restoreEnabled)
+    }
+
+    @MainActor
     func testLightingRouteModelConsumesTypedIdentityEvents() async throws {
         let suiteName = "CutoutAppRouteTests.lightingIdentity"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
