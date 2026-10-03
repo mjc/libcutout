@@ -920,3 +920,30 @@ fn radio_off_refuses_candidate_selection_and_late_scan_results() {
     assert!(core.drain_actions().is_empty());
     assert!(core.drain_candidates().is_empty());
 }
+
+#[test]
+fn candidate_cap_reports_every_identifier_that_must_be_removed() {
+    let core = MobileMelkLightingSessionCore::new();
+    core.start(None);
+    core.handle(MobileMelkLightingSessionEventDto::BluetoothState {
+        powered_on: true,
+        state_code: 5,
+    });
+    let identifiers = (1..=33_u128)
+        .map(|value| uuid::Uuid::from_u128(value).to_string())
+        .collect::<Vec<_>>();
+    for identifier in &identifiers {
+        core.handle(MobileMelkLightingSessionEventDto::Discovered {
+            name: Some("Nearby device".into()),
+            platform_identifier: identifier.clone(),
+            rssi: -60,
+        });
+        core.drain_candidates();
+    }
+
+    assert_eq!(
+        core.drain_candidate_removals(),
+        [identifiers[0].clone()],
+        "Rust must tell the UI and transport cache which evicted row to release"
+    );
+}

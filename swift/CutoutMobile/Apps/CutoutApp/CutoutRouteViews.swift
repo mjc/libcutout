@@ -512,6 +512,12 @@ final class LightingRouteModel {
                 self.candidates.sort { $0.rssi > $1.rssi }
             }
         }
+        session.onCandidateRemoved = { [weak self] identifier in
+            Task { @MainActor [weak self] in
+                guard let self, self.isRunning, self.callbackGeneration == generation else { return }
+                self.candidates.removeAll { $0.id == identifier }
+            }
+        }
     }
 
     func reconnect() {

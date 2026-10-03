@@ -68,6 +68,7 @@ import Foundation
         var onNotification: ((Data) -> Void)? { get set }
         var onRecord: ((String) -> Void)? { get set }
         var onCandidate: ((MelkLightingPeripheralCandidate) -> Void)? { get set }
+        var onCandidateRemoved: ((String) -> Void)? { get set }
 
         func start(preferredPlatformIdentifier: String?)
         func stop()
@@ -113,6 +114,7 @@ import Foundation
         public var onAdvertisement: ((String?, String, Int) -> Void)?
         public var onRecord: ((String) -> Void)?
         public var onCandidate: ((MelkLightingPeripheralCandidate) -> Void)?
+        public var onCandidateRemoved: ((String) -> Void)?
 
         public init(queue: DispatchQueue = DispatchQueue(label: "io.cutout.melk-lighting")) {
             self.queue = queue
@@ -458,6 +460,10 @@ import Foundation
                         platformIdentifier: candidate.platformIdentifier,
                         rssi: Int(candidate.rssi)
                     ))
+            }
+            for identifier in core.drainCandidateRemovals() {
+                discoveredPeripherals.removeValue(forKey: identifier)
+                onCandidateRemoved?(identifier)
             }
             for record in core.drainRecords() { onRecord?(record) }
             for bytes in core.drainNotifications() { onNotification?(Data(bytes)) }

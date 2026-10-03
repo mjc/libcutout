@@ -57,6 +57,7 @@ pub(crate) struct SessionReducer {
     records: VecDeque<String>,
     notifications: VecDeque<Vec<u8>>,
     candidates_out: VecDeque<MobileMelkLightingSessionCandidateDto>,
+    candidate_removals_out: VecDeque<String>,
 }
 
 impl Default for SessionReducer {
@@ -81,6 +82,7 @@ impl Default for SessionReducer {
             records: VecDeque::new(),
             notifications: VecDeque::new(),
             candidates_out: VecDeque::new(),
+            candidate_removals_out: VecDeque::new(),
         }
     }
 }
@@ -91,6 +93,7 @@ impl SessionReducer {
         self.records.clear();
         self.notifications.clear();
         self.candidates_out.clear();
+        self.candidate_removals_out.clear();
         self.preferred_identifier = preferred_identifier.map(str::to_owned);
         self.invalid_preferred_identifier =
             preferred_identifier.is_some_and(|value| uuid::Uuid::parse_str(value).is_err());
@@ -518,9 +521,11 @@ impl SessionReducer {
                         .find(|(_, candidate)| !Self::is_melk_name(candidate.name.as_deref()))
                         .map(|(id, _)| id.clone())
                     else {
+                        self.candidate_removals_out.push_back(platform_identifier);
                         return;
                     };
                     self.candidates.remove(&evicted);
+                    self.candidate_removals_out.push_back(evicted);
                 }
                 let candidate = MobileMelkLightingSessionCandidateDto {
                     platform_identifier: platform_identifier.clone(),
@@ -794,6 +799,10 @@ impl SessionReducer {
 
     pub(crate) fn drain_candidates(&mut self) -> Vec<MobileMelkLightingSessionCandidateDto> {
         self.candidates_out.drain(..).collect()
+    }
+
+    pub(crate) fn drain_candidate_removals(&mut self) -> Vec<String> {
+        self.candidate_removals_out.drain(..).collect()
     }
 
     pub(crate) fn drain_notifications(&mut self) -> Vec<Vec<u8>> {

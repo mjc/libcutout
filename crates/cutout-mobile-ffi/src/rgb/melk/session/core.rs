@@ -212,6 +212,14 @@ impl MobileMelkLightingSessionCore {
             .drain_candidates()
     }
 
+    /// Drains candidate identities removed by Rust's bounded scan policy.
+    pub fn drain_candidate_removals(&self) -> Vec<String> {
+        self.inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .drain_candidate_removals()
+    }
+
     /// Drains raw FFF4 notifications for the app-level observer.
     pub fn drain_notifications(&self) -> Vec<Vec<u8>> {
         self.inner

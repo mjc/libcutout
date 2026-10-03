@@ -1464,6 +1464,10 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertTrue(model.peripheralIdentifier == nil)
         model.selectCandidate(nearer)
         XCTAssertEqual(fake.candidateSelections, [nearer.id])
+
+        fake.emitCandidateRemoved(farther.id)
+        await Task.yield()
+        XCTAssertEqual(model.candidates, [nearer])
     }
 
     @MainActor
@@ -1503,6 +1507,7 @@ private final class TestLightingSession: MelkLightingPeripheralSessionProtocol {
     var onNotification: ((Data) -> Void)?
     var onRecord: ((String) -> Void)?
     var onCandidate: ((MelkLightingPeripheralCandidate) -> Void)?
+    var onCandidateRemoved: ((String) -> Void)?
     var startCalls: [String?] = []
     var stopCalls = 0
     var candidateSelections: [String] = []
@@ -1581,5 +1586,9 @@ private final class TestLightingSession: MelkLightingPeripheralSessionProtocol {
 
     func emitCandidate(_ candidate: MelkLightingPeripheralCandidate) {
         onCandidate?(candidate)
+    }
+
+    func emitCandidateRemoved(_ identifier: String) {
+        onCandidateRemoved?(identifier)
     }
 }
