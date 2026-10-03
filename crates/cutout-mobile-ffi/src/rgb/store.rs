@@ -3,15 +3,35 @@
 use std::sync::{Arc, Mutex, PoisonError};
 
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use super::{
-    MobileRgbLightingAccessoryRecord, MobileRgbLightingProfileKindDto, MobileRgbLightingRecordError,
+    MobileMelkLightingRestoreStateDto, MobileRgbLightingAccessoryRecord,
+    MobileRgbLightingProfileKindDto, MobileRgbLightingRecordError,
 };
+
+/// An opted-in request for one compatible accessory; it is not device-state evidence.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileRgbLightingRestoreCandidate {
+    /// Canonical platform identity that must match the connected accessory.
+    pub platform_identifier: String,
+    /// Last saved user intent to replay.
+    pub requested_state: MobileMelkLightingRestoreStateDto,
+}
 
 #[derive(Debug)]
 struct Entry {
     record: Arc<MobileRgbLightingAccessoryRecord>,
     fingerprint: Option<String>,
+}
+
+impl Entry {
+    fn is_compatible(&self) -> bool {
+        self.record.profile() == MobileRgbLightingProfileKindDto::MelkOc21
+            && self.record.profile_version() == super::mobile_melk_lighting_profile_version()
+            && self.fingerprint.as_deref()
+                == Some(super::mobile_melk_lighting_capabilities_fingerprint().as_str())
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -33,6 +53,15 @@ struct WireEntry {
 struct Store {
     entries: Vec<Entry>,
     adopt_legacy: bool,
+}
+
+impl Store {
+    fn entry(&self, identifier: &str) -> Option<&Entry> {
+        let identifier = Uuid::parse_str(identifier).ok()?;
+        self.entries.iter().find(|entry| {
+            Uuid::parse_str(&entry.record.platform_identifier()).ok() == Some(identifier)
+        })
+    }
 }
 
 /// Accessories retained across vehicle changes and app restarts.
@@ -207,6 +236,39 @@ impl MobileRgbLightingAccessoryStore {
             .and_then(|entry| entry.fingerprint.clone())
     }
 
+    /// Checks persisted profile and capability evidence for this accessory identity.
+    #[must_use]
+    pub fn is_compatible_with_current_profile(&self, platform_identifier: String) -> bool {
+        self.inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .entry(&platform_identifier)
+            .is_some_and(Entry::is_compatible)
+    }
+
+    /// Returns opted-in saved intent only for a valid identity and compatible profile.
+    ///
+    /// Confirmation is independent: replay never upgrades a request to a device acknowledgement.
+    #[must_use]
+    pub fn restore_candidate(
+        &self,
+        platform_identifier: String,
+    ) -> Option<MobileRgbLightingRestoreCandidate> {
+        let store = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        let entry = store.entry(&platform_identifier)?;
+        if !entry.is_compatible() {
+            return None;
+        }
+        Some(MobileRgbLightingRestoreCandidate {
+            platform_identifier: Uuid::parse_str(&entry.record.platform_identifier())
+                .ok()?
+                .hyphenated()
+                .to_string()
+                .to_uppercase(),
+            requested_state: entry.record.restore_request()?,
+        })
+    }
+
     /// Backfills the fingerprint for an old record without replacing present evidence.
     pub fn backfill_fingerprint(&self, platform_identifier: String, fingerprint: String) {
         if let Some(entry) = self
@@ -236,6 +298,72 @@ mod tests {
     use super::*;
     const A: &str = "11111111-1111-1111-1111-111111111111";
     const B: &str = "22222222-2222-2222-2222-222222222222";
+
+    #[test]
+    fn restore_requires_valid_same_profile_identity_and_preserves_evidence() {
+        use super::super::{
+            MobileMelkLightingRestoreStateDto, MobileRgbLightingConfirmationStateDto,
+        };
+        let store = MobileRgbLightingAccessoryStore::new();
+        let record = store
+            .pair(
+                A.into(),
+                Some("aero".into()),
+                super::super::mobile_melk_lighting_capabilities_fingerprint(),
+            )
+            .unwrap();
+        let requested = MobileMelkLightingRestoreStateDto {
+            power_on: true,
+            red: 1,
+            green: 2,
+            blue: 3,
+            brightness: 42,
+            playback: None,
+        };
+        assert!(store.restore_candidate(A.into()).is_none());
+        record.set_requested_state(Some(requested)).unwrap();
+        assert!(store.restore_candidate(A.into()).is_none());
+        record.set_restore_enabled(true);
+        let restored = MobileRgbLightingAccessoryStore::decode(store.encode().unwrap()).unwrap();
+        let candidate = restored.restore_candidate(A.into()).unwrap();
+        assert_eq!(candidate.platform_identifier, A);
+        assert_eq!(candidate.requested_state, requested);
+        assert!(restored.restore_candidate(B.into()).is_none());
+        assert!(!restored.is_compatible_with_current_profile(B.into()));
+        assert_eq!(
+            record.confirmation(),
+            MobileRgbLightingConfirmationStateDto::Unknown
+        );
+        assert!(record.confirmed_state().is_none());
+
+        let stale = MobileRgbLightingAccessoryStore::new();
+        stale.import_legacy(Arc::clone(&record), Some("old-fingerprint".into()));
+        assert!(stale.restore_candidate(A.into()).is_none());
+        assert!(!stale.is_compatible_with_current_profile(A.into()));
+        let missing = MobileRgbLightingAccessoryStore::new();
+        missing.import_legacy(record, None);
+        assert!(missing.restore_candidate(A.into()).is_none());
+
+        let invalid = MobileRgbLightingAccessoryStore::new();
+        let invalid_record = MobileRgbLightingAccessoryRecord::new(
+            "not-a-bluetooth-id".into(),
+            MobileRgbLightingProfileKindDto::MelkOc21,
+            1,
+        )
+        .unwrap();
+        invalid_record.set_restore_enabled(true);
+        invalid_record.set_requested_state(Some(requested)).unwrap();
+        invalid.import_legacy(
+            invalid_record,
+            Some(super::super::mobile_melk_lighting_capabilities_fingerprint()),
+        );
+        assert!(
+            invalid
+                .restore_candidate("not-a-bluetooth-id".into())
+                .is_none()
+        );
+        assert!(!invalid.is_compatible_with_current_profile("not-a-bluetooth-id".into()));
+    }
 
     #[test]
     fn vehicle_switch_and_restart_recall_each_accessory_and_alias() {

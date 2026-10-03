@@ -365,7 +365,7 @@ final class LightingAccessoryPersistenceTests: XCTestCase {
         XCTAssertNil(store.platformIdentifier)
     }
 
-    func testRestoreCandidateRequiresTheCompleteSafetyContract() throws {
+    func testRestoreCandidateReplaysOptedInRequestWithoutConfirmation() throws {
         let suiteName = "LightingAccessoryPersistenceTests-restore-candidate-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
@@ -379,11 +379,13 @@ final class LightingAccessoryPersistenceTests: XCTestCase {
         XCTAssertNil(store.restoreCandidate())
 
         store.setRestoreEnabled(true)
-        XCTAssertNil(store.restoreCandidate())
-        try store.confirm(state)
         let candidate = try XCTUnwrap(store.restoreCandidate())
         XCTAssertEqual(candidate.platformIdentifier, "CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC")
         XCTAssertEqual(candidate.requestedState, state)
+        XCTAssertEqual(store.confirmation, .unknown)
+        XCTAssertNil(store.confirmedState)
+        let reopened = LightingAccessoryPersistence(defaults: defaults)
+        XCTAssertEqual(reopened.restoreCandidate(), candidate)
     }
 
     func testInvalidLegacyIdentifierDoesNotMigrate() throws {

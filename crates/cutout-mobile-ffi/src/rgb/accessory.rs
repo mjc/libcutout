@@ -263,6 +263,16 @@ pub struct MobileRgbLightingAccessoryRecord {
     inner: Mutex<RgbLightingAccessoryRecord>,
 }
 
+impl MobileRgbLightingAccessoryRecord {
+    pub(super) fn restore_request(&self) -> Option<MobileMelkLightingRestoreStateDto> {
+        self.inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .restore_request()
+            .map(Into::into)
+    }
+}
+
 #[uniffi::export]
 impl MobileRgbLightingAccessoryRecord {
     /// Creates an empty record for one verified profile.

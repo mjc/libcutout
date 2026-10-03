@@ -1,16 +1,7 @@
 import CutoutMobileFFI
 import Foundation
 
-/// The only state shape permitted to cross the persistence-to-restore boundary.
-public struct LightingAccessoryRestoreCandidate: Equatable, Sendable {
-    public let platformIdentifier: String
-    public let requestedState: MobileMelkLightingRestoreStateDto
-
-    init(platformIdentifier: String, requestedState: MobileMelkLightingRestoreStateDto) {
-        self.platformIdentifier = platformIdentifier
-        self.requestedState = requestedState
-    }
-}
+public typealias LightingAccessoryRestoreCandidate = MobileRgbLightingRestoreCandidate
 
 /// Rust-backed persistence for the selected Aero-installed MELK controller.
 ///
@@ -112,22 +103,10 @@ public final class LightingAccessoryPersistence {
         record?.vehicleIdentifier()
     }
 
-    /// Returns a restore request only when every safety prerequisite is satisfied.
+    /// Rust checks opt-in, saved intent, accessory identity, and profile compatibility.
     public func restoreCandidate() -> LightingAccessoryRestoreCandidate? {
-        guard let record,
-            let identifier = canonicalIdentifier(record.platformIdentifier()),
-            record.restoreEnabled(),
-            isCompatibleWithCurrentProfile,
-            record.confirmation() == .confirmed,
-            let confirmedState = record.confirmedState(),
-            record.requestedState() == confirmedState
-        else {
-            return nil
-        }
-        return LightingAccessoryRestoreCandidate(
-            platformIdentifier: identifier,
-            requestedState: confirmedState
-        )
+        guard let record else { return nil }
+        return store.restoreCandidate(platformIdentifier: record.platformIdentifier())
     }
 
     public var requestedState: MobileMelkLightingRestoreStateDto? {
@@ -154,14 +133,8 @@ public final class LightingAccessoryPersistence {
     /// A missing fingerprint intentionally makes restore ineligible rather than guessing that an
     /// old record is still safe after a profile change.
     public var isCompatibleWithCurrentProfile: Bool {
-        guard let record,
-            record.profile() == .melkOc21,
-            record.profileVersion() == Self.currentProfileVersion,
-            let fingerprint = recordCapabilitiesFingerprint
-        else {
-            return false
-        }
-        return fingerprint == Self.currentCapabilitiesFingerprint
+        guard let record else { return false }
+        return store.isCompatibleWithCurrentProfile(platformIdentifier: record.platformIdentifier())
     }
 
     public static var currentProfileVersion: UInt16 {

@@ -1394,7 +1394,7 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertTrue(fake.stateRequests.isEmpty)
         XCTAssertEqual(fake.colorRequests, ["12,34,56"])
         model.markConfirmed()
-        XCTAssertNil(persistence.restoreCandidate())
+        XCTAssertEqual(persistence.restoreCandidate()?.requestedState, persistence.requestedState)
         XCTAssertNil(persistence.confirmedState)
     }
 
@@ -1430,7 +1430,7 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertTrue(model.setPower(false))
         model.markConfirmed()
 
-        XCTAssertNil(restartedPersistence.restoreCandidate())
+        XCTAssertEqual(restartedPersistence.restoreCandidate()?.requestedState, restartedPersistence.requestedState)
         XCTAssertEqual(restartedPersistence.confirmation, .unknown)
     }
 
@@ -1557,6 +1557,45 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(fake.startCalls.last!, "11111111-1111-1111-1111-111111111111")
         XCTAssertEqual(model.accessoryAlias, "aero lights")
         XCTAssertEqual(fake.stopCalls, 2)
+    }
+
+    @MainActor
+    func testLightingRestoresSavedRequestOncePerConnectionAfterRestart() async throws {
+        let suiteName = "CutoutAppRouteTests.restoreRequest.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let identifier = "A1B2C3D4-E5F6-4789-ABCD-0123456789AB"
+        let state = MobileMelkLightingRestoreStateDto(
+            powerOn: true, red: 12, green: 34, blue: 56, brightness: 42,
+            playback: .effect(pattern: 16, speed: 80))
+        let original = LightingAccessoryPersistence(defaults: defaults)
+        original.selectVehicle("aero")
+        XCTAssertTrue(original.ensureRecord(platformIdentifier: identifier))
+        try original.updateRequestedState(state)
+        original.setRestoreEnabled(true)
+
+        let reopened = LightingAccessoryPersistence(defaults: defaults)
+        let fake = TestLightingSession()
+        let model = LightingRouteModel(session: fake, persistence: reopened)
+        model.selectVehicle("aero")
+        fake.emitIdentity(MelkLightingPeripheralIdentity(name: "lights", platformIdentifier: identifier, rssi: -40))
+        fake.emitState(.ready)
+        await Task.yield()
+        await Task.yield()
+        XCTAssertEqual(fake.stateRequests, [state])
+        XCTAssertEqual(reopened.confirmation, .unknown)
+        XCTAssertNil(reopened.confirmedState)
+
+        fake.emitState(.ready)
+        await Task.yield()
+        XCTAssertEqual(fake.stateRequests, [state])
+        fake.emitState(.retrying(attempt: 1, delayMilliseconds: 250))
+        fake.emitState(.ready)
+        await Task.yield()
+        await Task.yield()
+        XCTAssertEqual(fake.stateRequests, [state, state])
+        XCTAssertNotEqual(reopened.confirmation, .confirmed)
+        XCTAssertNil(reopened.confirmedState)
     }
 
 }
