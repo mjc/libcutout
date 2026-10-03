@@ -927,9 +927,9 @@ extension MelkLightingPeripheralState {
         case .idle: localizedAppText("lighting.state.idle")
         case .scanning: localizedAppText("lighting.state.scanning")
         case .connecting: localizedAppText("lighting.state.connecting")
-        case let .retrying(attempt, delayMilliseconds):
+        case let .retrying(_, delayMilliseconds):
             localizedAppText(
-                "lighting.state.retrying", Int64(attempt), Int64(max(1, Int((delayMilliseconds + 999) / 1000))))
+                "lighting.state.retrying", Int64(max(1, Int((delayMilliseconds + 999) / 1000))))
         case .discovering: localizedAppText("lighting.state.discovering")
         case .ready: localizedAppText("lighting.state.ready")
         case .disconnected: localizedAppText("lighting.state.disconnected")

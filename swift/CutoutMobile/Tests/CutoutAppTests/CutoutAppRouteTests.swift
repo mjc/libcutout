@@ -37,6 +37,11 @@ final class CutoutAppRouteTests: XCTestCase {
     func testNavigationLabelsResolveFromTheAppCatalog() {
         XCTAssertEqual(localizedAppText("navigation.tab.cells"), "Cells")
         XCTAssertEqual(localizedAppText("lighting.power"), "Power")
+        XCTAssertEqual(localizedAppText("lighting.default_name"), "Lighting accessory")
+        XCTAssertEqual(localizedAppText("lighting.connection.scanning"), "Scanning")
+        XCTAssertEqual(localizedAppText("lighting.choose_accessory"), "Choose accessory")
+        XCTAssertEqual(localizedAppText("lighting.pairing.nearby_title"), "Nearby devices")
+        XCTAssertEqual(localizedAppText("lighting.pairing.nearby_hint"), "Tap a device")
         XCTAssertEqual(localizedAppText("navigation.tab.faults"), "Faults")
         XCTAssertEqual(localizedAppText("picker.title"), "Choose device")
         XCTAssertEqual(localizedAppText("picker.subtitle.nearby_devices"), "Nearby Bluetooth devices")

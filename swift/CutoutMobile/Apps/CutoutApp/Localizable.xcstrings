@@ -373,11 +373,11 @@
     },
     "lighting.state.idle" : {
       "comment" : "Lighting connection state.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Idle" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Not connected" } } }
     },
     "lighting.state.scanning" : {
       "comment" : "Lighting connection state.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Scanning for MELK-OC21" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Scanning" } } }
     },
     "lighting.state.connecting" : {
       "comment" : "Lighting connection state.",
@@ -385,15 +385,15 @@
     },
     "lighting.state.retrying" : {
       "comment" : "Lighting retry state. Placeholders are attempt and delay seconds.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Retrying (%1$lld) in %2$llds" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Retrying in %llds" } } }
     },
     "lighting.state.discovering" : {
       "comment" : "Lighting connection state.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Preparing lighting controls" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Connecting" } } }
     },
     "lighting.state.ready" : {
       "comment" : "Lighting connection state.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Ready" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Connected" } } }
     },
     "lighting.state.disconnected" : {
       "comment" : "Lighting connection state.",
@@ -401,7 +401,7 @@
     },
     "lighting.state.failed" : {
       "comment" : "Lighting connection failure. Placeholder is the failure reason.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Failed: %@" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Failed" } } }
     },
     "lighting.command.idle" : {
       "comment" : "Lighting command status.",
@@ -505,11 +505,11 @@
     },
     "lighting.pairing.nearby_title" : {
       "comment" : "Heading for the first-pairing accessory list.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Nearby lighting accessories" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Nearby devices" } } }
     },
     "lighting.pairing.nearby_hint" : {
       "comment" : "First-pairing guidance; unknown devices remain read-only until their profile is verified.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Choose a lighting accessory to connect." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Tap a device" } } }
     },
     "lighting.pairing.unknown_name" : {
       "comment" : "Fallback name for an advertisement without a local name.",
@@ -519,9 +519,13 @@
       "comment" : "Accessibility label for lighting accessory details.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Lighting accessory details" } } }
     },
+    "lighting.choose_accessory" : {
+      "comment" : "Open the accessory picker from the Lighting screen.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Choose accessory" } } }
+    },
     "lighting.default_name" : {
-      "comment" : "Fallback name for the verified MELK accessory.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "MELK-OC21 6A" } } }
+      "comment" : "Generic lighting accessory name shown before a connection is ready.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Lighting accessory" } } }
     },
     "lighting.connection.connected" : {
       "comment" : "Lighting connection summary.",
@@ -529,15 +533,15 @@
     },
     "lighting.connection.scanning" : {
       "comment" : "Lighting connection summary.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Scanning for MELK-OC21" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Scanning" } } }
     },
     "lighting.connection.connecting" : {
       "comment" : "Lighting connection summary.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Connecting…" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Connecting" } } }
     },
     "lighting.connection.retrying" : {
       "comment" : "Lighting retry summary. Placeholders are attempt and delay seconds.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Retrying (%1$lld) in %2$llds…" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Retrying in %llds" } } }
     },
     "lighting.connection.not_connected" : {
       "comment" : "Lighting connection summary.",
@@ -549,11 +553,7 @@
     },
     "lighting.connection.ready_to_scan" : {
       "comment" : "Lighting connection summary.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Ready to scan" } } }
-    },
-    "lighting.connection.ride_independent" : {
-      "comment" : "Explains that lighting uses its own Bluetooth connection. Placeholder is ride status.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Ride: %@ · Lighting connects separately." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Not connected" } } }
     },
     "lighting.patterns" : {
       "comment" : "Lighting effects heading.",
@@ -775,9 +775,9 @@
       "comment" : "Lighting solid-color preset summary. Placeholder is brightness.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Solid RGB · %lld%%" } } }
     },
-    "lighting.connect" : {
-      "comment" : "Connect action for a lighting accessory.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Connect" } } }
+    "lighting.retry" : {
+      "comment" : "Retry the lighting accessory connection.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Retry" } } }
     },
     "lighting.restore.toggle" : {
       "comment" : "Lighting restore opt-in toggle.",
@@ -810,14 +810,6 @@
     "lighting.scanning" : {
       "comment" : "Lighting pairing scan status.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Scanning" } } }
-    },
-    "lighting.connection.looking_nearby" : {
-      "comment" : "Lighting pairing scan status.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Looking for nearby accessories…" } } }
-    },
-    "lighting.independent_connection" : {
-      "comment" : "Explains that lighting uses its own Bluetooth connection.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Lighting has its own Bluetooth connection." } } }
     },
     "lighting.alias" : {
       "comment" : "Lighting accessory alias field heading.",

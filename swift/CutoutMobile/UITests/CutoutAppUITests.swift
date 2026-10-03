@@ -1268,10 +1268,16 @@ final class CutoutAppUITests: XCTestCase {
             "lighting.color-wheel",
             "lighting.brightness",
             "lighting.accessory-details",
+            "lighting.choose-accessory",
         ] {
             let element = app.descendants(matching: .any)[identifier]
             XCTAssertTrue(element.waitForExistence(timeout: 5), "Missing live Lighting control: \(identifier)")
         }
+        XCTAssertFalse(app.staticTexts["MELK-OC21 6A"].exists)
+        app.buttons["lighting.choose-accessory"].tap()
+        let addLighting = app.navigationBars["Add lighting"]
+        XCTAssertTrue(addLighting.waitForExistence(timeout: 5))
+        addLighting.buttons["Back"].tap()
         XCTAssertTrue(app.buttons["lighting.quick-preset.red"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["lighting.quick-preset.blue"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["lighting.quick-preset.night"].waitForExistence(timeout: 5))

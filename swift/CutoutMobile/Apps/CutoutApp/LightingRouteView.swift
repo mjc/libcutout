@@ -17,7 +17,7 @@ struct LightingRouteView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 LightingScreenHeader()
-                LightingConnectionCard(model: model, rideModel: rideModel) {
+                LightingConnectionCard(model: model) {
                     showsPairing = true
                 }
                 LightingCommandEvidenceCard(model: model)
@@ -205,7 +205,6 @@ private struct LightingPowerToggle: View {
 
 private struct LightingConnectionCard: View {
     let model: LightingRouteModel
-    let rideModel: CutoutAppModel
     let onDetails: () -> Void
 
     var body: some View {
@@ -218,14 +217,14 @@ private struct LightingConnectionCard: View {
                     .background(PevColors.cyan.opacity(0.14), in: Circle())
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(model.accessoryAlias ?? model.peripheralName ?? localizedAppText("lighting.default_name"))
+                    Text(connectionName)
                         .font(.headline)
                     Text(connectionSummary)
                         .font(.subheadline)
                         .foregroundStyle(connectionStatusColor)
+                        .accessibilityIdentifier("lighting.connection-state")
                 }
                 Spacer(minLength: 8)
-                LightingConnectionPill(model: model, color: connectionStatusColor)
                 Button(action: onDetails) {
                     Image(systemName: "info.circle")
                         .font(.title3)
@@ -234,13 +233,20 @@ private struct LightingConnectionCard: View {
                 .accessibilityLabel(localizedAppText("lighting.accessory.details"))
                 .accessibilityIdentifier("lighting.accessory-details")
             }
-            Label(
-                localizedAppText("lighting.connection.ride_independent", rideModel.connectionStatusText),
-                systemImage: "figure.roll"
-            )
-            .font(.footnote)
-            .foregroundStyle(PevColors.muted)
+            if !model.isReady {
+                Button(action: onDetails) {
+                    Label(localizedAppText("lighting.choose_accessory"), systemImage: "plus")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("lighting.choose-accessory")
+            }
         }
+    }
+
+    private var connectionName: String {
+        guard model.isReady else { return localizedAppText("lighting.default_name") }
+        return model.accessoryAlias ?? model.peripheralName ?? localizedAppText("lighting.default_name")
     }
 
     private var connectionSummary: String {
@@ -256,7 +262,7 @@ private struct LightingConnectionCard: View {
             )
         case .disconnected: localizedAppText("lighting.connection.not_connected")
         case .failed: localizedAppText("lighting.connection.failed")
-        case .idle: localizedAppText("lighting.connection.ready_to_scan")
+        case .idle: localizedAppText("lighting.connection.not_connected")
         }
     }
 
@@ -266,21 +272,6 @@ private struct LightingConnectionCard: View {
         case .failed: PevColors.red
         default: PevColors.yellow
         }
-    }
-}
-
-private struct LightingConnectionPill: View {
-    let model: LightingRouteModel
-    let color: Color
-
-    var body: some View {
-        Label(model.connectionState.displayText, systemImage: model.connectionState.symbolName)
-            .font(.footnote.weight(.semibold))
-            .foregroundStyle(color)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(color.opacity(0.14), in: Capsule())
-            .accessibilityIdentifier("lighting.connection-state")
     }
 }
 
@@ -698,18 +689,16 @@ private struct LightingPairingSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     pairingStatusCard
-                    Button {
-                        if model.canReconnect { model.reconnect() } else { model.start() }
-                    } label: {
-                        Label(
-                            localizedAppText(model.isReady ? "lighting.connection.connected" : "lighting.connect"),
-                            systemImage: "link"
-                        )
-                        .frame(maxWidth: .infinity)
+                    if model.canReconnect {
+                        Button {
+                            model.reconnect()
+                        } label: {
+                            Label(localizedAppText("lighting.retry"), systemImage: "arrow.clockwise")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .accessibilityIdentifier("lighting.pairing.connect")
                     }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(model.isReady)
-                    .accessibilityIdentifier("lighting.pairing.connect")
 
                     if !model.candidates.isEmpty && model.canSelectCandidate {
                         LightingCard {
@@ -802,22 +791,20 @@ private struct LightingPairingSheet: View {
                 Image(systemName: "lightbulb.led.fill")
                     .foregroundStyle(PevColors.cyan)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(model.peripheralName ?? localizedAppText("lighting.scanning"))
-                        .font(.headline)
                     Text(
-                        model.connectionState == .scanning
-                            ? localizedAppText("lighting.connection.looking_nearby")
-                            : model.connectionState.displayText
+                        model.isReady
+                            ? model.accessoryAlias ?? model.peripheralName ?? localizedAppText("lighting.default_name")
+                            : localizedAppText("lighting.default_name")
+                    )
+                    .font(.headline)
+                    Text(
+                        model.isReady
+                            ? localizedAppText("lighting.connection.connected") : model.connectionState.displayText
                     )
                     .font(.subheadline)
                     .foregroundStyle(PevColors.muted)
                 }
-                Spacer()
-                connectionPill
             }
-            Text(localizedAppText("lighting.independent_connection"))
-                .font(.footnote)
-                .foregroundStyle(PevColors.muted)
         }
     }
 
@@ -862,14 +849,4 @@ private struct LightingPairingSheet: View {
         }
     }
 
-    private var connectionPill: some View {
-        Label(model.connectionState.displayText, systemImage: model.connectionState.symbolName)
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(model.connectionState == .ready ? PevColors.green : PevColors.yellow)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5)
-            .background(
-                (model.connectionState == .ready ? PevColors.green : PevColors.yellow).opacity(0.14),
-                in: Capsule())
-    }
 }
