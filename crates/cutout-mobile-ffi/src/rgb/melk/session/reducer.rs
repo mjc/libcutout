@@ -192,7 +192,8 @@ impl SessionReducer {
     }
 
     pub(crate) fn select(&mut self, identifier: &str) {
-        if self.preferred_identifier.is_some()
+        if self.state != MobileMelkLightingSessionStateDto::Scanning
+            || self.preferred_identifier.is_some()
             || self.invalid_preferred_identifier
             || self.selected_identifier.is_some()
         {
@@ -444,7 +445,8 @@ impl SessionReducer {
                 platform_identifier,
                 rssi,
             } => {
-                if self.selected_identifier.is_some()
+                if self.state != MobileMelkLightingSessionStateDto::Scanning
+                    || self.selected_identifier.is_some()
                     || !self.accepts_discovery(name.as_deref(), &platform_identifier)
                 {
                     return;

@@ -225,6 +225,7 @@ fn initializing_core_with_name(
         powered_on: true,
         state_code: 5,
     });
+    core.handle(MobileMelkLightingSessionEventDto::RestoreUnavailable);
     core.handle(MobileMelkLightingSessionEventDto::Discovered {
         name: Some("MELK-OC21  6A".into()),
         platform_identifier: ID.into(),
@@ -352,6 +353,11 @@ fn connected_and_restored_gatt_discovery_have_a_deadline() {
                 pending: false,
             });
         } else {
+            core.handle(MobileMelkLightingSessionEventDto::BluetoothState {
+                powered_on: true,
+                state_code: 5,
+            });
+            core.handle(MobileMelkLightingSessionEventDto::RestoreUnavailable);
             core.handle(MobileMelkLightingSessionEventDto::Discovered {
                 name: Some("MELK-OC21".into()),
                 platform_identifier: ID.into(),
@@ -472,6 +478,7 @@ fn connection_attempt_timeout_cancels_and_returns_to_scanning() {
         powered_on: true,
         state_code: 5,
     });
+    core.handle(MobileMelkLightingSessionEventDto::RestoreUnavailable);
     core.handle(MobileMelkLightingSessionEventDto::Discovered {
         name: Some("MELK-OC21  6A".into()),
         platform_identifier: ID.into(),
@@ -617,6 +624,7 @@ fn preferred_connection_timeouts_are_bounded() {
         powered_on: true,
         state_code: 5,
     });
+    core.handle(MobileMelkLightingSessionEventDto::RestoreUnavailable);
     core.drain_actions();
 
     for _ in 0..4 {
@@ -635,4 +643,44 @@ fn preferred_connection_timeouts_are_bounded() {
         core.snapshot().state,
         MobileMelkLightingSessionStateDto::Failed { .. }
     ));
+    core.drain_actions();
+    let failed = core.snapshot();
+    core.handle(MobileMelkLightingSessionEventDto::Discovered {
+        name: Some("MELK-OC21".into()),
+        platform_identifier: ID.into(),
+        rssi: -60,
+    });
+    assert_eq!(core.snapshot(), failed);
+    assert!(core.drain_actions().is_empty());
+}
+
+#[test]
+fn radio_off_refuses_candidate_selection_and_late_scan_results() {
+    let core = MobileMelkLightingSessionCore::new();
+    core.start(None);
+    core.handle(MobileMelkLightingSessionEventDto::BluetoothState {
+        powered_on: true,
+        state_code: 5,
+    });
+    core.handle(MobileMelkLightingSessionEventDto::Discovered {
+        name: Some("MELK-OC21".into()),
+        platform_identifier: ID.into(),
+        rssi: -60,
+    });
+    core.drain_actions();
+    core.drain_candidates();
+    core.handle(MobileMelkLightingSessionEventDto::BluetoothState {
+        powered_on: false,
+        state_code: 4,
+    });
+    let failed = core.snapshot();
+    core.select_candidate(ID.into());
+    assert_eq!(core.snapshot(), failed);
+    core.handle(MobileMelkLightingSessionEventDto::Discovered {
+        name: Some("MELK-OC21".into()),
+        platform_identifier: ID.into(),
+        rssi: -60,
+    });
+    assert!(core.drain_actions().is_empty());
+    assert!(core.drain_candidates().is_empty());
 }
