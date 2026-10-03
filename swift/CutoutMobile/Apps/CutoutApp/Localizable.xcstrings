@@ -190,6 +190,12 @@
     "bms.pack.voltage" : {
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Pack voltage" } } }
     },
+    "bms.pack.current.pack_1" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Pack 1 current" } } }
+    },
+    "bms.pack.current.pack_2" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Pack 2 current" } } }
+    },
     "bms.pack.current" : {
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Current" } } }
     },

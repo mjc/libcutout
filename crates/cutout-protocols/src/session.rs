@@ -1,19 +1,21 @@
 use arrayvec::ArrayVec;
 use core::{fmt, marker::PhantomData};
 use cutout_core::{
-    BATTERY_TEMPERATURE_VALUES_PER_PAGE, BatteryCurrent, BatteryInfo, BatteryPageKind,
-    BatteryPageMetadata, BatteryPagePayload, BatteryReadback, BatterySpec, Capabilities,
-    CommandKind, ControlRefusal, ControlRefusalReason, Count, DeviceCommand, DeviceEvent,
-    DiagnosticDetail, DiagnosticReadback, DiagnosticSeverity, FirmwareInfo, GattChannel,
-    GattFingerprint, GattRoles, LightCommandState, Measured, ModelRegistryEntry,
-    MonotonicTimestamp, NotificationByteLen, NotificationIngestOutcome, ParserDiagnostics,
-    ParserError, ParserGapEvidence, PayloadBodyLen, PayloadClassifier, ProtocolFamily,
-    ProtocolSelector, ProtocolSession, Quantity, RawFieldValue, RawTelemetryReadback,
-    ReadOnlyResponse, RequestedLightState, ReservedPayloadEvidence, RetainedNotificationPayload,
-    SafetyClass, SemanticEventCount, SeriesCount, SessionInput, SessionOutput, Temperature,
-    TransportAction, Unit, ValueQuality, VerificationStatus, VerifiedValue, Voltage, WriteMode,
-    WritePayload,
+    BATTERY_TEMPERATURE_VALUES_PER_PAGE, BatteryInfo, BatteryPageKind, BatteryPageMetadata,
+    BatteryPagePayload, BatteryReadback, BatterySpec, Capabilities, CommandKind, ControlRefusal,
+    ControlRefusalReason, Count, DeviceCommand, DeviceEvent, DiagnosticDetail, DiagnosticReadback,
+    DiagnosticSeverity, FirmwareInfo, GattChannel, GattFingerprint, GattRoles, LightCommandState,
+    Measured, ModelRegistryEntry, MonotonicTimestamp, NotificationByteLen,
+    NotificationIngestOutcome, ParserDiagnostics, ParserError, ParserGapEvidence, PayloadBodyLen,
+    PayloadClassifier, ProtocolFamily, ProtocolSelector, ProtocolSession, Quantity, RawFieldValue,
+    RawTelemetryReadback, ReadOnlyResponse, RequestedLightState, ReservedPayloadEvidence,
+    RetainedNotificationPayload, SafetyClass, SemanticEventCount, SeriesCount, SessionInput,
+    SessionOutput, Temperature, TransportAction, Unit, ValueQuality, VerificationStatus,
+    VerifiedValue, Voltage, WriteMode, WritePayload,
 };
+
+#[cfg(test)]
+use cutout_core::BatteryCurrent;
 
 use crate::{
     AeroProbe, AeroRequestEncoder, BEGODE_DATA_CHANNEL, BEGODE_SERVICE_CHANNEL, BegodeFrame,
@@ -1696,15 +1698,9 @@ fn veteran_bms_temperature_payload(page: VeteranBmsTemperaturePage) -> BatteryPa
 }
 
 fn veteran_bms_metadata_payload(page: VeteranBmsMetadataPage) -> BatteryPagePayload {
-    let battery = BatteryInfo {
-        current: Some(Measured::reported(BatteryCurrent::from_milliamps(
-            page.currents.current_0().as_milliamps(),
-        ))),
-        ..BatteryInfo::default()
-    };
     BatteryPagePayload::raw(
         BatteryPageMetadata::metadata(page.selector, VerificationStatus::HardwareVerified),
-        battery,
+        BatteryInfo::default(),
     )
     .with_bms_pack_currents(page.currents)
 }
@@ -5133,8 +5129,7 @@ mod tests {
                         == ProtocolSelector::new(0)
                         && payload.page().kind == BatteryPageKind::Metadata
                         && payload.page().verification == VerificationStatus::HardwareVerified
-                        && payload.battery().current
-                            == Some(Measured::reported(BatteryCurrent::from_milliamps(20)))
+                        && payload.battery().current.is_none()
                         && payload.bms_pack_currents()
                             == Some(cutout_core::BmsPackCurrents::reported(
                                 BatteryCurrent::from_milliamps(20),
@@ -5156,10 +5151,7 @@ mod tests {
 
         let battery = payload.battery();
         assert_eq!(payload.page().kind, BatteryPageKind::Metadata);
-        assert_eq!(
-            battery.current,
-            Some(Measured::reported(BatteryCurrent::from_milliamps(-1_230)))
-        );
+        assert_eq!(battery.current, None);
         assert_eq!(
             payload.bms_pack_currents(),
             Some(cutout_core::BmsPackCurrents::reported(

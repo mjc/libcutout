@@ -331,6 +331,30 @@ final class BmsSnapshotContractTests: XCTestCase {
         XCTAssertEqual(snapshot.captureActionState, "disabled for launch")
     }
 
+    func testPairedPackCurrentsArePresentedSeparatelyInsteadOfAsAnAmbiguousCurrent() {
+        let snapshot = BmsSnapshot(
+            topology: BmsTopology(
+                layoutLabel: "30S2P",
+                seriesGroupCount: 30,
+                parallelCount: 2,
+                packCount: 1,
+                bmsCount: 1,
+                confidence: .verified
+            ),
+            current: BatteryCurrent(value: -10_000),
+            bmsPackCurrent0: BatteryCurrent(value: -5_000),
+            bmsPackCurrent1: BatteryCurrent(value: -5_000)
+        )
+
+        XCTAssertEqual(
+            snapshot.currentReadings,
+            [
+                BmsCurrentReading(packIndex: 1, current: BatteryCurrent(value: -5_000)),
+                BmsCurrentReading(packIndex: 2, current: BatteryCurrent(value: -5_000)),
+            ]
+        )
+    }
+
     func testSnapshotKeepsUnknownTopologyExplicitWithoutInventedGroups() {
         let snapshot = BmsSnapshot(
             topology: BmsTopology(

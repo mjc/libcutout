@@ -33,7 +33,7 @@ struct BmsPackLayout: View {
                     spread: spread)
             }
 
-            if snapshot.energyPercent != nil || snapshot.voltage != nil || snapshot.current != nil {
+            if snapshot.energyPercent != nil || snapshot.voltage != nil || !snapshot.currentReadings.isEmpty {
                 packMeasurements
             }
 
@@ -251,10 +251,11 @@ struct BmsPackLayout: View {
                 )
                 .accessibilityIdentifier("bms.pack.voltage")
             }
-            if let current = snapshot.current {
+            ForEach(snapshot.currentReadings, id: \.packIndex) { reading in
                 BmsReadingMetric(
-                    title: localizedAppText("bms.pack.current"),
-                    value: RideUnits.decimalString(Double(current.value) / 1_000, fractionDigits: 1), unit: "A")
+                    title: reading.packIndex.map { localizedAppText("bms.pack.current.pack_\($0)") }
+                        ?? localizedAppText("bms.pack.current"),
+                    value: RideUnits.decimalString(Double(reading.current.value) / 1_000, fractionDigits: 1), unit: "A")
             }
         }
         .bmsPanel()

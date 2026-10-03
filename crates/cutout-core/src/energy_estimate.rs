@@ -675,7 +675,7 @@ pub enum ChargeEstimateResetReason {
     StaleGap,
     /// A sample timestamp moved backwards.
     TimestampOrder,
-    /// Current evidence changed provenance, verification, or polarity.
+    /// Current evidence changed provenance or verification.
     CurrentEvidenceChanged,
     /// The usable pack profile changed.
     CapacityChanged,
@@ -856,7 +856,6 @@ impl CurrentRateWindow {
 pub struct ChargeEstimator {
     session: Option<ChargeSessionIdentity>,
     window: CurrentRateWindow,
-    last_current_negative: Option<bool>,
     last_current_source: Option<ValueSource>,
     last_current_verification: Option<VerificationStatus>,
     last_charge_mode_source: Option<ValueSource>,
@@ -869,7 +868,6 @@ pub struct ChargeEstimator {
 #[derive(Clone, Copy)]
 struct ValidatedChargeSample {
     current: i64,
-    current_negative: bool,
     battery_current: Measured<BatteryCurrent>,
     level_confidence: EstimateConfidence,
 }
@@ -890,7 +888,6 @@ impl ChargeEstimator {
                 last_current: 0,
                 variability_q8: 0,
             },
-            last_current_negative: None,
             last_current_source: None,
             last_current_verification: None,
             last_charge_mode_source: None,
@@ -927,7 +924,6 @@ impl ChargeEstimator {
         }
 
         self.window.observe(input.observed_at, sample.current);
-        self.last_current_negative = Some(sample.current_negative);
         self.last_current_source = Some(sample.battery_current.source);
         self.last_current_verification = Some(sample.battery_current.verification);
         self.last_charge_mode_source = Some(input.charge_mode.source);
@@ -969,17 +965,18 @@ impl ChargeEstimator {
             self.reset_with_reason(ChargeEstimateResetReason::ChargingStopped);
             return Err(unavailable(ChargeEstimateUnavailableReason::NotCharging));
         }
-        if !input.flow.verification.is_trusted() {
-            self.reset_with_reason(ChargeEstimateResetReason::ChargingStopped);
-            return Err(unavailable(
-                ChargeEstimateUnavailableReason::CurrentDirectionUnverified,
-            ));
-        }
-        if !input.flow.value.is_charging() {
-            self.reset_with_reason(ChargeEstimateResetReason::ChargingStopped);
-            return Err(unavailable(
-                ChargeEstimateUnavailableReason::ContradictoryInputs,
-            ));
+        // A fresh, trusted protocol charging flag establishes that charging is
+        // active. Use the measured current magnitude as the rate; its sign is
+        // protocol-specific and is not needed for this estimate. Still reject
+        // explicit contradictory flow evidence.
+        match input.flow.value {
+            ChargeFlow::Charging | ChargeFlow::Unknown => {}
+            ChargeFlow::Discharging | ChargeFlow::Regeneration | ChargeFlow::Zero => {
+                self.reset_with_reason(ChargeEstimateResetReason::ChargingStopped);
+                return Err(unavailable(
+                    ChargeEstimateUnavailableReason::ContradictoryInputs,
+                ));
+            }
         }
         let Some(battery_current) = input.battery_current else {
             return Err(unavailable(ChargeEstimateUnavailableReason::CurrentMissing));
@@ -997,16 +994,6 @@ impl ChargeEstimator {
                 ChargeEstimateUnavailableReason::CurrentTooSmall,
             ));
         }
-        let current_negative = battery_current.value.as_milliamps().is_negative();
-        if self
-            .last_current_negative
-            .is_some_and(|previous| previous != current_negative)
-        {
-            self.reset_with_reason(ChargeEstimateResetReason::CurrentEvidenceChanged);
-            return Err(unavailable(
-                ChargeEstimateUnavailableReason::ContradictoryInputs,
-            ));
-        }
         if !input.usable_capacity.verification.is_trusted()
             || input.usable_capacity.as_milliamp_hours() == 0
         {
@@ -1018,7 +1005,6 @@ impl ChargeEstimator {
         validate_battery_temperature(input.battery_temperature)?;
         Ok(ValidatedChargeSample {
             current,
-            current_negative,
             battery_current,
             level_confidence,
         })
@@ -1095,7 +1081,6 @@ impl ChargeEstimator {
 
     fn reset_with_reason(&mut self, reason: ChargeEstimateResetReason) {
         self.window.reset();
-        self.last_current_negative = None;
         self.last_current_source = None;
         self.last_current_verification = None;
         self.last_charge_mode_source = None;
@@ -1449,14 +1434,14 @@ mod tests {
     }
 
     #[test]
-    fn charging_requires_verified_direction_and_explicit_mode() {
+    fn charging_requires_trusted_explicit_mode() {
         let mut estimator = ChargeEstimator::new();
         let mut sample = input(0, -2_000, 50);
-        sample.flow = Measured::estimated(ChargeFlow::Charging);
+        sample.charge_mode = Measured::estimated(ChargeMode::Charging);
         assert_eq!(
             estimator.update(sample),
             ChargeEstimateState::Unavailable {
-                reason: ChargeEstimateUnavailableReason::CurrentDirectionUnverified,
+                reason: ChargeEstimateUnavailableReason::NotCharging,
             }
         );
         let mut sample = input(1_000, -2_000, 50);
@@ -1467,6 +1452,31 @@ mod tests {
                 reason: ChargeEstimateUnavailableReason::NotCharging,
             }
         );
+    }
+
+    #[test]
+    fn explicit_charging_mode_allows_current_magnitude_without_polarity_evidence() {
+        let mut estimator = ChargeEstimator::new();
+        let mut first = input(0, -5_000, 50);
+        first.flow = Measured::estimated(ChargeFlow::Charging);
+        assert!(matches!(
+            estimator.update(first),
+            ChargeEstimateState::CollectingSamples { .. }
+        ));
+
+        let mut second = input(15_000, 5_000, 50);
+        second.flow = Measured::estimated(ChargeFlow::Unknown);
+        assert!(matches!(
+            estimator.update(second),
+            ChargeEstimateState::CollectingSamples { .. }
+        ));
+
+        let mut third = input(30_000, -5_000, 50);
+        third.flow = Measured::estimated(ChargeFlow::Unknown);
+        let ChargeEstimateState::Available(estimate) = estimator.update(third) else {
+            panic!("explicit charging mode and measured current magnitude should estimate time");
+        };
+        assert_eq!(estimate.expected.as_minutes(), 60);
     }
 
     #[test]
@@ -1487,25 +1497,17 @@ mod tests {
     }
 
     #[test]
-    fn current_polarity_change_resets_as_contradictory() {
+    fn current_sign_change_does_not_reset_an_explicit_charge_magnitude_estimate() {
         let mut estimator = ChargeEstimator::new();
         let _ = estimator.update(input(0, -2_000, 50));
         let _ = estimator.update(input(15_000, -2_000, 50));
 
-        assert_eq!(
-            estimator.update(input(30_000, 2_000, 50)),
-            ChargeEstimateState::Unavailable {
-                reason: ChargeEstimateUnavailableReason::ContradictoryInputs,
-            }
-        );
-        assert_eq!(
-            estimator.last_reset_reason(),
-            Some(ChargeEstimateResetReason::CurrentEvidenceChanged)
-        );
-        assert!(matches!(
-            estimator.update(input(45_000, 2_000, 50)),
-            ChargeEstimateState::CollectingSamples { samples: 1, .. }
-        ));
+        let ChargeEstimateState::Available(estimate) = estimator.update(input(30_000, 2_000, 50))
+        else {
+            panic!("explicit charging mode should estimate from current magnitude");
+        };
+        assert_eq!(estimate.expected.as_minutes(), 150);
+        assert_eq!(estimator.last_reset_reason(), None);
     }
 
     #[test]
