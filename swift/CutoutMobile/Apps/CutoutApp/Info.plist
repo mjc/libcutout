@@ -38,11 +38,11 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSAppleMusicUsageDescription</key>
-	<string>CutOut lets you view and control Apple Music playback. If you enable listening history, it saves song identifiers, timestamps, and optionally titles and artists on this device so you can see what you listened to during a ride. CutOut does not record audio.</string>
+	<string>CutOut controls Apple Music playback. Optional ride listening history saves song IDs, times, and optionally titles and artists on this device. CutOut does not record audio.</string>
 	<key>NSBluetoothAlwaysUsageDescription</key>
-	<string>CutOut connects to your vehicle over Bluetooth to show live telemetry and keep an active ride recording when the screen is locked.</string>
+	<string>CutOut uses Bluetooth to show wheel data and record active rides while the screen is locked.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>CutOut uses the local camera Wi-Fi network for read-only camera identity, preview, recording status, and media access.</string>
+	<string>CutOut connects to cameras on local Wi-Fi to show previews, recording status, and files.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>CutOut uses your location to record your ride route. An active ride can continue recording when the screen is locked.</string>
 	<key>NSLocationAlwaysUsageDescription</key>

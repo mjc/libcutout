@@ -50,32 +50,32 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(localizedAppText("bms.overview.balancing"), "Balancing")
         XCTAssertEqual(localizedAppText("bms.overview.fault_state"), "Fault state")
         XCTAssertEqual(localizedAppText("bms.overview.pack_telemetry"), "Pack telemetry")
-        XCTAssertEqual(localizedAppText("bms.unknown.title"), "Do not pretend certainty")
+        XCTAssertEqual(localizedAppText("bms.unknown.title"), "Battery details unavailable")
         XCTAssertEqual(localizedAppText("bms.unknown.reported_voltage"), "Reported voltage")
         XCTAssertEqual(localizedAppText("bms.unknown.cell_count"), "Cell count")
         XCTAssertEqual(localizedAppText("bms.unknown.temperatures"), "Temperatures")
         XCTAssertEqual(localizedAppText("bms.unknown.fault_bits"), "Fault bits")
-        XCTAssertEqual(localizedAppText("bms.unknown.next_capture_flow"), "Next capture flow")
+        XCTAssertEqual(localizedAppText("bms.unknown.next_capture_flow"), "Record Bluetooth data")
         XCTAssertEqual(localizedAppText("bms.no_data.confidence.medium"), "Medium")
         XCTAssertEqual(localizedAppText("bms.no_data.confidence.low"), "Low")
         XCTAssertEqual(localizedAppText("bms.no_data.confidence.unknown"), "Unknown")
-        XCTAssertEqual(localizedAppText("bms.no_data.confidence_detail.not_cell_safe"), "Not cell-safe")
+        XCTAssertEqual(localizedAppText("bms.no_data.confidence_detail.not_cell_safe"), "Cell data unavailable")
         XCTAssertEqual(localizedAppText("bms.no_data.confidence_detail.telemetry_unavailable"), "Telemetry unavailable")
         XCTAssertEqual(localizedAppText("bms.no_data.pack_estimate"), "PACK ESTIMATE")
         XCTAssertEqual(localizedAppText("bms.no_data.confidence"), "CONFIDENCE")
-        XCTAssertEqual(localizedAppText("bms.no_data.what_we_can_see"), "WHAT WE CAN SEE")
+        XCTAssertEqual(localizedAppText("bms.no_data.what_we_can_see"), "AVAILABLE DATA")
         XCTAssertEqual(localizedAppText("bms.no_data.pack_voltage"), "Pack voltage")
         XCTAssertEqual(localizedAppText("bms.no_data.ride_sag"), "Ride sag")
         XCTAssertEqual(localizedAppText("bms.no_data.load_now"), "Load now")
-        XCTAssertEqual(localizedAppText("bms.no_data.what_is_unknown"), "WHAT IS UNKNOWN")
+        XCTAssertEqual(localizedAppText("bms.no_data.what_is_unknown"), "UNAVAILABLE DATA")
         XCTAssertEqual(localizedAppText("bms.no_data.pack_estimate_accessibility"), "Pack estimate")
         XCTAssertEqual(localizedAppText("bms.no_data.confidence_accessibility"), "Confidence")
         XCTAssertEqual(
-            localizedAppText("bms.no_data.estimate_detail.recent_sag"), "Derived from voltage curve + recent sag")
-        XCTAssertEqual(localizedAppText("bms.no_data.estimate_detail.voltage_curve"), "Derived from voltage curve only")
+            localizedAppText("bms.no_data.estimate_detail.recent_sag"), "Based on voltage and voltage sag")
+        XCTAssertEqual(localizedAppText("bms.no_data.estimate_detail.voltage_curve"), "Based on voltage")
         XCTAssertEqual(localizedAppText("bms.no_data.estimate_detail.unavailable"), "Estimate unavailable")
         XCTAssertEqual(localizedAppText("bms.diagnostics.title"), "BMS diagnostics")
-        XCTAssertEqual(localizedAppText("bms.diagnostics.detail"), "Raw readback, available when we need to debug")
+        XCTAssertEqual(localizedAppText("bms.diagnostics.detail"), "Battery readings and fault codes")
         XCTAssertEqual(localizedAppText("bms.display_modes"), "Display modes")
         XCTAssertEqual(localizedAppText("picker.section.setup"), "Setup")
         XCTAssertEqual(localizedAppText("picker.advanced_capture"), "Capture unknown device")
@@ -120,7 +120,7 @@ final class CutoutAppRouteTests: XCTestCase {
         )
         XCTAssertEqual(
             localizedAppText("camera.connection.bluetooth_warning"),
-            "Camera Wi-Fi may interfere with Bluetooth audio. Ride telemetry continues independently."
+            "Camera Wi-Fi may interrupt Bluetooth audio."
         )
         XCTAssertEqual(
             localizedAppText("camera.command.timed_out"),
@@ -128,7 +128,7 @@ final class CutoutAppRouteTests: XCTestCase {
         )
         XCTAssertEqual(
             localizedAppText("camera.error.unsupported_profile"),
-            "Camera firmware is not the verified R3 Pro profile."
+            "Unsupported camera firmware."
         )
         XCTAssertEqual(
             localizedAppText("camera.error.origin_mismatch"),
@@ -137,12 +137,12 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(localizedAppText("camera.preview.export"), "Export preview")
         XCTAssertEqual(localizedAppText("camera.action.back"), "Back to ride")
         XCTAssertEqual(
-            localizedAppText("bms.no_data.pack_estimate_accessibility_value", "71", "Derived from voltage curve"),
-            "71%. Derived from voltage curve"
+            localizedAppText("bms.no_data.pack_estimate_accessibility_value", "71", "Based on voltage"),
+            "71%. Based on voltage"
         )
         XCTAssertEqual(
-            localizedAppText("bms.no_data.confidence_accessibility_value", "Medium", "Not cell-safe"),
-            "Medium. Not cell-safe"
+            localizedAppText("bms.no_data.confidence_accessibility_value", "Medium", "Cell data unavailable"),
+            "Medium. Cell data unavailable"
         )
         XCTAssertEqual(
             PevScreen(id: .bmsCellDetail, title: "", subtitle: "", secondaryValue: "").tabTitle,
@@ -497,11 +497,11 @@ final class CutoutAppRouteTests: XCTestCase {
         )
         XCTAssertEqual(
             SessionConnectionPhase.failed(.identificationFailed(.conflictingEvidence)).accessibilityAnnouncement,
-            "Connection failed. Choose a device to try again. Device identification found conflicting evidence"
+            "Connection failed. Choose a device to try again. Device identification failed"
         )
         XCTAssertEqual(
             SessionConnectionPhase.failed(.identificationFailed(.unsupported)).accessibilityAnnouncement,
-            "Connection failed. Choose a device to try again. Device does not support this identification probe"
+            "Connection failed. Choose a device to try again. Device identification unsupported"
         )
     }
 

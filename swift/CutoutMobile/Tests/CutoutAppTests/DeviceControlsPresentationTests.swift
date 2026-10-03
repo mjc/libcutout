@@ -209,7 +209,7 @@ final class DeviceControlsPresentationTests: XCTestCase {
             "Connect to the wheel before sending a command.")
         XCTAssertEqual(
             DeviceControlPresentation.error(DeviceSettingSubmissionError.Unverified),
-            "Writing this control has not been verified.")
+            "This setting is unavailable for this wheel.")
         XCTAssertEqual(
             DeviceControlPresentation.error(DeviceSettingSubmissionError.InvalidValue),
             "Choose one of the available values.")
@@ -229,7 +229,7 @@ final class DeviceControlsPresentationTests: XCTestCase {
         }
         XCTAssertEqual(
             DeviceControlPresentation.error(CutoutSessionError.commandRefused(.missingArm)),
-            "Speed too high, unavailable, or state not allowed")
+            "Stop the wheel and wait for current ride data.")
         XCTAssertEqual(DeviceControlPresentation.error(CutoutSessionError.commandRefused(nil)), "Refused")
         XCTAssertEqual(
             DeviceControlPresentation.error(CutoutSessionError.unexpectedStepError("diagnostic")),

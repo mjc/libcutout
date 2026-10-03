@@ -134,7 +134,7 @@ final class PevScreenCatalogTests: XCTestCase {
         XCTAssertEqual(catalog.screen(id: .vescDebug)?.title, "VESC state")
         XCTAssertEqual(pevLocalizedText("bms.chip.bms_online", Int64(2)), "2 BMS online")
         XCTAssertEqual(
-            pevLocalizedText("bms.subtitle.controller_estimate", "6S pack"), "6S pack · controller-only estimate")
+            pevLocalizedText("bms.subtitle.controller_estimate", "6S pack"), "6S pack · estimated")
     }
 
     func testBmsDisplayModeTitlesResolveFromThePackageCatalog() {
@@ -152,7 +152,7 @@ final class PevScreenCatalogTests: XCTestCase {
             pevLocalizedText("charge.estimate.detail.collecting.plural", Int64(2)),
             "estimating charge time · 2 samples"
         )
-        XCTAssertEqual(pevLocalizedText("charge.estimate.kind.profile_backed"), "profile-backed")
+        XCTAssertEqual(pevLocalizedText("charge.estimate.kind.profile_backed"), "time to full")
         XCTAssertEqual(pevLocalizedText("charge.estimate.confidence.medium"), "medium")
         XCTAssertEqual(
             pevLocalizedText("charge.estimate.unavailable.capacity_missing"),
@@ -202,11 +202,11 @@ final class PevScreenCatalogTests: XCTestCase {
         XCTAssertEqual(pevLocalizedText("euc.warning.waiting_for_speed"), "Waiting for speed telemetry")
         XCTAssertEqual(pevLocalizedText("euc.warning.live_telemetry_detail"), "Receiving wheel data")
         XCTAssertEqual(pevLocalizedText("euc.warning.waiting_for_telemetry"), "Waiting for telemetry")
-        XCTAssertEqual(pevLocalizedText("euc.warning.subscribed_no_values"), "Subscribed; no ride values yet")
+        XCTAssertEqual(pevLocalizedText("euc.warning.subscribed_no_values"), "Connected · waiting for ride data")
         XCTAssertEqual(pevLocalizedText("euc.warning.telemetry_unavailable"), "Telemetry unavailable")
-        XCTAssertEqual(pevLocalizedText("euc.warning.no_live_snapshot"), "No live snapshot yet")
+        XCTAssertEqual(pevLocalizedText("euc.warning.no_live_snapshot"), "No ride data")
         XCTAssertEqual(pevLocalizedText("euc.warning.waiting_for_live_telemetry"), "Waiting for live telemetry")
-        XCTAssertEqual(pevLocalizedText("euc.warning.screen_inactive"), "Ride screen is not active yet")
+        XCTAssertEqual(pevLocalizedText("euc.warning.screen_inactive"), "Ride screen inactive")
         XCTAssertEqual(pevLocalizedText("euc.warning.telemetry_stale"), "Telemetry stale")
         XCTAssertEqual(pevLocalizedText("euc.warning.last_update", "3 seconds"), "Last update 3 seconds ago")
         XCTAssertEqual(pevLocalizedText("euc.status.parked"), "Parked")

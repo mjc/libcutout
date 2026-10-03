@@ -696,7 +696,7 @@ final class PevScreenThemeTests: XCTestCase {
 
         XCTAssertEqual(
             card.accessibilityValueText,
-            "CutOut can’t see individual cell balance or weak groups. and BMS temperature, faults, or cutout reason stay unavailable."
+            "Cell balance data unavailable. and Battery temperature and fault data unavailable."
         )
     }
 
