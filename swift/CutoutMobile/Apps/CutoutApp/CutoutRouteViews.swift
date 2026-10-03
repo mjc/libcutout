@@ -682,7 +682,7 @@ final class LightingRouteModel {
 
     func markConfirmed() {
         guard commandStatus == .requested, pendingCommandScope != .none else { return }
-        session.markLastCommandConfirmed()
+        guard session.markLastCommandConfirmed() else { return }
         commandStatus = .confirmed
         switch pendingCommandScope {
         case .none:

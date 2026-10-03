@@ -79,7 +79,7 @@ import Foundation
         @discardableResult func setEffectSpeed(_ speed: UInt8) -> Bool
         @discardableResult func applyState(_ state: MobileMelkLightingRestoreStateDto) throws -> Bool
         @discardableResult func setSchedule(_ schedule: MobileMelkScheduleDto, clock: MobileMelkClockDto) throws -> Bool
-        func markLastCommandConfirmed()
+        @discardableResult func markLastCommandConfirmed() -> Bool
         func markLastCommandUnconfirmed()
     }
 
@@ -240,10 +240,12 @@ import Foundation
             }
         }
 
-        public func markLastCommandConfirmed() {
+        @discardableResult
+        public func markLastCommandConfirmed() -> Bool {
             onQueue {
-                core.markLastCommandConfirmed()
+                let confirmed = core.markLastCommandConfirmed()
                 syncCore()
+                return confirmed
             }
         }
 

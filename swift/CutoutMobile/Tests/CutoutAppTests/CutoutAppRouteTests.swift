@@ -1488,6 +1488,26 @@ final class CutoutAppRouteTests: XCTestCase {
     }
 
     @MainActor
+    func testRouteDoesNotPersistConfirmationWhenRustRejectsAnUndrainedBatch() throws {
+        let suiteName = "CutoutAppRouteTests.earlyConfirmation"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let persistence = LightingAccessoryPersistence(defaults: defaults)
+        XCTAssertTrue(persistence.ensureRecord(platformIdentifier: "A1B2C3D4-E5F6-4789-ABCD-0123456789AB"))
+        let fake = TestLightingSession()
+        fake.confirmationResult = false
+        let model = LightingRouteModel(session: fake, persistence: persistence)
+
+        model.setPlayback(.effect(pattern: 16, speed: 50))
+        model.markConfirmed()
+
+        XCTAssertEqual(model.commandStatus, .requested)
+        XCTAssertNil(persistence.confirmedState)
+        XCTAssertNotEqual(persistence.confirmation, .confirmed)
+    }
+
+    @MainActor
     func testLightingRouteModelConsumesTypedIdentityEvents() async throws {
         let suiteName = "CutoutAppRouteTests.lightingIdentity"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
@@ -1535,6 +1555,7 @@ private final class TestLightingSession: MelkLightingPeripheralSessionProtocol {
     var scheduleRequests: [MobileMelkScheduleDto] = []
     var powerResult = true
     var colorResult = true
+    var confirmationResult = true
     var brightnessResult = true
     var powerRequests: [Bool] = []
     var colorRequests: [String] = []
@@ -1582,7 +1603,7 @@ private final class TestLightingSession: MelkLightingPeripheralSessionProtocol {
         return stateResult
     }
 
-    func markLastCommandConfirmed() {}
+    func markLastCommandConfirmed() -> Bool { confirmationResult }
     func markLastCommandUnconfirmed() {}
 
     func emitIdentity(_ identity: MelkLightingPeripheralIdentity) {

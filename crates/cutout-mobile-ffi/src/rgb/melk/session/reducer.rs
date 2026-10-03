@@ -777,10 +777,12 @@ impl SessionReducer {
         }
     }
 
-    pub(crate) fn mark_last_command_confirmed(&mut self) {
-        if self.command_status == 1 {
-            self.command_status = 2;
+    pub(crate) fn mark_last_command_confirmed(&mut self) -> bool {
+        if self.command_status != 1 || !self.writes.is_empty() {
+            return false;
         }
+        self.command_status = 2;
+        true
     }
 
     pub(crate) fn mark_last_command_unconfirmed(&mut self) {

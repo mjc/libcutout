@@ -147,8 +147,7 @@ import Foundation
                 "effect" where parts.count == 2 || parts.count == 3:
                 handleLighting(parts, session: session)
             case "confirm":
-                session.markLastCommandConfirmed()
-                print("evidence=confirmed")
+                print("evidence=\(session.markLastCommandConfirmed() ? "confirmed" : "pending_writes")")
             case "unconfirm":
                 session.markLastCommandUnconfirmed()
                 print("evidence=unconfirmed")

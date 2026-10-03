@@ -641,6 +641,32 @@ fn rejected_remembered_profile_cancels_the_active_connection() {
 }
 
 #[test]
+fn disconnect_after_early_confirmation_marks_a_partial_state_unconfirmed() {
+    let core = ready_core();
+    assert!(
+        core.apply_state(MobileMelkLightingRestoreStateDto {
+            power_on: true,
+            red: 12,
+            green: 34,
+            blue: 56,
+            brightness: 80,
+            playback: None,
+        })
+        .unwrap()
+    );
+    core.flush_writes(true);
+    core.drain_actions();
+
+    assert!(!core.mark_last_command_confirmed());
+    core.handle(MobileMelkLightingSessionEventDto::Disconnected {
+        reason: "link lost during state update".into(),
+        powered_on: true,
+    });
+
+    assert_eq!(core.snapshot().command_status, 3);
+}
+
+#[test]
 fn reducer_coalesces_color_preview_writes_and_waits_for_capacity() {
     let core = ready_core();
     assert!(core.set_solid_color(255, 0, 0));
