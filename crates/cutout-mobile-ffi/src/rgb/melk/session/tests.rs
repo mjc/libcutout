@@ -4,6 +4,70 @@ use crate::{MobileMelkLightingError, MobileMelkLightingRestoreStateDto};
 const ID: &str = "11111111-1111-1111-1111-111111111111";
 
 #[test]
+fn failed_sessions_discard_the_previous_reconnect_timer() {
+    let core = ready_core();
+    core.handle(MobileMelkLightingSessionEventDto::Disconnected {
+        reason: "link lost".into(),
+        powered_on: true,
+    });
+    core.drain_actions();
+    // Subscription errors may arrive after CoreBluetooth reports a disconnect.
+    core.handle(MobileMelkLightingSessionEventDto::NotificationState {
+        characteristic: cutout_protocols::MELK_NOTIFY_CHANNEL.as_uuid().into(),
+        ready: false,
+        can_send: false,
+        error: Some("subscription lost".into()),
+    });
+    core.drain_actions();
+    let failed = core.snapshot();
+    assert!(matches!(
+        failed.state,
+        MobileMelkLightingSessionStateDto::Failed { .. }
+    ));
+    core.handle(MobileMelkLightingSessionEventDto::TimerFired {
+        timer: MobileMelkLightingTimerDto::Reconnect,
+        can_send: true,
+    });
+    assert_eq!(core.snapshot(), failed);
+    assert!(core.drain_actions().is_empty());
+}
+
+#[test]
+fn stopped_sessions_ignore_late_transport_callbacks() {
+    for event in [
+        MobileMelkLightingSessionEventDto::BluetoothState {
+            powered_on: true,
+            state_code: 5,
+        },
+        MobileMelkLightingSessionEventDto::Restored {
+            name: Some("MELK-OC21".into()),
+            platform_identifier: ID.into(),
+            connected: true,
+            pending: false,
+        },
+        MobileMelkLightingSessionEventDto::Connected {
+            name: Some("MELK-OC21".into()),
+            platform_identifier: ID.into(),
+        },
+        MobileMelkLightingSessionEventDto::ConnectFailed {
+            reason: "late failure".into(),
+        },
+        MobileMelkLightingSessionEventDto::Notification {
+            characteristic: cutout_protocols::MELK_NOTIFY_CHANNEL.as_uuid().into(),
+            bytes: vec![1, 2, 3],
+        },
+    ] {
+        let core = ready_core();
+        core.stop();
+        let stopped = core.snapshot();
+        core.handle(event.clone());
+        assert_eq!(core.snapshot(), stopped, "late event: {event:?}");
+        assert!(core.drain_actions().is_empty());
+        assert!(core.drain_notifications().is_empty());
+    }
+}
+
+#[test]
 fn resume_restarts_exhausted_retries_and_keeps_the_remembered_identity() {
     let core = ready_core();
     for _ in 0..4 {

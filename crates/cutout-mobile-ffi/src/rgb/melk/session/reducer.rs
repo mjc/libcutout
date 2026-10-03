@@ -114,6 +114,7 @@ impl SessionReducer {
         } {
             self.reconnect_attempt = 0;
         } else {
+            self.timer = None;
             if self.command_status == 1 {
                 self.command_status = 3;
             }
@@ -390,6 +391,9 @@ impl SessionReducer {
         reason = "The reducer keeps event transitions explicit and auditable."
     )]
     pub(crate) fn handle(&mut self, event: MobileMelkLightingSessionEventDto) {
+        if !self.reconnect_enabled {
+            return;
+        }
         match event {
             MobileMelkLightingSessionEventDto::Resume => {
                 if !self.reconnect_enabled || self.invalid_preferred_identifier {
