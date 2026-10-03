@@ -1283,7 +1283,9 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(app.buttons["lighting.quick-preset.night"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["lighting.mark-confirmed"].exists)
         app.segmentedControls["lighting.control-page"].buttons["Effects"].tap()
-        XCTAssertTrue(app.buttons["lighting.play-mode"].waitForExistence(timeout: 5))
+        let effect = app.buttons.matching(identifier: "lighting.effect.1").firstMatch
+        XCTAssertTrue(effect.waitForExistence(timeout: 5))
+        XCTAssertFalse(effect.isEnabled)
         XCTAssertTrue(app.descendants(matching: .any)["lighting.effect-speed"].exists)
         app.segmentedControls["lighting.control-page"].buttons["Music"].tap()
         XCTAssertTrue(app.descendants(matching: .any)["lighting.music-sensitivity"].waitForExistence(timeout: 5))
