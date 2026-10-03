@@ -52,7 +52,7 @@ private func liveDashboardTile(
             label: localizedAppText("ride.metric.battery"),
             metricValue: text.map { .available(display: $0, accessibility: $0) } ?? .unavailable,
             unit: RideUnits.percentUnit,
-            detail: reading?.source == .estimated ? localizedAppText("ride.detail.estimated") : "",
+            detail: "",
             accent: .green
         )
     case .chargeEstimate:

@@ -1849,6 +1849,12 @@
       "comment" : "Visible capture status after a label ends. Placeholders are label, notification count, and filename.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%@ stopped: %lld notifications → %@" } } }
     },
+    "capture.status.ride_recording" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Recording" } } }
+    },
+    "capture.status.ride_saved" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Saved" } } }
+    },
     "capture.status.recording" : {
       "comment" : "Visible capture status. The placeholder is the notification count.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Recording: %lld notifications" } } }
@@ -2861,19 +2867,19 @@
     },
     "vesc.battery_detail.estimated_current" : {
       "comment" : "VESC battery tile detail. The placeholders are estimated battery level and reported battery current.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "battery %@ estimated · current %@ A" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "battery %@ · current %@ A" } } }
     },
     "vesc.battery_detail.estimated_unavailable" : {
       "comment" : "VESC battery tile detail when only an estimated battery level is available.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "battery %@ estimated · current unavailable" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "battery %@ · current unavailable" } } }
     },
     "vesc.battery_detail.reported_current" : {
       "comment" : "VESC battery tile detail. The placeholders are reported battery level and reported battery current.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "battery %@ reported · current %@ A" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "battery %@ · current %@ A" } } }
     },
     "vesc.battery_detail.reported_unavailable" : {
       "comment" : "VESC battery tile detail when a reported battery level is available but battery current is not.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "battery %@ reported · current unavailable" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "battery %@ · current unavailable" } } }
     },
     "vesc.battery_detail.unavailable_current" : {
       "comment" : "VESC battery tile detail when battery level is unavailable. The placeholder is reported battery current.",

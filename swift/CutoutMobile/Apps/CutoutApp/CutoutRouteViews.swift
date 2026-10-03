@@ -144,7 +144,7 @@ struct EucRideRouteView: View {
                 rideState: model.device.eucRidePresentationState,
                 rideTitle: model.device.selectedRideTitle,
                 now: model.currentMonotonicTime,
-                captureStatusText: model.capture.status?.displayText,
+                captureStatusText: model.capture.status?.rideDisplayText,
                 connectionStatusText: model.device.connectionStatusText,
                 phoneLocationReadback: model.device.phoneLocationReadback
             )
@@ -314,7 +314,7 @@ struct VescRideRouteView: View {
                 liveSnapshot: model.device.vescRideSnapshot,
                 phase: model.device.phase,
                 now: model.currentMonotonicTime,
-                captureStatusText: model.capture.status?.displayText,
+                captureStatusText: model.capture.status?.rideDisplayText,
                 connectionStatusText: model.device.connectionStatusText
             )
             .accessibilityElement(children: .contain)

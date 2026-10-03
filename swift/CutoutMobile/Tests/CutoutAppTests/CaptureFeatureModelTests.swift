@@ -250,6 +250,11 @@ final class CaptureFeatureModelTests: XCTestCase {
 
     func testCaptureStatusKeepsVisibleTextToneAndMeaningfulAnnouncements() {
         XCTAssertEqual(
+            CaptureStatus.recording(label: "Ride", notificationCount: 3, fileName: "ride.cutout").rideDisplayText,
+            "Recording"
+        )
+        XCTAssertEqual(CaptureStatus.saved(fileName: "ride.cutout").rideDisplayText, "Saved")
+        XCTAssertEqual(
             CaptureStatus.recordingLocally(fileName: "ride.cutout").displayText,
             "Recording locally: ride.cutout"
         )
