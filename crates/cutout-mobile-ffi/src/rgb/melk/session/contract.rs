@@ -98,6 +98,8 @@ pub enum MobileMelkLightingSessionEventDto {
 pub enum MobileMelkLightingTimerDto {
     /// Bounds a pending connection attempt.
     ConnectionAttempt,
+    /// Bounds service discovery, characteristic verification, and subscription.
+    Discovery,
     /// Starts the next reconnect attempt.
     Reconnect,
     /// Advances the initialization sequence.

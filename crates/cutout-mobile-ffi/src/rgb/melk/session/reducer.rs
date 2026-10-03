@@ -22,6 +22,13 @@ const INITIALIZATION_DELAY_MS: u64 = 1_000;
 const MAX_RECONNECT_ATTEMPTS: u8 = 3;
 const FALLBACK_WRITE_INTERVAL_MS: u16 = 50;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum GattState {
+    Unverified,
+    Verified,
+    Subscribed,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct SessionReducer {
     state: MobileMelkLightingSessionStateDto,
@@ -32,7 +39,7 @@ pub(crate) struct SessionReducer {
     candidates: BTreeMap<String, MobileMelkLightingSessionCandidateDto>,
     reconnect_enabled: bool,
     reconnect_attempt: u8,
-    notification_ready: bool,
+    gatt: GattState,
     initialization: VecDeque<MobileMelkLightingWriteDto>,
     writes: VecDeque<MobileMelkLightingWriteDto>,
     timer: Option<MobileMelkLightingTimerDto>,
@@ -54,7 +61,7 @@ impl Default for SessionReducer {
             candidates: BTreeMap::new(),
             reconnect_enabled: true,
             reconnect_attempt: 0,
-            notification_ready: false,
+            gatt: GattState::Unverified,
             initialization: VecDeque::new(),
             writes: VecDeque::new(),
             timer: None,
@@ -99,7 +106,7 @@ impl SessionReducer {
             platform_identifier: self.selected_identifier.clone(),
             name: self.selected_name.clone(),
             command_status: self.command_status,
-            notification_ready: self.notification_ready,
+            notification_ready: self.gatt == GattState::Subscribed,
         }
     }
 
@@ -132,7 +139,7 @@ impl SessionReducer {
 
     fn reset_initialization(&mut self) {
         self.initialization.clear();
-        self.notification_ready = false;
+        self.gatt = GattState::Unverified;
         if match self.timer {
             Some(MobileMelkLightingTimerDto::Initialization) => true,
             _ => false,
@@ -323,7 +330,7 @@ impl SessionReducer {
 
     fn drain_initialization(&mut self, can_send: bool) {
         if !can_send
-            || !self.notification_ready
+            || self.gatt != GattState::Subscribed
             || !(match self.state {
                 MobileMelkLightingSessionStateDto::Discovering => true,
                 _ => false,
@@ -499,6 +506,7 @@ impl SessionReducer {
                 self.record(format!("restore=melk id={platform_identifier}"));
                 if connected {
                     self.transition(MobileMelkLightingSessionStateDto::Discovering);
+                    self.arm(MobileMelkLightingTimerDto::Discovery, CONNECTION_TIMEOUT_MS);
                     self.actions
                         .push_back(MobileMelkLightingSessionActionDto::DiscoverServices {
                             platform_identifier,
@@ -526,6 +534,7 @@ impl SessionReducer {
                 }
                 self.timer = None;
                 self.transition(MobileMelkLightingSessionStateDto::Discovering);
+                self.arm(MobileMelkLightingTimerDto::Discovery, CONNECTION_TIMEOUT_MS);
                 self.actions
                     .push_back(MobileMelkLightingSessionActionDto::DiscoverServices {
                         platform_identifier,
@@ -552,6 +561,9 @@ impl SessionReducer {
                 service_uuids,
                 error,
             } => {
+                if self.state != MobileMelkLightingSessionStateDto::Discovering {
+                    return;
+                }
                 if let Some(reason) = error {
                     self.reject_candidate(reason);
                 } else if !service_uuids.iter().any(|uuid| {
@@ -574,6 +586,9 @@ impl SessionReducer {
                 characteristics,
                 error,
             } => {
+                if self.state != MobileMelkLightingSessionStateDto::Discovering {
+                    return;
+                }
                 let name = name.or_else(|| self.selected_name.clone()).or_else(|| {
                     self.preferred_identifier
                         .as_ref()
@@ -605,11 +620,11 @@ impl SessionReducer {
                 {
                     self.reject_candidate("invalid MELK profile".into());
                 } else {
+                    self.gatt = GattState::Verified;
                     self.initialization = MelkLightingProfile::initialization_actions()
                         .into_iter()
                         .map(mobile_melk_transport_action)
                         .collect();
-                    self.notification_ready = false;
                     self.record("gatt=FFF0 write=FFF3 notify=FFF4");
                     if let Some(identifier) = self.selected_identifier.clone() {
                         self.actions
@@ -641,7 +656,13 @@ impl SessionReducer {
                         reason: "FFF4 notify unavailable".into(),
                     });
                 } else {
-                    self.notification_ready = true;
+                    if self.gatt == GattState::Unverified {
+                        return;
+                    }
+                    if self.timer == Some(MobileMelkLightingTimerDto::Discovery) {
+                        self.timer = None;
+                    }
+                    self.gatt = GattState::Subscribed;
                     self.drain_initialization(can_send);
                 }
             }
@@ -665,6 +686,10 @@ impl SessionReducer {
                 }
                 match timer {
                     MobileMelkLightingTimerDto::ConnectionAttempt => self.connection_timed_out(),
+                    MobileMelkLightingTimerDto::Discovery => {
+                        self.record("gatt_timeout");
+                        self.connection_timed_out();
+                    }
                     MobileMelkLightingTimerDto::Reconnect => {
                         self.timer = None;
                         self.connect_selected();

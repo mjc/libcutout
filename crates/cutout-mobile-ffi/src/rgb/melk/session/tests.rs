@@ -314,6 +314,91 @@ fn reducer_owns_gatt_initialization_and_ready_gate() {
 }
 
 #[test]
+fn restored_notifications_cannot_bypass_profile_verification() {
+    let core = MobileMelkLightingSessionCore::new();
+    core.start(Some(ID.into()));
+    core.handle(MobileMelkLightingSessionEventDto::Restored {
+        name: Some("MELK-OC21".into()),
+        platform_identifier: ID.into(),
+        connected: true,
+        pending: false,
+    });
+    core.drain_actions();
+    core.handle(MobileMelkLightingSessionEventDto::NotificationState {
+        characteristic: cutout_protocols::MELK_NOTIFY_CHANNEL.as_uuid().into(),
+        ready: true,
+        can_send: true,
+        error: None,
+    });
+    assert_eq!(
+        core.snapshot().state,
+        MobileMelkLightingSessionStateDto::Discovering
+    );
+    assert!(!core.snapshot().notification_ready);
+    assert!(!core.set_power(true));
+    assert!(core.drain_actions().is_empty());
+}
+
+#[test]
+fn connected_and_restored_gatt_discovery_have_a_deadline() {
+    for restored in [false, true] {
+        let core = MobileMelkLightingSessionCore::new();
+        core.start(Some(ID.into()));
+        if restored {
+            core.handle(MobileMelkLightingSessionEventDto::Restored {
+                name: Some("MELK-OC21".into()),
+                platform_identifier: ID.into(),
+                connected: true,
+                pending: false,
+            });
+        } else {
+            core.handle(MobileMelkLightingSessionEventDto::Discovered {
+                name: Some("MELK-OC21".into()),
+                platform_identifier: ID.into(),
+                rssi: -60,
+            });
+            core.drain_actions();
+            core.handle(MobileMelkLightingSessionEventDto::Connected {
+                name: Some("MELK-OC21".into()),
+                platform_identifier: ID.into(),
+            });
+        }
+        let timer = core
+            .drain_actions()
+            .into_iter()
+            .find_map(|action| match action {
+                MobileMelkLightingSessionActionDto::ArmTimer {
+                    timer,
+                    delay_milliseconds,
+                } => {
+                    assert_eq!(delay_milliseconds, 15_000);
+                    Some(timer)
+                }
+                _ => None,
+            })
+            .expect("GATT discovery must not hang indefinitely");
+        core.handle(MobileMelkLightingSessionEventDto::TimerFired {
+            timer,
+            can_send: true,
+        });
+        assert_eq!(
+            core.snapshot().state,
+            MobileMelkLightingSessionStateDto::Scanning
+        );
+        assert!(core.drain_actions().iter().any(|action| matches!(
+            action, MobileMelkLightingSessionActionDto::CancelConnect { platform_identifier } if platform_identifier == ID
+        )));
+        core.handle(MobileMelkLightingSessionEventDto::NotificationState {
+            characteristic: cutout_protocols::MELK_NOTIFY_CHANNEL.as_uuid().into(),
+            ready: true,
+            can_send: true,
+            error: None,
+        });
+        assert!(!core.set_power(true));
+    }
+}
+
+#[test]
 fn reducer_coalesces_color_preview_writes_and_waits_for_capacity() {
     let core = ready_core();
     assert!(core.set_solid_color(255, 0, 0));
