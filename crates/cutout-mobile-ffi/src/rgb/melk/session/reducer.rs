@@ -186,18 +186,14 @@ impl SessionReducer {
                 || name.map(str::trim).is_some_and(|v| !v.is_empty()))
     }
 
-    fn selected_id(&self) -> Option<&str> {
-        self.selected_identifier.as_deref()
-    }
-
     fn reject_candidate(&mut self, reason: String) {
+        if let Some(identifier) = self.selected_identifier.clone() {
+            self.actions
+                .push_back(MobileMelkLightingSessionActionDto::CancelConnect {
+                    platform_identifier: identifier,
+                });
+        }
         if self.preferred_identifier.is_none() {
-            if let Some(identifier) = self.selected_id().map(str::to_owned) {
-                self.actions
-                    .push_back(MobileMelkLightingSessionActionDto::CancelConnect {
-                        platform_identifier: identifier,
-                    });
-            }
             self.selected_identifier = None;
             self.selected_name = None;
             self.transition(MobileMelkLightingSessionStateDto::Scanning);

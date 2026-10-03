@@ -608,6 +608,39 @@ fn connected_and_restored_gatt_discovery_have_a_deadline() {
 }
 
 #[test]
+fn rejected_remembered_profile_cancels_the_active_connection() {
+    let core = MobileMelkLightingSessionCore::new();
+    core.start(Some(ID.into()));
+    core.handle(MobileMelkLightingSessionEventDto::BluetoothState {
+        powered_on: true,
+        state_code: 5,
+    });
+    core.handle(MobileMelkLightingSessionEventDto::Restored {
+        name: Some("MELK-OC21".into()),
+        platform_identifier: ID.into(),
+        connected: true,
+        pending: false,
+    });
+    core.drain_actions();
+    core.handle(MobileMelkLightingSessionEventDto::ServicesDiscovered {
+        service_uuids: Vec::new(),
+        error: None,
+    });
+
+    assert_eq!(
+        core.snapshot().state,
+        MobileMelkLightingSessionStateDto::Failed {
+            reason: "missing FFF0 service".into()
+        }
+    );
+    assert!(core.drain_actions().iter().any(|action| matches!(
+        action,
+        MobileMelkLightingSessionActionDto::CancelConnect { platform_identifier }
+            if platform_identifier == ID
+    )));
+}
+
+#[test]
 fn reducer_coalesces_color_preview_writes_and_waits_for_capacity() {
     let core = ready_core();
     assert!(core.set_solid_color(255, 0, 0));
