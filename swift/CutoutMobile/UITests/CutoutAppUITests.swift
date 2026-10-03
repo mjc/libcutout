@@ -1274,9 +1274,14 @@ final class CutoutAppUITests: XCTestCase {
             XCTAssertTrue(element.waitForExistence(timeout: 5), "Missing live Lighting control: \(identifier)")
         }
         XCTAssertFalse(app.staticTexts["MELK-OC21 6A"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["lighting.command-evidence"].exists)
         app.buttons["lighting.choose-accessory"].tap()
         let addLighting = app.navigationBars["Add lighting"]
         XCTAssertTrue(addLighting.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.textFields["lighting.vehicle-association"].exists)
+        XCTAssertFalse(app.buttons["lighting.use-current-ride"].exists)
+        XCTAssertFalse(app.staticTexts["Other connected apps"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["lighting.restore-toggle"].exists)
         addLighting.buttons["Back"].tap()
         XCTAssertTrue(app.buttons["lighting.quick-preset.red"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["lighting.quick-preset.blue"].waitForExistence(timeout: 5))

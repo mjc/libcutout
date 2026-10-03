@@ -20,7 +20,6 @@ struct LightingRouteView: View {
                 LightingConnectionCard(model: model) {
                     showsPairing = true
                 }
-                LightingCommandEvidenceCard(model: model)
                 LightingPagePicker(selection: $page)
                 LightingControlSurface(
                     model: model,
@@ -66,12 +65,13 @@ struct LightingRouteView: View {
             model.stopIfUnpaired()
         }
         .sheet(isPresented: $showsPairing) {
-            LightingPairingSheet(model: model, rideModel: rideModel)
+            LightingPairingSheet(model: model)
         }
         .accessibilityIdentifier("dashboard.screen.lighting")
     }
 
     private func startLighting() {
+        model.selectVehicle(rideModel.selectedRideIdentifier)
         model.start()
         brightness = Double(model.requestedBrightness)
         updateColorSelection()
@@ -92,48 +92,6 @@ struct LightingRouteView: View {
         )
         hue = selection.hue
         saturation = selection.saturation
-    }
-}
-
-private struct LightingCommandEvidenceCard: View {
-    let model: LightingRouteModel
-
-    var body: some View {
-        LightingCard {
-            Label(localizedAppText("lighting.command.evidence.title"), systemImage: "checkmark.seal")
-                .font(.headline)
-            Text(statusText)
-                .foregroundStyle(statusColor)
-            if model.commandStatus == .requested {
-                Text(localizedAppText("lighting.command.evidence.hint"))
-                    .font(.footnote)
-                    .foregroundStyle(PevColors.muted)
-                HStack {
-                    Button(localizedAppText("lighting.command.mark_confirmed")) { model.markConfirmed() }
-                    Button(localizedAppText("lighting.command.mark_unconfirmed")) { model.markUnconfirmed() }
-                }
-                .buttonStyle(.bordered)
-            }
-        }
-        .accessibilityIdentifier("lighting.command-evidence")
-    }
-
-    private var statusText: String {
-        switch model.commandStatus {
-        case .idle: localizedAppText("lighting.command.idle")
-        case .requested: localizedAppText("lighting.command.requested")
-        case .confirmed: localizedAppText("lighting.command.confirmed")
-        case .unconfirmed: localizedAppText("lighting.command.unconfirmed")
-        }
-    }
-
-    private var statusColor: Color {
-        switch model.commandStatus {
-        case .confirmed: PevColors.green
-        case .unconfirmed: PevColors.red
-        case .requested: PevColors.yellow
-        case .idle: PevColors.muted
-        }
     }
 }
 
@@ -385,11 +343,7 @@ private struct LightingPresetsCard: View {
                     quickColorPreset("lighting.preset.blue", color: .blue, red: 0, green: 0, blue: 255)
                     quickColorPreset("lighting.preset.night", color: .black, red: 16, green: 20, blue: 32)
                 }
-                if model.presets.isEmpty {
-                    Text(localizedAppText("lighting.preset.helper"))
-                        .font(.footnote)
-                        .foregroundStyle(PevColors.muted)
-                } else {
+                if !model.presets.isEmpty {
                     ForEach(model.presets, id: \.name) { preset in
                         Button(action: { apply(preset) }) {
                             VStack(alignment: .leading, spacing: 3) {
@@ -678,10 +632,8 @@ private struct LightingColorWheel: View {
 
 private struct LightingPairingSheet: View {
     let model: LightingRouteModel
-    let rideModel: CutoutAppModel
     @Environment(\.dismiss) private var dismiss
     @State private var accessoryAlias = ""
-    @State private var vehicleIdentifier = ""
     @State private var showsForgetConfirmation = false
 
     var body: some View {
@@ -704,9 +656,6 @@ private struct LightingPairingSheet: View {
                         LightingCard {
                             Text(localizedAppText("lighting.pairing.nearby_title"))
                                 .font(.headline)
-                            Text(localizedAppText("lighting.pairing.nearby_hint"))
-                                .font(.footnote)
-                                .foregroundStyle(PevColors.muted)
                             ForEach(model.candidates) { candidate in
                                 Button {
                                     model.selectCandidate(candidate)
@@ -728,22 +677,19 @@ private struct LightingPairingSheet: View {
                         }
                     }
 
-                    Toggle(
-                        localizedAppText("lighting.restore.toggle"),
-                        isOn: Binding(
-                            get: { model.restoreEnabled },
-                            set: { model.setRestoreEnabled($0) }
+                    if model.canEditMetadata {
+                        Toggle(
+                            localizedAppText("lighting.restore.toggle"),
+                            isOn: Binding(
+                                get: { model.restoreEnabled },
+                                set: { model.setRestoreEnabled($0) }
+                            )
                         )
-                    )
-                    .tint(PevColors.cyan)
-                    .disabled(!model.canEditMetadata)
-                    .accessibilityIdentifier("lighting.restore-toggle")
-                    Text(localizedAppText("lighting.restore.explanation"))
-                        .font(.footnote)
-                        .foregroundStyle(PevColors.muted)
-
-                    metadataCard
-                    warningCard
+                        .tint(PevColors.cyan)
+                        .disabled(!model.canEditMetadata)
+                        .accessibilityIdentifier("lighting.restore-toggle")
+                        metadataCard
+                    }
 
                     if model.canEditMetadata {
                         Button(localizedAppText("lighting.forget"), role: .destructive) {
@@ -769,7 +715,6 @@ private struct LightingPairingSheet: View {
         }
         .task {
             accessoryAlias = model.accessoryAlias ?? ""
-            vehicleIdentifier = model.vehicleIdentifier ?? ""
         }
         .confirmationDialog(
             localizedAppText("lighting.forget.confirm_title"),
@@ -816,36 +761,13 @@ private struct LightingPairingSheet: View {
                 .textFieldStyle(.roundedBorder)
                 .accessibilityIdentifier("lighting.accessory-alias")
 
-            HStack(spacing: 10) {
-                TextField(localizedAppText("lighting.vehicle_identifier"), text: $vehicleIdentifier)
-                    .textFieldStyle(.roundedBorder)
-                    .accessibilityIdentifier("lighting.vehicle-association")
-                if let selectedRideIdentifier = rideModel.selectedRideIdentifier {
-                    Button(localizedAppText("lighting.use_current_ride")) {
-                        vehicleIdentifier = selectedRideIdentifier
-                    }
-                    .buttonStyle(.bordered)
-                    .accessibilityIdentifier("lighting.use-current-ride")
-                }
-            }
-
             Button(localizedAppText("lighting.save_details")) {
-                model.saveAccessoryMetadata(alias: accessoryAlias, vehicleIdentifier: vehicleIdentifier)
+                model.saveAccessoryName(accessoryAlias)
             }
             .buttonStyle(.bordered)
             .frame(maxWidth: .infinity)
             .disabled(!model.canEditMetadata)
             .accessibilityIdentifier("lighting.save-accessory-details")
-        }
-    }
-
-    private var warningCard: some View {
-        LightingCard {
-            Label(localizedAppText("lighting.competing_client"), systemImage: "exclamationmark.triangle")
-                .foregroundStyle(PevColors.yellow)
-            Text(localizedAppText("lighting.competing_client.explanation"))
-                .font(.footnote)
-                .foregroundStyle(PevColors.muted)
         }
     }
 

@@ -29,6 +29,7 @@ public final class LightingAccessoryPersistence {
     }
 
     private enum Key {
+        static let store = "lighting.accessories.store"
         static let record = "lighting.accessory.record"
         static let capabilitiesFingerprint = "lighting.accessory.capabilitiesFingerprint"
         static let legacyEnabled = "lighting.restore.enabled"
@@ -51,6 +52,8 @@ public final class LightingAccessoryPersistence {
     }
 
     private let defaults: UserDefaults
+    private let store: MobileRgbLightingAccessoryStore
+    private var currentVehicleIdentifier: String?
     private var record: MobileRgbLightingAccessoryRecord?
     private var recordCapabilitiesFingerprint: String?
     public private(set) var lastPersistenceError: String?
@@ -58,6 +61,17 @@ public final class LightingAccessoryPersistence {
     public init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         lastPersistenceError = nil
+        if let bytes = defaults.data(forKey: Key.store) {
+            let loaded =
+                (try? MobileRgbLightingAccessoryStore.decode(bytes: bytes)) ?? MobileRgbLightingAccessoryStore()
+            store = loaded
+            record = try? loaded.selectVehicle(vehicleIdentifier: nil)
+            recordCapabilitiesFingerprint = record.flatMap {
+                loaded.fingerprint(platformIdentifier: $0.platformIdentifier())
+            }
+            return
+        }
+        store = MobileRgbLightingAccessoryStore()
         switch Self.loadRecord(from: defaults) {
         case .missing:
             record = nil
@@ -70,6 +84,20 @@ public final class LightingAccessoryPersistence {
             record = nil
             recordCapabilitiesFingerprint = nil
         }
+        if let record {
+            store.importLegacy(record: record, fingerprint: recordCapabilitiesFingerprint)
+            persist()
+        }
+    }
+
+    /// The Rust collection chooses the accessory installed on the selected vehicle.
+    public func selectVehicle(_ identifier: String?) {
+        currentVehicleIdentifier = identifier
+        record = try? store.selectVehicle(vehicleIdentifier: identifier)
+        recordCapabilitiesFingerprint = record.flatMap {
+            store.fingerprint(platformIdentifier: $0.platformIdentifier())
+        }
+        if record != nil { persist() }
     }
 
     public var platformIdentifier: String? {
@@ -162,10 +190,10 @@ public final class LightingAccessoryPersistence {
             return false
         }
         guard
-            let newRecord = try? MobileRgbLightingAccessoryRecord(
+            let newRecord = try? store.pair(
                 platformIdentifier: platformIdentifier,
-                profile: .melkOc21,
-                profileVersion: Self.currentProfileVersion
+                vehicleIdentifier: currentVehicleIdentifier,
+                fingerprint: Self.currentCapabilitiesFingerprint
             )
         else {
             return false
@@ -187,6 +215,10 @@ public final class LightingAccessoryPersistence {
             return
         }
         recordCapabilitiesFingerprint = Self.currentCapabilitiesFingerprint
+        if let record {
+            store.backfillFingerprint(
+                platformIdentifier: record.platformIdentifier(), fingerprint: Self.currentCapabilitiesFingerprint)
+        }
         persist()
     }
 
@@ -214,7 +246,10 @@ public final class LightingAccessoryPersistence {
 
     /// Forgets the selected accessory and removes all restore-capable state.
     public func forget() {
+        if let record { store.forget(platformIdentifier: record.platformIdentifier()) }
         record = nil
+        recordCapabilitiesFingerprint = nil
+        persist()
         defaults.removeObject(forKey: Key.record)
         defaults.removeObject(forKey: Key.capabilitiesFingerprint)
         Key.legacy.forEach(defaults.removeObject(forKey:))
@@ -370,13 +405,10 @@ public final class LightingAccessoryPersistence {
 
     @discardableResult
     private func persist() -> Bool {
-        guard let record else { return false }
         do {
-            let envelope = Envelope(
-                record: try record.encode(),
-                capabilitiesFingerprint: recordCapabilitiesFingerprint
-            )
-            defaults.set(try JSONEncoder().encode(envelope), forKey: Key.record)
+            if let record { store.importLegacy(record: record, fingerprint: recordCapabilitiesFingerprint) }
+            defaults.set(try store.encode(), forKey: Key.store)
+            defaults.removeObject(forKey: Key.record)
             defaults.removeObject(forKey: Key.capabilitiesFingerprint)
             lastPersistenceError = nil
             return true

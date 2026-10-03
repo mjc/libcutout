@@ -385,6 +385,7 @@ final class LightingRouteModel {
     private(set) var notificationCount = 0
     private(set) var controlError: String?
     private var isRunning = false
+    private var currentVehicleIdentifier: String?
     private var requestedState = MobileMelkLightingRestoreStateDto(
         powerOn: false,
         red: 255,
@@ -791,14 +792,34 @@ final class LightingRouteModel {
         }
     }
 
-    func saveAccessoryMetadata(alias: String, vehicleIdentifier: String?) {
+    func saveAccessoryName(_ alias: String) {
         guard canEditMetadata else { return }
-        let trimmedAlias = alias.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedVehicle = vehicleIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines)
-        try? persistence.setAlias(trimmedAlias.isEmpty ? nil : trimmedAlias)
-        try? persistence.setVehicleIdentifier(trimmedVehicle?.isEmpty == true ? nil : trimmedVehicle)
+        let trimmed = alias.trimmingCharacters(in: .whitespacesAndNewlines)
+        try? persistence.setAlias(trimmed.isEmpty ? nil : trimmed)
         accessoryAlias = persistence.alias
-        self.vehicleIdentifier = persistence.vehicleIdentifier
+    }
+
+    func selectVehicle(_ identifier: String?) {
+        guard currentVehicleIdentifier != identifier else { return }
+        let wasRunning = isRunning
+        stop()
+        currentVehicleIdentifier = identifier
+        persistence.selectVehicle(identifier)
+        connectionState = .idle
+        peripheralName = nil
+        peripheralIdentifier = nil
+        accessoryAlias = persistence.alias
+        vehicleIdentifier = persistence.vehicleIdentifier
+        restoreEnabled = persistence.restoreEnabled
+        restoreAttempted = false
+        commandStatus = .idle
+        pendingCommandScope = .none
+        controlError = nil
+        requestedState =
+            persistence.requestedState ?? persistence.confirmedState
+            ?? MobileMelkLightingRestoreStateDto(powerOn: false, red: 255, green: 0, blue: 0, brightness: 100)
+        refreshPresets()
+        if wasRunning || persistence.platformIdentifier != nil { start() }
     }
 
     func applyPreset(_ preset: MobileRgbLightingPresetDto) {
@@ -943,26 +964,6 @@ extension MelkLightingPeripheralState {
         case .failed: "exclamationmark.triangle"
         case .disconnected: "bolt.horizontal.circle"
         default: "antenna.radiowaves.left.and.right"
-        }
-    }
-}
-
-extension MelkLightingCommandStatus {
-    fileprivate var displayText: String {
-        switch self {
-        case .idle: localizedAppText("lighting.command.idle")
-        case .requested: localizedAppText("lighting.command.requested")
-        case .confirmed: localizedAppText("lighting.command.confirmed")
-        case .unconfirmed: localizedAppText("lighting.command.unconfirmed")
-        }
-    }
-
-    fileprivate var symbolName: String {
-        switch self {
-        case .idle: "circle"
-        case .requested: "clock"
-        case .confirmed: "checkmark.circle"
-        case .unconfirmed: "questionmark.circle"
         }
     }
 }

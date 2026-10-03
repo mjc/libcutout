@@ -403,38 +403,6 @@
       "comment" : "Lighting connection failure. Placeholder is the failure reason.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Failed" } } }
     },
-    "lighting.command.idle" : {
-      "comment" : "Lighting command status.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Idle" } } }
-    },
-    "lighting.command.requested" : {
-      "comment" : "Lighting command status.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Sent · awaiting confirmation" } } }
-    },
-    "lighting.command.confirmed" : {
-      "comment" : "Lighting command status.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Confirmed" } } }
-    },
-    "lighting.command.unconfirmed" : {
-      "comment" : "Lighting command status.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Unconfirmed" } } }
-    },
-    "lighting.command.evidence.title" : {
-      "comment" : "Heading for the lighting command observation card.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Command status" } } }
-    },
-    "lighting.command.evidence.hint" : {
-      "comment" : "Instruction to confirm a lighting command only after observing the controller.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Check the lights before marking the command confirmed." } } }
-    },
-    "lighting.command.mark_confirmed" : {
-      "comment" : "Action that records external confirmation of a lighting command.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Mark confirmed" } } }
-    },
-    "lighting.command.mark_unconfirmed" : {
-      "comment" : "Action that records that a lighting command could not be externally confirmed.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Mark unconfirmed" } } }
-    },
     "lighting.page.color" : {
       "comment" : "Lighting controls page label.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Color" } } }
@@ -506,10 +474,6 @@
     "lighting.pairing.nearby_title" : {
       "comment" : "Heading for the first-pairing accessory list.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Nearby devices" } } }
-    },
-    "lighting.pairing.nearby_hint" : {
-      "comment" : "First-pairing guidance; unknown devices remain read-only until their profile is verified.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Tap a device" } } }
     },
     "lighting.pairing.unknown_name" : {
       "comment" : "Fallback name for an advertisement without a local name.",
@@ -671,10 +635,6 @@
       "comment" : "Lighting scenes and presets heading.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Scenes & presets" } } }
     },
-    "lighting.preset.helper" : {
-      "comment" : "Lighting preset helper copy.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Save your color, effect, or music settings as a named scene." } } }
-    },
     "lighting.preset.replace" : {
       "comment" : "Lighting preset context action.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Replace with current" } } }
@@ -781,11 +741,7 @@
     },
     "lighting.restore.toggle" : {
       "comment" : "Lighting restore opt-in toggle.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Restore last lighting settings" } } }
-    },
-    "lighting.restore.explanation" : {
-      "comment" : "Lighting restore explanation.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Restore the saved color, effect, brightness, and power setting when this accessory reconnects." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Restore settings" } } }
     },
     "lighting.forget" : {
       "comment" : "Forget lighting accessory action.",
@@ -801,11 +757,11 @@
     },
     "lighting.forget.confirm_title" : {
       "comment" : "Lighting accessory forget confirmation title.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Forget this RGB accessory?" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Forget lighting?" } } }
     },
     "lighting.forget.confirm_message" : {
       "comment" : "Lighting accessory forget confirmation message.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Its alias, vehicle association, presets, and automatic restore preference will be removed." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Saved lighting settings will be removed." } } }
     },
     "lighting.scanning" : {
       "comment" : "Lighting pairing scan status.",
@@ -813,31 +769,15 @@
     },
     "lighting.alias" : {
       "comment" : "Lighting accessory alias field heading.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Alias (optional)" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Name" } } }
     },
     "lighting.alias.placeholder" : {
       "comment" : "Lighting accessory alias field placeholder.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Accessory name" } } }
     },
-    "lighting.vehicle_identifier" : {
-      "comment" : "Lighting accessory vehicle association field placeholder.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Installed vehicle identifier" } } }
-    },
-    "lighting.use_current_ride" : {
-      "comment" : "Associates lighting accessory with current ride.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Use current ride" } } }
-    },
     "lighting.save_details" : {
       "comment" : "Saves lighting accessory metadata.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Save details" } } }
-    },
-    "lighting.competing_client" : {
-      "comment" : "Warning heading when another app may own the controller.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Other connected apps" } } }
-    },
-    "lighting.competing_client.explanation" : {
-      "comment" : "Warning about another app connected to the controller.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Disconnect this controller from other apps before connecting here." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Save" } } }
     },
     "lighting.schedule.enabled_for" : {
       "comment" : "Accessibility label for a schedule enabled toggle. Placeholder is turn-on or turn-off.",

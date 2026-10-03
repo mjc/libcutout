@@ -10,17 +10,24 @@ Commands are based on [dave-code-ruiz/elkbledom](https://github.com/dave-code-ru
 specifically `models.json`, `definitions.json`, `model.py`, and `elkbledom.py`.
 The user's nRF Connect inventory establishes FFF0 service, FFF3 read/write
 without response, and FFF4 notify. The advertisement does not include FFF0:
-scan without a service filter. Rust admits picker candidates only when the
-platform UUID is valid and the name matches an implemented profile (currently
-`MELK-OC21`, case-insensitive, with an optional whitespace-delimited suffix).
-Unrelated, unnamed, and unsupported-model advertisements are excluded. Names
-are discovery hints: identity and discovered GATT roles must still agree before
-selecting the typed profile. Remembered accessories reconnect by UUID even when
-their local name is absent, then pass the same GATT verification.
-Rust retains up to 32 candidates, updates existing candidates at capacity, and
-reports rejected, withdrawn, or overflow identifiers to the UI and native
-peripheral cache. A candidate rejected during GATT discovery is removed before
-scanning resumes.
+scan without a service filter. Names are display metadata and never determine
+support. Rust runs bounded, sequential, read-only connection probes to inspect
+FFF0, FFF3 write-without-response, and FFF4 notify/indicate. Only devices with
+all three roles appear in the picker. A probe disconnects without subscribing,
+initializing, or sending control commands. Each probe has a three-second
+connection deadline and a separate three-second discovery deadline; failed
+probes advance to the next device while scanning continues. Remembered devices
+reconnect by UUID and pass the same GATT verification before commands.
+Rust retains up to 32 candidates and reports rejected or overflow identities to
+the native cache. A bounded negative cache prevents immediate repeat probes of
+confirmed GATT mismatches. Timeouts and transport errors remain retryable. Names, including absent names, never affect these decisions.
+
+Pairing saves the accessory against the selected vehicle's stable platform
+identity. A Rust-owned collection retains each vehicle's name, presets and
+restore preference across switches and restarts. The previous single-accessory
+record migrates once; an unassigned legacy accessory is associated with the
+first selected vehicle. Forgetting one accessory leaves other vehicles intact.
+
 The same upstream integration documents a MELK initialization handshake: send
 `7e 07 83`, wait one second, then send `7e 04 04`. Production performs this
 one-time sequence after FFF3 discovery and before admitting user commands; it is

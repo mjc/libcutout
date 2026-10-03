@@ -104,6 +104,9 @@ struct CutoutApp: App {
                 lighting: lighting,
                 navigationPath: $navigationPath
             )
+            .onChange(of: model.selectedRideIdentifier, initial: true) {
+                lighting.selectVehicle(model.selectedRideIdentifier)
+            }
             #if os(macOS)
                 .frame(minWidth: 360, minHeight: 280)
             #endif
@@ -135,6 +138,7 @@ struct CutoutApp: App {
             self.lighting = lighting
             model = opened
             opened.start(sceneIsActive: scenePhase == .active)
+            lighting.selectVehicle(opened.selectedRideIdentifier)
             lighting.startIfRemembered()
             if let pendingMusicURL {
                 _ = opened.music.handleProviderURL(pendingMusicURL)

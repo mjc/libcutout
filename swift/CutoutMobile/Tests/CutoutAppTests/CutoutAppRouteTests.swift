@@ -41,7 +41,6 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(localizedAppText("lighting.connection.scanning"), "Scanning")
         XCTAssertEqual(localizedAppText("lighting.choose_accessory"), "Choose accessory")
         XCTAssertEqual(localizedAppText("lighting.pairing.nearby_title"), "Nearby devices")
-        XCTAssertEqual(localizedAppText("lighting.pairing.nearby_hint"), "Tap a device")
         XCTAssertEqual(localizedAppText("navigation.tab.faults"), "Faults")
         XCTAssertEqual(localizedAppText("picker.title"), "Choose device")
         XCTAssertEqual(localizedAppText("picker.subtitle.nearby_devices"), "Nearby Bluetooth devices")
@@ -1050,13 +1049,10 @@ final class CutoutAppRouteTests: XCTestCase {
         let fake = TestLightingSession()
         let model = LightingRouteModel(session: fake, persistence: persistence)
         model.start()
-        struct PersistenceEnvelope: Decodable {
-            let record: Data
-        }
         func persistedRecord() throws -> MobileRgbLightingAccessoryRecord {
-            let data = try XCTUnwrap(defaults.data(forKey: "lighting.accessory.record"))
-            let envelope = try JSONDecoder().decode(PersistenceEnvelope.self, from: data)
-            return try MobileRgbLightingAccessoryRecord.decode(bytes: envelope.record)
+            let data = try XCTUnwrap(defaults.data(forKey: "lighting.accessories.store"))
+            let store = try MobileRgbLightingAccessoryStore.decode(bytes: data)
+            return try XCTUnwrap(store.selectVehicle(vehicleIdentifier: nil))
         }
 
         let transientStates: [MelkLightingPeripheralState] = [
@@ -1536,6 +1532,33 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(model.peripheralName, "MELK-OC21 6A")
         XCTAssertEqual(model.peripheralIdentifier, "A1B2C3D4-E5F6-4789-ABCD-0123456789AB")
     }
+    @MainActor
+    func testLightingPairsWithCurrentVehicleAndRecallsItAfterSwitching() async throws {
+        let suiteName = "CutoutAppRouteTests.lightingVehicle.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let persistence = LightingAccessoryPersistence(defaults: defaults)
+        let fake = TestLightingSession()
+        let model = LightingRouteModel(session: fake, persistence: persistence)
+        model.selectVehicle("aero")
+        model.start()
+        fake.emitIdentity(
+            MelkLightingPeripheralIdentity(
+                name: "aero lights", platformIdentifier: "11111111-1111-1111-1111-111111111111", rssi: -40))
+        fake.emitState(.ready)
+        await Task.yield()
+        await Task.yield()
+        XCTAssertEqual(model.vehicleIdentifier, "aero")
+        model.saveAccessoryName("aero lights")
+        model.selectVehicle("pev")
+        XCTAssertNil(model.accessoryAlias)
+        XCTAssertNil(fake.startCalls.last!)
+        model.selectVehicle("aero")
+        XCTAssertEqual(fake.startCalls.last!, "11111111-1111-1111-1111-111111111111")
+        XCTAssertEqual(model.accessoryAlias, "aero lights")
+        XCTAssertEqual(fake.stopCalls, 2)
+    }
+
 }
 
 private final class ObservationFlag: @unchecked Sendable {

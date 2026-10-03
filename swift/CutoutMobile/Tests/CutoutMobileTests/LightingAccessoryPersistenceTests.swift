@@ -29,7 +29,7 @@ final class LightingAccessoryPersistenceTests: XCTestCase {
         XCTAssertEqual(store.confirmation, .unknown)
         XCTAssertNil(store.confirmedState)
         XCTAssertNil(defaults.string(forKey: "lighting.restore.platformIdentifier"))
-        XCTAssertNotNil(defaults.data(forKey: "lighting.accessory.record"))
+        XCTAssertNotNil(defaults.data(forKey: "lighting.accessories.store"))
     }
 
     func testStoreReopensCanonicalRecordAndSeparatesRequestedFromConfirmedState() throws {
@@ -252,6 +252,7 @@ final class LightingAccessoryPersistenceTests: XCTestCase {
         try store.setVehicleIdentifier("euc-aero")
 
         let reopened = LightingAccessoryPersistence(defaults: defaults)
+        reopened.selectVehicle("euc-aero")
         XCTAssertEqual(reopened.alias, "Under-seat LEDs")
         XCTAssertEqual(reopened.vehicleIdentifier, "euc-aero")
     }
@@ -404,4 +405,42 @@ final class LightingAccessoryPersistenceTests: XCTestCase {
         XCTAssertNil(defaults.data(forKey: "lighting.accessory.record"))
         XCTAssertNotNil(defaults.string(forKey: "lighting.restore.platformIdentifier"))
     }
+    func testVehicleAccessoriesKeepSettingsAcrossSwitchesAndRestart() throws {
+        let suiteName = "LightingAccessoryPersistenceTests-vehicles-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = LightingAccessoryPersistence(defaults: defaults)
+        store.selectVehicle("aero")
+        XCTAssertTrue(store.ensureRecord(platformIdentifier: "11111111-1111-1111-1111-111111111111"))
+        try store.setAlias("aero lights")
+        store.selectVehicle("pev")
+        XCTAssertNil(store.platformIdentifier)
+        XCTAssertTrue(store.ensureRecord(platformIdentifier: "22222222-2222-2222-2222-222222222222"))
+        store.setRestoreEnabled(true)
+        let reopened = LightingAccessoryPersistence(defaults: defaults)
+        reopened.selectVehicle("aero")
+        XCTAssertEqual(reopened.alias, "aero lights")
+        XCTAssertEqual(reopened.vehicleIdentifier, "aero")
+        reopened.selectVehicle("pev")
+        XCTAssertEqual(reopened.platformIdentifier, "22222222-2222-2222-2222-222222222222")
+        XCTAssertTrue(reopened.restoreEnabled)
+        reopened.forget()
+        reopened.selectVehicle("aero")
+        XCTAssertEqual(reopened.alias, "aero lights")
+    }
+
+    func testCorruptCollectionDoesNotFallBackToPreviousRecord() throws {
+        let suiteName = "LightingAccessoryPersistenceTests-corrupt-collection-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let old = try MobileRgbLightingAccessoryRecord(
+            platformIdentifier: "11111111-1111-1111-1111-111111111111", profile: .melkOc21, profileVersion: 1)
+        defaults.set(try old.encode(), forKey: "lighting.accessory.record")
+        defaults.set(Data([0xff]), forKey: "lighting.accessories.store")
+        let reopened = LightingAccessoryPersistence(defaults: defaults)
+        reopened.selectVehicle("aero")
+        XCTAssertNil(reopened.platformIdentifier)
+        XCTAssertEqual(defaults.data(forKey: "lighting.accessories.store"), Data([0xff]))
+    }
+
 }
