@@ -131,7 +131,7 @@ fn pattern_group(id: u8) -> &'static str {
 }
 
 const MELK_PATTERN_NAMES: [&str; 228] = [
-    "Auto Play (reference)",
+    "Auto Play",
     "Magic Forward",
     "Magic Back",
     "7-Color Trans",
@@ -344,21 +344,21 @@ const MELK_PATTERN_NAMES: [&str; 228] = [
     "Purple Marquee",
     "White Marquee",
     "7-Color Energy",
-    "Fade 73 (reference)",
-    "Fade 74 (reference)",
-    "Fade 75 (reference)",
-    "Fade 76 (reference)",
-    "Fade 77 (reference)",
-    "Fade 78 (reference)",
-    "Fade Bar (reference)",
-    "Music Flow Flash (reference)",
-    "Music Flash (reference)",
-    "Music Rainbow (reference)",
-    "Music Snake (reference)",
-    "Music Rainbow 2 (reference)",
-    "Music Pulse (reference)",
-    "Music Flow (reference)",
-    "Music Pulse 2 (reference)",
+    "Fade 73",
+    "Fade 74",
+    "Fade 75",
+    "Fade 76",
+    "Fade 77",
+    "Fade 78",
+    "Fade Bar",
+    "Music Flow Flash",
+    "Music Flash",
+    "Music Rainbow",
+    "Music Snake",
+    "Music Rainbow 2",
+    "Music Pulse",
+    "Music Flow",
+    "Music Pulse 2",
 ];
 
 const BASIC_EFFECT_IDS: [u8; 46] = [
@@ -769,7 +769,7 @@ mod tests {
         assert_eq!(catalog[1].group, "Basic");
         assert_eq!(catalog[142].group, "Run Back");
         assert_eq!(catalog[180].group, "Run Back");
-        assert_eq!(catalog[213].name, "Fade 73 (reference)");
+        assert_eq!(catalog[213].name, "Fade 73");
         assert_eq!(catalog[213].group, "Unmapped");
         assert_eq!(
             MelkLightingProfile::profile_version(),

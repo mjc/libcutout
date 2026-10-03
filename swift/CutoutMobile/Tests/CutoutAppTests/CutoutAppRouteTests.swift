@@ -996,7 +996,7 @@ final class CutoutAppRouteTests: XCTestCase {
 
         model.setPower(true)
 
-        XCTAssertEqual(model.controlError, "Power was not sent because the lighting controller is not ready.")
+        XCTAssertEqual(model.controlError, "Power not sent.")
         XCTAssertEqual(model.commandStatus, .idle)
     }
 
@@ -1268,11 +1268,11 @@ final class CutoutAppRouteTests: XCTestCase {
             XCTAssertFalse(LightingPatternCatalog.name(for: id).isEmpty)
             XCTAssertFalse(LightingPatternCatalog.name(for: id).contains("Unmapped"))
         }
-        XCTAssertEqual(LightingPatternCatalog.name(for: 0), "Auto Play (reference)")
-        XCTAssertEqual(LightingPatternCatalog.name(for: 213), "Fade 73 (reference)")
-        XCTAssertEqual(LightingPatternCatalog.name(for: 220), "Music Flow Flash (reference)")
-        XCTAssertEqual(LightingPatternCatalog.name(for: 221), "Music Flash (reference)")
-        XCTAssertEqual(LightingPatternCatalog.name(for: 227), "Music Pulse 2 (reference)")
+        XCTAssertEqual(LightingPatternCatalog.name(for: 0), "Auto Play")
+        XCTAssertEqual(LightingPatternCatalog.name(for: 213), "Fade 73")
+        XCTAssertEqual(LightingPatternCatalog.name(for: 220), "Music Flow Flash")
+        XCTAssertEqual(LightingPatternCatalog.name(for: 221), "Music Flash")
+        XCTAssertEqual(LightingPatternCatalog.name(for: 227), "Music Pulse 2")
         for id in [255, -1] {
             XCTAssertEqual(LightingPatternCatalog.name(for: id), "Unmapped effect \(id)")
         }

@@ -445,31 +445,31 @@
     },
     "lighting.error.power_not_ready" : {
       "comment" : "Lighting command refusal when the controller is not ready.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Power was not sent because the lighting controller is not ready." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Power not sent." } } }
     },
     "lighting.error.color_not_ready" : {
       "comment" : "Lighting command refusal when the controller is not ready.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Color was not sent because the lighting controller is not ready." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Color not sent." } } }
     },
     "lighting.error.brightness_not_ready" : {
       "comment" : "Lighting command refusal when the controller is not ready.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Brightness was not sent because the lighting controller is not ready." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Brightness not sent." } } }
     },
     "lighting.error.effect_speed_failed" : {
       "comment" : "Lighting effect speed command failed.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Could not send effect speed. Check the connection and try again." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Effect speed not sent." } } }
     },
     "lighting.error.state_failed" : {
       "comment" : "Lighting state command failed.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Could not send lighting settings. Check the connection and try again." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Settings not sent." } } }
     },
     "lighting.error.schedule_failed" : {
       "comment" : "Lighting schedule command failed.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Could not send the timer. Check the connection and try again." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Timer not sent." } } }
     },
     "lighting.error.restore_incompatible" : {
       "comment" : "Saved lighting state cannot be restored after a profile or capability change.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Saved settings are incompatible with this controller. Pair it again to restore settings." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Saved settings are incompatible. Forget this accessory and pair it again." } } }
     },
     "lighting.pairing.nearby_title" : {
       "comment" : "Heading for the first-pairing accessory list.",
@@ -653,11 +653,11 @@
     },
     "lighting.error.preset_save" : {
       "comment" : "User-friendly lighting preset save error.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Could not save this preset. Check the connection and try again." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Could not save preset." } } }
     },
     "lighting.error.preset_update" : {
       "comment" : "User-friendly lighting preset update error.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Could not update this preset. Check the connection and try again." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Could not update preset." } } }
     },
     "lighting.effect.verified" : {
       "comment" : "Accessibility value for a physically verified effect.",
@@ -829,35 +829,35 @@
     },
     "lighting.music.effect.flow_flash" : {
       "comment" : "Reference controller-local music effect name.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Music Flow Flash (reference)" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Flow flash" } } }
     },
     "lighting.music.effect.flash" : {
       "comment" : "Reference controller-local music effect name.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Music Flash (reference)" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Flash" } } }
     },
     "lighting.music.effect.rainbow" : {
       "comment" : "Reference controller-local music effect name.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Music Rainbow (reference)" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Rainbow" } } }
     },
     "lighting.music.effect.snake" : {
       "comment" : "Reference controller-local music effect name.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Music Snake (reference)" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Snake" } } }
     },
     "lighting.music.effect.rainbow_2" : {
       "comment" : "Reference controller-local music effect name.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Music Rainbow 2 (reference)" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Rainbow 2" } } }
     },
     "lighting.music.effect.pulse" : {
       "comment" : "Reference controller-local music effect name.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Music Pulse (reference)" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Pulse" } } }
     },
     "lighting.music.effect.flow" : {
       "comment" : "Reference controller-local music effect name.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Music Flow (reference)" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Flow" } } }
     },
     "lighting.music.effect.pulse_2" : {
       "comment" : "Reference controller-local music effect name.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Music Pulse 2 (reference)" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Pulse 2" } } }
     },
     "app.command.disconnect" : {
       "comment" : "App command that disconnects the current device.",
