@@ -212,8 +212,15 @@ fn resume_does_not_retry_an_invalid_remembered_identity() {
 }
 
 fn initializing_core() -> std::sync::Arc<MobileMelkLightingSessionCore> {
+    initializing_core_with_name(Some(ID), Some("MELK-OC21  6A"))
+}
+
+fn initializing_core_with_name(
+    preferred_identifier: Option<&str>,
+    callback_name: Option<&str>,
+) -> std::sync::Arc<MobileMelkLightingSessionCore> {
     let core = MobileMelkLightingSessionCore::new();
-    core.start(Some(ID.into()));
+    core.start(preferred_identifier.map(str::to_owned));
     core.handle(MobileMelkLightingSessionEventDto::BluetoothState {
         powered_on: true,
         state_code: 5,
@@ -223,9 +230,12 @@ fn initializing_core() -> std::sync::Arc<MobileMelkLightingSessionCore> {
         platform_identifier: ID.into(),
         rssi: -60,
     });
+    if preferred_identifier.is_none() {
+        core.select_candidate(ID.into());
+    }
     core.drain_actions();
     core.handle(MobileMelkLightingSessionEventDto::Connected {
-        name: Some("MELK-OC21  6A".into()),
+        name: callback_name.map(str::to_owned),
         platform_identifier: ID.into(),
     });
     core.drain_actions();
@@ -236,7 +246,7 @@ fn initializing_core() -> std::sync::Arc<MobileMelkLightingSessionCore> {
     core.drain_actions();
     core.handle(
         MobileMelkLightingSessionEventDto::CharacteristicsDiscovered {
-            name: Some("MELK-OC21  6A".into()),
+            name: callback_name.map(str::to_owned),
             service_uuid: cutout_protocols::MELK_SERVICE_CHANNEL.as_uuid().into(),
             characteristics: vec![
                 MobileMelkLightingCharacteristicEvidenceDto {
@@ -266,6 +276,11 @@ fn initializing_core() -> std::sync::Arc<MobileMelkLightingSessionCore> {
 
 fn ready_core() -> std::sync::Arc<MobileMelkLightingSessionCore> {
     let core = initializing_core();
+    finish_initialization(&core);
+    core
+}
+
+fn finish_initialization(core: &MobileMelkLightingSessionCore) {
     core.handle(MobileMelkLightingSessionEventDto::TimerFired {
         timer: MobileMelkLightingTimerDto::Initialization,
         can_send: true,
@@ -280,7 +295,14 @@ fn ready_core() -> std::sync::Arc<MobileMelkLightingSessionCore> {
         core.snapshot().state,
         MobileMelkLightingSessionStateDto::Ready
     );
-    core
+}
+
+#[test]
+fn first_pairing_keeps_the_advertised_name_when_connected_callbacks_omit_it() {
+    let core = initializing_core_with_name(None, None);
+    assert_eq!(core.snapshot().name.as_deref(), Some("MELK-OC21  6A"));
+    finish_initialization(&core);
+    assert!(core.set_power(true));
 }
 
 #[test]

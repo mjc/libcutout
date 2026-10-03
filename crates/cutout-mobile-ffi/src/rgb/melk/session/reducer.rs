@@ -521,7 +521,9 @@ impl SessionReducer {
                 if self.selected_identifier.as_deref() != Some(platform_identifier.as_str()) {
                     return;
                 }
-                self.selected_name = name;
+                if name.is_some() {
+                    self.selected_name = name;
+                }
                 self.timer = None;
                 self.transition(MobileMelkLightingSessionStateDto::Discovering);
                 self.actions
@@ -572,7 +574,7 @@ impl SessionReducer {
                 characteristics,
                 error,
             } => {
-                let name = name.or_else(|| {
+                let name = name.or_else(|| self.selected_name.clone()).or_else(|| {
                     self.preferred_identifier
                         .as_ref()
                         .map(|_| "MELK-OC21".into())
