@@ -23,11 +23,13 @@ pub struct MobileRgbLightingRestoreCandidate {
 struct Entry {
     record: Arc<MobileRgbLightingAccessoryRecord>,
     fingerprint: Option<String>,
+    retired: bool,
 }
 
 impl Entry {
     fn is_compatible(&self) -> bool {
-        self.record.profile() == MobileRgbLightingProfileKindDto::MelkOc21
+        !self.retired
+            && self.record.profile() == MobileRgbLightingProfileKindDto::MelkOc21
             && self.record.profile_version() == super::mobile_melk_lighting_profile_version()
             && self.fingerprint.as_deref()
                 == Some(super::mobile_melk_lighting_capabilities_fingerprint().as_str())
@@ -47,6 +49,8 @@ struct WireStore {
 struct WireEntry {
     record: Vec<u8>,
     fingerprint: Option<String>,
+    #[serde(default)]
+    retired: bool,
 }
 
 #[derive(Debug, Default)]
@@ -105,6 +109,7 @@ impl MobileRgbLightingAccessoryStore {
             entries.push(Entry {
                 record,
                 fingerprint: entry.fingerprint,
+                retired: entry.retired,
             });
         }
         Ok(Arc::new(Self {
@@ -128,6 +133,7 @@ impl MobileRgbLightingAccessoryStore {
                 Ok(WireEntry {
                     record: entry.record.encode()?,
                     fingerprint: entry.fingerprint.clone(),
+                    retired: entry.retired,
                 })
             })
             .collect::<Result<Vec<_>, MobileRgbLightingRecordError>>()?;
@@ -151,6 +157,7 @@ impl MobileRgbLightingAccessoryStore {
             store.entries.push(Entry {
                 record,
                 fingerprint,
+                retired: false,
             });
         }
     }
@@ -174,7 +181,7 @@ impl MobileRgbLightingAccessoryStore {
             .entries
             .iter()
             .rev()
-            .find(|entry| entry.record.vehicle_identifier() == vehicle_identifier)
+            .find(|entry| !entry.retired && entry.record.vehicle_identifier() == vehicle_identifier)
             .map(|entry| Arc::clone(&entry.record)))
     }
 
@@ -206,11 +213,11 @@ impl MobileRgbLightingAccessoryStore {
             )?
         };
         record.set_vehicle_identifier(vehicle_identifier.clone())?;
-        for entry in &store.entries {
+        for entry in &mut store.entries {
             if entry.record.platform_identifier() != record.platform_identifier()
                 && entry.record.vehicle_identifier() == vehicle_identifier
             {
-                entry.record.set_vehicle_identifier(None)?;
+                entry.retired = true;
             }
         }
         store
@@ -219,6 +226,7 @@ impl MobileRgbLightingAccessoryStore {
         store.entries.push(Entry {
             record: Arc::clone(&record),
             fingerprint: Some(fingerprint),
+            retired: false,
         });
         store.adopt_legacy = false;
         Ok(record)
@@ -447,5 +455,49 @@ mod tests {
             .unwrap();
         store.forget(B.into());
         assert!(store.select_vehicle(Some("aero".into())).unwrap().is_none());
+    }
+
+    #[test]
+    fn replaced_vehicle_lights_do_not_become_standalone_after_restart() {
+        let store = MobileRgbLightingAccessoryStore::new();
+        let old = store
+            .pair(A.into(), Some("aero".into()), "fingerprint".into())
+            .unwrap();
+        old.set_alias(Some("old aero lights".into())).unwrap();
+        store
+            .pair(B.into(), Some("aero".into()), "fingerprint".into())
+            .unwrap();
+        let reopened = MobileRgbLightingAccessoryStore::decode(store.encode().unwrap()).unwrap();
+        assert!(reopened.select_vehicle(None).unwrap().is_none());
+        reopened.forget(B.into());
+        assert!(
+            reopened
+                .select_vehicle(Some("aero".into()))
+                .unwrap()
+                .is_none()
+        );
+        assert!(reopened.select_vehicle(None).unwrap().is_none());
+        let paired_again = reopened
+            .pair(A.into(), Some("aero".into()), "fingerprint".into())
+            .unwrap();
+        assert_eq!(paired_again.alias().as_deref(), Some("old aero lights"));
+        assert!(reopened.select_vehicle(None).unwrap().is_none());
+        reopened.pair(B.into(), None, "fingerprint".into()).unwrap();
+        assert_eq!(
+            reopened
+                .select_vehicle(None)
+                .unwrap()
+                .unwrap()
+                .platform_identifier(),
+            B
+        );
+        assert_eq!(
+            reopened
+                .select_vehicle(Some("aero".into()))
+                .unwrap()
+                .unwrap()
+                .platform_identifier(),
+            A
+        );
     }
 }
