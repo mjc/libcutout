@@ -668,7 +668,7 @@ fn plist_json(path: &Path) -> Result<Value> {
 fn verify_ios_metadata(metadata: &Value) -> Result<()> {
     let expected = serde_json::json!({
         "CFBundleDisplayName": "CutOut",
-        "NSBluetoothAlwaysUsageDescription": "CutOut connects to your vehicle over Bluetooth to show live telemetry and keep an active ride recording when the screen is locked.",
+        "NSBluetoothAlwaysUsageDescription": "CutOut uses Bluetooth to show wheel data and record active rides while the screen is locked.",
         "NSLocationWhenInUseUsageDescription": "CutOut uses your location to record your ride route. An active ride can continue recording when the screen is locked.",
         "UIDeviceFamily": [1],
         "UISupportedInterfaceOrientations": [
@@ -1598,7 +1598,7 @@ mod tests {
     fn ios_metadata_rejects_missing_and_incorrect_values() {
         let valid = serde_json::json!({
             "CFBundleDisplayName": "CutOut",
-            "NSBluetoothAlwaysUsageDescription": "CutOut connects to your vehicle over Bluetooth to show live telemetry and keep an active ride recording when the screen is locked.",
+            "NSBluetoothAlwaysUsageDescription": "CutOut uses Bluetooth to show wheel data and record active rides while the screen is locked.",
             "NSLocationWhenInUseUsageDescription": "CutOut uses your location to record your ride route. An active ride can continue recording when the screen is locked.",
             "UIBackgroundModes": ["bluetooth-central", "location"],
             "UIDeviceFamily": [1],

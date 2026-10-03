@@ -45,10 +45,6 @@
 	<string>CutOut connects to cameras on local Wi-Fi to show previews, recording status, and files.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>CutOut uses your location to record your ride route. An active ride can continue recording when the screen is locked.</string>
-	<key>NSLocationAlwaysUsageDescription</key>
-	<string>CutOut records ride location, altitude, speed, and direction while an active ride continues in the background.</string>
-	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-	<string>CutOut records ride location, altitude, speed, and direction while an active ride continues in the background.</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>
