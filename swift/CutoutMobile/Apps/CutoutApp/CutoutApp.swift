@@ -39,6 +39,7 @@ struct CutoutApp: App {
                     switch scenePhase {
                     case .active:
                         model?.appDidBecomeActive()
+                        lighting?.startIfRemembered()
                     case .background:
                         model?.appDidEnterBackground()
                     case .inactive:

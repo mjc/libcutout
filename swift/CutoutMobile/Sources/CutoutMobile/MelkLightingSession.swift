@@ -122,21 +122,36 @@ import Foundation
 
         public func start(preferredPlatformIdentifier: String? = nil) {
             onQueue {
-                guard central == nil else { return }
+                if central != nil {
+                    core.handle(event: .resume)
+                    syncCore()
+                    return
+                }
                 self.preferredPlatformIdentifier = preferredPlatformIdentifier
-                discoveredPeripherals.removeAll(keepingCapacity: true)
                 core.start(preferredPlatformIdentifier: preferredPlatformIdentifier)
-                #if os(iOS)
-                    central = CBCentralManager(
-                        delegate: self,
-                        queue: queue,
-                        options: [CBCentralManagerOptionRestoreIdentifierKey: "io.cutout.melk-lighting"]
-                    )
-                #else
-                    central = CBCentralManager(delegate: self, queue: queue)
-                #endif
+                restartTransport()
                 syncCore()
             }
+        }
+
+        private func restartTransport() {
+            timerTask?.cancel()
+            timerTask = nil
+            let previousCentral = central
+            central = nil
+            previousCentral?.stopScan()
+            if let peripheral { previousCentral?.cancelPeripheralConnection(peripheral) }
+            clearActivePeripheral()
+            discoveredPeripherals.removeAll(keepingCapacity: true)
+            #if os(iOS)
+                central = CBCentralManager(
+                    delegate: self,
+                    queue: queue,
+                    options: [CBCentralManagerOptionRestoreIdentifierKey: "io.cutout.melk-lighting"]
+                )
+            #else
+                central = CBCentralManager(delegate: self, queue: queue)
+            #endif
         }
 
         public func stop() {
@@ -491,6 +506,8 @@ import Foundation
             guard let central else { return }
             for action in actions {
                 switch action {
+                case .restartTransport:
+                    restartTransport()
                 case .scan:
                     central.scanForPeripherals(withServices: nil)
                 case .stopScan:

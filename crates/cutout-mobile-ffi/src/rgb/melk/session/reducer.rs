@@ -391,6 +391,21 @@ impl SessionReducer {
     )]
     pub(crate) fn handle(&mut self, event: MobileMelkLightingSessionEventDto) {
         match event {
+            MobileMelkLightingSessionEventDto::Resume => {
+                if !self.reconnect_enabled || self.invalid_preferred_identifier {
+                    return;
+                }
+                match self.state {
+                    MobileMelkLightingSessionStateDto::Failed { .. }
+                    | MobileMelkLightingSessionStateDto::Disconnected => {
+                        let preferred_identifier = self.preferred_identifier.clone();
+                        self.start(preferred_identifier.as_deref());
+                        self.actions
+                            .push_back(MobileMelkLightingSessionActionDto::RestartTransport);
+                    }
+                    _ => {}
+                }
+            }
             MobileMelkLightingSessionEventDto::BluetoothState {
                 powered_on,
                 state_code,

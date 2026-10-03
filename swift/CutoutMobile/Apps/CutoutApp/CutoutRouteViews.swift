@@ -394,11 +394,12 @@ final class LightingRouteModel {
     }
 
     func start() {
-        guard !isRunning else { return }
-        isRunning = true
-        callbackGeneration &+= 1
-        installSessionCallbacks(for: callbackGeneration)
-        candidates.removeAll()
+        if !isRunning {
+            isRunning = true
+            callbackGeneration &+= 1
+            installSessionCallbacks(for: callbackGeneration)
+            candidates.removeAll()
+        }
         session.start(preferredPlatformIdentifier: persistence.platformIdentifier)
     }
 

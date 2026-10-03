@@ -784,6 +784,46 @@ final class CutoutAppRouteTests: XCTestCase {
     }
 
     @MainActor
+    func testOpeningLightingForwardsResumeToAnAlreadyRunningSession() async throws {
+        let suiteName = "CutoutAppRouteTests.lightingResume"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let fake = TestLightingSession()
+        let model = LightingRouteModel(session: fake, persistence: LightingAccessoryPersistence(defaults: defaults))
+        model.start()
+        fake.onStateChange?(.failed("Accessory reconnect exhausted"))
+        for _ in 0..<10 { await Task.yield() }
+        model.start()
+        XCTAssertEqual(fake.startCalls, [nil, nil])
+        XCTAssertEqual(fake.stopCalls, 0)
+        // Rust chooses the transition; reopening does not invent a Swift state.
+        XCTAssertEqual(model.connectionState, .failed("Accessory reconnect exhausted"))
+        fake.onStateChange?(.idle)
+        for _ in 0..<10 { await Task.yield() }
+        XCTAssertEqual(model.connectionState, .idle)
+    }
+
+    @MainActor
+    func testRememberedLightingForwardsResumeWithTheSameControllerIdentity() async throws {
+        let suiteName = "CutoutAppRouteTests.lightingRememberedResume"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let persistence = LightingAccessoryPersistence(defaults: defaults)
+        let identifier = "A1B2C3D4-E5F6-4789-ABCD-0123456789AB"
+        XCTAssertTrue(persistence.ensureRecord(platformIdentifier: identifier))
+        let fake = TestLightingSession()
+        let model = LightingRouteModel(session: fake, persistence: persistence)
+        model.startIfRemembered()
+        fake.onStateChange?(.disconnected)
+        for _ in 0..<10 { await Task.yield() }
+        model.startIfRemembered()
+        XCTAssertEqual(fake.startCalls, [identifier, identifier])
+        XCTAssertEqual(fake.stopCalls, 0)
+    }
+
+    @MainActor
     func testLightingForgetClearsStoppedAccessoryPresentation() async throws {
         let suiteName = "CutoutAppRouteTests.lightingForget"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))

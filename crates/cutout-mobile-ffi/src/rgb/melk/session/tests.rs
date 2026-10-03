@@ -3,6 +3,150 @@ use crate::{MobileMelkLightingError, MobileMelkLightingRestoreStateDto};
 
 const ID: &str = "11111111-1111-1111-1111-111111111111";
 
+#[test]
+fn resume_restarts_exhausted_retries_and_keeps_the_remembered_identity() {
+    let core = ready_core();
+    for _ in 0..4 {
+        core.handle(MobileMelkLightingSessionEventDto::ConnectFailed {
+            reason: "accessory unavailable".into(),
+        });
+        core.drain_actions();
+    }
+    assert!(matches!(
+        core.snapshot().state,
+        MobileMelkLightingSessionStateDto::Failed { .. }
+    ));
+
+    core.handle(MobileMelkLightingSessionEventDto::Resume);
+    assert_eq!(
+        core.snapshot().state,
+        MobileMelkLightingSessionStateDto::Idle
+    );
+    assert_eq!(core.snapshot().platform_identifier, None);
+    assert_eq!(
+        core.drain_actions(),
+        [MobileMelkLightingSessionActionDto::RestartTransport]
+    );
+
+    // Duplicate lifecycle notifications must not keep recreating the adapter.
+    core.handle(MobileMelkLightingSessionEventDto::Resume);
+    assert!(core.drain_actions().is_empty());
+    core.handle(MobileMelkLightingSessionEventDto::BluetoothState {
+        powered_on: true,
+        state_code: 5,
+    });
+    core.handle(MobileMelkLightingSessionEventDto::RestoreUnavailable);
+    core.drain_actions();
+    core.handle(MobileMelkLightingSessionEventDto::Discovered {
+        name: Some("unrelated controller".into()),
+        platform_identifier: "22222222-2222-2222-2222-222222222222".into(),
+        rssi: -30,
+    });
+    assert!(core.drain_actions().is_empty());
+    core.handle(MobileMelkLightingSessionEventDto::Discovered {
+        name: None,
+        platform_identifier: ID.into(),
+        rssi: -60,
+    });
+    assert!(core.drain_actions().iter().any(|action| matches!(
+        action, MobileMelkLightingSessionActionDto::Connect { platform_identifier } if platform_identifier == ID
+    )));
+    // The retry budget belongs to this fresh session.
+    core.handle(MobileMelkLightingSessionEventDto::ConnectFailed {
+        reason: "temporary failure".into(),
+    });
+    assert!(matches!(
+        core.snapshot().state,
+        MobileMelkLightingSessionStateDto::Retrying { attempt: 1, .. }
+    ));
+}
+
+#[test]
+fn resume_recovers_a_power_loss_but_does_not_revive_an_explicitly_stopped_session() {
+    let core = ready_core();
+    core.handle(MobileMelkLightingSessionEventDto::Disconnected {
+        reason: "Bluetooth off".into(),
+        powered_on: false,
+    });
+    core.drain_actions();
+    core.handle(MobileMelkLightingSessionEventDto::Resume);
+    assert_eq!(
+        core.drain_actions(),
+        [MobileMelkLightingSessionActionDto::RestartTransport]
+    );
+    core.stop();
+    core.handle(MobileMelkLightingSessionEventDto::Resume);
+    assert_eq!(
+        core.snapshot().state,
+        MobileMelkLightingSessionStateDto::Disconnected
+    );
+    assert!(core.drain_actions().is_empty());
+}
+
+#[test]
+fn resume_preserves_active_connections_and_their_timers_and_commands() {
+    let ready = ready_core();
+    assert!(ready.set_power(true));
+    let initializing = initializing_core();
+    let connecting = MobileMelkLightingSessionCore::new();
+    connecting.start(Some(ID.into()));
+    connecting.handle(MobileMelkLightingSessionEventDto::Restored {
+        name: None,
+        platform_identifier: ID.into(),
+        connected: false,
+        pending: true,
+    });
+    connecting.drain_actions();
+    let retrying = ready_core();
+    retrying.handle(MobileMelkLightingSessionEventDto::ConnectFailed {
+        reason: "temporary".into(),
+    });
+    retrying.drain_actions();
+    let scanning = MobileMelkLightingSessionCore::new();
+    scanning.start(None);
+    scanning.handle(MobileMelkLightingSessionEventDto::BluetoothState {
+        powered_on: true,
+        state_code: 5,
+    });
+    scanning.drain_actions();
+    for core in [&ready, &initializing, &connecting, &retrying, &scanning] {
+        let before = core.snapshot();
+        core.handle(MobileMelkLightingSessionEventDto::Resume);
+        assert_eq!(core.snapshot(), before);
+        assert!(core.drain_actions().is_empty());
+    }
+    connecting.handle(MobileMelkLightingSessionEventDto::ConnectTimeout);
+    assert_eq!(
+        connecting.snapshot().state,
+        MobileMelkLightingSessionStateDto::Scanning
+    );
+    initializing.handle(MobileMelkLightingSessionEventDto::TimerFired {
+        timer: MobileMelkLightingTimerDto::Initialization,
+        can_send: true,
+    });
+    assert!(
+        initializing
+            .drain_actions()
+            .iter()
+            .any(|action| matches!(action, MobileMelkLightingSessionActionDto::Write { .. }))
+    );
+    assert_eq!(ready.snapshot().command_status, 1);
+}
+
+#[test]
+fn resume_does_not_retry_an_invalid_remembered_identity() {
+    let core = MobileMelkLightingSessionCore::new();
+    core.start(Some("invalid".into()));
+    core.handle(MobileMelkLightingSessionEventDto::BluetoothState {
+        powered_on: true,
+        state_code: 5,
+    });
+    let before = core.snapshot();
+    core.handle(MobileMelkLightingSessionEventDto::Resume);
+    assert_eq!(core.snapshot(), before);
+    assert!(core.drain_actions().is_empty());
+}
+
 fn initializing_core() -> std::sync::Arc<MobileMelkLightingSessionCore> {
     let core = MobileMelkLightingSessionCore::new();
     core.start(Some(ID.into()));
