@@ -253,24 +253,55 @@ struct EucPackRouteView: View {
 }
 
 struct EucTuneRouteView: View {
-    let device: DevicePresentationModel
+    let model: CutoutAppModel
     let submitSetting: (ConnectionAttemptToken, DeviceSettingID, DeviceSettingValue) throws -> Void
     let submitAction: (ConnectionAttemptToken, DeviceActionID) throws -> Void
 
     var body: some View {
         Group {
-            if let snapshot = device.settings {
+            if let snapshot = model.device.settings {
                 DeviceControlsForm(
                     snapshot: snapshot,
                     submitSetting: submitSetting,
                     submitAction: submitAction
-                )
+                ) { alarmsSection }
             } else {
-                ContentUnavailableView(
-                    localizedAppText("settings.readback.unavailable"), systemImage: "slider.horizontal.3")
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 20) {
+                        Text(localizedAppText("controls.tune.title")).font(.largeTitle.bold())
+                        ContentUnavailableView(
+                            localizedAppText("settings.readback.unavailable"), systemImage: "slider.horizontal.3")
+                        alarmsSection
+                    }
+                    .padding(24)
+                }
             }
         }
+        .background(PevColors.pageBackground)
+        .foregroundStyle(PevColors.primaryText)
+        .tint(PevColors.yellow)
         .accessibilityIdentifier("settings.screen.eucTune")
+    }
+
+    private var alarmsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(localizedAppText("controls.alarms.title"))
+                .font(.headline)
+                .accessibilityAddTraits(.isHeader)
+            NavigationLink {
+                PhoneRideAlarmSettingsView(model: model)
+            } label: {
+                HStack {
+                    Label(localizedAppText("controls.alarms.title"), systemImage: "bell.badge")
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .foregroundStyle(PevColors.muted)
+                }
+                .padding(16)
+                .background(PevDashboardCardBackground(cornerRadius: 22))
+            }
+            .accessibilityIdentifier("settings.open-alarms")
+        }
     }
 }
 

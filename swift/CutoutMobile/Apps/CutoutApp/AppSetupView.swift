@@ -12,7 +12,6 @@ struct AppSetupView: View {
 
     private enum Destination: Hashable {
         case music
-        case phoneAlarms
         case captures
     }
 
@@ -61,16 +60,6 @@ struct AppSetupView: View {
                     }
                 }
                 Section {
-                    NavigationLink(value: Destination.phoneAlarms) {
-                        LabeledContent {
-                            Text(localizedAppText("phone_alarm.summary"))
-                                .foregroundStyle(.secondary)
-                        } label: {
-                            Label(
-                                localizedAppText("phone_alarm.title"), systemImage: "iphone.radiowaves.left.and.right")
-                        }
-                    }
-                    .accessibilityIdentifier("setup.phone-alarms")
                     NavigationLink(value: Destination.music) {
                         Label(pevLocalizedText("music.settings.title"), systemImage: "music.note")
                     }
@@ -128,9 +117,6 @@ struct AppSetupView: View {
                         }
                     )
                     .toolbar { doneToolbar }
-                case .phoneAlarms:
-                    PhoneRideAlarmSettingsView(model: model)
-                        .toolbar { doneToolbar }
                 }
             }
         }
@@ -146,7 +132,7 @@ struct AppSetupView: View {
     }
 }
 
-private struct PhoneRideAlarmSettingsView: View {
+struct PhoneRideAlarmSettingsView: View {
     let model: CutoutAppModel
     @Environment(\.openURL) private var openURL
 
@@ -253,6 +239,7 @@ private struct PhoneRideAlarmSettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .navigationTitle(localizedAppText("phone_alarm.title"))
+        .navigationTitle(localizedAppText("controls.alarms.title"))
+        .accessibilityIdentifier("settings.screen.alarms")
     }
 }

@@ -3338,6 +3338,10 @@
     "settings.tiltback_speed.label" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Tilt-back speed" } } } },
     "settings.transport_mode.label" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Transport mode" } } } },
     "settings.voltage_correction.label" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Voltage correction" } } } },
+    "controls.alarms.title" : {
+      "comment" : "Wheel tuning section and destination for ride alarms.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Alarms" } } }
+    },
     "controls.tune.title" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Settings"}}}},
     "controls.empty" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "No settings are available for this wheel."}}}},
     "controls.group.interface" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Lights & display"}}}},
