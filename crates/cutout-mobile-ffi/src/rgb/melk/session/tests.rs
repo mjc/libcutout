@@ -4,6 +4,151 @@ use crate::{MobileMelkLightingError, MobileMelkLightingRestoreStateDto};
 const ID: &str = "11111111-1111-1111-1111-111111111111";
 
 #[test]
+fn restored_peripherals_wait_for_bluetooth_power_before_transport_operations() {
+    for (connected, pending) in [(true, false), (false, true), (false, false)] {
+        let core = MobileMelkLightingSessionCore::new();
+        core.start(Some(ID.into()));
+        core.handle(MobileMelkLightingSessionEventDto::Restored {
+            name: Some("MELK-OC21".into()),
+            platform_identifier: ID.into(),
+            connected,
+            pending,
+        });
+        assert_eq!(core.snapshot().platform_identifier.as_deref(), Some(ID));
+        assert!(
+            core.drain_actions().is_empty(),
+            "restoration precedes the radio state callback"
+        );
+        core.handle(MobileMelkLightingSessionEventDto::BluetoothState {
+            powered_on: true,
+            state_code: 5,
+        });
+        let actions = core.drain_actions();
+        if connected {
+            assert!(actions.iter().any(|action| matches!(action,
+                MobileMelkLightingSessionActionDto::DiscoverServices { platform_identifier, .. } if platform_identifier == ID
+            )));
+        } else if pending {
+            assert!(!actions.iter().any(|action| matches!(
+                action,
+                MobileMelkLightingSessionActionDto::Connect { .. }
+            )));
+            assert!(actions.iter().any(|action| matches!(
+                action,
+                MobileMelkLightingSessionActionDto::ArmTimer {
+                    timer: MobileMelkLightingTimerDto::ConnectionAttempt,
+                    ..
+                }
+            )));
+        } else {
+            assert!(actions.iter().any(|action| matches!(action,
+                MobileMelkLightingSessionActionDto::Connect { platform_identifier } if platform_identifier == ID
+            )));
+        }
+        core.handle(MobileMelkLightingSessionEventDto::BluetoothState {
+            powered_on: true,
+            state_code: 5,
+        });
+        assert!(core.drain_actions().is_empty());
+    }
+}
+
+#[test]
+fn unavailable_restoration_does_not_scan_before_bluetooth_is_powered_on() {
+    let core = MobileMelkLightingSessionCore::new();
+    core.start(Some(ID.into()));
+    core.handle(MobileMelkLightingSessionEventDto::RestoreUnavailable);
+    assert!(core.drain_actions().is_empty());
+    core.handle(MobileMelkLightingSessionEventDto::BluetoothState {
+        powered_on: true,
+        state_code: 5,
+    });
+    assert_eq!(
+        core.drain_actions(),
+        [MobileMelkLightingSessionActionDto::RestorePeripheral {
+            platform_identifier: ID.into(),
+        }]
+    );
+}
+
+#[test]
+fn connection_completion_before_the_radio_callback_is_deferred() {
+    let core = MobileMelkLightingSessionCore::new();
+    core.start(Some(ID.into()));
+    core.handle(MobileMelkLightingSessionEventDto::Restored {
+        name: None,
+        platform_identifier: ID.into(),
+        connected: false,
+        pending: true,
+    });
+    core.drain_actions();
+    core.handle(MobileMelkLightingSessionEventDto::Connected {
+        name: None,
+        platform_identifier: ID.into(),
+    });
+    assert!(core.drain_actions().is_empty());
+    core.handle(MobileMelkLightingSessionEventDto::BluetoothState {
+        powered_on: true,
+        state_code: 5,
+    });
+    assert!(core.drain_actions().iter().any(|action| matches!(action,
+        MobileMelkLightingSessionActionDto::DiscoverServices { platform_identifier, .. } if platform_identifier == ID
+    )));
+}
+
+#[test]
+fn power_loss_discards_deferred_restoration_before_the_next_power_cycle() {
+    let core = MobileMelkLightingSessionCore::new();
+    core.start(Some(ID.into()));
+    core.handle(MobileMelkLightingSessionEventDto::Restored {
+        name: None,
+        platform_identifier: ID.into(),
+        connected: true,
+        pending: false,
+    });
+    assert!(core.drain_actions().is_empty());
+    core.handle(MobileMelkLightingSessionEventDto::BluetoothState {
+        powered_on: false,
+        state_code: 4,
+    });
+    assert_eq!(core.snapshot().platform_identifier, None);
+    core.handle(MobileMelkLightingSessionEventDto::BluetoothState {
+        powered_on: true,
+        state_code: 5,
+    });
+    assert_eq!(
+        core.drain_actions(),
+        [MobileMelkLightingSessionActionDto::RestorePeripheral {
+            platform_identifier: ID.into(),
+        }]
+    );
+}
+
+#[test]
+fn disconnect_radio_state_also_gates_restoration_operations() {
+    let core = ready_core();
+    core.handle(MobileMelkLightingSessionEventDto::Disconnected {
+        reason: "radio off".into(),
+        powered_on: false,
+    });
+    core.drain_actions();
+    core.handle(MobileMelkLightingSessionEventDto::Restored {
+        name: None,
+        platform_identifier: ID.into(),
+        connected: true,
+        pending: false,
+    });
+    assert!(core.drain_actions().is_empty());
+    core.handle(MobileMelkLightingSessionEventDto::BluetoothState {
+        powered_on: true,
+        state_code: 5,
+    });
+    assert!(core.drain_actions().iter().any(|action| matches!(action,
+        MobileMelkLightingSessionActionDto::DiscoverServices { platform_identifier, .. } if platform_identifier == ID
+    )));
+}
+
+#[test]
 fn late_subscription_errors_preserve_the_pending_reconnect() {
     let core = ready_core();
     core.handle(MobileMelkLightingSessionEventDto::Disconnected {
@@ -156,6 +301,10 @@ fn resume_preserves_active_connections_and_their_timers_and_commands() {
     let initializing = initializing_core();
     let connecting = MobileMelkLightingSessionCore::new();
     connecting.start(Some(ID.into()));
+    connecting.handle(MobileMelkLightingSessionEventDto::BluetoothState {
+        powered_on: true,
+        state_code: 5,
+    });
     connecting.handle(MobileMelkLightingSessionEventDto::Restored {
         name: None,
         platform_identifier: ID.into(),
@@ -364,6 +513,10 @@ fn reducer_owns_gatt_initialization_and_ready_gate() {
 fn restored_notifications_cannot_bypass_profile_verification() {
     let core = MobileMelkLightingSessionCore::new();
     core.start(Some(ID.into()));
+    core.handle(MobileMelkLightingSessionEventDto::BluetoothState {
+        powered_on: true,
+        state_code: 5,
+    });
     core.handle(MobileMelkLightingSessionEventDto::Restored {
         name: Some("MELK-OC21".into()),
         platform_identifier: ID.into(),
@@ -391,6 +544,10 @@ fn connected_and_restored_gatt_discovery_have_a_deadline() {
     for restored in [false, true] {
         let core = MobileMelkLightingSessionCore::new();
         core.start(Some(ID.into()));
+        core.handle(MobileMelkLightingSessionEventDto::BluetoothState {
+            powered_on: true,
+            state_code: 5,
+        });
         if restored {
             core.handle(MobileMelkLightingSessionEventDto::Restored {
                 name: Some("MELK-OC21".into()),

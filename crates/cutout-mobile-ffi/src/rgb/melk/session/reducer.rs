@@ -29,6 +29,13 @@ enum GattState {
     Subscribed,
 }
 
+#[derive(Clone, Copy, Debug)]
+enum RestoredConnection {
+    Connected,
+    Pending,
+    Disconnected,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct SessionReducer {
     state: MobileMelkLightingSessionStateDto,
@@ -39,6 +46,8 @@ pub(crate) struct SessionReducer {
     candidates: BTreeMap<String, MobileMelkLightingSessionCandidateDto>,
     reconnect_enabled: bool,
     reconnect_attempt: u8,
+    bluetooth_powered_on: bool,
+    pending_restoration: Option<RestoredConnection>,
     gatt: GattState,
     initialization: VecDeque<MobileMelkLightingWriteDto>,
     writes: VecDeque<MobileMelkLightingWriteDto>,
@@ -61,6 +70,8 @@ impl Default for SessionReducer {
             candidates: BTreeMap::new(),
             reconnect_enabled: true,
             reconnect_attempt: 0,
+            bluetooth_powered_on: false,
+            pending_restoration: None,
             gatt: GattState::Unverified,
             initialization: VecDeque::new(),
             writes: VecDeque::new(),
@@ -85,6 +96,8 @@ impl SessionReducer {
             preferred_identifier.is_some_and(|value| uuid::Uuid::parse_str(value).is_err());
         self.reconnect_enabled = true;
         self.reconnect_attempt = 0;
+        self.bluetooth_powered_on = false;
+        self.pending_restoration = None;
         self.candidates.clear();
         self.selected_identifier = None;
         self.selected_name = None;
@@ -137,6 +150,7 @@ impl SessionReducer {
 
     fn forget_selected_connection(&mut self) {
         self.timer = None;
+        self.pending_restoration = None;
         self.selected_identifier = None;
         self.selected_name = None;
     }
@@ -235,6 +249,10 @@ impl SessionReducer {
         let Some(identifier) = self.selected_identifier.clone() else {
             return;
         };
+        if !self.bluetooth_powered_on {
+            self.pending_restoration = Some(RestoredConnection::Disconnected);
+            return;
+        }
         self.transition(MobileMelkLightingSessionStateDto::Connecting);
         self.actions
             .push_back(MobileMelkLightingSessionActionDto::Connect {
@@ -244,6 +262,36 @@ impl SessionReducer {
             MobileMelkLightingTimerDto::ConnectionAttempt,
             CONNECTION_TIMEOUT_MS,
         );
+    }
+
+    fn resume_restoration(&mut self, connection: RestoredConnection) {
+        if !self.bluetooth_powered_on {
+            self.pending_restoration = Some(connection);
+            return;
+        }
+        self.pending_restoration = None;
+        match connection {
+            RestoredConnection::Connected => {
+                let Some(identifier) = self.selected_identifier.clone() else {
+                    return;
+                };
+                self.transition(MobileMelkLightingSessionStateDto::Discovering);
+                self.arm(MobileMelkLightingTimerDto::Discovery, CONNECTION_TIMEOUT_MS);
+                self.actions
+                    .push_back(MobileMelkLightingSessionActionDto::DiscoverServices {
+                        platform_identifier: identifier,
+                        service: cutout_protocols::MELK_SERVICE_CHANNEL.as_uuid().into(),
+                    });
+            }
+            RestoredConnection::Pending => {
+                self.transition(MobileMelkLightingSessionStateDto::Connecting);
+                self.arm(
+                    MobileMelkLightingTimerDto::ConnectionAttempt,
+                    CONNECTION_TIMEOUT_MS,
+                );
+            }
+            RestoredConnection::Disconnected => self.connect_selected(),
+        }
     }
 
     fn schedule_reconnect(&mut self, reason: &str) {
@@ -426,6 +474,7 @@ impl SessionReducer {
                 powered_on,
                 state_code,
             } => {
+                self.bluetooth_powered_on = powered_on;
                 if self.invalid_preferred_identifier {
                     self.transition(MobileMelkLightingSessionStateDto::Failed {
                         reason: "Remembered lighting identity is invalid".into(),
@@ -436,6 +485,8 @@ impl SessionReducer {
                     self.transition(MobileMelkLightingSessionStateDto::Failed {
                         reason: format!("Bluetooth unavailable: {state_code}"),
                     });
+                } else if let Some(connection) = self.pending_restoration.take() {
+                    self.resume_restoration(connection);
                 } else if self.selected_identifier.is_none() {
                     if let Some(identifier) = self.preferred_identifier.clone() {
                         self.actions.push_back(
@@ -497,7 +548,10 @@ impl SessionReducer {
                 }
             }
             MobileMelkLightingSessionEventDto::RestoreUnavailable => {
-                if self.preferred_identifier.is_some() && self.selected_identifier.is_none() {
+                if self.bluetooth_powered_on
+                    && self.preferred_identifier.is_some()
+                    && self.selected_identifier.is_none()
+                {
                     self.actions
                         .push_back(MobileMelkLightingSessionActionDto::Scan);
                     self.transition(MobileMelkLightingSessionStateDto::Scanning);
@@ -517,23 +571,14 @@ impl SessionReducer {
                 self.selected_identifier = Some(platform_identifier.clone());
                 self.selected_name = name;
                 self.record(format!("restore=melk id={platform_identifier}"));
-                if connected {
-                    self.transition(MobileMelkLightingSessionStateDto::Discovering);
-                    self.arm(MobileMelkLightingTimerDto::Discovery, CONNECTION_TIMEOUT_MS);
-                    self.actions
-                        .push_back(MobileMelkLightingSessionActionDto::DiscoverServices {
-                            platform_identifier,
-                            service: cutout_protocols::MELK_SERVICE_CHANNEL.as_uuid().into(),
-                        });
+                let connection = if connected {
+                    RestoredConnection::Connected
                 } else if pending {
-                    self.transition(MobileMelkLightingSessionStateDto::Connecting);
-                    self.arm(
-                        MobileMelkLightingTimerDto::ConnectionAttempt,
-                        CONNECTION_TIMEOUT_MS,
-                    );
+                    RestoredConnection::Pending
                 } else {
-                    self.connect_selected();
-                }
+                    RestoredConnection::Disconnected
+                };
+                self.resume_restoration(connection);
             }
             MobileMelkLightingSessionEventDto::Connected {
                 name,
@@ -546,16 +591,11 @@ impl SessionReducer {
                     self.selected_name = name;
                 }
                 self.timer = None;
-                self.transition(MobileMelkLightingSessionStateDto::Discovering);
-                self.arm(MobileMelkLightingTimerDto::Discovery, CONNECTION_TIMEOUT_MS);
-                self.actions
-                    .push_back(MobileMelkLightingSessionActionDto::DiscoverServices {
-                        platform_identifier,
-                        service: cutout_protocols::MELK_SERVICE_CHANNEL.as_uuid().into(),
-                    });
+                self.resume_restoration(RestoredConnection::Connected);
             }
             MobileMelkLightingSessionEventDto::ConnectFailed { reason } => {
                 self.timer = None;
+                self.pending_restoration = None;
                 if self.reconnect_enabled {
                     self.schedule_reconnect(&reason);
                 } else {
@@ -723,6 +763,8 @@ impl SessionReducer {
                 }
             }
             MobileMelkLightingSessionEventDto::Disconnected { reason, powered_on } => {
+                self.bluetooth_powered_on = powered_on;
+                self.pending_restoration = None;
                 self.record(format!("disconnected error={reason}"));
                 if self.reconnect_enabled && powered_on {
                     self.schedule_reconnect(&reason);
