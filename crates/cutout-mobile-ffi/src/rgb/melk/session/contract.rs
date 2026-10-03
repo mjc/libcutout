@@ -117,6 +117,8 @@ pub enum MobileMelkLightingSessionActionDto {
     Scan,
     /// Stop scanning before connecting to a selected candidate.
     StopScan,
+    /// Retrieve the remembered peripheral, or report that it is unavailable.
+    RestorePeripheral { platform_identifier: String },
     /// Connect to a platform-local peripheral identifier.
     Connect { platform_identifier: String },
     /// Cancel a failed first-pairing candidate.

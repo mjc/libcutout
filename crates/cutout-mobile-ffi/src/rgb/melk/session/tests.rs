@@ -4,13 +4,14 @@ use crate::{MobileMelkLightingError, MobileMelkLightingRestoreStateDto};
 const ID: &str = "11111111-1111-1111-1111-111111111111";
 
 #[test]
-fn failed_sessions_discard_the_previous_reconnect_timer() {
+fn late_subscription_errors_preserve_the_pending_reconnect() {
     let core = ready_core();
     core.handle(MobileMelkLightingSessionEventDto::Disconnected {
         reason: "link lost".into(),
         powered_on: true,
     });
     core.drain_actions();
+    let retrying = core.snapshot();
     // Subscription errors may arrive after CoreBluetooth reports a disconnect.
     core.handle(MobileMelkLightingSessionEventDto::NotificationState {
         characteristic: cutout_protocols::MELK_NOTIFY_CHANNEL.as_uuid().into(),
@@ -19,17 +20,18 @@ fn failed_sessions_discard_the_previous_reconnect_timer() {
         error: Some("subscription lost".into()),
     });
     core.drain_actions();
-    let failed = core.snapshot();
-    assert!(matches!(
-        failed.state,
-        MobileMelkLightingSessionStateDto::Failed { .. }
-    ));
+    assert_eq!(core.snapshot(), retrying);
     core.handle(MobileMelkLightingSessionEventDto::TimerFired {
         timer: MobileMelkLightingTimerDto::Reconnect,
         can_send: true,
     });
-    assert_eq!(core.snapshot(), failed);
-    assert!(core.drain_actions().is_empty());
+    assert_eq!(
+        core.snapshot().state,
+        MobileMelkLightingSessionStateDto::Connecting
+    );
+    assert!(core.drain_actions().iter().any(|action| matches!(
+        action, MobileMelkLightingSessionActionDto::Connect { platform_identifier } if platform_identifier == ID
+    )));
 }
 
 #[test]
@@ -304,6 +306,50 @@ fn first_pairing_keeps_the_advertised_name_when_connected_callbacks_omit_it() {
     assert_eq!(core.snapshot().name.as_deref(), Some("MELK-OC21  6A"));
     finish_initialization(&core);
     assert!(core.set_power(true));
+}
+
+#[test]
+fn first_pairing_remembers_the_verified_identity_across_session_recovery() {
+    let core = initializing_core_with_name(None, Some("MELK-OC21"));
+    finish_initialization(&core);
+    core.handle(MobileMelkLightingSessionEventDto::NotificationState {
+        characteristic: cutout_protocols::MELK_NOTIFY_CHANNEL.as_uuid().into(),
+        ready: false,
+        can_send: false,
+        error: Some("subscription lost".into()),
+    });
+    core.handle(MobileMelkLightingSessionEventDto::Resume);
+    core.drain_actions();
+    core.handle(MobileMelkLightingSessionEventDto::BluetoothState {
+        powered_on: true,
+        state_code: 5,
+    });
+    assert_eq!(
+        core.drain_actions(),
+        [MobileMelkLightingSessionActionDto::RestorePeripheral {
+            platform_identifier: ID.into(),
+        }]
+    );
+    core.handle(MobileMelkLightingSessionEventDto::RestoreUnavailable);
+    core.drain_actions();
+    core.drain_candidates();
+    core.handle(MobileMelkLightingSessionEventDto::Discovered {
+        name: Some("MELK-OC21".into()),
+        platform_identifier: "22222222-2222-2222-2222-222222222222".into(),
+        rssi: -30,
+    });
+    assert!(
+        core.drain_candidates().is_empty(),
+        "recovery must stay with the paired controller"
+    );
+    core.handle(MobileMelkLightingSessionEventDto::Discovered {
+        name: None,
+        platform_identifier: ID.into(),
+        rssi: -60,
+    });
+    assert!(core.drain_actions().iter().any(|action| matches!(
+        action, MobileMelkLightingSessionActionDto::Connect { platform_identifier } if platform_identifier == ID
+    )));
 }
 
 #[test]

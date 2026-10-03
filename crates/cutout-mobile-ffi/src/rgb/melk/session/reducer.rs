@@ -120,6 +120,10 @@ impl SessionReducer {
             _ => false,
         } {
             self.reconnect_attempt = 0;
+            if self.preferred_identifier.is_none() {
+                self.preferred_identifier
+                    .clone_from(&self.selected_identifier);
+            }
         } else {
             self.timer = None;
             if self.command_status == 1 {
@@ -432,12 +436,19 @@ impl SessionReducer {
                     self.transition(MobileMelkLightingSessionStateDto::Failed {
                         reason: format!("Bluetooth unavailable: {state_code}"),
                     });
-                } else if self.selected_identifier.is_none() && self.preferred_identifier.is_none()
-                {
-                    self.actions
-                        .push_back(MobileMelkLightingSessionActionDto::Scan);
-                    self.transition(MobileMelkLightingSessionStateDto::Scanning);
-                    self.record("scan=melk services=all; gatt=FFF0 post-connect");
+                } else if self.selected_identifier.is_none() {
+                    if let Some(identifier) = self.preferred_identifier.clone() {
+                        self.actions.push_back(
+                            MobileMelkLightingSessionActionDto::RestorePeripheral {
+                                platform_identifier: identifier,
+                            },
+                        );
+                    } else {
+                        self.actions
+                            .push_back(MobileMelkLightingSessionActionDto::Scan);
+                        self.transition(MobileMelkLightingSessionStateDto::Scanning);
+                        self.record("scan=melk services=all; gatt=FFF0 post-connect");
+                    }
                 }
             }
             MobileMelkLightingSessionEventDto::Discovered {
@@ -646,6 +657,11 @@ impl SessionReducer {
                 can_send,
                 error,
             } => {
+                if self.state != MobileMelkLightingSessionStateDto::Discovering
+                    && self.state != MobileMelkLightingSessionStateDto::Ready
+                {
+                    return;
+                }
                 if uuid::Uuid::from(characteristic)
                     != cutout_protocols::MELK_NOTIFY_CHANNEL.as_uuid()
                 {
