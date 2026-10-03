@@ -3947,6 +3947,20 @@ impl CutoutSessionStateHandle {
     }
 }
 
+/// Transport service UUIDs to request from native Bluetooth scans.
+///
+/// These are discovery hints; the device still requires protocol detection.
+#[must_use]
+#[uniffi::export]
+pub fn mobile_discovery_scan_service_uuids() -> Vec<DiscoveryServiceUuid> {
+    CoreBluetoothServiceUuid::DISCOVERY_TRANSPORT_SERVICES
+        .iter()
+        .map(|uuid| DiscoveryServiceUuid {
+            bytes: uuid.as_bytes().to_vec(),
+        })
+        .collect()
+}
+
 /// Build a mobile discovery candidate from advertisement evidence.
 #[must_use]
 #[allow(

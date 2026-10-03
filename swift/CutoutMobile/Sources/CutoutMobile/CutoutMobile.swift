@@ -5081,10 +5081,9 @@ public struct CoreBluetoothScanPolicy: Equatable, Hashable, Sendable {
         self.serviceUuids = serviceUuids
     }
 
-    public static let aeroFalcon = CoreBluetoothScanPolicy(serviceUuids: [
-        .eucSerialFfe0,
-        .vescSerialFff0,
-    ])
+    public static let aeroFalcon = CoreBluetoothScanPolicy(
+        serviceUuids: mobileDiscoveryScanServiceUuids().compactMap { BluetoothUuid(Data($0.bytes)) }
+    )
 }
 
 public enum CoreBluetoothCharacteristicProperty: Equatable, Hashable, Sendable {

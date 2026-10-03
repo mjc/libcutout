@@ -847,6 +847,10 @@ final class CutoutSessionCoreTests: XCTestCase {
     }
 
     func testObservedAdvertisementsUpdatePickerScanState() {
+        XCTAssertEqual(
+            Set(CoreBluetoothScanPolicy.aeroFalcon.serviceUuids),
+            Set([.eucSerialFfe0, .vescSerialFff0, .vescNordicUartService])
+        )
         let core = CutoutSessionCore()
         var observedStates: [DevicePickerScanState] = []
         core.onScanStateChange = { observedStates.append($0) }
