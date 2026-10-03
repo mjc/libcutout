@@ -96,6 +96,7 @@ lifecycle_id!(PlayerStateRequest, PlayerStateRequestId);
 lifecycle_id!(ArtworkRequest, ArtworkRequestId);
 lifecycle_id!(ArtworkRetry, ArtworkRetryId);
 lifecycle_id!(CommandFeedback, CommandFeedbackId);
+lifecycle_id!(PlayHandoff, PlayHandoffId);
 lifecycle_id!(TransportRequest, TransportRequestId);
 lifecycle_id!(HistoryTransition, HistoryTransitionId);
 

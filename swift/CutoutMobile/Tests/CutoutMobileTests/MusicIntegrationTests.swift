@@ -22,24 +22,19 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertFalse(shouldShowSpotifyStartupPlayer(selectedProvider: .appleMusic, nowPlaying: nil))
     }
 
-    func testSpotifyHandoffPlayIntentIsBoundedAndConsumedOnce() {
-        let firstHandoff = UUID()
-        let laterHandoff = UUID()
-        var intent = SpotifyAppRemotePlayIntent()
+    func testSpotifyHandoffPlaybackConfirmationUsesRustIdentityAndDeadline() throws {
+        let lifecycle = MobileMusicProviderLifecycle()
+        let first = try XCTUnwrap(lifecycle.beginPlayHandoff(nowMs: 100))
+        XCTAssertNil(lifecycle.observePlayHandoff(id: first.id, state: .playing, observedAtMs: 99))
+        XCTAssertNil(lifecycle.observePlayHandoff(id: first.id, state: .paused, observedAtMs: 110))
+        XCTAssertEqual(lifecycle.observePlayHandoff(id: first.id, state: .playing, observedAtMs: 120), .accepted)
+        XCTAssertNil(lifecycle.expirePlayHandoff(id: first.id, nowMs: first.deadlineMs))
 
-        intent.begin(handoffID: firstHandoff)
-        XCTAssertEqual(intent.handoffID, firstHandoff)
-        XCTAssertFalse(intent.consume(handoffID: laterHandoff))
-
-        // A failed connection or provider change cancels the original intent.
-        intent.cancel(handoffID: firstHandoff)
-        XCTAssertNil(intent.handoffID)
-        XCTAssertFalse(intent.consume(handoffID: firstHandoff))
-
-        intent.begin(handoffID: laterHandoff)
-        XCTAssertTrue(intent.consume(handoffID: laterHandoff))
-        XCTAssertNil(intent.handoffID)
-        XCTAssertFalse(intent.consume(handoffID: laterHandoff))
+        let second = try XCTUnwrap(lifecycle.beginPlayHandoff(nowMs: 200))
+        XCTAssertNotEqual(first.id, second.id)
+        XCTAssertNil(lifecycle.observePlayHandoff(id: first.id, state: .playing, observedAtMs: 210))
+        XCTAssertNil(lifecycle.expirePlayHandoff(id: second.id, nowMs: second.deadlineMs - 1))
+        XCTAssertEqual(lifecycle.expirePlayHandoff(id: second.id, nowMs: second.deadlineMs), .timedOut)
     }
 
     func testSpotifyRenewalFailureOnlyRequiresNewAuthorizationForRejectedCredentials() {

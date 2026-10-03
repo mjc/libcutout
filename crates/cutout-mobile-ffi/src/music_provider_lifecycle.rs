@@ -9,7 +9,7 @@ use cutout_music::callback_epoch::{
 use cutout_music::connection::MusicConnectionCallback;
 use cutout_music::ids::{
     ArtworkRequestId, ArtworkRetryId, AuthorizationId, CommandFeedbackId, ConnectionAttemptId,
-    EstablishedConnectionId, HistoryTransitionId, MonitorId, ObservationRevision,
+    EstablishedConnectionId, HistoryTransitionId, MonitorId, ObservationRevision, PlayHandoffId,
     PlayerStateRequestId, ProviderSessionId, TransportRequestId,
 };
 use cutout_music::player_request::{MusicPlayerRequestCompletion, MusicPlayerRequestExpiration};
@@ -158,6 +158,12 @@ pub struct MobileMusicCommandFeedbackId {
     pub value: u64,
 }
 
+/// Rust-owned identity for playback dispatched by a provider app handoff.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileMusicPlayHandoffId {
+    pub value: u64,
+}
+
 /// Rust-owned transport request identity.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileMusicTransportRequestId {
@@ -222,6 +228,7 @@ timed_effect!(
 timed_effect!(MobileMusicArtworkEffect, MobileMusicArtworkRequestId);
 timed_effect!(MobileMusicArtworkRetryEffect, MobileMusicArtworkRetryId);
 timed_effect!(MobileMusicTransportEffect, MobileMusicTransportRequestId);
+timed_effect!(MobileMusicPlayHandoffEffect, MobileMusicPlayHandoffId);
 
 macro_rules! boundary_id {
     ($ffi:ty, $rust:ty) => {
@@ -242,6 +249,7 @@ boundary_id!(MobileMusicPlayerStateRequestId, PlayerStateRequestId);
 boundary_id!(MobileMusicArtworkRequestId, ArtworkRequestId);
 boundary_id!(MobileMusicArtworkRetryId, ArtworkRetryId);
 boundary_id!(MobileMusicCommandFeedbackId, CommandFeedbackId);
+boundary_id!(MobileMusicPlayHandoffId, PlayHandoffId);
 boundary_id!(MobileMusicTransportRequestId, TransportRequestId);
 boundary_id!(MobileMusicHistoryTransitionId, HistoryTransitionId);
 boundary_id!(MobileMusicObservationRevision, ObservationRevision);
@@ -911,6 +919,53 @@ impl MobileMusicProviderLifecycle {
                 id: effect.id.into(),
                 deadline_ms: effect.deadline.as_milliseconds(),
             })
+    }
+
+    /// Begins playback confirmation for a command dispatched by an app handoff.
+    pub fn begin_play_handoff(&self, now_ms: u64) -> Option<MobileMusicPlayHandoffEffect> {
+        self.lock_inner()
+            .begin_play_handoff(now_ms)
+            .map(|effect| MobileMusicPlayHandoffEffect {
+                id: effect.id.into(),
+                deadline_ms: effect.deadline.as_milliseconds(),
+            })
+    }
+
+    /// Confirms playback from fresh provider state, independently of connection status.
+    pub fn observe_play_handoff(
+        &self,
+        id: MobileMusicPlayHandoffId,
+        state: MobileMusicPlaybackStateDto,
+        observed_at_ms: u64,
+    ) -> Option<MobileMusicTransportOutcome> {
+        self.lock_inner()
+            .observe_play_handoff(
+                PlayHandoffId::from_raw(id.value),
+                state.into(),
+                observed_at_ms,
+            )
+            .map(Into::into)
+    }
+
+    /// Expires an unconfirmed handoff at the Rust deadline.
+    pub fn expire_play_handoff(
+        &self,
+        id: MobileMusicPlayHandoffId,
+        now_ms: u64,
+    ) -> Option<MobileMusicTransportOutcome> {
+        self.lock_inner()
+            .expire_play_handoff(PlayHandoffId::from_raw(id.value), now_ms)
+            .map(Into::into)
+    }
+
+    /// Retires rejected and cancelled handoffs once.
+    pub fn finish_play_handoff(
+        &self,
+        id: MobileMusicPlayHandoffId,
+    ) -> MobileMusicProviderCallbackMatch {
+        self.lock_inner()
+            .finish_play_handoff(PlayHandoffId::from_raw(id.value))
+            .into()
     }
 
     /// Finishes the matching transport request exactly once.

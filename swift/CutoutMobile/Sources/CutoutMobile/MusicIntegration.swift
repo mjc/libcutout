@@ -457,7 +457,7 @@ public final class MusicProviderEffectExecutor {
         case transport(MobileMusicTransportRequestId)
         case artwork(MobileMusicArtworkRequestId)
         case artworkRetry(MobileMusicArtworkRetryId)
-        case handoff(UUID)
+        case handoff(MobileMusicPlayHandoffId)
 
         var namespace: Namespace {
             switch self {
