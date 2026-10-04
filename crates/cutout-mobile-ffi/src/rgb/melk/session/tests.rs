@@ -4,6 +4,37 @@ use crate::{MobileMelkLightingError, MobileMelkLightingRestoreStateDto};
 const ID: &str = "11111111-1111-1111-1111-111111111111";
 
 #[test]
+fn duplicate_link_failure_callbacks_preserve_the_reconnect_budget_and_timer() {
+    let core = ready_core();
+    core.handle(MobileMelkLightingSessionEventDto::Disconnected {
+        reason: "link lost".into(),
+        powered_on: true,
+    });
+    core.drain_actions();
+    let retrying = core.snapshot();
+    for event in [
+        MobileMelkLightingSessionEventDto::Disconnected {
+            reason: "late disconnect".into(),
+            powered_on: true,
+        },
+        MobileMelkLightingSessionEventDto::ConnectFailed {
+            reason: "late failure".into(),
+        },
+    ] {
+        core.handle(event);
+        assert_eq!(core.snapshot(), retrying);
+        assert!(core.drain_actions().is_empty());
+    }
+    core.handle(MobileMelkLightingSessionEventDto::TimerFired {
+        timer: MobileMelkLightingTimerDto::Reconnect,
+        can_send: false,
+    });
+    assert!(core.drain_actions().iter().any(|action| matches!(action,
+        MobileMelkLightingSessionActionDto::Connect { platform_identifier } if platform_identifier == ID
+    )));
+}
+
+#[test]
 fn restored_peripherals_wait_for_bluetooth_power_before_transport_operations() {
     for (connected, pending) in [(true, false), (false, true), (false, false)] {
         let core = MobileMelkLightingSessionCore::new();
@@ -217,7 +248,16 @@ fn stopped_sessions_ignore_late_transport_callbacks() {
 #[test]
 fn resume_restarts_exhausted_retries_and_keeps_the_remembered_identity() {
     let core = ready_core();
-    for _ in 0..4 {
+    core.handle(MobileMelkLightingSessionEventDto::Disconnected {
+        reason: "link lost".into(),
+        powered_on: true,
+    });
+    core.drain_actions();
+    for _ in 0..3 {
+        core.handle(MobileMelkLightingSessionEventDto::TimerFired {
+            timer: MobileMelkLightingTimerDto::Reconnect,
+            can_send: false,
+        });
         core.handle(MobileMelkLightingSessionEventDto::ConnectFailed {
             reason: "accessory unavailable".into(),
         });
@@ -227,6 +267,17 @@ fn resume_restarts_exhausted_retries_and_keeps_the_remembered_identity() {
         core.snapshot().state,
         MobileMelkLightingSessionStateDto::Failed { .. }
     ));
+
+    let exhausted = core.snapshot();
+    core.handle(MobileMelkLightingSessionEventDto::ConnectFailed {
+        reason: "late failure".into(),
+    });
+    core.handle(MobileMelkLightingSessionEventDto::Disconnected {
+        reason: "late disconnect".into(),
+        powered_on: true,
+    });
+    assert_eq!(core.snapshot(), exhausted);
+    assert!(core.drain_actions().is_empty());
 
     core.handle(MobileMelkLightingSessionEventDto::Resume);
     assert_eq!(

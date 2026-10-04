@@ -711,6 +711,11 @@ impl SessionReducer {
                 self.resume_restoration(RestoredConnection::Connected);
             }
             MobileMelkLightingSessionEventDto::ConnectFailed { reason } => {
+                if self.state != MobileMelkLightingSessionStateDto::Connecting
+                    && self.pending_restoration.is_none()
+                {
+                    return;
+                }
                 if self.is_probing() {
                     self.finish_probe(ProbeOutcome::Unavailable);
                     return;
@@ -885,6 +890,17 @@ impl SessionReducer {
                 }
             }
             MobileMelkLightingSessionEventDto::Disconnected { reason, powered_on } => {
+                if powered_on
+                    && self.pending_restoration.is_none()
+                    && match self.state {
+                        MobileMelkLightingSessionStateDto::Connecting
+                        | MobileMelkLightingSessionStateDto::Discovering
+                        | MobileMelkLightingSessionStateDto::Ready => false,
+                        _ => true,
+                    }
+                {
+                    return;
+                }
                 self.bluetooth_powered_on = powered_on;
                 if self.is_probing() {
                     self.finish_probe(ProbeOutcome::Unavailable);
