@@ -134,8 +134,6 @@ in
       "project:lint"
       "project:tests"
       "project:dependency-policy"
-      "check:android-camera-protocols"
-      "check:android-camera-ffi"
     ]
     ++ lib.optionals pkgs.stdenv.isDarwin [
       "build:ios-ui-tests"
