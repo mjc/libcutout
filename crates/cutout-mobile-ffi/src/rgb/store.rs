@@ -10,6 +10,14 @@ use super::{
     MobileRgbLightingProfileKindDto, MobileRgbLightingRecordError,
 };
 
+fn same_platform_identifier(left: &str, right: &str) -> bool {
+    left == right
+        || Uuid::parse_str(left)
+            .ok()
+            .zip(Uuid::parse_str(right).ok())
+            .is_some_and(|(left, right)| left == right)
+}
+
 /// An opted-in request for one compatible accessory; it is not device-state evidence.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileRgbLightingRestoreCandidate {
@@ -102,7 +110,10 @@ impl MobileRgbLightingAccessoryStore {
         for entry in wire.entries {
             let record = MobileRgbLightingAccessoryRecord::decode(entry.record)?;
             if entries.iter().any(|existing| {
-                existing.record.platform_identifier() == record.platform_identifier()
+                same_platform_identifier(
+                    &existing.record.platform_identifier(),
+                    &record.platform_identifier(),
+                )
             }) {
                 return Err(MobileRgbLightingRecordError::InvalidEncoding);
             }
@@ -196,11 +207,9 @@ impl MobileRgbLightingAccessoryStore {
         fingerprint: String,
     ) -> Result<Arc<MobileRgbLightingAccessoryRecord>, MobileRgbLightingRecordError> {
         let mut store = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        let record = if let Some(entry) = store
-            .entries
-            .iter()
-            .find(|entry| entry.record.platform_identifier() == platform_identifier)
-        {
+        let record = if let Some(entry) = store.entries.iter().find(|entry| {
+            same_platform_identifier(&entry.record.platform_identifier(), &platform_identifier)
+        }) {
             Arc::clone(&entry.record)
         } else {
             if store.entries.len() >= 32 {
@@ -214,15 +223,20 @@ impl MobileRgbLightingAccessoryStore {
         };
         record.set_vehicle_identifier(vehicle_identifier.clone())?;
         for entry in &mut store.entries {
-            if entry.record.platform_identifier() != record.platform_identifier()
-                && entry.record.vehicle_identifier() == vehicle_identifier
+            if !same_platform_identifier(
+                &entry.record.platform_identifier(),
+                &record.platform_identifier(),
+            ) && entry.record.vehicle_identifier() == vehicle_identifier
             {
                 entry.retired = true;
             }
         }
-        store
-            .entries
-            .retain(|entry| entry.record.platform_identifier() != record.platform_identifier());
+        store.entries.retain(|entry| {
+            !same_platform_identifier(
+                &entry.record.platform_identifier(),
+                &record.platform_identifier(),
+            )
+        });
         store.entries.push(Entry {
             record: Arc::clone(&record),
             fingerprint: Some(fingerprint),
@@ -240,7 +254,9 @@ impl MobileRgbLightingAccessoryStore {
             .unwrap_or_else(PoisonError::into_inner)
             .entries
             .iter()
-            .find(|entry| entry.record.platform_identifier() == platform_identifier)
+            .find(|entry| {
+                same_platform_identifier(&entry.record.platform_identifier(), &platform_identifier)
+            })
             .and_then(|entry| entry.fingerprint.clone())
     }
 
@@ -285,7 +301,9 @@ impl MobileRgbLightingAccessoryStore {
             .unwrap_or_else(PoisonError::into_inner)
             .entries
             .iter_mut()
-            .find(|entry| entry.record.platform_identifier() == platform_identifier)
+            .find(|entry| {
+                same_platform_identifier(&entry.record.platform_identifier(), &platform_identifier)
+            })
         {
             entry.fingerprint.get_or_insert(fingerprint);
         }
@@ -297,7 +315,9 @@ impl MobileRgbLightingAccessoryStore {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .entries
-            .retain(|entry| entry.record.platform_identifier() != platform_identifier);
+            .retain(|entry| {
+                !same_platform_identifier(&entry.record.platform_identifier(), &platform_identifier)
+            });
     }
 }
 
@@ -306,6 +326,77 @@ mod tests {
     use super::*;
     const A: &str = "11111111-1111-1111-1111-111111111111";
     const B: &str = "22222222-2222-2222-2222-222222222222";
+
+    #[test]
+    fn pairing_the_same_uuid_in_another_case_preserves_saved_settings() {
+        let identifier = "aabbccdd-1111-2222-3333-444444444444";
+        let store = MobileRgbLightingAccessoryStore::new();
+        let record = store
+            .pair(identifier.into(), Some("aero".into()), "fingerprint".into())
+            .unwrap();
+        record.set_alias(Some("aero lights".into())).unwrap();
+        record.set_restore_enabled(true);
+        let reopened = MobileRgbLightingAccessoryStore::decode(store.encode().unwrap()).unwrap();
+        let paired = reopened
+            .pair(
+                identifier.to_uppercase(),
+                Some("aero".into()),
+                "fingerprint".into(),
+            )
+            .unwrap();
+        assert_eq!(paired.alias().as_deref(), Some("aero lights"));
+        assert!(paired.restore_enabled());
+    }
+
+    #[test]
+    fn saved_accessory_operations_match_uuid_identity_across_case() {
+        let identifier = "aabbccdd-1111-2222-3333-444444444444";
+        let store = MobileRgbLightingAccessoryStore::new();
+        let record = MobileRgbLightingAccessoryRecord::new(
+            identifier.into(),
+            MobileRgbLightingProfileKindDto::MelkOc21,
+            1,
+        )
+        .unwrap();
+        store.import_legacy(record, None);
+        store.backfill_fingerprint(identifier.to_uppercase(), "fingerprint".into());
+        assert_eq!(
+            store.fingerprint(identifier.to_uppercase()).as_deref(),
+            Some("fingerprint")
+        );
+        store.forget(identifier.to_uppercase());
+        assert!(store.select_vehicle(None).unwrap().is_none());
+    }
+
+    #[test]
+    fn decoding_rejects_duplicate_uuid_identities_in_different_cases() {
+        let identifier = "aabbccdd-1111-2222-3333-444444444444";
+        let entries = [identifier.to_owned(), identifier.to_uppercase()]
+            .into_iter()
+            .map(|id| WireEntry {
+                record: MobileRgbLightingAccessoryRecord::new(
+                    id,
+                    MobileRgbLightingProfileKindDto::MelkOc21,
+                    1,
+                )
+                .unwrap()
+                .encode()
+                .unwrap(),
+                fingerprint: None,
+                retired: false,
+            })
+            .collect();
+        let bytes = serde_json::to_vec(&WireStore {
+            version: 1,
+            entries,
+            adopt_legacy: false,
+        })
+        .unwrap();
+        assert!(matches!(
+            MobileRgbLightingAccessoryStore::decode(bytes),
+            Err(MobileRgbLightingRecordError::InvalidEncoding)
+        ));
+    }
 
     #[test]
     fn restore_requires_valid_same_profile_identity_and_preserves_evidence() {

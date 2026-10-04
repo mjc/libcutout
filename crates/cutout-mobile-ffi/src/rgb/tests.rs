@@ -11,6 +11,26 @@ use super::{
 use cutout_protocols::{MELK_NOTIFY_CHANNEL, MELK_WRITE_CHANNEL};
 
 #[test]
+fn saved_bluetooth_identity_is_canonical_at_the_mobile_boundary() {
+    let canonical = "AABBCCDD-1111-2222-3333-444444444444";
+    for identifier in [
+        "aabbccdd-1111-2222-3333-444444444444",
+        "aabbccdd111122223333444444444444",
+        canonical,
+    ] {
+        let record = MobileRgbLightingAccessoryRecord::new(
+            identifier.into(),
+            MobileRgbLightingProfileKindDto::MelkOc21,
+            1,
+        )
+        .unwrap();
+        assert_eq!(record.platform_identifier(), canonical);
+        let reopened = MobileRgbLightingAccessoryRecord::decode(record.encode().unwrap()).unwrap();
+        assert_eq!(reopened.platform_identifier(), canonical);
+    }
+}
+
+#[test]
 fn mobile_bluetooth_uuid_round_trips_the_core_uuid_without_bytes_or_text() {
     let mobile_uuid = MobileBluetoothUuid::from(MELK_WRITE_CHANNEL.as_uuid());
 
