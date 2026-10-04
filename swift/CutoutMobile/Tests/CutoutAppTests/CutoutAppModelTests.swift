@@ -325,7 +325,7 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(highBeam.status, .sentWithoutConfirmation)
         XCTAssertNil(highBeam.current)
         let tune = EucTuneRouteView(
-            device: model.device,
+            model: model,
             submitSetting: model.submitDeviceSetting,
             submitAction: model.submitDeviceAction
         )

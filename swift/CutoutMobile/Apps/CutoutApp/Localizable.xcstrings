@@ -23,7 +23,7 @@
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "OK" } } }
     },
     "captures.labels_full" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "No room for more labels in this recording. You can stop active labels and save, then start another capture." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Label limit reached. Stop active labels and save, then start a new capture." } } }
     },
     "captures.labels_not_recording" : {
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "This recording has ended. Start a new capture to add labels." } } }
@@ -50,7 +50,7 @@
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "This Session" } } }
     },
     "captures.session_history" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Completed captures from this app session. Relaunch history is not available yet." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Completed captures from this session. This list resets when the app restarts." } } }
     },
     "captures.automatic" : {
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Automatic diagnostics" } } }
@@ -104,19 +104,19 @@
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Description (optional)" } } }
     },
     "captures.description_hint" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Add a short note about what you’re investigating." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Describe the device or issue." } } }
     },
     "captures.start" : {
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Start Capture" } } }
     },
     "captures.start_failed" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Couldn’t start. The device may no longer be available. Go back and choose it again." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Couldn’t start the capture. Choose the device again." } } }
     },
     "captures.labels" : {
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Activity Labels" } } }
     },
     "captures.labels_hint" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Optional markers describe what you’re doing. They don’t send commands to the device." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Add markers for actions during the recording." } } }
     },
     "captures.starting" : {
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Starting…" } } }
@@ -137,7 +137,7 @@
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Recorded automatically while connected. Disconnect the device to finish these diagnostics." } } }
     },
     "captures.leave_hint" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "You can leave this screen while recording continues." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Recording continues when you leave this screen." } } }
     },
     "bms.pack.find_reading" : {
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Find reading number" } } }
@@ -190,6 +190,12 @@
     "bms.pack.voltage" : {
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Pack voltage" } } }
     },
+    "bms.pack.current.pack_1" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Pack 1 current" } } }
+    },
+    "bms.pack.current.pack_2" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Pack 2 current" } } }
+    },
     "bms.pack.current" : {
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Current" } } }
     },
@@ -224,10 +230,14 @@
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Latest reading" } } }
     },
     "bms.pack.stabilized_explanation" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "The headline value uses the recent median so brief voltage pulses do not make the pack summary jump." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Recent readings are smoothed to reduce voltage fluctuations." } } }
     },
     "bms.pack.pack_number" : {
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Pack %d" } } }
+    },
+    "controls.alarms.title" : {
+      "comment" : "Wheel tuning section and destination for ride alarms.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Alarms" } } }
     },
     "phone_alarm.title" : {
       "comment" : "Settings screen title for phone-generated ride alarms.",
@@ -295,7 +305,7 @@
     },
     "phone_alarm.source_explanation" : {
       "comment" : "Distinguishes phone alarms from wheel firmware behavior.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "These alerts come from this iPhone using fresh ride telemetry. Wheel firmware alarms and tiltback are separate and may use different thresholds." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Phone alerts use ride data. The wheel’s alarms and tiltback may have different thresholds." } } }
     },
     "phone_alarm.notifications_section" : {
       "comment" : "Heading for notification permission state.",
@@ -363,11 +373,11 @@
     },
     "lighting.state.idle" : {
       "comment" : "Lighting connection state.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Idle" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Not connected" } } }
     },
     "lighting.state.scanning" : {
       "comment" : "Lighting connection state.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Scanning for MELK-OC21" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Scanning" } } }
     },
     "lighting.state.connecting" : {
       "comment" : "Lighting connection state.",
@@ -375,15 +385,15 @@
     },
     "lighting.state.retrying" : {
       "comment" : "Lighting retry state. Placeholders are attempt and delay seconds.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Retrying (%1$lld) in %2$llds" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Retrying in %llds" } } }
     },
     "lighting.state.discovering" : {
       "comment" : "Lighting connection state.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Discovering FFF0/FFF3/FFF4" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Connecting" } } }
     },
     "lighting.state.ready" : {
       "comment" : "Lighting connection state.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Ready" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Connected" } } }
     },
     "lighting.state.disconnected" : {
       "comment" : "Lighting connection state.",
@@ -391,39 +401,7 @@
     },
     "lighting.state.failed" : {
       "comment" : "Lighting connection failure. Placeholder is the failure reason.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Failed: %@" } } }
-    },
-    "lighting.command.idle" : {
-      "comment" : "Lighting command status.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Idle" } } }
-    },
-    "lighting.command.requested" : {
-      "comment" : "Lighting command status.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Requested; awaiting confirmation" } } }
-    },
-    "lighting.command.confirmed" : {
-      "comment" : "Lighting command status.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Confirmed by external observation" } } }
-    },
-    "lighting.command.unconfirmed" : {
-      "comment" : "Lighting command status.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Unconfirmed" } } }
-    },
-    "lighting.command.evidence.title" : {
-      "comment" : "Heading for the lighting command observation card.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Command evidence" } } }
-    },
-    "lighting.command.evidence.hint" : {
-      "comment" : "Instruction to confirm a lighting command only after observing the controller.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Confirm only after observing the controller change." } } }
-    },
-    "lighting.command.mark_confirmed" : {
-      "comment" : "Action that records external confirmation of a lighting command.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Mark confirmed" } } }
-    },
-    "lighting.command.mark_unconfirmed" : {
-      "comment" : "Action that records that a lighting command could not be externally confirmed.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Mark unconfirmed" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Failed" } } }
     },
     "lighting.page.color" : {
       "comment" : "Lighting controls page label.",
@@ -467,39 +445,35 @@
     },
     "lighting.error.power_not_ready" : {
       "comment" : "Lighting command refusal when the controller is not ready.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Power was not sent because the lighting controller is not ready." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Power not sent." } } }
     },
     "lighting.error.color_not_ready" : {
       "comment" : "Lighting command refusal when the controller is not ready.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Color was not sent because the lighting controller is not ready." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Color not sent." } } }
     },
     "lighting.error.brightness_not_ready" : {
       "comment" : "Lighting command refusal when the controller is not ready.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Brightness was not sent because the lighting controller is not ready." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Brightness not sent." } } }
     },
     "lighting.error.effect_speed_failed" : {
       "comment" : "Lighting effect speed command failed.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Could not send effect speed. Check the connection and try again." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Effect speed not sent." } } }
     },
     "lighting.error.state_failed" : {
       "comment" : "Lighting state command failed.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Could not send lighting settings. Check the connection and try again." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Settings not sent." } } }
     },
     "lighting.error.schedule_failed" : {
       "comment" : "Lighting schedule command failed.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Could not send the timer. Check the connection and try again." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Timer not sent." } } }
     },
     "lighting.error.restore_incompatible" : {
       "comment" : "Saved lighting state cannot be restored after a profile or capability change.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Saved lighting settings are from an incompatible profile; pair this accessory again before restoring." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Saved settings are incompatible. Forget this accessory and pair it again." } } }
     },
     "lighting.pairing.nearby_title" : {
       "comment" : "Heading for the first-pairing accessory list.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Nearby lighting accessories" } } }
-    },
-    "lighting.pairing.nearby_hint" : {
-      "comment" : "First-pairing guidance; unknown devices remain read-only until their profile is verified.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Choose an accessory to inspect; unknown profiles remain read-only." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Nearby devices" } } }
     },
     "lighting.pairing.unknown_name" : {
       "comment" : "Fallback name for an advertisement without a local name.",
@@ -509,9 +483,13 @@
       "comment" : "Accessibility label for lighting accessory details.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Lighting accessory details" } } }
     },
+    "lighting.choose_accessory" : {
+      "comment" : "Open the accessory picker from the Lighting screen.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Choose accessory" } } }
+    },
     "lighting.default_name" : {
-      "comment" : "Fallback name for the verified MELK accessory.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "MELK-OC21 6A" } } }
+      "comment" : "Generic lighting accessory name shown before a connection is ready.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Lighting accessory" } } }
     },
     "lighting.connection.connected" : {
       "comment" : "Lighting connection summary.",
@@ -519,15 +497,15 @@
     },
     "lighting.connection.scanning" : {
       "comment" : "Lighting connection summary.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Scanning for MELK-OC21" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Scanning" } } }
     },
     "lighting.connection.connecting" : {
       "comment" : "Lighting connection summary.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Connecting…" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Connecting" } } }
     },
     "lighting.connection.retrying" : {
       "comment" : "Lighting retry summary. Placeholders are attempt and delay seconds.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Retrying (%1$lld) in %2$llds…" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Retrying in %llds" } } }
     },
     "lighting.connection.not_connected" : {
       "comment" : "Lighting connection summary.",
@@ -539,11 +517,7 @@
     },
     "lighting.connection.ready_to_scan" : {
       "comment" : "Lighting connection summary.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Ready to scan" } } }
-    },
-    "lighting.connection.ride_independent" : {
-      "comment" : "Explains that lighting uses its own Bluetooth connection. Placeholder is ride status.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Ride stays %@; lighting uses an independent Bluetooth connection." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Not connected" } } }
     },
     "lighting.patterns" : {
       "comment" : "Lighting effects heading.",
@@ -587,15 +561,15 @@
     },
     "lighting.reference_names" : {
       "comment" : "Explanation that effect names are reference labels.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Reference names may vary by firmware." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Effect names can vary by controller." } } }
     },
     "lighting.reference_effects" : {
       "comment" : "Explanation of capture-backed effect availability.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Only capture-backed effects are enabled for MELK-OC21. Reference names and previews remain visible for future verification." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Some effects are unavailable for this controller." } } }
     },
     "lighting.music.reference" : {
       "comment" : "Explanation of unverified controller-local music modes.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Controller-local microphone modes are shown for reference and remain unavailable until physically verified." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Music effects are unavailable for this controller." } } }
     },
     "lighting.music.effect" : {
       "comment" : "Controller-local music effect picker label.",
@@ -623,7 +597,7 @@
     },
     "lighting.schedule.unverified" : {
       "comment" : "Explanation of unverified controller schedule support.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Manual local-time timers are not physically verified for MELK-OC21, so timer writes are unavailable. The controller protocol shape is retained here for future capture-backed support." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Timers are unavailable for this controller." } } }
     },
     "lighting.schedule.turn_on" : {
       "comment" : "Schedule row label.",
@@ -661,10 +635,6 @@
       "comment" : "Lighting scenes and presets heading.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Scenes & presets" } } }
     },
-    "lighting.preset.helper" : {
-      "comment" : "Lighting preset helper copy.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Save your color, effect, or music settings as a named scene." } } }
-    },
     "lighting.preset.replace" : {
       "comment" : "Lighting preset context action.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Replace with current" } } }
@@ -683,23 +653,23 @@
     },
     "lighting.error.preset_save" : {
       "comment" : "User-friendly lighting preset save error.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Could not save this preset. Check the connection and try again." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Could not save preset." } } }
     },
     "lighting.error.preset_update" : {
       "comment" : "User-friendly lighting preset update error.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Could not update this preset. Check the connection and try again." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Could not update preset." } } }
     },
     "lighting.effect.verified" : {
       "comment" : "Accessibility value for a physically verified effect.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Verified and available" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Available" } } }
     },
     "lighting.effect.reference_unavailable" : {
       "comment" : "Accessibility value for an unverified reference effect.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Reference, unavailable until physically verified" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Unavailable" } } }
     },
     "lighting.effect.unmapped_unavailable" : {
       "comment" : "Accessibility value for an unmapped effect.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Unmapped, unavailable" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Unavailable" } } }
     },
     "lighting.effect.option" : {
       "comment" : "Effect picker option. Placeholders are numeric ID and reference name.",
@@ -765,17 +735,13 @@
       "comment" : "Lighting solid-color preset summary. Placeholder is brightness.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Solid RGB · %lld%%" } } }
     },
-    "lighting.connect" : {
-      "comment" : "Connect action for a lighting accessory.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Connect" } } }
+    "lighting.retry" : {
+      "comment" : "Retry the lighting accessory connection.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Retry" } } }
     },
     "lighting.restore.toggle" : {
       "comment" : "Lighting restore opt-in toggle.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Restore last lighting settings" } } }
-    },
-    "lighting.restore.explanation" : {
-      "comment" : "Lighting restore explanation.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Re-apply your last color, effect, brightness, and power setting when this same accessory reconnects." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Restore settings" } } }
     },
     "lighting.forget" : {
       "comment" : "Forget lighting accessory action.",
@@ -791,51 +757,27 @@
     },
     "lighting.forget.confirm_title" : {
       "comment" : "Lighting accessory forget confirmation title.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Forget this RGB accessory?" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Forget lighting?" } } }
     },
     "lighting.forget.confirm_message" : {
       "comment" : "Lighting accessory forget confirmation message.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Its alias, vehicle association, presets, and automatic restore preference will be removed." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Saved lighting settings will be removed." } } }
     },
     "lighting.scanning" : {
       "comment" : "Lighting pairing scan status.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Scanning" } } }
     },
-    "lighting.connection.looking_nearby" : {
-      "comment" : "Lighting pairing scan status.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Looking for nearby accessories…" } } }
-    },
-    "lighting.independent_connection" : {
-      "comment" : "Explains that lighting uses its own Bluetooth connection.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Lighting stays connected independently of your ride." } } }
-    },
     "lighting.alias" : {
       "comment" : "Lighting accessory alias field heading.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Alias (optional)" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Name" } } }
     },
     "lighting.alias.placeholder" : {
       "comment" : "Lighting accessory alias field placeholder.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Help identify this accessory" } } }
-    },
-    "lighting.vehicle_identifier" : {
-      "comment" : "Lighting accessory vehicle association field placeholder.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Installed vehicle identifier" } } }
-    },
-    "lighting.use_current_ride" : {
-      "comment" : "Associates lighting accessory with current ride.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Use current ride" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Accessory name" } } }
     },
     "lighting.save_details" : {
       "comment" : "Saves lighting accessory metadata.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Save details" } } }
-    },
-    "lighting.competing_client" : {
-      "comment" : "Warning heading when another app may own the controller.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Competing client" } } }
-    },
-    "lighting.competing_client.explanation" : {
-      "comment" : "Warning about another app connected to the controller.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "If another app is connected to this controller, disconnect it there before connecting in Cutout." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Save" } } }
     },
     "lighting.schedule.enabled_for" : {
       "comment" : "Accessibility label for a schedule enabled toggle. Placeholder is turn-on or turn-off.",
@@ -887,35 +829,35 @@
     },
     "lighting.music.effect.flow_flash" : {
       "comment" : "Reference controller-local music effect name.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Music Flow Flash (reference)" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Flow flash" } } }
     },
     "lighting.music.effect.flash" : {
       "comment" : "Reference controller-local music effect name.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Music Flash (reference)" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Flash" } } }
     },
     "lighting.music.effect.rainbow" : {
       "comment" : "Reference controller-local music effect name.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Music Rainbow (reference)" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Rainbow" } } }
     },
     "lighting.music.effect.snake" : {
       "comment" : "Reference controller-local music effect name.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Music Snake (reference)" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Snake" } } }
     },
     "lighting.music.effect.rainbow_2" : {
       "comment" : "Reference controller-local music effect name.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Music Rainbow 2 (reference)" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Rainbow 2" } } }
     },
     "lighting.music.effect.pulse" : {
       "comment" : "Reference controller-local music effect name.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Music Pulse (reference)" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Pulse" } } }
     },
     "lighting.music.effect.flow" : {
       "comment" : "Reference controller-local music effect name.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Music Flow (reference)" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Flow" } } }
     },
     "lighting.music.effect.pulse_2" : {
       "comment" : "Reference controller-local music effect name.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Music Pulse 2 (reference)" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Pulse 2" } } }
     },
     "app.command.disconnect" : {
       "comment" : "App command that disconnects the current device.",
@@ -1099,7 +1041,7 @@
     },
     "settings.trip_meter.footer" : {
       "comment" : "Safety guidance for resetting the NOSFET Aero trip meter.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Available on NOSFET Aero while parked or below 500 mm/s." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Available on NOSFET Aero while stopped or moving below 0.5 m/s." } } }
     },
     "settings.trip_meter.confirm_title" : {
       "comment" : "Confirmation title shown before resetting the NOSFET Aero trip meter.",
@@ -1133,7 +1075,7 @@
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Device validation mode" } } }
     },
     "settings.validation.description" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Settings marked Needs validation are available for testing. Verify their behavior on the wheel; enabling this mode does not validate them." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Enable settings that still need testing on this wheel." } } }
     },
     "settings.capabilities.title" : {
       "comment" : "Section title for settings that are not currently editable.",
@@ -1141,7 +1083,7 @@
     },
     "settings.capabilities.footer" : {
       "comment" : "Explains why only validated settings can be changed.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Only settings with validated wheel commands can be changed." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Available settings for this wheel." } } }
     },
     "settings.capabilities.supported" : {
       "comment" : "Status for a setting with a validated write command.",
@@ -1153,7 +1095,7 @@
     },
     "settings.readback.footer" : {
       "comment" : "Explains that these settings are read-only until their write commands are validated.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Values reported by the wheel. Submitted changes remain unconfirmed until reported back." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Values reported by the wheel. Changes are confirmed when the wheel reports them." } } }
     },
     "settings.readback.unavailable" : {
       "comment" : "Status for a setting that the wheel did not report.",
@@ -1241,7 +1183,7 @@
     },
     "settings.pedal_mode.footer" : {
       "comment" : "Safety guidance for the pedal mode write control.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Change only while parked or at 500 mm/s or less." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Change while stopped or moving at 0.5 m/s or less." } } }
     },
     "settings.pedal_mode.hard" : {
       "comment" : "Hard pedal mode picker value.",
@@ -1281,7 +1223,7 @@
     },
     "settings.speed_alarm_mode.footer" : {
       "comment" : "Safety guidance for the speed-alarm mode write control.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Change only while parked or at 500 mm/s or less." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Change while stopped or moving at 0.5 m/s or less." } } }
     },
     "settings.speed_alarm_mode.both" : {
       "comment" : "Both speed alarms picker value.",
@@ -1557,7 +1499,7 @@
     },
     "bms.diagnostics.detail" : {
       "comment" : "BMS diagnostics disclosure detail explaining that raw readback is for troubleshooting.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Raw readback, available when we need to debug" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Battery readings and fault codes" } } }
     },
     "bms.diagnostics.title" : {
       "comment" : "BMS diagnostics disclosure title.",
@@ -1593,7 +1535,7 @@
     },
     "bms.no_data.confidence_detail.not_cell_safe" : {
       "comment" : "No-data BMS detail warning that a controller estimate is not safe to treat as a cell-level reading.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Not cell-safe" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Cell data unavailable" } } }
     },
     "bms.no_data.confidence_detail.telemetry_unavailable" : {
       "comment" : "No-data BMS detail when no telemetry supports a controller estimate.",
@@ -1601,7 +1543,7 @@
     },
     "bms.no_data.estimate_detail.recent_sag" : {
       "comment" : "No-data BMS controller estimate based on voltage and recent sag.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Derived from voltage curve + recent sag" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Based on voltage and voltage sag" } } }
     },
     "bms.no_data.estimate_detail.unavailable" : {
       "comment" : "No-data BMS controller estimate when no usable estimate can be calculated.",
@@ -1609,7 +1551,7 @@
     },
     "bms.no_data.estimate_detail.voltage_curve" : {
       "comment" : "No-data BMS controller estimate based only on the voltage curve.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Derived from voltage curve only" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Based on voltage" } } }
     },
     "bms.no_data.load_now" : {
       "comment" : "No-data BMS metric label for current battery load.",
@@ -1637,11 +1579,11 @@
     },
     "bms.no_data.what_is_unknown" : {
       "comment" : "No-data BMS section heading for facts the controller cannot establish.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "WHAT IS UNKNOWN" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "UNAVAILABLE DATA" } } }
     },
     "bms.no_data.what_we_can_see" : {
       "comment" : "No-data BMS section heading for available telemetry facts.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "WHAT WE CAN SEE" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "AVAILABLE DATA" } } }
     },
     "bms.overview.average_group" : {
       "comment" : "BMS overview metric label for the average cell-group voltage.",
@@ -1681,7 +1623,7 @@
     },
     "bms.unknown.next_capture_flow" : {
       "comment" : "Unknown-topology BMS card heading for the next capture action.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Next capture flow" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Record Bluetooth data" } } }
     },
     "bms.unknown.reported_voltage" : {
       "comment" : "Unknown-topology BMS metric label for the reported pack voltage.",
@@ -1721,19 +1663,19 @@
     },
     "bms.inline.range_of_interest" : {
       "comment" : "BMS inline cell-map card title for the voltage range that needs attention.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Range of interest" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Selected range" } } }
     },
     "bms.inline.topology_fits" : {
       "comment" : "BMS inline cell-map card title when the topology fits in the available space.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Topology fits inline" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Cell layout" } } }
     },
     "bms.scroll.interesting_groups" : {
       "comment" : "BMS scrollable cell-map card title for groups needing attention.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Interesting groups" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Selected groups" } } }
     },
     "bms.scroll.large_packs" : {
       "comment" : "BMS scrollable cell-map card title explaining the grouped overview.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Large packs use grouped overview first" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Cell group overview" } } }
     },
     "capture.announcement.failed" : {
       "comment" : "Visible status and VoiceOver announcement when capture fails.",
@@ -1903,6 +1845,12 @@
       "comment" : "Visible capture status after a label ends. Placeholders are label, notification count, and filename.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%@ stopped: %lld notifications → %@" } } }
     },
+    "capture.status.ride_recording" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Recording" } } }
+    },
+    "capture.status.ride_saved" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Saved" } } }
+    },
     "capture.status.recording" : {
       "comment" : "Visible capture status. The placeholder is the notification count.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Recording: %lld notifications" } } }
@@ -2021,7 +1969,7 @@
     },
     "ride_map.history_error_detail" : {
       "comment" : "Explanation shown with the history query retry action.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "The stored rides could not be loaded. Your recording state was not changed." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Could not load saved rides." } } }
     },
     "ride_map.history_retry" : {
       "comment" : "Retry action for a failed history or selected-detail query.",
@@ -2029,7 +1977,7 @@
     },
     "ride_map.map_alternative" : {
       "comment" : "Accessible textual alternative for the route map.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Route map. The text summary below contains the validated route facts." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Route map. Ride details are listed below." } } }
     },
     "ride_map.mode.history" : {
       "comment" : "Ride-map mode picker option for historical rides.",
@@ -2045,7 +1993,7 @@
     },
     "ride_map.no_points" : {
       "comment" : "Live ride-map state before the first location point is admitted.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Waiting for a validated location fix." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Waiting for location." } } }
     },
     "ride_map.persistence_unavailable" : {
       "comment" : "Warning shown when the ride-map database could not be opened and the map is session-only.",
@@ -2053,7 +2001,7 @@
     },
     "ride_map.command_failed" : {
       "comment" : "Warning shown when a Rust-owned ride-map command or query fails without changing ride state.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "The map action could not be completed; the ride state was not changed." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Could not complete the map action." } } }
     },
     "ride_map.location_permission_required" : {
       "comment" : "Map availability when Core Location permission has not been granted yet.",
@@ -2381,7 +2329,7 @@
     },
     "camera.preview.saved_detail" : {
       "comment" : "Detail describing the raw H.264 file output format.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Saves an H.264 file on this device." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Saves a video file on this device." } } }
     },
     "camera.preview.export" : {
       "comment" : "Button that shares a saved local camera preview file.",
@@ -2397,7 +2345,7 @@
     },
     "camera.error.unsupported_profile" : {
       "comment" : "The camera responded, but its firmware is not the verified R3 Pro profile.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "This camera firmware is not supported." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Unsupported camera firmware." } } }
     },
     "camera.error.origin_mismatch" : {
       "comment" : "Camera request rejected because the address no longer matches the origin used for read-only evidence.",
@@ -2405,7 +2353,7 @@
     },
     "camera.profile.pending" : {
       "comment" : "Profile identity shown before read-only camera evidence has arrived.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Camera not identified" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Identifying camera" } } }
     },
     "camera.evidence.firmware" : {
       "comment" : "Label for the firmware version returned by read-only camera evidence.",
@@ -2453,7 +2401,7 @@
     },
     "camera.evidence.metadata_only" : {
       "comment" : "Detail clarifying that an empty camera media listing carries no file transfer evidence.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "No files on the camera." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "No camera files found." } } }
     },
     "camera.error.media_download_failed" : {
       "comment" : "Camera error shown when a local media download fails.",
@@ -2493,11 +2441,11 @@
     },
     "camera.connection.detail.not_configured" : {
       "comment" : "Camera detail before a validated local camera origin is loaded.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Connect to the camera’s Wi-Fi in Settings, then tap Read camera status." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Join the camera’s Wi-Fi network, then return to CutOut." } } }
     },
     "camera.connection.detail.permission_required" : {
       "comment" : "Camera detail when Apple Local Network permission is missing.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Allow Local Network access for CutOut in Settings." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Allow Local Network access in Settings." } } }
     },
     "camera.connection.detail.wifi_required" : {
       "comment" : "Camera detail when camera Wi-Fi is not joined.",
@@ -2505,22 +2453,22 @@
     },
     "camera.connection.detail.discovering" : {
       "comment" : "Camera detail while bounded discovery is running.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Reading camera status…" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Identifying the camera." } } }
     },
     "camera.connection.detail.connected" : {
       "comment" : "Camera detail after the local camera is connected.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Available camera controls appear below." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Camera status loaded." } } }
     },
     "camera.connection.detail.unsupported" : {
       "comment" : "Camera detail when profile or firmware is unsupported.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "This camera firmware is not supported." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Controls are unavailable for this camera." } } }
     },
     "camera.truth.title" : {
-      "comment" : "Heading for camera preview, recording, and storage status.",
+      "comment" : "Heading for independent camera preview, recording, and storage truth.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Camera status" } } }
     },
     "camera.truth.preview" : {
-      "comment" : "Camera preview status label.",
+      "comment" : "Camera truth row label for foreground preview state.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Preview" } } }
     },
     "camera.truth.recording" : {
@@ -2533,7 +2481,7 @@
     },
     "camera.privacy.local_only" : {
       "comment" : "Privacy note for local-network camera access.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Camera video stays on this device." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "CutOut does not upload camera data." } } }
     },
     "camera.connection.bluetooth_warning" : {
       "comment" : "Warning that camera Wi-Fi may interfere with FreedConn Bluetooth audio while ride telemetry continues independently.",
@@ -2569,7 +2517,7 @@
     },
     "camera.recording.unavailable" : {
       "comment" : "Recording controls are hidden because the camera has not advertised command 2001 support.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Recording controls are unavailable." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Recording controls unavailable." } } }
     },
     "camera.recording.request_start" : {
       "comment" : "Button that requests the camera to start onboard recording.",
@@ -2585,15 +2533,15 @@
     },
     "camera.recording.request_detail" : {
       "comment" : "Detail clarifying that onboard-recording controls are requests, not readback.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Sending a request does not confirm whether the camera is recording." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Waiting for the camera to confirm recording status." } } }
     },
     "camera.recording.request_start_sent" : {
       "comment" : "Status after an onboard-recording start request is accepted by the local transport.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Start requested; recording is not confirmed." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Start request sent. Awaiting confirmation." } } }
     },
     "camera.recording.request_stop_sent" : {
       "comment" : "Status after an onboard-recording stop request is accepted by the local transport.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Stop requested; recording is not confirmed." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Stop request sent. Awaiting confirmation." } } }
     },
     "camera.recording.stopped" : {
       "comment" : "Onboard recording is confirmed stopped.",
@@ -2617,11 +2565,11 @@
     },
     "camera.command.unknown" : {
       "comment" : "Camera command response did not provide a usable status.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Camera response did not confirm the request." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Camera did not confirm the request." } } }
     },
     "camera.command.failed" : {
       "comment" : "Camera command transport failed for a non-timeout reason.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Camera request failed before confirmation." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Camera request failed." } } }
     },
     "camera.command.busy" : {
       "comment" : "A second camera command was rejected while another command is in flight.",
@@ -2637,11 +2585,11 @@
     },
     "camera.still.request_sent" : {
       "comment" : "Status after a still-capture request is accepted by the local transport.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Photo requested. Refresh camera files to find it." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Photo requested. Waiting for the file." } } }
     },
     "camera.still.unavailable" : {
       "comment" : "Still capture is unavailable because the camera has not advertised command 1001 support.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Photo capture is unavailable." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Photo capture unavailable." } } }
     },
     "camera.error.still_request_failed" : {
       "comment" : "Camera error shown when a still-capture request fails.",
@@ -2911,19 +2859,19 @@
     },
     "vesc.battery_detail.estimated_current" : {
       "comment" : "VESC battery tile detail. The placeholders are estimated battery level and reported battery current.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "battery %@ estimated · current %@ A" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "battery %@ · current %@ A" } } }
     },
     "vesc.battery_detail.estimated_unavailable" : {
       "comment" : "VESC battery tile detail when only an estimated battery level is available.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "battery %@ estimated · current unavailable" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "battery %@ · current unavailable" } } }
     },
     "vesc.battery_detail.reported_current" : {
       "comment" : "VESC battery tile detail. The placeholders are reported battery level and reported battery current.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "battery %@ reported · current %@ A" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "battery %@ · current %@ A" } } }
     },
     "vesc.battery_detail.reported_unavailable" : {
       "comment" : "VESC battery tile detail when a reported battery level is available but battery current is not.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "battery %@ reported · current unavailable" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "battery %@ · current unavailable" } } }
     },
     "vesc.battery_detail.unavailable_current" : {
       "comment" : "VESC battery tile detail when battery level is unavailable. The placeholder is reported battery current.",
@@ -3264,7 +3212,7 @@
     "settings.beeper_volume_percent.label" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Beeper volume" } } } },
     "settings.brake_overpressure_alarm.label" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Brake alarm" } } } },
     "settings.charge_limit_diagnostic.help" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Raw protocol value. Its voltage meaning for this wheel is unresolved, so it cannot be changed." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Reported charge limit. This value cannot be changed." } } }
     },
     "settings.charge_limit_diagnostic.label" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Charge limit (raw)" } } } },
     "settings.charge_mode.label" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Charge mode" } } } },
@@ -3299,7 +3247,7 @@
     "settings.high_speed_mode.label" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "High-speed mode" } } } },
     "settings.lateral_tilt_limit.label" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Lateral tilt limit" } } } },
     "settings.lighting_pattern.help" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "The wheel reports a raw pattern number. Pattern effects have not been verified, so this value is read only." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Reported lighting pattern. This value cannot be changed." } } }
     },
     "settings.lighting_pattern.label" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Lighting pattern" } } } },
     "settings.low_battery_mode.label" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Low-battery mode" } } } },
@@ -3343,7 +3291,7 @@
     "controls.waiting" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Waiting for the wheel"}}}},
     "controls.restart" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Restart the wheel before calibrating again"}}}},
     "controls.ready" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Ready for the next step"}}}},
-    "controls.refusal.stationary" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Speed too high, unavailable, or state not allowed"}}}},
+    "controls.refusal.stationary" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Stop the wheel and wait for current ride data."}}}},
     "controls.refusal.expired" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Safety check expired"}}}},
     "controls.refusal.busy" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Wheel busy"}}}},
     "controls.refusal.model" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Unavailable for this wheel"}}}},
@@ -3351,7 +3299,7 @@
     "controls.refusal.limit" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "The requested value exceeds the permitted limit."}}}},
     "controls.refusal.state" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "This command is not permitted in the current operating state."}}}},
     "controls.error.connection" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Connect to the wheel before sending a command."}}}},
-    "controls.error.unverified" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Writing this control has not been verified."}}}},
+    "controls.error.unverified" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "This setting is unavailable for this wheel."}}}},
     "controls.error.read_only" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "This setting is read only."}}}},
     "controls.error.value" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Choose one of the available values."}}}},
     "controls.error.restart" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Restart the wheel before calibrating again."}}}},

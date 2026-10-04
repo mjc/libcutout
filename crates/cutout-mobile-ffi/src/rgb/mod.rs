@@ -5,9 +5,11 @@
 
 mod accessory;
 mod melk;
+mod store;
 
 #[cfg(test)]
 mod tests;
 
 pub use accessory::*;
 pub use melk::*;
+pub use store::*;

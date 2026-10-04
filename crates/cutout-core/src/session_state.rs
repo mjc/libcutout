@@ -491,9 +491,24 @@ pub struct DiscoveryState {
 }
 
 impl DiscoveryState {
-    fn observe(&mut self, observation: DiscoveryObservation) {
-        self.observations
-            .retain(|existing| existing.platform_identifier != observation.platform_identifier);
+    fn observe(&mut self, mut observation: DiscoveryObservation) {
+        if let Some(index) = self
+            .observations
+            .iter()
+            .position(|existing| existing.platform_identifier == observation.platform_identifier)
+        {
+            let previous = self.observations.remove(index);
+            observation.advertised_name = observation.advertised_name.or(previous.advertised_name);
+            for uuid in previous.advertised_service_uuids {
+                if !observation.advertised_service_uuids.contains(&uuid) {
+                    observation.advertised_service_uuids.push(uuid);
+                }
+            }
+            if observation.manufacturer_data.is_empty() {
+                observation.manufacturer_data = previous.manufacturer_data;
+            }
+            observation.rssi_dbm = observation.rssi_dbm.or(previous.rssi_dbm);
+        }
         self.observations.push(observation);
     }
 
@@ -551,6 +566,13 @@ impl BluetoothServiceUuid {
         0x6e, 0x40, 0x00, 0x01, 0xb5, 0xa3, 0xf3, 0x93, 0xe0, 0xa9, 0xe5, 0x0e, 0x24, 0xdc, 0xca,
         0x9e,
     ]);
+
+    /// Service UUIDs native scanners request to find supported transports.
+    pub const DISCOVERY_TRANSPORT_SERVICES: [Self; 3] = [
+        Self::EUC_SERIAL_FFE0,
+        Self::VESC_SERIAL_FFF0,
+        Self::VESC_NORDIC_UART,
+    ];
 
     /// Normalizes a standard 16-bit service UUID into the Bluetooth base UUID.
     #[must_use]
@@ -1455,6 +1477,30 @@ mod tests {
     }
 
     #[test]
+    fn partial_advertisement_preserves_discovered_transport_services() {
+        let mut state = CutoutSessionState::default();
+        state.observe_discovery(discovery_observation(
+            "wheel",
+            b"NF2557",
+            vec![BluetoothServiceUuid::EUC_SERIAL_FFE0],
+            -60,
+        ));
+        state.observe_discovery(DiscoveryObservation {
+            platform_identifier: "wheel".to_owned(),
+            advertised_name: None,
+            advertised_service_uuids: vec![],
+            manufacturer_data: vec![],
+            rssi_dbm: Some(-42),
+        });
+
+        let candidates = state.discovery().picker_candidates();
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].display_name, "NF2557");
+        assert!(candidates[0].connection_route.is_none());
+        assert_eq!(state.discovery().observations[0].rssi_dbm, Some(-42));
+    }
+
+    #[test]
     fn identity_state_retains_latest_discovery_by_platform_identifier() {
         let mut state = CutoutSessionState::default();
 
@@ -1514,11 +1560,7 @@ mod tests {
 
     #[test]
     fn advertisement_transport_hints_never_establish_ride_route() {
-        for service in [
-            BluetoothServiceUuid::EUC_SERIAL_FFE0,
-            BluetoothServiceUuid::VESC_SERIAL_FFF0,
-            BluetoothServiceUuid::VESC_NORDIC_UART,
-        ] {
+        for service in BluetoothServiceUuid::DISCOVERY_TRANSPORT_SERVICES {
             let mut state = CutoutSessionState::default();
             state.observe_discovery(discovery_observation(
                 "unverified",

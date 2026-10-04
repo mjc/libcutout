@@ -3947,6 +3947,20 @@ impl CutoutSessionStateHandle {
     }
 }
 
+/// Transport service UUIDs to request from native Bluetooth scans.
+///
+/// These are discovery hints; the device still requires protocol detection.
+#[must_use]
+#[uniffi::export]
+pub fn mobile_discovery_scan_service_uuids() -> Vec<DiscoveryServiceUuid> {
+    CoreBluetoothServiceUuid::DISCOVERY_TRANSPORT_SERVICES
+        .iter()
+        .map(|uuid| DiscoveryServiceUuid {
+            bytes: uuid.as_bytes().to_vec(),
+        })
+        .collect()
+}
+
 /// Build a mobile discovery candidate from advertisement evidence.
 #[must_use]
 #[allow(
@@ -17595,10 +17609,16 @@ fn core_charge_flow(
 ) -> Measured<ChargeFlow> {
     let flow = if charge_mode.value.is_active() {
         match snapshot.power_flow {
+            Some(PowerFlowDirection::Discharge) if charge_flow_verification.is_trusted() => {
+                ChargeFlow::Discharging
+            }
+            Some(PowerFlowDirection::Regeneration) if charge_flow_verification.is_trusted() => {
+                ChargeFlow::Regeneration
+            }
             Some(
-                PowerFlowDirection::Discharge
-                | PowerFlowDirection::Regeneration
-                | PowerFlowDirection::NegativeUnknown,
+                PowerFlowDirection::NegativeUnknown
+                | PowerFlowDirection::Discharge
+                | PowerFlowDirection::Regeneration,
             ) => ChargeFlow::Unknown,
             Some(PowerFlowDirection::Charging | PowerFlowDirection::Zero) | None => {
                 ChargeFlow::Charging
@@ -24627,15 +24647,15 @@ mod tests {
         estimator.configure_profile(charge_profile(MobileVerificationStatusDto::Unverified));
         let gated = update(0, PowerFlowDirection::Charging);
         assert_eq!(
-            gated.unavailable_reason,
-            Some(MobileChargeEstimateUnavailableReasonDto::CurrentDirectionUnverified)
+            gated.kind,
+            MobileChargeEstimateStateKindDto::CollectingSamples
         );
 
         estimator.configure_nosfet_aero_30s2p_samsung_50s_profile();
         let default_profile = update(0, PowerFlowDirection::Charging);
         assert_eq!(
-            default_profile.unavailable_reason,
-            Some(MobileChargeEstimateUnavailableReasonDto::CurrentDirectionUnverified)
+            default_profile.kind,
+            MobileChargeEstimateStateKindDto::CollectingSamples
         );
     }
 

@@ -246,8 +246,8 @@ impl RgbLightingAccessoryRecord {
 
     /// Merges one independently confirmed field into the existing complete baseline.
     ///
-    /// The requested state is deliberately left untouched. If it contains another unconfirmed
-    /// change, the record remains ineligible for restore until that change is confirmed too.
+    /// The requested state is deliberately left untouched. Any other unconfirmed change remains
+    /// separate from this baseline, including when the user opts into replaying saved intent.
     #[must_use]
     pub fn confirm_partial_state(
         &mut self,
@@ -344,6 +344,19 @@ impl RgbLightingAccessoryRecord {
     /// Sets the explicit restore preference.
     pub const fn set_restore_enabled(&mut self, enabled: bool) {
         self.restore_enabled = enabled;
+    }
+
+    /// Returns the saved user intent when replay is explicitly enabled.
+    ///
+    /// Replay does not change independent confirmation evidence. The caller must also verify
+    /// the accessory identity and profile compatibility before sending this request.
+    #[must_use]
+    pub const fn restore_request(&self) -> Option<RgbLightingRequestedState> {
+        if self.restore_enabled {
+            self.requested_state
+        } else {
+            None
+        }
     }
 
     /// Returns named presets in insertion order.
@@ -666,6 +679,36 @@ mod tests {
             crate::RgbColor::new(1, 2, 3),
             crate::LightingBrightness::try_from_percent(42).expect("bounded brightness"),
         )
+    }
+
+    #[test]
+    fn restore_replays_opted_in_intent_without_claiming_confirmation() {
+        let mut record =
+            RgbLightingAccessoryRecord::new("melk-1".into(), RgbLightingProfileKind::MelkOc21, 1)
+                .unwrap();
+        record.set_requested_state(Some(state()));
+        assert_eq!(record.restore_request(), None);
+        record.set_restore_enabled(true);
+        assert_eq!(record.restore_request(), Some(state()));
+        assert_eq!(record.confirmed_state(), None);
+        assert_eq!(record.confirmation(), RgbLightingConfirmationState::Unknown);
+
+        let confirmed = state().with_playback(LightingPlayback::Effect {
+            pattern: 16.try_into().unwrap(),
+            speed: 128,
+        });
+        record.set_confirmed_state(Some(confirmed));
+        record.set_confirmation(RgbLightingConfirmationState::Unconfirmed);
+        let restarted = RgbLightingAccessoryRecord::decode(&record.encode().unwrap()).unwrap();
+        assert_eq!(restarted.restore_request(), Some(state()));
+        assert_eq!(restarted.confirmed_state(), Some(confirmed));
+        assert_eq!(
+            restarted.confirmation(),
+            RgbLightingConfirmationState::Unconfirmed
+        );
+
+        record.set_requested_state(None);
+        assert_eq!(record.restore_request(), None);
     }
 
     #[test]

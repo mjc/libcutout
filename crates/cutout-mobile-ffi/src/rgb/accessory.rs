@@ -263,6 +263,16 @@ pub struct MobileRgbLightingAccessoryRecord {
     inner: Mutex<RgbLightingAccessoryRecord>,
 }
 
+impl MobileRgbLightingAccessoryRecord {
+    pub(super) fn restore_request(&self) -> Option<MobileMelkLightingRestoreStateDto> {
+        self.inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .restore_request()
+            .map(Into::into)
+    }
+}
+
 #[uniffi::export]
 impl MobileRgbLightingAccessoryRecord {
     /// Creates an empty record for one verified profile.
@@ -319,13 +329,14 @@ impl MobileRgbLightingAccessoryRecord {
             .map_err(Into::into)
     }
 
-    /// Returns the persisted platform identity.
+    /// Returns a canonical Bluetooth UUID, preserving legacy non-UUID identities.
     pub fn platform_identifier(&self) -> String {
-        self.inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .platform_identifier()
-            .to_owned()
+        let record = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        let identifier = record.platform_identifier();
+        match Uuid::parse_str(identifier) {
+            Ok(uuid) => uuid.hyphenated().to_string().to_uppercase(),
+            Err(_) => identifier.to_owned(),
+        }
     }
 
     /// Returns the verified profile kind.

@@ -1313,16 +1313,29 @@ final class CutoutAppUITests: XCTestCase {
             "lighting.color-wheel",
             "lighting.brightness",
             "lighting.accessory-details",
+            "lighting.choose-accessory",
         ] {
             let element = app.descendants(matching: .any)[identifier]
             XCTAssertTrue(element.waitForExistence(timeout: 5), "Missing live Lighting control: \(identifier)")
         }
+        XCTAssertFalse(app.staticTexts["MELK-OC21 6A"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["lighting.command-evidence"].exists)
+        app.buttons["lighting.choose-accessory"].tap()
+        let addLighting = app.navigationBars["Add lighting"]
+        XCTAssertTrue(addLighting.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.textFields["lighting.vehicle-association"].exists)
+        XCTAssertFalse(app.buttons["lighting.use-current-ride"].exists)
+        XCTAssertFalse(app.staticTexts["Other connected apps"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["lighting.restore-toggle"].exists)
+        addLighting.buttons["Back"].tap()
         XCTAssertTrue(app.buttons["lighting.quick-preset.red"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["lighting.quick-preset.blue"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["lighting.quick-preset.night"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["lighting.mark-confirmed"].exists)
         app.segmentedControls["lighting.control-page"].buttons["Effects"].tap()
-        XCTAssertTrue(app.buttons["lighting.play-mode"].waitForExistence(timeout: 5))
+        let effect = app.buttons.matching(identifier: "lighting.effect.1").firstMatch
+        XCTAssertTrue(effect.waitForExistence(timeout: 5))
+        XCTAssertFalse(effect.isEnabled)
         XCTAssertTrue(app.descendants(matching: .any)["lighting.effect-speed"].exists)
         app.segmentedControls["lighting.control-page"].buttons["Music"].tap()
         XCTAssertTrue(app.descendants(matching: .any)["lighting.music-sensitivity"].waitForExistence(timeout: 5))

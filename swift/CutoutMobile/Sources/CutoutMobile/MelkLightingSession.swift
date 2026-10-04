@@ -68,6 +68,7 @@ import Foundation
         var onNotification: ((Data) -> Void)? { get set }
         var onRecord: ((String) -> Void)? { get set }
         var onCandidate: ((MelkLightingPeripheralCandidate) -> Void)? { get set }
+        var onCandidateRemoved: ((String) -> Void)? { get set }
 
         func start(preferredPlatformIdentifier: String?)
         func stop()
@@ -78,7 +79,7 @@ import Foundation
         @discardableResult func setEffectSpeed(_ speed: UInt8) -> Bool
         @discardableResult func applyState(_ state: MobileMelkLightingRestoreStateDto) throws -> Bool
         @discardableResult func setSchedule(_ schedule: MobileMelkScheduleDto, clock: MobileMelkClockDto) throws -> Bool
-        func markLastCommandConfirmed()
+        @discardableResult func markLastCommandConfirmed() -> Bool
         func markLastCommandUnconfirmed()
     }
 
@@ -113,6 +114,7 @@ import Foundation
         public var onAdvertisement: ((String?, String, Int) -> Void)?
         public var onRecord: ((String) -> Void)?
         public var onCandidate: ((MelkLightingPeripheralCandidate) -> Void)?
+        public var onCandidateRemoved: ((String) -> Void)?
 
         public init(queue: DispatchQueue = DispatchQueue(label: "io.cutout.melk-lighting")) {
             self.queue = queue
@@ -122,21 +124,36 @@ import Foundation
 
         public func start(preferredPlatformIdentifier: String? = nil) {
             onQueue {
-                guard central == nil else { return }
+                if central != nil {
+                    core.handle(event: .resume)
+                    syncCore()
+                    return
+                }
                 self.preferredPlatformIdentifier = preferredPlatformIdentifier
-                discoveredPeripherals.removeAll(keepingCapacity: true)
                 core.start(preferredPlatformIdentifier: preferredPlatformIdentifier)
-                #if os(iOS)
-                    central = CBCentralManager(
-                        delegate: self,
-                        queue: queue,
-                        options: [CBCentralManagerOptionRestoreIdentifierKey: "io.cutout.melk-lighting"]
-                    )
-                #else
-                    central = CBCentralManager(delegate: self, queue: queue)
-                #endif
+                restartTransport()
                 syncCore()
             }
+        }
+
+        private func restartTransport() {
+            timerTask?.cancel()
+            timerTask = nil
+            let previousCentral = central
+            central = nil
+            previousCentral?.stopScan()
+            if let peripheral { previousCentral?.cancelPeripheralConnection(peripheral) }
+            clearActivePeripheral()
+            discoveredPeripherals.removeAll(keepingCapacity: true)
+            #if os(iOS)
+                central = CBCentralManager(
+                    delegate: self,
+                    queue: queue,
+                    options: [CBCentralManagerOptionRestoreIdentifierKey: "io.cutout.melk-lighting"]
+                )
+            #else
+                central = CBCentralManager(delegate: self, queue: queue)
+            #endif
         }
 
         public func stop() {
@@ -223,10 +240,12 @@ import Foundation
             }
         }
 
-        public func markLastCommandConfirmed() {
+        @discardableResult
+        public func markLastCommandConfirmed() -> Bool {
             onQueue {
-                core.markLastCommandConfirmed()
+                let confirmed = core.markLastCommandConfirmed()
                 syncCore()
+                return confirmed
             }
         }
 
@@ -248,25 +267,6 @@ import Foundation
                 if central.state != .poweredOn {
                     clearActivePeripheral()
                 }
-                if central.state == .poweredOn, peripheral == nil, let preferredPlatformIdentifier {
-                    if let uuid = UUID(uuidString: preferredPlatformIdentifier),
-                        let restored = central.retrievePeripherals(withIdentifiers: [uuid]).first
-                    {
-                        peripheral = restored
-                        peripheralName = restored.name
-                        peripheralIdentifier = restored.identifier.uuidString
-                        restored.delegate = self
-                        core.handle(
-                            event: .restored(
-                                name: restored.name,
-                                platformIdentifier: restored.identifier.uuidString,
-                                connected: restored.state == .connected,
-                                pending: restored.state == .connecting
-                            ))
-                    } else {
-                        core.handle(event: .restoreUnavailable)
-                    }
-                }
                 syncCore()
             }
         }
@@ -278,14 +278,10 @@ import Foundation
             rssi: NSNumber
         ) {
             onQueue {
-                guard central === self.central, self.peripheral == nil else { return }
+                guard central === self.central else { return }
                 let name = (advertisementData[CBAdvertisementDataLocalNameKey] as? String) ?? peripheral.name
                 let identifier = peripheral.identifier.uuidString
                 onAdvertisement?(name, identifier, rssi.intValue)
-                guard
-                    preferredPlatformIdentifier != nil
-                        || name?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-                else { return }
                 discoveredPeripherals[identifier] = peripheral
                 core.handle(event: .discovered(name: name, platformIdentifier: identifier, rssi: Int32(rssi.intValue)))
                 syncCore()
@@ -342,8 +338,9 @@ import Foundation
                 let restoredPeripheral =
                     preferred.flatMap { identifier in
                         restored.first(where: { $0.identifier == identifier })
-                    } ?? (preferredPlatformIdentifier == nil ? restored.first : nil)
+                    }
                 guard let restoredPeripheral else {
+                    for candidate in restored { central.cancelPeripheralConnection(candidate) }
                     peripheral = nil
                     peripheralName = nil
                     peripheralIdentifier = nil
@@ -351,26 +348,7 @@ import Foundation
                     syncCore()
                     return
                 }
-                core.handle(
-                    event: .restored(
-                        name: restoredPeripheral.name,
-                        platformIdentifier: restoredPeripheral.identifier.uuidString,
-                        connected: restoredPeripheral.state == .connected,
-                        pending: restoredPeripheral.state == .connecting
-                    ))
-                guard core.snapshot().platformIdentifier == restoredPeripheral.identifier.uuidString else {
-                    peripheral = nil
-                    peripheralName = nil
-                    peripheralIdentifier = nil
-                    syncCore()
-                    return
-                }
-                peripheral = restoredPeripheral
-                peripheralName = restoredPeripheral.name
-                peripheralIdentifier = restoredPeripheral.identifier.uuidString
-                restoredPeripheral.delegate = self
-                emitIdentity(rssi: nil)
-                syncCore()
+                restorePeripheral(restoredPeripheral)
             }
         }
 
@@ -482,6 +460,10 @@ import Foundation
                         rssi: Int(candidate.rssi)
                     ))
             }
+            for identifier in core.drainCandidateRemovals() {
+                discoveredPeripherals.removeValue(forKey: identifier)
+                onCandidateRemoved?(identifier)
+            }
             for record in core.drainRecords() { onRecord?(record) }
             for bytes in core.drainNotifications() { onNotification?(Data(bytes)) }
             execute(core.drainActions())
@@ -491,10 +473,23 @@ import Foundation
             guard let central else { return }
             for action in actions {
                 switch action {
+                case .restartTransport:
+                    restartTransport()
                 case .scan:
-                    central.scanForPeripherals(withServices: nil)
+                    central.scanForPeripherals(
+                        withServices: nil, options: [CBCentralManagerScanOptionAllowDuplicatesKey: true])
                 case .stopScan:
                     central.stopScan()
+                case let .restorePeripheral(identifier):
+                    preferredPlatformIdentifier = identifier
+                    if let uuid = UUID(uuidString: identifier),
+                        let restored = central.retrievePeripherals(withIdentifiers: [uuid]).first
+                    {
+                        restorePeripheral(restored)
+                    } else {
+                        core.handle(event: .restoreUnavailable)
+                        syncCore()
+                    }
                 case let .connect(identifier):
                     guard
                         let candidate = discoveredPeripherals[identifier]
@@ -556,6 +551,27 @@ import Foundation
             peripheral = nil
             peripheralName = nil
             peripheralIdentifier = nil
+        }
+
+        private func restorePeripheral(_ restored: CBPeripheral) {
+            core.handle(
+                event: .restored(
+                    name: restored.name,
+                    platformIdentifier: restored.identifier.uuidString,
+                    connected: restored.state == .connected,
+                    pending: restored.state == .connecting
+                ))
+            guard core.snapshot().platformIdentifier == restored.identifier.uuidString else {
+                clearActivePeripheral()
+                syncCore()
+                return
+            }
+            peripheral = restored
+            peripheralName = restored.name
+            peripheralIdentifier = restored.identifier.uuidString
+            restored.delegate = self
+            emitIdentity(rssi: nil)
+            syncCore()
         }
 
         private func arm(_ timer: MobileMelkLightingTimerDto, delayMilliseconds: UInt64) {

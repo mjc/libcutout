@@ -265,7 +265,7 @@ struct ContentView: View {
             )
         case .eucTune:
             EucTuneRouteView(
-                device: model.device,
+                model: model,
                 submitSetting: model.submitDeviceSetting,
                 submitAction: model.submitDeviceAction
             )

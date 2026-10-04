@@ -37,6 +37,17 @@ enum CaptureStatus: Equatable {
         }
     }
 
+    var rideDisplayText: String {
+        switch self {
+        case .recordingLocally, .recording, .labelStarted, .labelStopped:
+            localizedAppText("capture.status.ride_recording")
+        case .saved, .stored:
+            localizedAppText("capture.status.ride_saved")
+        case .failed:
+            localizedAppText("capture.announcement.failed")
+        }
+    }
+
     var accessibilityAnnouncement: String? {
         switch self {
         case let .labelStarted(label, _, _):

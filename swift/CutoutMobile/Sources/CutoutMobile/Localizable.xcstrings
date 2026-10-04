@@ -119,7 +119,7 @@
     },
     "bms.subtitle.controller_estimate" : {
       "comment" : "BMS no-data subtitle. The placeholder is the topology/layout label.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%@ · controller-only estimate" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%@ · estimated" } } }
     },
     "bms.subtitle.live_readback" : {
       "comment" : "BMS screen subtitle for live BMS telemetry.",
@@ -165,15 +165,15 @@
     "bms.detail.unnamed_group" : { "comment" : "Fallback cell-group label. Argument: one-based group index.", "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "group %lld" } } } },
     "bms.detail.lowest_below_average" : { "comment" : "Cell-group detail. Argument: millivolts below pack average.", "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "lowest group · %lld mV below pack avg" } } } },
     "bms.detail.lowest_group" : { "comment" : "Cell-group detail when it is the lowest group.", "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "lowest group" } } } },
-    "bms.cell_map.hint.resistance" : { "comment" : "Cell-map accessibility hint when resistance is available.", "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "tap a group for history, IR estimate, and BMS raw fields" } } } },
-    "bms.cell_map.hint.temperature" : { "comment" : "Cell-map accessibility hint when temperature is available.", "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "tap a group for voltage and temperature detail" } } } },
-    "bms.cell_map.hint.voltage" : { "comment" : "Cell-map accessibility hint when voltage detail is available.", "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "tap a group for exact voltage detail" } } } },
-    "bms.cell_map.overview_rule" : { "comment" : "Cell-map navigation guidance. Argument: group count.", "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%lld groups need overview before exact cells" } } } },
-    "bms.cell_map.focus.none" : { "comment" : "Cell-map navigation guidance when no groups are flagged.", "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "scan the raw table after the overview" } } } },
-    "bms.cell_map.focus.flagged" : { "comment" : "Cell-map navigation guidance when groups are flagged.", "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "show flagged groups before the raw table" } } } },
+    "bms.cell_map.hint.resistance" : { "comment" : "Cell-map accessibility hint when resistance is available.", "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "View group history, resistance, and battery readings" } } } },
+    "bms.cell_map.hint.temperature" : { "comment" : "Cell-map accessibility hint when temperature is available.", "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "View group voltage and temperature" } } } },
+    "bms.cell_map.hint.voltage" : { "comment" : "Cell-map accessibility hint when voltage detail is available.", "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "View group voltage" } } } },
+    "bms.cell_map.overview_rule" : { "comment" : "Cell-map navigation guidance. Argument: group count.", "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%lld cell groups" } } } },
+    "bms.cell_map.focus.none" : { "comment" : "Cell-map navigation guidance when no groups are flagged.", "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "All groups" } } } },
+    "bms.cell_map.focus.flagged" : { "comment" : "Cell-map navigation guidance when groups are flagged.", "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Groups with warnings" } } } },
     "bms.no_data.title" : { "comment" : "BMS warning title when no cell-level data exists.", "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "No cell-level BMS data" } } } },
-    "bms.no_data.row.cell_balance_warning" : { "comment" : "BMS no-data warning: CutOut cannot report individual cell balancing or weak groups.", "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "CutOut can’t see individual cell balance or weak groups." } } } },
-    "bms.no_data.row.diagnostics_warning" : { "comment" : "BMS no-data warning: temperature, faults, and cutout reason remain unavailable.", "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "BMS temperature, faults, or cutout reason stay unavailable." } } } },
+    "bms.no_data.row.cell_balance_warning" : { "comment" : "BMS no-data warning: CutOut cannot report individual cell balancing or weak groups.", "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Cell balance data unavailable." } } } },
+    "bms.no_data.row.diagnostics_warning" : { "comment" : "BMS no-data warning: temperature, faults, and cutout reason remain unavailable.", "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Battery temperature and fault data unavailable." } } } },
     "bms.no_data.row.cell_voltages" : { "comment" : "BMS no-data unknown field: individual cell or group voltages.", "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "individual cell/group voltages" } } } },
     "bms.no_data.row.weak_groups" : { "comment" : "BMS no-data unknown field: cell balancing or weak parallel group information.", "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "cell balance / weak parallel group" } } } },
     "bms.no_data.row.diagnostics" : { "comment" : "BMS no-data unknown field: temperature, faults, and cutout reason.", "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "BMS temperature, faults, and cutout reason" } } } },
@@ -232,7 +232,7 @@
     },
     "charge.estimate.kind.observed_taper" : {
       "comment" : "Charge estimate basis derived from observed charging taper.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "observed taper" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "adjusted for slower charging near full" } } }
     },
     "charge.estimate.kind.present_current" : {
       "comment" : "Charge estimate basis derived from the current charging rate.",
@@ -240,7 +240,7 @@
     },
     "charge.estimate.kind.profile_backed" : {
       "comment" : "Charge estimate basis derived from a battery profile.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "profile-backed" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "time to full" } } }
     },
     "charge.estimate.unavailable.battery_level_missing" : {
       "comment" : "Charge estimate unavailable reason when battery level is missing.",
@@ -252,7 +252,7 @@
     },
     "charge.estimate.unavailable.contradictory_inputs" : {
       "comment" : "Charge estimate unavailable reason when source inputs disagree.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "charging inputs disagree" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "charging data unavailable" } } }
     },
     "charge.estimate.unavailable.current_direction_unverified" : {
       "comment" : "Charge estimate unavailable reason when current direction is unverified.",
@@ -280,7 +280,7 @@
     },
     "charge.estimate.unavailable.temperature_out_of_model" : {
       "comment" : "Charge estimate unavailable reason when temperature is outside the supported model.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "temperature outside model" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "battery temperature outside supported range" } } }
     },
     "charge.estimate.unavailable.unstable_current" : {
       "comment" : "Charge estimate unavailable reason when charging current is unstable.",
@@ -372,7 +372,7 @@
     },
     "euc.failure.identification_conflict" : {
       "comment" : "Connection failure when identification evidence resolves to incompatible protocol families.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Device identification found conflicting evidence" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Device identification failed" } } }
     },
     "euc.failure.identification_malformed" : {
       "comment" : "Connection failure when a device returns a malformed identification response.",
@@ -384,7 +384,7 @@
     },
     "euc.failure.identification_unsupported" : {
       "comment" : "Connection failure when the selected device does not support the requested identification exchange.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Device does not support this identification probe" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Device identification unsupported" } } }
     },
     "euc.failure.missing_notify_channel" : {
       "comment" : "Connection failure when the device does not expose a notification channel.",
@@ -444,7 +444,7 @@
     },
     "euc.warning.no_live_snapshot" : {
       "comment" : "Ride warning detail when no live telemetry snapshot has arrived.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "No live snapshot yet" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "No ride data" } } }
     },
     "euc.warning.reduce_acceleration" : {
       "comment" : "Safety warning title advising the rider to reduce acceleration.",
@@ -452,11 +452,11 @@
     },
     "euc.warning.screen_inactive" : {
       "comment" : "Ride warning detail while the ride screen is not connected to an active session.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Ride screen is not active yet" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Ride screen inactive" } } }
     },
     "euc.warning.subscribed_no_values" : {
       "comment" : "Ride warning detail after notification subscription succeeds but before live values arrive.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Subscribed; no ride values yet" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Connected · waiting for ride data" } } }
     },
     "euc.warning.telemetry_live" : {
       "comment" : "Ride warning title while live telemetry is healthy.",
@@ -948,7 +948,7 @@
     },
     "music.history.disabled.explanation" : {
       "comment" : "Explanation for the disabled music history policy.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Music stays in the player and is not added to rides or PEVCAP captures." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Do not add music history to rides or captures." } } }
     },
     "music.history.forget" : {
       "comment" : "Removes music metadata from a saved ride without deleting the ride.",
@@ -960,7 +960,7 @@
     },
     "music.history.forget.message" : {
       "comment" : "Confirmation message for removing saved-ride music metadata.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "This removes music history from the ride database. The ride and route stay saved. Existing PEVCAP capture files are separate and may retain their captured copy." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Remove music history from saved rides. Rides and routes remain saved. Exported captures may still contain music history." } } }
     },
     "music.history.forget.title" : {
       "comment" : "Confirmation title for removing saved-ride music metadata.",
@@ -972,7 +972,7 @@
     },
     "music.history.human_readable.explanation" : {
       "comment" : "Explanation for readable music history.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Saves track IDs, titles, artists, and times with rides and PEVCAP captures." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Save track IDs, titles, artists, and times with rides and captures." } } }
     },
     "music.history.opaque_item" : {
       "comment" : "History policy that saves provider item identifiers only.",
@@ -980,11 +980,11 @@
     },
     "music.history.opaque_item.explanation" : {
       "comment" : "Explanation for opaque music history.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Save provider and item IDs without readable track metadata, including permitted PEVCAP correlations." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Save provider, track IDs, and times with rides and captures. Omit titles and artists." } } }
     },
     "music.history.title" : {
       "comment" : "Music history privacy setting title.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Ride music history" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Ride listening history" } } }
     },
     "music.next" : {
       "comment" : "Skips to the next track.",
@@ -1036,7 +1036,7 @@
     },
     "music.command.refused" : {
       "comment" : "The current playback state does not permit a music command.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "That control is unavailable for the current track." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "This control is unavailable for the current track." } } }
     },
     "music.command.title" : {
       "comment" : "Title for music command feedback.",

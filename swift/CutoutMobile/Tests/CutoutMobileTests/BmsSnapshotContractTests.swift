@@ -20,11 +20,11 @@ final class BmsSnapshotContractTests: XCTestCase {
         )
         XCTAssertEqual(
             pevLocalizedText("bms.cell_map.hint.resistance"),
-            "tap a group for history, IR estimate, and BMS raw fields"
+            "View group history, resistance, and battery readings"
         )
         XCTAssertEqual(
             pevLocalizedText("bms.cell_map.overview_rule", Int64(40)),
-            "40 groups need overview before exact cells"
+            "40 cell groups"
         )
         XCTAssertEqual(pevLocalizedText("bms.no_data.title"), "No cell-level BMS data")
     }
@@ -63,11 +63,11 @@ final class BmsSnapshotContractTests: XCTestCase {
         let cases: [(BmsNoDataTextRow, String, String)] = [
             (
                 .cellBalanceWarning, "bms.no_data.row.cell_balance_warning",
-                "CutOut can’t see individual cell balance or weak groups."
+                "Cell balance data unavailable."
             ),
             (
                 .bmsDiagnosticsWarning, "bms.no_data.row.diagnostics_warning",
-                "BMS temperature, faults, or cutout reason stay unavailable."
+                "Battery temperature and fault data unavailable."
             ),
             (.cellVoltages, "bms.no_data.row.cell_voltages", "individual cell/group voltages"),
             (.weakGroups, "bms.no_data.row.weak_groups", "cell balance / weak parallel group"),
@@ -329,6 +329,30 @@ final class BmsSnapshotContractTests: XCTestCase {
         )
         XCTAssertEqual(snapshot.faultMetricDetail, "last: under-voltage warning - 3 days ago")
         XCTAssertEqual(snapshot.captureActionState, "disabled for launch")
+    }
+
+    func testPairedPackCurrentsArePresentedSeparatelyInsteadOfAsAnAmbiguousCurrent() {
+        let snapshot = BmsSnapshot(
+            topology: BmsTopology(
+                layoutLabel: "30S2P",
+                seriesGroupCount: 30,
+                parallelCount: 2,
+                packCount: 1,
+                bmsCount: 1,
+                confidence: .verified
+            ),
+            current: BatteryCurrent(value: -10_000),
+            bmsPackCurrent0: BatteryCurrent(value: -5_000),
+            bmsPackCurrent1: BatteryCurrent(value: -5_000)
+        )
+
+        XCTAssertEqual(
+            snapshot.currentReadings,
+            [
+                BmsCurrentReading(packIndex: 1, current: BatteryCurrent(value: -5_000)),
+                BmsCurrentReading(packIndex: 2, current: BatteryCurrent(value: -5_000)),
+            ]
+        )
     }
 
     func testSnapshotKeepsUnknownTopologyExplicitWithoutInventedGroups() {
@@ -786,9 +810,9 @@ final class BmsSnapshotContractTests: XCTestCase {
         XCTAssertEqual(snapshot.scrollableCellMapModes, [.overview, .strip, .rawTable, .temperatures])
         XCTAssertEqual(snapshot.inlineCellMapModes.map(\.title), ["balance view", "temps", "faults"])
         XCTAssertEqual(snapshot.scrollableCellMapModes.map(\.title), ["overview", "strip", "raw table", "temps"])
-        XCTAssertEqual(snapshot.cellMapInteractionHint, "tap a group for history, IR estimate, and BMS raw fields")
-        XCTAssertEqual(snapshot.scrollableCellMapRule, "40 groups need overview before exact cells")
-        XCTAssertEqual(snapshot.scrollableCellMapFocusHint, "show flagged groups before the raw table")
+        XCTAssertEqual(snapshot.cellMapInteractionHint, "View group history, resistance, and battery readings")
+        XCTAssertEqual(snapshot.scrollableCellMapRule, "40 cell groups")
+        XCTAssertEqual(snapshot.scrollableCellMapFocusHint, "Groups with warnings")
     }
 
     func testSnapshotExposesNoDataHelpers() {
@@ -819,8 +843,8 @@ final class BmsSnapshotContractTests: XCTestCase {
         XCTAssertEqual(
             snapshot.noDataWarningLines.map(\.text),
             [
-                "CutOut can’t see individual cell balance or weak groups.",
-                "BMS temperature, faults, or cutout reason stay unavailable.",
+                "Cell balance data unavailable.",
+                "Battery temperature and fault data unavailable.",
             ])
         XCTAssertEqual(
             snapshot.noDataUnknownRows.map(\.id),

@@ -5,10 +5,12 @@ import SwiftUI
 
 /// One native renderer for the shared semantic catalog. Drafts belong to each
 /// attempt-scoped row; reported and requested values remain Rust snapshots.
-struct DeviceControlsForm: View {
+struct DeviceControlsForm<AdditionalContent: View>: View {
     let snapshot: DeviceSettings
     let submitSetting: (ConnectionAttemptToken, DeviceSettingID, DeviceSettingValue) throws -> Void
     let submitAction: (ConnectionAttemptToken, DeviceActionID) throws -> Void
+
+    @ViewBuilder let additionalContent: () -> AdditionalContent
 
     private var canInteract: Bool {
         snapshot.connection.readiness == .verified
@@ -34,6 +36,7 @@ struct DeviceControlsForm: View {
                         }
                     }
                 }
+                additionalContent()
                 let actions = snapshot.actionDescriptors.filter { $0.access != .unverified }
                 if !actions.isEmpty {
                     controlsCard(title: localizedAppText("controls.actions")) {

@@ -56,6 +56,62 @@ const fn provider_transport(provider: ProviderSessionId) -> MusicTransportOwner 
     MusicTransportOwner::Provider(provider)
 }
 
+#[test]
+fn play_handoff_succeeds_from_playback_even_when_control_connection_failed() {
+    let mut lifecycle = MusicProviderLifecycle::default();
+    let handoff = lifecycle.begin_play_handoff(100).expect("handoff");
+    let connection = begin_connection(&mut lifecycle, 110);
+    let _ = lifecycle.connection_failed_effect(connection.attempt_id, 120);
+    assert_eq!(
+        lifecycle.observe_play_handoff(handoff.id, MusicPlaybackState::Playing, 130),
+        Some(MusicTransportOutcome::Accepted)
+    );
+    assert_eq!(
+        lifecycle.expire_play_handoff(handoff.id, handoff.deadline.as_milliseconds()),
+        None
+    );
+}
+
+#[test]
+fn play_handoff_requires_fresh_playback_and_finishes_once() {
+    let mut lifecycle = MusicProviderLifecycle::default();
+    let first = lifecycle.begin_play_handoff(100).expect("handoff");
+    assert_eq!(
+        lifecycle.observe_play_handoff(first.id, MusicPlaybackState::Playing, 99),
+        None
+    );
+    assert_eq!(
+        lifecycle.observe_play_handoff(first.id, MusicPlaybackState::Paused, 110),
+        None
+    );
+    assert_eq!(
+        lifecycle.observe_play_handoff(
+            first.id,
+            MusicPlaybackState::Playing,
+            first.deadline.as_milliseconds()
+        ),
+        None
+    );
+    assert_eq!(
+        lifecycle.expire_play_handoff(first.id, first.deadline.as_milliseconds() - 1),
+        None
+    );
+    assert_eq!(
+        lifecycle.expire_play_handoff(first.id, first.deadline.as_milliseconds()),
+        Some(MusicTransportOutcome::TimedOut)
+    );
+    let second = lifecycle.begin_play_handoff(70_000).expect("handoff");
+    assert_ne!(first.id, second.id);
+    assert_eq!(
+        lifecycle.observe_play_handoff(first.id, MusicPlaybackState::Playing, 70_001),
+        None
+    );
+    assert_eq!(
+        lifecycle.observe_play_handoff(second.id, MusicPlaybackState::Playing, 70_002),
+        Some(MusicTransportOutcome::Accepted)
+    );
+}
+
 const fn connection_transport(
     provider_generation: ProviderSessionId,
     connection_id: EstablishedConnectionId,
@@ -64,6 +120,33 @@ const fn connection_transport(
         provider_generation,
         connection_id,
     }
+}
+
+#[test]
+fn play_handoff_survives_scene_switch_but_explicit_cancellation_rejects_late_playback() {
+    let mut lifecycle = MusicProviderLifecycle::default();
+    let handoff = lifecycle.begin_play_handoff(100).expect("handoff");
+    let _ = lifecycle.suspend();
+    let _ = lifecycle.resume();
+    let _ = lifecycle.begin_provider_session();
+    assert_eq!(
+        lifecycle.observe_play_handoff(handoff.id, MusicPlaybackState::Playing, 200),
+        Some(MusicTransportOutcome::Accepted)
+    );
+
+    let cancelled = lifecycle.begin_play_handoff(300).expect("handoff");
+    assert_eq!(
+        lifecycle.finish_play_handoff(cancelled.id),
+        CallbackEpochMatch::Current
+    );
+    assert_eq!(
+        lifecycle.observe_play_handoff(cancelled.id, MusicPlaybackState::Playing, 400),
+        None
+    );
+    assert_eq!(
+        lifecycle.expire_play_handoff(cancelled.id, cancelled.deadline.as_milliseconds()),
+        None
+    );
 }
 
 fn begin_connection(

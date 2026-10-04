@@ -143,17 +143,6 @@ pub fn mobile_melk_lighting_pattern_catalog() -> Vec<MobileMelkLightingPatternDt
         .collect()
 }
 
-/// Returns whether an advertised name belongs to the MELK-OC21 family.
-#[uniffi::export]
-#[must_use]
-#[allow(
-    clippy::needless_pass_by_value,
-    reason = "UniFFI exports own String arguments at the FFI boundary."
-)]
-pub fn mobile_melk_lighting_name_matches(name: String) -> bool {
-    MelkLightingProfile::name_matches(&name)
-}
-
 /// Returns the Rust-owned persisted MELK lighting profile version.
 #[uniffi::export]
 #[must_use]
@@ -171,7 +160,7 @@ pub fn mobile_melk_lighting_capabilities_fingerprint() -> String {
 /// Invalid input presented to the MELK lighting boundary.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
 pub enum MobileMelkLightingError {
-    /// Name and observed GATT evidence did not identify the candidate profile.
+    /// Observed GATT evidence did not identify the candidate profile.
     #[error("invalid MELK GATT evidence")]
     InvalidGattEvidence,
 
@@ -318,7 +307,7 @@ pub struct MobileMelkLightingProfile;
 
 #[uniffi::export]
 impl MobileMelkLightingProfile {
-    /// Selects the profile only when the family name and all typed GATT roles agree.
+    /// Selects the profile from typed GATT roles; the name is display metadata.
     ///
     /// # Errors
     ///

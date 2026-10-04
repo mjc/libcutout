@@ -37,6 +37,10 @@ final class CutoutAppRouteTests: XCTestCase {
     func testNavigationLabelsResolveFromTheAppCatalog() {
         XCTAssertEqual(localizedAppText("navigation.tab.cells"), "Cells")
         XCTAssertEqual(localizedAppText("lighting.power"), "Power")
+        XCTAssertEqual(localizedAppText("lighting.default_name"), "Lighting accessory")
+        XCTAssertEqual(localizedAppText("lighting.connection.scanning"), "Scanning")
+        XCTAssertEqual(localizedAppText("lighting.choose_accessory"), "Choose accessory")
+        XCTAssertEqual(localizedAppText("lighting.pairing.nearby_title"), "Nearby devices")
         XCTAssertEqual(localizedAppText("navigation.tab.faults"), "Faults")
         XCTAssertEqual(localizedAppText("picker.title"), "Choose device")
         XCTAssertEqual(localizedAppText("picker.subtitle.nearby_devices"), "Nearby Bluetooth devices")
@@ -54,27 +58,27 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(localizedAppText("bms.unknown.cell_count"), "Cell count")
         XCTAssertEqual(localizedAppText("bms.unknown.temperatures"), "Temperatures")
         XCTAssertEqual(localizedAppText("bms.unknown.fault_bits"), "Fault bits")
-        XCTAssertEqual(localizedAppText("bms.unknown.next_capture_flow"), "Next capture flow")
+        XCTAssertEqual(localizedAppText("bms.unknown.next_capture_flow"), "Record Bluetooth data")
         XCTAssertEqual(localizedAppText("bms.no_data.confidence.medium"), "Medium")
         XCTAssertEqual(localizedAppText("bms.no_data.confidence.low"), "Low")
         XCTAssertEqual(localizedAppText("bms.no_data.confidence.unknown"), "Unknown")
-        XCTAssertEqual(localizedAppText("bms.no_data.confidence_detail.not_cell_safe"), "Not cell-safe")
+        XCTAssertEqual(localizedAppText("bms.no_data.confidence_detail.not_cell_safe"), "Cell data unavailable")
         XCTAssertEqual(localizedAppText("bms.no_data.confidence_detail.telemetry_unavailable"), "Telemetry unavailable")
         XCTAssertEqual(localizedAppText("bms.no_data.pack_estimate"), "PACK ESTIMATE")
         XCTAssertEqual(localizedAppText("bms.no_data.confidence"), "CONFIDENCE")
-        XCTAssertEqual(localizedAppText("bms.no_data.what_we_can_see"), "WHAT WE CAN SEE")
+        XCTAssertEqual(localizedAppText("bms.no_data.what_we_can_see"), "AVAILABLE DATA")
         XCTAssertEqual(localizedAppText("bms.no_data.pack_voltage"), "Pack voltage")
         XCTAssertEqual(localizedAppText("bms.no_data.ride_sag"), "Ride sag")
         XCTAssertEqual(localizedAppText("bms.no_data.load_now"), "Load now")
-        XCTAssertEqual(localizedAppText("bms.no_data.what_is_unknown"), "WHAT IS UNKNOWN")
+        XCTAssertEqual(localizedAppText("bms.no_data.what_is_unknown"), "UNAVAILABLE DATA")
         XCTAssertEqual(localizedAppText("bms.no_data.pack_estimate_accessibility"), "Pack estimate")
         XCTAssertEqual(localizedAppText("bms.no_data.confidence_accessibility"), "Confidence")
         XCTAssertEqual(
-            localizedAppText("bms.no_data.estimate_detail.recent_sag"), "Derived from voltage curve + recent sag")
-        XCTAssertEqual(localizedAppText("bms.no_data.estimate_detail.voltage_curve"), "Derived from voltage curve only")
+            localizedAppText("bms.no_data.estimate_detail.recent_sag"), "Based on voltage and voltage sag")
+        XCTAssertEqual(localizedAppText("bms.no_data.estimate_detail.voltage_curve"), "Based on voltage")
         XCTAssertEqual(localizedAppText("bms.no_data.estimate_detail.unavailable"), "Estimate unavailable")
         XCTAssertEqual(localizedAppText("bms.diagnostics.title"), "BMS diagnostics")
-        XCTAssertEqual(localizedAppText("bms.diagnostics.detail"), "Raw readback, available when we need to debug")
+        XCTAssertEqual(localizedAppText("bms.diagnostics.detail"), "Battery readings and fault codes")
         XCTAssertEqual(localizedAppText("bms.display_modes"), "Display modes")
         XCTAssertEqual(localizedAppText("picker.section.setup"), "Setup")
         XCTAssertEqual(localizedAppText("picker.advanced_capture"), "Capture unknown device")
@@ -127,7 +131,7 @@ final class CutoutAppRouteTests: XCTestCase {
         )
         XCTAssertEqual(
             localizedAppText("camera.error.unsupported_profile"),
-            "This camera firmware is not supported."
+            "Unsupported camera firmware."
         )
         XCTAssertEqual(
             localizedAppText("camera.error.origin_mismatch"),
@@ -135,12 +139,12 @@ final class CutoutAppRouteTests: XCTestCase {
         )
         XCTAssertEqual(localizedAppText("camera.preview.export"), "Export preview")
         XCTAssertEqual(
-            localizedAppText("bms.no_data.pack_estimate_accessibility_value", "71", "Derived from voltage curve"),
-            "71%. Derived from voltage curve"
+            localizedAppText("bms.no_data.pack_estimate_accessibility_value", "71", "Based on voltage"),
+            "71%. Based on voltage"
         )
         XCTAssertEqual(
-            localizedAppText("bms.no_data.confidence_accessibility_value", "Medium", "Not cell-safe"),
-            "Medium. Not cell-safe"
+            localizedAppText("bms.no_data.confidence_accessibility_value", "Medium", "Cell data unavailable"),
+            "Medium. Cell data unavailable"
         )
         XCTAssertEqual(
             PevScreen(id: .bmsCellDetail, title: "", subtitle: "", secondaryValue: "").tabTitle,
@@ -508,11 +512,11 @@ final class CutoutAppRouteTests: XCTestCase {
         )
         XCTAssertEqual(
             SessionConnectionPhase.failed(.identificationFailed(.conflictingEvidence)).accessibilityAnnouncement,
-            "Connection failed. Choose a device to try again. Device identification found conflicting evidence"
+            "Connection failed. Choose a device to try again. Device identification failed"
         )
         XCTAssertEqual(
             SessionConnectionPhase.failed(.identificationFailed(.unsupported)).accessibilityAnnouncement,
-            "Connection failed. Choose a device to try again. Device does not support this identification probe"
+            "Connection failed. Choose a device to try again. Device identification unsupported"
         )
     }
 
@@ -795,6 +799,46 @@ final class CutoutAppRouteTests: XCTestCase {
     }
 
     @MainActor
+    func testOpeningLightingForwardsResumeToAnAlreadyRunningSession() async throws {
+        let suiteName = "CutoutAppRouteTests.lightingResume"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let fake = TestLightingSession()
+        let model = LightingRouteModel(session: fake, persistence: LightingAccessoryPersistence(defaults: defaults))
+        model.start()
+        fake.onStateChange?(.failed("Accessory reconnect exhausted"))
+        for _ in 0..<10 { await Task.yield() }
+        model.start()
+        XCTAssertEqual(fake.startCalls, [nil, nil])
+        XCTAssertEqual(fake.stopCalls, 0)
+        // Rust chooses the transition; reopening does not invent a Swift state.
+        XCTAssertEqual(model.connectionState, .failed("Accessory reconnect exhausted"))
+        fake.onStateChange?(.idle)
+        for _ in 0..<10 { await Task.yield() }
+        XCTAssertEqual(model.connectionState, .idle)
+    }
+
+    @MainActor
+    func testRememberedLightingForwardsResumeWithTheSameControllerIdentity() async throws {
+        let suiteName = "CutoutAppRouteTests.lightingRememberedResume"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let persistence = LightingAccessoryPersistence(defaults: defaults)
+        let identifier = "A1B2C3D4-E5F6-4789-ABCD-0123456789AB"
+        XCTAssertTrue(persistence.ensureRecord(platformIdentifier: identifier))
+        let fake = TestLightingSession()
+        let model = LightingRouteModel(session: fake, persistence: persistence)
+        model.startIfRemembered()
+        fake.onStateChange?(.disconnected)
+        for _ in 0..<10 { await Task.yield() }
+        model.startIfRemembered()
+        XCTAssertEqual(fake.startCalls, [identifier, identifier])
+        XCTAssertEqual(fake.stopCalls, 0)
+    }
+
+    @MainActor
     func testLightingForgetClearsStoppedAccessoryPresentation() async throws {
         let suiteName = "CutoutAppRouteTests.lightingForget"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
@@ -963,7 +1007,7 @@ final class CutoutAppRouteTests: XCTestCase {
 
         model.setPower(true)
 
-        XCTAssertEqual(model.controlError, "Power was not sent because the lighting controller is not ready.")
+        XCTAssertEqual(model.controlError, "Power not sent.")
         XCTAssertEqual(model.commandStatus, .idle)
     }
 
@@ -1016,13 +1060,10 @@ final class CutoutAppRouteTests: XCTestCase {
         let fake = TestLightingSession()
         let model = LightingRouteModel(session: fake, persistence: persistence)
         model.start()
-        struct PersistenceEnvelope: Decodable {
-            let record: Data
-        }
         func persistedRecord() throws -> MobileRgbLightingAccessoryRecord {
-            let data = try XCTUnwrap(defaults.data(forKey: "lighting.accessory.record"))
-            let envelope = try JSONDecoder().decode(PersistenceEnvelope.self, from: data)
-            return try MobileRgbLightingAccessoryRecord.decode(bytes: envelope.record)
+            let data = try XCTUnwrap(defaults.data(forKey: "lighting.accessories.store"))
+            let store = try MobileRgbLightingAccessoryStore.decode(bytes: data)
+            return try XCTUnwrap(store.selectVehicle(vehicleIdentifier: nil))
         }
 
         let transientStates: [MelkLightingPeripheralState] = [
@@ -1238,11 +1279,11 @@ final class CutoutAppRouteTests: XCTestCase {
             XCTAssertFalse(LightingPatternCatalog.name(for: id).isEmpty)
             XCTAssertFalse(LightingPatternCatalog.name(for: id).contains("Unmapped"))
         }
-        XCTAssertEqual(LightingPatternCatalog.name(for: 0), "Auto Play (reference)")
-        XCTAssertEqual(LightingPatternCatalog.name(for: 213), "Fade 73 (reference)")
-        XCTAssertEqual(LightingPatternCatalog.name(for: 220), "Music Flow Flash (reference)")
-        XCTAssertEqual(LightingPatternCatalog.name(for: 221), "Music Flash (reference)")
-        XCTAssertEqual(LightingPatternCatalog.name(for: 227), "Music Pulse 2 (reference)")
+        XCTAssertEqual(LightingPatternCatalog.name(for: 0), "Auto Play")
+        XCTAssertEqual(LightingPatternCatalog.name(for: 213), "Fade 73")
+        XCTAssertEqual(LightingPatternCatalog.name(for: 220), "Music Flow Flash")
+        XCTAssertEqual(LightingPatternCatalog.name(for: 221), "Music Flash")
+        XCTAssertEqual(LightingPatternCatalog.name(for: 227), "Music Pulse 2")
         for id in [255, -1] {
             XCTAssertEqual(LightingPatternCatalog.name(for: id), "Unmapped effect \(id)")
         }
@@ -1364,7 +1405,7 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertTrue(fake.stateRequests.isEmpty)
         XCTAssertEqual(fake.colorRequests, ["12,34,56"])
         model.markConfirmed()
-        XCTAssertNil(persistence.restoreCandidate())
+        XCTAssertEqual(persistence.restoreCandidate()?.requestedState, persistence.requestedState)
         XCTAssertNil(persistence.confirmedState)
     }
 
@@ -1400,7 +1441,7 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertTrue(model.setPower(false))
         model.markConfirmed()
 
-        XCTAssertNil(restartedPersistence.restoreCandidate())
+        XCTAssertEqual(restartedPersistence.restoreCandidate()?.requestedState, restartedPersistence.requestedState)
         XCTAssertEqual(restartedPersistence.confirmation, .unknown)
     }
 
@@ -1435,6 +1476,47 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertTrue(model.peripheralIdentifier == nil)
         model.selectCandidate(nearer)
         XCTAssertEqual(fake.candidateSelections, [nearer.id])
+
+        fake.emitCandidateRemoved(farther.id)
+        await Task.yield()
+        XCTAssertEqual(model.candidates, [nearer])
+    }
+
+    @MainActor
+    func testRestoreToggleCannotBeEnabledBeforeAnAccessoryExists() throws {
+        let suiteName = "CutoutAppRouteTests.restoreBeforePairing"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let model = LightingRouteModel(
+            session: TestLightingSession(),
+            persistence: LightingAccessoryPersistence(defaults: defaults)
+        )
+
+        XCTAssertFalse(model.canEditMetadata)
+        model.setRestoreEnabled(true)
+
+        XCTAssertFalse(model.restoreEnabled)
+    }
+
+    @MainActor
+    func testRouteDoesNotPersistConfirmationWhenRustRejectsAnUndrainedBatch() throws {
+        let suiteName = "CutoutAppRouteTests.earlyConfirmation"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let persistence = LightingAccessoryPersistence(defaults: defaults)
+        XCTAssertTrue(persistence.ensureRecord(platformIdentifier: "A1B2C3D4-E5F6-4789-ABCD-0123456789AB"))
+        let fake = TestLightingSession()
+        fake.confirmationResult = false
+        let model = LightingRouteModel(session: fake, persistence: persistence)
+
+        model.setPlayback(.effect(pattern: 16, speed: 50))
+        model.markConfirmed()
+
+        XCTAssertEqual(model.commandStatus, .requested)
+        XCTAssertNil(persistence.confirmedState)
+        XCTAssertNotEqual(persistence.confirmation, .confirmed)
     }
 
     @MainActor
@@ -1461,6 +1543,72 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(model.peripheralName, "MELK-OC21 6A")
         XCTAssertEqual(model.peripheralIdentifier, "A1B2C3D4-E5F6-4789-ABCD-0123456789AB")
     }
+    @MainActor
+    func testLightingPairsWithCurrentVehicleAndRecallsItAfterSwitching() async throws {
+        let suiteName = "CutoutAppRouteTests.lightingVehicle.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let persistence = LightingAccessoryPersistence(defaults: defaults)
+        let fake = TestLightingSession()
+        let model = LightingRouteModel(session: fake, persistence: persistence)
+        model.selectVehicle("aero")
+        model.start()
+        fake.emitIdentity(
+            MelkLightingPeripheralIdentity(
+                name: "aero lights", platformIdentifier: "11111111-1111-1111-1111-111111111111", rssi: -40))
+        fake.emitState(.ready)
+        await Task.yield()
+        await Task.yield()
+        XCTAssertEqual(model.vehicleIdentifier, "aero")
+        model.saveAccessoryName("aero lights")
+        model.selectVehicle("pev")
+        XCTAssertNil(model.accessoryAlias)
+        XCTAssertNil(fake.startCalls.last!)
+        model.selectVehicle("aero")
+        XCTAssertEqual(fake.startCalls.last!, "11111111-1111-1111-1111-111111111111")
+        XCTAssertEqual(model.accessoryAlias, "aero lights")
+        XCTAssertEqual(fake.stopCalls, 2)
+    }
+
+    @MainActor
+    func testLightingRestoresSavedRequestOncePerConnectionAfterRestart() async throws {
+        let suiteName = "CutoutAppRouteTests.restoreRequest.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let identifier = "A1B2C3D4-E5F6-4789-ABCD-0123456789AB"
+        let state = MobileMelkLightingRestoreStateDto(
+            powerOn: true, red: 12, green: 34, blue: 56, brightness: 42,
+            playback: .effect(pattern: 16, speed: 80))
+        let original = LightingAccessoryPersistence(defaults: defaults)
+        original.selectVehicle("aero")
+        XCTAssertTrue(original.ensureRecord(platformIdentifier: identifier))
+        try original.updateRequestedState(state)
+        original.setRestoreEnabled(true)
+
+        let reopened = LightingAccessoryPersistence(defaults: defaults)
+        let fake = TestLightingSession()
+        let model = LightingRouteModel(session: fake, persistence: reopened)
+        model.selectVehicle("aero")
+        fake.emitIdentity(MelkLightingPeripheralIdentity(name: "lights", platformIdentifier: identifier, rssi: -40))
+        fake.emitState(.ready)
+        await Task.yield()
+        await Task.yield()
+        XCTAssertEqual(fake.stateRequests, [state])
+        XCTAssertEqual(reopened.confirmation, .unknown)
+        XCTAssertNil(reopened.confirmedState)
+
+        fake.emitState(.ready)
+        await Task.yield()
+        XCTAssertEqual(fake.stateRequests, [state])
+        fake.emitState(.retrying(attempt: 1, delayMilliseconds: 250))
+        fake.emitState(.ready)
+        await Task.yield()
+        await Task.yield()
+        XCTAssertEqual(fake.stateRequests, [state, state])
+        XCTAssertNotEqual(reopened.confirmation, .confirmed)
+        XCTAssertNil(reopened.confirmedState)
+    }
+
 }
 
 private final class ObservationFlag: @unchecked Sendable {
@@ -1474,6 +1622,7 @@ private final class TestLightingSession: MelkLightingPeripheralSessionProtocol {
     var onNotification: ((Data) -> Void)?
     var onRecord: ((String) -> Void)?
     var onCandidate: ((MelkLightingPeripheralCandidate) -> Void)?
+    var onCandidateRemoved: ((String) -> Void)?
     var startCalls: [String?] = []
     var stopCalls = 0
     var candidateSelections: [String] = []
@@ -1484,6 +1633,7 @@ private final class TestLightingSession: MelkLightingPeripheralSessionProtocol {
     var scheduleRequests: [MobileMelkScheduleDto] = []
     var powerResult = true
     var colorResult = true
+    var confirmationResult = true
     var brightnessResult = true
     var powerRequests: [Bool] = []
     var colorRequests: [String] = []
@@ -1531,7 +1681,7 @@ private final class TestLightingSession: MelkLightingPeripheralSessionProtocol {
         return stateResult
     }
 
-    func markLastCommandConfirmed() {}
+    func markLastCommandConfirmed() -> Bool { confirmationResult }
     func markLastCommandUnconfirmed() {}
 
     func emitIdentity(_ identity: MelkLightingPeripheralIdentity) {
@@ -1552,5 +1702,9 @@ private final class TestLightingSession: MelkLightingPeripheralSessionProtocol {
 
     func emitCandidate(_ candidate: MelkLightingPeripheralCandidate) {
         onCandidate?(candidate)
+    }
+
+    func emitCandidateRemoved(_ identifier: String) {
+        onCandidateRemoved?(identifier)
     }
 }

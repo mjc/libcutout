@@ -60,25 +60,6 @@ struct SpotifyRenewalRetryPolicy {
     }
 }
 
-struct SpotifyAppRemotePlayIntent {
-    private(set) var handoffID: UUID?
-
-    mutating func begin(handoffID: UUID) {
-        self.handoffID = handoffID
-    }
-
-    mutating func consume(handoffID: UUID) -> Bool {
-        guard self.handoffID == handoffID else { return false }
-        self.handoffID = nil
-        return true
-    }
-
-    mutating func cancel(handoffID: UUID? = nil) {
-        guard handoffID == nil || self.handoffID == handoffID else { return }
-        self.handoffID = nil
-    }
-}
-
 #if canImport(SpotifyiOS) && os(iOS)
 
     enum SpotifyAuthorizationCallbackGate {
@@ -225,9 +206,8 @@ struct SpotifyAppRemotePlayIntent {
         private var appRemoteBridge: AppRemoteBridge?
         private var appRemoteHandoff: SPTAppRemote?
         private var appRemoteHandoffPending = false
-        private var appRemoteHandoffPlayIntent = SpotifyAppRemotePlayIntent()
         private var appRemoteHandoffResumeFailure: (@MainActor () -> Void)?
-        private var appRemoteHandoffID: UUID?
+        private var appRemoteHandoffID: MobileMusicPlayHandoffId?
         private var appRemoteHandoffToken: String?
         private var establishedConnectionID: MobileMusicEstablishedConnectionId?
         private var accessToken: String?
@@ -250,7 +230,6 @@ struct SpotifyAppRemotePlayIntent {
         private var authorizationNeedsUserAction = false
         private var renewalRetryPolicy = SpotifyRenewalRetryPolicy()
         private static let playbackScopes: SPTScope = [.userReadPlaybackState, .userModifyPlaybackState]
-        private static let appRemoteHandoffTimeoutMs: UInt64 = 60_000
         private let playbackAPI = SpotifyPlaybackAPI()
         private var webPlayback: SpotifyPlayback?
         private var webPollTask: Task<Void, Never>?
@@ -778,6 +757,7 @@ struct SpotifyAppRemotePlayIntent {
                     self.webRenewalAttempted = false
                     self.lifecycle.markPlayerStateObserved(nowMs: self.connectionNowMs)
                     self.lifecycleState = playback.map { $0.isPlaying ? .playing : .paused } ?? .stopped
+                    self.confirmPlayHandoff(state: self.lifecycleState)
                     #if DEBUG
                         print(
                             "spotify_web_playback_received playing=\(playback?.isPlaying ?? false) has_item=\(playback?.item != nil)"
@@ -893,8 +873,11 @@ struct SpotifyAppRemotePlayIntent {
             if appRemoteHandoffPending, let handoff = appRemoteHandoff {
                 let parameters = handoff.authorizationParameters(from: url)
                 guard let token = parameters?[SPTAppRemoteAccessTokenKey], !token.isEmpty else {
-                    if let appRemoteHandoffID {
-                        finishAppRemoteHandoff(id: appRemoteHandoffID, state: .disconnected, disconnect: true)
+                    if let appRemoteHandoffID,
+                        lifecycle.finishPlayHandoff(id: appRemoteHandoffID) == .current
+                    {
+                        finishAppRemoteHandoff(
+                            id: appRemoteHandoffID, state: .disconnected, disconnect: true, failed: true)
                     }
                     return true
                 }
@@ -1234,29 +1217,29 @@ struct SpotifyAppRemotePlayIntent {
             onResumeFailure: (@MainActor () -> Void)?,
             restartMonitoring: Bool = true
         ) -> MusicCommandOutcome {
-            guard !appRemoteHandoffPending, let configuration else { return .unavailable }
+            guard appRemoteHandoffID == nil, let configuration,
+                let effect = lifecycle.beginPlayHandoff(nowMs: connectionNowMs)
+            else { return .unavailable }
 
             appRemoteHandoffPending = true
-            let handoffID = UUID()
-            appRemoteHandoffPlayIntent.begin(handoffID: handoffID)
+            let handoffID = effect.id
             appRemoteHandoffResumeFailure = onResumeFailure
             appRemoteHandoffID = handoffID
             appRemoteHandoffToken = nil
             guard !restartMonitoring || startMonitoring(allowAuthorization: false, onChange: onChange) else {
-                appRemoteHandoffPending = false
-                appRemoteHandoffPlayIntent.cancel(handoffID: handoffID)
-                appRemoteHandoffResumeFailure = nil
-                appRemoteHandoffID = nil
+                retireAppRemoteHandoff(disconnect: false)
                 return .unavailable
             }
 
             effects.run(
                 .handoff(handoffID),
-                until: connectionNowMs + Self.appRemoteHandoffTimeoutMs,
+                until: effect.deadlineMs,
                 nowMs: { [weak self] in self?.connectionNowMs ?? 0 }
             ) { [weak self] in
-                guard let self, self.appRemoteHandoffID == handoffID else { return }
-                self.finishAppRemoteHandoff(id: handoffID, state: .disconnected, disconnect: true)
+                guard let self, self.appRemoteHandoffID == handoffID,
+                    self.lifecycle.expirePlayHandoff(id: handoffID, nowMs: effect.deadlineMs) != nil
+                else { return }
+                self.finishAppRemoteHandoff(id: handoffID, state: self.lifecycleState, disconnect: false, failed: true)
             }
 
             onStarted?()
@@ -1265,36 +1248,47 @@ struct SpotifyAppRemotePlayIntent {
             handoff.authorizeAndPlayURI("") { [weak self] installed in
                 guard !installed else { return }
                 Task { @MainActor [weak self] in
-                    guard let self, self.appRemoteHandoffID == handoffID else { return }
-                    self.finishAppRemoteHandoff(id: handoffID, state: .disconnected, disconnect: true)
+                    guard let self, self.appRemoteHandoffID == handoffID,
+                        self.lifecycle.finishPlayHandoff(id: handoffID) == .current
+                    else { return }
+                    self.finishAppRemoteHandoff(id: handoffID, state: .disconnected, disconnect: true, failed: true)
                 }
             }
             return .accepted
         }
 
-        private func finishAppRemoteHandoff(id: UUID, state: MobileMusicPlaybackStateDto, disconnect: Bool) {
+        private func finishAppRemoteHandoff(
+            id: MobileMusicPlayHandoffId, state: MobileMusicPlaybackStateDto, disconnect: Bool, failed: Bool
+        ) {
             guard appRemoteHandoffID == id else { return }
-            let reportFailure = appRemoteHandoffPlayIntent.handoffID == id
             let resumeFailure = appRemoteHandoffResumeFailure
             effects.cancel(.handoff(id))
             if disconnect { appRemoteHandoff?.disconnect() }
             appRemoteHandoff = nil
             appRemoteHandoffPending = false
-            appRemoteHandoffPlayIntent.cancel(handoffID: id)
             appRemoteHandoffResumeFailure = nil
             appRemoteHandoffID = nil
             appRemoteHandoffToken = nil
             lifecycleState = state
             emitChange()
-            if reportFailure { resumeFailure?() }
+            if failed { resumeFailure?() }
+        }
+
+        private func confirmPlayHandoff(state: MobileMusicPlaybackStateDto) {
+            guard let id = appRemoteHandoffID,
+                lifecycle.observePlayHandoff(id: id, state: state, observedAtMs: connectionNowMs) == .accepted
+            else { return }
+            finishAppRemoteHandoff(id: id, state: state, disconnect: false, failed: false)
         }
 
         private func retireAppRemoteHandoff(disconnect: Bool) {
-            if let appRemoteHandoffID { effects.cancel(.handoff(appRemoteHandoffID)) }
+            if let appRemoteHandoffID {
+                effects.cancel(.handoff(appRemoteHandoffID))
+                _ = lifecycle.finishPlayHandoff(id: appRemoteHandoffID)
+            }
             if disconnect { appRemoteHandoff?.disconnect() }
             appRemoteHandoff = nil
             appRemoteHandoffPending = false
-            appRemoteHandoffPlayIntent.cancel()
             appRemoteHandoffResumeFailure = nil
             appRemoteHandoffID = nil
             appRemoteHandoffToken = nil
@@ -1370,30 +1364,8 @@ struct SpotifyAppRemotePlayIntent {
                     }
                 }
             })
-            if let handoffID = appRemoteHandoffPlayIntent.handoffID,
-                let playerAPI = appRemote.playerAPI,
-                appRemoteHandoffPlayIntent.consume(handoffID: handoffID)
-            {
-                let resumeFailure = appRemoteHandoffResumeFailure
-                appRemoteHandoffResumeFailure = nil
-                if appRemoteHandoffID == handoffID {
-                    effects.cancel(.handoff(handoffID))
-                    appRemoteHandoffID = nil
-                }
-                playerAPI.resume { [weak self] _, error in
-                    let failed = error != nil
-                    guard failed else { return }
-                    Task { @MainActor [weak self] in
-                        guard let self,
-                            self.lifecycle.classifyProviderSession(id: providerGeneration) == .current,
-                            self.lifecycle.classifyConnection(id: attemptID, nowMs: self.connectionNowMs) == .accepted
-                        else { return }
-                        self.refreshPlayerState()
-                        self.emitChange()
-                        resumeFailure?()
-                    }
-                }
-            }
+            // authorizeAndPlayURI already dispatched playback in Spotify.
+            // Confirm its result from player state without a second resume.
             refreshPlayerState()
             emitChange()
         }
@@ -1411,13 +1383,8 @@ struct SpotifyAppRemotePlayIntent {
             guard lifecycle.classifyProviderSession(id: providerGeneration) == .current else { return }
             let connection = lifecycle.connectionFailedEffect(id: attemptID, nowMs: connectionNowMs)
             guard connection.callback == .accepted else { return }
-            let resumeFailure =
-                appRemoteHandoffPlayIntent.handoffID == appRemoteHandoffID
-                ? appRemoteHandoffResumeFailure
-                : nil
             transport.apply(connection.transport)
             detachAppRemote(providerGeneration: providerGeneration, attemptID: attemptID)
-            retireAppRemoteHandoff(disconnect: false)
             // App Remote reports transport and wakeup failures here too. A generic
             // connection failure is not evidence that the credential was rejected.
             lifecycleState = .disconnected
@@ -1430,7 +1397,6 @@ struct SpotifyAppRemotePlayIntent {
                 }
             #endif
             emitChange()
-            resumeFailure?()
             if selectedPlaybackTransport == .webApi { refreshWebPlayback() }
         }
 
@@ -1497,6 +1463,7 @@ struct SpotifyAppRemotePlayIntent {
             self.lifecycle.markPlayerStateObserved(nowMs: connectionNowMs)
             self.playerState = playerState
             lifecycleState = playerState.isPaused ? .paused : .playing
+            confirmPlayHandoff(state: lifecycleState)
             if trackChanged {
                 artwork = artworkCache.cachedArtwork(for: playerState.track.uri)
                 invalidateArtworkRequest()

@@ -6266,14 +6266,7 @@ mod tests {
                 let currents = payload
                     .bms_pack_currents()
                     .expect("metadata page should carry typed BMS currents");
-                assert_eq!(
-                    payload.battery().current,
-                    Some(Measured::reported(
-                        cutout_core::BatteryCurrent::from_milliamps(
-                            currents.current_0().as_milliamps()
-                        )
-                    ))
-                );
+                assert_eq!(payload.battery().current, None);
                 observed.insert((
                     payload.page().selector.get(),
                     currents.current_0().as_milliamps(),

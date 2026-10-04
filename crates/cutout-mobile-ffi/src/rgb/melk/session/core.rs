@@ -165,11 +165,11 @@ impl MobileMelkLightingSessionCore {
     }
 
     /// Marks the latest requested command as physically confirmed.
-    pub fn mark_last_command_confirmed(&self) {
+    pub fn mark_last_command_confirmed(&self) -> bool {
         self.inner
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .mark_last_command_confirmed();
+            .mark_last_command_confirmed()
     }
 
     /// Marks the latest requested command as explicitly unconfirmed.
@@ -210,6 +210,14 @@ impl MobileMelkLightingSessionCore {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .drain_candidates()
+    }
+
+    /// Drains candidate identities removed by Rust's bounded scan policy.
+    pub fn drain_candidate_removals(&self) -> Vec<String> {
+        self.inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .drain_candidate_removals()
     }
 
     /// Drains raw FFF4 notifications for the app-level observer.

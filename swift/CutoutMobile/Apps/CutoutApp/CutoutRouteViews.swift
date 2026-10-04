@@ -144,7 +144,7 @@ struct EucRideRouteView: View {
                 rideState: model.device.eucRidePresentationState,
                 rideTitle: model.device.selectedRideTitle,
                 now: model.currentMonotonicTime,
-                captureStatusText: model.capture.status?.displayText,
+                captureStatusText: model.capture.status?.rideDisplayText,
                 connectionStatusText: model.device.connectionStatusText,
                 phoneLocationReadback: model.device.phoneLocationReadback
             )
@@ -253,24 +253,55 @@ struct EucPackRouteView: View {
 }
 
 struct EucTuneRouteView: View {
-    let device: DevicePresentationModel
+    let model: CutoutAppModel
     let submitSetting: (ConnectionAttemptToken, DeviceSettingID, DeviceSettingValue) throws -> Void
     let submitAction: (ConnectionAttemptToken, DeviceActionID) throws -> Void
 
     var body: some View {
         Group {
-            if let snapshot = device.settings {
+            if let snapshot = model.device.settings {
                 DeviceControlsForm(
                     snapshot: snapshot,
                     submitSetting: submitSetting,
                     submitAction: submitAction
-                )
+                ) { alarmsSection }
             } else {
-                ContentUnavailableView(
-                    localizedAppText("settings.readback.unavailable"), systemImage: "slider.horizontal.3")
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 20) {
+                        Text(localizedAppText("controls.tune.title")).font(.largeTitle.bold())
+                        ContentUnavailableView(
+                            localizedAppText("settings.readback.unavailable"), systemImage: "slider.horizontal.3")
+                        alarmsSection
+                    }
+                    .padding(24)
+                }
             }
         }
+        .background(PevColors.pageBackground)
+        .foregroundStyle(PevColors.primaryText)
+        .tint(PevColors.yellow)
         .accessibilityIdentifier("settings.screen.eucTune")
+    }
+
+    private var alarmsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(localizedAppText("controls.alarms.title"))
+                .font(.headline)
+                .accessibilityAddTraits(.isHeader)
+            NavigationLink {
+                PhoneRideAlarmSettingsView(model: model)
+            } label: {
+                HStack {
+                    Label(localizedAppText("controls.alarms.title"), systemImage: "bell.badge")
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .foregroundStyle(PevColors.muted)
+                }
+                .padding(16)
+                .background(PevDashboardCardBackground(cornerRadius: 22))
+            }
+            .accessibilityIdentifier("settings.open-alarms")
+        }
     }
 }
 
@@ -283,7 +314,7 @@ struct VescRideRouteView: View {
                 liveSnapshot: model.device.vescRideSnapshot,
                 phase: model.device.phase,
                 now: model.currentMonotonicTime,
-                captureStatusText: model.capture.status?.displayText,
+                captureStatusText: model.capture.status?.rideDisplayText,
                 connectionStatusText: model.device.connectionStatusText
             )
             .accessibilityElement(children: .contain)
@@ -354,6 +385,7 @@ final class LightingRouteModel {
     private(set) var notificationCount = 0
     private(set) var controlError: String?
     private var isRunning = false
+    private var currentVehicleIdentifier: String?
     private var requestedState = MobileMelkLightingRestoreStateDto(
         powerOn: false,
         red: 255,
@@ -394,11 +426,12 @@ final class LightingRouteModel {
     }
 
     func start() {
-        guard !isRunning else { return }
-        isRunning = true
-        callbackGeneration &+= 1
-        installSessionCallbacks(for: callbackGeneration)
-        candidates.removeAll()
+        if !isRunning {
+            isRunning = true
+            callbackGeneration &+= 1
+            installSessionCallbacks(for: callbackGeneration)
+            candidates.removeAll()
+        }
         session.start(preferredPlatformIdentifier: persistence.platformIdentifier)
     }
 
@@ -478,6 +511,12 @@ final class LightingRouteModel {
                 self.candidates.removeAll { $0.id == candidate.id }
                 self.candidates.append(candidate)
                 self.candidates.sort { $0.rssi > $1.rssi }
+            }
+        }
+        session.onCandidateRemoved = { [weak self] identifier in
+            Task { @MainActor [weak self] in
+                guard let self, self.isRunning, self.callbackGeneration == generation else { return }
+                self.candidates.removeAll { $0.id == identifier }
             }
         }
     }
@@ -644,7 +683,7 @@ final class LightingRouteModel {
 
     func markConfirmed() {
         guard commandStatus == .requested, pendingCommandScope != .none else { return }
-        session.markLastCommandConfirmed()
+        guard session.markLastCommandConfirmed() else { return }
         commandStatus = .confirmed
         switch pendingCommandScope {
         case .none:
@@ -753,14 +792,34 @@ final class LightingRouteModel {
         }
     }
 
-    func saveAccessoryMetadata(alias: String, vehicleIdentifier: String?) {
+    func saveAccessoryName(_ alias: String) {
         guard canEditMetadata else { return }
-        let trimmedAlias = alias.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedVehicle = vehicleIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines)
-        try? persistence.setAlias(trimmedAlias.isEmpty ? nil : trimmedAlias)
-        try? persistence.setVehicleIdentifier(trimmedVehicle?.isEmpty == true ? nil : trimmedVehicle)
+        let trimmed = alias.trimmingCharacters(in: .whitespacesAndNewlines)
+        try? persistence.setAlias(trimmed.isEmpty ? nil : trimmed)
         accessoryAlias = persistence.alias
-        self.vehicleIdentifier = persistence.vehicleIdentifier
+    }
+
+    func selectVehicle(_ identifier: String?) {
+        guard currentVehicleIdentifier != identifier else { return }
+        let wasRunning = isRunning
+        stop()
+        currentVehicleIdentifier = identifier
+        persistence.selectVehicle(identifier)
+        connectionState = .idle
+        peripheralName = nil
+        peripheralIdentifier = nil
+        accessoryAlias = persistence.alias
+        vehicleIdentifier = persistence.vehicleIdentifier
+        restoreEnabled = persistence.restoreEnabled
+        restoreAttempted = false
+        commandStatus = .idle
+        pendingCommandScope = .none
+        controlError = nil
+        requestedState =
+            persistence.requestedState ?? persistence.confirmedState
+            ?? MobileMelkLightingRestoreStateDto(powerOn: false, red: 255, green: 0, blue: 0, brightness: 100)
+        refreshPresets()
+        if wasRunning || persistence.platformIdentifier != nil { start() }
     }
 
     func applyPreset(_ preset: MobileRgbLightingPresetDto) {
@@ -768,6 +827,7 @@ final class LightingRouteModel {
     }
 
     func setRestoreEnabled(_ enabled: Bool) {
+        guard canEditMetadata else { return }
         restoreEnabled = enabled
         persistence.setRestoreEnabled(enabled)
         if enabled {
@@ -888,9 +948,9 @@ extension MelkLightingPeripheralState {
         case .idle: localizedAppText("lighting.state.idle")
         case .scanning: localizedAppText("lighting.state.scanning")
         case .connecting: localizedAppText("lighting.state.connecting")
-        case let .retrying(attempt, delayMilliseconds):
+        case let .retrying(_, delayMilliseconds):
             localizedAppText(
-                "lighting.state.retrying", Int64(attempt), Int64(max(1, Int((delayMilliseconds + 999) / 1000))))
+                "lighting.state.retrying", Int64(max(1, Int((delayMilliseconds + 999) / 1000))))
         case .discovering: localizedAppText("lighting.state.discovering")
         case .ready: localizedAppText("lighting.state.ready")
         case .disconnected: localizedAppText("lighting.state.disconnected")
@@ -904,26 +964,6 @@ extension MelkLightingPeripheralState {
         case .failed: "exclamationmark.triangle"
         case .disconnected: "bolt.horizontal.circle"
         default: "antenna.radiowaves.left.and.right"
-        }
-    }
-}
-
-extension MelkLightingCommandStatus {
-    fileprivate var displayText: String {
-        switch self {
-        case .idle: localizedAppText("lighting.command.idle")
-        case .requested: localizedAppText("lighting.command.requested")
-        case .confirmed: localizedAppText("lighting.command.confirmed")
-        case .unconfirmed: localizedAppText("lighting.command.unconfirmed")
-        }
-    }
-
-    fileprivate var symbolName: String {
-        switch self {
-        case .idle: "circle"
-        case .requested: "clock"
-        case .confirmed: "checkmark.circle"
-        case .unconfirmed: "questionmark.circle"
         }
     }
 }

@@ -131,7 +131,7 @@ fn pattern_group(id: u8) -> &'static str {
 }
 
 const MELK_PATTERN_NAMES: [&str; 228] = [
-    "Auto Play (reference)",
+    "Auto Play",
     "Magic Forward",
     "Magic Back",
     "7-Color Trans",
@@ -344,21 +344,21 @@ const MELK_PATTERN_NAMES: [&str; 228] = [
     "Purple Marquee",
     "White Marquee",
     "7-Color Energy",
-    "Fade 73 (reference)",
-    "Fade 74 (reference)",
-    "Fade 75 (reference)",
-    "Fade 76 (reference)",
-    "Fade 77 (reference)",
-    "Fade 78 (reference)",
-    "Fade Bar (reference)",
-    "Music Flow Flash (reference)",
-    "Music Flash (reference)",
-    "Music Rainbow (reference)",
-    "Music Snake (reference)",
-    "Music Rainbow 2 (reference)",
-    "Music Pulse (reference)",
-    "Music Flow (reference)",
-    "Music Pulse 2 (reference)",
+    "Fade 73",
+    "Fade 74",
+    "Fade 75",
+    "Fade 76",
+    "Fade 77",
+    "Fade 78",
+    "Fade Bar",
+    "Music Flow Flash",
+    "Music Flash",
+    "Music Rainbow",
+    "Music Snake",
+    "Music Rainbow 2",
+    "Music Pulse",
+    "Music Flow",
+    "Music Pulse 2",
 ];
 
 const BASIC_EFFECT_IDS: [u8; 46] = [
@@ -539,29 +539,15 @@ impl MelkLightingProfile {
             .collect()
     }
 
-    /// Returns whether an advertised name belongs to this profile family.
-    #[must_use]
-    pub fn name_matches(name: &str) -> bool {
-        let bytes = name.trim().as_bytes();
-        let Some(model) = bytes.get(..9) else {
-            return false;
-        };
-        model.eq_ignore_ascii_case(b"MELK-OC21")
-            && (match bytes.get(9) {
-                None | Some(b' ' | b'\t') => true,
-                _ => false,
-            })
-    }
-
     /// Returns the Rust-owned reference effect grouping for mobile clients.
     #[must_use]
     pub const fn effect_groups() -> &'static [MelkLightingEffectGroup] {
         &MELK_EFFECT_GROUPS
     }
-    /// Selects the candidate profile only when family name and GATT evidence agree.
+    /// Selects the profile from GATT evidence. Advertised names are display metadata.
     #[must_use]
-    pub fn identify(name: &str, evidence: MelkGattEvidence) -> Option<Self> {
-        (Self::name_matches(name) && evidence == MelkGattEvidence::observed()).then_some(Self)
+    pub fn identify(_name: &str, evidence: MelkGattEvidence) -> Option<Self> {
+        (evidence == MelkGattEvidence::observed()).then_some(Self)
     }
 
     /// Returns the candidate write and confirmation policy.
@@ -783,7 +769,7 @@ mod tests {
         assert_eq!(catalog[1].group, "Basic");
         assert_eq!(catalog[142].group, "Run Back");
         assert_eq!(catalog[180].group, "Run Back");
-        assert_eq!(catalog[213].name, "Fade 73 (reference)");
+        assert_eq!(catalog[213].name, "Fade 73");
         assert_eq!(catalog[213].group, "Unmapped");
         assert_eq!(
             MelkLightingProfile::profile_version(),
@@ -987,7 +973,7 @@ mod tests {
     }
 
     #[test]
-    fn selects_melk_only_with_family_name_and_complete_gatt_evidence() {
+    fn selects_melk_with_complete_gatt_evidence_regardless_of_name() {
         let evidence = MelkGattEvidence::observed();
 
         assert_eq!(
@@ -995,8 +981,8 @@ mod tests {
             Some(MelkLightingProfile)
         );
         assert_eq!(
-            MelkLightingProfile::identify("Govee_H607C_D635", evidence),
-            None
+            MelkLightingProfile::identify("aero lights", evidence),
+            Some(MelkLightingProfile)
         );
         assert_eq!(
             MelkLightingProfile::identify(
@@ -1011,10 +997,10 @@ mod tests {
     }
 
     #[test]
-    fn rejects_unknown_melk_models_even_with_matching_gatt() {
+    fn admits_renamed_and_unnamed_melk_devices() {
         assert_eq!(
-            MelkLightingProfile::identify("MELK-OC99  6A", MelkGattEvidence::observed()),
-            None
+            MelkLightingProfile::identify("", MelkGattEvidence::observed()),
+            Some(MelkLightingProfile)
         );
     }
 

@@ -29,6 +29,8 @@ pub enum MobileMelkLightingSessionStateDto {
 /// `CoreBluetooth` facts submitted to the Rust MELK reducer.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum MobileMelkLightingSessionEventDto {
+    /// The user opened Lighting or returned to the app.
+    Resume,
     /// `CoreBluetooth` changed power state.
     BluetoothState { powered_on: bool, state_code: i32 },
     /// A peripheral was observed while scanning.
@@ -96,6 +98,8 @@ pub enum MobileMelkLightingSessionEventDto {
 pub enum MobileMelkLightingTimerDto {
     /// Bounds a pending connection attempt.
     ConnectionAttempt,
+    /// Bounds service discovery, characteristic verification, and subscription.
+    Discovery,
     /// Starts the next reconnect attempt.
     Reconnect,
     /// Advances the initialization sequence.
@@ -107,10 +111,14 @@ pub enum MobileMelkLightingTimerDto {
 /// `CoreBluetooth` operation requested by the Rust reducer.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum MobileMelkLightingSessionActionDto {
+    /// Recreate the native transport after a failed session is resumed.
+    RestartTransport,
     /// Scan without a service filter; MELK does not advertise FFF0.
     Scan,
     /// Stop scanning before connecting to a selected candidate.
     StopScan,
+    /// Retrieve the remembered peripheral, or report that it is unavailable.
+    RestorePeripheral { platform_identifier: String },
     /// Connect to a platform-local peripheral identifier.
     Connect { platform_identifier: String },
     /// Cancel a failed first-pairing candidate.

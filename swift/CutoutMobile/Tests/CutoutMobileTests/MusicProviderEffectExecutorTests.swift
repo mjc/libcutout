@@ -40,7 +40,7 @@ final class MusicProviderEffectExecutorTests: XCTestCase {
         let playerState = try! XCTUnwrap(lifecycle.beginPlayerStateRequest(nowMs: 0))
         effects.run(.provider(provider)) { try? await Task.sleep(for: .seconds(30)) }
         effects.run(.playerState(playerState)) { try? await Task.sleep(for: .seconds(30)) }
-        let handoffID = UUID()
+        let handoffID = try! XCTUnwrap(lifecycle.beginPlayHandoff(nowMs: 0)).id
         effects.run(.handoff(handoffID)) { try? await Task.sleep(for: .seconds(30)) }
 
         effects.cancelAll(in: .playerState)

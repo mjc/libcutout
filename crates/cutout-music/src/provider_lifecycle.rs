@@ -10,8 +10,8 @@ use crate::connection::{ConnectionAttemptAdmission, MusicConnection, MusicConnec
 use crate::ids::{
     ArtworkRequestId, ArtworkRetry, ArtworkRetryId, AuthorizationId, CommandFeedback,
     CommandFeedbackId, ConnectionAttemptId, EstablishedConnectionId, MonitorGeneration, MonitorId,
-    ObservationRevision, PlayerStateRequestId, ProviderSessionGeneration, ProviderSessionId,
-    TransportRequestId,
+    ObservationRevision, PlayHandoff, PlayHandoffId, PlayerStateRequestId,
+    ProviderSessionGeneration, ProviderSessionId, TransportRequestId,
 };
 use crate::player_request::{
     MusicArtworkRequest, MusicPlayerRequest, MusicPlayerRequestCompletion,
@@ -20,7 +20,7 @@ use crate::player_request::{
 use crate::{
     MusicCommand, MusicHistoryTransitionAcknowledgement, MusicMonitor, MusicMonitorRequest,
     MusicMonitorResume, MusicMonitorStart, MusicObservationOutcome, MusicObservationTiming,
-    MusicSnapshot,
+    MusicPlaybackState, MusicSnapshot,
     observation::{MusicObservationTracker, SkipCommandOutcome},
 };
 
@@ -29,6 +29,7 @@ const AUTHORIZATION_TIMEOUT_MS: u64 = 20_000;
 const TRANSPORT_TIMEOUT_MS: u64 = 10_000;
 const ARTWORK_TIMEOUT_MS: u64 = 5_000;
 const ARTWORK_RETRY_DELAY_MS: u64 = 1_000;
+const PLAY_HANDOFF_TIMEOUT_MS: u64 = 60_000;
 
 /// Playback path selected from current provider capabilities.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -287,6 +288,8 @@ pub struct MusicProviderLifecycle {
     artwork: MusicArtworkRequest,
     artwork_retry: CallbackEpoch<ArtworkRetry>,
     command_feedback: CallbackEpoch<CommandFeedback>,
+    play_handoff: CallbackEpoch<PlayHandoff>,
+    play_handoff_started_at: MonotonicTimestamp,
     transport: MusicTransportState,
     observations: MusicObservationTracker,
     observation_ownership: MusicObservationOwnership,
@@ -304,6 +307,8 @@ impl Default for MusicProviderLifecycle {
             artwork: MusicArtworkRequest::default(),
             artwork_retry: CallbackEpoch::default(),
             command_feedback: CallbackEpoch::default(),
+            play_handoff: CallbackEpoch::default(),
+            play_handoff_started_at: MonotonicTimestamp::new(0),
             transport: MusicTransportState::default(),
             observations: MusicObservationTracker::new(),
             observation_ownership: MusicObservationOwnership::Idle,
@@ -312,6 +317,67 @@ impl Default for MusicProviderLifecycle {
 }
 
 impl MusicProviderLifecycle {
+    /// Tracks playback dispatched by a provider app handoff independently of
+    /// its control socket. Reconnecting a socket does not resend Play.
+    #[must_use]
+    pub fn begin_play_handoff(
+        &mut self,
+        now_ms: u64,
+    ) -> Option<MusicDeadlineEffect<PlayHandoffId>> {
+        let id = self.play_handoff.begin()?;
+        self.play_handoff_started_at = MonotonicTimestamp::new(now_ms);
+        Some(MusicDeadlineEffect {
+            id,
+            deadline: deadline_after(now_ms, PLAY_HANDOFF_TIMEOUT_MS),
+        })
+    }
+
+    /// Fresh playing state confirms the handoff even when its control socket
+    /// failed. Paused, missing, and cached state provide no command outcome.
+    #[must_use]
+    pub fn observe_play_handoff(
+        &mut self,
+        id: PlayHandoffId,
+        state: MusicPlaybackState,
+        observed_at_ms: u64,
+    ) -> Option<MusicTransportOutcome> {
+        if state != MusicPlaybackState::Playing
+            || MonotonicTimestamp::new(observed_at_ms) < self.play_handoff_started_at
+            || MonotonicTimestamp::new(observed_at_ms)
+                >= self
+                    .play_handoff_started_at
+                    .saturating_add_duration(Duration::from_milliseconds(PLAY_HANDOFF_TIMEOUT_MS))
+        {
+            return None;
+        }
+        (self.play_handoff.finish(id) == CallbackEpochMatch::Current)
+            .then_some(MusicTransportOutcome::Accepted)
+    }
+
+    /// Reports failure only when no playback confirmation arrived by the deadline.
+    #[must_use]
+    pub fn expire_play_handoff(
+        &mut self,
+        id: PlayHandoffId,
+        now_ms: u64,
+    ) -> Option<MusicTransportOutcome> {
+        if MonotonicTimestamp::new(now_ms)
+            < self
+                .play_handoff_started_at
+                .saturating_add_duration(Duration::from_milliseconds(PLAY_HANDOFF_TIMEOUT_MS))
+        {
+            return None;
+        }
+        (self.play_handoff.finish(id) == CallbackEpochMatch::Current)
+            .then_some(MusicTransportOutcome::TimedOut)
+    }
+
+    /// Ends a rejected or cancelled handoff once, without accepting old callbacks.
+    #[must_use]
+    pub fn finish_play_handoff(&mut self, id: PlayHandoffId) -> CallbackEpochMatch {
+        self.play_handoff.finish(id)
+    }
+
     /// Begins one replaceable command-feedback presentation.
     #[must_use]
     pub fn begin_command_feedback(&mut self) -> Option<CommandFeedbackId> {

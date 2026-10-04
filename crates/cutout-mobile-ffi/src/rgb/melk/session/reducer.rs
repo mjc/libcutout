@@ -1,11 +1,11 @@
 //! Pure Rust session reducer for the MELK `CoreBluetooth` adapter.
 
 use std::{
-    collections::{BTreeMap, VecDeque},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     fmt::Write as _,
 };
 
-use cutout_protocols::{MelkGattEvidence, MelkLightingProfile};
+use cutout_protocols::MelkLightingProfile;
 
 use super::contract::{
     MobileMelkLightingSessionActionDto, MobileMelkLightingSessionCandidateDto,
@@ -18,9 +18,37 @@ use crate::{
 
 const MAX_CANDIDATES: usize = 32;
 const CONNECTION_TIMEOUT_MS: u64 = 15_000;
+const PROBE_TIMEOUT_MS: u64 = 3_000;
 const INITIALIZATION_DELAY_MS: u64 = 1_000;
 const MAX_RECONNECT_ATTEMPTS: u8 = 3;
 const FALLBACK_WRITE_INTERVAL_MS: u16 = 50;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum GattState {
+    Unverified,
+    Verified,
+    Subscribed,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ConnectionPurpose {
+    Probe,
+    Selected,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ProbeOutcome {
+    Supported,
+    Unsupported,
+    Unavailable,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum RestoredConnection {
+    Connected,
+    Pending,
+    Disconnected,
+}
 
 #[derive(Clone, Debug)]
 pub(crate) struct SessionReducer {
@@ -30,9 +58,15 @@ pub(crate) struct SessionReducer {
     selected_identifier: Option<String>,
     selected_name: Option<String>,
     candidates: BTreeMap<String, MobileMelkLightingSessionCandidateDto>,
+    purpose: ConnectionPurpose,
+    verified: BTreeSet<String>,
+    rejected: BTreeSet<String>,
+    probe_queue: VecDeque<String>,
     reconnect_enabled: bool,
     reconnect_attempt: u8,
-    notification_ready: bool,
+    bluetooth_powered_on: bool,
+    pending_restoration: Option<RestoredConnection>,
+    gatt: GattState,
     initialization: VecDeque<MobileMelkLightingWriteDto>,
     writes: VecDeque<MobileMelkLightingWriteDto>,
     timer: Option<MobileMelkLightingTimerDto>,
@@ -41,6 +75,7 @@ pub(crate) struct SessionReducer {
     records: VecDeque<String>,
     notifications: VecDeque<Vec<u8>>,
     candidates_out: VecDeque<MobileMelkLightingSessionCandidateDto>,
+    candidate_removals_out: VecDeque<String>,
 }
 
 impl Default for SessionReducer {
@@ -52,9 +87,15 @@ impl Default for SessionReducer {
             selected_identifier: None,
             selected_name: None,
             candidates: BTreeMap::new(),
+            purpose: ConnectionPurpose::Selected,
+            verified: BTreeSet::new(),
+            rejected: BTreeSet::new(),
+            probe_queue: VecDeque::new(),
             reconnect_enabled: true,
             reconnect_attempt: 0,
-            notification_ready: false,
+            bluetooth_powered_on: false,
+            pending_restoration: None,
+            gatt: GattState::Unverified,
             initialization: VecDeque::new(),
             writes: VecDeque::new(),
             timer: None,
@@ -63,6 +104,7 @@ impl Default for SessionReducer {
             records: VecDeque::new(),
             notifications: VecDeque::new(),
             candidates_out: VecDeque::new(),
+            candidate_removals_out: VecDeque::new(),
         }
     }
 }
@@ -73,12 +115,19 @@ impl SessionReducer {
         self.records.clear();
         self.notifications.clear();
         self.candidates_out.clear();
+        self.candidate_removals_out.clear();
         self.preferred_identifier = preferred_identifier.map(str::to_owned);
         self.invalid_preferred_identifier =
             preferred_identifier.is_some_and(|value| uuid::Uuid::parse_str(value).is_err());
         self.reconnect_enabled = true;
         self.reconnect_attempt = 0;
+        self.bluetooth_powered_on = false;
+        self.pending_restoration = None;
         self.candidates.clear();
+        self.verified.clear();
+        self.rejected.clear();
+        self.probe_queue.clear();
+        self.purpose = ConnectionPurpose::Selected;
         self.selected_identifier = None;
         self.selected_name = None;
         self.timer = None;
@@ -88,6 +137,7 @@ impl SessionReducer {
 
     pub(crate) fn stop(&mut self) {
         self.reconnect_enabled = false;
+        self.purpose = ConnectionPurpose::Selected;
         self.timer = None;
         self.actions.clear();
         self.transition(MobileMelkLightingSessionStateDto::Disconnected);
@@ -95,11 +145,15 @@ impl SessionReducer {
 
     pub(crate) fn snapshot(&self) -> MobileMelkLightingSessionSnapshotDto {
         MobileMelkLightingSessionSnapshotDto {
-            state: self.state.clone(),
+            state: if self.is_probing() {
+                MobileMelkLightingSessionStateDto::Scanning
+            } else {
+                self.state.clone()
+            },
             platform_identifier: self.selected_identifier.clone(),
             name: self.selected_name.clone(),
             command_status: self.command_status,
-            notification_ready: self.notification_ready,
+            notification_ready: self.gatt == GattState::Subscribed,
         }
     }
 
@@ -113,7 +167,12 @@ impl SessionReducer {
             _ => false,
         } {
             self.reconnect_attempt = 0;
+            if self.preferred_identifier.is_none() {
+                self.preferred_identifier
+                    .clone_from(&self.selected_identifier);
+            }
         } else {
+            self.timer = None;
             if self.command_status == 1 {
                 self.command_status = 3;
             }
@@ -125,13 +184,16 @@ impl SessionReducer {
 
     fn forget_selected_connection(&mut self) {
         self.timer = None;
+        self.pending_restoration = None;
+        self.purpose = ConnectionPurpose::Selected;
+        self.probe_queue.clear();
         self.selected_identifier = None;
         self.selected_name = None;
     }
 
     fn reset_initialization(&mut self) {
         self.initialization.clear();
-        self.notification_ready = false;
+        self.gatt = GattState::Unverified;
         if match self.timer {
             Some(MobileMelkLightingTimerDto::Initialization) => true,
             _ => false,
@@ -140,38 +202,97 @@ impl SessionReducer {
         }
     }
 
-    fn is_melk_name(name: Option<&str>) -> bool {
-        name.is_some_and(|value| value.trim().to_ascii_lowercase().starts_with("melk"))
-    }
-
     fn accepts(&self, identifier: &str) -> bool {
+        let Ok(identifier) = uuid::Uuid::parse_str(identifier) else {
+            return false;
+        };
         !self.invalid_preferred_identifier
             && self
                 .preferred_identifier
                 .as_deref()
-                .is_none_or(|preferred| {
-                    uuid::Uuid::parse_str(preferred).ok() == uuid::Uuid::parse_str(identifier).ok()
-                })
+                .is_none_or(|preferred| uuid::Uuid::parse_str(preferred).ok() == Some(identifier))
     }
 
-    fn accepts_discovery(&self, name: Option<&str>, identifier: &str) -> bool {
-        self.accepts(identifier)
-            && (self.preferred_identifier.is_some()
-                || name.map(str::trim).is_some_and(|v| !v.is_empty()))
+    fn is_probing(&self) -> bool {
+        self.purpose == ConnectionPurpose::Probe
     }
 
-    fn selected_id(&self) -> Option<&str> {
-        self.selected_identifier.as_deref()
+    fn probe_next(&mut self) {
+        if self.selected_identifier.is_some() || !self.bluetooth_powered_on {
+            return;
+        }
+        while let Some(identifier) = self.probe_queue.pop_front() {
+            let Some(candidate) = self.candidates.get(&identifier) else {
+                continue;
+            };
+            self.selected_name.clone_from(&candidate.name);
+            self.selected_identifier = Some(identifier.clone());
+            self.purpose = ConnectionPurpose::Probe;
+            self.transition(MobileMelkLightingSessionStateDto::Connecting);
+            self.actions
+                .push_back(MobileMelkLightingSessionActionDto::Connect {
+                    platform_identifier: identifier,
+                });
+            self.arm(
+                MobileMelkLightingTimerDto::ConnectionAttempt,
+                PROBE_TIMEOUT_MS,
+            );
+            break;
+        }
+    }
+
+    fn finish_probe(&mut self, outcome: ProbeOutcome) {
+        let Some(identifier) = self.selected_identifier.take() else {
+            return;
+        };
+        self.actions
+            .push_back(MobileMelkLightingSessionActionDto::CancelConnect {
+                platform_identifier: identifier.clone(),
+            });
+        if outcome == ProbeOutcome::Supported {
+            self.verified.insert(identifier.clone());
+            if let Some(candidate) = self.candidates.get(&identifier) {
+                self.candidates_out.push_back(candidate.clone());
+            }
+        } else {
+            // Bound the negative cache while avoiding immediate repeated probes of noise.
+            if outcome == ProbeOutcome::Unsupported {
+                if self.rejected.len() >= 256 {
+                    self.rejected.clear();
+                }
+                self.rejected.insert(identifier.clone());
+            }
+            self.discard_candidate(identifier);
+        }
+        self.selected_name = None;
+        self.purpose = ConnectionPurpose::Selected;
+        self.transition(MobileMelkLightingSessionStateDto::Scanning);
+        self.probe_next();
+    }
+
+    fn discard_candidate(&mut self, identifier: String) {
+        self.candidates.remove(&identifier);
+        self.verified.remove(&identifier);
+        self.probe_queue.retain(|pending| pending != &identifier);
+        self.candidates_out
+            .retain(|candidate| candidate.platform_identifier != identifier);
+        self.candidate_removals_out.push_back(identifier);
     }
 
     fn reject_candidate(&mut self, reason: String) {
+        if self.is_probing() {
+            self.record(format!("probe_rejected reason={reason}"));
+            self.finish_probe(ProbeOutcome::Unsupported);
+            return;
+        }
+        if let Some(identifier) = self.selected_identifier.clone() {
+            self.actions
+                .push_back(MobileMelkLightingSessionActionDto::CancelConnect {
+                    platform_identifier: identifier.clone(),
+                });
+            self.discard_candidate(identifier);
+        }
         if self.preferred_identifier.is_none() {
-            if let Some(identifier) = self.selected_id().map(str::to_owned) {
-                self.actions
-                    .push_back(MobileMelkLightingSessionActionDto::CancelConnect {
-                        platform_identifier: identifier,
-                    });
-            }
             self.selected_identifier = None;
             self.selected_name = None;
             self.transition(MobileMelkLightingSessionStateDto::Scanning);
@@ -184,15 +305,26 @@ impl SessionReducer {
     }
 
     pub(crate) fn select(&mut self, identifier: &str) {
-        if self.preferred_identifier.is_some()
+        if (!self.is_probing() && self.state != MobileMelkLightingSessionStateDto::Scanning)
+            || self.preferred_identifier.is_some()
             || self.invalid_preferred_identifier
-            || self.selected_identifier.is_some()
+            || !self.verified.contains(identifier)
         {
             return;
         }
         let Some(candidate) = self.candidates.get(identifier).cloned() else {
             return;
         };
+        if self.is_probing() {
+            if let Some(probe) = self.selected_identifier.take() {
+                self.actions
+                    .push_back(MobileMelkLightingSessionActionDto::CancelConnect {
+                        platform_identifier: probe.clone(),
+                    });
+                self.probe_queue.push_front(probe);
+            }
+            self.purpose = ConnectionPurpose::Selected;
+        }
         self.selected_identifier = Some(identifier.to_owned());
         self.selected_name.clone_from(&candidate.name);
         self.actions
@@ -222,6 +354,10 @@ impl SessionReducer {
         let Some(identifier) = self.selected_identifier.clone() else {
             return;
         };
+        if !self.bluetooth_powered_on {
+            self.pending_restoration = Some(RestoredConnection::Disconnected);
+            return;
+        }
         self.transition(MobileMelkLightingSessionStateDto::Connecting);
         self.actions
             .push_back(MobileMelkLightingSessionActionDto::Connect {
@@ -231,6 +367,43 @@ impl SessionReducer {
             MobileMelkLightingTimerDto::ConnectionAttempt,
             CONNECTION_TIMEOUT_MS,
         );
+    }
+
+    fn resume_restoration(&mut self, connection: RestoredConnection) {
+        if !self.bluetooth_powered_on {
+            self.pending_restoration = Some(connection);
+            return;
+        }
+        self.pending_restoration = None;
+        match connection {
+            RestoredConnection::Connected => {
+                let Some(identifier) = self.selected_identifier.clone() else {
+                    return;
+                };
+                self.transition(MobileMelkLightingSessionStateDto::Discovering);
+                self.arm(
+                    MobileMelkLightingTimerDto::Discovery,
+                    if self.is_probing() {
+                        PROBE_TIMEOUT_MS
+                    } else {
+                        CONNECTION_TIMEOUT_MS
+                    },
+                );
+                self.actions
+                    .push_back(MobileMelkLightingSessionActionDto::DiscoverServices {
+                        platform_identifier: identifier,
+                        service: cutout_protocols::MELK_SERVICE_CHANNEL.as_uuid().into(),
+                    });
+            }
+            RestoredConnection::Pending => {
+                self.transition(MobileMelkLightingSessionStateDto::Connecting);
+                self.arm(
+                    MobileMelkLightingTimerDto::ConnectionAttempt,
+                    CONNECTION_TIMEOUT_MS,
+                );
+            }
+            RestoredConnection::Disconnected => self.connect_selected(),
+        }
     }
 
     fn schedule_reconnect(&mut self, reason: &str) {
@@ -257,6 +430,10 @@ impl SessionReducer {
     }
 
     fn connection_timed_out(&mut self) {
+        if self.is_probing() {
+            self.finish_probe(ProbeOutcome::Unavailable);
+            return;
+        }
         self.timer = None;
         if let Some(identifier) = self.selected_identifier.take() {
             self.actions
@@ -322,7 +499,7 @@ impl SessionReducer {
 
     fn drain_initialization(&mut self, can_send: bool) {
         if !can_send
-            || !self.notification_ready
+            || self.gatt != GattState::Subscribed
             || !(match self.state {
                 MobileMelkLightingSessionStateDto::Discovering => true,
                 _ => false,
@@ -390,11 +567,30 @@ impl SessionReducer {
         reason = "The reducer keeps event transitions explicit and auditable."
     )]
     pub(crate) fn handle(&mut self, event: MobileMelkLightingSessionEventDto) {
+        if !self.reconnect_enabled {
+            return;
+        }
         match event {
+            MobileMelkLightingSessionEventDto::Resume => {
+                if !self.reconnect_enabled || self.invalid_preferred_identifier {
+                    return;
+                }
+                match self.state {
+                    MobileMelkLightingSessionStateDto::Failed { .. }
+                    | MobileMelkLightingSessionStateDto::Disconnected => {
+                        let preferred_identifier = self.preferred_identifier.clone();
+                        self.start(preferred_identifier.as_deref());
+                        self.actions
+                            .push_back(MobileMelkLightingSessionActionDto::RestartTransport);
+                    }
+                    _ => {}
+                }
+            }
             MobileMelkLightingSessionEventDto::BluetoothState {
                 powered_on,
                 state_code,
             } => {
+                self.bluetooth_powered_on = powered_on;
                 if self.invalid_preferred_identifier {
                     self.transition(MobileMelkLightingSessionStateDto::Failed {
                         reason: "Remembered lighting identity is invalid".into(),
@@ -405,12 +601,21 @@ impl SessionReducer {
                     self.transition(MobileMelkLightingSessionStateDto::Failed {
                         reason: format!("Bluetooth unavailable: {state_code}"),
                     });
-                } else if self.selected_identifier.is_none() && self.preferred_identifier.is_none()
-                {
-                    self.actions
-                        .push_back(MobileMelkLightingSessionActionDto::Scan);
-                    self.transition(MobileMelkLightingSessionStateDto::Scanning);
-                    self.record("scan=melk services=all; gatt=FFF0 post-connect");
+                } else if let Some(connection) = self.pending_restoration.take() {
+                    self.resume_restoration(connection);
+                } else if self.selected_identifier.is_none() {
+                    if let Some(identifier) = self.preferred_identifier.clone() {
+                        self.actions.push_back(
+                            MobileMelkLightingSessionActionDto::RestorePeripheral {
+                                platform_identifier: identifier,
+                            },
+                        );
+                    } else {
+                        self.actions
+                            .push_back(MobileMelkLightingSessionActionDto::Scan);
+                        self.transition(MobileMelkLightingSessionStateDto::Scanning);
+                        self.record("scan=melk services=all; gatt=FFF0 post-connect");
+                    }
                 }
             }
             MobileMelkLightingSessionEventDto::Discovered {
@@ -418,29 +623,25 @@ impl SessionReducer {
                 platform_identifier,
                 rssi,
             } => {
-                if self.selected_identifier.is_some()
-                    || !self.accepts_discovery(name.as_deref(), &platform_identifier)
+                if (!self.is_probing() && self.state != MobileMelkLightingSessionStateDto::Scanning)
+                    || !self.accepts(&platform_identifier)
+                    || self.rejected.contains(&platform_identifier)
                 {
+                    self.discard_candidate(platform_identifier);
                     return;
                 }
                 if self.candidates.len() >= MAX_CANDIDATES
                     && !self.candidates.contains_key(&platform_identifier)
                 {
-                    let Some(evicted) = self
-                        .candidates
-                        .iter()
-                        .find(|(_, candidate)| !Self::is_melk_name(candidate.name.as_deref()))
-                        .map(|(id, _)| id.clone())
-                    else {
-                        return;
-                    };
-                    self.candidates.remove(&evicted);
+                    self.discard_candidate(platform_identifier);
+                    return;
                 }
                 let candidate = MobileMelkLightingSessionCandidateDto {
                     platform_identifier: platform_identifier.clone(),
                     name: name.clone(),
                     rssi,
                 };
+                let is_new = !self.candidates.contains_key(&platform_identifier);
                 self.candidates
                     .insert(platform_identifier.clone(), candidate.clone());
                 self.record(format!(
@@ -453,12 +654,21 @@ impl SessionReducer {
                     self.actions
                         .push_back(MobileMelkLightingSessionActionDto::StopScan);
                     self.connect_selected();
-                } else {
+                } else if self.verified.contains(&platform_identifier) {
                     self.candidates_out.push_back(candidate);
+                } else if is_new
+                    || (self.selected_identifier.as_deref() != Some(platform_identifier.as_str())
+                        && !self.probe_queue.contains(&platform_identifier))
+                {
+                    self.probe_queue.push_back(platform_identifier);
+                    self.probe_next();
                 }
             }
             MobileMelkLightingSessionEventDto::RestoreUnavailable => {
-                if self.preferred_identifier.is_some() && self.selected_identifier.is_none() {
+                if self.bluetooth_powered_on
+                    && self.preferred_identifier.is_some()
+                    && self.selected_identifier.is_none()
+                {
                     self.actions
                         .push_back(MobileMelkLightingSessionActionDto::Scan);
                     self.transition(MobileMelkLightingSessionStateDto::Scanning);
@@ -471,29 +681,21 @@ impl SessionReducer {
                 connected,
                 pending,
             } => {
-                if !self.accepts(&platform_identifier) {
+                if self.preferred_identifier.is_none() || !self.accepts(&platform_identifier) {
                     self.record("restore=melk ignored different identity");
                     return;
                 }
                 self.selected_identifier = Some(platform_identifier.clone());
                 self.selected_name = name;
                 self.record(format!("restore=melk id={platform_identifier}"));
-                if connected {
-                    self.transition(MobileMelkLightingSessionStateDto::Discovering);
-                    self.actions
-                        .push_back(MobileMelkLightingSessionActionDto::DiscoverServices {
-                            platform_identifier,
-                            service: cutout_protocols::MELK_SERVICE_CHANNEL.as_uuid().into(),
-                        });
+                let connection = if connected {
+                    RestoredConnection::Connected
                 } else if pending {
-                    self.transition(MobileMelkLightingSessionStateDto::Connecting);
-                    self.arm(
-                        MobileMelkLightingTimerDto::ConnectionAttempt,
-                        CONNECTION_TIMEOUT_MS,
-                    );
+                    RestoredConnection::Pending
                 } else {
-                    self.connect_selected();
-                }
+                    RestoredConnection::Disconnected
+                };
+                self.resume_restoration(connection);
             }
             MobileMelkLightingSessionEventDto::Connected {
                 name,
@@ -502,17 +704,24 @@ impl SessionReducer {
                 if self.selected_identifier.as_deref() != Some(platform_identifier.as_str()) {
                     return;
                 }
-                self.selected_name = name;
+                if name.is_some() {
+                    self.selected_name = name;
+                }
                 self.timer = None;
-                self.transition(MobileMelkLightingSessionStateDto::Discovering);
-                self.actions
-                    .push_back(MobileMelkLightingSessionActionDto::DiscoverServices {
-                        platform_identifier,
-                        service: cutout_protocols::MELK_SERVICE_CHANNEL.as_uuid().into(),
-                    });
+                self.resume_restoration(RestoredConnection::Connected);
             }
             MobileMelkLightingSessionEventDto::ConnectFailed { reason } => {
+                if self.state != MobileMelkLightingSessionStateDto::Connecting
+                    && self.pending_restoration.is_none()
+                {
+                    return;
+                }
+                if self.is_probing() {
+                    self.finish_probe(ProbeOutcome::Unavailable);
+                    return;
+                }
                 self.timer = None;
+                self.pending_restoration = None;
                 if self.reconnect_enabled {
                     self.schedule_reconnect(&reason);
                 } else {
@@ -531,8 +740,15 @@ impl SessionReducer {
                 service_uuids,
                 error,
             } => {
+                if self.state != MobileMelkLightingSessionStateDto::Discovering {
+                    return;
+                }
                 if let Some(reason) = error {
-                    self.reject_candidate(reason);
+                    if self.is_probing() {
+                        self.finish_probe(ProbeOutcome::Unavailable);
+                    } else {
+                        self.reject_candidate(reason);
+                    }
                 } else if !service_uuids.iter().any(|uuid| {
                     uuid::Uuid::from(*uuid) == cutout_protocols::MELK_SERVICE_CHANNEL.as_uuid()
                 }) {
@@ -553,13 +769,18 @@ impl SessionReducer {
                 characteristics,
                 error,
             } => {
-                let name = name.or_else(|| {
-                    self.preferred_identifier
-                        .as_ref()
-                        .map(|_| "MELK-OC21".into())
-                });
+                if self.state != MobileMelkLightingSessionStateDto::Discovering {
+                    return;
+                }
+                if name.is_some() {
+                    self.selected_name = name;
+                }
                 if let Some(reason) = error {
-                    self.reject_candidate(reason);
+                    if self.is_probing() {
+                        self.finish_probe(ProbeOutcome::Unavailable);
+                    } else {
+                        self.reject_candidate(reason);
+                    }
                 } else if uuid::Uuid::from(service_uuid)
                     != cutout_protocols::MELK_SERVICE_CHANNEL.as_uuid()
                 {
@@ -576,19 +797,14 @@ impl SessionReducer {
                         && characteristic.notify_or_indicate
                 }) {
                     self.reject_candidate("missing FFF4 notification characteristic".into());
-                } else if MelkLightingProfile::identify(
-                    name.as_deref().unwrap_or_default(),
-                    MelkGattEvidence::observed(),
-                )
-                .is_none()
-                {
-                    self.reject_candidate("invalid MELK profile".into());
+                } else if self.is_probing() {
+                    self.finish_probe(ProbeOutcome::Supported);
                 } else {
+                    self.gatt = GattState::Verified;
                     self.initialization = MelkLightingProfile::initialization_actions()
                         .into_iter()
                         .map(mobile_melk_transport_action)
                         .collect();
-                    self.notification_ready = false;
                     self.record("gatt=FFF0 write=FFF3 notify=FFF4");
                     if let Some(identifier) = self.selected_identifier.clone() {
                         self.actions
@@ -608,6 +824,11 @@ impl SessionReducer {
                 can_send,
                 error,
             } => {
+                if self.state != MobileMelkLightingSessionStateDto::Discovering
+                    && self.state != MobileMelkLightingSessionStateDto::Ready
+                {
+                    return;
+                }
                 if uuid::Uuid::from(characteristic)
                     != cutout_protocols::MELK_NOTIFY_CHANNEL.as_uuid()
                 {
@@ -620,7 +841,13 @@ impl SessionReducer {
                         reason: "FFF4 notify unavailable".into(),
                     });
                 } else {
-                    self.notification_ready = true;
+                    if self.gatt == GattState::Unverified {
+                        return;
+                    }
+                    if self.timer == Some(MobileMelkLightingTimerDto::Discovery) {
+                        self.timer = None;
+                    }
+                    self.gatt = GattState::Subscribed;
                     self.drain_initialization(can_send);
                 }
             }
@@ -644,6 +871,10 @@ impl SessionReducer {
                 }
                 match timer {
                     MobileMelkLightingTimerDto::ConnectionAttempt => self.connection_timed_out(),
+                    MobileMelkLightingTimerDto::Discovery => {
+                        self.record("gatt_timeout");
+                        self.connection_timed_out();
+                    }
                     MobileMelkLightingTimerDto::Reconnect => {
                         self.timer = None;
                         self.connect_selected();
@@ -659,6 +890,23 @@ impl SessionReducer {
                 }
             }
             MobileMelkLightingSessionEventDto::Disconnected { reason, powered_on } => {
+                if powered_on
+                    && self.pending_restoration.is_none()
+                    && match self.state {
+                        MobileMelkLightingSessionStateDto::Connecting
+                        | MobileMelkLightingSessionStateDto::Discovering
+                        | MobileMelkLightingSessionStateDto::Ready => false,
+                        _ => true,
+                    }
+                {
+                    return;
+                }
+                self.bluetooth_powered_on = powered_on;
+                if self.is_probing() {
+                    self.finish_probe(ProbeOutcome::Unavailable);
+                    return;
+                }
+                self.pending_restoration = None;
                 self.record(format!("disconnected error={reason}"));
                 if self.reconnect_enabled && powered_on {
                     self.schedule_reconnect(&reason);
@@ -670,10 +918,12 @@ impl SessionReducer {
         }
     }
 
-    pub(crate) fn mark_last_command_confirmed(&mut self) {
-        if self.command_status == 1 {
-            self.command_status = 2;
+    pub(crate) fn mark_last_command_confirmed(&mut self) -> bool {
+        if self.command_status != 1 || !self.writes.is_empty() {
+            return false;
         }
+        self.command_status = 2;
+        true
     }
 
     pub(crate) fn mark_last_command_unconfirmed(&mut self) {
@@ -692,6 +942,10 @@ impl SessionReducer {
 
     pub(crate) fn drain_candidates(&mut self) -> Vec<MobileMelkLightingSessionCandidateDto> {
         self.candidates_out.drain(..).collect()
+    }
+
+    pub(crate) fn drain_candidate_removals(&mut self) -> Vec<String> {
+        self.candidate_removals_out.drain(..).collect()
     }
 
     pub(crate) fn drain_notifications(&mut self) -> Vec<Vec<u8>> {

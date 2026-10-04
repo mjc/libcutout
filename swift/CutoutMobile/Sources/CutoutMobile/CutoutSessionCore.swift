@@ -1527,7 +1527,7 @@ public final class CutoutSessionCore: NSObject {
         #endif
         publishScanState()
         setPhase(.scanning)
-        central?.scanForPeripherals(withServices: nil)
+        central?.scanForPeripherals(withServices: CoreBluetoothScanPolicy.aeroFalcon.coreBluetoothServiceUuids)
     }
 
     private func connectionLinkDownOnBleQueue(token: ConnectionAttemptToken) {
@@ -2042,7 +2042,7 @@ public final class CutoutSessionCore: NSObject {
 
         guard !wasRecordOnlyConnection else {
             setPhase(.scanning)
-            central?.scanForPeripherals(withServices: nil)
+            central?.scanForPeripherals(withServices: CoreBluetoothScanPolicy.aeroFalcon.coreBluetoothServiceUuids)
             return
         }
 
@@ -2095,7 +2095,7 @@ public final class CutoutSessionCore: NSObject {
             reconnectController.cancel()
             rustSessionState.setDeviceConnectionIntent(intent: .recordOnly)
             setPhase(.failed(.connectFailed(error.sessionMessage)))
-            central?.scanForPeripherals(withServices: nil)
+            central?.scanForPeripherals(withServices: CoreBluetoothScanPolicy.aeroFalcon.coreBluetoothServiceUuids)
         case .rejected:
             break
         }
@@ -2166,6 +2166,13 @@ public final class CutoutSessionCore: NSObject {
     }
 
     private func record(_ message: String) {
+        #if DEBUG
+            if message.hasPrefix("central_") || message.hasPrefix("scan_") || message.hasPrefix("candidate="),
+                ProcessInfo.processInfo.environment["CUTOUT_BLE_DIAGNOSTICS"] == "1"
+            {
+                print(message)
+            }
+        #endif
         diagnosticLog.append(message)
         publishOnMain { self.onRecord?(message) }
     }
@@ -2933,7 +2940,8 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
     public func centralManagerDidUpdateState(_ central: CBCentralManager) {
         resolveBluetoothRestorationIfNeeded()
         handleCentralState(central.state) {
-            central.scanForPeripherals(withServices: nil)
+            central.scanForPeripherals(withServices: CoreBluetoothScanPolicy.aeroFalcon.coreBluetoothServiceUuids)
+            record("central_scan=\(central.isScanning)")
         }
     }
 
@@ -3041,11 +3049,12 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
         assertOnBleQueue()
         let advertisement = CoreBluetoothAdvertisement(
             peripheral: peripheral,
-            advertisementData: advertisementData
+            advertisementData: advertisementData,
+            rssi: rssi
         )
         discoveredPeripherals[advertisement.peripheralIdentifier] = peripheral
         observeAdvertisement(advertisement)
-        let advertisedServices = advertisement.advertisedServiceUuids.map(String.init(describing:)).joined(
+        let advertisedServices = advertisement.advertisedServiceUuids.map { $0.coreBluetoothUuid.uuidString }.joined(
             separator: ",")
         let candidate = [
             "candidate=\(advertisement.peripheralIdentifier.rawValue)",
