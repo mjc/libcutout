@@ -27,23 +27,18 @@ struct LightingRouteView: View {
                     hue: $hue,
                     saturation: $saturation
                 )
-                if page != .schedule {
-                    LightingBrightnessControl(
-                        brightness: $brightness,
-                        isEnabled: model.isReady,
-                        onCommit: commitBrightness
-                    )
-                    LightingPresetsCard(
-                        model: model,
-                        isEnabled: model.isReady,
-                        hue: $hue,
-                        saturation: $saturation,
-                        isPresetNameFocused: $isPresetNameFocused
-                    )
-                }
-                if page == .schedule {
-                    LightingScheduleControls(model: model)
-                }
+                LightingBrightnessControl(
+                    brightness: $brightness,
+                    isEnabled: model.isReady,
+                    onCommit: commitBrightness
+                )
+                LightingPresetsCard(
+                    model: model,
+                    isEnabled: model.isReady,
+                    hue: $hue,
+                    saturation: $saturation,
+                    isPresetNameFocused: $isPresetNameFocused
+                )
                 LightingErrorBanner(error: model.controlError)
             }
             .padding(.horizontal, 20)
@@ -134,10 +129,6 @@ private struct LightingControlSurface: View {
                     LightingPowerToggle(model: model)
                 }
                 LightingPlaybackControls(model: model, page: page)
-            case .schedule:
-                LightingCard {
-                    LightingPowerToggle(model: model)
-                }
             }
         }
     }

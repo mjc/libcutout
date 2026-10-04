@@ -415,10 +415,6 @@
       "comment" : "Lighting controls page label.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Music" } } }
     },
-    "lighting.page.schedule" : {
-      "comment" : "Lighting controls page label.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Schedule" } } }
-    },
     "lighting.title" : {
       "comment" : "Lighting screen title.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Lighting" } } }
@@ -595,42 +591,6 @@
       "comment" : "Stops controller-local music mode.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Stop music mode" } } }
     },
-    "lighting.schedule.unverified" : {
-      "comment" : "Explanation of unverified controller schedule support.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Timers are unavailable for this controller." } } }
-    },
-    "lighting.schedule.turn_on" : {
-      "comment" : "Schedule row label.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Turn on" } } }
-    },
-    "lighting.schedule.turn_off" : {
-      "comment" : "Schedule row label.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Turn off" } } }
-    },
-    "lighting.schedule.enabled" : {
-      "comment" : "Schedule enabled toggle accessibility label.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Enabled" } } }
-    },
-    "lighting.schedule.time" : {
-      "comment" : "Schedule time picker label. Placeholder is turn-on or turn-off.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%@ time" } } }
-    },
-    "lighting.schedule.save" : {
-      "comment" : "Schedule save action. Placeholder is turn-on or turn-off.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Save %@ timer" } } }
-    },
-    "lighting.schedule.requested_on" : {
-      "comment" : "Schedule request feedback.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Turn-on timer requested" } } }
-    },
-    "lighting.schedule.requested_off" : {
-      "comment" : "Schedule request feedback.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Turn-off timer requested" } } }
-    },
-    "lighting.repeat_days" : {
-      "comment" : "Accessibility label for schedule weekday selection.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Repeat days" } } }
-    },
     "lighting.preset.scenes" : {
       "comment" : "Lighting scenes and presets heading.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Scenes & presets" } } }
@@ -778,10 +738,6 @@
     "lighting.save_details" : {
       "comment" : "Saves lighting accessory metadata.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Save" } } }
-    },
-    "lighting.schedule.enabled_for" : {
-      "comment" : "Accessibility label for a schedule enabled toggle. Placeholder is turn-on or turn-off.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%@ timer enabled" } } }
     },
     "lighting.on" : {
       "comment" : "Accessibility state for an enabled control.",

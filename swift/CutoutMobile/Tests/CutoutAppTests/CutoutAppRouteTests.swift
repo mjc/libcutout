@@ -1256,7 +1256,7 @@ final class CutoutAppRouteTests: XCTestCase {
     }
 
     func testLightingControlPagesResolveFromTheAppCatalog() {
-        XCTAssertEqual(LightingControlPage.allCases.map(\.title), ["Color", "Effects", "Music", "Schedule"])
+        XCTAssertEqual(LightingControlPage.allCases.map(\.title), ["Color", "Effects", "Music"])
     }
 
     func testLightingPatternNamesKeepEveryWireIDAvailable() {
