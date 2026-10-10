@@ -46,7 +46,13 @@ enum LiveRideCommand: Sendable {
 @MainActor
 @Observable
 final class LiveRideModel {
+    enum InitialSnapshotPhase: Equatable {
+        case pending
+        case settled
+    }
+
     private(set) var snapshot: MobileRideMapSnapshotDto?
+    private(set) var initialSnapshotPhase: InitialSnapshotPhase
     private(set) var storageError: String?
     private(set) var availability: MobileRideMapAvailability
     private(set) var error: MobileRideMapError?
@@ -73,13 +79,16 @@ final class LiveRideModel {
     private var projectionGeneration: UInt64 = 0
     private var projectionEnabled = false
     private var projectionRequested = false
-    private var didRestore = false
     private var snapshotReadTask: Task<Void, Never>?
     private var durationReadTask: Task<Void, Never>?
     private var pendingDurationRead: (atMs: UInt64, generation: UInt64)?
     private var errorReadTask: Task<Void, Never>?
     private var pendingError: MobileRideMapErrorEvent?
     private var snapshotGeneration: UInt64 = 0
+
+    var isInitialSnapshotPending: Bool {
+        initialSnapshotPhase == .pending
+    }
 
     private struct ProjectionRequest {
         let rideID: String
@@ -98,6 +107,7 @@ final class LiveRideModel {
         }
     ) {
         self.state = state
+        self.initialSnapshotPhase = state == nil ? .settled : .pending
         self.storageError = storageError
         self.availability = availability
         self.now = now
@@ -116,9 +126,8 @@ final class LiveRideModel {
 
     @discardableResult
     func restore() -> Task<Void, Never>? {
-        guard let state else { return nil }
+        guard let state, initialSnapshotPhase == .pending else { return nil }
         if let snapshotReadTask { return snapshotReadTask }
-        didRestore = true
         let generation = snapshotGeneration
         snapshotReadTask = Task { [weak self] in
             defer { self?.snapshotReadTask = nil }
@@ -141,6 +150,7 @@ final class LiveRideModel {
                 return projectionTask
             }
         } else {
+            initialSnapshotPhase = .settled
             snapshot = nil
             telemetryState = nil
             updateDurationTicker()
@@ -151,6 +161,7 @@ final class LiveRideModel {
 
     func applySnapshot(_ next: MobileRideMapSnapshotDto) {
         guard accepts(next) else { return }
+        initialSnapshotPhase = .settled
         snapshotGeneration &+= 1
         let previousRideID = snapshot?.rideID
         let routeProgressChanged =
@@ -164,15 +175,13 @@ final class LiveRideModel {
         telemetryState = next.telemetryState
         updateDurationTicker()
         if !next.rideID.isEmpty, routeProgressChanged {
-            didRestore = true
             requestProjection()
-        } else if !didRestore {
-            _ = restore()
         }
     }
 
     func applyDecision(snapshot next: MobileRideMapSnapshotDto, decision: MobileRideMapDecisionDto) {
         guard accepts(next) else { return }
+        initialSnapshotPhase = .settled
         snapshotGeneration &+= 1
         let routeProgressChanged =
             snapshot?.rideID != next.rideID
@@ -257,6 +266,7 @@ final class LiveRideModel {
     }
 
     func applyCommandSnapshot(_ snapshot: MobileRideMapSnapshotDto, resetPoints: Bool) {
+        initialSnapshotPhase = .settled
         snapshotGeneration &+= 1
         self.snapshot = snapshot
         error = nil

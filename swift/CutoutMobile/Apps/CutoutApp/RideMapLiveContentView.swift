@@ -16,6 +16,7 @@ struct RideMapLiveContentView: View {
     let cameraRegion: MobileRideMapCameraRegion?
     let segments: [MobileRideMapSegmentDisplayMetadata]
     let snapshot: MobileRideMapSnapshotDto?
+    let isInitialSnapshotPending: Bool
     let availability: MobileRideMapAvailability
     let speed: SpeedReadout
     let vehicleName: String?
@@ -79,6 +80,7 @@ struct RideMapLiveContentView: View {
                             RideMapLiveStatusView(
                                 displayPointCount: displayPoints.count,
                                 snapshot: snapshot,
+                                isInitialSnapshotPending: isInitialSnapshotPending,
                                 availability: availability,
                                 vehicleName: vehicleName,
                                 mapError: mapError,
@@ -91,7 +93,10 @@ struct RideMapLiveContentView: View {
                             RideMapSummaryView(snapshot: snapshot, speed: speed, vehicleName: vehicleName)
                             RideMapControlsView(
                                 state: snapshot?.state,
-                                allowedActions: snapshot?.allowedActions ?? [.start],
+                                allowedActions: Self.allowedControlActions(
+                                    isInitialSnapshotPending: isInitialSnapshotPending,
+                                    snapshotAllowedActions: snapshot?.allowedActions
+                                ),
                                 isDiscardConfirmationPresented: $isDiscardConfirmationPresented,
                                 pause: pause,
                                 resume: resume,
@@ -176,6 +181,14 @@ struct RideMapLiveContentView: View {
         case .draft, nil:
             return .unavailable
         }
+    }
+
+    static func allowedControlActions(
+        isInitialSnapshotPending: Bool,
+        snapshotAllowedActions: [MobileRideMapActionDto]?
+    ) -> [MobileRideMapActionDto] {
+        guard !isInitialSnapshotPending else { return [] }
+        return snapshotAllowedActions ?? [.start]
     }
 
     static func supportsLatestPointFollow(state: MobileRideMapStateDto?) -> Bool {
@@ -318,6 +331,7 @@ private struct RideMapLiveStatusView: View {
 
     let displayPointCount: Int
     let snapshot: MobileRideMapSnapshotDto?
+    let isInitialSnapshotPending: Bool
     let availability: MobileRideMapAvailability
     let vehicleName: String?
     let mapError: MobileRideMapError?
@@ -411,7 +425,9 @@ private struct RideMapLiveStatusView: View {
         case .imported:
             localizedAppText("ride_map.status.imported")
         case nil:
-            localizedAppText("ride_map.no_active")
+            localizedAppText(
+                isInitialSnapshotPending ? "ride_map.initial_snapshot_loading" : "ride_map.no_active"
+            )
         }
     }
 

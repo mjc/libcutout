@@ -1959,6 +1959,10 @@
       "comment" : "Retry action for a failed history or selected-detail query.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Try again" } } }
     },
+    "ride_map.initial_snapshot_loading" : {
+      "comment" : "Live ride-map status while the initial native query checks for a current route snapshot.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Loading ride…" } } }
+    },
     "ride_map.map_alternative" : {
       "comment" : "Accessible textual alternative for the route map.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Route map. Ride details are listed below." } } }

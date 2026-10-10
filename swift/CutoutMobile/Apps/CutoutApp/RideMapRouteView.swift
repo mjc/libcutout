@@ -116,6 +116,7 @@ struct RideMapRouteView: View {
             cameraRegion: liveRide.cameraRegion,
             segments: liveRide.segments,
             snapshot: liveRide.snapshot,
+            isInitialSnapshotPending: liveRide.isInitialSnapshotPending,
             availability: liveRide.availability,
             speed: model.rideMapSpeed,
             vehicleName: model.device.rideMapVehicleName,
