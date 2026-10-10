@@ -374,6 +374,7 @@ public struct MusicSettingsView: View {
                     }
                 }
                 .accessibilityIdentifier("music.provider-picker")
+                .accessibilityValue(selectedProvider.title)
                 if let nowPlaying {
                     Text(nowPlaying.statusText ?? nowPlaying.title)
                         .foregroundStyle(.secondary)
@@ -383,12 +384,14 @@ public struct MusicSettingsView: View {
                         .foregroundStyle(.secondary)
                         .accessibilityIdentifier("music.connection-status")
                 }
-                Button(
-                    MusicSettingsPresentation.connectionActionTitle(
-                        provider: selectedProvider, state: nowPlaying?.state
-                    ), action: onConnect
-                )
-                .accessibilityIdentifier("music.connect-provider")
+                if selectedProvider.profile.interface != .appHandoffOnly {
+                    Button(
+                        MusicSettingsPresentation.connectionActionTitle(
+                            provider: selectedProvider, state: nowPlaying?.state
+                        ), action: onConnect
+                    )
+                    .accessibilityIdentifier("music.connect-provider")
+                }
                 if MusicSettingsPresentation.showsReauthorize(
                     provider: selectedProvider,
                     state: nowPlaying?.state
@@ -407,6 +410,12 @@ public struct MusicSettingsView: View {
                 }
                 .accessibilityIdentifier("music.history-picker")
                 .accessibilityValue(historyPolicy.title)
+                .disabled(selectedProvider.profile.interface == .appHandoffOnly)
+                if let key = selectedProvider.profile.unavailableKey {
+                    Text(pevLocalizedText(key))
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("music.history-provider-unavailable")
+                }
                 if historyUnavailable {
                     Label(pevLocalizedText("music.state.unavailable"), systemImage: "exclamationmark.triangle")
                         .accessibilityIdentifier("music.history-unavailable")

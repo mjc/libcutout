@@ -870,6 +870,42 @@ final class MusicFeatureModelTests: XCTestCase {
         XCTAssertEqual(capturedPolicies.last, .disabled)
     }
 
+    func testSoundCloudRestorationAndSwitchingNeverDispatchAppleMusicOrHistory() async throws {
+        let suite = try makeDefaults()
+        defer { suite.defaults.removePersistentDomain(forName: suite.name) }
+        let store = MusicProviderSelectionStore(defaults: suite.defaults)
+        store.set(.soundCloud)
+        let historyStore = MusicHistoryPolicyStore(defaults: suite.defaults)
+        historyStore.set(.humanReadable)
+        var commands = [MobileMusicCommandDto]()
+        let model = makeModel(
+            defaults: suite.defaults, providerSelectionStore: store, historyPolicyStore: historyStore,
+            providerCommandHandler: { _, command in
+                commands.append(command)
+                return .accepted
+            })
+        model.start(sceneIsActive: true)
+        model.refreshSnapshot()
+        let snapshot = try XCTUnwrap(model.projectedNowPlaying())
+        XCTAssertEqual(snapshot.provider, .soundCloud)
+        XCTAssertEqual(snapshot.state, .unavailable)
+        XCTAssertNil(snapshot.item)
+        let result = await model.handleCommand(.play)
+        XCTAssertEqual(result, .refused)
+        XCTAssertTrue(commands.isEmpty)
+        XCTAssertTrue(model.timelineEvents.isEmpty)
+        XCTAssertEqual(model.historyPolicy, .disabled)
+        XCTAssertEqual(model.preferredHistoryPolicy, .humanReadable)
+        XCTAssertEqual(historyStore.policy, .humanReadable)
+        model.sceneDidEnterBackground()
+        XCTAssertEqual(model.projectedNowPlaying()?.state, .unavailable)
+        model.selectProvider(.appleMusic)
+        model.selectProvider(.soundCloud)
+        XCTAssertEqual(model.projectedNowPlaying()?.provider, .soundCloud)
+        XCTAssertEqual(store.provider, .soundCloud)
+        model.stopMonitoring()
+    }
+
     func testNewRideHistoryAdoptionReadsRustPolicyWithoutWritingSavedDefault() async throws {
         let suite = try makeDefaults()
         defer { suite.defaults.removePersistentDomain(forName: suite.name) }

@@ -1,6 +1,14 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "music.provider.soundcloud" : {
+      "comment" : "SoundCloud provider name.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "SoundCloud" } } }
+    },
+    "music.soundcloud.unavailable" : {
+      "comment" : "Explains the limits of public iOS SoundCloud integration.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Open SoundCloud to listen. Playback controls, track information, and listening history are unavailable in CutOut." } } }
+    },
     "camera.preview.accessibility" : {
       "comment" : "VoiceOver label for the live ride-camera preview surface.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Camera preview" } } }
