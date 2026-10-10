@@ -118,6 +118,7 @@ struct RideMapRouteView: View {
             snapshot: liveRide.snapshot,
             isInitialSnapshotPending: liveRide.isInitialSnapshotPending,
             availability: liveRide.availability,
+            storageError: liveRide.storageError,
             speed: model.rideMapSpeed,
             vehicleName: model.device.rideMapVehicleName,
             mapError: liveRide.error,

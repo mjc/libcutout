@@ -1,25 +1,134 @@
-import CutoutMobile
 import CutoutMobileFFI
 import Foundation
 import XCTest
 
 @testable import CutoutApp
+@testable import CutoutMobile
 
 final class LiveRideInitialSnapshotTests: XCTestCase {
     @MainActor
-    func testStartActionIsWithheldUntilInitialSnapshotReadSettles() {
+    func testRideControlsDistinguishPendingEmptyFailedAndAuthoritativeSnapshot() throws {
+        let pendingModel = LiveRideModel(
+            state: MobileRideMapState(),
+            storageError: nil,
+            availability: .checking,
+            now: { 1_000 }
+        )
         XCTAssertTrue(
             RideMapLiveContentView.allowedControlActions(
-                isInitialSnapshotPending: true,
+                isInitialSnapshotPending: pendingModel.isInitialSnapshotPending,
+                availability: pendingModel.availability,
+                storageError: pendingModel.storageError,
                 snapshotAllowedActions: nil
             ).isEmpty
         )
         XCTAssertEqual(
+            RideMapLiveContentView.emptySnapshotStatusKey(
+                isInitialSnapshotPending: pendingModel.isInitialSnapshotPending,
+                availability: pendingModel.availability,
+                storageError: pendingModel.storageError
+            ),
+            "ride_map.initial_snapshot_loading"
+        )
+
+        let failedModel = LiveRideModel(
+            state: nil,
+            storageError: "test database open failure",
+            availability: .ready,
+            now: { 1_000 }
+        )
+        XCTAssertTrue(
             RideMapLiveContentView.allowedControlActions(
                 isInitialSnapshotPending: false,
+                availability: failedModel.availability,
+                storageError: failedModel.storageError,
+                snapshotAllowedActions: nil
+            ).isEmpty
+        )
+        XCTAssertEqual(
+            RideMapLiveContentView.emptySnapshotStatusKey(
+                isInitialSnapshotPending: false,
+                availability: failedModel.availability,
+                storageError: failedModel.storageError
+            ),
+            "ride_map.persistence_unavailable"
+        )
+
+        XCTAssertTrue(
+            RideMapLiveContentView.allowedControlActions(
+                isInitialSnapshotPending: false,
+                availability: .ready,
+                storageError: nil,
+                mapError: .storageError("test database query failure"),
+                snapshotAllowedActions: nil
+            ).isEmpty
+        )
+        XCTAssertEqual(
+            RideMapLiveContentView.emptySnapshotStatusKey(
+                isInitialSnapshotPending: false,
+                availability: .ready,
+                storageError: nil,
+                mapError: .storageError("test database query failure")
+            ),
+            "ride_map.persistence_unavailable"
+        )
+
+        let unavailableModel = LiveRideModel(
+            state: nil,
+            storageError: nil,
+            availability: .storageUnavailable,
+            now: { 1_000 }
+        )
+        XCTAssertTrue(
+            RideMapLiveContentView.allowedControlActions(
+                isInitialSnapshotPending: false,
+                availability: unavailableModel.availability,
+                storageError: unavailableModel.storageError,
+                snapshotAllowedActions: nil
+            ).isEmpty
+        )
+
+        let readyEmptyModel = LiveRideModel(
+            state: nil,
+            storageError: nil,
+            availability: .ready,
+            now: { 1_000 }
+        )
+        XCTAssertEqual(
+            RideMapLiveContentView.allowedControlActions(
+                isInitialSnapshotPending: readyEmptyModel.isInitialSnapshotPending,
+                availability: readyEmptyModel.availability,
+                storageError: readyEmptyModel.storageError,
                 snapshotAllowedActions: nil
             ),
             [.start]
+        )
+        XCTAssertEqual(
+            RideMapLiveContentView.emptySnapshotStatusKey(
+                isInitialSnapshotPending: readyEmptyModel.isInitialSnapshotPending,
+                availability: readyEmptyModel.availability,
+                storageError: readyEmptyModel.storageError
+            ),
+            "ride_map.no_active"
+        )
+
+        let state = MobileRideMapState()
+        let snapshot = try state.startGpsOnly(atMs: 1_000)
+        let snapshotModel = LiveRideModel(
+            state: state,
+            storageError: "a later storage warning",
+            availability: .storageUnavailable,
+            now: { 1_000 }
+        )
+        snapshotModel.applySnapshot(snapshot)
+        XCTAssertEqual(
+            RideMapLiveContentView.allowedControlActions(
+                isInitialSnapshotPending: snapshotModel.isInitialSnapshotPending,
+                availability: snapshotModel.availability,
+                storageError: snapshotModel.storageError,
+                snapshotAllowedActions: snapshotModel.snapshot?.allowedActions
+            ),
+            snapshot.allowedActions
         )
     }
 
@@ -55,6 +164,43 @@ final class LiveRideInitialSnapshotTests: XCTestCase {
         XCTAssertEqual(model.initialSnapshotPhase, .settled)
         XCTAssertFalse(model.isInitialSnapshotPending)
         XCTAssertNil(model.snapshot)
+    }
+
+    @MainActor
+    func testStorageUnavailableStateSettlesNilWithoutOfferingStart() async {
+        let failure = "test database open failure"
+        let state = MobileRideMapState(storageUnavailable: failure)
+        let model = LiveRideModel(
+            state: state,
+            storageError: failure,
+            availability: .storageUnavailable,
+            now: { 1_000 }
+        )
+        XCTAssertTrue(model.isInitialSnapshotPending)
+
+        let restoration = model.restore()
+        await restoration?.value
+
+        XCTAssertFalse(model.isInitialSnapshotPending)
+        XCTAssertNil(model.snapshot)
+        XCTAssertTrue(
+            RideMapLiveContentView.allowedControlActions(
+                isInitialSnapshotPending: model.isInitialSnapshotPending,
+                availability: model.availability,
+                storageError: model.storageError,
+                mapError: model.error,
+                snapshotAllowedActions: model.snapshot?.allowedActions
+            ).isEmpty
+        )
+        XCTAssertEqual(
+            RideMapLiveContentView.emptySnapshotStatusKey(
+                isInitialSnapshotPending: model.isInitialSnapshotPending,
+                availability: model.availability,
+                storageError: model.storageError,
+                mapError: model.error
+            ),
+            "ride_map.persistence_unavailable"
+        )
     }
 
     @MainActor

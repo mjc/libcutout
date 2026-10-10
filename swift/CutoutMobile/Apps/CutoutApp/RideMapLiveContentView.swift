@@ -18,6 +18,7 @@ struct RideMapLiveContentView: View {
     let snapshot: MobileRideMapSnapshotDto?
     let isInitialSnapshotPending: Bool
     let availability: MobileRideMapAvailability
+    let storageError: String?
     let speed: SpeedReadout
     let vehicleName: String?
     let mapError: MobileRideMapError?
@@ -82,6 +83,7 @@ struct RideMapLiveContentView: View {
                                 snapshot: snapshot,
                                 isInitialSnapshotPending: isInitialSnapshotPending,
                                 availability: availability,
+                                storageError: storageError,
                                 vehicleName: vehicleName,
                                 mapError: mapError,
                                 telemetryState: telemetryState,
@@ -95,6 +97,9 @@ struct RideMapLiveContentView: View {
                                 state: snapshot?.state,
                                 allowedActions: Self.allowedControlActions(
                                     isInitialSnapshotPending: isInitialSnapshotPending,
+                                    availability: availability,
+                                    storageError: storageError,
+                                    mapError: mapError,
                                     snapshotAllowedActions: snapshot?.allowedActions
                                 ),
                                 isDiscardConfirmationPresented: $isDiscardConfirmationPresented,
@@ -185,10 +190,38 @@ struct RideMapLiveContentView: View {
 
     static func allowedControlActions(
         isInitialSnapshotPending: Bool,
+        availability: MobileRideMapAvailability,
+        storageError: String?,
+        mapError: MobileRideMapError? = nil,
         snapshotAllowedActions: [MobileRideMapActionDto]?
     ) -> [MobileRideMapActionDto] {
-        guard !isInitialSnapshotPending else { return [] }
-        return snapshotAllowedActions ?? [.start]
+        if let snapshotAllowedActions { return snapshotAllowedActions }
+        guard !isInitialSnapshotPending,
+            !hasStorageFailure(availability: availability, storageError: storageError, mapError: mapError)
+        else { return [] }
+        return [.start]
+    }
+
+    static func emptySnapshotStatusKey(
+        isInitialSnapshotPending: Bool,
+        availability: MobileRideMapAvailability,
+        storageError: String?,
+        mapError: MobileRideMapError? = nil
+    ) -> String {
+        if hasStorageFailure(availability: availability, storageError: storageError, mapError: mapError) {
+            return "ride_map.persistence_unavailable"
+        }
+        return isInitialSnapshotPending ? "ride_map.initial_snapshot_loading" : "ride_map.no_active"
+    }
+
+    private static func hasStorageFailure(
+        availability: MobileRideMapAvailability,
+        storageError: String?,
+        mapError: MobileRideMapError?
+    ) -> Bool {
+        if availability == .storageUnavailable || storageError != nil { return true }
+        if case .storageError? = mapError { return true }
+        return false
     }
 
     static func supportsLatestPointFollow(state: MobileRideMapStateDto?) -> Bool {
@@ -333,6 +366,7 @@ private struct RideMapLiveStatusView: View {
     let snapshot: MobileRideMapSnapshotDto?
     let isInitialSnapshotPending: Bool
     let availability: MobileRideMapAvailability
+    let storageError: String?
     let vehicleName: String?
     let mapError: MobileRideMapError?
     let telemetryState: MobileRideMapTelemetryStateDto?
@@ -343,7 +377,7 @@ private struct RideMapLiveStatusView: View {
 
     var body: some View {
 
-        if availability == .storageUnavailable {
+        if snapshot != nil && hasStorageFailure {
             Label(
                 localizedAppText("ride_map.persistence_unavailable"),
                 systemImage: "exclamationmark.triangle.fill"
@@ -351,7 +385,7 @@ private struct RideMapLiveStatusView: View {
             .font(.subheadline)
             .foregroundStyle(.orange)
             .accessibilityIdentifier("ride-map.persistence-warning")
-        } else if availability != .ready {
+        } else if availability != .ready && availability != .storageUnavailable {
             Label(availabilityText, systemImage: "location.slash")
                 .font(.subheadline)
                 .foregroundStyle(.orange)
@@ -370,7 +404,7 @@ private struct RideMapLiveStatusView: View {
             }
         #endif
 
-        if mapError != nil {
+        if mapError != nil && !isStorageError(mapError) {
             Label(
                 localizedAppText("ride_map.command_failed"),
                 systemImage: "exclamationmark.circle.fill"
@@ -426,9 +460,23 @@ private struct RideMapLiveStatusView: View {
             localizedAppText("ride_map.status.imported")
         case nil:
             localizedAppText(
-                isInitialSnapshotPending ? "ride_map.initial_snapshot_loading" : "ride_map.no_active"
+                RideMapLiveContentView.emptySnapshotStatusKey(
+                    isInitialSnapshotPending: isInitialSnapshotPending,
+                    availability: availability,
+                    storageError: storageError,
+                    mapError: mapError
+                )
             )
         }
+    }
+
+    private var hasStorageFailure: Bool {
+        availability == .storageUnavailable || storageError != nil || isStorageError(mapError)
+    }
+
+    private func isStorageError(_ error: MobileRideMapError?) -> Bool {
+        if case .storageError? = error { return true }
+        return false
     }
 
     #if os(iOS)
