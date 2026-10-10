@@ -982,7 +982,7 @@ public struct MusicNowPlaying: Equatable, Sendable {
         case .stopped where capabilities.play: .play
         case .disconnected where capabilities.play: .play
         case .stale where capabilities.play: .play
-        case .unavailable where provider == .spotify && capabilities.play: .play
+        case .unavailable where capabilities.play: .play
         default: nil
         }
     }

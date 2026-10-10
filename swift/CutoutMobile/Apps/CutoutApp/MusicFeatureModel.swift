@@ -107,7 +107,7 @@ final class MusicFeatureModel {
     var historyReadbackRevision: UInt64 { historyReadbackRevisionStorage }
 
     var nowPlaying: MusicNowPlaying? {
-        isPlayerHidden ? nil : (selectedProvider == .soundcloud ? projectedNowPlaying() : settingsNowPlaying)
+        isPlayerHidden ? nil : (selectedProvider == .soundCloud ? projectedNowPlaying() : settingsNowPlaying)
     }
 
     var commandStatusText: String? {
@@ -678,7 +678,7 @@ final class MusicFeatureModel {
 
     func selectProvider(_ provider: MobileMusicProviderDto) {
         let previousProvider = selectedProvider
-        if previousProvider == .soundcloud, provider != .soundcloud { nativeSoundCloud.stop() }
+        if previousProvider == .soundCloud, provider != .soundCloud { nativeSoundCloud.stop() }
         #if canImport(SpotifyiOS) && os(iOS)
             if previousProvider != provider {
                 spotifyProvider.cancelPendingPlayHandoff()
@@ -731,7 +731,7 @@ final class MusicFeatureModel {
 
     func handleCommand(_ command: MobileMusicCommandDto) async -> MusicCommandOutcome {
         let commandProvider = selectedProvider
-        if commandProvider == .soundcloud, nativeSoundCloud.snapshot.track != nil, command != .openProvider {
+        if commandProvider == .soundCloud, nativeSoundCloud.snapshot.track != nil, command != .openProvider {
             switch command {
             case .play: nativeSoundCloud.command(.play)
             case .pause: nativeSoundCloud.command(.pause)
@@ -1285,7 +1285,7 @@ final class MusicFeatureModel {
     }
 
     func projectedNowPlaying() -> MusicNowPlaying? {
-        if selectedProvider == .soundcloud, nativeSoundCloud.snapshot.track != nil {
+        if selectedProvider == .soundCloud, nativeSoundCloud.snapshot.track != nil {
             return MusicNowPlaying(snapshot: nativeSoundCloud.musicSnapshot(nowMs: monotonicNow()))
         }
         if selectedProvider.profile.interface == .appHandoffOnly {

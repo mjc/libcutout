@@ -94,7 +94,7 @@ struct AppSetupView: View {
                 case .music:
                     let music = model.music
                     MusicSettingsView(
-                        nowPlaying: music.selectedProvider == .soundcloud ? music.nowPlaying : music.settingsNowPlaying,
+                        nowPlaying: music.selectedProvider == .soundCloud ? music.nowPlaying : music.settingsNowPlaying,
                         selectedProvider: Binding(
                             get: { music.selectedProvider },
                             set: music.selectProvider
