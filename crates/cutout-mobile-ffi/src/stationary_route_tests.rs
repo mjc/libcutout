@@ -103,8 +103,23 @@ fn source_location(
 }
 
 #[test]
+fn inclusive_movement_boundary_records_route_locations() {
+    for speed in [500, -500, 501, -501] {
+        let (session, core, token) = connected_ride();
+        wheel_speed(&session, core.clone(), &token, 1_200, speed);
+        location(&core, 1_300, 40.0);
+        let snapshot = location(&core, 1_400, 40.000_02);
+        assert_eq!(snapshot.summary.point_count, 2, "moving speed {speed}");
+        assert!(
+            snapshot.summary.distance_meters > 2.0,
+            "moving speed {speed} must admit measured route distance"
+        );
+    }
+}
+
+#[test]
 fn stationary_connected_wheel_does_not_record_gps_drift() {
-    for speed in [0, 500, -500] {
+    for speed in [0, 499, -499] {
         let (session, core, token) = connected_ride();
         wheel_speed(&session, core.clone(), &token, 1_200, speed);
         location(&core, 1_300, 40.0);
@@ -368,7 +383,7 @@ fn repeated_parked_frames_keep_transition_time_and_lifecycle_checkpoints_succeed
     let connection = rusqlite::Connection::open(&path).unwrap();
     connection.execute_batch("CREATE TABLE motion_write_count (value INTEGER NOT NULL); INSERT INTO motion_write_count VALUES (0); CREATE TRIGGER motion_write_count_update AFTER UPDATE ON rides BEGIN UPDATE motion_write_count SET value = value + 1; END;").unwrap();
     wheel_speed(&session, core.clone(), &token, 1_300, 0);
-    wheel_speed(&session, core.clone(), &token, 1_400, 500);
+    wheel_speed(&session, core.clone(), &token, 1_400, 499);
     let writes: u64 = connection
         .query_row("SELECT value FROM motion_write_count", [], |row| row.get(0))
         .unwrap();

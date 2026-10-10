@@ -4757,7 +4757,7 @@ mod tests {
         let mut state = DashboardState::empty();
         state.telemetry.latest_battery_current = Some(DisplayBatteryCurrent::from_milliamps(0));
         let threshold = cutout_core::CONNECTED_WHEEL_MOVEMENT_THRESHOLD.as_millimetres_per_second();
-        for raw_speed in [-threshold, -threshold + 1, 0, threshold - 1, threshold] {
+        for raw_speed in [-threshold + 1, 0, threshold - 1] {
             state.telemetry.latest_speed = Some(DisplaySpeed::from_speed(
                 Speed::from_millimetres_per_second(raw_speed),
             ));
@@ -4766,7 +4766,14 @@ mod tests {
                 OperationalWheelState::Parked
             );
         }
-        for raw_speed in [i32::MIN, -threshold - 1, threshold + 1, i32::MAX] {
+        for raw_speed in [
+            i32::MIN,
+            -threshold - 1,
+            -threshold,
+            threshold,
+            threshold + 1,
+            i32::MAX,
+        ] {
             state.telemetry.latest_speed = Some(DisplaySpeed::from_speed(
                 Speed::from_millimetres_per_second(raw_speed),
             ));

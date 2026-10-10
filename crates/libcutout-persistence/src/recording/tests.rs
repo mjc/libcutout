@@ -10,7 +10,7 @@ use cutout_ride_maps::{RideEvent, RideLifecycleState};
 fn wheel_motion_is_latched_and_fenced_by_source_time_and_fresh_verified_evidence() {
     let mut state = RecordingSpeedState::default();
     assert!(!state.parked_at(1_000));
-    assert!(state.observe_verified_motion(500, 1_000, 1_000));
+    assert!(state.observe_verified_motion(499, 1_000, 1_000));
     assert!(!state.parked_at(999));
     assert!(state.parked_at(1_000));
     assert!(state.parked_at(90_000));
@@ -388,6 +388,22 @@ fn live_speed_prefers_vehicle_zero_then_falls_back_to_fresh_gps() {
             source: RecordingSpeedSource::PhoneGps,
         })
     );
+}
+
+#[test]
+fn wheel_motion_threshold_is_inclusive_and_uses_signed_speed_magnitude() {
+    for (speed, parked) in [
+        (499, true),
+        (500, false),
+        (501, false),
+        (-499, true),
+        (-500, false),
+        (-501, false),
+    ] {
+        let mut state = RecordingSpeedState::default();
+        assert!(state.observe_verified_motion(speed, 1_000, 1_000));
+        assert_eq!(state.parked_at(1_000), parked, "speed {speed}");
+    }
 }
 
 #[test]

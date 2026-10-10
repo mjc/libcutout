@@ -5710,7 +5710,7 @@ impl Capacity {
 /// Linear speed stored in millimetres per second.
 pub type Speed = Quantity<Velocity, MillimetrePerSecond, i32>;
 
-/// Maximum absolute speed considered stationary for a connected wheel.
+/// Minimum absolute speed considered moving for a connected wheel.
 ///
 /// Use current wheel telemetry, not GPS or retained disconnected samples. This
 /// classification never changes the measured speed or gates other ride events.
@@ -5723,14 +5723,14 @@ impl Speed {
         Self::from_unit_value(value)
     }
 
-    /// Whether current connected-wheel telemetry exceeds the stationary window.
+    /// Whether current connected-wheel telemetry meets the inclusive movement threshold.
     ///
     /// The caller must establish connection and freshness. Missing or stale
     /// evidence must not be converted to a stationary speed.
     #[must_use]
     pub const fn is_moving(self) -> bool {
         self.as_millimetres_per_second().unsigned_abs()
-            > CONNECTED_WHEEL_MOVEMENT_THRESHOLD
+            >= CONNECTED_WHEEL_MOVEMENT_THRESHOLD
                 .as_millimetres_per_second()
                 .unsigned_abs()
     }
@@ -11128,7 +11128,7 @@ mod tests {
     #[test]
     fn connected_wheel_motion_uses_the_stationary_speed_window() {
         let threshold = crate::CONNECTED_WHEEL_MOVEMENT_THRESHOLD.as_millimetres_per_second();
-        for raw_speed in [-threshold, -threshold + 1, 0, threshold - 1, threshold] {
+        for raw_speed in [-threshold + 1, 0, threshold - 1] {
             assert_eq!(
                 crate::RideOperatingState::resolve(
                     None,
@@ -11139,7 +11139,14 @@ mod tests {
                 "speed {raw_speed}",
             );
         }
-        for raw_speed in [i32::MIN, -threshold - 1, threshold + 1, i32::MAX] {
+        for raw_speed in [
+            i32::MIN,
+            -threshold - 1,
+            -threshold,
+            threshold,
+            threshold + 1,
+            i32::MAX,
+        ] {
             assert_eq!(
                 crate::RideOperatingState::resolve(
                     None,
