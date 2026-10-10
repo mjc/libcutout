@@ -11,6 +11,7 @@ members = [
     "crates/cutout-cli",
     "crates/cutout-uniffi-bindgen",
     "crates/cutout-dev",
+    "crates/cutout-soundcloud-auth-broker",
 ]
 default-members = [
     "crates/cutout-core",
@@ -67,6 +68,8 @@ uuid = { version = "1", features = ["v4"] }
 vesc = { version = "0.4", default-features = false }
 zerocopy = "0.8"
 arrayvec = { version = "0.7", features = ["serde"] }
+axum = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots"] }
 
 [workspace.lints.rust]
 unsafe_code = "deny"
