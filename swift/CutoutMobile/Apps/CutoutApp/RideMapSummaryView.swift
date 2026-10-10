@@ -136,7 +136,7 @@ struct RideMapSummaryView: View {
         )
         RideMapMetric(
             value: durationText(for: snapshot),
-            label: localizedAppText("ride_map.metric_elapsed")
+            label: localizedAppText("ride_map.metric_recording_time")
         )
         RideMapMetric(
             value: speed.millimetersPerSecond == nil ? speed.displayValue : Self.speedText(for: speed),

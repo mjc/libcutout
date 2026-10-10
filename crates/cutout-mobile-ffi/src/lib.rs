@@ -6765,7 +6765,7 @@ pub struct MobileRideMapCoreSummaryDto {
     pub point_count: u64,
     /// Accumulated route distance in metres.
     pub distance_meters: f64,
-    /// Elapsed recording duration in milliseconds.
+    /// Active recording duration in milliseconds, excluding paused and interrupted intervals.
     pub duration_milliseconds: u64,
 }
 

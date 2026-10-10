@@ -553,7 +553,7 @@ impl RideRecord {
         self.updated_at_ms
     }
 
-    /// Returns the elapsed monotonic duration from ride start to its latest route sample.
+    /// Returns the Rust recording duration, excluding paused and interrupted intervals.
     #[must_use]
     pub const fn duration_milliseconds(&self) -> u64 {
         self.duration_ms

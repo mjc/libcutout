@@ -119,6 +119,7 @@ struct RideMapHistoryRow: View {
         VStack(alignment: dynamicTypeSize.isAccessibilitySize ? .leading : .trailing, spacing: 6) {
             Text(distance).font(.subheadline.weight(.semibold))
             Text(duration).font(.caption).foregroundStyle(PevColors.muted)
+                .accessibilityLabel(localizedAppText("ride_map.duration", duration))
         }
         .monospacedDigit()
         .fixedSize(horizontal: false, vertical: true)

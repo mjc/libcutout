@@ -399,7 +399,7 @@ struct RideMapDetailMetrics: View {
     @ViewBuilder
     private var metrics: some View {
         RideMapDetailMetric(value: distance, label: localizedAppText("ride_map.metric_distance"))
-        RideMapDetailMetric(value: duration, label: localizedAppText("ride_map.metric_elapsed"))
+        RideMapDetailMetric(value: duration, label: localizedAppText("ride_map.metric_recording_time"))
         RideMapDetailMetric(value: averageSpeed, label: localizedAppText("ride_map.metric_average_speed"))
     }
 }

@@ -156,6 +156,7 @@ public enum MobileRideMapTelemetryObservation: Equatable, Hashable, Sendable {
 public struct MobileRideMapSummaryDto: Equatable, Hashable, Sendable {
     public let pointCount: UInt64
     public let distanceMeters: Double
+    /// Rust recording duration; excludes pauses and interruptions and is not moving or elapsed time.
     public let durationMilliseconds: UInt64
     public let averageSpeedMillimetresPerSecond: UInt64?
 

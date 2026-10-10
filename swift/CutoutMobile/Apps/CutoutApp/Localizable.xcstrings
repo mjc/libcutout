@@ -1879,9 +1879,9 @@
       "comment" : "Live map metric label for distance.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "distance" } } }
     },
-    "ride_map.metric_elapsed" : {
-      "comment" : "Live map metric label for elapsed time.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "elapsed" } } }
+    "ride_map.metric_recording_time" : {
+      "comment" : "Live map and saved ride metric label for Rust recording duration, which excludes paused intervals. This value is neither elapsed nor moving time.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Recording time" } } }
     },
     "ride_map.metric_speed" : {
       "comment" : "Live map metric label for speed when a typed speed value is available.",
@@ -1904,8 +1904,8 @@
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Ride end" } } }
     },
     "ride_map.duration" : {
-      "comment" : "Ride-map summary label. The placeholder is the formatted duration.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Duration: %@" } } }
+      "comment" : "Labelled recording duration for shared ride text and accessibility. The placeholder is the formatted Rust recording duration, which excludes pauses.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Recording time: %@" } } }
     },
     "ride_map.discard" : {
       "comment" : "Ride-map destructive control that discards a stopped ride.",
