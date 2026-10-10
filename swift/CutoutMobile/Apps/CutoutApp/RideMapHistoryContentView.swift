@@ -5,6 +5,7 @@ import SwiftUI
 
 struct RideMapHistoryContentView: View {
     @Environment(\.musicCompactPlayerFrame) private var musicCompactPlayerFrame
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     let isRecording: Bool
     let isPaused: Bool
@@ -121,6 +122,27 @@ struct RideMapHistoryContentView: View {
         isLoading && rideCount > 0
     }
 
+    enum RetainedRefreshStatus: Equatable {
+        case hidden
+        case loading
+        case retryableError
+    }
+
+    @MainActor
+    static func retainedRefreshStatus(
+        isLoading: Bool,
+        hasResults: Bool,
+        hasHistoryError: Bool,
+        hasRouteError: Bool,
+        hasSelectedRide: Bool
+    ) -> RetainedRefreshStatus {
+        guard hasResults else { return .hidden }
+        if hasHistoryError || (hasSelectedRide && hasRouteError) {
+            return .retryableError
+        }
+        return isLoading ? .loading : .hidden
+    }
+
     @MainActor
     static func hasActiveFilters(
         searchText: String,
@@ -156,17 +178,6 @@ struct RideMapHistoryContentView: View {
                             } else if rides.isEmpty {
                                 RideMapHistoryEmptyState(canLoadMore: canLoadMore, loadMore: loadMore)
                             } else {
-                                if historyError != nil {
-                                    Label(
-                                        localizedAppText("ride_map.command_failed"),
-                                        systemImage: "exclamationmark.triangle"
-                                    )
-                                    .font(.caption)
-                                    .foregroundStyle(.orange)
-                                    .padding(.horizontal, 16)
-                                    .padding(.bottom, 8)
-                                    .accessibilityIdentifier("ride-map.history-error")
-                                }
                                 RideMapHistoryRouteSection(
                                     displayPoints: displayPoints,
                                     routeID: selectedRideID ?? "history",
@@ -197,7 +208,16 @@ struct RideMapHistoryContentView: View {
                 }
                 .frame(height: visibleHeight, alignment: .top)
                 .overlay(alignment: .topTrailing) {
-                    if Self.shouldShowRefreshStatus(isLoading: isLoading, rideCount: rides.count) {
+                    switch Self.retainedRefreshStatus(
+                        isLoading: isLoading,
+                        hasResults: !rides.isEmpty,
+                        hasHistoryError: historyError != nil,
+                        hasRouteError: routeError != nil,
+                        hasSelectedRide: selectedRide != nil
+                    ) {
+                    case .hidden:
+                        EmptyView()
+                    case .loading:
                         ProgressView()
                             .tint(PevColors.yellow)
                             .padding(10)
@@ -205,6 +225,30 @@ struct RideMapHistoryContentView: View {
                             .padding(12)
                             .accessibilityLabel(localizedAppText("ride_map.history_loading"))
                             .accessibilityIdentifier("ride-map.history-refreshing")
+                    case .retryableError:
+                        VStack(
+                            alignment: dynamicTypeSize.isAccessibilitySize ? .leading : .trailing,
+                            spacing: 8
+                        ) {
+                            if selectedRouteState != .error {
+                                Label(
+                                    localizedAppText("ride_map.command_failed"),
+                                    systemImage: "exclamationmark.triangle"
+                                )
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.orange)
+                                .fixedSize(horizontal: false, vertical: true)
+                            }
+                            Button(localizedAppText("ride_map.history_retry"), action: load)
+                                .buttonStyle(.borderedProminent)
+                                .tint(PevColors.yellow)
+                                .accessibilityIdentifier("ride-map.history-refresh-retry")
+                        }
+                        .padding(10)
+                        .background(PevColors.cardFill, in: RoundedRectangle(cornerRadius: 12))
+                        .padding(12)
+                        .accessibilityElement(children: .contain)
+                        .accessibilityIdentifier("ride-map.history-refresh-error")
                     }
                 }
                 .clipped()
