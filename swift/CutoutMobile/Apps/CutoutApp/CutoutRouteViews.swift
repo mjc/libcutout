@@ -64,7 +64,16 @@ struct AppMusicPlayerView: View {
 
     var body: some View {
         Group {
-            if let nowPlaying = model.music.settingsNowPlaying {
+            if model.music.selectedProvider == .soundcloud {
+                NavigationStack {
+                    SoundCloudPlayerView(player: model.music.nativeSoundCloud)
+                        .toolbar {
+                            ToolbarItem(placement: .confirmationAction) {
+                                Button(pevLocalizedText("music.done")) { dismiss() }
+                            }
+                        }
+                }
+            } else if let nowPlaying = model.music.settingsNowPlaying {
                 MusicExpandedPlayer(
                     nowPlaying: nowPlaying,
                     timeline: model.music.timelineEvents,

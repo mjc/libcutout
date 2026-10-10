@@ -881,7 +881,7 @@ public struct MusicNowPlaying: Equatable, Sendable {
     public var providerName: String { provider.title }
 
     public var title: String {
-        if provider.profile.interface == .appHandoffOnly { return providerName }
+        if provider.profile.interface == .appHandoffOnly && item == nil { return providerName }
         return item?.title.flatMap { $0.isEmpty ? nil : $0 }
             ?? pevLocalizedText(musicPlaybackTitleKey(state: state))
     }
@@ -893,7 +893,7 @@ public struct MusicNowPlaying: Equatable, Sendable {
             true
         case .stopped, .disconnected, .stale:
             item != nil
-        case .unavailable where provider == .spotify && capabilities.play:
+        case .unavailable where capabilities.play:
             item != nil
         case .unauthorized, .unavailable:
             false
@@ -977,6 +977,7 @@ public struct MusicNowPlaying: Equatable, Sendable {
     public var playPauseCommand: MobileMusicCommandDto? {
         switch state {
         case .playing where capabilities.pause: .pause
+        case .buffering where capabilities.pause: .pause
         case .paused where capabilities.play: .play
         case .stopped where capabilities.play: .play
         case .disconnected where capabilities.play: .play
