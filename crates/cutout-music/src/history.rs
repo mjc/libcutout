@@ -73,7 +73,8 @@ impl MusicRideEvent {
     ///
     /// # Errors
     ///
-    /// Returns [`MusicValidationError`] when an identifier or timestamp is invalid.
+    /// Returns [`MusicValidationError`] when an identifier or timestamp is invalid,
+    /// or the provider exposes no listening observations.
     pub fn new(
         provider: MusicProvider,
         item_identifier: Option<String>,
@@ -82,6 +83,9 @@ impl MusicRideEvent {
         kind: MusicRideEventKind,
         timing: MusicEventTiming,
     ) -> Result<Self, MusicValidationError> {
+        if provider == MusicProvider::SoundCloud {
+            return Err(MusicValidationError::ProviderObservationUnsupported);
+        }
         if timing
             .observed_at
             .is_some_and(|observed| observed > timing.monotonic_at)
@@ -423,7 +427,7 @@ pub enum MusicTimelineRestoreError {
 
 fn metadata_bearing_identifier(provider: MusicProvider, identifier: &MusicIdentifier) -> bool {
     match provider {
-        MusicProvider::AppleMusic => false,
+        MusicProvider::AppleMusic | MusicProvider::SoundCloud => false,
         MusicProvider::Spotify => identifier.as_str().starts_with("spotify:local:"),
     }
 }

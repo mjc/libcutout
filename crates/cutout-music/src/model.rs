@@ -15,6 +15,8 @@ pub enum MusicProvider {
     AppleMusic,
     /// Spotify through App Remote.
     Spotify,
+    /// `SoundCloud` app handoff; public iOS APIs expose no local playback state.
+    SoundCloud,
 }
 
 /// Provider playback state projected into the shared player.
@@ -277,12 +279,26 @@ pub struct MusicSnapshot {
 }
 
 impl MusicSnapshot {
+    pub(crate) fn soundcloud_unavailable(observed_at: MonotonicTimestamp) -> Self {
+        Self {
+            provider: MusicProvider::SoundCloud,
+            session_id: MusicIdentifier("soundcloud-local-unavailable".to_owned()),
+            state: MusicPlaybackState::Unavailable,
+            item: None,
+            position_milliseconds: None,
+            duration_milliseconds: None,
+            observed_at,
+            capabilities: MusicCapabilities::new().with(MusicCommand::OpenProvider),
+        }
+    }
+
     /// Validates and creates a provider observation.
     ///
     /// # Errors
     ///
     /// Returns [`MusicValidationError`] when the session identifier is invalid
-    /// or the playback position is inconsistent with its duration.
+    /// or the playback position is inconsistent with its duration. `SoundCloud`
+    /// cannot supply playback, metadata, position, or transport capabilities.
     pub fn new(
         provider: MusicProvider,
         session_id: impl Into<String>,
@@ -292,6 +308,15 @@ impl MusicSnapshot {
         observed_at: MonotonicTimestamp,
         capabilities: MusicCapabilities,
     ) -> Result<Self, MusicValidationError> {
+        if provider == MusicProvider::SoundCloud
+            && (state != MusicPlaybackState::Unavailable
+                || item.is_some()
+                || position.position_milliseconds().is_some()
+                || position.duration_milliseconds().is_some()
+                || capabilities.0 & !MusicCommand::OpenProvider.bit() != 0)
+        {
+            return Err(MusicValidationError::ProviderObservationUnsupported);
+        }
         Ok(Self {
             provider,
             session_id: MusicIdentifier::new(session_id)?,
@@ -356,6 +381,9 @@ impl MusicSnapshot {
 /// Validation failures at the music/provider boundary.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
 pub enum MusicValidationError {
+    /// The provider has no public interface for the reported observation.
+    #[error("provider playback observation is unsupported")]
+    ProviderObservationUnsupported,
     /// A required provider or item identifier was blank.
     #[error("music identifier is blank")]
     BlankIdentifier,

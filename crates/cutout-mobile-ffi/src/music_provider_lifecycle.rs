@@ -2,7 +2,7 @@
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use cutout_core::WallClockUnixTimestamp;
+use cutout_core::{MonotonicTimestamp, WallClockUnixTimestamp};
 use cutout_music::callback_epoch::{
     AuthorizationTransactionKind, AuthorizationTransactionMatch, CallbackEpochMatch,
 };
@@ -26,8 +26,94 @@ use cutout_music::{
 
 use crate::{
     CoreMusicPlaybackState, CoreMusicSnapshot, MobileMusicCommandDto, MobileMusicPlaybackStateDto,
-    MobileMusicRideEventKindDto, MobileMusicSnapshotDto, MobileRideMapCoreErrorDto,
+    MobileMusicProviderDto, MobileMusicRideEventKindDto, MobileMusicSnapshotDto,
+    MobileRideMapCoreErrorDto,
 };
+
+/// Platform interface selected by the Rust provider contract.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileMusicProviderInterface {
+    /// Observe and control Apple's Music app.
+    AppleMusicSystemPlayer,
+    /// Observe and control Spotify through its local SDK when available.
+    SpotifyAppRemote,
+    /// Explicit app opening only; playback and history are unavailable.
+    AppHandoffOnly,
+}
+
+/// Stable storage and localized presentation keys for a music provider.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileMusicProviderProfile {
+    pub interface: MobileMusicProviderInterface,
+    pub storage_key: String,
+    pub title_key: String,
+    pub unavailable_key: Option<String>,
+}
+
+/// Returns provider capabilities and presentation keys without platform policy.
+#[uniffi::export]
+#[must_use]
+pub fn music_provider_profile(provider: MobileMusicProviderDto) -> MobileMusicProviderProfile {
+    let (interface, storage_key, title_key, unavailable_key) = match provider {
+        MobileMusicProviderDto::AppleMusic => (
+            MobileMusicProviderInterface::AppleMusicSystemPlayer,
+            "apple_music",
+            "music.provider.apple_music",
+            None,
+        ),
+        MobileMusicProviderDto::Spotify => (
+            MobileMusicProviderInterface::SpotifyAppRemote,
+            "spotify",
+            "music.provider.spotify",
+            None,
+        ),
+        MobileMusicProviderDto::SoundCloud => (
+            MobileMusicProviderInterface::AppHandoffOnly,
+            "soundcloud",
+            "music.provider.soundcloud",
+            Some("music.soundcloud.unavailable"),
+        ),
+    };
+    MobileMusicProviderProfile {
+        interface,
+        storage_key: storage_key.to_owned(),
+        title_key: title_key.to_owned(),
+        unavailable_key: unavailable_key.map(str::to_owned),
+    }
+}
+
+/// Restores the durable provider selection, preserving the Apple Music default.
+#[uniffi::export]
+#[must_use]
+#[allow(clippy::needless_pass_by_value)] // UniFFI owns strings at this boundary.
+pub fn music_provider_from_storage(value: Option<String>) -> MobileMusicProviderDto {
+    match value.as_deref() {
+        Some("spotify") => MobileMusicProviderDto::Spotify,
+        Some("soundcloud") => MobileMusicProviderDto::SoundCloud,
+        _ => MobileMusicProviderDto::AppleMusic,
+    }
+}
+
+/// Projects the supported local `SoundCloud` snapshot with no invented observations.
+#[uniffi::export]
+#[must_use]
+pub fn soundcloud_unavailable_snapshot(now_ms: u64) -> MobileMusicSnapshotDto {
+    (&cutout_music::soundcloud::unavailable_snapshot(MonotonicTimestamp::new(now_ms))).into()
+}
+
+/// Capability-checked, session-owned `SoundCloud` command effect.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileSoundCloudCommandAdmission {
+    /// No public interface supports this command.
+    Refused,
+    /// The provider session is stale or another transport effect is pending.
+    Unavailable,
+    /// Execute this local app opening and return the platform result.
+    Handoff {
+        url: String,
+        effect: MobileMusicTransportEffect,
+    },
+}
 
 /// Matches callback paths with only empty/slash root equivalence.
 #[uniffi::export]
@@ -438,7 +524,7 @@ pub struct MobileMusicProviderLifecycle {
     observation_queue:
         Mutex<Arc<crate::music_observation_admission::MusicObservationAdmissionQueue>>,
     correlation_ride_id: Mutex<Option<String>>,
-    player_observations: Mutex<[Option<CoreMusicSnapshot>; 2]>,
+    player_observations: Mutex<[Option<CoreMusicSnapshot>; 3]>,
 }
 
 impl MobileMusicProviderLifecycle {
@@ -565,6 +651,7 @@ impl MobileMusicProviderLifecycle {
             let index = match snapshot.provider() {
                 cutout_music::MusicProvider::AppleMusic => 0,
                 cutout_music::MusicProvider::Spotify => 1,
+                cutout_music::MusicProvider::SoundCloud => 2,
             };
             let mut latest = self
                 .player_observations
@@ -1100,6 +1187,34 @@ impl MobileMusicProviderLifecycle {
                 id: effect.id.into(),
                 deadline_ms: effect.deadline.as_milliseconds(),
             })
+    }
+
+    /// Admits only explicit local app opening using the shared transport lifecycle.
+    #[must_use]
+    pub fn begin_soundcloud_command(
+        &self,
+        provider_generation: MobileMusicProviderSessionId,
+        command: MobileMusicCommandDto,
+        now_ms: u64,
+    ) -> MobileSoundCloudCommandAdmission {
+        let cutout_music::soundcloud::SoundCloudCommandAdmission::Handoff(handoff) =
+            cutout_music::soundcloud::admit_command(command.into())
+        else {
+            return MobileSoundCloudCommandAdmission::Refused;
+        };
+        let Some(effect) = self.begin_transport_effect(
+            MobileMusicTransportOwner::Provider {
+                provider_generation,
+            },
+            command,
+            now_ms,
+        ) else {
+            return MobileSoundCloudCommandAdmission::Unavailable;
+        };
+        MobileSoundCloudCommandAdmission::Handoff {
+            url: handoff.url().to_owned(),
+            effect,
+        }
     }
 
     /// Begins playback confirmation for a command dispatched by an app handoff.

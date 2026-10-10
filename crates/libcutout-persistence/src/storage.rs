@@ -8236,6 +8236,8 @@ fn provider_name(provider: MusicProvider) -> &'static str {
     match provider {
         MusicProvider::AppleMusic => "apple_music",
         MusicProvider::Spotify => "spotify",
+        // SoundCloud listening events are rejected by MusicRideEvent::new.
+        MusicProvider::SoundCloud => "soundcloud",
     }
 }
 
@@ -8314,6 +8316,7 @@ fn decode_music_event(row: &rusqlite::Row<'_>) -> Result<MusicRideEvent, rusqlit
             MusicValidationError::PositionAfterDuration => 5,
             MusicValidationError::ObservationAfterEvent => 8,
             MusicValidationError::EventKindStateMismatch => 4,
+            MusicValidationError::ProviderObservationUnsupported => 0,
         };
         music_conversion_error(column, error)
     })

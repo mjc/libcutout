@@ -21,6 +21,7 @@ mod monitor;
 mod observation;
 pub mod player_request;
 pub mod provider_lifecycle;
+pub mod soundcloud;
 
 pub use history::*;
 pub use model::*;
