@@ -2987,6 +2987,69 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(settingsGenerations, [first.generation, second.generation])
     }
 
+    func testStopClearsLogicalRideStatisticsWithoutAnotherNotification() async throws {
+        let state = MobileRideMapState()
+        _ = try? state.discard()
+        let core = CutoutSessionCore(
+            clock: MonotonicClock(now: { MonotonicMilliseconds(4_000) }),
+            rideMapState: state
+        )
+        let started = try await core.startRideMapGpsOnly(atMs: 1_000, musicHistoryPolicy: .disabled)
+        XCTAssertNotNil(core.displayStateWithLogicalRide(RideDisplayState()).logicalRide?.liveActivityStatistics)
+        let stopped = try await core.stopRideMap(
+            expected: XCTUnwrap(started.commandToken), atMs: 4_000
+        )
+        let displayed = try XCTUnwrap(core.displayStateWithLogicalRide(RideDisplayState()).logicalRide)
+        XCTAssertEqual(displayed.rideID, stopped.rideID)
+        XCTAssertEqual(displayed.revision, stopped.revision)
+        XCTAssertEqual(displayed.state, .stopped)
+        XCTAssertNil(displayed.liveActivityStatistics)
+        _ = try await core.discardRideMap(expected: XCTUnwrap(stopped.commandToken))
+    }
+
+    func testOlderLogicalRideReceiptCannotReplaceNewRideStatistics() async throws {
+        let state = MobileRideMapState()
+        _ = try? state.discard()
+        let core = CutoutSessionCore(
+            clock: MonotonicClock(now: { MonotonicMilliseconds(4_000) }),
+            rideMapState: state
+        )
+        let first = try await core.startRideMapGpsOnly(atMs: 1_000, musicHistoryPolicy: .disabled)
+        let stopped = try await core.stopRideMap(expected: XCTUnwrap(first.commandToken), atMs: 2_000)
+        _ = try await core.discardRideMap(expected: XCTUnwrap(stopped.commandToken))
+        let replacement = try await core.startRideMapGpsOnly(atMs: 3_000, musicHistoryPolicy: .disabled)
+        XCTAssertNotEqual(first.rideID, replacement.rideID)
+        XCTAssertGreaterThan(replacement.revision, first.revision)
+        core.cacheLogicalRideSnapshot(first)
+        let displayed = try XCTUnwrap(core.displayStateWithLogicalRide(RideDisplayState()).logicalRide)
+        XCTAssertEqual(displayed.rideID, replacement.rideID)
+        XCTAssertEqual(displayed.revision, replacement.revision)
+        XCTAssertEqual(displayed.liveActivityStatistics, replacement.liveActivityStatistics)
+        _ = try await core.discardRideMap(expected: XCTUnwrap(replacement.commandToken))
+    }
+
+    func testEqualRevisionLogicalRideReceiptCannotRegressElapsedDuration() async throws {
+        let state = MobileRideMapState()
+        _ = try? state.discard()
+        let core = CutoutSessionCore(
+            clock: MonotonicClock(now: { MonotonicMilliseconds(4_000) }),
+            rideMapState: state
+        )
+        let started = try await core.startRideMapGpsOnly(atMs: 1_000, musicHistoryPolicy: .disabled)
+        let newer = try XCTUnwrap(state.currentSnapshot(atMs: 4_000))
+        let older = try XCTUnwrap(state.currentSnapshot(atMs: 2_000))
+        XCTAssertEqual(newer.revision, older.revision)
+        XCTAssertEqual(newer.liveActivityStatistics?.durationMilliseconds, 3_000)
+        XCTAssertEqual(older.liveActivityStatistics?.durationMilliseconds, 1_000)
+        core.cacheLogicalRideSnapshot(newer)
+        core.cacheLogicalRideSnapshot(older)
+        XCTAssertEqual(
+            core.displayStateWithLogicalRide(RideDisplayState()).logicalRide?.liveActivityStatistics,
+            newer.liveActivityStatistics
+        )
+        _ = try await core.discardRideMap(expected: XCTUnwrap(started.commandToken))
+    }
+
     func testDisplayPublicationThrottleUsesMonotonicTime() {
         let clock = TestMonotonicClock(MonotonicMilliseconds(1_000))
         let core = CutoutSessionCore(clock: MonotonicClock(now: { clock.now }))

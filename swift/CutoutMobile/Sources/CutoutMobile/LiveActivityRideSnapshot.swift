@@ -296,6 +296,31 @@ public enum LiveActivityRidePwmSeverity: String, Codable, Equatable, Hashable, S
     }
 }
 
+public enum PevLiveActivityMetricRole: CaseIterable, Hashable, Sendable {
+    case battery
+    case packVoltage
+    case pwm
+    case mode
+    case duration
+    case distance
+    case chargeEstimate
+    case headroom
+    case temperature
+
+    public var isRepeatedInSafetyFooter: Bool {
+        self == .headroom || self == .temperature
+    }
+
+    public func accessibilitySortPriority(for severity: LiveActivityRideHeadroomSeverity?) -> Double {
+        self == .headroom && severity == .reduceAcceleration ? 2 : 0
+    }
+}
+
+public struct LiveActivityRideGridMetric: Equatable, Sendable {
+    public let role: PevLiveActivityMetricRole
+    public let value: LiveActivityRideValue
+}
+
 public struct LiveActivityRideSnapshot: Codable, Equatable, Hashable, Sendable {
     public let identity: LiveActivityRideIdentity
     public let glyph: LiveActivityRideGlyph
@@ -320,7 +345,8 @@ public struct LiveActivityRideSnapshot: Codable, Equatable, Hashable, Sendable {
         rideState: EucRideScreenState,
         now: MonotonicMilliseconds? = nil,
         staleAfter staleThreshold: MonotonicMilliseconds = RideTelemetryFreshnessPolicy.staleAfter,
-        rideDuration: MonotonicMilliseconds? = nil
+        rideDuration: MonotonicMilliseconds? = nil,
+        rideDistance: Distance? = nil
     ) {
         let connectionState = Self.deriveConnectionState(
             identity: identity,
@@ -338,11 +364,7 @@ public struct LiveActivityRideSnapshot: Codable, Equatable, Hashable, Sendable {
         self.pwm = Self.pwmValue(rideState: rideState, connectionState: connectionState)
         self.mode = .deferred(label: localizedLiveActivityText("live_activity.label.mode"))
         self.duration = Self.durationValue(rideDuration)
-        self.distance = Self.distanceValue(
-            telemetry: rideState.telemetry,
-            speedUnit: rideState.speedUnit,
-            connectionState: connectionState
-        )
+        self.distance = Self.distanceValue(rideDistance: rideDistance, speedUnit: rideState.speedUnit)
         self.headroom = Self.headroomValue(rideState: rideState, connectionState: connectionState)
         self.headroomSeverity = Self.headroomSeverity(rideState: rideState, connectionState: connectionState)
         self.beeps = .deferred(label: localizedLiveActivityText("live_activity.label.beeps"))
@@ -401,6 +423,28 @@ public struct LiveActivityRideSnapshot: Codable, Equatable, Hashable, Sendable {
             temperature,
             chargeEstimate,
         ]
+    }
+
+    /// Visual and spoken grid content share the same stable metric ownership.
+    /// The safety footer owns headroom, beep state and temperature.
+    public var metricGridValues: [LiveActivityRideGridMetric] {
+        let required = [
+            LiveActivityRideGridMetric(role: .battery, value: battery),
+            LiveActivityRideGridMetric(role: .packVoltage, value: packVoltage),
+            LiveActivityRideGridMetric(role: .pwm, value: pwm),
+        ]
+        let optional = [
+            LiveActivityRideGridMetric(role: .mode, value: mode),
+            LiveActivityRideGridMetric(role: .duration, value: duration),
+            LiveActivityRideGridMetric(role: .distance, value: distance),
+            LiveActivityRideGridMetric(role: .chargeEstimate, value: chargeEstimate),
+        ].filter { metric in
+            switch metric.value.state {
+            case .available, .stale: true
+            case .unavailable, .deferred, .notApplicable: false
+            }
+        }
+        return required + optional
     }
 
     public var compactTrailingValue: LiveActivityRideValue {
@@ -623,19 +667,18 @@ extension LiveActivityRideSnapshot {
     }
 
     static func distanceValue(
-        telemetry: TelemetrySnapshot?,
-        speedUnit: String,
-        connectionState: LiveActivityRideConnectionState
+        rideDistance: Distance?,
+        speedUnit: String
     ) -> LiveActivityRideValue {
         let unit = distanceUnit(for: speedUnit)
-        return telemetry?.distance
+        return
+            rideDistance
             .map {
-                value(
+                LiveActivityRideValue.available(
                     label: localizedLiveActivityText("live_activity.label.distance"),
                     value: decimalString(fromMillimetres: $0.value, unit: unit, fractionDigits: 1),
                     unit: unit,
-                    source: .liveTelemetry,
-                    connectionState: connectionState
+                    source: .appLifecycle
                 )
             } ?? .unavailable(label: localizedLiveActivityText("live_activity.label.distance"), unit: unit)
     }

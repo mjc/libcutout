@@ -4,6 +4,65 @@ import XCTest
 @testable import CutoutMobile
 
 final class LiveActivityRideSnapshotTests: XCTestCase {
+    func testMetricGridOmitsMissingOptionalValuesAndFooterOwnedSafetyMetrics() {
+        let snapshot = gridSnapshot()
+        XCTAssertEqual(snapshot.metricGridValues.map(\.role), [.battery, .packVoltage, .pwm])
+        XCTAssertEqual(snapshot.metricGridValues.map(\.value), [snapshot.battery, snapshot.packVoltage, snapshot.pwm])
+        XCTAssertFalse(snapshot.metricGridValues.contains { $0.role.isRepeatedInSafetyFooter })
+        XCTAssertEqual(snapshot.headroom.value, "Headroom good")
+        XCTAssertEqual(snapshot.temperature.value, "24")
+        XCTAssertEqual(snapshot.beeps.state, .deferred)
+    }
+
+    func testMetricGridKeepsReportedZeroAndStaleOptionalValuesWithoutSafetyDuplicates() {
+        let mode = LiveActivityRideValue.available(label: "Mode", value: "Off", unit: nil, source: .liveTelemetry)
+        let duration = LiveActivityRideValue.available(
+            label: "Duration", value: "0:00", unit: nil, source: .appLifecycle)
+        let distance = LiveActivityRideValue.available(
+            label: "Distance", value: "0.0", unit: "mi", source: .appLifecycle)
+        let charge = LiveActivityRideValue.stale(label: "Charge", value: "45 min", unit: nil, source: .derivedTelemetry)
+        let snapshot = gridSnapshot(mode: mode, duration: duration, distance: distance, charge: charge)
+        XCTAssertEqual(
+            snapshot.metricGridValues.map(\.role),
+            [.battery, .packVoltage, .pwm, .mode, .duration, .distance, .chargeEstimate])
+        XCTAssertEqual(Array(snapshot.metricGridValues.suffix(4)).map(\.value), [mode, duration, distance, charge])
+        XCTAssertEqual(Set(snapshot.metricGridValues.map(\.role)).count, snapshot.metricGridValues.count)
+        XCTAssertFalse(snapshot.metricGridValues.contains { $0.role.isRepeatedInSafetyFooter })
+    }
+
+    func testMetricGridRetainsMissingPrimaryTelemetryWithoutEmptyOptionalRows() {
+        let snapshot = gridSnapshot(
+            mode: .notApplicable(label: "Mode"),
+            duration: .unavailable(label: "Duration"),
+            distance: .deferred(label: "Distance"),
+            charge: .unavailable(label: "Charge"),
+            battery: .unavailable(label: "Battery", unit: "%"))
+        XCTAssertEqual(snapshot.metricGridValues.map(\.role), [.battery, .packVoltage, .pwm])
+        XCTAssertEqual(snapshot.metricGridValues.first?.value.state, .unavailable)
+        XCTAssertEqual(snapshot.metricGridValues.first?.value.accessibilityValue, "unavailable, %")
+    }
+
+    private func gridSnapshot(
+        mode: LiveActivityRideValue = .deferred(label: "Mode"),
+        duration: LiveActivityRideValue = .deferred(label: "Duration"),
+        distance: LiveActivityRideValue = .unavailable(label: "Distance"),
+        charge: LiveActivityRideValue = .unavailable(label: "Charge"),
+        battery: LiveActivityRideValue = .available(label: "Battery", value: "81", unit: "%", source: .liveTelemetry)
+    ) -> LiveActivityRideSnapshot {
+        LiveActivityRideSnapshot(
+            identity: .device("Falcon"), connectionState: .connected,
+            sessionStatus: .available(label: "Status", value: "Parked", unit: nil, source: .liveTelemetry),
+            speed: .available(label: "Speed", value: "0.0", unit: "mph", source: .liveTelemetry),
+            battery: battery,
+            packVoltage: .available(label: "Voltage", value: "96.4", unit: "V", source: .liveTelemetry),
+            pwm: .available(label: "PWM", value: "0", unit: "%", source: .liveTelemetry),
+            mode: mode, duration: duration, distance: distance,
+            headroom: .available(label: "Headroom", value: "Headroom good", unit: nil, source: .derivedTelemetry),
+            beeps: .deferred(label: "Beeps"),
+            temperature: .available(label: "Temp", value: "24", unit: "°C", source: .liveTelemetry),
+            chargeEstimate: charge, headroomSeverity: .nominal)
+    }
+
     func testChargeEstimateDisplayNamesPreserveCollectingFullAndBalancingStates() {
         let collecting = ChargeEstimateState(
             MobileChargeEstimateStateDto(
@@ -275,7 +334,8 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
                 )
             ),
             now: MonotonicMilliseconds(1_500),
-            staleAfter: MonotonicMilliseconds(2_000)
+            staleAfter: MonotonicMilliseconds(2_000),
+            rideDistance: Distance(value: 12_552_883)
         )
 
         XCTAssertEqual(snapshot.glyph, .electricUnicycle)
@@ -301,7 +361,7 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
             .available(label: "PWM", value: "54", unit: "%", normalizedProgress: 0.54, source: .liveTelemetry)
         )
         XCTAssertEqual(
-            snapshot.distance, .available(label: "Distance", value: "7.8", unit: "mi", source: .liveTelemetry))
+            snapshot.distance, .available(label: "Distance", value: "7.8", unit: "mi", source: .appLifecycle))
         XCTAssertEqual(snapshot.headroom.value, "Headroom good")
         XCTAssertEqual(snapshot.headroomSeverity, .nominal)
         XCTAssertEqual(snapshot.temperature, .available(label: "Temp", value: "34", unit: "°C", source: .liveTelemetry))
@@ -371,36 +431,45 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
         XCTAssertEqual(PevLiveActivityMetricRole.battery.accessibilitySortPriority(for: .reduceAcceleration), 0)
     }
 
-    func testDistanceValueConvertsToKilometresWhenSpeedUnitIsMetric() {
-        let telemetry = TelemetrySnapshot(
-            at: MonotonicMilliseconds(1_000),
-            distance: Distance(value: 1_000_000)
-        )
-
+    func testDistanceValueConvertsRecordingDistanceToKilometresWhenSpeedUnitIsMetric() {
         XCTAssertEqual(
-            LiveActivityRideSnapshot.distanceValue(
-                telemetry: telemetry,
-                speedUnit: "km/h",
-                connectionState: .connected
-            ),
-            .available(label: "Distance", value: "1.0", unit: "km", source: .liveTelemetry)
-        )
+            LiveActivityRideSnapshot.distanceValue(rideDistance: Distance(value: 1_000_000), speedUnit: "km/h"),
+            .available(label: "Distance", value: "1.0", unit: "km", source: .appLifecycle))
     }
 
     func testDistanceValueTreatsKmhAsMetric() {
-        let telemetry = TelemetrySnapshot(
-            at: MonotonicMilliseconds(1_000),
-            distance: Distance(value: 1_000_000)
-        )
-
         XCTAssertEqual(
-            LiveActivityRideSnapshot.distanceValue(
-                telemetry: telemetry,
-                speedUnit: "kmh",
-                connectionState: .connected
-            ),
-            .available(label: "Distance", value: "1.0", unit: "km", source: .liveTelemetry)
-        )
+            LiveActivityRideSnapshot.distanceValue(rideDistance: Distance(value: 1_000_000), speedUnit: "kmh"),
+            .available(label: "Distance", value: "1.0", unit: "km", source: .appLifecycle))
+    }
+
+    func testWheelOdometerDoesNotPopulateRecordingDistanceOrDuration() {
+        let ride = liveRideState(
+            speed: 0,
+            telemetry: TelemetrySnapshot(
+                at: MonotonicMilliseconds(1_000), speed: Speed(value: 0),
+                distance: Distance(value: 1_842_000_000)))
+        let snapshot = LiveActivityRideSnapshot(identity: .device("Falcon"), rideState: ride)
+        XCTAssertEqual(snapshot.distance.state, .unavailable)
+        XCTAssertEqual(snapshot.duration.state, .deferred)
+        XCTAssertFalse(snapshot.metricGridValues.contains { $0.role == .distance || $0.role == .duration })
+    }
+
+    func testRecordingStatisticsOverrideWheelOdometerAndPreserveActualZero() {
+        let ride = liveRideState(
+            speed: 0,
+            telemetry: TelemetrySnapshot(
+                at: MonotonicMilliseconds(1_000), speed: Speed(value: 0),
+                distance: Distance(value: 1_842_000_000)))
+        let snapshot = LiveActivityRideSnapshot(
+            identity: .device("Falcon"), rideState: ride,
+            rideDuration: MonotonicMilliseconds(65_000), rideDistance: Distance(value: 0))
+        XCTAssertEqual(
+            snapshot.duration, .available(label: "Duration", value: "1:05", unit: nil, source: .appLifecycle))
+        XCTAssertEqual(
+            snapshot.distance, .available(label: "Distance", value: "0.0", unit: "mi", source: .appLifecycle))
+        XCTAssertTrue(snapshot.metricGridValues.contains { $0.role == .duration && $0.value == snapshot.duration })
+        XCTAssertTrue(snapshot.metricGridValues.contains { $0.role == .distance && $0.value == snapshot.distance })
     }
 
     func testPartialLiveSnapshotMarksUnownedFieldsDeferred() {

@@ -825,6 +825,8 @@ final class CutoutAppModel {
 
     private func applyRideMapCommand(_ command: LiveRideCommand) async -> Bool {
         guard await liveRide.perform(command) != nil else { return false }
+        lastLiveActivityUpdate = nil
+        syncLiveActivity()
         return true
     }
 
@@ -1467,11 +1469,26 @@ final class CutoutAppModel {
     }
 
     private func currentLiveActivitySnapshot() -> LiveActivityRideSnapshot? {
-        liveActivityIdentity.map {
+        let displayed = latestPlatformDisplayState ?? displayState
+        let recording: MobileRideMapSnapshotDto?
+        if let commandSnapshot = liveRide.snapshot, let displayedSnapshot = displayed.logicalRide,
+            commandSnapshot.revision > displayedSnapshot.revision
+                || (commandSnapshot.revision == displayedSnapshot.revision
+                    && (commandSnapshot.liveActivityStatistics?.durationMilliseconds ?? 0)
+                        > (displayedSnapshot.liveActivityStatistics?.durationMilliseconds ?? 0))
+        {
+            recording = commandSnapshot
+        } else {
+            recording = displayed.logicalRide ?? liveRide.snapshot
+        }
+        let statistics = recording?.liveActivityStatistics
+        return liveActivityIdentity.map {
             LiveActivityRideSnapshot(
                 identity: $0, glyph: liveActivityGlyph,
-                rideState: EucRideScreenState(phase: phase, displayState: latestPlatformDisplayState ?? displayState),
-                now: core.now()
+                rideState: EucRideScreenState(phase: phase, displayState: displayed),
+                now: core.now(),
+                rideDuration: statistics.map { MonotonicMilliseconds($0.durationMilliseconds) },
+                rideDistance: statistics.map { Distance(value: $0.distanceMillimetres) }
             )
         }
     }

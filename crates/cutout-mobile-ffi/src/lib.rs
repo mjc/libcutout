@@ -6769,6 +6769,15 @@ pub struct MobileRideMapCoreSummaryDto {
     pub duration_milliseconds: u64,
 }
 
+/// Recording-scoped statistics for the current logical ride, never the wheel odometer.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileRideMapLiveActivityStatisticsDto {
+    /// Elapsed recording duration, evaluated in Rust's logical clock domain.
+    pub duration_milliseconds: u64,
+    /// Canonical accumulated route distance in millimetres.
+    pub distance_millimetres: u64,
+}
+
 /// Source selected by Rust for a live ride-speed readout.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum MobileRideMapSpeedSourceDto {
@@ -7023,6 +7032,8 @@ pub struct MobileRideMapCoreSnapshotDto {
     pub telemetry_state: MobileRideMapCoreTelemetryStateDto,
     /// Current route summary.
     pub summary: MobileRideMapCoreSummaryDto,
+    /// Statistics for an open logical ride; absent after terminal lifecycle transitions.
+    pub live_activity_statistics: Option<MobileRideMapLiveActivityStatisticsDto>,
     /// Fresh live speed selected by Rust, or none when unavailable.
     pub live_speed: MobileRideMapSpeedDto,
     /// Rust-owned number of admitted route segments.
@@ -7035,6 +7046,10 @@ pub struct MobileRideMapCoreSnapshotDto {
 
 /// Nonblocking result of polling a verified connection admission.
 #[derive(Clone, Debug, PartialEq, uniffi::Enum)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "UniFFI polling returns one bounded owned snapshot without another allocation"
+)]
 pub enum MobileRideMapAdmissionPollDto {
     /// SQLite has not completed the ordered admission transaction.
     Pending,
@@ -7046,6 +7061,10 @@ pub enum MobileRideMapAdmissionPollDto {
 
 /// Nonblocking result of polling a ride lifecycle command.
 #[derive(Clone, Debug, PartialEq, uniffi::Enum)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "UniFFI polling returns one bounded owned snapshot without another allocation"
+)]
 pub enum MobileRideMapLifecyclePollDto {
     /// SQLite has not completed the ordered lifecycle transition.
     Pending,
@@ -7057,6 +7076,10 @@ pub enum MobileRideMapLifecyclePollDto {
 
 /// Nonblocking result of polling a durable ride-map restore.
 #[derive(Clone, Debug, PartialEq, uniffi::Enum)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "UniFFI polling returns one bounded owned snapshot without another allocation"
+)]
 pub enum MobileRideMapRestorePollDto {
     /// The durable startup state is still being loaded or recovered.
     Pending,
@@ -12214,6 +12237,15 @@ impl MobileRideMapCoreInner {
                 )
                 .into(),
             summary: self.summary(),
+            live_activity_statistics: match state {
+                MobileRideLifecycleStateDto::Active | MobileRideLifecycleStateDto::Paused => {
+                    Some(MobileRideMapLiveActivityStatisticsDto {
+                        duration_milliseconds: self.recorder.duration_milliseconds().as_u64(),
+                        distance_millimetres: self.recorder.summary().distance_millimetres(),
+                    })
+                }
+                _ => None,
+            },
             live_speed: self
                 .live_speed(
                     state,
@@ -12252,6 +12284,9 @@ impl MobileRideMapCoreInner {
             .recorder
             .duration_milliseconds_at(ride_maps::MonotonicMilliseconds::new(at_milliseconds))
             .as_u64();
+        if let Some(statistics) = &mut snapshot.live_activity_statistics {
+            statistics.duration_milliseconds = snapshot.summary.duration_milliseconds;
+        }
         snapshot.live_speed = self.live_speed(state, at_milliseconds).unwrap_or_default();
         snapshot
     }
@@ -28554,6 +28589,51 @@ mod tests {
 
         database.shutdown().expect("database shuts down");
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn live_activity_statistics_use_logical_ride_duration_and_route_distance() {
+        let state = MobileRideMapCore::new();
+        state.start_gps_only(1_000).expect("ride starts");
+        state
+            .ingest_location(1_001, 1_700_000_001_001, 40.0, -105.0, 3.0)
+            .expect("first point");
+        state
+            .ingest_location(2_001, 1_700_000_002_001, 40.0001, -105.0, 3.0)
+            .expect("second point");
+        let snapshot = state.current_snapshot(4_000).expect("open ride");
+        let statistics = snapshot
+            .live_activity_statistics
+            .expect("open ride statistics");
+        assert_eq!(statistics.duration_milliseconds, 3_000);
+        assert!(statistics.distance_millimetres > 0);
+        assert_eq!(
+            statistics.distance_millimetres,
+            state
+                .inner
+                .lock()
+                .unwrap()
+                .recorder
+                .summary()
+                .distance_millimetres()
+        );
+        let paused = state.pause_at(4_500).expect("ride pauses");
+        assert_eq!(
+            paused
+                .live_activity_statistics
+                .expect("paused statistics")
+                .duration_milliseconds,
+            3_500
+        );
+        let stopped = state.stop_at(5_000).expect("ride stops");
+        assert_eq!(stopped.live_activity_statistics, None);
+        assert_eq!(
+            state
+                .current_snapshot(6_000)
+                .unwrap()
+                .live_activity_statistics,
+            None
+        );
     }
 
     #[test]

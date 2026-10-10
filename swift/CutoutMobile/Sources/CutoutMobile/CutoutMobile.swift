@@ -5,6 +5,7 @@ public typealias Angle = CutoutMobileFFI.Angle
 public typealias BatteryCurrent = CutoutMobileFFI.BatteryCurrent
 public typealias BatteryLevel = CutoutMobileFFI.BatteryLevel
 public typealias Distance = CutoutMobileFFI.Distance
+public typealias MobileRideMapLiveActivityStatisticsDto = CutoutMobileFFI.MobileRideMapLiveActivityStatisticsDto
 public typealias DutyCycle = CutoutMobileFFI.DutyCycle
 public typealias MobilePhoneLocationSnapshotDto = CutoutMobileFFI.MobilePhoneLocationSnapshotDto
 public typealias PhaseCurrent = CutoutMobileFFI.PhaseCurrent
@@ -3639,17 +3640,27 @@ public struct RideDisplayState: Equatable, Hashable, Sendable {
     public let telemetry: TelemetrySnapshot?
     public let notificationCount: UInt64
     public let lastUpdate: MonotonicMilliseconds?
+    /// Current Rust recording facts; contains no route geometry or storage rows.
+    public let logicalRide: MobileRideMapSnapshotDto?
 
     public init(
         speed: SpeedReadout = SpeedReadout(millimetersPerSecond: nil),
         telemetry: TelemetrySnapshot? = nil,
         notificationCount: UInt64 = 0,
-        lastUpdate: MonotonicMilliseconds? = nil
+        lastUpdate: MonotonicMilliseconds? = nil,
+        logicalRide: MobileRideMapSnapshotDto? = nil
     ) {
         self.speed = speed
         self.telemetry = telemetry
         self.notificationCount = notificationCount
         self.lastUpdate = lastUpdate
+        self.logicalRide = logicalRide
+    }
+
+    func withLogicalRide(_ snapshot: MobileRideMapSnapshotDto?) -> Self {
+        Self(
+            speed: speed, telemetry: telemetry, notificationCount: notificationCount,
+            lastUpdate: lastUpdate, logicalRide: snapshot)
     }
 
     public var debugRows: [SessionDebugRow] {
@@ -3707,7 +3718,8 @@ public struct RideDisplayState: Equatable, Hashable, Sendable {
             speed: nextSpeed,
             telemetry: snapshot ?? telemetry,
             notificationCount: notificationCount,
-            lastUpdate: receivedAt
+            lastUpdate: receivedAt,
+            logicalRide: logicalRide
         )
     }
 

@@ -454,6 +454,7 @@ public final class CutoutSessionCore: NSObject {
         }
     }
     private let presentationActive = Mutex(true)
+    private let logicalRideSnapshot = Mutex<MobileRideMapSnapshotDto?>(nil)
     public private(set) var phase = SessionConnectionPhase.starting
     private var publishedPhaseGeneration: UInt64?
     public var records: [String] { diagnosticLog.values }
@@ -606,7 +607,8 @@ public final class CutoutSessionCore: NSObject {
             clock: clock,
             backgroundIntervalMilliseconds: rustSessionState.rideSessionSnapshot().staleAfterMs / 2,
             onDisplayStateChange: { [weak self] value in
-                self?.onDisplayStateChange?(value)
+                guard let self else { return }
+                self.onDisplayStateChange?(self.displayStateWithLogicalRide(value))
             },
             onRecord: { [weak self] message in
                 self?.onRecord?(message)
@@ -657,7 +659,9 @@ public final class CutoutSessionCore: NSObject {
                 clock: clock,
                 wallClock: wallClock,
                 publishSnapshot: { snapshot in
-                    reference.value?.rideMapSnapshotPublisher.submit(snapshot)
+                    guard let core = reference.value else { return }
+                    core.cacheLogicalRideSnapshot(snapshot)
+                    core.rideMapSnapshotPublisher.submit(snapshot)
                 },
                 publishDecisions: { batch in
                     reference.value?.submitRideMapDecisions(batch)
@@ -2477,9 +2481,28 @@ public final class CutoutSessionCore: NSObject {
         )
     }
 
+    func displayStateWithLogicalRide(_ state: RideDisplayState) -> RideDisplayState {
+        state.withLogicalRide(logicalRideSnapshot.withLock { $0 })
+    }
+
+    func cacheLogicalRideSnapshot(_ snapshot: MobileRideMapSnapshotDto) {
+        logicalRideSnapshot.withLock { current in
+            if let current {
+                guard snapshot.revision >= current.revision else { return }
+                if snapshot.revision == current.revision {
+                    let incomingDuration = snapshot.liveActivityStatistics?.durationMilliseconds ?? 0
+                    let currentDuration = current.liveActivityStatistics?.durationMilliseconds ?? 0
+                    guard incomingDuration >= currentDuration else { return }
+                }
+            }
+            current = snapshot
+        }
+    }
+
     private func submitRideMapDecisions(_ batch: RideMapDecisionBatch) {
         var presentation: [MobileRideMapOutcomeDto] = []
         for outcome in batch.outcomes {
+            cacheLogicalRideSnapshot(outcome.snapshot)
             switch outcome.decision {
             case .storageError(let message):
                 rideMapErrorPublisher.submit(
@@ -4068,33 +4091,45 @@ extension CutoutSessionCore {
         atMs: UInt64,
         musicHistoryPolicy: MobileMusicHistoryPolicyDto
     ) async throws -> MobileRideMapSnapshotDto {
-        try await rideMapRecorder.startGpsOnly(atMs: atMs, musicHistoryPolicy: musicHistoryPolicy)
+        let snapshot = try await rideMapRecorder.startGpsOnly(atMs: atMs, musicHistoryPolicy: musicHistoryPolicy)
+        cacheLogicalRideSnapshot(snapshot)
+        return snapshot
     }
 
     public func pauseRideMap(expected: MobileRideMapCommandTokenDto, atMs: UInt64) async throws
         -> MobileRideMapSnapshotDto
     {
-        try await rideMapRecorder.pause(expected: expected, atMs: atMs)
+        let snapshot = try await rideMapRecorder.pause(expected: expected, atMs: atMs)
+        cacheLogicalRideSnapshot(snapshot)
+        return snapshot
     }
 
     public func resumeRideMap(expected: MobileRideMapCommandTokenDto, atMs: UInt64) async throws
         -> MobileRideMapSnapshotDto
     {
-        try await rideMapRecorder.resume(expected: expected, atMs: atMs)
+        let snapshot = try await rideMapRecorder.resume(expected: expected, atMs: atMs)
+        cacheLogicalRideSnapshot(snapshot)
+        return snapshot
     }
 
     public func stopRideMap(expected: MobileRideMapCommandTokenDto, atMs: UInt64) async throws
         -> MobileRideMapSnapshotDto
     {
-        try await rideMapRecorder.stop(expected: expected, atMs: atMs)
+        let snapshot = try await rideMapRecorder.stop(expected: expected, atMs: atMs)
+        cacheLogicalRideSnapshot(snapshot)
+        return snapshot
     }
 
     public func saveRideMap(expected: MobileRideMapCommandTokenDto) async throws -> MobileRideMapSnapshotDto {
-        try await rideMapRecorder.save(expected: expected)
+        let snapshot = try await rideMapRecorder.save(expected: expected)
+        cacheLogicalRideSnapshot(snapshot)
+        return snapshot
     }
 
     public func discardRideMap(expected: MobileRideMapCommandTokenDto) async throws -> MobileRideMapSnapshotDto {
-        try await rideMapRecorder.discard(expected: expected)
+        let snapshot = try await rideMapRecorder.discard(expected: expected)
+        cacheLogicalRideSnapshot(snapshot)
+        return snapshot
     }
 
     /// Waits for ride-map writes already queued in Rust, leaving the active ride unchanged.

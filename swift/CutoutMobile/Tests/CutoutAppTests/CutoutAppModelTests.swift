@@ -2821,6 +2821,77 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testLiveActivityUsesCanonicalLogicalRideStatisticsWhileBackgrounded() async {
+        let suiteName = "CutoutAppModelTests.activityStatistics.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let fixture = CutoutUITestSessionFixture.vesc
+        let driver = SessionDriverSpy(rows: [fixture.candidate.pickerRow])
+        // This test supplies canonical recording receipts through the display envelope.
+        // A restored ride from the shared database must not compete with those receipts.
+        driver.setRideMapUnavailable(true)
+        let manager = FailingLiveActivityManager(error: nil)
+        let model = CutoutAppModel(
+            core: driver, selectedDeviceStore: DevicePickerSelectionStore(defaults: defaults),
+            rideSessionMarkerStore: RideSessionMarkerStore(defaults: defaults), liveActivityManager: manager)
+        driver.nowValue = 1_000
+        model.start()
+        func display(at: UInt64, revision: UInt64, statistics: MobileRideMapLiveActivityStatisticsDto?)
+            -> RideDisplayState
+        {
+            RideDisplayState(
+                telemetry: TelemetrySnapshot(
+                    at: MonotonicMilliseconds(at), speed: Speed(value: 0),
+                    distance: Distance(value: 1_842_000_000)),
+                lastUpdate: MonotonicMilliseconds(at),
+                logicalRide: MobileRideMapSnapshotDto(
+                    rideID: "logical-ride", revision: revision, state: statistics == nil ? .stopped : .active,
+                    summary: MobileRideMapSummaryDto(pointCount: 2, distanceMeters: 161, durationMilliseconds: 65_000),
+                    liveActivityStatistics: statistics, segmentCount: 1,
+                    associatedVehicle: fixture.candidate.platformIdentifier))
+        }
+        driver.onDisplayStateChange?(
+            display(
+                at: 1_000, revision: 1,
+                statistics: MobileRideMapLiveActivityStatisticsDto(
+                    durationMilliseconds: 65_000, distanceMillimetres: 161_000)))
+        // Pairing starts the activity during service discovery, before the live phase.
+        // Admit the recording receipt first so the actual start contains canonical statistics.
+        XCTAssertTrue(model.pair(platformIdentifier: fixture.candidate.platformIdentifier))
+        driver.emitPhase(.subscribing)
+        driver.emitPhase(.live)
+        await Self.waitUntil("canonical ride activity statistics") {
+            await manager.lastStartedSnapshot?.duration.value == "1:05"
+        }
+        let started = await manager.lastStartedSnapshot
+        XCTAssertEqual(started?.duration.source, .appLifecycle)
+        XCTAssertEqual(started?.distance.value, "0.1")
+        XCTAssertEqual(started?.distance.source, .appLifecycle)
+
+        model.appDidEnterBackground()
+        driver.nowValue = 2_000
+        driver.onDisplayStateChange?(
+            display(
+                at: 2_000, revision: 2,
+                statistics: MobileRideMapLiveActivityStatisticsDto(
+                    durationMilliseconds: 104_000, distanceMillimetres: 332_000)))
+        await Self.waitUntil("locked canonical ride statistics") {
+            await manager.lastUpdatedSnapshot?.duration.value == "1:44"
+        }
+        let background = await manager.lastUpdatedSnapshot
+        XCTAssertEqual(background?.distance.value, "0.2")
+        XCTAssertNil(model.liveRide.snapshot, "Activity statistics must not require foreground Map presentation")
+
+        driver.nowValue = 3_000
+        driver.onDisplayStateChange?(display(at: 3_000, revision: 3, statistics: nil))
+        await Self.waitUntil("no logical ride statistics") {
+            await manager.lastUpdatedSnapshot?.distance.state == .unavailable
+        }
+        let terminal = await manager.lastUpdatedSnapshot
+        XCTAssertFalse(terminal?.metricGridValues.contains { $0.role == .duration || $0.role == .distance } ?? true)
+    }
+
+    @MainActor
     func testTransientReconnectKeepsTheLiveActivityStaleAndReusesItsIdentity() async {
         let suiteName = "CutoutAppModelTests.transientReconnect.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
