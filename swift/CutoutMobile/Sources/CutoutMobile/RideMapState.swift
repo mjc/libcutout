@@ -1254,7 +1254,11 @@ public final class MobileRideMapState: @unchecked Sendable {
                 }
             }
         }
-        try await completion.value
+        do {
+            try await completion.value
+        } catch {
+            throw map(error)
+        }
     }
 
     public func retireClosedMusicHistoryAsync(

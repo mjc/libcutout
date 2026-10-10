@@ -1,5 +1,6 @@
 import CutoutMobileFFI
 import Foundation
+import SQLite3
 import XCTest
 
 @testable import CutoutMobile
@@ -10,6 +11,35 @@ private let vescReply: [UInt8] = [
 ]
 
 final class RideMapStateTests: XCTestCase {
+    func testAsyncHistoryWriteMapsTerminalStorageErrorAndPreservesPolicy() async throws {
+        let state = MobileRideMapState()
+        let started = try await state.startGpsOnlyCommand(atMs: 1_000, musicHistoryPolicy: .opaqueItem)
+        let rideID = try XCTUnwrap(started.rideID)
+        var connection: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(MobileRideMapState.debugDatabasePath, &connection), SQLITE_OK)
+        defer {
+            sqlite3_exec(connection, "DROP TRIGGER reject_history_update", nil, nil, nil)
+            sqlite3_close(connection)
+            _ = try? state.stop(atMs: 2_000)
+            _ = try? state.discard()
+        }
+        XCTAssertEqual(
+            sqlite3_exec(
+                connection,
+                "CREATE TRIGGER reject_history_update BEFORE UPDATE ON ride_music_history WHEN NEW.ride_id = '\(rideID)' BEGIN SELECT RAISE(ABORT, 'history write denied'); END",
+                nil, nil, nil), SQLITE_OK)
+
+        do {
+            try await state.setMusicHistoryPolicyAsync(.humanReadable)
+            XCTFail("The rejected durable write must throw")
+        } catch let MobileRideMapError.storageError(message) {
+            XCTAssertEqual(message, "ride database storage failure")
+        } catch {
+            XCTFail("Expected the mapped storage error, received \(error)")
+        }
+        XCTAssertEqual(state.currentMusicHistoryPolicy(), .opaqueItem)
+    }
+
     func testGpsOnlyCommandPublishesSavedMusicPolicyWithCreatedRide() async throws {
         for policy in [MobileMusicHistoryPolicyDto.disabled, .opaqueItem, .humanReadable] {
             let state = MobileRideMapState()
