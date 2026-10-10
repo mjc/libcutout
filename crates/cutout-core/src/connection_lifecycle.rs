@@ -178,10 +178,19 @@ pub struct ConnectionAttemptSnapshot {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ConnectionAttemptLifecycle {
     snapshot: ConnectionAttemptSnapshot,
+    retry_scope: ConnectionRetryScope,
     retry_attempt: u8,
     retry_token: u64,
     failed_attempt: Option<ConnectionAttemptToken>,
     pending_retry: Option<ConnectionRetry>,
+}
+
+/// Initial identification is bounded; a proven wheel remains selected through transport loss.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum ConnectionRetryScope {
+    #[default]
+    InitialIdentification,
+    EstablishedConnection,
 }
 
 impl ConnectionAttemptLifecycle {
@@ -191,6 +200,7 @@ impl ConnectionAttemptLifecycle {
         platform_identifier: String,
         at: MonotonicTimestamp,
     ) -> ConnectionAttemptToken {
+        self.retry_scope = ConnectionRetryScope::InitialIdentification;
         self.retry_attempt = 0;
         self.failed_attempt = None;
         self.pending_retry = None;
@@ -213,6 +223,7 @@ impl ConnectionAttemptLifecycle {
     }
 
     /// Requests the next reconnect using Rust-owned attempt limits and backoff.
+    /// A verified connection keeps recovering until explicitly disconnected or replaced.
     ///
     /// `jitter_permille` is platform-provided entropy in the inclusive range 0..=1000; policy,
     /// retry count, and deadline remain owned here.
@@ -239,7 +250,7 @@ impl ConnectionAttemptLifecycle {
         }
 
         let attempt = self.retry_attempt.saturating_add(1);
-        if attempt > 3 {
+        if attempt > 3 && self.retry_scope == ConnectionRetryScope::InitialIdentification {
             if self.is_current(failed) {
                 self.snapshot.generation = self.snapshot.generation.wrapping_add(1);
                 self.snapshot.revision = self.snapshot.revision.wrapping_add(1);
@@ -265,7 +276,10 @@ impl ConnectionAttemptLifecycle {
         self.retry_token = self.retry_token.wrapping_add(1);
 
         let jitter = u64::from(jitter_permille.min(1_000));
-        let base_ms = 250_u64.saturating_mul(1_u64 << (attempt - 1));
+        // Cap before shifting so a long outage and the saturated attempt counter are safe.
+        // The 25-second base yields a 20–30-second delay across the jitter range.
+        let exponent = attempt.saturating_sub(1).min(7);
+        let base_ms = 250_u64.saturating_mul(1_u64 << exponent).min(25_000);
         let delay_ms = base_ms
             .saturating_mul(800_000 + 400 * jitter)
             .saturating_add(500_000)
@@ -356,6 +370,7 @@ impl ConnectionAttemptLifecycle {
             ConnectionReadiness::RecordOnly
         };
         if verified {
+            self.retry_scope = ConnectionRetryScope::EstablishedConnection;
             self.retry_attempt = 0;
             self.failed_attempt = None;
             self.pending_retry = None;
@@ -375,6 +390,7 @@ impl ConnectionAttemptLifecycle {
 
     /// Invalidates the current attempt before native cancellation or replacement.
     pub fn disconnect(&mut self) {
+        self.retry_scope = ConnectionRetryScope::InitialIdentification;
         self.retry_attempt = 0;
         self.failed_attempt = None;
         self.pending_retry = None;
@@ -409,7 +425,7 @@ impl ConnectionAttemptLifecycle {
         true
     }
 
-    /// Keeps failed detection recordable; failures after verification are terminal.
+    /// Keeps failed detection recordable and retires a lost verified transport for recovery.
     pub fn transport_failed(&mut self, token: &ConnectionAttemptToken) -> bool {
         if !self.is_current(token) {
             return false;
@@ -420,6 +436,7 @@ impl ConnectionAttemptLifecycle {
         if self.snapshot.readiness == ConnectionReadiness::Verified {
             let failed = token.clone();
             self.disconnect();
+            self.retry_scope = ConnectionRetryScope::EstablishedConnection;
             self.failed_attempt = Some(failed);
             self.snapshot.readiness = ConnectionReadiness::Failed;
             return true;
@@ -662,6 +679,144 @@ mod tests {
         assert_eq!(
             lifecycle.snapshot().transport,
             ConnectionTransportState::Disconnected
+        );
+    }
+
+    fn verified_connection() -> (ConnectionAttemptLifecycle, ConnectionAttemptToken) {
+        let mut lifecycle = ConnectionAttemptLifecycle::default();
+        let attempt = lifecycle.begin("Falcon".into(), MonotonicTimestamp::new(0));
+        assert!(lifecycle.connected(&attempt));
+        assert!(lifecycle.finish_detection(&attempt, true));
+        (lifecycle, attempt)
+    }
+
+    #[test]
+    fn verified_recovery_survives_minutes_of_failed_attempts_and_protocol_timeouts() {
+        let (mut lifecycle, mut attempt) = verified_connection();
+        assert!(lifecycle.link_down(&attempt));
+        for number in 1..=16_u64 {
+            let now = MonotonicTimestamp::new(number * 60_000);
+            let ConnectionRetryDecision::Scheduled(retry) =
+                lifecycle.request_retry(&attempt, now, 500)
+            else {
+                panic!("verified wheel recovery must remain scheduled until cancellation");
+            };
+            assert_eq!(retry.platform_identifier(), "Falcon");
+            assert!(retry.deadline().get() > now.get());
+            assert!(retry.deadline().get() - now.get() <= 30_000);
+            assert!(lifecycle.admit_retry(retry.token(), now).is_none());
+            let previous = attempt;
+            attempt = lifecycle
+                .admit_retry(retry.token(), retry.deadline())
+                .expect("due retry");
+            assert!(!lifecycle.is_current(&previous));
+            assert!(lifecycle.connected(&attempt));
+            assert!(lifecycle.expire(
+                &attempt,
+                MonotonicTimestamp::new(retry.deadline().get() + 15_000)
+            ));
+            assert_eq!(
+                lifecycle.snapshot().readiness,
+                ConnectionReadiness::RecordOnly
+            );
+        }
+        let ConnectionRetryDecision::Scheduled(retry) =
+            lifecycle.request_retry(&attempt, MonotonicTimestamp::new(1_100_000), 500)
+        else {
+            panic!("returning wheel must still have a scheduled recovery");
+        };
+        attempt = lifecycle
+            .admit_retry(retry.token(), retry.deadline())
+            .expect("due retry");
+        assert!(lifecycle.connected(&attempt));
+        assert!(lifecycle.finish_detection(&attempt, true));
+        assert!(lifecycle.is_verified(&attempt));
+        assert!(lifecycle.link_down(&attempt));
+        let ConnectionRetryDecision::Scheduled(retry) =
+            lifecycle.request_retry(&attempt, MonotonicTimestamp::new(1_200_000), 500)
+        else {
+            panic!("a restored verified wheel must retain recovery ownership");
+        };
+        assert_eq!(retry.attempt(), 1);
+    }
+
+    #[test]
+    fn verified_recovery_backoff_and_counter_remain_bounded_after_hundreds_of_failures() {
+        let (mut lifecycle, mut attempt) = verified_connection();
+        assert!(lifecycle.link_down(&attempt));
+        for number in 1..=300_u64 {
+            let now = MonotonicTimestamp::new(number * 60_000);
+            let jitter = if number % 2 == 0 { 0 } else { 1_000 };
+            let ConnectionRetryDecision::Scheduled(retry) =
+                lifecycle.request_retry(&attempt, now, jitter)
+            else {
+                panic!("established recovery cannot exhaust through counter saturation");
+            };
+            let delay = retry.deadline().get() - now.get();
+            assert!(delay > 0 && delay <= 30_000);
+            if number >= 8 {
+                assert!(delay >= 20_000);
+            }
+            attempt = lifecycle
+                .admit_retry(retry.token(), retry.deadline())
+                .expect("due retry");
+            assert!(lifecycle.transport_failed(&attempt));
+        }
+    }
+
+    #[test]
+    fn explicit_disconnect_retires_established_recovery_timer_and_callbacks() {
+        let (mut lifecycle, attempt) = verified_connection();
+        assert!(lifecycle.link_down(&attempt));
+        let ConnectionRetryDecision::Scheduled(retry) =
+            lifecycle.request_retry(&attempt, MonotonicTimestamp::new(100), 500)
+        else {
+            panic!("verified recovery");
+        };
+        lifecycle.disconnect();
+        assert!(
+            lifecycle
+                .admit_retry(retry.token(), retry.deadline())
+                .is_none()
+        );
+        assert!(!lifecycle.connected(&attempt));
+        assert!(!lifecycle.finish_detection(&attempt, true));
+        assert_eq!(
+            lifecycle.request_retry(&attempt, retry.deadline(), 500),
+            ConnectionRetryDecision::Rejected
+        );
+    }
+
+    #[test]
+    fn replacing_verified_recovery_restores_initial_retry_limit() {
+        let (mut lifecycle, previous) = verified_connection();
+        assert!(lifecycle.link_down(&previous));
+        let ConnectionRetryDecision::Scheduled(old_retry) =
+            lifecycle.request_retry(&previous, MonotonicTimestamp::new(100), 500)
+        else {
+            panic!("verified recovery");
+        };
+        let mut attempt = lifecycle.begin("Replacement".into(), MonotonicTimestamp::new(200));
+        assert!(
+            lifecycle
+                .admit_retry(old_retry.token(), old_retry.deadline())
+                .is_none()
+        );
+        assert!(!lifecycle.connected(&previous));
+        for number in 1..=3_u64 {
+            let ConnectionRetryDecision::Scheduled(retry) =
+                lifecycle.request_retry(&attempt, MonotonicTimestamp::new(number * 1_000), 500)
+            else {
+                panic!("initial replacement retry");
+            };
+            attempt = lifecycle
+                .admit_retry(retry.token(), retry.deadline())
+                .expect("due initial retry");
+            assert!(lifecycle.transport_failed(&attempt));
+        }
+        assert_eq!(
+            lifecycle.request_retry(&attempt, MonotonicTimestamp::new(10_000), 500),
+            ConnectionRetryDecision::Exhausted { attempt: 4 }
         );
     }
 }

@@ -1874,6 +1874,55 @@ final class CutoutSessionCoreTests: XCTestCase {
     }
 
     @MainActor
+    func testEstablishedRecoveryIdentificationTimeoutsNeverBecomeManualCaptureOnly() throws {
+        let scheduler = RecordingReconnectScheduler()
+        let now = Mutex(MonotonicMilliseconds(1_000))
+        let capture = CaptureRecorderSpy()
+        capture.hasWriter = false
+        capture.currentGeneration = nil
+        let core = CutoutSessionCore(
+            clock: MonotonicClock { now.withLock { $0 } },
+            testScript: CutoutSessionTestScript(
+                candidate: scriptedAeroCandidate, telemetry: nil, connectionDelayMilliseconds: 60_000
+            ),
+            reconnectScheduler: scheduler, reconnectJitter: { 0 }, captureRecorder: capture
+        )
+        defer { core.disconnectAndScan() }
+        core.start()
+        XCTAssertTrue(core.pair(platformIdentifier: scriptedAeroCandidate.platformIdentifier))
+        let state = core.rideSessionStateHandle
+        let verified = try XCTUnwrap(core.connectionSnapshot.token)
+        var frame = Data(repeating: 0, count: 42)
+        frame.replaceSubrange(0..<4, with: [0xdc, 0x5a, 0x5c, 38])
+        frame.replaceSubrange(28..<30, with: [0xa7, 0xf8])
+        _ = state.connectionLinkEstablished(token: verified)
+        _ = state.observeConnectionNotification(token: verified, bytes: frame)
+        XCTAssertEqual(
+            state.resolveDeviceSession(token: verified, identificationComplete: true, nowMs: 1_001).connection
+                .readiness, .verified)
+        var reconnects = 0
+        for index in 0..<12 {
+            core.handleTransportTermination(
+                platformIdentifier: scriptedAeroCandidate.platformIdentifier, error: nil,
+                reconnect: { reconnects += 1 }
+            )
+            now.withLock { $0 = MonotonicMilliseconds(UInt64(index + 1) * 61_000) }
+            scheduler.runAll()
+            XCTAssertEqual(reconnects, index + 1)
+            XCTAssertTrue(state.shouldRetryIdentification())
+            let retry = try XCTUnwrap(core.connectionSnapshot.token)
+            now.withLock { $0 = MonotonicMilliseconds(UInt64(index + 1) * 61_000 + 15_001) }
+            XCTAssertEqual(
+                state.expireConnectionAttempt(token: retry, nowMs: now.withLock { $0.rawValue }).readiness, .recordOnly)
+            core.recordUnresolvedProtocolDetection(.timedOut, on: nil)
+            XCTAssertEqual(core.phase, .discoveringServices)
+            XCTAssertFalse(
+                core.isRecordOnlyConnection,
+                "An established recovery timeout cannot enter the manual capture-only branch")
+        }
+    }
+
+    @MainActor
     func testTransportTerminationPreservesVerifiedWheelIdentityAcrossRetries() {
         let scheduler = RecordingReconnectScheduler()
         let now = Mutex(MonotonicMilliseconds(1_000))
