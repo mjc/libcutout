@@ -75,6 +75,7 @@ private final class CaptureRecorderSpy: CutoutSessionCaptureRecording {
 
     private(set) var notificationReceipts: [MonotonicMilliseconds] = []
     private(set) var notificationEvidence: [MobileCaptureNotificationEvidenceDto] = []
+    private(set) var resolvedIdentities: [MobileResolvedIdentityDto] = []
 
     func recordNotification(
         characteristic _: BluetoothUuid,
@@ -104,10 +105,13 @@ private final class CaptureRecorderSpy: CutoutSessionCaptureRecording {
     func updateMusicPolicy(_: MobileMusicHistoryPolicyDto) -> MobileCaptureWriteOutcomeDto { .accepted }
 
     func setResolvedIdentity(
-        _: MobileResolvedIdentityDto,
+        _ identity: MobileResolvedIdentityDto,
         evidence _: String?,
         detail _: String?
-    ) -> MobileCaptureWriteOutcomeDto { .accepted }
+    ) -> MobileCaptureWriteOutcomeDto {
+        resolvedIdentities.append(identity)
+        return .accepted
+    }
 
     func addGattFingerprint(_: MobileGattFingerprintDto) -> MobileCaptureWriteOutcomeDto { .accepted }
 
@@ -3949,6 +3953,135 @@ final class CutoutSessionCoreTests: XCTestCase {
 
     func testPevcapIdentityDoesNotUseProvisionalSelectedModel() {
         XCTAssertNil(captureResolvedIdentity(protocolIdentityCandidate: nil))
+    }
+
+    @MainActor
+    func testCaptureIdentityRequiresFreshAttemptEvidenceAndRefreshesAnEqualCandidate() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let identifier = "fresh-capture-falcon"
+        let candidate = DevicePickerDiscoveryCandidate(
+            platformIdentifier: identifier, displayName: "Falcon", productCategory: "EUC", evidence: "fixture",
+            detail: "fixture", support: .supported(connectionRoute: .electricUnicycle, electricUnicycleModel: .falcon),
+            symbolName: "circle.hexagongrid.circle"
+        )
+        let core = CutoutSessionCore(
+            clock: MonotonicClock { MonotonicMilliseconds(1_000) },
+            testScript: CutoutSessionTestScript(candidate: candidate, telemetry: nil)
+        )
+        core.captureDirectoryForTesting = directory
+        defer { core.disconnectAndScan() }
+        core.observeAdvertisement(
+            CoreBluetoothAdvertisement(
+                peripheralIdentifier: CoreBluetoothPeripheralIdentifier(identifier), localName: "Falcon",
+                advertisedServiceUuids: [.bluetooth16(0xffe0)]
+            ))
+        let completed = (0..<3).map { expectation(description: "capture segment \($0) durably closed") }
+        var files: [URL] = []
+        core.onCaptureEvent = { event in
+            if case .finished(_, let url) = event {
+                let index = files.count
+                files.append(url)
+                if index < completed.count { completed[index].fulfill() }
+            } else if case .failed = event {
+                XCTFail("Capture writer must preserve every segment")
+            }
+        }
+        let state = core.rideSessionStateHandle
+        let channel = BluetoothUuid.bluetooth16(0xffe1)
+        let frame = Data([
+            0x55, 0xaa, 0x17, 0x75, 0x05, 0x38, 0x00, 0x76,
+            0x02, 0xee, 0xfb, 0x64, 0xf4, 0x94, 0x14, 0x81,
+            0x00, 0x09, 0x00, 0x18, 0x5a, 0x5a, 0x5a, 0x5a,
+        ])
+        let first = try XCTUnwrap(state.beginConnectionAttempt(platformIdentifier: identifier, nowMs: 0).token)
+        _ = state.connectionLinkEstablished(token: first)
+        XCTAssertTrue(core.recordOnly(platformIdentifier: identifier))
+        _ = state.observeConnectionNotification(token: first, bytes: frame)
+        core.observeDetectionProbeWrite(channel: channel, bytes: Data("N".utf8))
+        core.observeDetectionNotification(channel: channel, bytes: Data("NAME=Falcon".utf8))
+        XCTAssertEqual(
+            state.resolveDeviceSession(token: first, identificationComplete: true, nowMs: 1).connection.readiness,
+            .verified)
+        let remembered = try XCTUnwrap(core.protocolIdentityCandidate)
+        core.finishCaptureForTesting()
+        await fulfillment(of: [completed[0]], timeout: 3)
+        let firstBytes = try Data(contentsOf: files[0])
+        _ = state.connectionLinkDown(token: first)
+        core.handleTransportTermination(platformIdentifier: identifier, error: nil, reconnect: {})
+
+        _ = state.beginConnectionAttempt(platformIdentifier: identifier, nowMs: 2)
+        XCTAssertTrue(core.recordOnly(platformIdentifier: identifier))
+        XCTAssertEqual(core.protocolIdentityCandidate, remembered, "The picker retains remembered identity")
+        core.finishCaptureForTesting()
+        await fulfillment(of: [completed[1]], timeout: 3)
+
+        let third = try XCTUnwrap(state.beginConnectionAttempt(platformIdentifier: identifier, nowMs: 3).token)
+        _ = state.connectionLinkEstablished(token: third)
+        XCTAssertTrue(core.recordOnly(platformIdentifier: identifier))
+        _ = state.observeConnectionNotification(token: third, bytes: frame)
+        core.observeDetectionProbeWrite(channel: channel, bytes: Data("N".utf8))
+        core.observeDetectionNotification(channel: channel, bytes: Data("NAME=Falcon".utf8))
+        XCTAssertEqual(
+            core.protocolIdentityCandidate, remembered, "Equal UI identity still carries fresh capture proof")
+        core.finishCaptureForTesting()
+        await fulfillment(of: [completed[2]], timeout: 3)
+
+        func header(_ file: URL) throws -> [String: Any] {
+            let line = try XCTUnwrap(String(contentsOf: file, encoding: .utf8).split(separator: "\n").first)
+            let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any])
+            return try XCTUnwrap(object["header"] as? [String: Any])
+        }
+        let firstHeader = try header(files[0])
+        let emptyHeader = try header(files[1])
+        let freshHeader = try header(files[2])
+        let firstIdentity = try XCTUnwrap(firstHeader["resolved_identity"] as? [String: Any])
+        let firstModel = try XCTUnwrap(firstIdentity["model"] as? [String: Any])
+        XCTAssertEqual(firstModel["value"] as? String, "Begode Falcon")
+        XCTAssertEqual(firstModel["verification"] as? String, "HardwareVerified")
+        XCTAssertTrue(
+            emptyHeader["resolved_identity"] is NSNull, "No-byte reconnect cannot claim previous hardware proof")
+        XCTAssertFalse((emptyHeader["annotations"] as? [String] ?? []).contains { $0.hasPrefix("resolved_") })
+        XCTAssertEqual(
+            freshHeader["resolved_identity"] as? NSDictionary, firstHeader["resolved_identity"] as? NSDictionary)
+        XCTAssertTrue((freshHeader["annotations"] as? [String] ?? []).contains { $0.hasPrefix("resolved_evidence=") })
+        XCTAssertEqual(try Data(contentsOf: files[0]), firstBytes, "A later attempt cannot rewrite the closed segment")
+    }
+
+    func testEqualFreshIdentityRefreshesCaptureWithoutRepublishingPickerCandidate() throws {
+        let capture = CaptureRecorderSpy()
+        let core = CutoutSessionCore(clock: MonotonicClock(), captureRecorder: capture)
+        let channel = BluetoothUuid.bluetooth16(0xffe1)
+        core.observeAdvertisement(
+            CoreBluetoothAdvertisement(
+                peripheralIdentifier: CoreBluetoothPeripheralIdentifier("same-falcon-proof"), localName: "Falcon",
+                advertisedServiceUuids: [.bluetooth16(0xffe0)]
+            ))
+        let state = core.rideSessionStateHandle
+        let token = try XCTUnwrap(state.beginConnectionAttempt(platformIdentifier: "same-falcon-proof", nowMs: 0).token)
+        _ = state.connectionLinkEstablished(token: token)
+        var publications = 0
+        core.onProtocolIdentityCandidateChange = { _ in publications += 1 }
+        core.observeDetectionProbeWrite(channel: channel, bytes: Data("N".utf8))
+        core.observeDetectionNotification(channel: channel, bytes: Data("NAME=Falcon".utf8))
+        let first = try XCTUnwrap(capture.resolvedIdentities.last)
+        let count = capture.resolvedIdentities.count
+        let publicationCount = publications
+        let fresh = try XCTUnwrap(state.beginConnectionAttempt(platformIdentifier: "same-falcon-proof", nowMs: 1).token)
+        _ = state.connectionLinkEstablished(token: fresh)
+        core.observeDetectionProbeWrite(channel: channel, bytes: Data("N".utf8))
+        core.observeDetectionNotification(channel: channel, bytes: Data("NAME=Falcon".utf8))
+        XCTAssertEqual(
+            capture.resolvedIdentities.count, count + 1,
+            "Fresh proof belongs to the capture even when the picker row is unchanged")
+        XCTAssertEqual(capture.resolvedIdentities.last, first)
+        XCTAssertEqual(publications, publicationCount)
+        let refreshedCount = capture.resolvedIdentities.count
+        core.observeDetectionNotification(channel: channel, bytes: Data("NAME=Falcon".utf8))
+        XCTAssertEqual(
+            capture.resolvedIdentities.count, refreshedCount,
+            "An unchanged proof on the same attempt adds no writer work")
     }
 
     func testPevcapIdentityUsesProtocolConfirmedCandidate() {

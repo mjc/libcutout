@@ -475,6 +475,11 @@ public final class CutoutSessionCore: NSObject {
     @MainActor private var lastLocationAcquisition: MobileRideMapLocationAcquisitionDto?
     @MainActor private var rideMapStorageStatus: (error: MobileRideMapError?, isReady: Bool) = (nil, false)
     private var storedProtocolIdentityCandidate: DevicePickerDiscoveryCandidate?
+    private struct CaptureProtocolIdentityProof: Equatable {
+        let token: ConnectionAttemptToken
+        let candidate: DevicePickerDiscoveryCandidate
+    }
+    private var captureProtocolIdentityProof: CaptureProtocolIdentityProof?
     public var protocolIdentityCandidate: DevicePickerDiscoveryCandidate? {
         onBleQueue { storedProtocolIdentityCandidate }
     }
@@ -1758,10 +1763,11 @@ public final class CutoutSessionCore: NSObject {
                     ?? protocolIdentityFallbackDisplayName(protocolFamily: .veteranLeaperkimNosfet),
                 modelId: modelId
             )
-            storedProtocolIdentityCandidate = DevicePickerDiscoveryCandidate(candidate: candidate)
+            let pickerCandidate = DevicePickerDiscoveryCandidate(candidate: candidate)
+            storedProtocolIdentityCandidate = pickerCandidate
             publishProtocolIdentityCandidate()
             record("protocol_identity=\(candidate.detail)")
-            return updateCaptureIdentity()
+            return refreshCaptureIdentityProof(pickerCandidate)
         case (.none, _), (_, .none):
             return nil
         }
@@ -1784,6 +1790,7 @@ public final class CutoutSessionCore: NSObject {
     }
 
     private func clearProtocolIdentityCandidate() {
+        captureProtocolIdentityProof = nil
         guard protocolIdentityCandidate != nil else {
             return
         }
@@ -1816,15 +1823,15 @@ public final class CutoutSessionCore: NSObject {
             return
         }
         let pickerCandidate = DevicePickerDiscoveryCandidate(candidate: candidate)
+        if let outcome = refreshCaptureIdentityProof(pickerCandidate) {
+            _ = acceptCaptureWrite(outcome)
+        }
         guard pickerCandidate != protocolIdentityCandidate else {
             return
         }
         storedProtocolIdentityCandidate = pickerCandidate
         publishProtocolIdentityCandidate()
         record("protocol_identity=\(candidate.detail)")
-        if let outcome = updateCaptureIdentity() {
-            _ = acceptCaptureWrite(outcome)
-        }
     }
 
     private func setPhase(_ phase: SessionConnectionPhase) {
@@ -2929,20 +2936,35 @@ public final class CutoutSessionCore: NSObject {
         captureRecorder.elapsedMilliseconds(since: captureStartedAt)
     }
 
-    private func updateCaptureIdentity() -> MobileCaptureWriteOutcomeDto? {
-        guard captureRecorder.hasWriter, let identity = pevcapResolvedIdentity() else {
-            return nil
-        }
-        let candidate = protocolIdentityCandidate
-        return captureRecorder.setResolvedIdentity(
-            identity,
-            evidence: candidate?.evidence,
-            detail: candidate?.detail
-        )
+    /// Records only evidence admitted on this Rust connection attempt; picker identity may survive link loss.
+    private func refreshCaptureIdentityProof(_ candidate: DevicePickerDiscoveryCandidate)
+        -> MobileCaptureWriteOutcomeDto?
+    {
+        guard let token = connectionSnapshot.token,
+            rustSessionState.connectionAttemptIsCurrent(token: token)
+        else { return nil }
+        let proof = CaptureProtocolIdentityProof(token: token, candidate: candidate)
+        guard captureProtocolIdentityProof != proof else { return nil }
+        captureProtocolIdentityProof = proof
+        return updateCaptureIdentity()
     }
 
-    private func pevcapResolvedIdentity() -> MobileResolvedIdentityDto? {
-        captureResolvedIdentity(protocolIdentityCandidate: protocolIdentityCandidate)
+    private func updateCaptureIdentity() -> MobileCaptureWriteOutcomeDto? {
+        guard captureRecorder.hasWriter,
+            let proof = captureProtocolIdentityProof,
+            rustSessionState.connectionAttemptIsCurrent(token: proof.token),
+            let identity = captureResolvedIdentity(protocolIdentityCandidate: proof.candidate)
+        else { return nil }
+        let outcome = captureRecorder.setResolvedIdentity(
+            identity,
+            evidence: proof.candidate.evidence,
+            detail: proof.candidate.detail
+        )
+        if outcome != .accepted {
+            // A rejected metadata effect is not an acknowledgement; fresh evidence may retry.
+            captureProtocolIdentityProof = nil
+        }
+        return outcome
     }
 }
 
