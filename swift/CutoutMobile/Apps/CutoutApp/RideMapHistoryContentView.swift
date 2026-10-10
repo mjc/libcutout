@@ -117,6 +117,11 @@ struct RideMapHistoryContentView: View {
     }
 
     @MainActor
+    static func shouldShowRefreshStatus(isLoading: Bool, rideCount: Int) -> Bool {
+        isLoading && rideCount > 0
+    }
+
+    @MainActor
     static func hasActiveFilters(
         searchText: String,
         dateFilter: RideHistoryModel.DateFilter,
@@ -191,6 +196,17 @@ struct RideMapHistoryContentView: View {
                     .scrollDismissesKeyboard(.interactively)
                 }
                 .frame(height: visibleHeight, alignment: .top)
+                .overlay(alignment: .topTrailing) {
+                    if Self.shouldShowRefreshStatus(isLoading: isLoading, rideCount: rides.count) {
+                        ProgressView()
+                            .tint(PevColors.yellow)
+                            .padding(10)
+                            .background(PevColors.cardFill, in: Circle())
+                            .padding(12)
+                            .accessibilityLabel(localizedAppText("ride_map.history_loading"))
+                            .accessibilityIdentifier("ride-map.history-refreshing")
+                    }
+                }
                 .clipped()
                 .contentShape(Rectangle())
                 .accessibilityElement(children: .contain)

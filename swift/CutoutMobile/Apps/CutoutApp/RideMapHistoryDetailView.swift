@@ -103,6 +103,13 @@ struct RideMapHistoryDetailView: View {
             && !hasError && (isLoading || hasSelectedRide || !hasStartedSelectionRequest)
     }
 
+    static func shouldShowRetainedRouteRetry(
+        hasMatchingProjection: Bool,
+        hasError: Bool
+    ) -> Bool {
+        hasMatchingProjection && hasError
+    }
+
     private var routeState: RideMapHistoryRouteState {
         if routeError != nil {
             return .error
@@ -217,6 +224,18 @@ struct RideMapHistoryDetailView: View {
                                     cameraDidChange: cameraDidChange
                                 )
                                 .frame(height: Self.mapHeight(for: visibleHeight))
+                                .overlay(alignment: .bottomTrailing) {
+                                    if Self.shouldShowRetainedRouteRetry(
+                                        hasMatchingProjection: projectionRideID == activeHistoryID,
+                                        hasError: routeError != nil || historyError != nil
+                                    ) {
+                                        Button(localizedAppText("ride_map.history_retry"), action: retry)
+                                            .buttonStyle(.borderedProminent)
+                                            .tint(PevColors.yellow)
+                                            .padding(12)
+                                            .accessibilityIdentifier("ride-map.detail-retained-route-retry")
+                                    }
+                                }
                             }
 
                             if projectionRideID != activeHistoryID && !isWaitingForInitialProjection {

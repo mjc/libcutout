@@ -54,6 +54,42 @@ final class RideMapPresentationTests: XCTestCase {
         XCTAssertFalse(deleted.canForget)
     }
 
+    func testHistoryShowsRefreshStatusOnlyWhenExistingResultsRemainVisible() {
+        XCTAssertFalse(
+            RideMapHistoryContentView.shouldShowRefreshStatus(isLoading: true, rideCount: 0),
+            "An initial load uses the full loading state"
+        )
+        XCTAssertTrue(
+            RideMapHistoryContentView.shouldShowRefreshStatus(isLoading: true, rideCount: 1),
+            "A filter reload keeps prior rides visible, so it needs a refresh status"
+        )
+        XCTAssertFalse(
+            RideMapHistoryContentView.shouldShowRefreshStatus(isLoading: false, rideCount: 1)
+        )
+    }
+
+    func testHistoryDetailOffersRetryWhenRefreshErrorKeepsRouteProjection() {
+        XCTAssertTrue(
+            RideMapHistoryDetailView.shouldShowRetainedRouteRetry(
+                hasMatchingProjection: true,
+                hasError: true
+            )
+        )
+        XCTAssertFalse(
+            RideMapHistoryDetailView.shouldShowRetainedRouteRetry(
+                hasMatchingProjection: false,
+                hasError: true
+            ),
+            "The unavailable state already owns retry when no matching route is retained"
+        )
+        XCTAssertFalse(
+            RideMapHistoryDetailView.shouldShowRetainedRouteRetry(
+                hasMatchingProjection: true,
+                hasError: false
+            )
+        )
+    }
+
     private func point(
         sequence: UInt64,
         segmentId: UInt64 = 0,
