@@ -621,6 +621,58 @@ mod tests {
     }
 
     #[test]
+    fn future_vehicle_speed_is_not_cached_until_its_source_time() {
+        let handle = CutoutSessionStateHandle::new();
+        let ride_map = MobileRideMapCore::new();
+        ride_map.start_gps_only(900).unwrap();
+        let (token, _) = admit_verified_connection(&handle, ride_map.clone(), "pev-a", 1_000);
+
+        handle
+            .observe_ride_telemetry_for_verified_connection(
+                ride_map.clone(),
+                token.clone(),
+                1_100,
+                Some(MobileRideMapSpeedObservationDto {
+                    millimetres_per_second: 5_000,
+                    observed_at_ms: 1_101,
+                }),
+            )
+            .unwrap();
+
+        assert_eq!(
+            ride_map.current_snapshot(1_101).unwrap().live_speed.source,
+            MobileRideMapSpeedSourceDto::Unavailable,
+            "a future source timestamp must not become selectable when receipt time catches up"
+        );
+
+        for (received_at, source_at, value, expected) in [
+            (1_102, 1_102, 0, 0),
+            (1_103, 1_200, 9_000, 0),
+            (1_201, 1_201, 6_000, 6_000),
+        ] {
+            handle
+                .observe_ride_telemetry_for_verified_connection(
+                    ride_map.clone(),
+                    token.clone(),
+                    received_at,
+                    Some(MobileRideMapSpeedObservationDto {
+                        millimetres_per_second: value,
+                        observed_at_ms: source_at,
+                    }),
+                )
+                .unwrap();
+            assert_eq!(
+                ride_map.current_snapshot(source_at).unwrap().live_speed,
+                MobileRideMapSpeedDto {
+                    millimetres_per_second: expected,
+                    source: MobileRideMapSpeedSourceDto::Vehicle,
+                },
+                "invalid future speed must preserve prior valid speed and allow newer causal input"
+            );
+        }
+    }
+
+    #[test]
     fn queued_speed_from_before_async_resume_is_not_reused() {
         let handle = CutoutSessionStateHandle::new();
         let ride_map = MobileRideMapCore::new();

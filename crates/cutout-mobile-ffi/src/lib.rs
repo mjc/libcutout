@@ -10651,7 +10651,7 @@ fn observe_telemetry_locked(
     let mut motion_changed = false;
     if accepted && let Some(speed) = speed_observation {
         let source_at = state.logical_monotonic_milliseconds(speed.observed_at_ms);
-        if source_at >= state.speed_generation_started_at_ms {
+        if source_at >= state.speed_generation_started_at_ms && source_at <= at_ms {
             staged_speed.observe_vehicle(
                 Some(speed.millimetres_per_second),
                 source_at,
