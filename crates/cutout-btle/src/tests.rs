@@ -2065,6 +2065,14 @@ async fn capture_reconnecting_session_restores_subscription_after_disconnect() {
     );
     assert_eq!(*first.disconnects.lock().expect("first disconnects"), 1);
     assert_eq!(*second.disconnects.lock().expect("second disconnects"), 0);
+    let disconnect_at = match capture.records.get(2) {
+        Some(crate::SessionCaptureRecord::LinkDown { monotonic_ms }) => *monotonic_ms,
+        record => panic!("expected the first link to disconnect, got {record:?}"),
+    };
+    // The bridge uses elapsed monotonic time when it exceeds the next logical millisecond.
+    // Reconnection must start exactly one millisecond after the captured disconnect.
+    assert!(disconnect_at >= crate::MonotonicMs::new(1));
+    let reconnect_at = disconnect_at.next();
     assert_eq!(
         capture.records,
         vec![
@@ -2077,14 +2085,14 @@ async fn capture_reconnecting_session_restores_subscription_after_disconnect() {
                 characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
             },
             crate::SessionCaptureRecord::LinkDown {
-                monotonic_ms: crate::MonotonicMs::new(1)
+                monotonic_ms: disconnect_at,
             },
             crate::SessionCaptureRecord::Link {
-                monotonic_ms: crate::MonotonicMs::new(2),
+                monotonic_ms: reconnect_at,
                 max_write_len: Some(crate::NegotiatedWriteLimit::from_bytes(185)),
             },
             crate::SessionCaptureRecord::Subscribe {
-                monotonic_ms: crate::MonotonicMs::new(2),
+                monotonic_ms: reconnect_at,
                 characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
             },
         ]
