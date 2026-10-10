@@ -2195,6 +2195,10 @@
       "comment" : "Camera state after the user pans or zooms the map.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Manual map position" } } }
     },
+    "ride_map.show_full_ride" : {
+      "comment" : "VoiceOver label for the live Map camera control when its action fits the complete terminal ride route.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Show full ride" } } }
+    },
     "ride_map.recenter" : {
       "comment" : "Ride-map control that returns the camera to the latest validated point.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Recenter" } } }

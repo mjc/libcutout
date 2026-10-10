@@ -69,9 +69,8 @@ struct RideMapLiveContentView: View {
                         .frame(maxWidth: .infinity)
                         .overlay(alignment: .topTrailing) {
                             RideMapCameraControlsView(
-                                followsLatestPoint: $followsLatestPoint,
-                                canRecenter: displayPoints.isEmpty == false && cameraRegion != nil,
-                                recenter: recenterOnLatestPoint
+                                mode: cameraActionMode,
+                                action: performCameraAction
                             )
                             .padding(12)
                         }
@@ -146,6 +145,59 @@ struct RideMapLiveContentView: View {
         .onDisappear { onVisibilityChange(false) }
     }
 
+    enum CameraActionMode: Equatable {
+        case following
+        case notFollowing
+        case showFullRide
+        case unavailable
+    }
+
+    private var cameraActionMode: CameraActionMode {
+        Self.cameraActionMode(
+            state: snapshot?.state,
+            hasPoints: displayPoints.isEmpty == false,
+            hasCameraRegion: cameraRegion != nil,
+            followsLatestPoint: followsLatestPoint
+        )
+    }
+
+    static func cameraActionMode(
+        state: MobileRideMapStateDto?,
+        hasPoints: Bool,
+        hasCameraRegion: Bool,
+        followsLatestPoint: Bool
+    ) -> CameraActionMode {
+        guard hasPoints, hasCameraRegion else { return .unavailable }
+        switch state {
+        case .active, .paused:
+            return followsLatestPoint ? .following : .notFollowing
+        case .stopped, .interrupted, .discarded, .saved, .imported:
+            return .showFullRide
+        case .draft, nil:
+            return .unavailable
+        }
+    }
+
+    static func supportsLatestPointFollow(state: MobileRideMapStateDto?) -> Bool {
+        switch state {
+        case .active, .paused:
+            return true
+        case .draft, .stopped, .interrupted, .discarded, .saved, .imported, nil:
+            return false
+        }
+    }
+
+    private func showFullRide() {
+        guard cameraActionMode == .showFullRide,
+            let cameraRegion,
+            let region = RideMapCanvasView.mapRegion(for: cameraRegion)
+        else { return }
+        followsLatestPoint = false
+        followSpan = nil
+        isApplyingCamera = true
+        mapPosition = .region(region)
+    }
+
     private var showsRecordedBounds: Bool {
         snapshot?.recordedBoundsAvailable == true
     }
@@ -164,8 +216,20 @@ struct RideMapLiveContentView: View {
         isTerminalRide ? "\(routeID):terminal" : routeID
     }
 
+    private func performCameraAction() {
+        switch cameraActionMode {
+        case .following, .notFollowing:
+            recenterOnLatestPoint()
+        case .showFullRide:
+            showFullRide()
+        case .unavailable:
+            return
+        }
+    }
+
     private func recenterOnLatestPoint() {
-        guard let point = displayPoints.last,
+        guard Self.supportsLatestPointFollow(state: snapshot?.state),
+            let point = displayPoints.last,
             let cameraRegion,
             let baseRegion = RideMapCanvasView.mapRegion(for: cameraRegion),
             let region = Self.followRegion(
@@ -207,27 +271,45 @@ struct RideMapLiveContentView: View {
 }
 
 private struct RideMapCameraControlsView: View {
-    @Binding var followsLatestPoint: Bool
-    let canRecenter: Bool
-    let recenter: () -> Void
+    let mode: RideMapLiveContentView.CameraActionMode
+    let action: () -> Void
 
     var body: some View {
-        Button(action: recenter) {
-            Image(systemName: followsLatestPoint ? "location.fill" : "location")
+        let button = Button(action: action) {
+            Image(systemName: symbolName)
                 .font(.body.weight(.semibold))
                 .frame(width: 44, height: 44)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .foregroundStyle(canRecenter ? PevColors.brand : PevColors.muted)
+        .foregroundStyle(mode == .unavailable ? PevColors.muted : PevColors.brand)
         .background(PevColors.cardFill, in: RoundedRectangle(cornerRadius: 14))
         .overlay {
             RoundedRectangle(cornerRadius: 14).strokeBorder(PevColors.cardStroke, lineWidth: 1)
         }
-        .disabled(!canRecenter)
-        .accessibilityLabel(localizedAppText("ride_map.recenter"))
-        .accessibilityValue(localizedAppText(followsLatestPoint ? "ride_map.following" : "ride_map.not_following"))
+        .disabled(mode == .unavailable)
+        .accessibilityLabel(localizedAppText(mode == .showFullRide ? "ride_map.show_full_ride" : "ride_map.recenter"))
         .accessibilityIdentifier("ride-map.recenter")
+
+        switch mode {
+        case .following:
+            button.accessibilityValue(localizedAppText("ride_map.following"))
+        case .notFollowing:
+            button.accessibilityValue(localizedAppText("ride_map.not_following"))
+        case .showFullRide, .unavailable:
+            button
+        }
+    }
+
+    private var symbolName: String {
+        switch mode {
+        case .following:
+            "location.fill"
+        case .notFollowing, .unavailable:
+            "location"
+        case .showFullRide:
+            "viewfinder"
+        }
     }
 }
 
