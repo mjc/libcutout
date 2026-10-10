@@ -5908,6 +5908,8 @@ pub enum MobileMusicProviderDto {
     AppleMusic,
     /// Spotify App Remote integration.
     Spotify,
+    /// Local app handoff; playback and listening observations are unavailable.
+    SoundCloud,
 }
 
 /// Playback state projected by a music adapter.
@@ -6168,7 +6170,7 @@ impl TryFrom<MobilePevcapMusicEventDto> for PevcapMusicEvent {
 
     fn try_from(event: MobilePevcapMusicEventDto) -> Result<Self, Self::Error> {
         Self::new(
-            event.provider.into(),
+            event.provider.try_into()?,
             event.track_id,
             MonotonicTimestamp::new(event.monotonic_at_ms),
             WallClockUnixTimestamp::from_milliseconds(event.wall_clock_unix_ms),
@@ -6184,15 +6186,21 @@ impl From<MobileMusicProviderDto> for CoreMusicProvider {
         match provider {
             MobileMusicProviderDto::AppleMusic => Self::AppleMusic,
             MobileMusicProviderDto::Spotify => Self::Spotify,
+            MobileMusicProviderDto::SoundCloud => Self::SoundCloud,
         }
     }
 }
 
-impl From<MobileMusicProviderDto> for CorePevcapMusicProvider {
-    fn from(provider: MobileMusicProviderDto) -> Self {
+impl TryFrom<MobileMusicProviderDto> for CorePevcapMusicProvider {
+    type Error = String;
+
+    fn try_from(provider: MobileMusicProviderDto) -> Result<Self, Self::Error> {
         match provider {
-            MobileMusicProviderDto::AppleMusic => Self::AppleMusic,
-            MobileMusicProviderDto::Spotify => Self::Spotify,
+            MobileMusicProviderDto::AppleMusic => Ok(Self::AppleMusic),
+            MobileMusicProviderDto::Spotify => Ok(Self::Spotify),
+            MobileMusicProviderDto::SoundCloud => {
+                Err("SoundCloud listening observations are unavailable".to_owned())
+            }
         }
     }
 }
@@ -6202,6 +6210,7 @@ impl From<CoreMusicProvider> for MobileMusicProviderDto {
         match provider {
             CoreMusicProvider::AppleMusic => Self::AppleMusic,
             CoreMusicProvider::Spotify => Self::Spotify,
+            CoreMusicProvider::SoundCloud => Self::SoundCloud,
         }
     }
 }
@@ -8523,6 +8532,9 @@ pub fn pevcap_music_track_identifier(
     provider: MobileMusicProviderDto,
     identifier: String,
 ) -> Option<String> {
+    if provider == MobileMusicProviderDto::SoundCloud {
+        return None;
+    }
     if policy == MobileMusicHistoryPolicyDto::OpaqueItem
         && provider == MobileMusicProviderDto::Spotify
         && identifier.starts_with("spotify:local:")
