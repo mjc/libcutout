@@ -1,13 +1,34 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "music.soundcloud.search" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Search tracks" } } }
+    },
+    "music.soundcloud.choose_music" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Choose music in CutOut" } } }
+    },
+    "music.soundcloud.track_link" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Listen on SoundCloud" } } }
+    },
+    "music.soundcloud.not_configured" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "SoundCloud playback is not configured yet." } } }
+    },
+    "music.soundcloud.authorization_expired" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "SoundCloud authorization failed. Try again." } } }
+    },
+    "music.soundcloud.network_failed" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Could not reach SoundCloud. Check your connection and try again." } } }
+    },
+    "music.soundcloud.play_failed" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Could not play this SoundCloud track. Try another track." } } }
+    },
     "music.provider.soundcloud" : {
       "comment" : "SoundCloud provider name.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "SoundCloud" } } }
     },
     "music.soundcloud.unavailable" : {
       "comment" : "Explains the limits of public iOS SoundCloud integration.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Use iOS Control Center for playback controls. Open SoundCloud to choose music. Track information and listening history are unavailable in CutOut." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Choose music in CutOut to play SoundCloud tracks. Ride listening history is unavailable." } } }
     },
     "camera.preview.accessibility" : {
       "comment" : "VoiceOver label for the live ride-camera preview surface.",

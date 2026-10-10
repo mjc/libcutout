@@ -32,8 +32,8 @@ final class MusicPreferencesDeviceUITests: XCTestCase {
         XCTAssertFalse(app.buttons["music.authorize-spotify"].exists)
         XCTAssertFalse(app.buttons["music.history-picker"].isEnabled)
         let status = app.staticTexts["music.connection-status"]
-        XCTAssertTrue(status.label.contains("Control Center"), app.debugDescription)
-        XCTAssertTrue(status.label.contains("listening history are unavailable"), app.debugDescription)
+        XCTAssertTrue(status.label.contains("Choose music in CutOut"), app.debugDescription)
+        XCTAssertTrue(status.label.contains("listening history is unavailable"), app.debugDescription)
         app.buttons["music.open-provider"].tap()
         let failure = app.alerts.staticTexts["The music command failed."]
         XCTAssertTrue(failure.waitForExistence(timeout: 10), app.debugDescription)
@@ -52,6 +52,78 @@ final class MusicPreferencesDeviceUITests: XCTestCase {
         XCTAssertEqual(picker.value as? String, "SoundCloud")
         XCTAssertFalse(app.buttons["music.connect-provider"].exists)
         XCTAssertTrue(status.label.contains("unavailable"))
+    }
+
+    func testSoundCloudLiveStreamTransport() throws {
+        continueAfterFailure = false
+        #if !targetEnvironment(simulator)
+            throw XCTSkip("Live SoundCloud acceptance is restricted to Simulator")
+        #endif
+        let app = XCUIApplication()
+        app.launchArguments = ["-CUTOUT_UI_TEST_FIXTURE", "bluetooth-unavailable"]
+        app.terminate()
+        app.launch()
+        openMusicSettings(in: app)
+        let provider = app.buttons["music.provider-picker"]
+        let originalProvider = try XCTUnwrap(provider.value as? String)
+        defer {
+            if app.buttons["music.soundcloud.done"].exists { app.buttons["music.soundcloud.done"].tap() }
+            if provider.exists {
+                provider.tap()
+                app.buttons[originalProvider].firstMatch.tap()
+            }
+            app.terminate()
+        }
+        provider.tap()
+        app.buttons["SoundCloud"].firstMatch.tap()
+        app.buttons["music.soundcloud.choose-music"].tap()
+        let search = app.textFields["music.soundcloud.search-field"]
+        XCTAssertTrue(search.waitForExistence(timeout: 10), app.debugDescription)
+        search.tap()
+        search.typeText("house")
+        app.buttons["music.soundcloud.search-button"].tap()
+        let rows = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "music.soundcloud.track."))
+        let catalogue = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in rows.count >= 2 }, object: app)
+        XCTAssertEqual(XCTWaiter.wait(for: [catalogue], timeout: 60), .completed, app.debugDescription)
+        rows.element(boundBy: 0).tap()
+        let title = app.staticTexts["music.soundcloud.current-title"]
+        XCTAssertTrue(title.waitForExistence(timeout: 10), app.debugDescription)
+        let firstTitle = title.label
+        let elapsed = app.staticTexts["music.soundcloud.elapsed"]
+        func waitForPlayback(after seconds: Int) {
+            let advanced = XCTNSPredicateExpectation(
+                predicate: NSPredicate { _, _ in
+                    guard elapsed.exists, let value = elapsed.value as? String, let current = Int(value) else {
+                        return false
+                    }
+                    return current > seconds
+                }, object: elapsed)
+            XCTAssertEqual(XCTWaiter.wait(for: [advanced], timeout: 60), .completed, app.debugDescription)
+            XCTAssertFalse(app.staticTexts["music.soundcloud.error"].exists, app.debugDescription)
+        }
+        waitForPlayback(after: 2)
+        app.buttons["music.soundcloud.music.pause"].tap()
+        XCTAssertTrue(app.buttons["music.soundcloud.music.play"].waitForExistence(timeout: 5))
+        let pausedAt = try XCTUnwrap(Int(try XCTUnwrap(elapsed.value as? String)))
+        let remainedPaused = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in
+                guard let value = elapsed.value as? String, let current = Int(value) else { return false }
+                return current > pausedAt + 1
+            }, object: elapsed)
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [remainedPaused], timeout: 3), .timedOut, "Paused audio clock kept advancing")
+        app.buttons["music.soundcloud.music.play"].tap()
+        waitForPlayback(after: pausedAt + 2)
+        app.buttons["music.soundcloud.music.next"].tap()
+        let changed = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label != %@", firstTitle), object: title)
+        XCTAssertEqual(XCTWaiter.wait(for: [changed], timeout: 10), .completed, app.debugDescription)
+        waitForPlayback(after: 2)
+        app.buttons["music.soundcloud.music.previous"].tap()
+        let restored = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label == %@", firstTitle), object: title)
+        XCTAssertEqual(XCTWaiter.wait(for: [restored], timeout: 10), .completed, app.debugDescription)
+        waitForPlayback(after: 2)
     }
 
     func testReadableHistorySelectionSurvivesSheetReopen() throws {

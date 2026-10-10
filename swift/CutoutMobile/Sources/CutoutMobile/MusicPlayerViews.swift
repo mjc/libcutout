@@ -355,6 +355,7 @@ public struct MusicSettingsView: View {
     let historyFailureContext: MusicHistoryFailureContext
     let onConnect: () -> Void
     let onAuthorizeSpotify: () -> Void
+    let onPlaySoundCloud: (() -> Void)?
     let onOpenProvider: () -> Void
 
     public init(
@@ -366,6 +367,7 @@ public struct MusicSettingsView: View {
         historyFailureContext: MusicHistoryFailureContext = .listeningHistory,
         onConnect: @escaping () -> Void,
         onAuthorizeSpotify: @escaping () -> Void,
+        onPlaySoundCloud: (() -> Void)? = nil,
         onOpenProvider: @escaping () -> Void
     ) {
         self.nowPlaying = nowPlaying
@@ -376,6 +378,7 @@ public struct MusicSettingsView: View {
         self.historyFailureContext = historyFailureContext
         self.onConnect = onConnect
         self.onAuthorizeSpotify = onAuthorizeSpotify
+        self.onPlaySoundCloud = onPlaySoundCloud
         self.onOpenProvider = onOpenProvider
     }
 
@@ -412,6 +415,10 @@ public struct MusicSettingsView: View {
                 ) {
                     Button(pevLocalizedText("music.authorize_spotify"), action: onAuthorizeSpotify)
                         .accessibilityIdentifier("music.authorize-spotify")
+                }
+                if selectedProvider == .soundCloud, let onPlaySoundCloud {
+                    Button(pevLocalizedText("music.soundcloud.choose_music"), action: onPlaySoundCloud)
+                        .accessibilityIdentifier("music.soundcloud.choose-music")
                 }
                 Button(pevLocalizedText("music.open_named_provider", selectedProvider.title), action: onOpenProvider)
                     .accessibilityIdentifier("music.open-provider")

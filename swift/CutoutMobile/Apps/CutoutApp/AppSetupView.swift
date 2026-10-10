@@ -8,6 +8,7 @@ import SwiftUI
 struct AppSetupView: View {
     let model: CutoutAppModel
     @Environment(\.dismiss) private var dismiss
+    @State private var showsSoundCloud = false
     @State private var path: [Destination]
 
     private enum Destination: Hashable {
@@ -93,7 +94,7 @@ struct AppSetupView: View {
                 case .music:
                     let music = model.music
                     MusicSettingsView(
-                        nowPlaying: music.settingsNowPlaying,
+                        nowPlaying: music.selectedProvider == .soundcloud ? music.nowPlaying : music.settingsNowPlaying,
                         selectedProvider: Binding(
                             get: { music.selectedProvider },
                             set: music.selectProvider
@@ -111,6 +112,7 @@ struct AppSetupView: View {
                         historyFailureContext: music.historyFailureContext,
                         onConnect: music.connect,
                         onAuthorizeSpotify: music.authorizeSpotify,
+                        onPlaySoundCloud: { showsSoundCloud = true },
                         onOpenProvider: {
                             Task { @MainActor in
                                 _ = await music.handleCommand(.openProvider)
@@ -119,6 +121,17 @@ struct AppSetupView: View {
                     )
                     .toolbar { doneToolbar }
                 }
+            }
+        }
+        .sheet(isPresented: $showsSoundCloud) {
+            NavigationStack {
+                SoundCloudPlayerView(player: model.music.nativeSoundCloud)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button(pevLocalizedText("music.done")) { showsSoundCloud = false }
+                                .accessibilityIdentifier("music.soundcloud.done")
+                        }
+                    }
             }
         }
         .tint(PevDashboardColors.yellow)
