@@ -407,6 +407,75 @@ fn wheel_motion_threshold_is_inclusive_and_uses_signed_speed_magnitude() {
 }
 
 #[test]
+fn repeated_vehicle_speed_timestamp_keeps_first_zero_and_does_not_renew_freshness() {
+    let mut speed = RecordingSpeedState::default();
+    speed.observe_vehicle(Some(0), 1_000, 7);
+    speed.observe_vehicle(Some(7_000), 1_000, 7);
+    speed.observe_vehicle(None, 1_000, 7);
+    speed.observe_phone_gps(Some(8.0), 2_000, 7);
+
+    assert_eq!(
+        speed.selected_at(RideLifecycleState::Active, 7, 1_001),
+        Some(super::RecordingSpeed {
+            millimetres_per_second: 0,
+            source: RecordingSpeedSource::Vehicle,
+        })
+    );
+    assert_eq!(
+        speed.selected_at(RideLifecycleState::Active, 7, 3_001),
+        Some(super::RecordingSpeed {
+            millimetres_per_second: 8_000,
+            source: RecordingSpeedSource::PhoneGps,
+        }),
+        "a duplicate wheel timestamp cannot extend the original observation"
+    );
+}
+
+#[test]
+fn repeated_vehicle_speed_timestamp_keeps_first_moving_value_and_newer_evidence_wins() {
+    let mut speed = RecordingSpeedState::default();
+    speed.observe_vehicle(Some(7_000), 1_000, 7);
+    speed.observe_vehicle(Some(0), 1_000, 7);
+    speed.observe_vehicle(None, 1_000, 7);
+
+    assert_eq!(
+        speed.selected_at(RideLifecycleState::Active, 7, 1_001),
+        Some(super::RecordingSpeed {
+            millimetres_per_second: 7_000,
+            source: RecordingSpeedSource::Vehicle,
+        })
+    );
+
+    speed.observe_vehicle(Some(9_000), 2_000, 7);
+    assert_eq!(
+        speed.selected_at(RideLifecycleState::Active, 7, 2_001),
+        Some(super::RecordingSpeed {
+            millimetres_per_second: 9_000,
+            source: RecordingSpeedSource::Vehicle,
+        })
+    );
+    speed.observe_vehicle(Some(0), 2_000, 8);
+    assert_eq!(
+        speed.selected_at(RideLifecycleState::Active, 8, 2_001),
+        Some(super::RecordingSpeed {
+            millimetres_per_second: 0,
+            source: RecordingSpeedSource::Vehicle,
+        }),
+        "a new ride generation may restart its source clock"
+    );
+
+    speed.observe_vehicle(Some(3_000), 100, 9);
+    assert_eq!(
+        speed.selected_at(RideLifecycleState::Active, 9, 101),
+        Some(super::RecordingSpeed {
+            millimetres_per_second: 3_000,
+            source: RecordingSpeedSource::Vehicle,
+        }),
+        "a new ride generation may restart its source clock at a lower timestamp"
+    );
+}
+
+#[test]
 fn live_speed_is_unavailable_when_paused_or_after_ride_generation_changes() {
     let mut speed = RecordingSpeedState::default();
     speed.observe_vehicle(Some(4_000), 1_000, 7);

@@ -287,7 +287,7 @@ impl RecordingSpeedState {
                 .is_some_and(|oldest| source_at_milliseconds < oldest)
     }
 
-    /// Replaces the vehicle observation when its speed is valid.
+    /// Replaces the observation only when its valid speed source time is newer.
     pub fn observe_vehicle(
         &mut self,
         millimetres_per_second: Option<i32>,
@@ -297,7 +297,7 @@ impl RecordingSpeedState {
         if let Some(millimetres_per_second) = millimetres_per_second {
             if self.vehicle.is_some_and(|previous| {
                 previous.recording_generation == recording_generation
-                    && previous.observed_at_milliseconds > at_milliseconds
+                    && previous.observed_at_milliseconds >= at_milliseconds
             }) {
                 return;
             }
