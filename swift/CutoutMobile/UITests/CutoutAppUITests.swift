@@ -5,6 +5,54 @@ import XCTest
 /// Runs against the installed app and its real preferences/provider session.
 @MainActor
 final class MusicPreferencesDeviceUITests: XCTestCase {
+    func testSoundCloudUnavailableControlsMissingAppAndColdSelectionRestoration() throws {
+        continueAfterFailure = false
+        #if !targetEnvironment(simulator)
+            throw XCTSkip("SoundCloud acceptance is restricted to Simulator")
+        #endif
+        let app = XCUIApplication()
+        app.terminate()
+        app.launch()
+        app.activate()
+        openMusicSettings(in: app)
+        let picker = app.buttons["music.provider-picker"]
+        let originalProvider = try XCTUnwrap(picker.value as? String)
+        defer {
+            app.activate()
+            if !picker.exists { openMusicSettings(in: app) }
+            picker.tap()
+            let original = app.buttons[originalProvider].firstMatch
+            if original.exists { original.tap() }
+            app.buttons["setup.done"].tap()
+        }
+        picker.tap()
+        app.buttons["SoundCloud"].firstMatch.tap()
+        XCTAssertEqual(picker.value as? String, "SoundCloud")
+        XCTAssertFalse(app.buttons["music.connect-provider"].exists)
+        XCTAssertFalse(app.buttons["music.authorize-spotify"].exists)
+        XCTAssertFalse(app.buttons["music.history-picker"].isEnabled)
+        let status = app.staticTexts["music.connection-status"]
+        XCTAssertTrue(status.label.contains("listening history are unavailable"), app.debugDescription)
+        app.buttons["music.open-provider"].tap()
+        let failure = app.alerts.staticTexts["The music command failed."]
+        XCTAssertTrue(failure.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertEqual(app.state, .runningForeground)
+        app.alerts.buttons["OK"].tap()
+        XCUIDevice.shared.press(.home)
+        app.activate()
+        if !picker.waitForExistence(timeout: 2) { openMusicSettings(in: app) }
+        XCTAssertEqual(picker.value as? String, "SoundCloud")
+        XCTAssertTrue(status.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(status.label.contains("unavailable"))
+        app.terminate()
+        app.launch()
+        app.activate()
+        openMusicSettings(in: app)
+        XCTAssertEqual(picker.value as? String, "SoundCloud")
+        XCTAssertFalse(app.buttons["music.connect-provider"].exists)
+        XCTAssertTrue(status.label.contains("unavailable"))
+    }
+
     func testReadableHistorySelectionSurvivesSheetReopen() throws {
         continueAfterFailure = false
         guard ProcessInfo.processInfo.environment["CUTOUT_RUN_DEVICE_MUSIC_UI_TESTS"] == "1" else {

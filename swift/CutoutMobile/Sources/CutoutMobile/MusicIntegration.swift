@@ -218,6 +218,21 @@ final class MusicProviderTransportExecutor {
         )
         guard let effect else { return .refused }
 
+        return await perform(
+            providerGeneration: providerGeneration, effect: effect, onTerminal: onTerminal, dispatch: dispatch)
+    }
+
+    /// Executes an effect already admitted by Rust without admitting a second request.
+    func perform(
+        providerGeneration: MobileMusicProviderSessionId,
+        effect: MobileMusicTransportEffect,
+        onTerminal: @escaping @MainActor (MobileMusicTransportRequestId) -> Void = { _ in },
+        dispatch: @escaping @MainActor @Sendable (
+            MobileMusicTransportRequestId,
+            @escaping @MainActor @Sendable (Bool) -> Void
+        ) -> Void
+    ) async -> MusicCommandOutcome {
+
         return await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
                 guard
@@ -360,28 +375,29 @@ extension MobileMusicTransportOutcome {
 public enum MusicProviderMonitoringMode: Equatable, Sendable {
     case appleMusicSystemPlayer
     case spotifyAppRemote
+    case appHandoffOnly
     case unavailable
 }
 
 extension MobileMusicProviderDto {
-    public static var allCases: [Self] { [.appleMusic, .spotify] }
+    public static var allCases: [Self] { [.appleMusic, .spotify, .soundCloud] }
+
+    public var profile: MobileMusicProviderProfile { musicProviderProfile(provider: self) }
 
     public var monitoringMode: MusicProviderMonitoringMode {
-        switch self {
-        case .appleMusic: .appleMusicSystemPlayer
+        switch profile.interface {
+        case .appleMusicSystemPlayer: .appleMusicSystemPlayer
+        case .appHandoffOnly: .appHandoffOnly
         #if canImport(SpotifyiOS) && os(iOS)
-            case .spotify: .spotifyAppRemote
+            case .spotifyAppRemote: .spotifyAppRemote
         #else
-            case .spotify: .unavailable
+            case .spotifyAppRemote: .unavailable
         #endif
         }
     }
 
     public var title: String {
-        switch self {
-        case .appleMusic: pevLocalizedText("music.provider.apple_music")
-        case .spotify: pevLocalizedText("music.provider.spotify")
-        }
+        pevLocalizedText(profile.titleKey)
     }
 }
 
@@ -405,11 +421,11 @@ public struct MusicProviderSelectionStore {
     }
 
     public var provider: MobileMusicProviderDto {
-        defaults.string(forKey: Self.key) == "spotify" ? .spotify : .appleMusic
+        musicProviderFromStorage(value: defaults.string(forKey: Self.key))
     }
 
     public func set(_ provider: MobileMusicProviderDto) {
-        defaults.set(provider == .spotify ? "spotify" : "apple_music", forKey: Self.key)
+        defaults.set(provider.profile.storageKey, forKey: Self.key)
     }
 }
 
@@ -898,7 +914,7 @@ public struct MusicNowPlaying: Equatable, Sendable {
         case .unauthorized:
             pevLocalizedText("music.state.authorization_required")
         case .unavailable:
-            pevLocalizedText("music.state.unavailable")
+            pevLocalizedText(provider.profile.unavailableKey ?? "music.state.unavailable")
         case .disconnected:
             pevLocalizedText("music.state.disconnected")
         case .stale:
@@ -908,7 +924,8 @@ public struct MusicNowPlaying: Equatable, Sendable {
 
     /// Playback stopping or a temporary connection gap does not require setup.
     public var requiresSetup: Bool {
-        switch state {
+        if provider.profile.interface == .appHandoffOnly { return false }
+        return switch state {
         case .unauthorized:
             true
         case .unavailable:
@@ -1067,6 +1084,7 @@ extension MobileMusicProviderDto {
         switch self {
         case .appleMusic: "apple-music"
         case .spotify: "spotify"
+        case .soundCloud: "soundcloud"
         }
     }
 }

@@ -10,6 +10,83 @@ import XCTest
 #endif
 
 final class MusicIntegrationTests: XCTestCase {
+    func testSoundCloudSelectionRestoresWithoutFallingBackToAppleMusic() throws {
+        let name = "soundcloud-selection-\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        let store = MusicProviderSelectionStore(defaults: defaults)
+        store.set(.soundCloud)
+        XCTAssertEqual(MusicProviderSelectionStore(defaults: defaults).provider, .soundCloud)
+        XCTAssertTrue(MobileMusicProviderDto.allCases.contains(.soundCloud))
+        XCTAssertEqual(MobileMusicProviderDto.soundCloud.monitoringMode, .appHandoffOnly)
+    }
+
+    func testSoundCloudPresentationHasOnlyExplicitAppOpening() {
+        let player = MusicNowPlaying(snapshot: soundcloudUnavailableSnapshot(nowMs: 10))
+        XCTAssertFalse(player.requiresSetup)
+        XCTAssertFalse(player.showsCompactPlayer)
+        XCTAssertTrue(player.availableTransportCommands.isEmpty)
+        XCTAssertTrue(player.isCommandAvailable(.openProvider))
+        XCTAssertEqual(player.statusText, pevLocalizedText("music.soundcloud.unavailable"))
+        XCTAssertNil(player.item)
+    }
+
+    @MainActor
+    func testSoundCloudAdapterOpensOnlyTheAdmittedLocalURL() async {
+        var opened = [URL]()
+        let adapter = SoundCloudProviderAdapter(
+            lifecycle: MobileMusicProviderLifecycle(), effects: MusicProviderEffectExecutor(), nowMs: { 10 },
+            openURL: { url, completion in
+                opened.append(url)
+                completion(true)
+                completion(false)
+            }
+        )
+        let refused = await adapter.perform(.play)
+        XCTAssertEqual(refused, .refused)
+        XCTAssertTrue(opened.isEmpty)
+        let openedResult = await adapter.perform(.openProvider)
+        XCTAssertEqual(openedResult, .accepted)
+        XCTAssertEqual(opened.map(\.absoluteString), ["soundcloud://"])
+        adapter.stop()
+    }
+
+    @MainActor
+    func testSoundCloudStopResolvesPendingOpeningAndRejectsItsLateCallback() async throws {
+        var reply: (@MainActor @Sendable (Bool) -> Void)?
+        let lifecycle = MobileMusicProviderLifecycle()
+        let adapter = SoundCloudProviderAdapter(
+            lifecycle: lifecycle, effects: MusicProviderEffectExecutor(), nowMs: { 10 },
+            openURL: { _, completion in reply = completion }
+        )
+        let command = Task { await adapter.perform(.openProvider) }
+        for _ in 0..<10_000 {
+            if reply != nil { break }
+            await Task.yield()
+        }
+        let completion = try XCTUnwrap(reply)
+        adapter.applyCompletion(lifecycle.cancelMonitor())
+        adapter.stop()
+        let result = await command.value
+        XCTAssertEqual(result, .unavailable)
+        completion(true)
+        completion(false)
+    }
+
+    @MainActor
+    func testSoundCloudMissingAppReportsFailureWithoutClaimingPlayback() async {
+        let adapter = SoundCloudProviderAdapter(
+            lifecycle: MobileMusicProviderLifecycle(), effects: MusicProviderEffectExecutor(), nowMs: { 10 },
+            openURL: { _, completion in completion(false) }
+        )
+        let result = await adapter.perform(.openProvider)
+        XCTAssertEqual(result, .failed)
+        let snapshot = soundcloudUnavailableSnapshot(nowMs: 20)
+        XCTAssertEqual(snapshot.state, .unavailable)
+        XCTAssertNil(snapshot.item)
+        adapter.stop()
+    }
+
     func testSpotifyPlaybackTransportPrefersAppRemoteAndUsesWebAsFallback() {
         XCTAssertEqual(musicPlaybackTransport(appRemoteConnected: true, webPlaybackAuthorized: true), .appRemote)
         XCTAssertEqual(musicPlaybackTransport(appRemoteConnected: true, webPlaybackAuthorized: false), .appRemote)
