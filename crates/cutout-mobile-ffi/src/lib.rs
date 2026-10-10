@@ -31782,3 +31782,6 @@ mod tests {
         let _ = fs::remove_file(path);
     }
 }
+
+mod soundcloud_player;
+pub use soundcloud_player::*;
