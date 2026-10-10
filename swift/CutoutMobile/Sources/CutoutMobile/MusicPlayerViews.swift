@@ -271,8 +271,10 @@ public struct MusicExpandedPlayer: View {
             Form {
                 Section {
                     MusicExpandedHero(nowPlaying: nowPlaying)
-                    MusicTransportControls(nowPlaying: nowPlaying, onCommand: onCommand)
-                        .frame(maxWidth: .infinity)
+                    if !nowPlaying.availableTransportCommands.isEmpty {
+                        MusicTransportControls(nowPlaying: nowPlaying, onCommand: onCommand)
+                            .frame(maxWidth: .infinity)
+                    }
                     if nowPlaying.isCommandAvailable(.openProvider) {
                         Button(action: { onCommand(.openProvider) }) {
                             Label(
@@ -333,6 +335,15 @@ public struct MusicExpandedPlayer: View {
     }
 }
 
+public enum MusicHistoryFailureContext: Equatable, Sendable {
+    case preferences
+    case listeningHistory
+
+    public var message: String {
+        pevLocalizedText(self == .preferences ? "music.history.save_error" : "music.history.record_error")
+    }
+}
+
 /// Configuration is separate from live playback. Bindings publish changes
 /// directly to the app's persisted, Rust-owned settings instead of shadow state.
 public struct MusicSettingsView: View {
@@ -341,6 +352,7 @@ public struct MusicSettingsView: View {
     @Binding var historyPolicy: MobileMusicHistoryPolicyDto
     let historyUnavailable: Bool
     let historySaveError: MobileRideMapError?
+    let historyFailureContext: MusicHistoryFailureContext
     let onConnect: () -> Void
     let onAuthorizeSpotify: () -> Void
     let onOpenProvider: () -> Void
@@ -351,6 +363,7 @@ public struct MusicSettingsView: View {
         historyPolicy: Binding<MobileMusicHistoryPolicyDto>,
         historyUnavailable: Bool,
         historySaveError: MobileRideMapError?,
+        historyFailureContext: MusicHistoryFailureContext = .listeningHistory,
         onConnect: @escaping () -> Void,
         onAuthorizeSpotify: @escaping () -> Void,
         onOpenProvider: @escaping () -> Void
@@ -360,6 +373,7 @@ public struct MusicSettingsView: View {
         _historyPolicy = historyPolicy
         self.historyUnavailable = historyUnavailable
         self.historySaveError = historySaveError
+        self.historyFailureContext = historyFailureContext
         self.onConnect = onConnect
         self.onAuthorizeSpotify = onAuthorizeSpotify
         self.onOpenProvider = onOpenProvider
@@ -421,7 +435,7 @@ public struct MusicSettingsView: View {
                         .accessibilityIdentifier("music.history-unavailable")
                 }
                 if historySaveError != nil {
-                    Label(pevLocalizedText("music.history.save_error"), systemImage: "exclamationmark.triangle")
+                    Label(historyFailureContext.message, systemImage: "exclamationmark.triangle")
                         .accessibilityIdentifier("music.history-error")
                 }
             } header: {

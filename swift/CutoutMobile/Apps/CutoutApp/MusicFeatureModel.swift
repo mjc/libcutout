@@ -89,11 +89,15 @@ final class MusicFeatureModel {
     var historyPolicy: MobileMusicHistoryPolicyDto
     var historyUnavailable = false
     var historySaveError: MobileRideMapError?
+    var historyFailureContext: MusicHistoryFailureContext {
+        historyPreferenceSaveError == nil ? .listeningHistory : .preferences
+    }
     var commandFeedback: MusicCommandFeedback?
     @ObservationIgnored private var activeSpotifyHandoffFeedbackRequest: MusicCommandFeedbackRequest?
     @ObservationIgnored private var observationError: MobileRideMapError?
     @ObservationIgnored private(set) var captureFailureReceipt: MusicCaptureFailureReceipt?
     @ObservationIgnored private var historyPersistenceError: MobileRideMapError?
+    @ObservationIgnored private var historyPreferenceSaveError: MobileRideMapError?
     @ObservationIgnored private var historyReadbackRevisionStorage: UInt64 = 0
     @ObservationIgnored private var historyDiagnosticDeletionRevision: UInt64 = 0
     @ObservationIgnored private var closedHistoryReadTask: Task<Void, Never>?
@@ -222,7 +226,8 @@ final class MusicFeatureModel {
                 print("music_history_rejected error=\(error)")
             #endif
             historyPolicy = previous
-            setHistoryPersistenceError(appRideMapError(error))
+            historyPreferenceSaveError = appRideMapError(error)
+            refreshHistoryErrorProjection()
             return false
         }
     }
@@ -295,7 +300,8 @@ final class MusicFeatureModel {
             guard operationRevision == historyReadbackRevision else { return false }
             if stillTargetsCurrentRide {
                 historyPolicy = previous
-                setHistoryPersistenceError(appRideMapError(error))
+                historyPreferenceSaveError = appRideMapError(error)
+                refreshHistoryErrorProjection()
             }
             return false
         }
@@ -1244,6 +1250,7 @@ final class MusicFeatureModel {
     }
 
     func clearHistoryErrors() {
+        historyPreferenceSaveError = nil
         observationError = nil
         historyPersistenceError = nil
         refreshHistoryErrorProjection()
@@ -1251,7 +1258,7 @@ final class MusicFeatureModel {
 
     private func refreshHistoryErrorProjection() {
         historySaveError =
-            observationError ?? historyPersistenceError
+            historyPreferenceSaveError ?? observationError ?? historyPersistenceError
             ?? coordinator.previousRideHistoryFailure.map { _ in
                 .storageError("Previous ride listening history is incomplete")
             }

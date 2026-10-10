@@ -958,6 +958,10 @@
       "comment" : "History preferences could not be saved; the current persisted value remains selected.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Could not save music history preferences. Try again." } } }
     },
+    "music.history.record_error" : {
+      "comment" : "Reading or recording ride listening history failed, independently of saving preferences.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Could not read or record ride listening history. Some tracks may be missing." } } }
+    },
     "music.history.privacy" : {
       "comment" : "Music history is optional local metadata, not audio recording.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Optional. Stored on this device. No audio is recorded." } } }
