@@ -64,7 +64,7 @@ struct AppMusicPlayerView: View {
 
     var body: some View {
         Group {
-            if model.music.selectedProvider == .soundcloud {
+            if model.music.selectedProvider == .soundCloud {
                 NavigationStack {
                     SoundCloudPlayerView(player: model.music.nativeSoundCloud)
                         .toolbar {

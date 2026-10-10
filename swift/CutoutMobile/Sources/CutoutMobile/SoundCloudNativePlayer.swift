@@ -67,6 +67,12 @@ public final class SoundCloudNativePlayer {
         return core.musicSnapshot(nowMs: nowMs)
     }
 
+    isolated deinit {
+        stop()
+        if let timeObservation { player.removeTimeObserver(timeObservation) }
+        session.invalidateAndCancel()
+    }
+
     public func search(_ query: String) {
         searchTask?.cancel()
         isSearching = true
