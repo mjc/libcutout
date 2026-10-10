@@ -6,6 +6,7 @@ struct RideMapRouteTruthView: View {
     let recordedPointCount: UInt64?
     let rustSegmentCount: UInt64
     let showsRecordedBounds: Bool
+    let pointsOmittedByBudget: Bool
     let segmentsOmittedByBudget: Bool
     let segments: [MobileRideMapSegmentDisplayMetadata]
     let canonicalBackgroundGapCount: UInt64
@@ -17,6 +18,7 @@ struct RideMapRouteTruthView: View {
         recordedPointCount: UInt64?,
         rustSegmentCount: UInt64,
         showsRecordedBounds: Bool,
+        pointsOmittedByBudget: Bool = false,
         segmentsOmittedByBudget: Bool = false,
         segments: [MobileRideMapSegmentDisplayMetadata] = [],
         canonicalBackgroundGapCount: UInt64 = 0,
@@ -27,6 +29,7 @@ struct RideMapRouteTruthView: View {
         self.recordedPointCount = recordedPointCount
         self.rustSegmentCount = rustSegmentCount
         self.showsRecordedBounds = showsRecordedBounds
+        self.pointsOmittedByBudget = pointsOmittedByBudget
         self.segmentsOmittedByBudget = segmentsOmittedByBudget
         self.segments = segments
         self.canonicalBackgroundGapCount = canonicalBackgroundGapCount
@@ -44,7 +47,11 @@ struct RideMapRouteTruthView: View {
                     .font(.caption)
                     .foregroundStyle(PevColors.muted)
             }
-            if segmentsOmittedByBudget {
+            if Self.shouldShowRoutePreview(
+                routeIsPresent: routeIsPresent,
+                pointsOmittedByBudget: pointsOmittedByBudget,
+                segmentsOmittedByBudget: segmentsOmittedByBudget
+            ) {
                 Label(
                     localizedAppText("ride_map.segments_omitted_by_budget"),
                     systemImage: "exclamationmark.triangle"
@@ -62,6 +69,14 @@ struct RideMapRouteTruthView: View {
         canonicalBackgroundGapCount: UInt64
     ) -> Bool {
         routeIsPresent && canonicalBackgroundGapCount > 0
+    }
+
+    static func shouldShowRoutePreview(
+        routeIsPresent: Bool,
+        pointsOmittedByBudget: Bool,
+        segmentsOmittedByBudget: Bool
+    ) -> Bool {
+        routeIsPresent && (pointsOmittedByBudget || segmentsOmittedByBudget)
     }
 
     static func routeExists(

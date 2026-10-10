@@ -384,6 +384,7 @@ private struct RideMapLiveStatusView: View {
             recordedPointCount: snapshot?.summary.pointCount,
             rustSegmentCount: snapshot?.segmentCount ?? 0,
             showsRecordedBounds: snapshot?.recordedBoundsAvailable == true,
+            pointsOmittedByBudget: pointsTruncated,
             segmentsOmittedByBudget: segmentsOmittedByBudget,
             segments: segments,
             canonicalBackgroundGapCount: canonicalBackgroundGapCount,
