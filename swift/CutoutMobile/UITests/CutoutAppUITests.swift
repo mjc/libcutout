@@ -32,6 +32,7 @@ final class MusicPreferencesDeviceUITests: XCTestCase {
         XCTAssertFalse(app.buttons["music.authorize-spotify"].exists)
         XCTAssertFalse(app.buttons["music.history-picker"].isEnabled)
         let status = app.staticTexts["music.connection-status"]
+        XCTAssertTrue(status.label.contains("Control Center"), app.debugDescription)
         XCTAssertTrue(status.label.contains("listening history are unavailable"), app.debugDescription)
         app.buttons["music.open-provider"].tap()
         let failure = app.alerts.staticTexts["The music command failed."]
@@ -55,28 +56,51 @@ final class MusicPreferencesDeviceUITests: XCTestCase {
 
     func testReadableHistorySelectionSurvivesSheetReopen() throws {
         continueAfterFailure = false
-        guard ProcessInfo.processInfo.environment["CUTOUT_RUN_DEVICE_MUSIC_UI_TESTS"] == "1" else {
-            throw XCTSkip("Requires an explicitly enabled, installed-device music session")
-        }
+        #if !targetEnvironment(simulator)
+            throw XCTSkip("Music preference regression is restricted to Simulator")
+        #endif
         let app = XCUIApplication()
+        app.launchArguments = ["-CUTOUT_UI_TEST_FIXTURE", "bluetooth-unavailable"]
         app.terminate()
         app.launch()
         app.activate()
         openMusicSettings(in: app)
+        let providerPicker = app.buttons["music.provider-picker"]
+        let originalProvider = try XCTUnwrap(providerPicker.value as? String)
+        providerPicker.tap()
+        app.buttons["Apple Music"].firstMatch.tap()
         let picker = app.buttons["music.history-picker"]
         XCTAssertTrue(picker.waitForExistence(timeout: 5), app.debugDescription)
-        picker.tap()
-        app.buttons["music.history-policy.human-readable"].tap()
-        XCTAssertEqual(picker.value as? String, "Save IDs and titles")
-        picker.tap()
-        app.buttons["music.history-policy.opaque-item"].tap()
-        XCTAssertEqual(picker.value as? String, "Save item IDs only")
+        let originalPolicy = try XCTUnwrap(picker.value as? String)
+        func choosePolicy(_ identifier: String, expected: String) {
+            picker.tap()
+            app.buttons["music.history-policy.\(identifier)"].tap()
+            let saved = XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "value == %@", expected), object: picker
+            )
+            XCTAssertEqual(XCTWaiter.wait(for: [saved], timeout: 5), .completed, app.debugDescription)
+            XCTAssertFalse(app.staticTexts["music.history-error"].exists, app.debugDescription)
+        }
+        defer {
+            app.activate()
+            if !picker.exists { openMusicSettings(in: app) }
+            let originalIdentifier =
+                switch originalPolicy {
+                case "Save IDs and titles": "human-readable"
+                case "Save item IDs only": "opaque-item"
+                default: "disabled"
+                }
+            choosePolicy(originalIdentifier, expected: originalPolicy)
+            providerPicker.tap()
+            app.buttons[originalProvider].firstMatch.tap()
+            app.buttons["setup.done"].tap()
+        }
+        choosePolicy("human-readable", expected: "Save IDs and titles")
+        choosePolicy("opaque-item", expected: "Save item IDs only")
         app.buttons["setup.done"].tap()
         openMusicSettings(in: app)
         XCTAssertEqual(picker.value as? String, "Save item IDs only")
-        picker.tap()
-        app.buttons["music.history-policy.human-readable"].tap()
-        XCTAssertEqual(picker.value as? String, "Save IDs and titles")
+        choosePolicy("human-readable", expected: "Save IDs and titles")
         app.buttons["setup.done"].tap()
         openMusicSettings(in: app)
         XCTAssertEqual(picker.value as? String, "Save IDs and titles")
@@ -86,7 +110,7 @@ final class MusicPreferencesDeviceUITests: XCTestCase {
         app.activate()
         openMusicSettings(in: app)
         XCTAssertEqual(picker.value as? String, "Save IDs and titles")
-        app.buttons["setup.done"].tap()
+        XCTAssertFalse(app.staticTexts["music.history-error"].exists, app.debugDescription)
     }
 
     func testSpotifyMapPlayingWithoutRide() throws {
