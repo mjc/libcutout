@@ -881,7 +881,8 @@ public struct MusicNowPlaying: Equatable, Sendable {
     public var providerName: String { provider.title }
 
     public var title: String {
-        item?.title.flatMap { $0.isEmpty ? nil : $0 }
+        if provider.profile.interface == .appHandoffOnly { return providerName }
+        return item?.title.flatMap { $0.isEmpty ? nil : $0 }
             ?? pevLocalizedText(musicPlaybackTitleKey(state: state))
     }
     public var artist: String { item?.artist ?? "" }

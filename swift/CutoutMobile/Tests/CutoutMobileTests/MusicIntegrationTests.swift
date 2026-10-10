@@ -28,7 +28,16 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertTrue(player.availableTransportCommands.isEmpty)
         XCTAssertTrue(player.isCommandAvailable(.openProvider))
         XCTAssertEqual(player.statusText, pevLocalizedText("music.soundcloud.unavailable"))
+        XCTAssertEqual(player.title, "SoundCloud")
         XCTAssertNil(player.item)
+    }
+
+    func testListeningHistoryFailureDoesNotClaimPreferencesFailedToSave() {
+        XCTAssertEqual(MusicHistoryFailureContext.preferences.message, pevLocalizedText("music.history.save_error"))
+        XCTAssertEqual(
+            MusicHistoryFailureContext.listeningHistory.message, pevLocalizedText("music.history.record_error"))
+        XCTAssertNotEqual(
+            MusicHistoryFailureContext.preferences.message, MusicHistoryFailureContext.listeningHistory.message)
     }
 
     @MainActor

@@ -108,6 +108,7 @@ struct AppSetupView: View {
                         ),
                         historyUnavailable: music.historyUnavailable,
                         historySaveError: music.historySaveError,
+                        historyFailureContext: music.historyFailureContext,
                         onConnect: music.connect,
                         onAuthorizeSpotify: music.authorizeSpotify,
                         onOpenProvider: {
