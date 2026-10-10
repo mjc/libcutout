@@ -7,7 +7,7 @@
     },
     "music.soundcloud.unavailable" : {
       "comment" : "Explains the limits of public iOS SoundCloud integration.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Open SoundCloud to listen. Playback controls, track information, and listening history are unavailable in CutOut." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Use iOS Control Center for playback controls. Open SoundCloud to choose music. Track information and listening history are unavailable in CutOut." } } }
     },
     "camera.preview.accessibility" : {
       "comment" : "VoiceOver label for the live ride-camera preview surface.",
