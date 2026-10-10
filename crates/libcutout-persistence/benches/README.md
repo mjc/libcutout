@@ -36,8 +36,8 @@ after measurement.
 ## Run
 
 Use a Linux host supported by Valgrind, provided in the Linux development shell.
-The library and runner versions must match; 0.19.4 preserves this workspace's
-Rust 1.85 minimum. Install the runner locally under ignored build output:
+The library and runner versions must match. Use the workspace's pinned Rust 1.99
+toolchain and install the 0.19.4 runner locally under ignored build output:
 
 ```sh
 devenv shell -- cargo install gungraun-runner --version 0.19.4 --locked --root target/gungraun-runner

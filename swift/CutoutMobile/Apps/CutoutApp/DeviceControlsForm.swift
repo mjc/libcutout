@@ -176,6 +176,9 @@ private struct DeviceSettingRow: View {
                             Text(localizedAppText("settings.choice.off")).frame(minWidth: 44, minHeight: 44)
                         }
                         .buttonStyle(.borderless)
+                        .accessibilityLabel(
+                            localizedAppText("controls.disable.accessibility", localizedAppText(descriptor.labelKey))
+                        )
                         .accessibilityIdentifier("settings.disable.\(descriptor.id)")
                     }
                     applyButton
@@ -224,12 +227,6 @@ private struct DeviceSettingRow: View {
                 labeledValue(
                     DeviceControlPresentation.sourceLabel(state?.currentSource),
                     current,
-                    identifier: "settings.current.\(descriptor.id)"
-                )
-            } else {
-                labeledValue(
-                    DeviceControlPresentation.sourceLabel(nil),
-                    nil,
                     identifier: "settings.current.\(descriptor.id)"
                 )
             }
@@ -340,6 +337,10 @@ private struct DeviceSettingRow: View {
                 Text(localizedAppText("controls.apply")).frame(minWidth: 44, minHeight: 44)
             }
             .buttonStyle(.borderless)
+            .accessibilityLabel(
+                localizedAppText("controls.apply.accessibility", localizedAppText(descriptor.labelKey))
+            )
+            .accessibilityValue(displayedValue)
             .accessibilityIdentifier("settings.apply.\(descriptor.id)")
         }
     }
@@ -415,16 +416,23 @@ private struct DeviceActionRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Button(DeviceControlPresentation.actionTitle(descriptor: descriptor, state: state)) {
+            Button {
                 if descriptor.role == .destructive {
                     confirmsDestructiveAction = true
                 } else {
                     send()
                 }
+            } label: {
+                Text(DeviceControlPresentation.actionTitle(descriptor: descriptor, state: state))
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    .contentShape(Rectangle())
             }
             .disabled(
                 !isEnabled
                     || !DeviceControlPresentation.actionAvailable(descriptor: descriptor, state: state)
+            )
+            .accessibilityLabel(
+                DeviceControlPresentation.actionAccessibilityLabel(descriptor: descriptor, state: state)
             )
             .accessibilityIdentifier("settings.action.\(descriptor.id)")
             if let submissionError {
@@ -636,6 +644,12 @@ enum DeviceControlPresentation {
         case .restartRequired: localizedAppText("controls.restart")
         case nil: localizedAppText(descriptor.labelKey)
         }
+    }
+
+    static func actionAccessibilityLabel(descriptor: DeviceActionDescriptor, state: DeviceActionSnapshot?) -> String {
+        let name = localizedAppText(descriptor.labelKey)
+        let command = actionTitle(descriptor: descriptor, state: state)
+        return command == name ? name : localizedAppText("controls.action.accessibility", name, command)
     }
 
     static func actionStatus(_ status: DeviceActionStatus) -> String? {

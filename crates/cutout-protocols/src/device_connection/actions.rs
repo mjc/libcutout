@@ -251,7 +251,7 @@ mod tests {
         );
         owner.begin_attempt("B".into(), MonotonicTimestamp::new(9));
         assert!(owner.ingest(&token, &gyro_readback(2, 10)).is_none());
-        assert!(owner.actions_snapshot().actions.is_empty());
+        assert_eq!(owner.actions_snapshot().actions.len(), 0);
     }
 
     #[test]
@@ -356,7 +356,7 @@ mod tests {
             DeviceActionStatus::SentWithoutConfirmation
         );
         owner.begin_attempt("B".into(), MonotonicTimestamp::new(4));
-        assert!(owner.actions_snapshot().actions.is_empty());
+        assert_eq!(owner.actions_snapshot().actions.len(), 0);
         assert_eq!(
             owner.submit_action(
                 &token,

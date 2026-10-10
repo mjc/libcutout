@@ -30,9 +30,6 @@ struct RideMapRouteView: View {
     private let closeDetail: (() -> Void)?
     private let initialHistoryID: String?
     private let detailOnly: Bool
-    private let showsNavigationHeader: Bool
-    private let showBackButton: Bool
-    private let back: (() -> Void)?
     @Environment(\.dismiss) private var dismiss
 
     static func liveRouteID(for snapshot: MobileRideMapSnapshotDto?) -> String {
@@ -51,10 +48,7 @@ struct RideMapRouteView: View {
         _ openHistory: ((String) -> Void)? = nil,
         initialHistoryID: String? = nil,
         detailOnly: Bool = false,
-        showsNavigationHeader: Bool = true,
-        closeDetail: (() -> Void)? = nil,
-        showBackButton: Bool = false,
-        back: (() -> Void)? = nil
+        closeDetail: (() -> Void)? = nil
     ) {
         self._model = Bindable(wrappedValue: model)
         self._liveRide = Bindable(wrappedValue: model.liveRide)
@@ -64,9 +58,6 @@ struct RideMapRouteView: View {
         self.closeDetail = closeDetail
         self.initialHistoryID = initialHistoryID
         self.detailOnly = detailOnly
-        self.showsNavigationHeader = showsNavigationHeader
-        self.showBackButton = showBackButton
-        self.back = back
     }
 
     var body: some View {
@@ -74,10 +65,6 @@ struct RideMapRouteView: View {
             if detailOnly {
                 detailContent
             } else {
-                if showsNavigationHeader {
-                    RideMapNavigationHeader(showBackButton: showBackButton, back: back)
-                }
-
                 HStack(spacing: 0) {
                     Picker(localizedAppText("navigation.section.map"), selection: $presentation.mode) {
                         Text(localizedAppText("ride_map.mode.live")).tag(RideMapPresentationState.Mode.live)
@@ -104,8 +91,13 @@ struct RideMapRouteView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(PevColors.pageBackground)
         .foregroundStyle(PevColors.primaryText)
-        .accessibilityIdentifier("ride-map.screen")
-        .appMusicCompactPlayer(model: model)
+        // Keep the screen identity on one container instead of forwarding it to
+        // the segmented picker and native scroll view as separate AX elements.
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier(detailOnly ? "ride-map.detail-screen" : "ride-map.screen")
+        #if DEBUG
+            .modifier(CutoutUITestSavedRideReadback(history: history))
+        #endif
         #if os(iOS)
             // Ride Detail owns its compact header so it remains attached to the map
             // when the destination is pushed from either Map entry path. Leaving the
@@ -128,11 +120,11 @@ struct RideMapRouteView: View {
             speed: model.rideMapSpeed,
             vehicleName: model.device.rideMapVehicleName,
             mapError: liveRide.error,
-            lastDecision: liveRide.lastDecision,
             telemetryState: liveRide.telemetryState,
             pointsTruncated: liveRide.pointsTruncated,
             segmentsOmittedByBudget: liveRide.segmentsOmittedByBudget,
             canonicalBackgroundGapCount: liveRide.backgroundGapCount,
+            onVisibilityChange: { liveRide.setMapVisible($0) },
             mapPosition: $presentation.liveMapPosition,
             isApplyingCamera: $presentation.liveIsApplyingCamera,
             followsLatestPoint: $presentation.followsLatestPoint,
@@ -191,6 +183,9 @@ struct RideMapRouteView: View {
             mapPosition: $presentation.historyMapPosition,
             isApplyingCamera: $presentation.historyIsApplyingCamera
         )
+        .task {
+            history.reloadPreservingSelection()
+        }
     }
 
     @ViewBuilder
@@ -220,7 +215,7 @@ struct RideMapRouteView: View {
                 canonicalBackgroundGapCount: history.detailBackgroundGapCount,
                 historyError: history.error,
                 routeError: history.detailRouteError,
-                isLoading: history.detailRouteLoading,
+                isLoading: history.isLoading || history.detailRouteLoading,
                 selectedHistoryID: history.selectedRideID,
                 ensureSelection: { history.ensureSelection(requestedRideID: $0) },
                 retry: { history.reload(selecting: initialHistoryID) },
@@ -239,35 +234,18 @@ struct RideMapRouteView: View {
     }
 }
 
-private struct RideMapNavigationHeader: View {
-    let showBackButton: Bool
-    let back: (() -> Void)?
+#if DEBUG
+    /// Fixture metadata lives on the existing container; it adds no visual or AX element.
+    private struct CutoutUITestSavedRideReadback: ViewModifier {
+        let history: RideHistoryModel
 
-    @ScaledMetric(relativeTo: .largeTitle) private var headerFontSize: CGFloat = 32
-
-    var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 12) {
-            if showBackButton, let back {
-                Button(action: back) {
-                    Label(localizedAppText("ride_map.detail_back"), systemImage: "chevron.left")
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(PevColors.yellow)
+        @ViewBuilder
+        func body(content: Content) -> some View {
+            if let value = CutoutUITestSavedRideFixture.accessibilityValue {
+                content.accessibilityValue("\(value);\(history.uiTestHistoryReadback)")
+            } else {
+                content
             }
-            Text("CutOut")
-                .font(.system(size: headerFontSize, weight: .black))
-                .foregroundStyle(PevColors.yellow)
-
-            Text(localizedAppText("navigation.section.map"))
-                .font(.system(size: headerFontSize, weight: .bold))
-                .foregroundStyle(PevColors.primaryText)
-
-            Spacer(minLength: 0)
         }
-        .padding(.horizontal, 20)
-        .padding(.top, 12)
-        .padding(.bottom, 14)
-        .accessibilityElement(children: showBackButton && back != nil ? .contain : .combine)
-        .accessibilityIdentifier("ride-map.navigation-header")
     }
-}
+#endif

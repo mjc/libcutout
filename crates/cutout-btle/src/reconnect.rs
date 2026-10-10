@@ -14,6 +14,10 @@ use crate::{
 const EXTERNAL_LINK_LOSS_IDLE_WINDOW: NotificationWindow = NotificationWindow::from_millis(1_500);
 
 /// Host boundary that can create fresh connected peripherals for reconnecting sessions.
+#[allow(
+    clippy::double_must_use,
+    reason = "async_trait adds must_use to boxed futures that already require use."
+)]
 #[async_trait]
 pub trait ReconnectingSessionHost: Send {
     /// Connected peripheral type returned for each link attempt.

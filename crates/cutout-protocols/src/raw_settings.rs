@@ -159,7 +159,7 @@ mod tests {
         }
         assert_eq!(decoder.raw_settings_pages(), before);
         decoder.reset();
-        assert!(decoder.raw_settings_pages().is_empty());
+        assert_eq!(decoder.raw_settings_pages().len(), 0);
     }
 
     #[test]
@@ -325,7 +325,7 @@ mod tests {
         assert_eq!(retained8.observed_at.get(), 100);
 
         owner.begin_attempt("other-device".into(), MonotonicTimestamp::new(200));
-        assert!(owner.raw_settings_snapshot().pages.is_empty());
+        assert_eq!(owner.raw_settings_snapshot().pages.len(), 0);
         assert!(
             owner
                 .ingest(
@@ -339,8 +339,8 @@ mod tests {
         let (mut owner, token) = connected(page8);
         ingest(&mut owner, &token, page8, 100);
         owner.link_down(&token);
-        assert!(owner.raw_settings_snapshot().pages.is_empty());
+        assert_eq!(owner.raw_settings_snapshot().pages.len(), 0);
         owner.disconnect();
-        assert!(owner.raw_settings_snapshot().pages.is_empty());
+        assert_eq!(owner.raw_settings_snapshot().pages.len(), 0);
     }
 }

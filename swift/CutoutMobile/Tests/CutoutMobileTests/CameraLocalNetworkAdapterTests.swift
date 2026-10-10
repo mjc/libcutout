@@ -42,6 +42,29 @@ final class CameraLocalNetworkAdapterTests: XCTestCase {
     }
 
     @MainActor
+    func testNetworkReadinessRevisionCoversInitialObservationAndWiFiLoss() {
+        let adapter = CameraLocalNetworkAdapter()
+        XCTAssertFalse(adapter.isWiFiReady)
+        XCTAssertEqual(adapter.networkRevision, 0)
+
+        adapter.apply(pathStatus: .satisfied, usesWiFi: true)
+        XCTAssertTrue(adapter.isWiFiReady)
+        XCTAssertEqual(adapter.networkRevision, 1)
+        XCTAssertEqual(adapter.presentation.connection, .notConfigured)
+
+        adapter.apply(pathStatus: .unavailable, usesWiFi: false, networkPathChanged: true)
+        XCTAssertFalse(adapter.isWiFiReady)
+        XCTAssertEqual(adapter.networkRevision, 2)
+        XCTAssertEqual(adapter.presentation.connection, .wifiRequired)
+
+        adapter.apply(pathStatus: .satisfied, usesWiFi: true, networkPathChanged: true)
+        XCTAssertTrue(adapter.isWiFiReady)
+        XCTAssertEqual(adapter.networkRevision, 3)
+        adapter.stop()
+        XCTAssertFalse(adapter.isWiFiReady)
+    }
+
+    @MainActor
     func testAdapterStartAndStopRemainNonOptimistic() {
         let adapter = CameraLocalNetworkAdapter()
 
@@ -146,6 +169,67 @@ final class CameraLocalNetworkAdapterTests: XCTestCase {
         XCTAssertEqual(adapter.presentation.storage, .present)
         XCTAssertEqual(adapter.presentation.preview, .stopped)
         XCTAssertEqual(adapter.presentation.recording, .unknown)
+    }
+
+    @MainActor
+    func testConnectionLoadsStatusWithoutRequestingMediaList() async throws {
+        let responses: [String: Data] = [
+            "3012": Data("<Function><Cmd>3012</Cmd><Status>0</Status><String>R3V1.1_20240411</String></Function>".utf8),
+            "2019": Data(
+                "<LIST><MovieLiveViewLink>rtsp://192.168.1.254/xxx.mov</MovieLiveViewLink><PhotoLiveViewLink>rtsp://192.168.1.254/xxx.mov</PhotoLiveViewLink></LIST>"
+                    .utf8),
+            "3014": Data("<Function><Cmd>2016</Cmd><Status>0</Status></Function>".utf8),
+            "3024": Data("<Function><Cmd>3024</Cmd><Status>0</Status><Value>1</Value></Function>".utf8),
+            "3015": Data(
+                "<LIST><File><NAME>clip.TS</NAME><FPATH>A:\\Novatek\\Movie\\clip.TS</FPATH><SIZE>42</SIZE><TIMECODE>7</TIMECODE><TIME>2025/01/01 00:00:00</TIME><ATTR>32</ATTR></File></LIST>"
+                    .utf8),
+        ]
+        let adapter = CameraLocalNetworkAdapter()
+
+        let evidence = try await adapter.loadReadOnlyEvidence(
+            address: "192.168.1.254",
+            port: 80,
+            includeMedia: false
+        ) { url in
+            let command = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first {
+                $0.name == "cmd"
+            }?.value
+            XCTAssertNotNil(command)
+            XCTAssertNotEqual(command, "3015")
+            return responses[command!]!
+        }
+
+        XCTAssertEqual(evidence.firmwareVersion, "R3V1.1_20240411")
+        XCTAssertFalse(evidence.isMediaListLoaded)
+        XCTAssertTrue(evidence.media.isEmpty)
+        XCTAssertEqual(adapter.presentation.connection, .connected)
+        XCTAssertEqual(adapter.presentation.storage, .present)
+        XCTAssertEqual(adapter.presentation.preview, .stopped)
+        XCTAssertEqual(adapter.presentation.recording, .unknown)
+    }
+
+    @MainActor
+    func testFailedMediaRefreshKeepsVerifiedConnectionAndLivePreview() async {
+        let adapter = CameraLocalNetworkAdapter()
+        applyTestEvidence(
+            CameraReadOnlyEvidence(
+                firmwareVersion: "R3V1.1_20240411",
+                movieRTSPURI: "rtsp://192.168.1.254/xxx.mov",
+                photoRTSPURI: "rtsp://192.168.1.254/xxx.mov",
+                configuration: [], storagePresent: true, media: []
+            ), to: adapter)
+        adapter.observePreview(.live)
+        let retainedEvidence = adapter.readOnlyEvidence
+        do {
+            _ = try await adapter.loadReadOnlyEvidence(address: "192.168.1.254", port: 80) { _ in
+                throw URLError(.timedOut)
+            }
+            XCTFail("the failed refresh must report its error")
+        } catch {
+            XCTAssertEqual(adapter.presentation.connection, .connected)
+            XCTAssertEqual(adapter.presentation.preview, .live)
+            XCTAssertEqual(adapter.readOnlyEvidence, retainedEvidence)
+        }
     }
 
     @MainActor
@@ -619,7 +703,7 @@ final class CameraLocalNetworkAdapterTests: XCTestCase {
         let requestedURL = DownloadURLCapture()
         let adapter = CameraLocalNetworkAdapter()
         applyTestEvidence(cameraEvidence(advertisedCommandIDs: []), to: adapter)
-        try await adapter.downloadMedia(
+        _ = try await adapter.downloadMedia(
             address: "192.168.1.254",
             port: 80,
             media: media,
@@ -684,7 +768,7 @@ final class CameraLocalNetworkAdapterTests: XCTestCase {
         }
 
         do {
-            try await adapter.downloadMedia(
+            _ = try await adapter.downloadMedia(
                 address: "192.168.1.254",
                 port: 80,
                 media: media,
@@ -846,7 +930,7 @@ final class CameraLocalNetworkAdapterTests: XCTestCase {
             to: adapter
         )
         do {
-            try await adapter.downloadMedia(
+            _ = try await adapter.downloadMedia(
                 address: "192.168.1.254",
                 port: 80,
                 media: media,
@@ -905,7 +989,7 @@ final class CameraLocalNetworkAdapterTests: XCTestCase {
         let adapter = CameraLocalNetworkAdapter()
         applyTestEvidence(cameraEvidence(advertisedCommandIDs: []), to: adapter)
         do {
-            try await adapter.downloadMedia(
+            _ = try await adapter.downloadMedia(
                 address: "192.168.1.254",
                 port: 80,
                 media: media,
@@ -1246,7 +1330,7 @@ private func applyTestEvidence(
         statuses
         .map { "<Cmd>\($0.commandId)</Cmd><Status>\($0.status)</Status>" }
         .joined()
-    let media = snapshot.media.map {
+    let media = (snapshot.media ?? []).map {
         "<File><NAME>\($0.name)</NAME><FPATH>\($0.path)</FPATH><SIZE>\($0.sizeBytes)</SIZE><TIMECODE>\($0.timecode)</TIMECODE><TIME>\($0.time)</TIME><ATTR>\($0.attributes)</ATTR></File>"
     }.joined()
     do {

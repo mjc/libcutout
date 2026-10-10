@@ -15,18 +15,20 @@ cutout-music = { path = "../cutout-music", version = "0.1.0" }
 cutout-core = { path = "../cutout-core", version = "0.1.0", features = ["serde"] }
 cutout-ride-maps = { path = "../cutout-ride-maps", version = "0.1.0" }
 hex.workspace = true
+miniz_oxide.workspace = true
 num-traits = "0.2"
 rusqlite.workspace = true
 sha2.workspace = true
-serde_json.workspace = true
+serde.workspace = true
+serde_json = { workspace = true, features = ["raw_value"] }
 thiserror.workspace = true
+tempfile = "3"
 uuid.workspace = true
 
 [dev-dependencies]
 divan = "=0.1.21"
 gungraun = "=0.19.4"
 rusqlite = { workspace = true, features = ["backup"] }
-tempfile = "3"
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 gungraun = { version = "=0.19.4", features = ["client_requests"] }

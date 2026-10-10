@@ -8,6 +8,11 @@ private enum RideSessionRestorationState {
     case awaitingBluetooth
     case awaitingSnapshot(platformIdentifier: String)
     case recovering
+    case markerReadFailed
+}
+
+private struct PendingBluetoothRestoration {
+    let platformIdentifier: String?
 }
 
 struct MusicHistoryQueryResult: Equatable, Sendable {
@@ -67,6 +72,27 @@ final class CutoutAppModel {
         }
     }
 
+    #if DEBUG
+        /// Existing native/Rust receipts for explicitly requested UI-test diagnostics.
+        /// The snapshot is memory-only; this getter does not enqueue persistence or transport work.
+        private var uiTestLifecycleReadbackRevision: UInt64 = 0
+
+        var uiTestLifecycleReadback: String {
+            _ = uiTestLifecycleReadbackRevision
+            let session = core.rideSessionStateHandle.rideSessionSnapshot()
+            let activityID: String?
+            switch session.activity {
+            case .active(let identifier), .stale(let identifier): activityID = identifier
+            default: activityID = nil
+            }
+            let script = (core as? CutoutSessionCore)?.uiTestScriptReadback ?? "injected"
+            return "fixture=\(String(describing: Self.uiTestFixture));script=\(script);"
+                + "phase=\(phase);session=\(session.phase);activity=\(session.activity);"
+                + "activityAcknowledged=\(activityID?.isEmpty == false);"
+                + "restoration=\(rideSessionRestorationState);error=\(String(describing: liveActivityError))"
+        }
+    #endif
+
     /// Exposes Rust-owned camera/session state to the camera route.
     var cameraSessionStateHandle: CutoutSessionStateHandle {
         core.rideSessionStateHandle
@@ -80,7 +106,7 @@ final class CutoutAppModel {
             localizedAppText("phone_alarm.authorization.not_determined")
         case .denied:
             localizedAppText("phone_alarm.authorization.denied")
-        case let .permitted(alerts, sounds, quietly):
+        case .permitted(let alerts, let sounds, let quietly):
             if quietly {
                 localizedAppText("phone_alarm.authorization.quiet")
             } else if alerts, sounds {
@@ -300,11 +326,11 @@ final class CutoutAppModel {
     private let core: any CutoutSessionDriving
     let rideHistory: RideHistoryModel
     private let liveActivityCoordinator: LiveActivityRideLifecycleCoordinator
-    private let selectedDeviceStore: DevicePickerSelectionStore
     private let rideSessionMarkerStore: RideSessionMarkerStore
     private let phoneAlarmDelivery: any PhoneRideAlarmDelivering
     private var liveActivityIdentity: LiveActivityRideIdentity?
     private var liveActivityGlyph = LiveActivityRideGlyph.electricUnicycle
+    @ObservationIgnored private var latestPlatformDisplayState: RideDisplayState?
     private var lastLiveActivitySnapshot: LiveActivityRideSnapshot?
     private var lastLiveActivityUpdate: MonotonicMilliseconds?
     private var liveActivityRequestID: UInt64 = 0
@@ -312,14 +338,18 @@ final class CutoutAppModel {
     private var permitsStoredDeviceAutoPairing = true
     private var rideSessionRestorationState = RideSessionRestorationState.complete
     private var restorationMarkerAtLaunch: Data?
+    @ObservationIgnored private var restorationMarkerLoadTask: Task<Void, Never>?
+    @ObservationIgnored private var pendingBluetoothRestoration: PendingBluetoothRestoration?
+    private var rideMapRestoreTask: Task<Void, Never>?
     private var musicHistoryRestoreTask: Task<Void, Never>?
     private var musicHistoryRestoreGeneration: UInt64 = 0
     private var phoneAlarmAuthorizationTask: Task<Void, Never>?
     private var phoneAlarmAuthorizationGeneration: UInt64 = 0
-    private static let liveActivityUpdateIntervalMilliseconds: UInt64 = 1_000
 
     isolated deinit {
+        rideMapRestoreTask?.cancel()
         musicHistoryRestoreTask?.cancel()
+        restorationMarkerLoadTask?.cancel()
         stopMusicMonitoring()
     }
 
@@ -331,9 +361,15 @@ final class CutoutAppModel {
     static func open() async throws -> CutoutAppModel {
         let database = try await RustPersistenceStore.open()
         try Task.checkCancellation()
+        #if DEBUG
+            try await RideCaptureRecovery.runIfRequested(database: database)
+            try await CutoutUITestSavedRideFixture.runIfRequested(database: database)
+        #endif
         let state = MobileRideMapState(database: database)
         let now = UInt64(ProcessInfo.processInfo.systemUptime * 1_000)
         _ = try await state.restoreCommand(atMs: now)
+        let selectedDeviceStore = DevicePickerSelectionStore()
+        let restoredDeviceSelection = await selectedDeviceStore.load()
         try Task.checkCancellation()
         #if DEBUG
             let permitsStoredDeviceAutoPairing = uiTestFixture == nil
@@ -343,7 +379,8 @@ final class CutoutAppModel {
         return CutoutAppModel(
             core: makeSessionDriver(rideMapState: state),
             permitsStoredDeviceAutoPairing: permitsStoredDeviceAutoPairing,
-            selectedDeviceStore: DevicePickerSelectionStore(),
+            selectedDeviceStore: selectedDeviceStore,
+            restoredDeviceSelection: restoredDeviceSelection,
             rideSessionMarkerStore: RideSessionMarkerStore(),
             liveActivityManager: LiveActivityRideActivityKitManager(),
             musicHistoryPolicyStore: MusicHistoryPolicyStore(),
@@ -407,6 +444,7 @@ final class CutoutAppModel {
         core: any CutoutSessionDriving,
         permitsStoredDeviceAutoPairing: Bool,
         selectedDeviceStore: DevicePickerSelectionStore,
+        restoredDeviceSelection: DevicePickerSelectionSnapshot? = nil,
         rideSessionMarkerStore: RideSessionMarkerStore,
         liveActivityManager: any LiveActivityRideLifecycleManaging,
         musicHistoryPolicyStore: MusicHistoryPolicyStore,
@@ -422,7 +460,8 @@ final class CutoutAppModel {
             dateProvider: rideHistoryDateProvider,
             storageErrorProvider: { core.rideMapStorageError }
         )
-        device = DevicePresentationModel(selectedDeviceStore: selectedDeviceStore)
+        device = DevicePresentationModel(
+            selectedDeviceStore: selectedDeviceStore, restoredSelection: restoredDeviceSelection)
         device.protocolIdentityCandidate = core.protocolIdentityCandidate
         self.rideHistory = rideHistory
         self.permitsStoredDeviceAutoPairing = permitsStoredDeviceAutoPairing
@@ -434,17 +473,17 @@ final class CutoutAppModel {
             now: { core.now().rawValue },
             executeCommand: { command in
                 switch command {
-                case let .startGpsOnly(atMs, musicHistoryPolicy):
+                case .startGpsOnly(let atMs, let musicHistoryPolicy):
                     try await core.startRideMapGpsOnly(atMs: atMs, musicHistoryPolicy: musicHistoryPolicy)
-                case let .pause(expected, atMs):
+                case .pause(let expected, let atMs):
                     try await core.pauseRideMap(expected: expected, atMs: atMs)
-                case let .resume(expected, atMs):
+                case .resume(let expected, let atMs):
                     try await core.resumeRideMap(expected: expected, atMs: atMs)
-                case let .stop(expected, atMs):
+                case .stop(let expected, let atMs):
                     try await core.stopRideMap(expected: expected, atMs: atMs)
-                case let .save(expected):
+                case .save(let expected):
                     try await core.saveRideMap(expected: expected)
-                case let .discard(expected):
+                case .discard(let expected):
                     try await core.discardRideMap(expected: expected)
                 }
             }
@@ -460,9 +499,16 @@ final class CutoutAppModel {
             sessionState: core.rideSessionStateHandle,
             markerStore: rideSessionMarkerStore
         )
-        self.selectedDeviceStore = selectedDeviceStore
         self.rideSessionMarkerStore = rideSessionMarkerStore
         self.phoneAlarmDelivery = phoneAlarmDelivery
+        var musicMonitor = appleMusicMonitor
+        var musicCommandHandler: MusicProviderCommandHandler?
+        #if DEBUG
+            if Self.uiTestFixture != nil, let fixture = CutoutUITestMusicMonitor.resolve() {
+                musicMonitor = fixture
+                musicCommandHandler = { _, command in fixture.perform(command) }
+            }
+        #endif
         self.music = MusicFeatureModel(
             providerSelectionStore: musicProviderSelectionStore,
             historyPolicyStore: musicHistoryPolicyStore,
@@ -471,19 +517,23 @@ final class CutoutAppModel {
             monotonicNow: { core.now().rawValue },
             updateCapturePolicy: { core.updateMusicCapturePolicy($0) },
             updateCaptureObservation: { core.updateMusicCaptureObservation($0) },
+            updateCaptureObservationAsync: { await core.updateMusicCaptureObservationAsync($0, target: $1) },
+            captureTarget: { core.rideSessionStateHandle.musicCaptureTarget() },
             invalidateHistoryForDeletion: { rideHistory.invalidateForMusicDeletion() },
             selectedHistoryRideID: { rideHistory.selectedRideID },
             clearSelectedHistoryMusic: { rideHistory.clearMusicMetadata() },
             setRideHistoryError: { rideHistory.setError($0) },
-            appleMonitor: appleMusicMonitor
+            appleMonitor: musicMonitor,
+            providerCommandHandler: musicCommandHandler
         )
-        self.music.timelineEvents = music.coordinator.recordedEvents
         restoreRideMapState()
         CutoutSessionCallbackRegistrar(core: core).install(
             .init(
                 displayState: { [weak self] displayState in
-                    self?.device.displayState = displayState
-                    self?.syncLiveActivity()
+                    guard let self else { return }
+                    self.latestPlatformDisplayState = displayState
+                    if self.liveRide.isSceneActive { self.device.displayState = displayState }
+                    self.syncLiveActivity()
                 },
                 phase: { [weak self] phase in
                     guard let self else { return }
@@ -520,7 +570,12 @@ final class CutoutAppModel {
                     self?.liveRide.applyDecision(snapshot: snapshot, decision: decision)
                 },
                 rideMapSnapshot: { [weak self] snapshot in
-                    self?.liveRide.applySnapshot(snapshot)
+                    guard let self else { return }
+                    let previousRideID = self.liveRide.snapshot?.rideID
+                    self.liveRide.applySnapshot(snapshot)
+                    if self.liveRide.snapshot?.rideID == snapshot.rideID, previousRideID != snapshot.rideID {
+                        self.restoreMusicHistory(for: snapshot.rideID)
+                    }
                 },
                 rideMapError: { [weak self] event in
                     self?.liveRide.applyError(event)
@@ -542,6 +597,10 @@ final class CutoutAppModel {
         syncPhoneAlarmPreferences()
         drainPhoneAlarmActions()
         refreshPhoneAlarmAuthorization()
+        device.restoreSavedSelection { [weak self] in
+            guard let self, let scanState = device.scanState else { return }
+            handleScanStateChange(scanState)
+        }
     }
 
     private func stopMusicMonitoring() {
@@ -553,12 +612,23 @@ final class CutoutAppModel {
     }
 
     private func restoreRideMapState() {
+        guard rideMapRestoreTask == nil else { return }
+        let restoration = liveRide.restore()
+        rideMapRestoreTask = Task { [weak self] in
+            await restoration?.value
+            guard !Task.isCancelled, let self else { return }
+            self.rideMapRestoreTask = nil
+            self.restoreMusicHistory(for: self.liveRide.snapshot?.rideID)
+        }
+    }
+
+    private func restoreMusicHistory(for restoredRideID: String?) {
         guard let state = core.rideMapStateHandle else { return }
-        liveRide.restore()
         musicHistoryRestoreTask?.cancel()
         musicHistoryRestoreGeneration &+= 1
         let historyGeneration = musicHistoryRestoreGeneration
-        guard let restoredRideID = liveRide.snapshot?.rideID else {
+        let historyRevision = music.historyReadbackRevision
+        guard let restoredRideID, !restoredRideID.isEmpty else {
             music.rideMapClosed()
             return
         }
@@ -571,12 +641,13 @@ final class CutoutAppModel {
                     self.musicHistoryRestoreGeneration == historyGeneration,
                     self.liveRide.snapshot?.rideID == restoredRideID
                 else { return }
-                self.music.synchronizeHistory(history)
+                self.music.synchronizeHistory(history, ifCurrentRevision: historyRevision)
             } catch {
                 guard
                     !Task.isCancelled,
                     let self,
                     self.musicHistoryRestoreGeneration == historyGeneration,
+                    self.music.historyReadbackRevision == historyRevision,
                     self.liveRide.snapshot?.rideID == restoredRideID
                 else { return }
                 self.music.setHistoryPersistenceError(appRideMapError(error))
@@ -587,11 +658,50 @@ final class CutoutAppModel {
     func start(sceneIsActive: Bool = true) {
         guard hasStarted == false else { return }
         hasStarted = true
+        liveRide.setSceneActive(sceneIsActive)
+        core.setPresentationActive(sceneIsActive)
         permitsStoredDeviceAutoPairing = false
-        restorationMarkerAtLaunch = rideSessionMarkerStore.marker
         rideSessionRestorationState = .awaitingBluetooth
+        if rideSessionMarkerStore.requiresDatabaseLoad {
+            beginStartupMarkerLoad()
+        } else {
+            restorationMarkerAtLaunch = rideSessionMarkerStore.marker
+        }
         core.start()
         music.start(sceneIsActive: sceneIsActive)
+    }
+
+    private func beginStartupMarkerLoad() {
+        guard restorationMarkerLoadTask == nil else { return }
+        let store = rideSessionMarkerStore
+        restorationMarkerLoadTask = Task { [weak self, store] in
+            do {
+                let marker = try await store.load()
+                guard let self, !Task.isCancelled else { return }
+                restorationMarkerLoadTask = nil
+                guard case .awaitingBluetooth = rideSessionRestorationState else { return }
+                restorationMarkerAtLaunch = marker
+                if let pending = pendingBluetoothRestoration {
+                    pendingBluetoothRestoration = nil
+                    handleBluetoothRestorationResolved(pending.platformIdentifier)
+                }
+            } catch {
+                guard let self, !Task.isCancelled else { return }
+                restorationMarkerLoadTask = nil
+                guard case .awaitingBluetooth = rideSessionRestorationState else { return }
+                rideSessionRestorationState = .markerReadFailed
+                liveActivityError = .requestFailed
+            }
+        }
+    }
+
+    /// Accepted native user actions retire callbacks belonging to the startup restoration.
+    private func retireStartupRestoration() {
+        restorationMarkerLoadTask?.cancel()
+        restorationMarkerLoadTask = nil
+        pendingBluetoothRestoration = nil
+        restorationMarkerAtLaunch = nil
+        rideSessionRestorationState = .complete
     }
 
     func loadRideAutostartSetting() async {
@@ -650,7 +760,7 @@ final class CutoutAppModel {
         core.resetRideMapLocationAdmission()
         if let error = await music.adoptHistoryForNewRideAsync() {
             liveRide.setError(error)
-            guard core.rideMapStateHandle?.currentSnapshot() != nil else {
+            guard await core.rideMapStateHandle?.currentSnapshotAsync() != nil else {
                 return false
             }
         }
@@ -734,11 +844,12 @@ final class CutoutAppModel {
         try core.submitDeviceAction(token: token, id: id)
     }
 
-    func pair(platformIdentifier: String) -> Bool {
+    func pair(platformIdentifier: String, isAutomatic: Bool = false) -> Bool {
         guard core.rideSessionStateHandle.captureLifecycleSnapshot().canPair else { return false }
         let outcome = device.pair(
             platformIdentifier: platformIdentifier,
-            mayRetryCurrentSelection: liveActivityError != nil
+            mayRetryCurrentSelection: liveActivityError != nil,
+            persistAcceptedSelection: !isAutomatic
         ) { selectedRow in
             liveActivityError = nil
             permitsStoredDeviceAutoPairing = true
@@ -752,7 +863,8 @@ final class CutoutAppModel {
         case .refused:
             permitsStoredDeviceAutoPairing = false
             return false
-        case let .accepted(selectedRow):
+        case .accepted(let selectedRow):
+            retireStartupRestoration()
             syncPhoneAlarmPreferences()
             drainPhoneAlarmActions()
             liveActivityIdentity = liveActivityIdentity(for: selectedRow)
@@ -783,6 +895,7 @@ final class CutoutAppModel {
             )
         }
         guard didStart else { return false }
+        retireStartupRestoration()
         capture.apply(.lifecycle(core.rideSessionStateHandle.captureLifecycleSnapshot()))
 
         device.connectionState = .picker
@@ -794,6 +907,8 @@ final class CutoutAppModel {
     }
 
     func appDidEnterBackground() {
+        liveRide.setSceneActive(false)
+        core.setPresentationActive(false)
         music.sceneDidEnterBackground()
         checkpointRideMapForBackground()
         guard let snapshot = currentLiveActivitySnapshot() else {
@@ -854,6 +969,8 @@ final class CutoutAppModel {
     }
 
     func appDidBecomeActive() {
+        liveRide.setSceneActive(true)
+        core.setPresentationActive(true)
         refreshPhoneAlarmAuthorization()
         if music.sceneDidBecomeActive() {
             beginMusicMonitoring()
@@ -872,7 +989,8 @@ final class CutoutAppModel {
 
     @discardableResult
     func disconnectTransport() async -> Bool {
-        let expectedRecordingToken = core.rideMapStateHandle?.currentSnapshot(atMs: core.now().rawValue)?.recordingToken
+        let expectedRecordingToken = await core.rideMapStateHandle?.currentSnapshotAsync(atMs: core.now().rawValue)?
+            .recordingToken
         let connectionGeneration = core.connectionSnapshot.generation
         do {
             try await core.prepareRideMapForDisconnect(
@@ -911,6 +1029,7 @@ final class CutoutAppModel {
     }
 
     func endLiveActivity(reason: LiveActivityRideLifecycleEndReason = .sessionEnded) {
+        retireStartupRestoration()
         liveActivityRequestID += 1
         let requestID = liveActivityRequestID
         Task { [weak self, liveActivityCoordinator] in
@@ -924,16 +1043,23 @@ final class CutoutAppModel {
     func retryLiveActivity() {
         guard liveActivityError != nil else { return }
         liveActivityError = nil
+        if case .markerReadFailed = rideSessionRestorationState {
+            rideSessionRestorationState = .awaitingBluetooth
+            beginStartupMarkerLoad()
+            return
+        }
         lastLiveActivitySnapshot = nil
         lastLiveActivityUpdate = nil
         syncLiveActivity()
     }
 
     func applyProtocolIdentityCandidate(_ candidate: DevicePickerDiscoveryCandidate?) {
-        device.applyProtocolIdentityCandidate(
-            candidate,
-            allowsRidePresentation: !isRecordOnlyCapture
-        )
+        guard
+            device.applyProtocolIdentityCandidate(
+                candidate,
+                allowsRidePresentation: !isRecordOnlyCapture
+            )
+        else { return }
         guard isRecordOnlyCapture != true else {
             liveActivityIdentity = nil
             liveActivityGlyph = .electricUnicycle
@@ -967,19 +1093,20 @@ final class CutoutAppModel {
         switch rideSessionRestorationState {
         case .complete:
             break
-        case let .awaitingSnapshot(platformIdentifier):
-            guard selectedDeviceStore.platformIdentifier == platformIdentifier else { return }
-        case .awaitingBluetooth, .recovering:
+        case .awaitingSnapshot(let platformIdentifier):
+            guard device.savedPlatformIdentifier == platformIdentifier else { return }
+        case .awaitingBluetooth, .recovering, .markerReadFailed:
             return
         }
         guard permitsStoredDeviceAutoPairing else { return }
-        guard let platformIdentifier = selectedDeviceStore.platformIdentifier else { return }
+        guard let platformIdentifier = device.savedPlatformIdentifier else { return }
         guard let row = scanState.rows.first(where: { $0.id == platformIdentifier }) else { return }
         guard row.isSupported || row.isProbeRecommended else { return }
-        _ = pair(platformIdentifier: platformIdentifier)
+        _ = pair(platformIdentifier: platformIdentifier, isAutomatic: true)
     }
 
-    private func handlePhaseChange(_ phase: SessionConnectionPhase) {
+    private func handlePhaseChange(_ presentation: SessionConnectionPresentation) {
+        let phase = presentation.phase
         switch (phase, connectionState) {
         case (.starting, .identified), (.starting, .connecting), (.starting, .retrying), (.starting, .connected),
             (.scanning, .identified), (.scanning, .connecting), (.scanning, .retrying), (.scanning, .connected):
@@ -994,7 +1121,7 @@ final class CutoutAppModel {
             switch connectionState {
             case .connecting(_, phase: .subscribing), .identified:
                 break
-            case .connecting(_, phase: .discoveringServices) where core.isRecordOnlyConnection:
+            case .connecting(_, phase: .discoveringServices) where presentation.isRecordOnly:
                 break
             default:
                 return
@@ -1021,7 +1148,7 @@ final class CutoutAppModel {
                 device.connectionState = .connecting(selection, phase: phase)
             }
         case .live:
-            if core.isRecordOnlyConnection {
+            if presentation.isRecordOnly {
                 // Record-only is an explicit capture choice. A normal Use/auto-reconnect
                 // attempt must never silently turn a known wheel into the capture screen when
                 // protocol detection times out (for example while the wheel is powered off).
@@ -1041,7 +1168,7 @@ final class CutoutAppModel {
                 break
             }
             if let selection = DevicePresentationModel.connectionSelection(
-                from: core.protocolIdentityCandidate
+                from: device.protocolIdentityCandidate
             ) {
                 device.connectionState = .connected(
                     ConnectionSelection(
@@ -1052,7 +1179,7 @@ final class CutoutAppModel {
             } else if let selection = connectionState.selection {
                 device.connectionState = .connected(selection)
             }
-        case let .failed(failure):
+        case .failed(let failure):
             guard let selection = connectionState.selection else { return }
             device.connectionState = .failed(selection, failure)
             let rows = devicePickerScanState?.rows ?? []
@@ -1076,7 +1203,15 @@ final class CutoutAppModel {
     }
 
     private func handleBluetoothRestorationResolved(_ platformIdentifier: String?) {
+        if case .markerReadFailed = rideSessionRestorationState {
+            pendingBluetoothRestoration = PendingBluetoothRestoration(platformIdentifier: platformIdentifier)
+            return
+        }
         guard case .awaitingBluetooth = rideSessionRestorationState else { return }
+        if restorationMarkerLoadTask != nil {
+            pendingBluetoothRestoration = PendingBluetoothRestoration(platformIdentifier: platformIdentifier)
+            return
+        }
         let marker = restorationMarkerAtLaunch
         guard platformIdentifier != nil || marker != nil else {
             permitsStoredDeviceAutoPairing = true
@@ -1084,20 +1219,31 @@ final class CutoutAppModel {
             if let scanState = devicePickerScanState {
                 handleScanStateChange(scanState)
             }
+            // Connection callbacks may have completed while the marker read was pending.
+            if phase != .starting {
+                syncLiveActivity()
+            }
             return
         }
         if let platformIdentifier {
-            device.connectionState = .identified(
-                ConnectionSelection(
-                    platformIdentifier: platformIdentifier,
-                    title: device.persistedVehicleName(for: platformIdentifier)
-                        ?? localizedAppText("setup.device"),
-                    route: .electricUnicycle
-                ))
+            // A delayed marker read must not replace the connection already identified by the protocol.
+            if connectionState.selection?.platformIdentifier != platformIdentifier {
+                device.connectionState = .identified(
+                    ConnectionSelection(
+                        platformIdentifier: platformIdentifier,
+                        title: device.persistedVehicleName(for: platformIdentifier)
+                            ?? localizedAppText("setup.device"),
+                        route: .electricUnicycle
+                    ))
+            }
+            device.restoreVehicleName(for: platformIdentifier)
         }
         if platformIdentifier != nil, marker == nil {
             permitsStoredDeviceAutoPairing = false
             rideSessionRestorationState = .complete
+            if phase != .starting {
+                syncLiveActivity()
+            }
             return
         }
         if let platformIdentifier, let marker {
@@ -1131,14 +1277,24 @@ final class CutoutAppModel {
         rideSessionRestorationState = .recovering
         liveActivityRequestID += 1
         let requestID = liveActivityRequestID
+        let telemetryAtMs = snapshot == nil ? 0 : (latestPlatformDisplayState ?? displayState).lastUpdate?.rawValue ?? 0
+        let presentationAtMs = core.now().rawValue
+        let nativeEnqueuedAtMs = UInt64(ProcessInfo.processInfo.systemUptime * 1_000)
+        let persistedMarker = restorationMarkerAtLaunch
         Task { [weak self, liveActivityCoordinator] in
             let recoveryResult = await liveActivityCoordinator.recoverPersistedRide(
                 requestID: requestID,
                 restoredPlatformIdentifier: restoredPlatformIdentifier,
-                snapshot: snapshot
+                snapshot: snapshot,
+                monotonicTimeMs: telemetryAtMs,
+                presentationAtMs: presentationAtMs,
+                nativeEnqueuedAtMs: nativeEnqueuedAtMs,
+                persistedMarker: persistedMarker
             )
             let error = await liveActivityCoordinator.lastError
-            guard let self else { return }
+            guard let self, liveActivityRequestID == requestID,
+                case .recovering = rideSessionRestorationState
+            else { return }
             rideSessionRestorationState = .complete
             liveActivityError = error
             switch recoveryResult {
@@ -1169,9 +1325,9 @@ final class CutoutAppModel {
         switch rideSessionRestorationState {
         case .complete:
             return false
-        case .awaitingBluetooth, .recovering:
+        case .awaitingBluetooth, .recovering, .markerReadFailed:
             return true
-        case let .awaitingSnapshot(platformIdentifier):
+        case .awaitingSnapshot(let platformIdentifier):
             if let snapshot {
                 beginRideSessionRecovery(
                     restoredPlatformIdentifier: platformIdentifier,
@@ -1280,18 +1436,28 @@ final class CutoutAppModel {
         liveActivityRequestID += 1
         let requestID = liveActivityRequestID
         let platformIdentifier = connectionState.selection?.platformIdentifier
-        let monotonicTimeMs = core.now().rawValue
+        let monotonicTimeMs = (latestPlatformDisplayState ?? displayState).lastUpdate?.rawValue ?? 0
+        let presentationAtMs = core.now().rawValue
+        let nativeEnqueuedAtMs = UInt64(ProcessInfo.processInfo.systemUptime * 1_000)
         Task { [weak self, liveActivityCoordinator] in
             await liveActivityCoordinator.reconcile(
                 requestID: requestID,
                 platformIdentifier: platformIdentifier,
                 monotonicTimeMs: monotonicTimeMs,
+                presentationAtMs: presentationAtMs,
+                nativeEnqueuedAtMs: nativeEnqueuedAtMs,
                 snapshot: snapshot,
                 shouldBeActive: shouldBeActive,
                 endReason: endReason
             )
             let error = await liveActivityCoordinator.lastError
-            guard let self, self.liveActivityRequestID == requestID else { return }
+            guard let self else { return }
+            #if DEBUG
+                // Refresh existing Rust state after the platform await even when a newer
+                // presentation request superseded this completion. Never invent an acknowledgement.
+                self.uiTestLifecycleReadbackRevision &+= 1
+            #endif
+            guard self.liveActivityRequestID == requestID else { return }
             self.liveActivityError = error
             if error != nil {
                 self.lastLiveActivitySnapshot = nil
@@ -1302,7 +1468,11 @@ final class CutoutAppModel {
 
     private func currentLiveActivitySnapshot() -> LiveActivityRideSnapshot? {
         liveActivityIdentity.map {
-            LiveActivityRideSnapshot(identity: $0, glyph: liveActivityGlyph, rideState: rideState, now: core.now())
+            LiveActivityRideSnapshot(
+                identity: $0, glyph: liveActivityGlyph,
+                rideState: EucRideScreenState(phase: phase, displayState: latestPlatformDisplayState ?? displayState),
+                now: core.now()
+            )
         }
     }
 
@@ -1314,11 +1484,11 @@ final class CutoutAppModel {
         if selectedRow?.connectionRoute == .vescOnewheel {
             return vescRideIdentity(using: selectedRow?.title)
         }
-        if core.protocolIdentityCandidate?.support.connectionRoute == .vescOnewheel {
-            return vescRideIdentity(using: core.protocolIdentityCandidate?.displayName)
+        if device.protocolIdentityCandidate?.support.connectionRoute == .vescOnewheel {
+            return vescRideIdentity(using: device.protocolIdentityCandidate?.displayName)
         }
         if let model = selectedRow?.electricUnicycleModel
-            ?? core.protocolIdentityCandidate?.support.electricUnicycleModel
+            ?? device.protocolIdentityCandidate?.support.electricUnicycleModel
             ?? phase.connectingModel
         {
             return .model(model)
@@ -1328,7 +1498,7 @@ final class CutoutAppModel {
 
     private func liveActivityGlyph(for selectedRow: DevicePickerRow?) -> LiveActivityRideGlyph {
         if selectedRow?.connectionRoute == .vescOnewheel
-            || core.protocolIdentityCandidate?.support.connectionRoute == .vescOnewheel
+            || device.protocolIdentityCandidate?.support.connectionRoute == .vescOnewheel
         {
             return .floatwheelAtom
         }
@@ -1351,13 +1521,13 @@ final class CutoutAppModel {
             lastLiveActivityUpdate = now
             return true
         }
-        guard snapshot != lastLiveActivitySnapshot else { return false }
         let previousSnapshot = lastLiveActivitySnapshot
         guard
             previousSnapshot == nil
                 || snapshot.connectionState != previousSnapshot?.connectionState
                 || lastLiveActivityUpdate.map({
-                    now.elapsed(since: $0).rawValue >= Self.liveActivityUpdateIntervalMilliseconds
+                    now.elapsed(since: $0).rawValue >= core.rideSessionStateHandle.rideSessionSnapshot().staleAfterMs
+                        / 2
                 }) != false
         else { return false }
 
@@ -1400,3 +1570,83 @@ extension SessionConnectionPhase {
         }
     }
 }
+
+#if DEBUG
+    /// Explicit developer maintenance command. Imports through the shared Rust database
+    /// service; it never replaces the database or edits existing rides.
+    enum RideCaptureRecovery {
+        struct Report: Codable, Sendable {
+            let rideID: String
+            let artifactDigest: String
+            let duplicate: Bool
+            let pointCount: UInt64
+            let distanceMillimetres: UInt64
+            let createdAtMilliseconds: UInt64
+            let queryAtMilliseconds: UInt64
+            let previousRideIDs: [String]
+            let recentRideIDs: [String]
+        }
+
+        static func runIfRequested(database: RideDatabaseHandle) async throws {
+            let arguments = CommandLine.arguments
+            guard let index = arguments.firstIndex(of: "--import-ride-capture") else { return }
+            guard arguments.count > index + 3,
+                let createdAt = UInt64(arguments[index + 2]), createdAt > 0,
+                let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+            else { throw CocoaError(.fileReadInvalidFileName) }
+            let fileName = arguments[index + 1]
+            guard !fileName.isEmpty, fileName != ".", fileName != "..",
+                URL(fileURLWithPath: fileName).lastPathComponent == fileName
+            else { throw CocoaError(.fileReadInvalidFileName) }
+            let source = documents.appendingPathComponent(fileName)
+            let expectedDigest = arguments[index + 3]
+            let resultURL = documents.appendingPathComponent("ride-recovery-result.json")
+            try await Task.detached(priority: .userInitiated) {
+                do {
+                    let report = try run(
+                        database: database, source: source, createdAtMilliseconds: createdAt,
+                        expectedDigest: expectedDigest,
+                        nowMilliseconds: UInt64(Date().timeIntervalSince1970 * 1_000)
+                    )
+                    try JSONEncoder().encode(report).write(to: resultURL, options: .atomic)
+                } catch {
+                    let failure = try JSONSerialization.data(withJSONObject: ["error": String(describing: error)])
+                    try failure.write(to: resultURL, options: .atomic)
+                    throw error
+                }
+            }.value
+        }
+
+        /// Synchronous storage work; call on a background executor.
+        static func run(
+            database: RideDatabaseHandle, source: URL, createdAtMilliseconds: UInt64,
+            expectedDigest: String, nowMilliseconds: UInt64
+        ) throws -> Report {
+            let state = MobileRideMapState(database: database)
+            let previous = try state.storedSummaries(limit: MobileRideMapLimits.rustOwned.historyPageLimit)
+            let preview = try database.preflightPevcap(path: source.path, encoding: .jsonl)
+            guard preview.artifactDigest == expectedDigest else { throw CocoaError(.fileReadCorruptFile) }
+            guard preview.locationCount > 0 else { throw CocoaError(.fileReadCorruptFile) }
+            let receipt = try database.confirmPevcapImport(
+                preview: preview, createdAtMilliseconds: createdAtMilliseconds)
+            guard let id = receipt.rideId, id.bytes.count == 16,
+                let ride = try database.findRide(rideId: id)
+            else { throw CocoaError(.fileReadCorruptFile) }
+            let rideID = NSUUID(uuidBytes: [UInt8](id.bytes)).uuidString.lowercased()
+            let window = MobileRideMapLimits.rustOwned.historyRecentWindowMilliseconds
+            let recent = try state.storedHistoryPage(
+                cursor: nil, limit: MobileRideMapLimits.rustOwned.historyPageLimit,
+                filter: MobileRideHistoryFilterDto(
+                    createdAfterMilliseconds: nowMilliseconds > window ? nowMilliseconds - window : 0,
+                    vehicleIdentity: nil, searchText: nil
+                )
+            )
+            return Report(
+                rideID: rideID, artifactDigest: receipt.artifactDigest, duplicate: receipt.duplicate,
+                pointCount: ride.summary.pointCount, distanceMillimetres: ride.summary.distanceMillimetres,
+                createdAtMilliseconds: ride.createdAtMilliseconds, queryAtMilliseconds: nowMilliseconds,
+                previousRideIDs: previous.map(\.rideID), recentRideIDs: recent.summaries.map(\.rideID)
+            )
+        }
+    }
+#endif

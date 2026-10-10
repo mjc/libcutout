@@ -9,6 +9,8 @@ use cutout_ride_maps::LocationAdmission;
 use rusqlite::{Connection, OptionalExtension, params};
 use uuid::Uuid;
 
+mod payload;
+
 /// Maximum header size retained for a live capture.
 pub const LIVE_CAPTURE_HEADER_LIMIT_BYTES: usize = 65_536;
 /// Maximum event payload size accepted by one live-capture write.
@@ -21,11 +23,24 @@ pub const LIVE_CAPTURE_TOTAL_LIMIT_BYTES: u64 = 536_870_912;
 pub struct LiveCaptureId(Uuid);
 
 impl LiveCaptureId {
+    /// Parses an existing database identity; this does not confer writer completion authority.
+    ///
+    /// # Errors
+    /// Returns an invalid identity error for non-UUID input.
+    pub fn parse(value: &str) -> Result<Self, StorageError> {
+        Uuid::parse_str(value)
+            .map(Self)
+            .map_err(|_| StorageError::InvalidStoredValue {
+                field: "live capture identity",
+                value: value.to_owned(),
+            })
+    }
+
     pub(crate) fn new() -> Self {
         Self(Uuid::new_v4())
     }
 
-    fn as_string(self) -> String {
+    pub(super) fn as_string(self) -> String {
         self.0.to_string()
     }
 }
@@ -105,7 +120,7 @@ impl LiveCaptureState {
         }
     }
 
-    fn parse(value: &str) -> Result<Self, StorageError> {
+    pub(super) fn parse(value: &str) -> Result<Self, StorageError> {
         match value {
             "active" => Ok(Self::Active),
             "finished" => Ok(Self::Finished),
@@ -148,7 +163,7 @@ impl LiveCaptureIntegrity {
         }
     }
 
-    fn parse(value: &str, dropped_messages: u64) -> Result<Self, StorageError> {
+    pub(super) fn parse(value: &str, dropped_messages: u64) -> Result<Self, StorageError> {
         match (value, dropped_messages) {
             ("complete", 0) => Ok(Self::Complete),
             ("incomplete", dropped_messages @ 1..) => Ok(Self::Incomplete { dropped_messages }),
@@ -343,6 +358,7 @@ pub(super) const SCHEMA: &str = "
         finished_at_ms INTEGER CHECK (finished_at_ms IS NULL OR finished_at_ms >= started_at_ms),
         next_sequence INTEGER NOT NULL DEFAULT 0 CHECK (next_sequence >= 0),
         stored_bytes INTEGER NOT NULL CHECK (stored_bytes BETWEEN 1 AND 536870912),
+        recording_context_json TEXT,
         CHECK ((state = 'finished') = (finished_at_ms IS NOT NULL)),
         CHECK ((integrity = 'complete' AND dropped_messages = 0)
             OR (integrity = 'incomplete' AND dropped_messages > 0)
@@ -358,12 +374,10 @@ pub(super) const SCHEMA: &str = "
         source_wall_clock_unix_ms INTEGER CHECK
             (source_wall_clock_unix_ms IS NULL OR source_wall_clock_unix_ms >= 0),
         payload BLOB NOT NULL CHECK (length(payload) BETWEEN 1 AND 65536),
+        payload_encoding INTEGER NOT NULL DEFAULT 0,
+        payload_original_bytes INTEGER,
         PRIMARY KEY (capture_id, sequence)
     ) WITHOUT ROWID;
-    CREATE INDEX IF NOT EXISTS live_capture_events_receipt_order
-        ON live_capture_events(capture_id, receipt_monotonic_ms, sequence);
-    CREATE INDEX IF NOT EXISTS live_capture_events_source_wall_clock
-        ON live_capture_events(capture_id, source_wall_clock_unix_ms, sequence);
 ";
 
 /// Structured location values remain separate from, and foreign-keyed to, raw event bytes.
@@ -430,8 +444,6 @@ pub(super) const BLE_SCHEMA: &str = "
         FOREIGN KEY (capture_id, sequence)
             REFERENCES live_capture_events(capture_id, sequence) ON DELETE CASCADE
     ) WITHOUT ROWID;
-    CREATE INDEX IF NOT EXISTS live_capture_ble_characteristic
-        ON live_capture_ble_observations(characteristic_uuid, capture_id, sequence);
 ";
 
 /// Protocol-native decoded field slots remain independently queryable while the original
@@ -453,8 +465,6 @@ pub(super) const BLE_RAW_TELEMETRY_SCHEMA: &str = "
         FOREIGN KEY (capture_id, sequence)
             REFERENCES live_capture_ble_observations(capture_id, sequence) ON DELETE CASCADE
     ) WITHOUT ROWID;
-    CREATE INDEX IF NOT EXISTS live_capture_ble_raw_telemetry_field_id
-        ON live_capture_ble_raw_telemetry_fields(field_kind, field_id, capture_id, sequence);
 ";
 
 /// Rust-produced semantic snapshots stay linked to the exact BLE event and preserve provenance.
@@ -471,8 +481,6 @@ pub(super) const BLE_SEMANTIC_TELEMETRY_SCHEMA: &str = "
         FOREIGN KEY (capture_id, sequence)
             REFERENCES live_capture_ble_observations(capture_id, sequence) ON DELETE CASCADE
     ) WITHOUT ROWID;
-    CREATE INDEX IF NOT EXISTS live_capture_ble_semantic_telemetry_time
-        ON live_capture_ble_semantic_telemetry(provenance, observed_at_ms, capture_id, sequence);
 ";
 
 impl RideDatabase {
@@ -696,6 +704,37 @@ impl RideDatabase {
         })
     }
 
+    /// Commits the closed header and terminal state together, at the writer's existing durable
+    /// completion acknowledgement boundary. Raw event transactions are unchanged.
+    pub(crate) fn finalize_live_capture(
+        &self,
+        id: LiveCaptureId,
+        header_json: Vec<u8>,
+        finished_at_ms: u64,
+        integrity: LiveCaptureIntegrity,
+    ) -> Result<(), StorageError> {
+        validate_timestamp(finished_at_ms)?;
+        if header_json.is_empty() || header_json.len() > LIVE_CAPTURE_HEADER_LIMIT_BYTES {
+            return Err(StorageError::LiveCaptureInputInvalid("header size"));
+        }
+        match integrity {
+            LiveCaptureIntegrity::Unknown
+            | LiveCaptureIntegrity::Incomplete {
+                dropped_messages: 0,
+            } => {
+                return Err(StorageError::LiveCaptureInputInvalid("finish integrity"));
+            }
+            LiveCaptureIntegrity::Complete | LiveCaptureIntegrity::Incomplete { .. } => {}
+        }
+        self.request(|reply| Command::FinalizeLiveCapture {
+            id,
+            header_json,
+            finished_at_ms,
+            integrity,
+            reply,
+        })
+    }
+
     /// Replaces the staged header after Rust applies capture metadata changes.
     ///
     /// # Errors
@@ -822,6 +861,7 @@ pub(super) fn append(
     let next_sequence = sequence
         .checked_add(1)
         .ok_or(StorageError::LiveCaptureLimitExceeded)?;
+    let stored_payload = payload::encode(payload)?;
     let changed = transaction.execute(
         "UPDATE live_capture_sessions SET next_sequence = ?1, stored_bytes = ?2
          WHERE capture_id = ?3 AND state = 'active' AND next_sequence = ?4",
@@ -833,8 +873,9 @@ pub(super) fn append(
     transaction.execute(
         "INSERT INTO live_capture_events
          (capture_id, sequence, event_kind, receipt_monotonic_ms,
-          source_monotonic_offset_ms, source_wall_clock_unix_ms, payload)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+          source_monotonic_offset_ms, source_wall_clock_unix_ms, payload,
+          payload_encoding, payload_original_bytes)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         params![
             id.as_string(),
             sequence,
@@ -842,7 +883,9 @@ pub(super) fn append(
             receipt_monotonic_ms,
             source_monotonic_offset_ms,
             source_wall_clock_unix_ms,
-            payload
+            stored_payload.bytes.as_ref(),
+            stored_payload.encoding,
+            stored_payload.original_bytes,
         ],
     )?;
     if let Some(location) = location {
@@ -1200,40 +1243,61 @@ pub(super) fn update_header(
     header_json: &[u8],
 ) -> Result<(), StorageError> {
     let transaction = connection.transaction()?;
-    let previous_size: Option<i64> = transaction
-        .query_row(
-            "SELECT length(header_json) FROM live_capture_sessions
-             WHERE capture_id = ?1 AND state = 'active'",
-            [id.as_string()],
-            |row| row.get(0),
-        )
-        .optional()?;
-    let Some(previous_size) = previous_size else {
-        return Err(StorageError::LiveCaptureNotActive);
-    };
-    let stored_bytes: i64 = transaction.query_row(
-        "SELECT stored_bytes FROM live_capture_sessions WHERE capture_id = ?1",
-        [id.as_string()],
-        |row| row.get(0),
+    let next_size = updated_header_size(&transaction, id, header_json)?;
+    transaction.execute("UPDATE live_capture_sessions SET header_json = ?1, stored_bytes = ?2 WHERE capture_id = ?3 AND state = 'active'",
+        params![header_json, next_size, id.as_string()])?;
+    transaction.commit()?;
+    Ok(())
+}
+
+pub(super) fn finalize(
+    connection: &mut Connection,
+    id: LiveCaptureId,
+    header_json: &[u8],
+    finished_at_ms: u64,
+    integrity: LiveCaptureIntegrity,
+) -> Result<(), StorageError> {
+    let transaction = connection.transaction()?;
+    let next_size = updated_header_size(&transaction, id, header_json)?;
+    let changed = transaction.execute(
+        "UPDATE live_capture_sessions SET header_json = ?1, stored_bytes = ?2,
+            state = 'finished', finished_at_ms = ?3, integrity = ?4, dropped_messages = ?5
+         WHERE capture_id = ?6 AND state = 'active' AND started_at_ms <= ?3",
+        params![
+            header_json,
+            next_size,
+            finished_at_ms,
+            integrity.as_str(),
+            integrity.dropped_messages(),
+            id.as_string()
+        ],
     )?;
-    let next_size = u64::try_from(stored_bytes)
-        .ok()
-        .and_then(|stored| {
-            stored
-                .checked_sub(u64::try_from(previous_size).ok()?)
-                .and_then(|without_header| without_header.checked_add(header_json.len() as u64))
-        })
+    if changed != 1 {
+        return Err(StorageError::LiveCaptureInputInvalid(
+            "finish precedes capture start",
+        ));
+    }
+    transaction.commit()?;
+    Ok(())
+}
+
+fn updated_header_size(
+    connection: &Connection,
+    id: LiveCaptureId,
+    header_json: &[u8],
+) -> Result<u64, StorageError> {
+    let session: Option<(u64, u64)> = connection.query_row(
+        "SELECT length(header_json), stored_bytes FROM live_capture_sessions WHERE capture_id = ?1 AND state = 'active'",
+        [id.as_string()], |row| Ok((row.get(0)?, row.get(1)?))).optional()?;
+    let (previous_size, stored_bytes) = session.ok_or(StorageError::LiveCaptureNotActive)?;
+    let next_size = stored_bytes
+        .checked_sub(previous_size)
+        .and_then(|without_header| without_header.checked_add(header_json.len() as u64))
         .ok_or(StorageError::LiveCaptureLimitExceeded)?;
     if next_size > LIVE_CAPTURE_TOTAL_LIMIT_BYTES {
         return Err(StorageError::LiveCaptureLimitExceeded);
     }
-    transaction.execute(
-        "UPDATE live_capture_sessions SET header_json = ?1, stored_bytes = ?2
-         WHERE capture_id = ?3 AND state = 'active'",
-        params![header_json, next_size, id.as_string()],
-    )?;
-    transaction.commit()?;
-    Ok(())
+    Ok(next_size)
 }
 
 struct LiveCaptureEventRow {
@@ -1243,6 +1307,8 @@ struct LiveCaptureEventRow {
     source_monotonic_offset_ms: Option<i64>,
     source_wall_clock_unix_ms: Option<u64>,
     payload: Vec<u8>,
+    payload_encoding: i64,
+    payload_original_bytes: Option<i64>,
     latitude_degrees: Option<f64>,
     longitude_degrees: Option<f64>,
     altitude_meters: Option<f64>,
@@ -1286,6 +1352,8 @@ impl LiveCaptureEventRow {
             route_admission: row.get(19)?,
             raw_float_bits: row.get(20)?,
             raw_source_timestamp_bits: row.get(21)?,
+            payload_encoding: row.get(22)?,
+            payload_original_bytes: row.get(23)?,
         })
     }
 
@@ -1297,6 +1365,8 @@ impl LiveCaptureEventRow {
             source_monotonic_offset_ms,
             source_wall_clock_unix_ms,
             payload,
+            payload_encoding,
+            payload_original_bytes,
             latitude_degrees,
             longitude_degrees,
             altitude_meters,
@@ -1342,7 +1412,7 @@ impl LiveCaptureEventRow {
             receipt_monotonic_ms,
             source_monotonic_offset_ms,
             source_wall_clock_unix_ms,
-            payload,
+            payload: payload::decode(payload, payload_encoding, payload_original_bytes)?,
             location,
         })
     }
@@ -1569,7 +1639,8 @@ pub(super) fn read(
                 location.course_degrees, location.course_accuracy_degrees,
                 location.simulated, location.produced_by_accessory,
                 location.validation_state, location.validation_reason, location.route_admission,
-                location.raw_float_bits, location.raw_source_timestamp_bits
+                location.raw_float_bits, location.raw_source_timestamp_bits,
+                event.payload_encoding, event.payload_original_bytes
          FROM live_capture_events AS event
          LEFT JOIN live_capture_location_observations AS location
            ON location.capture_id = event.capture_id AND location.sequence = event.sequence

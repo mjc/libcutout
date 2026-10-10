@@ -15,39 +15,34 @@ struct EucRideScreenView: View {
     }
 
     var phaseText: String {
-        guard rideState?.phase == .live else { return connectionStatusText }
-        guard let warningState, warningState.severity != .normal else {
-            return rideState?.statusText ?? connectionStatusText
+        guard let rideState, rideState.phase == .live else { return connectionStatusText }
+        if rideState.operatingState == .charging {
+            switch rideState.chargeEstimate.kind {
+            case .full, .balancing: return rideState.chargeEstimate.displayValue
+            default: return pevLocalizedText("euc.status.charging")
+            }
         }
-        return warningState.title
+        if rideState.warningState.severity == .reduceAcceleration {
+            return rideState.warningState.title
+        }
+        return rideState.operatingState == .unknown
+            ? pevLocalizedText("euc.status.connected") : rideState.statusText
     }
 
     private var titleText: String {
         rideTitle ?? localizedAppText("euc.ride.untitled")
     }
 
-    private var sectionTitle: String {
-        PevScreenCatalog.live.screen(id: .eucRide)!.title
-    }
-
     var statusTone: PevDashboardStatusPillTone {
-        guard rideState?.phase == .live,
-            let warningState,
-            warningState.severity == .normal
-        else { return .warning }
-        return .eucRide
-    }
-
-    var warningCard: PevWarningCard? {
-        guard let warningState, warningState.severity != .normal else { return nil }
-        return PevWarningCard(title: warningState.title, detail: warningState.detail)
+        guard let rideState, rideState.phase == .live else { return .warning }
+        return rideState.warningState.severity == .reduceAcceleration ? .warning : .eucRide
     }
 
     private var warningState: EucRideWarningState? {
         guard let rideState else {
             return nil
         }
-        return rideState.warningState(at: now, staleAfter: RideTelemetryFreshnessPolicy.staleAfter)
+        return rideState.warningState
     }
 
     private var safetyBars: [PevSafetyBar] {
@@ -66,21 +61,15 @@ struct EucRideScreenView: View {
 
     var body: some View {
         PevRideDashboardShell(
-            sectionTitle: sectionTitle,
             heroStyle: .electricUnicycle,
             title: titleText,
             subtitle: phaseText,
             statusTone: statusTone,
             captureStatusText: captureStatusText,
             speedReadout: speedReadout,
-            speedCaption: localizedAppText("euc.speed.caption")
+            speedCaption: localizedAppText("euc.speed.caption"),
+            gpsSpeed: gpsSpeedTile
         ) {
-            if let warningCard {
-                EucRideWarningSection(
-                    card: warningCard,
-                    severity: warningState?.severity ?? .unavailable
-                )
-            }
             EucRideReadingsSection(safetyBars: safetyBars, tiles: dashboardTiles, gpsSpeed: gpsSpeedTile)
         }
         .accessibilityElement(children: .contain)
@@ -92,46 +81,88 @@ struct EucRideScreenView: View {
     }
 }
 
-private struct EucRideWarningSection: View {
-    let card: PevWarningCard
-    let severity: EucRideWarningSeverity
-
-    var body: some View {
-        PevDashboardWarningCard(
-            title: card.title,
-            detail: card.detail,
-            accent: eucWarningAccent(for: severity),
-            detailColor: PevColors.primaryText,
-            fill: PevColors.warningFill,
-            stroke: PevColors.warningStroke
-        )
-        .accessibilityIdentifier("euc.warning")
-        .padding(.top, 14)
-    }
-}
-
 private struct EucRideReadingsSection: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @ScaledMetric(relativeTo: .headline) private var headroomLineHeight: CGFloat = 21
+    @ScaledMetric(relativeTo: .caption) private var footerHeight: CGFloat = 42
     let safetyBars: [PevSafetyBar]
     let tiles: [PevDashboardTile]
     let gpsSpeed: PevDashboardTile
 
+    private var metrics: [PevDashboardTile] {
+        let source =
+            tiles.isEmpty
+            ? liveDashboardTiles(
+                from: EucRideScreenState(phase: .live, displayState: RideDisplayState(telemetry: TelemetrySnapshot())),
+                telemetry: TelemetrySnapshot())
+            : tiles
+        return source.filter { $0.kind != .chargeEstimate && $0.kind != .limpHomeRange }
+    }
+
     var body: some View {
-        VStack(spacing: 10) {
-            ForEach(safetyBars) { bar in
-                PevDashboardProgressBar(
-                    label: bar.label,
-                    metricValue: bar.metricValue,
-                    progress: bar.progress
-                )
+        if dynamicTypeSize.isAccessibilitySize {
+            PevRideAccessibleReadings(
+                headroomLabel: localizedAppText("ride.safety.pwm_headroom"),
+                headroom: safetyBars.first?.metricValue ?? .unavailable,
+                headroomProgress: safetyBars.first?.progress,
+                tiles: (tiles.isEmpty ? metrics : tiles) + [gpsSpeed]
+            )
+        } else {
+            GeometryReader { geometry in
+                let rowHeight = min(
+                    108, max(0, (geometry.size.height - headroomLineHeight - 17 - footerHeight - 32) / 2))
+                VStack(spacing: 8) {
+                    PevDashboardProgressBar(
+                        label: localizedAppText("ride.safety.pwm_headroom"),
+                        metricValue: safetyBars.first?.metricValue ?? .unavailable,
+                        progress: safetyBars.first?.progress,
+                        height: 10
+                    )
+                    .fixedSize(horizontal: false, vertical: true)
+                    Grid(horizontalSpacing: 8, verticalSpacing: 8) {
+                        GridRow {
+                            metric(metrics[0], height: rowHeight)
+                            metric(metrics[1], height: rowHeight)
+                        }
+                        GridRow {
+                            metric(metrics[2], height: rowHeight)
+                            metric(metrics[3], height: rowHeight)
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    compactMetric(tiles.first { $0.kind == .chargeEstimate })
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(minHeight: 26)
+                    compactMetric(tiles.first { $0.kind == .limpHomeRange })
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(minHeight: 16)
+                }
             }
         }
-        PevDashboardGrid(columnSpacing: 12, spacing: 12) {
-            ForEach(tiles) { tile in
-                PevDashboardMetricTile(tile, prominence: .dashboard)
+    }
+
+    private func metric(_ tile: PevDashboardTile, height: CGFloat) -> some View {
+        PevDashboardMetricTile(tile, prominence: .ride)
+            .frame(height: height)
+    }
+
+    @ViewBuilder
+    private func compactMetric(_ tile: PevDashboardTile?) -> some View {
+        if let tile {
+            HStack {
+                Text(tile.label)
+                Spacer(minLength: 4)
+                Text(tile.value)
+                    .monospacedDigit()
             }
-            PevDashboardMetricTile(gpsSpeed, prominence: .dashboard)
+            .font(.caption.weight(.semibold))
+            .lineLimit(1)
+            .minimumScaleFactor(0.6)
+            .accessibilityElement(children: .combine)
+        } else {
+            Color.clear
+                .accessibilityHidden(true)
         }
-        .padding(.top, 12)
     }
 }
 
@@ -147,17 +178,4 @@ func eucGpsSpeedTile(
         detail: readback.detail(at: now),
         accent: readback.freshness(at: now) == .fresh ? .cyan : .yellow
     )
-}
-
-private func eucWarningAccent(for severity: EucRideWarningSeverity) -> Color {
-    switch severity {
-    case .normal:
-        PevColors.green
-    case .caution, .reduceAcceleration:
-        PevColors.orange
-    case .limpHome, .failed:
-        PevColors.red
-    case .unavailable:
-        PevColors.muted
-    }
 }

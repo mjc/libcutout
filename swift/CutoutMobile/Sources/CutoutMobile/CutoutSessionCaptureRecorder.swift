@@ -21,9 +21,10 @@ struct CaptureMusicContext: Equatable {
 
 struct CaptureWriterCompletion {
     let generation: CaptureGeneration
-    let outcome: MobileCaptureFinishOutcomeDto
-    let priorWriteSucceeded: Bool
-    let databasePublicationSucceeded: Bool?
+    let completion: MobileCaptureCompletionDto
+    let priorWriteOutcome: MobileCaptureWriteOutcomeDto
+    var outcome: MobileCaptureFinishOutcomeDto { completion.finish }
+    var databasePublicationSucceeded: Bool? { completion.databasePublicationSucceeded }
 
     var artifact: MobileSavedCaptureArtifactDto? {
         switch outcome {
@@ -36,15 +37,11 @@ struct CaptureWriterCompletion {
     var fileURL: URL? { artifact.map { URL(fileURLWithPath: $0.path) } }
 
     var succeeded: Bool {
-        switch outcome {
-        case .artifactAvailable: priorWriteSucceeded
-        case .databaseFinished: true
-        case .notStarted, .finalizing, .failed: false
-        }
+        captureCompletionSucceeded(completion: completion, priorWriteOutcome: priorWriteOutcome)
     }
 }
 
-struct CaptureLocationWriteResult {
+struct CaptureLocationWriteResult: Sendable {
     let generation: CaptureGeneration?
     let outcome: MobileCaptureWriteOutcomeDto
 }
@@ -79,7 +76,7 @@ protocol CutoutSessionCaptureRecording: AnyObject {
     func resetMusicContext()
     func addAnnotation(_ annotation: String) -> MobileCaptureWriteOutcomeDto
     func changeLabel(_ action: MobileCaptureLabelActionDto) throws -> [MobileCaptureLabelDto]
-    func flushWriter() -> Bool
+    func flushWriter() -> MobileCaptureFlushOutcomeDto
     @discardableResult func publishProgress() -> CaptureProgress
     func publishFailure()
     func writerStatus() -> MobileCaptureWriterStatusDto?
@@ -88,7 +85,9 @@ protocol CutoutSessionCaptureRecording: AnyObject {
         service: BluetoothUuid,
         bytes: Data,
         telemetry: RawTelemetryReadback?,
-        semanticTelemetry: MobileTelemetrySnapshotDto?
+        semanticTelemetry: MobileTelemetrySnapshotDto?,
+        receivedAt: MonotonicMilliseconds,
+        evidence: MobileCaptureNotificationEvidenceDto
     ) -> MobileCaptureWriteOutcomeDto
     func recordLocationUpdate(_ update: PhoneLocationUpdate) -> CaptureLocationWriteResult
     func recordLinkUp(maxWriteLength: UInt16?) -> MobileCaptureWriteOutcomeDto
@@ -106,7 +105,7 @@ protocol CutoutSessionCaptureRecording: AnyObject {
         bytes: Data,
         writeID: UInt64
     ) -> (CoreBluetoothWriteDisposition) -> MobileCaptureWriteOutcomeDto
-    func finish(publishesResult: Bool, priorWriteSucceeded: Bool)
+    func finish(publishesResult: Bool, priorWriteOutcome: MobileCaptureWriteOutcomeDto)
     func elapsedMilliseconds() -> UInt64
     func elapsedMilliseconds(since startedAt: MonotonicMilliseconds) -> UInt64
 }
@@ -163,50 +162,42 @@ final class CutoutSessionCaptureRecorder: CutoutSessionCaptureRecording {
         origin: MobileCaptureOriginDto,
         advertisedName: String?
     ) -> Bool {
-        locationWriter.withLock { $0 = nil }
-        presentation.begin(generation: generation)
-        captureOrigin = origin
-        self.advertisedName = advertisedName
-        let startedAt = clock.now()
-        self.startedAt = startedAt
-        notificationCount = 0
+        guard self.builder == nil else { return false }
+        do {
+            let prepared = try prepareCaptureWriter(
+                request: MobileCaptureStartRequestDto(
+                    wallClockUnixSeconds: wallClock().timeIntervalSince1970,
+                    platformId: platformIdentifier,
+                    advertisedServices: advertisedServices.map(\.bytes),
+                    directoryPath: directory.path,
+                    filenameNonce: UUID().uuidString,
+                    source: "ios-app",
+                    reason: reason,
+                    evidence: evidence,
+                    annotations: annotations,
+                    origin: origin,
+                    musicHistoryPolicy: musicHistoryPolicy
+                ),
+                database: database
+            )
+            let startedAt = clock.now()
+            let admitted = try prepared.start(monotonicMs: startedAt.rawValue, musicContext: musicContext.current)
+            let builder = admitted.builder
+            let url = URL(fileURLWithPath: admitted.path)
 
-        let url = directory.appendingPathComponent(
-            "cutout-btle-capture-\(Int(wallClock().timeIntervalSince1970))-\(UUID().uuidString).jsonl"
-        )
-        let builder = MobilePevcapCaptureBuilder(
-            wallClockStartUnixMs: MobileWallClockUnixMillisDto(
-                milliseconds: UInt64(wallClock().timeIntervalSince1970 * 1_000)
-            ),
-            platformId: platformIdentifier,
-            writeLimit: MobileTransportWriteLimitDto(bytes: 23)
-        )
-        if let database {
-            _ = builder.setDatabase(database: database)
-        }
-        _ = builder.setMusicHistoryPolicy(policy: musicHistoryPolicy)
-        _ = builder.setCaptureStartMonotonicMs(monotonicMs: startedAt.rawValue)
-        advertisedServices.forEach { _ = builder.addAdvertisedService(service: $0.bytes) }
-        [
-            "source=ios-app",
-            "capture_reason=\(reason)",
-            "capture_privacy=private",
-            "capture_evidence=\(evidence)",
-        ].forEach { _ = builder.addAnnotation(annotation: $0) }
-        annotations.forEach { _ = builder.addAnnotation(annotation: sanitizedPevcapAnnotation($0)) }
-        _ = builder.setMusicContext(music: musicContext.current)
-        self.builder = builder
-        fileURL = url
-        guard builder.startWriter(path: url.path) else {
-            self.builder = nil
-            fileURL = nil
-            self.startedAt = nil
-            presentation.end()
+            presentation.begin(generation: generation)
+            captureOrigin = origin
+            self.advertisedName = advertisedName
+            self.startedAt = startedAt
+            notificationCount = 0
+            self.builder = builder
+            fileURL = url
+            locationWriter.withLock { $0 = ActiveCaptureLocationWriter(generation: generation, builder: builder) }
+            musicContext.reset()
+            return true
+        } catch {
             return false
         }
-        locationWriter.withLock { $0 = ActiveCaptureLocationWriter(generation: generation, builder: builder) }
-        musicContext.reset()
-        return true
     }
 
     func publishStarted() {
@@ -240,7 +231,7 @@ final class CutoutSessionCaptureRecorder: CutoutSessionCaptureRecording {
         return try builder.changeLabel(action: action)
     }
 
-    func flushWriter() -> Bool { builder?.flushWriter() ?? false }
+    func flushWriter() -> MobileCaptureFlushOutcomeDto { builder?.flushWriterOutcome() ?? .rejected }
 
     @discardableResult
     func publishProgress() -> CaptureProgress {
@@ -261,7 +252,9 @@ final class CutoutSessionCaptureRecorder: CutoutSessionCaptureRecording {
             notificationCount: notificationCount,
             fileSizeBytes: size,
             queuedMessageCount: status?.queuedMessages ?? 0,
-            writerError: status?.failed == true ? status?.lastError : nil
+            writerError: status?.lastError,
+            writerFailed: status?.failed ?? false,
+            droppedMessageCount: status?.droppedMessages ?? 0
         )
     }
 
@@ -279,17 +272,19 @@ final class CutoutSessionCaptureRecorder: CutoutSessionCaptureRecording {
         service: BluetoothUuid,
         bytes: Data,
         telemetry: RawTelemetryReadback?,
-        semanticTelemetry: MobileTelemetrySnapshotDto?
+        semanticTelemetry: MobileTelemetrySnapshotDto?,
+        receivedAt: MonotonicMilliseconds,
+        evidence: MobileCaptureNotificationEvidenceDto
     ) -> MobileCaptureWriteOutcomeDto {
         if let builder {
-            let outcome = builder.recordNotificationWithContextAndSemanticTelemetry(
-                monotonicMs: MobileMonotonicMillisDto(milliseconds: clock.now().rawValue),
+            let outcome = builder.recordDecodedNotification(
+                monotonicMs: MobileMonotonicMillisDto(milliseconds: receivedAt.rawValue),
                 characteristic: characteristic.bytes,
                 service: service.bytes,
                 bytes: bytes,
                 telemetry: telemetry?.dto,
                 semanticTelemetry: semanticTelemetry,
-                phoneLocation: nil
+                evidence: evidence
             )
             if case .accepted = outcome { notificationCount += 1 }
             return outcome
@@ -357,18 +352,7 @@ final class CutoutSessionCaptureRecorder: CutoutSessionCaptureRecording {
         evidence: String?,
         detail: String?
     ) -> MobileCaptureWriteOutcomeDto {
-        guard let builder else { return .accepted }
-        let identityOutcome = builder.setResolvedIdentity(identity: identity)
-        guard case .accepted = identityOutcome else { return identityOutcome }
-        if let evidence {
-            let outcome = builder.addAnnotation(annotation: pevcapAnnotation(key: "resolved_evidence", value: evidence))
-            guard case .accepted = outcome else { return outcome }
-        }
-        if let detail {
-            let outcome = builder.addAnnotation(annotation: pevcapAnnotation(key: "resolved_detail", value: detail))
-            guard case .accepted = outcome else { return outcome }
-        }
-        return .accepted
+        builder?.updateResolvedIdentity(identity: identity, evidence: evidence, detail: detail) ?? .accepted
     }
 
     func addGattFingerprint(_ fingerprint: MobileGattFingerprintDto) -> MobileCaptureWriteOutcomeDto {
@@ -400,7 +384,7 @@ final class CutoutSessionCaptureRecorder: CutoutSessionCaptureRecording {
         }
     }
 
-    func finish(publishesResult: Bool, priorWriteSucceeded: Bool) {
+    func finish(publishesResult: Bool, priorWriteOutcome: MobileCaptureWriteOutcomeDto) {
         musicContext.reset()
         guard let builder else { return }
         let generation = currentGeneration ?? .legacy
@@ -437,9 +421,8 @@ final class CutoutSessionCaptureRecorder: CutoutSessionCaptureRecording {
             completionHandler(
                 CaptureWriterCompletion(
                     generation: generation,
-                    outcome: completion.finish,
-                    priorWriteSucceeded: priorWriteSucceeded,
-                    databasePublicationSucceeded: completion.databasePublicationSucceeded
+                    completion: completion,
+                    priorWriteOutcome: priorWriteOutcome
                 ))
         }
         DispatchQueue.global(qos: .utility).async(execute: finish)

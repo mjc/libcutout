@@ -26,8 +26,9 @@ pub use history::*;
 pub use model::*;
 pub use monitor::*;
 pub use observation::{
-    MusicHistoryTransition, MusicHistoryTransitionAcknowledgement, MusicObservationDecision,
-    MusicObservationOutcome, MusicObservationTiming,
+    MusicCaptureTarget, MusicHistoryTransition, MusicHistoryTransitionAcknowledgement,
+    MusicObservationDecision, MusicObservationOutcome, MusicObservationTiming,
+    MusicUnsettledHistoryKind, MusicUnsettledHistoryTransition,
 };
 
 #[cfg(test)]

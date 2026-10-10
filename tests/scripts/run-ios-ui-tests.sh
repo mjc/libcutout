@@ -113,6 +113,26 @@ fi
 assert_equal "Result.xcresult" "$(basename "$first_result")"
 assert_equal "$tmp/derived-data/TestResults" "$(dirname "$(dirname "$first_result")")"
 
+for architecture in 'ARCHS=x86_64' 'ARCHS=arm64 x86_64' 'VALID_ARCHS=x86_64' 'ONLY_ACTIVE_ARCH=NO' '-arch'; do
+  if "$root/scripts/run-ios-ui-tests.sh" --build-only "$architecture" >"$tmp/architecture.log" 2>&1; then
+    echo "expected architecture override to be rejected: $architecture" >&2
+    exit 1
+  fi
+  if ! grep -q 'support only arm64' "$tmp/architecture.log"; then
+    cat "$tmp/architecture.log" >&2
+    exit 1
+  fi
+done
+if "$root/scripts/run-ios-ui-tests.sh" --build-only \
+  -destination 'platform=iOS Simulator,name=Test,arch=x86_64' >"$tmp/architecture.log" 2>&1; then
+  echo "expected x86_64 destination to be rejected" >&2
+  exit 1
+fi
+if ! grep -q 'support only arm64' "$tmp/architecture.log"; then
+  cat "$tmp/architecture.log" >&2
+  exit 1
+fi
+
 # A physical UI test build must keep the Spotify configuration of the app it replaces.
 mkdir -p "$tmp/bin"
 cat >"$tmp/bin/physical-ui-test-cargo" <<'EOF'
@@ -120,13 +140,21 @@ cat >"$tmp/bin/physical-ui-test-cargo" <<'EOF'
 set -euo pipefail
 derived_data=""
 client_id=""
+arm64=false
+active_arch=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -derivedDataPath) derived_data="$2"; shift 2 ;;
     SPOTIFY_CLIENT_ID=*) client_id="${1#SPOTIFY_CLIENT_ID=}"; shift ;;
+    ARCHS=arm64) arm64=true; shift ;;
+    ONLY_ACTIVE_ARCH=YES) active_arch=true; shift ;;
     *) shift ;;
   esac
 done
+[[ "$arm64" == true && "$active_arch" == true ]] || {
+  echo "iOS test runner must build only arm64" >&2
+  exit 1
+}
 [[ "$client_id" == "runner-test-id" ]] || {
   echo "physical UI test build lost its configured Spotify client ID" >&2
   exit 1

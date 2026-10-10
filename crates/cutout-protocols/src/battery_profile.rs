@@ -219,8 +219,10 @@ mod tests {
     fn samsung_50s_profile_interpolates_midpoint_between_adjacent_cell_points() {
         let low = SAMSUNG_50S_CELL_POINTS[3];
         let high = SAMSUNG_50S_CELL_POINTS[4];
-        let midpoint_uv =
-            (low.cell_voltage.as_microvolts() + high.cell_voltage.as_microvolts()) / 2;
+        let midpoint_uv = i32::midpoint(
+            low.cell_voltage.as_microvolts(),
+            high.cell_voltage.as_microvolts(),
+        );
 
         assert_eq!(
             SAMSUNG_50S_PROFILE

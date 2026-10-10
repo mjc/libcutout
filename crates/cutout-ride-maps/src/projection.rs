@@ -168,9 +168,14 @@ impl RouteCameraBounds {
         let maximum_latitude = self.maximum_latitude?.as_i32();
         let minimum_longitude = self.minimum_longitude?;
         let maximum_longitude = self.maximum_longitude?;
-        let center_longitude = normalize_longitude_e7((minimum_longitude + maximum_longitude) / 2);
+        let center_longitude =
+            normalize_longitude_e7(i64::midpoint(minimum_longitude, maximum_longitude));
         let center = Coordinate::from_fixed_parts(
-            i32::try_from((i64::from(minimum_latitude) + i64::from(maximum_latitude)) / 2).ok()?,
+            i32::try_from(i64::midpoint(
+                i64::from(minimum_latitude),
+                i64::from(maximum_latitude),
+            ))
+            .ok()?,
             center_longitude,
         )
         .ok()?;

@@ -17,7 +17,10 @@ use cutout_protocols::{
 fn legacy_pedal_mode_does_not_expose_an_unsupported_aero_riding_preset() {
     let profile = aero_control_profile();
     for raw in [-1, 0, 1, 2, 3, 1920, i64::MAX] {
-        assert!(read(profile, cutout_protocols::VETERAN_FIELD_PEDALS_MODE, raw).is_empty());
+        assert_eq!(
+            read(profile, cutout_protocols::VETERAN_FIELD_PEDALS_MODE, raw),
+            [] as [SettingObservation; 0]
+        );
     }
     assert!(
         profile
@@ -266,19 +269,23 @@ fn normalization_preserves_signed_fixed_point_and_original_evidence() {
 #[test]
 fn absent_and_unrelated_fields_do_not_manufacture_observations() {
     let profile = aero_control_profile();
-    assert!(
-        profile
-            .normalize_readback(SettingsReadback::unavailable())
-            .is_empty()
+    assert_eq!(
+        profile.normalize_readback(SettingsReadback::unavailable()),
+        [] as [SettingObservation; 0]
     );
-    assert!(
-        profile
-            .normalize_readback(SettingsReadback::unsupported())
-            .is_empty()
+    assert_eq!(
+        profile.normalize_readback(SettingsReadback::unsupported()),
+        [] as [SettingObservation; 0]
     );
-    assert!(read(profile, u16::MAX, 80).is_empty());
-    assert!(read(falcon_control_profile(), AERO_FIELD_PWM_PERCENT, 80).is_empty());
-    assert!(read(DeviceControlProfile::default(), AERO_FIELD_PWM_PERCENT, 80).is_empty());
+    assert_eq!(read(profile, u16::MAX, 80), [] as [SettingObservation; 0]);
+    assert_eq!(
+        read(falcon_control_profile(), AERO_FIELD_PWM_PERCENT, 80),
+        [] as [SettingObservation; 0]
+    );
+    assert_eq!(
+        read(DeviceControlProfile::default(), AERO_FIELD_PWM_PERCENT, 80),
+        [] as [SettingObservation; 0]
+    );
 }
 
 #[test]
@@ -342,13 +349,16 @@ fn passive_garage_rows_keep_exact_meaning_and_cannot_be_submitted() {
         ),
         Some(DeviceSettingValue::Number(15))
     );
-    assert!(read(aero, BEGODE_FIELD_POWER_OFF_TIMER_MINUTES, 15).is_empty());
-    assert!(
+    assert_eq!(
+        read(aero, BEGODE_FIELD_POWER_OFF_TIMER_MINUTES, 15),
+        [] as [SettingObservation; 0]
+    );
+    assert_eq!(
         read(
             falcon,
             VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS,
             90,
-        )
-        .is_empty()
+        ),
+        [] as [SettingObservation; 0]
     );
 }

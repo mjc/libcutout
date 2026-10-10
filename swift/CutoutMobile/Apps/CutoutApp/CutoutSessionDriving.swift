@@ -8,7 +8,7 @@ protocol CutoutSessionDriving: AnyObject {
     /// The Rust-backed map adapter is optional while persistence is unavailable.
     var rideMapStateHandle: MobileRideMapState? { get }
     var onDisplayStateChange: ((RideDisplayState) -> Void)? { get set }
-    var onPhaseChange: ((SessionConnectionPhase) -> Void)? { get set }
+    var onPhaseChange: ((SessionConnectionPresentation) -> Void)? { get set }
     var onReconnectScheduled: ((SessionConnectionRetry) -> Void)? { get set }
     var onCaptureEvent: ((CaptureEvent) -> Void)? { get set }
     var onScanStateChange: ((DevicePickerScanState) -> Void)? { get set }
@@ -23,10 +23,10 @@ protocol CutoutSessionDriving: AnyObject {
     var onProtocolIdentityCandidateChange: ((DevicePickerDiscoveryCandidate?) -> Void)? { get set }
     var onBluetoothRestorationResolved: ((String?) -> Void)? { get set }
     var protocolIdentityCandidate: DevicePickerDiscoveryCandidate? { get }
-    var isRecordOnlyConnection: Bool { get }
     var electricUnicycleModel: ElectricUnicycleModel? { get }
     var settings: DeviceSettings { get }
 
+    func setPresentationActive(_ active: Bool)
     func start()
     func pair(platformIdentifier: String) -> Bool
     func pair(platformIdentifier: String, model: ElectricUnicycleModel) -> Bool
@@ -37,6 +37,9 @@ protocol CutoutSessionDriving: AnyObject {
     func annotateCapture(key: String, value: String) -> Bool
     func updateMusicCapturePolicy(_ policy: MobileMusicHistoryPolicyDto)
     func updateMusicCaptureObservation(_ observation: MobilePevcapMusicEventDto?)
+    func updateMusicCaptureObservationAsync(
+        _ observation: MobilePevcapMusicEventDto?, target: MobileMusicCaptureTarget
+    ) async -> MobileCaptureWriteOutcomeDto
     func flushCapture() async -> Bool
     func finishCapture() async -> Bool
     func disconnectAndScan()
@@ -66,6 +69,7 @@ protocol CutoutSessionDriving: AnyObject {
 extension CutoutSessionCore: CutoutSessionDriving {}
 
 extension CutoutSessionDriving {
+    func setPresentationActive(_ active: Bool) {}
     func checkpointRideMap() async throws {}
     func prepareRideMapForDisconnect(
         expectedRecordingToken: MobileRideMapRecordingTokenDto?,
@@ -90,7 +94,6 @@ extension CutoutSessionDriving {
         throw DeviceSettingSubmissionError.ConnectionUnavailable
     }
 
-    var isRecordOnlyConnection: Bool { false }
     var rideMapStateHandle: MobileRideMapState? { nil }
 
     @discardableResult

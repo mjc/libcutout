@@ -94,6 +94,10 @@ impl<'a> BtleWriteChunk<'a> {
 }
 
 /// Minimal BTLE operations required by the protocol bridge.
+#[allow(
+    clippy::double_must_use,
+    reason = "async_trait adds must_use to boxed futures that already require use."
+)]
 #[async_trait]
 pub trait SessionPeripheral: Send + Sync {
     /// Returns the negotiated MTU for the connected peripheral.

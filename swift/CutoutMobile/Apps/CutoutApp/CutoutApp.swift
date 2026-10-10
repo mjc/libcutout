@@ -16,10 +16,19 @@ struct CutoutApp: App {
     @State private var startupError: String?
     @State private var startupAttempt = 0
     @State private var pendingMusicURL: URL?
+    @State private var latestScenePhase: ScenePhase = .inactive
     @State private var navigationPath = CutoutAppRoute.navigationPath(for: .initialRoute())
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
+        #if DEBUG
+            if CommandLine.arguments.contains("--import-ride-capture") {
+                _navigationPath = State(initialValue: CutoutAppRoute.navigationPath(for: .rideMap))
+                let presentation = RideMapPresentationState()
+                presentation.mode = .history
+                _rideMapPresentation = State(initialValue: presentation)
+            }
+        #endif
         if CommandLine.arguments.contains("--smoke") {
             print("cutout_app=ok")
             Foundation.exit(EXIT_SUCCESS)
@@ -29,14 +38,28 @@ struct CutoutApp: App {
     var body: some Scene {
         WindowGroup("CutOut") {
             rootView
+                .overlay(alignment: .topLeading) {
+                    #if DEBUG && targetEnvironment(simulator)
+                        if CommandLine.arguments.contains("--ui-test-live-activity-readback"),
+                            UserDefaults.standard.bool(forKey: "CUTOUT_UI_TEST_ENVIRONMENT_READBACK"), let model
+                        {
+                            Text("Live Activity test state")
+                                .font(.system(size: 1))
+                                .opacity(0.01)
+                                .accessibilityIdentifier("dashboard.lifecycle-readback")
+                                .accessibilityValue(model.uiTestLifecycleReadback)
+                        }
+                    #endif
+                }
                 .task(id: startupAttempt) {
                     await openApplication()
                 }
                 .onOpenURL { url in
                     if let model { _ = model.music.handleProviderURL(url) } else { pendingMusicURL = url }
                 }
-                .onChange(of: scenePhase) {
-                    switch scenePhase {
+                .onChange(of: scenePhase, initial: true) { _, phase in
+                    latestScenePhase = phase
+                    switch phase {
                     case .active:
                         model?.appDidBecomeActive()
                         lighting?.startIfRemembered()
@@ -128,16 +151,22 @@ struct CutoutApp: App {
     private func openApplication() async {
         #if DEBUG && os(iOS)
             guard !CommandLine.arguments.contains("--spotify-local-probe") else { return }
+            // Hosted unit tests own their database and provider fixtures.
+            guard ProcessInfo.processInfo.environment["CUTOUT_UNIT_TEST_HOST"] != "1" else { return }
         #endif
         guard model == nil else { return }
         startupError = nil
         do {
             let opened = try await CutoutAppModel.open()
             try Task.checkCancellation()
-            let lighting = LightingRouteModel()
+            #if DEBUG && targetEnvironment(simulator)
+                let lighting = LightingRouteModel.uiTestConnectedLightingModel() ?? LightingRouteModel()
+            #else
+                let lighting = LightingRouteModel()
+            #endif
             self.lighting = lighting
             model = opened
-            opened.start(sceneIsActive: scenePhase == .active)
+            opened.start(sceneIsActive: latestScenePhase == .active)
             lighting.selectVehicle(opened.selectedRideIdentifier)
             lighting.startIfRemembered()
             if let pendingMusicURL {
@@ -172,6 +201,7 @@ struct CutoutNavigationCommands: Commands {
     nonisolated static func shortcut(for tabID: PevScreenTabID) -> Character {
         switch tabID {
         case .devices: "0"
+        case .more: "9"
         case .camera: "8"
         case .ride: "1"
         case .lighting: "7"
@@ -187,7 +217,7 @@ struct CutoutNavigationCommands: Commands {
         currentRoute: CutoutAppRoute,
         hasConnection: Bool
     ) -> Bool {
-        currentRoute != .devicePicker && hasConnection
+        hasConnection && (currentRoute == .eucRide || currentRoute == .vescRide)
     }
 
     var body: some Commands {

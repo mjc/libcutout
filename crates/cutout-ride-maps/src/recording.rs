@@ -2,13 +2,49 @@ use crate::{
     DistanceMillimetres, LocationAdmission, LocationSample, LocationSource, MonotonicMilliseconds,
     RideEvent, RideLifecycleState, RidePointCount, RideSummary, TransitionError,
     ValidatedRideTransition, distance_between, distance_between_millimetres,
-    location::AdmittedLocationSample,
+    location::{AdmittedLocationBoundary, AdmittedLocationSample},
 };
+use std::{
+    num::NonZeroU64,
+    sync::atomic::{AtomicU64, Ordering},
+};
+
+// Cloned admission/durable projections share one identity. Starting or restoring a
+// different recording receives a process-unique identity, even with identical clocks.
+static NEXT_RECORDING_GENERATION: AtomicU64 = AtomicU64::new(1);
+
+fn next_recording_generation() -> Option<NonZeroU64> {
+    NEXT_RECORDING_GENERATION
+        .try_update(Ordering::Relaxed, Ordering::Relaxed, |generation| {
+            generation.checked_add(1)
+        })
+        .ok()
+        .and_then(NonZeroU64::new)
+}
 
 const MAX_HORIZONTAL_ACCURACY_MILLIMETRES: u32 = 100_000;
 /// Maximum timestamp gap before starting a new route segment.
 pub const MAX_GAP_MILLISECONDS: u64 = 30_000;
 const MAX_IMPLIED_SPEED_MILLIMETRES_PER_SECOND: u64 = 100_000;
+
+/// Whether a valid location contributes a route point or only observation time.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LocationRecordingDecision {
+    /// Native location values, route context, or a segment boundary need a retained point.
+    Record(AdmittedLocationSample),
+    /// The ordered live observation repeats the last retained values and context.
+    ObserveClockOnly(ClockOnlyLocationObservation),
+    /// The observation fails quality or monotonic ordering policy.
+    Rejected(LocationAdmission),
+}
+
+/// A validated clock-only observation that cannot be appended as a route point.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ClockOnlyLocationObservation {
+    sample: LocationSample,
+    recording_generation: NonZeroU64,
+    active_interval_generation: u64,
+}
 
 /// Applies route admission policy to a candidate and its latest accepted predecessor.
 #[must_use]
@@ -104,7 +140,7 @@ pub const TELEMETRY_FRESHNESS_MILLISECONDS: u64 = 2_000;
 pub const MAX_LIVE_ROUTE_POINTS: usize = 4_096;
 
 /// One accepted route sample with its Rust-owned segment identity.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RideMapPoint {
     sample: LocationSample,
     segment_id: RideMapSegmentId,
@@ -518,11 +554,14 @@ pub const fn clamped_transition_timestamp(
 #[derive(Clone, Debug)]
 pub struct RideMapRecorder {
     state: Option<RideLifecycleState>,
+    recording_generation: Option<NonZeroU64>,
+    active_interval_generation: u64,
     created_at_milliseconds: MonotonicMilliseconds,
     candidate_vehicle: Option<VehicleIdentity>,
     associated_vehicle: Option<VehicleIdentity>,
     associated_at_milliseconds: Option<MonotonicMilliseconds>,
     last_telemetry_at_milliseconds: Option<MonotonicMilliseconds>,
+    latest_location_observation: Option<LocationSample>,
     points: Vec<RideMapPoint>,
     first_point_sequence: RidePointSequence,
     summary: RideSummary,
@@ -548,11 +587,14 @@ impl RideMapRecorder {
     pub const fn new() -> Self {
         Self {
             state: None,
+            recording_generation: None,
+            active_interval_generation: 0,
             created_at_milliseconds: MonotonicMilliseconds::new(0),
             candidate_vehicle: None,
             associated_vehicle: None,
             associated_at_milliseconds: None,
             last_telemetry_at_milliseconds: None,
+            latest_location_observation: None,
             points: Vec::new(),
             first_point_sequence: RidePointSequence::new(0),
             summary: RideSummary::from_stored(RidePointCount::new(0), 0),
@@ -565,6 +607,15 @@ impl RideMapRecorder {
             paused_duration_milliseconds: RideDurationMilliseconds::new(0),
             completed_duration_milliseconds: RideDurationMilliseconds::new(0),
         }
+    }
+
+    /// Rejects source callbacks from before the current active recording interval.
+    #[must_use]
+    pub fn accepts_recording_observation_at(&self, at: MonotonicMilliseconds) -> bool {
+        self.state() == Some(RideLifecycleState::Active)
+            && self
+                .active_started_at_milliseconds
+                .is_some_and(|start| at >= start)
     }
 
     /// Restores a bounded active projection from canonical route samples.
@@ -688,11 +739,14 @@ impl RideMapRecorder {
             .count();
         Self {
             state: Some(state),
+            recording_generation: next_recording_generation(),
+            active_interval_generation: 0,
             created_at_milliseconds,
             candidate_vehicle: metadata.candidate_vehicle,
             associated_vehicle: metadata.associated_vehicle,
             associated_at_milliseconds: metadata.associated_at_milliseconds,
             last_telemetry_at_milliseconds: metadata.last_telemetry_at_milliseconds,
+            latest_location_observation: points.last().map(|point| point.sample()),
             last_monotonic_milliseconds,
             active_started_at_milliseconds: (state == RideLifecycleState::Active)
                 .then_some(last_monotonic_milliseconds),
@@ -747,11 +801,14 @@ impl RideMapRecorder {
             .count();
         Self {
             state: Some(state),
+            recording_generation: next_recording_generation(),
+            active_interval_generation: 0,
             created_at_milliseconds,
             candidate_vehicle: metadata.candidate_vehicle,
             associated_vehicle: metadata.associated_vehicle,
             associated_at_milliseconds: metadata.associated_at_milliseconds,
             last_telemetry_at_milliseconds: metadata.last_telemetry_at_milliseconds,
+            latest_location_observation: points.last().map(|point| point.sample()),
             last_monotonic_milliseconds: last,
             active_started_at_milliseconds: (state == RideLifecycleState::Active).then_some(last),
             paused_at_milliseconds: (state == RideLifecycleState::Paused)
@@ -803,6 +860,44 @@ impl RideMapRecorder {
         self.last_telemetry_at_milliseconds
     }
 
+    /// Returns the latest ordered valid location, including clock-only observations.
+    #[must_use]
+    pub const fn latest_location_observation(&self) -> Option<LocationSample> {
+        self.latest_location_observation
+    }
+
+    /// Restores dedicated durable location evidence anchored to the last retained point.
+    ///
+    /// Lifecycle timing alone is insufficient evidence of a location observation. Callers
+    /// must supply the separately persisted observation clocks; legacy absent metadata must
+    /// leave the last retained point as the observation baseline.
+    pub fn restore_location_observation(
+        &mut self,
+        at: MonotonicMilliseconds,
+        wall_clock: crate::WallClockUnixMilliseconds,
+    ) -> bool {
+        let Some(point) = self.points.last() else {
+            return false;
+        };
+        let sample = point.sample();
+        if at < sample.monotonic_milliseconds()
+            || at > self.last_monotonic_milliseconds
+            || self
+                .latest_location_observation
+                .is_some_and(|latest| at < latest.monotonic_milliseconds())
+        {
+            return false;
+        }
+        self.latest_location_observation = Some(LocationSample::new(
+            sample.coordinate(),
+            at,
+            wall_clock,
+            sample.horizontal_accuracy_millimetres(),
+            sample.source(),
+        ));
+        true
+    }
+
     /// Returns the current segment identity for the next accepted point.
     #[must_use]
     pub const fn current_segment_id(&self) -> RideMapSegmentId {
@@ -813,10 +908,10 @@ impl RideMapRecorder {
     #[must_use]
     pub fn segment_id_for_sample(&self, sample: &LocationSample) -> RideMapSegmentId {
         let gap_started = !self.segment_started
-            && self.points.last().is_some_and(|previous| {
+            && self.latest_location_observation.is_some_and(|previous| {
                 sample
                     .monotonic_milliseconds()
-                    .saturating_sub(previous.sample().monotonic_milliseconds())
+                    .saturating_sub(previous.monotonic_milliseconds())
                     > MAX_GAP_MILLISECONDS
             });
         if gap_started {
@@ -932,7 +1027,10 @@ impl RideMapRecorder {
         }) {
             return Err(TransitionError::Invalid);
         }
+        let generation = next_recording_generation().ok_or(TransitionError::Invalid)?;
         self.state = Some(RideLifecycleState::Active);
+        self.recording_generation = Some(generation);
+        self.active_interval_generation = 0;
         self.created_at_milliseconds = at_milliseconds;
         self.last_monotonic_milliseconds = at_milliseconds;
         self.active_started_at_milliseconds = Some(at_milliseconds);
@@ -940,6 +1038,7 @@ impl RideMapRecorder {
         self.associated_vehicle = None;
         self.associated_at_milliseconds = None;
         self.last_telemetry_at_milliseconds = None;
+        self.latest_location_observation = None;
         self.points.clear();
         self.first_point_sequence = RidePointSequence::new(0);
         self.summary = RideSummary::from_stored(RidePointCount::new(0), 0);
@@ -994,6 +1093,16 @@ impl RideMapRecorder {
             return Err(TransitionError::Invalid);
         }
         let state = transition.next();
+        let active_interval_generation = match (transition.previous(), state) {
+            (
+                RideLifecycleState::Paused | RideLifecycleState::Interrupted,
+                RideLifecycleState::Active,
+            ) => self
+                .active_interval_generation
+                .checked_add(1)
+                .ok_or(TransitionError::Invalid)?,
+            _ => self.active_interval_generation,
+        };
         let at_milliseconds = clamped_transition_timestamp(
             self.created_at_milliseconds,
             Some(self.last_monotonic_milliseconds),
@@ -1034,6 +1143,7 @@ impl RideMapRecorder {
             ) => Some(at_milliseconds),
             _ => self.active_started_at_milliseconds,
         };
+        self.active_interval_generation = active_interval_generation;
         self.last_monotonic_milliseconds = self.last_monotonic_milliseconds.max(at_milliseconds);
         self.state = Some(state);
         Ok(())
@@ -1132,13 +1242,12 @@ impl RideMapRecorder {
         }
     }
 
-    /// Checks a candidate sample against the latest accepted sample.
+    /// Checks quality and ordering against the latest valid observation.
     #[must_use]
     pub fn check_sample(&self, sample: &LocationSample) -> LocationAdmission {
-        let previous = self.points.last().map(|point| point.sample());
         route_admission(
             self.active_started_at_milliseconds,
-            previous.as_ref(),
+            self.latest_location_observation.as_ref(),
             sample,
         )
     }
@@ -1152,21 +1261,96 @@ impl RideMapRecorder {
         &self,
         sample: LocationSample,
     ) -> Result<AdmittedLocationSample, LocationAdmission> {
+        let Some(recording_generation) = self.recording_generation else {
+            return Err(LocationAdmission::OutOfOrder);
+        };
         match self.check_sample(&sample) {
-            LocationAdmission::Accepted => Ok(AdmittedLocationSample::new(sample)),
+            LocationAdmission::Accepted => {
+                let (segment_id, segment_started, start_reason) = self.next_sample_metadata(sample);
+                let boundary = if segment_started {
+                    AdmittedLocationBoundary::Start
+                } else {
+                    AdmittedLocationBoundary::Continue
+                };
+                Ok(AdmittedLocationSample::new(
+                    RideMapPoint::new_with_start_reason(
+                        sample,
+                        segment_id,
+                        self.telemetry_state_at(sample.monotonic_milliseconds()),
+                        start_reason,
+                    ),
+                    boundary,
+                    recording_generation,
+                    self.active_interval_generation,
+                ))
+            }
             admission => Err(admission),
         }
     }
 
-    /// Records a sample after durable storage has accepted it.
+    /// Classifies a sample without advancing either the retained or observed baseline.
+    #[must_use]
+    pub fn classify_sample(&self, sample: LocationSample) -> LocationRecordingDecision {
+        let admitted = match self.admit_sample(sample) {
+            Ok(admitted) => admitted,
+            Err(reason) => return LocationRecordingDecision::Rejected(reason),
+        };
+        let segment_started = admitted.boundary() == AdmittedLocationBoundary::Start;
+        let repeats_retained_values = self.points.last().is_some_and(|previous| {
+            sample.same_values(previous.sample())
+                && previous.telemetry_state()
+                    == self.telemetry_state_at(sample.monotonic_milliseconds())
+        });
+        if sample.source() == LocationSource::Live && !segment_started && repeats_retained_values {
+            LocationRecordingDecision::ObserveClockOnly(ClockOnlyLocationObservation {
+                sample,
+                recording_generation: admitted.recording_generation(),
+                active_interval_generation: self.active_interval_generation,
+            })
+        } else {
+            LocationRecordingDecision::Record(admitted)
+        }
+    }
+
+    /// Advances validated observation time without changing route points or distance.
+    ///
+    /// Revalidation prevents stale capabilities from refreshing GPS after intervening
+    /// observations, lifecycle changes, or telemetry context changes.
+    pub fn observe_clock_only(&mut self, observation: ClockOnlyLocationObservation) -> bool {
+        if self.state != Some(RideLifecycleState::Active)
+            || self.recording_generation != Some(observation.recording_generation)
+            || self.active_interval_generation != observation.active_interval_generation
+        {
+            return false;
+        }
+        match self.classify_sample(observation.sample) {
+            LocationRecordingDecision::ObserveClockOnly(_) => {}
+            LocationRecordingDecision::Record(_) | LocationRecordingDecision::Rejected(_) => {
+                return false;
+            }
+        }
+        self.latest_location_observation = Some(observation.sample);
+        self.last_monotonic_milliseconds = self
+            .last_monotonic_milliseconds
+            .max(observation.sample.monotonic_milliseconds());
+        true
+    }
+
+    /// Retains a material sample, returning whether a route point was added.
+    ///
+    /// An ordered clock-only observation advances timing and returns `false`.
     pub fn record_sample(&mut self, sample: LocationSample) -> bool {
         if self.state != Some(RideLifecycleState::Active) {
             return false;
         }
-        let Ok(admitted_sample) = self.admit_sample(sample) else {
-            return false;
-        };
-        self.record_admitted_sample(admitted_sample)
+        match self.classify_sample(sample) {
+            LocationRecordingDecision::Record(admitted) => self.record_admitted_sample(admitted),
+            LocationRecordingDecision::ObserveClockOnly(observation) => {
+                self.observe_clock_only(observation);
+                false
+            }
+            LocationRecordingDecision::Rejected(_) => false,
+        }
     }
 
     /// Settles a sample that was admitted while recording was active.
@@ -1189,25 +1373,44 @@ impl RideMapRecorder {
             return false;
         }
         let sample = admitted_sample.sample();
-        let (next_segment_id, segment_started, segment_start_reason) =
-            self.next_sample_metadata(sample);
-        let gap_started = next_segment_id != self.segment_id;
-        if segment_started && segment_start_reason == RideSegmentStartReason::BackgroundGap {
+        if Some(admitted_sample.recording_generation()) != self.recording_generation
+            || self.points.last().is_some_and(|point| {
+                sample.monotonic_milliseconds() <= point.sample().monotonic_milliseconds()
+            })
+        {
+            return false;
+        }
+        let point = admitted_sample.point();
+        // A preceding queued boundary may have failed. Summary distance and gap count
+        // follow the actual durable predecessor, while the captured point context stays exact.
+        let boundary = match self.points.last() {
+            Some(previous) if previous.segment_id() == point.segment_id() => {
+                AdmittedLocationBoundary::Continue
+            }
+            Some(_) | None => AdmittedLocationBoundary::Start,
+        };
+        if boundary == AdmittedLocationBoundary::Start
+            && point.segment_start_reason() == RideSegmentStartReason::BackgroundGap
+        {
             self.background_gap_count = self
                 .background_gap_count
                 .saturating_add(BackgroundGapCount::new(1));
         }
-        if gap_started {
-            self.segment_id = next_segment_id;
-        }
-        let distance = if segment_started {
-            DistanceMillimetres::default()
+        let preserve_resume_boundary = self.segment_started
+            && admitted_sample.active_interval_generation() != self.active_interval_generation;
+        self.segment_id = self.segment_id.max(if preserve_resume_boundary {
+            point.segment_id().next()
         } else {
-            self.points
+            point.segment_id()
+        });
+        let distance = match boundary {
+            AdmittedLocationBoundary::Start => DistanceMillimetres::default(),
+            AdmittedLocationBoundary::Continue => self
+                .points
                 .last()
                 .map_or(DistanceMillimetres::default(), |previous| {
                     distance_between(previous.sample(), sample)
-                })
+                }),
         };
         self.summary = RideSummary::from_stored(
             self.summary
@@ -1218,12 +1421,12 @@ impl RideMapRecorder {
         self.last_monotonic_milliseconds = self
             .last_monotonic_milliseconds
             .max(sample.monotonic_milliseconds());
-        self.points.push(RideMapPoint::new_with_start_reason(
-            sample,
-            self.segment_id,
-            self.telemetry_state_at(sample.monotonic_milliseconds()),
-            segment_start_reason,
-        ));
+        if self.latest_location_observation.is_none_or(|previous| {
+            sample.monotonic_milliseconds() > previous.monotonic_milliseconds()
+        }) {
+            self.latest_location_observation = Some(sample);
+        }
+        self.points.push(point);
         if self.points.len() > MAX_LIVE_ROUTE_POINTS {
             let excess = self.points.len() - MAX_LIVE_ROUTE_POINTS;
             self.points.drain(..excess);
@@ -1234,7 +1437,7 @@ impl RideMapRecorder {
                 .saturating_sub(RidePointCount::from_usize(self.points.len()))
                 .as_u64(),
         );
-        self.segment_started = false;
+        self.segment_started = preserve_resume_boundary;
         true
     }
 
@@ -1278,7 +1481,7 @@ mod tests {
 
     #[test]
     fn imported_recording_does_not_offer_start_as_a_lifecycle_event() {
-        assert!(RideLifecycleState::Imported.recording_actions().is_empty());
+        assert_eq!(RideLifecycleState::Imported.recording_actions().len(), 0);
     }
 
     #[test]
@@ -1313,6 +1516,430 @@ mod tests {
             None,
             LocationSource::Live,
         )
+    }
+
+    #[test]
+    fn clock_only_route_observations_preserve_duration_and_continuity() {
+        let mut recorder = RideMapRecorder::new();
+        recorder.start(monotonic(0), None).unwrap();
+        assert!(recorder.record_sample(sample(1_000, 40.0)));
+        for second in 2..=71 {
+            assert!(!recorder.record_sample(sample(second * 1_000, 40.0)));
+        }
+        assert_eq!(recorder.point_count(), 1);
+        assert_eq!(
+            recorder.recording_timing().last_monotonic_milliseconds(),
+            monotonic(71_000)
+        );
+        assert!(recorder.record_sample(sample(72_000, 40.000_01)));
+        assert_eq!(recorder.points().last().unwrap().segment_id().value(), 0);
+        assert_eq!(recorder.background_gap_count().as_u64(), 0);
+    }
+
+    #[test]
+    fn clock_only_route_observations_bound_implied_speed_from_latest_observation() {
+        let mut recorder = RideMapRecorder::new();
+        recorder.start(monotonic(0), None).unwrap();
+        recorder.record_sample(sample(1_000, 40.0));
+        for second in 2..=71 {
+            recorder.record_sample(sample(second * 1_000, 40.0));
+        }
+        assert_eq!(recorder.point_count(), 1);
+        assert_eq!(
+            recorder.check_sample(&sample(72_000, 40.01)),
+            LocationAdmission::UnrealisticJump
+        );
+        assert_eq!(
+            recorder.check_sample(&sample(70_000, 40.0)),
+            LocationAdmission::OutOfOrder
+        );
+        assert_eq!(
+            recorder.check_sample(&sample(71_000, 40.0)),
+            LocationAdmission::Duplicate
+        );
+    }
+
+    #[test]
+    fn clock_only_route_observation_after_real_gap_or_resume_retains_boundary() {
+        let mut recorder = RideMapRecorder::new();
+        recorder.start(monotonic(0), None).unwrap();
+        recorder.record_sample(sample(1_000, 40.0));
+        assert!(!recorder.record_sample(sample(2_000, 40.0)));
+        assert!(recorder.record_sample(sample(32_001, 40.0)));
+        assert_eq!(
+            recorder.points()[1].segment_start_reason(),
+            RideSegmentStartReason::BackgroundGap
+        );
+        let pause = recorder.validate_transition(RideEvent::Pause).unwrap();
+        recorder
+            .apply_transition_at(pause, monotonic(33_000))
+            .unwrap();
+        let resume = recorder.validate_transition(RideEvent::Resume).unwrap();
+        recorder
+            .apply_transition_at(resume, monotonic(34_000))
+            .unwrap();
+        assert!(recorder.record_sample(sample(34_000, 40.0)));
+        assert_eq!(
+            recorder.points()[2].segment_start_reason(),
+            RideSegmentStartReason::Resume
+        );
+    }
+
+    #[test]
+    fn clock_only_route_observation_retains_telemetry_context_changes() {
+        let mut recorder = RideMapRecorder::new();
+        recorder.start(monotonic(0), None).unwrap();
+        recorder.record_sample(sample(1_000, 40.0));
+        assert!(!recorder.record_sample(sample(2_000, 40.0)));
+        assert_eq!(
+            recorder.observe_vehicle(&identity("wheel"), monotonic(2_000)),
+            VehicleAssociation::Associated
+        );
+        assert!(recorder.record_sample(sample(3_000, 40.0)));
+        assert_eq!(
+            recorder.observe_telemetry(monotonic(3_000)),
+            super::TelemetryObservation::Observed
+        );
+        assert!(recorder.record_sample(sample(4_000, 40.0)));
+        assert!(!recorder.record_sample(sample(5_000, 40.0)));
+        assert!(recorder.record_sample(sample(5_001, 40.0)));
+        assert_eq!(recorder.point_count(), 4);
+    }
+
+    #[test]
+    fn clock_only_route_observation_keeps_exact_accuracy_source_and_coordinate_changes() {
+        let mut recorder = RideMapRecorder::new();
+        recorder.start(monotonic(0), None).unwrap();
+        let make_sample = |at, latitude, accuracy, source| {
+            LocationSample::new(
+                Coordinate::from_degrees(latitude, -105.0).unwrap(),
+                monotonic(at),
+                WallClockUnixMilliseconds::new(1_700_000_000_000 + at),
+                Some(accuracy),
+                source,
+            )
+        };
+        assert!(recorder.record_sample(make_sample(1_000, 40.0, 3_000, LocationSource::Live)));
+        assert!(!recorder.record_sample(make_sample(2_000, 40.0, 3_000, LocationSource::Live)));
+        assert!(recorder.record_sample(make_sample(3_000, 40.0, 3_001, LocationSource::Live)));
+        assert!(recorder.record_sample(make_sample(
+            4_000,
+            40.000_000_1,
+            3_001,
+            LocationSource::Live
+        )));
+        assert!(recorder.record_sample(make_sample(
+            5_000,
+            40.000_000_1,
+            3_001,
+            LocationSource::PevcapImport
+        )));
+        assert_eq!(recorder.point_count(), 4);
+    }
+
+    #[test]
+    fn clock_only_route_capability_cannot_refresh_replayed_or_rejected_observations() {
+        let mut recorder = RideMapRecorder::new();
+        recorder.start(monotonic(0), None).unwrap();
+        recorder.record_sample(sample(1_000, 40.0));
+        let super::LocationRecordingDecision::ObserveClockOnly(observation) =
+            recorder.classify_sample(sample(2_000, 40.0))
+        else {
+            panic!("same native values must classify as clock-only");
+        };
+        assert!(recorder.observe_clock_only(observation));
+        assert!(!recorder.observe_clock_only(observation));
+        assert!(!recorder.record_sample(sample(1_999, 40.0)));
+        assert!(!recorder.record_sample(sample(2_001, 40.01)));
+        assert_eq!(
+            recorder.latest_location_observation(),
+            Some(sample(2_000, 40.0))
+        );
+        assert_eq!(
+            recorder.recording_timing().last_monotonic_milliseconds(),
+            monotonic(2_000)
+        );
+    }
+
+    #[test]
+    fn clock_only_route_quality_uses_monotonic_order_even_when_wall_clock_moves_backwards() {
+        let mut recorder = RideMapRecorder::new();
+        recorder.start(monotonic(0), None).unwrap();
+        recorder.record_sample(sample(1_000, 40.0));
+        let wall_clock_reversed = LocationSample::new(
+            sample(2_000, 40.0).coordinate(),
+            monotonic(2_000),
+            WallClockUnixMilliseconds::new(1_700_000_000_500),
+            None,
+            LocationSource::Live,
+        );
+        assert!(!recorder.record_sample(wall_clock_reversed));
+        assert_eq!(
+            recorder.latest_location_observation(),
+            Some(wall_clock_reversed)
+        );
+        assert_eq!(
+            recorder.check_sample(&wall_clock_reversed),
+            LocationAdmission::Duplicate
+        );
+    }
+
+    #[test]
+    fn clock_only_route_capability_cannot_cross_resume_or_material_baseline_change() {
+        for change_location in [false, true] {
+            let mut recorder = RideMapRecorder::new();
+            recorder.start(monotonic(0), None).unwrap();
+            recorder.record_sample(sample(1_000, 40.0));
+            let super::LocationRecordingDecision::ObserveClockOnly(observation) =
+                recorder.classify_sample(sample(2_000, 40.0))
+            else {
+                panic!("same native values must classify as clock-only");
+            };
+            if change_location {
+                assert!(recorder.record_sample(sample(1_500, 40.000_01)));
+            } else {
+                let pause = recorder.validate_transition(RideEvent::Pause).unwrap();
+                recorder
+                    .apply_transition_at(pause, monotonic(3_000))
+                    .unwrap();
+                let resume = recorder.validate_transition(RideEvent::Resume).unwrap();
+                recorder
+                    .apply_transition_at(resume, monotonic(4_000))
+                    .unwrap();
+            }
+            assert!(!recorder.observe_clock_only(observation));
+        }
+    }
+
+    #[test]
+    fn clock_only_route_restoration_requires_dedicated_observation_evidence() {
+        let mut recorder = RideMapRecorder::new();
+        recorder.start(monotonic(0), None).unwrap();
+        recorder.record_sample(sample(1_000, 40.0));
+        for second in 2..=71 {
+            recorder.record_sample(sample(second * 1_000, 40.0));
+        }
+        let restore = || {
+            RideMapRecorder::restored_with_metadata_and_summary_and_timing(
+                RideLifecycleState::Active,
+                monotonic(0),
+                super::RideMapMetadata::default(),
+                recorder.points().to_vec(),
+                recorder.summary(),
+                recorder.recording_timing(),
+            )
+        };
+        let legacy = restore();
+        assert_eq!(
+            legacy
+                .segment_id_for_sample(&sample(72_000, 40.000_01))
+                .value(),
+            1
+        );
+        let mut observed = restore();
+        assert!(!observed.restore_location_observation(
+            monotonic(71_001),
+            WallClockUnixMilliseconds::new(1_700_000_071_001)
+        ));
+        assert!(observed.restore_location_observation(
+            monotonic(71_000),
+            WallClockUnixMilliseconds::new(1_700_000_071_000)
+        ));
+        assert!(!observed.restore_location_observation(
+            monotonic(70_000),
+            WallClockUnixMilliseconds::new(1_700_000_070_000)
+        ));
+        assert_eq!(
+            observed
+                .segment_id_for_sample(&sample(72_000, 40.000_01))
+                .value(),
+            0
+        );
+        assert_eq!(
+            observed.check_sample(&sample(72_000, 40.01)),
+            LocationAdmission::UnrealisticJump
+        );
+        assert_eq!(observed.point_count(), 1);
+    }
+
+    #[test]
+    fn clock_only_route_policy_preserves_every_admitted_import_point() {
+        let mut recorder = RideMapRecorder::new();
+        recorder.start(monotonic(0), None).unwrap();
+        for second in 1..=3 {
+            let live = sample(second * 1_000, 40.0);
+            assert!(recorder.record_sample(LocationSample::new(
+                live.coordinate(),
+                live.monotonic_milliseconds(),
+                live.wall_clock_unix_milliseconds(),
+                live.horizontal_accuracy_millimetres(),
+                LocationSource::PevcapImport,
+            )));
+        }
+        assert_eq!(recorder.point_count(), 3);
+    }
+
+    #[test]
+    fn admitted_location_settlement_preserves_the_queued_telemetry_context() {
+        let mut recorder = RideMapRecorder::new();
+        recorder.start(monotonic(0), None).unwrap();
+        assert_eq!(
+            recorder.observe_vehicle(&identity("wheel"), monotonic(0)),
+            VehicleAssociation::Associated
+        );
+        assert_eq!(
+            recorder.observe_telemetry(monotonic(500)),
+            super::TelemetryObservation::Observed
+        );
+        let admitted = recorder.admit_sample(sample(1_000, 40.0)).unwrap();
+        assert_eq!(
+            recorder.observe_telemetry(monotonic(1_500)),
+            super::TelemetryObservation::Observed
+        );
+        assert!(recorder.record_admitted_sample(admitted));
+        assert_eq!(
+            recorder.points()[0].telemetry_state(),
+            super::RouteTelemetryState::AssociatedFresh
+        );
+    }
+
+    #[test]
+    fn admitted_location_settlement_preserves_queued_segment_and_future_resume() {
+        let mut recorder = RideMapRecorder::new();
+        recorder.start(monotonic(0), None).unwrap();
+        recorder.record_sample(sample(1_000, 40.0));
+        let admitted = recorder.admit_sample(sample(2_000, 40.000_01)).unwrap();
+        let pause = recorder.validate_transition(RideEvent::Pause).unwrap();
+        recorder
+            .apply_transition_at(pause, monotonic(2_500))
+            .unwrap();
+        let resume = recorder.validate_transition(RideEvent::Resume).unwrap();
+        recorder
+            .apply_transition_at(resume, monotonic(3_000))
+            .unwrap();
+        assert!(recorder.record_admitted_sample(admitted));
+        assert_eq!(recorder.points()[1].segment_id().value(), 0);
+        assert!(recorder.record_sample(sample(4_000, 40.000_02)));
+        assert_eq!(recorder.points()[2].segment_id().value(), 1);
+        assert_eq!(
+            recorder.points()[2].segment_start_reason(),
+            RideSegmentStartReason::Resume
+        );
+    }
+
+    #[test]
+    fn admitted_location_capability_cannot_commit_twice() {
+        let mut recorder = RideMapRecorder::new();
+        recorder.start(monotonic(0), None).unwrap();
+        let admitted = recorder.admit_sample(sample(1_000, 40.0)).unwrap();
+        assert!(recorder.record_admitted_sample(admitted));
+        assert!(!recorder.record_admitted_sample(admitted));
+        assert_eq!(recorder.point_count(), 1);
+    }
+
+    #[test]
+    fn admitted_location_gap_settlement_cannot_consume_a_later_resume_boundary() {
+        let mut recorder = RideMapRecorder::new();
+        recorder.start(monotonic(0), None).unwrap();
+        recorder.record_sample(sample(1_000, 40.0));
+        let admitted = recorder.admit_sample(sample(40_000, 40.001)).unwrap();
+        let pause = recorder.validate_transition(RideEvent::Pause).unwrap();
+        recorder
+            .apply_transition_at(pause, monotonic(41_000))
+            .unwrap();
+        let resume = recorder.validate_transition(RideEvent::Resume).unwrap();
+        recorder
+            .apply_transition_at(resume, monotonic(42_000))
+            .unwrap();
+        assert!(recorder.record_admitted_sample(admitted));
+        assert_eq!(
+            recorder.points()[1].segment_start_reason(),
+            RideSegmentStartReason::BackgroundGap
+        );
+        assert!(recorder.record_sample(sample(43_000, 40.002)));
+        assert_eq!(recorder.points()[2].segment_id().value(), 2);
+        assert_eq!(
+            recorder.points()[2].segment_start_reason(),
+            RideSegmentStartReason::Resume
+        );
+        assert_eq!(recorder.background_gap_count().as_u64(), 1);
+    }
+
+    #[test]
+    fn admitted_location_capability_cannot_cross_rides_with_identical_clocks() {
+        let mut previous = RideMapRecorder::new();
+        previous.start(monotonic(0), None).unwrap();
+        let admitted = previous.admit_sample(sample(1_000, 40.0)).unwrap();
+        let mut replacement = RideMapRecorder::new();
+        replacement.start(monotonic(0), None).unwrap();
+        assert!(!replacement.record_admitted_sample(admitted));
+        let stop = previous.validate_transition(RideEvent::Stop).unwrap();
+        previous
+            .apply_transition_at(stop, monotonic(2_000))
+            .unwrap();
+        let save = previous.validate_transition(RideEvent::Save).unwrap();
+        previous
+            .apply_transition_at(save, monotonic(2_000))
+            .unwrap();
+        previous.start(monotonic(0), None).unwrap();
+        assert!(!previous.record_admitted_sample(admitted));
+        assert!(previous.record_sample(sample(1_000, 40.0)));
+    }
+
+    #[test]
+    fn clock_only_route_capability_cannot_cross_rides_with_identical_clocks() {
+        let mut previous = RideMapRecorder::new();
+        previous.start(monotonic(0), None).unwrap();
+        previous.record_sample(sample(1_000, 40.0));
+        let super::LocationRecordingDecision::ObserveClockOnly(observation) =
+            previous.classify_sample(sample(2_000, 40.0))
+        else {
+            panic!("same values classify as a clock-only observation");
+        };
+        let mut replacement = RideMapRecorder::new();
+        replacement.start(monotonic(0), None).unwrap();
+        replacement.record_sample(sample(1_000, 40.0));
+        assert!(!replacement.observe_clock_only(observation));
+    }
+
+    #[test]
+    fn admitted_location_continuation_after_failed_boundary_does_not_bridge_segments() {
+        for resume in [false, true] {
+            let mut durable = RideMapRecorder::new();
+            durable.start(monotonic(0), None).unwrap();
+            durable.record_sample(sample(1_000, 40.0));
+            if resume {
+                let pause = durable.validate_transition(RideEvent::Pause).unwrap();
+                durable
+                    .apply_transition_at(pause, monotonic(2_000))
+                    .unwrap();
+                let resume = durable.validate_transition(RideEvent::Resume).unwrap();
+                durable
+                    .apply_transition_at(resume, monotonic(3_000))
+                    .unwrap();
+            }
+            let mut admission = durable.clone();
+            let (boundary, continuation) = if resume {
+                (sample(3_000, 40.000_1), sample(4_000, 40.000_2))
+            } else {
+                (sample(40_000, 40.001), sample(41_000, 40.001_1))
+            };
+            assert!(admission.record_sample(boundary));
+            let admitted = admission.admit_sample(continuation).unwrap();
+            assert!(durable.record_admitted_sample(admitted));
+            assert_eq!(durable.point_count(), 2);
+            assert_eq!(durable.summary().distance_millimetres(), 0);
+            assert_eq!(durable.background_gap_count().as_u64(), u64::from(!resume));
+            assert_eq!(durable.points()[1].segment_id().value(), 1);
+            assert_eq!(
+                durable.points()[1].segment_start_reason(),
+                if resume {
+                    RideSegmentStartReason::Resume
+                } else {
+                    RideSegmentStartReason::BackgroundGap
+                }
+            );
+        }
     }
 
     #[test]
@@ -1710,7 +2337,7 @@ mod tests {
         recorder.start(monotonic(1_000), None).expect("starts");
         for index in 0..(u32::try_from(super::MAX_LIVE_ROUTE_POINTS).expect("bounded") + 2) {
             let monotonic = 1_001 + u64::from(index);
-            let latitude = 40.0 + (f64::from(index) * 0.000_000_01);
+            let latitude = 40.0 + (f64::from(index) * 0.000_000_1);
             let point = sample(monotonic, latitude);
             assert_eq!(recorder.check_sample(&point), LocationAdmission::Accepted);
             recorder.record_sample(point);

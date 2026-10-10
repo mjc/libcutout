@@ -39,24 +39,53 @@ func deliverCaptureFixture(
         translated = .started(generation: CaptureGeneration(rawValue: generation.value), fileURL: url)
     case let .progress(generation, progress):
         let generation = resolve(generation)
-        if progress.writerError != nil { _ = owner.captureWriterFailed(generation: generation.dto) }
+        _ = owner.applyCaptureWriterStatus(
+            generation: generation.dto,
+            status: MobileCaptureWriterStatusDto(
+                queuedMessages: progress.queuedMessageCount, peakQueuedMessages: progress.queuedMessageCount,
+                droppedMessages: progress.droppedMessageCount, bytesWritten: progress.fileSizeBytes,
+                physicalBytesWritten: 0, failed: progress.writerFailed, lastError: progress.writerError
+            )
+        )
         translated = .progress(generation: generation, progress)
     case let .notificationRecorded(generation):
         translated = .notificationRecorded(generation: resolve(generation))
     case let .finished(generation, url):
         let generation = resolve(generation)
         _ = owner.retireCaptureWriter(generation: generation.dto)
-        _ = owner.completeCaptureWriter(generation: generation.dto, succeeded: true)
+        _ = owner.completeCaptureWriter(
+            generation: generation.dto,
+            completion: MobileCaptureCompletionDto(
+                finish: .artifactAvailable(
+                    artifact: MobileSavedCaptureArtifactDto(
+                        id: MobileCaptureArtifactIdDto(value: url.lastPathComponent),
+                        path: url.path,
+                        status: MobileCaptureWriterStatusDto(
+                            queuedMessages: 0, peakQueuedMessages: 0, droppedMessages: 0,
+                            bytesWritten: 0, physicalBytesWritten: 0, failed: false, lastError: nil
+                        )
+                    )), databasePublicationSucceeded: nil),
+            priorWriteOutcome: .accepted
+        )
         translated = .finished(generation: generation, fileURL: url)
     case let .databaseFinished(generation, outcome):
         let generation = resolve(generation)
         _ = owner.retireCaptureWriter(generation: generation.dto)
-        _ = owner.completeCaptureWriter(generation: generation.dto, succeeded: true)
+        _ = owner.completeCaptureWriter(
+            generation: generation.dto,
+            completion: MobileCaptureCompletionDto(finish: outcome, databasePublicationSucceeded: nil),
+            priorWriteOutcome: .accepted
+        )
         translated = .databaseFinished(generation: generation, outcome: outcome)
     case let .failed(generation):
         let generation = resolve(generation)
         _ = owner.retireCaptureWriter(generation: generation.dto)
-        _ = owner.completeCaptureWriter(generation: generation.dto, succeeded: false)
+        _ = owner.completeCaptureWriter(
+            generation: generation.dto,
+            completion: MobileCaptureCompletionDto(
+                finish: .failed(message: "fixture failure"), databasePublicationSucceeded: nil),
+            priorWriteOutcome: .failed
+        )
         translated = .failed(generation: generation)
     case .lifecycle:
         translated = event

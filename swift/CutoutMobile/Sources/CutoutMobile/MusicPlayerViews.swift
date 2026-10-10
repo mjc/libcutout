@@ -5,6 +5,7 @@ import SwiftUI
 /// A small, reusable control surface for Ride and Map. It renders metadata only;
 /// neither artwork nor an audio stream crosses the Rust ride boundary.
 public struct MusicCompactPlayer: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     public let nowPlaying: MusicNowPlaying
     public let onCommand: (MobileMusicCommandDto) -> Void
     public let onOpenDetails: () -> Void
@@ -27,50 +28,27 @@ public struct MusicCompactPlayer: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 12) {
-                artworkView
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(nowPlaying.title)
-                        .lineLimit(1)
-                        .font(.subheadline.weight(.bold))
-                        .accessibilityIdentifier("music.now-playing-title")
-                        .accessibilityValue(String(describing: nowPlaying.state))
-                    Text(
-                        nowPlaying.statusText == nowPlaying.title
-                            ? nowPlaying.artist : nowPlaying.statusText ?? nowPlaying.artist
-                    )
-                    .lineLimit(1)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                }
+        HStack(spacing: 8) {
+            MusicTrackButton(nowPlaying: nowPlaying, action: onOpenDetails)
                 .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-            }
-            HStack(spacing: 8) {
-                if nowPlaying.requiresSetup {
-                    MusicSettingsButton(action: onOpenSettings, controlSize: .small)
-                }
-                Spacer(minLength: 0)
-                MusicTransportControls(nowPlaying: nowPlaying, onCommand: onCommand)
+            MusicTransportControls(nowPlaying: nowPlaying, includesPrevious: false, onCommand: onCommand)
+                .fixedSize(horizontal: true, vertical: false)
+            if nowPlaying.playPauseCommand == nil && !nowPlaying.isCommandAvailable(.next)
+                && nowPlaying.isCommandAvailable(.openProvider)
+            {
                 MusicPlayerIconButton(
-                    systemImage: "ellipsis",
-                    label: pevLocalizedText("music.expand"),
-                    action: onOpenDetails,
-                    accessibilityIdentifier: "music.expand"
-                )
-                MusicPlayerIconButton(
-                    systemImage: "xmark",
-                    label: pevLocalizedText("music.hide"),
-                    action: onDismiss
+                    systemImage: "arrow.up.forward.app",
+                    label: pevLocalizedText("music.open_named_provider", nowPlaying.providerName),
+                    action: { onCommand(.openProvider) },
+                    accessibilityIdentifier: "music.open-provider"
                 )
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .tint(PevDashboardColors.yellow)
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 20))
+        .padding(.horizontal, 8)
+        .frame(height: 44)
+        .tint(PevDashboardColors.brand)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel(nowPlaying.accessibilitySummary)
+        .accessibilityIdentifier("music.compact-player")
         .onChange(of: nowPlaying) { _, nowPlaying in
             guard let announcement = accessibilityAnnouncementTracker.next(for: nowPlaying) else {
                 return
@@ -78,24 +56,65 @@ public struct MusicCompactPlayer: View {
             AccessibilityNotification.Announcement(announcement).post()
         }
     }
+}
 
-    private var artworkView: some View {
-        MusicArtworkView(
-            artwork: nowPlaying.artwork,
-            size: 44,
-            cornerRadius: 6,
-            accessibilityLabel: nowPlaying.artworkAccessibilityLabel
-        )
+private struct MusicTrackButton: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    let nowPlaying: MusicNowPlaying
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                MusicArtworkView(
+                    artwork: nowPlaying.artwork,
+                    size: 32,
+                    cornerRadius: 6,
+                    accessibilityLabel: nowPlaying.artworkAccessibilityLabel
+                )
+                .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(dynamicTypeSize > .large ? nowPlaying.statusText ?? nowPlaying.title : nowPlaying.title)
+                        .font(.subheadline.weight(.semibold))
+                        .accessibilityIdentifier("music.now-playing-title")
+                    if dynamicTypeSize <= .large {
+                        let subtitle =
+                            nowPlaying.statusText == nowPlaying.title
+                            ? nowPlaying.artist : nowPlaying.statusText ?? nowPlaying.artist
+                        if !subtitle.isEmpty {
+                            Text(subtitle)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                .lineLimit(1)
+                .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+                .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(PevDashboardColors.primaryText)
+        // The compact title may truncate. Expose its complete metadata once as
+        // the button value; the detail sheet honors the full Dynamic Type size.
+        .accessibilityElement(children: .ignore)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityLabel(pevLocalizedText("music.expand"))
+        .accessibilityValue(nowPlaying.accessibilitySummary)
+        .accessibilityIdentifier("music.expand")
     }
 }
 
 private struct MusicTransportControls: View {
     let nowPlaying: MusicNowPlaying
+    var includesPrevious = true
     let onCommand: (MobileMusicCommandDto) -> Void
 
     var body: some View {
         HStack(spacing: 0) {
-            if nowPlaying.isCommandAvailable(.previous) {
+            if includesPrevious && nowPlaying.isCommandAvailable(.previous) {
                 MusicPlayerIconButton(
                     systemImage: "backward.fill",
                     label: pevLocalizedText("music.previous"),
@@ -115,13 +134,6 @@ private struct MusicTransportControls: View {
                     systemImage: "forward.fill",
                     label: pevLocalizedText("music.next"),
                     action: { onCommand(.next) }
-                )
-            }
-            if nowPlaying.isCommandAvailable(.openProvider) {
-                MusicPlayerIconButton(
-                    systemImage: "arrow.up.forward.app",
-                    label: pevLocalizedText("music.open_provider"),
-                    action: { onCommand(.openProvider) }
                 )
             }
         }
@@ -160,9 +172,12 @@ private struct MusicPlayerIconButton: View {
     private var button: some View {
         Button(action: action) {
             Image(systemName: systemImage)
+                .font(.body.weight(.semibold))
+                .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+                .foregroundStyle(isProminent ? PevDashboardColors.brand : PevDashboardColors.primaryText)
                 .frame(minWidth: 44, minHeight: 44)
                 .background(
-                    isProminent ? PevDashboardColors.yellow.opacity(0.18) : .clear,
+                    isProminent ? PevDashboardColors.brand.opacity(0.12) : .clear,
                     in: Circle()
                 )
                 .contentShape(Rectangle())
@@ -230,19 +245,25 @@ public struct MusicTimelineRows: View {
 }
 
 public struct MusicExpandedPlayer: View {
+    @Environment(\.dismiss) private var dismiss
     public let nowPlaying: MusicNowPlaying
     public let timeline: [MobileMusicRideEventDto]
     public let onCommand: (MobileMusicCommandDto) -> Void
-    @Environment(\.dismiss) private var dismiss
+    public let onOpenSettings: (() -> Void)?
+    public let onDismissPlayer: (() -> Void)?
 
     public init(
         nowPlaying: MusicNowPlaying,
         timeline: [MobileMusicRideEventDto] = [],
-        onCommand: @escaping (MobileMusicCommandDto) -> Void
+        onCommand: @escaping (MobileMusicCommandDto) -> Void,
+        onOpenSettings: (() -> Void)? = nil,
+        onDismissPlayer: (() -> Void)? = nil
     ) {
         self.nowPlaying = nowPlaying
         self.timeline = timeline.listeningHistoryEvents
         self.onCommand = onCommand
+        self.onOpenSettings = onOpenSettings
+        self.onDismissPlayer = onDismissPlayer
     }
 
     public var body: some View {
@@ -251,6 +272,35 @@ public struct MusicExpandedPlayer: View {
                 Section {
                     MusicExpandedHero(nowPlaying: nowPlaying)
                     MusicTransportControls(nowPlaying: nowPlaying, onCommand: onCommand)
+                        .frame(maxWidth: .infinity)
+                    if nowPlaying.isCommandAvailable(.openProvider) {
+                        Button(action: { onCommand(.openProvider) }) {
+                            Label(
+                                pevLocalizedText("music.open_named_provider", nowPlaying.providerName),
+                                systemImage: "arrow.up.forward.app"
+                            )
+                        }
+                        .accessibilityIdentifier("music.open-provider")
+                    } else {
+                        Text(nowPlaying.providerName)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                if onOpenSettings != nil || onDismissPlayer != nil {
+                    Section {
+                        if let onOpenSettings {
+                            Button(action: onOpenSettings) {
+                                Label(pevLocalizedText("music.settings.open"), systemImage: "gearshape")
+                            }
+                            .accessibilityIdentifier("music.open-settings")
+                        }
+                        if onDismissPlayer != nil {
+                            Button(action: hidePlayer) {
+                                Label(pevLocalizedText("music.hide"), systemImage: "eye.slash")
+                            }
+                            .accessibilityIdentifier("music.hide")
+                        }
+                    }
                 }
                 if !timeline.isEmpty {
                     Section(pevLocalizedText("music.timeline.title")) {
@@ -262,12 +312,24 @@ public struct MusicExpandedPlayer: View {
             .navigationTitle(pevLocalizedText("music.expand"))
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button(pevLocalizedText("music.done")) { dismiss() }
-                        .accessibilityIdentifier("music.done")
+                    Button {
+                        dismiss()
+                    } label: {
+                        Text(pevLocalizedText("music.done"))
+                            .frame(minWidth: 44, minHeight: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("music.done")
                 }
             }
         }
-        .tint(PevDashboardColors.yellow)
+        .tint(PevDashboardColors.brand)
+    }
+
+    private func hidePlayer() {
+        onDismissPlayer?()
+        dismiss()
     }
 }
 
@@ -344,7 +406,7 @@ public struct MusicSettingsView: View {
                     }
                 }
                 .accessibilityIdentifier("music.history-picker")
-                .accessibilityValue(historyPolicy.musicAccessibilityIdentifier)
+                .accessibilityValue(historyPolicy.title)
                 if historyUnavailable {
                     Label(pevLocalizedText("music.state.unavailable"), systemImage: "exclamationmark.triangle")
                         .accessibilityIdentifier("music.history-unavailable")
@@ -366,46 +428,46 @@ public struct MusicSettingsView: View {
 }
 
 private struct MusicExpandedHero: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let nowPlaying: MusicNowPlaying
 
     var body: some View {
-        HStack(spacing: 16) {
-            artworkView
-            VStack(alignment: .leading, spacing: 5) {
-                Text(nowPlaying.providerName.uppercased())
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(PevDashboardColors.yellow)
-                    .tracking(0.8)
+        let layout =
+            dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 16))
+            : AnyLayout(HStackLayout(spacing: 16))
+        layout {
+            MusicArtworkView(
+                artwork: nowPlaying.artwork,
+                size: 84,
+                cornerRadius: 12,
+                accessibilityLabel: nowPlaying.artworkAccessibilityLabel
+            )
+            .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 6) {
                 Text(nowPlaying.title)
-                    .font(.title3.weight(.bold))
-                    .lineLimit(2)
-                Text(nowPlaying.artist)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    .font(.title2.weight(.bold))
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
+                if !nowPlaying.artist.isEmpty {
+                    Text(nowPlaying.artist)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
+                }
                 if let status = nowPlaying.statusText, status != nowPlaying.title {
                     Text(status)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
             }
-            Spacer(minLength: 0)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(16)
-        .background(PevDashboardColors.yellow.opacity(0.10), in: RoundedRectangle(cornerRadius: 20))
-    }
-
-    private var artworkView: some View {
-        MusicArtworkView(
-            artwork: nowPlaying.artwork,
-            size: 84,
-            cornerRadius: 16,
-            accessibilityLabel: nowPlaying.artworkAccessibilityLabel
-        )
+        .padding(.vertical, 8)
     }
 }
 
-private struct MusicArtworkView: View {
+struct MusicArtworkView: View {
     let artwork: MusicArtwork?
     let size: CGFloat
     let cornerRadius: CGFloat
@@ -420,25 +482,8 @@ private struct MusicArtworkView: View {
                     .frame(width: size, height: size)
                     .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
                     .accessibilityLabel(accessibilityLabel)
-            } else {
-                MusicArtworkPlaceholder(size: size)
             }
         }
-    }
-}
-
-private struct MusicArtworkPlaceholder: View {
-    let size: CGFloat
-
-    var body: some View {
-        Image(systemName: "music.note")
-            .font(size >= 64 ? .largeTitle : .title3)
-            .foregroundStyle(PevDashboardColors.yellow)
-            .frame(width: size, height: size)
-            .background(
-                PevDashboardColors.yellow.opacity(0.16), in: RoundedRectangle(cornerRadius: size >= 64 ? 16 : 12)
-            )
-            .accessibilityHidden(true)
     }
 }
 
@@ -451,37 +496,58 @@ private struct MusicHistoryPolicyLabel: View {
     }
 }
 
-private struct MusicSettingsButton: View {
-    let action: () -> Void
-    var controlSize: ControlSize = .regular
+private struct MusicCompactPlayerFrameKey: EnvironmentKey {
+    static let defaultValue: CGRect? = nil
+}
 
-    var body: some View {
-        Button(action: action) {
-            Label(pevLocalizedText("music.settings.open"), systemImage: "gearshape")
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .buttonStyle(.bordered)
-        .controlSize(controlSize)
-        .tint(PevDashboardColors.primaryText)
-        .accessibilityIdentifier("music.open-settings")
+extension EnvironmentValues {
+    /// Floating native accessories can cover fixed layouts without changing their safe-area inset.
+    public var musicCompactPlayerFrame: CGRect? {
+        get { self[MusicCompactPlayerFrameKey.self] }
+        set { self[MusicCompactPlayerFrameKey.self] = newValue }
     }
 }
 
-/// Shared Ride/Map composition for the compact player.
+/// Shared primary-navigation composition for the compact player.
 public struct MusicCompactPlayerInset: ViewModifier {
+    @State private var accessoryFrame: CGRect?
     public let nowPlaying: MusicNowPlaying?
-    public let selectedProvider: MobileMusicProviderDto
     public let isHidden: Bool
     public let onCommand: (MobileMusicCommandDto) -> Void
     public let onOpenDetails: () -> Void
     public let onOpenSettings: () -> Void
     public let onDismiss: () -> Void
-    public let onRestore: () -> Void
 
     public func body(content: Content) -> some View {
-        content.safeAreaInset(edge: .bottom, spacing: 8) {
-            if let nowPlaying, nowPlaying.showsCompactPlayer {
+        #if os(iOS)
+            content
+                .environment(\.musicCompactPlayerFrame, showsPlayer ? accessoryFrame : nil)
+                .tabViewBottomAccessory(isEnabled: showsPlayer) {
+                    player
+                        .frame(maxHeight: .infinity)
+                        .onGeometryChange(for: CGRect.self) { proxy in
+                            proxy.frame(in: .global)
+                        } action: { frame in
+                            accessoryFrame = frame.width > 0 && frame.height > 0 ? frame : nil
+                        }
+                }
+                .onChange(of: showsPlayer) { _, isShown in
+                    if !isShown { accessoryFrame = nil }
+                }
+        #else
+            content.safeAreaInset(edge: .bottom, spacing: 0) {
+                if showsPlayer { player }
+            }
+        #endif
+    }
+
+    var showsPlayer: Bool {
+        !isHidden && nowPlaying?.showsCompactPlayer == true
+    }
+
+    private var player: some View {
+        Group {
+            if let nowPlaying {
                 MusicCompactPlayer(
                     nowPlaying: nowPlaying,
                     onCommand: onCommand,
@@ -489,73 +555,81 @@ public struct MusicCompactPlayerInset: ViewModifier {
                     onOpenSettings: onOpenSettings,
                     onDismiss: onDismiss
                 )
-                .padding(.horizontal, 12)
-            } else if isHidden {
-                Button(action: onRestore) {
-                    Label(
-                        pevLocalizedText("music.restore"),
-                        systemImage: "music.note"
-                    )
-                }
-                .buttonStyle(.bordered)
-                .accessibilityIdentifier("music.restore")
-            } else if shouldShowSpotifyStartupPlayer(
-                selectedProvider: selectedProvider,
-                nowPlaying: nowPlaying
-            ) {
-                HStack(spacing: 12) {
-                    Image(systemName: "music.note")
-                        .foregroundStyle(PevDashboardColors.yellow)
-                    Text("Spotify")
-                        .font(.subheadline.weight(.semibold))
-                    Spacer(minLength: 0)
-                    MusicPlayerIconButton(
-                        systemImage: "play.fill",
-                        label: pevLocalizedText("music.play"),
-                        action: { onCommand(.play) },
-                        accessibilityIdentifier: "music.play",
-                        isProminent: true
-                    )
-                    MusicPlayerIconButton(
-                        systemImage: "gearshape",
-                        label: pevLocalizedText("music.settings.open"),
-                        action: onOpenSettings,
-                        accessibilityIdentifier: "music.open-settings"
-                    )
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 20))
-                .padding(.horizontal, 12)
-            } else {
-                MusicSettingsButton(action: onOpenSettings)
             }
         }
+        .padding(.horizontal, 4)
     }
 }
 
 extension View {
+    /// Attach to the primary TabView on iOS so playback stays above the system tab bar.
     public func musicCompactPlayer(
         nowPlaying: MusicNowPlaying?,
-        selectedProvider: MobileMusicProviderDto,
         isHidden: Bool,
         onCommand: @escaping (MobileMusicCommandDto) -> Void,
         onOpenDetails: @escaping () -> Void,
         onOpenSettings: @escaping () -> Void,
-        onDismiss: @escaping () -> Void,
-        onRestore: @escaping () -> Void
+        onDismiss: @escaping () -> Void
     ) -> some View {
         modifier(
             MusicCompactPlayerInset(
                 nowPlaying: nowPlaying,
-                selectedProvider: selectedProvider,
                 isHidden: isHidden,
                 onCommand: onCommand,
                 onOpenDetails: onOpenDetails,
                 onOpenSettings: onOpenSettings,
-                onDismiss: onDismiss,
-                onRestore: onRestore
+                onDismiss: onDismiss
             )
         )
     }
 }
+
+#if DEBUG
+    private struct MusicCompactPlayerPreview: View {
+        let state: MobileMusicPlaybackStateDto
+
+        var body: some View {
+            MusicCompactPlayer(
+                nowPlaying: MusicNowPlaying(
+                    provider: .appleMusic,
+                    state: state,
+                    item: MobileMusicItemDto(
+                        identifier: "preview-track",
+                        title: "Everything In Its Right Place",
+                        artist: "Radiohead"
+                    ),
+                    capabilities: .init(
+                        previous: true,
+                        play: true,
+                        pause: true,
+                        next: true,
+                        openProvider: true
+                    )
+                ),
+                onCommand: { _ in },
+                onOpenDetails: {},
+                onOpenSettings: {}
+            )
+            .padding(12)
+            .frame(width: 360)
+            .background(PevDashboardColors.pageBackground)
+        }
+    }
+
+    #Preview("Playing") {
+        MusicCompactPlayerPreview(state: .playing)
+    }
+
+    #Preview("Paused") {
+        MusicCompactPlayerPreview(state: .paused)
+    }
+
+    #Preview("Recovery") {
+        MusicCompactPlayerPreview(state: .stale)
+    }
+
+    #Preview("Accessibility") {
+        MusicCompactPlayerPreview(state: .playing)
+            .environment(\.dynamicTypeSize, .accessibility3)
+    }
+#endif

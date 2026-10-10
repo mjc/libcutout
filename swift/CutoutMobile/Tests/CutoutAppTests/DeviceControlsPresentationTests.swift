@@ -409,12 +409,28 @@ final class DeviceControlsPresentationTests: XCTestCase {
             nextStep: .available(step: .prepareGyroCalibration), refusal: nil)
         XCTAssertTrue(DeviceControlPresentation.actionAvailable(descriptor: descriptor, state: state))
         XCTAssertEqual(DeviceControlPresentation.actionTitle(descriptor: descriptor, state: state), "Calibrate pedals")
+        XCTAssertEqual(
+            DeviceControlPresentation.actionAccessibilityLabel(descriptor: descriptor, state: state),
+            "Calibrate gyro: Calibrate pedals")
         state.nextStep = .busy
         XCTAssertFalse(DeviceControlPresentation.actionAvailable(descriptor: descriptor, state: state))
+        XCTAssertEqual(
+            DeviceControlPresentation.actionAccessibilityLabel(descriptor: descriptor, state: state),
+            "Calibrate gyro: Waiting for the wheel")
         state.nextStep = .available(step: .startGyroCalibration)
         XCTAssertEqual(DeviceControlPresentation.actionTitle(descriptor: descriptor, state: state), "Start calibration")
+        XCTAssertEqual(
+            DeviceControlPresentation.actionAccessibilityLabel(descriptor: descriptor, state: state),
+            "Calibrate gyro: Start calibration")
         state.nextStep = .restartRequired
         XCTAssertFalse(DeviceControlPresentation.actionAvailable(descriptor: descriptor, state: state))
+        XCTAssertEqual(
+            DeviceControlPresentation.actionAccessibilityLabel(descriptor: descriptor, state: state),
+            "Calibrate gyro: Restart the wheel before calibrating again")
+        state.nextStep = .available(step: .invoke)
+        XCTAssertEqual(
+            DeviceControlPresentation.actionAccessibilityLabel(descriptor: descriptor, state: state),
+            "Calibrate gyro")
         XCTAssertNil(DeviceControlPresentation.actionStatus(.idle))
     }
 }

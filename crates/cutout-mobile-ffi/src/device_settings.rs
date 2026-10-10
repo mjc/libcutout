@@ -521,6 +521,17 @@ impl CutoutSessionStateHandle {
             .map_err(Into::into)
     }
 
+    /// Rust-owned next wakeup, excluding polling when native transport is backpressured.
+    pub fn device_session_next_wakeup_at(
+        &self,
+        token: MobileConnectionAttemptTokenDto,
+        can_poll: bool,
+    ) -> Option<u64> {
+        self.lock_inner()
+            .next_wakeup_at(&token.into(), can_poll)
+            .map(cutout_core::MonotonicTimestamp::get)
+    }
+
     /// Advances setting deadlines without generating native polling writes.
     pub fn tick_setting_transport(
         &self,
@@ -743,8 +754,8 @@ mod tests {
         );
         assert_eq!(handle.settings_descriptors().connection, next);
         assert!(!handle.settings_descriptors().validation_authorized);
-        assert!(handle.settings_descriptors().descriptors.is_empty());
-        assert!(handle.settings_snapshot().settings.is_empty());
+        assert_eq!(handle.settings_descriptors().descriptors.len(), 0);
+        assert_eq!(handle.settings_snapshot().settings.len(), 0);
     }
 
     fn prepared_generic_settings_boundary() -> (

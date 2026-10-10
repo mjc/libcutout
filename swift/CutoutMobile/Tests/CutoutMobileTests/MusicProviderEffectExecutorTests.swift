@@ -47,6 +47,9 @@ final class MusicProviderEffectExecutorTests: XCTestCase {
         effects.cancelAll(in: .handoff)
 
         XCTAssertTrue(effects.isRunning(.provider(provider)))
+        XCTAssertTrue(effects.isRunning(in: .provider))
+        XCTAssertFalse(effects.isRunning(in: .playerState))
+        XCTAssertFalse(effects.isRunning(in: .handoff))
         XCTAssertFalse(effects.isRunning(.playerState(playerState)))
         XCTAssertFalse(effects.isRunning(.handoff(handoffID)))
         effects.cancelAll()

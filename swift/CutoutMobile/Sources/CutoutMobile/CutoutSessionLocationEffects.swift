@@ -1,15 +1,15 @@
 import Foundation
 
 /// Routes each phone-location update to capture and ride-map recording.
-struct CutoutSessionLocationEffects {
-    private let recordCaptureUpdate: (PhoneLocationUpdate) -> CaptureLocationWriteResult
-    private let ingestRideMapUpdate: (PhoneLocationUpdate) -> Void
-    private let handleCaptureResult: (CaptureLocationWriteResult) -> Void
+struct CutoutSessionLocationEffects: Sendable {
+    private let recordCaptureUpdate: @Sendable (PhoneLocationUpdate) -> CaptureLocationWriteResult
+    private let ingestRideMapUpdate: @Sendable (PhoneLocationUpdate) -> Void
+    private let handleCaptureResult: @Sendable (CaptureLocationWriteResult) -> Void
 
     init(
-        recordCaptureUpdate: @escaping (PhoneLocationUpdate) -> CaptureLocationWriteResult,
-        ingestRideMapUpdate: @escaping (PhoneLocationUpdate) -> Void,
-        handleCaptureResult: @escaping (CaptureLocationWriteResult) -> Void
+        recordCaptureUpdate: @escaping @Sendable (PhoneLocationUpdate) -> CaptureLocationWriteResult,
+        ingestRideMapUpdate: @escaping @Sendable (PhoneLocationUpdate) -> Void,
+        handleCaptureResult: @escaping @Sendable (CaptureLocationWriteResult) -> Void
     ) {
         self.recordCaptureUpdate = recordCaptureUpdate
         self.ingestRideMapUpdate = ingestRideMapUpdate

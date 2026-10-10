@@ -483,4 +483,280 @@ import Foundation
         }
     }
 
+    /// Drives the real app-owned music monitor and command path without an installed music app.
+    @MainActor
+    final class CutoutUITestMusicMonitor: AppleMusicMonitorDriving {
+        private var state: MobileMusicPlaybackStateDto
+        private var trackNumber = 1
+        private let emitsObservations: Bool
+        private let previousOnly: Bool
+        private var onObservation: (@MainActor (MusicProviderObservation) -> Void)?
+
+        private init(
+            state: MobileMusicPlaybackStateDto, emitsObservations: Bool = true, previousOnly: Bool = false
+        ) {
+            self.state = state
+            self.emitsObservations = emitsObservations
+            self.previousOnly = previousOnly
+        }
+
+        static func resolve() -> CutoutUITestMusicMonitor? {
+            let value = UserDefaults.standard.string(forKey: "CUTOUT_UI_TEST_MUSIC")
+            return switch value {
+            case "playing": CutoutUITestMusicMonitor(state: .playing)
+            case "paused": CutoutUITestMusicMonitor(state: .paused)
+            case "recovery": CutoutUITestMusicMonitor(state: .stale)
+            case "silent": CutoutUITestMusicMonitor(state: .stopped, emitsObservations: false)
+            case "previous-only": CutoutUITestMusicMonitor(state: .playing, previousOnly: true)
+            default: nil
+            }
+        }
+
+        func requestAuthorization(allowPrompt: Bool) async -> Bool { true }
+
+        func unauthorizedSnapshot(observedAtMs: UInt64) -> MobileMusicSnapshotDto {
+            snapshot(observedAtMs: observedAtMs)
+        }
+
+        func startMonitoring(
+            observedAtMs: @escaping @MainActor () -> UInt64,
+            onObservation: @escaping @MainActor (MusicProviderObservation) -> Void
+        ) async {
+            self.onObservation = onObservation
+            refreshObservation(observedAtMs: observedAtMs())
+        }
+
+        func stopMonitoring() { onObservation = nil }
+        func applySuspension(_ suspension: MobileMusicProviderSuspension) {}
+
+        func refreshObservation(observedAtMs: UInt64) {
+            guard emitsObservations else { return }
+            onObservation?(MusicProviderObservation(snapshot: snapshot(observedAtMs: observedAtMs)))
+        }
+
+        func perform(_ command: MobileMusicCommandDto) -> MusicCommandOutcome {
+            switch command {
+            case .play: state = .playing
+            case .pause: state = .paused
+            case .next: trackNumber += 1
+            case .previous: trackNumber = max(1, trackNumber - 1)
+            case .openProvider: return .unavailable
+            }
+            return .accepted
+        }
+
+        private func snapshot(observedAtMs: UInt64) -> MobileMusicSnapshotDto {
+            MobileMusicSnapshotDto(
+                provider: .appleMusic,
+                sessionId: "ui-test-music",
+                state: state,
+                item: .init(
+                    identifier: "ui-test-track-\(trackNumber)",
+                    title: "Everything In Its Right Place \(trackNumber)",
+                    artist: "Radiohead"
+                ),
+                positionMilliseconds: 45_000,
+                durationMilliseconds: 240_000,
+                observedAtMs: observedAtMs,
+                capabilities: state == .stale || previousOnly
+                    ? .init(previous: previousOnly, play: false, pause: false, next: false, openProvider: true)
+                    : .init(previous: true, play: true, pause: true, next: true, openProvider: false)
+            )
+        }
+    }
+    /// Opt-in Simulator data for exercising the real saved-history queries and navigation.
+    /// Rust creates IDs, admits samples, computes summaries, and applies lifecycle transitions.
+    enum CutoutUITestSavedRideFixture {
+        private static let receiptKey = "io.cutout.ui-test.saved-ride-receipts.v2"
+
+        private static var isEnabled: Bool {
+            #if os(iOS) && targetEnvironment(simulator)
+                CommandLine.arguments.contains("--seed-ui-test-ride-history")
+                    && CutoutUITestSessionFixture(arguments: CommandLine.arguments) != nil
+            #else
+                false
+            #endif
+        }
+
+        static var accessibilityValue: String? {
+            guard isEnabled, let ids = UserDefaults.standard.stringArray(forKey: receiptKey) else { return nil }
+            return "saved-rides:\(ids.joined(separator: ","))"
+        }
+
+        static func runIfRequested(database: RideDatabaseHandle) async throws {
+            guard isEnabled else { return }
+            try await Task.detached(priority: .utility) {
+                let nowWall = UInt64(Date().timeIntervalSince1970 * 1_000)
+                let nowMonotonic = UInt64(ProcessInfo.processInfo.systemUptime * 1_000)
+                let recentWindow = MobileRideMapLimits.rustOwned.historyRecentWindowMilliseconds
+                let cutoff = nowWall > recentWindow ? nowWall - recentWindow : 0
+                let defaults = UserDefaults.standard
+                if let existing = defaults.stringArray(forKey: receiptKey), existing.count == 2,
+                    Set(existing).count == 2
+                {
+                    let records = try existing.compactMap { value -> MobileRideRecordDto? in
+                        guard let uuid = UUID(uuidString: value)?.uuid else { return nil }
+                        let id = MobileRideIdDto(bytes: withUnsafeBytes(of: uuid) { Data($0) })
+                        return try database.findRide(rideId: id)
+                    }
+                    if records.count == 2,
+                        records.allSatisfy({
+                            $0.state == .saved && $0.summary.pointCount == 3
+                                && $0.createdAtMilliseconds >= cutoff && $0.createdAtMilliseconds <= nowWall
+                        })
+                    {
+                        return
+                    }
+                }
+                let routeCount = Int(MobileRideMapLimits.rustOwned.historyPageLimit) + 1
+                let totalOffset = UInt64(routeCount + 1) * 3_000
+                guard nowWall > totalOffset, nowMonotonic > totalOffset else {
+                    throw CocoaError(.coderInvalidValue)
+                }
+                var receipts: [String] = []
+                for index in 0..<routeCount {
+                    try Task.checkCancellation()
+                    let offset = UInt64(index) * 3_000
+                    let startedMonotonic = nowMonotonic - totalOffset + offset
+                    let startedWall = nowWall - totalOffset + offset
+                    let id = try database.createRideWithMonotonicStart(
+                        source: .live,
+                        createdAtMilliseconds: startedWall,
+                        monotonicCreatedAtMilliseconds: startedMonotonic
+                    )
+                    _ = try database.transition(id: id, event: .start, monotonicAtMilliseconds: startedMonotonic)
+                    for point in 0..<3 {
+                        let elapsed = UInt64(point) * 1_000
+                        let admitted = try database.appendLocation(
+                            id: id,
+                            location: MobileRideLocationDto(
+                                latitudeDegrees: 39.7 + Double(index) * 0.01 + Double(point) * 0.0001,
+                                longitudeDegrees: -104.9,
+                                monotonicMilliseconds: startedMonotonic + elapsed,
+                                wallClockUnixMilliseconds: startedWall + elapsed,
+                                horizontalAccuracyMillimetres: 3_000,
+                                source: .live
+                            )
+                        )
+                        guard admitted == .accepted else { throw CocoaError(.coderInvalidValue) }
+                    }
+                    _ = try database.transition(id: id, event: .stop, monotonicAtMilliseconds: startedMonotonic + 2_000)
+                    _ = try database.transition(id: id, event: .save, monotonicAtMilliseconds: startedMonotonic + 2_000)
+                    guard id.bytes.count == 16,
+                        let record = try database.findRide(rideId: id), record.state == .saved,
+                        record.summary.pointCount == 3
+                    else { throw CocoaError(.coderInvalidValue) }
+                    if index == 0 || index == routeCount - 1 {
+                        receipts.append(NSUUID(uuidBytes: [UInt8](id.bytes)).uuidString.lowercased())
+                    }
+                }
+                // Reuse the same validated Rust receipts when this explicit fixture relaunches.
+                defaults.set(receipts, forKey: receiptKey)
+            }.value
+        }
+    }
+#endif
+
+#if DEBUG && targetEnvironment(simulator)
+    /// Representative typed view input, enabled only by the explicit secondary-readings UI test flag.
+    /// It exercises rendering and accessibility; it does not simulate physical telemetry or GPS acquisition.
+    enum CutoutUITestSecondaryRideFixture {
+        private static var fixture: CutoutUITestSessionFixture? {
+            guard CommandLine.arguments.contains("--ui-test-ride-secondary-readings") else { return nil }
+            return CutoutUITestSessionFixture.resolve(
+                environmentValue: ProcessInfo.processInfo.environment["CUTOUT_UI_TEST_FIXTURE"],
+                persistedValue: UserDefaults.standard.string(forKey: "CUTOUT_UI_TEST_FIXTURE"),
+                arguments: CommandLine.arguments
+            )
+        }
+
+        static func eucRideState(at now: MonotonicMilliseconds) -> EucRideScreenState? {
+            guard fixture?.isEuc == true else { return nil }
+            let estimate = MobileChargeTimeEstimateDto(
+                lower: MobileDurationDto(milliseconds: 90_000),
+                expected: MobileDurationDto(milliseconds: 120_000),
+                upper: MobileDurationDto(milliseconds: 180_000),
+                kind: .atPresentCurrent,
+                confidence: .medium,
+                currentRate: MobileCurrentRateSummaryDto(
+                    meanMilliamps: 2_000, minimumMilliamps: 1_900,
+                    maximumMilliamps: 2_100, variabilityPermille: 100
+                ),
+                batteryLevel: BatteryLevelReading(
+                    value: BatteryLevel(value: 64), source: .reported,
+                    quality: .known, verification: .unverified
+                ),
+                batteryLevelBasis: .reported,
+                batteryProfileId: nil,
+                capacitySource: .estimated,
+                voltageSag: nil,
+                calculatedAt: MobileMonotonicMillisDto(milliseconds: now.rawValue),
+                validUntil: MobileMonotonicMillisDto(milliseconds: now.rawValue + 60_000)
+            )
+            let telemetry = TelemetrySnapshot(
+                at: now,
+                speed: Speed(value: 0),
+                operatingState: .charging,
+                voltage: Voltage(value: 82_000),
+                batteryCurrent: BatteryCurrent(value: 2_000),
+                power: Power(value: 164_000),
+                powerFlow: .charging,
+                controllerTemperature: Temperature(value: 31_000),
+                pwm: DutyCycle(permille: 0),
+                limpHomeRange: Distance(value: 22_852_500),
+                batteryLevelReported: BatteryLevel(value: 64),
+                chargeEstimate: .withPresentationFixture(
+                    MobileChargeEstimateStateDto(
+                        kind: .available, estimate: estimate, voltageSag: nil,
+                        unavailableReason: nil, error: nil, resetReason: nil,
+                        samples: 5, observedFor: MobileDurationDto(milliseconds: 30_000)
+                    ))
+            )
+            return EucRideScreenState(
+                phase: .live,
+                displayState: RideDisplayState(
+                    speed: SpeedReadout(snapshot: telemetry), telemetry: telemetry, lastUpdate: now
+                )
+            )
+        }
+
+        static func phoneLocationReadback(at now: MonotonicMilliseconds) -> PhoneLocationReadback? {
+            guard fixture?.isEuc == true else { return nil }
+            let sourceTime = Date().timeIntervalSince1970
+            let state = MobilePhoneLocationState()
+            _ = state.ingest(
+                sample: MobilePhoneLocationSampleDto(
+                    wallClockUnixMs: UInt64(sourceTime * 1_000),
+                    sourceTimestampUnixSeconds: sourceTime,
+                    latitudeDegrees: 39.7, longitudeDegrees: -104.9,
+                    altitudeMeters: 1_600, horizontalAccuracyMeters: 4,
+                    verticalAccuracyMeters: 6, speedMetersPerSecond: 3,
+                    speedAccuracyMetersPerSecond: 0.2, courseDegrees: 90,
+                    courseAccuracyDegrees: 3
+                ))
+            return PhoneLocationReadback(snapshot: state.currentSnapshot(), receivedAt: now)
+        }
+
+        static func vescRideSnapshot(at now: MonotonicMilliseconds) -> VescRideSnapshot? {
+            guard let fixture, !fixture.isEuc else { return nil }
+            return VescRideSnapshot(
+                title: "VESC", vehicleKind: .float, subProtocol: .generic,
+                controllerState: .unknown, operatingState: .riding, warning: .none,
+                boardSpeed: Speed(value: 8_000), dutyCycle: DutyCycle(permille: 230),
+                dutyHeadroom: BatteryLevel(value: 77),
+                batteryVoltage: Voltage(value: 50_400),
+                batteryLevelReported: BatteryLevel(value: 72),
+                batteryCurrent: BatteryCurrent(value: 12_000),
+                motorCurrent: PhaseCurrent(value: 5_000),
+                boardAngle: Angle(value: 1_500),
+                controllerTemperature: Temperature(value: 32_000),
+                motorTemperature: Temperature(value: 28_000),
+                footpad: FootpadTelemetry(
+                    state: 3, contactState: .both,
+                    adc1Milliunits: 1_250, adc2Milliunits: 875
+                ),
+                lastUpdate: now
+            )
+        }
+    }
 #endif

@@ -37,6 +37,8 @@ struct RideMapHistoryMusicDetail {
 }
 
 struct RideMapHistoryDetailView: View {
+    @Environment(\.musicCompactPlayerFrame) private var musicCompactPlayerFrame
+
     let initialHistoryID: String?
     let rides: [MobileRideMapHistorySummaryDto]
     let displayPoints: [MobileRideMapRouteDisplayPoint]
@@ -65,6 +67,7 @@ struct RideMapHistoryDetailView: View {
     @Binding var mapPosition: MapCameraPosition
     @Binding var isApplyingCamera: Bool
     let close: () -> Void
+    @State private var startedSelectionTaskID: String?
 
     private var selectedRide: MobileRideMapHistorySummaryDto? {
         guard let activeHistoryID else { return nil }
@@ -76,6 +79,29 @@ struct RideMapHistoryDetailView: View {
     }
 
     private var selectionTaskID: String { initialHistoryID ?? "" }
+
+    private var isWaitingForInitialProjection: Bool {
+        Self.initialProjectionIsLoading(
+            activeHistoryID: activeHistoryID,
+            projectionRideID: projectionRideID,
+            hasSelectedRide: selectedRide != nil,
+            isLoading: isLoading,
+            hasError: historyError != nil || routeError != nil,
+            hasStartedSelectionRequest: startedSelectionTaskID == selectionTaskID
+        )
+    }
+
+    static func initialProjectionIsLoading(
+        activeHistoryID: String?,
+        projectionRideID: String?,
+        hasSelectedRide: Bool,
+        isLoading: Bool,
+        hasError: Bool,
+        hasStartedSelectionRequest: Bool = true
+    ) -> Bool {
+        activeHistoryID != nil && projectionRideID != activeHistoryID
+            && !hasError && (isLoading || hasSelectedRide || !hasStartedSelectionRequest)
+    }
 
     private var routeState: RideMapHistoryRouteState {
         if routeError != nil {
@@ -159,85 +185,101 @@ struct RideMapHistoryDetailView: View {
             RideMapHistoryDetailHeader(close: close)
 
             GeometryReader { proxy in
-                ScrollView(.vertical, showsIndicators: false) {
-                    VStack(spacing: 0) {
-                        if projectionRideID == activeHistoryID {
-                            RideMapHistoryDetailMap(
-                                points: displayPoints,
-                                showsRecordedEnd: Self.showsRecordedEnd(for: selectedRide?.state),
-                                showsCurrentMarker: Self.showsCurrentMarker(for: selectedRide?.state),
-                                routeID: Self.routeID(
-                                    for: activeHistoryID,
-                                    cameraFitVersion: cameraFitVersion
-                                ),
-                                projectionVersion: projectionVersion,
-                                endpointMetadata: endpointMetadata,
-                                cameraRegion: cameraRegion,
-                                segments: segments,
-                                state: routeState,
-                                cameraFitID: Self.routeID(
-                                    for: activeHistoryID,
-                                    cameraFitVersion: cameraFitVersion
-                                ),
-                                mapPosition: $mapPosition,
-                                isApplyingCamera: $isApplyingCamera,
-                                cameraDidChange: cameraDidChange
-                            )
-                            .frame(height: Self.mapHeight(for: proxy.size.height))
-                        }
+                let visibleHeight = RideMapViewportLayout.visibleHeight(
+                    in: proxy, musicPlayerFrame: musicCompactPlayerFrame)
+                VStack(spacing: 0) {
+                    ScrollView(.vertical, showsIndicators: false) {
+                        VStack(spacing: 0) {
+                            if isWaitingForInitialProjection {
+                                RideMapHistoryLoadingSurface(identifier: "ride-map.detail-initial-loading")
+                                    .frame(maxWidth: .infinity)
+                                    .frame(height: Self.mapHeight(for: visibleHeight))
+                            } else if projectionRideID == activeHistoryID {
+                                RideMapHistoryDetailMap(
+                                    points: displayPoints,
+                                    showsRecordedEnd: Self.showsRecordedEnd(for: selectedRide?.state),
+                                    showsCurrentMarker: Self.showsCurrentMarker(for: selectedRide?.state),
+                                    routeID: Self.routeID(
+                                        for: activeHistoryID,
+                                        cameraFitVersion: cameraFitVersion
+                                    ),
+                                    projectionVersion: projectionVersion,
+                                    endpointMetadata: endpointMetadata,
+                                    cameraRegion: cameraRegion,
+                                    segments: segments,
+                                    state: routeState,
+                                    cameraFitID: Self.routeID(
+                                        for: activeHistoryID,
+                                        cameraFitVersion: cameraFitVersion
+                                    ),
+                                    mapPosition: $mapPosition,
+                                    isApplyingCamera: $isApplyingCamera,
+                                    cameraDidChange: cameraDidChange
+                                )
+                                .frame(height: Self.mapHeight(for: visibleHeight))
+                            }
 
-                        if projectionRideID != activeHistoryID {
-                            RideMapHistoryDetailUnavailableState(
-                                hasError: historyError != nil || routeError != nil,
-                                retry: retry
-                            )
-                        } else if let ride = selectedRide {
-                            RideMapHistoryDetailSummary(
-                                distance: distanceText(for: ride.summary),
-                                duration: durationText(for: ride.summary),
-                                averageSpeed: Self.averageSpeedText(
-                                    millimetresPerSecond: ride.summary
-                                        .averageSpeedMillimetresPerSecond,
-                                    locale: .current
-                                ),
-                                recordedAt: recordedAtText(for: ride.createdAtMilliseconds),
-                                vehicle: vehicleLabel(for: ride),
-                                telemetryState: ride.telemetryState,
-                                displayPointCount: displayPoints.count,
-                                recordedPointCount: ride.summary.pointCount,
-                                pointsTruncated: pointsTruncated,
-                                segmentCount: ride.segmentCount,
-                                segments: segments,
-                                segmentsOmittedByBudget: segmentsOmittedByBudget,
-                                canonicalBackgroundGapCount: canonicalBackgroundGapCount,
-                                musicTimeline: music.events,
-                                musicTimelineUnavailable: music.timelineUnavailable,
-                                musicHistoryState: music.state,
-                                musicHistoryError: music.error,
-                                musicHistoryCanForget: music.canForget,
-                                forgetMusicHistory: {
-                                    await music.forget()
-                                },
-                                state: routeState,
-                                loadRoutePreview: loadRoutePreview,
-                                shareText: shareText(for: ride),
-                                mapPosition: $mapPosition,
-                                isApplyingCamera: $isApplyingCamera
-                            )
-                        } else if activeHistoryID != nil && routeState != .loading {
-                            RideMapHistoryDetailUnavailableState(
-                                hasError: historyError != nil || routeError != nil,
-                                retry: retry
-                            )
+                            if projectionRideID != activeHistoryID && !isWaitingForInitialProjection {
+                                RideMapHistoryDetailUnavailableState(
+                                    hasError: historyError != nil || routeError != nil,
+                                    retry: retry
+                                )
+                            } else if projectionRideID == activeHistoryID, let ride = selectedRide {
+                                RideMapHistoryDetailSummary(
+                                    distance: distanceText(for: ride.summary),
+                                    duration: durationText(for: ride.summary),
+                                    averageSpeed: Self.averageSpeedText(
+                                        millimetresPerSecond: ride.summary
+                                            .averageSpeedMillimetresPerSecond,
+                                        locale: .current
+                                    ),
+                                    recordedAt: recordedAtText(for: ride.createdAtMilliseconds),
+                                    vehicle: vehicleLabel(for: ride),
+                                    telemetryState: ride.telemetryState,
+                                    displayPointCount: displayPoints.count,
+                                    recordedPointCount: ride.summary.pointCount,
+                                    pointsTruncated: pointsTruncated,
+                                    segmentCount: ride.segmentCount,
+                                    segments: segments,
+                                    segmentsOmittedByBudget: segmentsOmittedByBudget,
+                                    canonicalBackgroundGapCount: canonicalBackgroundGapCount,
+                                    musicTimeline: music.events,
+                                    musicTimelineUnavailable: music.timelineUnavailable,
+                                    musicHistoryState: music.state,
+                                    musicHistoryError: music.error,
+                                    musicHistoryCanForget: music.canForget,
+                                    forgetMusicHistory: {
+                                        await music.forget()
+                                    },
+                                    state: routeState,
+                                    loadRoutePreview: loadRoutePreview,
+                                    shareText: shareText(for: ride),
+                                    mapPosition: $mapPosition,
+                                    isApplyingCamera: $isApplyingCamera
+                                )
+                            } else if !isWaitingForInitialProjection && activeHistoryID != nil && routeState != .loading
+                            {
+                                RideMapHistoryDetailUnavailableState(
+                                    hasError: historyError != nil || routeError != nil,
+                                    retry: retry
+                                )
+                            }
                         }
                     }
                 }
+                .frame(height: visibleHeight, alignment: .top)
+                .clipped()
+                .contentShape(Rectangle())
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("ride-map.detail-viewport")
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .task(id: selectionTaskID) {
+            startedSelectionTaskID = selectionTaskID
             ensureSelection(initialHistoryID)
         }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("ride-map.detail")
     }
 

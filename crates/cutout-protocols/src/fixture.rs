@@ -393,17 +393,10 @@ fn parse_channel(line: usize, value: &str) -> Result<GattChannel, RequestFixture
 }
 
 fn parse_hex_bytes(line: usize, value: &str) -> Result<Vec<u8>, RequestFixtureLoadError> {
-    if value.len() % 2 != 0 {
-        return Err(RequestFixtureLoadError::InvalidValue {
-            line,
-            field: "bytes",
-        });
-    }
-    let mut bytes = Vec::with_capacity(value.len() / 2);
-    for chunk in value.as_bytes().chunks_exact(2) {
-        bytes.push(parse_hex_byte(line, "bytes", chunk)?);
-    }
-    Ok(bytes)
+    hex::decode(value).map_err(|_| RequestFixtureLoadError::InvalidValue {
+        line,
+        field: "bytes",
+    })
 }
 
 fn parse_hex_array<const N: usize>(
@@ -415,34 +408,9 @@ fn parse_hex_array<const N: usize>(
         return Err(RequestFixtureLoadError::InvalidValue { line, field });
     }
     let mut bytes = [0; N];
-    for (slot, chunk) in bytes.iter_mut().zip(value.as_bytes().chunks_exact(2)) {
-        *slot = parse_hex_byte(line, field, chunk)?;
-    }
+    hex::decode_to_slice(value, &mut bytes)
+        .map_err(|_| RequestFixtureLoadError::InvalidValue { line, field })?;
     Ok(bytes)
-}
-
-fn parse_hex_byte(
-    line: usize,
-    field: &'static str,
-    byte: &[u8],
-) -> Result<u8, RequestFixtureLoadError> {
-    let [high, low] = byte else {
-        return Err(RequestFixtureLoadError::InvalidValue { line, field });
-    };
-    let high =
-        parse_hex_nibble(*high).ok_or(RequestFixtureLoadError::InvalidValue { line, field })?;
-    let low =
-        parse_hex_nibble(*low).ok_or(RequestFixtureLoadError::InvalidValue { line, field })?;
-    Ok((high << 4) + low)
-}
-
-const fn parse_hex_nibble(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        b'A'..=b'F' => Some(byte - b'A' + 10),
-        _ => None,
-    }
 }
 
 #[cfg(test)]
@@ -579,6 +547,78 @@ mod tests {
                 line: 1,
                 field: "bytes",
             }
+        );
+    }
+
+    #[test]
+    fn loader_preserves_every_byte_and_accepts_empty_payloads() {
+        let expected: Vec<u8> = (0..=u8::MAX).collect();
+        let encoded = hex::encode(&expected);
+        for (value, bytes) in [
+            (encoded.clone(), expected.clone()),
+            (encoded.to_uppercase(), expected),
+            (String::new(), Vec::new()),
+        ] {
+            let input = format!(
+                "family=begode-falcon probe=falcon.identity command=request-identity mode=without-response bytes={value} provenance=vendor-documentation verification=unverified"
+            );
+            let fixtures = load_request_fixtures(&input).unwrap();
+            assert_eq!(fixtures[0].bytes.as_slice(), bytes);
+        }
+    }
+
+    #[test]
+    fn loader_keeps_line_and_field_context_for_invalid_hex() {
+        for value in ["0", "000", "0g", "g0", "é", "🦀", "0é0", "0x00"] {
+            let input = format!(
+                "# evidence\n\nfamily=begode-falcon probe=falcon.identity command=request-identity mode=without-response bytes={value} provenance=vendor-documentation verification=unverified"
+            );
+            assert_eq!(
+                load_request_fixtures(&input).unwrap_err(),
+                RequestFixtureLoadError::InvalidValue {
+                    line: 3,
+                    field: "bytes",
+                },
+                "invalid bytes: {value}"
+            );
+        }
+    }
+
+    #[test]
+    fn loader_requires_exact_channel_width_and_valid_hex() {
+        for field in ["service", "characteristic"] {
+            for value in [
+                String::new(),
+                "0".repeat(31),
+                "0".repeat(33),
+                format!("{}g", "0".repeat(31)),
+                format!("{}é", "0".repeat(30)),
+            ] {
+                let input = format!(
+                    "# evidence\n\nfamily=begode-falcon probe=falcon.identity command=request-identity mode=without-response bytes=00 {field}={value} provenance=vendor-documentation verification=unverified"
+                );
+                assert_eq!(
+                    load_request_fixtures(&input).unwrap_err(),
+                    RequestFixtureLoadError::InvalidValue {
+                        line: 3,
+                        field: "channel",
+                    },
+                    "invalid {field}: {value}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn loader_accepts_uppercase_channels_without_changing_byte_order() {
+        let fixtures = load_request_fixtures(
+            "family=begode-falcon probe=falcon.identity command=request-identity mode=without-response bytes=00 service=0000FFE000001000800000805F9B34FB characteristic=0000FFE100001000800000805F9B34FB provenance=vendor-documentation verification=unverified",
+        )
+        .unwrap();
+        assert_eq!(fixtures[0].channels.service, Some(VETERAN_SERVICE_CHANNEL));
+        assert_eq!(
+            fixtures[0].channels.characteristic,
+            Some(VETERAN_DATA_CHANNEL)
         );
     }
 

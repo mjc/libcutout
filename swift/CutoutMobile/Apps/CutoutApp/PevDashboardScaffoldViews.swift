@@ -62,41 +62,62 @@ struct PevAppShell<Content: View>: View {
     @Environment(\.verticalSizeClass) private var verticalSizeClass
 
     let sectionTitle: String
-    let disconnect: () -> Void
+    let isRideScreen: Bool
+    let disconnect: (() -> Void)?
+    let back: (() -> Void)?
     let content: Content
 
     init(
         sectionTitle: String,
-        disconnect: @escaping () -> Void,
+        isRideScreen: Bool = false,
+        disconnect: (() -> Void)? = nil,
+        back: (() -> Void)? = nil,
         @ViewBuilder content: () -> Content
     ) {
         self.sectionTitle = sectionTitle
+        self.isRideScreen = isRideScreen
         self.disconnect = disconnect
+        self.back = back
         self.content = content()
     }
 
     var body: some View {
         VStack(spacing: 0) {
             PevDashboardHeader(
-                sectionTitle: sectionTitle
+                sectionTitle: sectionTitle,
+                stacksAtAccessibilitySizes: !isRideScreen
             ) {
-                Button(action: disconnect) {
-                    if verticalSizeClass == .compact && dynamicTypeSize.isAccessibilitySize {
-                        Image(systemName: "xmark")
-                            .accessibilityHidden(true)
-                    } else {
-                        Text(localizedAppText("ride.action.disconnect"))
+                if let back {
+                    Button(action: back) {
+                        Label(localizedAppText("ride_map.detail_back"), systemImage: "chevron.backward")
+                            .frame(minWidth: 44, minHeight: 44)
+                            .contentShape(Rectangle())
                     }
+                    .font(.callout.weight(.bold))
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("dashboard.back")
+                } else if let disconnect {
+                    Button(action: disconnect) {
+                        if dynamicTypeSize.isAccessibilitySize && (isRideScreen || verticalSizeClass == .compact) {
+                            Image(systemName: "xmark")
+                                .accessibilityHidden(true)
+                        } else {
+                            Text(localizedAppText("ride.action.disconnect"))
+                        }
+                    }
+                    .font(.callout.weight(.bold))
+                    .foregroundStyle(PevDashboardColors.primaryText)
+                    .padding(.horizontal, 12)
+                    .frame(minWidth: 44, minHeight: 44)
+                    .background(PevDashboardCardBackground(cornerRadius: 8))
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(localizedAppText("ride.action.disconnect"))
+                    .accessibilityIdentifier("dashboard.disconnect")
+                } else {
+                    PevDashboardBrand()
                 }
-                .font(.callout.weight(.bold))
-                .foregroundStyle(PevDashboardColors.primaryText)
-                .padding(.horizontal, 12)
-                .frame(minWidth: 44, minHeight: 44)
-                .background(PevDashboardCardBackground(cornerRadius: 8))
-                .buttonStyle(.plain)
-                .accessibilityLabel(localizedAppText("ride.action.disconnect"))
-                .accessibilityIdentifier("dashboard.disconnect")
             }
+            .frame(minHeight: 44)
             .padding(.horizontal, 24)
 
             content
@@ -113,26 +134,31 @@ struct PevDashboardHeader<LeadingAccessory: View>: View {
     @Environment(\.verticalSizeClass) private var verticalSizeClass
 
     let sectionTitle: String
+    let stacksAtAccessibilitySizes: Bool
     let leadingAccessory: LeadingAccessory
 
     init(
         sectionTitle: String,
+        stacksAtAccessibilitySizes: Bool = true,
         @ViewBuilder leadingAccessory: () -> LeadingAccessory
     ) {
         self.sectionTitle = sectionTitle
+        self.stacksAtAccessibilitySizes = stacksAtAccessibilitySizes
         self.leadingAccessory = leadingAccessory()
     }
 
     var body: some View {
         Group {
-            if dynamicTypeSize.isAccessibilitySize && verticalSizeClass != .compact {
+            if stacksAtAccessibilitySizes && dynamicTypeSize.isAccessibilitySize && verticalSizeClass != .compact {
                 VStack(alignment: .leading, spacing: 8) {
                     leadingAccessory
+                        .frame(minHeight: 44)
                     section
                 }
             } else {
                 HStack(alignment: .firstTextBaseline) {
                     leadingAccessory
+                        .frame(minHeight: 44)
                     Spacer()
                     section
                 }

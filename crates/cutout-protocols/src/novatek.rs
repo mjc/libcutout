@@ -3,6 +3,7 @@
 use std::{collections::HashSet, net::Ipv4Addr, num::NonZeroU16, str};
 
 use arrayvec::{ArrayString, ArrayVec};
+use quick_xml::{Reader, events::Event};
 use thiserror::Error;
 
 /// Maximum XML response size accepted by the small Novatek read parsers.
@@ -11,6 +12,7 @@ pub const NOVATEK_MAX_RESPONSE_BYTES: usize = 4 * 1024;
 /// Maximum XML response size accepted by the Novatek media-list parser.
 pub const NOVATEK_MAX_MEDIA_RESPONSE_BYTES: usize = 512 * 1024;
 
+const NOVATEK_MAX_XML_DEPTH: usize = 32;
 const NOVATEK_MAX_FIRMWARE_VERSION_BYTES: usize = 64;
 const NOVATEK_MAX_RTSP_URI_BYTES: usize = 256;
 const NOVATEK_MAX_COMMAND_STATUS_ENTRIES: usize = 32;
@@ -35,7 +37,7 @@ pub enum NovatekResponseError {
     /// The response was not valid UTF-8.
     #[error("Novatek response is not UTF-8")]
     InvalidUtf8,
-    /// The response XML was incomplete or had data outside its document root.
+    /// The XML was incomplete, outside the protocol subset, or had ambiguous fields.
     #[error("Novatek response is not a complete XML document")]
     MalformedXml,
     /// A required XML element was absent.
@@ -239,6 +241,17 @@ impl std::fmt::Display for NovatekCommandId {
 }
 
 impl NovatekHttpOrigin {
+    const R3_PRO_ACCESS_POINT: Self = Self {
+        address: Ipv4Addr::new(192, 168, 1, 254),
+        port: NonZeroU16::new(80).unwrap(),
+    };
+
+    /// Returns the captured HTTP endpoint of the `FreedConn` R3 Pro access point.
+    #[must_use]
+    pub const fn r3_pro_access_point() -> Self {
+        Self::R3_PRO_ACCESS_POINT
+    }
+
     /// Creates an origin only for a local IPv4 address and nonzero port.
     ///
     /// The camera's gateway is selected by the platform adapter; this type
@@ -1048,7 +1061,7 @@ pub struct NovatekReadOnlySnapshot {
     live_view: NovatekLiveViewLinks,
     configuration: NovatekConfiguration,
     storage: NovatekStoragePresence,
-    media: NovatekMediaList,
+    media: Option<NovatekMediaList>,
 }
 
 impl NovatekReadOnlySnapshot {
@@ -1076,10 +1089,10 @@ impl NovatekReadOnlySnapshot {
         self.storage
     }
 
-    /// Returns the bounded media metadata.
+    /// Returns bounded media metadata if command `3015` has been loaded.
     #[must_use]
-    pub const fn media(&self) -> &NovatekMediaList {
-        &self.media
+    pub const fn media(&self) -> Option<&NovatekMediaList> {
+        self.media.as_ref()
     }
 }
 
@@ -1092,14 +1105,13 @@ impl NovatekReadOnlySnapshot {
 pub fn parse_firmware_response(
     response: &[u8],
 ) -> Result<NovatekFirmwareVersion, NovatekResponseError> {
-    let xml = bounded_xml(response)?;
-    require_xml_root(xml, "Function")?;
-    parse_expected_command(xml, NovatekReadCommand::FirmwareVersion.command_id())?;
-    let status = parse_status(xml)?;
+    let fields = parse_fields(response, "Function")?;
+    parse_expected_command(&fields, NovatekReadCommand::FirmwareVersion.command_id())?;
+    let status = parse_status(&fields)?;
     if status != 0 {
         return Err(NovatekResponseError::StatusFailure { status });
     }
-    let version = extract_tag(xml, "String", "<String>", "</String>")?;
+    let version = fields.required("String")?;
     let version =
         ArrayString::try_from(version).map_err(|_| NovatekResponseError::ValueTooLong {
             tag: "String",
@@ -1117,11 +1129,10 @@ pub fn parse_firmware_response(
 pub fn parse_live_view_response(
     response: &[u8],
 ) -> Result<NovatekLiveViewLinks, NovatekResponseError> {
-    let xml = bounded_xml(response)?;
-    require_xml_root(xml, "LIST")?;
+    let fields = parse_fields(response, "LIST")?;
     Ok(NovatekLiveViewLinks {
-        movie: parse_rtsp_uri(xml, "MovieLiveViewLink")?,
-        photo: parse_rtsp_uri(xml, "PhotoLiveViewLink")?,
+        movie: parse_rtsp_uri(&fields, "MovieLiveViewLink")?,
+        photo: parse_rtsp_uri(&fields, "PhotoLiveViewLink")?,
     })
 }
 
@@ -1134,14 +1145,13 @@ pub fn parse_live_view_response(
 pub fn parse_storage_response(
     response: &[u8],
 ) -> Result<NovatekStoragePresence, NovatekResponseError> {
-    let xml = bounded_xml(response)?;
-    require_xml_root(xml, "Function")?;
-    parse_expected_command(xml, NovatekReadCommand::StoragePresent.command_id())?;
-    let status = parse_status(xml)?;
+    let fields = parse_fields(response, "Function")?;
+    parse_expected_command(&fields, NovatekReadCommand::StoragePresent.command_id())?;
+    let status = parse_status(&fields)?;
     if status != 0 {
         return Err(NovatekResponseError::StatusFailure { status });
     }
-    match extract_tag(xml, "Value", "<Value>", "</Value>")? {
+    match fields.required("Value")? {
         "0" => Ok(NovatekStoragePresence::Absent),
         "1" => Ok(NovatekStoragePresence::Present),
         _ => Err(NovatekResponseError::InvalidStorageValue),
@@ -1163,9 +1173,8 @@ pub fn parse_command_response(
     response: &[u8],
     expected_command_id: NovatekCommandId,
 ) -> Result<NovatekCommandOutcome, NovatekResponseError> {
-    let xml = bounded_xml(response)?;
-    require_xml_root(xml, "Function")?;
-    let command = match extract_tag(xml, "Cmd", "<Cmd>", "</Cmd>") {
+    let fields = parse_fields(response, "Function")?;
+    let command = match fields.required("Cmd") {
         Ok(value) => {
             let value = value
                 .parse()
@@ -1183,7 +1192,7 @@ pub fn parse_command_response(
             expected: expected_command_id,
         });
     }
-    match parse_status(xml) {
+    match parse_status(&fields) {
         Ok(0) => Ok(NovatekCommandOutcome::Acknowledged),
         Ok(status) => Ok(NovatekCommandOutcome::Refused {
             status: NovatekStatusCode::new(status),
@@ -1223,77 +1232,60 @@ pub fn parse_command_response_for_id(
 pub fn parse_configuration_response(
     response: &[u8],
 ) -> Result<NovatekConfiguration, NovatekResponseError> {
-    let xml = bounded_xml(response)?;
-    require_xml_root(xml, "Function")?;
-    let mut cursor = 0;
+    let mut xml = NovatekXml::new(response, NOVATEK_MAX_RESPONSE_BYTES, "Function")?;
     let mut statuses: ArrayVec<NovatekCommandStatus, NOVATEK_MAX_COMMAND_STATUS_ENTRIES> =
         ArrayVec::new();
-
-    while let Some(command_offset) = xml
-        .get(cursor..)
-        .and_then(|remaining| remaining.find("<Cmd>"))
-    {
-        let command_start = cursor + command_offset + "<Cmd>".len();
-        let command_end = xml
-            .get(command_start..)
-            .and_then(|remaining| remaining.find("</Cmd>").map(|index| command_start + index))
-            .ok_or(NovatekResponseError::MissingTag { tag: "Cmd" })?;
-        let command_id = xml
-            .get(command_start..command_end)
-            .ok_or(NovatekResponseError::MissingTag { tag: "Cmd" })?
-            .trim()
-            .parse()
-            .map_err(|_| NovatekResponseError::InvalidCommand)?;
-        let command_id =
-            NovatekCommandId::new(command_id).ok_or(NovatekResponseError::InvalidCommand)?;
-
-        let after_command = xml
-            .get(command_end + "</Cmd>".len()..)
-            .ok_or(NovatekResponseError::MissingTag { tag: "Status" })?;
-        let status_offset = after_command
-            .find("<Status>")
-            .ok_or(NovatekResponseError::MissingTag { tag: "Status" })?;
-        if after_command
-            .find("<Cmd>")
-            .is_some_and(|next_command| next_command < status_offset)
-        {
-            return Err(NovatekResponseError::MissingTag { tag: "Status" });
+    let mut pending_command = None;
+    let mut domain_error = None;
+    while let Some((name, value)) = xml.field()? {
+        if domain_error.is_some() {
+            continue;
         }
-        let status_start = command_end + "</Cmd>".len() + status_offset + "<Status>".len();
-        let status_end = xml
-            .get(status_start..)
-            .and_then(|remaining| {
-                remaining
-                    .find("</Status>")
-                    .map(|index| status_start + index)
-            })
-            .ok_or(NovatekResponseError::MissingTag { tag: "Status" })?;
-        let status = xml
-            .get(status_start..status_end)
-            .ok_or(NovatekResponseError::MissingTag { tag: "Status" })?
-            .trim()
-            .parse()
-            .map_err(|_| NovatekResponseError::InvalidStatus)?;
-
-        if statuses.is_full() {
-            return Err(NovatekResponseError::TooManyEntries {
-                tag: "Cmd",
-                max: NOVATEK_MAX_COMMAND_STATUS_ENTRIES,
-            });
-        }
-        if statuses
-            .iter()
-            .any(|existing| existing.command_id == command_id)
-        {
-            return Err(NovatekResponseError::DuplicateCommand { command_id });
-        }
-        statuses.push(NovatekCommandStatus {
-            command_id,
-            status: NovatekStatusCode::new(status),
-        });
-        cursor = status_end + "</Status>".len();
+        let outcome = (|| {
+            match name {
+                "Cmd" => {
+                    if pending_command.is_some() {
+                        return Err(NovatekResponseError::MissingTag { tag: "Status" });
+                    }
+                    pending_command = Some(parse_command_id(value)?);
+                }
+                "Status" => {
+                    let Some(command_id) = pending_command.take() else {
+                        return Ok(());
+                    };
+                    let status = value
+                        .parse()
+                        .map_err(|_| NovatekResponseError::InvalidStatus)?;
+                    if statuses.is_full() {
+                        return Err(NovatekResponseError::TooManyEntries {
+                            tag: "Cmd",
+                            max: NOVATEK_MAX_COMMAND_STATUS_ENTRIES,
+                        });
+                    }
+                    if statuses
+                        .iter()
+                        .any(|existing| existing.command_id == command_id)
+                    {
+                        return Err(NovatekResponseError::DuplicateCommand { command_id });
+                    }
+                    statuses.push(NovatekCommandStatus {
+                        command_id,
+                        status: NovatekStatusCode::new(status),
+                    });
+                }
+                _ => {}
+            }
+            Ok(())
+        })();
+        domain_error = outcome.err();
+    }
+    if let Some(error) = domain_error {
+        return Err(error);
     }
 
+    if pending_command.is_some() {
+        return Err(NovatekResponseError::MissingTag { tag: "Status" });
+    }
     if statuses.is_empty() {
         return Err(NovatekResponseError::MissingTag { tag: "Cmd" });
     }
@@ -1309,38 +1301,52 @@ pub fn parse_configuration_response(
 pub fn parse_media_list_response(
     response: &[u8],
 ) -> Result<NovatekMediaList, NovatekResponseError> {
-    let xml = bounded_xml_with_limit(response, NOVATEK_MAX_MEDIA_RESPONSE_BYTES)?;
-    require_xml_root(xml, "LIST")?;
-    let mut cursor = 0;
+    let mut xml = NovatekXml::new(response, NOVATEK_MAX_MEDIA_RESPONSE_BYTES, "LIST")?;
     let mut entries = Vec::with_capacity(64);
     let mut paths = HashSet::with_capacity(64);
-
-    while let Some(file_offset) = xml
-        .get(cursor..)
-        .and_then(|remaining| remaining.find("<File>"))
-    {
-        if entries.len() >= NOVATEK_MAX_MEDIA_ENTRIES {
-            return Err(NovatekResponseError::TooManyEntries {
-                tag: "File",
-                max: NOVATEK_MAX_MEDIA_ENTRIES,
-            });
+    let mut in_all_file = false;
+    let mut domain_error = None;
+    loop {
+        match xml.next()? {
+            Event::Start(start) if start.name().as_ref() == "ALLFile" && !in_all_file => {
+                in_all_file = true;
+            }
+            Event::End(end) if end.name().as_ref() == "ALLFile" && in_all_file => {
+                in_all_file = false;
+            }
+            Event::Start(start) if start.name().as_ref() == "File" => {
+                let fields = xml.record_fields()?;
+                if domain_error.is_some() {
+                    continue;
+                }
+                let outcome = (|| {
+                    if entries.len() >= NOVATEK_MAX_MEDIA_ENTRIES {
+                        return Err(NovatekResponseError::TooManyEntries {
+                            tag: "File",
+                            max: NOVATEK_MAX_MEDIA_ENTRIES,
+                        });
+                    }
+                    let entry = parse_media_entry(&fields)?;
+                    if !paths.insert(entry.path) {
+                        return Err(NovatekResponseError::DuplicateMediaPath);
+                    }
+                    entries.push(entry);
+                    Ok(())
+                })();
+                domain_error = outcome.err();
+            }
+            Event::End(_) if xml.depth == 0 => {
+                xml.finish()?;
+                break;
+            }
+            Event::Empty(_) => {}
+            Event::Text(text) if text.as_ref().trim().is_empty() => {}
+            _ => return Err(NovatekResponseError::MalformedXml),
         }
-        let file_start = cursor + file_offset + "<File>".len();
-        let file_end = xml
-            .get(file_start..)
-            .and_then(|remaining| remaining.find("</File>").map(|index| file_start + index))
-            .ok_or(NovatekResponseError::MissingTag { tag: "File" })?;
-        let file = xml
-            .get(file_start..file_end)
-            .ok_or(NovatekResponseError::MissingTag { tag: "File" })?;
-        let entry = parse_media_entry(file)?;
-        if !paths.insert(entry.path) {
-            return Err(NovatekResponseError::DuplicateMediaPath);
-        }
-        entries.push(entry);
-        cursor = file_end + "</File>".len();
     }
-
+    if let Some(error) = domain_error {
+        return Err(error);
+    }
     Ok(NovatekMediaList { entries })
 }
 
@@ -1359,16 +1365,39 @@ pub fn parse_read_only_snapshot(
     storage_response: &[u8],
     media_response: &[u8],
 ) -> Result<NovatekReadOnlySnapshot, NovatekResponseError> {
+    let mut snapshot = parse_connection_snapshot(
+        firmware_response,
+        live_view_response,
+        configuration_response,
+        storage_response,
+    )?;
+    snapshot.media = Some(parse_media_list_response(media_response)?);
+    Ok(snapshot)
+}
+
+/// Parses the status responses needed for connection and live preview.
+///
+/// Media remains unobserved until the user requests the potentially large file list.
+///
+/// # Errors
+///
+/// Returns the first [`NovatekResponseError`] raised by a component parser.
+pub fn parse_connection_snapshot(
+    firmware_response: &[u8],
+    live_view_response: &[u8],
+    configuration_response: &[u8],
+    storage_response: &[u8],
+) -> Result<NovatekReadOnlySnapshot, NovatekResponseError> {
     Ok(NovatekReadOnlySnapshot {
         firmware: parse_firmware_response(firmware_response)?,
         live_view: parse_live_view_response(live_view_response)?,
         configuration: parse_configuration_response(configuration_response)?,
         storage: parse_storage_response(storage_response)?,
-        media: parse_media_list_response(media_response)?,
+        media: None,
     })
 }
 
-fn parse_media_entry(file: &str) -> Result<NovatekMediaEntry, NovatekResponseError> {
+fn parse_media_entry(file: &Fields<'_>) -> Result<NovatekMediaEntry, NovatekResponseError> {
     let name = media_string(file, "NAME", NOVATEK_MAX_MEDIA_NAME_BYTES)?;
     let path = media_string(file, "FPATH", NOVATEK_MAX_MEDIA_PATH_BYTES)?;
     let time = media_string(file, "TIME", NOVATEK_MAX_MEDIA_TIME_BYTES)?;
@@ -1388,17 +1417,11 @@ fn parse_media_entry(file: &str) -> Result<NovatekMediaEntry, NovatekResponseErr
 }
 
 fn media_string<const N: usize>(
-    file: &str,
+    file: &Fields<'_>,
     tag: &'static str,
     max: usize,
 ) -> Result<ArrayString<N>, NovatekResponseError> {
-    let (open, close) = match tag {
-        "NAME" => ("<NAME>", "</NAME>"),
-        "FPATH" => ("<FPATH>", "</FPATH>"),
-        "TIME" => ("<TIME>", "</TIME>"),
-        _ => return Err(NovatekResponseError::MissingTag { tag }),
-    };
-    let value = extract_tag(file, tag, open, close)?;
+    let value = file.required(tag)?;
     if value.is_empty()
         || value.chars().any(|character| character.is_ascii_control())
         || value.contains("..")
@@ -1408,25 +1431,17 @@ fn media_string<const N: usize>(
     ArrayString::try_from(value).map_err(|_| NovatekResponseError::ValueTooLong { tag, max })
 }
 
-fn media_number(file: &str, tag: &'static str) -> Result<u64, NovatekResponseError> {
-    let (open, close) = match tag {
-        "SIZE" => ("<SIZE>", "</SIZE>"),
-        "TIMECODE" => ("<TIMECODE>", "</TIMECODE>"),
-        "ATTR" => ("<ATTR>", "</ATTR>"),
-        _ => return Err(NovatekResponseError::MissingTag { tag }),
-    };
-    extract_tag(file, tag, open, close)?
+fn media_number(file: &Fields<'_>, tag: &'static str) -> Result<u64, NovatekResponseError> {
+    file.required(tag)?
         .parse()
         .map_err(|_| NovatekResponseError::InvalidMediaValue { tag })
 }
 
-fn parse_rtsp_uri(xml: &str, tag: &'static str) -> Result<NovatekRtspUri, NovatekResponseError> {
-    let (open, close) = match tag {
-        "MovieLiveViewLink" => ("<MovieLiveViewLink>", "</MovieLiveViewLink>"),
-        "PhotoLiveViewLink" => ("<PhotoLiveViewLink>", "</PhotoLiveViewLink>"),
-        _ => return Err(NovatekResponseError::MissingTag { tag }),
-    };
-    let value = extract_tag(xml, tag, open, close)?;
+fn parse_rtsp_uri(
+    fields: &Fields<'_>,
+    tag: &'static str,
+) -> Result<NovatekRtspUri, NovatekResponseError> {
+    let value = fields.required(tag)?;
     if !is_valid_rtsp_uri(value) {
         return Err(NovatekResponseError::InvalidRtspUri { tag });
     }
@@ -1460,129 +1475,214 @@ fn is_valid_rtsp_uri(value: &str) -> bool {
         && !value.chars().any(char::is_whitespace)
 }
 
-fn bounded_xml(response: &[u8]) -> Result<&str, NovatekResponseError> {
-    bounded_xml_with_limit(response, NOVATEK_MAX_RESPONSE_BYTES)
+// The camera protocol uses a restricted XML subset: no attributes, comments,
+// CDATA, processing instructions, or DTD. Scalar text stays literal (including
+// entity references) because URI/path validation must inspect camera evidence.
+struct NovatekXml<'a> {
+    reader: Reader<&'a [u8]>,
+    source: &'a str,
+    depth: usize,
 }
 
-fn bounded_xml_with_limit(response: &[u8], max: usize) -> Result<&str, NovatekResponseError> {
-    if response.len() > max {
-        return Err(NovatekResponseError::ResponseTooLarge { max });
-    }
-    str::from_utf8(response).map_err(|_| NovatekResponseError::InvalidUtf8)
-}
-
-fn require_xml_root(xml: &str, root: &'static str) -> Result<(), NovatekResponseError> {
-    let xml = xml.trim_start();
-    let xml = if let Some(declaration) = xml.strip_prefix("<?xml") {
-        let end = declaration
-            .find("?>")
-            .ok_or(NovatekResponseError::MalformedXml)?;
-        declaration
-            .get(end + 2..)
-            .ok_or(NovatekResponseError::MalformedXml)?
-            .trim_start()
-    } else {
-        xml
-    };
-    let (open, close) = match root {
-        "Function" => ("<Function>", "</Function>"),
-        "LIST" => ("<LIST>", "</LIST>"),
-        _ => return Err(NovatekResponseError::MalformedXml),
-    };
-    let body = xml
-        .strip_prefix(open)
-        .ok_or(NovatekResponseError::MalformedXml)?;
-    let close_start = body.find(close).ok_or(NovatekResponseError::MalformedXml)?;
-    let trailing = body
-        .get(close_start + close.len()..)
-        .ok_or(NovatekResponseError::MalformedXml)?;
-    if trailing.trim().is_empty() {
-        require_matching_xml_tags(xml)
-    } else {
-        Err(NovatekResponseError::MalformedXml)
-    }
-}
-
-fn require_matching_xml_tags(xml: &str) -> Result<(), NovatekResponseError> {
-    let mut open_tags = Vec::new();
-    let mut cursor = 0;
-    while let Some(offset) = xml.get(cursor..).and_then(|remaining| remaining.find('<')) {
-        let start = cursor + offset;
-        let end = xml
-            .get(start + 1..)
-            .and_then(|remaining| remaining.find('>').map(|index| start + 1 + index))
-            .ok_or(NovatekResponseError::MalformedXml)?;
-        let tag = xml
-            .get(start + 1..end)
-            .ok_or(NovatekResponseError::MalformedXml)?;
-        let (is_closing, tag) = match tag.strip_prefix('/') {
-            Some(tag) => (true, tag),
-            None => (false, tag),
-        };
-        if is_closing && tag.ends_with('/') {
+impl<'a> NovatekXml<'a> {
+    fn new(response: &'a [u8], max: usize, root: &str) -> Result<Self, NovatekResponseError> {
+        if response.len() > max {
+            return Err(NovatekResponseError::ResponseTooLarge { max });
+        }
+        let source = str::from_utf8(response).map_err(|_| NovatekResponseError::InvalidUtf8)?;
+        if source.starts_with('\u{feff}') {
             return Err(NovatekResponseError::MalformedXml);
         }
-        let (name, is_empty) = match tag.strip_suffix('/') {
-            Some(name) if !is_closing => (name, true),
-            _ => (tag, false),
+        let mut reader = Reader::from_reader(response);
+        reader.config_mut().allow_dangling_amp = true;
+        reader.config_mut().trim_markup_names_in_closing_tags = false;
+        let mut xml = Self {
+            reader,
+            source,
+            depth: 0,
         };
-        if name.is_empty()
-            || !name.bytes().all(|byte| match byte {
-                b'_' | b'-' | b':' => true,
-                _ => byte.is_ascii_alphanumeric(),
-            })
+        let mut declaration = false;
+        loop {
+            match xml.next()? {
+                Event::Decl(value) if !declaration => {
+                    value
+                        .version()
+                        .map_err(|_| NovatekResponseError::MalformedXml)?;
+                    declaration = true;
+                }
+                Event::Text(text) if text.as_ref().trim().is_empty() => {}
+                Event::Start(start) if start.name().as_ref() == root => return Ok(xml),
+                _ => return Err(NovatekResponseError::MalformedXml),
+            }
+        }
+    }
+
+    fn next(&mut self) -> Result<Event<'a>, NovatekResponseError> {
+        let event = self
+            .reader
+            .read_event()
+            .map_err(|_| NovatekResponseError::MalformedXml)?;
+        match &event {
+            Event::Start(start) | Event::Empty(start) => {
+                // Attribute parsing is unnecessary: any content beyond the exact
+                // element name is outside the captured Novatek subset.
+                if start.as_ref() != start.name().as_ref()
+                    || !start.name().as_ref().bytes().all(|byte| match byte {
+                        b'_' | b'-' | b':' => true,
+                        _ => byte.is_ascii_alphanumeric(),
+                    })
+                {
+                    return Err(NovatekResponseError::MalformedXml);
+                }
+                if let Event::Start(_) = &event {
+                    if self.depth >= NOVATEK_MAX_XML_DEPTH {
+                        return Err(NovatekResponseError::MalformedXml);
+                    }
+                    self.depth += 1;
+                }
+            }
+            Event::End(_) => {
+                self.depth = self
+                    .depth
+                    .checked_sub(1)
+                    .ok_or(NovatekResponseError::MalformedXml)?;
+            }
+            Event::Decl(_) | Event::Eof if self.depth == 0 => {}
+            Event::Text(_) | Event::GeneralRef(_) => {}
+            _ => return Err(NovatekResponseError::MalformedXml),
+        }
+        Ok(event)
+    }
+
+    // Offsets delimit borrowed scalar text; quick-xml supplies token boundaries
+    // and matching-end validation. No XML text is copied or entity-decoded.
+    fn scalar(&mut self) -> Result<&'a str, NovatekResponseError> {
+        let start = usize::try_from(self.reader.buffer_position())
+            .map_err(|_| NovatekResponseError::MalformedXml)?;
+        loop {
+            let end = usize::try_from(self.reader.buffer_position())
+                .map_err(|_| NovatekResponseError::MalformedXml)?;
+            match self.next()? {
+                Event::End(_) => {
+                    return self
+                        .source
+                        .get(start..end)
+                        .map(str::trim)
+                        .ok_or(NovatekResponseError::MalformedXml);
+                }
+                Event::Text(_) | Event::GeneralRef(_) => {}
+                _ => return Err(NovatekResponseError::MalformedXml),
+            }
+        }
+    }
+
+    fn field(&mut self) -> Result<Option<(&'static str, &'a str)>, NovatekResponseError> {
+        loop {
+            match self.next()? {
+                Event::Start(start) => {
+                    let name = FIELD_NAMES
+                        .iter()
+                        .find(|name| **name == start.name().as_ref())
+                        .copied()
+                        .unwrap_or("");
+                    return Ok(Some((name, self.scalar()?)));
+                }
+                Event::End(_) => {
+                    if self.depth == 0 {
+                        self.finish()?;
+                    }
+                    return Ok(None);
+                }
+                Event::Empty(_) => {}
+                Event::Text(text) if text.as_ref().trim().is_empty() => {}
+                _ => return Err(NovatekResponseError::MalformedXml),
+            }
+        }
+    }
+
+    fn record_fields(&mut self) -> Result<Fields<'a>, NovatekResponseError> {
+        let mut fields = Fields::default();
+        while let Some((name, value)) = self.field()? {
+            fields.insert(name, value)?;
+        }
+        Ok(fields)
+    }
+
+    fn finish(&mut self) -> Result<(), NovatekResponseError> {
+        loop {
+            match self.next()? {
+                Event::Text(text) if text.as_ref().trim().is_empty() => {}
+                Event::Eof => return Ok(()),
+                _ => return Err(NovatekResponseError::MalformedXml),
+            }
+        }
+    }
+}
+
+const FIELD_NAMES: [&str; 12] = [
+    "Cmd",
+    "Status",
+    "String",
+    "Value",
+    "MovieLiveViewLink",
+    "PhotoLiveViewLink",
+    "NAME",
+    "FPATH",
+    "TIME",
+    "SIZE",
+    "TIMECODE",
+    "ATTR",
+];
+
+#[derive(Default)]
+struct Fields<'a> {
+    values: [Option<&'a str>; FIELD_NAMES.len()],
+}
+
+impl<'a> Fields<'a> {
+    fn insert(&mut self, name: &str, value: &'a str) -> Result<(), NovatekResponseError> {
+        if let Some(slot) = FIELD_NAMES
+            .iter()
+            .position(|candidate| *candidate == name)
+            .and_then(|index| self.values.get_mut(index))
+            && slot.replace(value).is_some()
         {
             return Err(NovatekResponseError::MalformedXml);
         }
-        if is_closing {
-            if open_tags.pop() != Some(name) {
-                return Err(NovatekResponseError::MalformedXml);
-            }
-        } else if !is_empty {
-            open_tags.push(name);
-        }
-        cursor = end + 1;
-    }
-    if open_tags.is_empty() {
         Ok(())
-    } else {
-        Err(NovatekResponseError::MalformedXml)
+    }
+    fn required(&self, tag: &'static str) -> Result<&'a str, NovatekResponseError> {
+        FIELD_NAMES
+            .iter()
+            .position(|candidate| *candidate == tag)
+            .and_then(|index| self.values.get(index).copied().flatten())
+            .ok_or(NovatekResponseError::MissingTag { tag })
     }
 }
 
-fn extract_tag<'a>(
-    xml: &'a str,
-    tag: &'static str,
-    open: &str,
-    close: &str,
-) -> Result<&'a str, NovatekResponseError> {
-    let start = xml
-        .find(open)
-        .map(|index| index + open.len())
-        .ok_or(NovatekResponseError::MissingTag { tag })?;
-    let end = xml
-        .get(start..)
-        .and_then(|remaining| remaining.find(close).map(|index| start + index))
-        .ok_or(NovatekResponseError::MissingTag { tag })?;
-    xml.get(start..end)
-        .map(str::trim)
-        .ok_or(NovatekResponseError::MissingTag { tag })
+fn parse_fields<'a>(response: &'a [u8], root: &str) -> Result<Fields<'a>, NovatekResponseError> {
+    NovatekXml::new(response, NOVATEK_MAX_RESPONSE_BYTES, root)?.record_fields()
 }
 
-fn parse_status(xml: &str) -> Result<u16, NovatekResponseError> {
-    extract_tag(xml, "Status", "<Status>", "</Status>")?
+fn parse_status(fields: &Fields<'_>) -> Result<u16, NovatekResponseError> {
+    fields
+        .required("Status")?
         .parse()
         .map_err(|_| NovatekResponseError::InvalidStatus)
 }
 
-fn parse_expected_command(
-    xml: &str,
-    expected: NovatekCommandId,
-) -> Result<(), NovatekResponseError> {
-    let actual = extract_tag(xml, "Cmd", "<Cmd>", "</Cmd>")?
+fn parse_command_id(value: &str) -> Result<NovatekCommandId, NovatekResponseError> {
+    let value = value
         .parse()
         .map_err(|_| NovatekResponseError::InvalidCommand)?;
-    let actual = NovatekCommandId::new(actual).ok_or(NovatekResponseError::InvalidCommand)?;
+    NovatekCommandId::new(value).ok_or(NovatekResponseError::InvalidCommand)
+}
+
+fn parse_expected_command(
+    fields: &Fields<'_>,
+    expected: NovatekCommandId,
+) -> Result<(), NovatekResponseError> {
+    let actual = parse_command_id(fields.required("Cmd")?)?;
     if actual != expected {
         return Err(NovatekResponseError::UnexpectedCommand { actual, expected });
     }
@@ -1971,6 +2071,203 @@ mod tests {
     }
 
     #[test]
+    fn command_response_rejects_duplicate_and_nested_acknowledgement_fields() {
+        for response in [
+            b"<Function><Cmd>2001</Cmd><Status>0</Status><Status>7</Status></Function>".as_slice(),
+            b"<Function><Wrapper><Cmd>2001</Cmd><Status>0</Status></Wrapper></Function>".as_slice(),
+            b"<Function><Cmd>2001</Cmd><Status>0<Status>7</Status></Status></Function>".as_slice(),
+        ] {
+            assert_eq!(
+                parse_command_response(response, command_id(2001)),
+                Err(NovatekResponseError::MalformedXml),
+            );
+        }
+    }
+
+    #[test]
+    fn response_parser_keeps_literal_entity_text_and_rejects_unsupported_markup() {
+        let firmware = parse_firmware_response(
+            br"<Function><Cmd>3012</Cmd><Status>0</Status><String>R3V1&amp;&#65;&unknown;literal</String></Function>",
+        )
+        .expect("literal XML references remain untransformed protocol evidence");
+        assert_eq!(firmware.as_str(), "R3V1&amp;&#65;&unknown;literal");
+
+        for markup in [
+            "<!-- comment -->",
+            "<![CDATA[text]]>",
+            "<?camera ignored?>",
+            "<!DOCTYPE Function>",
+            "<Status extra=\"ignored\">0</Status>",
+        ] {
+            let response =
+                format!("<Function><Cmd>2001</Cmd><Status>0</Status>{markup}</Function>");
+            assert_eq!(
+                parse_command_response(response.as_bytes(), command_id(2001)),
+                Err(NovatekResponseError::MalformedXml),
+            );
+        }
+    }
+
+    #[test]
+    fn response_parser_preserves_literal_ampersands_and_ignores_unknown_leaf_fields() {
+        let response = br"<LIST><Unknown>literal&amp;text</Unknown><Empty/><MovieLiveViewLink>rtsp://192.168.1.254/live?one=1&two=2</MovieLiveViewLink><PhotoLiveViewLink>rtsp://192.168.1.254/photo</PhotoLiveViewLink></LIST>";
+        let links = parse_live_view_response(response).expect("captured URI text stays literal");
+        assert_eq!(
+            links.movie().as_str(),
+            "rtsp://192.168.1.254/live?one=1&two=2"
+        );
+        assert_eq!(
+            parse_firmware_response(
+                b"<Function><Cmd>3012</Cmd><Status>0</Status><String>\xff</String></Function>"
+            ),
+            Err(NovatekResponseError::InvalidUtf8),
+        );
+        assert_eq!(
+            parse_firmware_response("\u{feff}<Function><Cmd>3012</Cmd><Status>0</Status><String>R3V1</String></Function>".as_bytes()),
+            Err(NovatekResponseError::MalformedXml),
+        );
+    }
+
+    #[test]
+    fn media_list_rejects_nested_records_duplicate_fields_and_unvalidated_suffixes() {
+        let file = "<File><NAME>clip.TS</NAME><FPATH>A:\\Novatek\\Movie\\clip.TS</FPATH><SIZE>42</SIZE><TIMECODE>7</TIMECODE><TIME>2025/01/01 00:00:00</TIME><ATTR>32</ATTR></File>";
+        for response in [
+            format!(
+                "<LIST>{}</LIST>",
+                file.replace("<NAME>", "<File><NAME>")
+                    .replace("</NAME>", "</NAME></File>")
+            ),
+            format!(
+                "<LIST>{}</LIST>",
+                file.replace("</NAME>", "</NAME><NAME>other.TS</NAME>")
+            ),
+            format!("<LIST>{file}</LIST><LIST></LIST>"),
+            format!("<LIST>{file}<ALLFile>"),
+            format!("<LIST>{file}</LIST>trailing"),
+        ] {
+            assert_eq!(
+                parse_media_list_response(response.as_bytes()),
+                Err(NovatekResponseError::MalformedXml)
+            );
+        }
+    }
+
+    #[test]
+    fn media_list_enforces_entry_and_response_bounds() {
+        let mut response = String::from("<LIST>");
+        for index in 0..NOVATEK_MAX_MEDIA_ENTRIES {
+            write!(response, "<File><NAME>{index}.TS</NAME><FPATH>A:\\Novatek\\Movie\\{index}.TS</FPATH><SIZE>42</SIZE><TIMECODE>7</TIMECODE><TIME>2025/01/01 00:00:00</TIME><ATTR>32</ATTR></File>").unwrap();
+        }
+        let prefix = response.clone();
+        response.push_str("</LIST>");
+        response.extend(std::iter::repeat_n(
+            ' ',
+            NOVATEK_MAX_MEDIA_RESPONSE_BYTES - response.len(),
+        ));
+        assert_eq!(
+            parse_media_list_response(response.as_bytes())
+                .unwrap()
+                .entries()
+                .len(),
+            NOVATEK_MAX_MEDIA_ENTRIES
+        );
+        response.push(' ');
+        assert_eq!(
+            parse_media_list_response(response.as_bytes()),
+            Err(NovatekResponseError::ResponseTooLarge {
+                max: NOVATEK_MAX_MEDIA_RESPONSE_BYTES
+            })
+        );
+        let extra = format!("{prefix}<File></File></LIST>");
+        assert_eq!(
+            parse_media_list_response(extra.as_bytes()),
+            Err(NovatekResponseError::TooManyEntries {
+                tag: "File",
+                max: NOVATEK_MAX_MEDIA_ENTRIES
+            })
+        );
+    }
+
+    #[test]
+    fn configuration_enforces_pair_order_and_fixed_entry_bound() {
+        assert_eq!(
+            parse_configuration_response(
+                br"<Function><Cmd>1002</Cmd><Cmd>1003</Cmd><Status>0</Status></Function>"
+            ),
+            Err(NovatekResponseError::MissingTag { tag: "Status" })
+        );
+        let mut response = String::from("<Function>");
+        for index in 1..=NOVATEK_MAX_COMMAND_STATUS_ENTRIES {
+            write!(response, "<Cmd>{index}</Cmd><Status>0</Status>").unwrap();
+        }
+        let accepted = format!("{response}</Function>");
+        assert_eq!(
+            parse_configuration_response(accepted.as_bytes())
+                .unwrap()
+                .statuses()
+                .len(),
+            NOVATEK_MAX_COMMAND_STATUS_ENTRIES
+        );
+        response.push_str("<Cmd>1000</Cmd><Status>0</Status></Function>");
+        assert_eq!(
+            parse_configuration_response(response.as_bytes()),
+            Err(NovatekResponseError::TooManyEntries {
+                tag: "Cmd",
+                max: NOVATEK_MAX_COMMAND_STATUS_ENTRIES
+            })
+        );
+    }
+
+    #[test]
+    fn malformed_document_takes_precedence_over_streamed_domain_errors() {
+        assert_eq!(
+            parse_configuration_response(
+                br"<Function><Cmd>0</Cmd><Status>bad</Status></Function>trailing"
+            ),
+            Err(NovatekResponseError::MalformedXml),
+        );
+        assert_eq!(
+            parse_media_list_response(br"<LIST><File><NAME>bad..name</NAME></File></LIST>trailing"),
+            Err(NovatekResponseError::MalformedXml),
+        );
+    }
+
+    #[test]
+    fn media_fields_keep_width_numeric_and_missing_field_errors() {
+        let file = "<File><NAME>clip.TS</NAME><FPATH>A:\\Novatek\\Movie\\clip.TS</FPATH><SIZE>42</SIZE><TIMECODE>7</TIMECODE><TIME>2025/01/01 00:00:00</TIME><ATTR>32</ATTR></File>";
+        for (file, expected) in [
+            (
+                file.replace("<SIZE>42</SIZE>", "<SIZE>invalid</SIZE>"),
+                NovatekResponseError::InvalidMediaValue { tag: "SIZE" },
+            ),
+            (
+                file.replace("<ATTR>32</ATTR>", "<ATTR>4294967296</ATTR>"),
+                NovatekResponseError::InvalidMediaValue { tag: "ATTR" },
+            ),
+            (
+                file.replace("<NAME>clip.TS</NAME>", ""),
+                NovatekResponseError::MissingTag { tag: "NAME" },
+            ),
+            (
+                file.replace(
+                    "clip.TS</NAME>",
+                    &format!("{}</NAME>", "x".repeat(NOVATEK_MAX_MEDIA_NAME_BYTES + 1)),
+                ),
+                NovatekResponseError::ValueTooLong {
+                    tag: "NAME",
+                    max: NOVATEK_MAX_MEDIA_NAME_BYTES,
+                },
+            ),
+        ] {
+            let response = format!("<LIST>{file}</LIST>");
+            assert_eq!(
+                parse_media_list_response(response.as_bytes()),
+                Err(expected)
+            );
+        }
+    }
+
+    #[test]
     fn command_response_rejects_a_different_command_acknowledgement() {
         assert_eq!(
             parse_command_response(
@@ -2177,7 +2474,7 @@ mod tests {
         let media = parse_media_list_response(br"<LIST></LIST>")
             .expect("an empty camera card listing is valid");
 
-        assert!(media.entries().is_empty());
+        assert_eq!(media.entries(), []);
     }
 
     #[test]
@@ -2408,7 +2705,14 @@ mod tests {
             Some(NovatekStatusCode::ACKNOWLEDGED)
         );
         assert_eq!(snapshot.storage(), NovatekStoragePresence::Present);
-        assert_eq!(snapshot.media().entries()[0].size_bytes(), 42);
+        assert_eq!(snapshot.media().unwrap().entries()[0].size_bytes(), 42);
+    }
+
+    #[test]
+    fn r3_pro_access_point_origin_matches_the_captured_camera() {
+        let origin = NovatekHttpOrigin::r3_pro_access_point();
+        assert_eq!(origin.address(), std::net::Ipv4Addr::new(192, 168, 1, 254));
+        assert_eq!(origin.port(), 80);
     }
 
     #[test]

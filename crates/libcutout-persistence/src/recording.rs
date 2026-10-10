@@ -124,11 +124,18 @@ struct SpeedObservation {
     recording_generation: u64,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct PhoneGpsReceipt {
+    observed_at_milliseconds: u64,
+    recording_generation: u64,
+}
+
 /// Selects fresh, ride-correlated speed from vehicle telemetry and phone GPS.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct RecordingSpeedState {
     vehicle: Option<SpeedObservation>,
     phone_gps: Option<SpeedObservation>,
+    phone_gps_receipt: Option<PhoneGpsReceipt>,
 }
 
 impl RecordingSpeedState {
@@ -154,13 +161,26 @@ impl RecordingSpeedState {
         }
     }
 
-    /// Replaces the phone observation when its speed is finite, non-negative, and representable.
+    /// Accepts strictly newer phone receipts within a recording generation.
+    ///
+    /// Invalid speed still establishes receipt order; it cannot allow a replay to replace
+    /// a valid reading or extend that reading's freshness.
     pub fn observe_phone_gps(
         &mut self,
         metres_per_second: Option<f64>,
         at_milliseconds: u64,
         recording_generation: u64,
     ) {
+        if self.phone_gps_receipt.is_some_and(|previous| {
+            previous.recording_generation == recording_generation
+                && previous.observed_at_milliseconds >= at_milliseconds
+        }) {
+            return;
+        }
+        self.phone_gps_receipt = Some(PhoneGpsReceipt {
+            observed_at_milliseconds: at_milliseconds,
+            recording_generation,
+        });
         let Some(speed) = metres_per_second.filter(|speed| speed.is_finite() && *speed >= 0.0)
         else {
             return;

@@ -18,6 +18,7 @@ struct OwnerEntry {
     path: PathBuf,
     service_id: Uuid,
     bootstrap: BootstrapSnapshot,
+    marker_writes: Arc<Mutex<crate::ride_session_marker::MarkerWriteState>>,
     sender: SyncSender<Command>,
     shutting_down: bool,
     worker_alive: Arc<AtomicBool>,
@@ -31,14 +32,22 @@ fn owner() -> &'static Mutex<Option<OwnerEntry>> {
 }
 
 pub(super) fn open(path: &Path) -> Result<RideDatabase, StorageError> {
-    acquire(path, Uuid::new_v4())
+    acquire(path, Uuid::new_v4(), None)
 }
 
-pub(super) fn reopen(path: &Path, service_id: Uuid) -> Result<RideDatabase, StorageError> {
-    acquire(path, service_id)
+pub(super) fn reopen(
+    path: &Path,
+    service_id: Uuid,
+    marker_writes: Arc<Mutex<crate::ride_session_marker::MarkerWriteState>>,
+) -> Result<RideDatabase, StorageError> {
+    acquire(path, service_id, Some(marker_writes))
 }
 
-fn acquire(path: &Path, service_id: Uuid) -> Result<RideDatabase, StorageError> {
+fn acquire(
+    path: &Path,
+    service_id: Uuid,
+    marker_writes: Option<Arc<Mutex<crate::ride_session_marker::MarkerWriteState>>>,
+) -> Result<RideDatabase, StorageError> {
     let canonical_path = canonical_database_path(path)?;
     let mut owner = owner().lock().map_err(|_| StorageError::WorkerStopped)?;
     remove_stale_owner(&mut owner);
@@ -59,16 +68,19 @@ fn acquire(path: &Path, service_id: Uuid) -> Result<RideDatabase, StorageError> 
         .name("cutout-ride-maps-db".to_owned())
         .spawn(move || worker::run(connection, &receiver, &worker_alive_for_thread))
         .map_err(|error| StorageError::WorkerStart(error.to_string()))?;
+    let marker_writes = marker_writes.unwrap_or_default();
     let handle = RideDatabase {
         sender: sender.clone(),
         service_id,
         bootstrap: bootstrap.clone(),
+        marker_writes: Arc::clone(&marker_writes),
         path: Arc::new(canonical_path.clone()),
     };
     *owner = Some(OwnerEntry {
         path: canonical_path,
         service_id,
         bootstrap,
+        marker_writes,
         sender,
         worker_alive,
         shutting_down: false,
@@ -121,6 +133,18 @@ pub(super) fn worker_has_exited(service_id: Uuid) -> bool {
     })
 }
 
+pub(super) fn current_marker_handle(service_id: Uuid) -> Result<RideDatabase, StorageError> {
+    let owner = owner().lock().map_err(|_| StorageError::WorkerStopped)?;
+    let entry = owner.as_ref().ok_or(StorageError::WorkerStopped)?;
+    if entry.service_id != service_id
+        || entry.shutting_down
+        || !entry.worker_alive.load(Ordering::Acquire)
+    {
+        return Err(StorageError::WorkerStopped);
+    }
+    Ok(handle_from(entry))
+}
+
 pub(super) fn can_restart(service_id: Uuid) -> bool {
     owner().lock().is_ok_and(|owner| {
         owner
@@ -163,6 +187,7 @@ fn handle_from(owner: &OwnerEntry) -> RideDatabase {
         sender: owner.sender.clone(),
         service_id: owner.service_id,
         bootstrap: owner.bootstrap.clone(),
+        marker_writes: Arc::clone(&owner.marker_writes),
         path: Arc::new(owner.path.clone()),
     }
 }

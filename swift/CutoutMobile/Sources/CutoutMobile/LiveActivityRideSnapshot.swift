@@ -720,7 +720,7 @@ extension LiveActivityRideSnapshot {
                 connectionState: connectionState,
                 accessibilityDetail: estimate.displayDetail
             )
-        case .collectingSamples:
+        case .full, .balancing, .collectingSamples:
             return value(
                 label: localizedLiveActivityText("live_activity.label.charge"),
                 value: estimate.displayValue,
@@ -740,16 +740,6 @@ extension LiveActivityRideSnapshot {
                 accessibilityDetail: estimate.displayDetail
             )
         case .unavailable:
-            if estimate.unavailableReason == .fullOrNearFull {
-                return value(
-                    label: localizedLiveActivityText("live_activity.label.charge"),
-                    value: estimate.displayValue,
-                    unit: nil,
-                    source: .derivedTelemetry,
-                    connectionState: connectionState,
-                    accessibilityDetail: estimate.displayDetail
-                )
-            }
             return .unavailable(
                 label: localizedLiveActivityText("live_activity.label.charge"),
                 accessibilityDetail: estimate.displayDetail)

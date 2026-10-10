@@ -39,6 +39,10 @@ impl Schema {
         Self::build(Some(parent), layouts)
     }
 
+    #[expect(
+        clippy::assert_is_empty,
+        reason = "slice assert_ne! requires non-const PartialEq and panic helpers"
+    )]
     const fn build(parent: Option<&'static Schema>, layouts: &'static [Layout]) -> Self {
         let schema = Self { parent, layouts };
         let inherited = match parent {
@@ -88,6 +92,10 @@ impl Schema {
     }
 }
 
+#[expect(
+    clippy::assert_is_empty,
+    reason = "slice assert_ne! requires non-const PartialEq and panic helpers"
+)]
 const fn validate_field(field: BinaryField) {
     assert!(!field.bank.is_empty());
     assert!(field.offset as usize >= 5 + field.bank.len() && field.offset <= 28);

@@ -3,6 +3,12 @@
 version = 4
 
 [[package]]
+name = "adler2"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
+
+[[package]]
 name = "aho-corasick"
 version = "1.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -637,6 +643,7 @@ dependencies = [
  "cutout-btle",
  "cutout-core",
  "cutout-protocols",
+ "hex",
  "hex-literal",
  "libcutout-persistence",
  "ratatui",
@@ -658,6 +665,7 @@ dependencies = [
  "proptest",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror 2.0.18",
  "uuid",
 ]
@@ -669,6 +677,7 @@ dependencies = [
  "anyhow",
  "cutout-core",
  "cutout-protocols",
+ "hex",
  "libc",
  "serde_json",
  "sha2",
@@ -683,6 +692,7 @@ dependencies = [
  "cutout-music",
  "cutout-protocols",
  "cutout-ride-maps",
+ "hex",
  "hex-literal",
  "libcutout-persistence",
  "rusqlite",
@@ -709,11 +719,14 @@ dependencies = [
  "arrayvec",
  "bitflags",
  "bytes",
+ "crc",
  "crc32fast",
  "cutout-core",
  "futures-util",
+ "hex",
  "hex-literal",
  "proptest",
+ "quick-xml",
  "retina",
  "serde",
  "serde_json",
@@ -1571,8 +1584,10 @@ dependencies = [
  "divan",
  "gungraun",
  "hex",
+ "miniz_oxide",
  "num-traits",
  "rusqlite",
+ "serde",
  "serde_json",
  "sha2",
  "tempfile",
@@ -1697,6 +1712,15 @@ name = "minimal-lexical"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
+
+[[package]]
+name = "miniz_oxide"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b63fbc4a50860e98e7b2aa7804ded1db5cbc3aff9193adaff57a6931bf7c4b4c"
+dependencies = [
+ "adler2",
+]
 
 [[package]]
 name = "mio"
@@ -2026,6 +2050,15 @@ name = "quick-error"
 version = "1.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a1d01941d82fa2ab50be1e79e6714289dd7cde78eba4c074bc5a4374f650dfe0"
+
+[[package]]
+name = "quick-xml"
+version = "0.42.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "41b1177fdf999d2321d3fb46ff47159d9c1fb9ad66a4879f8c50a0b504615e9b"
+dependencies = [
+ "memchr",
+]
 
 [[package]]
 name = "quote"

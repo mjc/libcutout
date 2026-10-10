@@ -5,16 +5,6 @@ struct RideMapDecisionBatch: Sendable {
     let outcomes: [MobileRideMapOutcomeDto]
 }
 
-private struct PendingRideMapConnectionAdmission {
-    let admission: MobileRideMapConnectionAdmission
-    let previousRideID: String?
-    let atMs: UInt64
-    let token: ConnectionAttemptToken
-    let speedObservation: MobileRideMapSpeedObservationDto?
-    let connectionState: CutoutSessionStateHandle
-    let resetTripMeter: @Sendable (ConnectionAttemptToken) -> Void
-}
-
 protocol CutoutSessionRideMapRecording: AnyObject {
     func start(replayConnection: @escaping @Sendable () -> Void)
     func persistBmsSamples(
@@ -44,6 +34,7 @@ protocol CutoutSessionRideMapRecording: AnyObject {
 /// Owns Rust ride-map state and storage effects on one serial executor. Protocol truth remains in Core.
 actor CutoutSessionRideMapRecorder: CutoutSessionRideMapRecording {
     private nonisolated let queue = DispatchSerialQueue(label: "io.cutout.ridemap", qos: .utility)
+    private nonisolated let recordingDispatchLock = NSLock()
     private let state: MobileRideMapState?
     private let clock: MonotonicClock
     private let wallClock: @Sendable () -> Date
@@ -53,8 +44,6 @@ actor CutoutSessionRideMapRecorder: CutoutSessionRideMapRecording {
     private let publishAvailability: @Sendable (MobileRideMapError?, Bool) -> Void
     private let recordDiagnostic: @Sendable (String) -> Void
     private let onLocationDemandChanged: @Sendable () -> Void
-    private var writePoller: DispatchSourceTimer?
-    private var pendingConnectionAdmissions: [PendingRideMapConnectionAdmission] = []
     private var restorationStarted = false
     nonisolated var unownedExecutor: UnownedSerialExecutor {
         queue.asUnownedSerialExecutor()
@@ -82,17 +71,12 @@ actor CutoutSessionRideMapRecorder: CutoutSessionRideMapRecording {
         self.onLocationDemandChanged = onLocationDemandChanged
     }
 
-    deinit {
-        writePoller?.cancel()
-    }
-
     nonisolated func start(
         replayConnection: @escaping @Sendable () -> Void
     ) {
         queue.async { [self] in
             assumeIsolated { recorder in
-                recorder.startWritePolling()
-                Task {
+                _ = Task {
                     await recorder.startRestoration(replayConnection: replayConnection)
                 }
             }
@@ -167,7 +151,9 @@ actor CutoutSessionRideMapRecorder: CutoutSessionRideMapRecording {
         atMs: UInt64
     ) async throws -> MobileRideMapSnapshotDto {
         let state = try requireState()
-        return try await state.performLifecycleCommand(event: event, expected: expected, atMs: atMs)
+        let snapshot = try await state.performLifecycleCommand(event: event, expected: expected, atMs: atMs)
+        drainLocationWrites()
+        return snapshot
     }
 
     nonisolated func observeConnection(
@@ -177,7 +163,11 @@ actor CutoutSessionRideMapRecorder: CutoutSessionRideMapRecording {
         connectionState: CutoutSessionStateHandle,
         resetTripMeter: @escaping @Sendable (ConnectionAttemptToken) -> Void
     ) {
+        recordingDispatchLock.lock()
+        defer { recordingDispatchLock.unlock() }
+        guard let permit = reserveRecordingWork(observationCount: 1) else { return }
         queue.async { [weak self] in
+            defer { permit.release() }
             guard let self else { return }
             self.assumeIsolated { recorder in
                 guard recorder.state?.isReady == true else { return }
@@ -187,19 +177,24 @@ actor CutoutSessionRideMapRecorder: CutoutSessionRideMapRecording {
                     let admission = try state.beginVerifiedConnectionAdmission(
                         connectionState: connectionState,
                         token: token,
-                        atMs: receivedAt.rawValue
+                        atMs: receivedAt.rawValue,
+                        musicHistoryPolicy: MusicHistoryPolicyStore().policy
                     )
-                    recorder.pendingConnectionAdmissions.append(
-                        PendingRideMapConnectionAdmission(
-                            admission: admission,
-                            previousRideID: previousRideID,
-                            atMs: receivedAt.rawValue,
-                            token: token,
-                            speedObservation: speedObservation,
-                            connectionState: connectionState,
-                            resetTripMeter: resetTripMeter
-                        )
+                    let admissionSnapshot = try state.waitVerifiedConnectionAdmission(admission)
+                    if let admissionSnapshot, admissionSnapshot.rideID != previousRideID {
+                        resetTripMeter(token)
+                    }
+                    _ = try state.observeTelemetryForVerifiedConnection(
+                        connectionState: connectionState,
+                        token: token,
+                        atMs: receivedAt.rawValue,
+                        speedObservation: speedObservation
                     )
+                    if let snapshot = state.currentSnapshot(atMs: receivedAt.rawValue) ?? admissionSnapshot {
+                        recorder.publishSnapshot(snapshot)
+                    }
+                    recorder.drainLocationWrites()
+                    recorder.synchronizeLocationDemand()
                 } catch let error as MobileRideMapError where error == .staleConnection {
                     return
                 } catch let error as MobileRideMapError {
@@ -221,14 +216,20 @@ actor CutoutSessionRideMapRecorder: CutoutSessionRideMapRecording {
         deviceIdentity: String?,
         sessionIdentifier: String
     ) {
+        guard !observations.isEmpty,
+            let wallClockMilliseconds = unixMilliseconds(for: wallClock())
+        else { return }
+        recordingDispatchLock.lock()
+        defer { recordingDispatchLock.unlock() }
+        guard let permit = reserveRecordingWork(observationCount: UInt64(observations.count)) else { return }
         queue.async { [weak self] in
+            defer { permit.release() }
             guard let self else { return }
             self.assumeIsolated { recorder in
                 guard let state = recorder.state,
                     state.initializationError == nil,
                     state.isReady,
-                    let deviceIdentity,
-                    let wallClockMilliseconds = unixMilliseconds(for: recorder.wallClock())
+                    let deviceIdentity
                 else { return }
                 let samples = bmsStorageSamples(
                     observations: observations,
@@ -238,6 +239,7 @@ actor CutoutSessionRideMapRecorder: CutoutSessionRideMapRecording {
                 guard !samples.isEmpty else { return }
                 do {
                     try state.queueBmsVoltageSamples(deviceIdentity: deviceIdentity, samples: samples)
+                    recorder.drainBmsVoltageWrites()
                 } catch {
                     recorder.recordDiagnostic("bms_storage_error=\(error)")
                 }
@@ -246,93 +248,47 @@ actor CutoutSessionRideMapRecorder: CutoutSessionRideMapRecording {
     }
 
     nonisolated func ingestLocation(_ update: PhoneLocationUpdate) {
-        queue.async { [weak self] in
-            guard let self else { return }
-            self.assumeIsolated { recorder in
-                guard let state = recorder.state,
-                    state.initializationError == nil,
-                    state.isReady,
-                    let receiptWallClockUnixMs = unixMilliseconds(for: update.receiptWallClock)
-                else { return }
-                let recordingToken =
-                    state
-                    .currentSnapshot(atMs: update.receiptMonotonic.rawValue)?
-                    .recordingToken
-                let errorContext = MobileRideMapErrorContext(recordingToken: recordingToken)
-                do {
-                    let outcomes = try state.ingestLocationBatchOutcomes(
-                        recordingToken: recordingToken,
-                        receiptMonotonicMs: update.receiptMonotonic.rawValue,
-                        receiptWallClockUnixMs: receiptWallClockUnixMs,
-                        samples: update.samples
-                    )
-                    recorder.publishDecisionBatch(outcomes)
-                } catch let error as MobileRideMapError {
-                    recorder.publishError(error, errorContext)
-                    recorder.recordDiagnostic("ride_map_ingest_error=\(error)")
-                } catch {
+        // Native dispatch order must match Rust receipt order even if a future producer
+        // calls from a second delegate queue. This lock only bridges ownership transfer.
+        recordingDispatchLock.lock()
+        defer { recordingDispatchLock.unlock() }
+        guard let state,
+            state.initializationError == nil,
+            state.isReady,
+            let receiptWallClockUnixMs = unixMilliseconds(for: update.receiptWallClock)
+        else { return }
+        do {
+            // Only the Rust receipt enters the executor; the native samples do not accumulate
+            // in Dispatch closures. Saturation waits for capacity rather than dropping data.
+            let callback = try state.admitLocationCallback(
+                receiptMonotonicMs: update.receiptMonotonic.rawValue,
+                receiptWallClockUnixMs: receiptWallClockUnixMs,
+                samples: update.samples
+            )
+            queue.async { [weak self] in
+                guard let self else { return }
+                self.assumeIsolated { recorder in
+                    do {
+                        recorder.publishDecisionBatch(try state.finishLocationCallback(callback))
+                    } catch let error as MobileRideMapError {
+                        recorder.publishError(
+                            error, MobileRideMapErrorContext(recordingToken: callback.recordingToken()))
+                        recorder.recordDiagnostic("ride_map_ingest_error=\(error)")
+                    } catch {
+                        recorder.recordDiagnostic("ride_map_ingest_error=\(error)")
+                    }
+                }
+            }
+        } catch let error as MobileRideMapError {
+            queue.async { [weak self] in
+                self?.assumeIsolated { recorder in
+                    recorder.publishError(error, MobileRideMapErrorContext(snapshot: nil))
                     recorder.recordDiagnostic("ride_map_ingest_error=\(error)")
                 }
             }
+        } catch {
+            recordDiagnostic("ride_map_ingest_error=\(error)")
         }
-    }
-
-    private func startWritePolling() {
-        guard writePoller == nil else { return }
-        let timer = DispatchSource.makeTimerSource(queue: queue)
-        timer.schedule(
-            deadline: .now() + .milliseconds(100),
-            repeating: .milliseconds(100),
-            leeway: .milliseconds(25)
-        )
-        timer.setEventHandler { [weak self] in
-            self?.assumeIsolated { recorder in
-                recorder.drainConnectionAdmissions()
-                recorder.drainLocationWrites()
-            }
-        }
-        writePoller = timer
-        timer.resume()
-    }
-
-    private func drainConnectionAdmissions() {
-        guard let state else { return }
-        var remaining = [PendingRideMapConnectionAdmission]()
-        remaining.reserveCapacity(pendingConnectionAdmissions.count)
-        for pending in pendingConnectionAdmissions {
-            do {
-                switch try state.pollVerifiedConnectionAdmission(pending.admission) {
-                case .pending:
-                    remaining.append(pending)
-                case let .completed(admissionSnapshot):
-                    if let admissionSnapshot,
-                        admissionSnapshot.rideID != pending.previousRideID
-                    {
-                        pending.resetTripMeter(pending.token)
-                    }
-                    _ = try state.observeTelemetryForVerifiedConnection(
-                        connectionState: pending.connectionState,
-                        token: pending.token,
-                        atMs: pending.atMs,
-                        speedObservation: pending.speedObservation
-                    )
-                    if let snapshot = state.currentSnapshot(atMs: pending.atMs) ?? admissionSnapshot {
-                        publishSnapshot(snapshot)
-                    }
-                    synchronizeLocationDemand()
-                }
-            } catch let error as MobileRideMapError where error == .staleConnection {
-                continue
-            } catch let error as MobileRideMapError {
-                let snapshot = state.currentSnapshot(atMs: pending.atMs)
-                if let snapshot { publishSnapshot(snapshot) }
-                publishError(error, MobileRideMapErrorContext(snapshot: snapshot))
-                recordDiagnostic("ride_map_connection_error=\(error)")
-            } catch {
-                recordDiagnostic("ride_map_connection_error=\(error)")
-            }
-        }
-        pendingConnectionAdmissions = remaining
     }
 
     private func startRestoration(replayConnection: @escaping @Sendable () -> Void) async {
@@ -369,14 +325,13 @@ actor CutoutSessionRideMapRecorder: CutoutSessionRideMapRecording {
             state.initializationError == nil,
             state.isReady,
             state.hasPendingLocationWrites
-                || state.currentSnapshot(atMs: clock.now().rawValue)?.state.isOpen == true
         else { return }
         publishDecisionBatch(state.pollLocationWriteOutcomes(atMs: clock.now().rawValue))
     }
 
     private func drainBmsVoltageWrites() {
         guard let state else { return }
-        for outcome in state.pollBmsVoltageWrites() {
+        for outcome in state.finishBmsVoltageWrites() {
             if let error = outcome.error {
                 recordDiagnostic("bms_storage_error request=\(outcome.requestId) error=\(error)")
             }
@@ -389,7 +344,18 @@ actor CutoutSessionRideMapRecorder: CutoutSessionRideMapRecording {
     }
 
     private func synchronizeLocationDemand() {
+        guard state?.takeLocationAcquisitionChange() == true else { return }
         onLocationDemandChanged()
+    }
+
+    private nonisolated func reserveRecordingWork(observationCount: UInt64) -> MobileRideMapRecordingWorkPermit? {
+        guard let state else { return nil }
+        do {
+            return try state.reserveRecordingWork(observationCount: observationCount)
+        } catch {
+            recordDiagnostic("ride_map_callback_admission_error=\(error)")
+            return nil
+        }
     }
 
     private func requireState() throws -> MobileRideMapState {

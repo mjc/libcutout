@@ -7,6 +7,43 @@ use cutout_music::MusicHistoryPolicy;
 use cutout_ride_maps::{RideEvent, RideLifecycleState};
 
 #[test]
+fn phone_gps_replayed_receipts_cannot_replace_speed_or_extend_freshness() {
+    let mut speed = RecordingSpeedState::default();
+    speed.observe_phone_gps(Some(7.0), 2_000, 7);
+    speed.observe_phone_gps(Some(99.0), 2_000, 7);
+    speed.observe_phone_gps(Some(99.0), 1_999, 7);
+    assert_eq!(
+        speed
+            .selected_at(RideLifecycleState::Active, 7, 2_500)
+            .unwrap()
+            .millimetres_per_second,
+        7_000
+    );
+    speed.observe_phone_gps(None, 3_000, 7);
+    speed.observe_phone_gps(Some(99.0), 2_500, 7);
+    assert_eq!(
+        speed.selected_at(RideLifecycleState::Active, 7, 4_001),
+        None
+    );
+    speed.observe_phone_gps(Some(8.0), 4_002, 7);
+    assert_eq!(
+        speed
+            .selected_at(RideLifecycleState::Active, 7, 4_003)
+            .unwrap()
+            .millimetres_per_second,
+        8_000
+    );
+    speed.observe_phone_gps(Some(9.0), 1_000, 8);
+    assert_eq!(
+        speed
+            .selected_at(RideLifecycleState::Active, 8, 1_001)
+            .unwrap()
+            .millimetres_per_second,
+        9_000
+    );
+}
+
+#[test]
 fn rejected_start_preserves_the_published_recording_and_token() {
     let mut session = RideRecordingSession::new(None);
     assert_eq!(session.snapshot(), None);

@@ -1,9 +1,6 @@
 //! Pure Rust session reducer for the MELK `CoreBluetooth` adapter.
 
-use std::{
-    collections::{BTreeMap, BTreeSet, VecDeque},
-    fmt::Write as _,
-};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use cutout_protocols::MelkLightingProfile;
 
@@ -543,7 +540,7 @@ impl SessionReducer {
         let Some(write) = self.writes.pop_front() else {
             return;
         };
-        self.record(format!("requested={}", hex(&write.payload)));
+        self.record(format!("requested={}", hex::encode(&write.payload)));
         let interval = write
             .minimum_interval_ms
             .unwrap_or(FALLBACK_WRITE_INTERVAL_MS);
@@ -973,12 +970,4 @@ fn is_coalescible_color_write(write: &MobileMelkLightingWriteDto) -> bool {
         && write.payload[2] == 5
         && write.payload[3] == 3
         && write.payload[8] == 0xef
-}
-
-fn hex(bytes: &[u8]) -> String {
-    let mut output = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        let _ = write!(output, "{byte:02x}");
-    }
-    output
 }

@@ -60,18 +60,26 @@ final class LiveRideModel {
     private(set) var pointsTruncated = false
     private(set) var segmentsOmittedByBudget = false
     private(set) var lastDecision: MobileRideMapDecisionDto?
+    private(set) var isMapVisible = false
+    private(set) var isSceneActive = false
 
     private let state: (any LiveRideQuerying)?
     private let now: @MainActor () -> UInt64
     private let executeCommand: @MainActor (LiveRideCommand) async throws -> MobileRideMapSnapshotDto
-    private var restoreTask: Task<Void, Never>?
-    private var restoreCancellation: MobileRideMapProjectionCancellation?
     private var projectionTask: Task<Void, Never>?
     private var durationTask: Task<Void, Never>?
     private var liveCancellation: MobileLiveRideMapProjectionCancellation?
     private var durableCancellation: MobileRideMapProjectionCancellation?
     private var projectionGeneration: UInt64 = 0
     private var projectionEnabled = false
+    private var projectionRequested = false
+    private var didRestore = false
+    private var snapshotReadTask: Task<Void, Never>?
+    private var durationReadTask: Task<Void, Never>?
+    private var pendingDurationRead: (atMs: UInt64, generation: UInt64)?
+    private var errorReadTask: Task<Void, Never>?
+    private var pendingError: MobileRideMapErrorEvent?
+    private var snapshotGeneration: UInt64 = 0
 
     private struct ProjectionRequest {
         let rideID: String
@@ -97,8 +105,9 @@ final class LiveRideModel {
     }
 
     isolated deinit {
-        restoreTask?.cancel()
-        restoreCancellation?.cancel()
+        snapshotReadTask?.cancel()
+        durationReadTask?.cancel()
+        errorReadTask?.cancel()
         projectionTask?.cancel()
         durationTask?.cancel()
         liveCancellation?.cancel()
@@ -108,81 +117,117 @@ final class LiveRideModel {
     @discardableResult
     func restore() -> Task<Void, Never>? {
         guard let state else { return nil }
-        snapshot = state.currentSnapshot()
-        telemetryState = snapshot?.telemetryState
-        updateDurationTicker()
-        restoreTask?.cancel()
-        restoreCancellation?.cancel()
-        guard let rideID = snapshot?.rideID else { return nil }
-        let generation = projectionGeneration
-        let budget = MobileRideMapLimits.rustOwned.liveTailPointLimit
-        let cancellation = MobileRideMapProjectionCancellation()
-        restoreCancellation = cancellation
-        restoreTask = Task { [weak self] in
-            do {
-                let projection = try await Self.runCancellableDetached(priority: .userInitiated) {
-                    try state.projectStoredPoints(
-                        rideID: rideID,
-                        budget: budget,
-                        viewport: nil,
-                        privacy: .precise,
-                        cancellation: cancellation
-                    )
-                }
-                guard !Task.isCancelled, let self,
-                    Self.shouldApplyRestoredProjection(
-                        restorationGeneration: generation,
-                        currentGeneration: self.projectionGeneration,
-                        liveProjectionEnabled: self.projectionEnabled
-                    ), self.snapshot?.rideID == rideID
-                else { return }
-                self.applyProjection(projection)
-            } catch {
-                guard !Task.isCancelled, let self,
-                    Self.shouldApplyRestoredProjection(
-                        restorationGeneration: generation,
-                        currentGeneration: self.projectionGeneration,
-                        liveProjectionEnabled: self.projectionEnabled
-                    ), self.snapshot?.rideID == rideID
-                else { return }
-                self.error = appRideMapError(error)
-                self.clearProjection()
-            }
+        if let snapshotReadTask { return snapshotReadTask }
+        didRestore = true
+        let generation = snapshotGeneration
+        snapshotReadTask = Task { [weak self] in
+            defer { self?.snapshotReadTask = nil }
+            let next = await Task.detached(priority: .utility) { state.currentSnapshot() }.value
+            guard !Task.isCancelled else { return }
+            let projection = self?.applyRestoredSnapshot(next, generation: generation)
+            await projection?.value
         }
-        return restoreTask
+        return snapshotReadTask
+    }
+
+    private func applyRestoredSnapshot(
+        _ next: MobileRideMapSnapshotDto?, generation: UInt64
+    ) -> Task<Void, Never>? {
+        guard generation == snapshotGeneration else { return nil }
+        if let next {
+            applySnapshot(next)
+            if snapshot?.rideID.isEmpty == false {
+                if projectionTask == nil { requestProjection() }
+                return projectionTask
+            }
+        } else {
+            snapshot = nil
+            telemetryState = nil
+            updateDurationTicker()
+            invalidateProjection(clearPoints: true)
+        }
+        return nil
     }
 
     func applySnapshot(_ next: MobileRideMapSnapshotDto) {
         guard accepts(next) else { return }
-        if let previousRideID = snapshot?.rideID, previousRideID != next.rideID {
+        snapshotGeneration &+= 1
+        let previousRideID = snapshot?.rideID
+        let routeProgressChanged =
+            previousRideID != next.rideID
+            || snapshot?.summary.pointCount != next.summary.pointCount
+        if let previousRideID, previousRideID != next.rideID {
             invalidateProjection(clearPoints: true)
             error = nil
         }
         snapshot = next
         telemetryState = next.telemetryState
         updateDurationTicker()
-        if restoreTask == nil { restore() }
+        if !next.rideID.isEmpty, routeProgressChanged {
+            didRestore = true
+            requestProjection()
+        } else if !didRestore {
+            _ = restore()
+        }
     }
 
     func applyDecision(snapshot next: MobileRideMapSnapshotDto, decision: MobileRideMapDecisionDto) {
         guard accepts(next) else { return }
+        snapshotGeneration &+= 1
+        let routeProgressChanged =
+            snapshot?.rideID != next.rideID
+            || snapshot?.summary.pointCount != next.summary.pointCount
         error = nil
-        snapshot = next
+        if routeProgressChanged {
+            applySnapshot(next)
+        } else {
+            snapshot = next
+        }
         lastDecision = decision
         switch decision {
         case let .pending(point):
             telemetryState = point.telemetryState
         case let .accepted(point):
             telemetryState = point.telemetryState
-            requestProjection()
+            if !routeProgressChanged { requestProjection() }
         case .rejected, .ignored, .storageError:
             break
         }
     }
 
-    func applyError(_ event: MobileRideMapErrorEvent) {
-        guard Self.shouldApplyError(context: event.context, currentSnapshot: snapshot) else { return }
-        error = event.error
+    @discardableResult
+    func applyError(_ event: MobileRideMapErrorEvent) -> Task<Void, Never>? {
+        guard let state else {
+            if Self.shouldApplyError(context: event.context, currentSnapshot: snapshot) { error = event.error }
+            return nil
+        }
+        if let errorReadTask {
+            pendingError = event
+            return errorReadTask
+        }
+        errorReadTask = Task { [weak self] in
+            var nextEvent: MobileRideMapErrorEvent? = event
+            while let currentEvent = nextEvent, let generation = self?.snapshotGeneration {
+                let current = await Task.detached(priority: .utility) { state.currentSnapshot() }.value
+                guard let self else { return }
+                guard !Task.isCancelled else {
+                    self.errorReadTask = nil
+                    return
+                }
+                if generation != self.snapshotGeneration {
+                    // Commands can change authoritative absence while the query waits.
+                    // Retry the owned event without dropping the latest pending event.
+                    continue
+                }
+                if Self.shouldApplyError(context: currentEvent.context, currentSnapshot: current) {
+                    self.error = currentEvent.error
+                }
+                nextEvent = self.pendingError
+                self.pendingError = nil
+            }
+            self?.errorReadTask = nil
+        }
+        return errorReadTask
     }
 
     func setError(_ error: MobileRideMapError?) {
@@ -193,7 +238,22 @@ final class LiveRideModel {
         self.availability = availability
     }
 
+    func setMapVisible(_ visible: Bool) {
+        guard isMapVisible != visible else { return }
+        isMapVisible = visible
+        updateProjectionAvailability()
+    }
+
+    func setSceneActive(_ active: Bool) {
+        guard isSceneActive != active else { return }
+        isSceneActive = active
+        if active { refreshDuration() } else { pendingDurationRead = nil }
+        updateDurationTicker()
+        updateProjectionAvailability()
+    }
+
     func applyCommandSnapshot(_ snapshot: MobileRideMapSnapshotDto, resetPoints: Bool) {
+        snapshotGeneration &+= 1
         self.snapshot = snapshot
         error = nil
         updateDurationTicker()
@@ -212,34 +272,61 @@ final class LiveRideModel {
         }
     }
 
-    func refreshDuration() {
-        guard let next = state?.currentSnapshot(atMs: now()), next.state == .active else { return }
-        snapshot = next
+    @discardableResult
+    func refreshDuration() -> Task<Void, Never>? {
+        guard isSceneActive, let state else { return nil }
+        pendingDurationRead = (now(), snapshotGeneration)
+        if let durationReadTask { return durationReadTask }
+        durationReadTask = Task { [weak self] in
+            defer { self?.durationReadTask = nil }
+            while let pending = self?.takePendingDurationRead() {
+                let next = await Task.detached(priority: .utility) {
+                    state.currentSnapshot(atMs: pending.atMs)
+                }.value
+                guard !Task.isCancelled, let self else { return }
+                guard self.isSceneActive, pending.generation == self.snapshotGeneration,
+                    let next, next.state == .active
+                else { continue }
+                if self.snapshot?.rideID != next.rideID || self.snapshot?.summary.pointCount != next.summary.pointCount
+                {
+                    self.applySnapshot(next)
+                } else {
+                    self.snapshot = next
+                }
+            }
+        }
+        return durationReadTask
+    }
+
+    private func takePendingDurationRead() -> (atMs: UInt64, generation: UInt64)? {
+        guard isSceneActive else { return nil }
+        defer { pendingDurationRead = nil }
+        return pendingDurationRead
     }
 
     func invalidateProjection(clearPoints: Bool) {
         projectionGeneration &+= 1
-        projectionEnabled = false
-        restoreTask?.cancel()
-        restoreCancellation?.cancel()
+        projectionEnabled = isMapVisible && isSceneActive
         liveCancellation?.cancel()
         durableCancellation?.cancel()
         if clearPoints {
+            projectionRequested = false
             clearProjection()
             lastDecision = nil
         }
     }
 
     private func updateDurationTicker() {
-        durationTask?.cancel()
-        guard snapshot?.state == .active else {
+        guard isSceneActive, snapshot?.state == .active else {
+            durationTask?.cancel()
             durationTask = nil
             return
         }
+        guard durationTask == nil else { return }
         durationTask = Task { [weak self] in
             while !Task.isCancelled {
-                self?.refreshDuration()
                 do { try await Task.sleep(for: .seconds(1)) } catch { return }
+                self?.refreshDuration()
             }
         }
     }
@@ -251,17 +338,50 @@ final class LiveRideModel {
     }
 
     private func requestProjection() {
+        projectionRequested = true
+        guard projectionEnabled else { return }
         projectionGeneration &+= 1
-        projectionEnabled = true
         liveCancellation?.cancel()
         durableCancellation?.cancel()
-        guard projectionTask == nil, let state else { return }
+        startProjectionIfNeeded()
+    }
+
+    private func updateProjectionAvailability() {
+        let enabled = isMapVisible && isSceneActive
+        guard projectionEnabled != enabled else { return }
+        projectionEnabled = enabled
+        guard enabled else {
+            projectionGeneration &+= 1
+            liveCancellation?.cancel()
+            durableCancellation?.cancel()
+            return
+        }
+        if projectionRequested {
+            projectionGeneration &+= 1
+            startProjectionIfNeeded()
+        }
+    }
+
+    private func startProjectionIfNeeded() {
+        guard projectionEnabled, projectionRequested else { return }
+        guard let rideID = snapshot?.rideID, !rideID.isEmpty else {
+            projectionRequested = false
+            return
+        }
+        guard let state else {
+            projectionRequested = false
+            return
+        }
+        guard projectionTask == nil else { return }
         let budget = MobileRideMapLimits.rustOwned.liveTailPointLimit
         projectionTask = Task { [weak self] in
             defer {
                 self?.projectionTask = nil
                 self?.liveCancellation = nil
                 self?.durableCancellation = nil
+                if self?.projectionEnabled == true, self?.projectionRequested == true {
+                    self?.startProjectionIfNeeded()
+                }
             }
             while let request = self?.nextProjectionRequest() {
                 do {
@@ -287,6 +407,7 @@ final class LiveRideModel {
                         )
                     else { continue }
                     self.applyProjection(projection)
+                    self.projectionRequested = false
                 } catch {
                     guard let self else { break }
                     guard self.projectionEnabled else { break }
@@ -301,6 +422,7 @@ final class LiveRideModel {
                     else { continue }
                     self.error = appRideMapError(error)
                     self.clearProjection()
+                    self.projectionRequested = false
                 }
                 return
             }
@@ -308,7 +430,9 @@ final class LiveRideModel {
     }
 
     private func nextProjectionRequest() -> ProjectionRequest? {
-        guard projectionEnabled, let rideID = snapshot?.rideID, !rideID.isEmpty else { return nil }
+        guard projectionEnabled, projectionRequested,
+            let rideID = snapshot?.rideID, !rideID.isEmpty
+        else { return nil }
         let request = ProjectionRequest(
             rideID: rideID,
             generation: projectionGeneration,
@@ -351,14 +475,6 @@ final class LiveRideModel {
         currentRideID: String?
     ) -> Bool {
         enabled && generation == currentGeneration && currentRideID == rideID
-    }
-
-    static func shouldApplyRestoredProjection(
-        restorationGeneration: UInt64,
-        currentGeneration: UInt64,
-        liveProjectionEnabled: Bool
-    ) -> Bool {
-        !liveProjectionEnabled && restorationGeneration == currentGeneration
     }
 
     static func shouldApplyError(

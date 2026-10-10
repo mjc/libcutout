@@ -247,7 +247,7 @@ fn queued_history_deletion_stops_new_events_and_keeps_deleted_status() {
         .unwrap()
         .unwrap();
     assert_eq!(history.status, MobileMusicHistoryStatusDto::Deleted);
-    assert!(history.events.is_empty());
+    assert_eq!(history.events, [] as [MobileMusicRideEventDto; 0]);
 }
 
 #[test]
@@ -278,7 +278,10 @@ fn forget_then_reenable_records_from_empty_sequence() {
     let (db, core, id) = (&fixture.db, &fixture.core, fixture.id.clone());
     record(core, 2_000, 2_000, MobileMusicRideEventKindDto::Play).unwrap();
     db.delete_music_history(id.clone()).unwrap();
-    assert!(db.music_events(id).unwrap().is_empty());
+    assert_eq!(
+        db.music_events(id).unwrap(),
+        [] as [MobileMusicRideEventDto; 0]
+    );
     core.set_music_history_policy(MobileMusicHistoryPolicyDto::HumanReadable)
         .unwrap();
     assert_eq!(
@@ -360,14 +363,17 @@ fn history_status_survives_core_recreation_and_privacy_changes() {
         .unwrap();
     assert_eq!(history().status, MobileMusicHistoryStatusDto::Redacted);
     fixture.db.delete_music_history(fixture.id.clone()).unwrap();
-    assert!(fixture.core.current_music_events().unwrap().is_empty());
+    assert_eq!(
+        fixture.core.current_music_events().unwrap(),
+        [] as [MobileMusicRideEventDto; 0]
+    );
     let restored = MobileRideMapCore::with_database(fixture.db.clone());
     restored.restore(4_000).unwrap();
     assert_eq!(
         restored.current_music_history().unwrap().status,
         MobileMusicHistoryStatusDto::Deleted
     );
-    assert!(history().events.is_empty());
+    assert_eq!(history().events, [] as [MobileMusicRideEventDto; 0]);
 }
 
 #[test]
@@ -442,7 +448,10 @@ fn pre_ride_observation_is_rejected_even_when_event_is_delayed() {
         record(&fixture.core, 500, 2_000, MobileMusicRideEventKindDto::Skip).unwrap(),
         MobileMusicTimelineOutcomeDto::OutOfOrder
     );
-    assert!(fixture.core.current_music_events().unwrap().is_empty());
+    assert_eq!(
+        fixture.core.current_music_events().unwrap(),
+        [] as [MobileMusicRideEventDto; 0]
+    );
 }
 
 #[test]
@@ -595,7 +604,10 @@ fn failed_durable_event_does_not_consume_sequence_or_observation() {
         5,
     );
     assert!(result.is_err());
-    assert!(fixture.core.current_music_events().unwrap().is_empty());
+    assert_eq!(
+        fixture.core.current_music_events().unwrap(),
+        [] as [MobileMusicRideEventDto; 0]
+    );
     assert_eq!(
         record(
             &fixture.core,

@@ -18,6 +18,7 @@ name = "cutout"
 path = "src/main.rs"
 
 [dependencies]
+hex.workspace = true
 anyhow.workspace = true
 arrayvec.workspace = true
 clap.workspace = true

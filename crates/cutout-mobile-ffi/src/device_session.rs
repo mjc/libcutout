@@ -44,6 +44,16 @@ pub struct MobileDeviceSessionSnapshotDto {
     pub identity: Option<MobileDeviceIdentityDto>,
 }
 
+/// Capture admission evidence established by the Rust decoder and connection owner.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileCaptureNotificationEvidenceDto {
+    /// The notification must retain its complete observation evidence.
+    #[default]
+    Unclassified,
+    /// One complete telemetry frame supplied fresh stationary wheel speed.
+    StationaryTelemetry,
+}
+
 /// Decoded result paired with the exact connection that produced it.
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct MobileDeviceSessionStepDto {
@@ -55,6 +65,8 @@ pub struct MobileDeviceSessionStepDto {
     pub telemetry: MobileTelemetrySnapshotDto,
     /// Current parser diagnostics.
     pub diagnostics: MobileParserDiagnosticsDto,
+    /// Rust-established admission evidence for this exact notification.
+    pub capture_notification_evidence: MobileCaptureNotificationEvidenceDto,
 }
 
 impl From<DeviceConnectionSnapshot> for MobileDeviceSessionSnapshotDto {
@@ -83,6 +95,7 @@ impl From<DeviceConnectionStep> for MobileDeviceSessionStepDto {
             result: cutout_protocols::ConcreteSessionStepResultDto::from(value.result).into(),
             telemetry: value.telemetry.into(),
             diagnostics: value.diagnostics.into(),
+            capture_notification_evidence: MobileCaptureNotificationEvidenceDto::Unclassified,
         }
     }
 }
@@ -211,7 +224,12 @@ impl CutoutSessionStateHandle {
             let telemetry = MobileTelemetrySnapshotDto::from(step.telemetry);
             self.apply_phone_alarm_step(&input, &telemetry, true);
         }
-        step.map(Into::into)
+        step.map(|step| {
+            let evidence = capture_notification_evidence(&input, &step);
+            let mut projected = MobileDeviceSessionStepDto::from(step);
+            projected.capture_notification_evidence = evidence;
+            projected
+        })
     }
 }
 
@@ -224,6 +242,88 @@ impl CutoutSessionStateHandle {
         self.lock_inner()
             .observe_for_attempt(&token.into(), event)
             .map(Into::into)
+    }
+}
+
+fn capture_notification_evidence(
+    input: &MobileSessionInputDto,
+    step: &DeviceConnectionStep,
+) -> MobileCaptureNotificationEvidenceDto {
+    use cutout_core::{
+        ConnectionReadiness, ConnectionTransportState, DeviceEvent, NotificationIngestOutcome,
+        ProtocolFamily, ReadOnlyResponse, SessionOutput, Speed,
+    };
+
+    if input.kind != crate::MobileSessionInputKindDto::Notification
+        || step.notification_framing
+            != cutout_protocols::NotificationFramingEvidence::EmptyBoundaries
+        || step.result.error.is_some()
+        || step.session.connection.readiness != ConnectionReadiness::Verified
+        || step.session.connection.transport != ConnectionTransportState::Connected
+        || step.session.connection.token.is_none()
+        || step
+            .session
+            .identity
+            .is_none_or(|identity| identity.protocol != ProtocolFamily::VeteranLeaperkimNosfet)
+        || input.channel.as_slice() != cutout_protocols::VETERAN_DATA_CHANNEL.as_bytes()
+    {
+        return MobileCaptureNotificationEvidenceDto::Unclassified;
+    }
+    // Only one self-contained Veteran telemetry frame can qualify. Completing a
+    // prior fragment, concatenated frames, and trailing partial frames retain
+    // every byte. Other adapters need their own complete-frame proof.
+    let Ok(frame) = cutout_protocols::VeteranFrame::try_from_slice(&input.bytes) else {
+        return MobileCaptureNotificationEvidenceDto::Unclassified;
+    };
+    if frame
+        .as_slice()
+        .get(46)
+        .is_some_and(|selector| *selector != 0)
+    {
+        return MobileCaptureNotificationEvidenceDto::Unclassified;
+    }
+    let Some(speed) = step.telemetry.speed else {
+        return MobileCaptureNotificationEvidenceDto::Unclassified;
+    };
+    if step
+        .telemetry
+        .speed_observed_at_ms
+        .map(|at| at.milliseconds)
+        != Some(input.monotonic_ms.milliseconds)
+        || speed.source != cutout_core::ValueSourceDto::Reported
+        || speed.quality != cutout_core::ValueQualityDto::Known
+        || Speed::from_millimetres_per_second(speed.value).is_moving()
+    {
+        return MobileCaptureNotificationEvidenceDto::Unclassified;
+    }
+    let mut telemetry_events = 0;
+    let mut complete_frames = 0;
+    for output in &step.result.outputs {
+        match output {
+            SessionOutput::Event(DeviceEvent::Telemetry(delta))
+                if delta.speed.is_some_and(|measured| {
+                    measured.value.as_millimetres_per_second() == speed.value
+                }) =>
+            {
+                telemetry_events += 1;
+            }
+            // These readbacks are decoded from this same telemetry frame; its
+            // exact bytes remain part of the material comparison key.
+            SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                ReadOnlyResponse::Firmware(_)
+                | ReadOnlyResponse::Settings(_)
+                | ReadOnlyResponse::RawTelemetry(_),
+            )) => {}
+            SessionOutput::NotificationIngest(NotificationIngestOutcome::SemanticEvents {
+                ..
+            }) => complete_frames += 1,
+            _ => return MobileCaptureNotificationEvidenceDto::Unclassified,
+        }
+    }
+    if telemetry_events == 1 && complete_frames == 1 {
+        MobileCaptureNotificationEvidenceDto::StationaryTelemetry
+    } else {
+        MobileCaptureNotificationEvidenceDto::Unclassified
     }
 }
 
@@ -241,6 +341,195 @@ mod tests {
         frame[..4].copy_from_slice(&[0xdc, 0x5a, 0x5c, 38]);
         frame[28..30].copy_from_slice(&(model_id * 1_000).to_be_bytes());
         frame
+    }
+
+    fn connected_capture_session() -> (
+        std::sync::Arc<CutoutSessionStateHandle>,
+        MobileConnectionAttemptTokenDto,
+        Vec<u8>,
+    ) {
+        let handle = CutoutSessionStateHandle::new();
+        let token = handle
+            .begin_connection_attempt("NF2557".into(), 0)
+            .token
+            .unwrap();
+        handle.connection_link_established(token.clone());
+        let frame = veteran_frame_with_model_id(43);
+        handle.observe_connection_notification(token.clone(), frame.clone());
+        handle.resolve_device_session(token.clone(), true, 1);
+        let linked = handle
+            .ingest_device_session(
+                token.clone(),
+                MobileSessionInputDto {
+                    kind: crate::MobileSessionInputKindDto::LinkUp,
+                    monotonic_ms: crate::MobileMonotonicMillisDto { milliseconds: 1 },
+                    max_write_len: None,
+                    channel: Vec::new(),
+                    bytes: Vec::new(),
+                },
+            )
+            .expect("resolved decoder receives native link-up before notifications");
+        assert!(linked.result.error.is_none());
+        (handle, token, frame)
+    }
+
+    #[test]
+    fn capture_admission_requires_current_complete_stationary_telemetry() {
+        let (handle, token, frame) = connected_capture_session();
+        let step = handle
+            .ingest_device_session(
+                token,
+                MobileSessionInputDto {
+                    kind: crate::MobileSessionInputKindDto::Notification,
+                    monotonic_ms: crate::MobileMonotonicMillisDto { milliseconds: 100 },
+                    max_write_len: None,
+                    channel: cutout_protocols::VETERAN_DATA_CHANNEL.as_bytes().to_vec(),
+                    bytes: frame,
+                },
+            )
+            .expect("current notification is admitted");
+        assert_eq!(
+            step.capture_notification_evidence,
+            MobileCaptureNotificationEvidenceDto::StationaryTelemetry,
+        );
+    }
+
+    #[test]
+    fn capture_admission_uses_signed_shared_threshold_on_each_current_frame() {
+        let (handle, token, frame) = connected_capture_session();
+        for (index, deci_kmh) in [-19_i16, -18, -17, 0, 17, 18, 19].into_iter().enumerate() {
+            let mut bytes = frame.clone();
+            bytes[6..8].copy_from_slice(&deci_kmh.to_be_bytes());
+            let input = MobileSessionInputDto {
+                kind: crate::MobileSessionInputKindDto::Notification,
+                monotonic_ms: crate::MobileMonotonicMillisDto {
+                    milliseconds: 100 + index as u64,
+                },
+                max_write_len: None,
+                channel: cutout_protocols::VETERAN_DATA_CHANNEL.as_bytes().to_vec(),
+                bytes,
+            };
+            let step = handle.ingest_device_session(token.clone(), input).unwrap();
+            assert_eq!(
+                step.telemetry.speed.as_ref().unwrap().value.value,
+                cutout_core::Speed::from_deci_kmh(i32::from(deci_kmh)).as_millimetres_per_second()
+            );
+            let expected = if cutout_core::Speed::from_deci_kmh(i32::from(deci_kmh)).is_moving() {
+                MobileCaptureNotificationEvidenceDto::Unclassified
+            } else {
+                MobileCaptureNotificationEvidenceDto::StationaryTelemetry
+            };
+            assert_eq!(
+                step.capture_notification_evidence, expected,
+                "speed {deci_kmh}"
+            );
+        }
+    }
+
+    #[test]
+    fn capture_admission_rejects_stale_disconnected_or_ambiguous_evidence() {
+        let (handle, token, frame) = connected_capture_session();
+        let input = MobileSessionInputDto {
+            kind: crate::MobileSessionInputKindDto::Notification,
+            monotonic_ms: crate::MobileMonotonicMillisDto { milliseconds: 100 },
+            max_write_len: None,
+            channel: cutout_protocols::VETERAN_DATA_CHANNEL.as_bytes().to_vec(),
+            bytes: frame,
+        };
+        let step = handle
+            .lock_inner()
+            .ingest(&token.into(), &input.clone().into())
+            .unwrap();
+        assert_eq!(
+            step.notification_framing,
+            cutout_protocols::NotificationFramingEvidence::EmptyBoundaries
+        );
+        assert_eq!(
+            capture_notification_evidence(&input, &step),
+            MobileCaptureNotificationEvidenceDto::StationaryTelemetry,
+            "{step:#?}"
+        );
+        let mut stale = step.clone();
+        stale.telemetry.speed_observed_at_ms =
+            Some(cutout_core::MonotonicMillisDto { milliseconds: 99 });
+        let mut missing = step.clone();
+        missing.telemetry.speed = None;
+        let mut inferred = step.clone();
+        inferred.telemetry.speed.as_mut().unwrap().quality = cutout_core::ValueQualityDto::Inferred;
+        let mut estimated = step.clone();
+        estimated.telemetry.speed.as_mut().unwrap().source = cutout_core::ValueSourceDto::Estimated;
+        let mut disconnected = step.clone();
+        disconnected.session.connection.transport =
+            cutout_core::ConnectionTransportState::Disconnected;
+        let mut unverified = step.clone();
+        unverified.session.connection.readiness = cutout_core::ConnectionReadiness::Pending;
+        let mut no_token = step.clone();
+        no_token.session.connection.token = None;
+        let mut unknown_framing = step.clone();
+        unknown_framing.notification_framing =
+            cutout_protocols::NotificationFramingEvidence::Unclassified;
+        let mut ambiguous = step.clone();
+        ambiguous.result.outputs.extend(step.result.outputs.clone());
+        for rejected in [
+            stale,
+            missing,
+            inferred,
+            estimated,
+            disconnected,
+            unverified,
+            no_token,
+            unknown_framing,
+            ambiguous,
+        ] {
+            assert_eq!(
+                capture_notification_evidence(&input, &rejected),
+                MobileCaptureNotificationEvidenceDto::Unclassified
+            );
+        }
+    }
+
+    #[test]
+    fn capture_admission_keeps_notifications_with_pending_parser_bytes() {
+        let (handle, token, frame) = connected_capture_session();
+        let notification = |at, bytes| MobileSessionInputDto {
+            kind: crate::MobileSessionInputKindDto::Notification,
+            monotonic_ms: crate::MobileMonotonicMillisDto { milliseconds: at },
+            max_write_len: None,
+            channel: cutout_protocols::VETERAN_DATA_CHANNEL.as_bytes().to_vec(),
+            bytes,
+        };
+        let fragment = handle
+            .ingest_device_session(token.clone(), notification(100, frame[..4].to_vec()))
+            .unwrap();
+        assert_eq!(
+            fragment.capture_notification_evidence,
+            MobileCaptureNotificationEvidenceDto::Unclassified
+        );
+        let after_fragment = handle
+            .ingest_device_session(token.clone(), notification(101, frame.clone()))
+            .unwrap();
+        assert!(after_fragment.telemetry.speed.is_some());
+        assert_eq!(
+            after_fragment.capture_notification_evidence,
+            MobileCaptureNotificationEvidenceDto::Unclassified
+        );
+        let mut frame_and_partial = frame.clone();
+        frame_and_partial.extend_from_slice(&frame[..4]);
+        let trailing = handle
+            .ingest_device_session(token.clone(), notification(102, frame_and_partial))
+            .unwrap();
+        assert!(trailing.telemetry.speed.is_some());
+        assert_eq!(
+            trailing.capture_notification_evidence,
+            MobileCaptureNotificationEvidenceDto::Unclassified
+        );
+        let after_trailing = handle
+            .ingest_device_session(token, notification(103, frame))
+            .unwrap();
+        assert_eq!(
+            after_trailing.capture_notification_evidence,
+            MobileCaptureNotificationEvidenceDto::Unclassified
+        );
     }
 
     #[test]
@@ -295,7 +584,7 @@ mod tests {
         let resolved = handle.resolve_device_session(token, true, 2_333);
         assert_eq!(resolved.identity.unwrap().model.as_deref(), Some("Falcon"));
         assert!(handle.settings().default_charge_profile.is_some());
-        assert!(!handle.settings().setting_descriptors.is_empty());
+        assert_ne!(handle.settings().setting_descriptors.len(), 0);
     }
 
     #[test]

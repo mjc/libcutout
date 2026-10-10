@@ -258,7 +258,7 @@ mod tests {
     fn reassembler_reassembles_fragmented_frame() {
         let mut reassembler = BegodeFrameReassembler::default();
 
-        assert!(feed_bytes(&mut reassembler, &LIVE_A[..9]).is_empty());
+        assert_eq!(feed_bytes(&mut reassembler, &LIVE_A[..9]).len(), 0);
         let frames = feed_bytes(&mut reassembler, &LIVE_A[9..]);
 
         assert_eq!(frames, vec![BegodeFrame::try_from_slice(&LIVE_A).unwrap()]);
@@ -332,11 +332,11 @@ mod tests {
     fn reassembler_reset_drops_partial_frame() {
         let mut reassembler = BegodeFrameReassembler::default();
 
-        assert!(feed_bytes(&mut reassembler, &LIVE_A[..12]).is_empty());
+        assert_eq!(feed_bytes(&mut reassembler, &LIVE_A[..12]).len(), 0);
         reassembler.reset();
         let frames = feed_bytes(&mut reassembler, &LIVE_A[12..]);
 
-        assert!(frames.is_empty());
+        assert_eq!(frames.len(), 0);
     }
 
     #[test]
@@ -355,7 +355,7 @@ mod tests {
         assert!(reassembler.expire_idle(ms(1_012), ms(1_000)));
         let frames = feed_bytes(&mut reassembler, &LIVE_A[12..]);
 
-        assert!(frames.is_empty());
+        assert_eq!(frames.len(), 0);
     }
 
     #[test]

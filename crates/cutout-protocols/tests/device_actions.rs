@@ -85,11 +85,13 @@ fn ordinary_aero_actions_preserve_roles_and_write_verification() {
             step: DeviceActionStep::PrepareGyroCalibration,
         }))
     );
-    assert!(falcon_control_profile().action_descriptors(true).is_empty());
-    assert!(
-        DeviceControlProfile::default()
-            .action_descriptors(true)
-            .is_empty()
+    assert_eq!(
+        falcon_control_profile().action_descriptors(true),
+        [] as [cutout_protocols::ActionDescriptor; 0]
+    );
+    assert_eq!(
+        DeviceControlProfile::default().action_descriptors(true),
+        [] as [cutout_protocols::ActionDescriptor; 0]
     );
 }
 
@@ -125,10 +127,9 @@ fn gyro_progress_preserves_evidence_and_explicit_unknown() {
             assert_eq!(measured.verification, VerificationStatus::SourceVerified);
         }
     }
-    assert!(
-        profile
-            .normalize_action_readback(SettingsReadback::unavailable())
-            .is_empty()
+    assert_eq!(
+        profile.normalize_action_readback(SettingsReadback::unavailable()),
+        [] as [cutout_protocols::ActionObservation; 0]
     );
 }
 

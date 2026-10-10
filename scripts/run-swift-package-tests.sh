@@ -1,6 +1,31 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ "$(uname -s)" != Darwin || "$(uname -m)" != arm64 ]]; then
+  echo "Cutout Swift package tests require Apple Silicon Darwin" >&2
+  exit 1
+fi
+
+arguments=("$@")
+forwarded_arguments=()
+for ((index = 0; index < ${#arguments[@]}; index++)); do
+  case "${arguments[$index]}" in
+    --arch)
+      if [[ "${arguments[$((index + 1))]:-}" != arm64 ]]; then
+        echo "Swift package test runners support only arm64" >&2
+        exit 2
+      fi
+      index=$((index + 1))
+      ;;
+    --arch=arm64) ;;
+    --arch=* | --triple | --triple=* | --destination | --destination=* | --swift-sdk | --swift-sdk=* | --experimental-swift-sdk | --experimental-swift-sdk=* | --toolset | --toolset=*)
+      echo "Swift package test runners support only the native arm64 target" >&2
+      exit 2
+      ;;
+    *) forwarded_arguments+=("${arguments[$index]}") ;;
+  esac
+done
+
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 log_directory="$root/target/test-logs"
 mkdir -p "$log_directory"
@@ -9,12 +34,14 @@ log_file="$log_directory/swift-package-$(date +%Y%m%dT%H%M%S)-$$.log"
 printf 'Full Swift package test log: %s\n' "$log_file"
 {
   printf '$ cargo cutout swift -- test --package-path %q' "$root/swift/CutoutMobile"
-  printf ' %q' "$@"
-  printf '\n'
+  if [[ ${#forwarded_arguments[@]} -gt 0 ]]; then
+    printf ' %q' "${forwarded_arguments[@]}"
+  fi
+  printf ' --arch arm64\n'
 } >"$log_file"
 
 set +e
-cargo cutout swift -- test --package-path "$root/swift/CutoutMobile" "$@" 2>&1 \
+cargo cutout swift -- test --package-path "$root/swift/CutoutMobile" "${forwarded_arguments[@]+"${forwarded_arguments[@]}"}" --arch arm64 2>&1 \
   | tee -a "$log_file" \
   | awk '
       /error:/ || /Test Case .* failed/ || /Test Suite .* (passed|failed)/ ||

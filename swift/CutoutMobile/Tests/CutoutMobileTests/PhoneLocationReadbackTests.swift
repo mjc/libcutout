@@ -1,9 +1,27 @@
+import CoreLocation
 import CutoutMobileFFI
 import XCTest
 
 @testable import CutoutMobile
 
 final class PhoneLocationReadbackTests: XCTestCase {
+    @MainActor
+    func testRideLocationManagerKeepsAcquiringAcrossStops() async {
+        let inspected = expectation(description: "Policy inspected on manager run loop")
+        let adapter = CutoutSessionPhoneLocationAdapter(
+            clock: MonotonicClock(), wallClock: Date.init,
+            onSnapshot: { _, _ in }, onLocationUpdate: { _ in }, onAvailabilityChange: {}
+        )
+        adapter.inspectManagerForTesting { manager in
+            XCTAssertFalse(Thread.isMainThread)
+            XCTAssertFalse(manager.pausesLocationUpdatesAutomatically)
+            XCTAssertEqual(manager.desiredAccuracy, kCLLocationAccuracyBestForNavigation)
+            XCTAssertEqual(manager.activityType, .fitness)
+            inspected.fulfill()
+        }
+        await fulfillment(of: [inspected], timeout: 2)
+    }
+
     func testGpsFreshnessDetailsResolveFromThePackageCatalog() {
         XCTAssertEqual(pevLocalizedText("gps.detail.unavailable"), "GPS unavailable")
         XCTAssertEqual(pevLocalizedText("gps.detail.fresh"), "fresh GPS")

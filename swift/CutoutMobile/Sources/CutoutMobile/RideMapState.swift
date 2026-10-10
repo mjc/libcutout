@@ -788,17 +788,22 @@ public final class MobileRideMapState: @unchecked Sendable {
     private let storageUnavailableError: MobileRideMapError?
 
     #if DEBUG
-        static let debugDatabase: RideDatabaseHandle? = {
-            let path = FileManager.default.temporaryDirectory
-                .appendingPathComponent("cutout-map-test-\(UUID().uuidString).sqlite")
-                .path
-            return try? openRideDatabase(path: path)
-        }()
+        static let debugDatabasePath = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cutout-map-test-\(UUID().uuidString).sqlite")
+            .path
+        private static let debugDatabaseOpenResult: Result<RideDatabaseHandle, Error> = Result {
+            try openRideDatabase(path: debugDatabasePath)
+        }
+
+        static var debugDatabase: RideDatabaseHandle? { try? debugDatabaseOpenResult.get() }
 
         /// Creates a fresh durable map state for deterministic tests only.
         public convenience init() {
-            guard let database = Self.debugDatabase else {
-                self.init(storageUnavailable: "Rust ride database is unavailable")
+            let database: RideDatabaseHandle
+            do {
+                database = try Self.debugDatabaseOpenResult.get()
+            } catch {
+                self.init(storageUnavailable: "Rust ride test database could not open: \(error)")
                 return
             }
             self.init(database: database)
@@ -875,6 +880,15 @@ public final class MobileRideMapState: @unchecked Sendable {
         core?.currentSnapshot(atMs: Self.monotonicMillisecondsNow()).map(mapSnapshot)
     }
 
+    /// Query Rust's authoritative identity off the caller's actor. GPS durability may
+    /// hold the shared Rust mutex; presentation never waits for that lock on Main.
+    public func currentSnapshotAsync(atMs: UInt64? = nil) async -> MobileRideMapSnapshotDto? {
+        await Task.detached(priority: .utility) { [self] in
+            if let atMs { return currentSnapshot(atMs: atMs) }
+            return currentSnapshot()
+        }.value
+    }
+
     public func currentSnapshot(atMs: UInt64) -> MobileRideMapSnapshotDto? {
         core?.currentSnapshot(atMs: atMs).map(mapSnapshot)
     }
@@ -924,13 +938,15 @@ public final class MobileRideMapState: @unchecked Sendable {
     public func beginVerifiedConnectionAdmission(
         connectionState: CutoutSessionStateHandle,
         token: ConnectionAttemptToken,
-        atMs: UInt64
+        atMs: UInt64,
+        musicHistoryPolicy: MobileMusicHistoryPolicyDto = .disabled
     ) throws -> MobileRideMapConnectionAdmission {
         try withCore {
             try connectionState.beginRideRecordingForVerifiedConnection(
                 rideMap: $0,
                 token: token,
-                atMs: atMs
+                atMs: atMs,
+                musicHistoryPolicy: musicHistoryPolicy
             )
         }
     }
@@ -944,6 +960,13 @@ public final class MobileRideMapState: @unchecked Sendable {
         case let .completed(snapshot):
             .completed(snapshot.map(mapSnapshot))
         }
+    }
+
+    /// Waits only on the background recording executor for the Rust admission receipt.
+    func waitVerifiedConnectionAdmission(
+        _ admission: MobileRideMapConnectionAdmission
+    ) throws -> MobileRideMapSnapshotDto? {
+        try withCore { _ in try admission.wait().map(mapSnapshot) }
     }
 
     public func beginLifecycleCommand(
@@ -960,6 +983,14 @@ public final class MobileRideMapState: @unchecked Sendable {
         try withCore { $0.observeLocationEnvironment(environment: environment) }
     }
 
+    func observeLocationEnvironmentAsync(
+        _ environment: MobileRideMapLocationEnvironmentDto
+    ) async -> MobileRideMapLocationAcquisitionDto? {
+        await Task.detached(priority: .utility) { [self] in
+            try? observeLocationEnvironment(environment)
+        }.value
+    }
+
     public func observeDiagnosticCaptureLocation(
         generation: MobileCaptureGenerationDto,
         active: Bool
@@ -972,11 +1003,15 @@ public final class MobileRideMapState: @unchecked Sendable {
     public func pollLifecycleCommand(
         _ command: MobileRideMapLifecycleCommand
     ) throws -> MobileRideMapLifecycleState {
-        switch try command.poll() {
-        case .pending:
-            .pending
-        case let .completed(snapshot):
-            .completed(mapSnapshot(snapshot))
+        do {
+            return switch try command.poll() {
+            case .pending:
+                .pending
+            case let .completed(snapshot):
+                .completed(mapSnapshot(snapshot))
+            }
+        } catch {
+            throw map(error)
         }
     }
 
@@ -991,8 +1026,8 @@ public final class MobileRideMapState: @unchecked Sendable {
     private func completeLifecycleCommand(
         _ command: MobileRideMapLifecycleCommand
     ) async throws -> MobileRideMapSnapshotDto {
-        // Rust holds its mutation barrier until a terminal poll. Keep this settlement task
-        // independent of caller cancellation so it cannot strand the accepted command.
+        // Rust settles the accepted command independently and caches its terminal receipt.
+        // Keep receipt delivery independent of caller cancellation.
         let completion = Task {
             while true {
                 switch try pollLifecycleCommand(command) {
@@ -1026,7 +1061,7 @@ public final class MobileRideMapState: @unchecked Sendable {
         try transition { try $0.pauseAt(atMs: atMs) }
     }
 
-    /// Pauses an active ride before an explicit user-requested transport disconnect.
+    /// Settles pending writes before transport disconnect, keeping the GPS ride active.
     public func prepareDisconnect(
         expected: MobileRideMapRecordingTokenDto?,
         atMs: UInt64
@@ -1091,6 +1126,10 @@ public final class MobileRideMapState: @unchecked Sendable {
         try withCore { try $0.setRideAutostartEnabled(enabled: enabled) }
     }
 
+    func finishBmsVoltageWrites() -> [MobileBmsVoltageWriteOutcomeDto] {
+        database?.finishBmsVoltageWrites() ?? []
+    }
+
     func pollBmsVoltageWrites() -> [MobileBmsVoltageWriteOutcomeDto] {
         database?.pollBmsVoltageWrites() ?? []
     }
@@ -1102,6 +1141,10 @@ public final class MobileRideMapState: @unchecked Sendable {
     /// Returns the Rust-owned music-history policy restored for the active ride.
     public func currentMusicHistoryPolicy() -> MobileMusicHistoryPolicyDto {
         core?.currentMusicHistoryPolicy() ?? .disabled
+    }
+
+    public func currentMusicHistoryPolicyAsync() async -> MobileMusicHistoryPolicyDto {
+        await Task.detached(priority: .utility) { [self] in currentMusicHistoryPolicy() }.value
     }
 
     /// Records one low-rate provider transition for the active ride.
@@ -1201,6 +1244,43 @@ public final class MobileRideMapState: @unchecked Sendable {
             }
         }
         try await completion.value
+    }
+
+    public func retireClosedMusicHistoryAsync(
+        lifecycle: MobileMusicProviderLifecycle,
+        lease: MobileMusicObservationLease
+    ) async throws -> MobileMusicHistoryTerminalFailure? {
+        try withCore { try $0.retireClosedMusicHistory(lifecycle: lifecycle, lease: lease) }
+    }
+
+    public func bindMusicObservationLifecycle(lifecycle: MobileMusicProviderLifecycle) throws {
+        try withCore { try $0.bindMusicObservationLifecycle(lifecycle: lifecycle) }
+    }
+
+    public func musicObservationContextAsync(
+        expectedRideID: String, observedAtMs: UInt64, lease: MobileMusicObservationLease? = nil
+    )
+        async throws -> MobileMusicObservationContext
+    {
+        try withCore {
+            if let lease {
+                return try $0.musicObservationContextForObservation(
+                    lease: lease, expectedRideId: expectedRideID, observedAtMs: observedAtMs)
+            }
+            return try $0.musicObservationContext(expectedRideId: expectedRideID, observedAtMs: observedAtMs)
+        }
+    }
+
+    public func recordMusicObservationAsync(lease: MobileMusicObservationLease)
+        async throws -> MobileMusicTimelineRecordResultDto
+    {
+        let command = try withCore { try $0.beginRecordMusicObservation(lease: lease) }
+        while true {
+            switch try pollMusicCommand(command) {
+            case .pending: try await Task.sleep(nanoseconds: 10_000_000)
+            case let .completed(result): return result
+            }
+        }
     }
 
     public func recordMusicEventWithSequenceAsync(
@@ -1383,6 +1463,51 @@ public final class MobileRideMapState: @unchecked Sendable {
     ) throws -> [MobileRideMapOutcomeDto] {
         try withCore {
             try $0.ingestLocationBatchWithOutcomes(
+                recording: recordingToken,
+                receiptMonotonicMs: receiptMonotonicMs,
+                receiptWallClockUnixMs: receiptWallClockUnixMs,
+                samples: samples
+            ).map(mapOutcome)
+        }
+    }
+
+    func takeLocationAcquisitionChange() -> Bool {
+        core?.takeLocationAcquisitionChange() ?? false
+    }
+
+    func reserveRecordingWork(observationCount: UInt64) throws -> MobileRideMapRecordingWorkPermit {
+        try withCore { try $0.reserveRecordingWork(observationCount: observationCount) }
+    }
+
+    /// Transfers native callback ownership to Rust before dispatch; capacity waits are lossless.
+    func admitLocationCallback(
+        receiptMonotonicMs: UInt64,
+        receiptWallClockUnixMs: UInt64,
+        samples: [MobilePhoneLocationSampleDto]
+    ) throws -> MobileRideMapLocationCallback {
+        try withCore {
+            try $0.admitLocationCallback(
+                receiptMonotonicMs: receiptMonotonicMs,
+                receiptWallClockUnixMs: receiptWallClockUnixMs,
+                samples: samples
+            )
+        }
+    }
+
+    func finishLocationCallback(_ callback: MobileRideMapLocationCallback) throws -> [MobileRideMapOutcomeDto] {
+        try withCore { _ in try callback.finish().map(mapOutcome) }
+    }
+
+    /// Records a complete native callback from the serial background recording executor.
+    /// Rust settles bounded groups before admitting more, preserving every source timestamp.
+    public func ingestLocationCallbackOutcomes(
+        recordingToken: MobileRideMapRecordingTokenDto?,
+        receiptMonotonicMs: UInt64,
+        receiptWallClockUnixMs: UInt64,
+        samples: [MobilePhoneLocationSampleDto]
+    ) throws -> [MobileRideMapOutcomeDto] {
+        try withCore {
+            try $0.ingestLocationCallbackWithOutcomes(
                 recording: recordingToken,
                 receiptMonotonicMs: receiptMonotonicMs,
                 receiptWallClockUnixMs: receiptWallClockUnixMs,
@@ -1935,6 +2060,9 @@ public final class MobileRideMapState: @unchecked Sendable {
         case .AdmissionPending: return .admissionPending
         case .InvalidRouteProjection: return .invalidRouteProjection
         case .Cancelled: return .cancelled
+        case .PendingMusicHistory: return .storageError("previous ride music history is pending")
+        case .MusicHistoryFull: return .storageError("pending ride music history is full")
+        case .MusicObservationIncomplete: return .storageError("ride music observation is incomplete")
         case let .InvalidMusicInput(message): return .invalidMusicInput(message)
         case let .Storage(message): return .storageError(message)
         }

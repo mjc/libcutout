@@ -15,12 +15,15 @@ build = "build.rs"
 workspace = true
 
 [dependencies]
+hex.workspace = true
 arrayvec.workspace = true
 bitflags.workspace = true
 bytes.workspace = true
 crc32fast.workspace = true
+crc.workspace = true
 cutout-core = { path = "../cutout-core", version = "0.1.0" }
 futures-util.workspace = true
+quick-xml.workspace = true
 retina.workspace = true
 thiserror.workspace = true
 tokio.workspace = true

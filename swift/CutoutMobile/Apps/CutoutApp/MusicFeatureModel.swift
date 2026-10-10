@@ -24,6 +24,13 @@ typealias MusicProviderCommandHandler = @MainActor (
     MobileMusicProviderDto,
     MobileMusicCommandDto
 ) async -> MusicCommandOutcome
+typealias MusicHistorySnapshotReader = @MainActor () async -> MobileRideMapSnapshotDto?
+
+struct MusicCaptureFailureReceipt {
+    let transition: MobileMusicHistoryTransition
+    let target: MobileMusicCaptureTarget
+    let outcome: MobileCaptureWriteOutcomeDto
+}
 
 @MainActor
 private final class MusicCommandFeedbackRequest {
@@ -51,11 +58,17 @@ final class MusicFeatureModel {
     @ObservationIgnored let effects: MusicProviderEffectExecutor
     @ObservationIgnored let coordinator: MusicIntegrationCoordinator
     @ObservationIgnored private let rideMapState: MobileRideMapState?
+    @ObservationIgnored private let historySnapshotReader: MusicHistorySnapshotReader
     @ObservationIgnored let spotifyProvider: SpotifyProviderAdapter
     @ObservationIgnored private let spotifyCallbackHandler: (@MainActor (URL) -> Bool)?
     @ObservationIgnored private let monotonicNow: @MainActor () -> UInt64
     @ObservationIgnored private let updateCapturePolicy: @MainActor (MobileMusicHistoryPolicyDto) -> Void
     @ObservationIgnored private let updateCaptureObservation: @MainActor (MobilePevcapMusicEventDto?) -> Void
+    @ObservationIgnored private let updateCaptureObservationAsync:
+        @MainActor (
+            MobilePevcapMusicEventDto?, MobileMusicCaptureTarget
+        ) async -> MobileCaptureWriteOutcomeDto
+    @ObservationIgnored private let captureTarget: @MainActor () -> MobileMusicCaptureTarget
     @ObservationIgnored private let invalidateHistoryForDeletion: @MainActor () -> Void
     @ObservationIgnored private let selectedHistoryRideID: @MainActor () -> String?
     @ObservationIgnored private let clearSelectedHistoryMusic: @MainActor () -> Void
@@ -71,13 +84,21 @@ final class MusicFeatureModel {
     var timelineEvents = [MobileMusicRideEventDto]()
     var selectedProvider: MobileMusicProviderDto
     var isPlayerHidden: Bool
+    private(set) var preferredHistoryPolicy: MobileMusicHistoryPolicyDto
     var historyPolicy: MobileMusicHistoryPolicyDto
     var historyUnavailable = false
     var historySaveError: MobileRideMapError?
     var commandFeedback: MusicCommandFeedback?
     @ObservationIgnored private var activeSpotifyHandoffFeedbackRequest: MusicCommandFeedbackRequest?
     @ObservationIgnored private var observationError: MobileRideMapError?
+    @ObservationIgnored private(set) var captureFailureReceipt: MusicCaptureFailureReceipt?
     @ObservationIgnored private var historyPersistenceError: MobileRideMapError?
+    @ObservationIgnored private var historyReadbackRevisionStorage: UInt64 = 0
+    @ObservationIgnored private var historyDiagnosticDeletionRevision: UInt64 = 0
+    @ObservationIgnored private var closedHistoryReadTask: Task<Void, Never>?
+    @ObservationIgnored private var closedHistoryReadRequested = false
+
+    var historyReadbackRevision: UInt64 { historyReadbackRevisionStorage }
 
     var nowPlaying: MusicNowPlaying? {
         isPlayerHidden ? nil : settingsNowPlaying
@@ -95,6 +116,12 @@ final class MusicFeatureModel {
         monotonicNow: @escaping @MainActor () -> UInt64,
         updateCapturePolicy: @escaping @MainActor (MobileMusicHistoryPolicyDto) -> Void,
         updateCaptureObservation: @escaping @MainActor (MobilePevcapMusicEventDto?) -> Void,
+        updateCaptureObservationAsync: (
+            @MainActor (
+                MobilePevcapMusicEventDto?, MobileMusicCaptureTarget
+            ) async -> MobileCaptureWriteOutcomeDto
+        )? = nil,
+        captureTarget: @escaping @MainActor () -> MobileMusicCaptureTarget = { .unavailable },
         invalidateHistoryForDeletion: @escaping @MainActor () -> Void,
         selectedHistoryRideID: @escaping @MainActor () -> String?,
         clearSelectedHistoryMusic: @escaping @MainActor () -> Void,
@@ -102,7 +129,9 @@ final class MusicFeatureModel {
         appleMonitor: (any AppleMusicMonitorDriving)? = nil,
         monitorPollWaiter: MusicMonitorPollWaiter? = nil,
         providerCommandHandler: MusicProviderCommandHandler? = nil,
-        spotifyCallbackHandler: (@MainActor (URL) -> Bool)? = nil
+        spotifyCallbackHandler: (@MainActor (URL) -> Bool)? = nil,
+        historySnapshotReader: MusicHistorySnapshotReader? = nil,
+        correlationRideIDReader: (@MainActor () async -> String?)? = nil
     ) {
         let providerLifecycle = MobileMusicProviderLifecycle()
         let effects = MusicProviderEffectExecutor()
@@ -112,9 +141,16 @@ final class MusicFeatureModel {
         self.historyPolicyStore = historyPolicyStore
         self.monitoringPreferenceStore = monitoringPreferenceStore
         self.rideMapState = rideMapState
+        self.historySnapshotReader = historySnapshotReader ?? { await rideMapState?.currentSnapshotAsync() }
         self.monotonicNow = monotonicNow
         self.updateCapturePolicy = updateCapturePolicy
         self.updateCaptureObservation = updateCaptureObservation
+        self.updateCaptureObservationAsync =
+            updateCaptureObservationAsync ?? { observation, _ in
+                updateCaptureObservation(observation)
+                return .accepted
+            }
+        self.captureTarget = captureTarget
         self.invalidateHistoryForDeletion = invalidateHistoryForDeletion
         self.selectedHistoryRideID = selectedHistoryRideID
         self.clearSelectedHistoryMusic = clearSelectedHistoryMusic
@@ -124,7 +160,8 @@ final class MusicFeatureModel {
         self.effects = effects
         self.coordinator = MusicIntegrationCoordinator(
             rideMapState: rideMapState,
-            lifecycle: providerLifecycle
+            lifecycle: providerLifecycle,
+            correlationRideIDReader: correlationRideIDReader
         )
         let spotifyProvider = SpotifyProviderAdapter(
             lifecycle: providerLifecycle,
@@ -146,12 +183,18 @@ final class MusicFeatureModel {
         #endif
         selectedProvider = providerSelectionStore.provider
         isPlayerHidden = playerVisibilityStore.isHidden
-        historyPolicy = historyPolicyStore.policy
+        preferredHistoryPolicy = historyPolicyStore.policy
+        historyPolicy = .disabled
         timelineEvents = []
     }
 
     @discardableResult
     func setHistoryPolicy(_ policy: MobileMusicHistoryPolicyDto) -> Bool {
+        advanceHistoryReadbackRevision()
+        guard rideMapState != nil else {
+            rememberFutureHistoryPolicy(policy)
+            return true
+        }
         #if DEBUG
             print("music_history_request policy=\(policy) has_ride_store=\(rideMapState != nil)")
         #endif
@@ -165,10 +208,7 @@ final class MusicFeatureModel {
             timelineEvents = coordinator.recordedEvents
             return true
         } catch let error as MobileRideMapError where error == .noActiveRide || error == .invalidTransition {
-            rememberHistoryPolicy(policy)
-            coordinator.restoreHistoryPolicy(policy)
-            historyUnavailable = false
-            if policy == .disabled { clearMusicCaptureContext() }
+            rememberFutureHistoryPolicy(policy)
             return true
         } catch {
             #if DEBUG
@@ -182,65 +222,137 @@ final class MusicFeatureModel {
 
     @discardableResult
     func setHistoryPolicyAsync(_ policy: MobileMusicHistoryPolicyDto) async -> Bool {
-        #if DEBUG
-            print("music_history_request policy=\(policy) has_ride_store=\(rideMapState != nil)")
-        #endif
+        advanceHistoryReadbackRevision()
+        let operationRevision = historyReadbackRevision
+        let targetRideID = await historySnapshotReader()?.rideID
+        var stillTargetsCurrentRide = true
+        defer {
+            if stillTargetsCurrentRide, historyReadbackRevision == operationRevision {
+                advanceHistoryReadbackRevision()
+            }
+        }
+        guard operationRevision == historyReadbackRevision else { return false }
+        guard let rideMapState else {
+            rememberFutureHistoryPolicy(policy)
+            return true
+        }
         let previous = historyPolicy
         clearHistoryErrors()
         do {
-            try await coordinator.setHistoryPolicyAsync(policy)
+            try await rideMapState.setMusicHistoryPolicyAsync(policy)
+            let current = await historySnapshotReader()
+            stillTargetsCurrentRide = current?.rideID == targetRideID
+            guard operationRevision == historyReadbackRevision else { return false }
+            guard stillTargetsCurrentRide else {
+                rememberPreferredHistoryPolicy(policy)
+                return true
+            }
+            coordinator.restoreHistoryPolicy(policy)
             rememberHistoryPolicy(policy)
             if policy == .disabled {
                 clearMusicCaptureContext()
                 timelineEvents = []
             } else {
                 do {
-                    timelineEvents = try await coordinator.recordedEventsAsync()
+                    let events = try await coordinator.recordedEventsAsync()
+                    let current = await historySnapshotReader()
+                    stillTargetsCurrentRide = current?.rideID == targetRideID
+                    guard operationRevision == historyReadbackRevision else { return false }
+                    if stillTargetsCurrentRide, historyPolicy == policy { timelineEvents = events }
                 } catch {
-                    setHistoryPersistenceError(appRideMapError(error))
+                    let current = await historySnapshotReader()
+                    stillTargetsCurrentRide = current?.rideID == targetRideID
+                    guard operationRevision == historyReadbackRevision else { return false }
+                    if stillTargetsCurrentRide, historyPolicy == policy {
+                        setHistoryPersistenceError(appRideMapError(error))
+                    }
                 }
             }
+            let settledCurrent = await historySnapshotReader()
+            stillTargetsCurrentRide = settledCurrent?.rideID == targetRideID
+            guard operationRevision == historyReadbackRevision else { return false }
             return true
         } catch let error as MobileRideMapError where error == .noActiveRide || error == .invalidTransition {
-            rememberHistoryPolicy(policy)
-            coordinator.restoreHistoryPolicy(policy)
-            if policy == .disabled { clearMusicCaptureContext() }
+            let current = await historySnapshotReader()
+            stillTargetsCurrentRide = current?.rideID == targetRideID
+            guard operationRevision == historyReadbackRevision else { return false }
+            if stillTargetsCurrentRide {
+                rememberFutureHistoryPolicy(policy)
+            } else {
+                rememberPreferredHistoryPolicy(policy)
+            }
             return true
         } catch {
-            #if DEBUG
-                print("music_history_rejected error=\(error)")
-            #endif
-            historyPolicy = previous
-            setHistoryPersistenceError(appRideMapError(error))
+            let current = await historySnapshotReader()
+            stillTargetsCurrentRide = current?.rideID == targetRideID
+            guard operationRevision == historyReadbackRevision else { return false }
+            if stillTargetsCurrentRide {
+                historyPolicy = previous
+                setHistoryPersistenceError(appRideMapError(error))
+            }
             return false
         }
     }
 
     private func rememberHistoryPolicy(_ policy: MobileMusicHistoryPolicyDto) {
-        historyPolicyStore.set(policy)
+        rememberPreferredHistoryPolicy(policy)
         historyPolicy = policy
         historyUnavailable = false
         clearHistoryErrors()
         updateCapturePolicy(policy)
     }
 
+    private func rememberPreferredHistoryPolicy(_ policy: MobileMusicHistoryPolicyDto) {
+        historyPolicyStore.set(policy)
+        preferredHistoryPolicy = policy
+    }
+
+    private func rememberFutureHistoryPolicy(_ policy: MobileMusicHistoryPolicyDto) {
+        rememberPreferredHistoryPolicy(policy)
+        historyPolicy = .disabled
+        historyUnavailable = false
+        clearHistoryErrors()
+        coordinator.restoreHistoryPolicy(.disabled)
+        updateCapturePolicy(.disabled)
+        clearMusicCaptureContext()
+        refreshClosedHistoryTimeline()
+    }
+
     /// Adopts the history Rust created atomically with the ride; this must never write a policy.
     func adoptHistoryForNewRideAsync() async -> MobileRideMapError? {
+        advanceHistoryReadbackRevision()
+        let readbackRevision = historyReadbackRevision
+        let targetRideID = (await historySnapshotReader())?.rideID
+        let policy = await rideMapState?.currentMusicHistoryPolicyAsync() ?? .disabled
+        guard (await historySnapshotReader())?.rideID == targetRideID,
+            readbackRevision == historyReadbackRevision
+        else { return nil }
         updateCaptureObservation(nil)
         timelineEvents = []
-        historyPolicy = rideMapState?.currentMusicHistoryPolicy() ?? .disabled
+        historyPolicy = policy
         historyUnavailable = false
         clearHistoryErrors()
         coordinator.restoreHistoryPolicy(historyPolicy)
         updateCapturePolicy(historyPolicy)
         do {
-            synchronizeHistory(try await rideMapState?.currentMusicHistoryAsync())
+            let history = try await rideMapState?.currentMusicHistoryAsync()
+            let current = await historySnapshotReader()
+            guard
+                readbackRevision == historyReadbackRevision,
+                current?.rideID == targetRideID
+            else { return nil }
+            _ = synchronizeHistory(history, ifCurrentRevision: readbackRevision)
             return nil
         } catch {
+            let current = await historySnapshotReader()
+            guard
+                readbackRevision == historyReadbackRevision,
+                current?.rideID == targetRideID
+            else { return nil }
             let mappedError = appRideMapError(error)
             setHistoryPersistenceError(mappedError)
             setRideHistoryError(mappedError)
-            guard rideMapState?.currentSnapshot() != nil else {
+            guard current != nil else {
                 synchronizeHistory(nil)
                 setHistoryPersistenceError(mappedError)
                 return mappedError
@@ -250,6 +362,22 @@ final class MusicFeatureModel {
     }
 
     func synchronizeHistory(_ history: MobileMusicHistoryDto?) {
+        advanceHistoryReadbackRevision()
+        applySynchronizedHistory(history)
+    }
+
+    @discardableResult
+    func synchronizeHistory(
+        _ history: MobileMusicHistoryDto?,
+        ifCurrentRevision revision: UInt64
+    ) -> Bool {
+        guard revision == historyReadbackRevision else { return false }
+        advanceHistoryReadbackRevision()
+        applySynchronizedHistory(history)
+        return true
+    }
+
+    private func applySynchronizedHistory(_ history: MobileMusicHistoryDto?) {
         guard let history else {
             historyUnavailable = false
             clearHistoryErrors()
@@ -292,30 +420,34 @@ final class MusicFeatureModel {
             setRideHistoryError(.storageError("Rust ride database is unavailable"))
             return false
         }
+        let initialRevision = historyReadbackRevision
+        let currentRide = await historySnapshotReader()
+        guard initialRevision == historyReadbackRevision else { return false }
+        let invalidatesCurrentRide = currentRide?.rideID == rideID
+        if invalidatesCurrentRide { advanceHistoryReadbackRevision() }
+        let operationRevision = historyReadbackRevision
+        defer {
+            if invalidatesCurrentRide, historyReadbackRevision == operationRevision {
+                advanceHistoryReadbackRevision()
+            }
+        }
         invalidateHistoryForDeletion()
-        let currentRide = rideMapState.currentSnapshot()
-        let isOpenCurrentRide = currentRide?.rideID == rideID && currentRide?.state.isOpen == true
         do {
-            if isOpenCurrentRide {
-                try await rideMapState.deleteCurrentMusicHistoryAsync()
-                if rideMapState.currentSnapshot()?.rideID == rideID {
-                    clearActiveHistory()
-                }
-            } else {
-                try await rideMapState.deleteMusicHistoryAsync(rideID: rideID)
-                if rideMapState.currentSnapshot()?.rideID == rideID {
-                    historyPolicy = .disabled
-                    historyUnavailable = false
-                    coordinator.restoreHistoryPolicy(.disabled)
-                    providerLifecycle.clearPendingCommandCorrelation()
-                    clearMusicCaptureContext()
-                    timelineEvents = coordinator.recordedEvents
-                }
+            try await rideMapState.deleteMusicHistoryAsync(rideID: rideID)
+            let current = await historySnapshotReader()
+            if operationRevision == historyReadbackRevision, current?.rideID == rideID {
+                clearActiveHistory()
             }
             if selectedHistoryRideID() == rideID { clearSelectedHistoryMusic() }
+            // Explicit deletion conservatively clears all retained history diagnostics
+            // without altering live playback or transport state.
+            historyDiagnosticDeletionRevision &+= 1
+            captureFailureReceipt = nil
+            coordinator.clearPresentationHistoryFailures()
+            refreshHistoryErrorProjection()
             return true
         } catch {
-            setRideHistoryError(appRideMapError(error))
+            if operationRevision == historyReadbackRevision { setRideHistoryError(appRideMapError(error)) }
             return false
         }
     }
@@ -325,9 +457,10 @@ final class MusicFeatureModel {
         historyUnavailable = false
         clearHistoryErrors()
         coordinator.restoreHistoryPolicy(.disabled)
+        updateCapturePolicy(.disabled)
         providerLifecycle.clearPendingCommandCorrelation()
         clearMusicCaptureContext()
-        timelineEvents = coordinator.recordedEvents
+        timelineEvents = []
     }
 
     func clearMusicCaptureContext() {
@@ -335,8 +468,44 @@ final class MusicFeatureModel {
     }
 
     func rideMapClosed() {
+        advanceHistoryReadbackRevision()
+        historyPolicy = .disabled
+        historyUnavailable = false
+        coordinator.restoreHistoryPolicy(.disabled)
+        updateCapturePolicy(.disabled)
         clearMusicCaptureContext()
-        timelineEvents = coordinator.recordedEvents
+        refreshClosedHistoryTimeline()
+    }
+
+    private func refreshClosedHistoryTimeline() {
+        closedHistoryReadRequested = true
+        guard closedHistoryReadTask == nil else { return }
+        let coordinator = coordinator
+        closedHistoryReadTask = Task { [weak self] in
+            while let revision = self?.takeClosedHistoryReadRevision() {
+                do {
+                    let events = try await coordinator.recordedEventsAsync()
+                    guard let self else { return }
+                    if revision == self.historyReadbackRevision { self.timelineEvents = events }
+                } catch {
+                    guard let self else { return }
+                    if revision == self.historyReadbackRevision {
+                        self.setHistoryPersistenceError(appRideMapError(error))
+                    }
+                }
+            }
+            self?.closedHistoryReadTask = nil
+        }
+    }
+
+    private func takeClosedHistoryReadRevision() -> UInt64? {
+        guard closedHistoryReadRequested else { return nil }
+        closedHistoryReadRequested = false
+        return historyReadbackRevision
+    }
+
+    private func advanceHistoryReadbackRevision() {
+        historyReadbackRevisionStorage &+= 1
     }
 
     func handleProviderURL(_ url: URL) -> Bool {
@@ -365,9 +534,7 @@ final class MusicFeatureModel {
                     snapshot: spotifyProvider.unavailableSnapshot(observedAtMs: observedAtMs)
                 )
             }
-            Task { @MainActor [weak self] in
-                _ = await self?.ingestObservationAsync(observation)
-            }
+            submitObservation(observation)
         #endif
     }
 
@@ -421,9 +588,7 @@ final class MusicFeatureModel {
                         openProvider: true
                     )
                 ))
-            Task { @MainActor [weak self] in
-                _ = await self?.ingestObservationAsync(observation)
-            }
+            submitObservation(observation)
         }
         stopProviderWork()
         if let nowPlaying = coordinator.nowPlaying {
@@ -436,9 +601,16 @@ final class MusicFeatureModel {
     }
 
     func connect() {
+        let request: MobileMusicProviderMonitorRequest =
+            settingsNowPlaying == nil || settingsNowPlaying?.state == .unauthorized ? .authorize : .observe
+        requestMonitoring(request)
+    }
+
+    private func requestMonitoring(_ request: MobileMusicProviderMonitorRequest) {
         monitoringPreferenceStore.setEnabled(true)
         _ = providerLifecycle.resume()
-        providerLifecycle.requestMonitor(request: .authorize)
+        if request == .observe, effects.isRunning(in: .monitor) { return }
+        providerLifecycle.requestMonitor(request: request)
         beginMonitoring()
     }
 
@@ -446,7 +618,7 @@ final class MusicFeatureModel {
         #if canImport(SpotifyiOS) && os(iOS)
             guard selectedProvider == .spotify else { return }
             spotifyProvider.clearAuthorization()
-            connect()
+            requestMonitoring(.authorize)
         #endif
     }
 
@@ -460,9 +632,7 @@ final class MusicFeatureModel {
         playerVisibilityStore.setHidden(false)
         isPlayerHidden = false
         settingsNowPlaying = projectedNowPlaying()
-        monitoringPreferenceStore.setEnabled(true)
-        providerLifecycle.requestMonitor(request: .observe)
-        beginMonitoring()
+        requestMonitoring(.observe)
     }
 
     func selectProvider(_ provider: MobileMusicProviderDto) {
@@ -658,10 +828,10 @@ final class MusicFeatureModel {
     }
 
     func beginMonitoring() {
+        guard let effect = providerLifecycle.beginMonitor() else { return }
         // Invalidate before stopping: teardown may resume cancelled command work synchronously.
         providerLifecycle.invalidateCommandFeedback()
         commandFeedback = nil
-        guard let effect = providerLifecycle.beginMonitor() else { return }
         #if os(iOS) && canImport(MediaPlayer)
             if let settingsNowPlaying {
                 self.settingsNowPlaying = settingsNowPlaying.staleProjection
@@ -689,17 +859,22 @@ final class MusicFeatureModel {
                     },
                     observedAtMs: { [weak self] in self?.monotonicNow() },
                     record: { [weak self] observation in
-                        Task { @MainActor [weak self] in
-                            _ = await self?.ingestObservationAsync(observation)
-                        }
+                        self?.submitObservation(observation)
                     },
                     refresh: { [weak self] in self?.refreshSnapshot() }
                 )
                 self?.finishMonitoring(generation: generation)
             }
         #else
-            _ = ingestObservation(unavailableMusicObservation(observedAtMs: monotonicNow()))
-            _ = providerLifecycle.finishMonitor(generation: effect.generation)
+            let observation = unavailableMusicObservation(observedAtMs: monotonicNow())
+            coordinator.update(snapshot: observation.snapshot)
+            settingsNowPlaying = projectedNowPlaying()
+            let generation = effect.generation
+            let observationTask = submitObservation(observation)
+            effects.run(.monitor(generation)) { [weak self, observationTask] in
+                _ = await observationTask?.value
+                self?.finishMonitoring(generation: generation)
+            }
         #endif
     }
 
@@ -841,38 +1016,149 @@ final class MusicFeatureModel {
         wallClockAtMs: UInt64? = nil,
         clockUncertaintyMs: UInt64 = 1_000
     ) async -> Bool {
+        guard
+            let task = submitObservation(
+                observation, wallClockAtMs: wallClockAtMs,
+                clockUncertaintyMs: clockUncertaintyMs
+            )
+        else { return false }
+        return await task.value
+    }
+
+    @discardableResult
+    func submitObservation(
+        _ observation: MusicProviderObservation,
+        wallClockAtMs: UInt64? = nil,
+        clockUncertaintyMs: UInt64 = 1_000,
+        historyReadback: (@MainActor () async throws -> [MobileMusicRideEventDto])? = nil
+    ) -> Task<Bool, Never>? {
+        let coordinator = coordinator
+        let submission = coordinator.beginObservation()
+        switch submission.admission() {
+        case .admitted:
+            break
+        case .full:
+            setHistoryPersistenceError(.storageError("music observation queue is full"))
+            submission.release()
+            return nil
+        case .exhausted:
+            setHistoryPersistenceError(.storageError("music observation identities exhausted"))
+            submission.release()
+            return nil
+        }
         let wallClockAtMs = wallClockAtMs ?? UInt64(Date().timeIntervalSince1970 * 1_000)
-        do {
-            let outcome = try await coordinator.ingestAsync(
-                observation: observation,
-                wallClockAtMs: wallClockAtMs,
-                clockUncertaintyMs: clockUncertaintyMs
-            )
-            let succeeded = applyObservationOutcome(
-                outcome,
-                observation: observation,
-                wallClockAtMs: wallClockAtMs,
-                clockUncertaintyMs: clockUncertaintyMs
-            )
-            await finishObservationAsync()
-            return succeeded
-        } catch let MusicIntegrationIngestError.observation(error) {
-            setObservationError(appRideMapError(error))
-            await finishObservationAsync()
-            return false
-        } catch let MusicIntegrationIngestError.history(error) {
-            setObservationError(nil)
-            if let error = error as? MobileRideMapError, error == .noActiveRide {
-                await finishObservationAsync()
+        let readbackRevision = historyReadbackRevision
+        let diagnosticDeletionRevision = historyDiagnosticDeletionRevision
+        let captureObservation = updateCaptureObservationAsync
+        let capturedTarget = captureTarget()
+        let readHistory = historyReadback ?? { try await coordinator.recordedEventsAsync() }
+        return Task { [weak self, coordinator, submission, captureObservation] in
+            defer { submission.release() }
+            do {
+                let completion = try await coordinator.completeObservation(
+                    submission: submission,
+                    observation: observation,
+                    wallClockAtMs: wallClockAtMs,
+                    clockUncertaintyMs: clockUncertaintyMs,
+                    captureTarget: capturedTarget
+                )
+                guard !Task.isCancelled, submission.isCurrent() else { return false }
+                var captureFailure: MusicCaptureFailureReceipt?
+                var captureOutcome: MobileCaptureWriteOutcomeDto?
+                if completion.outcome == .recorded, let transition = completion.settledTransition {
+                    if let policy = completion.effectivePolicy {
+                        let outcome = await captureObservation(
+                            MusicFeatureModel.pevcapMusicObservation(
+                                from: MusicProviderObservation(snapshot: transition.snapshot),
+                                policy: policy,
+                                wallClockAtMs: transition.wallClockAtMs,
+                                clockUncertaintyMs: transition.clockUncertaintyMs,
+                                rideSequence: completion.recordedSequence
+                            ), completion.settledCaptureTarget)
+                        captureOutcome = outcome
+                        if outcome != .accepted {
+                            captureFailure = MusicCaptureFailureReceipt(
+                                transition: transition, target: completion.settledCaptureTarget,
+                                outcome: outcome
+                            )
+                        }
+                    }
+                } else if completion.outcome == .disabled || completion.outcome == .full {
+                    captureOutcome = await captureObservation(nil, capturedTarget)
+                }
+                do {
+                    try submission.settle(capture: captureOutcome)
+                } catch {
+                    // Preserve the exact capture failure as well as Rust's terminal settlement error.
+                    if !Task.isCancelled, submission.isCurrent(), let self,
+                        diagnosticDeletionRevision == self.historyDiagnosticDeletionRevision,
+                        let captureFailure
+                    {
+                        self.captureFailureReceipt = captureFailure
+                        self.refreshHistoryErrorProjection()
+                    }
+                    throw MusicIntegrationIngestError.history(error)
+                }
+                var events: [MobileMusicRideEventDto]?
+                var readError: MobileRideMapError?
+                do { events = try await readHistory() } catch { readError = appRideMapError(error) }
+                guard !Task.isCancelled, submission.isCurrent(), let self else { return false }
+                if diagnosticDeletionRevision == self.historyDiagnosticDeletionRevision {
+                    if let captureFailure {
+                        self.captureFailureReceipt = captureFailure
+                    }
+                } else {
+                    coordinator.clearPresentationHistoryFailures()
+                }
+                self.refreshHistoryErrorProjection()
+                if readbackRevision == self.historyReadbackRevision {
+                    self.setObservationError(nil)
+                    if completion.outcome == .full {
+                        self.setHistoryPersistenceError(.storageError("ride music timeline is full"))
+                    } else if completion.outcome != nil {
+                        self.setHistoryPersistenceError(nil)
+                    }
+                    if let events { self.timelineEvents = events }
+                    if let readError { self.setHistoryPersistenceError(readError) }
+                }
+                self.settingsNowPlaying = completion.nowPlaying
+                return completion.outcome != .full && captureFailure == nil
+            } catch {
+                submission.failRequiredEffects()
+                // Required failure presentation must not wait for optional history delivery.
+                if !Task.isCancelled, submission.isCurrent(), let self {
+                    if diagnosticDeletionRevision != self.historyDiagnosticDeletionRevision {
+                        coordinator.clearPresentationHistoryFailures()
+                    }
+                    self.refreshHistoryErrorProjection()
+                    if readbackRevision == self.historyReadbackRevision {
+                        switch error {
+                        case let MusicIntegrationIngestError.observation(observationError):
+                            self.setObservationError(appRideMapError(observationError))
+                        case let MusicIntegrationIngestError.history(historyError):
+                            self.setObservationError(nil)
+                            if (historyError as? MobileRideMapError) != .noActiveRide {
+                                self.setHistoryPersistenceError(appRideMapError(historyError))
+                            }
+                        default:
+                            self.setHistoryPersistenceError(appRideMapError(error))
+                        }
+                    }
+                    self.settingsNowPlaying = self.projectedNowPlaying()
+                }
+                var events: [MobileMusicRideEventDto]?
+                do { events = try await readHistory() } catch {}
+                guard !Task.isCancelled, submission.isCurrent(), let self else { return false }
+                if diagnosticDeletionRevision != self.historyDiagnosticDeletionRevision {
+                    coordinator.clearPresentationHistoryFailures()
+                }
+                self.refreshHistoryErrorProjection()
+                if readbackRevision == self.historyReadbackRevision {
+                    if let events { self.timelineEvents = events }
+                }
+                self.settingsNowPlaying = self.projectedNowPlaying()
                 return false
             }
-            setHistoryPersistenceError(appRideMapError(error))
-            await finishObservationAsync()
-            return false
-        } catch {
-            setHistoryPersistenceError(appRideMapError(error))
-            await finishObservationAsync()
-            return false
         }
     }
 
@@ -921,20 +1207,18 @@ final class MusicFeatureModel {
     }
 
     private func refreshHistoryErrorProjection() {
-        historySaveError = observationError ?? historyPersistenceError
+        historySaveError =
+            observationError ?? historyPersistenceError
+            ?? coordinator.previousRideHistoryFailure.map { _ in
+                .storageError("Previous ride listening history is incomplete")
+            }
+            ?? captureFailureReceipt.map { _ in
+                .storageError("Ride music capture metadata is incomplete")
+            }
     }
 
     private func finishObservation() {
         timelineEvents = coordinator.recordedEvents
-        settingsNowPlaying = projectedNowPlaying()
-    }
-
-    private func finishObservationAsync() async {
-        do {
-            timelineEvents = try await coordinator.recordedEventsAsync()
-        } catch {
-            setHistoryPersistenceError(appRideMapError(error))
-        }
         settingsNowPlaying = projectedNowPlaying()
     }
 
@@ -952,11 +1236,27 @@ final class MusicFeatureModel {
         clockUncertaintyMs: UInt64,
         rideSequence: UInt64?
     ) -> MobilePevcapMusicEventDto? {
-        guard !historyUnavailable,
-            historyPolicy != .disabled,
+        guard !historyUnavailable else { return nil }
+        return Self.pevcapMusicObservation(
+            from: observation,
+            policy: historyPolicy,
+            wallClockAtMs: wallClockAtMs,
+            clockUncertaintyMs: clockUncertaintyMs,
+            rideSequence: rideSequence
+        )
+    }
+
+    private static func pevcapMusicObservation(
+        from observation: MusicProviderObservation,
+        policy: MobileMusicHistoryPolicyDto,
+        wallClockAtMs: UInt64,
+        clockUncertaintyMs: UInt64,
+        rideSequence: UInt64?
+    ) -> MobilePevcapMusicEventDto? {
+        guard policy != .disabled,
             let item = observation.snapshot.item,
             let trackID = Self.pevcapTrackIdentifier(
-                policy: historyPolicy,
+                policy: policy,
                 provider: observation.snapshot.provider,
                 identifier: item.identifier
             )

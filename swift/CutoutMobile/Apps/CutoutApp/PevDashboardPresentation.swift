@@ -233,8 +233,21 @@ func livePackVoltageDetail(_ detail: TelemetryPackVoltageDetail) -> String {
 
 func chargeEstimateTile(from state: EucRideScreenState) -> PevDashboardTile {
     let presentation = state.chargeEstimate.dashboardPresentation
+    let hasDuration =
+        state.chargeEstimate.kind == .available
+        || state.chargeEstimate.kind == .collectingSamples
+    let metricValue: PevDashboardMetricValue
+    switch state.chargeEstimate.kind {
+    case .full, .balancing, .available, .collectingSamples:
+        metricValue = presentation.metricValue
+    case .unavailable, .stale, .failed:
+        let charging = pevLocalizedText("euc.status.charging")
+        metricValue = .status(display: charging, accessibility: charging)
+    }
     return PevDashboardTile(
-        kind: .chargeEstimate, label: localizedAppText("ride.metric.charge"), metricValue: presentation.metricValue,
+        kind: .chargeEstimate,
+        label: hasDuration ? localizedAppText("ride.metric.charge") : pevLocalizedText("euc.status.charging"),
+        metricValue: metricValue,
         unit: "",
         detail: state.chargeEstimate.kind == .available ? localizedAppText("ride.detail.estimated") : "",
         accent: .green)

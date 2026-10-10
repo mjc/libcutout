@@ -508,6 +508,6 @@ mod tests {
             DeviceActionStatus::Failed
         );
         actions.disconnect();
-        assert!(actions.snapshot(time(14)).is_empty());
+        assert_eq!(actions.snapshot(time(14)).len(), 0);
     }
 }

@@ -7,8 +7,8 @@ use cutout_core::{
 use std::sync::Arc;
 
 use crate::{
-    CutoutSessionStateHandle, MobileRideMapConnectionAdmission, MobileRideMapCore,
-    MobileRideMapCoreErrorDto, MobileRideMapSpeedObservationDto,
+    CutoutSessionStateHandle, MobileMusicHistoryPolicyDto, MobileRideMapConnectionAdmission,
+    MobileRideMapCore, MobileRideMapCoreErrorDto, MobileRideMapSpeedObservationDto,
     MobileRideMapTelemetryObservationDto, MonotonicTimestamp,
 };
 #[cfg(test)]
@@ -273,7 +273,8 @@ impl CutoutSessionStateHandle {
     ///
     /// The session-state lock remains held through ordered enqueue, so connection invalidation
     /// cannot race between verification and admission. SQLite completion is polled separately,
-    /// after this method releases the session lock. Swift supplies only the Rust-issued token.
+    /// after this method releases the session lock. Native callers supply the Rust-issued token
+    /// and the saved music-retention preference, which applies only if admission creates a ride.
     ///
     /// # Errors
     ///
@@ -288,6 +289,7 @@ impl CutoutSessionStateHandle {
         ride_map: Arc<MobileRideMapCore>,
         token: MobileConnectionAttemptTokenDto,
         at_ms: u64,
+        music_history_policy: MobileMusicHistoryPolicyDto,
     ) -> Result<Arc<MobileRideMapConnectionAdmission>, MobileRideMapCoreErrorDto> {
         let token = token.into();
         let pending = {
@@ -301,6 +303,7 @@ impl CutoutSessionStateHandle {
                 verified.platform_identifier(),
                 at_ms,
                 verified.generation(),
+                music_history_policy.into(),
             )?
         };
         Ok(MobileRideMapConnectionAdmission::new(ride_map, pending))
@@ -428,7 +431,12 @@ mod tests {
                 .finish_detection(&token.clone().into(), true)
         );
         let admission = handle
-            .begin_ride_recording_for_verified_connection(ride_map, token.clone(), at_ms + 100)
+            .begin_ride_recording_for_verified_connection(
+                ride_map,
+                token.clone(),
+                at_ms + 100,
+                MobileMusicHistoryPolicyDto::Disabled,
+            )
             .expect("verified connection is admitted");
         (
             token,
@@ -507,7 +515,12 @@ mod tests {
 
         assert_eq!(
             handle
-                .begin_ride_recording_for_verified_connection(MobileRideMapCore::new(), token, 20)
+                .begin_ride_recording_for_verified_connection(
+                    MobileRideMapCore::new(),
+                    token,
+                    20,
+                    MobileMusicHistoryPolicyDto::Disabled,
+                )
                 .expect_err("pending connection cannot enter the ride path"),
             MobileRideMapCoreErrorDto::StaleConnection
         );
@@ -519,7 +532,8 @@ mod tests {
                 .begin_ride_recording_for_verified_connection(
                     MobileRideMapCore::new(),
                     replacement_token,
-                    40
+                    40,
+                    MobileMusicHistoryPolicyDto::Disabled,
                 )
                 .expect_err("replacement must still be verified before admission"),
             MobileRideMapCoreErrorDto::StaleConnection
@@ -624,7 +638,12 @@ mod tests {
                 .finish_detection(&token.clone().into(), true)
         );
         let admission = handle
-            .begin_ride_recording_for_verified_connection(ride_map.clone(), token.clone(), 1_100)
+            .begin_ride_recording_for_verified_connection(
+                ride_map.clone(),
+                token.clone(),
+                1_100,
+                MobileMusicHistoryPolicyDto::Disabled,
+            )
             .unwrap();
         complete_admission(&admission).unwrap();
         handle
@@ -721,7 +740,12 @@ mod tests {
         let task_handle = Arc::clone(&handle);
         let task_map = Arc::clone(&ride_map);
         let admission = task_handle
-            .begin_ride_recording_for_verified_connection(task_map, token.clone(), 20)
+            .begin_ride_recording_for_verified_connection(
+                task_map,
+                token.clone(),
+                20,
+                MobileMusicHistoryPolicyDto::Disabled,
+            )
             .expect("verified connection enqueues admission without waiting for SQLite");
         let task_admission = Arc::clone(&admission);
         let poll = std::thread::spawn(move || task_admission.poll());

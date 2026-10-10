@@ -275,6 +275,11 @@ mod tests {
             subscribe < write,
             "native must enable notifications before initial requests"
         );
+        assert_eq!(
+            owner.next_wakeup_at(&token, true),
+            Some(MonotonicTimestamp::new(101))
+        );
+        assert_eq!(owner.next_wakeup_at(&token, false), None);
         let tick = owner
             .ingest(
                 &token,
@@ -290,6 +295,7 @@ mod tests {
             SessionOutput::Transport(cutout_core::TransportAction::Write { .. })
         )));
         owner.link_down(&token);
+        assert_eq!(owner.next_wakeup_at(&token, true), None);
         assert!(
             owner
                 .ingest(
@@ -417,12 +423,9 @@ mod tests {
         assert_eq!(pwm.age, Some(cutout_core::Duration::from_milliseconds(5)));
         let _ = begin(&mut owner, "B");
         assert!(owner.ingest(&token, &pwm_duty_readback(30, 20)).is_none());
-        assert!(
-            owner
-                .state
-                .settings
-                .snapshot(MonotonicTimestamp::new(20))
-                .is_empty()
+        assert_eq!(
+            owner.state.settings.snapshot(MonotonicTimestamp::new(20)),
+            [] as [cutout_core::DeviceSettingSnapshot; 0]
         );
     }
 
@@ -463,9 +466,21 @@ mod tests {
     }
 }
 
+/// Parser boundaries for one input, independent of its semantic output count.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum NotificationFramingEvidence {
+    /// Unsupported framing, a partial frame, or a non-notification input.
+    #[default]
+    Unclassified,
+    /// The decoder retained no partial bytes before or after this notification.
+    EmptyBoundaries,
+}
+
 /// One decoded input paired with its producing connection.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DeviceConnectionStep {
+    /// Parser state sampled before and after this exact input.
+    pub notification_framing: NotificationFramingEvidence,
     /// Connection and identity that produced this result.
     pub session: DeviceConnectionSnapshot,
     /// Protocol outputs and typed error.
@@ -941,7 +956,17 @@ impl DeviceConnectionSession {
                 );
             }
         }
+        let framing_before = device.notification_buffer_state();
         let result = device.ingest_typed(input);
+        let notification_framing = match (input, framing_before, device.notification_buffer_state())
+        {
+            (
+                SessionInputDto::Notification { .. },
+                crate::NotificationBufferState::Empty,
+                crate::NotificationBufferState::Empty,
+            ) => NotificationFramingEvidence::EmptyBoundaries,
+            _ => NotificationFramingEvidence::Unclassified,
+        };
         let telemetry = device.current_snapshot();
         let diagnostics = device.diagnostics();
         if let SessionInputDto::Notification { monotonic_ms, .. } = input {
@@ -969,6 +994,7 @@ impl DeviceConnectionSession {
             }
         }
         Some(DeviceConnectionStep {
+            notification_framing,
             session: self.snapshot(),
             result,
             telemetry,

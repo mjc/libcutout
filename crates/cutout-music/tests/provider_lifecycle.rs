@@ -49,6 +49,7 @@ fn observe_transition(
             Some(kind)
         }
         MusicObservationOutcome::OutOfOrder => panic!("observation unexpectedly out of order"),
+        MusicObservationOutcome::Full => panic!("observation history unexpectedly full"),
     }
 }
 

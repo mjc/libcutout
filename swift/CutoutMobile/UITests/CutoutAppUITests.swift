@@ -1,3 +1,5 @@
+import UIKit
+import Vision
 import XCTest
 
 /// Runs against the installed app and its real preferences/provider session.
@@ -17,25 +19,25 @@ final class MusicPreferencesDeviceUITests: XCTestCase {
         XCTAssertTrue(picker.waitForExistence(timeout: 5), app.debugDescription)
         picker.tap()
         app.buttons["music.history-policy.human-readable"].tap()
-        XCTAssertEqual(picker.value as? String, "human-readable")
+        XCTAssertEqual(picker.value as? String, "Save IDs and titles")
         picker.tap()
         app.buttons["music.history-policy.opaque-item"].tap()
-        XCTAssertEqual(picker.value as? String, "opaque-item")
+        XCTAssertEqual(picker.value as? String, "Save item IDs only")
         app.buttons["setup.done"].tap()
         openMusicSettings(in: app)
-        XCTAssertEqual(picker.value as? String, "opaque-item")
+        XCTAssertEqual(picker.value as? String, "Save item IDs only")
         picker.tap()
         app.buttons["music.history-policy.human-readable"].tap()
-        XCTAssertEqual(picker.value as? String, "human-readable")
+        XCTAssertEqual(picker.value as? String, "Save IDs and titles")
         app.buttons["setup.done"].tap()
         openMusicSettings(in: app)
-        XCTAssertEqual(picker.value as? String, "human-readable")
+        XCTAssertEqual(picker.value as? String, "Save IDs and titles")
         app.buttons["setup.done"].tap()
         app.terminate()
         app.launch()
         app.activate()
         openMusicSettings(in: app)
-        XCTAssertEqual(picker.value as? String, "human-readable")
+        XCTAssertEqual(picker.value as? String, "Save IDs and titles")
         app.buttons["setup.done"].tap()
     }
 
@@ -64,7 +66,7 @@ final class MusicPreferencesDeviceUITests: XCTestCase {
         app.buttons["setup.done"].tap()
         XCTAssertTrue(setup.waitForExistence(timeout: 5))
 
-        app.buttons["device-picker.open-map"].tap()
+        app.tabBars.buttons["Map"].tap()
         XCTAssertTrue(app.descendants(matching: .any)["ride-map.screen"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["No active ride"].exists, app.debugDescription)
         XCTAssertFalse(app.buttons["Set up music"].exists)
@@ -88,7 +90,7 @@ final class MusicPreferencesDeviceUITests: XCTestCase {
         if done.exists {
             done.tap()
         }
-        let openMap = app.buttons["device-picker.open-map"]
+        let openMap = app.tabBars.buttons["Map"]
         if openMap.exists {
             openMap.tap()
         } else if !app.descendants(matching: .any)["ride-map.screen"].exists,
@@ -135,7 +137,7 @@ final class MusicPreferencesDeviceUITests: XCTestCase {
         let done = app.buttons["setup.done"]
         XCTAssertTrue(done.waitForExistence(timeout: 10), app.debugDescription)
         done.tap()
-        app.buttons["device-picker.open-map"].tap()
+        app.tabBars.buttons["Map"].tap()
         XCTAssertTrue(app.descendants(matching: .any)["ride-map.screen"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["No active ride"].exists, app.debugDescription)
         requirePlayingTitle(in: app)
@@ -145,7 +147,7 @@ final class MusicPreferencesDeviceUITests: XCTestCase {
         openMusicSettings(in: app)
         XCTAssertFalse(app.buttons["music.authorize-spotify"].exists, "Cold launch must retain authorization")
         app.buttons["setup.done"].tap()
-        let map = app.buttons["device-picker.open-map"]
+        let map = app.tabBars.buttons["Map"]
         XCTAssertTrue(map.waitForExistence(timeout: 30), app.debugDescription)
         map.tap()
         XCTAssertTrue(app.staticTexts["No active ride"].waitForExistence(timeout: 5))
@@ -168,12 +170,14 @@ final class MusicPreferencesDeviceUITests: XCTestCase {
         if restore.exists {
             restore.tap()
         }
-        let title = app.staticTexts["music.now-playing-title"]
+        let title = app.buttons["music.expand"]
         let playing = NSPredicate { object, _ in
             guard let title = object as? XCUIElement, title.exists,
-                title.value as? String == "playing"
+                let summary = title.value as? String
             else { return false }
-            return !title.label.isEmpty && !["Playing", "Not playing", "Spotify"].contains(title.label)
+            let components = summary.components(separatedBy: ", ")
+            return components.count >= 3 && components.last == "Playing"
+                && !["Playing", "Not playing", "Spotify", ""].contains(components[1])
         }
         let result = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: playing, object: title)], timeout: 30)
         XCTAssertEqual(
@@ -209,6 +213,385 @@ final class CutoutAppUITests: XCTestCase {
 
     func testPickerSetupOpensGeneralSettingsWithoutConnectingMusic() throws {
         try verifySetupNavigation()
+    }
+
+    func testPickerSurfaceMusicHistoryPreferenceSurvivesRelaunchWithoutRide() throws {
+        func assertNoActiveRide() {
+            let map = app.tabBars.buttons["Map"]
+            XCTAssertTrue(map.waitForExistence(timeout: 10), app.debugDescription)
+            map.tap()
+            XCTAssertTrue(app.staticTexts["No active ride"].waitForExistence(timeout: 5), app.debugDescription)
+            app.tabBars.buttons["Devices"].tap()
+        }
+
+        func openHistoryPicker() -> XCUIElement {
+            let setup = app.buttons["device-picker.open-setup"]
+            XCTAssertTrue(setup.waitForExistence(timeout: 10), app.debugDescription)
+            setup.tap()
+            app.buttons["setup.music"].tap()
+            let picker = app.buttons["music.history-picker"]
+            scrollElementFrameIntoViewport(picker, in: app.collectionViews.firstMatch, maxScrolls: 8)
+            XCTAssertTrue(picker.waitForExistence(timeout: 5), app.debugDescription)
+            return picker
+        }
+
+        assertNoActiveRide()
+        let picker = openHistoryPicker()
+        picker.tap()
+        app.buttons["music.history-policy.opaque-item"].tap()
+        XCTAssertEqual(picker.value as? String, "Save item IDs only")
+        picker.tap()
+        app.buttons["music.history-policy.human-readable"].tap()
+        XCTAssertEqual(picker.value as? String, "Save IDs and titles")
+        app.buttons["setup.done"].tap()
+
+        app.terminate()
+        app.launch()
+
+        assertNoActiveRide()
+        XCTAssertEqual(openHistoryPicker().value as? String, "Save IDs and titles")
+        XCTAssertFalse(app.buttons["dashboard.disconnect"].exists)
+    }
+
+    func testMoreMusicAppleOpensWithoutSnapshotAfterRelaunch() throws {
+        try verifyMusicOpensWithoutSnapshotAfterRelaunch()
+    }
+
+    func testMoreMusicSpotifyOpensWithoutSnapshotAfterRelaunch() throws {
+        try verifyMusicOpensWithoutSnapshotAfterRelaunch()
+    }
+
+    private func assertMinimumControlDimension(
+        _ dimension: CGFloat,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        // CGRect arithmetic can return 43.99999999999997 for a logical 44pt
+        // target. One millionth of a point absorbs that rounding, not undersizing.
+        XCTAssertGreaterThanOrEqual(dimension + 0.000001, 44, file: file, line: line)
+    }
+
+    @discardableResult
+    private func assertReachableSheetDone(_ identifier: String) -> XCUIElement {
+        let done = app.buttons[identifier]
+        XCTAssertTrue(done.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertEqual(done.elementType, .button)
+        XCTAssertTrue(done.isHittable, app.debugDescription)
+        assertMinimumControlDimension(done.frame.width)
+        assertMinimumControlDimension(done.frame.height)
+        XCTAssertTrue(app.windows.firstMatch.frame.insetBy(dx: -2, dy: -2).contains(done.frame), app.debugDescription)
+        return done
+    }
+
+    private func verifyMusicOpensWithoutSnapshotAfterRelaunch() throws {
+        for attempt in 0..<2 {
+            if attempt > 0 {
+                app.terminate()
+                app.launch()
+            }
+            XCTAssertFalse(app.descendants(matching: .any)["music.compact-player"].exists)
+            app.tabBars.buttons["More"].tap()
+            let music = app.buttons["more.music"]
+            XCTAssertTrue(music.waitForExistence(timeout: 5), app.debugDescription)
+            XCTAssertTrue(music.isHittable)
+            music.tap()
+            XCTAssertTrue(app.descendants(matching: .any)["music.player.screen"].waitForExistence(timeout: 5))
+            assertReachableSheetDone("music.done")
+            if !name.contains("Spotify") {
+                XCTAssertTrue(app.staticTexts["music.player.not-connected"].exists, app.debugDescription)
+                XCTAssertTrue(app.buttons["music.open-provider"].isHittable)
+            }
+            let settings = app.buttons["music.open-settings"]
+            XCTAssertTrue(settings.waitForExistence(timeout: 5), app.debugDescription)
+            if !settings.isHittable { app.swipeUp() }
+            settings.tap()
+            XCTAssertTrue(app.descendants(matching: .any)["music.settings.screen"].waitForExistence(timeout: 5))
+            XCTAssertTrue(app.buttons["music.connect-provider"].exists)
+            let history = app.descendants(matching: .any)["music.history-picker"]
+            scrollElementFrameIntoViewport(history, in: app.collectionViews.firstMatch, maxScrolls: 8)
+            XCTAssertTrue(history.exists)
+            XCTAssertTrue(history.isHittable)
+            assertReachableSheetDone("setup.done").tap()
+            XCTAssertTrue(music.waitForExistence(timeout: 5))
+            XCTAssertTrue(music.isHittable)
+        }
+    }
+
+    func testMusicPlayerCanReopenFromMoreAfterHiding() throws {
+        app.buttons["music.expand"].tap()
+        let expandedPlayer = app.descendants(matching: .any)["music.player.screen"]
+        XCTAssertTrue(expandedPlayer.waitForExistence(timeout: 5))
+        assertReachableSheetDone("music.done")
+        let hide = app.buttons["music.hide"]
+        scrollElementFrameIntoViewport(hide, in: expandedPlayer.collectionViews.firstMatch, maxScrolls: 8)
+        hide.tap()
+        XCTAssertFalse(app.descendants(matching: .any)["music.compact-player"].exists)
+        app.tabBars.buttons["More"].tap()
+        app.buttons["more.music"].tap()
+        XCTAssertTrue(expandedPlayer.waitForExistence(timeout: 5))
+        assertReachableSheetDone("music.done")
+        let pause = expandedPlayer.buttons["Pause"]
+        scrollElementFrameIntoViewport(pause, in: expandedPlayer.collectionViews.firstMatch, maxScrolls: 8)
+        let pauseIsHittable = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in pause.isHittable }, object: pause
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [pauseIsHittable], timeout: 5), .completed, app.debugDescription)
+        pause.tap()
+        XCTAssertTrue(expandedPlayer.buttons["Play"].waitForExistence(timeout: 5), app.debugDescription)
+        expandedPlayer.buttons["Play"].tap()
+        XCTAssertTrue(pause.waitForExistence(timeout: 5), app.debugDescription)
+        app.buttons["music.done"].tap()
+        XCTAssertTrue(app.buttons["music.expand"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["music.expand"].isHittable)
+        app.buttons["music.expand"].tap()
+        let settings = app.buttons["music.open-settings"]
+        scrollElementFrameIntoViewport(settings, in: expandedPlayer.collectionViews.firstMatch, maxScrolls: 8)
+        XCTAssertTrue(settings.isHittable, app.debugDescription)
+        settings.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["music.settings.screen"].waitForExistence(timeout: 5))
+        app.buttons["setup.done"].tap()
+        XCTAssertTrue(app.buttons["music.expand"].waitForExistence(timeout: 5))
+    }
+
+    func testMusicPlayerPlayingAcrossPickerMapMore() throws {
+        try assertMusicPlayerAcrossRoutes(expectedTransport: "Pause")
+        let player = app.descendants(matching: .any)["music.compact-player"]
+        let pause = player.buttons["Pause"]
+        pause.tap()
+        XCTAssertTrue(player.buttons["Play"].waitForExistence(timeout: 5), app.debugDescription)
+        player.buttons["Play"].tap()
+        XCTAssertTrue(pause.waitForExistence(timeout: 5), app.debugDescription)
+        player.buttons["Next track"].tap()
+        let nextTitle = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value CONTAINS %@", "Everything In Its Right Place 2"),
+            object: app.buttons["music.expand"]
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [nextTitle], timeout: 5), .completed, app.debugDescription)
+        app.buttons["music.expand"].tap()
+        app.buttons["Previous track"].tap()
+        XCTAssertTrue(app.staticTexts["Everything In Its Right Place 1"].waitForExistence(timeout: 5))
+        let hide = app.buttons["music.hide"]
+        for _ in 0..<5 where !hide.isHittable { app.swipeUp() }
+        XCTAssertTrue(hide.isHittable, app.debugDescription)
+        hide.tap()
+        XCTAssertFalse(player.exists, app.debugDescription)
+        let restore = app.buttons["music.restore"]
+        for _ in 0..<5 where !restore.isHittable { app.swipeUp() }
+        XCTAssertTrue(restore.isHittable, app.debugDescription)
+        restore.tap()
+        XCTAssertTrue(player.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["music.expand"].isHittable)
+    }
+
+    func testMusicPlayerPausedAcrossEucRideMapMoreAtAccessibilityDynamicType() throws {
+        // Three routes, repeated Readings checks, and rotations exceed the default two minutes.
+        executionTimeAllowance = 360
+        XCTAssertTrue(pairAvailableDevice(.euc))
+        XCTAssertTrue(app.descendants(matching: .any)["dashboard.screen.eucRide"].waitForExistence(timeout: 20))
+        try assertMusicPlayerAcrossRoutes(expectedTransport: "Play")
+        defer { XCUIDevice.shared.orientation = .portrait }
+
+        tapNavigationTab("ride", title: "Ride")
+        assertPausedMusicRideGeometry(isLandscape: false)
+        XCUIDevice.shared.orientation = .landscapeLeft
+        assertPausedMusicRideGeometry(isLandscape: true)
+        XCUIDevice.shared.orientation = .portrait
+        assertPausedMusicRideGeometry(isLandscape: false)
+
+        app.buttons["music.expand"].tap()
+        XCTAssertTrue(app.buttons["music.done"].waitForExistence(timeout: 5))
+        let hide = app.buttons["music.hide"]
+        scrollElementFrameIntoViewport(hide, in: app, maxScrolls: 8)
+        hide.tap()
+        assertPausedMusicRideGeometry(isLandscape: false, playerIsHidden: true)
+
+        // Restore in a different orientation so a retained accessory frame cannot
+        // accidentally satisfy the ride's viewport calculation.
+        XCUIDevice.shared.orientation = .landscapeLeft
+        assertPausedMusicRideGeometry(isLandscape: true, playerIsHidden: true)
+        tapNavigationTab("more", title: "More")
+        let restore = app.buttons["music.restore"]
+        scrollElementFrameIntoViewport(
+            restore, in: app.descendants(matching: .any)["more.screen"], maxScrolls: 8,
+            occludedBy: app.tabBars.firstMatch
+        )
+        restore.tap()
+        tapNavigationTab("ride", title: "Ride")
+        assertPausedMusicRideGeometry(isLandscape: true)
+    }
+
+    private func assertPausedMusicRideGeometry(isLandscape: Bool, playerIsHidden: Bool = false) {
+        let window = app.windows.firstMatch
+        let ride = app.descendants(matching: .any)["dashboard.screen.eucRide"]
+        let player = app.descendants(matching: .any)["music.compact-player"]
+        let tabs = app.tabBars.firstMatch
+        assertRideWindowHasSettled(ride, landscape: isLandscape)
+        assertRideTextSizeReadback(ride, systemCategory: rideTextSizeCategory)
+        let labels =
+            rideTextSizeCategory == "UICTContentSizeCategoryAccessibilityXXXL"
+            ? ["Battery"] : ["Battery", "pack", "power", "thermal"]
+        let metrics = labels.map { label in
+            ride.descendants(matching: .any).matching(NSPredicate(format: "label == %@", label)).firstMatch
+        }
+        let essentialContent =
+            metrics + [
+                ride.descendants(matching: .any)["ride.hero.status"],
+                ride.descendants(matching: .any)["ride.hero.speed"],
+            ]
+        let settled = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in
+                let frame = window.frame
+                guard XCUIDevice.shared.orientation == (isLandscape ? .landscapeLeft : .portrait),
+                    frame.width > 0, frame.height > 0,
+                    (frame.width > frame.height) == isLandscape,
+                    ride.exists, tabs.exists,
+                    playerIsHidden ? !player.exists : player.exists
+                else { return false }
+                if !playerIsHidden {
+                    guard frame.contains(player.frame), player.frame.maxY <= tabs.frame.minY + 2 else { return false }
+                }
+                let viewport = self.unobscuredFrame(in: ride, above: playerIsHidden ? tabs : player)
+                return essentialContent.allSatisfy {
+                    $0.exists && $0.isHittable && viewport.insetBy(dx: -2, dy: -2).contains($0.frame)
+                }
+            }, object: app
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 5), .completed, app.debugDescription)
+        XCTAssertEqual(ride.scrollViews.count, 0, app.debugDescription)
+        let viewport = unobscuredFrame(in: ride, above: playerIsHidden ? tabs : player)
+        for metric in essentialContent {
+            XCTAssertTrue(metric.isHittable, app.debugDescription)
+            XCTAssertTrue(window.frame.insetBy(dx: -2, dy: -2).contains(metric.frame), app.debugDescription)
+            XCTAssertTrue(viewport.insetBy(dx: -2, dy: -2).contains(metric.frame), app.debugDescription)
+        }
+        guard !playerIsHidden else {
+            XCTAssertFalse(player.exists, app.debugDescription)
+            retainMusicRideScreenshot(isLandscape: isLandscape, playerIsHidden: true)
+            if rideTextSizeCategory == "UICTContentSizeCategoryAccessibilityXXXL" {
+                assertAccessibleRideReadings(["Battery", "pack", "power", "thermal"])
+            }
+            return
+        }
+        let controls = [app.buttons["music.expand"], player.buttons["Play"], player.buttons["Next track"]]
+        for (index, control) in controls.enumerated() {
+            XCTAssertTrue(control.isHittable, app.debugDescription)
+            assertMinimumControlDimension(control.frame.width)
+            assertMinimumControlDimension(control.frame.height)
+            XCTAssertTrue(player.frame.insetBy(dx: -2, dy: -2).contains(control.frame), app.debugDescription)
+            for other in controls.dropFirst(index + 1) {
+                XCTAssertFalse(control.frame.intersects(other.frame), app.debugDescription)
+            }
+        }
+        retainMusicRideScreenshot(isLandscape: isLandscape, playerIsHidden: false)
+        if rideTextSizeCategory == "UICTContentSizeCategoryAccessibilityXXXL" {
+            assertAccessibleRideReadings(["Battery", "pack", "power", "thermal"])
+        }
+    }
+
+    private func retainMusicRideScreenshot(isLandscape: Bool, playerIsHidden: Bool) {
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "music-ride-\(isLandscape ? "landscape" : "portrait")-\(playerIsHidden ? "hidden" : "shown")"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
+    func testMusicPlayerRecoveryAcrossPickerSurfaceMapMoreAtAccessibilityDynamicType() throws {
+        try assertMusicPlayerAcrossRoutes(expectedTransport: nil)
+        let summary = app.buttons["music.expand"].value as? String ?? ""
+        XCTAssertTrue(summary.contains("Can’t get playback"), summary)
+        let openProvider = app.descendants(matching: .any)["music.compact-player"].buttons["music.open-provider"]
+        XCTAssertTrue(openProvider.isHittable, app.debugDescription)
+        assertMinimumControlDimension(openProvider.frame.width)
+        XCTAssertFalse(app.buttons["music.expand"].frame.intersects(openProvider.frame))
+    }
+
+    func testMusicPlayerPreviousOnlyShowsOpenProvider() throws {
+        let player = app.descendants(matching: .any)["music.compact-player"]
+        XCTAssertTrue(player.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertFalse(player.buttons["Previous track"].exists)
+        XCTAssertFalse(player.buttons["Play"].exists)
+        XCTAssertFalse(player.buttons["Pause"].exists)
+        let openProvider = player.buttons["music.open-provider"]
+        XCTAssertTrue(openProvider.isHittable, app.debugDescription)
+        assertMinimumControlDimension(openProvider.frame.width)
+        XCTAssertFalse(app.buttons["music.expand"].frame.intersects(openProvider.frame))
+    }
+
+    private func assertMusicPlayerAcrossRoutes(expectedTransport: String?) throws {
+        for route in [nil, "map", "more"] as [String?] {
+            if let route { tapNavigationTab(route, title: route.capitalized) }
+            let player = app.descendants(matching: .any)["music.compact-player"]
+            XCTAssertTrue(player.waitForExistence(timeout: 5), app.debugDescription)
+            let expand = app.buttons["music.expand"]
+            XCTAssertTrue(expand.isHittable, app.debugDescription)
+            assertMinimumControlDimension(expand.frame.height)
+            let summary = expand.value as? String ?? ""
+            XCTAssertTrue(summary.contains("Everything In Its Right Place 1"), summary)
+            XCTAssertTrue(summary.contains("Radiohead"), summary)
+            let tabs = app.tabBars.firstMatch
+            XCTAssertLessThanOrEqual(player.frame.maxY, tabs.frame.minY + 2, app.debugDescription)
+            XCTAssertTrue(app.windows.firstMatch.frame.contains(player.frame), app.debugDescription)
+            if route == "map" {
+                let scroll = app.scrollViews["ride-map.live-viewport"]
+                XCTAssertTrue(scroll.waitForExistence(timeout: 5), app.debugDescription)
+                // The native scroll frame includes TabView's safe-area tail;
+                // actions must scroll fully into the region above the player.
+                var visibleActionCount = 0
+                for action in ["pause", "resume", "save", "stop", "start", "discard"] {
+                    let control = app.buttons["ride-map.\(action)"]
+                    guard control.exists else { continue }
+                    scrollElementFrameIntoViewport(control, in: scroll, maxScrolls: 10, occludedBy: player)
+                    visibleActionCount += 1
+                    let viewport = unobscuredFrame(in: scroll, above: player)
+                    XCTAssertTrue(viewport.insetBy(dx: -2, dy: -2).contains(control.frame), app.debugDescription)
+                    XCTAssertTrue(control.isHittable, app.debugDescription)
+                    XCTAssertLessThanOrEqual(control.frame.maxY, player.frame.minY, app.debugDescription)
+                    let screenshot = XCTAttachment(screenshot: app.screenshot())
+                    screenshot.name = "music-map-\(action)-visible"
+                    screenshot.lifetime = .keepAlways
+                    add(screenshot)
+                }
+                XCTAssertGreaterThan(visibleActionCount, 0, app.debugDescription)
+            }
+            let ride = app.descendants(matching: .any)["dashboard.screen.eucRide"]
+            if route == nil, ride.exists {
+                XCTAssertEqual(ride.scrollViews.count, 0)
+                let labels =
+                    rideTextSizeCategory == "UICTContentSizeCategoryAccessibilityXXXL"
+                    ? ["Battery"] : ["Battery", "pack", "power", "thermal"]
+                for label in labels {
+                    let metric = ride.descendants(matching: .any).matching(
+                        NSPredicate(format: "label == %@", label)
+                    ).firstMatch
+                    XCTAssertTrue(metric.isHittable, app.debugDescription)
+                    XCTAssertLessThanOrEqual(metric.frame.maxY, player.frame.minY, app.debugDescription)
+                }
+            }
+            if let expectedTransport {
+                let transport = player.buttons[expectedTransport]
+                XCTAssertTrue(transport.isHittable, app.debugDescription)
+                assertMinimumControlDimension(transport.frame.height)
+                assertMinimumControlDimension(transport.frame.width)
+                XCTAssertFalse(expand.frame.intersects(transport.frame), app.debugDescription)
+            } else {
+                XCTAssertFalse(player.buttons["Play"].exists)
+                XCTAssertFalse(player.buttons["Pause"].exists)
+            }
+            try performTextClippingAudit(
+                named: "music-player-\(route ?? "initial")", allowingCompactMusicTitleTruncation: true
+            )
+            let screenshot = XCTAttachment(screenshot: app.screenshot())
+            screenshot.name = "music-player-\(route ?? "initial")"
+            screenshot.lifetime = .keepAlways
+            add(screenshot)
+        }
+        app.buttons["music.expand"].tap()
+        let done = assertReachableSheetDone("music.done")
+        XCTAssertTrue(app.staticTexts["Everything In Its Right Place 1"].exists, app.debugDescription)
+        XCTAssertTrue(app.staticTexts["Radiohead"].exists, app.debugDescription)
+        try performTextClippingAudit(named: "music-details")
+        done.tap()
+        XCTAssertTrue(app.buttons["music.expand"].waitForExistence(timeout: 5))
     }
 
     func testPickerSetupOpensGeneralSettingsInDarkAppearanceAtAccessibilityDynamicType() throws {
@@ -249,7 +632,7 @@ final class CutoutAppUITests: XCTestCase {
         let start = app.buttons["captures.start"]
         XCTAssertTrue(description.waitForExistence(timeout: 5))
         XCTAssertTrue(start.isEnabled, "Description is optional")
-        XCTAssertGreaterThanOrEqual(start.frame.height, 44)
+        assertMinimumControlDimension(start.frame.height)
         XCTAssertTrue(setup.exists)
     }
 
@@ -266,12 +649,12 @@ final class CutoutAppUITests: XCTestCase {
         let connect = app.buttons["device-picker.use.ui-test-vesc"]
         XCTAssertTrue(connect.waitForExistence(timeout: 5))
         XCTAssertTrue(connect.isHittable)
-        XCTAssertGreaterThanOrEqual(connect.frame.height, 44)
+        assertMinimumControlDimension(connect.frame.height)
         XCTAssertFalse(app.staticTexts["Deterministic accessibility test device"].exists)
         XCTAssertFalse(app.staticTexts["VESC Onewheel - UI test fixture"].exists)
         let details = app.buttons["device-picker.details.ui-test-vesc"]
         XCTAssertTrue(details.isHittable)
-        XCTAssertGreaterThanOrEqual(details.frame.height, 44)
+        assertMinimumControlDimension(details.frame.height)
         details.tap()
         XCTAssertTrue(app.staticTexts["Deterministic accessibility test device"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["VESC Onewheel - UI test fixture"].exists)
@@ -378,26 +761,54 @@ final class CutoutAppUITests: XCTestCase {
         assertCameraTabReturnsToRide(.euc)
     }
 
-    func testEucCameraTabKeepsMapReachableThroughMore() {
+    func testEucMoreKeepsMapOnTabBar() {
         XCTAssertTrue(pairAvailableDevice(.euc))
         XCTAssertTrue(app.descendants(matching: .any)["dashboard.screen.eucRide"].waitForExistence(timeout: 20))
+        for id in ["ride", "map", "tune", "more"] {
+            let title = id.capitalized
+            let tab = navigationTab(id, title: title)
+            XCTAssertTrue(tab.exists, app.debugDescription)
+            XCTAssertEqual(tab.elementType, .button)
+            XCTAssertTrue(tab.isHittable, app.debugDescription)
+            assertMinimumControlDimension(tab.frame.width)
+            assertMinimumControlDimension(tab.frame.height)
+            XCTAssertEqual(app.tabBars.buttons.matching(NSPredicate(format: "label == %@", title)).count, 1)
+        }
+        for id in ["camera", "lighting", "pack"] {
+            XCTAssertFalse(app.tabBars.buttons["dashboard.nav.\(id)"].exists)
+            XCTAssertFalse(app.tabBars.buttons[id.capitalized].exists)
+        }
         tapNavigationTab("map", title: "Map")
         XCTAssertTrue(app.descendants(matching: .any)["ride-map.screen"].waitForExistence(timeout: 5))
-        app.tabBars.buttons["dashboard.nav.camera"].tap()
+        tapNavigationTab("more", title: "More")
+        XCTAssertTrue(app.descendants(matching: .any)["more.screen"].waitForExistence(timeout: 5))
+        for id in ["camera", "lighting", "pack"] {
+            XCTAssertTrue(app.descendants(matching: .any)["dashboard.nav.\(id)"].isHittable)
+        }
+        attachScreenshot(of: app, named: "More menu with Camera Lighting and Pack")
+        tapNavigationTab("camera", title: "Camera")
         XCTAssertTrue(app.descendants(matching: .any)["camera.screen"].waitForExistence(timeout: 5))
-        app.tabBars.buttons["dashboard.nav.ride"].tap()
+        let back = app.buttons["dashboard.back"]
+        XCTAssertTrue(back.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(back.isHittable, app.debugDescription)
+        assertMinimumControlDimension(back.frame.width)
+        assertMinimumControlDimension(back.frame.height)
+        back.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["more.screen"].waitForExistence(timeout: 5))
+        tapNavigationTab("ride", title: "Ride")
         XCTAssertTrue(app.descendants(matching: .any)["dashboard.screen.eucRide"].waitForExistence(timeout: 5))
         disconnectIfConnected()
     }
 
-    func testEucCameraTabKeepsTuneReachableThroughMore() {
+    func testEucCameraKeepsTuneOnTabBar() {
         XCTAssertTrue(pairAvailableDevice(.euc))
         XCTAssertTrue(app.descendants(matching: .any)["dashboard.screen.eucRide"].waitForExistence(timeout: 20))
-        app.tabBars.buttons["dashboard.nav.camera"].tap()
+        tapNavigationTab("camera", title: "Camera")
         XCTAssertTrue(app.descendants(matching: .any)["camera.screen"].waitForExistence(timeout: 5))
+        XCTAssertTrue(navigationTab("tune", title: "Tune").isHittable, app.debugDescription)
         tapNavigationTab("tune", title: "Tune")
         XCTAssertTrue(app.descendants(matching: .any)["settings.screen.eucTune"].waitForExistence(timeout: 5))
-        app.tabBars.buttons["dashboard.nav.ride"].tap()
+        navigationTab("ride", title: "Ride").tap()
         XCTAssertTrue(app.descendants(matching: .any)["dashboard.screen.eucRide"].waitForExistence(timeout: 5))
         disconnectIfConnected()
     }
@@ -405,15 +816,14 @@ final class CutoutAppUITests: XCTestCase {
     func testPickerSurfaceCameraTabReturnsToDevicesWithoutConnecting() {
         let picker = app.descendants(matching: .any)["device-picker.screen"]
         XCTAssertTrue(picker.waitForExistence(timeout: 10), app.debugDescription)
-        let cameraTab = app.tabBars.buttons["dashboard.nav.camera"]
-        XCTAssertTrue(cameraTab.isHittable, app.debugDescription)
-        cameraTab.tap()
+        XCTAssertFalse(app.tabBars.buttons["dashboard.nav.camera"].exists)
+        tapNavigationTab("camera", title: "Camera")
         XCTAssertTrue(app.descendants(matching: .any)["camera.screen"].waitForExistence(timeout: 5))
         let devicesTab = app.tabBars.buttons["dashboard.nav.devices"]
         XCTAssertTrue(devicesTab.isHittable, app.debugDescription)
         devicesTab.tap()
         XCTAssertTrue(picker.waitForExistence(timeout: 5), app.debugDescription)
-        XCTAssertTrue(cameraTab.isHittable)
+        XCTAssertTrue(app.tabBars.buttons["dashboard.nav.more"].isHittable)
         XCTAssertFalse(app.buttons["dashboard.disconnect"].exists)
     }
 
@@ -422,13 +832,15 @@ final class CutoutAppUITests: XCTestCase {
         let ride = app.descendants(matching: .any)[family.screenIdentifier]
         XCTAssertTrue(ride.waitForExistence(timeout: 20), app.debugDescription)
 
-        let cameraButton = app.tabBars.buttons["dashboard.nav.camera"]
-        XCTAssertTrue(cameraButton.waitForExistence(timeout: 5), app.debugDescription)
-        XCTAssertTrue(cameraButton.isHittable)
-        cameraButton.tap()
+        tapNavigationTab("camera", title: "Camera")
 
         let camera = app.descendants(matching: .any)["camera.screen"]
         XCTAssertTrue(camera.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertFalse(app.textFields["camera.origin.address"].exists)
+        XCTAssertFalse(app.textFields["camera.origin.port"].exists)
+        XCTAssertTrue(app.buttons["camera.connect"].waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertFalse(app.descendants(matching: .any)["camera.truth.card"].exists)
+        attachScreenshot(of: app, named: "Camera connection without address setup")
         let rideTab = app.tabBars.buttons["dashboard.nav.ride"]
         XCTAssertTrue(rideTab.waitForExistence(timeout: 5), app.debugDescription)
         XCTAssertTrue(rideTab.isHittable)
@@ -501,13 +913,13 @@ final class CutoutAppUITests: XCTestCase {
     func testEucFixtureSelectionIgnoresXCTestSelectorCase() {
         XCTAssertEqual(Fixture.testFixture(for: "testEUCBmsDetailPassesAccessibilityAudit"), .euc)
         XCTAssertEqual(Fixture.testFixture(for: "testEucBmsOverviewPassesAccessibilityAudit"), .eucOverview)
-        XCTAssertEqual(Fixture.testFixture(for: "testEucStaleTelemetryIsAnAccessibleWarning"), .eucStale)
+        XCTAssertEqual(Fixture.testFixture(for: "testEucStaleTelemetryKeepsRideLayoutFixed"), .eucStale)
         XCTAssertEqual(Fixture.testFixture(for: "testEUCNoBmsSurfacePassesAccessibilityAudit"), .eucNoBms)
         XCTAssertEqual(Fixture.testFixture(for: "testEUCReconnectKeepsRideRoute"), .eucReconnect)
     }
 
     func testPickerSurfaceHomeMapRouteKeepsMapAndLifecycleActionsReachable() throws {
-        let mapButton = app.buttons["device-picker.open-map"]
+        let mapButton = app.tabBars.buttons["Map"]
         XCTAssertTrue(mapButton.waitForExistence(timeout: 8), app.debugDescription)
         XCTAssertTrue(mapButton.isHittable)
         mapButton.tap()
@@ -515,18 +927,22 @@ final class CutoutAppUITests: XCTestCase {
         let mapScreen = app.descendants(matching: .any)["ride-map.screen"]
         XCTAssertTrue(mapScreen.waitForExistence(timeout: 8), app.debugDescription)
         XCTAssertTrue(app.descendants(matching: .any)["ride-map.map"].waitForExistence(timeout: 5))
-        let modePicker = mapScreen.segmentedControls.firstMatch
+        XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "ride-map.screen").count, 1)
+        let modePicker = app.descendants(matching: .any)["ride-map.mode-picker"].segmentedControls.firstMatch
         XCTAssertTrue(modePicker.waitForExistence(timeout: 5), app.debugDescription)
         let pauseButton = app.buttons["ride-map.pause"]
         let restoredResumeButton = app.buttons["ride-map.resume"]
-        if restoredResumeButton.waitForExistence(timeout: 2) {
+        if pauseButton.waitForExistence(timeout: 2) {
+            XCTAssertTrue(pauseButton.isEnabled)
+            XCTAssertTrue(pauseButton.isHittable)
+        } else if restoredResumeButton.exists {
             restoredResumeButton.tap()
         } else {
             let startButton = app.buttons["ride-map.start"]
             XCTAssertTrue(startButton.waitForExistence(timeout: 5), app.debugDescription)
             XCTAssertTrue(startButton.isEnabled)
             XCTAssertTrue(startButton.isHittable)
-            XCTAssertGreaterThanOrEqual(startButton.frame.height, 44)
+            assertMinimumControlDimension(startButton.frame.height)
             startButton.tap()
         }
         XCTAssertTrue(pauseButton.waitForExistence(timeout: 5), app.debugDescription)
@@ -540,6 +956,169 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(recenterButton.waitForExistence(timeout: 5), app.debugDescription)
         recenterButton.tap()
         XCTAssertTrue(app.descendants(matching: .any)["ride-map.map"].exists)
+    }
+
+    func testPickerSurfaceSavedHistoryPreservesSelectionAndClearsFiltersWithoutReflow() throws {
+        // Traverse both pages and verify selection, reentry, filters, and relaunch in one scenario.
+        executionTimeAllowance = 360
+        let mapTab = app.tabBars.buttons["Map"]
+        XCTAssertTrue(mapTab.waitForExistence(timeout: 10), app.debugDescription)
+        mapTab.tap()
+        let screen = app.descendants(matching: .any)["ride-map.screen"]
+        XCTAssertTrue(screen.waitForExistence(timeout: 8), app.debugDescription)
+        let readback = try XCTUnwrap(screen.value as? String)
+        let receipt = try XCTUnwrap(readback.components(separatedBy: ";").first)
+        XCTAssertTrue(receipt.hasPrefix("saved-rides:"), app.debugDescription)
+        let seededIDs = receipt.dropFirst("saved-rides:".count).split(separator: ",").map(String.init)
+        let selectedID = try XCTUnwrap(seededIDs.first)
+        XCTAssertEqual(seededIDs.count, 2, "This checks fixture receipts, not the full stored history count")
+        XCTAssertNotNil(UUID(uuidString: selectedID))
+        XCTAssertNotEqual(seededIDs.first, seededIDs.last)
+
+        XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "ride-map.screen").count, 1)
+        let picker = app.descendants(matching: .any)["ride-map.mode-picker"].segmentedControls.firstMatch
+        XCTAssertTrue(picker.waitForExistence(timeout: 5), app.debugDescription)
+        picker.buttons["History"].tap()
+        let viewport = app.descendants(matching: .any)["ride-map.history-viewport"]
+        XCTAssertTrue(viewport.waitForExistence(timeout: 5), app.debugDescription)
+        let scroll = app.scrollViews["ride-map.history-viewport"]
+        XCTAssertTrue(scroll.waitForExistence(timeout: 5), app.debugDescription)
+        let defaultGeneration = try waitForSettledHistory(in: screen, afterQueryGeneration: 0)
+        let filters = app.descendants(matching: .any)["ride-map.history-filters"]
+        let date = app.buttons["ride-map.history-date-filter"]
+        let clear = app.buttons["ride-map.history-clear-filters"]
+        XCTAssertTrue(date.isHittable, app.debugDescription)
+        XCTAssertFalse(clear.isEnabled)
+        let initialFilterFrame = filters.frame
+        let initialViewportFrame = viewport.frame
+        XCTAssertGreaterThan(initialViewportFrame.height, 0)
+        date.tap()
+        let allTime = app.buttons["All time"]
+        XCTAssertTrue(allTime.waitForExistence(timeout: 5), app.debugDescription)
+        allTime.tap()
+        let filterApplied = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label == %@", "All time"), object: date
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [filterApplied], timeout: 5), .completed, app.debugDescription)
+        let initialGeneration = try waitForSettledHistory(in: screen, afterQueryGeneration: defaultGeneration)
+        XCTAssertTrue(clear.isEnabled)
+        assertHistoryFrame(filters.frame, equals: initialFilterFrame)
+        assertHistoryFrame(viewport.frame, equals: initialViewportFrame)
+        let firstPage = Self.historyFixtureFields(from: try XCTUnwrap(screen.value as? String))["listed"] ?? ""
+        XCTAssertFalse(firstPage.split(separator: ",").map(String.init).contains(selectedID))
+        let loadMore = app.buttons["ride-map.history-load-more"]
+        scrollElementFrameIntoViewport(loadMore, in: scroll, maxScrolls: 60)
+        assertMinimumControlDimension(loadMore.frame.height)
+        loadMore.tap()
+        let selectedRow = app.buttons["ride-map.history-\(selectedID)"]
+        scrollElementFrameIntoViewport(selectedRow, in: scroll, maxScrolls: 60)
+        assertMinimumControlDimension(selectedRow.frame.height)
+        selectedRow.tap()
+
+        let detailScreen = app.descendants(matching: .any)["ride-map.detail-screen"]
+        XCTAssertTrue(detailScreen.waitForExistence(timeout: 8), app.debugDescription)
+        XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "ride-map.detail-screen").count, 1)
+        // The route root owns the native screen identity; its child wrapper does not add another AX element.
+        let detail = detailScreen
+        _ = try waitForSettledHistory(
+            in: detailScreen, afterQueryGeneration: initialGeneration - 1, selecting: selectedID
+        )
+        XCTAssertTrue(detail.descendants(matching: .any)["ride-map.map"].waitForExistence(timeout: 8))
+        XCTAssertFalse(app.descendants(matching: .any)["ride-map.detail-initial-loading"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["ride-map.detail-no-points"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["ride-map.detail-map-error"].exists)
+        let detailShot = XCTAttachment(screenshot: app.screenshot())
+        detailShot.name = "saved-history-selected-detail"
+        detailShot.lifetime = .keepAlways
+        add(detailShot)
+        let header = detail.descendants(matching: .any)["ride-map.detail-header"]
+        let back = header.buttons.firstMatch
+        XCTAssertTrue(back.isHittable, app.debugDescription)
+        assertMinimumControlDimension(back.frame.height)
+        back.tap()
+        XCTAssertTrue(viewport.waitForExistence(timeout: 5), app.debugDescription)
+        let beforeReentry = try waitForSettledHistory(
+            in: screen, afterQueryGeneration: initialGeneration - 1, selecting: selectedID
+        )
+        scrollElementFrameIntoViewport(selectedRow, in: scroll, maxScrolls: 60)
+        XCTAssertEqual(selectedRow.value as? String, "Selected", app.debugDescription)
+
+        app.tabBars.buttons["More"].tap()
+        XCTAssertTrue(app.tabBars.buttons["More"].isSelected)
+        app.tabBars.buttons["Map"].tap()
+        XCTAssertTrue(viewport.waitForExistence(timeout: 5), app.debugDescription)
+        _ = try waitForSettledHistory(in: screen, afterQueryGeneration: beforeReentry, selecting: selectedID)
+        scrollElementFrameIntoViewport(selectedRow, in: scroll, maxScrolls: 60)
+        XCTAssertEqual(selectedRow.value as? String, "Selected", app.debugDescription)
+
+        XCTAssertEqual(date.label, "All time", "Map reentry must preserve the selected history filter")
+        XCTAssertTrue(date.isHittable, app.debugDescription)
+        XCTAssertTrue(clear.isEnabled)
+        XCTAssertTrue(clear.isHittable, app.debugDescription)
+        assertHistoryFrame(filters.frame, equals: initialFilterFrame)
+        assertHistoryFrame(viewport.frame, equals: initialViewportFrame)
+        assertMinimumControlDimension(clear.frame.width)
+        assertMinimumControlDimension(clear.frame.height)
+        clear.tap()
+        let filtersCleared = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label == %@", "Last 30 days"), object: date
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [filtersCleared], timeout: 5), .completed, app.debugDescription)
+        XCTAssertFalse(clear.isEnabled)
+        assertHistoryFrame(filters.frame, equals: initialFilterFrame)
+        assertHistoryFrame(viewport.frame, equals: initialViewportFrame)
+        let clearedShot = XCTAttachment(screenshot: app.screenshot())
+        clearedShot.name = "saved-history-filters-cleared-without-reflow"
+        clearedShot.lifetime = .keepAlways
+        add(clearedShot)
+
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(mapTab.waitForExistence(timeout: 10), app.debugDescription)
+        mapTab.tap()
+        XCTAssertTrue(screen.waitForExistence(timeout: 8), app.debugDescription)
+        XCTAssertEqual(
+            (screen.value as? String)?.components(separatedBy: ";").first, receipt,
+            "Relaunch must reuse the same validated Rust fixture IDs"
+        )
+    }
+
+    private func waitForSettledHistory(
+        in screen: XCUIElement, afterQueryGeneration generation: UInt64, selecting rideID: String? = nil
+    ) throws -> UInt64 {
+        let settled = XCTNSPredicateExpectation(
+            predicate: NSPredicate { object, _ in
+                guard let element = object as? XCUIElement, let value = element.value as? String else { return false }
+                let fields = Self.historyFixtureFields(from: value)
+                guard let current = fields["query"].flatMap(UInt64.init), current > generation,
+                    fields["loading"] == "false"
+                else { return false }
+                guard let rideID else { return true }
+                return fields["selected"] == rideID && fields["projection"] == rideID
+            }, object: screen
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 10), .completed, app.debugDescription)
+        let fields = Self.historyFixtureFields(from: try XCTUnwrap(screen.value as? String))
+        return try XCTUnwrap(fields["query"].flatMap(UInt64.init))
+    }
+
+    nonisolated private static func historyFixtureFields(from value: String) -> [String: String] {
+        Dictionary(
+            uniqueKeysWithValues: value.split(separator: ";").compactMap { component in
+                let pair = component.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+                guard pair.count == 2 else { return nil }
+                return (String(pair[0]), String(pair[1]))
+            }
+        )
+    }
+
+    private func assertHistoryFrame(
+        _ actual: CGRect, equals expected: CGRect, file: StaticString = #filePath, line: UInt = #line
+    ) {
+        XCTAssertEqual(actual.minX, expected.minX, accuracy: 2, file: file, line: line)
+        XCTAssertEqual(actual.minY, expected.minY, accuracy: 2, file: file, line: line)
+        XCTAssertEqual(actual.width, expected.width, accuracy: 2, file: file, line: line)
+        XCTAssertEqual(actual.height, expected.height, accuracy: 2, file: file, line: line)
     }
 
     func testCaptureAnnotationUsesOneStatefulAccessibleAction() {
@@ -673,7 +1252,7 @@ final class CutoutAppUITests: XCTestCase {
         enterCapture()
         let finish = app.buttons["capture.stop"]
         XCTAssertTrue(finish.waitForExistence(timeout: 5))
-        XCTAssertGreaterThanOrEqual(finish.frame.height, 44)
+        assertMinimumControlDimension(finish.frame.height)
         finish.tap()
         let detail = app.descendants(matching: .any)["captures.detail"]
         XCTAssertTrue(detail.waitForExistence(timeout: 10), app.debugDescription)
@@ -1042,6 +1621,51 @@ final class CutoutAppUITests: XCTestCase {
         try assertRidePublishesDynamicTelemetryAfterRouteMounts(.euc)
     }
 
+    func testEucTuneAlarmSettingsHasAReachableBackAction() throws {
+        XCTAssertTrue(pairAvailableDevice(.euc))
+        XCTAssertNotNil(connectedScreen(timeout: 20))
+        defer { disconnectIfConnected() }
+        tapNavigationTab("tune", title: "Tune")
+        let tune = app.descendants(matching: .any)["settings.screen.eucTune"]
+        XCTAssertTrue(tune.waitForExistence(timeout: 5))
+        let alarms = app.buttons["settings.open-alarms"]
+        for _ in 0..<8 where !alarms.isHittable { tune.swipeUp() }
+        XCTAssertTrue(alarms.isHittable)
+        alarms.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["settings.screen.alarms"].waitForExistence(timeout: 5))
+        let back = app.navigationBars.buttons.firstMatch
+        XCTAssertTrue(back.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(back.isHittable)
+        assertMinimumControlDimension(back.frame.height)
+        back.tap()
+        XCTAssertTrue(tune.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.descendants(matching: .any)["settings.screen.alarms"].exists)
+        XCTAssertTrue(navigationTab("ride", title: "Ride").isHittable)
+    }
+
+    func testEucLightingPresetNameKeepsKeyboardFocusUntilSubmission() throws {
+        XCTAssertTrue(pairAvailableDevice(.euc))
+        XCTAssertNotNil(connectedScreen(timeout: 20))
+        defer { disconnectIfConnected() }
+        tapNavigationTab("lighting", title: "Lighting")
+        let lighting = app.descendants(matching: .any)["dashboard.screen.lighting"]
+        XCTAssertTrue(lighting.waitForExistence(timeout: 5))
+        let field = lighting.textFields.firstMatch
+        for _ in 0..<8 where !field.isHittable { lighting.swipeUp() }
+        XCTAssertTrue(field.isHittable)
+        field.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), app.debugDescription)
+        field.typeText("Evening ride")
+        XCTAssertEqual(field.value as? String, "Evening ride")
+        XCTAssertTrue(app.keyboards.firstMatch.exists)
+        field.typeText("\n")
+        let dismissed = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in !self.app.keyboards.firstMatch.exists }, object: nil
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 5), .completed)
+        XCTAssertEqual(field.value as? String, "Evening ride")
+    }
+
     func testEucTuneUsesOrdinaryGenericControlsWithoutInventedValues() throws {
         try assertEucTuneSettings()
     }
@@ -1066,10 +1690,11 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(turnOn.waitForExistence(timeout: 5))
         XCTAssertTrue(turnOff.exists)
         XCTAssertTrue(app.staticTexts["Headlight"].exists)
-        XCTAssertGreaterThanOrEqual(turnOn.frame.height, 44)
-        XCTAssertGreaterThanOrEqual(turnOff.frame.height, 44)
+        assertMinimumControlDimension(turnOn.frame.height)
+        assertMinimumControlDimension(turnOff.frame.height)
         XCTAssertFalse(app.buttons["settings.apply.highBeam"].exists)
-        XCTAssertFalse(app.staticTexts["settings.current.highBeam"].exists)
+        let currentHighBeam = app.descendants(matching: .any)["settings.current.highBeam"]
+        XCTAssertFalse(currentHighBeam.exists)
         for button in [turnOn, turnOff] {
             button.tap()
             let selected = XCTNSPredicateExpectation(predicate: NSPredicate(format: "selected == true"), object: button)
@@ -1077,25 +1702,31 @@ final class CutoutAppUITests: XCTestCase {
             XCTAssertEqual(button.value as? String, "Requested")
             XCTAssertFalse(app.staticTexts["settings.requested.highBeam"].exists)
             XCTAssertFalse(app.staticTexts["settings.status.highBeam"].exists)
-            XCTAssertFalse(app.staticTexts["settings.current.highBeam"].exists)
+            XCTAssertFalse(currentHighBeam.exists)
             XCTAssertFalse(app.staticTexts["settings.error.highBeam"].exists)
         }
 
         let brightness = app.steppers["settings.stepper.displayBrightness"]
-        for _ in 0..<8 where !brightness.isHittable { screen.swipeUp() }
-        XCTAssertTrue(brightness.isHittable)
-        XCTAssertFalse(app.buttons["settings.apply.displayBrightness"].exists)
-        brightness.buttons.element(boundBy: 1).tap()
-        XCTAssertTrue(app.staticTexts["settings.draft.displayBrightness"].exists)
-        let draftValue = app.staticTexts["settings.draft.displayBrightness"].label
-        let apply = app.buttons["settings.apply.displayBrightness"]
-        XCTAssertTrue(apply.exists)
-        for _ in 0..<4 where !apply.isHittable { screen.swipeUp() }
-        apply.tap()
-        XCTAssertFalse(apply.exists, "Apply should disappear after submitting the local draft")
-        XCTAssertEqual(
-            app.staticTexts["settings.draft.displayBrightness"].label, draftValue,
-            "A pending value must not snap back to old readback")
+        XCTAssertTrue(brightness.waitForExistence(timeout: 5))
+        if brightness.isEnabled {
+            for _ in 0..<8 where !brightness.isHittable { screen.swipeUp() }
+            XCTAssertTrue(brightness.isHittable)
+            XCTAssertFalse(app.buttons["settings.apply.displayBrightness"].exists)
+            brightness.buttons.element(boundBy: 1).tap()
+            XCTAssertTrue(app.staticTexts["settings.draft.displayBrightness"].exists)
+            let draftValue = app.staticTexts["settings.draft.displayBrightness"].label
+            let apply = app.buttons["settings.apply.displayBrightness"]
+            XCTAssertTrue(apply.exists)
+            for _ in 0..<4 where !apply.isHittable { screen.swipeUp() }
+            apply.tap()
+            XCTAssertFalse(apply.exists, "Apply should disappear after submitting the local draft")
+            XCTAssertEqual(
+                app.staticTexts["settings.draft.displayBrightness"].label, draftValue,
+                "A pending value must not snap back to old readback")
+        } else {
+            XCTAssertFalse(app.buttons["settings.apply.displayBrightness"].exists)
+            XCTAssertFalse(app.staticTexts["settings.draft.displayBrightness"].exists)
+        }
 
         let controls = [
             "highBeam", "displayBrightness", "displayUnits", "beeperVolumePercent",
@@ -1255,6 +1886,223 @@ final class CutoutAppUITests: XCTestCase {
         try assertEssentialRideControlsRemainVisibleWithoutScrolling(for: .vesc)
     }
 
+    func testEucPrimaryRoutesRemainUsableWithReduceMotionAndIncreasedContrastAtAccessibilityDynamicType() throws {
+        // Include native Settings changes, route checks, Readings, and restoration in this bounded scenario.
+        executionTimeAllowance = 360
+        let settings = XCUIApplication(bundleIdentifier: "com.apple.Preferences")
+        // Each preference audit starts a fresh Settings process. Failed setup
+        // must not leave the next audit reusing a retained native navigation tree.
+        settings.terminate()
+        // Operate the real OS preference in Settings' process-local default text
+        // size. CutOut must still prove its actual AX5 category and OS readbacks.
+        settings.launchArguments = ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryL"]
+        settings.launch()
+        let reduceMotion = try openReduceMotionSetting(in: settings)
+        let original = try XCTUnwrap(reduceMotion.value as? String)
+        XCTAssertTrue(["0", "1"].contains(original), settings.debugDescription)
+        defer {
+            do {
+                let restored = try openReduceMotionSetting(in: settings)
+                if restored.value as? String != original { tapReduceMotionToggle(in: restored, settings: settings) }
+                let restoration = XCTNSPredicateExpectation(
+                    predicate: NSPredicate(format: "value == %@", original), object: restored
+                )
+                XCTAssertEqual(XCTWaiter.wait(for: [restoration], timeout: 5), .completed, settings.debugDescription)
+            } catch {
+                XCTFail("Could not restore the original Simulator Reduce Motion setting: \(error)")
+            }
+            settings.terminate()
+            app.activate()
+        }
+        if original == "0" { tapReduceMotionToggle(in: reduceMotion, settings: settings) }
+        let enabled = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", "1"), object: reduceMotion
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 5), .completed, settings.debugDescription)
+        app.activate()
+
+        try assertEssentialRideControlsRemainVisibleWithoutScrolling(for: .euc) { screen in
+            let preferences = XCTNSPredicateExpectation(
+                predicate: NSPredicate(
+                    format: "value CONTAINS %@ AND value CONTAINS %@ AND value CONTAINS %@ AND value CONTAINS %@",
+                    "reduceMotion=true", "systemReduceMotion=true", "contrast=increased", "systemContrast=true"
+                ), object: screen
+            )
+            XCTAssertEqual(XCTWaiter.wait(for: [preferences], timeout: 5), .completed, self.app.debugDescription)
+            self.tapNavigationTab("map", title: "Map")
+            XCTAssertTrue(self.app.descendants(matching: .any)["ride-map.screen"].waitForExistence(timeout: 5))
+            self.tapNavigationTab("tune", title: "Tune")
+            XCTAssertTrue(self.app.descendants(matching: .any)["settings.screen.eucTune"].waitForExistence(timeout: 5))
+            self.tapNavigationTab("more", title: "More")
+            XCTAssertTrue(self.app.descendants(matching: .any)["more.screen"].waitForExistence(timeout: 5))
+            self.tapNavigationTab("camera", title: "Camera")
+            XCTAssertTrue(self.app.descendants(matching: .any)["camera.screen"].waitForExistence(timeout: 5))
+            let back = self.app.buttons["dashboard.back"]
+            XCTAssertTrue(back.waitForExistence(timeout: 5), self.app.debugDescription)
+            XCTAssertTrue(back.isHittable, self.app.debugDescription)
+            self.assertMinimumControlDimension(back.frame.width)
+            self.assertMinimumControlDimension(back.frame.height)
+            back.tap()
+            XCTAssertTrue(self.app.descendants(matching: .any)["more.screen"].waitForExistence(timeout: 5))
+            self.tapNavigationTab("ride", title: "Ride")
+            XCTAssertTrue(screen.waitForExistence(timeout: 5), self.app.debugDescription)
+            XCTAssertEqual(screen.scrollViews.count, 0)
+            self.attachScreenshot(of: self.app, named: "Ride after reduced-motion primary navigation")
+        }
+    }
+
+    private func tapReduceMotionToggle(in row: XCUIElement, settings: XCUIApplication) {
+        // The named Switch owns the whole Settings row. Its descendant Switch
+        // is the rendered trailing toggle; tapping the row center does not change it.
+        let controls = row.descendants(matching: .switch)
+        XCTAssertEqual(controls.count, 1, settings.debugDescription)
+        let control = controls.firstMatch
+        XCTAssertEqual(control.elementType, .switch)
+        XCTAssertTrue(control.isEnabled, settings.debugDescription)
+        XCTAssertTrue(settings.windows.firstMatch.frame.contains(control.frame), settings.debugDescription)
+        XCTAssertTrue(control.isHittable, settings.debugDescription)
+        control.tap()
+    }
+
+    private func openReduceMotionSetting(in settings: XCUIApplication) throws -> XCUIElement {
+        settings.activate()
+        let reduceMotion = settings.switches["Reduce Motion"]
+        if reduceMotion.waitForExistence(timeout: 2) { return reduceMotion }
+        let accessibilityPage = settings.navigationBars["Accessibility"]
+        if !accessibilityPage.exists {
+            let accessibility = settings.buttons["Accessibility"]
+            let list = settings.collectionViews.firstMatch
+            XCTAssertTrue(list.waitForExistence(timeout: 5), settings.debugDescription)
+            // Settings retains its scroll position. A prior bottom-of-list launch
+            // must return toward the top before locating this lazily created button.
+            for _ in 0..<8 where !accessibility.exists { list.swipeDown() }
+            scrollElementFrameIntoViewport(accessibility, in: list, maxScrolls: 8)
+            XCTAssertEqual(accessibility.elementType, .button)
+            XCTAssertTrue(accessibility.isHittable, settings.debugDescription)
+            accessibility.tap()
+        }
+        XCTAssertTrue(accessibilityPage.waitForExistence(timeout: 5), settings.debugDescription)
+        // The table cell retains its offscreen geometry. Its native action
+        // button acquires real bounds once the row scrolls into the viewport.
+        let table = settings.tables.firstMatch
+        XCTAssertTrue(table.waitForExistence(timeout: 5), settings.debugDescription)
+        let motion = settings.cells["MOTION_TITLE"]
+        scrollElementFrameIntoViewport(motion, in: table, maxScrolls: 8)
+        XCTAssertEqual(motion.elementType, .cell)
+        XCTAssertEqual(motion.label, "Motion")
+        XCTAssertTrue(motion.isHittable, settings.debugDescription)
+        let motionButton = settings.buttons["MOTION_TITLE"]
+        scrollElementFrameIntoViewport(motionButton, in: table, maxScrolls: 8)
+        XCTAssertEqual(motionButton.elementType, .button)
+        XCTAssertEqual(motionButton.label, "Motion")
+        XCTAssertTrue(motionButton.isHittable, settings.debugDescription)
+        motionButton.tap()
+        XCTAssertTrue(reduceMotion.waitForExistence(timeout: 5), settings.debugDescription)
+        XCTAssertEqual(reduceMotion.elementType, .switch)
+        XCTAssertTrue(reduceMotion.isHittable, settings.debugDescription)
+        return reduceMotion
+    }
+
+    func testEucPwmReadoutHonorsRequestedAccessibilityTextSize() throws {
+        try assertPwmReadoutGrowsWithAccessibilityText(for: .euc)
+    }
+
+    func testVescPwmReadoutHonorsRequestedAccessibilityTextSize() throws {
+        try assertPwmReadoutGrowsWithAccessibilityText(for: .vesc)
+    }
+
+    private func assertPwmReadoutGrowsWithAccessibilityText(for family: ConnectedDeviceFamily) throws {
+        let label = family == .euc ? "PWM headroom" : "Duty headroom"
+        func readoutHeight(category: String) throws -> CGFloat {
+            app.terminate()
+            app.launchArguments =
+                fixture.launchArguments + [
+                    "-UIPreferredContentSizeCategoryName", category,
+                    "-CUTOUT_UI_TEST_ENVIRONMENT_READBACK", "YES",
+                ]
+            app.launch()
+            XCTAssertTrue(pairAvailableDevice(family))
+            let screen = try XCTUnwrap(connectedScreen(timeout: 20))
+            assertRideWindowHasSettled(screen, landscape: false)
+            assertRideTextSizeReadback(screen, systemCategory: category)
+            let pwm = screen.descendants(matching: .any).matching(NSPredicate(format: "label == %@", label)).firstMatch
+            XCTAssertTrue(pwm.waitForExistence(timeout: 5), app.debugDescription)
+            XCTAssertTrue(pwm.isHittable)
+            XCTAssertEqual(screen.scrollViews.count, 0)
+            let height = pwm.frame.height
+            let attachment = XCTAttachment(screenshot: app.screenshot())
+            attachment.name = "\(family.name)-pwm-\(category)"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+            disconnectIfConnected()
+            return height
+        }
+        let normal = try readoutHeight(category: "UICTContentSizeCategoryL")
+        let accessible = try readoutHeight(category: "UICTContentSizeCategoryAccessibilityXXXL")
+        XCTAssertGreaterThan(accessible, normal, "PWM must grow instead of clamping the requested text size")
+    }
+
+    private func assertRideTextSizeReadback(_ screen: XCUIElement, systemCategory: String) {
+        let expectedSize: String
+        switch systemCategory {
+        case "UICTContentSizeCategoryL": expectedSize = "large"
+        case "UICTContentSizeCategoryXXXL": expectedSize = "xxxLarge"
+        case "UICTContentSizeCategoryAccessibilityM": expectedSize = "accessibility1"
+        case "UICTContentSizeCategoryAccessibilityL": expectedSize = "accessibility2"
+        case "UICTContentSizeCategoryAccessibilityXL": expectedSize = "accessibility3"
+        case "UICTContentSizeCategoryAccessibilityXXL": expectedSize = "accessibility4"
+        case "UICTContentSizeCategoryAccessibilityXXXL": expectedSize = "accessibility5"
+        default:
+            XCTFail("No explicit expected SwiftUI category for \(systemCategory)")
+            return
+        }
+        let readback = screen.value as? String ?? ""
+        XCTAssertTrue(readback.contains("swiftui=\(expectedSize)"), readback)
+        XCTAssertTrue(readback.contains("system=\(systemCategory)"), readback)
+    }
+
+    private func assertRideWindowHasSettled(_ screen: XCUIElement, landscape: Bool) {
+        let window = app.windows.firstMatch
+        let settled = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in
+                let frame = window.frame
+                let imageSize = Self.displayedScreenshotSize(self.app.screenshot().image)
+                return frame.width > 0 && frame.height > 0
+                    && (frame.width > frame.height) == landscape
+                    && XCUIDevice.shared.orientation == (landscape ? .landscapeLeft : .portrait)
+                    && screen.exists && frame.insetBy(dx: -2, dy: -2).contains(screen.frame)
+                    && (imageSize.width > imageSize.height) == landscape
+            }, object: app
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 5), .completed, app.debugDescription)
+        let screenshot = app.screenshot().image
+        let displayedSize = Self.displayedScreenshotSize(screenshot)
+        let orientationProof = XCTAttachment(
+            string: "device=\(XCUIDevice.shared.orientation.rawValue); window=\(window.frame); "
+                + "imageOrientation=\(screenshot.imageOrientation.rawValue); imageSize=\(screenshot.size); "
+                + "displayedSize=\(displayedSize)"
+        )
+        orientationProof.name = "settled Ride orientation metadata"
+        orientationProof.lifetime = .keepAlways
+        add(orientationProof)
+        let screenshotProof = XCTAttachment(screenshot: app.screenshot())
+        screenshotProof.name = "settled Ride native screenshot"
+        screenshotProof.lifetime = .keepAlways
+        add(screenshotProof)
+        XCTAssertEqual(displayedSize.width > displayedSize.height, landscape)
+    }
+
+    private static func displayedScreenshotSize(_ image: UIImage) -> CGSize {
+        switch image.imageOrientation {
+        case .left, .right, .leftMirrored, .rightMirrored:
+            CGSize(width: image.size.height, height: image.size.width)
+        case .up, .down, .upMirrored, .downMirrored:
+            image.size
+        @unknown default:
+            image.size
+        }
+    }
+
     func testVescEssentialRideControlsRemainVisibleWithoutScrollingAtAccessibilityDynamicType() throws {
         try assertEssentialRideControlsRemainVisibleWithoutScrolling(for: .vesc)
     }
@@ -1291,6 +2139,47 @@ final class CutoutAppUITests: XCTestCase {
         try assertEssentialRideControlsRemainVisibleWithoutScrolling(for: .euc)
     }
 
+    func testEucLightingBrightnessSliderCommitsTypedWriteAtAccessibilityDynamicType() throws {
+        XCTAssertTrue(pairAvailableDevice(.euc))
+        XCTAssertTrue(app.descendants(matching: .any)["dashboard.screen.eucRide"].waitForExistence(timeout: 20))
+        defer { disconnectIfConnected() }
+        tapNavigationTab("lighting", title: "Lighting")
+        let screen = app.descendants(matching: .any)["dashboard.screen.lighting"]
+        XCTAssertTrue(screen.waitForExistence(timeout: 5), app.debugDescription)
+        let slider = app.sliders["lighting.brightness"]
+        XCTAssertTrue(slider.waitForExistence(timeout: 5), app.debugDescription)
+        let enabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: slider)
+        XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 5), .completed, app.debugDescription)
+        // The enabled color wheel owns center drags. Scroll through the padded edge, outside its controls.
+        scrollElementFrameIntoViewport(
+            slider, in: screen, maxScrolls: 12, requiresFullVisibility: true, horizontalFraction: 0.08)
+        XCTAssertEqual(slider.elementType, .slider)
+        XCTAssertEqual(slider.label, "Brightness")
+        XCTAssertTrue(slider.isEnabled)
+        XCTAssertTrue(slider.isHittable)
+        XCTAssertTrue(app.windows.firstMatch.frame.insetBy(dx: -2, dy: -2).contains(slider.frame))
+        let before = slider.value as? String
+        slider.adjust(toNormalizedSliderPosition: 0.25)
+        let spoken = try XCTUnwrap(slider.value as? String)
+        XCTAssertNotEqual(spoken, before)
+        XCTAssertTrue(spoken.hasSuffix("percent"), spoken)
+        let percentage = try XCTUnwrap(UInt8(spoken.split(separator: " ").first ?? ""))
+        XCTAssertGreaterThan(percentage, 0)
+        XCTAssertLessThan(percentage, 100)
+        let receipt = app.staticTexts["lighting.connection-state"]
+        let expectedPayload = "7e0401" + String(format: "%02x", percentage) + "ff00ff00ef"
+        let written = XCTNSPredicateExpectation(
+            predicate: NSPredicate(
+                format: "value CONTAINS %@ AND value CONTAINS %@ AND value CONTAINS %@ AND value CONTAINS %@",
+                "requested=\(percentage);written=\(percentage);writes=1;", "payload=\(expectedPayload);",
+                "channel=\((UInt64(0xfff3) << 32) | 0x0000_1000);", "mode=without-response"
+            ), object: receipt
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [written], timeout: 5), .completed, app.debugDescription)
+        XCTAssertFalse(app.descendants(matching: .any)["lighting.control-error"].exists)
+        attachScreenshot(of: app, named: "connected Lighting native brightness and Rust write receipt")
+    }
+
     func testEucLightingRouteUsesProductionControls() throws {
         XCTAssertTrue(pairAvailableDevice(.euc))
         guard connectedScreen(timeout: 20) != nil else {
@@ -1299,10 +2188,7 @@ final class CutoutAppUITests: XCTestCase {
         }
         defer { disconnectIfConnected() }
 
-        let lightingTab = app.tabBars.buttons["dashboard.nav.lighting"]
-        XCTAssertTrue(lightingTab.waitForExistence(timeout: 5), app.debugDescription)
-        XCTAssertTrue(lightingTab.isHittable)
-        lightingTab.tap()
+        tapNavigationTab("lighting", title: "Lighting")
 
         let lighting = app.descendants(matching: .any)["dashboard.screen.lighting"]
         XCTAssertTrue(lighting.waitForExistence(timeout: 5), app.debugDescription)
@@ -1317,6 +2203,12 @@ final class CutoutAppUITests: XCTestCase {
         ] {
             let element = app.descendants(matching: .any)[identifier]
             XCTAssertTrue(element.waitForExistence(timeout: 5), "Missing live Lighting control: \(identifier)")
+        }
+        XCTAssertEqual(app.sliders["lighting.brightness"].label, "Brightness")
+        for label in ["Hue", "Saturation"] {
+            let slider = app.sliders.matching(NSPredicate(format: "label == %@", label)).firstMatch
+            XCTAssertTrue(slider.waitForExistence(timeout: 5), app.debugDescription)
+            XCTAssertFalse(slider.isEnabled, "Disconnected color adjustment must be unavailable to VoiceOver")
         }
         XCTAssertFalse(app.staticTexts["MELK-OC21 6A"].exists)
         XCTAssertFalse(app.descendants(matching: .any)["lighting.command-evidence"].exists)
@@ -1334,8 +2226,10 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertFalse(app.buttons["lighting.mark-confirmed"].exists)
         app.segmentedControls["lighting.control-page"].buttons["Effects"].tap()
         let effect = app.buttons.matching(identifier: "lighting.effect.1").firstMatch
-        XCTAssertTrue(effect.waitForExistence(timeout: 5))
+        if !effect.isHittable { app.swipeUp() }
+        XCTAssertTrue(effect.waitForExistence(timeout: 5), app.debugDescription)
         XCTAssertFalse(effect.isEnabled)
+        XCTAssertTrue(effect.isSelected, "The active effect must expose its selection state to VoiceOver")
         XCTAssertTrue(app.descendants(matching: .any)["lighting.effect-speed"].exists)
         app.segmentedControls["lighting.control-page"].buttons["Music"].tap()
         XCTAssertTrue(app.descendants(matching: .any)["lighting.music-sensitivity"].waitForExistence(timeout: 5))
@@ -1345,7 +2239,8 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     private func assertEssentialRideControlsRemainVisibleWithoutScrolling(
-        for family: ConnectedDeviceFamily
+        for family: ConnectedDeviceFamily,
+        beforeDisconnect: ((XCUIElement) throws -> Void)? = nil
     ) throws {
         XCTAssertTrue(pairAvailableDevice(family))
         guard let screen = connectedScreen(timeout: 20) else {
@@ -1354,6 +2249,8 @@ final class CutoutAppUITests: XCTestCase {
         }
         defer { disconnectIfConnected() }
 
+        assertRideWindowHasSettled(screen, landscape: isLandscapeTest)
+        assertRideTextSizeReadback(screen, systemCategory: rideTextSizeCategory)
         let windowFrame = app.windows.firstMatch.frame
         for identifier in ["ride.hero.speed", "ride.hero.status", "dashboard.disconnect"] {
             let element = app.descendants(matching: .any)[identifier]
@@ -1364,28 +2261,474 @@ final class CutoutAppUITests: XCTestCase {
                 "Essential Ride control is clipped by the viewport: \(identifier) \(element.frame)"
             )
             if identifier == "dashboard.disconnect" {
-                XCTAssertGreaterThanOrEqual(element.frame.height, 44)
+                assertMinimumControlDimension(element.frame.height)
             }
         }
         XCTAssertTrue(screen.exists)
-        XCTAssertTrue(app.tabBars.buttons["dashboard.nav.ride"].isHittable)
-        let secondaryRoute =
-            switch family {
-            case .vesc: "dashboard.nav.debug"
-            case .euc: "dashboard.nav.pack"
-            }
-        for identifier in ["dashboard.nav.ride", secondaryRoute] {
-            let tab = app.tabBars.buttons[identifier]
+        XCTAssertEqual(screen.scrollViews.count, 0)
+        let metricLabels =
+            family == .euc
+            ? ["Battery", "pack", "power", "thermal"]
+            : ["voltage", "motor current", "board angle", "controller"]
+        let mainMetricLabels =
+            rideTextSizeCategory == "UICTContentSizeCategoryAccessibilityXXXL"
+            ? Array(metricLabels.prefix(1)) : metricLabels
+        let viewport = unobscuredFrame(in: screen, above: app.tabBars.firstMatch)
+        for label in mainMetricLabels {
+            let metric = screen.descendants(matching: .any).matching(
+                NSPredicate(format: "label == %@", label)
+            ).firstMatch
+            XCTAssertTrue(metric.waitForExistence(timeout: 5), "Missing Ride metric: \(label)")
+            XCTAssertTrue(metric.isHittable, "Ride metric requires scrolling: \(label)")
+            XCTAssertLessThanOrEqual(
+                metric.frame.height, 112,
+                "Ride metric row should not consume unused instrument-panel height: \(label)"
+            )
+            XCTAssertTrue(
+                viewport.insetBy(dx: -2, dy: -2).contains(metric.frame),
+                "Ride metric is clipped: \(label) \(metric.frame)")
+        }
+        XCTAssertTrue(navigationTab("ride", title: "Ride").isHittable, app.debugDescription)
+        for identifier in ["dashboard.nav.ride", "dashboard.nav.map", "dashboard.nav.more"] {
+            let id = String(identifier.dropFirst("dashboard.nav.".count))
+            let tab = navigationTab(id, title: id.capitalized)
             XCTAssertTrue(tab.isHittable)
             XCTAssertTrue(
                 windowFrame.insetBy(dx: -2, dy: -2).contains(tab.frame),
                 "Ride tab is clipped by the viewport: \(identifier) \(tab.frame)"
             )
         }
+        try performTextClippingAudit(named: "\(family.name)-ride")
         let screenshot = XCTAttachment(screenshot: app.screenshot())
         screenshot.name = "\(family.name) ride controls"
         screenshot.lifetime = .keepAlways
         add(screenshot)
+        if rideTextSizeCategory == "UICTContentSizeCategoryAccessibilityXXXL" {
+            assertAccessibleRideReadings(metricLabels)
+        }
+        try beforeDisconnect?(screen)
+    }
+
+    func testEucAccessibleReadingsPreserveAvailableSecondaryValuesAtAccessibilityDynamicType() throws {
+        try assertAvailableSecondaryRideReadings(
+            for: .euc,
+            expected: [
+                ("Battery", "64 and %"),
+                ("Time to full", "2 min and Estimated"),
+                ("pack", "82.0 and V"),
+                ("power", "0.16, kW, and charging input"),
+                ("thermal", "31, °C, and ESC 31 °C"),
+                ("limp-home", "14.2, mi, and Estimated"),
+                ("GPS speed", "6.7, mph, and fresh GPS"),
+            ]
+        )
+    }
+
+    func testVescAccessibleReadingsPreserveAvailableSecondaryValuesAtAccessibilityDynamicType() throws {
+        try assertAvailableSecondaryRideReadings(
+            for: .vesc,
+            expected: [
+                ("voltage", "50.4, V, and battery 72% · current 12.0 A"),
+                ("motor current", "5.0, A, and phase current"),
+                ("board angle", "1.5, °, and nose up"),
+                ("controller", "32.0, °C, and motor 28.0 °C"),
+            ],
+            footpad: "both pressed"
+        )
+    }
+
+    private func assertAvailableSecondaryRideReadings(
+        for family: ConnectedDeviceFamily,
+        expected: [(String, String)],
+        footpad: String? = nil
+    ) throws {
+        XCTAssertTrue(pairAvailableDevice(family))
+        guard let screen = connectedScreen(timeout: 20) else {
+            XCTFail("The representative secondary-readings fixture did not open Ride")
+            return
+        }
+        defer { disconnectIfConnected() }
+        assertRideWindowHasSettled(screen, landscape: false)
+        assertRideTextSizeReadback(screen, systemCategory: rideTextSizeCategory)
+        XCTAssertEqual(screen.scrollViews.count, 0)
+        let open = app.buttons["ride.readings.open"]
+        XCTAssertTrue(open.waitForExistence(timeout: 5))
+        XCTAssertTrue(open.isHittable)
+        assertMinimumControlDimension(open.frame.height)
+        open.tap()
+        let detail = app.descendants(matching: .any)["ride.readings.detail"]
+        XCTAssertTrue(detail.waitForExistence(timeout: 5))
+        XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "ride.readings.detail").count, 1)
+        let scroll = detail.scrollViews.firstMatch
+        XCTAssertTrue(scroll.exists)
+        for (label, spokenValue) in expected {
+            let metric = detail.descendants(matching: .any).matching(NSPredicate(format: "label == %@", label))
+                .firstMatch
+            XCTAssertTrue(metric.waitForExistence(timeout: 5), "Missing available reading: \(label)")
+            scrollElementFrameIntoViewport(metric, in: scroll, maxScrolls: 10, requiresFullVisibility: true)
+            XCTAssertTrue(metric.isHittable, "Reading is unreachable: \(label)")
+            XCTAssertTrue(
+                scroll.frame.insetBy(dx: -2, dy: -2).contains(metric.frame),
+                "Reading is clipped: \(label) \(metric.frame) inside \(scroll.frame)"
+            )
+            XCTAssertEqual(
+                metric.value as? String, spokenValue, "Reading lost its exact value, unit, or detail: \(label)")
+            let attachment = XCTAttachment(screenshot: app.screenshot())
+            attachment.name = "\(family.name) available Readings \(label)"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
+        if let footpad {
+            let contact = detail.staticTexts[footpad]
+            XCTAssertTrue(contact.waitForExistence(timeout: 5))
+            scrollElementFrameIntoViewport(contact, in: scroll, maxScrolls: 10, requiresFullVisibility: true)
+            XCTAssertTrue(contact.isHittable)
+            XCTAssertTrue(scroll.frame.insetBy(dx: -2, dy: -2).contains(contact.frame))
+            XCTAssertEqual(contact.label, footpad)
+        }
+        let hierarchy = XCTAttachment(string: detail.debugDescription)
+        hierarchy.name = "\(family.name) available Readings accessibility hierarchy"
+        hierarchy.lifetime = .keepAlways
+        add(hierarchy)
+        let done = app.buttons["ride.readings.done"]
+        XCTAssertTrue(done.isHittable)
+        assertMinimumControlDimension(done.frame.height)
+        assertMinimumControlDimension(done.frame.width)
+        done.tap()
+        let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in !detail.exists }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 5), .completed)
+        assertRideWindowHasSettled(screen, landscape: false)
+        XCTAssertEqual(screen.scrollViews.count, 0)
+        XCTAssertTrue(open.isHittable)
+        XCTAssertTrue(app.windows.firstMatch.frame.insetBy(dx: -2, dy: -2).contains(open.frame))
+    }
+
+    private func assertAccessibleRideReadings(_ labels: [String]) {
+        let open = app.buttons["ride.readings.open"]
+        XCTAssertTrue(open.waitForExistence(timeout: 5))
+        XCTAssertTrue(open.isHittable)
+        assertMinimumControlDimension(open.frame.height)
+        XCTAssertFalse((open.value as? String ?? "").isEmpty)
+        open.tap()
+        let detail = app.descendants(matching: .any)["ride.readings.detail"]
+        XCTAssertTrue(detail.waitForExistence(timeout: 5))
+        XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "ride.readings.detail").count, 1)
+        let scroll = detail.scrollViews.firstMatch
+        XCTAssertTrue(scroll.exists)
+        for label in labels {
+            let metric = detail.descendants(matching: .any).matching(NSPredicate(format: "label == %@", label))
+                .firstMatch
+            XCTAssertTrue(metric.waitForExistence(timeout: 5), "Missing secondary Ride reading: \(label)")
+            scrollElementFrameIntoViewport(
+                metric, in: scroll, maxScrolls: 8,
+                requiresFullVisibility: metric.frame.height <= scroll.frame.height
+            )
+            XCTAssertFalse((metric.value as? String ?? "").isEmpty, "Reading must retain its spoken value: \(label)")
+        }
+        let done = app.buttons["ride.readings.done"]
+        XCTAssertTrue(done.isHittable)
+        assertMinimumControlDimension(done.frame.height)
+        done.tap()
+        let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in !detail.exists }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 5), .completed)
+        XCTAssertTrue(open.isHittable)
+    }
+
+    func testVescLiveActivityLockScreenSecondarySpeechAcrossAccessibilityCategories() throws {
+        // Two real ActivityKit states, native surface assertions and verified dismissal.
+        executionTimeAllowance = 360
+        try assertLiveActivitySecondarySpeechAtCurrentAccessibilityCategory(lockScreen: true)
+    }
+
+    func testVescLiveActivityAutoFixtureExpandedSecondarySpeechAcrossAccessibilityCategories() throws {
+        // Two real ActivityKit states, native surface assertions and verified dismissal.
+        executionTimeAllowance = 360
+        try assertLiveActivitySecondarySpeechAtCurrentAccessibilityCategory(lockScreen: false)
+    }
+
+    private func assertLiveActivitySecondarySpeechAtCurrentAccessibilityCategory(lockScreen: Bool) throws {
+        let category = UIApplication.shared.preferredContentSizeCategory.rawValue
+        let accessibilityCategories = [
+            UIContentSizeCategory.accessibilityMedium.rawValue,
+            UIContentSizeCategory.accessibilityLarge.rawValue,
+            UIContentSizeCategory.accessibilityExtraLarge.rawValue,
+            UIContentSizeCategory.accessibilityExtraExtraLarge.rawValue,
+            UIContentSizeCategory.accessibilityExtraExtraExtraLarge.rawValue,
+        ]
+        XCTAssertTrue(
+            accessibilityCategories.contains(category),
+            "Run this matrix cell with the supported runner's verified --content-size accessibility setting: \(category)"
+        )
+        // setUp uses an automatic fixture for these selectors. Retire that
+        // initial activity before changing the requested state below.
+        let initialScreen = app.descendants(matching: .any)["dashboard.screen.vescRide"]
+        XCTAssertTrue(initialScreen.waitForExistence(timeout: 20), app.debugDescription)
+        disconnectIfConnected()
+        assertLiveActivityFixtureDismissed()
+        let states: [(Fixture, LiveActivitySurfaceExpectation)] = [
+            (.vescCriticalLiveActivityAuto, .critical),
+            (.vescLiveActivityAuto, .nominal),
+        ]
+        for (stateFixture, expectation) in states {
+            try XCTContext.runActivity(
+                named: "\(category)-\(expectation.stateName)-\(lockScreen ? "LockScreen" : "Expanded")"
+            ) { _ in
+                app.terminate()
+                app.launchEnvironment = stateFixture.launchEnvironment
+                app.launchArguments =
+                    stateFixture.launchArguments + [
+                        "-UIPreferredContentSizeCategoryName", category,
+                        "-CUTOUT_UI_TEST_ENVIRONMENT_READBACK", "YES",
+                        "--ui-test-live-activity-readback",
+                    ]
+                app.launch()
+                let screen = app.descendants(matching: .any)["dashboard.screen.vescRide"]
+                XCTAssertTrue(screen.waitForExistence(timeout: 20), app.debugDescription)
+                assertRideTextSizeReadback(screen, systemCategory: category)
+                if lockScreen {
+                    assertVescLiveActivityLockScreen(
+                        speed: expectation.speed, headroom: expectation.headroom, stateName: expectation.stateName)
+                } else {
+                    try assertVescLiveActivityAutoFixture(expectation, assertsSecondarySpeech: true)
+                }
+                assertLiveActivityFixtureDismissed()
+            }
+        }
+    }
+
+    private func assertLiveActivityFixtureDismissed() {
+        // A disconnected fixture ends its ActivityKit activity immediately.
+        // Verify dismissal before another state can create an overlapping widget.
+        XCUIDevice.shared.press(.home)
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        openLockScreen(in: springboard)
+        let activity = springboard.descendants(matching: .any)["CutOut ride"]
+        let dismissed = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in !activity.exists }, object: activity)
+        XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 10), .completed, springboard.debugDescription)
+        app.activate()
+    }
+
+    private func assertLiveActivitySafetySpeechOrder(
+        in owner: XCUIElement, stateName: String, surfaceName: String
+    ) {
+        let readings = owner.descendants(matching: .any).matching(
+            NSPredicate(format: "label == 'Speed' OR label == 'Headroom'")
+        )
+        XCTAssertEqual(readings.count, 2, owner.debugDescription)
+        // XCTest's descendants query is breadth-first: a shallower Speed node
+        // can precede Headroom even when the native speech tree orders Headroom first.
+        let hierarchy = owner.debugDescription
+        let attachment = XCTAttachment(string: hierarchy)
+        attachment.name = "\(stateName)-\(surfaceName)-safety-speech-order"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        guard let headroom = hierarchy.range(of: "label: 'Headroom'"),
+            let speed = hierarchy.range(of: "label: 'Speed'")
+        else {
+            XCTFail("Missing native safety readings: \(hierarchy)")
+            return
+        }
+        XCTAssertEqual(headroom.lowerBound < speed.lowerBound, stateName == "Critical", hierarchy)
+        assertLiveActivityVisualGeometry(in: hierarchy, stateName: stateName, surfaceName: surfaceName)
+    }
+
+    private struct LiveActivityNativeGeometryNode {
+        let role: String
+        let label: String?
+        let frame: CGRect
+        let indentation: Int
+        let parentIndex: Int?
+        let sourceLine: String
+    }
+
+    private func liveActivityNativeGeometryNodes(in hierarchy: String) -> [LiveActivityNativeGeometryNode] {
+        guard let start = hierarchy.range(of: "Element subtree:\n"),
+            let end = hierarchy.range(of: "Path to element:", range: start.upperBound..<hierarchy.endIndex)
+        else {
+            XCTFail("Missing coherent native Element subtree: \(hierarchy)")
+            return []
+        }
+        do {
+            let framePattern = try NSRegularExpression(
+                pattern: #"^\s*(?:→)?(Other|StaticText),.*?\{\{([^,]+), ([^}]+)\}, \{([^,]+), ([^}]+)\}\}"#)
+            let labelPattern = try NSRegularExpression(pattern: #"label: '([^']*)'"#)
+            var nodes: [LiveActivityNativeGeometryNode] = []
+            var ancestors: [Int] = []
+            for line in hierarchy[start.upperBound..<end.lowerBound].split(separator: "\n") {
+                let text = String(line)
+                let range = NSRange(text.startIndex..<text.endIndex, in: text)
+                guard let match = framePattern.firstMatch(in: text, range: range) else { continue }
+                let captures = (1...5).compactMap { Range(match.range(at: $0), in: text).map { String(text[$0]) } }
+                guard captures.count == 5 else {
+                    XCTFail("Malformed native geometry: \(text)")
+                    return []
+                }
+                let numbers = captures.dropFirst().compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
+                guard numbers.count == 4, numbers.allSatisfy(\.isFinite) else {
+                    XCTFail("Nonfinite or missing native frame: \(text)")
+                    return []
+                }
+                let label = labelPattern.firstMatch(in: text, range: range)
+                    .flatMap { Range($0.range(at: 1), in: text) }.map { String(text[$0]) }
+                let indentation = text.prefix(while: \.isWhitespace).count
+                while let last = ancestors.last, nodes[last].indentation >= indentation {
+                    ancestors.removeLast()
+                }
+                nodes.append(
+                    LiveActivityNativeGeometryNode(
+                        role: captures[0], label: label,
+                        frame: CGRect(x: numbers[0], y: numbers[1], width: numbers[2], height: numbers[3]),
+                        indentation: indentation, parentIndex: ancestors.last,
+                        sourceLine: text))
+                ancestors.append(nodes.count - 1)
+            }
+            return nodes
+        } catch {
+            XCTFail("Native geometry parser failed: \(error)")
+            return []
+        }
+    }
+
+    private func assertLiveActivityVisualGeometry(
+        in hierarchy: String, stateName: String, surfaceName: String
+    ) {
+        // Reuse one immutable native snapshot. Resolving indexed elements and then
+        // reading each frame races ActivityKit refresh and can change the collection.
+        let nodes = liveActivityNativeGeometryNodes(in: hierarchy)
+        guard let root = nodes.first, root.role == "Other" else {
+            XCTFail("Missing native owner frame: \(hierarchy)")
+            return
+        }
+        let ownerFrame = root.frame
+        // SpringBoard can expose the oversized composition as regular.view while
+        // a same-origin, full-width native container clips it to the actual viewport.
+        // Read that native geometry rather than assuming a fixed Island height.
+        let alignedContainers = nodes.filter { $0.role == "Other" }.map(\.frame).filter {
+            abs($0.minX - ownerFrame.minX) <= 1
+                && abs($0.minY - ownerFrame.minY) <= 1
+                && abs($0.width - ownerFrame.width) <= 1
+                && $0.height > 0
+        }
+        let viewport = alignedContainers.min(by: { $0.height < $1.height }) ?? ownerFrame
+        let context = "\(stateName) \(surfaceName): viewport=\(viewport), owner=\(ownerFrame)\n\(hierarchy)"
+        XCTAssertGreaterThan(viewport.width, 0, context)
+        XCTAssertGreaterThan(viewport.height, 0, context)
+        if stateName == "Critical" {
+            assertLiveActivityVisibleCriticalWarning(in: viewport, surfaceName: surfaceName)
+        }
+
+        let speed = nodes.indices.filter { nodes[$0].role == "Other" && nodes[$0].label == "Speed" }
+        let headroom = nodes.indices.filter { nodes[$0].label == "Headroom" }
+        XCTAssertEqual(speed.count, 1, context)
+        XCTAssertEqual(headroom.count, 1, context)
+        guard let speedIndex = speed.first, let headroomIndex = headroom.first else { return }
+        assertLiveActivityFrame(nodes[speedIndex].frame, fitsIn: viewport, context: context)
+        // The outer owner can include virtual Footer speech beyond its physical
+        // body. Bound the lowest shared native body of Speed and Footer instead.
+        // The retained cropped Grid still makes that body exceed the viewport.
+        var footerAncestors: Set<Int> = []
+        var current: Int? = headroomIndex
+        while let index = current {
+            footerAncestors.insert(index)
+            current = nodes[index].parentIndex
+        }
+        current = speedIndex
+        while let index = current, !footerAncestors.contains(index) {
+            current = nodes[index].parentIndex
+        }
+        guard let bodyIndex = current, nodes[bodyIndex].role == "Other" else {
+            XCTFail("Missing native shared Speed/Footer body: \(context)")
+            return
+        }
+        assertLiveActivityFrame(nodes[bodyIndex].frame, fitsIn: viewport, context: context)
+
+        // Footer speech is a virtual representation, including Headroom. Do not
+        // infer visible chip bounds from those replacement accessibility nodes.
+        if surfaceName == "LockScreen" {
+            let header = nodes.filter { $0.role == "Other" && $0.label == "CutOut ride" }
+            XCTAssertEqual(header.count, 1, context)
+            if header.first?.sourceLine.localizedCaseInsensitiveContains("stale") == true {
+                let status = nodes.filter { $0.role == "StaticText" && $0.label == "Stale" }
+                let identity = nodes.filter { $0.role == "StaticText" && $0.label == "Refloat VESC" }
+                XCTAssertEqual(status.count, 1, context)
+                XCTAssertEqual(identity.count, 1, context)
+                if let status = status.first, let identity = identity.first {
+                    // Both use the same scaled identity font. A two-line status was
+                    // twice the actual one-line vehicle height in the retained AX3 failure.
+                    XCTAssertLessThanOrEqual(status.frame.height, identity.frame.height + 1, context)
+                    assertLiveActivityFrame(status.frame, fitsIn: viewport, context: context)
+                    assertLiveActivityFrame(identity.frame, fitsIn: viewport, context: context)
+                }
+            }
+        }
+    }
+
+    private func assertLiveActivityVisibleCriticalWarning(in viewport: CGRect, surfaceName: String) {
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let canvas = springboard.frame
+        let screenshot = springboard.screenshot()
+        let attachment = XCTAttachment(screenshot: screenshot)
+        attachment.name = "Critical-\(surfaceName)-visible-warning-OCR"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        guard canvas.width > 0, canvas.height > 0, let image = screenshot.image.cgImage else {
+            XCTFail("Missing native screenshot/canvas for warning recognition")
+            return
+        }
+        let region = CGRect(
+            x: (viewport.minX - canvas.minX) / canvas.width,
+            y: 1 - (viewport.maxY - canvas.minY) / canvas.height,
+            width: viewport.width / canvas.width, height: viewport.height / canvas.height
+        ).intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+        guard !region.isNull, !region.isEmpty else {
+            XCTFail("Missing visible native widget region: \(viewport), canvas=\(canvas)")
+            return
+        }
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.recognitionLanguages = ["en-US"]
+        request.usesLanguageCorrection = false
+        request.minimumTextHeight = 0
+        request.regionOfInterest = region
+        do {
+            try VNImageRequestHandler(cgImage: image, options: [:]).perform([request])
+            let lines = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+            let recognized = lines.joined(separator: " ").lowercased().filter { $0.isLetter || $0.isNumber }
+            let diagnostic = XCTAttachment(
+                string: "viewport=\(viewport); canvas=\(canvas); region=\(region)\n" + lines.joined(separator: "\n"))
+            diagnostic.name = "Critical-\(surfaceName)-visible-warning-recognition"
+            diagnostic.lifetime = .keepAlways
+            add(diagnostic)
+            XCTAssertTrue(
+                recognized.contains("reduceacceleration"),
+                "Visible warning must retain its full words, including when wrapped: \(lines)")
+        } catch {
+            XCTFail("Native visible warning recognition failed: \(error)")
+        }
+    }
+
+    private func assertLiveActivityFrame(_ frame: CGRect, fitsIn viewport: CGRect, context: String) {
+        // Native wrapper origins differ by a display pixel in retained SpringBoard
+        // trees. One point tolerates that alignment, not clipped text or an oversized grid.
+        let tolerance: CGFloat = 1
+        XCTAssertGreaterThan(frame.width, 0, context)
+        XCTAssertGreaterThan(frame.height, 0, context)
+        XCTAssertGreaterThanOrEqual(frame.minX, viewport.minX - tolerance, context)
+        XCTAssertGreaterThanOrEqual(frame.minY, viewport.minY - tolerance, context)
+        XCTAssertLessThanOrEqual(frame.maxX, viewport.maxX + tolerance, context)
+        XCTAssertLessThanOrEqual(frame.maxY, viewport.maxY + tolerance, context)
+    }
+
+    private func assertLiveActivitySecondarySpeech(in surface: XCUIApplication, stateName: String) {
+        for (label, expected) in [("Beeps", "waiting for data"), ("Temp", "32, °C, vehicle telemetry")] {
+            let matches = surface.descendants(matching: .any).matching(NSPredicate(format: "label == %@", label))
+            XCTAssertEqual(matches.count, 1, "\(stateName): \(surface.debugDescription)")
+            let actual = matches.firstMatch.value as? String
+            XCTAssertTrue(
+                actual == expected || (label == "Temp" && actual == expected + ", stale"),
+                matches.firstMatch.debugDescription)
+        }
     }
 
     func testVescLiveActivityAutoFixtureStartsAnAccessibleRide() throws {
@@ -1584,6 +2927,20 @@ final class CutoutAppUITests: XCTestCase {
         assertVescLiveActivityLockScreen(speed: "stale", headroom: "good", stateName: "Stale")
     }
 
+    private func assertLiveActivityForegroundAcknowledged() {
+        let readback = app.staticTexts["dashboard.lifecycle-readback"]
+        XCTAssertTrue(readback.waitForExistence(timeout: 5), app.debugDescription)
+        let acknowledged = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value CONTAINS 'activityAcknowledged=true'"), object: readback)
+        let result = XCTWaiter.wait(for: [acknowledged], timeout: 15)
+        let value = readback.value as? String ?? "No lifecycle readback value"
+        let attachment = XCTAttachment(string: value)
+        attachment.name = "Actual foreground Live Activity lifecycle receipt"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        XCTAssertEqual(result, .completed, value)
+    }
+
     private func assertVescLiveActivityLockScreen(
         speed expectedSpeed: String,
         headroom expectedHeadroom: String,
@@ -1596,8 +2953,21 @@ final class CutoutAppUITests: XCTestCase {
             disconnectIfConnected()
         }
 
+        let foregroundSpeed = app.descendants(matching: .any)["ride.hero.speed"]
+        XCTAssertTrue(foregroundSpeed.waitForExistence(timeout: 5), app.debugDescription)
+        let telemetryReceived = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value CONTAINS[c] %@", expectedSpeed), object: foregroundSpeed)
+        XCTAssertEqual(XCTWaiter.wait(for: [telemetryReceived], timeout: 12), .completed, app.debugDescription)
+        if name.contains("AcrossAccessibilityCategories") { assertLiveActivityForegroundAcknowledged() }
         XCUIDevice.shared.press(.home)
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        dismissLocationPromptIfNeeded(in: springboard)
+        XCUIDevice.shared.press(.home)
+        let compactSpeed = springboard.descendants(matching: .any)["Speed"]
+        XCTAssertTrue(compactSpeed.waitForExistence(timeout: 5), springboard.debugDescription)
+        let activityReceived = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value CONTAINS[c] %@", expectedSpeed), object: compactSpeed)
+        XCTAssertEqual(XCTWaiter.wait(for: [activityReceived], timeout: 12), .completed, springboard.debugDescription)
         openLockScreen(in: springboard)
         assertVescLiveActivityLockScreenSemantics(
             in: springboard,
@@ -1643,6 +3013,10 @@ final class CutoutAppUITests: XCTestCase {
         connectionState expectedConnectionState: String? = nil,
         stateName: String
     ) {
+        let hierarchy = XCTAttachment(string: springboard.debugDescription)
+        hierarchy.name = "\(stateName)-lock-screen-accessibility-hierarchy"
+        hierarchy.lifetime = .keepAlways
+        add(hierarchy)
         let activity = springboard.descendants(matching: .any)["CutOut ride"]
         XCTAssertTrue(activity.waitForExistence(timeout: 5), springboard.debugDescription)
         let speed = springboard.descendants(matching: .any)["Speed"]
@@ -1657,6 +3031,12 @@ final class CutoutAppUITests: XCTestCase {
             (headroom.value as? String)?.localizedCaseInsensitiveContains(expectedHeadroom) == true,
             headroom.debugDescription
         )
+        if stateName == "Nominal" || stateName == "Critical" {
+            assertLiveActivitySecondarySpeech(in: springboard, stateName: stateName)
+            let owner = springboard.otherElements["activity-content-view"]
+            XCTAssertTrue(owner.exists, springboard.debugDescription)
+            assertLiveActivitySafetySpeechOrder(in: owner, stateName: stateName, surfaceName: "LockScreen")
+        }
         if let expectedConnectionState {
             let device = springboard.descendants(matching: .any)["Device"]
             XCTAssertTrue(device.waitForExistence(timeout: 5), springboard.debugDescription)
@@ -1717,7 +3097,8 @@ final class CutoutAppUITests: XCTestCase {
 
     private func assertVescLiveActivityAutoFixture(
         _ expectation: LiveActivitySurfaceExpectation,
-        assertsLockScreen: Bool = false
+        assertsLockScreen: Bool = false,
+        assertsSecondarySpeech: Bool = false
     ) throws {
         let screen = app.descendants(matching: .any)["dashboard.screen.vescRide"]
         XCTAssertTrue(screen.waitForExistence(timeout: 20), app.debugDescription)
@@ -1735,6 +3116,7 @@ final class CutoutAppUITests: XCTestCase {
         )
         XCTAssertEqual(XCTWaiter.wait(for: [liveSpeed], timeout: 10), .completed)
 
+        if name.contains("AcrossAccessibilityCategories") { assertLiveActivityForegroundAcknowledged() }
         XCUIDevice.shared.press(.home)
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
         dismissLocationPromptIfNeeded(in: springboard)
@@ -1806,6 +3188,9 @@ final class CutoutAppUITests: XCTestCase {
             (islandHeadroom.value as? String)?.localizedCaseInsensitiveContains(expectation.headroom) == true,
             islandHeadroom.debugDescription
         )
+        if assertsSecondarySpeech {
+            assertLiveActivitySecondarySpeech(in: springboard, stateName: stateName)
+        }
         let expandedActivity = springboard.descendants(matching: .any).matching(
             NSPredicate(format: "label CONTAINS 'CutOut' AND label CONTAINS 'Speed' AND label CONTAINS 'Headroom'")
         ).firstMatch
@@ -1814,7 +3199,7 @@ final class CutoutAppUITests: XCTestCase {
             NSPredicate(format: "label == 'Speed' OR label == 'Headroom'")
         )
         XCTAssertEqual(orderedSafetyValues.count, 2)
-        XCTAssertEqual(orderedSafetyValues.element(boundBy: 0).label, stateName == "Critical" ? "Headroom" : "Speed")
+        assertLiveActivitySafetySpeechOrder(in: expandedActivity, stateName: stateName, surfaceName: "Expanded")
         attachScreenshot(of: springboard, named: "\(stateName) Expanded Dynamic Island")
         if assertsLockScreen {
             XCUIDevice.shared.press(.home)
@@ -2037,6 +3422,12 @@ final class CutoutAppUITests: XCTestCase {
         for _ in 0..<auditScrolls {
             rideScreen.swipeUp()
         }
+        let hierarchy = XCTAttachment(string: app.debugDescription)
+        hierarchy.name = "Ride accessibility hierarchy before audit"
+        hierarchy.lifetime = .keepAlways
+        XCTContext.runActivity(named: "Capture Ride accessibility hierarchy") { activity in
+            activity.add(hierarchy)
+        }
         try performVisibleLayoutAccessibilityAudit(
             excluding: auditExclusions,
             ignoringNilElementContrastWarning: ignoringNilElementContrastWarning,
@@ -2206,7 +3597,7 @@ final class CutoutAppUITests: XCTestCase {
         defer { disconnectIfConnected() }
 
         XCTAssertTrue(bmsScreen.exists)
-        XCTAssertTrue(app.tabBars.buttons["dashboard.nav.pack"].isSelected)
+        XCTAssertTrue(app.tabBars.buttons["dashboard.nav.more"].isSelected)
         XCTAssertTrue(reachableBmsGroup(7, in: bmsScreen).isHittable)
         restoreDashboardViewport(bmsScreen)
         revealBottomEdgeContent(in: bmsScreen)
@@ -2467,31 +3858,32 @@ final class CutoutAppUITests: XCTestCase {
 
     private func assertMountedTelemetryAges(for family: ConnectedDeviceFamily) {
         XCTAssertTrue(pairAvailableDevice(family))
-        guard connectedScreen(timeout: 20) != nil else {
-            XCTFail("The deterministic \(family.name) fixture did not open its Ride screen")
+        guard let screen = connectedScreen(timeout: 20) else {
+            XCTFail("The deterministic fixture did not open its Ride screen")
             return
         }
         defer { disconnectIfConnected() }
-
-        let status = app.descendants(matching: .any)["ride.hero.status"]
+        let status = screen.descendants(matching: .any)["ride.hero.status"]
+        let speed = screen.descendants(matching: .any)["ride.hero.speed"]
         XCTAssertTrue(status.waitForExistence(timeout: 5))
-        XCTAssertFalse(status.label.contains("Telemetry stale"), "The fixture must mount with fresh telemetry")
-
-        let stale = XCTNSPredicateExpectation(
+        XCTAssertTrue(speed.waitForExistence(timeout: 5))
+        let statusFrame = status.frame
+        let speedFrame = speed.frame
+        let aged = XCTNSPredicateExpectation(
             predicate: NSPredicate { object, _ in
-                guard let status = object as? XCUIElement else { return false }
-                return status.exists && status.label.contains("Telemetry stale")
-            },
-            object: status
+                guard let speed = object as? XCUIElement else { return false }
+                return (speed.value as? String ?? "").contains("stale")
+            }, object: speed
         )
-        XCTAssertEqual(
-            XCTWaiter.wait(for: [stale], timeout: 4),
-            .completed,
-            "The mounted \(family.name) Ride screen did not become stale when telemetry stopped"
-        )
+        XCTAssertEqual(XCTWaiter.wait(for: [aged], timeout: 5), .completed)
+        XCTAssertFalse(status.label.contains("Telemetry stale"))
+        XCTAssertEqual(status.frame, statusFrame)
+        XCTAssertEqual(speed.frame, speedFrame)
+        XCTAssertEqual(screen.scrollViews.count, 0)
+
     }
 
-    func testVescStaleTelemetryIsAnAccessibleWarningAtAccessibilityDynamicType() throws {
+    func testVescStaleTelemetryKeepsRideLayoutFixedAtAccessibilityDynamicType() throws {
         try assertVescStaleTelemetryAccessibility()
     }
 
@@ -2592,143 +3984,127 @@ final class CutoutAppUITests: XCTestCase {
     private func assertVescTypedWarning(label: String) {
         XCTAssertTrue(pairAvailableDevice(.vesc))
         guard let screen = connectedScreen(timeout: 20) else {
-            XCTFail("The deterministic Refloat warning fixture did not open its Ride screen")
+            XCTFail("The deterministic Refloat fixture did not open its Ride screen")
             return
         }
         defer { disconnectIfConnected() }
-
-        let warning = screen.descendants(matching: .any)["vesc.warning.active"]
-        XCTAssertTrue(warning.waitForExistence(timeout: 5), screen.debugDescription)
-        XCTAssertEqual(warning.label, label)
-        XCTAssertFalse((warning.value as? String ?? "").isEmpty)
-
+        let status = screen.descendants(matching: .any)["ride.hero.status"]
         let speed = screen.descendants(matching: .any)["ride.hero.speed"]
+        XCTAssertTrue(status.waitForExistence(timeout: 5))
+        XCTAssertTrue(status.label.contains(label), status.debugDescription)
+        XCTAssertTrue(status.isHittable)
         XCTAssertTrue(speed.waitForExistence(timeout: 5))
-        let ordered = screen.descendants(matching: .any).matching(
-            NSPredicate(
-                format: "identifier == 'ride.hero.speed' OR identifier == 'vesc.warning.active'"
-            )
-        )
-        XCTAssertEqual(ordered.count, 2, screen.debugDescription)
-        XCTAssertEqual(ordered.element(boundBy: 0).identifier, "vesc.warning.active")
+        XCTAssertLessThan(status.frame.minY, speed.frame.minY)
+        XCTAssertFalse(screen.descendants(matching: .any)["vesc.warning.active"].exists)
+        XCTAssertEqual(screen.scrollViews.count, 0)
+
     }
 
-    func testVescStaleTelemetryPrioritizesWarningForAccessibilityAtAccessibilityDynamicType() {
-        assertWarningPrecedesSpeed(
+    func testVescStaleTelemetryUsesStatusPillAtAccessibilityDynamicType() {
+        assertStatusPillReplacesWarningBlock(
             for: .vesc,
             warningIdentifier: "vesc.warning.telemetry-stale"
         )
     }
 
-    func testEucStaleTelemetryPrioritizesWarningForAccessibilityAtAccessibilityDynamicType() {
-        assertWarningPrecedesSpeed(for: .euc, warningIdentifier: "euc.warning")
+    func testEucStaleTelemetryUsesStatusPillAtAccessibilityDynamicType() {
+        assertStatusPillReplacesWarningBlock(for: .euc, warningIdentifier: "euc.warning")
     }
 
-    func testVescPendingTelemetryPrioritizesWarningForAccessibilityAtAccessibilityDynamicType() {
-        assertWarningPrecedesSpeed(
+    func testVescPendingTelemetryUsesStatusPillAtAccessibilityDynamicType() {
+        assertStatusPillReplacesWarningBlock(
             for: .vesc,
             warningIdentifier: "vesc.warning.telemetry-pending"
         )
     }
 
-    private func assertWarningPrecedesSpeed(
+    private func assertStatusPillReplacesWarningBlock(
         for family: ConnectedDeviceFamily,
         warningIdentifier: String
     ) {
         XCTAssertTrue(pairAvailableDevice(family))
-        let familyScreen = app.descendants(matching: .any)[family.screenIdentifier]
-        XCTAssertTrue(familyScreen.waitForExistence(timeout: 20), app.debugDescription)
+        let screen = app.descendants(matching: .any)[family.screenIdentifier]
+        XCTAssertTrue(screen.waitForExistence(timeout: 20), app.debugDescription)
+        let status = screen.descendants(matching: .any)["ride.hero.status"]
+        let speed = screen.descendants(matching: .any)["ride.hero.speed"]
+        XCTAssertTrue(status.waitForExistence(timeout: 5))
+        XCTAssertTrue(speed.waitForExistence(timeout: 5))
+        XCTAssertFalse(screen.descendants(matching: .any)[warningIdentifier].exists)
+        XCTAssertLessThan(status.frame.minY, speed.frame.minY)
+        XCTAssertEqual(screen.scrollViews.count, 0)
 
-        let orderedSafetyValues = familyScreen.descendants(matching: .any).matching(
-            NSPredicate(
-                format: "identifier == 'ride.hero.speed' OR identifier == %@",
-                warningIdentifier
-            )
-        )
-        XCTAssertEqual(orderedSafetyValues.count, 2, familyScreen.debugDescription)
-        XCTAssertEqual(
-            orderedSafetyValues.element(boundBy: 0).identifier,
-            warningIdentifier
-        )
     }
 
-    func testVescStaleTelemetryIsAnAccessibleWarningInLightAppearanceAtAccessibilityDynamicType() throws {
+    func testVescStaleTelemetryKeepsRideLayoutFixedInLightAppearanceAtAccessibilityDynamicType() throws {
         try assertVescStaleTelemetryAccessibility()
     }
 
-    func testVescStaleTelemetryIsAnAccessibleWarningInDarkAppearanceAtAccessibilityDynamicType() throws {
+    func testVescStaleTelemetryKeepsRideLayoutFixedInDarkAppearanceAtAccessibilityDynamicType() throws {
         try assertVescStaleTelemetryAccessibility()
     }
 
-    func testVescStaleTelemetryIsAnAccessibleWarningInLandscapeAtAccessibilityDynamicType() throws {
+    func testVescStaleTelemetryKeepsRideLayoutFixedInLandscapeAtAccessibilityDynamicType() throws {
         try assertVescStaleTelemetryAccessibility()
     }
 
-    func testVescStaleTelemetryWarningPrecedesMetricsInLandscapeAtAccessibilityDynamicType() {
+    func testVescStaleTelemetryShowsMetricsWithoutScrollingInLandscapeAtAccessibilityDynamicType() {
         XCTAssertEqual(fixture, .vescStale)
         XCTAssertTrue(pairAvailableDevice(.vesc))
         guard let screen = connectedScreen(timeout: 20) else {
-            XCTFail("The deterministic stale VESC fixture did not open its Ride screen")
+            XCTFail("The deterministic VESC fixture did not open its Ride screen")
             return
         }
-
-        let warning = screen.descendants(matching: .any)["vesc.warning.telemetry-stale"]
+        let status = screen.descendants(matching: .any)["ride.hero.status"]
         let voltage = screen.descendants(matching: .any).matching(
             NSPredicate(format: "label == %@", "voltage")
         ).firstMatch
-        XCTAssertTrue(warning.waitForExistence(timeout: 5))
-        for _ in 0..<6 where !voltage.exists {
-            let start = screen.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.75))
-            let end = screen.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2))
-            start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .fast, thenHoldForDuration: 0)
-        }
+        XCTAssertTrue(status.waitForExistence(timeout: 5))
         XCTAssertTrue(voltage.waitForExistence(timeout: 5))
-        XCTAssertLessThan(
-            warning.frame.minY,
-            voltage.frame.minY,
-            "The stale safety warning must appear before ordinary metrics"
-        )
+        XCTAssertTrue(voltage.isHittable)
+        XCTAssertEqual(screen.scrollViews.count, 0)
+        XCTAssertFalse(screen.descendants(matching: .any)["vesc.warning.telemetry-stale"].exists)
+
     }
 
-    func testVescStaleTelemetryIsAnAccessibleWarningWithPseudolocalizedTextAtAccessibilityDynamicType() throws {
+    func testVescStaleTelemetryKeepsRideLayoutFixedWithPseudolocalizedTextAtAccessibilityDynamicType() throws {
         try assertVescStaleTelemetryAccessibility(usesLocalizedText: true)
     }
 
     func
-        testVescStaleTelemetryIsAnAccessibleWarningWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType()
+        testVescStaleTelemetryKeepsRideLayoutFixedWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType()
         throws
     {
         try assertVescStaleTelemetryAccessibility(usesLocalizedText: true)
     }
 
-    func testVescStaleTelemetryIsAnAccessibleWarningInRightToLeftLayout() throws {
+    func testVescStaleTelemetryKeepsRideLayoutFixedInRightToLeftLayout() throws {
         try assertVescStaleTelemetryAccessibility()
     }
 
-    func testEucStaleTelemetryIsAnAccessibleWarningAtAccessibilityDynamicType() throws {
+    func testEucStaleTelemetryKeepsRideLayoutFixedAtAccessibilityDynamicType() throws {
         try assertEucStaleTelemetryAccessibility()
     }
 
-    func testEucStaleTelemetryIsAnAccessibleWarningInLightAppearanceAtAccessibilityDynamicType() throws {
+    func testEucStaleTelemetryKeepsRideLayoutFixedInLightAppearanceAtAccessibilityDynamicType() throws {
         try assertEucStaleTelemetryAccessibility()
     }
 
-    func testEucStaleTelemetryIsAnAccessibleWarningInDarkAppearanceAtAccessibilityDynamicType() throws {
+    func testEucStaleTelemetryKeepsRideLayoutFixedInDarkAppearanceAtAccessibilityDynamicType() throws {
         try assertEucStaleTelemetryAccessibility()
     }
 
-    func testEucStaleTelemetryIsAnAccessibleWarningInLandscapeAtAccessibilityDynamicType() throws {
+    func testEucStaleTelemetryKeepsRideLayoutFixedInLandscapeAtAccessibilityDynamicType() throws {
         try assertEucStaleTelemetryAccessibility()
     }
 
     func
-        testEucStaleTelemetryIsAnAccessibleWarningWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType()
+        testEucStaleTelemetryKeepsRideLayoutFixedWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType()
         throws
     {
         try assertEucStaleTelemetryAccessibility(usesLocalizedText: true)
     }
 
-    func testEucStaleTelemetryIsAnAccessibleWarningInRightToLeftLayout() throws {
+    func testEucStaleTelemetryKeepsRideLayoutFixedInRightToLeftLayout() throws {
         try assertEucStaleTelemetryAccessibility()
     }
 
@@ -2737,55 +4113,28 @@ final class CutoutAppUITests: XCTestCase {
     ) throws {
         XCTAssertTrue(pairAvailableDevice(.euc))
         guard let screen = connectedScreen(timeout: 20) else {
-            XCTFail("The deterministic stale EUC fixture did not open its Ride screen")
+            XCTFail("The deterministic EUC fixture did not open its Ride screen")
             return
         }
+        XCTAssertFalse(screen.descendants(matching: .any)["euc.warning"].exists)
+        try assertFixedRideStatus(in: screen)
 
-        let warning = app.descendants(matching: .any)["euc.warning"]
-        XCTAssertTrue(warning.waitForExistence(timeout: 5))
-        if !isLandscapeTest {
-            XCTAssertTrue(warning.isHittable, "The EUC stale warning must be visible without scrolling")
-        }
-        if usesLocalizedText {
-            XCTAssertNotEqual(warning.label, "Telemetry stale")
-            XCTAssertFalse(warning.label.isEmpty)
-            XCTAssertFalse((warning.value as? String ?? "").isEmpty)
-        } else {
-            XCTAssertEqual(warning.label, "Telemetry stale")
-            XCTAssertTrue((warning.value as? String)?.hasPrefix("Last update ") == true)
-        }
-
-        let status = app.descendants(matching: .any)["ride.hero.status"]
-        XCTAssertTrue(status.waitForExistence(timeout: 5))
-        XCTAssertTrue(status.isHittable, "The EUC stale operating status must be visible without scrolling")
-        if usesLocalizedText {
-            XCTAssertFalse(status.label.isEmpty)
-            XCTAssertFalse((status.value as? String ?? "").isEmpty)
-        } else {
-            XCTAssertTrue(status.label.contains("Telemetry stale"))
-            XCTAssertEqual(status.value as? String, "warning")
-        }
-        scrollSafetyWarningAboveNavigation(warning, in: screen)
-        XCTAssertTrue(warning.isHittable, "The EUC stale warning cannot be reached by scrolling")
-        try performVisibleLayoutAccessibilityAudit(
-            ignoringNilElementContrastWarning: true
-        )
     }
 
-    func testVescPendingTelemetryIsAnAccessibleWarningAtAccessibilityDynamicType() throws {
+    func testVescPendingTelemetryKeepsRideLayoutFixedAtAccessibilityDynamicType() throws {
         try assertVescPendingTelemetryAccessibility()
     }
 
-    func testVescPendingTelemetryIsAnAccessibleWarningInLightAppearanceAtAccessibilityDynamicType() throws {
+    func testVescPendingTelemetryKeepsRideLayoutFixedInLightAppearanceAtAccessibilityDynamicType() throws {
         try assertVescPendingTelemetryAccessibility()
     }
 
-    func testVescPendingTelemetryIsAnAccessibleWarningInDarkAppearanceAtAccessibilityDynamicType() throws {
+    func testVescPendingTelemetryKeepsRideLayoutFixedInDarkAppearanceAtAccessibilityDynamicType() throws {
         try assertVescPendingTelemetryAccessibility()
     }
 
     func
-        testVescPendingTelemetryIsAnAccessibleWarningWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType()
+        testVescPendingTelemetryKeepsRideLayoutFixedWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType()
         throws
     {
         try assertVescPendingTelemetryAccessibility(
@@ -2794,7 +4143,7 @@ final class CutoutAppUITests: XCTestCase {
         )
     }
 
-    func testVescPendingTelemetryIsAnAccessibleWarningInRightToLeftLayout() throws {
+    func testVescPendingTelemetryKeepsRideLayoutFixedInRightToLeftLayout() throws {
         try assertVescPendingTelemetryAccessibility()
     }
 
@@ -2804,33 +4153,12 @@ final class CutoutAppUITests: XCTestCase {
     ) throws {
         XCTAssertTrue(pairAvailableDevice(.vesc))
         guard let screen = connectedScreen(timeout: 20) else {
-            XCTFail("The deterministic pending VESC fixture did not open its Ride screen")
+            XCTFail("The deterministic VESC fixture did not open its Ride screen")
             return
         }
+        XCTAssertFalse(screen.descendants(matching: .any)["vesc.warning.telemetry-pending"].exists)
+        try assertFixedRideStatus(in: screen)
 
-        let warning = app.descendants(matching: .any)["vesc.warning.telemetry-pending"]
-        XCTAssertTrue(warning.waitForExistence(timeout: 5))
-        let status = app.descendants(matching: .any)["ride.hero.status"]
-        XCTAssertTrue(status.waitForExistence(timeout: 5))
-        XCTAssertTrue(status.isHittable, "The pending operating status must be visible without scrolling")
-        scrollSafetyWarningAboveNavigation(warning, in: screen)
-        XCTAssertTrue(warning.isHittable, "The pending warning cannot be reached by scrolling")
-        if usesLocalizedText {
-            XCTAssertNotEqual(warning.label, "Telemetry pending")
-            XCTAssertFalse(warning.label.isEmpty)
-            XCTAssertFalse((warning.value as? String ?? "").isEmpty)
-            XCTAssertFalse(status.label.isEmpty)
-            XCTAssertFalse((status.value as? String ?? "").isEmpty)
-        } else {
-            XCTAssertEqual(warning.label, "Telemetry pending")
-            XCTAssertEqual(warning.value as? String, "Waiting for live values.")
-            XCTAssertTrue(status.label.contains("Telemetry pending"))
-            XCTAssertEqual(status.value as? String, "warning")
-        }
-        try performVisibleLayoutAccessibilityAudit(
-            ignoringNilElementContrastWarning: true,
-            ignoringVisibleRideStatusContrastWarning: ignoringVisibleRideStatusContrastWarning
-        )
     }
 
     private func assertVescStaleTelemetryAccessibility(
@@ -2838,35 +4166,23 @@ final class CutoutAppUITests: XCTestCase {
     ) throws {
         XCTAssertTrue(pairAvailableDevice(.vesc))
         guard let screen = connectedScreen(timeout: 20) else {
-            XCTFail("The deterministic stale VESC fixture did not open its Ride screen")
+            XCTFail("The deterministic VESC fixture did not open its Ride screen")
             return
         }
+        XCTAssertFalse(screen.descendants(matching: .any)["vesc.warning.telemetry-stale"].exists)
+        try assertFixedRideStatus(in: screen)
 
-        let warning = app.descendants(matching: .any)["vesc.warning.telemetry-stale"]
-        XCTAssertTrue(warning.waitForExistence(timeout: 5))
-        let status = app.descendants(matching: .any)["ride.hero.status"]
+    }
+
+    private func assertFixedRideStatus(in screen: XCUIElement) throws {
+        let status = screen.descendants(matching: .any)["ride.hero.status"]
         XCTAssertTrue(status.waitForExistence(timeout: 5))
-        XCTAssertTrue(status.isHittable, "The stale operating status must be visible without scrolling")
-        scrollSafetyWarningAboveNavigation(warning, in: screen)
-        XCTAssertTrue(warning.isHittable, "The stale warning cannot be reached by scrolling")
-        if usesLocalizedText {
-            XCTAssertNotEqual(warning.label, "Telemetry stale")
-            XCTAssertFalse(warning.label.isEmpty)
-            XCTAssertFalse((warning.value as? String ?? "").isEmpty)
-            XCTAssertFalse(status.label.isEmpty)
-            XCTAssertFalse((status.value as? String ?? "").isEmpty)
-        } else {
-            XCTAssertEqual(warning.label, "Telemetry stale")
-            XCTAssertTrue(status.label.contains("Telemetry stale"))
-            XCTAssertEqual(status.value as? String, "warning")
-            XCTAssertTrue(
-                (warning.value as? String)?.hasPrefix("Last update ") == true,
-                "The stale warning must expose its elapsed-telemetry detail: \(String(describing: warning.value))"
-            )
-        }
-        try performVisibleLayoutAccessibilityAudit(
-            ignoringNilElementContrastWarning: true
-        )
+        XCTAssertTrue(status.isHittable)
+        XCTAssertFalse(status.label.isEmpty)
+        XCTAssertFalse(status.label.contains("Telemetry stale"))
+        XCTAssertFalse(status.label.contains("Telemetry pending"))
+        XCTAssertEqual(screen.scrollViews.count, 0)
+        try performVisibleLayoutAccessibilityAudit(ignoringNilElementContrastWarning: true)
     }
 
     private func scrollSafetyWarningAboveNavigation(
@@ -3180,7 +4496,66 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     private var launchArguments: [String] {
-        var arguments = fixture.launchArguments
+        // Launch-argument defaults persist in the app domain. Set the requested
+        // category on every launch so a prior AX fixture cannot change this case.
+        var arguments = fixture.launchArguments + ["-UIPreferredContentSizeCategoryName", rideTextSizeCategory]
+        if name.contains("AcrossAccessibilityCategories") {
+            arguments += ["-CUTOUT_UI_TEST_ENVIRONMENT_READBACK", "YES", "--ui-test-live-activity-readback"]
+        }
+        if name.contains("LightingBrightnessSliderCommits") {
+            arguments += ["--ui-test-connected-lighting"]
+        }
+        if name.contains("AccessibleReadingsPreserveAvailableSecondaryValues") {
+            arguments += [
+                "--ui-test-ride-secondary-readings",
+                "-io.cutout.music.monitoring.enabled", "NO",
+                "-CUTOUT_UI_TEST_MUSIC", "silent",
+            ]
+        }
+        if name.contains("SavedHistoryPreservesSelection") {
+            arguments += [
+                "--seed-ui-test-ride-history",
+                "-io.cutout.music.monitoring.enabled", "NO",
+                "-io.cutout.music.compact-player.hidden", "NO",
+                "-CUTOUT_UI_TEST_MUSIC", "silent",
+            ]
+        }
+        if name.contains("MusicHistoryPreference") {
+            arguments += [
+                "-CUTOUT_UI_TEST_MUSIC", "silent",
+                "-io.cutout.music.monitoring.enabled", "NO",
+            ]
+        }
+        if name.contains("MoreMusic") {
+            arguments += [
+                "-io.cutout.music.provider.selected", name.contains("Spotify") ? "spotify" : "apple_music",
+                "-io.cutout.music.monitoring.enabled", "NO",
+                "-io.cutout.music.compact-player.hidden", "NO",
+            ]
+            if !name.contains("Spotify") { arguments += ["-CUTOUT_UI_TEST_MUSIC", "silent"] }
+        }
+        if name.contains("MusicPlayer") {
+            let state =
+                name.contains("PreviousOnly")
+                ? "previous-only"
+                : name.contains("Recovery")
+                    ? "recovery"
+                    : name.contains("Paused") ? "paused" : "playing"
+            arguments += [
+                "-CUTOUT_UI_TEST_MUSIC", state,
+                "-io.cutout.music.provider.selected", "apple_music",
+                "-io.cutout.music.monitoring.enabled", "YES",
+                "-io.cutout.music.compact-player.hidden", "NO",
+            ]
+        }
+        if name.contains("EssentialRideControls") || name.contains("MusicPlayerPaused")
+            || name.contains("AccessibleReadingsPreserveAvailableSecondaryValues")
+            || name.contains("ReduceMotionAndIncreasedContrast")
+        {
+            arguments += [
+                "-CUTOUT_UI_TEST_ENVIRONMENT_READBACK", "YES",
+            ]
+        }
         if name.contains("EucTune") { arguments += ["-CUTOUT_UI_TEST_SETTINGS", "YES"] }
         if name.contains("EucTuneUsesOrdinaryGenericControlsAtAccessibilityDynamicType") {
             arguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
@@ -3201,6 +4576,15 @@ final class CutoutAppUITests: XCTestCase {
         }
 
         return arguments
+    }
+
+    private var rideTextSizeCategory: String {
+        if name.contains("AcrossAccessibilityCategories") {
+            return UIApplication.shared.preferredContentSizeCategory.rawValue
+        }
+        if name.contains("AtAccessibilityDynamicType") { return "UICTContentSizeCategoryAccessibilityXXXL" }
+        if name.contains("AtExtraExtraExtraLargeType") { return "UICTContentSizeCategoryXXXL" }
+        return "UICTContentSizeCategoryL"
     }
 
     private var isLandscapeTest: Bool {
@@ -3561,7 +4945,8 @@ final class CutoutAppUITests: XCTestCase {
         in screen: XCUIElement,
         maxScrolls: Int,
         occludedBy obstruction: XCUIElement? = nil,
-        requiresFullVisibility: Bool = true
+        requiresFullVisibility: Bool = true,
+        horizontalFraction: CGFloat = 0.5
     ) {
         for _ in 0..<maxScrolls {
             let unobscuredFrame = unobscuredFrame(in: screen, above: obstruction)
@@ -3588,7 +4973,8 @@ final class CutoutAppUITests: XCTestCase {
             dragVertically(
                 in: screen,
                 from: isAboveViewport ? centerY - travel / 2 : centerY + travel / 2,
-                to: isAboveViewport ? centerY + travel / 2 : centerY - travel / 2
+                to: isAboveViewport ? centerY + travel / 2 : centerY - travel / 2,
+                horizontalFraction: horizontalFraction
             )
         }
         XCTAssertTrue(element.waitForExistence(timeout: 5), screen.debugDescription)
@@ -3620,19 +5006,45 @@ final class CutoutAppUITests: XCTestCase {
         )
     }
 
-    private func dragVertically(in screen: XCUIElement, from startY: CGFloat, to endY: CGFloat) {
+    private func dragVertically(
+        in screen: XCUIElement, from startY: CGFloat, to endY: CGFloat, horizontalFraction: CGFloat = 0.5
+    ) {
         let frame = screen.frame
         guard frame.height > 0 else { return }
         func normalizedY(_ y: CGFloat) -> CGFloat {
             min(0.92, max(0.08, (y - frame.minY) / frame.height))
         }
         let start = screen.coordinate(
-            withNormalizedOffset: CGVector(dx: 0.5, dy: normalizedY(startY))
+            withNormalizedOffset: CGVector(dx: horizontalFraction, dy: normalizedY(startY))
         )
         let end = screen.coordinate(
-            withNormalizedOffset: CGVector(dx: 0.5, dy: normalizedY(endY))
+            withNormalizedOffset: CGVector(dx: horizontalFraction, dy: normalizedY(endY))
         )
         start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0)
+    }
+
+    private func performTextClippingAudit(
+        named name: String, allowingCompactMusicTitleTruncation: Bool = false
+    ) throws {
+        let hierarchy = XCTAttachment(string: app.debugDescription)
+        hierarchy.name = "\(name)-accessibility-hierarchy"
+        hierarchy.lifetime = .keepAlways
+        add(hierarchy)
+        try app.performAccessibilityAudit(for: .textClipped) { issue in
+            let detail = """
+                \(issue.detailedDescription)
+                Frame: \(issue.element.map { String(describing: $0.frame) } ?? "No frame")
+                \(issue.element?.debugDescription ?? "No element")
+                """
+            let attachment = XCTAttachment(string: detail)
+            attachment.name = "\(name)-clipping-issue"
+            attachment.lifetime = .keepAlways
+            self.add(attachment)
+            // A native tab accessory ellipsizes long track titles. Full metadata
+            // is asserted on music.expand and remains unrestricted in details.
+            return allowingCompactMusicTitleTruncation
+                && issue.element?.identifier == "music.now-playing-title"
+        }
     }
 
     private func performVisibleLayoutAccessibilityAudit(
@@ -3650,9 +5062,21 @@ final class CutoutAppUITests: XCTestCase {
         let auditTypes = XCUIAccessibilityAuditType.all.subtracting(excluded)
         try app.performAccessibilityAudit(for: auditTypes) { issue in
             let elementDescription = issue.element?.debugDescription ?? "No element"
+            let elementFrame = issue.element.map { String(describing: $0.frame) } ?? "No frame"
+            let diagnostic = """
+                Accessibility audit issue [\(issue.auditType.rawValue)]: \(issue.detailedDescription)
+                Element frame: \(elementFrame)
+                \(elementDescription)
+                """
             print(
-                "Accessibility audit issue [\(issue.auditType.rawValue)]: \(issue.detailedDescription)\n\(elementDescription)"
+                diagnostic
             )
+            XCTContext.runActivity(named: "Accessibility audit issue details") { activity in
+                let attachment = XCTAttachment(string: diagnostic)
+                attachment.name = "Accessibility audit issue details"
+                attachment.lifetime = .keepAlways
+                activity.add(attachment)
+            }
             if issue.auditType == .contrast,
                 let element = issue.element,
                 !self.isFullyRenderedForContrastAudit(element)
@@ -3748,33 +5172,33 @@ final class CutoutAppUITests: XCTestCase {
                     "testCapturePassesAccessibilityAuditInLightAppearanceAtAccessibilityDynamicType",
                 ],
                 "PWM headroom": [
-                    "testEucStaleTelemetryIsAnAccessibleWarningInDarkAppearanceAtAccessibilityDynamicType"
+                    "testEucStaleTelemetryKeepsRideLayoutFixedInDarkAppearanceAtAccessibilityDynamicType"
                 ],
                 "Refloat VESC": [
-                    "testVescStaleTelemetryIsAnAccessibleWarningAtAccessibilityDynamicType",
-                    "testVescStaleTelemetryIsAnAccessibleWarningInLightAppearanceAtAccessibilityDynamicType",
+                    "testVescStaleTelemetryKeepsRideLayoutFixedAtAccessibilityDynamicType",
+                    "testVescStaleTelemetryKeepsRideLayoutFixedInLightAppearanceAtAccessibilityDynamicType",
                 ],
                 "Test EUC": [
-                    "testEucStaleTelemetryIsAnAccessibleWarningAtAccessibilityDynamicType",
-                    "testEucStaleTelemetryIsAnAccessibleWarningInDarkAppearanceAtAccessibilityDynamicType",
-                    "testEucStaleTelemetryIsAnAccessibleWarningInLightAppearanceAtAccessibilityDynamicType",
+                    "testEucStaleTelemetryKeepsRideLayoutFixedAtAccessibilityDynamicType",
+                    "testEucStaleTelemetryKeepsRideLayoutFixedInDarkAppearanceAtAccessibilityDynamicType",
+                    "testEucStaleTelemetryKeepsRideLayoutFixedInLightAppearanceAtAccessibilityDynamicType",
                 ],
                 "Telemetry pending": [
-                    "testVescPendingTelemetryIsAnAccessibleWarningInRightToLeftLayout"
+                    "testVescPendingTelemetryKeepsRideLayoutFixedInRightToLeftLayout"
                 ],
                 "Telemetry stale": [
                     "testProductionSurfacesPassAccessibilityAudit",
-                    "testVescStaleTelemetryIsAnAccessibleWarningInRightToLeftLayout",
+                    "testVescStaleTelemetryKeepsRideLayoutFixedInRightToLeftLayout",
                 ],
                 "VESC": [
-                    "testVescPendingTelemetryIsAnAccessibleWarningAtAccessibilityDynamicType",
-                    "testVescPendingTelemetryIsAnAccessibleWarningInLightAppearanceAtAccessibilityDynamicType",
+                    "testVescPendingTelemetryKeepsRideLayoutFixedAtAccessibilityDynamicType",
+                    "testVescPendingTelemetryKeepsRideLayoutFixedInLightAppearanceAtAccessibilityDynamicType",
                 ],
                 "board speed": [
-                    "testVescStaleTelemetryIsAnAccessibleWarningInLandscapeAtAccessibilityDynamicType"
+                    "testVescStaleTelemetryKeepsRideLayoutFixedInLandscapeAtAccessibilityDynamicType"
                 ],
                 "speed": [
-                    "testEucStaleTelemetryIsAnAccessibleWarningInRightToLeftLayout"
+                    "testEucStaleTelemetryKeepsRideLayoutFixedInRightToLeftLayout"
                 ],
                 "voltage": [
                     "testProductionSurfacesPassAccessibilityAudit"
@@ -3995,12 +5419,7 @@ final class CutoutAppUITests: XCTestCase {
             assertMetricIsReachable("speed", in: rideScreen)
         }
 
-        let packTab = app.tabBars.buttons["dashboard.nav.pack"]
-        guard packTab.waitForExistence(timeout: 5), packTab.isHittable else {
-            XCTFail("The Pack tab is not available from the EUC Ride screen")
-            return nil
-        }
-        packTab.tap()
+        tapNavigationTab("pack", title: "Pack")
 
         let bmsScreen = app.descendants(matching: .any)[identifier]
         guard bmsScreen.waitForExistence(timeout: 5) else {
@@ -4048,7 +5467,7 @@ final class CutoutAppUITests: XCTestCase {
         } else {
             XCTAssertTrue(bmsScreen.exists)
         }
-        XCTAssertTrue(app.tabBars.buttons["dashboard.nav.pack"].isSelected)
+        XCTAssertTrue(app.tabBars.buttons["dashboard.nav.more"].isSelected)
         restoreDashboardViewport(bmsScreen)
         for _ in 0..<scrollsBeforeAudit {
             bmsScreen.swipeUp()
@@ -4144,9 +5563,12 @@ final class CutoutAppUITests: XCTestCase {
         let picker = app.descendants(matching: .any)["device-picker.screen"]
         guard picker.waitForExistence(timeout: 8) else { return false }
 
-        for _ in 0..<6 where !button.exists || !button.isHittable {
-            picker.swipeUp()
-        }
+        _ = button.waitForExistence(timeout: 5)
+        let player = app.descendants(matching: .any)["music.compact-player"]
+        scrollElementFrameIntoViewport(
+            button, in: picker, maxScrolls: 16,
+            occludedBy: player.exists ? player : app.tabBars.firstMatch
+        )
 
         guard button.exists, button.isHittable else {
             XCTFail(
@@ -4155,22 +5577,27 @@ final class CutoutAppUITests: XCTestCase {
             return false
         }
         XCTAssertEqual(button.elementType, .button)
-        XCTAssertGreaterThanOrEqual(button.frame.height, 44)
+        assertMinimumControlDimension(button.frame.height)
         XCTAssertTrue(family.matches(label: button.label))
         button.tap()
         return true
     }
 
-    private func tapNavigationTab(_ id: String, title: String) {
+    private func navigationTab(_ id: String, title: String) -> XCUIElement {
         let tab = app.tabBars.buttons["dashboard.nav.\(id)"]
+        return tab.exists ? tab : app.tabBars.buttons[title]
+    }
+
+    private func tapNavigationTab(_ id: String, title: String) {
+        let tab = navigationTab(id, title: title)
         if tab.exists {
             XCTAssertTrue(tab.isHittable, app.debugDescription)
             tab.tap()
         } else {
-            let more = app.tabBars.buttons["More"]
+            let more = navigationTab("more", title: "More")
             XCTAssertTrue(more.waitForExistence(timeout: 5), app.debugDescription)
             more.tap()
-            let row = app.tables.cells.containing(.staticText, identifier: title).firstMatch
+            let row = app.descendants(matching: .any)["dashboard.nav.\(id)"]
             XCTAssertTrue(row.waitForExistence(timeout: 5), app.debugDescription)
             row.tap()
         }

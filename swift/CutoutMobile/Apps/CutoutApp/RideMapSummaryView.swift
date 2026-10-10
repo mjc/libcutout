@@ -4,6 +4,8 @@ import Foundation
 import SwiftUI
 
 struct RideMapSummaryView: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     let snapshot: MobileRideMapSnapshotDto?
     let speed: SpeedReadout
     let vehicleName: String?
@@ -69,7 +71,7 @@ struct RideMapSummaryView: View {
                     Text(vehicleName ?? Self.vehicleLabel(for: snapshot.associatedVehicle))
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(PevColors.muted)
-                        .lineLimit(1)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 .accessibilityElement(children: .combine)
             }
@@ -108,13 +110,10 @@ struct RideMapSummaryView: View {
 
     @ViewBuilder
     private func metricRow(for snapshot: MobileRideMapSnapshotDto) -> some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(alignment: .firstTextBaseline, spacing: 0) {
-                metrics(for: snapshot)
-            }
-            VStack(alignment: .leading, spacing: 8) {
-                metrics(for: snapshot)
-            }
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(alignment: .leading, spacing: 12) { metrics(for: snapshot) }
+        } else {
+            HStack(alignment: .firstTextBaseline, spacing: 12) { metrics(for: snapshot) }
         }
     }
 
@@ -129,12 +128,13 @@ struct RideMapSummaryView: View {
             label: localizedAppText("ride_map.metric_elapsed")
         )
         RideMapMetric(
-            value: Self.speedText(for: speed),
+            value: speed.millimetersPerSecond == nil ? speed.displayValue : Self.speedText(for: speed),
             label: localizedAppText(
                 snapshot.liveSpeed?.source == .phoneGps
                     ? "euc.metric.gps_speed"
                     : "ride_map.metric_speed"
-            )
+            ),
+            spokenValue: Self.speedText(for: speed)
         )
     }
 }
@@ -142,17 +142,21 @@ struct RideMapSummaryView: View {
 private struct RideMapMetric: View {
     let value: String
     let label: String
+    var spokenValue: String? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(value)
                 .font(.title2.weight(.bold).monospacedDigit())
-                .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
             Text(label)
                 .font(.caption)
                 .foregroundStyle(PevColors.muted)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(label)
+        .accessibilityValue(spokenValue ?? value)
     }
 }

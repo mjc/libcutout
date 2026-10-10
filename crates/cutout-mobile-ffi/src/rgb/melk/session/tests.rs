@@ -23,7 +23,7 @@ fn duplicate_link_failure_callbacks_preserve_the_reconnect_budget_and_timer() {
     ] {
         core.handle(event);
         assert_eq!(core.snapshot(), retrying);
-        assert!(core.drain_actions().is_empty());
+        assert_eq!(core.drain_actions().len(), 0);
     }
     core.handle(MobileMelkLightingSessionEventDto::TimerFired {
         timer: MobileMelkLightingTimerDto::Reconnect,
@@ -80,7 +80,7 @@ fn restored_peripherals_wait_for_bluetooth_power_before_transport_operations() {
             powered_on: true,
             state_code: 5,
         });
-        assert!(core.drain_actions().is_empty());
+        assert_eq!(core.drain_actions().len(), 0);
     }
 }
 
@@ -89,7 +89,7 @@ fn unavailable_restoration_does_not_scan_before_bluetooth_is_powered_on() {
     let core = MobileMelkLightingSessionCore::new();
     core.start(Some(ID.into()));
     core.handle(MobileMelkLightingSessionEventDto::RestoreUnavailable);
-    assert!(core.drain_actions().is_empty());
+    assert_eq!(core.drain_actions().len(), 0);
     core.handle(MobileMelkLightingSessionEventDto::BluetoothState {
         powered_on: true,
         state_code: 5,
@@ -117,7 +117,7 @@ fn connection_completion_before_the_radio_callback_is_deferred() {
         name: None,
         platform_identifier: ID.into(),
     });
-    assert!(core.drain_actions().is_empty());
+    assert_eq!(core.drain_actions().len(), 0);
     core.handle(MobileMelkLightingSessionEventDto::BluetoothState {
         powered_on: true,
         state_code: 5,
@@ -137,7 +137,7 @@ fn power_loss_discards_deferred_restoration_before_the_next_power_cycle() {
         connected: true,
         pending: false,
     });
-    assert!(core.drain_actions().is_empty());
+    assert_eq!(core.drain_actions().len(), 0);
     core.handle(MobileMelkLightingSessionEventDto::BluetoothState {
         powered_on: false,
         state_code: 4,
@@ -169,7 +169,7 @@ fn disconnect_radio_state_also_gates_restoration_operations() {
         connected: true,
         pending: false,
     });
-    assert!(core.drain_actions().is_empty());
+    assert_eq!(core.drain_actions().len(), 0);
     core.handle(MobileMelkLightingSessionEventDto::BluetoothState {
         powered_on: true,
         state_code: 5,
@@ -240,8 +240,8 @@ fn stopped_sessions_ignore_late_transport_callbacks() {
         let stopped = core.snapshot();
         core.handle(event.clone());
         assert_eq!(core.snapshot(), stopped, "late event: {event:?}");
-        assert!(core.drain_actions().is_empty());
-        assert!(core.drain_notifications().is_empty());
+        assert_eq!(core.drain_actions().len(), 0);
+        assert_eq!(core.drain_notifications().len(), 0);
     }
 }
 
@@ -277,7 +277,7 @@ fn resume_restarts_exhausted_retries_and_keeps_the_remembered_identity() {
         powered_on: true,
     });
     assert_eq!(core.snapshot(), exhausted);
-    assert!(core.drain_actions().is_empty());
+    assert_eq!(core.drain_actions().len(), 0);
 
     core.handle(MobileMelkLightingSessionEventDto::Resume);
     assert_eq!(
@@ -292,7 +292,7 @@ fn resume_restarts_exhausted_retries_and_keeps_the_remembered_identity() {
 
     // Duplicate lifecycle notifications must not keep recreating the adapter.
     core.handle(MobileMelkLightingSessionEventDto::Resume);
-    assert!(core.drain_actions().is_empty());
+    assert_eq!(core.drain_actions().len(), 0);
     core.handle(MobileMelkLightingSessionEventDto::BluetoothState {
         powered_on: true,
         state_code: 5,
@@ -304,7 +304,7 @@ fn resume_restarts_exhausted_retries_and_keeps_the_remembered_identity() {
         platform_identifier: "22222222-2222-2222-2222-222222222222".into(),
         rssi: -30,
     });
-    assert!(core.drain_actions().is_empty());
+    assert_eq!(core.drain_actions().len(), 0);
     core.handle(MobileMelkLightingSessionEventDto::Discovered {
         name: None,
         platform_identifier: ID.into(),
@@ -342,7 +342,7 @@ fn resume_recovers_a_power_loss_but_does_not_revive_an_explicitly_stopped_sessio
         core.snapshot().state,
         MobileMelkLightingSessionStateDto::Disconnected
     );
-    assert!(core.drain_actions().is_empty());
+    assert_eq!(core.drain_actions().len(), 0);
 }
 
 #[test]
@@ -379,7 +379,7 @@ fn resume_preserves_active_connections_and_their_timers_and_commands() {
         let before = core.snapshot();
         core.handle(MobileMelkLightingSessionEventDto::Resume);
         assert_eq!(core.snapshot(), before);
-        assert!(core.drain_actions().is_empty());
+        assert_eq!(core.drain_actions().len(), 0);
     }
     connecting.handle(MobileMelkLightingSessionEventDto::ConnectTimeout);
     assert_eq!(
@@ -410,7 +410,7 @@ fn resume_does_not_retry_an_invalid_remembered_identity() {
     let before = core.snapshot();
     core.handle(MobileMelkLightingSessionEventDto::Resume);
     assert_eq!(core.snapshot(), before);
-    assert!(core.drain_actions().is_empty());
+    assert_eq!(core.drain_actions().len(), 0);
 }
 
 fn initializing_core() -> std::sync::Arc<MobileMelkLightingSessionCore> {
@@ -482,6 +482,23 @@ fn ready_core() -> std::sync::Arc<MobileMelkLightingSessionCore> {
     let core = initializing_core();
     finish_initialization(&core);
     core
+}
+
+#[test]
+fn requested_write_diagnostics_preserve_lowercase_hex_and_leading_zeroes() {
+    let core = ready_core();
+    core.drain_records();
+
+    assert!(core.set_power(true));
+
+    core.handle(MobileMelkLightingSessionEventDto::WriteReady { can_send: true });
+
+    let records = core.drain_records();
+    assert!(
+        records
+            .iter()
+            .any(|record| record == "requested=7e00040100000000ef")
+    );
 }
 
 fn finish_initialization(core: &MobileMelkLightingSessionCore) {
@@ -588,7 +605,7 @@ fn restored_notifications_cannot_bypass_profile_verification() {
     );
     assert!(!core.snapshot().notification_ready);
     assert!(!core.set_power(true));
-    assert!(core.drain_actions().is_empty());
+    assert_eq!(core.drain_actions().len(), 0);
 }
 
 #[test]
@@ -723,7 +740,7 @@ fn reducer_coalesces_color_preview_writes_and_waits_for_capacity() {
     let core = ready_core();
     assert!(core.set_solid_color(255, 0, 0));
     assert!(core.set_solid_color(0, 255, 0));
-    assert!(core.drain_actions().is_empty());
+    assert_eq!(core.drain_actions().len(), 0);
     core.flush_writes(true);
     let actions = core.drain_actions();
     assert_eq!(actions.len(), 2);
@@ -754,7 +771,7 @@ fn reducer_rejects_malformed_remembered_identity_before_scanning() {
             reason: "Remembered lighting identity is invalid".into()
         }
     );
-    assert!(core.drain_actions().is_empty());
+    assert_eq!(core.drain_actions().len(), 0);
 }
 
 #[test]
@@ -778,10 +795,10 @@ fn restarting_discards_output_from_the_previous_session() {
     core.stop();
     core.start(None);
 
-    assert!(core.drain_actions().is_empty());
-    assert!(core.drain_records().is_empty());
-    assert!(core.drain_candidates().is_empty());
-    assert!(core.drain_notifications().is_empty());
+    assert_eq!(core.drain_actions().len(), 0);
+    assert_eq!(core.drain_records().len(), 0);
+    assert_eq!(core.drain_candidates().len(), 0);
+    assert_eq!(core.drain_notifications().len(), 0);
 }
 
 #[test]
@@ -912,7 +929,7 @@ fn stop_discards_pending_platform_actions() {
     });
     core.stop();
 
-    assert!(core.drain_actions().is_empty());
+    assert_eq!(core.drain_actions().len(), 0);
 }
 
 #[test]
@@ -965,7 +982,7 @@ fn preferred_connection_timeouts_are_bounded() {
         rssi: -60,
     });
     assert_eq!(core.snapshot(), failed);
-    assert!(core.drain_actions().is_empty());
+    assert_eq!(core.drain_actions().len(), 0);
 }
 
 #[test]
@@ -995,8 +1012,8 @@ fn radio_off_refuses_candidate_selection_and_late_scan_results() {
         platform_identifier: ID.into(),
         rssi: -60,
     });
-    assert!(core.drain_actions().is_empty());
-    assert!(core.drain_candidates().is_empty());
+    assert_eq!(core.drain_actions().len(), 0);
+    assert_eq!(core.drain_candidates().len(), 0);
 }
 
 fn scanning_core() -> std::sync::Arc<MobileMelkLightingSessionCore> {
@@ -1023,10 +1040,10 @@ fn discovery_refuses_malformed_platform_identifiers() {
             platform_identifier: identifier.into(),
             rssi: -60,
         });
-        assert!(core.drain_candidates().is_empty());
+        assert_eq!(core.drain_candidates().len(), 0);
         assert_eq!(core.drain_candidate_removals(), [identifier.to_owned()]);
         core.select_candidate(identifier.into());
-        assert!(core.drain_actions().is_empty());
+        assert_eq!(core.drain_actions().len(), 0);
     }
 }
 
@@ -1044,7 +1061,7 @@ fn changed_names_do_not_remove_protocol_verified_candidates() {
         core.drain_candidates()[0].name.as_deref(),
         Some("aero lights")
     );
-    assert!(core.drain_candidate_removals().is_empty());
+    assert_eq!(core.drain_candidate_removals().len(), 0);
 }
 
 #[test]
@@ -1084,7 +1101,7 @@ fn unsupported_gatt_withdraws_the_selected_candidate_before_rescanning() {
     );
     assert!(!core.set_power(true));
     core.select_candidate(ID.into());
-    assert!(core.drain_actions().is_empty());
+    assert_eq!(core.drain_actions().len(), 0);
 }
 
 #[test]
@@ -1140,7 +1157,7 @@ fn candidate_cap_reports_every_identifier_that_must_be_removed() {
     let updated = core.drain_candidates();
     assert_eq!(updated.len(), 1);
     assert_eq!(updated[0].rssi, -40);
-    assert!(core.drain_candidate_removals().is_empty());
+    assert_eq!(core.drain_candidate_removals().len(), 0);
     core.select_candidate(identifiers[0].clone());
     assert_eq!(
         core.snapshot().state,
@@ -1157,7 +1174,7 @@ fn discovery_probes_without_listing_or_writing_until_gatt_is_verified() {
             platform_identifier: ID.into(),
             rssi: -40,
         });
-        assert!(core.drain_candidates().is_empty());
+        assert_eq!(core.drain_candidates().len(), 0);
         assert!(core.drain_actions().iter().any(|action| matches!(action,
             MobileMelkLightingSessionActionDto::Connect { platform_identifier } if platform_identifier == ID)));
         core.handle(MobileMelkLightingSessionEventDto::Connected {
@@ -1274,7 +1291,7 @@ fn probes_advance_past_noise_failure_and_timeout_without_writes() {
                 });
             }
         }
-        assert!(core.drain_candidates().is_empty());
+        assert_eq!(core.drain_candidates().len(), 0);
         let actions = core.drain_actions();
         assert!(actions.iter().any(|action| matches!(action, MobileMelkLightingSessionActionDto::Connect { platform_identifier } if platform_identifier == next)));
         assert!(
@@ -1296,7 +1313,7 @@ fn unpaired_platform_restoration_cannot_select_another_vehicles_accessory() {
         connected: true,
         pending: false,
     });
-    assert!(core.drain_actions().is_empty());
+    assert_eq!(core.drain_actions().len(), 0);
     assert_eq!(core.snapshot().platform_identifier, None);
 }
 

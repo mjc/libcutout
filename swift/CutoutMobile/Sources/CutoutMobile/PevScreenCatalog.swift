@@ -15,6 +15,7 @@ public enum PevScreenID: String, CaseIterable, Equatable, Hashable, Sendable {
 
 public enum PevNavigationTarget: Equatable, Hashable, Sendable {
     case devicePicker
+    case more
     case camera
     case screen(PevScreenID)
     case eucPack
@@ -155,6 +156,7 @@ public struct PevDashboardTile: Equatable, Hashable, Sendable, Identifiable {
 
 public enum PevScreenTabID: String, Equatable, Hashable, Sendable {
     case devices
+    case more
     case camera
     case ride
     case lighting

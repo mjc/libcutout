@@ -172,6 +172,9 @@ private struct LightingConnectionCard: View {
                         .font(.subheadline)
                         .foregroundStyle(connectionStatusColor)
                         .accessibilityIdentifier("lighting.connection-state")
+                        #if DEBUG && targetEnvironment(simulator)
+                            .accessibilityValue(model.uiTestBrightnessWriteReceipt ?? "")
+                        #endif
                 }
                 Spacer(minLength: 8)
                 Button(action: onDetails) {
@@ -248,6 +251,7 @@ private struct LightingColorControls: View {
                     .frame(maxWidth: .infinity)
                     .opacity(model.isReady ? 1 : 0.45)
                     .allowsHitTesting(model.isReady)
+                    .disabled(!model.isReady)
                     .accessibilityIdentifier("lighting.color-wheel")
             }
         }
@@ -308,6 +312,7 @@ private struct LightingBrightnessControl: View {
                 .disabled(!isEnabled)
                 .tint(PevColors.primaryText)
                 .accessibilityIdentifier("lighting.brightness")
+                .accessibilityLabel(localizedAppText("lighting.brightness"))
                 .accessibilityValue(localizedAppText("lighting.percent_accessibility", Int64(brightness)))
                 Image(systemName: "sun.max")
                     .foregroundStyle(PevColors.muted)

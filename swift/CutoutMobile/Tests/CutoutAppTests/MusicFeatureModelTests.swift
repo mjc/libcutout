@@ -6,6 +6,870 @@ import XCTest
 
 @MainActor
 final class MusicFeatureModelTests: XCTestCase {
+    func testBackgroundObservationDoesNotRetainMusicModelDuringSQLiteStall() async throws {
+        let fixture = try await SQLiteRideStall.make()
+        defer { fixture.release.signal() }
+        let suite = try makeDefaults()
+        defer { suite.defaults.removePersistentDomain(forName: suite.name) }
+        var model: MusicFeatureModel? = makeModel(state: fixture.state, defaults: suite.defaults)
+        weak let releasedModel = model
+        _ = try XCTUnwrap(model?.providerLifecycle.beginProviderSession())
+        try await fixture.holdWrite()
+        model?.sceneDidEnterBackground()
+        try await Task.sleep(for: .milliseconds(50))
+        model = nil
+        XCTAssertFalse(fixture.unlocked.withLock { $0 })
+        XCTAssertNil(releasedModel, "A pending background observation must not retain music presentation")
+        fixture.release.signal()
+        try await fixture.finish()
+    }
+
+    func testStaleRideContextFailsStopBeforeOptionalErrorReadbackReturns() async throws {
+        let suite = try makeDefaults()
+        defer { suite.defaults.removePersistentDomain(forName: suite.name) }
+        let state = MobileRideMapState()
+        let retired = try await state.startGpsOnlyCommand(atMs: 100, musicHistoryPolicy: .humanReadable)
+        _ = try state.stop(atMs: 150)
+        _ = try state.discard()
+        let model = makeModel(
+            state: state, defaults: suite.defaults,
+            correlationRideIDReader: { retired.rideID })
+        let current = try await state.startGpsOnlyCommand(atMs: 200, musicHistoryPolicy: .humanReadable)
+        let adoptionError = await model.adoptHistoryForNewRideAsync()
+        XCTAssertNil(adoptionError)
+        let readHeld = expectation(description: "optional current-ride history query is held after stale context fails")
+        var releaseRead: CheckedContinuation<Void, Never>?
+        defer { releaseRead?.resume() }
+        let coordinator = model.coordinator
+        let observation = try XCTUnwrap(
+            model.submitObservation(
+                self.observation(atMs: 250, identifier: "player-with-stale-history-context"),
+                wallClockAtMs: 1_700_000_000_250, clockUncertaintyMs: 9,
+                historyReadback: {
+                    let events = try await coordinator.recordedEventsAsync()
+                    readHeld.fulfill()
+                    await withCheckedContinuation { releaseRead = $0 }
+                    return events
+                }))
+        await fulfillment(of: [readHeld], timeout: 2)
+        XCTAssertNotNil(model.historySaveError)
+        XCTAssertEqual(model.settingsNowPlaying?.item?.identifier, "player-with-stale-history-context")
+        XCTAssertEqual(model.settingsNowPlaying?.isCommandAvailable(.pause), true)
+        let stop = try state.beginLifecycleCommand(
+            event: .stop, expected: XCTUnwrap(current.commandToken), atMs: 300)
+        do {
+            _ = try await settledMusicStop(state: state, command: stop)
+            XCTFail("Stale required context must fail Stop before optional error readback is released")
+        } catch let error as MobileRideMapError {
+            XCTAssertEqual(error, .storageError("ride music observation is incomplete"))
+            guard error == .storageError("ride music observation is incomplete") else { throw error }
+        }
+        XCTAssertEqual(state.currentSnapshot()?.rideID, current.rideID)
+        XCTAssertNotEqual(state.currentSnapshot()?.state, .stopped)
+        XCTAssertTrue(
+            state.currentMusicEvents().isEmpty,
+            "The stale original ride must not reassociate metadata with the current ride")
+        let retry = try await state.performLifecycleCommand(
+            event: .stop, expected: XCTUnwrap(state.currentSnapshot()?.commandToken), atMs: 301)
+        XCTAssertEqual(retry.rideID, current.rideID)
+        XCTAssertEqual(retry.state, .stopped)
+        releaseRead?.resume()
+        releaseRead = nil
+        let accepted = await observation.value
+        XCTAssertFalse(accepted)
+        XCTAssertTrue(state.currentMusicEvents().isEmpty)
+        XCTAssertEqual(model.settingsNowPlaying?.item?.identifier, "player-with-stale-history-context")
+        _ = try state.discard()
+    }
+
+    func testOptionalOldMusicReadbackCannotDelayStopOrOverwriteNewerPresentation() async throws {
+        let suite = try makeDefaults()
+        defer { suite.defaults.removePersistentDomain(forName: suite.name) }
+        let state = MobileRideMapState()
+        let ride = try await state.startGpsOnlyCommand(atMs: 100, musicHistoryPolicy: .humanReadable)
+        let target = MobileMusicCaptureTarget.capture(generation: MobileCaptureGenerationDto(value: 75))
+        let readHeld = expectation(description: "older optional history result is held after required settlement")
+        let newerCapture = expectation(description: "newer required capture progresses past the settled older request")
+        var releaseRead: CheckedContinuation<Void, Never>?
+        defer { releaseRead?.resume() }
+        var deliveries = [MobilePevcapMusicEventDto]()
+        let model = makeModel(
+            state: state, defaults: suite.defaults,
+            updateCaptureObservationAsync: { event, admittedTarget in
+                XCTAssertEqual(admittedTarget, target)
+                if let event {
+                    deliveries.append(event)
+                    if event.monotonicAtMs == 250 { newerCapture.fulfill() }
+                }
+                return .accepted
+            }, captureTarget: { target })
+        let adoptionError = await model.adoptHistoryForNewRideAsync()
+        XCTAssertNil(adoptionError)
+        let coordinator = model.coordinator
+        let older = try XCTUnwrap(
+            model.submitObservation(
+                observation(atMs: 200, identifier: "older"),
+                wallClockAtMs: 1_700_000_000_200, clockUncertaintyMs: 7,
+                historyReadback: {
+                    let oldEvents = try await coordinator.recordedEventsAsync()
+                    XCTAssertEqual(oldEvents.map(\.itemIdentifier), ["older"])
+                    readHeld.fulfill()
+                    await withCheckedContinuation { releaseRead = $0 }
+                    return oldEvents
+                }))
+        await fulfillment(of: [readHeld], timeout: 2)
+        let newer = try XCTUnwrap(
+            model.submitObservation(
+                observation(atMs: 250, identifier: "newer"),
+                wallClockAtMs: 1_700_000_000_250, clockUncertaintyMs: 9))
+        let stop = try state.beginLifecycleCommand(
+            event: .stop, expected: XCTUnwrap(ride.commandToken), atMs: 300)
+        await fulfillment(of: [newerCapture], timeout: 2)
+        let stopped = try await settledMusicStop(state: state, command: stop)
+        XCTAssertEqual(stopped.rideID, ride.rideID)
+        XCTAssertEqual(stopped.state, .stopped)
+        let newerAccepted = await newer.value
+        XCTAssertTrue(newerAccepted)
+        XCTAssertEqual(model.settingsNowPlaying?.item?.identifier, "newer")
+        XCTAssertEqual(model.timelineEvents.map(\.itemIdentifier), ["older", "newer"])
+        XCTAssertEqual(deliveries.map(\.monotonicAtMs), [200, 250])
+        XCTAssertEqual(deliveries.map(\.rideSequence), [0, 1])
+        releaseRead?.resume()
+        releaseRead = nil
+        let olderPublished = await older.value
+        XCTAssertFalse(olderPublished, "An old optional read cannot reclaim publication after newer classification")
+        XCTAssertEqual(model.settingsNowPlaying?.item?.identifier, "newer")
+        XCTAssertEqual(model.timelineEvents.map(\.itemIdentifier), ["older", "newer"])
+        _ = try state.discard()
+    }
+
+    func testRejectedCaptureDiagnosticIsVisibleBeforeOptionalErrorReadbackReturns() async throws {
+        let suite = try makeDefaults()
+        defer { suite.defaults.removePersistentDomain(forName: suite.name) }
+        let state = MobileRideMapState()
+        _ = try await state.startGpsOnlyCommand(atMs: 100, musicHistoryPolicy: .humanReadable)
+        let target = MobileMusicCaptureTarget.capture(generation: MobileCaptureGenerationDto(value: 76))
+        let readHeld = expectation(description: "optional readback after required capture failure is held")
+        var releaseRead: CheckedContinuation<Void, Never>?
+        defer { releaseRead?.resume() }
+        let model = makeModel(
+            state: state, defaults: suite.defaults,
+            updateCaptureObservationAsync: { _, admittedTarget in
+                XCTAssertEqual(admittedTarget, target)
+                return .rejected
+            }, captureTarget: { target })
+        let adoptionError = await model.adoptHistoryForNewRideAsync()
+        XCTAssertNil(adoptionError)
+        let coordinator = model.coordinator
+        let original = observation(atMs: 200, identifier: "failed-capture")
+        let pending = try XCTUnwrap(
+            model.submitObservation(
+                original, wallClockAtMs: 1_700_000_000_200, clockUncertaintyMs: 11,
+                historyReadback: {
+                    let events = try await coordinator.recordedEventsAsync()
+                    readHeld.fulfill()
+                    await withCheckedContinuation { releaseRead = $0 }
+                    return events
+                }))
+        await fulfillment(of: [readHeld], timeout: 2)
+        let failure = try XCTUnwrap(model.captureFailureReceipt)
+        XCTAssertEqual(failure.transition.snapshot, original.snapshot)
+        XCTAssertEqual(failure.transition.wallClockAtMs, 1_700_000_000_200)
+        XCTAssertEqual(failure.transition.clockUncertaintyMs, 11)
+        XCTAssertEqual(failure.target, target)
+        XCTAssertEqual(failure.outcome, .rejected)
+        XCTAssertNotNil(
+            model.historySaveError, "Required-effect failure must be visible before an optional query returns")
+        releaseRead?.resume()
+        releaseRead = nil
+        let accepted = await pending.value
+        XCTAssertFalse(accepted)
+        try stopAfterExpectedRejectedMusicCapture(state: state, atMs: 300)
+        _ = try state.discard()
+    }
+
+    func testStopWaitsForRequiredMusicCaptureReceipt() async throws {
+        let suite = try makeDefaults()
+        defer { suite.defaults.removePersistentDomain(forName: suite.name) }
+        let state = MobileRideMapState()
+        let ride = try await state.startGpsOnlyCommand(atMs: 100, musicHistoryPolicy: .humanReadable)
+        let target = MobileMusicCaptureTarget.capture(generation: MobileCaptureGenerationDto(value: 73))
+        let sinkHeld = expectation(description: "required original-target capture sink is held after history commits")
+        var releaseSink: CheckedContinuation<Void, Never>?
+        defer { releaseSink?.resume() }
+        var delivered: MobilePevcapMusicEventDto?
+        let model = makeModel(
+            state: state, defaults: suite.defaults,
+            updateCaptureObservationAsync: { observation, admittedTarget in
+                XCTAssertEqual(admittedTarget, target)
+                delivered = observation
+                sinkHeld.fulfill()
+                await withCheckedContinuation { releaseSink = $0 }
+                return .accepted
+            }, captureTarget: { target })
+        let adoptionError = await model.adoptHistoryForNewRideAsync()
+        XCTAssertNil(adoptionError)
+        let observation = try XCTUnwrap(
+            model.submitObservation(
+                self.observation(atMs: 200, identifier: "captured-before-stop"),
+                wallClockAtMs: 1_700_000_000_200, clockUncertaintyMs: 7))
+        await fulfillment(of: [sinkHeld], timeout: 2)
+        let stop = try state.beginLifecycleCommand(
+            event: .stop, expected: XCTUnwrap(ride.commandToken), atMs: 300)
+        if case .completed = try state.pollLifecycleCommand(stop) {
+            XCTFail("SQL completion alone must not let Stop pass the held required capture sink")
+        }
+        releaseSink?.resume()
+        releaseSink = nil
+        let accepted = await observation.value
+        XCTAssertTrue(accepted)
+        let stopped = try await settledMusicStop(state: state, command: stop)
+        XCTAssertEqual(stopped.rideID, ride.rideID)
+        XCTAssertEqual(stopped.state, .stopped)
+        XCTAssertEqual(delivered?.monotonicAtMs, 200)
+        XCTAssertEqual(delivered?.wallClockUnixMs, 1_700_000_000_200)
+        XCTAssertEqual(delivered?.clockUncertaintyMs, 7)
+        XCTAssertEqual(delivered?.rideSequence, 0)
+        let events = try await model.coordinator.recordedEventsAsync()
+        XCTAssertEqual(events.map(\.itemIdentifier), ["captured-before-stop"])
+        _ = try state.discard()
+    }
+
+    func testProviderResetMakesUnsettledAcceptedObservationFailStopExplicitly() async throws {
+        let suite = try makeDefaults()
+        defer { suite.defaults.removePersistentDomain(forName: suite.name) }
+        let state = MobileRideMapState()
+        let ride = try await state.startGpsOnlyCommand(atMs: 100, musicHistoryPolicy: .humanReadable)
+        let target = MobileMusicCaptureTarget.capture(generation: MobileCaptureGenerationDto(value: 74))
+        let sinkHeld = expectation(description: "capture receipt is held across provider retirement")
+        var releaseSink: CheckedContinuation<Void, Never>?
+        defer { releaseSink?.resume() }
+        let model = makeModel(
+            state: state, defaults: suite.defaults,
+            updateCaptureObservationAsync: { _, admittedTarget in
+                XCTAssertEqual(admittedTarget, target)
+                sinkHeld.fulfill()
+                await withCheckedContinuation { releaseSink = $0 }
+                return .accepted
+            }, captureTarget: { target })
+        let adoptionError = await model.adoptHistoryForNewRideAsync()
+        XCTAssertNil(adoptionError)
+        let observation = try XCTUnwrap(
+            model.submitObservation(
+                self.observation(atMs: 200, identifier: "retired-before-stop")))
+        await fulfillment(of: [sinkHeld], timeout: 2)
+        let stop = try state.beginLifecycleCommand(
+            event: .stop, expected: XCTUnwrap(ride.commandToken), atMs: 300)
+        if case .completed = try state.pollLifecycleCommand(stop) {
+            XCTFail("Stop must remain pending before the accepted capture obligation settles")
+        }
+        model.coordinator.resetProviderCorrelation()
+        releaseSink?.resume()
+        releaseSink = nil
+        let accepted = await observation.value
+        XCTAssertFalse(accepted)
+        do {
+            _ = try await settledMusicStop(state: state, command: stop)
+            XCTFail("Provider retirement must not turn an unfinished accepted obligation into successful Stop")
+        } catch let error as MobileRideMapError {
+            XCTAssertEqual(error, .storageError("ride music observation is incomplete"))
+        }
+        XCTAssertEqual(state.currentSnapshot()?.rideID, ride.rideID)
+        XCTAssertNotEqual(state.currentSnapshot()?.state, .stopped)
+        let retry = try await state.performLifecycleCommand(
+            event: .stop, expected: XCTUnwrap(state.currentSnapshot()?.commandToken), atMs: 301)
+        XCTAssertEqual(retry.state, .stopped)
+        _ = try state.discard()
+    }
+
+    private func settledMusicStop(
+        state: MobileRideMapState, command: MobileRideMapLifecycleCommand
+    ) async throws -> MobileRideMapSnapshotDto {
+        let deadline = ContinuousClock.now + .seconds(3)
+        while ContinuousClock.now < deadline {
+            if case let .completed(snapshot) = try state.pollLifecycleCommand(command) { return snapshot }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTFail("Stop did not produce its Rust terminal receipt")
+        throw MobileRideMapError.admissionPending
+    }
+
+    func testRejectedCaptureRetainsExactReceiptWhileLaterPlayerAndHistoryProgress() async throws {
+        let suite = try makeDefaults()
+        defer { suite.defaults.removePersistentDomain(forName: suite.name) }
+        let state = MobileRideMapState()
+        _ = try await state.startGpsOnlyCommand(atMs: 100, musicHistoryPolicy: .humanReadable)
+        let originalTarget = MobileMusicCaptureTarget.capture(generation: MobileCaptureGenerationDto(value: 41))
+        let replacementTarget = MobileMusicCaptureTarget.capture(generation: MobileCaptureGenerationDto(value: 42))
+        var target = originalTarget
+        var deliveries = [(MobilePevcapMusicEventDto?, MobileMusicCaptureTarget)]()
+        let model = makeModel(
+            state: state, defaults: suite.defaults,
+            updateCaptureObservationAsync: { observation, target in
+                deliveries.append((observation, target))
+                return deliveries.count == 1 ? .rejected : .accepted
+            },
+            captureTarget: { target }
+        )
+        let adoptionError = await model.adoptHistoryForNewRideAsync()
+        XCTAssertNil(adoptionError)
+        let first = observation(atMs: 200, identifier: "first-track")
+        let firstAccepted = await model.ingestObservationAsync(
+            first, wallClockAtMs: 1_700_000_000_200, clockUncertaintyMs: 7)
+        XCTAssertFalse(firstAccepted)
+        let failure = try XCTUnwrap(model.captureFailureReceipt)
+        XCTAssertEqual(failure.transition.snapshot, first.snapshot)
+        XCTAssertEqual(failure.transition.wallClockAtMs, 1_700_000_000_200)
+        XCTAssertEqual(failure.transition.clockUncertaintyMs, 7)
+        XCTAssertEqual(failure.transition.captureTarget, originalTarget)
+        XCTAssertEqual(failure.target, originalTarget)
+        XCTAssertEqual(failure.outcome, .rejected)
+        XCTAssertEqual(deliveries.first?.1, originalTarget)
+        XCTAssertEqual(deliveries.first?.0?.monotonicAtMs, 200)
+        XCTAssertEqual(deliveries.first?.0?.wallClockUnixMs, 1_700_000_000_200)
+        XCTAssertEqual(deliveries.first?.0?.clockUncertaintyMs, 7)
+        XCTAssertEqual(deliveries.first?.0?.rideSequence, 0)
+        XCTAssertNotNil(model.historySaveError)
+        XCTAssertEqual(model.settingsNowPlaying?.item?.identifier, "first-track")
+
+        target = replacementTarget
+        let secondAccepted = await model.ingestObservationAsync(
+            observation(atMs: 300, identifier: "replacement-track"),
+            wallClockAtMs: 1_700_000_000_300, clockUncertaintyMs: 9)
+        XCTAssertTrue(secondAccepted)
+        XCTAssertEqual(model.settingsNowPlaying?.item?.identifier, "replacement-track")
+        let thirdAccepted = await model.ingestObservationAsync(
+            observation(atMs: 400, identifier: "replacement-track"),
+            wallClockAtMs: 1_700_000_000_400, clockUncertaintyMs: 11)
+        XCTAssertTrue(thirdAccepted)
+        XCTAssertEqual(model.captureFailureReceipt?.transition, failure.transition)
+        XCTAssertEqual(model.captureFailureReceipt?.target, originalTarget)
+        XCTAssertEqual(model.captureFailureReceipt?.outcome, .rejected)
+        XCTAssertNotNil(model.historySaveError)
+        XCTAssertEqual(model.settingsNowPlaying?.item?.identifier, "replacement-track")
+        XCTAssertTrue(deliveries.dropFirst().allSatisfy { $0.1 == replacementTarget })
+        let rideID = try XCTUnwrap(state.currentSnapshot()?.rideID)
+        let deleted = await model.forgetHistory(for: rideID)
+        XCTAssertTrue(deleted)
+        XCTAssertNil(model.captureFailureReceipt)
+        XCTAssertNil(model.coordinator.previousRideHistoryFailure)
+        XCTAssertNil(model.historySaveError)
+        XCTAssertEqual(model.settingsNowPlaying?.item?.identifier, "replacement-track")
+        try stopAfterExpectedRejectedMusicCapture(state: state, atMs: 500)
+        _ = try state.discard()
+    }
+
+    func testOrdinaryHistoryReadbackPreservesLateExactCaptureFailure() async throws {
+        let suite = try makeDefaults()
+        defer { suite.defaults.removePersistentDomain(forName: suite.name) }
+        let state = MobileRideMapState()
+        let ride = try await state.startGpsOnlyCommand(atMs: 100, musicHistoryPolicy: .humanReadable)
+        let target = MobileMusicCaptureTarget.capture(generation: MobileCaptureGenerationDto(value: 52))
+        let captureHeld = expectation(description: "required capture admission is held during ordinary readback")
+        var releaseCapture: CheckedContinuation<Void, Never>?
+        let model = makeModel(
+            state: state, defaults: suite.defaults,
+            updateCaptureObservationAsync: { observation, _ in
+                guard observation != nil else { return .accepted }
+                captureHeld.fulfill()
+                await withCheckedContinuation { releaseCapture = $0 }
+                return .rejected
+            },
+            captureTarget: { target }
+        )
+        let adoptionError = await model.adoptHistoryForNewRideAsync()
+        XCTAssertNil(adoptionError)
+        let original = observation(atMs: 200, identifier: "retained-track")
+        let pending = try XCTUnwrap(
+            model.submitObservation(
+                original, wallClockAtMs: 1_700_000_000_200, clockUncertaintyMs: 7))
+        await fulfillment(of: [captureHeld], timeout: 2)
+        model.synchronizeHistory(try XCTUnwrap(state.currentMusicHistory()))
+        releaseCapture?.resume()
+        let admitted = await pending.value
+        XCTAssertFalse(admitted)
+        let failure = try XCTUnwrap(model.captureFailureReceipt)
+        XCTAssertEqual(failure.transition.snapshot, original.snapshot)
+        XCTAssertEqual(failure.transition.wallClockAtMs, 1_700_000_000_200)
+        XCTAssertEqual(failure.transition.clockUncertaintyMs, 7)
+        XCTAssertEqual(failure.target, target)
+        XCTAssertEqual(failure.outcome, .rejected)
+        XCTAssertNotNil(model.historySaveError)
+        XCTAssertEqual(model.settingsNowPlaying?.item?.identifier, "retained-track")
+        XCTAssertEqual(model.settingsNowPlaying?.isCommandAvailable(.pause), true)
+        let deleted = await model.forgetHistory(for: ride.rideID)
+        XCTAssertTrue(deleted)
+        XCTAssertNil(model.captureFailureReceipt)
+        XCTAssertNil(model.historySaveError)
+        try stopAfterExpectedRejectedMusicCapture(state: state, atMs: 300)
+        _ = try state.discard()
+    }
+
+    func testHistoryDeletionPreventsLateCaptureFailureFromRestoringDiagnosticMetadata() async throws {
+        let suite = try makeDefaults()
+        defer { suite.defaults.removePersistentDomain(forName: suite.name) }
+        let state = MobileRideMapState()
+        let ride = try await state.startGpsOnlyCommand(atMs: 100, musicHistoryPolicy: .humanReadable)
+        let target = MobileMusicCaptureTarget.capture(generation: MobileCaptureGenerationDto(value: 51))
+        let captureHeld = expectation(description: "required capture admission is held")
+        var releaseCapture: CheckedContinuation<Void, Never>?
+        let model = makeModel(
+            state: state, defaults: suite.defaults,
+            updateCaptureObservationAsync: { observation, _ in
+                guard observation != nil else { return .accepted }
+                captureHeld.fulfill()
+                await withCheckedContinuation { releaseCapture = $0 }
+                return .rejected
+            },
+            captureTarget: { target }
+        )
+        let adoptionError = await model.adoptHistoryForNewRideAsync()
+        XCTAssertNil(adoptionError)
+        let pending = try XCTUnwrap(
+            model.submitObservation(
+                observation(atMs: 200, identifier: "deleted-track"),
+                wallClockAtMs: 1_700_000_000_200, clockUncertaintyMs: 7))
+        await fulfillment(of: [captureHeld], timeout: 2)
+        let deleted = await model.forgetHistory(for: ride.rideID)
+        XCTAssertTrue(deleted)
+        releaseCapture?.resume()
+        let admitted = await pending.value
+        XCTAssertFalse(admitted)
+        XCTAssertNil(model.captureFailureReceipt)
+        XCTAssertNil(model.coordinator.previousRideHistoryFailure)
+        XCTAssertNil(model.historySaveError)
+        XCTAssertTrue(model.timelineEvents.isEmpty)
+        let playerAccepted = await model.ingestObservationAsync(
+            observation(atMs: 300, identifier: "live-player"),
+            wallClockAtMs: 1_700_000_000_300, clockUncertaintyMs: 9)
+        XCTAssertTrue(playerAccepted)
+        XCTAssertEqual(model.settingsNowPlaying?.item?.identifier, "live-player")
+        XCTAssertEqual(model.settingsNowPlaying?.isCommandAvailable(.pause), true)
+        XCTAssertTrue(state.currentMusicEvents().isEmpty)
+        try stopAfterExpectedRejectedMusicCapture(state: state, atMs: 400)
+        _ = try state.discard()
+    }
+
+    private func stopAfterExpectedRejectedMusicCapture(state: MobileRideMapState, atMs: UInt64) throws {
+        let originalRideID = try XCTUnwrap(state.currentSnapshot()?.rideID)
+        do {
+            _ = try state.stop(atMs: atMs)
+            XCTFail("The known rejected required capture must produce an explicit incomplete Stop receipt")
+            return
+        } catch let error as MobileRideMapError {
+            XCTAssertEqual(error, .storageError("ride music observation is incomplete"))
+            guard error == .storageError("ride music observation is incomplete") else { throw error }
+        }
+        XCTAssertEqual(state.currentSnapshot()?.rideID, originalRideID)
+        XCTAssertNotEqual(state.currentSnapshot()?.state, .stopped)
+        let stopped = try state.stop(atMs: atMs)
+        XCTAssertEqual(stopped.rideID, originalRideID)
+        XCTAssertEqual(stopped.state, .stopped)
+    }
+
+    func testHistoryDeletionTargetsRequestedRideAfterAnAwaitedIdentityRead() async throws {
+        let suite = try makeDefaults()
+        defer { suite.defaults.removePersistentDomain(forName: suite.name) }
+        let state = MobileRideMapState()
+        let original = try await state.startGpsOnlyCommand(atMs: 100, musicHistoryPolicy: .humanReadable)
+        let readHeld = expectation(description: "deletion's old current-ride identity read held")
+        var reads = 0
+        var releaseRead: CheckedContinuation<Void, Never>?
+        let model = makeModel(
+            state: state, defaults: suite.defaults,
+            historySnapshotReader: {
+                let snapshot = await state.currentSnapshotAsync()
+                reads += 1
+                if reads == 1 {
+                    readHeld.fulfill()
+                    await withCheckedContinuation { releaseRead = $0 }
+                }
+                return snapshot
+            })
+        let deletion = Task { await model.forgetHistory(for: original.rideID) }
+        await fulfillment(of: [readHeld], timeout: 2)
+        _ = try state.stop(atMs: 200)
+        _ = try state.save()
+        let replacement = try await state.startGpsOnlyCommand(atMs: 300, musicHistoryPolicy: .humanReadable)
+        _ = try state.recordMusicEvent(
+            snapshot: observation(atMs: 400, identifier: "replacement-track").snapshot, kind: .play,
+            monotonicAtMs: 400, wallClockAtMs: 1_700_000_000_400, clockUncertaintyMs: 5)
+        let retained = try XCTUnwrap(state.currentMusicHistory())
+        XCTAssertEqual(retained.events.count, 1)
+        releaseRead?.resume()
+        let deleted = await deletion.value
+        XCTAssertTrue(deleted)
+        let oldHistory = try state.storedMusicHistory(rideID: original.rideID)
+        let replacementHistory = try state.storedMusicHistory(rideID: replacement.rideID)
+        XCTAssertEqual(oldHistory.status, .deleted)
+        XCTAssertEqual(replacementHistory.status, .available)
+        XCTAssertEqual(replacementHistory.events, retained.events)
+        XCTAssertEqual(state.currentMusicHistoryPolicy(), .humanReadable)
+        _ = try state.stop(atMs: 500)
+        _ = try state.discard()
+    }
+
+    func testOlderPolicyReadbackCannotReenableHistoryAfterANewerDisable() async throws {
+        let suite = try makeDefaults()
+        defer { suite.defaults.removePersistentDomain(forName: suite.name) }
+        let state = MobileRideMapState()
+        _ = try await state.startGpsOnlyCommand(atMs: 100, musicHistoryPolicy: .opaqueItem)
+        let store = MusicHistoryPolicyStore(defaults: suite.defaults)
+        let readHeld = expectation(description: "older policy mutation awaiting authoritative readback")
+        var reads = 0
+        var releaseRead: CheckedContinuation<Void, Never>?
+        let model = makeModel(
+            state: state, defaults: suite.defaults, historyPolicyStore: store,
+            historySnapshotReader: {
+                let snapshot = await state.currentSnapshotAsync()
+                reads += 1
+                if reads == 2 {
+                    readHeld.fulfill()
+                    await withCheckedContinuation { releaseRead = $0 }
+                }
+                return snapshot
+            })
+        let older = Task { await model.setHistoryPolicyAsync(.humanReadable) }
+        await fulfillment(of: [readHeld], timeout: 2)
+        let latestAccepted = await model.setHistoryPolicyAsync(.disabled)
+        XCTAssertTrue(latestAccepted)
+        XCTAssertEqual(model.historyPolicy, .disabled)
+        releaseRead?.resume()
+        let olderAccepted = await older.value
+        XCTAssertFalse(olderAccepted, "A superseded native publication must report that it was not applied")
+        XCTAssertEqual(model.historyPolicy, .disabled)
+        XCTAssertEqual(model.preferredHistoryPolicy, .disabled)
+        XCTAssertEqual(store.policy, .disabled)
+        let durablePolicy = await state.currentMusicHistoryPolicyAsync()
+        XCTAssertEqual(durablePolicy, .disabled)
+        _ = try state.stop(atMs: 200)
+        _ = try state.discard()
+    }
+
+    func testClosedHistoryReadDoesNotRetainMusicModelDuringSQLiteStall() async throws {
+        let suite = try makeDefaults()
+        defer { suite.defaults.removePersistentDomain(forName: suite.name) }
+        let fixture = try await SQLiteRideStall.make()
+        defer { fixture.release.signal() }
+        var model: MusicFeatureModel? = makeModel(state: fixture.state, defaults: suite.defaults)
+        weak let releasedModel = model
+        try await fixture.holdWrite()
+        model?.rideMapClosed()
+        try await Task.sleep(for: .milliseconds(50))
+        model = nil
+        XCTAssertFalse(fixture.unlocked.withLock { $0 })
+        XCTAssertNil(releasedModel, "A queued history read must not retain music presentation")
+        try await fixture.finish()
+    }
+
+    func testSavedHistoryPreferenceSurvivesModelRecreationWithoutAnActiveRide() async throws {
+        for policy in [MobileMusicHistoryPolicyDto.opaqueItem, .humanReadable] {
+            let suite = try makeDefaults()
+            defer { suite.defaults.removePersistentDomain(forName: suite.name) }
+            let store = MusicHistoryPolicyStore(defaults: suite.defaults)
+            var capturePolicies = [MobileMusicHistoryPolicyDto]()
+            var captureObservations = [MobilePevcapMusicEventDto?]()
+            let initial = makeModel(
+                state: MobileRideMapState(),
+                defaults: suite.defaults,
+                historyPolicyStore: store,
+                updateCapturePolicy: { capturePolicies.append($0) },
+                updateCaptureObservation: { captureObservations.append($0) }
+            )
+            let accepted = await initial.setHistoryPolicyAsync(policy)
+            XCTAssertTrue(accepted)
+            XCTAssertEqual(initial.preferredHistoryPolicy, policy)
+            XCTAssertEqual(initial.historyPolicy, .disabled)
+            XCTAssertEqual(capturePolicies.last, .disabled)
+            XCTAssertTrue(initial.ingestObservation(observation(atMs: 50)))
+            XCTAssertNil(initial.historySaveError)
+            XCTAssertTrue(initial.timelineEvents.isEmpty)
+            XCTAssertFalse(captureObservations.isEmpty)
+            XCTAssertTrue(captureObservations.allSatisfy { $0 == nil })
+
+            let restored = makeModel(state: MobileRideMapState(), defaults: suite.defaults, historyPolicyStore: store)
+            restored.synchronizeHistory(nil)
+
+            XCTAssertEqual(restored.preferredHistoryPolicy, policy)
+            XCTAssertEqual(restored.historyPolicy, .disabled)
+            XCTAssertEqual(store.policy, policy)
+        }
+    }
+
+    func testRestoredRideRetentionDoesNotReplaceSavedHistoryPreference() async throws {
+        for savedPolicy in [MobileMusicHistoryPolicyDto.disabled, .opaqueItem, .humanReadable] {
+            for ridePolicy in [MobileMusicHistoryPolicyDto.disabled, .opaqueItem, .humanReadable] {
+                let suite = try makeDefaults()
+                defer { suite.defaults.removePersistentDomain(forName: suite.name) }
+                let store = MusicHistoryPolicyStore(defaults: suite.defaults)
+                store.set(savedPolicy)
+                let state = MobileRideMapState()
+                _ = try await state.startGpsOnlyCommand(atMs: 100, musicHistoryPolicy: ridePolicy)
+                let model = makeModel(state: state, defaults: suite.defaults, historyPolicyStore: store)
+
+                let error = await model.adoptHistoryForNewRideAsync()
+
+                XCTAssertNil(error)
+                XCTAssertEqual(model.preferredHistoryPolicy, savedPolicy)
+                XCTAssertEqual(store.policy, savedPolicy)
+                XCTAssertEqual(model.historyPolicy, ridePolicy)
+                XCTAssertEqual(state.currentMusicHistoryPolicy(), ridePolicy)
+            }
+        }
+    }
+
+    func testClosingRideDisablesEffectivePolicyWithoutChangingPreference() async throws {
+        let suite = try makeDefaults()
+        defer { suite.defaults.removePersistentDomain(forName: suite.name) }
+        let store = MusicHistoryPolicyStore(defaults: suite.defaults)
+        store.set(.opaqueItem)
+        let state = MobileRideMapState()
+        _ = try await state.startGpsOnlyCommand(atMs: 100, musicHistoryPolicy: .humanReadable)
+        var capturePolicies = [MobileMusicHistoryPolicyDto]()
+        let model = makeModel(
+            state: state,
+            defaults: suite.defaults,
+            historyPolicyStore: store,
+            updateCapturePolicy: { capturePolicies.append($0) }
+        )
+
+        let adoptionError = await model.adoptHistoryForNewRideAsync()
+        XCTAssertNil(adoptionError)
+        XCTAssertEqual(model.historyPolicy, .humanReadable)
+
+        model.rideMapClosed()
+
+        XCTAssertEqual(model.historyPolicy, .disabled)
+        XCTAssertEqual(model.preferredHistoryPolicy, .opaqueItem)
+        XCTAssertEqual(store.policy, .opaqueItem)
+        XCTAssertEqual(capturePolicies.last, .disabled)
+    }
+
+    func testHistoryWriteFailurePreservesDistinctPreferenceAndEffectivePolicy() async throws {
+        let suite = try makeDefaults()
+        defer { suite.defaults.removePersistentDomain(forName: suite.name) }
+        let store = MusicHistoryPolicyStore(defaults: suite.defaults)
+        store.set(.opaqueItem)
+        let state = MobileRideMapState(storageUnavailable: "history write unavailable")
+        let model = makeModel(state: state, defaults: suite.defaults, historyPolicyStore: store)
+        model.synchronizeHistory(nil)
+
+        let accepted = await model.setHistoryPolicyAsync(.humanReadable)
+
+        XCTAssertFalse(accepted)
+        XCTAssertEqual(model.preferredHistoryPolicy, .opaqueItem)
+        XCTAssertEqual(store.policy, .opaqueItem)
+        XCTAssertEqual(model.historyPolicy, .disabled)
+        XCTAssertNotNil(model.historySaveError)
+    }
+
+    func testStaleHistoryReadbackCannotUndoPolicyChange() async throws {
+        let suite = try makeDefaults()
+        defer { suite.defaults.removePersistentDomain(forName: suite.name) }
+        let store = MusicHistoryPolicyStore(defaults: suite.defaults)
+        store.set(.disabled)
+        let state = MobileRideMapState()
+        _ = try await state.startGpsOnlyCommand(atMs: 100, musicHistoryPolicy: .humanReadable)
+        var capturedPolicies = [MobileMusicHistoryPolicyDto]()
+        let model = makeModel(
+            state: state,
+            defaults: suite.defaults,
+            historyPolicyStore: store,
+            updateCapturePolicy: { capturedPolicies.append($0) }
+        )
+        let adoptionError = await model.adoptHistoryForNewRideAsync()
+        XCTAssertNil(adoptionError)
+        let staleHistory = try XCTUnwrap(state.currentMusicHistory())
+        let staleRevision = model.historyReadbackRevision
+
+        let didSetPolicy = await model.setHistoryPolicyAsync(.opaqueItem)
+        XCTAssertTrue(didSetPolicy)
+        XCTAssertFalse(model.synchronizeHistory(staleHistory, ifCurrentRevision: staleRevision))
+
+        XCTAssertEqual(model.historyPolicy, .opaqueItem)
+        XCTAssertEqual(model.preferredHistoryPolicy, .opaqueItem)
+        XCTAssertEqual(store.policy, .opaqueItem)
+        XCTAssertEqual(state.currentMusicHistoryPolicy(), .opaqueItem)
+        XCTAssertEqual(capturedPolicies.last, .opaqueItem)
+    }
+
+    func testDeletingOlderHistoryPreservesPendingCurrentRideReadback() async throws {
+        let suite = try makeDefaults()
+        defer { suite.defaults.removePersistentDomain(forName: suite.name) }
+        let store = MusicHistoryPolicyStore(defaults: suite.defaults)
+        store.set(.opaqueItem)
+        let state = MobileRideMapState()
+        let olderRide = try await state.startGpsOnlyCommand(atMs: 100, musicHistoryPolicy: .humanReadable)
+        _ = try state.stop(atMs: 200)
+        _ = try state.save()
+        _ = try await state.startGpsOnlyCommand(atMs: 300, musicHistoryPolicy: .humanReadable)
+        var capturedPolicies = [MobileMusicHistoryPolicyDto]()
+        let model = makeModel(
+            state: state,
+            defaults: suite.defaults,
+            historyPolicyStore: store,
+            updateCapturePolicy: { capturedPolicies.append($0) }
+        )
+        let currentHistory = try XCTUnwrap(state.currentMusicHistory())
+        let readbackRevision = model.historyReadbackRevision
+
+        let didForget = await model.forgetHistory(for: olderRide.rideID)
+        XCTAssertTrue(didForget)
+        XCTAssertTrue(model.synchronizeHistory(currentHistory, ifCurrentRevision: readbackRevision))
+
+        XCTAssertEqual(try state.storedMusicHistory(rideID: olderRide.rideID).status, .deleted)
+        XCTAssertEqual(model.historyPolicy, .humanReadable)
+        XCTAssertEqual(model.preferredHistoryPolicy, .opaqueItem)
+        XCTAssertEqual(state.currentMusicHistoryPolicy(), .humanReadable)
+        XCTAssertEqual(capturedPolicies.last, .humanReadable)
+    }
+
+    func testOlderRideAdoptionPreservesReplacementRideReadback() async throws {
+        let suite = try makeDefaults()
+        defer { suite.defaults.removePersistentDomain(forName: suite.name) }
+        let store = MusicHistoryPolicyStore(defaults: suite.defaults)
+        store.set(.humanReadable)
+        let state = MobileRideMapState()
+        let originalRide = try await state.startGpsOnlyCommand(atMs: 100, musicHistoryPolicy: .humanReadable)
+        weak var modelReference: MusicFeatureModel?
+        var replacementHistory: MobileMusicHistoryDto?
+        var replacementRevision: UInt64?
+        var replacementError: Error?
+        var didReplace = false
+        var capturePolicies = [MobileMusicHistoryPolicyDto]()
+        let model = makeModel(
+            state: state,
+            defaults: suite.defaults,
+            historyPolicyStore: store,
+            updateCapturePolicy: { policy in
+                capturePolicies.append(policy)
+                guard !didReplace else { return }
+                didReplace = true
+                do {
+                    _ = try state.stop(atMs: 200)
+                    _ = try state.save()
+                    _ = try state.startGpsOnly(atMs: 300)
+                    try state.setMusicHistoryPolicy(.opaqueItem)
+                    replacementHistory = state.currentMusicHistory()
+                    replacementRevision = modelReference?.historyReadbackRevision
+                } catch {
+                    replacementError = error
+                }
+            }
+        )
+        modelReference = model
+
+        let adoptionError = await model.adoptHistoryForNewRideAsync()
+
+        XCTAssertNil(adoptionError)
+        XCTAssertNil(replacementError)
+        XCTAssertTrue(didReplace)
+        XCTAssertNotEqual(state.currentSnapshot()?.rideID, originalRide.rideID)
+        XCTAssertTrue(
+            model.synchronizeHistory(
+                try XCTUnwrap(replacementHistory),
+                ifCurrentRevision: try XCTUnwrap(replacementRevision)
+            ))
+        XCTAssertEqual(model.historyPolicy, .opaqueItem)
+        XCTAssertEqual(state.currentMusicHistoryPolicy(), .opaqueItem)
+        XCTAssertEqual(model.preferredHistoryPolicy, .humanReadable)
+        XCTAssertEqual(store.policy, .humanReadable)
+        XCTAssertEqual(capturePolicies.last, .opaqueItem)
+    }
+
+    func testOlderRidePolicyCompletionPreservesReplacementRideReadbackAndTimeline() async throws {
+        let suite = try makeDefaults()
+        defer { suite.defaults.removePersistentDomain(forName: suite.name) }
+        let store = MusicHistoryPolicyStore(defaults: suite.defaults)
+        store.set(.disabled)
+        let state = MobileRideMapState()
+        let originalRide = try await state.startGpsOnlyCommand(atMs: 100, musicHistoryPolicy: .disabled)
+        let replacementObservation = observation(atMs: 400)
+        weak var modelReference: MusicFeatureModel?
+        var replacementHistory: MobileMusicHistoryDto?
+        var replacementRevision: UInt64?
+        var replacementError: Error?
+        var didReplace = false
+        var capturePolicies = [MobileMusicHistoryPolicyDto]()
+        let model = makeModel(
+            state: state,
+            defaults: suite.defaults,
+            historyPolicyStore: store,
+            updateCapturePolicy: { policy in
+                capturePolicies.append(policy)
+                guard !didReplace else { return }
+                didReplace = true
+                do {
+                    _ = try state.stop(atMs: 200)
+                    _ = try state.save()
+                    _ = try state.startGpsOnly(atMs: 300)
+                    try state.setMusicHistoryPolicy(.opaqueItem)
+                    _ = try state.recordMusicEvent(
+                        snapshot: replacementObservation.snapshot,
+                        kind: .play,
+                        monotonicAtMs: 400,
+                        wallClockAtMs: 1_700_000_000_400,
+                        clockUncertaintyMs: 5
+                    )
+                    replacementHistory = state.currentMusicHistory()
+                    replacementRevision = modelReference?.historyReadbackRevision
+                } catch {
+                    replacementError = error
+                }
+            }
+        )
+        modelReference = model
+
+        let accepted = await model.setHistoryPolicyAsync(.humanReadable)
+
+        XCTAssertTrue(accepted)
+        XCTAssertNil(replacementError)
+        XCTAssertTrue(didReplace)
+        XCTAssertNotEqual(state.currentSnapshot()?.rideID, originalRide.rideID)
+        XCTAssertTrue(model.timelineEvents.isEmpty, "the older completion must not publish the replacement timeline")
+        let history = try XCTUnwrap(replacementHistory)
+        XCTAssertEqual(history.events.count, 1)
+        XCTAssertTrue(model.synchronizeHistory(history, ifCurrentRevision: try XCTUnwrap(replacementRevision)))
+        XCTAssertEqual(model.timelineEvents.count, 1)
+        XCTAssertNil(model.timelineEvents.first?.title)
+        XCTAssertEqual(model.historyPolicy, .opaqueItem)
+        XCTAssertEqual(state.currentMusicHistoryPolicy(), .opaqueItem)
+        XCTAssertEqual(model.preferredHistoryPolicy, .humanReadable)
+        XCTAssertEqual(store.policy, .humanReadable)
+        XCTAssertEqual(capturePolicies.last, .opaqueItem)
+    }
+
+    func testStaleHistoryReadbackCannotRestoreDeletedCurrentHistory() async throws {
+        let suite = try makeDefaults()
+        defer { suite.defaults.removePersistentDomain(forName: suite.name) }
+        let store = MusicHistoryPolicyStore(defaults: suite.defaults)
+        store.set(.humanReadable)
+        let state = MobileRideMapState()
+        _ = try await state.startGpsOnlyCommand(atMs: 100, musicHistoryPolicy: .humanReadable)
+        var capturedPolicies = [MobileMusicHistoryPolicyDto]()
+        let model = makeModel(
+            state: state,
+            defaults: suite.defaults,
+            historyPolicyStore: store,
+            updateCapturePolicy: { capturedPolicies.append($0) }
+        )
+        let adoptionError = await model.adoptHistoryForNewRideAsync()
+        XCTAssertNil(adoptionError)
+        let staleHistory = try XCTUnwrap(state.currentMusicHistory())
+        let staleRevision = model.historyReadbackRevision
+        let rideID = try XCTUnwrap(state.currentSnapshot()?.rideID)
+
+        let didForget = await model.forgetHistory(for: rideID)
+        XCTAssertTrue(didForget)
+        XCTAssertFalse(model.synchronizeHistory(staleHistory, ifCurrentRevision: staleRevision))
+
+        XCTAssertEqual(state.currentMusicHistory()?.status, .deleted)
+        XCTAssertEqual(model.historyPolicy, .disabled)
+        XCTAssertEqual(model.preferredHistoryPolicy, .humanReadable)
+        XCTAssertEqual(store.policy, .humanReadable)
+        XCTAssertEqual(capturedPolicies.last, .disabled)
+    }
+
     func testNewRideHistoryAdoptionReadsRustPolicyWithoutWritingSavedDefault() async throws {
         let suite = try makeDefaults()
         defer { suite.defaults.removePersistentDomain(forName: suite.name) }
@@ -14,10 +878,12 @@ final class MusicFeatureModelTests: XCTestCase {
         let state = MobileRideMapState()
         _ = try await state.startGpsOnlyCommand(atMs: 100, musicHistoryPolicy: .opaqueItem)
         var captureWasCleared = false
+        var capturePolicies = [MobileMusicHistoryPolicyDto]()
         let model = makeModel(
             state: state,
             defaults: suite.defaults,
             historyPolicyStore: policyStore,
+            updateCapturePolicy: { capturePolicies.append($0) },
             updateCaptureObservation: { captureWasCleared = $0 == nil }
         )
         model.setHistoryPersistenceError(.storageError("previous ride failure"))
@@ -29,9 +895,14 @@ final class MusicFeatureModelTests: XCTestCase {
         XCTAssertEqual(model.historyPolicy, .opaqueItem)
         XCTAssertEqual(state.currentMusicHistoryPolicy(), .opaqueItem)
         XCTAssertEqual(policyStore.policy, .humanReadable)
+        XCTAssertEqual(capturePolicies.last, .opaqueItem)
         XCTAssertTrue(model.timelineEvents.isEmpty)
         XCTAssertFalse(model.historyUnavailable)
         XCTAssertNil(model.historySaveError)
+
+        XCTAssertTrue(model.ingestObservation(observation(atMs: 200), wallClockAtMs: 1_700_000_000_100))
+        XCTAssertEqual(state.currentMusicHistory()?.status, .redacted)
+        XCTAssertNil(state.currentMusicEvents().first?.title)
     }
 
     func testNewRideHistoryAdoptionPreservesDeletedHistory() async throws {
@@ -50,6 +921,7 @@ final class MusicFeatureModelTests: XCTestCase {
         XCTAssertEqual(state.currentMusicHistory()?.status, .deleted)
         XCTAssertEqual(state.currentMusicHistoryPolicy(), .disabled)
         XCTAssertEqual(model.historyPolicy, .disabled)
+        XCTAssertEqual(model.preferredHistoryPolicy, .humanReadable)
         XCTAssertTrue(model.timelineEvents.isEmpty)
         XCTAssertEqual(policyStore.policy, .humanReadable)
     }
@@ -304,10 +1176,14 @@ final class MusicFeatureModelTests: XCTestCase {
         let policyStore = MusicHistoryPolicyStore(defaults: suite.defaults)
         policyStore.set(.opaqueItem)
         let state = MobileRideMapState()
-        _ = try state.startGpsOnly(atMs: 100)
+        _ = try await state.startGpsOnlyCommand(atMs: 100, musicHistoryPolicy: .opaqueItem)
         let model = makeModel(state: state, defaults: suite.defaults, historyPolicyStore: policyStore)
 
+        XCTAssertEqual(model.historyPolicy, .disabled)
+        let adoptionError = await model.adoptHistoryForNewRideAsync()
+        XCTAssertNil(adoptionError)
         XCTAssertEqual(model.historyPolicy, .opaqueItem)
+        XCTAssertEqual(model.preferredHistoryPolicy, .opaqueItem)
         let enabled = await model.setHistoryPolicyAsync(.humanReadable)
         XCTAssertTrue(enabled)
         let ingested = await model.ingestObservationAsync(observation(atMs: 200))
@@ -339,8 +1215,11 @@ final class MusicFeatureModelTests: XCTestCase {
 
         model.restorePlayer()
 
-        XCTAssertEqual(model.nowPlaying?.provider, .spotify)
-        XCTAssertEqual(model.nowPlaying?.state, .unavailable)
+        // The SDK may not have delivered its first observation yet.
+        if let nowPlaying = model.nowPlaying {
+            XCTAssertEqual(nowPlaying.provider, .spotify)
+            XCTAssertEqual(nowPlaying.state, .unavailable)
+        }
         XCTAssertNil(model.nowPlaying?.item)
     }
 
@@ -512,6 +1391,146 @@ final class MusicFeatureModelTests: XCTestCase {
             pollWaiter.releaseNext(returning: false)
             await waitUntil("explicit authorization monitor cancellation") { pollWaiter.completedCount == 1 }
         }
+
+        func testConnectAllowsAuthorizationPromptForUnauthorizedSnapshot() async throws {
+            let suite = try makeDefaults()
+            defer { suite.defaults.removePersistentDomain(forName: suite.name) }
+            let monitor = TestAppleMusicMonitor()
+            let pollWaiter = TestMusicMonitorPollWaiter()
+            let model = makeModel(
+                defaults: suite.defaults,
+                appleMonitor: monitor,
+                monitorPollWaiter: { deadlineMs, _ in
+                    await pollWaiter.wait(until: deadlineMs)
+                }
+            )
+            let unauthorized = MusicProviderObservation(
+                snapshot: monitor.unauthorizedSnapshot(observedAtMs: 1_000)
+            )
+            XCTAssertTrue(model.ingestObservation(unauthorized))
+
+            model.connect()
+            await waitUntil("explicit authorization monitor poll after unauthorized snapshot") {
+                pollWaiter.startedCount == 1
+            }
+
+            XCTAssertEqual(monitor.authorizationPrompts, [true])
+            XCTAssertEqual(monitor.startCount, 1)
+
+            model.stopMonitoring()
+            pollWaiter.releaseNext(returning: false)
+            await waitUntil("unauthorized authorization monitor cancellation") { pollWaiter.completedCount == 1 }
+        }
+
+        func testConnectReusesAuthorizationForExistingPlaybackSnapshots() async throws {
+            let states: [MobileMusicPlaybackStateDto] = [
+                .stale, .disconnected, .unavailable, .paused, .stopped, .playing, .buffering, .interrupted,
+            ]
+
+            for state in states {
+                let suite = try makeDefaults()
+                defer { suite.defaults.removePersistentDomain(forName: suite.name) }
+                let monitor = TestAppleMusicMonitor()
+                let pollWaiter = TestMusicMonitorPollWaiter()
+                let model = makeModel(
+                    defaults: suite.defaults,
+                    appleMonitor: monitor,
+                    monitorPollWaiter: { deadlineMs, _ in
+                        await pollWaiter.wait(until: deadlineMs)
+                    }
+                )
+                XCTAssertTrue(model.ingestObservation(observation(atMs: 1_000, state: state)), "seed \(state)")
+
+                model.connect()
+                await waitUntil("passive reconnect for \(state)") { pollWaiter.startedCount == 1 }
+
+                XCTAssertEqual(monitor.authorizationPrompts, [false], "\(state) must reuse saved authorization")
+                XCTAssertEqual(monitor.startCount, 1, "\(state) should reconnect the provider")
+
+                model.stopMonitoring()
+                pollWaiter.releaseNext(returning: false)
+                await waitUntil("reconnect cancellation for \(state)") { pollWaiter.completedCount == 1 }
+            }
+        }
+
+        func testColdStartRestoreUsesPassiveAuthorizationAndShowsPlayer() async throws {
+            let suite = try makeDefaults()
+            defer { suite.defaults.removePersistentDomain(forName: suite.name) }
+            let visibility = MusicPlayerVisibilityStore()
+            let wasHidden = visibility.isHidden
+            visibility.setHidden(true)
+            defer { visibility.setHidden(wasHidden) }
+
+            let monitoring = MusicMonitoringPreferenceStore(defaults: suite.defaults)
+            XCTAssertFalse(monitoring.isEnabled)
+            let monitor = TestAppleMusicMonitor()
+            let pollWaiter = TestMusicMonitorPollWaiter()
+            let model = makeModel(
+                defaults: suite.defaults,
+                monitoringPreferenceStore: monitoring,
+                appleMonitor: monitor,
+                monitorPollWaiter: { deadlineMs, _ in
+                    await pollWaiter.wait(until: deadlineMs)
+                }
+            )
+            XCTAssertNil(model.settingsNowPlaying)
+            XCTAssertTrue(model.isPlayerHidden)
+
+            model.restorePlayer()
+            await waitUntil("cold-start restore monitor poll") { pollWaiter.startedCount == 1 }
+            await waitUntil("cold-start restore playback observation") {
+                model.settingsNowPlaying?.item?.identifier == "monitor-track"
+            }
+
+            XCTAssertEqual(monitor.authorizationPrompts, [false])
+            XCTAssertEqual(monitor.startCount, 1)
+            XCTAssertTrue(monitoring.isEnabled)
+            XCTAssertFalse(model.isPlayerHidden)
+            XCTAssertFalse(visibility.isHidden)
+
+            model.stopMonitoring()
+            pollWaiter.releaseNext(returning: false)
+            await waitUntil("cold-start restore monitor cancellation") { pollWaiter.completedCount == 1 }
+        }
+
+        func testRestorePlayerPreservesCurrentFeedbackWhenMonitorIsAlreadyActive() async throws {
+            let suite = try makeDefaults()
+            defer { suite.defaults.removePersistentDomain(forName: suite.name) }
+            let visibility = MusicPlayerVisibilityStore()
+            let wasHidden = visibility.isHidden
+            visibility.setHidden(true)
+            defer { visibility.setHidden(wasHidden) }
+
+            let monitoring = MusicMonitoringPreferenceStore(defaults: suite.defaults)
+            monitoring.setEnabled(true)
+            let monitor = TestAppleMusicMonitor()
+            let pollWaiter = TestMusicMonitorPollWaiter()
+            let model = makeModel(
+                defaults: suite.defaults,
+                monitoringPreferenceStore: monitoring,
+                appleMonitor: monitor,
+                monitorPollWaiter: { deadlineMs, _ in
+                    await pollWaiter.wait(until: deadlineMs)
+                }
+            )
+
+            model.connect()
+            await waitUntil("active music monitor poll") { pollWaiter.startedCount == 1 }
+            await waitUntil("active music monitor observation") { monitor.startCount == 1 }
+            let requestID = try XCTUnwrap(model.beginCommandFeedback())
+            _ = model.finishCommand(.failed, provider: .appleMusic, requestID: requestID)
+            let failedFeedback = try XCTUnwrap(model.commandFeedback)
+
+            model.restorePlayer()
+
+            XCTAssertEqual(model.commandFeedback, failedFeedback)
+            XCTAssertEqual(monitor.startCount, 1, "restoring an active player must reuse its monitor")
+            XCTAssertFalse(model.isPlayerHidden)
+
+            model.stopMonitoring()
+            pollWaiter.releaseNext(returning: false)
+            await waitUntil("active music monitor cancellation") { pollWaiter.completedCount == 1 }
+        }
     #endif
 
     #if !os(iOS)
@@ -634,15 +1653,24 @@ final class MusicFeatureModelTests: XCTestCase {
         providerSelectionStore: MusicProviderSelectionStore? = nil,
         historyPolicyStore: MusicHistoryPolicyStore? = nil,
         monitoringPreferenceStore: MusicMonitoringPreferenceStore? = nil,
+        updateCapturePolicy: @escaping @MainActor (MobileMusicHistoryPolicyDto) -> Void = { _ in },
         selectedRideID: @escaping @MainActor () -> String? = { nil },
         invalidateHistory: @escaping @MainActor () -> Void = {},
         updateCaptureObservation: @escaping @MainActor (MobilePevcapMusicEventDto?) -> Void = { _ in },
+        updateCaptureObservationAsync: (
+            @MainActor (
+                MobilePevcapMusicEventDto?, MobileMusicCaptureTarget
+            ) async -> MobileCaptureWriteOutcomeDto
+        )? = nil,
+        captureTarget: @escaping @MainActor () -> MobileMusicCaptureTarget = { .unavailable },
         clearSelectedHistoryMusic: @escaping @MainActor () -> Void = {},
         setRideHistoryError: @escaping @MainActor (MobileRideMapError) -> Void = { _ in },
         appleMonitor: (any AppleMusicMonitorDriving)? = nil,
         monitorPollWaiter: MusicMonitorPollWaiter? = nil,
         providerCommandHandler: MusicProviderCommandHandler? = nil,
-        spotifyCallbackHandler: (@MainActor (URL) -> Bool)? = nil
+        spotifyCallbackHandler: (@MainActor (URL) -> Bool)? = nil,
+        historySnapshotReader: MusicHistorySnapshotReader? = nil,
+        correlationRideIDReader: (@MainActor () async -> String?)? = nil
     ) -> MusicFeatureModel {
         MusicFeatureModel(
             providerSelectionStore: providerSelectionStore ?? MusicProviderSelectionStore(defaults: defaults),
@@ -650,8 +1678,10 @@ final class MusicFeatureModelTests: XCTestCase {
             monitoringPreferenceStore: monitoringPreferenceStore ?? MusicMonitoringPreferenceStore(defaults: defaults),
             rideMapState: state,
             monotonicNow: { 1_000 },
-            updateCapturePolicy: { _ in },
+            updateCapturePolicy: updateCapturePolicy,
             updateCaptureObservation: updateCaptureObservation,
+            updateCaptureObservationAsync: updateCaptureObservationAsync,
+            captureTarget: captureTarget,
             invalidateHistoryForDeletion: invalidateHistory,
             selectedHistoryRideID: selectedRideID,
             clearSelectedHistoryMusic: clearSelectedHistoryMusic,
@@ -659,7 +1689,9 @@ final class MusicFeatureModelTests: XCTestCase {
             appleMonitor: appleMonitor,
             monitorPollWaiter: monitorPollWaiter,
             providerCommandHandler: providerCommandHandler,
-            spotifyCallbackHandler: spotifyCallbackHandler
+            spotifyCallbackHandler: spotifyCallbackHandler,
+            historySnapshotReader: historySnapshotReader,
+            correlationRideIDReader: correlationRideIDReader
         )
     }
 
@@ -682,12 +1714,16 @@ final class MusicFeatureModelTests: XCTestCase {
         return (name, try XCTUnwrap(UserDefaults(suiteName: name)))
     }
 
-    private func observation(atMs: UInt64, identifier: String = "track-1") -> MusicProviderObservation {
+    private func observation(
+        atMs: UInt64,
+        identifier: String = "track-1",
+        state: MobileMusicPlaybackStateDto = .playing
+    ) -> MusicProviderObservation {
         MusicProviderObservation(
             snapshot: MobileMusicSnapshotDto(
                 provider: .appleMusic,
                 sessionId: "feature-test",
-                state: .playing,
+                state: state,
                 item: MobileMusicItemDto(identifier: identifier, title: "Track", artist: "Artist"),
                 positionMilliseconds: nil,
                 durationMilliseconds: nil,
@@ -846,7 +1882,7 @@ private struct HistoricalRideQuery: RideHistoryQuerying {
     private final class MusicMonitorSessionDriver: CutoutSessionDriving {
         let rideSessionStateHandle = CutoutSessionStateHandle()
         var onDisplayStateChange: ((RideDisplayState) -> Void)?
-        var onPhaseChange: ((SessionConnectionPhase) -> Void)?
+        var onPhaseChange: ((SessionConnectionPresentation) -> Void)?
         var onReconnectScheduled: ((SessionConnectionRetry) -> Void)?
         var onCaptureEvent: ((CaptureEvent) -> Void)?
         var onScanStateChange: ((DevicePickerScanState) -> Void)?
@@ -876,6 +1912,9 @@ private struct HistoricalRideQuery: RideHistoryQuerying {
         func annotateCapture(key: String, value: String) -> Bool { false }
         func updateMusicCapturePolicy(_ policy: MobileMusicHistoryPolicyDto) {}
         func updateMusicCaptureObservation(_ observation: MobilePevcapMusicEventDto?) {}
+        func updateMusicCaptureObservationAsync(
+            _ observation: MobilePevcapMusicEventDto?, target: MobileMusicCaptureTarget
+        ) async -> MobileCaptureWriteOutcomeDto { .accepted }
         func flushCapture() async -> Bool { true }
         func finishCapture() async -> Bool { true }
         func disconnectAndScan() {}

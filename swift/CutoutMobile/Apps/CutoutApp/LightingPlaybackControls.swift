@@ -214,6 +214,7 @@ private struct LightingEffectGrid: View {
                     )
                 }
                 .buttonStyle(.plain)
+                .accessibilityAddTraits(selectedPattern == id ? .isSelected : [])
                 .accessibilityIdentifier("lighting.effect.\(id)")
             }
         }

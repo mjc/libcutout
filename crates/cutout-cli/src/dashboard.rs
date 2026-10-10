@@ -1,14 +1,13 @@
 use std::{
     collections::VecDeque,
     fmt::{self, Write as FmtWrite},
-    io::{self, Read, Write},
+    io::Write,
     ops::RangeInclusive,
     sync::{
         Arc, OnceLock,
         atomic::{AtomicBool, Ordering},
         mpsc,
     },
-    thread,
     time::{Duration, Instant},
 };
 
@@ -33,8 +32,9 @@ use cutout_protocols::{
     VeteranModelProfile,
 };
 use ratatui::termina::{
-    PlatformTerminal, Terminal as _,
+    EventReader, PlatformTerminal, Terminal as _,
     escape::csi::{self},
+    event::{Event, KeyCode, KeyEventKind, Modifiers},
 };
 use ratatui::{
     Frame, Terminal,
@@ -571,11 +571,11 @@ impl DisplaySpeed {
     }
 
     const fn is_stationary(self) -> bool {
-        self.0.as_millimetres_per_second() == 0
+        !self.0.is_moving()
     }
 
     const fn is_moving(self) -> bool {
-        self.0.as_millimetres_per_second() > 0
+        self.0.is_moving()
     }
 }
 
@@ -1082,14 +1082,14 @@ impl DashboardState {
         state.source = DashboardSource::Demo;
         state.apply_demo_seed();
 
-        if let Some(device) = device {
-            if state.device.name != device {
-                state
-                    .scan_browser
-                    .observations
-                    .retain(|observation| observation.real_device && observation.name == device);
-                state.scan_browser.selected = ScanSelection::first();
-            }
+        if let Some(device) = device
+            && state.device.name != device
+        {
+            state
+                .scan_browser
+                .observations
+                .retain(|observation| observation.real_device && observation.name == device);
+            state.scan_browser.selected = ScanSelection::first();
         }
 
         state
@@ -2659,10 +2659,7 @@ fn run_dashboard_loop(
     updates: Option<&mpsc::Receiver<DashboardUpdate>>,
     termination_requested: &AtomicBool,
 ) -> Result<()> {
-    let (tx, rx) = mpsc::channel::<DashboardInput>();
-    let _input_thread = spawn_input_thread(tx);
-
-    let mut terminal = init_dashboard_terminal()?;
+    let (mut terminal, reader) = init_dashboard_terminal()?;
     let mut last_tick = Instant::now();
 
     let result = 'dashboard: loop {
@@ -2679,7 +2676,15 @@ fn run_dashboard_loop(
             break 'dashboard Err(error.into());
         }
 
-        while let Ok(input) = rx.try_recv() {
+        let event = match reader.poll(Some(Duration::from_millis(25)), |_| true) {
+            Ok(true) => match reader.read(|_| true) {
+                Ok(event) => Some(event),
+                Err(error) => break 'dashboard Err(error.into()),
+            },
+            Ok(false) => None,
+            Err(error) => break 'dashboard Err(error.into()),
+        };
+        if let Some(input) = event.as_ref().and_then(dashboard_input) {
             match input {
                 DashboardInput::Quit => break 'dashboard Ok(()),
                 input => state.handle_input(input),
@@ -2689,8 +2694,6 @@ fn run_dashboard_loop(
         if last_tick.elapsed() >= Duration::from_millis(250) {
             state.advance();
             last_tick = Instant::now();
-        } else {
-            thread::sleep(Duration::from_millis(25));
         }
     };
 
@@ -2729,37 +2732,57 @@ fn dashboard_should_exit(termination_requested: &AtomicBool) -> bool {
     termination_requested.load(Ordering::Relaxed)
 }
 
-fn init_dashboard_terminal() -> Result<DashboardTerminal> {
+fn init_dashboard_terminal() -> Result<(DashboardTerminal, EventReader)> {
     init_dashboard_terminal_inner().inspect_err(|_error| {
         ratatui::restore();
     })
 }
 
-fn init_dashboard_terminal_inner() -> Result<DashboardTerminal> {
+fn init_dashboard_terminal_inner() -> Result<(DashboardTerminal, EventReader)> {
     let mut output = PlatformTerminal::new()?;
+    // Termina restores the captured termios after this callback, before invoking
+    // the previous panic hook. Display/input modes need the same cleanup too.
+    output.set_panic_hook(|output| {
+        let _ = write_dashboard_restore(output);
+    });
     output.enter_raw_mode()?;
-    write!(
-        output,
-        "{}{}",
-        decset(csi::DecPrivateModeCode::ClearAndEnableAlternateScreen),
-        decreset(csi::DecPrivateModeCode::ShowCursor)
-    )?;
-    output.flush()?;
-
+    // Derive the reader before transferring this same handle into Ratatui.
+    let reader = output.event_reader();
     let backend = TerminaBackend::new(output);
-    Ok(Terminal::new(backend)?)
+    // Validate backend dimensions before enabling any display/input modes.
+    let mut terminal = Terminal::new(backend)?;
+    let enter_result = (|| -> Result<()> {
+        let output = terminal.backend_mut();
+        write!(
+            output,
+            "{}{}{}",
+            decset(csi::DecPrivateModeCode::ClearAndEnableAlternateScreen),
+            decreset(csi::DecPrivateModeCode::ShowCursor),
+            decset(csi::DecPrivateModeCode::BracketedPaste)
+        )?;
+        output.flush()?;
+        Ok(())
+    })();
+    enter_result.inspect_err(|_| {
+        let _ = restore_dashboard_terminal(&mut terminal);
+    })?;
+    Ok((terminal, reader))
 }
 
 fn restore_dashboard_terminal(terminal: &mut DashboardTerminal) -> Result<()> {
-    let backend = terminal.backend_mut();
-    write!(
-        backend,
-        "{}{}",
-        decreset(csi::DecPrivateModeCode::ClearAndEnableAlternateScreen),
-        decset(csi::DecPrivateModeCode::ShowCursor)
-    )?;
-    backend.flush()?;
+    write_dashboard_restore(terminal.backend_mut())?;
     Ok(())
+}
+
+fn write_dashboard_restore(output: &mut impl Write) -> std::io::Result<()> {
+    write!(
+        output,
+        "{}{}{}",
+        decreset(csi::DecPrivateModeCode::ClearAndEnableAlternateScreen),
+        decset(csi::DecPrivateModeCode::ShowCursor),
+        decreset(csi::DecPrivateModeCode::BracketedPaste)
+    )?;
+    output.flush()
 }
 
 fn decset(code: csi::DecPrivateModeCode) -> csi::Csi {
@@ -2787,60 +2810,32 @@ fn drain_dashboard_updates(
     }
 }
 
-fn spawn_input_thread(tx: mpsc::Sender<DashboardInput>) -> thread::JoinHandle<()> {
-    thread::spawn(move || {
-        let stdin = io::stdin();
-        let mut locked = stdin.lock();
-        let mut byte = [0_u8; 1];
-
-        while locked.read_exact(&mut byte).is_ok() {
-            match byte[0] {
-                b'q' | b'Q' => {
-                    let _ = tx.send(DashboardInput::Quit);
-                    break;
-                }
-                b'\r' | b'\n' => {
-                    let _ = tx.send(DashboardInput::Enter);
-                }
-                b'\t' => {
-                    let _ = tx.send(DashboardInput::NextTab);
-                }
-                b'j' | b'J' => {
-                    let _ = tx.send(DashboardInput::MoveDown);
-                }
-                b'k' | b'K' => {
-                    let _ = tx.send(DashboardInput::MoveUp);
-                }
-                b'b' | b'B' | 0x7f => {
-                    let _ = tx.send(DashboardInput::Back);
-                }
-                0x1b => handle_escape_sequence(&mut locked, &tx),
-                _ => {}
-            }
-        }
-    })
-}
-
-fn handle_escape_sequence<R: Read>(input: &mut R, tx: &mpsc::Sender<DashboardInput>) {
-    let mut sequence = [0_u8; 2];
-    if input.read_exact(&mut sequence).is_err() {
-        return;
+/// Consume all event kinds, then ignore unsupported input rather than buffering it.
+fn dashboard_input(event: &Event) -> Option<DashboardInput> {
+    let Event::Key(key) = event else {
+        return None;
+    };
+    if key.kind == KeyEventKind::Release
+        || key.modifiers.intersects(
+            Modifiers::ALT
+                | Modifiers::CONTROL
+                | Modifiers::SUPER
+                | Modifiers::HYPER
+                | Modifiers::META,
+        )
+    {
+        return None;
     }
-
-    match sequence {
-        [b'[', b'C'] => {
-            let _ = tx.send(DashboardInput::NextTab);
-        }
-        [b'[', b'D'] => {
-            let _ = tx.send(DashboardInput::PreviousTab);
-        }
-        [b'[', b'B'] => {
-            let _ = tx.send(DashboardInput::MoveDown);
-        }
-        [b'[', b'A'] => {
-            let _ = tx.send(DashboardInput::MoveUp);
-        }
-        _ => {}
+    // Repeats retain held-key navigation; Shift/lock state permits uppercase bindings.
+    match key.code {
+        KeyCode::Char('q' | 'Q') => Some(DashboardInput::Quit),
+        KeyCode::Enter => Some(DashboardInput::Enter),
+        KeyCode::Tab | KeyCode::Right => Some(DashboardInput::NextTab),
+        KeyCode::Left => Some(DashboardInput::PreviousTab),
+        KeyCode::Char('j' | 'J') | KeyCode::Down => Some(DashboardInput::MoveDown),
+        KeyCode::Char('k' | 'K') | KeyCode::Up => Some(DashboardInput::MoveUp),
+        KeyCode::Char('b' | 'B') | KeyCode::Backspace => Some(DashboardInput::Back),
+        _ => None,
     }
 }
 
@@ -3842,10 +3837,10 @@ fn dashboard_voltage_range(state: &DashboardState) -> Option<RangeInclusive<Volt
         .find_model_names(&state.device.make, &state.device.model)
         .is_some_and(|entry| entry.registration.session == Some(NOSFET_AERO_SESSION_KEY));
 
-    if is_nosfet_aero {
-        if let Some(profile) = VeteranModelProfile::from_model_id(VeteranModelId::new(43)) {
-            return Some(profile.voltage_range);
-        }
+    if is_nosfet_aero
+        && let Some(profile) = VeteranModelProfile::from_model_id(VeteranModelId::new(43))
+    {
+        return Some(profile.voltage_range);
     }
 
     None
@@ -4157,7 +4152,6 @@ fn index_to_f64(value: usize) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Cursor;
 
     use super::*;
     use cutout_btle::{
@@ -4592,9 +4586,9 @@ mod tests {
             Some("NF2557")
         );
         assert_eq!(state.provenance, None);
-        assert!(state.scan_browser.observations.is_empty());
-        assert!(state.profiles.is_empty());
-        assert!(state.logs.is_empty());
+        assert_eq!(state.scan_browser.observations.len(), 0);
+        assert_eq!(state.profiles.len(), 0);
+        assert_eq!(state.logs.len(), 0);
     }
 
     #[test]
@@ -4759,9 +4753,43 @@ mod tests {
     }
 
     #[test]
+    fn operational_wheel_state_uses_the_connected_wheel_speed_window() {
+        let mut state = DashboardState::empty();
+        state.telemetry.latest_battery_current = Some(DisplayBatteryCurrent::from_milliamps(0));
+        let threshold = cutout_core::CONNECTED_WHEEL_MOVEMENT_THRESHOLD.as_millimetres_per_second();
+        for raw_speed in [-threshold, -threshold + 1, 0, threshold - 1, threshold] {
+            state.telemetry.latest_speed = Some(DisplaySpeed::from_speed(
+                Speed::from_millimetres_per_second(raw_speed),
+            ));
+            assert_eq!(
+                operational_wheel_state(&state),
+                OperationalWheelState::Parked
+            );
+        }
+        for raw_speed in [i32::MIN, -threshold - 1, threshold + 1, i32::MAX] {
+            state.telemetry.latest_speed = Some(DisplaySpeed::from_speed(
+                Speed::from_millimetres_per_second(raw_speed),
+            ));
+            assert_eq!(
+                operational_wheel_state(&state),
+                OperationalWheelState::Riding
+            );
+        }
+        state.telemetry.latest_speed = None;
+        assert_eq!(
+            operational_wheel_state(&state),
+            OperationalWheelState::Unknown
+        );
+    }
+
+    #[test]
     fn operational_wheel_state_reports_riding_from_motion() {
         let mut state = DashboardState::empty();
-        state.telemetry.latest_speed = Some(display_speed_mph(1));
+        state.telemetry.latest_speed = Some(DisplaySpeed::from_speed(
+            Speed::from_millimetres_per_second(
+                cutout_core::CONNECTED_WHEEL_MOVEMENT_THRESHOLD.as_millimetres_per_second() + 1,
+            ),
+        ));
         state.telemetry.latest_battery_current = Some(DisplayBatteryCurrent::from_milliamps(0));
         state
             .read_only
@@ -4882,6 +4910,17 @@ mod tests {
             decset(csi::DecPrivateModeCode::ShowCursor).to_string(),
             "\u{1b}[?25h"
         );
+    }
+
+    #[test]
+    #[ignore = "run in the dashboard-input.py PTY subprocess"]
+    #[should_panic(expected = "dashboard PTY panic cleanup probe")]
+    fn dashboard_terminal_panic_restores_modes() {
+        let (_terminal, reader) = init_dashboard_terminal().expect("PTY terminal initializes");
+        reader
+            .read(|_| true)
+            .expect("PTY sends input after checking raw mode");
+        panic!("dashboard PTY panic cleanup probe");
     }
 
     #[test]
@@ -6349,7 +6388,7 @@ mod tests {
 
         state.advance();
 
-        assert!(state.logs.is_empty());
+        assert_eq!(state.logs.len(), 0);
         assert_eq!(state.counters.notifications, NotificationCount::default());
     }
 
@@ -6368,14 +6407,91 @@ mod tests {
     }
 
     #[test]
-    fn arrow_escape_sequences_emit_tab_navigation() {
-        let (tx, rx) = mpsc::channel();
+    fn terminal_events_preserve_dashboard_bindings_and_repeats() {
+        use ratatui::termina::event::KeyEvent;
 
-        handle_escape_sequence(&mut Cursor::new(*b"[C"), &tx);
-        assert_eq!(rx.try_recv(), Ok(DashboardInput::NextTab));
+        for (code, input) in [
+            (KeyCode::Char('q'), DashboardInput::Quit),
+            (KeyCode::Char('Q'), DashboardInput::Quit),
+            (KeyCode::Enter, DashboardInput::Enter),
+            (KeyCode::Tab, DashboardInput::NextTab),
+            (KeyCode::Right, DashboardInput::NextTab),
+            (KeyCode::Left, DashboardInput::PreviousTab),
+            (KeyCode::Char('j'), DashboardInput::MoveDown),
+            (KeyCode::Char('J'), DashboardInput::MoveDown),
+            (KeyCode::Down, DashboardInput::MoveDown),
+            (KeyCode::Char('k'), DashboardInput::MoveUp),
+            (KeyCode::Char('K'), DashboardInput::MoveUp),
+            (KeyCode::Up, DashboardInput::MoveUp),
+            (KeyCode::Char('b'), DashboardInput::Back),
+            (KeyCode::Char('B'), DashboardInput::Back),
+            (KeyCode::Backspace, DashboardInput::Back),
+        ] {
+            let mut key = KeyEvent::new(code, Modifiers::NONE);
+            assert_eq!(dashboard_input(&Event::Key(key)), Some(input));
+            key.kind = KeyEventKind::Repeat;
+            assert_eq!(dashboard_input(&Event::Key(key)), Some(input));
+            key.kind = KeyEventKind::Release;
+            assert_eq!(dashboard_input(&Event::Key(key)), None);
+        }
+    }
 
-        handle_escape_sequence(&mut Cursor::new(*b"[D"), &tx);
-        assert_eq!(rx.try_recv(), Ok(DashboardInput::PreviousTab));
+    #[test]
+    fn terminal_events_ignore_paste_protocol_responses_and_modified_shortcuts() {
+        use ratatui::termina::event::KeyEvent;
+
+        for modifiers in [
+            Modifiers::CONTROL,
+            Modifiers::ALT,
+            Modifiers::SUPER,
+            Modifiers::HYPER,
+            Modifiers::META,
+        ] {
+            let key = KeyEvent::new(KeyCode::Char('q'), modifiers);
+            assert_eq!(dashboard_input(&Event::Key(key)), None);
+        }
+        let uppercase = KeyEvent::new(KeyCode::Char('Q'), Modifiers::SHIFT);
+        assert_eq!(
+            dashboard_input(&Event::Key(uppercase)),
+            Some(DashboardInput::Quit)
+        );
+        assert_eq!(dashboard_input(&Event::Paste("qjkb".to_owned())), None);
+        assert_eq!(dashboard_input(&Event::FocusIn), None);
+        assert_eq!(dashboard_input(&Event::FocusOut), None);
+        assert_eq!(
+            dashboard_input(&Event::Csi(decset(csi::DecPrivateModeCode::ShowCursor))),
+            None
+        );
+        assert_eq!(dashboard_input(&Event::Key(KeyCode::Escape.into())), None);
+        assert_eq!(
+            dashboard_input(&Event::Key(KeyCode::Function(1).into())),
+            None
+        );
+    }
+
+    #[test]
+    fn terminal_parser_keeps_fragmented_navigation_and_paste_separate() {
+        use ratatui::termina::Parser;
+
+        let mut parser = Parser::default();
+        parser.parse(b"\x1b[", true);
+        assert_eq!(parser.pop(), None);
+        parser.parse(b"C", false);
+        let right = parser.pop().expect("completed right-arrow event");
+        assert_eq!(dashboard_input(&right), Some(DashboardInput::NextTab));
+
+        parser.parse(b"\x1b[200~qjkb\x1b[201~", false);
+        let paste = parser.pop().expect("one bracketed paste event");
+        assert_eq!(paste, Event::Paste("qjkb".to_owned()));
+        assert_eq!(dashboard_input(&paste), None);
+        assert_eq!(parser.pop(), None);
+
+        parser.parse(b"\x1b", false);
+        let escape = parser.pop().expect("lone Escape is a complete event");
+        assert_eq!(dashboard_input(&escape), None);
+        parser.parse(b"q", false);
+        let quit = parser.pop().expect("Escape does not swallow later quit");
+        assert_eq!(dashboard_input(&quit), Some(DashboardInput::Quit));
     }
 
     #[test]

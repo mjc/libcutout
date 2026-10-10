@@ -5,7 +5,7 @@ import CutoutMobileFFI
 struct CutoutSessionCallbackRegistrar {
     struct Handlers {
         let displayState: (RideDisplayState) -> Void
-        let phase: (SessionConnectionPhase) -> Void
+        let phase: (SessionConnectionPresentation) -> Void
         let reconnectScheduled: (SessionConnectionRetry) -> Void
         let captureEvent: (CaptureEvent) -> Void
         let scanState: (DevicePickerScanState) -> Void

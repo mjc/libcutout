@@ -342,6 +342,7 @@ impl RideSessionLifecycle {
     pub fn recover(
         marker: RideSessionMarker,
         restored_platform_identifier: Option<&str>,
+        app_presence: RideSessionAppPresence,
     ) -> RideSessionDecision {
         let identity = marker.identity;
         if restored_platform_identifier == Some(identity.platform_identifier()) {
@@ -352,7 +353,7 @@ impl RideSessionLifecycle {
                     pending_identity: None,
                     activity: ActivityProjectionState::Starting,
                     last_telemetry_at: None,
-                    app_presence: RideSessionAppPresence::Foreground,
+                    app_presence,
                 },
                 RideSessionEffect::StartActivity { identity },
             );
@@ -365,7 +366,7 @@ impl RideSessionLifecycle {
                 pending_identity: None,
                 activity: ActivityProjectionState::Unavailable,
                 last_telemetry_at: None,
-                app_presence: RideSessionAppPresence::Foreground,
+                app_presence,
             },
             RideSessionEffect::None,
         )
@@ -460,7 +461,7 @@ impl RideSessionLifecycle {
                 pending_identity: None,
                 activity: ActivityProjectionState::Starting,
                 last_telemetry_at: None,
-                app_presence: RideSessionAppPresence::Foreground,
+                app_presence: self.app_presence,
             },
             RideSessionEffect::StartActivity { identity },
         )
@@ -471,11 +472,16 @@ impl RideSessionLifecycle {
         identity: &RideSessionIdentity,
         activity_id: String,
     ) -> RideSessionDecision {
-        if self.identity.as_ref() != Some(identity) || self.phase != RideSessionPhase::Starting {
+        if self.identity.as_ref() != Some(identity)
+            || self.activity != ActivityProjectionState::Starting
+            || !self.phase.accepts_updates()
+        {
             return self.decision(RideSessionEffect::None);
         }
         let mut state = self.clone();
-        state.phase = RideSessionPhase::Active;
+        if state.phase == RideSessionPhase::Starting {
+            state.phase = RideSessionPhase::Active;
+        }
         state.activity = ActivityProjectionState::Active { activity_id };
         RideSessionDecision::new(state, RideSessionEffect::None)
     }
@@ -519,18 +525,16 @@ impl RideSessionLifecycle {
     }
 
     fn app_backgrounded(&self) -> RideSessionDecision {
-        let Some(identity) = self.identity.clone() else {
-            return self.decision(RideSessionEffect::None);
-        };
-        if !self.phase.accepts_updates() {
-            return self.decision(RideSessionEffect::None);
-        }
         if self.app_presence == RideSessionAppPresence::Background {
             return self.decision(RideSessionEffect::None);
         }
         let mut state = self.clone();
         state.app_presence = RideSessionAppPresence::Background;
-        RideSessionDecision::new(state, RideSessionEffect::RequestCaptureFlush { identity })
+        let effect = match self.identity.clone().filter(|_| self.phase.is_live()) {
+            Some(identity) => RideSessionEffect::RequestCaptureFlush { identity },
+            None => RideSessionEffect::None,
+        };
+        RideSessionDecision::new(state, effect)
     }
 
     fn app_foregrounded(&self) -> RideSessionDecision {
@@ -632,7 +636,10 @@ impl RideSessionLifecycle {
 
     fn end(&self, reason: RideSessionEndReason) -> RideSessionDecision {
         let Some(identity) = self.identity.clone() else {
-            return self.decision(RideSessionEffect::None);
+            let mut state = self.clone();
+            state.phase = RideSessionPhase::Ended(reason);
+            state.activity = ActivityProjectionState::Ended;
+            return RideSessionDecision::new(state, RideSessionEffect::None);
         };
         if !self.phase.is_live() {
             return self.decision(RideSessionEffect::None);
@@ -696,6 +703,100 @@ mod tests {
     use super::*;
     use crate::MonotonicTimestamp;
     use uuid::Uuid;
+
+    #[test]
+    fn background_flush_is_required_while_terminal_activity_cleanup_is_pending() {
+        let identity = RideSessionIdentity::new("wheel".to_owned(), Uuid::from_u128(1));
+        let started = RideSessionLifecycle::default().transition(RideSessionInput::Start {
+            identity: identity.clone(),
+        });
+        let ending = started
+            .state()
+            .transition(RideSessionInput::UserDisconnected);
+        let backgrounded = ending.state().transition(RideSessionInput::AppBackgrounded);
+        assert_eq!(
+            backgrounded.effect(),
+            &RideSessionEffect::RequestCaptureFlush {
+                identity: identity.clone()
+            }
+        );
+        assert_eq!(
+            backgrounded.state().phase(),
+            &RideSessionPhase::Ending(RideSessionEndReason::UserDisconnect)
+        );
+        assert_eq!(
+            backgrounded.state().app_presence(),
+            RideSessionAppPresence::Background
+        );
+        let duplicate = backgrounded
+            .state()
+            .transition(RideSessionInput::AppBackgrounded);
+        assert_eq!(duplicate.effect(), &RideSessionEffect::None);
+        let ended = backgrounded
+            .state()
+            .transition(RideSessionInput::ActivityEnded { identity });
+        let foregrounded = ended.state().transition(RideSessionInput::AppForegrounded);
+        assert_eq!(
+            foregrounded
+                .state()
+                .transition(RideSessionInput::AppBackgrounded)
+                .effect(),
+            &RideSessionEffect::None
+        );
+    }
+
+    #[test]
+    fn matching_start_acknowledgement_preserves_disconnect_and_background_state() {
+        let identity = RideSessionIdentity::new("wheel".to_owned(), Uuid::from_u128(1));
+        let started = RideSessionLifecycle::default().transition(RideSessionInput::Start {
+            identity: identity.clone(),
+        });
+        let disconnected = started
+            .state()
+            .transition(RideSessionInput::BluetoothDisconnected {
+                at: MonotonicTimestamp::from_milliseconds(100),
+            });
+        let backgrounded = disconnected
+            .state()
+            .transition(RideSessionInput::AppBackgrounded);
+        let acknowledged = backgrounded
+            .state()
+            .transition(RideSessionInput::ActivityStarted {
+                identity: identity.clone(),
+                activity_id: "activity-1".to_owned(),
+            });
+        assert_eq!(
+            acknowledged.state().phase(),
+            &RideSessionPhase::Reconnecting
+        );
+        assert_eq!(
+            acknowledged.state().app_presence(),
+            RideSessionAppPresence::Background
+        );
+        assert_eq!(
+            acknowledged.state().activity(),
+            &ActivityProjectionState::Active {
+                activity_id: "activity-1".to_owned(),
+            }
+        );
+        let duplicate = acknowledged
+            .state()
+            .transition(RideSessionInput::ActivityStarted {
+                identity: identity.clone(),
+                activity_id: "late-duplicate".to_owned(),
+            });
+        assert_eq!(duplicate.state(), acknowledged.state());
+        let ending = backgrounded
+            .state()
+            .transition(RideSessionInput::UserDisconnected);
+        let late = ending
+            .state()
+            .transition(RideSessionInput::ActivityStarted {
+                identity,
+                activity_id: "activity-1".to_owned(),
+            });
+        assert_eq!(late.state(), ending.state());
+    }
 
     #[test]
     fn ride_session_survives_background_and_reconnect_then_ends_once() {
@@ -1026,7 +1127,11 @@ mod tests {
         });
         let marker = started.state().marker().expect("active ride marker");
 
-        let resumed = RideSessionLifecycle::recover(marker.clone(), Some("vesc-1"));
+        let resumed = RideSessionLifecycle::recover(
+            marker.clone(),
+            Some("vesc-1"),
+            RideSessionAppPresence::Foreground,
+        );
         assert_eq!(
             resumed.effect(),
             &RideSessionEffect::StartActivity {
@@ -1037,8 +1142,11 @@ mod tests {
         assert_eq!(resumed.state().phase(), &RideSessionPhase::Starting);
 
         for restored_platform_identifier in [None, Some("aero-2")] {
-            let recovered =
-                RideSessionLifecycle::recover(marker.clone(), restored_platform_identifier);
+            let recovered = RideSessionLifecycle::recover(
+                marker.clone(),
+                restored_platform_identifier,
+                RideSessionAppPresence::Foreground,
+            );
             assert_eq!(
                 recovered.effect(),
                 &RideSessionEffect::None,

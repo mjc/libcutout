@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		C86400000000000000000019 /* CutoutMobile in Frameworks */ = {isa = PBXBuildFile; productRef = C86400000000000000000020 /* CutoutMobile */; };
 		111111111111111111111111 /* Apps/CutoutApp/CutoutApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 111111111111111111111121 /* Apps/CutoutApp/CutoutApp.swift */; };
 		111111111111111111111112 /* Apps/CutoutApp/ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 111111111111111111111122 /* Apps/CutoutApp/ContentView.swift */; };
 		111111111111111111111113 /* Apps/CutoutApp/CutoutAppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 111111111111111111111123 /* Apps/CutoutApp/CutoutAppModel.swift */; };
@@ -88,13 +89,29 @@
 		C00100000000000000000002 /* Apps/CutoutApp/TabAccentColors.swift in Sources */ = {isa = PBXBuildFile; fileRef = C00100000000000000000011 /* Apps/CutoutApp/TabAccentColors.swift */; };
 		C00100000000000000000003 /* UITests/TabAccentColorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C00100000000000000000012 /* UITests/TabAccentColorTests.swift */; };
 		D65100000000000000000001 /* MusicFeatureModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D65100000000000000000002 /* MusicFeatureModelTests.swift */; };
+		D88100000000000000000001 /* RideBackgroundTaskTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D88100000000000000000002 /* RideBackgroundTaskTests.swift */; };
 		E75300000000000000000001 /* DevicePresentationModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E75300000000000000000002 /* DevicePresentationModelTests.swift */; };
+		C86400000000000000000001 /* CaptureStagingFilesystemTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C86400000000000000000002 /* CaptureStagingFilesystemTests.swift */; };
+		C86400000000000000000003 /* MobileReplacementVectorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C86400000000000000000004 /* MobileReplacementVectorTests.swift */; };
+		C88300000000000000000001 /* RustPersistenceStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C88300000000000000000002 /* RustPersistenceStore.swift */; };
+		C86400000000000000000005 /* CutoutMobileFFI in Frameworks */ = {isa = PBXBuildFile; productRef = D65200000000000000000003 /* CutoutMobileFFI */; };
+		C8640000000000000000000D /* CutoutIOSRuntimeTestHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8640000000000000000000E /* CutoutIOSRuntimeTestHost.swift */; };
 		D65100000000000000000004 /* CutoutMobile in Frameworks */ = {isa = PBXBuildFile; productRef = D65100000000000000000005 /* CutoutMobile */; };
 		D65200000000000000000001 /* CutoutMobileFFI in Frameworks */ = {isa = PBXBuildFile; productRef = D65200000000000000000003 /* CutoutMobileFFI */; };
 		D65200000000000000000004 /* CutoutMobileFFI in Frameworks */ = {isa = PBXBuildFile; productRef = D65200000000000000000003 /* CutoutMobileFFI */; };
+		C89200000000000000000001 /* PhoneLocationAdapterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C89200000000000000000002 /* PhoneLocationAdapterTests.swift */; };
+		C89200000000000000000003 /* LockedRideMainThreadTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C89200000000000000000004 /* LockedRideMainThreadTests.swift */; };
+		C61700000000000000000001 /* RideSessionMarkerNonblockingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C61700000000000000000002 /* RideSessionMarkerNonblockingTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		C86400000000000000000018 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 111111111111111111111191 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = C86400000000000000000013;
+			remoteInfo = CutoutIOSRuntimeTestHost;
+		};
 		222222222222222222222192 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 111111111111111111111191 /* Project object */;
@@ -207,7 +224,14 @@
 		444444444444444444444411 /* UITests/CutoutAppUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITests/CutoutAppUITests.swift; sourceTree = SOURCE_ROOT; };
 		444444444444444444444412 /* CutoutAppUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CutoutAppUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		D65100000000000000000002 /* MusicFeatureModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/CutoutAppTests/MusicFeatureModelTests.swift; sourceTree = SOURCE_ROOT; };
+		D88100000000000000000002 /* RideBackgroundTaskTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/CutoutAppTests/RideBackgroundTaskTests.swift; sourceTree = SOURCE_ROOT; };
 		E75300000000000000000002 /* DevicePresentationModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/CutoutAppTests/DevicePresentationModelTests.swift; sourceTree = SOURCE_ROOT; };
+		C86400000000000000000002 /* CaptureStagingFilesystemTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/CutoutAppTests/CaptureStagingFilesystemTests.swift; sourceTree = SOURCE_ROOT; };
+		C86400000000000000000004 /* MobileReplacementVectorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/CutoutAppTests/MobileReplacementVectorTests.swift; sourceTree = SOURCE_ROOT; };
+		C88300000000000000000002 /* RustPersistenceStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/CutoutMobile/RustPersistenceStore.swift; sourceTree = SOURCE_ROOT; };
+		C86400000000000000000006 /* CutoutMobileIOSRuntimeTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CutoutMobileIOSRuntimeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		C8640000000000000000000E /* CutoutIOSRuntimeTestHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/CutoutIOSRuntimeTestHost/CutoutIOSRuntimeTestHost.swift; sourceTree = SOURCE_ROOT; };
+		C8640000000000000000000F /* CutoutIOSRuntimeTestHost.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CutoutIOSRuntimeTestHost.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		D65100000000000000000003 /* CutoutAppIOSUnitTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CutoutAppIOSUnitTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		500000000000000000000201 /* Apps/CutoutApp/Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Apps/CutoutApp/Localizable.xcstrings; sourceTree = SOURCE_ROOT; };
 		5EC7F605A4BE4DD590E4C995 /* Apps/CutoutApp/DeviceControlsForm.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/DeviceControlsForm.swift; sourceTree = SOURCE_ROOT; };
@@ -215,9 +239,27 @@
 		AABBCC000000000000000004 /* Apps/CutoutApp/LightingRouteView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/LightingRouteView.swift; sourceTree = SOURCE_ROOT; };
 		C00100000000000000000011 /* Apps/CutoutApp/TabAccentColors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/TabAccentColors.swift; sourceTree = SOURCE_ROOT; };
 		C00100000000000000000012 /* UITests/TabAccentColorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITests/TabAccentColorTests.swift; sourceTree = SOURCE_ROOT; };
+		C89200000000000000000002 /* PhoneLocationAdapterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/CutoutMobileTests/PhoneLocationAdapterTests.swift; sourceTree = SOURCE_ROOT; };
+		C89200000000000000000004 /* LockedRideMainThreadTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/CutoutAppTests/LockedRideMainThreadTests.swift; sourceTree = SOURCE_ROOT; };
+		C61700000000000000000002 /* RideSessionMarkerNonblockingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/CutoutAppTests/RideSessionMarkerNonblockingTests.swift; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		C86400000000000000000010 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = ();
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		C86400000000000000000007 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C86400000000000000000019 /* CutoutMobile in Frameworks */,
+				C86400000000000000000005 /* CutoutMobileFFI in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		111111111111111111111131 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -264,7 +306,15 @@
 				111111111111111111111153 /* Products */,
 				444444444444444444444415 /* UITests */,
 				D65100000000000000000002 /* MusicFeatureModelTests.swift */,
+				C89200000000000000000002 /* PhoneLocationAdapterTests.swift */,
+				C89200000000000000000004 /* LockedRideMainThreadTests.swift */,
+				C61700000000000000000002 /* RideSessionMarkerNonblockingTests.swift */,
+				D88100000000000000000002 /* RideBackgroundTaskTests.swift */,
 				E75300000000000000000002 /* DevicePresentationModelTests.swift */,
+				C86400000000000000000002 /* CaptureStagingFilesystemTests.swift */,
+				C86400000000000000000004 /* MobileReplacementVectorTests.swift */,
+				C88300000000000000000002 /* RustPersistenceStore.swift */,
+				C8640000000000000000000E /* CutoutIOSRuntimeTestHost.swift */,
 			);
 			sourceTree = "<group>";
 		};
@@ -355,6 +405,8 @@
 				222222222222222222222124 /* CutoutLiveActivityExtension.appex */,
 				444444444444444444444412 /* CutoutAppUITests.xctest */,
 				D65100000000000000000003 /* CutoutAppIOSUnitTests.xctest */,
+				C86400000000000000000006 /* CutoutMobileIOSRuntimeTests.xctest */,
+				C8640000000000000000000F /* CutoutIOSRuntimeTestHost.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -393,6 +445,41 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		C86400000000000000000013 /* CutoutIOSRuntimeTestHost */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C86400000000000000000016 /* Build configuration list for PBXNativeTarget "CutoutIOSRuntimeTestHost" */;
+			buildPhases = (
+				C86400000000000000000010 /* Frameworks */,
+				C86400000000000000000011 /* Sources */,
+				C86400000000000000000012 /* Resources */,
+			);
+			buildRules = ();
+			dependencies = ();
+			name = CutoutIOSRuntimeTestHost;
+			productName = CutoutIOSRuntimeTestHost;
+			productReference = C8640000000000000000000F /* CutoutIOSRuntimeTestHost.app */;
+			productType = "com.apple.product-type.application";
+		};
+		C86400000000000000000009 /* CutoutMobileIOSRuntimeTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C8640000000000000000000C /* Build configuration list for PBXNativeTarget "CutoutMobileIOSRuntimeTests" */;
+			buildPhases = (
+				C86400000000000000000007 /* Frameworks */,
+				C86400000000000000000008 /* Sources */,
+			);
+			buildRules = ();
+			dependencies = (
+				C86400000000000000000017 /* PBXTargetDependency */,
+			);
+			name = CutoutMobileIOSRuntimeTests;
+			packageProductDependencies = (
+				C86400000000000000000020 /* CutoutMobile */,
+				D65200000000000000000003 /* CutoutMobileFFI */,
+			);
+			productName = CutoutMobileIOSRuntimeTests;
+			productReference = C86400000000000000000006 /* CutoutMobileIOSRuntimeTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 		111111111111111111111161 /* CutoutApp */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 111111111111111111111171 /* Build configuration list for PBXNativeTarget "CutoutApp" */;
@@ -483,6 +570,13 @@
 			attributes = {
 				LastUpgradeCheck = 2700;
 				TargetAttributes = {
+					C86400000000000000000009 = {
+						CreatedOnToolsVersion = 27.0;
+						TestTargetID = C86400000000000000000013;
+					};
+					C86400000000000000000013 = {
+						CreatedOnToolsVersion = 27.0;
+					};
 					111111111111111111111161 = {
 						CreatedOnToolsVersion = 27.0;
 					};
@@ -516,6 +610,8 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
+				C86400000000000000000013 /* CutoutIOSRuntimeTestHost */,
+				C86400000000000000000009 /* CutoutMobileIOSRuntimeTests */,
 				111111111111111111111161 /* CutoutApp */,
 				222222222222222222222161 /* CutoutLiveActivityExtension */,
 				444444444444444444444461 /* CutoutAppUITests */,
@@ -525,6 +621,12 @@
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		C86400000000000000000012 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = ();
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		111111111111111111111133 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -555,6 +657,24 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		C86400000000000000000011 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C8640000000000000000000D /* CutoutIOSRuntimeTestHost.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		C86400000000000000000008 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C86400000000000000000001 /* CaptureStagingFilesystemTests.swift in Sources */,
+				C86400000000000000000003 /* MobileReplacementVectorTests.swift in Sources */,
+				C88300000000000000000001 /* RustPersistenceStore.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		111111111111111111111132 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -652,6 +772,10 @@
 			buildActionMask = 2147483647;
 			files = (
 				D65100000000000000000001 /* MusicFeatureModelTests.swift in Sources */,
+				C89200000000000000000001 /* PhoneLocationAdapterTests.swift in Sources */,
+				C89200000000000000000003 /* LockedRideMainThreadTests.swift in Sources */,
+				C61700000000000000000001 /* RideSessionMarkerNonblockingTests.swift in Sources */,
+				D88100000000000000000001 /* RideBackgroundTaskTests.swift in Sources */,
 				E75300000000000000000001 /* DevicePresentationModelTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -659,6 +783,11 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		C86400000000000000000017 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = C86400000000000000000013 /* CutoutIOSRuntimeTestHost */;
+			targetProxy = C86400000000000000000018 /* PBXContainerItemProxy */;
+		};
 		222222222222222222222191 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = 222222222222222222222161 /* CutoutLiveActivityExtension */;
@@ -677,6 +806,78 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
+		C86400000000000000000014 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
+				PRODUCT_BUNDLE_IDENTIFIER = lol.cutout.mobile.ios-runtime-test-host;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		C86400000000000000000015 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
+				PRODUCT_BUNDLE_IDENTIFIER = lol.cutout.mobile.ios-runtime-test-host;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		C8640000000000000000000A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @loader_path/Frameworks";
+				PRODUCT_BUNDLE_IDENTIFIER = lol.cutout.mobile.ios-runtime-tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/CutoutIOSRuntimeTestHost.app/CutoutIOSRuntimeTestHost";
+				TEST_TARGET_NAME = CutoutIOSRuntimeTestHost;
+			};
+			name = Debug;
+		};
+		C8640000000000000000000B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @loader_path/Frameworks";
+				PRODUCT_BUNDLE_IDENTIFIER = lol.cutout.mobile.ios-runtime-tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/CutoutIOSRuntimeTestHost.app/CutoutIOSRuntimeTestHost";
+				TEST_TARGET_NAME = CutoutIOSRuntimeTestHost;
+			};
+			name = Release;
+		};
 		111111111111111111111201 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -735,6 +936,8 @@
 		111111111111111111111211 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ARCHS = arm64;
+				ONLY_ACTIVE_ARCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -748,6 +951,8 @@
 		111111111111111111111212 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ARCHS = arm64;
+				ONLY_ACTIVE_ARCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -890,6 +1095,24 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		C86400000000000000000016 /* Build configuration list for PBXNativeTarget "CutoutIOSRuntimeTestHost" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C86400000000000000000014 /* Debug */,
+				C86400000000000000000015 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		C8640000000000000000000C /* Build configuration list for PBXNativeTarget "CutoutMobileIOSRuntimeTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C8640000000000000000000A /* Debug */,
+				C8640000000000000000000B /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
 		111111111111111111111171 /* Build configuration list for PBXNativeTarget "CutoutApp" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -949,6 +1172,11 @@
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		C86400000000000000000020 /* CutoutMobile */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 111111111111111111111180 /* XCLocalSwiftPackageReference "." */;
+			productName = CutoutMobile;
+		};
 		111111111111111111111181 /* CutoutMobile */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 111111111111111111111180 /* XCLocalSwiftPackageReference "." */;

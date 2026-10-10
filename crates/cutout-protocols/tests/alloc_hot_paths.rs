@@ -192,7 +192,7 @@ fn veteran_parser_owned_results_do_not_allocate() {
                 },
                 &mut veteran_output,
             );
-            assert!(!veteran_output.is_empty());
+            assert_ne!(veteran_output, [] as [SessionOutput; 0]);
             veteran_output.clear();
         }
     });
@@ -340,7 +340,7 @@ fn configured_sessions_do_not_allocate() {
             },
             &mut vesc_output,
         );
-        assert!(!vesc_output.is_empty());
+        assert_ne!(vesc_output, [] as [SessionOutput; 0]);
         vesc_output.clear();
     });
 
@@ -365,7 +365,7 @@ fn configured_sessions_do_not_allocate() {
             },
             &mut begode_output,
         );
-        assert!(!begode_output.is_empty());
+        assert_ne!(begode_output, [] as [SessionOutput; 0]);
         begode_output.clear();
     });
 }

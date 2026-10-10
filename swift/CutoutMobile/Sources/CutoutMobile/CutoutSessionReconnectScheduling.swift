@@ -45,12 +45,18 @@ private final class DispatchReconnectCancellation: ConnectionReconnectCancellabl
     }
 }
 
-final class MainQueueReconnectScheduler: ConnectionReconnectScheduling {
+final class DispatchQueueReconnectScheduler: ConnectionReconnectScheduling {
+    private let queue: DispatchQueue
+
+    init(queue: DispatchQueue) {
+        self.queue = queue
+    }
+
     func schedule(after delayMilliseconds: UInt64, operation: @escaping () -> Void)
         -> any ConnectionReconnectCancellable
     {
         let workItem = DispatchWorkItem(block: operation)
-        DispatchQueue.main.asyncAfter(
+        queue.asyncAfter(
             deadline: .now() + .milliseconds(Int(delayMilliseconds)),
             execute: workItem
         )

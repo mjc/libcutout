@@ -1,6 +1,9 @@
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+#[path = "ride_session_marker_tests.rs"]
+mod ride_session_marker_tests;
+
 use crate::{
     CaptureMetadata as LiveCaptureMetadata, CaptureWriteOutcome, CaptureWriter as LiveCaptureWriter,
 };
@@ -28,12 +31,236 @@ use super::{
     LiveCaptureIntegrity, LiveCaptureLocationAdmission, LiveCaptureLocationObservation,
     LiveCaptureLocationValidation, LiveCaptureState, PevcapImportOutcome, PevcapImportPreview,
     PevcapImportWarning, PhoneAlarmPreferencesRecord, QueryLimit, RideDatabase, RideHistoryQuery,
-    RideId, RideRecord, RideSource, RouteProjectionCancellation, StorageError,
+    RideId, RideRecord, RideSource, RouteProjectionCancellation, StorageError, StoredPevcapCapture,
     VerifiedConnectionLifecycleMutation, VerifiedConnectionRideMetadata,
     VerifiedConnectionRideTarget, VoltageSagModelRecord, normalize_device_display_name,
 };
 
 static TEST_LOCK: Mutex<()> = Mutex::new(());
+
+#[test]
+fn late_corrupt_compressed_event_fails_export_without_losing_durable_capture() {
+    let _guard = test_guard();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("capture.sqlite");
+    let artifact_path = directory.path().join("capture.jsonl");
+    let database = RideDatabase::open(&path).unwrap();
+    let writer = LiveCaptureWriter::start_with_database(
+        artifact_path.clone(),
+        WallClockUnixTimestamp::new(1_700_000_000_000),
+        "test",
+        None,
+        &LiveCaptureMetadata {
+            advertised_services: vec![],
+            gatt_fingerprints: vec![],
+            resolved_identity: None,
+            annotations: vec![],
+        },
+        database.clone(),
+    )
+    .unwrap();
+    // The exporter reads 32 events per page; corrupt the first event after it.
+    for index in 0..33 {
+        assert_eq!(
+            writer.record_location(database_capture_test_location(
+                index,
+                i64::try_from(index).unwrap()
+            )),
+            CaptureWriteOutcome::Accepted
+        );
+        if index % 64 == 0 {
+            writer.flush().unwrap();
+        }
+    }
+    writer.flush().unwrap();
+    let observer = Connection::open(&path).unwrap();
+    let before: (u64, u64, u64, u64) = observer.query_row("SELECT next_sequence,stored_bytes,(SELECT COUNT(*) FROM live_capture_events),(SELECT COUNT(*) FROM live_capture_location_observations) FROM live_capture_sessions", [], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?))).unwrap();
+    assert_eq!((before.0, before.2, before.3), (33, 33, 33));
+    let (mut corrupted, encoding): (Vec<u8>, i64) = observer
+        .query_row(
+            "SELECT payload,payload_encoding FROM live_capture_events WHERE sequence=32",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(encoding, 1);
+    *corrupted.last_mut().unwrap() ^= 1;
+    observer
+        .execute(
+            "UPDATE live_capture_events SET payload=?1 WHERE sequence=32",
+            [corrupted],
+        )
+        .unwrap();
+    let completion = writer.finish().unwrap();
+    let capture_id = match completion {
+        crate::CaptureWriterFinish::DatabaseFinished {
+            live_capture_id,
+            integrity: LiveCaptureIntegrity::Complete,
+            jsonl_export: crate::CaptureJsonlExport::Failed(ref error),
+            ..
+        } => {
+            assert!(error.contains("could not continue live capture export"));
+            live_capture_id
+        }
+        other => panic!("unexpected completion: {other:?}"),
+    };
+    assert!(!artifact_path.exists());
+    let after: (u64, u64, u64, u64, String) = observer.query_row("SELECT next_sequence,stored_bytes,(SELECT COUNT(*) FROM live_capture_events),(SELECT COUNT(*) FROM live_capture_location_observations),state FROM live_capture_sessions", [], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?))).unwrap();
+    assert_eq!((after.0, after.1, after.2, after.3), before);
+    assert_eq!(after.4, "finished");
+    assert_eq!(
+        database
+            .live_capture(capture_id, QueryLimit::new(32).unwrap())
+            .unwrap()
+            .events
+            .len(),
+        32
+    );
+    assert!(
+        database
+            .live_capture_page(capture_id, Some(31), QueryLimit::new(1).unwrap())
+            .is_err()
+    );
+    drop(observer);
+    database.shutdown().unwrap();
+}
+
+#[test]
+fn live_capture_compression_preserves_mixed_rows_after_reopen_and_reports_corruption() {
+    let _guard = test_guard();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("capture.sqlite");
+    let database = RideDatabase::open(&path).unwrap();
+    let id = database.begin_live_capture(b"{}".to_vec(), 0).unwrap();
+    let original = vec![0xaa; 65_536];
+    database
+        .append_live_capture_event(
+            id,
+            LiveCaptureEventKind::Notification,
+            0,
+            None,
+            None,
+            original.clone(),
+        )
+        .unwrap();
+    database
+        .append_live_capture_event(
+            id,
+            LiveCaptureEventKind::Metadata,
+            1,
+            None,
+            None,
+            b"x".to_vec(),
+        )
+        .unwrap();
+    let observer = Connection::open(&path).unwrap();
+    let legacy = b"{ \"legacy\":1.00 }\n";
+    observer.execute("INSERT INTO live_capture_events(capture_id, sequence, event_kind, receipt_monotonic_ms, payload) VALUES (?1, 2, 'metadata', 2, ?2)", rusqlite::params![id.to_string(), legacy.as_slice()]).unwrap();
+    observer
+        .execute(
+            "UPDATE live_capture_sessions SET next_sequence=3, stored_bytes=stored_bytes+?1",
+            [legacy.len()],
+        )
+        .unwrap();
+    drop(observer);
+    database.shutdown().unwrap();
+
+    let database = RideDatabase::open(&path).unwrap();
+    let snapshot = database
+        .live_capture(id, QueryLimit::new(3).unwrap())
+        .unwrap();
+    assert_eq!(snapshot.next_sequence, 3);
+    assert_eq!(
+        snapshot
+            .events
+            .iter()
+            .map(|event| event.payload.as_slice())
+            .collect::<Vec<_>>(),
+        vec![original.as_slice(), b"x".as_slice(), legacy.as_slice()]
+    );
+    let page = database
+        .live_capture_page(id, Some(0), QueryLimit::new(1).unwrap())
+        .unwrap();
+    assert_eq!(page.events[0].sequence, 1);
+    assert_eq!(page.events[0].payload, b"x");
+    let observer = Connection::open(&path).unwrap();
+    let (logical, physical, compressed): (usize, usize, usize) = observer.query_row("SELECT stored_bytes, (SELECT SUM(length(payload)) FROM live_capture_events), (SELECT COUNT(*) FROM live_capture_events WHERE payload_encoding=1) FROM live_capture_sessions", [], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?))).unwrap();
+    assert_eq!(logical, 2 + original.len() + 1 + legacy.len());
+    assert!(physical < original.len());
+    assert_eq!(compressed, 1);
+    let mut corrupted: Vec<u8> = observer
+        .query_row(
+            "SELECT payload FROM live_capture_events WHERE sequence=0",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    *corrupted.last_mut().unwrap() ^= 1;
+    observer
+        .execute(
+            "UPDATE live_capture_events SET payload=?1 WHERE sequence=0",
+            [corrupted],
+        )
+        .unwrap();
+    assert!(
+        database
+            .live_capture(id, QueryLimit::new(3).unwrap())
+            .is_err()
+    );
+    drop(observer);
+    database.shutdown().unwrap();
+}
+
+#[test]
+fn live_capture_compression_retains_logical_budget_and_rolls_back_rejected_events() {
+    let _guard = test_guard();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("capture.sqlite");
+    let database = RideDatabase::open(&path).unwrap();
+    let id = database.begin_live_capture(b"{}".to_vec(), 0).unwrap();
+    let observer = Connection::open(&path).unwrap();
+    let logical_bytes = crate::storage::LIVE_CAPTURE_TOTAL_LIMIT_BYTES - 2;
+    observer
+        .execute(
+            "UPDATE live_capture_sessions SET stored_bytes=?1",
+            [logical_bytes],
+        )
+        .unwrap();
+    let result = database.append_live_capture_event(
+        id,
+        LiveCaptureEventKind::Notification,
+        0,
+        None,
+        None,
+        vec![0xaa; 4096],
+    );
+    assert_eq!(
+        result.unwrap_err().to_string(),
+        StorageError::LiveCaptureLimitExceeded.to_string()
+    );
+    let (next, stored, events): (u64, u64, u64) = observer.query_row("SELECT next_sequence,stored_bytes,(SELECT COUNT(*) FROM live_capture_events) FROM live_capture_sessions", [], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?))).unwrap();
+    assert_eq!((next, stored, events), (0, logical_bytes, 0));
+    observer
+        .execute("UPDATE live_capture_sessions SET stored_bytes=2", [])
+        .unwrap();
+    let result = database.append_live_capture_event(
+        id,
+        LiveCaptureEventKind::Notification,
+        0,
+        None,
+        None,
+        vec![0xaa; 65_537],
+    );
+    let error = result.unwrap_err();
+    match error {
+        StorageError::LiveCaptureInputInvalid(_) => {}
+        other => panic!("unexpected error: {other}"),
+    }
+    let (next, stored, events): (u64, u64, u64) = observer.query_row("SELECT next_sequence,stored_bytes,(SELECT COUNT(*) FROM live_capture_events) FROM live_capture_sessions", [], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?))).unwrap();
+    assert_eq!((next, stored, events), (0, 2, 0));
+    drop(observer);
+    database.shutdown().unwrap();
+}
 
 #[test]
 fn ride_autostart_defaults_enabled_and_survives_reopen_and_failed_write() {
@@ -695,7 +922,7 @@ fn database_capture_test_location(index: u64, source_offset_ms: i64) -> PevcapLo
             course_degrees: None,
             course_accuracy_degrees: None,
         },
-        Some(index % 2 == 0),
+        Some(index.is_multiple_of(2)),
         Some(false),
     )
     .unwrap()
@@ -820,7 +1047,42 @@ fn database_backed_capture_writer_persists_events_on_its_worker_thread() {
         .expect("last event is queryable");
     assert_eq!(last_page.events.len(), 1);
     assert_eq!(last_page.events[0].sequence, 500);
-    let exported = std::fs::read(&artifact_path).expect("finalized export exists");
+    assert_database_capture_export(&database_path, &artifact_path, &snapshot, &last_page);
+
+    database.shutdown().expect("database shuts down");
+    let _ = std::fs::remove_file(artifact_path);
+    let _ = std::fs::remove_file(database_path);
+    assert!(!artifact_existed_while_recording);
+}
+
+fn assert_database_capture_export(
+    database_path: &std::path::Path,
+    artifact_path: &std::path::Path,
+    snapshot: &crate::LiveCaptureSnapshot,
+    last_page: &crate::LiveCaptureSnapshot,
+) {
+    let exported = std::fs::read(artifact_path).expect("finalized export exists");
+    let observer = Connection::open(database_path).unwrap();
+    let compressed_events: u64 = observer
+        .query_row(
+            "SELECT COUNT(*) FROM live_capture_events WHERE payload_encoding = 1",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(compressed_events, 501);
+    let expected_export = std::iter::once(snapshot.header_json.as_slice())
+        .chain(snapshot.events.iter().map(|event| event.payload.as_slice()))
+        .chain(
+            last_page
+                .events
+                .iter()
+                .map(|event| event.payload.as_slice()),
+        )
+        .flat_map(|bytes| bytes.iter().copied().chain(std::iter::once(b'\n')))
+        .collect::<Vec<_>>();
+    assert_eq!(exported, expected_export);
+    drop(observer);
     let mut lines = exported.split(|byte| *byte == b'\n');
     assert_eq!(lines.next(), Some(snapshot.header_json.as_slice()));
     assert_eq!(lines.next(), Some(snapshot.events[0].payload.as_slice()));
@@ -837,11 +1099,6 @@ fn database_backed_capture_writer_persists_events_on_its_worker_thread() {
             .next(),
         Some(last_page.events[0].payload.as_slice())
     );
-
-    database.shutdown().expect("database shuts down");
-    let _ = std::fs::remove_file(artifact_path);
-    let _ = std::fs::remove_file(database_path);
-    assert!(!artifact_existed_while_recording);
 }
 
 fn test_guard() -> std::sync::MutexGuard<'static, ()> {
@@ -899,7 +1156,10 @@ fn music_v16_migration_preserves_events_without_fabricating_observation_times() 
         database.music_history(ride).unwrap().status,
         crate::MusicHistoryStatus::Deleted
     );
-    assert!(database.music_events(ride).unwrap().is_empty());
+    assert_eq!(
+        database.music_events(ride).unwrap(),
+        Vec::<MusicRideEvent>::new()
+    );
     database.shutdown().unwrap();
     let _ = std::fs::remove_file(path);
 }
@@ -3191,12 +3451,12 @@ fn finished_recording_is_retained_without_deriving_a_ride() {
     assert_eq!(receipt.ride_id, None);
     assert_eq!(receipt.location_count, 0);
     assert_eq!(receipt.outcome, PevcapImportOutcome::CaptureOnly);
-    assert!(
+    assert_eq!(
         database
             .list_rides(None, QueryLimit::new(10).unwrap())
             .unwrap()
-            .rides()
-            .is_empty()
+            .rides(),
+        []
     );
     let preview = database
         .preflight_pevcap(&source, PevcapEncoding::Jsonl)
@@ -3282,12 +3542,12 @@ fn finished_capture_receipt_rejects_replacement_bytes_before_first_publication()
         ),
         Err(StorageError::PevcapPreviewChanged)
     ));
-    assert!(
+    assert_eq!(
         database
             .list_pevcap_captures(None, QueryLimit::new(10).unwrap())
             .unwrap()
-            .captures
-            .is_empty()
+            .captures,
+        Vec::<StoredPevcapCapture>::new()
     );
     database.shutdown().unwrap();
 }
@@ -3785,12 +4045,12 @@ fn capture_only_bytes_survive_without_external_files() {
         }
         assert!(sequence > 1);
         assert_eq!(reconstructed, bytes);
-        assert!(
+        assert_eq!(
             database
                 .list_rides(None, QueryLimit::new(10).unwrap())
                 .unwrap()
-                .rides()
-                .is_empty()
+                .rides(),
+            []
         );
         database.shutdown().unwrap();
         let connection = Connection::open(&path).unwrap();
@@ -3999,12 +4259,12 @@ fn capture_only_pevcap_import_does_not_publish_an_empty_ride() {
         .unwrap();
     assert_eq!(receipt.ride_id, None);
     assert_eq!(receipt.outcome, PevcapImportOutcome::CaptureOnly);
-    assert!(
+    assert_eq!(
         database
             .list_rides(None, QueryLimit::new(10).unwrap())
             .unwrap()
-            .rides()
-            .is_empty()
+            .rides(),
+        []
     );
     let duplicate_preview = database
         .preflight_pevcap(&artifact_path, PevcapEncoding::Jsonl)
@@ -4153,12 +4413,12 @@ fn pevcap_confirmation_rejects_a_source_changed_after_preflight() {
         database.confirm_pevcap_import(&preview, 1_700_000_000_000),
         Err(StorageError::PevcapPreviewChanged)
     ));
-    assert!(
+    assert_eq!(
         database
             .list_rides(None, QueryLimit::new(10).unwrap())
             .unwrap()
-            .rides()
-            .is_empty()
+            .rides(),
+        []
     );
     database.shutdown().unwrap();
     let _ = std::fs::remove_file(database_path);
@@ -4331,6 +4591,36 @@ fn pevcap_confirmation_cleans_managed_artifact_when_begin_fails() {
 }
 
 #[test]
+fn pevcap_begin_failure_preserves_preexisting_managed_artifact() {
+    let _guard = test_guard();
+    let directory = tempfile::tempdir().unwrap();
+    let database_path = directory.path().join("ride.sqlite");
+    let source_path = directory.path().join("source.jsonl");
+    let bytes = PevcapCapture::new(
+        pevcap_header(),
+        vec![PevcapRecord::link_up(MonotonicTimestamp::new(1), None)],
+    )
+    .to_jsonl()
+    .unwrap();
+    std::fs::write(&source_path, &bytes).unwrap();
+    let database = RideDatabase::open(&database_path).unwrap();
+    let preview = database
+        .preflight_pevcap(&source_path, PevcapEncoding::Jsonl)
+        .unwrap();
+    let mut managed_directory = database_path.as_os_str().to_owned();
+    managed_directory.push(".pevcap-imports");
+    let managed_directory = std::path::PathBuf::from(managed_directory);
+    std::fs::create_dir(&managed_directory).unwrap();
+    let accepted_path = managed_directory.join(format!("{}.jsonl", preview.artifact_digest()));
+    std::fs::write(&accepted_path, &bytes).unwrap();
+
+    assert!(database.confirm_pevcap_import(&preview, u64::MAX).is_err());
+    assert_eq!(std::fs::read_to_string(&accepted_path).unwrap(), bytes);
+    assert_eq!(std::fs::read_dir(managed_directory).unwrap().count(), 1);
+    database.shutdown().unwrap();
+}
+
+#[test]
 fn pevcap_preflight_rejects_artifact_and_duration_limit_overruns() {
     let _guard = test_guard();
     let database_path = std::env::temp_dir().join(format!(
@@ -4447,12 +4737,12 @@ fn reopen_removes_abandoned_pevcap_work_and_draft_ride() {
     let reopened = RideDatabase::open(&database_path).unwrap();
     assert!(!managed_path.exists());
     assert!(external_path.exists());
-    assert!(
+    assert_eq!(
         reopened
             .list_rides(None, QueryLimit::new(10).unwrap())
             .unwrap()
-            .rides()
-            .is_empty()
+            .rides(),
+        []
     );
     reopened.shutdown().unwrap();
     let connection = Connection::open(&database_path).unwrap();
@@ -4816,6 +5106,154 @@ fn ride_checkpoint_waits_for_preceding_location_writes() {
 }
 
 #[test]
+fn blocking_ride_checkpoint_waits_for_capacity_in_a_full_worker_queue() {
+    let _guard = test_guard();
+    let (database, path) = music_test_database("full-checkpoint");
+    let ride = database.create_started_live_ride(1_000, 100, None).unwrap();
+    let (entered_sender, entered_receiver) = std::sync::mpsc::sync_channel(0);
+    let (release_sender, release_receiver) = std::sync::mpsc::sync_channel(0);
+    let pending = database
+        .enqueue_location_with_worker_gate_for_test(
+            ride,
+            LocationSample::new(
+                Coordinate::from_degrees(40.0, -105.0).unwrap(),
+                1_001,
+                1_700_000_000_001,
+                None,
+                LocationSource::Live,
+            ),
+            RideMapSegmentId::new(0),
+            RouteTelemetryState::GpsOnly,
+            entered_sender,
+            release_receiver,
+        )
+        .unwrap();
+    entered_receiver
+        .recv_timeout(Duration::from_secs(1))
+        .unwrap();
+    let mut queued = Vec::new();
+    loop {
+        match database.queue_ride_checkpoint() {
+            Ok(checkpoint) => queued.push(checkpoint),
+            Err(StorageError::QueueFull) => break,
+            Err(error) => panic!("unexpected checkpoint error: {error}"),
+        }
+    }
+    let checkpoint_database = database.clone();
+    let (completed_sender, completed_receiver) = std::sync::mpsc::sync_channel(1);
+    let checkpoint = std::thread::spawn(move || {
+        completed_sender
+            .send(checkpoint_database.wait_for_ride_checkpoint())
+            .unwrap();
+    });
+    let early = completed_receiver.recv_timeout(Duration::from_millis(50));
+    release_sender.send(()).unwrap();
+    let result = match early {
+        Ok(result) => result,
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => completed_receiver
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap(),
+        Err(error) => panic!("checkpoint worker disconnected: {error}"),
+    };
+    checkpoint.join().unwrap();
+    pending.wait_result().unwrap().unwrap();
+    for checkpoint in queued {
+        checkpoint.wait_result().unwrap();
+    }
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+    assert!(
+        result.is_ok(),
+        "checkpoint must wait instead of rejecting capacity: {result:?}"
+    );
+}
+
+#[test]
+fn background_location_submission_waits_for_capacity_without_losing_the_point() {
+    let _guard = test_guard();
+    let (database, path) = music_test_database("full-location-queue");
+    let ride = database.create_started_live_ride(1_000, 100, None).unwrap();
+    let sample = |at| {
+        LocationSample::new(
+            Coordinate::from_degrees(40.0, -105.0).unwrap(),
+            at,
+            1_700_000_000_000 + at,
+            None,
+            LocationSource::Live,
+        )
+    };
+    let (entered_sender, entered_receiver) = std::sync::mpsc::sync_channel(0);
+    let (release_sender, release_receiver) = std::sync::mpsc::sync_channel(0);
+    let first = database
+        .enqueue_location_with_worker_gate_for_test(
+            ride,
+            sample(1_001),
+            RideMapSegmentId::new(0),
+            RouteTelemetryState::GpsOnly,
+            entered_sender,
+            release_receiver,
+        )
+        .unwrap();
+    entered_receiver
+        .recv_timeout(Duration::from_secs(1))
+        .unwrap();
+    let mut queued = Vec::new();
+    loop {
+        match database.queue_ride_checkpoint() {
+            Ok(checkpoint) => queued.push(checkpoint),
+            Err(StorageError::QueueFull) => break,
+            Err(error) => panic!("unexpected checkpoint error: {error}"),
+        }
+    }
+    let nonblocking = database.queue_location(
+        ride,
+        sample(2_001),
+        RideMapSegmentId::new(0),
+        RideSegmentStartReason::Initial,
+        RouteTelemetryState::GpsOnly,
+    );
+    let recorder_database = database.clone();
+    let (completed_sender, completed_receiver) = std::sync::mpsc::sync_channel(1);
+    let recorder = std::thread::spawn(move || {
+        completed_sender
+            .send(recorder_database.queue_location_waiting_for_capacity(
+                ride,
+                sample(2_001),
+                RideMapSegmentId::new(0),
+                RideSegmentStartReason::Initial,
+                RouteTelemetryState::GpsOnly,
+            ))
+            .unwrap();
+    });
+    let early = completed_receiver.recv_timeout(Duration::from_millis(50));
+    let waited = early.is_err();
+    release_sender.send(()).unwrap();
+    let result = match early {
+        Ok(result) => result,
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => completed_receiver
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap(),
+        Err(error) => panic!("location submission disconnected: {error}"),
+    };
+    recorder.join().unwrap();
+    first.wait_result().unwrap().unwrap();
+    for checkpoint in queued {
+        checkpoint.wait_result().unwrap();
+    }
+    assert!(matches!(nonblocking, Err(StorageError::QueueFull)));
+    let pending = result.expect("background location must wait for capacity, not reject the point");
+    assert!(waited, "submission must wait while the queue is full");
+    assert_eq!(
+        pending.wait_result().unwrap().unwrap().admission(),
+        LocationAdmission::Accepted
+    );
+    database.wait_for_ride_checkpoint().unwrap();
+    assert_eq!(database.summary(ride).unwrap().point_count().as_u64(), 2);
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn queued_ride_restore_snapshot_does_not_wait_for_a_busy_sqlite_worker() {
     let _guard = test_guard();
     let path = std::env::temp_dir().join(format!(
@@ -5006,6 +5444,56 @@ fn verified_connection_admission_rolls_back_lifecycle_and_history_together() {
 }
 
 #[test]
+fn verified_connection_music_default_failure_rolls_back_new_ride_and_connection() {
+    let _guard = test_guard();
+    let (database, path) = music_test_database("verified-connection-music-rollback");
+    database
+        .remember_selected_device("wheel-a", None, 1_000)
+        .unwrap();
+    let connection = Connection::open(&path).unwrap();
+    connection.execute_batch("CREATE TRIGGER reject_music_policy BEFORE INSERT ON ride_music_history BEGIN SELECT RAISE(ABORT, 'injected music policy failure'); END;").unwrap();
+    let mutations = vec![VerifiedConnectionLifecycleMutation::StartLive {
+        created_at_ms: 2_000,
+        monotonic_created_at_ms: 200,
+        candidate_vehicle: Some("wheel-a".to_owned()),
+        music_history_policy: MusicHistoryPolicy::HumanReadable,
+    }];
+    let failed = database
+        .queue_verified_connection_admission("wheel-a", 2_000, mutations.clone(), None, None)
+        .unwrap()
+        .wait_result();
+    assert!(failed.is_err());
+    assert_eq!(
+        database
+            .list_rides(None, QueryLimit::new(10).unwrap())
+            .unwrap()
+            .rides()
+            .len(),
+        0
+    );
+    assert_eq!(database.last_connected_device().unwrap(), None);
+
+    connection
+        .execute_batch("DROP TRIGGER reject_music_policy;")
+        .unwrap();
+    let admitted = database
+        .queue_verified_connection_admission("wheel-a", 2_000, mutations, None, None)
+        .unwrap()
+        .wait_result()
+        .unwrap();
+    let ride_id = admitted.created_ride_id.unwrap();
+    assert_eq!(
+        database.music_history_policy(ride_id).unwrap(),
+        MusicHistoryPolicy::HumanReadable
+    );
+    assert_eq!(
+        database.last_connected_device().unwrap().as_deref(),
+        Some("wheel-a")
+    );
+    close_music_test_database(database, path);
+}
+
+#[test]
 fn unselected_verified_connection_skips_automatic_lifecycle_mutations() {
     let _guard = test_guard();
     let path = std::env::temp_dir().join(format!(
@@ -5025,6 +5513,7 @@ fn unselected_verified_connection_skips_automatic_lifecycle_mutations() {
                 created_at_ms: 2_000,
                 monotonic_created_at_ms: 200,
                 candidate_vehicle: Some("wheel-b".to_owned()),
+                music_history_policy: MusicHistoryPolicy::HumanReadable,
             }],
             None,
             None,
@@ -5035,12 +5524,12 @@ fn unselected_verified_connection_skips_automatic_lifecycle_mutations() {
 
     assert!(!outcome.selected_device_matches);
     assert_eq!(outcome.created_ride_id, None);
-    assert!(
+    assert_eq!(
         database
             .list_rides(None, QueryLimit::new(10).unwrap())
             .unwrap()
-            .rides()
-            .is_empty()
+            .rides(),
+        []
     );
     assert_eq!(
         database.last_connected_device().unwrap().as_deref(),
@@ -5073,6 +5562,7 @@ fn unselected_verified_connection_uses_its_metadata_branch_without_starting_a_ri
                 created_at_ms: 2_000,
                 monotonic_created_at_ms: 200,
                 candidate_vehicle: Some("wheel-b".to_owned()),
+                music_history_policy: MusicHistoryPolicy::HumanReadable,
             }],
             Some(VerifiedConnectionRideMetadata {
                 target: VerifiedConnectionRideTarget::Created,
@@ -6476,7 +6966,7 @@ fn route_projection_is_bounded_viewport_aware_and_cancellable() {
             RoutePrivacyPolicy::Precise,
         )
         .unwrap();
-    assert!(!visible.points().is_empty());
+    assert_ne!(visible.points(), []);
     assert!(visible.points().iter().all(|point| {
         viewport.minimum_latitude().as_i32() <= point.coordinate().latitude().as_i32()
             && point.coordinate().latitude().as_i32() <= viewport.maximum_latitude().as_i32()
@@ -6498,7 +6988,7 @@ fn route_projection_is_bounded_viewport_aware_and_cancellable() {
             RoutePrivacyPolicy::Precise,
         )
         .unwrap();
-    assert!(antimeridian_projection.points().is_empty());
+    assert_eq!(antimeridian_projection.points(), []);
 
     let cancellation = RouteProjectionCancellation::new();
     cancellation.cancel();
@@ -6850,7 +7340,10 @@ fn music_history_round_trips_and_can_be_deleted_without_deleting_ride() {
     assert_eq!(database.music_events(ride).unwrap(), vec![event]);
 
     database.delete_music_history(ride).unwrap();
-    assert!(database.music_events(ride).unwrap().is_empty());
+    assert_eq!(
+        database.music_events(ride).unwrap(),
+        Vec::<MusicRideEvent>::new()
+    );
     assert!(database.find_ride(ride).unwrap().is_some());
     close_music_test_database(database, path);
 }
@@ -6963,11 +7456,12 @@ fn ride_export_includes_privacy_filtered_music_history() {
     database.export_ride_json(ride, &export_path).unwrap();
     let export = read_export();
     assert_eq!(export["music_history"]["state"], "deleted");
-    assert!(
+    assert_eq!(
         export["music_history"]["events"]
             .as_array()
             .unwrap()
-            .is_empty()
+            .as_slice(),
+        [] as [serde_json::Value; 0]
     );
 
     close_music_test_database(database, path);

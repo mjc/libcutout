@@ -58,6 +58,36 @@ pub struct BmsTemperatureSummary {
     pub highest_temperature: Option<Temperature>,
 }
 
+/// Latest reported BMS currents across the retained source pages.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct BmsCurrentSummary {
+    /// Latest scalar battery current, including its measurement provenance.
+    pub current: Option<Measured<crate::BatteryCurrent>>,
+    /// Latest paired pack currents, retained together with their shared provenance.
+    pub pack_currents: Option<BmsPackCurrents>,
+}
+
+impl BmsCurrentSummary {
+    /// Summarizes pages in oldest-to-newest replacement order.
+    ///
+    /// An unrelated page without current fields does not erase a source reading.
+    #[must_use]
+    pub fn from_readbacks(readbacks: &[crate::BatteryReadback]) -> Self {
+        Self {
+            current: readbacks
+                .iter()
+                .rev()
+                .filter_map(crate::BatteryReadback::page)
+                .find_map(|page| page.battery().current),
+            pack_currents: readbacks
+                .iter()
+                .rev()
+                .filter_map(crate::BatteryReadback::page)
+                .find_map(BatteryPagePayload::bms_pack_currents),
+        }
+    }
+}
+
 impl BmsTemperatureSummary {
     /// Summarizes the latest retained temperature source for each page identity.
     #[must_use]

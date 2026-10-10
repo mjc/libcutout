@@ -7,7 +7,10 @@ use cutout_core::{
 use cutout_core::{BatteryLevel, SeriesCount, VescControllerId};
 use thiserror::Error;
 
-use crate::{BatteryVoltageProfile, RefloatReadOnlyRequest, encode_refloat_request};
+use crate::{
+    BatteryVoltageProfile, RefloatReadOnlyRequest, encode_refloat_request,
+    wire_crc::crc16_xmodem as vesc_crc16,
+};
 
 /// Maximum VESC UART frame length supported by the read-only adapter.
 pub const VESC_MAX_FRAME_LEN: usize = 1024;
@@ -1563,20 +1566,6 @@ fn read_vesc_f32_auto(bytes: &[u8], offset: usize) -> Result<f32, VescCodecError
     Ok(f32::from_bits(word))
 }
 
-fn vesc_crc16(bytes: &[u8]) -> u16 {
-    bytes.iter().fold(0u16, |mut crc, byte| {
-        crc ^= u16::from(*byte) << 8;
-        for _ in 0..8 {
-            crc = if crc & 0x8000 != 0 {
-                (crc << 1) ^ 0x1021
-            } else {
-                crc << 1
-            };
-        }
-        crc
-    })
-}
-
 #[allow(
     clippy::cast_possible_truncation,
     reason = "The value is clamped to the i32 range before conversion."
@@ -1688,6 +1677,14 @@ impl From<vesc::Stats> for VescStatsTelemetry {
 mod tests {
     use super::*;
     use crate::SAMSUNG_50S_PROFILE;
+
+    #[test]
+    fn crc16_matches_xmodem_golden_vectors() {
+        assert_eq!(super::vesc_crc16(b""), 0);
+        assert_eq!(super::vesc_crc16(b"123456789"), 0x31c3);
+        assert_eq!(super::vesc_crc16(&[0x00, 0x7f, 0x80, 0xff]), 0xf151);
+        assert_eq!(super::vesc_crc16(&[4]), 0x4084);
+    }
 
     #[test]
     fn encodes_read_only_requests_without_exposing_vesc_types() {

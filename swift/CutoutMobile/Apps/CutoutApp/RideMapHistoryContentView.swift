@@ -4,6 +4,8 @@ import MapKit
 import SwiftUI
 
 struct RideMapHistoryContentView: View {
+    @Environment(\.musicCompactPlayerFrame) private var musicCompactPlayerFrame
+
     let isRecording: Bool
     let isPaused: Bool
     let rides: [MobileRideMapHistorySummaryDto]
@@ -131,91 +133,90 @@ struct RideMapHistoryContentView: View {
     }
 
     var body: some View {
-        ScrollView(.vertical, showsIndicators: false) {
-            VStack(spacing: 0) {
-                if isLoading && rides.isEmpty {
-                    ProgressView(localizedAppText("ride_map.history_loading"))
-                        .tint(PevColors.yellow)
-                        .frame(maxWidth: .infinity, alignment: .top)
-                        .padding(24)
-                } else {
-                    RideMapHistoryFilterBar(
-                        dateTitle: dateFilterTitle,
-                        vehicleTitle: vehicleFilter.map(vehicleLabel)
-                            ?? localizedAppText("ride_map.history_all_vehicles"),
-                        vehicleOptions: vehicleOptions,
-                        setDateFilter: setDateFilter,
-                        setVehicleFilter: setVehicleFilter
-                    )
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 8)
-
-                    if hasActiveFilters {
-                        Button(
-                            localizedAppText("ride_map.history_clear_filters"), action: clearFilters
-                        )
-                        .font(.subheadline.weight(.semibold))
-                        .buttonStyle(.plain)
-                        .foregroundStyle(PevColors.yellow)
-                        .frame(minHeight: 44)
-                        .frame(maxWidth: .infinity, alignment: .trailing)
-                        .contentShape(Rectangle())
-                        .padding(.horizontal, 16)
-                        .padding(.bottom, 8)
-                        .accessibilityIdentifier("ride-map.history-clear-filters")
-                    }
-
-                    if rides.isEmpty, historyError != nil {
-                        RideMapHistoryErrorState(load: load)
-                    } else if rides.isEmpty {
-                        RideMapHistoryEmptyState(canLoadMore: canLoadMore, loadMore: loadMore)
-                    } else {
-                        if historyError != nil {
-                            Label(
-                                localizedAppText("ride_map.command_failed"),
-                                systemImage: "exclamationmark.triangle"
-                            )
-                            .font(.caption)
-                            .foregroundStyle(.orange)
-                            .padding(.horizontal, 16)
-                            .padding(.bottom, 8)
-                            .accessibilityIdentifier("ride-map.history-error")
+        VStack(spacing: 0) {
+            filterControls
+            GeometryReader { viewport in
+                let visibleHeight = RideMapViewportLayout.visibleHeight(
+                    in: viewport, musicPlayerFrame: musicCompactPlayerFrame)
+                VStack(spacing: 0) {
+                    ScrollView(.vertical, showsIndicators: false) {
+                        VStack(spacing: 0) {
+                            if isLoading && rides.isEmpty {
+                                ProgressView(localizedAppText("ride_map.history_loading"))
+                                    .tint(PevColors.yellow)
+                                    .frame(maxWidth: .infinity, alignment: .top)
+                                    .padding(24)
+                            } else if rides.isEmpty, historyError != nil {
+                                RideMapHistoryErrorState(load: load)
+                            } else if rides.isEmpty {
+                                RideMapHistoryEmptyState(canLoadMore: canLoadMore, loadMore: loadMore)
+                            } else {
+                                if historyError != nil {
+                                    Label(
+                                        localizedAppText("ride_map.command_failed"),
+                                        systemImage: "exclamationmark.triangle"
+                                    )
+                                    .font(.caption)
+                                    .foregroundStyle(.orange)
+                                    .padding(.horizontal, 16)
+                                    .padding(.bottom, 8)
+                                    .accessibilityIdentifier("ride-map.history-error")
+                                }
+                                RideMapHistoryRouteSection(
+                                    displayPoints: displayPoints,
+                                    routeID: selectedRideID ?? "history",
+                                    projectionVersion: projectionVersion,
+                                    endpointMetadata: endpointMetadata,
+                                    cameraRegion: cameraRegion,
+                                    segments: segments,
+                                    cameraFitVersion: cameraFitVersion,
+                                    mapHeight: RideMapViewportLayout.mapHeight(for: visibleHeight),
+                                    state: selectedRouteState,
+                                    pointsTruncated: pointsTruncated,
+                                    segmentsOmittedByBudget: segmentsOmittedByBudget,
+                                    mapPosition: $mapPosition,
+                                    isApplyingCamera: $isApplyingCamera,
+                                    cameraDidChange: cameraDidChange
+                                )
+                                RideMapHistoryListSection(
+                                    rides: rides,
+                                    canLoadMore: canLoadMore,
+                                    selectedRideID: selectedRideID,
+                                    select: select,
+                                    loadMore: loadMore
+                                )
+                            }
                         }
-
-                        RideMapHistoryRouteSection(
-                            displayPoints: displayPoints,
-                            routeID: selectedRideID ?? "history",
-                            projectionVersion: projectionVersion,
-                            endpointMetadata: endpointMetadata,
-                            cameraRegion: cameraRegion,
-                            segments: segments,
-                            cameraFitVersion: cameraFitVersion,
-                            state: selectedRouteState,
-                            pointsTruncated: pointsTruncated,
-                            segmentsOmittedByBudget: segmentsOmittedByBudget,
-                            mapPosition: $mapPosition,
-                            isApplyingCamera: $isApplyingCamera,
-                            cameraDidChange: cameraDidChange
-                        )
-
-                        RideMapHistoryListSection(
-                            isRecording: isRecording,
-                            isPaused: isPaused,
-                            rides: rides,
-                            canLoadMore: canLoadMore,
-                            selectedRideID: selectedRideID,
-                            returnToLive: returnToLive,
-                            select: select,
-                            loadMore: loadMore
-                        )
                     }
+                    .scrollDismissesKeyboard(.interactively)
                 }
+                .frame(height: visibleHeight, alignment: .top)
+                .clipped()
+                .contentShape(Rectangle())
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("ride-map.history-viewport")
             }
         }
-        .searchable(text: $searchText)
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            Color.clear.frame(height: 92)
+    }
+
+    private var filterControls: some View {
+        VStack(spacing: 8) {
+            if isRecording || isPaused {
+                RideMapHistoryRecordingStatus(isPaused: isPaused, returnToLive: returnToLive)
+            }
+            RideMapHistorySearchField(searchText: $searchText)
+            RideMapHistoryFilterBar(
+                dateTitle: dateFilterTitle,
+                vehicleTitle: vehicleFilter.map(vehicleLabel) ?? localizedAppText("ride_map.history_all_vehicles"),
+                vehicleOptions: vehicleOptions,
+                hasActiveFilters: hasActiveFilters,
+                setDateFilter: setDateFilter,
+                setVehicleFilter: setVehicleFilter,
+                clearFilters: clearFilters
+            )
         }
+        .padding(.horizontal, 16)
+        .padding(.bottom, 8)
     }
 
     private func vehicleLabel(for identity: String) -> String {

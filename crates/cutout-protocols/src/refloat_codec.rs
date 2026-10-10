@@ -6,7 +6,7 @@ use cutout_core::{
 };
 use thiserror::Error;
 
-use crate::VESC_MAX_FRAME_LEN;
+use crate::{VESC_MAX_FRAME_LEN, wire_crc::crc16_xmodem};
 
 /// VESC command id for custom package app data.
 pub const VESC_COMM_CUSTOM_APP_DATA: u8 = 36;
@@ -492,10 +492,10 @@ impl RefloatStreamDecoder {
         }
         self.decode_pending(&mut on_reply, &mut reply_count, &mut first_error);
 
-        if reply_count == 0 {
-            if let Some(error) = first_error {
-                return Err(error);
-            }
+        if reply_count == 0
+            && let Some(error) = first_error
+        {
+            return Err(error);
         }
 
         Ok(if reply_count == 0 {
@@ -924,21 +924,6 @@ fn read_u16_at(bytes: &[u8], offset: usize) -> Result<u16, RefloatCodecError> {
     Ok(u16::from_be_bytes(array))
 }
 
-fn crc16_xmodem(bytes: &[u8]) -> u16 {
-    let mut crc = 0_u16;
-    for byte in bytes {
-        crc ^= u16::from(*byte) << 8;
-        for _ in 0..8 {
-            if crc & 0x8000 != 0 {
-                crc = (crc << 1) ^ 0x1021;
-            } else {
-                crc <<= 1;
-            }
-        }
-    }
-    crc
-}
-
 fn float16_to_f32(bits: u16) -> f32 {
     let sign = (u32::from(bits & 0x8000)) << 16;
     let exponent = u32::from((bits >> 10) & 0x1f);
@@ -1025,6 +1010,39 @@ impl<'a> Cursor<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
+
+    #[test]
+    fn crc16_matches_xmodem_golden_vectors() {
+        assert_eq!(super::crc16_xmodem(b""), 0);
+        assert_eq!(super::crc16_xmodem(b"123456789"), 0x31c3);
+        assert_eq!(super::crc16_xmodem(&[0x00, 0x7f, 0x80, 0xff]), 0xf151);
+        assert_eq!(super::crc16_xmodem(&[36, 101, 0, 2, 0]), 0x0247);
+    }
+
+    // Bit-serial division provides an independent oracle for the table-driven CRC.
+    fn reference_crc16(bytes: &[u8]) -> u16 {
+        let mut remainder = 0_u16;
+        for byte in bytes {
+            for bit in (0..8).rev() {
+                let feedback = (remainder >> 15) ^ u16::from((byte >> bit) & 1);
+                remainder <<= 1;
+                if feedback != 0 {
+                    remainder ^= 0x1021;
+                }
+            }
+        }
+        remainder
+    }
+
+    proptest! {
+        #[test]
+        fn crc16_matches_independent_reference_for_bounded_payloads(
+            bytes in proptest::collection::vec(any::<u8>(), 0..=VESC_MAX_FRAME_LEN)
+        ) {
+            prop_assert_eq!(crc16_xmodem(&bytes), reference_crc16(&bytes));
+        }
+    }
 
     #[derive(Clone, Debug, PartialEq)]
     enum CapturedReply {

@@ -117,7 +117,7 @@ mod tests {
             [CaptureSessionLabel::LowBeamOn]
         );
         annotations.stop(CaptureSessionLabel::LowBeamOn).unwrap();
-        assert!(annotations.active_labels().is_empty());
+        assert_eq!(annotations.active_labels().len(), 0);
         assert_eq!(
             annotations.entries().last().unwrap(),
             "capture_label=low_beam_on_stop"

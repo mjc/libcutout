@@ -4,6 +4,8 @@
 //! session slice correlates its outcomes and admits native effects; counters and
 //! view navigation cannot advance the lifecycle.
 
+use std::collections::BTreeSet;
+
 /// Identity of one writer attempt, including a failed start.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct CaptureGeneration(u64);
@@ -48,6 +50,17 @@ pub enum CaptureStage {
     Saved,
     /// Startup or terminal writer failure.
     Failed,
+}
+
+/// Ownership of a consumed writer's terminal receipt.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CaptureCompletionDisposition {
+    /// The receipt completed the current finalizing attempt.
+    CurrentAttempt,
+    /// The receipt belongs to a retired attempt; current presentation is unchanged.
+    HistoricalAttempt,
+    /// The receipt is unowned, premature, or already consumed.
+    Rejected,
 }
 
 impl CaptureStage {
@@ -107,6 +120,7 @@ pub struct CaptureSessionLifecycle {
     next_operation: u64,
     current: Option<CaptureAttemptSnapshot>,
     finishing: Option<CaptureFinishToken>,
+    pending_completions: BTreeSet<CaptureGeneration>,
 }
 
 impl CaptureSessionLifecycle {
@@ -154,6 +168,11 @@ impl CaptureSessionLifecycle {
         }
         self.next_generation = self.next_generation.checked_add(1)?;
         let generation = CaptureGeneration(self.next_generation);
+        if let Some(previous) = self.current
+            && previous.stage == CaptureStage::Finalizing
+        {
+            self.pending_completions.insert(previous.generation);
+        }
         self.current = Some(CaptureAttemptSnapshot {
             generation,
             origin,
@@ -245,10 +264,15 @@ impl CaptureSessionLifecycle {
         true
     }
 
-    /// Applies a consumed writer's outcome only to its own current attempt.
-    /// Old outcomes remain attributable through their event/artifact identity.
-    pub fn complete(&mut self, generation: CaptureGeneration, succeeded: bool) -> bool {
-        self.transition(
+    /// Consumes an owned terminal receipt once, including retired writers.
+    /// Only current completion advances the presented lifecycle. Pending retired
+    /// identities are removed on completion; terminal history is not retained here.
+    pub fn complete(
+        &mut self,
+        generation: CaptureGeneration,
+        succeeded: bool,
+    ) -> CaptureCompletionDisposition {
+        if self.transition(
             generation,
             CaptureStage::Finalizing,
             if succeeded {
@@ -256,7 +280,13 @@ impl CaptureSessionLifecycle {
             } else {
                 CaptureStage::Failed
             },
-        )
+        ) {
+            CaptureCompletionDisposition::CurrentAttempt
+        } else if self.pending_completions.remove(&generation) {
+            CaptureCompletionDisposition::HistoricalAttempt
+        } else {
+            CaptureCompletionDisposition::Rejected
+        }
     }
 
     fn transition(
@@ -293,7 +323,10 @@ mod tests {
         assert!(owner.admits_result(first));
 
         assert!(owner.retire(first));
-        assert!(owner.complete(first, true));
+        assert_eq!(
+            owner.complete(first, true),
+            CaptureCompletionDisposition::CurrentAttempt
+        );
         let second = owner.begin(CaptureOrigin::Manual).unwrap();
         assert!(owner.writer_started(second));
 
@@ -340,7 +373,10 @@ mod tests {
         assert!(!owner.finish_flush(first, true));
         assert!(owner.finish_flush(retry, true));
         assert_eq!(owner.snapshot().unwrap().stage, CaptureStage::Finalizing);
-        assert!(owner.complete(generation, true));
+        assert_eq!(
+            owner.complete(generation, true),
+            CaptureCompletionDisposition::CurrentAttempt
+        );
         assert_eq!(owner.snapshot().unwrap().stage, CaptureStage::Saved);
     }
 
@@ -351,11 +387,92 @@ mod tests {
             owner.retire(first);
             let second = owner.begin(CaptureOrigin::Manual).unwrap();
             owner.writer_started(second);
-            assert!(!owner.complete(first, succeeded));
+            assert_eq!(
+                owner.complete(first, succeeded),
+                CaptureCompletionDisposition::HistoricalAttempt
+            );
             assert_eq!(owner.snapshot().unwrap().generation, second);
             assert_eq!(owner.snapshot().unwrap().stage, CaptureStage::Recording);
             assert!(!owner.can_start());
         }
+    }
+
+    #[test]
+    fn retired_writer_completion_remains_owned_after_replacement() {
+        for succeeded in [false, true] {
+            let (mut owner, first) = recording(CaptureOrigin::Automatic);
+            assert!(owner.retire(first));
+            let second = owner.begin(CaptureOrigin::Automatic).unwrap();
+            assert!(owner.writer_started(second));
+            let before = owner.snapshot();
+            assert_eq!(
+                owner.complete(first, succeeded),
+                CaptureCompletionDisposition::HistoricalAttempt
+            );
+            assert_eq!(
+                owner.snapshot(),
+                before,
+                "historical receipt cannot alter current recording"
+            );
+            assert_eq!(
+                owner.complete(first, succeeded),
+                CaptureCompletionDisposition::Rejected
+            );
+            assert_eq!(
+                owner.complete(CaptureGeneration::new(0), true),
+                CaptureCompletionDisposition::Rejected
+            );
+        }
+    }
+
+    #[test]
+    fn out_of_order_completions_consume_only_owned_receipts() {
+        let (mut owner, first) = recording(CaptureOrigin::Automatic);
+        assert!(owner.retire(first));
+        let second = owner.begin(CaptureOrigin::Manual).unwrap();
+        assert!(owner.writer_started(second));
+        assert_eq!(
+            owner.complete(second, true),
+            CaptureCompletionDisposition::Rejected
+        );
+        assert!(owner.retire(second));
+        let third = owner.begin(CaptureOrigin::Automatic).unwrap();
+        assert!(owner.writer_started(third));
+        let before = owner.snapshot();
+
+        assert_eq!(
+            owner.complete(second, false),
+            CaptureCompletionDisposition::HistoricalAttempt
+        );
+        assert_eq!(
+            owner.complete(first, true),
+            CaptureCompletionDisposition::HistoricalAttempt
+        );
+        assert_eq!(owner.snapshot(), before);
+        assert!(owner.pending_completions.is_empty());
+        assert_eq!(
+            owner.complete(second, true),
+            CaptureCompletionDisposition::Rejected
+        );
+        assert_eq!(
+            owner.complete(first, false),
+            CaptureCompletionDisposition::Rejected
+        );
+        assert_eq!(
+            owner.complete(CaptureGeneration::new(third.get() + 1), true),
+            CaptureCompletionDisposition::Rejected
+        );
+
+        assert!(owner.retire(third));
+        assert_eq!(
+            owner.complete(third, true),
+            CaptureCompletionDisposition::CurrentAttempt
+        );
+        assert_eq!(
+            owner.complete(third, false),
+            CaptureCompletionDisposition::Rejected
+        );
+        assert_eq!(owner.snapshot().unwrap().stage, CaptureStage::Saved);
     }
 
     #[test]

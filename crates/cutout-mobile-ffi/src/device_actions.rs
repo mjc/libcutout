@@ -353,6 +353,6 @@ mod tests {
             MobileDeviceActionSubmissionError::ConnectionUnavailable
         );
         assert_eq!(handle.actions_snapshot().connection, replacement);
-        assert!(handle.actions_snapshot().actions.is_empty());
+        assert_eq!(handle.actions_snapshot().actions.len(), 0);
     }
 }

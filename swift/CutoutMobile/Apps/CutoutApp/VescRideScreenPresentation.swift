@@ -14,25 +14,16 @@ struct VescRideScreenPresentation {
         if phase != .live {
             return connectionStatusText ?? phase.displayText
         }
-        switch dashboardSupport {
-        case .telemetryStale:
-            return localizedAppText("vesc.warning.telemetry_stale")
-        case .telemetryPending:
-            return localizedAppText("vesc.subtitle.telemetry_pending")
-        case .dutyHeadroom, .none:
-            break
+        if let warningCard { return warningCard.title }
+        guard let snapshot, snapshot.operatingState != .unknown else {
+            return connectionStatusText ?? pevLocalizedText("euc.status.connected")
         }
-        return snapshot.map(vescRideSubtitle) ?? ""
+        return vescRideSubtitle(snapshot)
     }
 
     var statusTone: PevDashboardStatusPillTone {
         guard phase == .live else { return .warning }
-        switch dashboardSupport {
-        case .telemetryStale, .telemetryPending:
-            return .warning
-        case .dutyHeadroom, .none:
-            return .vescRide
-        }
+        return warningCard == nil ? .vescRide : .warning
     }
 
     var speedReadout: RideHeroReadout {

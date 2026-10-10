@@ -404,6 +404,17 @@ impl MusicProviderLifecycle {
         self.observations.observe(snapshot, timing)
     }
 
+    /// Returns exact incomplete metadata and ends only a proven terminal ride association.
+    pub fn retire_history_association(&mut self) -> Vec<crate::MusicUnsettledHistoryTransition> {
+        self.observations.retire_history_association()
+    }
+
+    /// Returns whether a ride association still owns unsettled history.
+    #[must_use]
+    pub fn has_pending_history(&self) -> bool {
+        self.observations.has_pending_history()
+    }
+
     /// Removes only the matching command-confirmed transition after durable handling.
     #[must_use]
     pub fn acknowledge_history_transition(

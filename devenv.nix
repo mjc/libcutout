@@ -71,6 +71,7 @@ in
 
   env.ANDROID_NDK_ROOT = androidNdkRoot;
   env.CC_aarch64_linux_android = androidArm64Clang;
+  env.CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER = androidArm64Clang;
   env.JNA_JAR = "${pkgs.jna}/share/java/jna.jar";
   env.KOTLIN_COROUTINES_JAR = "${pkgs.kotlin}/lib/kotlinx-coroutines-core-jvm.jar";
 
@@ -109,10 +110,12 @@ in
       "project:test"
       "test:rust-lint-policy"
       "test:kotlin-bindings-smoke"
+      "test:dashboard-input"
     ]
     ++ lib.optionals pkgs.stdenv.isDarwin [
       "test:swift-package"
       "test:ios-music-monitor"
+      "test:ios-capture-staging"
       "test:shell-regressions"
     ];
   };
@@ -126,6 +129,11 @@ in
     "cargo check --locked -p cutout-mobile-ffi --target aarch64-linux-android";
 
   tasks."test:rust-lint-policy".exec = "bash tests/fixtures/macro-policy/run.sh";
+
+  tasks."test:dashboard-input".exec = ''
+    cargo build --locked -p cutout-cli
+    python3 tests/scripts/dashboard-input.py target/debug/cutout
+  '';
 
   tasks."project:quality-gate" = {
     # Run formatting after the other checks so it cannot edit their inputs.
@@ -238,28 +246,68 @@ in
         -destination "$destination" \
         -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testActualMonitorTaskUsesPassiveAuthorizationAndCancelsOnBackground \
         -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testExplicitConnectAllowsAuthorizationPrompt \
+        -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testConnectAllowsAuthorizationPromptForUnauthorizedSnapshot \
+        -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testConnectReusesAuthorizationForExistingPlaybackSnapshots \
+        -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testColdStartRestoreUsesPassiveAuthorizationAndShowsPlayer \
+        -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testRestorePlayerPreservesCurrentFeedbackWhenMonitorIsAlreadyActive \
         -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testExplicitShutdownInvalidatesLateMonitorObservationBeforeAdapterTeardown \
         -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testAppModelDeallocationStopsMusicMonitor \
         -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testAppModelKeepsOneMusicMonitorAcrossStartupAndSceneResume \
         -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testOpeningHistoricalRideDetailDoesNotDispatchMusicTransport \
         -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testSpotifyCallbackAdmissionSurvivesEitherSceneEventOrder \
+        -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testStopWaitsForRequiredMusicCaptureReceipt \
+        -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testProviderResetMakesUnsettledAcceptedObservationFailStopExplicitly \
+        -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testOptionalOldMusicReadbackCannotDelayStopOrOverwriteNewerPresentation \
+        -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testRejectedCaptureDiagnosticIsVisibleBeforeOptionalErrorReadbackReturns \
+        -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testStaleRideContextFailsStopBeforeOptionalErrorReadbackReturns \
         -parallel-testing-enabled NO \
+        -collect-test-diagnostics never \
         ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
         test
     '';
     after = [ "check:xcode-ios" ];
   };
+  tasks."test:ios-locked-ride" = {
+    exec = ''
+      destination="''${CUTOUT_IOS_TEST_DESTINATION:-platform=iOS Simulator,name=iPhone 18 Pro,OS=latest}"
+      cargo cutout xcodebuild -- \
+        -project "$DEVENV_ROOT/swift/CutoutMobile/CutoutApp.xcodeproj" \
+        -scheme CutoutAppIOSUnitTests \
+        -destination "$destination" \
+        -only-testing:CutoutAppIOSUnitTests/PhoneLocationAdapterTests \
+        -only-testing:CutoutAppIOSUnitTests/LockedRideMainThreadTests \
+        -only-testing:CutoutAppIOSUnitTests/RideSessionMarkerNonblockingTests \
+        -parallel-testing-enabled NO \
+        -collect-test-diagnostics never \
+        ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
+        test
+    '';
+    after = [ "check:xcode-ios" ];
+  };
+  tasks."test:ios-capture-staging" = swiftTask ''
+    cargo cutout xcodebuild -- \
+      -project "$DEVENV_ROOT/swift/CutoutMobile/CutoutApp.xcodeproj" \
+      -scheme CutoutMobileIOSRuntimeTests \
+      -destination "''${CUTOUT_IOS_TEST_DESTINATION:-platform=iOS Simulator,name=iPhone 18 Pro,OS=latest}" \
+      -only-testing:CutoutMobileIOSRuntimeTests \
+      -parallel-testing-enabled NO \
+      -collect-test-diagnostics never \
+        ARCHS=arm64 ONLY_ACTIVE_ARCH=YES test
+  '';
+
   tasks."test:shell-regressions" = {
     # The production FFI fixture temporarily changes Rust source. Run it after
     # native checks so it cannot invalidate their captured source generations.
     after = [
       "test:swift-package"
       "test:ios-music-monitor"
+      "test:ios-capture-staging"
       "build:ios-ui-tests"
     ];
     exec = ''
       bash tests/scripts/swift-package-common.sh
       bash tests/scripts/run-ios-ui-tests.sh
+      bash tests/scripts/run-swift-package-tests.sh
       bash tests/fixtures/ffi-freshness/run.sh
       bash tests/fixtures/ffi-production/run.sh
       scripts/probe-novatek-camera.sh --self-test

@@ -39,12 +39,14 @@ final class DeviceSessionTransport: @unchecked Sendable {
     private var persistedVoltageSagObservations: UInt16 = 0
     private var chargeEstimate = ChargeEstimateState.missingProfile
     private var timer: DispatchSourceTimer?
+    private var scheduledWakeupAt: UInt64?
     private var waitingForSubscription: BluetoothUuid?
     private var pendingOperations: [PendingOperation] = []
     private var invalidated = false
     private(set) var records: [CoreBluetoothLiveRecord] = []
     private var publishedSettings: DeviceSettings?
-    private var lastSettingsPublication: MonotonicMilliseconds?
+    private var lastSettingsReadAt: MonotonicMilliseconds?
+    private var presentationActive = true
     var onSettingsChange: ((DeviceSettings) -> Void)?
     var onSubscriptionFailure: ((BluetoothUuid, Error?) -> Void)?
 
@@ -81,6 +83,12 @@ final class DeviceSessionTransport: @unchecked Sendable {
     }
 
     deinit { timer?.cancel() }
+
+    func setPresentationActive(_ active: Bool) {
+        guard !invalidated, presentationActive != active else { return }
+        presentationActive = active
+        if active { publishSettings(at: clock.now(), immediately: true) }
+    }
 
     func configureChargeEstimate(profile: ChargeEstimateProfile) {
         let hadModel = chargeEstimator.voltageSagModel() != nil
@@ -119,7 +127,10 @@ final class DeviceSessionTransport: @unchecked Sendable {
         guard !invalidated, waitingForSubscription == nil else {
             throw DeviceSettingSubmissionError.ConnectionUnavailable
         }
-        defer { publishSettings(at: clock.now(), immediately: true) }
+        defer {
+            publishSettings(at: clock.now(), immediately: true)
+            rescheduleTimer()
+        }
         let step = try state.submitSetting(token: token, id: id, value: value, monotonicMs: at.rawValue)
         return try process(step, at: at)
     }
@@ -128,7 +139,10 @@ final class DeviceSessionTransport: @unchecked Sendable {
         guard !invalidated, waitingForSubscription == nil else {
             throw DeviceActionSubmissionError.ConnectionUnavailable
         }
-        defer { publishSettings(at: clock.now(), immediately: true) }
+        defer {
+            publishSettings(at: clock.now(), immediately: true)
+            rescheduleTimer()
+        }
         return try process(state.submitAction(token: token, id: id, monotonicMs: at.rawValue), at: at)
     }
 
@@ -141,6 +155,7 @@ final class DeviceSessionTransport: @unchecked Sendable {
             throw DeviceSettingSubmissionError.ConnectionUnavailable
         }
         publishSettings(at: at, immediately: true)
+        rescheduleTimer()
     }
 
     func handleTick(at: MonotonicMilliseconds) throws -> CoreBluetoothSessionStep {
@@ -151,6 +166,7 @@ final class DeviceSessionTransport: @unchecked Sendable {
         guard !invalidated else { return }
         timer?.cancel()
         timer = nil
+        scheduledWakeupAt = nil
         rejectPendingOperations()
         waitingForSubscription = nil
         if state.connectionAttemptIsCurrent(token: token) {
@@ -158,6 +174,8 @@ final class DeviceSessionTransport: @unchecked Sendable {
             persistVoltageSag(force: true)
         }
         invalidated = true
+        // Cancellation receipts may have advanced Rust deadlines while settling writes.
+        cancelTimer()
         chargeEstimator.reset()
     }
 
@@ -173,12 +191,13 @@ final class DeviceSessionTransport: @unchecked Sendable {
         let operations = pendingOperations
         pendingOperations.removeAll()
         execute(operations)
-        startTimer()
+        rescheduleTimer()
     }
 
     func handlePeripheralIsReadyToSendWithoutResponse() {
         guard !invalidated, state.verifiedConnectionAttemptIsCurrent(token: token) else { return }
         sink?.peripheralIsReadyToSendWithoutResponse()
+        rescheduleTimer()
     }
 
     private func ingest(
@@ -199,6 +218,7 @@ final class DeviceSessionTransport: @unchecked Sendable {
         else {
             throw DeviceSettingSubmissionError.ConnectionUnavailable
         }
+        defer { rescheduleTimer() }
         let immediate = kind != .tick && kind != .notification
         return try process(step, at: at, publishImmediately: immediate)
     }
@@ -223,7 +243,9 @@ final class DeviceSessionTransport: @unchecked Sendable {
         if let error = step.result.error { throw CutoutSessionError(error) }
         let actions = step.result.outputs.map(SessionAction.init)
         let operations = actions.flatMap(planner.plan(action:))
-        let settings = state.settings()
+        let settings =
+            actions.contains(where: { $0.kind == .write && $0.operationID != nil })
+            ? state.settings() : nil
         // One receipt per protocol stage; Rust aggregates stages of a delayed sequence.
         // Resolve by operation identity on every step, including notification/tick outputs.
         var pending: [PendingOperation] = []
@@ -231,7 +253,7 @@ final class DeviceSessionTransport: @unchecked Sendable {
             let planned = planner.plan(action: action)
             let receipt: SettingWriteReceipt?
             if action.kind == .write, let operationID = action.operationID,
-                let setting = settings.settings.first(where: { $0.requestId == operationID })
+                let setting = settings?.settings.first(where: { $0.requestId == operationID })
             {
                 receipt = SettingWriteReceipt(
                     id: setting.id, requestID: operationID,
@@ -265,6 +287,7 @@ final class DeviceSessionTransport: @unchecked Sendable {
             operations: operations,
             snapshot: TelemetrySnapshot(step.telemetry, chargeEstimate: chargeEstimate),
             semanticTelemetry: step.telemetry,
+            captureNotificationEvidence: step.captureNotificationEvidence,
             speedObservation: step.telemetry.speed.flatMap { speed in
                 step.telemetry.speedObservedAtMs.map { observedAt in
                     MobileRideMapSpeedObservationDto(
@@ -350,41 +373,62 @@ final class DeviceSessionTransport: @unchecked Sendable {
             )
         else { return }
         publishSettings(at: clock.now(), immediately: true)
+        rescheduleTimer()
     }
 
-    private func startTimer() {
-        guard timer == nil else { return }
+    private func cancelTimer() {
+        timer?.cancel()
+        timer = nil
+        scheduledWakeupAt = nil
+    }
+
+    private func rescheduleTimer() {
+        guard !invalidated else { return }
+        let canPoll = waitingForSubscription == nil && sink?.canSubmitWithoutResponse() == true
+        guard let wakeupAt = state.deviceSessionNextWakeupAt(token: token, canPoll: canPoll) else {
+            cancelTimer()
+            return
+        }
+        guard scheduledWakeupAt != wakeupAt else { return }
+        cancelTimer()
+        let now = clock.now().rawValue
+        let delay = wakeupAt > now ? wakeupAt - now : 0
         let timer = DispatchSource.makeTimerSource(queue: queue)
-        timer.schedule(deadline: .now() + .milliseconds(100), repeating: .milliseconds(100))
+        timer.schedule(deadline: .now() + .milliseconds(Int(clamping: delay)))
         timer.setEventHandler { [weak self] in
-            self?.handleTimer()
+            guard let self, self.scheduledWakeupAt == wakeupAt else { return }
+            self.handleTimer()
         }
         self.timer = timer
+        scheduledWakeupAt = wakeupAt
         timer.resume()
     }
 
     func handleTimer() {
+        cancelTimer()
         guard !invalidated else { return }
         guard state.verifiedConnectionAttemptIsCurrent(token: token) else {
             invalidate()
             return
         }
+        defer { rescheduleTimer() }
         // Confirmation and queue authorization deadlines advance even under backpressure.
         let now = clock.now()
         _ = state.tickSettingTransport(token: token, monotonicMs: now.rawValue)
         publishSettings(at: now, immediately: false)
-        guard sink?.canSubmitWithoutResponse() == true else { return }
+        guard waitingForSubscription == nil, sink?.canSubmitWithoutResponse() == true else { return }
         _ = try? handleTick(at: now)
     }
 
     private func publishSettings(at: MonotonicMilliseconds, immediately: Bool) {
-        guard immediately || lastSettingsPublication.map({ at.elapsed(since: $0).rawValue >= 1_000 }) != false else {
+        guard presentationActive else { return }
+        guard immediately || lastSettingsReadAt.map({ at.elapsed(since: $0).rawValue >= 1_000 }) != false else {
             return
         }
+        lastSettingsReadAt = at
         let value = state.settings()
         guard value.connection.token == token, value != publishedSettings else { return }
         publishedSettings = value
-        lastSettingsPublication = at
         onSettingsChange?(value)
     }
 

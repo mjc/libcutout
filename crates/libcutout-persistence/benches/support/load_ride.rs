@@ -78,7 +78,7 @@ impl Fixture {
             expected.1.source_point_count(),
             summary.point_count().as_u64()
         );
-        assert!(!expected.1.points().is_empty());
+        assert_ne!(expected.1.points(), []);
         assert!(expected.1.points().len() <= MAX_ROUTE_DISPLAY_POINTS);
         let source_points = usize::try_from(summary.point_count().as_u64()).unwrap();
         if source_points <= MAX_ROUTE_DISPLAY_POINTS {

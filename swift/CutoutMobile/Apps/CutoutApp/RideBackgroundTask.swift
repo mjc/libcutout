@@ -5,28 +5,41 @@
 /// Owns only the native background execution lease; Rust owns checkpoint semantics.
 @MainActor
 final class RideBackgroundTask {
-    #if os(iOS)
-        private var identifier = UIBackgroundTaskIdentifier.invalid
-    #endif
-    init(onExpiration: @escaping @MainActor () -> Void) {
-        #if os(iOS)
-            identifier = UIApplication.shared.beginBackgroundTask(withName: "Ride checkpoint") { [weak self] in
-                Task { @MainActor in
-                    onExpiration()
-                    self?.end()
-                }
-            }
-        #endif
+    typealias EndTask = @MainActor () -> Void
+    typealias BeginTask = @MainActor (@escaping @MainActor @Sendable () -> Void) -> EndTask?
+
+    private var endTask: EndTask?
+
+    init(
+        onExpiration: @escaping @MainActor () -> Void,
+        beginTask: BeginTask = RideBackgroundTask.beginPlatformTask
+    ) {
+        endTask = beginTask { [weak self] in
+            guard let self, self.endTask != nil else { return }
+            self.end()
+            onExpiration()
+        }
     }
 
     isolated deinit { end() }
 
     func end() {
+        let completed = endTask
+        endTask = nil
+        completed?()
+    }
+
+    private static func beginPlatformTask(
+        onExpiration: @escaping @MainActor @Sendable () -> Void
+    ) -> EndTask? {
         #if os(iOS)
-            guard identifier != .invalid else { return }
-            let completed = identifier
-            identifier = .invalid
-            UIApplication.shared.endBackgroundTask(completed)
+            let identifier = UIApplication.shared.beginBackgroundTask(
+                withName: "Ride checkpoint", expirationHandler: onExpiration
+            )
+            guard identifier != .invalid else { return nil }
+            return { UIApplication.shared.endBackgroundTask(identifier) }
+        #else
+            return nil
         #endif
     }
 }

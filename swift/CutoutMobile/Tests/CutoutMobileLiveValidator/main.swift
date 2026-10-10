@@ -38,7 +38,7 @@ private final class CutoutLiveValidator {
         self.timeout = timeout
         self.targetFilter = targetFilter
         core.onRecord = { [weak self] record in self?.appendRecord(record) }
-        core.onPhaseChange = { phase in writeRecord("phase=\(phase)") }
+        core.onPhaseChange = { phase in writeRecord("phase=\(phase.phase)") }
         core.onScanStateChange = { [weak self] state in self?.probeFirstCandidate(from: state) }
     }
 

@@ -99,7 +99,7 @@ struct AppSetupView: View {
                             set: music.selectProvider
                         ),
                         historyPolicy: Binding(
-                            get: { music.historyPolicy },
+                            get: { music.preferredHistoryPolicy },
                             set: { policy in
                                 Task { @MainActor in
                                     _ = await music.setHistoryPolicyAsync(policy)
@@ -126,8 +126,15 @@ struct AppSetupView: View {
     @ToolbarContentBuilder
     private var doneToolbar: some ToolbarContent {
         ToolbarItem(placement: .confirmationAction) {
-            Button(pevLocalizedText("music.done")) { dismiss() }
-                .accessibilityIdentifier("setup.done")
+            Button {
+                dismiss()
+            } label: {
+                Text(pevLocalizedText("music.done"))
+                    .frame(minWidth: 44, minHeight: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("setup.done")
         }
     }
 }

@@ -751,6 +751,7 @@ public enum ChargeEstimateKind: Equatable, Hashable, Sendable {
     case atPresentCurrent
     case profileBackedTimeToFull
     case observedTaperTimeToFull
+    case observedProgressTimeToFull
 
     fileprivate init(_ dto: MobileEstimateKindDto) {
         switch dto {
@@ -758,6 +759,8 @@ public enum ChargeEstimateKind: Equatable, Hashable, Sendable {
             self = .atPresentCurrent
         case .profileBackedTimeToFull:
             self = .profileBackedTimeToFull
+        case .observedProgressTimeToFull:
+            self = .observedProgressTimeToFull
         case .observedTaperTimeToFull:
             self = .observedTaperTimeToFull
         }
@@ -775,7 +778,6 @@ public enum ChargeEstimateUnavailableReason: Equatable, Hashable, Sendable {
     case unstableCurrent
     case staleInput
     case temperatureOutOfModel
-    case fullOrNearFull
     case contradictoryInputs
 
     fileprivate init(_ dto: MobileChargeEstimateUnavailableReasonDto) {
@@ -790,7 +792,6 @@ public enum ChargeEstimateUnavailableReason: Equatable, Hashable, Sendable {
         case .unstableCurrent: self = .unstableCurrent
         case .staleInput: self = .staleInput
         case .temperatureOutOfModel: self = .temperatureOutOfModel
-        case .fullOrNearFull: self = .fullOrNearFull
         case .contradictoryInputs: self = .contradictoryInputs
         }
     }
@@ -807,13 +808,14 @@ public enum ChargeEstimateUnavailableReason: Equatable, Hashable, Sendable {
         case .unstableCurrent: pevLocalizedText("charge.estimate.unavailable.unstable_current")
         case .staleInput: pevLocalizedText("charge.estimate.unavailable.stale_input")
         case .temperatureOutOfModel: pevLocalizedText("charge.estimate.unavailable.temperature_out_of_model")
-        case .fullOrNearFull: pevLocalizedText("charge.estimate.unavailable.full_or_near_full")
         case .contradictoryInputs: pevLocalizedText("charge.estimate.unavailable.contradictory_inputs")
         }
     }
 }
 
 public enum ChargeEstimateStateKind: Equatable, Hashable, Sendable {
+    case full
+    case balancing
     case collectingSamples
     case available
     case unavailable
@@ -822,6 +824,8 @@ public enum ChargeEstimateStateKind: Equatable, Hashable, Sendable {
 
     fileprivate init(_ dto: MobileChargeEstimateStateKindDto) {
         switch dto {
+        case .full: self = .full
+        case .balancing: self = .balancing
         case .collectingSamples: self = .collectingSamples
         case .available: self = .available
         case .unavailable: self = .unavailable
@@ -834,7 +838,7 @@ public enum ChargeEstimateStateKind: Equatable, Hashable, Sendable {
         switch self {
         case .available:
             .available(display: display, accessibility: display)
-        case .collectingSamples, .stale, .unavailable, .failed:
+        case .full, .balancing, .collectingSamples, .stale, .unavailable, .failed:
             .status(display: display, accessibility: display)
         }
     }
@@ -1053,6 +1057,13 @@ public struct ChargeEstimateState: Equatable, Hashable, Sendable {
         self.observedFor = ChargeEstimateDuration(dto.observedFor)
     }
 
+    #if DEBUG && targetEnvironment(simulator)
+        /// Maps representative rendering input through the existing DTO adapter for explicit Simulator UI fixtures.
+        public static func withPresentationFixture(_ dto: MobileChargeEstimateStateDto) -> Self {
+            Self(dto)
+        }
+    #endif
+
     static var missingProfile: Self {
         Self(
             MobileChargeEstimateStateDto(
@@ -1069,6 +1080,8 @@ public struct ChargeEstimateState: Equatable, Hashable, Sendable {
 
     public var displayValue: String {
         switch kind {
+        case .full: pevLocalizedText("charge.estimate.value.full")
+        case .balancing: pevLocalizedText("charge.estimate.value.balancing")
         case .available:
             estimate?.expected.displayText ?? pevLocalizedText("metric.availability.unavailable")
         case .collectingSamples:
@@ -1076,9 +1089,7 @@ public struct ChargeEstimateState: Equatable, Hashable, Sendable {
         case .stale:
             pevLocalizedText("charge.estimate.value.stale")
         case .unavailable:
-            unavailableReason == .fullOrNearFull
-                ? pevLocalizedText("charge.estimate.value.near_full")
-                : pevLocalizedText("metric.availability.unavailable")
+            pevLocalizedText("metric.availability.unavailable")
         case .failed:
             pevLocalizedText("charge.estimate.value.failed")
         }
@@ -1086,6 +1097,8 @@ public struct ChargeEstimateState: Equatable, Hashable, Sendable {
 
     public var displayDetail: String {
         switch kind {
+        case .full: return pevLocalizedText("charge.estimate.value.full")
+        case .balancing: return pevLocalizedText("charge.estimate.value.balancing")
         case .available:
             guard let estimate else { return pevLocalizedText("charge.estimate.detail.unavailable") }
             return pevLocalizedText(
@@ -1158,6 +1171,7 @@ extension ChargeEstimateKind {
         case .atPresentCurrent: pevLocalizedText("charge.estimate.kind.present_current")
         case .profileBackedTimeToFull: pevLocalizedText("charge.estimate.kind.profile_backed")
         case .observedTaperTimeToFull: pevLocalizedText("charge.estimate.kind.observed_taper")
+        case .observedProgressTimeToFull: pevLocalizedText("charge.estimate.kind.observed_progress")
         }
     }
 }
@@ -4166,7 +4180,7 @@ public struct EucRideScreenState: Equatable, Hashable, Sendable {
     }
 
     private var shouldReduceAcceleration: Bool {
-        guard let pwmHeadroomPermille else {
+        guard operatingState == .riding || operatingState == .standing, let pwmHeadroomPermille else {
             return false
         }
 
@@ -4207,7 +4221,7 @@ public struct EucRideScreenState: Equatable, Hashable, Sendable {
 
     private var chargeEstimateCoverage: EucRideVisibleFieldSource {
         switch chargeEstimate.kind {
-        case .available, .collectingSamples:
+        case .full, .balancing, .available, .collectingSamples:
             .derivedTelemetry
         case .unavailable, .stale, .failed:
             .explicitlyUnavailable
@@ -4862,6 +4876,8 @@ public struct CoreBluetoothSessionStep: Equatable, Hashable, Sendable {
     public let operations: [CoreBluetoothPlannedOperation]
     public let snapshot: TelemetrySnapshot?
     public let semanticTelemetry: MobileTelemetrySnapshotDto?
+    /// Admission evidence from this exact verified Rust notification step.
+    public let captureNotificationEvidence: MobileCaptureNotificationEvidenceDto
     /// New vehicle-speed sample only, retaining Rust's original sample time.
     public let speedObservation: MobileRideMapSpeedObservationDto?
     public let actions: [SessionAction]
@@ -4871,6 +4887,7 @@ public struct CoreBluetoothSessionStep: Equatable, Hashable, Sendable {
         operations: [CoreBluetoothPlannedOperation],
         snapshot: TelemetrySnapshot?,
         semanticTelemetry: MobileTelemetrySnapshotDto? = nil,
+        captureNotificationEvidence: MobileCaptureNotificationEvidenceDto = .unclassified,
         speedObservation: MobileRideMapSpeedObservationDto? = nil,
         actions: [SessionAction] = [],
         captureContext: CoreBluetoothCaptureContext? = nil,
@@ -4880,6 +4897,7 @@ public struct CoreBluetoothSessionStep: Equatable, Hashable, Sendable {
         self.operations = operations
         self.snapshot = snapshot
         self.semanticTelemetry = semanticTelemetry
+        self.captureNotificationEvidence = captureNotificationEvidence
         self.speedObservation = speedObservation
         self.actions = actions
         self.captureContext = captureContext

@@ -204,8 +204,25 @@ pub trait SupportsReadRequests: ProtocolModelSpec {
     fn encode_read_command(kind: CommandKind) -> Option<RequestDisposition<Self::Probe>>;
 }
 
+/// Whether a decoder retains bytes belonging to an unfinished wire frame.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum NotificationBufferState {
+    /// The adapter does not expose a complete framing proof.
+    #[default]
+    Unknown,
+    /// No partial frame bytes are retained.
+    Empty,
+    /// A later notification may complete a frame started by an earlier input.
+    Buffered,
+}
+
 /// Decoder hook for read-only model notification streams.
 pub trait ReadOnlyNotificationDecoder {
+    /// Conservative framing evidence; unsupported adapters retain every observation.
+    fn notification_buffer_state(&self) -> NotificationBufferState {
+        NotificationBufferState::Unknown
+    }
+
     /// Resets model-specific parser state.
     fn reset(&mut self);
 
@@ -216,6 +233,11 @@ pub trait ReadOnlyNotificationDecoder {
 
     /// Gives a decoder a chance to issue a bounded periodic read request.
     fn on_tick(&mut self, _monotonic_ms: MonotonicTimestamp, _output: &mut Vec<SessionOutput>) {}
+
+    /// Next model-owned periodic request; passive notification decoders remain idle.
+    fn next_tick_at(&self) -> Option<MonotonicTimestamp> {
+        None
+    }
 
     /// Handles a read whose scheduling is owned by the model, returning whether it was handled.
     fn on_read_command(&mut self, _kind: CommandKind, _output: &mut Vec<SessionOutput>) -> bool {
@@ -292,6 +314,14 @@ impl Unit for CompletedFrame {
 type CompletedFrames = Quantity<Count, CompletedFrame, usize>;
 
 impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
+    fn notification_buffer_state(&self) -> NotificationBufferState {
+        if self.reassembler.has_pending_bytes() {
+            NotificationBufferState::Buffered
+        } else {
+            NotificationBufferState::Empty
+        }
+    }
+
     fn reset(&mut self) {
         self.reassembler.reset();
         self.command_mode.reset();
@@ -716,6 +746,12 @@ impl VescNotificationDecoder {
 }
 
 impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
+    fn next_tick_at(&self) -> Option<MonotonicTimestamp> {
+        self.polling.then(|| {
+            MonotonicTimestamp::new(self.last_poll_ms.unwrap_or(self.now_ms).saturating_add(100))
+        })
+    }
+
     fn reset(&mut self) {
         self.stream = VescReadOnlyStreamDecoder::new();
         self.refloat_stream = RefloatStreamDecoder::new();
@@ -853,45 +889,38 @@ impl VescNotificationDecoder {
         if !(match bytes.first() {
             Some(2 | 3) => true,
             _ => false,
-        }) {
-            if let Some(start) = bytes.iter().position(|byte| *byte == 2 || *byte == 3) {
-                let Some(candidate) = bytes.get(start..) else {
+        }) && let Some(start) = bytes.iter().position(|byte| *byte == 2 || *byte == 3)
+        {
+            let Some(candidate) = bytes.get(start..) else {
+                return;
+            };
+            let candidate_source = borrowed_source.and_then(|source| source.get(start..));
+            if let Some(frame_len) = complete_vesc_frame_len(candidate) {
+                let Some(frame) = candidate.get(..frame_len) else {
                     return;
                 };
-                let candidate_source = borrowed_source.and_then(|source| source.get(start..));
-                if let Some(frame_len) = complete_vesc_frame_len(candidate) {
-                    let Some(frame) = candidate.get(..frame_len) else {
-                        return;
-                    };
-                    if frame_len < candidate.len()
-                        && !self.enqueue_notification_tail(
-                            pending,
-                            candidate,
-                            candidate_source,
-                            frame_len,
-                            output,
-                        )
-                    {
-                        return;
-                    }
-                    self.handle_notification_chunk(
-                        metadata,
-                        frame,
-                        candidate_source.and_then(|source| source.get(..frame_len)),
-                        output,
+                if frame_len < candidate.len()
+                    && !self.enqueue_notification_tail(
                         pending,
-                    );
+                        candidate,
+                        candidate_source,
+                        frame_len,
+                        output,
+                    )
+                {
                     return;
                 }
                 self.handle_notification_chunk(
                     metadata,
-                    candidate,
-                    candidate_source,
+                    frame,
+                    candidate_source.and_then(|source| source.get(..frame_len)),
                     output,
                     pending,
                 );
                 return;
             }
+            self.handle_notification_chunk(metadata, candidate, candidate_source, output, pending);
+            return;
         }
         if let Some(frame_len) = complete_vesc_frame_len(bytes) {
             let Some(frame) = bytes.get(..frame_len) else {
@@ -1627,15 +1656,14 @@ fn push_veteran_frame(
                     response,
                 )));
             }
-            if let Some(evidence) = VeteranBmsPageEvidence::from_frame(frame) {
-                if evidence.kind != BatteryPageKind::Raw {
-                    if let Some(readback) = veteran_bms_readback(evidence) {
-                        output.push(SessionOutput::Event(DeviceEvent::read_only_response(
-                            ReadOnlyResponse::Battery(readback),
-                        )));
-                        return SemanticEventCount::from_events(3).saturating_add(settings_count);
-                    }
-                }
+            if let Some(evidence) = VeteranBmsPageEvidence::from_frame(frame)
+                && evidence.kind != BatteryPageKind::Raw
+                && let Some(readback) = veteran_bms_readback(evidence)
+            {
+                output.push(SessionOutput::Event(DeviceEvent::read_only_response(
+                    ReadOnlyResponse::Battery(readback),
+                )));
+                return SemanticEventCount::from_events(3).saturating_add(settings_count);
             }
             SemanticEventCount::from_events(2).saturating_add(settings_count)
         }
@@ -1863,7 +1891,7 @@ impl SupportsSettingsWrites for NosfetAeroModel {
         CommandKind::GyroCalibration,
     ]);
     const MAX_SETTINGS_SPEED: Option<cutout_core::Speed> =
-        Some(cutout_core::Speed::from_millimetres_per_second(500));
+        Some(cutout_core::CONNECTED_WHEEL_MOVEMENT_THRESHOLD);
 }
 
 /// Begode Falcon read-only model spec.
@@ -2123,6 +2151,16 @@ impl<M: ReadOnlyModelSpec> Default for ReadOnlySession<M> {
 }
 
 impl<M: ReadOnlyModelSpec> ReadOnlySession<M> {
+    pub(crate) fn next_tick_at(&self) -> Option<MonotonicTimestamp> {
+        self.connected
+            .then(|| self.decoder.next_tick_at())
+            .flatten()
+    }
+
+    pub(crate) fn notification_buffer_state(&self) -> NotificationBufferState {
+        self.decoder.notification_buffer_state()
+    }
+
     /// Creates a read-only session with an explicitly configured notification decoder.
     #[must_use]
     pub const fn with_decoder(decoder: M::NotificationDecoder) -> Self {
@@ -2176,18 +2214,17 @@ fn handle_benign_control<M: ReadOnlyModelSpec + SupportsBenignControls>(
     output: &mut Vec<SessionOutput>,
 ) {
     let kind = command.kind();
-    if M::CONTROL_CAPABILITIES.supports_command_kind(kind) {
-        if let Some(encoded) =
+    if M::CONTROL_CAPABILITIES.supports_command_kind(kind)
+        && let Some(encoded) =
             <M::WireDialect as crate::control_wire::Dialect>::select(command, context)
                 .and_then(|selection| selection.single(command))
-        {
-            output.push(SessionOutput::Transport(TransportAction::Write {
-                channel: M::WRITE_CHANNEL,
-                bytes: encoded.payload,
-                mode: encoded.mode,
-            }));
-            return;
-        }
+    {
+        output.push(SessionOutput::Transport(TransportAction::Write {
+            channel: M::WRITE_CHANNEL,
+            bytes: encoded.payload,
+            mode: encoded.mode,
+        }));
+        return;
     }
 
     output.push(SessionOutput::Event(DeviceEvent::ControlRefusal(
@@ -2373,6 +2410,39 @@ impl<M: ReadOnlyModelSpec + SupportsSettingsWrites + SupportsBenignControls> Def
 impl<M: ReadOnlyModelSpec + SupportsSettingsWrites + SupportsBenignControls>
     StationarySettingsWriteSession<M>
 {
+    pub(crate) fn next_tick_at(&self) -> Option<MonotonicTimestamp> {
+        [
+            self.read_only.next_tick_at(),
+            self.pending_sequence
+                .as_ref()
+                .map(|pending| pending.next_at),
+        ]
+        .into_iter()
+        .flatten()
+        .min()
+    }
+
+    pub(crate) fn setting_authorization_expires_at(
+        &self,
+        authorization: SettingWriteAuthorization,
+    ) -> MonotonicTimestamp {
+        let freshness = [
+            self.latest_settings_speed.map(|(_, at)| at),
+            self.latest_settings_charge_mode
+                .filter(|(mode, _)| mode.is_active())
+                .map(|(_, at)| at),
+        ]
+        .into_iter()
+        .flatten()
+        .max()
+        .map(|at| at.saturating_add_duration(cutout_core::Duration::from_milliseconds(2_001)));
+        let expiry = authorization
+            .arm
+            .expires_at_ms()
+            .saturating_add_duration(cutout_core::Duration::from_milliseconds(1));
+        freshness.map_or(expiry, |freshness| expiry.min(freshness))
+    }
+
     /// Creates a settings-write session with an explicitly configured decoder.
     #[must_use]
     pub const fn with_decoder(decoder: M::NotificationDecoder) -> Self {
@@ -2385,6 +2455,10 @@ impl<M: ReadOnlyModelSpec + SupportsSettingsWrites + SupportsBenignControls>
             latest_settings_charge_mode: None,
             settings_cancellation_generation: 0,
         }
+    }
+
+    pub(crate) fn notification_buffer_state(&self) -> NotificationBufferState {
+        self.read_only.notification_buffer_state()
     }
 
     /// Latest raw settings pages from the validated notification decoder.
@@ -2488,19 +2562,16 @@ impl<M: ReadOnlyModelSpec + SupportsSettingsWrites + SupportsBenignControls>
             let SessionOutput::Event(DeviceEvent::Telemetry(delta)) = output else {
                 continue;
             };
-            if let Some(speed) = delta.speed {
-                if self
+            if let Some(speed) = delta.speed
+                && self
                     .latest_settings_speed
                     .is_none_or(|(_, at)| delta.at_ms >= at)
-                {
-                    self.latest_settings_speed = Some((speed.value, delta.at_ms));
-                    let maximum = M::MAX_SETTINGS_SPEED
-                        .map_or(0, cutout_core::Speed::as_millimetres_per_second);
-                    if speed.value.as_millimetres_per_second().unsigned_abs()
-                        > maximum.unsigned_abs()
-                    {
-                        self.clear_arm();
-                    }
+            {
+                self.latest_settings_speed = Some((speed.value, delta.at_ms));
+                let maximum =
+                    M::MAX_SETTINGS_SPEED.map_or(0, cutout_core::Speed::as_millimetres_per_second);
+                if speed.value.as_millimetres_per_second().unsigned_abs() > maximum.unsigned_abs() {
+                    self.clear_arm();
                 }
             }
             if let Some(mode) = delta.charge_mode
@@ -3520,7 +3591,7 @@ mod tests {
             &mut output,
         );
 
-        assert!(output.is_empty());
+        assert_eq!(output.len(), 0);
     }
 
     #[test]
@@ -3871,7 +3942,7 @@ mod tests {
             &mut output,
         );
 
-        assert!(output.is_empty());
+        assert_eq!(output.len(), 0);
     }
 
     #[test]
@@ -3917,7 +3988,7 @@ mod tests {
             RawFieldValue::new(VESC_RAW_CURRENT_FAULT_CODE_FIELD_ID, 0)
         );
         assert_eq!(raw.fields.len(), 4);
-        assert!(raw.float_fields.is_empty());
+        assert_eq!(raw.float_fields.len(), 0);
     }
 
     #[test]
@@ -3968,7 +4039,7 @@ mod tests {
             raw.fields[1],
             RawFieldValue::new(VESC_RAW_TACHOMETER_FIELD_ID, -2)
         );
-        assert!(raw.float_fields.is_empty());
+        assert_eq!(raw.float_fields.len(), 0);
         assert_eq!(
             raw.fields[2],
             RawFieldValue::new(VESC_RAW_CONTROLLER_ID_FIELD_ID, 23)
@@ -4841,8 +4912,8 @@ mod tests {
             for split in 1..frame.len() {
                 let output =
                     falcon_output_for_notification_chunks(&[&frame[..split], &frame[split..]]);
-                assert!(telemetry_events(&output).is_empty());
-                assert!(read_only_response_events(&output).is_empty());
+                assert_eq!(telemetry_events(&output).len(), 0);
+                assert_eq!(read_only_response_events(&output).len(), 0);
                 assert!(
                     notification_ingest_outcomes(&output).contains(&begode_frame_gap(
                         &frame,
@@ -4864,8 +4935,8 @@ mod tests {
             outcomes,
             vec![begode_frame_gap(summary.as_slice(), 0x01, ms(42))]
         );
-        assert!(read_only_response_events(&output).is_empty());
-        assert!(telemetry_events(&output).is_empty());
+        assert_eq!(read_only_response_events(&output).len(), 0);
+        assert_eq!(telemetry_events(&output).len(), 0);
     }
 
     #[test]
@@ -4878,8 +4949,8 @@ mod tests {
             outcomes,
             vec![begode_frame_gap(cell_page.as_slice(), 0x02, ms(42))]
         );
-        assert!(read_only_response_events(&output).is_empty());
-        assert!(telemetry_events(&output).is_empty());
+        assert_eq!(read_only_response_events(&output).len(), 0);
+        assert_eq!(telemetry_events(&output).len(), 0);
     }
 
     #[test]
@@ -5193,8 +5264,8 @@ mod tests {
                 ms(42),
             )]
         );
-        assert!(telemetry_events(&output).is_empty());
-        assert!(read_only_response_events(&output).is_empty());
+        assert_eq!(telemetry_events(&output).len(), 0);
+        assert_eq!(read_only_response_events(&output).len(), 0);
     }
 
     #[test]
@@ -5216,8 +5287,8 @@ mod tests {
                 aero_bms_body_gap(&frame, 0, ms(42)),
             ]
         );
-        assert!(!telemetry_events(&output).is_empty());
-        assert!(!read_only_response_events(&output).is_empty());
+        assert_ne!(telemetry_events(&output).len(), 0);
+        assert_ne!(read_only_response_events(&output).len(), 0);
     }
 
     #[test]
@@ -5243,7 +5314,7 @@ mod tests {
                 },
             )]
         );
-        assert!(!read_only_response_events(&output).is_empty());
+        assert_ne!(read_only_response_events(&output).len(), 0);
     }
 
     #[test]
@@ -6309,24 +6380,29 @@ mod tests {
     }
 
     #[test]
-    fn aero_settings_arm_allows_the_500_mm_per_second_window() {
+    fn aero_settings_arm_uses_the_connected_wheel_speed_window() {
         let at = ms(10);
-        assert!(
-            NosfetAeroModel::arm_settings_write(
-                RideOperatingState::Riding,
-                Some(cutout_core::Speed::from_millimetres_per_second(500)),
-                at,
-            )
-            .is_some()
-        );
-        assert!(
-            NosfetAeroModel::arm_settings_write(
-                RideOperatingState::Riding,
-                Some(cutout_core::Speed::from_millimetres_per_second(501)),
-                at,
-            )
-            .is_none()
-        );
+        let threshold = cutout_core::CONNECTED_WHEEL_MOVEMENT_THRESHOLD.as_millimetres_per_second();
+        for raw_speed in [-threshold, threshold] {
+            assert!(
+                NosfetAeroModel::arm_settings_write(
+                    RideOperatingState::Riding,
+                    Some(cutout_core::Speed::from_millimetres_per_second(raw_speed)),
+                    at,
+                )
+                .is_some()
+            );
+        }
+        for raw_speed in [-threshold - 1, threshold + 1] {
+            assert!(
+                NosfetAeroModel::arm_settings_write(
+                    RideOperatingState::Riding,
+                    Some(cutout_core::Speed::from_millimetres_per_second(raw_speed)),
+                    at,
+                )
+                .is_none()
+            );
+        }
         assert!(
             BegodeFalconModel::arm_settings_write(
                 RideOperatingState::Riding,

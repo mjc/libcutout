@@ -29,12 +29,17 @@ use std::{
     },
     time::{Duration, Instant},
 };
+use tempfile::NamedTempFile;
 use thiserror::Error;
 use uuid::Uuid;
 
 mod capture_data;
 mod capture_history;
 pub use capture_history::{PevcapCaptureCursor, PevcapCapturePage, StoredPevcapCapture};
+mod live_capture_history;
+pub use live_capture_history::{
+    LiveCaptureHistoryCursor, LiveCaptureHistoryEntry, LiveCaptureHistoryPage,
+};
 mod live_capture;
 pub use live_capture::{
     LIVE_CAPTURE_EVENT_LIMIT_BYTES, LIVE_CAPTURE_HEADER_LIMIT_BYTES,
@@ -73,6 +78,25 @@ const MAX_HISTORY_CONTEXT_POINTS: usize = 4_096;
 const PEVCAP_LOCATION_BATCH_SIZE: usize = 256;
 const MAX_MANAGED_PEVCAP_DIRECTORY_ATTEMPTS: usize = 8;
 const DEFAULT_ROUTE_PROJECTION_TIMEOUT: Duration = Duration::from_secs(2);
+
+#[cfg(test)]
+mod pevcap_confirmation_hooks {
+    use std::{cell::RefCell, thread::LocalKey};
+
+    type Hook = RefCell<Option<Box<dyn FnOnce()>>>;
+
+    thread_local! {
+        pub(super) static BEFORE_BEGIN: Hook = const { RefCell::new(None) };
+        pub(super) static BEFORE_STORE: Hook = const { RefCell::new(None) };
+        pub(super) static AFTER_ABORT: Hook = const { RefCell::new(None) };
+    }
+
+    pub(super) fn run(key: &'static LocalKey<Hook>) {
+        if let Some(hook) = key.with(|slot| slot.borrow_mut().take()) {
+            hook();
+        }
+    }
+}
 
 #[derive(Clone, Copy)]
 struct PevcapRoutePoint {
@@ -435,6 +459,13 @@ pub struct RideRecord {
     associated_vehicle_name: Option<String>,
     associated_at_ms: Option<u64>,
     last_telemetry_at_ms: Option<u64>,
+    last_location_observation: Option<LocationObservationClocks>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct LocationObservationClocks {
+    monotonic_ms: u64,
+    wall_clock_ms: u64,
 }
 
 impl RideRecord {
@@ -564,6 +595,24 @@ impl RideRecord {
     #[must_use]
     pub const fn last_telemetry_at_milliseconds(&self) -> Option<u64> {
         self.last_telemetry_at_ms
+    }
+
+    /// Latest validated GPS observation time, distinct from lifecycle timing.
+    #[must_use]
+    pub const fn last_location_observed_monotonic_milliseconds(&self) -> Option<u64> {
+        match self.last_location_observation {
+            Some(clocks) => Some(clocks.monotonic_ms),
+            None => None,
+        }
+    }
+
+    /// Original source wall clock corresponding to the latest validated GPS observation.
+    #[must_use]
+    pub const fn last_location_observed_wall_clock_milliseconds(&self) -> Option<u64> {
+        match self.last_location_observation {
+            Some(clocks) => Some(clocks.wall_clock_ms),
+            None => None,
+        }
     }
 }
 
@@ -1602,6 +1651,7 @@ pub struct RideDatabase {
     service_id: Uuid,
     bootstrap: BootstrapSnapshot,
     path: Arc<PathBuf>,
+    pub(crate) marker_writes: Arc<Mutex<crate::ride_session_marker::MarkerWriteState>>,
 }
 
 /// A location write accepted by the bounded database queue but not necessarily committed yet.
@@ -1628,6 +1678,36 @@ pub struct PendingBmsVoltageWrite {
 pub struct PendingRideCheckpoint {
     response: Receiver<Result<(), StorageError>>,
     consumed: bool,
+}
+
+/// Pollable durable receipt for one opaque marker replacement or removal.
+#[must_use = "poll or wait for the durable marker mutation"]
+#[derive(Debug)]
+pub struct PendingRideSessionMarkerWrite {
+    response: Receiver<Result<(), StorageError>>,
+    consumed: bool,
+}
+
+/// Clock-only GPS evidence tied to one unchanged durable route point.
+#[derive(Clone, Copy, Debug)]
+pub struct RideLocationObservationCheckpoint {
+    /// Ride that owns the observation.
+    pub ride_id: RideId,
+    /// Last durable point whose native location values must still match.
+    pub expected_point_sequence: u64,
+    /// Validated same-location observation with original source clocks.
+    pub observation: LocationSample,
+}
+
+/// Durable outcome of a clock-only location checkpoint.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RideLocationObservationCheckpointOutcome {
+    /// New observation clocks were committed without adding a route point.
+    Applied,
+    /// The exact observation clock was already durable.
+    AlreadyObserved,
+    /// The ride, point, native values, or clock order no longer match the checkpoint.
+    PointChanged,
 }
 
 /// A live music transition accepted by the bounded worker but not yet committed.
@@ -1700,6 +1780,8 @@ pub enum VerifiedConnectionLifecycleMutation {
         monotonic_created_at_ms: u64,
         /// Candidate vehicle identity for the new ride.
         candidate_vehicle: Option<String>,
+        /// Retention chosen for this new ride, committed with its creation.
+        music_history_policy: MusicHistoryPolicy,
     },
 }
 
@@ -2286,6 +2368,26 @@ impl PendingRideCheckpoint {
     }
 }
 
+impl PendingRideSessionMarkerWrite {
+    /// Returns the durable result once; `None` means the worker is still busy.
+    pub fn try_result(&mut self) -> Option<Result<(), StorageError>> {
+        if self.consumed {
+            return None;
+        }
+        match self.response.try_recv() {
+            Ok(result) => {
+                self.consumed = true;
+                Some(result)
+            }
+            Err(mpsc::TryRecvError::Empty) => None,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.consumed = true;
+                Some(Err(StorageError::ResponseDropped))
+            }
+        }
+    }
+}
+
 impl PendingMusicEventWrite {
     /// Returns the durable result when the worker has completed the event.
     ///
@@ -2503,7 +2605,7 @@ impl RideDatabase {
     ///
     /// Returns the same errors as [`Self::open`] when the service cannot be reacquired.
     pub fn reopen(&self) -> Result<Self, StorageError> {
-        service::reopen(&self.path, self.service_id)
+        service::reopen(&self.path, self.service_id, Arc::clone(&self.marker_writes))
     }
 
     /// Returns the process-wide service identity.
@@ -2687,6 +2789,36 @@ impl RideDatabase {
         Ok(PendingRideCheckpoint {
             response,
             consumed: false,
+        })
+    }
+
+    /// Waits for capacity and for every preceding worker command to finish.
+    ///
+    /// Call this from a background recording executor when queue saturation must apply
+    /// backpressure rather than discard the rest of a native location callback.
+    ///
+    /// # Errors
+    ///
+    /// Returns a worker or storage error when the barrier cannot complete.
+    pub fn wait_for_ride_checkpoint(&self) -> Result<(), StorageError> {
+        self.request_blocking(|reply| Command::RideCheckpoint { reply })
+    }
+
+    /// Waits for preceding worker writes and commits clock-only location evidence.
+    ///
+    /// The last durable point is revalidated before the single ride-row update.
+    /// Call this on the background recording executor.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] when the worker or database cannot commit the checkpoint.
+    pub fn checkpoint_location_observation(
+        &self,
+        checkpoint: RideLocationObservationCheckpoint,
+    ) -> Result<RideLocationObservationCheckpointOutcome, StorageError> {
+        self.request_blocking(move |reply| Command::CheckpointLocationObservation {
+            checkpoint,
+            reply,
         })
     }
 
@@ -3400,6 +3532,37 @@ impl RideDatabase {
         })
     }
 
+    /// Queues opaque marker replacement or removal without waiting for worker capacity.
+    ///
+    /// # Errors
+    /// Returns [`StorageError::QueueFull`] or [`StorageError::WorkerStopped`] on rejection.
+    pub fn queue_ride_session_marker(
+        &self,
+        marker: Option<Vec<u8>>,
+    ) -> Result<PendingRideSessionMarkerWrite, StorageError> {
+        let (reply, response) = response_channel();
+        let command = match marker {
+            Some(marker) => Command::SaveRideSessionMarker { marker, reply },
+            None => Command::ClearRideSessionMarker { reply },
+        };
+        self.sender.try_send(command).map_err(|error| match error {
+            mpsc::TrySendError::Full(_) => StorageError::QueueFull,
+            mpsc::TrySendError::Disconnected(_) => StorageError::WorkerStopped,
+        })?;
+        Ok(PendingRideSessionMarkerWrite {
+            response,
+            consumed: false,
+        })
+    }
+
+    pub(crate) fn recover_marker_worker(&self) -> Result<Self, StorageError> {
+        if self.worker_has_exited() && self.worker_can_restart() {
+            self.reopen()
+        } else {
+            service::current_marker_handle(self.service_id)
+        }
+    }
+
     /// Loads opaque Rust-owned ride-session marker bytes.
     ///
     /// # Errors
@@ -3486,22 +3649,18 @@ impl RideDatabase {
             CapturePublication::Import => NewPevcapImportOutcome::try_from(preview.outcome)?,
         };
 
-        let managed = prepare_managed_pevcap(self.path.as_ref(), preview)?;
-        let begin = match self.request(|reply| Command::BeginPevcapImport {
+        let managed_path = managed_pevcap_path(self.path.as_ref(), preview);
+        #[cfg(test)]
+        pevcap_confirmation_hooks::run(&pevcap_confirmation_hooks::BEFORE_BEGIN);
+        // Reserve the digest before publishing bytes. A rejected competing importer must never
+        // own cleanup of the artifact used by the admitted importer.
+        let begin = self.request(|reply| Command::BeginPevcapImport {
             digest: preview.artifact_digest.clone(),
-            managed_path: managed.path.clone(),
+            managed_path: managed_path.clone(),
             outcome,
             created_at_ms,
             reply,
-        }) {
-            Ok(begin) => begin,
-            Err(error) => {
-                if managed.created {
-                    let _ = fs::remove_file(&managed.path);
-                }
-                return Err(error);
-            }
-        };
+        })?;
         let PevcapBegin::Started { ride_id } = begin else {
             return match begin {
                 PevcapBegin::Duplicate(receipt) => {
@@ -3511,7 +3670,12 @@ impl RideDatabase {
             };
         };
 
+        let mut created_managed_artifact = false;
         let result = (|| {
+            let managed = prepare_managed_pevcap(self.path.as_ref(), preview)?;
+            created_managed_artifact = managed.created;
+            #[cfg(test)]
+            pevcap_confirmation_hooks::run(&pevcap_confirmation_hooks::BEFORE_STORE);
             capture_data::store(self, preview, &managed.path)?;
             let location_count = if let Some(ride_id) = ride_id {
                 stream_pevcap_location_batches(&managed.path, preview.encoding(), |samples| {
@@ -3561,14 +3725,18 @@ impl RideDatabase {
             }
         }
         if result.is_err() {
+            // Keep the digest reserved until cleanup finishes, so a retry cannot reuse these
+            // newly owned bytes between the abort and removal.
+            if created_managed_artifact {
+                let _ = fs::remove_file(&managed_path);
+            }
             let _ = self.request(|reply| Command::AbortPevcapImport {
                 digest: preview.artifact_digest.clone(),
                 ride_id,
                 reply,
             });
-            if managed.created {
-                let _ = fs::remove_file(&managed.path);
-            }
+            #[cfg(test)]
+            pevcap_confirmation_hooks::run(&pevcap_confirmation_hooks::AFTER_ABORT);
         }
         result
     }
@@ -3861,6 +4029,29 @@ impl RideDatabase {
         self.transition_blocking_with_timestamp(ride_id, event, Some(monotonic_at_ms))
     }
 
+    /// Applies a lifecycle event and checkpoints the latest telemetry receipt in one row update.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] when the ride or worker rejects the transition.
+    pub fn transition_at_with_telemetry(
+        &self,
+        ride_id: RideId,
+        event: RideEvent,
+        monotonic_at_ms: u64,
+        last_telemetry_at_ms: Option<u64>,
+    ) -> Result<RideLifecycleState, StorageError> {
+        let occurred_at_ms = wall_clock_now_milliseconds()?;
+        self.request_blocking(move |reply| Command::Transition {
+            ride_id,
+            event,
+            occurred_at_ms,
+            monotonic_at_ms: Some(monotonic_at_ms),
+            last_telemetry_at_ms,
+            reply,
+        })
+    }
+
     /// Queues one timestamped lifecycle transition without waiting for SQLite.
     ///
     /// The bounded queue returns `QueueFull` immediately when it cannot accept the command.
@@ -3875,6 +4066,23 @@ impl RideDatabase {
         event: RideEvent,
         monotonic_at_ms: u64,
     ) -> Result<PendingRideLifecycleTransition, StorageError> {
+        self.queue_transition_at_with_telemetry(ride_id, event, monotonic_at_ms, None)
+    }
+
+    /// Queues a lifecycle event and telemetry receipt checkpoint without waiting for SQLite.
+    ///
+    /// Both are committed in the same row update; a rejected transition changes neither.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] when the bounded queue or worker cannot accept the command.
+    pub fn queue_transition_at_with_telemetry(
+        &self,
+        ride_id: RideId,
+        event: RideEvent,
+        monotonic_at_ms: u64,
+        last_telemetry_at_ms: Option<u64>,
+    ) -> Result<PendingRideLifecycleTransition, StorageError> {
         let occurred_at_ms = wall_clock_now_milliseconds()?;
         let (reply, response) = response_channel();
         self.enqueue(Command::Transition {
@@ -3882,6 +4090,7 @@ impl RideDatabase {
             event,
             occurred_at_ms,
             monotonic_at_ms: Some(monotonic_at_ms),
+            last_telemetry_at_ms,
             reply,
         })?;
         Ok(PendingRideLifecycleTransition {
@@ -3902,6 +4111,7 @@ impl RideDatabase {
             event,
             occurred_at_ms,
             monotonic_at_ms,
+            last_telemetry_at_ms: None,
             reply,
         })
     }
@@ -3985,6 +4195,38 @@ impl RideDatabase {
     ) -> Result<PendingLocationWrite, StorageError> {
         let (reply, response) = response_channel();
         self.enqueue(Command::AppendLocationAsync {
+            ride_id,
+            sample,
+            segment_id,
+            start_reason,
+            telemetry_state,
+            reply,
+        })?;
+        Ok(PendingLocationWrite {
+            response,
+            consumed: false,
+        })
+    }
+
+    /// Queues a location from a background recorder, waiting for worker queue capacity.
+    ///
+    /// The queue stays bounded. This may block until another command is consumed, so callers
+    /// must not use it on a UI executor or from the database worker. The returned ticket still
+    /// reports the durable admission result separately from submission.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::WorkerStopped`] when the worker is unavailable.
+    pub fn queue_location_waiting_for_capacity(
+        &self,
+        ride_id: RideId,
+        sample: LocationSample,
+        segment_id: RideMapSegmentId,
+        start_reason: RideSegmentStartReason,
+        telemetry_state: RouteTelemetryState,
+    ) -> Result<PendingLocationWrite, StorageError> {
+        let (reply, response) = response_channel();
+        self.enqueue_blocking(Command::AppendLocationAsync {
             ride_id,
             sample,
             segment_id,
@@ -4518,6 +4760,13 @@ enum Command {
         integrity: LiveCaptureIntegrity,
         reply: Reply<()>,
     },
+    FinalizeLiveCapture {
+        id: LiveCaptureId,
+        header_json: Vec<u8>,
+        finished_at_ms: u64,
+        integrity: LiveCaptureIntegrity,
+        reply: Reply<()>,
+    },
     UpdateLiveCaptureHeader {
         id: LiveCaptureId,
         header_json: Vec<u8>,
@@ -4528,6 +4777,17 @@ enum Command {
         after_sequence: Option<i64>,
         limit: QueryLimit,
         reply: Reply<LiveCaptureSnapshot>,
+    },
+    RetainLiveCaptureContext {
+        id: LiveCaptureId,
+        header_json: Vec<u8>,
+        context_json: String,
+        reply: Reply<()>,
+    },
+    ListLiveCaptureHistory {
+        cursor: Option<LiveCaptureHistoryCursor>,
+        limit: QueryLimit,
+        reply: Reply<LiveCaptureHistoryPage>,
     },
     RecordedCaptureLookup {
         id: crate::CaptureArtifactId,
@@ -4816,6 +5076,7 @@ enum Command {
         event: RideEvent,
         occurred_at_ms: u64,
         monotonic_at_ms: Option<u64>,
+        last_telemetry_at_ms: Option<u64>,
         reply: Reply<RideLifecycleState>,
     },
     AppendLocation {
@@ -4914,6 +5175,10 @@ enum Command {
     RideCheckpoint {
         reply: Reply<()>,
     },
+    CheckpointLocationObservation {
+        checkpoint: RideLocationObservationCheckpoint,
+        reply: Reply<RideLocationObservationCheckpointOutcome>,
+    },
 }
 
 fn canonical_database_path(path: &Path) -> Result<PathBuf, StorageError> {
@@ -4961,11 +5226,118 @@ fn configure_connection(
     migrate(connection)?;
     repair_legacy_ride_creation_times(connection)?;
     verify_current_schema(connection)?;
+    // Live capture commits every observation. WAL avoids journaling and then
+    // overwriting the same database pages for each event. Keep each successful
+    // commit synced: NORMAL would weaken the recording durability contract.
+    let journal: String =
+        connection.pragma_update_and_check(None, "journal_mode", "WAL", |row| row.get(0))?;
+    if journal != "wal" {
+        return Err(StorageError::Sqlite(rusqlite::Error::InvalidQuery));
+    }
+    connection.pragma_update(None, "synchronous", "FULL")?;
     recover_abandoned_pevcap_imports(connection, database_path)?;
     let recovered_rides = recover_interrupted_rides(connection)?;
     Ok(BootstrapSnapshot {
         recovered_rides: recovered_rides.into(),
     })
+}
+
+#[cfg(test)]
+mod sqlite_durability_tests {
+    use super::{Connection, LiveCaptureEventKind, LiveCaptureId, configure_connection};
+
+    #[test]
+    fn file_database_uses_wal_with_full_commit_durability() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("ride.sqlite");
+        let mut connection = Connection::open(&path).unwrap();
+        // The policy must be explicit on the worker connection, not inherited
+        // from a default or measured on an unrelated observer connection.
+        connection
+            .pragma_update(None, "synchronous", "NORMAL")
+            .unwrap();
+        configure_connection(&mut connection, &path).unwrap();
+        let journal: String = connection
+            .pragma_query_value(None, "journal_mode", |row| row.get(0))
+            .unwrap();
+        let synchronous: u32 = connection
+            .pragma_query_value(None, "synchronous", |row| row.get(0))
+            .unwrap();
+        assert_eq!(journal, "wal");
+        assert_eq!(synchronous, 2);
+    }
+
+    #[test]
+    fn committed_wal_capture_survives_process_exit_and_backup_includes_it() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("ride.sqlite");
+        let child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "storage::sqlite_durability_tests::capture_process_fixture",
+                "--ignored",
+                "--nocapture",
+            ])
+            .env("CUTOUT_SQLITE_CRASH_FIXTURE", &path)
+            .status()
+            .unwrap();
+        assert!(child.success());
+        assert!(
+            std::fs::metadata(path.with_extension("sqlite-wal"))
+                .unwrap()
+                .len()
+                > 0
+        );
+        let mut connection = Connection::open(&path).unwrap();
+        configure_connection(&mut connection, &path).unwrap();
+        let state: (u64, u64) = connection.query_row(
+            "SELECT next_sequence, (SELECT COUNT(*) FROM live_capture_events) FROM live_capture_sessions",
+            [], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
+        assert_eq!(state, (1, 1));
+        super::integrity_check(&connection).unwrap();
+        let backup_path = directory.path().join("backup.sqlite");
+        super::backup(&connection, &backup_path).unwrap();
+        let backup = Connection::open(&backup_path).unwrap();
+        assert_eq!(
+            backup
+                .query_row("SELECT payload FROM live_capture_events", [], |row| row
+                    .get::<_, Vec<u8>>(0))
+                .unwrap(),
+            b"committed"
+        );
+        super::integrity_check(&backup).unwrap();
+    }
+
+    #[test]
+    #[ignore = "subprocess fixture invoked by the WAL recovery regression"]
+    fn capture_process_fixture() {
+        let path =
+            std::path::PathBuf::from(std::env::var_os("CUTOUT_SQLITE_CRASH_FIXTURE").unwrap());
+        let mut connection = Connection::open(&path).unwrap();
+        configure_connection(&mut connection, &path).unwrap();
+        let id = LiveCaptureId::new();
+        super::live_capture::begin(&connection, id, b"header", 0).unwrap();
+        super::live_capture::append(
+            &mut connection,
+            &super::live_capture::LiveCaptureEventAppend {
+                id,
+                kind: LiveCaptureEventKind::Notification,
+                receipt_monotonic_ms: 1,
+                source_monotonic_offset_ms: None,
+                source_wall_clock_unix_ms: None,
+                payload: b"committed",
+                location: None,
+                ble_record: None,
+            },
+        )
+        .unwrap();
+        // Exit without dropping SQLite, with a later transaction still open.
+        // Recovery must retain the completed event and discard this mutation.
+        connection
+            .execute_batch("BEGIN; UPDATE live_capture_sessions SET next_sequence = 2;")
+            .unwrap();
+        std::process::exit(0);
+    }
 }
 
 fn integrity_check(connection: &Connection) -> Result<(), StorageError> {
@@ -5888,17 +6260,22 @@ fn check_pevcap_limit(resource: &'static str, limit: u64, actual: u64) -> Result
     check_limit_result(check_limit(resource, limit, actual))
 }
 
+fn managed_pevcap_path(database_path: &Path, preview: &PevcapImportPreview) -> PathBuf {
+    let extension = match preview.encoding {
+        PevcapEncoding::Jsonl => "jsonl",
+        PevcapEncoding::Binary => "pevcap",
+    };
+    pevcap_import_directory(database_path)
+        .join(format!("{}.{}", preview.artifact_digest, extension))
+}
+
 fn prepare_managed_pevcap(
     database_path: &Path,
     preview: &PevcapImportPreview,
 ) -> Result<ManagedArtifact, StorageError> {
     let directory = pevcap_import_directory(database_path);
     ensure_managed_pevcap_directory(&directory)?;
-    let extension = match preview.encoding {
-        PevcapEncoding::Jsonl => "jsonl",
-        PevcapEncoding::Binary => "pevcap",
-    };
-    let destination = directory.join(format!("{}.{}", preview.artifact_digest, extension));
+    let destination = managed_pevcap_path(database_path, preview);
     match fs::symlink_metadata(&destination) {
         Ok(_) => {
             validate_managed_pevcap_artifact(
@@ -5916,38 +6293,51 @@ fn prepare_managed_pevcap(
         Err(error) => return Err(StorageError::Io(error)),
     }
 
-    let temporary = directory.join(format!(
-        ".{}.{}.part",
-        preview.artifact_digest,
-        Uuid::new_v4()
-    ));
-    let copied = (|| {
-        let source = File::open(&preview.source_path)?;
-        let mut destination_file = OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&temporary)?;
-        let copied = std::io::copy(&mut BufReader::new(source), &mut destination_file)?;
-        destination_file.sync_all()?;
-        if copied != preview.artifact_size
-            || artifact_digest(&temporary)? != preview.artifact_digest
-        {
-            return Err(StorageError::PevcapPreviewChanged);
-        }
-        let mut permissions = destination_file.metadata()?.permissions();
-        permissions.set_readonly(true);
-        fs::set_permissions(&temporary, permissions)?;
-        fs::rename(&temporary, &destination)?;
-        File::open(&directory)?.sync_all()?;
-        Ok(())
-    })();
-    if let Err(error) = copied {
-        let _ = fs::remove_file(&temporary);
-        return Err(error);
+    let mut staging = tempfile::Builder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        // Match OpenOptions creation permissions, including the process umask.
+        staging.permissions(fs::Permissions::from_mode(0o666));
     }
+    let mut destination_file = staging.tempfile_in(&directory)?;
+    let source = File::open(&preview.source_path)?;
+    let copied = std::io::copy(&mut BufReader::new(source), destination_file.as_file_mut())?;
+    if copied != preview.artifact_size
+        || artifact_digest(destination_file.path())? != preview.artifact_digest
+    {
+        return Err(StorageError::PevcapPreviewChanged);
+    }
+    let mut permissions = destination_file.as_file().metadata()?.permissions();
+    permissions.set_readonly(true);
+    destination_file.as_file().set_permissions(permissions)?;
+    destination_file.as_file().sync_all()?;
+    publish_managed_pevcap(destination_file, &directory, destination, preview)
+}
+
+fn publish_managed_pevcap(
+    staging: NamedTempFile,
+    directory: &Path,
+    destination: PathBuf,
+    preview: &PevcapImportPreview,
+) -> Result<ManagedArtifact, StorageError> {
+    let created = match staging.persist_noclobber(&destination) {
+        Ok(_) => true,
+        Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {
+            validate_managed_pevcap_artifact(
+                directory,
+                &destination,
+                preview.artifact_digest(),
+                preview.artifact_size(),
+            )?;
+            false
+        }
+        Err(error) => return Err(StorageError::Io(error.error)),
+    };
+    File::open(directory)?.sync_all()?;
     Ok(ManagedArtifact {
         path: destination,
-        created: true,
+        created,
     })
 }
 
@@ -5973,6 +6363,323 @@ fn ensure_managed_pevcap_directory(directory: &Path) -> Result<(), StorageError>
         }
     }
     Err(StorageError::PevcapPreviewChanged)
+}
+
+#[cfg(test)]
+mod managed_artifact_tests {
+    use super::*;
+
+    fn capture_bytes() -> String {
+        use cutout_core::{
+            MonotonicTimestamp, PevcapCapture, PevcapHeader, WallClockUnixTimestamp,
+        };
+        let header = PevcapHeader::new(
+            WallClockUnixTimestamp::new(1_700_000_000_000),
+            "test",
+            None,
+            &[],
+            &[],
+            None,
+            None,
+            "test",
+            [0; 32],
+            &[],
+        )
+        .unwrap();
+        PevcapCapture::new(
+            header,
+            vec![PevcapRecord::link_up(MonotonicTimestamp::new(1), None)],
+        )
+        .to_jsonl()
+        .unwrap()
+    }
+
+    #[test]
+    fn rejected_importer_preserves_artifact_owned_by_admitted_importer() {
+        let directory = tempfile::tempdir().unwrap();
+        let database_path = directory.path().canonicalize().unwrap().join("ride.sqlite");
+        let source_path = directory.path().join("source.jsonl");
+        let bytes = capture_bytes();
+        fs::write(&source_path, &bytes).unwrap();
+        let database = RideDatabase::open(&database_path).unwrap();
+        let preview = database
+            .preflight_pevcap(&source_path, PevcapEncoding::Jsonl)
+            .unwrap();
+        let accepted_path = pevcap_import_directory(&database_path)
+            .join(format!("{}.jsonl", preview.artifact_digest()));
+        let (a_paused, a_ready) = mpsc::channel();
+        let (resume_a, a_resume) = mpsc::channel();
+        let (b_paused, b_ready) = mpsc::channel();
+        let (resume_b, b_resume) = mpsc::channel();
+        let timeout = Duration::from_secs(5);
+
+        std::thread::scope(|scope| {
+            let a = scope.spawn(|| {
+                pevcap_confirmation_hooks::BEFORE_BEGIN.with(|slot| {
+                    *slot.borrow_mut() = Some(Box::new(move || {
+                        a_paused.send(()).unwrap();
+                        a_resume.recv_timeout(timeout).unwrap();
+                    }));
+                });
+                database.confirm_pevcap_import(&preview, 1_700_000_000_001)
+            });
+            a_ready.recv_timeout(timeout).unwrap();
+            let b = scope.spawn(|| {
+                pevcap_confirmation_hooks::BEFORE_STORE.with(|slot| {
+                    *slot.borrow_mut() = Some(Box::new(move || {
+                        b_paused.send(()).unwrap();
+                        b_resume.recv_timeout(timeout).unwrap();
+                    }));
+                });
+                database.confirm_pevcap_import(&preview, 1_700_000_000_002)
+            });
+            b_ready.recv_timeout(timeout).unwrap();
+            resume_a.send(()).unwrap();
+            let rejected = a.join().unwrap();
+            let protected_bytes = fs::read(&accepted_path);
+            resume_b.send(()).unwrap();
+            let admitted = b.join().unwrap();
+
+            assert!(matches!(
+                rejected,
+                Err(StorageError::PevcapImportInProgress)
+            ));
+            assert_eq!(protected_bytes.unwrap(), bytes.as_bytes());
+            let receipt = admitted.unwrap();
+            assert_eq!(receipt.managed_artifact_path, accepted_path);
+            assert_eq!(fs::read(&accepted_path).unwrap(), bytes.as_bytes());
+        });
+        database.shutdown().unwrap();
+    }
+
+    #[test]
+    fn failed_importer_cleanup_cannot_delete_artifact_of_retrying_importer() {
+        let directory = tempfile::tempdir().unwrap();
+        let database_path = directory.path().canonicalize().unwrap().join("ride.sqlite");
+        let source_path = directory.path().join("source.jsonl");
+        let bytes = capture_bytes();
+        fs::write(&source_path, &bytes).unwrap();
+        let database = RideDatabase::open(&database_path).unwrap();
+        let preview = database
+            .preflight_pevcap(&source_path, PevcapEncoding::Jsonl)
+            .unwrap();
+        let accepted_path = managed_pevcap_path(&database_path, &preview);
+        let (a_paused, a_ready) = mpsc::channel();
+        let (resume_a, a_resume) = mpsc::channel();
+        let (b_paused, b_ready) = mpsc::channel();
+        let (resume_b, b_resume) = mpsc::channel();
+        let timeout = Duration::from_secs(5);
+
+        std::thread::scope(|scope| {
+            let a = scope.spawn(|| {
+                pevcap_confirmation_hooks::AFTER_ABORT.with(|slot| {
+                    *slot.borrow_mut() = Some(Box::new(move || {
+                        a_paused.send(()).unwrap();
+                        a_resume.recv_timeout(timeout).unwrap();
+                    }));
+                });
+                database.confirm_pevcap_import(&preview, u64::MAX)
+            });
+            a_ready.recv_timeout(timeout).unwrap();
+            let b = scope.spawn(|| {
+                pevcap_confirmation_hooks::BEFORE_STORE.with(|slot| {
+                    *slot.borrow_mut() = Some(Box::new(move || {
+                        b_paused.send(()).unwrap();
+                        b_resume.recv_timeout(timeout).unwrap();
+                    }));
+                });
+                database.confirm_pevcap_import(&preview, 1_700_000_000_002)
+            });
+            b_ready.recv_timeout(timeout).unwrap();
+            resume_a.send(()).unwrap();
+            let failed = a.join().unwrap();
+            let protected_bytes = fs::read(&accepted_path);
+            resume_b.send(()).unwrap();
+            let admitted = b.join().unwrap();
+
+            assert!(failed.is_err());
+            assert_eq!(protected_bytes.unwrap(), bytes.as_bytes());
+            let receipt = admitted.unwrap();
+            assert_eq!(receipt.managed_artifact_path, accepted_path);
+            assert_eq!(fs::read(&accepted_path).unwrap(), bytes.as_bytes());
+        });
+        database.shutdown().unwrap();
+    }
+
+    #[test]
+    fn failed_prepare_releases_reservation_and_preserves_unowned_path() {
+        let directory = tempfile::tempdir().unwrap();
+        let database_path = directory.path().canonicalize().unwrap().join("ride.sqlite");
+        let source_path = directory.path().join("source.jsonl");
+        let bytes = capture_bytes();
+        fs::write(&source_path, &bytes).unwrap();
+        let database = RideDatabase::open(&database_path).unwrap();
+        let preview = database
+            .preflight_pevcap(&source_path, PevcapEncoding::Jsonl)
+            .unwrap();
+        let managed_directory = pevcap_import_directory(&database_path);
+        fs::write(&managed_directory, b"unowned obstruction").unwrap();
+
+        assert!(matches!(
+            database.confirm_pevcap_import(&preview, 1_700_000_000_001),
+            Err(StorageError::PevcapPreviewChanged)
+        ));
+        assert_eq!(
+            fs::read(&managed_directory).unwrap(),
+            b"unowned obstruction"
+        );
+        fs::remove_file(managed_directory).unwrap();
+
+        let receipt = database
+            .confirm_pevcap_import(&preview, 1_700_000_000_002)
+            .unwrap();
+        assert_eq!(
+            fs::read(receipt.managed_artifact_path).unwrap(),
+            bytes.as_bytes()
+        );
+        database.shutdown().unwrap();
+    }
+
+    fn preview(directory: &Path) -> PevcapImportPreview {
+        let source = directory.join("source.jsonl");
+        fs::write(&source, b"original capture bytes").unwrap();
+        PevcapImportPreview::from_parts(
+            source.clone(),
+            PevcapEncoding::Jsonl,
+            artifact_digest(&source).unwrap(),
+            fs::metadata(source).unwrap().len(),
+            0,
+            0,
+            0,
+            PevcapImportOutcome::CaptureOnly,
+            vec![],
+        )
+    }
+
+    #[test]
+    fn managed_staging_rejects_changed_source_without_leaving_files() {
+        let directory = tempfile::tempdir().unwrap();
+        let preview = preview(directory.path());
+        fs::write(preview.source_path(), b"changed capture bytes").unwrap();
+        let database = directory.path().join("ride.sqlite");
+        assert!(matches!(
+            prepare_managed_pevcap(&database, &preview),
+            Err(StorageError::PevcapPreviewChanged)
+        ));
+        assert_eq!(
+            fs::read_dir(pevcap_import_directory(&database))
+                .unwrap()
+                .count(),
+            0
+        );
+    }
+
+    #[test]
+    fn managed_staging_preserves_creation_permissions_and_existing_artifact() {
+        let directory = tempfile::tempdir().unwrap();
+        let preview = preview(directory.path());
+        let database = directory.path().join("ride.sqlite");
+        let permissions_reference = directory.path().join("permissions-reference");
+        let reference = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(permissions_reference)
+            .unwrap();
+        let mut expected_permissions = reference.metadata().unwrap().permissions();
+        expected_permissions.set_readonly(true);
+
+        let first = prepare_managed_pevcap(&database, &preview).unwrap();
+        assert!(first.created);
+        assert_eq!(fs::read(&first.path).unwrap(), b"original capture bytes");
+        assert_eq!(
+            fs::metadata(&first.path).unwrap().permissions(),
+            expected_permissions
+        );
+        let second = prepare_managed_pevcap(&database, &preview).unwrap();
+        assert!(!second.created);
+        assert_eq!(second.path, first.path);
+        assert_eq!(fs::read(&first.path).unwrap(), b"original capture bytes");
+        assert_eq!(
+            fs::read_dir(pevcap_import_directory(&database))
+                .unwrap()
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn managed_publication_race_preserves_winner_and_removes_loser_staging() {
+        let directory = tempfile::tempdir().unwrap();
+        let preview = preview(directory.path());
+        let destination = directory.path().join("accepted.jsonl");
+        fs::copy(preview.source_path(), &destination).unwrap();
+        #[cfg(unix)]
+        let original_inode = {
+            use std::os::unix::fs::MetadataExt;
+            fs::metadata(&destination).unwrap().ino()
+        };
+        let mut staging = NamedTempFile::new_in(directory.path()).unwrap();
+        staging.write_all(b"original capture bytes").unwrap();
+        let staging_path = staging.path().to_owned();
+        let published =
+            publish_managed_pevcap(staging, directory.path(), destination.clone(), &preview)
+                .unwrap();
+        assert!(!published.created);
+        assert_eq!(fs::read(&destination).unwrap(), b"original capture bytes");
+        assert!(!staging_path.exists());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            assert_eq!(fs::metadata(destination).unwrap().ino(), original_inode);
+        }
+    }
+
+    #[test]
+    fn managed_publication_rejects_corrupt_race_winner_without_overwriting_it() {
+        let directory = tempfile::tempdir().unwrap();
+        let preview = preview(directory.path());
+        let destination = directory.path().join("accepted.jsonl");
+        fs::write(&destination, b"corrupt competing artifact").unwrap();
+        let mut staging = NamedTempFile::new_in(directory.path()).unwrap();
+        staging.write_all(b"original capture bytes").unwrap();
+        let staging_path = staging.path().to_owned();
+        assert!(matches!(
+            publish_managed_pevcap(staging, directory.path(), destination.clone(), &preview),
+            Err(StorageError::PevcapPreviewChanged)
+        ));
+        assert_eq!(
+            fs::read(destination).unwrap(),
+            b"corrupt competing artifact"
+        );
+        assert!(!staging_path.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn managed_publication_rejects_symlink_race_winner_without_removing_it() {
+        let directory = tempfile::tempdir().unwrap();
+        let preview = preview(directory.path());
+        let destination = directory.path().join("accepted.jsonl");
+        std::os::unix::fs::symlink(preview.source_path(), &destination).unwrap();
+        let mut staging = NamedTempFile::new_in(directory.path()).unwrap();
+        staging.write_all(b"original capture bytes").unwrap();
+        let staging_path = staging.path().to_owned();
+        assert!(matches!(
+            publish_managed_pevcap(staging, directory.path(), destination.clone(), &preview),
+            Err(StorageError::PevcapPreviewChanged)
+        ));
+        assert!(
+            fs::symlink_metadata(destination)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert!(!staging_path.exists());
+        assert_eq!(
+            fs::read(preview.source_path()).unwrap(),
+            b"original capture bytes"
+        );
+    }
 }
 
 fn validate_managed_pevcap_artifact(
@@ -6145,14 +6852,14 @@ fn next_attached_location(
             .next_event()
             .map_err(|error| StorageError::PevcapImport(error.to_string()))?;
         let Some(event) = event else { return Ok(None) };
-        if let PevcapEvent::Record(record) = event {
-            if let Some(location) = record.phone_location {
-                return Ok(Some(PevcapLocationCandidate {
-                    location,
-                    monotonic_ms: record.monotonic_ms.as_milliseconds(),
-                    origin: PevcapLocationOrigin::Attached,
-                }));
-            }
+        if let PevcapEvent::Record(record) = event
+            && let Some(location) = record.phone_location
+        {
+            return Ok(Some(PevcapLocationCandidate {
+                location,
+                monotonic_ms: record.monotonic_ms.as_milliseconds(),
+                origin: PevcapLocationOrigin::Attached,
+            }));
         }
     }
 }
@@ -6575,16 +7282,19 @@ fn apply_verified_connection_admission(
                     created_at_ms,
                     monotonic_created_at_ms,
                     candidate_vehicle,
+                    music_history_policy,
                 } => {
                     if created_ride_id.is_some() {
                         return Err(StorageError::InvalidConnectionAdmissionPlan);
                     }
-                    created_ride_id = Some(create_started_live_ride_in_transaction(
+                    let ride_id = create_started_live_ride_in_transaction(
                         &transaction,
                         *created_at_ms,
                         *monotonic_created_at_ms,
                         candidate_vehicle.as_deref(),
-                    )?);
+                    )?;
+                    apply_music_history_policy(&transaction, ride_id, *music_history_policy)?;
+                    created_ride_id = Some(ride_id);
                 }
             }
         }
@@ -6711,6 +7421,8 @@ pub struct MusicTimelineRecordResult {
     pub outcome: MusicTimelineOutcome,
     /// Durable ride-local sequence when the transition was recorded.
     pub sequence: Option<u64>,
+    /// Authoritative policy applied by the actual ordered SQLite transaction.
+    pub effective_policy: MusicHistoryPolicy,
 }
 
 fn music_history(connection: &Connection, ride_id: RideId) -> Result<MusicHistory, StorageError> {
@@ -6830,6 +7542,7 @@ fn record_music_event(
         return Ok(MusicTimelineRecordResult {
             outcome: MusicTimelineOutcome::Disabled,
             sequence: None,
+            effective_policy: policy,
         });
     }
     // Keep live writes closed while the existing durable prefix is unreadable or non-contiguous.
@@ -6844,6 +7557,7 @@ fn record_music_event(
         return Ok(MusicTimelineRecordResult {
             outcome: MusicTimelineOutcome::OutOfOrder,
             sequence: None,
+            effective_policy: policy,
         });
     }
     let previous = transaction
@@ -6882,6 +7596,7 @@ fn record_music_event(
     Ok(MusicTimelineRecordResult {
         sequence: (outcome == MusicTimelineOutcome::Recorded).then_some(count),
         outcome,
+        effective_policy: policy,
     })
 }
 
@@ -6943,22 +7658,21 @@ fn apply_music_history_policy(
             "DELETE FROM ride_music_event WHERE ride_id = ?1",
             [ride_id.uuid().to_string()],
         )?;
-    } else if let Some((value, deleted)) = existing_policy.as_ref() {
-        if !deleted
-            && parse_policy(value)? == MusicHistoryPolicy::OpaqueItem
-            && policy == MusicHistoryPolicy::HumanReadable
-        {
-            // Opaque history must never become readable merely because a user opts in later. Drop
-            // all fields that were not validly retained under the prior policy.
-            transaction.execute(
-                "UPDATE ride_music_event SET item_identifier = CASE
+    } else if let Some((value, deleted)) = existing_policy.as_ref()
+        && !deleted
+        && parse_policy(value)? == MusicHistoryPolicy::OpaqueItem
+        && policy == MusicHistoryPolicy::HumanReadable
+    {
+        // Opaque history must never become readable merely because a user opts in later. Drop
+        // all fields that were not validly retained under the prior policy.
+        transaction.execute(
+            "UPDATE ride_music_event SET item_identifier = CASE
                      WHEN provider = 'spotify' AND item_identifier LIKE 'spotify:local:%' THEN NULL
                      ELSE item_identifier END,
                      title = NULL, artist = NULL
                  WHERE ride_id = ?1",
-                [ride_id.uuid().to_string()],
-            )?;
-        }
+            [ride_id.uuid().to_string()],
+        )?;
     }
     transaction.execute(
         "INSERT INTO ride_music_history (ride_id, policy, state)
@@ -7579,7 +8293,8 @@ fn save_ride_session_marker(connection: &Connection, marker: &[u8]) -> Result<()
     }
     connection.execute(
         "INSERT INTO ride_session_marker (singleton_key, marker) VALUES (?1, ?2)
-         ON CONFLICT(singleton_key) DO UPDATE SET marker = excluded.marker",
+         ON CONFLICT(singleton_key) DO UPDATE SET marker = excluded.marker
+         WHERE ride_session_marker.marker != excluded.marker",
         params![RideSessionMarkerKey::VALUE.blob(), marker],
     )?;
     Ok(())
@@ -7611,13 +8326,34 @@ fn transition_ride(
     occurred_at_ms: u64,
     monotonic_at_ms: Option<u64>,
 ) -> Result<RideLifecycleState, StorageError> {
+    transition_ride_with_telemetry(
+        connection,
+        ride_id,
+        event,
+        occurred_at_ms,
+        monotonic_at_ms,
+        None,
+    )
+}
+
+fn transition_ride_with_telemetry(
+    connection: &Connection,
+    ride_id: RideId,
+    event: RideEvent,
+    occurred_at_ms: u64,
+    monotonic_at_ms: Option<u64>,
+    last_telemetry_at_ms: Option<u64>,
+) -> Result<RideLifecycleState, StorageError> {
     let write_state = load_ride_write_state(connection, ride_id)?;
     let update = write_state.transition_at(event, occurred_at_ms, monotonic_at_ms)?;
     connection.execute(
         "UPDATE rides SET state = ?2, monotonic_created_at_ms = ?3,
                 monotonic_last_event_ms = ?4, paused_at_ms = ?5,
                 paused_duration_ms = ?6, completed_duration_ms = ?7,
-                updated_at_ms = ?8 WHERE id = ?1",
+                updated_at_ms = ?8,
+                last_telemetry_at_ms = CASE WHEN ?9 IS NULL THEN last_telemetry_at_ms
+                    ELSE MAX(COALESCE(last_telemetry_at_ms, ?9), ?9) END
+             WHERE id = ?1",
         params![
             ride_id.uuid().to_string(),
             state_to_db(update.lifecycle()),
@@ -7627,6 +8363,7 @@ fn transition_ride(
             update.paused_duration_milliseconds(),
             update.completed_duration_milliseconds(),
             update.updated_at_milliseconds(),
+            last_telemetry_at_ms,
         ],
     )?;
     Ok(update.lifecycle())
@@ -7678,10 +8415,20 @@ fn load_previous_ride_point(
 ) -> Result<Option<PreviousRidePoint>, StorageError> {
     connection
         .query_row(
-            "SELECT sequence, segment_id, monotonic_ms, wall_clock_ms, latitude_e7, longitude_e7, horizontal_accuracy_mm, source
-             FROM ride_points WHERE ride_id = ?1 ORDER BY sequence DESC LIMIT 1",
+            "SELECT point.sequence, point.segment_id,
+                    CASE WHEN ride.last_location_observed_monotonic_ms >= point.monotonic_ms
+                         AND ride.last_location_observed_wall_clock_ms > 0
+                         THEN ride.last_location_observed_monotonic_ms ELSE point.monotonic_ms END,
+                    CASE WHEN ride.last_location_observed_monotonic_ms >= point.monotonic_ms
+                         AND ride.last_location_observed_wall_clock_ms > 0
+                         THEN ride.last_location_observed_wall_clock_ms ELSE point.wall_clock_ms END,
+                    point.latitude_e7, point.longitude_e7, point.horizontal_accuracy_mm, point.source,
+                    ride.last_location_observed_monotonic_ms, ride.last_location_observed_wall_clock_ms
+             FROM ride_points AS point JOIN rides AS ride ON ride.id = point.ride_id
+             WHERE point.ride_id = ?1 ORDER BY point.sequence DESC LIMIT 1",
             params![ride_id.uuid().to_string()],
             |row| {
+                read_location_observation_clocks(row, 8, 9)?;
                 let coordinate =
                     Coordinate::from_fixed_parts(row.get(4)?, row.get(5)?).map_err(|_| {
                         rusqlite::Error::FromSqlConversionFailure(
@@ -7716,6 +8463,61 @@ fn load_previous_ride_point(
         )
         .optional()
         .map_err(StorageError::from)
+}
+
+fn checkpoint_location_observation(
+    connection: &Connection,
+    checkpoint: RideLocationObservationCheckpoint,
+) -> Result<RideLocationObservationCheckpointOutcome, StorageError> {
+    use RideLocationObservationCheckpointOutcome::{AlreadyObserved, Applied, PointChanged};
+    let RideLocationObservationCheckpoint {
+        ride_id,
+        expected_point_sequence,
+        observation,
+    } = checkpoint;
+    // Revalidation and the row update share a snapshot even if another connection writes.
+    let transaction = connection.unchecked_transaction()?;
+    let ride = find_ride(&transaction, ride_id)?.ok_or(StorageError::NotFound)?;
+    let Some(previous) = load_previous_ride_point(&transaction, ride_id)? else {
+        return Ok(PointChanged);
+    };
+    if ride.state() != RideLifecycleState::Active
+        || u64::try_from(previous.sequence).ok() != Some(expected_point_sequence)
+        || previous.sample.coordinate() != observation.coordinate()
+        || previous.sample.horizontal_accuracy_millimetres()
+            != observation.horizontal_accuracy_millimetres()
+        || previous.sample.source() != observation.source()
+        || observation.source() != LocationSource::Live
+        || observation.wall_clock_unix_milliseconds().as_u64() == 0
+        || observation.monotonic_milliseconds() < previous.sample.monotonic_milliseconds()
+    {
+        return Ok(PointChanged);
+    }
+    if observation.monotonic_milliseconds() == previous.sample.monotonic_milliseconds() {
+        return Ok(
+            if observation.wall_clock_unix_milliseconds()
+                == previous.sample.wall_clock_unix_milliseconds()
+            {
+                AlreadyObserved
+            } else {
+                PointChanged
+            },
+        );
+    }
+    transaction.execute(
+        "UPDATE rides SET last_location_observed_monotonic_ms = ?2,
+             last_location_observed_wall_clock_ms = ?3,
+             monotonic_last_event_ms = MAX(COALESCE(monotonic_last_event_ms, ?2), ?2),
+             updated_at_ms = MAX(updated_at_ms, ?3)
+         WHERE id = ?1",
+        params![
+            ride_id.uuid().to_string(),
+            observation.monotonic_milliseconds().as_u64(),
+            observation.wall_clock_unix_milliseconds().as_u64()
+        ],
+    )?;
+    transaction.commit()?;
+    Ok(Applied)
 }
 
 fn append_location_in_transaction(
@@ -7767,21 +8569,13 @@ fn append_location_in_transaction(
                 distance_millimetres,
                 updated_at_ms,
             };
-            match insert_location(connection, &insert) {
-                Ok(()) => Ok(LocationWriteResult {
-                    admission: LocationAdmission::Accepted,
-                    sequence: Some(durable_sequence),
-                }),
-                Err(StorageError::Sqlite(rusqlite::Error::SqliteFailure(error, _)))
-                    if error.code == ErrorCode::ConstraintViolation =>
-                {
-                    Ok(LocationWriteResult {
-                        admission: LocationAdmission::Duplicate,
-                        sequence: None,
-                    })
-                }
-                Err(error) => Err(error),
-            }
+            // Admission already identifies duplicates. An insert or summary update
+            // failure must abort the transaction rather than commit a partial point.
+            insert_location(connection, &insert)?;
+            Ok(LocationWriteResult {
+                admission: LocationAdmission::Accepted,
+                sequence: Some(durable_sequence),
+            })
         }
         LocationWriteDecision::Rejected(admission) => Ok(LocationWriteResult {
             admission,
@@ -7984,12 +8778,15 @@ fn insert_location(connection: &Connection, insert: &LocationInsert) -> Result<(
              WHEN monotonic_last_event_ms IS NULL THEN ?4
              ELSE MAX(monotonic_last_event_ms, ?4)
          END,
-         updated_at_ms = ?3 WHERE id = ?1",
+         updated_at_ms = ?3,
+         last_location_observed_monotonic_ms = ?4,
+         last_location_observed_wall_clock_ms = ?5 WHERE id = ?1",
         params![
             ride_id.uuid().to_string(),
             distance_millimetres,
             updated_at_ms,
             sample.monotonic_milliseconds().as_u64(),
+            sample.wall_clock_unix_milliseconds().as_u64(),
         ],
     )?;
     connection.execute(
@@ -8061,7 +8858,8 @@ fn find_ride(connection: &Connection, ride_id: RideId) -> Result<Option<RideReco
                     (SELECT display_name FROM devices
                      WHERE platform_identifier = rides.associated_vehicle),
                     (SELECT COUNT(*) FROM ride_segments
-                     WHERE ride_id = rides.id AND point_count > 0 AND start_reason = 'background_gap')
+                     WHERE ride_id = rides.id AND point_count > 0 AND start_reason = 'background_gap'),
+                    rides.last_location_observed_monotonic_ms, rides.last_location_observed_wall_clock_ms
              FROM rides
              WHERE state NOT IN ('draft', 'discarded') AND id = ?1",
             params![ride_id.uuid().to_string()],
@@ -8106,7 +8904,8 @@ fn newest_recoverable_ride(connection: &Connection) -> Result<Option<RideRecord>
                     (SELECT display_name FROM devices
                      WHERE platform_identifier = rides.associated_vehicle),
                     (SELECT COUNT(*) FROM ride_segments
-                     WHERE ride_id = rides.id AND point_count > 0 AND start_reason = 'background_gap')
+                     WHERE ride_id = rides.id AND point_count > 0 AND start_reason = 'background_gap'),
+                    rides.last_location_observed_monotonic_ms, rides.last_location_observed_wall_clock_ms
              FROM rides
              WHERE state IN ('active', 'paused', 'interrupted')
              ORDER BY created_at_ms DESC, id DESC
@@ -8211,7 +9010,8 @@ fn list_rides(
                            rides.last_telemetry_at_ms,
                            candidate_device.display_name, associated_device.display_name,
                            (SELECT COUNT(*) FROM ride_segments
-                            WHERE ride_id = rides.id AND point_count > 0 AND start_reason = 'background_gap')
+                            WHERE ride_id = rides.id AND point_count > 0 AND start_reason = 'background_gap'),
+                    rides.last_location_observed_monotonic_ms, rides.last_location_observed_wall_clock_ms
                     FROM rides
                     LEFT JOIN devices AS associated_device
                         ON associated_device.platform_identifier = rides.associated_vehicle
@@ -8313,6 +9113,32 @@ fn list_ride_history_vehicle_options(
         .map_err(StorageError::from)
 }
 
+fn read_location_observation_clocks(
+    row: &rusqlite::Row<'_>,
+    monotonic_column: usize,
+    wall_clock_column: usize,
+) -> rusqlite::Result<Option<LocationObservationClocks>> {
+    let monotonic_ms: Option<u64> = row.get(monotonic_column)?;
+    let wall_clock_ms: Option<u64> = row.get(wall_clock_column)?;
+    match (monotonic_ms, wall_clock_ms) {
+        (None, None) => Ok(None),
+        (Some(monotonic_ms), Some(wall_clock_ms)) if wall_clock_ms > 0 => {
+            Ok(Some(LocationObservationClocks {
+                monotonic_ms,
+                wall_clock_ms,
+            }))
+        }
+        _ => Err(rusqlite::Error::FromSqlConversionFailure(
+            monotonic_column,
+            rusqlite::types::Type::Integer,
+            Box::new(StorageError::InvalidStoredValue {
+                field: "location observation clocks",
+                value: format!("{monotonic_ms:?}/{wall_clock_ms:?}"),
+            }),
+        )),
+    }
+}
+
 fn ride_record_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RideRecord> {
     let id_value: String = row.get(0)?;
     let id = Uuid::parse_str(&id_value)
@@ -8354,6 +9180,7 @@ fn ride_record_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RideRecord>
         associated_vehicle: row.get(15)?,
         associated_at_ms: row.get(16)?,
         last_telemetry_at_ms: row.get(17)?,
+        last_location_observation: read_location_observation_clocks(row, 21, 22)?,
         candidate_vehicle_name: row.get(18)?,
         associated_vehicle_name: row.get(19)?,
     })
@@ -9059,5 +9886,430 @@ fn source_from_db(value: &str) -> Result<LocationSource, StorageError> {
             field: "location source",
             value: other.to_owned(),
         }),
+    }
+}
+
+#[cfg(test)]
+mod location_observation_checkpoint_tests {
+    use super::*;
+
+    fn sample(at: u64, latitude: f64, accuracy: u32) -> LocationSample {
+        LocationSample::new(
+            Coordinate::from_degrees(latitude, -105.0).unwrap(),
+            at,
+            1_700_000_000_000 + at,
+            Some(accuracy),
+            LocationSource::Live,
+        )
+    }
+
+    fn fixture() -> (Connection, RideId) {
+        let mut connection = Connection::open_in_memory().unwrap();
+        migrate(&mut connection).unwrap();
+        let id = create_started_live_ride(&mut connection, 1_700_000_000_000, 1_000, None, None)
+            .unwrap();
+        assert_eq!(
+            append_location(
+                &mut connection,
+                id,
+                sample(1_000, 40.0, 3_000),
+                RideMapSegmentId::new(0),
+                RouteTelemetryState::GpsOnly
+            )
+            .unwrap(),
+            LocationAdmission::Accepted
+        );
+        (connection, id)
+    }
+
+    #[test]
+    fn location_observation_checkpoint_preserves_point_and_advances_exact_clock_pair() {
+        let (mut connection, ride_id) = fixture();
+        let before =
+            route_points(&connection, ride_id, None, QueryLimit::new(10).unwrap()).unwrap();
+        let checkpoint = RideLocationObservationCheckpoint {
+            ride_id,
+            expected_point_sequence: 0,
+            observation: sample(60_000, 40.0, 3_000),
+        };
+        let changes = connection.total_changes();
+        assert_eq!(
+            checkpoint_location_observation(&connection, checkpoint).unwrap(),
+            RideLocationObservationCheckpointOutcome::Applied
+        );
+        assert_eq!(connection.total_changes(), changes + 1);
+        let ride = find_ride(&connection, ride_id).unwrap().unwrap();
+        assert_eq!(
+            ride.last_location_observed_monotonic_milliseconds(),
+            Some(60_000)
+        );
+        assert_eq!(
+            ride.last_location_observed_wall_clock_milliseconds(),
+            Some(1_700_000_060_000)
+        );
+        assert_eq!(ride.monotonic_last_event_milliseconds(), Some(60_000));
+        assert_eq!(ride.updated_at_milliseconds(), 1_700_000_060_000);
+        assert_eq!(
+            route_points(&connection, ride_id, None, QueryLimit::new(10).unwrap())
+                .unwrap()
+                .points,
+            before.points
+        );
+        assert_eq!(
+            checkpoint_location_observation(&connection, checkpoint).unwrap(),
+            RideLocationObservationCheckpointOutcome::AlreadyObserved
+        );
+        assert_eq!(connection.total_changes(), changes + 1);
+        assert_eq!(
+            append_location(
+                &mut connection,
+                ride_id,
+                sample(61_000, 40.00001, 3_000),
+                RideMapSegmentId::new(0),
+                RouteTelemetryState::GpsOnly
+            )
+            .unwrap(),
+            LocationAdmission::Accepted
+        );
+        let points = route_points(&connection, ride_id, None, QueryLimit::new(10).unwrap())
+            .unwrap()
+            .points;
+        assert_eq!(points.len(), 2);
+        assert_eq!(points[1].start_reason(), RideSegmentStartReason::Initial);
+        assert_eq!(
+            find_ride(&connection, ride_id)
+                .unwrap()
+                .unwrap()
+                .last_location_observed_monotonic_milliseconds(),
+            Some(61_000)
+        );
+    }
+
+    #[test]
+    fn location_observation_checkpoint_rejects_corrupt_partial_clock_pair() {
+        let (mut connection, ride_id) = fixture();
+        for (monotonic_ms, wall_clock_ms) in [
+            (Some(60_000), None),
+            (None, Some(1_700_000_060_000_u64)),
+            (Some(60_000), Some(0)),
+        ] {
+            connection.execute(
+                "UPDATE rides SET last_location_observed_monotonic_ms = ?2, last_location_observed_wall_clock_ms = ?3 WHERE id = ?1",
+                params![ride_id.uuid().to_string(), monotonic_ms, wall_clock_ms],
+            ).unwrap();
+            assert!(find_ride(&connection, ride_id).is_err());
+            assert!(load_previous_ride_point(&connection, ride_id).is_err());
+            assert!(
+                append_location(
+                    &mut connection,
+                    ride_id,
+                    sample(61_000, 40.00001, 3_000),
+                    RideMapSegmentId::new(0),
+                    RouteTelemetryState::GpsOnly
+                )
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn location_observation_checkpoint_preserves_backwards_wall_clock() {
+        let (connection, ride_id) = fixture();
+        let observation = LocationSample::new(
+            Coordinate::from_degrees(40.0, -105.0).unwrap(),
+            60_000,
+            1_699_999_000_000,
+            Some(3_000),
+            LocationSource::Live,
+        );
+        let checkpoint = RideLocationObservationCheckpoint {
+            ride_id,
+            expected_point_sequence: 0,
+            observation,
+        };
+        assert_eq!(
+            checkpoint_location_observation(&connection, checkpoint).unwrap(),
+            RideLocationObservationCheckpointOutcome::Applied
+        );
+        assert_eq!(
+            checkpoint_location_observation(&connection, checkpoint).unwrap(),
+            RideLocationObservationCheckpointOutcome::AlreadyObserved
+        );
+        let ride = find_ride(&connection, ride_id).unwrap().unwrap();
+        assert_eq!(
+            ride.last_location_observed_monotonic_milliseconds(),
+            Some(60_000)
+        );
+        assert_eq!(
+            ride.last_location_observed_wall_clock_milliseconds(),
+            Some(1_699_999_000_000)
+        );
+        assert_eq!(ride.updated_at_milliseconds(), 1_700_000_001_000);
+        assert_eq!(
+            load_previous_ride_point(&connection, ride_id)
+                .unwrap()
+                .unwrap()
+                .sample,
+            observation
+        );
+        assert_eq!(
+            checkpoint_location_observation(
+                &connection,
+                RideLocationObservationCheckpoint {
+                    observation: sample(60_000, 40.0, 3_000),
+                    ..checkpoint
+                }
+            )
+            .unwrap(),
+            RideLocationObservationCheckpointOutcome::PointChanged
+        );
+    }
+
+    #[test]
+    fn location_observation_checkpoint_revalidates_after_new_material_point() {
+        let (mut connection, ride_id) = fixture();
+        let prepared = RideLocationObservationCheckpoint {
+            ride_id,
+            expected_point_sequence: 0,
+            observation: sample(3_000, 40.0, 3_000),
+        };
+        assert_eq!(
+            append_location(
+                &mut connection,
+                ride_id,
+                sample(2_000, 40.00001, 3_000),
+                RideMapSegmentId::new(0),
+                RouteTelemetryState::GpsOnly
+            )
+            .unwrap(),
+            LocationAdmission::Accepted
+        );
+        let changes = connection.total_changes();
+        assert_eq!(
+            checkpoint_location_observation(&connection, prepared).unwrap(),
+            RideLocationObservationCheckpointOutcome::PointChanged
+        );
+        assert_eq!(connection.total_changes(), changes);
+        assert_eq!(
+            find_ride(&connection, ride_id)
+                .unwrap()
+                .unwrap()
+                .last_location_observed_monotonic_milliseconds(),
+            Some(2_000)
+        );
+    }
+
+    #[test]
+    fn location_append_constraint_failure_rolls_back_every_write_and_retries() {
+        fn snapshot(connection: &Connection, table: &str) -> Vec<Vec<rusqlite::types::Value>> {
+            let mut statement = connection
+                .prepare(&format!("SELECT * FROM {table} ORDER BY rowid"))
+                .unwrap();
+            let column_count = statement.column_count();
+            statement
+                .query_map([], |row| {
+                    (0..column_count).map(|index| row.get(index)).collect()
+                })
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+        }
+        for table in ["rides", "ride_segments"] {
+            let (mut connection, ride_id) = fixture();
+            let before =
+                ["rides", "ride_segments", "ride_points"].map(|table| snapshot(&connection, table));
+            connection.execute_batch(&format!(
+                "CREATE TRIGGER fail_location_update BEFORE UPDATE ON {table} BEGIN SELECT RAISE(ABORT, 'test location summary failure'); END;"
+            )).unwrap();
+            let retry_sample = sample(40_000, 40.00001, 3_000);
+            let result = append_location(
+                &mut connection,
+                ride_id,
+                retry_sample,
+                RideMapSegmentId::new(1),
+                RouteTelemetryState::GpsOnly,
+            );
+            let Err(StorageError::Sqlite(error)) = result else {
+                panic!("{table} failure must remain a storage error, got {result:?}");
+            };
+            assert_eq!(
+                error.sqlite_error_code(),
+                Some(ErrorCode::ConstraintViolation)
+            );
+            for (table, expected) in ["rides", "ride_segments", "ride_points"]
+                .into_iter()
+                .zip(before)
+            {
+                assert_eq!(
+                    snapshot(&connection, table),
+                    expected,
+                    "{table} must roll back"
+                );
+            }
+            connection
+                .execute_batch("DROP TRIGGER fail_location_update;")
+                .unwrap();
+            assert_eq!(
+                append_location(
+                    &mut connection,
+                    ride_id,
+                    retry_sample,
+                    RideMapSegmentId::new(1),
+                    RouteTelemetryState::GpsOnly
+                )
+                .unwrap(),
+                LocationAdmission::Accepted
+            );
+            assert_eq!(
+                append_location(
+                    &mut connection,
+                    ride_id,
+                    retry_sample,
+                    RideMapSegmentId::new(1),
+                    RouteTelemetryState::GpsOnly
+                )
+                .unwrap(),
+                LocationAdmission::Duplicate
+            );
+            let ride = find_ride(&connection, ride_id).unwrap().unwrap();
+            assert_eq!(ride.summary().point_count().as_u64(), 2);
+            assert_eq!(ride.background_gap_count(), 1);
+            assert_eq!(ride.summary().distance().as_u64(), 0);
+        }
+    }
+
+    #[test]
+    fn location_observation_checkpoint_rejects_stale_identity_and_retries_sql_failure() {
+        let (connection, ride_id) = fixture();
+        let valid = RideLocationObservationCheckpoint {
+            ride_id,
+            expected_point_sequence: 0,
+            observation: sample(60_000, 40.0, 3_000),
+        };
+        let changes = connection.total_changes();
+        for checkpoint in [
+            RideLocationObservationCheckpoint {
+                expected_point_sequence: 1,
+                ..valid
+            },
+            RideLocationObservationCheckpoint {
+                observation: sample(60_000, 40.00001, 3_000),
+                ..valid
+            },
+            RideLocationObservationCheckpoint {
+                observation: sample(60_000, 40.0, 4_000),
+                ..valid
+            },
+            RideLocationObservationCheckpoint {
+                observation: sample(999, 40.0, 3_000),
+                ..valid
+            },
+        ] {
+            assert_eq!(
+                checkpoint_location_observation(&connection, checkpoint).unwrap(),
+                RideLocationObservationCheckpointOutcome::PointChanged
+            );
+        }
+        assert_eq!(connection.total_changes(), changes);
+        connection.execute_batch("CREATE TRIGGER deny_gps_clock BEFORE UPDATE OF last_location_observed_monotonic_ms ON rides BEGIN SELECT RAISE(ABORT, 'test GPS checkpoint failure'); END;").unwrap();
+        assert!(checkpoint_location_observation(&connection, valid).is_err());
+        assert_eq!(
+            find_ride(&connection, ride_id)
+                .unwrap()
+                .unwrap()
+                .monotonic_last_event_milliseconds(),
+            Some(1_000)
+        );
+        connection
+            .execute_batch("DROP TRIGGER deny_gps_clock;")
+            .unwrap();
+        assert_eq!(
+            checkpoint_location_observation(&connection, valid).unwrap(),
+            RideLocationObservationCheckpointOutcome::Applied
+        );
+        transition_ride(
+            &connection,
+            ride_id,
+            RideEvent::Pause,
+            1_700_000_061_000,
+            Some(61_000),
+        )
+        .unwrap();
+        assert_eq!(
+            checkpoint_location_observation(
+                &connection,
+                RideLocationObservationCheckpoint {
+                    observation: sample(62_000, 40.0, 3_000),
+                    ..valid
+                }
+            )
+            .unwrap(),
+            RideLocationObservationCheckpointOutcome::PointChanged
+        );
+        let ride = find_ride(&connection, ride_id).unwrap().unwrap();
+        assert_eq!(
+            ride.last_location_observed_monotonic_milliseconds(),
+            Some(60_000)
+        );
+        assert_eq!(
+            ride.last_location_observed_wall_clock_milliseconds(),
+            Some(1_700_000_060_000)
+        );
+    }
+}
+
+#[cfg(test)]
+mod ride_session_marker_idempotence_tests {
+    use super::{RideSessionMarkerKey, save_ride_session_marker};
+    use rusqlite::Connection;
+
+    #[test]
+    fn unchanged_marker_does_not_write_and_changed_marker_does() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute(
+                "CREATE TABLE ride_session_marker (
+                    singleton_key BLOB PRIMARY KEY,
+                    marker BLOB NOT NULL
+                )",
+                [],
+            )
+            .unwrap();
+
+        save_ride_session_marker(&connection, &[1, 2, 3]).unwrap();
+        let inserted_changes = connection.total_changes();
+
+        save_ride_session_marker(&connection, &[1, 2, 3]).unwrap();
+
+        assert_eq!(connection.total_changes(), inserted_changes);
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT marker FROM ride_session_marker WHERE singleton_key = ?1",
+                    [RideSessionMarkerKey::VALUE.blob()],
+                    |row| row.get::<_, Vec<u8>>(0),
+                )
+                .unwrap(),
+            vec![1, 2, 3]
+        );
+
+        save_ride_session_marker(&connection, &[4, 5, 6]).unwrap();
+
+        assert_eq!(connection.total_changes(), inserted_changes + 1);
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT marker FROM ride_session_marker WHERE singleton_key = ?1",
+                    [RideSessionMarkerKey::VALUE.blob()],
+                    |row| row.get::<_, Vec<u8>>(0),
+                )
+                .unwrap(),
+            vec![4, 5, 6]
+        );
+
+        connection
+            .execute("DROP TABLE ride_session_marker", [])
+            .unwrap();
+        assert!(save_ride_session_marker(&connection, &[7]).is_err());
     }
 }

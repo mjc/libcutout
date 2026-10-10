@@ -199,7 +199,7 @@ final class PevScreenCatalogTests: XCTestCase {
         XCTAssertEqual(pevLocalizedText("euc.warning.reduce_acceleration"), "Reduce acceleration")
         XCTAssertEqual(pevLocalizedText("euc.warning.low_pwm_headroom"), "PWM headroom is low while riding")
         XCTAssertEqual(pevLocalizedText("euc.warning.telemetry_live"), "Telemetry live")
-        XCTAssertEqual(pevLocalizedText("euc.warning.waiting_for_speed"), "Waiting for speed telemetry")
+        XCTAssertEqual(pevLocalizedText("euc.warning.waiting_for_speed"), "No movement")
         XCTAssertEqual(pevLocalizedText("euc.warning.live_telemetry_detail"), "Receiving wheel data")
         XCTAssertEqual(pevLocalizedText("euc.warning.waiting_for_telemetry"), "Waiting for telemetry")
         XCTAssertEqual(pevLocalizedText("euc.warning.subscribed_no_values"), "Connected · waiting for ride data")
@@ -210,7 +210,7 @@ final class PevScreenCatalogTests: XCTestCase {
         XCTAssertEqual(pevLocalizedText("euc.warning.telemetry_stale"), "Telemetry stale")
         XCTAssertEqual(pevLocalizedText("euc.warning.last_update", "3 seconds"), "Last update 3 seconds ago")
         XCTAssertEqual(pevLocalizedText("euc.status.parked"), "Parked")
-        XCTAssertEqual(pevLocalizedText("euc.status.standing"), "Standing")
+        XCTAssertEqual(pevLocalizedText("euc.status.standing"), "Parked")
         XCTAssertEqual(pevLocalizedText("euc.status.riding"), "Riding")
         XCTAssertEqual(pevLocalizedText("euc.status.charging"), "Charging")
     }

@@ -4,6 +4,34 @@
 the Swift and Kotlin clients. Rust owns the transport-independent DTOs and
 concrete protocol sessions; platform code owns Bluetooth and UI concerns.
 
+## Native shell ownership
+
+Swift supplies Apple API observations and executes native effects. Portable
+decisions belong in Rust, including validation, admission, recording policy,
+durability, loss accounting, clock normalization, receipt ownership, and
+recovery. Native code must not infer a lifecycle transition from a Boolean
+setter result, writer instrumentation, or a presentation error string.
+
+Recording startup uses a Rust-prepared request before reading the native
+monotonic clock. Rust validates the wall-clock observation, assembles required
+metadata, reserves annotation capacity, constructs the output filename, and
+admits the existing writer once. Swift supplies the filesystem directory,
+platform identity, clocks, and optional provider observation; it installs the
+admitted native references and publishes presentation state.
+
+Flush and completion return typed Rust receipts. Rust distinguishes a rejected
+flush barrier from a failed durability barrier and classifies terminal SQLite
+and file results independently of optional history publication. The session
+owner consumes each terminal receipt once, including a retired writer's
+receipt after a replacement starts. Swift maps authorized publication results
+to UI events and native file URLs.
+
+Keep this boundary when changing the app: a policy fix must be testable without
+an Apple runtime. Swift tests verify observation delivery, native effect
+ownership, and presentation; Rust tests verify the portable invariants.
+
+## Shared settings ownership
+
 For settings, that ownership includes value domains, applicability, observations,
 completion strategy, guards, serialization, deadlines and retry policy. The
 [settings design review](settings-design-review.md) proposes the remaining
@@ -218,6 +246,29 @@ devenv tasks run project:quality-gate
 
 `devenv test` remains the lightweight devenv lifecycle/environment check; it
 does not run this project gate automatically so entering a shell stays cheap.
+
+## Locked-ride native tests
+
+Run the native location-owner, Main-actor SQL backpressure/lifetime, and marker
+receipt tests on an ARM64 iOS Simulator with the supported shared FFI wrapper:
+
+```console
+devenv tasks run test:ios-locked-ride
+```
+
+`CUTOUT_IOS_TEST_DESTINATION` selects an explicit simulator; the default is the
+latest iPhone 18 Pro. The task runs the existing `PhoneLocationAdapterTests`,
+`LockedRideMainThreadTests`, and `RideSessionMarkerNonblockingTests` classes in
+`CutoutAppIOSUnitTests`. The Xcode target references their Swift package source
+files directly. The shared SQLite fixture stays in `LockedRideMainThreadTests`;
+there is no copied fixture or platform-specific test implementation. The hosted
+test scheme disables application startup and runs without parallel tests, so
+the process-owned database has one test owner at a time. ARM64 is explicit.
+
+These tests exercise the iOS Core Location branch and the Swift async admission
+boundary under real SQLite contention. Simulator results do not prove a locked
+physical phone's file-protection behavior or that iOS will keep a riding process
+alive; those require separate device evidence.
 
 ## SourceKit and app commands
 

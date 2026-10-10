@@ -5,6 +5,15 @@ import Synchronization
 
 /// The one Rust-owned SQLite service used by the mobile persistence adapters.
 public enum RustPersistenceStore {
+    /// The detached opening operation owns this filesystem adapter; test recorders synchronize their state.
+    private final class FileManagerAccess: @unchecked Sendable {
+        let manager: FileManager
+
+        init(_ manager: FileManager) {
+            self.manager = manager
+        }
+    }
+
     private final class OpenAttempt: @unchecked Sendable {
         let task: Task<RideDatabaseHandle, Error>
 
@@ -50,9 +59,14 @@ public enum RustPersistenceStore {
         }
     }
 
-    static func open(at databaseURL: URL) async throws -> RideDatabaseHandle {
-        try await Task.detached(priority: .userInitiated) {
-            try prepareDatabase(at: databaseURL)
+    static func open(
+        at databaseURL: URL,
+        fileManager: FileManager = .default,
+        openDatabase: @escaping @Sendable (String) throws -> RideDatabaseHandle = { try openRideDatabase(path: $0) }
+    ) async throws -> RideDatabaseHandle {
+        let fileManagerAccess = FileManagerAccess(fileManager)
+        return try await Task.detached(priority: .userInitiated) {
+            try prepareDatabase(at: databaseURL, fileManager: fileManagerAccess.manager, openDatabase: openDatabase)
         }.value
     }
 
@@ -70,8 +84,11 @@ public enum RustPersistenceStore {
         return try prepareDatabase(at: directory.appendingPathComponent("ride.sqlite"))
     }
 
-    private static func prepareDatabase(at url: URL) throws -> RideDatabaseHandle {
-        let fileManager = FileManager.default
+    private static func prepareDatabase(
+        at url: URL,
+        fileManager: FileManager = .default,
+        openDatabase: (String) throws -> RideDatabaseHandle = { try openRideDatabase(path: $0) }
+    ) throws -> RideDatabaseHandle {
         let directory = url.deletingLastPathComponent()
         var databaseURL = url
         do {
@@ -82,7 +99,22 @@ public enum RustPersistenceStore {
                     .protectionKey: FileProtectionType.completeUntilFirstUserAuthentication
                 ]
             )
-            let database = try openRideDatabase(path: databaseURL.path)
+            // createDirectory does not update an existing directory. SQLite
+            // sidecars must inherit protection that permits a locked ride.
+            try fileManager.setAttributes(
+                [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+                ofItemAtPath: directory.path
+            )
+            do {
+                try excludeFromBackup(at: directory)
+            } catch {
+                logger.error(
+                    "Could not exclude ride database directory from backups: \(error, privacy: .public)"
+                )
+            }
+            try protectExistingDatabaseFiles(at: databaseURL, fileManager: fileManager)
+            let database = try openDatabase(databaseURL.path)
+            try protectExistingDatabaseFiles(at: databaseURL, fileManager: fileManager)
             do {
                 var values = URLResourceValues()
                 values.isExcludedFromBackup = true
@@ -90,18 +122,27 @@ public enum RustPersistenceStore {
             } catch {
                 logger.error("Could not exclude ride database from backups: \(error, privacy: .public)")
             }
-            do {
-                try fileManager.setAttributes(
-                    [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
-                    ofItemAtPath: databaseURL.path
-                )
-            } catch {
-                logger.error("Could not apply ride database file protection: \(error, privacy: .public)")
-            }
             return database
         } catch {
             logger.error("Could not open Rust ride database: \(error, privacy: .public)")
             throw error
         }
+    }
+
+    private static func protectExistingDatabaseFiles(at url: URL, fileManager: FileManager) throws {
+        for path in [url.path, url.path + "-wal", url.path + "-shm"] {
+            guard fileManager.fileExists(atPath: path) else { continue }
+            try fileManager.setAttributes(
+                [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+                ofItemAtPath: path
+            )
+        }
+    }
+
+    static func excludeFromBackup(at url: URL) throws {
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        var mutableURL = url
+        try mutableURL.setResourceValues(values)
     }
 }

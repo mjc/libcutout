@@ -1,5 +1,5 @@
 //! Bounded PEVCAP ingestion and durable completion evidence.
-//! Mobile captures use SQLite as their live source and export a file only at finalization.
+//! Mobile captures use SQLite as their live source; JSONL exports are created on explicit demand.
 
 use crate::storage::{
     LiveCaptureEventKind, LiveCaptureId, LiveCaptureIntegrity, LiveCaptureLocationAdmission,
@@ -19,13 +19,43 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex, PoisonError,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicU64, Ordering},
         mpsc::{Receiver, SyncSender, TrySendError, sync_channel},
     },
     thread::{self, JoinHandle},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+use tempfile::NamedTempFile;
 use uuid::Uuid;
+
+#[cfg(test)]
+mod database_completion_tests;
+#[cfg(test)]
+mod export_digest_tests;
+mod material;
+use material::{MaterialBaseline, MaterialDecision, PreparedMaterialRecord};
+
+const CAPTURE_POLICY_ANNOTATION_KEY: &str = "capture_recording_policy=";
+
+/// Observation retention contract for one capture.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum CaptureRecordingPolicy {
+    /// Retain every admitted transport observation, including repeated telemetry.
+    #[default]
+    EveryObservation,
+    /// Retain stationary telemetry when material values change; all other observations remain complete.
+    MaterialChanges,
+}
+
+/// Event-scoped transport evidence, established by the current connection and decoder.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum CaptureRecordAdmission {
+    /// No complete stationary telemetry proof; retain this observation unconditionally.
+    #[default]
+    EveryObservation,
+    /// This input is a complete telemetry notification from the verified connection with fresh stationary speed.
+    StationaryTelemetry,
+}
 
 const LIVE_CAPTURE_EXPORT_PAGE_SIZE: u32 = 32;
 
@@ -44,8 +74,27 @@ impl std::fmt::Display for CaptureArtifactId {
 pub enum CaptureWriteOutcome {
     /// The event was accepted by the bounded queue.
     Accepted,
-    /// The queue or writer failed and the event was not accepted.
+    /// Observations were rejected at admission; the writer remains usable.
+    AdmissionLost {
+        /// Number of observations rejected by this request, excluding earlier losses.
+        dropped_messages: u64,
+    },
+    /// The writer is closed, stopped, or the request could not be admitted.
     Failed,
+}
+
+/// Durability of one flush barrier, separate from observation completeness.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CaptureFlushOutcome {
+    /// All evidence preceding the admitted barrier is durable.
+    Flushed,
+    /// The healthy writer did not admit this control request; retry is possible.
+    Rejected,
+    /// The writer failed or an admitted barrier has no valid durable receipt.
+    Failed {
+        /// First fatal writer cause, retained across later failures.
+        message: String,
+    },
 }
 
 impl CaptureArtifactId {
@@ -96,6 +145,30 @@ impl SavedCaptureArtifact {
     }
 }
 
+/// Completion authority for a database capture, produced only by a consumed writer.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SavedDatabaseCapture {
+    artifact_id: CaptureArtifactId,
+    live_capture_id: LiveCaptureId,
+    final_header: PevcapHeader,
+}
+
+impl SavedDatabaseCapture {
+    /// Original writer identity, independent of any later export file.
+    #[must_use]
+    pub const fn artifact_id(&self) -> CaptureArtifactId {
+        self.artifact_id
+    }
+    /// Canonical database identity.
+    #[must_use]
+    pub const fn live_capture_id(&self) -> LiveCaptureId {
+        self.live_capture_id
+    }
+    pub(crate) const fn final_header(&self) -> &PevcapHeader {
+        &self.final_header
+    }
+}
+
 /// Durable terminal result of consuming a capture writer.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CaptureWriterFinish {
@@ -109,6 +182,8 @@ pub enum CaptureWriterFinish {
         integrity: LiveCaptureIntegrity,
         /// Optional PEVCAP JSONL export result.
         jsonl_export: CaptureJsonlExport,
+        /// Unforgeable consumed-writer authority for retaining recording provenance.
+        receipt: Box<SavedDatabaseCapture>,
         /// Final writer counters, including admitted and dropped messages.
         status: CaptureWriterStatus,
     },
@@ -119,7 +194,7 @@ pub enum CaptureWriterFinish {
 pub enum CaptureJsonlExport {
     /// A synced export file is available for sharing or receipt publication.
     Available(Box<SavedCaptureArtifact>),
-    /// Export was intentionally skipped because the durable capture is incomplete.
+    /// Export was intentionally skipped; SQLite remains the durable source.
     NotAttempted,
     /// SQLite is durable, but creating or syncing the optional export failed.
     Failed(String),
@@ -154,19 +229,19 @@ const CAPTURE_WRITER_SYNC_INTERVAL: Duration = Duration::from_secs(3);
 /// Rust-owned status for the bounded capture writer queue.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct CaptureWriterStatus {
-    /// Messages accepted by the queue and not yet written.
+    /// Messages accepted by the queue and not yet processed.
     pub queued_messages: u64,
     /// Highest number of accepted messages waiting to be written.
     pub peak_queued_messages: u64,
     /// Messages rejected because the queue was full or closed.
     pub dropped_messages: u64,
-    /// Serialized capture bytes admitted; database-backed captures export them at finalization.
+    /// Serialized retained capture bytes; database-backed captures export them at finalization.
     pub bytes_written: u64,
     /// Total successful write payload bytes, including header rewrites.
     pub physical_bytes_written: u64,
     /// Whether the writer has encountered an unrecoverable error.
     pub failed: bool,
-    /// Last writer error, if one exists.
+    /// First fatal writer error, if one exists.
     pub last_error: Option<String>,
 }
 
@@ -178,8 +253,20 @@ struct CaptureWriterState {
     incomplete_messages: AtomicU64,
     bytes_written: AtomicU64,
     physical_bytes_written: AtomicU64,
-    failed: AtomicBool,
-    last_error: Mutex<Option<String>>,
+    failure: Mutex<CaptureWriterFailure>,
+}
+
+/// Admission loss cannot be mistaken for a stopped worker or erase its first cause.
+#[derive(Debug, Default)]
+enum CaptureWriterFailure {
+    #[default]
+    Healthy,
+    AdmissionLoss {
+        first_reason: String,
+    },
+    Fatal {
+        first_cause: String,
+    },
 }
 
 impl Default for CaptureWriterState {
@@ -191,34 +278,74 @@ impl Default for CaptureWriterState {
             incomplete_messages: AtomicU64::new(0),
             bytes_written: AtomicU64::new(0),
             physical_bytes_written: AtomicU64::new(0),
-            failed: AtomicBool::new(false),
-            last_error: Mutex::new(None),
+            failure: Mutex::new(CaptureWriterFailure::Healthy),
         }
     }
 }
 
 impl CaptureWriterState {
     fn fail(&self, error: impl Into<String>) {
-        self.failed.store(true, Ordering::Release);
-        *self
-            .last_error
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) = Some(error.into());
+        let mut failure = self.failure.lock().unwrap_or_else(PoisonError::into_inner);
+        match &*failure {
+            CaptureWriterFailure::Fatal { .. } => {}
+            CaptureWriterFailure::Healthy | CaptureWriterFailure::AdmissionLoss { .. } => {
+                *failure = CaptureWriterFailure::Fatal {
+                    first_cause: error.into(),
+                };
+            }
+        }
+    }
+
+    fn record_admission_loss(&self, count: u64, reason: &str) {
+        if count == 0 {
+            return;
+        }
+        self.dropped_messages.fetch_add(count, Ordering::AcqRel);
+        self.incomplete_messages.fetch_add(count, Ordering::AcqRel);
+        let mut failure = self.failure.lock().unwrap_or_else(PoisonError::into_inner);
+        match &*failure {
+            CaptureWriterFailure::Healthy => {
+                *failure = CaptureWriterFailure::AdmissionLoss {
+                    first_reason: reason.into(),
+                };
+            }
+            CaptureWriterFailure::AdmissionLoss { .. } | CaptureWriterFailure::Fatal { .. } => {}
+        }
+    }
+
+    fn admission_loss_outcome(&self, dropped_messages: u64) -> CaptureWriteOutcome {
+        match &*self.failure.lock().unwrap_or_else(PoisonError::into_inner) {
+            CaptureWriterFailure::Healthy | CaptureWriterFailure::AdmissionLoss { .. } => {
+                CaptureWriteOutcome::AdmissionLost { dropped_messages }
+            }
+            CaptureWriterFailure::Fatal { .. } => CaptureWriteOutcome::Failed,
+        }
+    }
+
+    fn file_completion_error(&self) -> Option<String> {
+        match &*self.failure.lock().unwrap_or_else(PoisonError::into_inner) {
+            CaptureWriterFailure::Healthy => None,
+            CaptureWriterFailure::AdmissionLoss { first_reason } => Some(first_reason.clone()),
+            CaptureWriterFailure::Fatal { first_cause } => Some(first_cause.clone()),
+        }
     }
 
     fn status(&self) -> CaptureWriterStatus {
+        let (failed, last_error) =
+            match &*self.failure.lock().unwrap_or_else(PoisonError::into_inner) {
+                CaptureWriterFailure::Healthy | CaptureWriterFailure::AdmissionLoss { .. } => {
+                    (false, None)
+                }
+                CaptureWriterFailure::Fatal { first_cause } => (true, Some(first_cause.clone())),
+            };
         CaptureWriterStatus {
             queued_messages: self.queued_messages.load(Ordering::Acquire),
             peak_queued_messages: self.peak_queued_messages.load(Ordering::Acquire),
             dropped_messages: self.dropped_messages.load(Ordering::Acquire),
             bytes_written: self.bytes_written.load(Ordering::Acquire),
             physical_bytes_written: self.physical_bytes_written.load(Ordering::Acquire),
-            failed: self.failed.load(Ordering::Acquire),
-            last_error: self
-                .last_error
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .clone(),
+            failed,
+            last_error,
         }
     }
 }
@@ -255,11 +382,13 @@ struct CaptureWriterEventLine {
     source_wall_clock_unix_ms: Option<u64>,
     location: Option<LiveCaptureLocationObservation>,
     record: Option<PevcapRecord>,
+    prepared_material: Option<PreparedMaterialRecord>,
 }
 
 struct DatabaseCapture {
     database: RideDatabase,
     id: LiveCaptureId,
+    policy: CaptureRecordingPolicy,
 }
 
 enum CaptureWriterStorage {
@@ -287,6 +416,7 @@ enum CaptureWriterJsonlExport {
 }
 
 enum CaptureWriterAction {
+    Suppressed,
     Event(Box<CaptureWriterEventLine>),
     Metadata(CaptureMetadata),
     Barrier(
@@ -299,6 +429,16 @@ enum CaptureWriterAction {
 enum CaptureBarrier {
     Flush,
     Finish,
+    FinishWithoutExport,
+}
+
+impl CaptureBarrier {
+    const fn finishes(self) -> bool {
+        match self {
+            Self::Flush => false,
+            Self::Finish | Self::FinishWithoutExport => true,
+        }
+    }
 }
 
 struct CaptureFlushState {
@@ -320,7 +460,7 @@ impl Default for CaptureFlushState {
 
 #[derive(Debug)]
 struct CaptureRecordPool {
-    records: Mutex<VecDeque<PevcapRecord>>,
+    records: Mutex<VecDeque<(PevcapRecord, CaptureRecordAdmission)>>,
 }
 
 /// Cloneable, bounded admission capability; unlike a writer handle, it never waits for storage.
@@ -367,6 +507,15 @@ impl CaptureWriterIngress {
 
     /// Admits one transport record without waiting for disk I/O.
     pub fn try_send_record(&self, record: PevcapRecord) -> CaptureWriteOutcome {
+        self.try_send_record_with_admission(record, CaptureRecordAdmission::EveryObservation)
+    }
+
+    /// Admits a record with event-scoped decoder evidence; policy comparison happens on the worker.
+    pub fn try_send_record_with_admission(
+        &self,
+        record: PevcapRecord,
+        admission: CaptureRecordAdmission,
+    ) -> CaptureWriteOutcome {
         let accepting = self
             .accepting
             .lock()
@@ -381,25 +530,50 @@ impl CaptureWriterIngress {
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
         if records.len() == records.capacity() {
-            self.state.dropped_messages.fetch_add(1, Ordering::AcqRel);
             self.state
-                .incomplete_messages
-                .fetch_add(1, Ordering::AcqRel);
-            self.state.fail("capture writer queue is full");
-            return CaptureWriteOutcome::Failed;
+                .record_admission_loss(1, "capture writer queue is full");
+            return self.state.admission_loss_outcome(1);
         }
-        records.push_back(record);
+        records.push_back((record, admission));
         match try_send_message(&self.sender, &self.state, CaptureWriterMessage::Record) {
             CaptureWriteOutcome::Accepted => CaptureWriteOutcome::Accepted,
-            CaptureWriteOutcome::Failed => {
+            outcome @ (CaptureWriteOutcome::AdmissionLost { .. } | CaptureWriteOutcome::Failed) => {
                 records.pop_back();
-                CaptureWriteOutcome::Failed
+                outcome
             }
         }
     }
 
+    /// Counts a native batch that its caller rejected before converting observations.
+    ///
+    /// A nonempty rejected batch makes an open capture incomplete without stopping the worker.
+    /// Empty batches are a no-op; callbacks after closure cannot change durable integrity.
+    #[must_use]
+    pub fn reject_location_batch(&self, sample_count: usize) -> CaptureWriteOutcome {
+        if sample_count == 0 {
+            return CaptureWriteOutcome::Accepted;
+        }
+        let accepting = self
+            .accepting
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let count = sample_count as u64;
+        if !*accepting {
+            self.state
+                .dropped_messages
+                .fetch_add(count, Ordering::AcqRel);
+            return CaptureWriteOutcome::Failed;
+        }
+        self.state
+            .record_admission_loss(count, "capture location batch rejected at admission");
+        self.state.admission_loss_outcome(count)
+    }
+
     /// Admits a bounded batch of independent location observations in one ordering step.
     pub fn record_location_batch(&self, locations: &[PevcapLocationSample]) -> CaptureWriteOutcome {
+        if locations.len() > CAPTURE_LOCATION_BATCH_CAPACITY {
+            return self.reject_location_batch(locations.len());
+        }
         let accepting = self
             .accepting
             .lock()
@@ -410,31 +584,27 @@ impl CaptureWriterIngress {
                 .fetch_add(locations.len() as u64, Ordering::AcqRel);
             return CaptureWriteOutcome::Failed;
         }
-        if locations.len() > CAPTURE_LOCATION_BATCH_CAPACITY {
-            self.state
-                .dropped_messages
-                .fetch_add(locations.len() as u64, Ordering::AcqRel);
-            self.state
-                .incomplete_messages
-                .fetch_add(locations.len() as u64, Ordering::AcqRel);
-            self.state.fail("capture location batch exceeds its limit");
-            return CaptureWriteOutcome::Failed;
-        }
         for (index, location) in locations.iter().enumerate() {
-            if try_send_message(
+            match try_send_message(
                 &self.sender,
                 &self.state,
                 CaptureWriterMessage::Location(*location),
-            ) == CaptureWriteOutcome::Failed
-            {
-                let remaining = locations.len().saturating_sub(index + 1);
-                self.state
-                    .dropped_messages
-                    .fetch_add(remaining as u64, Ordering::AcqRel);
-                self.state
-                    .incomplete_messages
-                    .fetch_add(remaining as u64, Ordering::AcqRel);
-                return CaptureWriteOutcome::Failed;
+            ) {
+                CaptureWriteOutcome::Accepted => {}
+                CaptureWriteOutcome::AdmissionLost { dropped_messages } => {
+                    let remaining = locations.len().saturating_sub(index + 1) as u64;
+                    self.state
+                        .record_admission_loss(remaining, "capture writer queue is full");
+                    return self
+                        .state
+                        .admission_loss_outcome(dropped_messages + remaining);
+                }
+                CaptureWriteOutcome::Failed => {
+                    let remaining = locations.len().saturating_sub(index + 1) as u64;
+                    self.state
+                        .record_admission_loss(remaining, "capture writer stopped");
+                    return CaptureWriteOutcome::Failed;
+                }
             }
         }
         CaptureWriteOutcome::Accepted
@@ -469,12 +639,13 @@ fn try_send_message(
         }
         Err(TrySendError::Full(_)) => {
             state.queued_messages.fetch_sub(1, Ordering::AcqRel);
-            state.dropped_messages.fetch_add(1, Ordering::AcqRel);
             if is_capture_message {
-                state.incomplete_messages.fetch_add(1, Ordering::AcqRel);
+                state.record_admission_loss(1, "capture writer queue is full");
+                state.admission_loss_outcome(1)
+            } else {
+                state.dropped_messages.fetch_add(1, Ordering::AcqRel);
+                CaptureWriteOutcome::Failed
             }
-            state.fail("capture writer queue is full");
-            CaptureWriteOutcome::Failed
         }
         Err(TrySendError::Disconnected(_)) => {
             state.queued_messages.fetch_sub(1, Ordering::AcqRel);
@@ -514,7 +685,7 @@ impl CaptureRecordPool {
         }
     }
 
-    fn take(&self) -> Option<PevcapRecord> {
+    fn take(&self) -> Option<(PevcapRecord, CaptureRecordAdmission)> {
         self.records
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -535,6 +706,7 @@ impl CaptureRecordPool {
 pub struct CaptureWriter {
     artifact_id: CaptureArtifactId,
     live_capture_id: Option<LiveCaptureId>,
+    recording_policy: CaptureRecordingPolicy,
     path: PathBuf,
     ingress: CaptureWriterIngress,
     state: Arc<CaptureWriterState>,
@@ -585,7 +757,30 @@ impl CaptureWriter {
             platform_id,
             write_limit,
             metadata,
-            Some(database),
+            Some((database, CaptureRecordingPolicy::EveryObservation)),
+        )
+    }
+
+    /// Starts a SQLite capture with an explicit observation retention contract.
+    ///
+    /// # Errors
+    /// Returns invalid header, existing artifact, or worker startup errors.
+    pub fn start_with_database_and_policy(
+        path: PathBuf,
+        wall_clock_start_unix_ms: WallClockUnixTimestamp,
+        platform_id: &str,
+        write_limit: Option<TransportWriteLimit>,
+        metadata: &CaptureMetadata,
+        database: RideDatabase,
+        policy: CaptureRecordingPolicy,
+    ) -> Result<Self, String> {
+        Self::start_inner(
+            path,
+            wall_clock_start_unix_ms,
+            platform_id,
+            write_limit,
+            metadata,
+            Some((database, policy)),
         )
     }
 
@@ -595,16 +790,37 @@ impl CaptureWriter {
         platform_id: &str,
         write_limit: Option<TransportWriteLimit>,
         metadata: &CaptureMetadata,
-        database: Option<RideDatabase>,
+        database: Option<(RideDatabase, CaptureRecordingPolicy)>,
     ) -> Result<Self, String> {
-        let header = capture_header(wall_clock_start_unix_ms, platform_id, write_limit, metadata)?;
+        let mut metadata = metadata.clone();
+        let recording_policy = database
+            .as_ref()
+            .map_or(CaptureRecordingPolicy::EveryObservation, |(_, policy)| {
+                *policy
+            });
+        set_policy_annotation(&mut metadata, recording_policy);
+        if !metadata_reserves_label_closures(&metadata) {
+            return Err(
+                "capture annotation capacity cannot retain closing label boundaries".into(),
+            );
+        }
+        let header = capture_header(
+            wall_clock_start_unix_ms,
+            platform_id,
+            write_limit,
+            &metadata,
+        )?;
         let (storage, live_capture_id) = match database {
-            Some(database) => {
+            Some((database, policy)) => {
                 if path.exists() {
                     return Err("capture artifact already exists".into());
                 }
                 let id = LiveCaptureId::new();
-                let capture = DatabaseCapture { database, id };
+                let capture = DatabaseCapture {
+                    database,
+                    id,
+                    policy,
+                };
                 (CaptureWriterStorage::Database(capture), Some(id))
             }
             None => (
@@ -663,6 +879,7 @@ impl CaptureWriter {
         Ok(Self {
             artifact_id,
             live_capture_id,
+            recording_policy,
             path,
             ingress,
             state,
@@ -690,25 +907,54 @@ impl CaptureWriter {
     /// # Errors
     /// Returns queue, worker, or storage failure.
     pub fn flush(&self) -> Result<(), String> {
+        match self.flush_outcome() {
+            CaptureFlushOutcome::Flushed => Ok(()),
+            CaptureFlushOutcome::Rejected => Err("capture writer flush was not admitted".into()),
+            CaptureFlushOutcome::Failed { message } => Err(message),
+        }
+    }
+
+    /// Waits for one durable barrier without confusing queue rejection with worker failure.
+    #[must_use]
+    pub fn flush_outcome(&self) -> CaptureFlushOutcome {
+        let status = self.state.status();
+        if status.failed {
+            return CaptureFlushOutcome::Failed {
+                message: status
+                    .last_error
+                    .unwrap_or_else(|| "capture writer failed".into()),
+            };
+        }
         let (sender, receiver) = sync_channel(0);
         if self.try_send(CaptureWriterMessage::Barrier(CaptureBarrier::Flush, sender))
             != CaptureWriteOutcome::Accepted
         {
-            return Err(self
-                .state
-                .status()
-                .last_error
-                .unwrap_or_else(|| "capture writer flush failed".into()));
+            let status = self.state.status();
+            return if status.failed {
+                CaptureFlushOutcome::Failed {
+                    message: status
+                        .last_error
+                        .unwrap_or_else(|| "capture writer failed".into()),
+                }
+            } else {
+                CaptureFlushOutcome::Rejected
+            };
         }
-        match receiver
-            .recv()
-            .map_err(|_| "capture writer stopped before flush".to_string())??
-        {
-            CaptureWriterBarrierResult::Flushed => Ok(()),
-            CaptureWriterBarrierResult::FileFinished { .. }
-            | CaptureWriterBarrierResult::DatabaseFinished { .. } => {
-                Err("capture writer finished before flush".into())
-            }
+        match receiver.recv() {
+            Ok(Ok(CaptureWriterBarrierResult::Flushed)) => CaptureFlushOutcome::Flushed,
+            Ok(Err(error)) => self.fail_flush(error),
+            Ok(Ok(
+                CaptureWriterBarrierResult::FileFinished { .. }
+                | CaptureWriterBarrierResult::DatabaseFinished { .. },
+            )) => self.fail_flush("capture writer finished before flush".into()),
+            Err(_) => self.fail_flush("capture writer stopped before flush".into()),
+        }
+    }
+
+    fn fail_flush(&self, message: String) -> CaptureFlushOutcome {
+        self.state.fail(&message);
+        CaptureFlushOutcome::Failed {
+            message: self.state.status().last_error.unwrap_or(message),
         }
     }
 
@@ -717,12 +963,25 @@ impl CaptureWriter {
     /// # Errors
     /// Returns queue, worker, or primary-storage failure. Optional database-backed export
     /// failures are returned inside [`CaptureWriterFinish::DatabaseFinished`].
-    pub fn finish(mut self) -> Result<CaptureWriterFinish, String> {
+    pub fn finish(self) -> Result<CaptureWriterFinish, String> {
+        self.finish_barrier(CaptureBarrier::Finish)
+    }
+
+    /// Completes SQLite without producing an optional JSONL file. File-only writers still sync
+    /// their canonical file. Explicit export can later read the durable database capture.
+    ///
+    /// # Errors
+    /// Returns queue, worker or primary-storage failure.
+    pub fn finish_without_export(self) -> Result<CaptureWriterFinish, String> {
+        self.finish_barrier(CaptureBarrier::FinishWithoutExport)
+    }
+
+    fn finish_barrier(mut self, kind: CaptureBarrier) -> Result<CaptureWriterFinish, String> {
         let (sender, receiver) = sync_channel(0);
-        if self.ingress.close_and_send(CaptureWriterMessage::Barrier(
-            CaptureBarrier::Finish,
-            sender,
-        )) != CaptureWriteOutcome::Accepted
+        if self
+            .ingress
+            .close_and_send(CaptureWriterMessage::Barrier(kind, sender))
+            != CaptureWriteOutcome::Accepted
         {
             return Err(self
                 .state
@@ -741,14 +1000,19 @@ impl CaptureWriter {
             CaptureWriterBarrierResult::FileFinished {
                 content_digest,
                 final_header,
-            } => CaptureWriterFinish::FileSaved(Box::new(SavedCaptureArtifact {
-                id: self.artifact_id,
-                live_capture_id: self.live_capture_id,
-                path: self.path,
-                status: self.state.status(),
-                content_digest,
-                final_header: *final_header,
-            })),
+            } => {
+                if let Some(error) = self.state.file_completion_error() {
+                    return Err(error);
+                }
+                CaptureWriterFinish::FileSaved(Box::new(SavedCaptureArtifact {
+                    id: self.artifact_id,
+                    live_capture_id: self.live_capture_id,
+                    path: self.path,
+                    status: self.state.status(),
+                    content_digest,
+                    final_header: *final_header,
+                }))
+            }
             CaptureWriterBarrierResult::DatabaseFinished {
                 integrity,
                 jsonl_export,
@@ -766,7 +1030,7 @@ impl CaptureWriter {
                             path: self.path,
                             status: status.clone(),
                             content_digest,
-                            final_header: *final_header,
+                            final_header: (*final_header).clone(),
                         }))
                     }
                     CaptureWriterJsonlExport::NotAttempted => CaptureJsonlExport::NotAttempted,
@@ -777,18 +1041,17 @@ impl CaptureWriter {
                     integrity,
                     jsonl_export,
                     status,
+                    receipt: Box::new(SavedDatabaseCapture {
+                        artifact_id: self.artifact_id,
+                        live_capture_id,
+                        final_header: *final_header,
+                    }),
                 }
             }
             CaptureWriterBarrierResult::Flushed => {
                 return Err("capture writer flushed instead of finishing".into());
             }
         };
-        let status = self.state.status();
-        if status.failed {
-            return Err(status
-                .last_error
-                .unwrap_or_else(|| "capture writer failed".into()));
-        }
         Ok(finalization)
     }
 
@@ -830,7 +1093,11 @@ impl CaptureWriter {
 
     /// Admits a metadata update without waiting for disk I/O.
     #[must_use]
-    pub fn update_metadata(&self, metadata: CaptureMetadata) -> CaptureWriteOutcome {
+    pub fn update_metadata(&self, mut metadata: CaptureMetadata) -> CaptureWriteOutcome {
+        set_policy_annotation(&mut metadata, self.recording_policy);
+        if !metadata_reserves_label_closures(&metadata) {
+            return CaptureWriteOutcome::Failed;
+        }
         self.try_send(CaptureWriterMessage::Metadata(metadata))
     }
 
@@ -844,6 +1111,37 @@ impl CaptureWriter {
     #[must_use]
     pub fn record_music(&self, music: PevcapMusicEvent) -> CaptureWriteOutcome {
         self.try_send(CaptureWriterMessage::Music(music))
+    }
+}
+
+fn metadata_reserves_label_closures(metadata: &CaptureMetadata) -> bool {
+    let labels =
+        CaptureLabelState::from_annotations(metadata.annotations.iter().map(String::as_str));
+    metadata.annotations.len() + labels.active().len() <= cutout_core::PEVCAP_MAX_ANNOTATIONS
+}
+
+fn set_policy_annotation(metadata: &mut CaptureMetadata, policy: CaptureRecordingPolicy) {
+    metadata
+        .annotations
+        .retain(|annotation| !annotation.starts_with(CAPTURE_POLICY_ANNOTATION_KEY));
+    match policy {
+        CaptureRecordingPolicy::EveryObservation => {}
+        CaptureRecordingPolicy::MaterialChanges => metadata
+            .annotations
+            .push("capture_recording_policy=material_changes".into()),
+    }
+}
+
+fn preserve_policy_annotation(header: &PevcapHeader, metadata: &mut CaptureMetadata) {
+    metadata
+        .annotations
+        .retain(|annotation| !annotation.starts_with(CAPTURE_POLICY_ANNOTATION_KEY));
+    if let Some(annotation) = header
+        .annotations
+        .iter()
+        .find(|annotation| annotation.starts_with(CAPTURE_POLICY_ANNOTATION_KEY))
+    {
+        metadata.annotations.push(annotation.clone());
     }
 }
 
@@ -894,10 +1192,12 @@ fn write_capture_stream(
         .map_err(|error| error.to_string())?;
     let mut flush = CaptureFlushState::default();
     let mut pending_metadata = None;
+    let mut material = MaterialBaseline::new(CaptureRecordingPolicy::EveryObservation);
 
     while let Ok(message) = receiver.recv() {
         state.queued_messages.fetch_sub(1, Ordering::AcqRel);
-        match capture_writer_action(message, records)? {
+        match capture_writer_action(message, records, &mut material)? {
+            CaptureWriterAction::Suppressed => {}
             CaptureWriterAction::Event(event) => {
                 write_capture_event_line(&mut writer, &event.json_line, state, &mut flush)?;
             }
@@ -914,7 +1214,7 @@ fn write_capture_stream(
                 )
                 .and_then(|()| match kind {
                     CaptureBarrier::Flush => Ok(CaptureWriterBarrierResult::Flushed),
-                    CaptureBarrier::Finish => {
+                    CaptureBarrier::Finish | CaptureBarrier::FinishWithoutExport => {
                         let content_digest = digest_open_file(writer.get_mut())?;
                         Ok(CaptureWriterBarrierResult::FileFinished {
                             content_digest,
@@ -923,7 +1223,7 @@ fn write_capture_stream(
                     }
                 });
                 reply_capture_writer_result(result, &reply)?;
-                if kind == CaptureBarrier::Finish {
+                if kind.finishes() {
                     return Ok(());
                 }
             }
@@ -964,10 +1264,13 @@ fn write_database_capture_stream(
         .fetch_add(header_size + 1, Ordering::AcqRel);
 
     let mut pending_metadata = None;
+    let mut material = MaterialBaseline::new(capture.policy);
     while let Ok(message) = receiver.recv() {
         state.queued_messages.fetch_sub(1, Ordering::AcqRel);
-        match capture_writer_action(message, records)? {
+        match capture_writer_action(message, records, &mut material)? {
+            CaptureWriterAction::Suppressed => {}
             CaptureWriterAction::Event(event) => {
+                let prepared = event.prepared_material;
                 let payload = event.json_line.into_bytes();
                 let serialized_size = payload.len() as u64 + 1;
                 if let Some(record) = event.record {
@@ -993,6 +1296,7 @@ fn write_database_capture_stream(
                     )
                 }
                 .map_err(|error| format!("could not persist live capture event: {error}"))?;
+                material.commit(prepared);
                 state
                     .bytes_written
                     .fetch_add(serialized_size, Ordering::AcqRel);
@@ -1020,10 +1324,7 @@ fn write_database_capture_stream(
         state,
         CaptureBarrier::Finish,
     )?;
-    let integrity = persist_database_capture(capture, header, CaptureBarrier::Finish, state)?;
-    if integrity == Some(LiveCaptureIntegrity::Complete) {
-        export_database_capture(path, capture, state)?;
-    }
+    persist_database_capture(capture, header, CaptureBarrier::FinishWithoutExport, state)?;
     Ok(())
 }
 
@@ -1040,25 +1341,29 @@ fn finish_database_capture_barrier(
         .and_then(|()| persist_database_capture(capture, header, kind, state))
         .and_then(|integrity| match kind {
             CaptureBarrier::Flush => Ok(CaptureWriterBarrierResult::Flushed),
-            CaptureBarrier::Finish => {
+            CaptureBarrier::Finish | CaptureBarrier::FinishWithoutExport => {
                 let integrity = integrity.ok_or_else(|| {
                     "finished database capture has no integrity result".to_string()
                 })?;
-                let jsonl_export = match integrity {
-                    LiveCaptureIntegrity::Complete => {
-                        match export_database_capture(path, capture, state) {
-                            Ok(content_digest) => {
-                                CaptureWriterJsonlExport::Available { content_digest }
+                let jsonl_export = if kind == CaptureBarrier::FinishWithoutExport {
+                    CaptureWriterJsonlExport::NotAttempted
+                } else {
+                    match integrity {
+                        LiveCaptureIntegrity::Complete => {
+                            match export_database_capture(path, capture, state) {
+                                Ok(content_digest) => {
+                                    CaptureWriterJsonlExport::Available { content_digest }
+                                }
+                                Err(error) => CaptureWriterJsonlExport::Failed(error),
                             }
-                            Err(error) => CaptureWriterJsonlExport::Failed(error),
                         }
+                        LiveCaptureIntegrity::Incomplete { .. } => {
+                            CaptureWriterJsonlExport::NotAttempted
+                        }
+                        LiveCaptureIntegrity::Unknown => CaptureWriterJsonlExport::Failed(
+                            "finished live capture has unknown integrity".into(),
+                        ),
                     }
-                    LiveCaptureIntegrity::Incomplete { .. } => {
-                        CaptureWriterJsonlExport::NotAttempted
-                    }
-                    LiveCaptureIntegrity::Unknown => CaptureWriterJsonlExport::Failed(
-                        "finished live capture has unknown integrity".into(),
-                    ),
                 };
                 Ok(CaptureWriterBarrierResult::DatabaseFinished {
                     integrity,
@@ -1068,7 +1373,7 @@ fn finish_database_capture_barrier(
             }
         });
     reply_capture_writer_result(result, reply)?;
-    Ok(kind == CaptureBarrier::Finish)
+    Ok(kind.finishes())
 }
 
 fn finalize_database_capture_metadata(
@@ -1077,12 +1382,13 @@ fn finalize_database_capture_metadata(
     state: &CaptureWriterState,
     kind: CaptureBarrier,
 ) -> Result<(), String> {
-    if kind == CaptureBarrier::Finish {
+    if kind.finishes() {
         close_pending_capture_labels(header, pending_metadata)?;
     }
-    let Some(metadata) = pending_metadata.take() else {
+    let Some(mut metadata) = pending_metadata.take() else {
         return Ok(());
     };
+    preserve_policy_annotation(header, &mut metadata);
     let previous_size = header
         .to_jsonl_line()
         .map_err(|error| error.to_string())?
@@ -1101,7 +1407,7 @@ fn finalize_database_capture_metadata(
         + 1;
     let _ = state
         .bytes_written
-        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+        .try_update(Ordering::AcqRel, Ordering::Acquire, |current| {
             Some(
                 current
                     .saturating_sub(previous_size)
@@ -1118,11 +1424,7 @@ fn persist_database_capture(
     state: &CaptureWriterState,
 ) -> Result<Option<LiveCaptureIntegrity>, String> {
     let header_line = header.to_jsonl_line().map_err(|error| error.to_string())?;
-    capture
-        .database
-        .update_live_capture_header(capture.id, header_line.into_bytes())
-        .map_err(|error| format!("could not persist live capture header: {error}"))?;
-    if kind == CaptureBarrier::Finish {
+    if kind.finishes() {
         let now_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|error| error.to_string())?
@@ -1137,11 +1439,37 @@ fn persist_database_capture(
         };
         capture
             .database
-            .finish_live_capture_with_integrity(capture.id, finished_at_ms, integrity)
+            .finalize_live_capture(
+                capture.id,
+                header_line.into_bytes(),
+                finished_at_ms,
+                integrity,
+            )
             .map_err(|error| format!("could not finish live SQLite capture: {error}"))?;
         return Ok(Some(integrity));
     }
+    capture
+        .database
+        .update_live_capture_header(capture.id, header_line.into_bytes())
+        .map_err(|error| format!("could not persist live capture header: {error}"))?;
     Ok(None)
+}
+
+impl RideDatabase {
+    /// Streams exact retained JSONL bytes on explicit demand. Interrupted/incomplete captures
+    /// remain exportable as evidence; their history integrity is never promoted to complete.
+    /// Existing files are never overwritten and failed partial exports are removed.
+    ///
+    /// # Errors
+    /// Returns storage, active-capture, output or sync failures. Database contents are preserved.
+    pub fn export_live_capture(&self, id: LiveCaptureId, path: &Path) -> Result<String, String> {
+        let capture = DatabaseCapture {
+            database: self.clone(),
+            id,
+            policy: CaptureRecordingPolicy::default(),
+        };
+        export_database_capture(path, &capture, &CaptureWriterState::default())
+    }
 }
 
 fn export_database_capture(
@@ -1155,33 +1483,24 @@ fn export_database_capture(
         .database
         .live_capture_page(capture.id, None, limit)
         .map_err(|error| format!("could not read finalized live capture: {error}"))?;
-    if first_page.state != LiveCaptureState::Finished {
-        return Err("live capture must be finalized before export".into());
-    }
-    if first_page.integrity != LiveCaptureIntegrity::Complete {
-        return Err(format!(
-            "live capture is not complete: {:?}",
-            first_page.integrity
-        ));
+    if first_page.state == LiveCaptureState::Active {
+        return Err("live capture must be inactive before export".into());
     }
 
     let mut created = false;
     let result = (|| {
         let file = sync_parent_directory_after(path, || {
-            let file = OpenOptions::new()
-                .create_new(true)
-                .read(true)
-                .write(true)
-                .open(path)?;
+            let file = OpenOptions::new().create_new(true).write(true).open(path)?;
             created = true;
             Ok(file)
         })?;
         let mut output = BufWriter::new(file);
-        let mut bytes_written = write_line(
-            &mut output,
-            std::str::from_utf8(&first_page.header_json)
-                .map_err(|error| format!("stored capture header is not UTF-8: {error}"))?,
-        )? as u64;
+        let header = std::str::from_utf8(&first_page.header_json)
+            .map_err(|error| format!("stored capture header is not UTF-8: {error}"))?;
+        let mut bytes_written = write_line(&mut output, header)? as u64;
+        let mut digest = Sha256::new();
+        digest.update(header.as_bytes());
+        digest.update(b"\n");
 
         let mut page = Some(first_page);
         let mut after_sequence = None;
@@ -1198,6 +1517,8 @@ fn export_database_capture(
                     .write_all(&event.payload)
                     .and_then(|()| output.write_all(b"\n"))
                     .map_err(|error| error.to_string())?;
+                digest.update(&event.payload);
+                digest.update(b"\n");
                 bytes_written = bytes_written.saturating_add(event.payload.len() as u64 + 1);
             }
             let cursor = snapshot.events.last().map(|event| event.sequence);
@@ -1211,15 +1532,14 @@ fn export_database_capture(
         }
 
         output.flush().map_err(|error| error.to_string())?;
-        let mut file = output
+        let file = output
             .into_inner()
             .map_err(|error| error.into_error().to_string())?;
         file.sync_all().map_err(|error| error.to_string())?;
-        let digest = digest_open_file(&mut file)?;
         state
             .physical_bytes_written
             .fetch_add(bytes_written, Ordering::AcqRel);
-        Ok(digest)
+        Ok(hex::encode(digest.finalize()))
     })();
     if result.is_err() && created {
         let _ = fs::remove_file(path);
@@ -1230,12 +1550,23 @@ fn export_database_capture(
 fn capture_writer_action(
     message: CaptureWriterMessage,
     records: &CaptureRecordPool,
+    material: &mut MaterialBaseline,
 ) -> Result<CaptureWriterAction, String> {
+    match &message {
+        CaptureWriterMessage::Location(_)
+        | CaptureWriterMessage::Music(_)
+        | CaptureWriterMessage::Metadata(_) => material.reset(),
+        CaptureWriterMessage::Record | CaptureWriterMessage::Barrier(_, _) => {}
+    }
     match message {
         CaptureWriterMessage::Record => {
-            let record = records
+            let (record, admission) = records
                 .take()
                 .ok_or_else(|| "capture record slot was empty".to_string())?;
+            let prepared_material = match material.prepare(&record, admission) {
+                MaterialDecision::Suppress => return Ok(CaptureWriterAction::Suppressed),
+                MaterialDecision::Retain(prepared) => prepared,
+            };
             let kind = match record.direction {
                 PevcapDirection::LinkUp => LiveCaptureEventKind::LinkUp,
                 PevcapDirection::LinkDown => LiveCaptureEventKind::LinkDown,
@@ -1253,6 +1584,7 @@ fn capture_writer_action(
                         .map(|location| location.wall_clock_unix_ms),
                     location: None,
                     record: Some(record),
+                    prepared_material,
                 },
             )))
         }
@@ -1284,6 +1616,7 @@ fn capture_writer_action(
                         admission: LiveCaptureLocationAdmission::NotEvaluated,
                     }),
                     record: None,
+                    prepared_material: None,
                 },
             )))
         }
@@ -1296,6 +1629,7 @@ fn capture_writer_action(
                 source_wall_clock_unix_ms: Some(music.wall_clock_unix_ms.as_milliseconds()),
                 location: None,
                 record: None,
+                prepared_material: None,
             },
         ))),
         CaptureWriterMessage::Metadata(metadata) => Ok(CaptureWriterAction::Metadata(metadata)),
@@ -1312,7 +1646,7 @@ fn flush_capture_barrier(
     state: &CaptureWriterState,
     kind: CaptureBarrier,
 ) -> Result<(), String> {
-    if kind == CaptureBarrier::Finish {
+    if kind.finishes() {
         close_pending_capture_labels(header, pending_metadata)?;
     }
     if rewrite_pending_capture_metadata(path, writer, header, pending_metadata, state)? {
@@ -1371,9 +1705,10 @@ fn rewrite_pending_capture_metadata(
     pending_metadata: &mut Option<CaptureMetadata>,
     state: &CaptureWriterState,
 ) -> Result<bool, String> {
-    let Some(metadata) = pending_metadata.take() else {
+    let Some(mut metadata) = pending_metadata.take() else {
         return Ok(false);
     };
+    preserve_policy_annotation(header, &mut metadata);
     let new_header = capture_header(
         header.wall_clock_start_unix_ms,
         header.platform_id.as_str(),
@@ -1464,27 +1799,35 @@ fn rewrite_capture_header(
         .sync_data()
         .map_err(|error| error.to_string())?;
     let input = File::open(path).map_err(|error| error.to_string())?;
+    let permissions = input
+        .metadata()
+        .map_err(|error| error.to_string())?
+        .permissions();
     let mut reader = BufReader::new(input);
     let mut old_header = Vec::new();
     reader
         .read_until(b'\n', &mut old_header)
         .map_err(|error| error.to_string())?;
-    let temp_path = path.with_extension("jsonl.tmp");
-    let mut output = OpenOptions::new()
-        .create(true)
-        .truncate(true)
-        .write(true)
-        .open(&temp_path)
-        .map_err(|error| error.to_string())?;
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let mut output = NamedTempFile::new_in(parent).map_err(|error| error.to_string())?;
     let header_bytes = write_line_to_file(
-        &mut output,
+        output.as_file_mut(),
         &header.to_jsonl_line().map_err(|error| error.to_string())?,
     )?;
     let copied_bytes =
-        std::io::copy(&mut reader, &mut output).map_err(|error| error.to_string())?;
-    output.sync_data().map_err(|error| error.to_string())?;
-    drop(output);
-    sync_parent_directory_after(path, || fs::rename(&temp_path, path))?;
+        std::io::copy(&mut reader, output.as_file_mut()).map_err(|error| error.to_string())?;
+    output
+        .as_file()
+        .set_permissions(permissions)
+        .map_err(|error| error.to_string())?;
+    output
+        .as_file()
+        .sync_all()
+        .map_err(|error| error.to_string())?;
+    sync_parent_directory_after(path, || output.persist(path).map_err(|error| error.error))?;
     let file = OpenOptions::new()
         .read(true)
         .append(true)
@@ -1521,6 +1864,410 @@ fn sync_parent_directory_after<T>(
 mod tests {
     use super::*;
 
+    pub(super) fn stationary_record(at: u64) -> PevcapRecord {
+        PevcapRecord::inbound_notification(
+            cutout_core::MonotonicTimestamp::new(at),
+            GattChannel::from_bytes([0x11; 16]),
+            GattChannel::from_bytes([0x22; 16]),
+            vec![0xaa, 0xbb],
+        )
+        .with_telemetry(cutout_core::RawTelemetryReadback::default())
+        .with_semantic_telemetry(cutout_core::PevcapSemanticTelemetry {
+            observed_at_ms: Some(cutout_core::MonotonicTimestamp::new(at)),
+            provenance: cutout_core::PevcapTelemetryProvenance::LiveSession,
+            snapshot_schema_version: 1,
+            library_version: "test".into(),
+            snapshot_json: format!(
+                r#"{{"at_ms":{at},"speed_observed_at_ms":{at},"speed":0,"nested":{{"at_ms":42}}}}"#
+            ),
+        })
+    }
+
+    fn policy_capture(
+        policy: CaptureRecordingPolicy,
+        observations: Vec<(PevcapRecord, CaptureRecordAdmission)>,
+    ) -> Vec<serde_json::Value> {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("capture.jsonl");
+        let database = RideDatabase::open(&directory.path().join("ride.sqlite")).unwrap();
+        let writer = CaptureWriter::start_with_database_and_policy(
+            path.clone(),
+            WallClockUnixTimestamp::new(100),
+            "test",
+            None,
+            &CaptureMetadata {
+                advertised_services: vec![],
+                gatt_fingerprints: vec![],
+                resolved_identity: None,
+                annotations: vec![],
+            },
+            database,
+            policy,
+        )
+        .unwrap();
+        let original_lines = observations
+            .iter()
+            .map(|(record, _)| record.to_jsonl_line().unwrap())
+            .collect::<Vec<_>>();
+        let ingress = writer.ingress();
+        for (record, admission) in observations {
+            assert_eq!(
+                ingress.try_send_record_with_admission(record, admission),
+                CaptureWriteOutcome::Accepted
+            );
+        }
+        let completion = writer.finish().unwrap();
+        let CaptureWriterFinish::DatabaseFinished {
+            integrity: LiveCaptureIntegrity::Complete,
+            jsonl_export: CaptureJsonlExport::Available(_),
+            status,
+            ..
+        } = completion
+        else {
+            panic!("policy capture did not finish complete with an export");
+        };
+        assert_eq!(status.dropped_messages, 0);
+        assert_eq!(status.queued_messages, 0);
+        assert!(!status.failed);
+        assert_eq!(status.bytes_written, fs::metadata(&path).unwrap().len());
+        let contents = fs::read_to_string(path).unwrap();
+        for line in contents.lines().skip(1) {
+            assert!(
+                original_lines.iter().any(|original| original == line),
+                "export changed a retained record"
+            );
+        }
+        contents
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn material_policy_suppresses_only_clock_changes_after_a_committed_baseline() {
+        let records = policy_capture(
+            CaptureRecordingPolicy::MaterialChanges,
+            (1..=3)
+                .map(|at| {
+                    (
+                        stationary_record(at),
+                        CaptureRecordAdmission::StationaryTelemetry,
+                    )
+                })
+                .collect(),
+        );
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[1]["record"]["monotonic_ms"], 1);
+        assert!(
+            records[0]
+                .to_string()
+                .contains("capture_recording_policy=material_changes")
+        );
+    }
+
+    #[test]
+    fn every_observation_policy_preserves_stationary_duplicates() {
+        let records = policy_capture(
+            CaptureRecordingPolicy::EveryObservation,
+            (1..=3)
+                .map(|at| {
+                    (
+                        stationary_record(at),
+                        CaptureRecordAdmission::StationaryTelemetry,
+                    )
+                })
+                .collect(),
+        );
+        assert_eq!(records.len(), 4);
+    }
+
+    #[test]
+    fn unclassified_fragment_breaks_the_material_baseline() {
+        let records = policy_capture(
+            CaptureRecordingPolicy::MaterialChanges,
+            vec![
+                (
+                    stationary_record(1),
+                    CaptureRecordAdmission::StationaryTelemetry,
+                ),
+                (
+                    stationary_record(2),
+                    CaptureRecordAdmission::EveryObservation,
+                ),
+                (
+                    stationary_record(3),
+                    CaptureRecordAdmission::StationaryTelemetry,
+                ),
+                (
+                    stationary_record(4),
+                    CaptureRecordAdmission::StationaryTelemetry,
+                ),
+            ],
+        );
+        assert_eq!(records.len(), 4);
+        assert_eq!(records[3]["record"]["monotonic_ms"], 3);
+    }
+
+    #[test]
+    fn material_policy_preserves_payload_metadata_and_unknown_clock_changes() {
+        let original = stationary_record(1);
+        let mut changed = stationary_record(2);
+        changed.bytes = vec![0xaa, 0xcc].into();
+        let mut metadata = stationary_record(3);
+        metadata.service = Some(GattChannel::from_bytes([0x33; 16]));
+        let mut nested_clock = stationary_record(4);
+        nested_clock
+            .semantic_telemetry
+            .as_mut()
+            .unwrap()
+            .snapshot_json =
+            r#"{"at_ms":4,"speed_observed_at_ms":4,"speed":0,"nested":{"at_ms":43}}"#.into();
+        let mut missing_clock = stationary_record(5);
+        missing_clock
+            .semantic_telemetry
+            .as_mut()
+            .unwrap()
+            .snapshot_json = r#"{"at_ms":5,"speed":0,"nested":{"at_ms":42}}"#.into();
+        let mut absent_observation = stationary_record(6);
+        absent_observation
+            .semantic_telemetry
+            .as_mut()
+            .unwrap()
+            .observed_at_ms = None;
+        let records = policy_capture(
+            CaptureRecordingPolicy::MaterialChanges,
+            vec![
+                original,
+                changed,
+                metadata,
+                nested_clock,
+                missing_clock,
+                absent_observation,
+            ]
+            .into_iter()
+            .map(|record| (record, CaptureRecordAdmission::StationaryTelemetry))
+            .collect(),
+        );
+        assert_eq!(records.len(), 7);
+    }
+
+    #[test]
+    fn default_admission_retains_every_record_in_material_policy() {
+        let records = policy_capture(
+            CaptureRecordingPolicy::MaterialChanges,
+            (1..=3)
+                .map(|at| (stationary_record(at), CaptureRecordAdmission::default()))
+                .collect(),
+        );
+        assert_eq!(records.len(), 4);
+    }
+
+    #[test]
+    fn later_metadata_cannot_change_the_capture_recording_contract() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("capture.jsonl");
+        let database = RideDatabase::open(&directory.path().join("ride.sqlite")).unwrap();
+        let metadata = CaptureMetadata {
+            advertised_services: vec![],
+            gatt_fingerprints: vec![],
+            resolved_identity: None,
+            annotations: vec![],
+        };
+        let writer = CaptureWriter::start_with_database_and_policy(
+            path.clone(),
+            WallClockUnixTimestamp::new(100),
+            "test",
+            None,
+            &metadata,
+            database,
+            CaptureRecordingPolicy::MaterialChanges,
+        )
+        .unwrap();
+        let mut replacement = metadata;
+        replacement
+            .annotations
+            .push("capture_recording_policy=every_observation".into());
+        assert_eq!(
+            writer.update_metadata(replacement),
+            CaptureWriteOutcome::Accepted
+        );
+        writer.finish().unwrap();
+        let capture = fs::read_to_string(path).unwrap();
+        assert!(capture.contains("capture_recording_policy=material_changes"));
+        assert!(!capture.contains("capture_recording_policy=every_observation"));
+    }
+
+    #[test]
+    fn material_policy_rejects_excess_metadata_before_it_can_poison_finalization() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("capture.jsonl");
+        let database = RideDatabase::open(&directory.path().join("ride.sqlite")).unwrap();
+        let metadata = CaptureMetadata {
+            advertised_services: vec![],
+            gatt_fingerprints: vec![],
+            resolved_identity: None,
+            annotations: vec![],
+        };
+        let writer = CaptureWriter::start_with_database_and_policy(
+            path.clone(),
+            WallClockUnixTimestamp::new(100),
+            "test",
+            None,
+            &metadata,
+            database,
+            CaptureRecordingPolicy::MaterialChanges,
+        )
+        .unwrap();
+        let mut excess = metadata;
+        excess.annotations = (0..cutout_core::PEVCAP_MAX_ANNOTATIONS)
+            .map(|index| format!("note={index}"))
+            .collect();
+        assert_eq!(writer.update_metadata(excess), CaptureWriteOutcome::Failed);
+        assert!(!writer.monitor().status().failed);
+        assert_eq!(writer.monitor().status().dropped_messages, 0);
+        writer.finish().unwrap();
+        let capture = fs::read_to_string(path).unwrap();
+        assert!(capture.contains("capture_recording_policy=material_changes"));
+        assert!(!capture.contains("note=0"));
+    }
+
+    #[test]
+    fn material_policy_reserves_active_label_closures_before_metadata_admission() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("capture.jsonl");
+        let database = RideDatabase::open(&directory.path().join("ride.sqlite")).unwrap();
+        let metadata = CaptureMetadata {
+            advertised_services: vec![],
+            gatt_fingerprints: vec![],
+            resolved_identity: None,
+            annotations: vec![],
+        };
+        let writer = CaptureWriter::start_with_database_and_policy(
+            path.clone(),
+            WallClockUnixTimestamp::new(100),
+            "test",
+            None,
+            &metadata,
+            database,
+            CaptureRecordingPolicy::MaterialChanges,
+        )
+        .unwrap();
+        let mut excess = metadata;
+        excess.annotations = vec!["note=test".into(); cutout_core::PEVCAP_MAX_ANNOTATIONS - 2];
+        excess.annotations.push("capture_label=ride_start".into());
+        assert_eq!(writer.update_metadata(excess), CaptureWriteOutcome::Failed);
+        assert!(!writer.monitor().status().failed);
+        assert_eq!(writer.monitor().status().dropped_messages, 0);
+        writer.finish().unwrap();
+        let capture = fs::read_to_string(path).unwrap();
+        assert!(!capture.contains("capture_label=ride_start"));
+    }
+
+    #[test]
+    fn default_capture_keeps_full_annotation_capacity_and_cannot_forge_material_policy() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("capture.jsonl");
+        let database = RideDatabase::open(&directory.path().join("ride.sqlite")).unwrap();
+        let mut metadata = CaptureMetadata {
+            advertised_services: vec![],
+            gatt_fingerprints: vec![],
+            resolved_identity: None,
+            annotations: (0..cutout_core::PEVCAP_MAX_ANNOTATIONS)
+                .map(|index| format!("note={index}"))
+                .collect(),
+        };
+        let writer = CaptureWriter::start_with_database(
+            path.clone(),
+            WallClockUnixTimestamp::new(100),
+            "test",
+            None,
+            &metadata,
+            database,
+        )
+        .unwrap();
+        writer.flush().unwrap();
+        metadata.annotations[0] = "capture_recording_policy=material_changes".into();
+        assert_eq!(
+            writer.update_metadata(metadata),
+            CaptureWriteOutcome::Accepted
+        );
+        writer.finish().unwrap();
+        let capture = fs::read_to_string(path).unwrap();
+        assert!(!capture.contains("capture_recording_policy="));
+        assert!(capture.contains("note=7"));
+    }
+
+    #[test]
+    fn header_rewrite_preserves_unowned_staging_sibling_and_record_bytes() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("capture.jsonl");
+        let sibling = path.with_extension("jsonl.tmp");
+        fs::write(&sibling, b"unrelated staging contents").unwrap();
+        let mut metadata = CaptureMetadata {
+            advertised_services: vec![],
+            gatt_fingerprints: vec![],
+            resolved_identity: None,
+            annotations: vec![],
+        };
+        let writer = CaptureWriter::start(
+            path.clone(),
+            WallClockUnixTimestamp::new(0),
+            "test",
+            None,
+            &metadata,
+        )
+        .unwrap();
+        assert_eq!(
+            writer.try_send_record(PevcapRecord::link_up(
+                cutout_core::MonotonicTimestamp::new(1),
+                None,
+            )),
+            CaptureWriteOutcome::Accepted
+        );
+        writer.flush().unwrap();
+        let original = fs::read_to_string(&path).unwrap();
+        let (_, original_records) = original.split_once('\n').unwrap();
+        #[cfg(unix)]
+        let original_mode = {
+            use std::os::unix::fs::PermissionsExt;
+            fs::metadata(&path).unwrap().permissions().mode()
+        };
+
+        metadata.annotations.push("note=updated".into());
+        assert_eq!(
+            writer.update_metadata(metadata),
+            CaptureWriteOutcome::Accepted
+        );
+        writer.flush().unwrap();
+        assert_eq!(fs::read(&sibling).unwrap(), b"unrelated staging contents");
+        let rewritten = fs::read_to_string(&path).unwrap();
+        let (_, rewritten_records) = rewritten.split_once('\n').unwrap();
+        assert_eq!(rewritten_records, original_records);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(&path).unwrap().permissions().mode(),
+                original_mode
+            );
+        }
+
+        assert_eq!(
+            writer.try_send_record(PevcapRecord::link_down(
+                cutout_core::MonotonicTimestamp::new(2),
+            )),
+            CaptureWriteOutcome::Accepted
+        );
+        writer.finish().unwrap();
+        let capture = cutout_core::PevcapCapture::decode(
+            &fs::read(path).unwrap(),
+            cutout_core::PevcapEncoding::Jsonl,
+        )
+        .unwrap();
+        assert_eq!(capture.records.len(), 2);
+        assert_eq!(capture.header.annotations.as_slice(), &["note=updated"]);
+    }
+
     #[test]
     fn directory_sync_accepts_relative_file_names_and_preserves_operation_errors() {
         assert_eq!(
@@ -1546,17 +2293,21 @@ mod tests {
             resolved_identity: None,
             annotations,
         };
-        let writer = CaptureWriter::start(
+        let result = CaptureWriter::start(
             path.clone(),
             WallClockUnixTimestamp::new(0),
             "test",
             None,
             &metadata,
-        )
-        .unwrap();
-        let result = writer.finish();
-        assert!(result.unwrap_err().contains("closing label boundaries"));
-        assert!(path.exists(), "failed artifact remains recoverable");
+        );
+        let Err(error) = result else {
+            panic!("invalid label capacity opened a capture writer");
+        };
+        assert!(error.contains("closing label boundaries"));
+        assert!(
+            !path.exists(),
+            "invalid metadata must not create an artifact"
+        );
     }
 
     #[test]
@@ -1734,7 +2485,24 @@ mod tests {
             )),
             CaptureWriteOutcome::Accepted
         );
-        writer.state.incomplete_messages.store(2, Ordering::Release);
+        let rejected_locations =
+            vec![database_test_location(); CAPTURE_LOCATION_BATCH_CAPACITY + 1];
+        assert_eq!(
+            writer.ingress().record_location_batch(&rejected_locations),
+            CaptureWriteOutcome::AdmissionLost {
+                dropped_messages: 65
+            }
+        );
+        assert!(!writer.monitor().status().failed);
+        assert_eq!(writer.monitor().status().last_error, None);
+        assert_eq!(
+            writer.try_send_record(PevcapRecord::link_down(
+                cutout_core::MonotonicTimestamp::new(12)
+            )),
+            CaptureWriteOutcome::Accepted,
+            "known loss must not prevent retaining subsequent data"
+        );
+        writer.flush().unwrap();
         let capture_id = writer.live_capture_id.unwrap();
 
         let completion = writer
@@ -1744,11 +2512,17 @@ mod tests {
             CaptureWriterFinish::DatabaseFinished {
                 integrity:
                     LiveCaptureIntegrity::Incomplete {
-                        dropped_messages: 2,
+                        dropped_messages: 65,
                     },
                 jsonl_export: CaptureJsonlExport::NotAttempted,
+                status,
                 ..
-            } => {}
+            } => {
+                assert_eq!(status.dropped_messages, 65);
+                assert_eq!(status.queued_messages, 0);
+                assert!(!status.failed);
+                assert_eq!(status.last_error, None);
+            }
             other => panic!("unexpected completion: {other:?}"),
         }
         assert!(!artifact_path.exists());
@@ -1759,10 +2533,11 @@ mod tests {
         assert_eq!(
             snapshot.integrity,
             LiveCaptureIntegrity::Incomplete {
-                dropped_messages: 2
+                dropped_messages: 65
             }
         );
-        assert_eq!(snapshot.events.len(), 2);
+        assert_eq!(snapshot.events.len(), 3);
+        assert_eq!(snapshot.events[2].kind, LiveCaptureEventKind::LinkDown);
         let connection = rusqlite::Connection::open(&database_path).unwrap();
         let structured: (String, Vec<u8>, Vec<u8>) = connection
             .query_row(
@@ -1864,11 +2639,219 @@ mod tests {
         );
         assert_eq!(state.status().dropped_messages, 1);
         assert_eq!(state.incomplete_messages.load(Ordering::Acquire), 0);
+        assert_eq!(
+            ingress.reject_location_batch(0),
+            CaptureWriteOutcome::Accepted
+        );
+        assert_eq!(
+            ingress.reject_location_batch(65),
+            CaptureWriteOutcome::Failed
+        );
+        assert_eq!(state.status().dropped_messages, 66);
+        assert_eq!(state.incomplete_messages.load(Ordering::Acquire), 0);
+        assert!(!state.status().failed);
     }
 
     #[test]
-    fn capture_writer_queue_overrun_is_nonblocking_and_instrumented() {
-        let (sender, _receiver) = sync_channel(0);
+    fn partial_location_batch_loss_counts_only_rejected_suffix() {
+        let (sender, receiver) = sync_channel(2);
+        let state = Arc::new(CaptureWriterState::default());
+        let ingress = CaptureWriterIngress {
+            sender,
+            records: Arc::new(CaptureRecordPool::new(2)),
+            state: Arc::clone(&state),
+            accepting: Arc::new(Mutex::new(true)),
+        };
+        let location = database_test_location();
+        assert_eq!(
+            ingress.record_location(location),
+            CaptureWriteOutcome::Accepted
+        );
+        assert_eq!(
+            ingress.record_location_batch(&[location; 4]),
+            CaptureWriteOutcome::AdmissionLost {
+                dropped_messages: 3
+            }
+        );
+        let status = state.status();
+        assert_eq!(status.queued_messages, 2);
+        assert_eq!(status.dropped_messages, 3);
+        assert_eq!(state.incomplete_messages.load(Ordering::Acquire), 3);
+        assert!(!status.failed);
+        assert_eq!(status.last_error, None);
+        for _ in 0..2 {
+            let CaptureWriterMessage::Location(retained) = receiver.recv().unwrap() else {
+                panic!("accepted location was not retained in its queue slot");
+            };
+            assert_eq!(
+                retained.to_jsonl_line().unwrap(),
+                location.to_jsonl_line().unwrap()
+            );
+            state.queued_messages.fetch_sub(1, Ordering::AcqRel);
+        }
+        assert_eq!(
+            ingress.record_location(location),
+            CaptureWriteOutcome::Accepted
+        );
+        assert_eq!(state.incomplete_messages.load(Ordering::Acquire), 3);
+    }
+
+    #[test]
+    fn record_pool_loss_retains_the_previous_accepted_record() {
+        let (sender, receiver) = sync_channel(2);
+        let state = Arc::new(CaptureWriterState::default());
+        let records = Arc::new(CaptureRecordPool::new(1));
+        let ingress = CaptureWriterIngress {
+            sender,
+            records: Arc::clone(&records),
+            state: Arc::clone(&state),
+            accepting: Arc::new(Mutex::new(true)),
+        };
+        let accepted = stationary_record(1);
+        assert_eq!(
+            ingress.try_send_record(accepted.clone()),
+            CaptureWriteOutcome::Accepted
+        );
+        assert_eq!(
+            ingress.try_send_record(stationary_record(2)),
+            CaptureWriteOutcome::AdmissionLost {
+                dropped_messages: 1
+            }
+        );
+        assert!(matches!(
+            receiver.recv().unwrap(),
+            CaptureWriterMessage::Record
+        ));
+        assert_eq!(records.take().unwrap().0, accepted);
+        state.queued_messages.fetch_sub(1, Ordering::AcqRel);
+        assert_eq!(
+            ingress.try_send_record(stationary_record(3)),
+            CaptureWriteOutcome::Accepted
+        );
+        assert_eq!(state.incomplete_messages.load(Ordering::Acquire), 1);
+        assert!(!state.status().failed);
+    }
+
+    #[test]
+    fn file_capture_with_admission_loss_refuses_a_saved_artifact() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("capture.jsonl");
+        let writer = CaptureWriter::start(
+            path.clone(),
+            WallClockUnixTimestamp::new(1_700_000_000_000),
+            "test",
+            None,
+            &CaptureMetadata {
+                advertised_services: vec![],
+                gatt_fingerprints: vec![],
+                resolved_identity: None,
+                annotations: vec![],
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            writer.ingress().reject_location_batch(0),
+            CaptureWriteOutcome::Accepted
+        );
+        assert_eq!(writer.monitor().status().dropped_messages, 0);
+        assert_eq!(
+            writer
+                .ingress()
+                .record_location_batch(&[database_test_location(); 65]),
+            CaptureWriteOutcome::AdmissionLost {
+                dropped_messages: 65
+            }
+        );
+        let retained = PevcapRecord::link_down(cutout_core::MonotonicTimestamp::new(12));
+        let retained_line = retained.to_jsonl_line().unwrap();
+        assert_eq!(
+            writer.try_send_record(retained),
+            CaptureWriteOutcome::Accepted
+        );
+        writer.flush().unwrap();
+        assert!(!writer.monitor().status().failed);
+        assert!(
+            writer
+                .finish()
+                .unwrap_err()
+                .contains("rejected at admission")
+        );
+        let contents = fs::read_to_string(path).unwrap();
+        assert_eq!(contents.lines().nth(1), Some(retained_line.as_str()));
+        assert_eq!(contents.lines().count(), 2);
+    }
+
+    fn controlled_flush_writer() -> (CaptureWriter, Receiver<CaptureWriterMessage>) {
+        let (sender, receiver) = sync_channel(1);
+        let state = Arc::new(CaptureWriterState::default());
+        let writer = CaptureWriter {
+            artifact_id: CaptureArtifactId(Uuid::new_v4()),
+            live_capture_id: None,
+            recording_policy: CaptureRecordingPolicy::EveryObservation,
+            path: PathBuf::new(),
+            ingress: CaptureWriterIngress {
+                sender,
+                records: Arc::new(CaptureRecordPool::new(1)),
+                state: Arc::clone(&state),
+                accepting: Arc::new(Mutex::new(true)),
+            },
+            state,
+            join: None,
+        };
+        (writer, receiver)
+    }
+
+    #[test]
+    fn accepted_flush_reply_loss_marks_writer_fatal() {
+        let (writer, receiver) = controlled_flush_writer();
+        let state = Arc::clone(&writer.state);
+        let worker = thread::spawn(move || {
+            let message = receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+            state.queued_messages.fetch_sub(1, Ordering::AcqRel);
+            let CaptureWriterMessage::Barrier(CaptureBarrier::Flush, reply) = message else {
+                panic!("flush did not enqueue a barrier");
+            };
+            drop(reply);
+        });
+        assert!(writer.flush().is_err());
+        worker.join().unwrap();
+        assert!(
+            writer.monitor().status().failed,
+            "an accepted barrier without a durable receipt must fail closed"
+        );
+        assert_eq!(
+            writer.monitor().status().last_error.as_deref(),
+            Some("capture writer stopped before flush")
+        );
+    }
+
+    #[test]
+    fn accepted_flush_storage_error_marks_writer_fatal() {
+        let (writer, receiver) = controlled_flush_writer();
+        let state = Arc::clone(&writer.state);
+        let worker = thread::spawn(move || {
+            let message = receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+            state.queued_messages.fetch_sub(1, Ordering::AcqRel);
+            let CaptureWriterMessage::Barrier(CaptureBarrier::Flush, reply) = message else {
+                panic!("flush did not enqueue a barrier");
+            };
+            reply.send(Err("test durable flush failed".into())).unwrap();
+        });
+        assert_eq!(writer.flush().unwrap_err(), "test durable flush failed");
+        worker.join().unwrap();
+        assert!(
+            writer.monitor().status().failed,
+            "storage rejected an accepted durability barrier"
+        );
+        assert_eq!(
+            writer.monitor().status().last_error.as_deref(),
+            Some("test durable flush failed")
+        );
+    }
+
+    #[test]
+    fn full_flush_queue_is_retryable_without_capture_loss() {
+        let (sender, receiver) = sync_channel(1);
         let state = Arc::new(CaptureWriterState::default());
         let records = Arc::new(CaptureRecordPool::new(1));
         let ingress = CaptureWriterIngress {
@@ -1880,6 +2863,7 @@ mod tests {
         let writer = CaptureWriter {
             artifact_id: CaptureArtifactId(Uuid::new_v4()),
             live_capture_id: None,
+            recording_policy: CaptureRecordingPolicy::EveryObservation,
             path: PathBuf::new(),
             ingress,
             state: Arc::clone(&state),
@@ -1889,17 +2873,87 @@ mod tests {
         let (reply, _result) = sync_channel(0);
         assert_eq!(
             writer.try_send(CaptureWriterMessage::Barrier(CaptureBarrier::Flush, reply)),
-            CaptureWriteOutcome::Failed
+            CaptureWriteOutcome::Accepted
         );
+        assert_eq!(writer.flush_outcome(), CaptureFlushOutcome::Rejected);
         let status = state.status();
-        assert_eq!(status.queued_messages, 0);
-        assert_eq!(status.peak_queued_messages, 0);
+        assert_eq!(status.queued_messages, 1);
+        assert_eq!(status.peak_queued_messages, 1);
         assert_eq!(status.dropped_messages, 1);
-        assert!(status.failed);
-        assert_eq!(
-            status.last_error.as_deref(),
-            Some("capture writer queue is full")
+        assert_eq!(state.incomplete_messages.load(Ordering::Acquire), 0);
+        assert!(
+            !status.failed,
+            "a rejected control request does not stop the worker"
         );
+        assert_eq!(status.last_error, None);
+
+        drop(receiver.recv().unwrap());
+        state.queued_messages.fetch_sub(1, Ordering::AcqRel);
+        let worker_state = Arc::clone(&state);
+        let worker = thread::spawn(move || {
+            let message = receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+            worker_state.queued_messages.fetch_sub(1, Ordering::AcqRel);
+            let CaptureWriterMessage::Barrier(CaptureBarrier::Flush, reply) = message else {
+                panic!("retry did not enqueue a flush barrier");
+            };
+            reply.send(Ok(CaptureWriterBarrierResult::Flushed)).unwrap();
+        });
+        assert_eq!(writer.flush_outcome(), CaptureFlushOutcome::Flushed);
+        worker.join().unwrap();
+        assert_eq!(state.status().queued_messages, 0);
+        assert!(!state.status().failed);
+    }
+
+    #[test]
+    fn disconnected_finish_preserves_the_first_worker_error() {
+        let directory = tempfile::tempdir().unwrap();
+        let database_path = directory.path().join("ride.sqlite");
+        let database = RideDatabase::open(&database_path).unwrap();
+        let mut writer = CaptureWriter::start_with_database(
+            directory.path().join("capture.jsonl"),
+            WallClockUnixTimestamp::new(1_700_000_000_000),
+            "test",
+            None,
+            &CaptureMetadata {
+                advertised_services: vec![],
+                gatt_fingerprints: vec![],
+                resolved_identity: None,
+                annotations: vec![],
+            },
+            database.clone(),
+        )
+        .unwrap();
+        writer.flush().unwrap();
+        assert_eq!(
+            writer.ingress().reject_location_batch(1),
+            CaptureWriteOutcome::AdmissionLost {
+                dropped_messages: 1
+            }
+        );
+        assert!(!writer.monitor().status().failed);
+        let connection = rusqlite::Connection::open(&database_path).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TRIGGER reject_capture_event BEFORE INSERT ON live_capture_events
+                 BEGIN SELECT RAISE(ABORT, 'injected capture append failure'); END;",
+            )
+            .unwrap();
+        assert_eq!(
+            writer.record_location(database_test_location()),
+            CaptureWriteOutcome::Accepted
+        );
+        // Join the known worker so the failure and channel closure are deterministic.
+        writer.join.take().unwrap().join().unwrap();
+        let monitor = writer.monitor();
+        let initial_error = monitor.status().last_error.unwrap();
+        assert!(initial_error.contains("injected capture append failure"));
+        let error = writer.finish().unwrap_err();
+        assert_eq!(error, initial_error);
+        assert_eq!(
+            monitor.status().last_error.as_deref(),
+            Some(initial_error.as_str())
+        );
+        database.shutdown().unwrap();
     }
 
     #[test]
@@ -1953,6 +3007,7 @@ mod tests {
         let writer = CaptureWriter {
             artifact_id: CaptureArtifactId(Uuid::new_v4()),
             live_capture_id: None,
+            recording_policy: CaptureRecordingPolicy::EveryObservation,
             path: PathBuf::new(),
             ingress,
             state: Arc::clone(&state),

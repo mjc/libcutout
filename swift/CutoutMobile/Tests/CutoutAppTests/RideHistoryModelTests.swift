@@ -1,17 +1,26 @@
-import CutoutMobile
 import CutoutMobileFFI
 import Foundation
 import XCTest
 
 @testable import CutoutApp
+@testable import CutoutMobile
+
+#if os(macOS)
+    import AppKit
+    import SwiftUI
+#endif
 
 final class RideHistoryModelTests: XCTestCase {
     private static func historySummary(_ rideID: String) -> MobileRideMapHistorySummaryDto {
+        historySummary(rideID, pointCount: 0)
+    }
+
+    private static func historySummary(_ rideID: String, pointCount: UInt64) -> MobileRideMapHistorySummaryDto {
         MobileRideMapHistorySummaryDto(
             rideID: rideID,
             state: .saved,
             summary: MobileRideMapSummaryDto(
-                pointCount: 0,
+                pointCount: pointCount,
                 distanceMeters: 0,
                 durationMilliseconds: 0
             ),
@@ -22,6 +31,101 @@ final class RideHistoryModelTests: XCTestCase {
             associatedVehicleName: nil,
             telemetryState: .associatedNoTelemetry
         )
+    }
+
+    private final class InMemoryHistoryQuery: RideHistoryQuerying, @unchecked Sendable {
+        final class PageGate: @unchecked Sendable {
+            let started = XCTestExpectation(description: "history page started")
+            let finished = XCTestExpectation(description: "history page finished")
+            private let releaseSignal = DispatchSemaphore(value: 0)
+
+            func waitForRelease() {
+                started.fulfill()
+                releaseSignal.wait()
+                finished.fulfill()
+            }
+
+            func release() { releaseSignal.signal() }
+        }
+
+        let summaries: [MobileRideMapHistorySummaryDto]
+        private let lock = NSLock()
+        private var nextPageGate: PageGate?
+
+        init(count: Int) {
+            summaries = (0..<count).map { RideHistoryModelTests.historySummary("ride-\($0)", pointCount: 1) }
+        }
+
+        func gateNextPage() -> PageGate {
+            let gate = PageGate()
+            lock.lock()
+            nextPageGate = gate
+            lock.unlock()
+            return gate
+        }
+
+        func storedHistoryPage(
+            cursor: MobileRideCursorDto?,
+            limit: UInt32,
+            filter: MobileRideHistoryFilterDto?
+        ) throws -> MobileRideMapHistoryPageDto {
+            // The fake uses the cursor timestamp as an array offset; Rust owns real cursor semantics.
+            let start = min(Int(cursor?.createdAtMilliseconds ?? 0), summaries.count)
+            let end = min(start + Int(limit), summaries.count)
+            let page = MobileRideMapHistoryPageDto(
+                summaries: Array(summaries[start..<end]),
+                nextCursor: end < summaries.count
+                    ? MobileRideCursorDto(
+                        createdAtMilliseconds: UInt64(end),
+                        rideId: MobileRideIdDto(bytes: Data(repeating: 0, count: 16))
+                    ) : nil
+            )
+            lock.lock()
+            let gate = nextPageGate
+            nextPageGate = nil
+            lock.unlock()
+            gate?.waitForRelease()
+            return page
+        }
+
+        func storedHistoryRide(rideID: String) throws -> MobileRideMapHistorySummaryDto? {
+            summaries.first { $0.rideID == rideID }
+        }
+
+        func storedHistoryVehicleOptions() throws -> [MobileRideMapHistoryVehicleOptionDto] { [] }
+
+        func storedMusicHistoryAsync(rideID: String) async throws -> MobileMusicHistoryDto {
+            MobileMusicHistoryDto(status: .unavailable, events: [])
+        }
+
+        func projectStoredPoints(
+            rideID: String,
+            budget: UInt32,
+            viewport: MobileGeoBoundsDto?,
+            privacy: MobileRideMapRoutePrivacyPolicy,
+            cancellation: MobileRideMapProjectionCancellation?
+        ) throws -> MobileRideMapRouteProjection {
+            guard let index = summaries.firstIndex(where: { $0.rideID == rideID }) else {
+                throw MobileRideMapError.rideNotFound
+            }
+            return MobileRideMapRouteProjection(
+                points: [
+                    MobileRideMapRouteDisplayPoint(
+                        sequence: UInt64(index), segmentId: 1,
+                        latitudeDegrees: 39.7 + Double(index) * 0.001, longitudeDegrees: -104.9,
+                        privacyClass: .precise
+                    )
+                ],
+                segments: [],
+                sourcePointCount: 1,
+                sourceSegmentCount: 1,
+                candidatePointCount: 1,
+                candidateSegmentCount: 0,
+                displayedSegmentCount: 0,
+                backgroundGapCount: 0,
+                presence: .visible
+            )
+        }
     }
 
     @MainActor
@@ -133,6 +237,31 @@ final class RideHistoryModelTests: XCTestCase {
         XCTAssertNil(filter.vehicleIdentity)
         XCTAssertNil(filter.searchText)
     }
+
+    #if os(macOS)
+        @MainActor
+        func testOpeningHistoryLoadsDefaultRecentRidesWithoutChangingFilter() async throws {
+            let state = MobileRideMapState()
+            let rideID = try await Self.saveHistoryRide(in: state)
+            let model = CutoutAppModel(core: CutoutSessionCore(rideMapState: state))
+            let presentation = RideMapPresentationState()
+            let window = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 480, height: 720),
+                styleMask: [.titled], backing: .buffered, defer: false
+            )
+            window.isReleasedWhenClosed = false
+            defer { window.close() }
+            window.contentView = NSHostingView(rootView: RideMapRouteView(model: model, presentation: presentation))
+            window.orderFront(nil)
+            presentation.mode = .history
+
+            await Self.waitUntil("initial Last 30 Days history load") {
+                model.rideHistory.rides.contains { $0.rideID == rideID }
+            }
+            XCTAssertEqual(model.rideHistory.dateFilter, .last30Days)
+            XCTAssertNil(model.rideHistory.error)
+        }
+    #endif
 
     @MainActor
     func testDetailLoadGenerationRejectsDeletedOrReplacedSelection() {
@@ -764,6 +893,135 @@ final class RideHistoryModelTests: XCTestCase {
         XCTAssertTrue(model.canLoadMore)
         XCTAssertNil(model.error)
         XCTAssertEqual(query.historyPageCursorPresenceSnapshot, [false, true, false])
+    }
+
+    @MainActor
+    func testStorageUnavailableReloadRejectsLateInitialPage() async throws {
+        let query = InMemoryHistoryQuery(count: 1)
+        let rideID = try XCTUnwrap(query.summaries.first?.rideID)
+        let availability = RideHistoryAvailability()
+        let gate = query.gateNextPage()
+        defer { gate.release() }
+        let model = RideHistoryModel(
+            stateProvider: { query },
+            storageErrorProvider: {
+                availability.isAvailable ? nil : "Rust ride database is unavailable"
+            }
+        )
+
+        model.setDateFilter(.allTime)
+        await fulfillment(of: [gate.started], timeout: 5)
+
+        availability.isAvailable = false
+        model.reload()
+        let storageError = MobileRideMapError.storageError("Rust ride database is unavailable")
+        XCTAssertEqual(model.error, storageError)
+        XCTAssertFalse(model.isLoading)
+
+        gate.release()
+        await fulfillment(of: [gate.finished], timeout: 5)
+        for _ in 0..<20 { await Task.yield() }
+
+        XCTAssertTrue(model.rides.isEmpty)
+        XCTAssertNil(model.selectedRideID)
+        XCTAssertFalse(model.canLoadMore)
+        XCTAssertFalse(model.isLoading)
+        XCTAssertEqual(model.error, storageError)
+        XCTAssertEqual(model.routeError, storageError)
+        XCTAssertEqual(model.detailRouteError, storageError)
+
+        availability.isAvailable = true
+        model.reload()
+        await Self.waitUntil("history retry after unavailable storage") {
+            !model.isLoading && model.selectedRideID == rideID
+        }
+        XCTAssertNil(model.error)
+    }
+
+    @MainActor
+    func testStorageUnavailableReloadRejectsLateCursorPage() async throws {
+        let pageLimit = Int(MobileRideMapLimits.rustOwned.historyPageLimit)
+        let query = InMemoryHistoryQuery(count: pageLimit + 1)
+        let availability = RideHistoryAvailability()
+        let model = RideHistoryModel(
+            stateProvider: { query },
+            storageErrorProvider: {
+                availability.isAvailable ? nil : "Rust ride database is unavailable"
+            }
+        )
+        model.setDateFilter(.allTime)
+        await Self.waitUntil("first page before unavailable storage") {
+            !model.isLoading && model.canLoadMore && !model.routeLoading
+        }
+        let firstPageRideIDs = model.rides.map(\.rideID)
+        let selectedRideID = model.selectedRideID
+        let routePoints = model.displayPoints
+        XCTAssertFalse(routePoints.isEmpty)
+
+        let gate = query.gateNextPage()
+        defer { gate.release() }
+        model.loadMore()
+        await fulfillment(of: [gate.started], timeout: 5)
+
+        availability.isAvailable = false
+        model.reload()
+        gate.release()
+        await fulfillment(of: [gate.finished], timeout: 5)
+        for _ in 0..<20 { await Task.yield() }
+
+        let storageError = MobileRideMapError.storageError("Rust ride database is unavailable")
+        XCTAssertEqual(model.rides.map(\.rideID), firstPageRideIDs)
+        XCTAssertEqual(model.selectedRideID, selectedRideID)
+        XCTAssertEqual(model.displayPoints, routePoints)
+        XCTAssertTrue(model.canLoadMore)
+        XCTAssertFalse(model.isLoading)
+        XCTAssertEqual(model.error, storageError)
+        XCTAssertEqual(model.routeError, storageError)
+        XCTAssertEqual(model.detailRouteError, storageError)
+
+        availability.isAvailable = true
+        model.loadMore()
+        await Self.waitUntil("cursor retry after unavailable storage") {
+            model.rides.count == pageLimit + 1 && !model.canLoadMore
+        }
+        XCTAssertNil(model.error)
+    }
+
+    @MainActor
+    func testHistoryReentryPreservesSelectedRideOutsideFirstPage() async throws {
+        let pageLimit = Int(MobileRideMapLimits.rustOwned.historyPageLimit)
+        let query = InMemoryHistoryQuery(count: pageLimit + 1)
+        let model = RideHistoryModel(stateProvider: { query })
+        model.setDateFilter(.allTime)
+        await Self.waitUntil("first page before history reentry") {
+            !model.isLoading && model.canLoadMore
+        }
+        let firstPageRideIDs = model.rides.map(\.rideID)
+        model.loadMore()
+        await Self.waitUntil("second page before history reentry") {
+            model.rides.count == pageLimit + 1
+        }
+        let selectedRideID = try XCTUnwrap(model.rides.last?.rideID)
+        XCTAssertFalse(firstPageRideIDs.contains(selectedRideID))
+        model.selectFromHistoryList(selectedRideID)
+        await Self.waitUntil("paginated ride selection") {
+            model.selectedRideID == selectedRideID && !model.routeLoading && !model.detailRouteLoading
+        }
+        let routePoints = model.displayPoints
+        XCTAssertFalse(routePoints.isEmpty)
+
+        model.reloadPreservingSelection()
+        await Self.waitUntil("same paginated selection after history reentry") {
+            !model.isLoading && !model.routeLoading && !model.detailRouteLoading
+        }
+
+        XCTAssertEqual(model.selectedRideID, selectedRideID)
+        XCTAssertEqual(model.detailProjectionRideID, selectedRideID)
+        XCTAssertTrue(model.rides.contains { $0.rideID == selectedRideID })
+        XCTAssertEqual(model.displayPoints, routePoints)
+        XCTAssertEqual(model.dateFilter, .allTime)
+        XCTAssertTrue(model.canLoadMore)
+        XCTAssertNil(model.error)
     }
 
     @MainActor

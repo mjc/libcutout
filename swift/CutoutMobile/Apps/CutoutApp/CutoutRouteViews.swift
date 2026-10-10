@@ -4,53 +4,134 @@ import Foundation
 import Observation
 import SwiftUI
 
-struct AppMusicCompactPlayerModifier: ViewModifier {
-    let model: CutoutAppModel
-    private enum Sheet: String, Identifiable {
-        case details, settings
-        var id: Self { self }
-    }
-    @State private var presentedSheet: Sheet?
+#if canImport(UIKit)
+    import UIKit
+#endif
 
-    func body(content: Content) -> some View {
-        content.musicCompactPlayer(
-            nowPlaying: model.music.nowPlaying,
-            selectedProvider: model.music.selectedProvider,
-            isHidden: model.music.isPlayerHidden,
-            onCommand: { command in
-                Task { @MainActor in
-                    _ = await model.music.handleCommand(command)
-                }
-            },
-            onOpenDetails: { presentedSheet = .details },
-            onOpenSettings: { presentedSheet = .settings },
-            onDismiss: model.music.dismissPlayer,
-            onRestore: model.music.restorePlayer
-        )
-        .sheet(item: $presentedSheet) { sheet in
-            switch sheet {
-            case .details:
-                if let nowPlaying = model.music.settingsNowPlaying {
-                    MusicExpandedPlayer(
-                        nowPlaying: nowPlaying,
-                        timeline: model.music.timelineEvents,
-                        onCommand: { command in
-                            Task { @MainActor in
-                                _ = await model.music.handleCommand(command)
-                            }
-                        }
-                    )
-                }
-            case .settings:
-                AppSetupView(model: model, opensMusic: true)
+#if DEBUG
+    @MainActor
+    private struct RideUITestEnvironmentReadback: ViewModifier {
+        @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+        @Environment(\.accessibilityReduceMotion) private var reduceMotion
+        @Environment(\.colorSchemeContrast) private var contrast
+        private let isEnabled =
+            CutoutUITestSessionFixture(arguments: ProcessInfo.processInfo.arguments) != nil
+            && UserDefaults.standard.bool(forKey: "CUTOUT_UI_TEST_ENVIRONMENT_READBACK")
+
+        func body(content: Content) -> some View {
+            if isEnabled {
+                content.accessibilityValue(readback)
+            } else {
+                content
             }
         }
+
+        private var readback: String {
+            #if canImport(UIKit)
+                "swiftui=\(categoryName);system=\(UIApplication.shared.preferredContentSizeCategory.rawValue);"
+                    + "reduceMotion=\(reduceMotion);systemReduceMotion=\(UIAccessibility.isReduceMotionEnabled);"
+                    + "contrast=\(contrast == .increased ? "increased" : "standard");"
+                    + "systemContrast=\(UIAccessibility.isDarkerSystemColorsEnabled)"
+            #else
+                "swiftui=\(categoryName)"
+            #endif
+        }
+
+        private var categoryName: String {
+            if dynamicTypeSize == .large { return "large" }
+            if dynamicTypeSize == .xxxLarge { return "xxxLarge" }
+            if dynamicTypeSize == .accessibility5 { return "accessibility5" }
+            return String(describing: dynamicTypeSize)
+        }
+    }
+#endif
+
+extension View {
+    @MainActor
+    fileprivate func rideUITestEnvironmentReadback() -> some View {
+        #if DEBUG
+            modifier(RideUITestEnvironmentReadback())
+        #else
+            self
+        #endif
+    }
+}
+
+struct AppMusicPlayerView: View {
+    let model: CutoutAppModel
+    let onOpenSettings: () -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        Group {
+            if let nowPlaying = model.music.settingsNowPlaying {
+                MusicExpandedPlayer(
+                    nowPlaying: nowPlaying,
+                    timeline: model.music.timelineEvents,
+                    onCommand: perform,
+                    onOpenSettings: onOpenSettings,
+                    onDismissPlayer: model.music.dismissPlayer
+                )
+            } else {
+                NavigationStack {
+                    Form {
+                        Section(model.music.selectedProvider.title) {
+                            Text(pevLocalizedText("music.state.not_connected"))
+                                .foregroundStyle(.secondary)
+                                .accessibilityIdentifier("music.player.not-connected")
+                            if model.music.selectedProvider == .spotify {
+                                Button(pevLocalizedText("music.play")) { perform(.play) }
+                                    .accessibilityIdentifier("music.play")
+                            }
+                            Button(pevLocalizedText("music.open_named_provider", model.music.selectedProvider.title)) {
+                                perform(.openProvider)
+                            }
+                            .accessibilityIdentifier("music.open-provider")
+                        }
+                        Section {
+                            Button(pevLocalizedText("music.settings.open"), action: onOpenSettings)
+                                .accessibilityIdentifier("music.open-settings")
+                        }
+                    }
+                    .navigationTitle(pevLocalizedText("music.settings.title"))
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button {
+                                dismiss()
+                            } label: {
+                                Text(pevLocalizedText("music.done"))
+                                    .frame(minWidth: 44, minHeight: 44)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityIdentifier("music.done")
+                        }
+                    }
+                }
+            }
+        }
+        .accessibilityIdentifier("music.player.screen")
+    }
+
+    private func perform(_ command: MobileMusicCommandDto) {
+        Task { @MainActor in _ = await model.music.handleCommand(command) }
     }
 }
 
 extension View {
-    func appMusicCompactPlayer(model: CutoutAppModel) -> some View {
-        modifier(AppMusicCompactPlayerModifier(model: model))
+    func appMusicCompactPlayer(
+        model: CutoutAppModel,
+        onOpenDetails: @escaping () -> Void,
+        onOpenSettings: @escaping () -> Void
+    ) -> some View {
+        musicCompactPlayer(
+            nowPlaying: model.music.nowPlaying,
+            isHidden: model.music.isPlayerHidden,
+            onCommand: { command in Task { @MainActor in _ = await model.music.handleCommand(command) } },
+            onOpenDetails: onOpenDetails,
+            onOpenSettings: onOpenSettings,
+            onDismiss: model.music.dismissPlayer
+        )
     }
 }
 
@@ -105,53 +186,41 @@ struct DevicePickerRouteView: View {
             pair: pair,
             openSetup: openSetup
         )
-        .safeAreaInset(edge: .bottom, spacing: 12) {
-            HStack {
-                Button {
-                    navigate(.lighting(.euc))
-                } label: {
-                    Label(localizedAppText("navigation.section.lighting"), systemImage: "lightbulb.2")
-                        .frame(maxWidth: .infinity, minHeight: 44)
-                        .padding(.vertical, 6)
-                        .background(PevDashboardCardBackground(cornerRadius: 18))
-                }
-                .accessibilityIdentifier("device-picker.open-lighting")
-                Button {
-                    navigate(.rideMap)
-                } label: {
-                    Label(localizedAppText("tab.map"), systemImage: "map")
-                        .frame(maxWidth: .infinity, minHeight: 44)
-                        .padding(.vertical, 6)
-                        .background(PevDashboardCardBackground(cornerRadius: 18))
-                }
-                .accessibilityIdentifier("device-picker.open-map")
-            }
-            .buttonStyle(.plain)
-            .font(.subheadline.weight(.semibold))
-            .foregroundStyle(PevColors.yellow)
-            .padding(.horizontal, 24)
-            .padding(.bottom, 8)
-        }
+
     }
 }
 
 struct EucRideRouteView: View {
     let model: CutoutAppModel
 
+    private func rideState(at now: MonotonicMilliseconds) -> EucRideScreenState? {
+        #if DEBUG && targetEnvironment(simulator)
+            if let fixture = CutoutUITestSecondaryRideFixture.eucRideState(at: now) { return fixture }
+        #endif
+        return model.device.eucRidePresentationState
+    }
+
+    private func phoneLocationReadback(at now: MonotonicMilliseconds) -> PhoneLocationReadback {
+        #if DEBUG && targetEnvironment(simulator)
+            if let fixture = CutoutUITestSecondaryRideFixture.phoneLocationReadback(at: now) { return fixture }
+        #endif
+        return model.device.phoneLocationReadback
+    }
+
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { _ in
             EucRideScreenView(
-                rideState: model.device.eucRidePresentationState,
+                rideState: rideState(at: model.currentMonotonicTime),
                 rideTitle: model.device.selectedRideTitle,
                 now: model.currentMonotonicTime,
-                captureStatusText: model.capture.status?.rideDisplayText,
+                captureStatusText: model.capture.status.flatMap { $0.isRecording ? $0.rideDisplayText : nil },
                 connectionStatusText: model.device.connectionStatusText,
-                phoneLocationReadback: model.device.phoneLocationReadback
+                phoneLocationReadback: phoneLocationReadback(at: model.currentMonotonicTime)
             )
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("dashboard.screen.eucRide")
+            .rideUITestEnvironmentReadback()
         }
-        .appMusicCompactPlayer(model: model)
     }
 }
 
@@ -308,19 +377,26 @@ struct EucTuneRouteView: View {
 struct VescRideRouteView: View {
     let model: CutoutAppModel
 
+    private func rideSnapshot(at now: MonotonicMilliseconds) -> VescRideSnapshot? {
+        #if DEBUG && targetEnvironment(simulator)
+            if let fixture = CutoutUITestSecondaryRideFixture.vescRideSnapshot(at: now) { return fixture }
+        #endif
+        return model.device.vescRideSnapshot
+    }
+
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { _ in
             VescRideScreenView(
-                liveSnapshot: model.device.vescRideSnapshot,
+                liveSnapshot: rideSnapshot(at: model.currentMonotonicTime),
                 phase: model.device.phase,
                 now: model.currentMonotonicTime,
-                captureStatusText: model.capture.status?.rideDisplayText,
+                captureStatusText: model.capture.status.flatMap { $0.isRecording ? $0.rideDisplayText : nil },
                 connectionStatusText: model.device.connectionStatusText
             )
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("dashboard.screen.vescRide")
+            .rideUITestEnvironmentReadback()
         }
-        .appMusicCompactPlayer(model: model)
     }
 }
 
@@ -634,7 +710,7 @@ final class LightingRouteModel {
 
     @discardableResult
     func setEffectSpeed(_ speed: UInt8) -> Bool {
-        guard case let .effect(pattern, _) = requestedPlayback else { return false }
+        guard case .effect(let pattern, _) = requestedPlayback else { return false }
         var state = requestedState
         state.playback = .effect(pattern: pattern, speed: speed)
         guard session.setEffectSpeed(speed) else {
@@ -948,13 +1024,13 @@ extension MelkLightingPeripheralState {
         case .idle: localizedAppText("lighting.state.idle")
         case .scanning: localizedAppText("lighting.state.scanning")
         case .connecting: localizedAppText("lighting.state.connecting")
-        case let .retrying(_, delayMilliseconds):
+        case .retrying(_, let delayMilliseconds):
             localizedAppText(
                 "lighting.state.retrying", Int64(max(1, Int((delayMilliseconds + 999) / 1000))))
         case .discovering: localizedAppText("lighting.state.discovering")
         case .ready: localizedAppText("lighting.state.ready")
         case .disconnected: localizedAppText("lighting.state.disconnected")
-        case let .failed(reason): localizedAppText("lighting.state.failed", reason)
+        case .failed(let reason): localizedAppText("lighting.state.failed", reason)
         }
     }
 
@@ -967,3 +1043,135 @@ extension MelkLightingPeripheralState {
         }
     }
 }
+
+#if DEBUG && targetEnvironment(simulator)
+    // Supplies only native transport facts. Rust verifies the profile, admits
+    // commands, and produces the exact write captured by this Simulator fixture.
+    @Observable
+    private final class CutoutUITestLightingSession: MelkLightingPeripheralSessionProtocol {
+        static let identifier = "11111111-1111-1111-1111-111111111111"
+        private let core = MobileMelkLightingSessionCore()
+        private(set) var brightnessWriteCount = 0
+        private(set) var writtenBrightness: UInt8?
+        private(set) var lastBrightnessWrite: MobileMelkLightingWriteDto?
+        var onIdentity: ((MelkLightingPeripheralIdentity) -> Void)?
+        var onStateChange: ((MelkLightingPeripheralState) -> Void)?
+        var onNotification: ((Data) -> Void)?
+        var onRecord: ((String) -> Void)?
+        var onCandidate: ((MelkLightingPeripheralCandidate) -> Void)?
+        var onCandidateRemoved: ((String) -> Void)?
+
+        var commandStatus: MelkLightingCommandStatus {
+            switch core.snapshot().commandStatus {
+            case 0: .idle
+            case 1: .requested
+            case 2: .confirmed
+            default: .unconfirmed
+            }
+        }
+
+        private static func channel(_ short: UInt64) -> MobileBluetoothUuid {
+            MobileBluetoothUuid(
+                mostSignificantBits: (short << 32) | 0x0000_1000,
+                leastSignificantBits: 0x8000_0080_5f9b_34fb
+            )
+        }
+
+        func start(preferredPlatformIdentifier: String?) {
+            if case .ready = core.snapshot().state {
+                publishReadyIfVerified()
+                return
+            }
+            let name = "MELK-OC21  6A"
+            core.start(preferredPlatformIdentifier: Self.identifier)
+            core.handle(event: .bluetoothState(poweredOn: true, stateCode: 5))
+            core.handle(event: .restoreUnavailable)
+            core.handle(event: .discovered(name: name, platformIdentifier: Self.identifier, rssi: -40))
+            _ = core.drainActions()
+            core.handle(event: .connected(name: name, platformIdentifier: Self.identifier))
+            _ = core.drainActions()
+            core.handle(event: .servicesDiscovered(serviceUuids: [Self.channel(0xfff0)], error: nil))
+            _ = core.drainActions()
+            core.handle(
+                event: .characteristicsDiscovered(
+                    name: name, serviceUuid: Self.channel(0xfff0),
+                    characteristics: [
+                        MobileMelkLightingCharacteristicEvidenceDto(
+                            uuid: Self.channel(0xfff3), writeWithoutResponse: true, notifyOrIndicate: false),
+                        MobileMelkLightingCharacteristicEvidenceDto(
+                            uuid: Self.channel(0xfff4), writeWithoutResponse: false, notifyOrIndicate: true),
+                    ], error: nil))
+            _ = core.drainActions()
+            core.handle(
+                event: .notificationState(
+                    characteristic: Self.channel(0xfff4), ready: true, canSend: true, error: nil))
+            _ = core.drainActions()
+            for _ in 0..<2 {
+                core.handle(event: .timerFired(timer: .initialization, canSend: true))
+                _ = core.drainActions()
+            }
+            publishReadyIfVerified()
+        }
+
+        private func publishReadyIfVerified() {
+            guard case .ready = core.snapshot().state else {
+                onStateChange?(.failed("Simulator Lighting profile verification failed"))
+                return
+            }
+            onIdentity?(
+                MelkLightingPeripheralIdentity(
+                    name: "MELK-OC21  6A", platformIdentifier: Self.identifier, rssi: -40))
+            onStateChange?(.ready)
+        }
+
+        func stop() {
+            core.stop()
+            onStateChange?(.disconnected)
+        }
+        func selectCandidate(platformIdentifier: String) {
+            core.selectCandidate(platformIdentifier: platformIdentifier)
+        }
+        func setPower(_ on: Bool) -> Bool { core.setPower(on: on) }
+        func setSolidColor(red: UInt8, green: UInt8, blue: UInt8) -> Bool {
+            core.setSolidColor(red: red, green: green, blue: blue)
+        }
+        func setBrightness(_ percentage: UInt8) throws -> Bool {
+            guard try core.setBrightness(percentage: percentage) else { return false }
+            core.flushWrites(canSend: true)
+            for action in core.drainActions() {
+                guard case let .write(identifier, write) = action, identifier == Self.identifier else { continue }
+                writtenBrightness = percentage
+                lastBrightnessWrite = write
+                brightnessWriteCount += 1
+            }
+            return true
+        }
+        func setEffectSpeed(_ speed: UInt8) -> Bool { core.setEffectSpeed(speed: speed) }
+        func applyState(_ state: MobileMelkLightingRestoreStateDto) throws -> Bool { try core.applyState(state: state) }
+        func setSchedule(_ schedule: MobileMelkScheduleDto, clock: MobileMelkClockDto) throws -> Bool {
+            try core.setSchedule(schedule: schedule, clock: clock)
+        }
+        func markLastCommandConfirmed() -> Bool { false }
+        func markLastCommandUnconfirmed() { core.markLastCommandUnconfirmed() }
+    }
+
+    extension LightingRouteModel {
+        static func uiTestConnectedLightingModel() -> LightingRouteModel? {
+            guard CommandLine.arguments.contains("--ui-test-connected-lighting") else { return nil }
+            guard let defaults = UserDefaults(suiteName: "io.cutout.ui-test.connected-lighting") else { return nil }
+            defaults.removePersistentDomain(forName: "io.cutout.ui-test.connected-lighting")
+            return LightingRouteModel(
+                session: CutoutUITestLightingSession(), persistence: LightingAccessoryPersistence(defaults: defaults))
+        }
+
+        var uiTestBrightnessWriteReceipt: String? {
+            guard let session = session as? CutoutUITestLightingSession else { return nil }
+            let brightness = session.writtenBrightness.map(String.init) ?? "none"
+            let payload = session.lastBrightnessWrite?.payload.map { String(format: "%02x", $0) }.joined() ?? "none"
+            let channel = session.lastBrightnessWrite?.characteristic.mostSignificantBits ?? 0
+            let mode = session.lastBrightnessWrite?.mode == .withoutResponse ? "without-response" : "none"
+            return "requested=\(requestedBrightness);written=\(brightness);writes=\(session.brightnessWriteCount);"
+                + "payload=\(payload);channel=\(channel);mode=\(mode)"
+        }
+    }
+#endif

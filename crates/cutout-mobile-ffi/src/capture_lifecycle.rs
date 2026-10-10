@@ -1,8 +1,9 @@
 //! Capture lifecycle through the existing session-state owner.
 
-use crate::{CutoutSessionStateHandle, MobileCaptureWriteOutcomeDto};
+use crate::{CutoutSessionStateHandle, MobileCaptureWriteOutcomeDto, MobileCaptureWriterStatusDto};
 use cutout_core::{
-    CaptureAttemptSnapshot, CaptureFinishToken, CaptureGeneration, CaptureOrigin, CaptureStage,
+    CaptureAttemptSnapshot, CaptureCompletionDisposition, CaptureFinishToken, CaptureGeneration,
+    CaptureOrigin, CaptureStage,
 };
 
 macro_rules! capture_enum {
@@ -39,10 +40,126 @@ pub enum MobileCaptureWriteDecisionDto {
     Continue,
     /// Metadata admission rejected the event, but the writer remains usable.
     Rejected,
+    /// Evidence was lost at bounded admission, but the writer remains usable.
+    AdmissionLost,
     /// The current writer failed and native failure effects should run.
     FailWriter,
-    /// The failed result did not belong to the current capture attempt.
+    /// The result did not belong to an active writer of the current capture attempt.
     StaleFailure,
+}
+
+/// Durability receipt for one flush; observation loss is tracked separately.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileCaptureFlushOutcomeDto {
+    /// All evidence preceding the admitted barrier is durable.
+    Flushed,
+    /// The healthy writer rejected this control request; retry is possible.
+    Rejected,
+    /// The writer failed or an admitted barrier has no valid durable receipt.
+    Failed {
+        /// First fatal writer cause.
+        message: String,
+    },
+}
+
+impl From<libcutout_persistence::CaptureFlushOutcome> for MobileCaptureFlushOutcomeDto {
+    fn from(outcome: libcutout_persistence::CaptureFlushOutcome) -> Self {
+        match outcome {
+            libcutout_persistence::CaptureFlushOutcome::Flushed => Self::Flushed,
+            libcutout_persistence::CaptureFlushOutcome::Rejected => Self::Rejected,
+            libcutout_persistence::CaptureFlushOutcome::Failed { message } => {
+                Self::Failed { message }
+            }
+        }
+    }
+}
+
+fn apply_writer_health(
+    handle: &CutoutSessionStateHandle,
+    generation: Option<MobileCaptureGenerationDto>,
+    fatal: bool,
+    healthy: MobileCaptureWriteDecisionDto,
+) -> MobileCaptureWriteDecisionDto {
+    let Some(generation) = generation else {
+        return MobileCaptureWriteDecisionDto::StaleFailure;
+    };
+    let mut inner = handle.lock_inner();
+    let capture = &mut inner.session_state_mut().capture;
+    let Some(attempt) = capture.snapshot() else {
+        return MobileCaptureWriteDecisionDto::StaleFailure;
+    };
+    if attempt.generation != generation.into() {
+        return MobileCaptureWriteDecisionDto::StaleFailure;
+    }
+    match attempt.stage {
+        CaptureStage::Recording | CaptureStage::SaveFailed => {
+            if fatal {
+                capture.writer_failed(generation.into());
+                MobileCaptureWriteDecisionDto::FailWriter
+            } else {
+                healthy
+            }
+        }
+        // The finish token still owns Saving. Its typed flush receipt will move this
+        // attempt to Finalizing or SaveFailed through finish_capture_flush.
+        CaptureStage::Saving => {
+            if fatal {
+                MobileCaptureWriteDecisionDto::FailWriter
+            } else {
+                healthy
+            }
+        }
+        CaptureStage::Starting
+        | CaptureStage::Finalizing
+        | CaptureStage::Saved
+        | CaptureStage::Failed => MobileCaptureWriteDecisionDto::StaleFailure,
+    }
+}
+
+/// Capture ownership sampled before a callback starts asynchronous work.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileMusicCaptureTarget {
+    /// No capture was active at original source admission.
+    NoCapture,
+    /// Capture ownership could not be established.
+    Unavailable,
+    /// Original writer; retries must retain this identity.
+    Capture {
+        generation: MobileCaptureGenerationDto,
+    },
+}
+
+/// Rust's admission of an original music capture target.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileMusicCaptureAdmission {
+    /// Pre-writer context may be updated without writing evidence.
+    ContextOnly,
+    /// The original writer still owns capture admission.
+    Recording,
+    /// The original association is unavailable or superseded.
+    Rejected,
+}
+
+impl From<MobileMusicCaptureTarget> for cutout_music::MusicCaptureTarget {
+    fn from(target: MobileMusicCaptureTarget) -> Self {
+        match target {
+            MobileMusicCaptureTarget::NoCapture => Self::NoCapture,
+            MobileMusicCaptureTarget::Unavailable => Self::Unavailable,
+            MobileMusicCaptureTarget::Capture { generation } => Self::Capture(generation.into()),
+        }
+    }
+}
+
+impl From<cutout_music::MusicCaptureTarget> for MobileMusicCaptureTarget {
+    fn from(target: cutout_music::MusicCaptureTarget) -> Self {
+        match target {
+            cutout_music::MusicCaptureTarget::NoCapture => Self::NoCapture,
+            cutout_music::MusicCaptureTarget::Unavailable => Self::Unavailable,
+            cutout_music::MusicCaptureTarget::Capture(generation) => Self::Capture {
+                generation: generation.into(),
+            },
+        }
+    }
 }
 
 /// One Rust-issued writer attempt, not a connection or device identity.
@@ -120,6 +237,54 @@ impl From<MobileCaptureFinishTokenDto> for CaptureFinishToken {
 
 #[uniffi::export]
 impl CutoutSessionStateHandle {
+    /// Samples ownership without the ride database or BLE queue.
+    #[must_use]
+    pub fn music_capture_target(&self) -> MobileMusicCaptureTarget {
+        let inner = self.lock_inner();
+        let capture = &inner.session_state().capture;
+        match capture.snapshot() {
+            Some(attempt)
+                if capture.admits_result(attempt.generation) && attempt.stage.reserves_writer() =>
+            {
+                MobileMusicCaptureTarget::Capture {
+                    generation: attempt.generation.into(),
+                }
+            }
+            Some(attempt) if attempt.stage.reserves_writer() => {
+                MobileMusicCaptureTarget::Unavailable
+            }
+            _ => MobileMusicCaptureTarget::NoCapture,
+        }
+    }
+
+    /// Admits only the original target using Rust's capture lifecycle.
+    #[must_use]
+    pub fn admit_music_capture_target(
+        &self,
+        target: MobileMusicCaptureTarget,
+    ) -> MobileMusicCaptureAdmission {
+        let inner = self.lock_inner();
+        let capture = &inner.session_state().capture;
+        match target {
+            MobileMusicCaptureTarget::Capture { generation }
+                if capture.admits_result(generation.into())
+                    && capture
+                        .snapshot()
+                        .is_some_and(|attempt| attempt.stage.reserves_writer()) =>
+            {
+                MobileMusicCaptureAdmission::Recording
+            }
+            MobileMusicCaptureTarget::NoCapture
+                if capture
+                    .snapshot()
+                    .is_none_or(|attempt| !attempt.stage.reserves_writer()) =>
+            {
+                MobileMusicCaptureAdmission::ContextOnly
+            }
+            _ => MobileMusicCaptureAdmission::Rejected,
+        }
+    }
+
     /// Reads admission without copying unrelated telemetry or settings.
     pub fn capture_lifecycle_snapshot(&self) -> MobileCaptureLifecycleSnapshotDto {
         let inner = self.lock_inner();
@@ -172,15 +337,71 @@ impl CutoutSessionStateHandle {
     }
 
     /// Authorizes transport release only for this capture's successful save flush.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "UniFFI enum inputs are owned"
+    )]
     pub fn finish_capture_flush(
         &self,
         token: MobileCaptureFinishTokenDto,
-        succeeded: bool,
+        outcome: MobileCaptureFlushOutcomeDto,
     ) -> bool {
+        let succeeded = match outcome {
+            MobileCaptureFlushOutcomeDto::Flushed => true,
+            MobileCaptureFlushOutcomeDto::Rejected
+            | MobileCaptureFlushOutcomeDto::Failed { .. } => false,
+        };
         self.lock_inner()
             .session_state_mut()
             .capture
             .finish_flush(token.into(), succeeded)
+    }
+
+    /// Interprets one flush receipt without native queue or writer-health policy.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "UniFFI enum inputs are owned"
+    )]
+    pub fn apply_capture_flush_outcome(
+        &self,
+        generation: Option<MobileCaptureGenerationDto>,
+        outcome: MobileCaptureFlushOutcomeDto,
+    ) -> MobileCaptureWriteDecisionDto {
+        match outcome {
+            MobileCaptureFlushOutcomeDto::Flushed => apply_writer_health(
+                self,
+                generation,
+                false,
+                MobileCaptureWriteDecisionDto::Continue,
+            ),
+            MobileCaptureFlushOutcomeDto::Rejected => apply_writer_health(
+                self,
+                generation,
+                false,
+                MobileCaptureWriteDecisionDto::Rejected,
+            ),
+            MobileCaptureFlushOutcomeDto::Failed { .. } => apply_writer_health(
+                self,
+                generation,
+                true,
+                MobileCaptureWriteDecisionDto::Continue,
+            ),
+        }
+    }
+
+    /// Applies authoritative writer health; counters and diagnostic text do not prove failure.
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn apply_capture_writer_status(
+        &self,
+        generation: Option<MobileCaptureGenerationDto>,
+        status: MobileCaptureWriterStatusDto,
+    ) -> MobileCaptureWriteDecisionDto {
+        apply_writer_health(
+            self,
+            generation,
+            status.failed,
+            MobileCaptureWriteDecisionDto::Continue,
+        )
     }
 
     /// Marks failed evidence without letting a later counter update clear it.
@@ -200,6 +421,9 @@ impl CutoutSessionStateHandle {
         match outcome {
             MobileCaptureWriteOutcomeDto::Accepted => MobileCaptureWriteDecisionDto::Continue,
             MobileCaptureWriteOutcomeDto::Rejected => MobileCaptureWriteDecisionDto::Rejected,
+            MobileCaptureWriteOutcomeDto::AdmissionLost { .. } => {
+                MobileCaptureWriteDecisionDto::AdmissionLost
+            }
             MobileCaptureWriteOutcomeDto::Failed => {
                 if generation.is_some_and(|generation| self.capture_writer_failed(generation)) {
                     MobileCaptureWriteDecisionDto::FailWriter
@@ -218,22 +442,100 @@ impl CutoutSessionStateHandle {
             .retire(generation.into())
     }
 
-    /// Applies a real terminal writer result to the matching attempt only.
+    /// Consumes one owned terminal receipt, preserving current state for retired writers.
     pub fn complete_capture_writer(
         &self,
         generation: MobileCaptureGenerationDto,
-        succeeded: bool,
-    ) -> bool {
-        self.lock_inner()
+        completion: crate::MobileCaptureCompletionDto,
+        prior_write_outcome: MobileCaptureWriteOutcomeDto,
+    ) -> crate::MobileCaptureCompletionDecisionDto {
+        match completion.finish {
+            crate::MobileCaptureFinishOutcomeDto::NotStarted
+            | crate::MobileCaptureFinishOutcomeDto::Finalizing => {
+                return crate::MobileCaptureCompletionDecisionDto::Rejected;
+            }
+            crate::MobileCaptureFinishOutcomeDto::ArtifactAvailable { .. }
+            | crate::MobileCaptureFinishOutcomeDto::DatabaseFinished { .. }
+            | crate::MobileCaptureFinishOutcomeDto::Failed { .. } => {}
+        }
+        let succeeded =
+            crate::capture_completion::completion_succeeded(&completion, prior_write_outcome);
+        let disposition = self
+            .lock_inner()
             .session_state_mut()
             .capture
-            .complete(generation.into(), succeeded)
+            .complete(generation.into(), succeeded);
+        match disposition {
+            CaptureCompletionDisposition::Rejected => {
+                crate::MobileCaptureCompletionDecisionDto::Rejected
+            }
+            CaptureCompletionDisposition::CurrentAttempt
+            | CaptureCompletionDisposition::HistoricalAttempt => {
+                crate::capture_completion::publication_for_completion(
+                    completion,
+                    prior_write_outcome,
+                )
+            }
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn music_capture_target_never_admits_a_replacement_writer() {
+        let owner = CutoutSessionStateHandle::new();
+        assert_eq!(
+            owner.music_capture_target(),
+            MobileMusicCaptureTarget::NoCapture
+        );
+        assert_eq!(
+            owner.admit_music_capture_target(MobileMusicCaptureTarget::NoCapture),
+            MobileMusicCaptureAdmission::ContextOnly
+        );
+        let first = owner.begin_capture(MobileCaptureOriginDto::Manual).unwrap();
+        assert!(owner.capture_writer_started(first));
+        let original = owner.music_capture_target();
+        assert_eq!(
+            original,
+            MobileMusicCaptureTarget::Capture { generation: first }
+        );
+        assert_eq!(
+            owner.admit_music_capture_target(original),
+            MobileMusicCaptureAdmission::Recording
+        );
+        assert!(owner.retire_capture_writer(first));
+        assert_eq!(
+            owner.admit_music_capture_target(original),
+            MobileMusicCaptureAdmission::Rejected
+        );
+        assert_eq!(
+            owner.music_capture_target(),
+            MobileMusicCaptureTarget::NoCapture
+        );
+        let second = owner.begin_capture(MobileCaptureOriginDto::Manual).unwrap();
+        assert!(owner.capture_writer_started(second));
+        assert_eq!(
+            owner.admit_music_capture_target(original),
+            MobileMusicCaptureAdmission::Rejected
+        );
+        assert_eq!(
+            owner.admit_music_capture_target(MobileMusicCaptureTarget::NoCapture),
+            MobileMusicCaptureAdmission::Rejected
+        );
+        assert_eq!(
+            owner.admit_music_capture_target(MobileMusicCaptureTarget::Unavailable),
+            MobileMusicCaptureAdmission::Rejected
+        );
+        assert_eq!(
+            owner.admit_music_capture_target(MobileMusicCaptureTarget::Capture {
+                generation: second
+            }),
+            MobileMusicCaptureAdmission::Recording
+        );
+    }
 
     #[test]
     fn writer_failure_does_not_invalidate_a_verified_connection() {
@@ -292,6 +594,19 @@ mod tests {
         assert_eq!(
             handle.apply_capture_write_outcome(
                 Some(generation),
+                MobileCaptureWriteOutcomeDto::AdmissionLost {
+                    dropped_messages: 65
+                }
+            ),
+            MobileCaptureWriteDecisionDto::AdmissionLost
+        );
+        assert_eq!(
+            handle.capture_lifecycle_snapshot().attempt.unwrap().stage,
+            MobileCaptureStageDto::Recording
+        );
+        assert_eq!(
+            handle.apply_capture_write_outcome(
+                Some(generation),
                 MobileCaptureWriteOutcomeDto::Failed
             ),
             MobileCaptureWriteDecisionDto::FailWriter
@@ -324,7 +639,16 @@ mod tests {
         assert!(!snapshot.can_pair);
         assert_eq!(snapshot.attempt.unwrap().generation, generation);
         owner.retire_capture_writer(generation);
-        owner.complete_capture_writer(generation, false);
+        owner.complete_capture_writer(
+            generation,
+            crate::MobileCaptureCompletionDto {
+                finish: crate::MobileCaptureFinishOutcomeDto::Failed {
+                    message: "writer failed".into(),
+                },
+                database_publication_succeeded: None,
+            },
+            MobileCaptureWriteOutcomeDto::Accepted,
+        );
         assert!(owner.capture_lifecycle_snapshot().can_start);
     }
 
@@ -342,7 +666,30 @@ mod tests {
         assert_eq!(owner.camera_media_provenance().len(), 1);
 
         assert!(owner.retire_capture_writer(first));
-        assert!(owner.complete_capture_writer(first, true));
+        assert_eq!(
+            owner.complete_capture_writer(
+                first,
+                crate::MobileCaptureCompletionDto {
+                    finish: crate::MobileCaptureFinishOutcomeDto::DatabaseFinished {
+                        live_capture_id: "capture-a".into(),
+                        integrity: crate::MobileCaptureIntegrityDto::Complete,
+                        jsonl_export: crate::MobileCaptureJsonlExportDto::NotAttempted,
+                        status: MobileCaptureWriterStatusDto::default(),
+                    },
+                    database_publication_succeeded: None,
+                },
+                MobileCaptureWriteOutcomeDto::Accepted,
+            ),
+            crate::MobileCaptureCompletionDecisionDto::PublishDatabase {
+                outcome: crate::MobileCaptureFinishOutcomeDto::DatabaseFinished {
+                    live_capture_id: "capture-a".into(),
+                    integrity: crate::MobileCaptureIntegrityDto::Complete,
+                    jsonl_export: crate::MobileCaptureJsonlExportDto::NotAttempted,
+                    status: MobileCaptureWriterStatusDto::default(),
+                },
+                database_publication_failed: false,
+            }
+        );
         let current = owner.begin_capture(MobileCaptureOriginDto::Manual).unwrap();
         assert!(owner.capture_writer_started(current));
 

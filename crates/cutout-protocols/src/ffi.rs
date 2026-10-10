@@ -37,12 +37,14 @@ impl From<crate::DeviceSessionStep> for ConcreteSessionStepResultDto {
             error,
             bms_observation_summary,
             bms_temperature_summary,
+            bms_current_summary,
         } = value;
         let mut outputs: Vec<_> = outputs.into_iter().map(Into::into).collect();
         decorate_battery_outputs(
             &mut outputs,
             &bms_observation_summary,
             &bms_temperature_summary,
+            &bms_current_summary,
         );
         Self {
             outputs,
@@ -87,6 +89,21 @@ pub struct ConcreteAeroBenignControlSession {
 }
 
 impl ConcreteAeroBenignControlSession {
+    pub(crate) fn next_tick_at(&self) -> Option<MonotonicTimestamp> {
+        self.host.protocol_session().next_tick_at()
+    }
+    pub(crate) fn setting_authorization_expires_at(
+        &self,
+        authorization: crate::session::SettingWriteAuthorization,
+    ) -> MonotonicTimestamp {
+        self.host
+            .protocol_session()
+            .setting_authorization_expires_at(authorization)
+    }
+    pub(crate) fn notification_buffer_state(&self) -> crate::NotificationBufferState {
+        self.host.protocol_session().notification_buffer_state()
+    }
+
     /// Latest validated raw pages for this connection, without replaying observations.
     #[must_use]
     pub fn raw_settings_pages(&self) -> &[crate::RawSettingsPage] {
@@ -175,10 +192,10 @@ impl ConcreteAeroBenignControlSession {
         } {
             self.last_telemetry_ms = None;
         }
-        if let SessionInputDto::Notification { monotonic_ms, .. } = input {
-            if result.outputs.iter().any(output_is_telemetry) {
-                self.last_telemetry_ms = Some(monotonic_ms.milliseconds);
-            }
+        if let SessionInputDto::Notification { monotonic_ms, .. } = input
+            && result.outputs.iter().any(output_is_telemetry)
+        {
+            self.last_telemetry_ms = Some(monotonic_ms.milliseconds);
         }
         result
     }
@@ -216,6 +233,17 @@ pub struct ConcreteFalconBenignControlSession {
 }
 
 impl ConcreteFalconBenignControlSession {
+    pub(crate) fn next_tick_at(&self) -> Option<MonotonicTimestamp> {
+        self.host.protocol_session().next_tick_at()
+    }
+    pub(crate) fn setting_authorization_expires_at(
+        &self,
+        authorization: crate::session::SettingWriteAuthorization,
+    ) -> MonotonicTimestamp {
+        self.host
+            .protocol_session()
+            .setting_authorization_expires_at(authorization)
+    }
     pub(crate) fn bind_setting_operation(
         &mut self,
         id: cutout_core::TransportOperationId,
@@ -313,10 +341,10 @@ impl ConcreteFalconBenignControlSession {
         } {
             self.last_telemetry_ms = None;
         }
-        if let SessionInputDto::Notification { monotonic_ms, .. } = input {
-            if result.outputs.iter().any(output_is_telemetry) {
-                self.last_telemetry_ms = Some(monotonic_ms.milliseconds);
-            }
+        if let SessionInputDto::Notification { monotonic_ms, .. } = input
+            && result.outputs.iter().any(output_is_telemetry)
+        {
+            self.last_telemetry_ms = Some(monotonic_ms.milliseconds);
         }
         result
     }
@@ -353,6 +381,9 @@ pub struct VescReadOnlySession {
 }
 
 impl VescReadOnlySession {
+    pub(crate) fn next_tick_at(&self) -> Option<MonotonicTimestamp> {
+        self.host.protocol_session().next_tick_at()
+    }
     /// Creates a read-only session wrapper.
     #[must_use]
     pub fn new() -> Self {
@@ -518,12 +549,18 @@ where
 {
     let summary = host.session_state().telemetry().bms.observation_summary();
     let temperature_summary = host.session_state().telemetry().bms.temperature_summary();
+    let current_summary = host.session_state().telemetry().bms.current_summary();
     let mut outputs: Vec<_> = host
         .drain_outputs()
         .into_iter()
         .map(SessionOutputDto::from)
         .collect();
-    decorate_battery_outputs(&mut outputs, &summary, &temperature_summary);
+    decorate_battery_outputs(
+        &mut outputs,
+        &summary,
+        &temperature_summary,
+        &current_summary,
+    );
     outputs
 }
 
@@ -531,6 +568,7 @@ fn decorate_battery_outputs(
     outputs: &mut [SessionOutputDto],
     summary: &cutout_core::BmsObservationSummary,
     temperatures: &cutout_core::BmsTemperatureSummary,
+    currents: &cutout_core::BmsCurrentSummary,
 ) {
     for output in outputs {
         if let SessionOutputDto::ReadOnly(response) = output
@@ -538,6 +576,13 @@ fn decorate_battery_outputs(
             && let Some(page) = &mut readback.page
         {
             page.observation_summary = summary.clone();
+            page.current = currents.current.map(Into::into);
+            page.bms_pack_current_0 = currents.pack_currents.map(|pair| {
+                cutout_core::BatteryCurrentReadingDto::from_bms_pack_current(pair.current_0(), pair)
+            });
+            page.bms_pack_current_1 = currents.pack_currents.map(|pair| {
+                cutout_core::BatteryCurrentReadingDto::from_bms_pack_current(pair.current_1(), pair)
+            });
             if !temperatures.readings.is_empty() {
                 page.temperature = temperatures
                     .highest_temperature
@@ -576,6 +621,87 @@ mod tests {
     const fn ms(value: u64) -> MonotonicMillisDto {
         MonotonicMillisDto {
             milliseconds: value,
+        }
+    }
+
+    #[test]
+    fn aero_pack_currents_survive_cell_and_temperature_pages_in_both_mobile_paths() {
+        let metadata = hex_literal::hex!(
+            "dc5a5c492a6a000000000000ab41001700000d1b
+             007d00000226021ca8f607801b0a000080c80000
+             808080808080000003f8ffffffffff3211ffae09
+             760dfe0195000000000002000242d923fb"
+        );
+        let cells = hex_literal::hex!(
+            "dc5a5c532a7c000000000000ab41001700000cff
+             000000000226021ca8f607801afa000080c80000
+             808080808080022880803080800e310e310e2f0e
+             2f0e300e2a0e320e2e0e300e310e300e2d0e2f0e
+             310e2e9e05e3ad"
+        );
+        let temperatures = hex_literal::hex!(
+            "dc5a5c5f2a09000000170000ab6c001700000bea
+             045c00000226021ca8f607801b1f000080c80000
+             808080808080030689065706a20686067c06f700
+             00000000000000000000000e0e0e0200000000a5
+             11000053f401c50000000000bffffaf33f9782"
+        );
+        let mut zero_current = metadata;
+        zero_current[69..73].fill(0);
+        let declared_len = usize::from(zero_current[3]);
+        let crc = crc32fast::hash(&zero_current[..declared_len]);
+        zero_current[declared_len..declared_len + 4].copy_from_slice(&crc.to_be_bytes());
+
+        for typed in [false, true] {
+            let mut session = new_nosfet_aero_benign_control_session();
+            session.ingest(&SessionInputDto::LinkUp {
+                monotonic_ms: ms(1),
+                max_write_len: Some(write_len_dto(185)),
+            });
+            let _ = session.drain_outputs();
+            for (index, (frame, selector, expected_current)) in [
+                (&metadata[..], 0, 20),
+                (&cells[..], 2, 20),
+                (&temperatures[..], 3, 20),
+                (&zero_current[..], 0, 0),
+                (&cells[..], 2, 0),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let input = SessionInputDto::Notification {
+                    channel: VETERAN_DATA_CHANNEL.as_bytes(),
+                    bytes: frame.to_vec(),
+                    monotonic_ms: ms(2 + u64::try_from(index).unwrap()),
+                };
+                let outputs = if typed {
+                    super::ConcreteSessionStepResultDto::from(session.ingest_typed(&input)).outputs
+                } else {
+                    session.ingest(&input);
+                    session.drain_outputs()
+                };
+                let page = outputs
+                    .into_iter()
+                    .find_map(|output| match output {
+                        SessionOutputDto::ReadOnly(response) => match response.payload {
+                            cutout_core::ReadOnlyOutputPayload::Battery(readback) => readback.page,
+                            _ => None,
+                        },
+                        _ => None,
+                    })
+                    .expect("captured frame produces a BMS page");
+                assert_eq!(page.page.id.selector, selector);
+                assert_eq!(
+                    page.bms_pack_current_0.map(|reading| reading.value),
+                    Some(expected_current),
+                    "first current disappeared on selector {selector}, typed={typed}"
+                );
+                assert_eq!(
+                    page.bms_pack_current_1.map(|reading| reading.value),
+                    Some(expected_current),
+                    "second current disappeared on selector {selector}, typed={typed}"
+                );
+            }
         }
     }
 
@@ -1209,6 +1335,6 @@ mod tests {
             link,
         )));
 
-        assert!(!session.drain_outputs().is_empty());
+        assert_ne!(session.drain_outputs().len(), 0);
     }
 }

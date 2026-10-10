@@ -1,10 +1,11 @@
 use super::{
     Command, SegmentStartReasonInput, SpatialSchemaState, abort_pevcap_import, append_location,
     append_location_with_result, append_pevcap_location_batch, append_trail_segment,
-    apply_verified_connection_admission, backup, begin_pevcap_import, clear_last_connected_device,
-    clear_ride_session_marker, clear_selected_device, create_map_point, create_ride,
-    create_started_live_ride, create_started_ride, create_trail, delete_music_history, device_name,
-    export_ride_json, find_ride, finish_pevcap_import, integrity_check, last_connected_device,
+    apply_verified_connection_admission, backup, begin_pevcap_import,
+    checkpoint_location_observation, clear_last_connected_device, clear_ride_session_marker,
+    clear_selected_device, create_map_point, create_ride, create_started_live_ride,
+    create_started_ride, create_trail, delete_music_history, device_name, export_ride_json,
+    find_ride, finish_pevcap_import, integrity_check, last_connected_device,
     list_ride_history_vehicle_options, list_rides, load_ride_restore_snapshot, load_summary,
     load_summary_with_duration, map_points_in_bounds, migrate_device_name, music_events,
     music_history, music_history_policy, music_history_state, newest_recoverable_ride,
@@ -14,8 +15,8 @@ use super::{
     ride_session_marker, route_points, save_device_name, save_music_event,
     save_music_history_policy, save_phone_alarm_preferences, save_ride_session_marker,
     save_selected_device, save_voltage_sag_model, selected_device, settle_recovered_ride,
-    sqlite_capabilities, trail_segments_in_bounds, transition_ride, update_ride_map_metadata,
-    voltage_sag_model,
+    sqlite_capabilities, trail_segments_in_bounds, transition_ride_with_telemetry,
+    update_ride_map_metadata, voltage_sag_model,
 };
 use rusqlite::Connection;
 use std::ops::ControlFlow;
@@ -119,6 +120,21 @@ impl DatabaseWorker<'_> {
                     integrity,
                 ));
             }
+            Command::FinalizeLiveCapture {
+                id,
+                header_json,
+                finished_at_ms,
+                integrity,
+                reply,
+            } => {
+                let _ = reply.send(super::live_capture::finalize(
+                    connection,
+                    id,
+                    &header_json,
+                    finished_at_ms,
+                    integrity,
+                ));
+            }
             Command::UpdateLiveCaptureHeader {
                 id,
                 header_json,
@@ -140,6 +156,30 @@ impl DatabaseWorker<'_> {
                     connection,
                     id,
                     after_sequence,
+                    limit,
+                ));
+            }
+            Command::RetainLiveCaptureContext {
+                id,
+                header_json,
+                context_json,
+                reply,
+            } => {
+                let _ = reply.send(super::live_capture_history::retain_context(
+                    connection,
+                    id,
+                    &header_json,
+                    &context_json,
+                ));
+            }
+            Command::ListLiveCaptureHistory {
+                cursor,
+                limit,
+                reply,
+            } => {
+                let _ = reply.send(super::live_capture_history::list(
+                    connection,
+                    cursor.as_ref(),
                     limit,
                 ));
             }
@@ -595,14 +635,16 @@ impl DatabaseWorker<'_> {
                 event,
                 occurred_at_ms,
                 monotonic_at_ms,
+                last_telemetry_at_ms,
                 reply,
             } => {
-                let _ = reply.send(transition_ride(
+                let _ = reply.send(transition_ride_with_telemetry(
                     connection,
                     ride_id,
                     event,
                     occurred_at_ms,
                     monotonic_at_ms,
+                    last_telemetry_at_ms,
                 ));
             }
             Command::AppendLocation {
@@ -767,6 +809,9 @@ impl DatabaseWorker<'_> {
             }
             Command::RideCheckpoint { reply } => {
                 let _ = reply.send(Ok(()));
+            }
+            Command::CheckpointLocationObservation { checkpoint, reply } => {
+                let _ = reply.send(checkpoint_location_observation(connection, checkpoint));
             }
             Command::Shutdown { reply } => {
                 worker_alive.store(false, Ordering::Release);

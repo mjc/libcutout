@@ -838,7 +838,7 @@ mod tests {
             RgbLightingPreset::new("Missing".to_owned(), state()).expect("preset")
         ));
         assert!(record.remove_preset("Night"));
-        assert!(record.presets().is_empty());
+        assert_eq!(record.presets().len(), 0);
         assert!(!record.remove_preset("Night"));
     }
 

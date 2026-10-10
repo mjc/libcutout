@@ -782,10 +782,10 @@ fn dashboard_state_from_aero_pevcap_parts(
         events: report.events,
         disconnects: DisconnectCount::default(),
     });
-    if state.device.firmware == "unknown" {
-        if let Some(firmware) = state.read_only.firmware {
-            state.device.firmware = firmware_summary_string(firmware);
-        }
+    if state.device.firmware == "unknown"
+        && let Some(firmware) = state.read_only.firmware
+    {
+        state.device.firmware = firmware_summary_string(firmware);
     }
     state.capture_provenance = Some(DashboardCaptureProvenance::from_pevcap_header(
         header,
@@ -1312,7 +1312,7 @@ async fn run_dashboard_live_iteration(
     refresh_battery: bool,
 ) -> bool {
     info!(iteration, "dashboard live update loop tick");
-    if refresh_battery && iteration % DASHBOARD_BATTERY_REFRESH_EVERY == 0 {
+    if refresh_battery && iteration.is_multiple_of(DASHBOARD_BATTERY_REFRESH_EVERY) {
         if !refresh_dashboard_battery(connection, tx, iteration).await {
             return false;
         }
@@ -1493,7 +1493,7 @@ async fn subscribe_raw(args: RawSubscribeArgs) -> Result<()> {
                     t_ms = record.monotonic_ms.get(),
                     characteristic = %record.characteristic,
                     service = %record.service,
-                    bytes = %encode_hex(record.bytes.as_raw_bytes()),
+                    bytes = %hex::encode(record.bytes.as_raw_bytes()),
                     "raw-notification"
                 );
             }
@@ -1520,16 +1520,6 @@ fn raw_capture_annotations(args: &RawSubscribeArgs) -> Vec<String> {
     .into_iter()
     .flatten()
     .collect()
-}
-
-fn encode_hex(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut encoded = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        encoded.push(char::from(HEX[usize::from(byte >> 4)]));
-        encoded.push(char::from(HEX[usize::from(byte & 0x0f)]));
-    }
-    encoded
 }
 
 async fn connect(args: TargetedScanArgs, mode: SessionMode) -> Result<()> {
@@ -1682,7 +1672,12 @@ fn aero_write_arm_from_probe(
         .at_ms
         .context("Aero settings write requires timestamped telemetry")?;
     cutout_protocols::NosfetAeroModel::arm_settings_write(state, Some(speed), monotonic_ms)
-        .context("Aero settings write requires stationary telemetry at or below 500 mm/s")
+        .with_context(|| {
+            format!(
+                "Aero settings write requires stationary telemetry at or below {} mm/s",
+                cutout_core::CONNECTED_WHEEL_MOVEMENT_THRESHOLD.as_millimetres_per_second(),
+            )
+        })
 }
 
 /// Build the live write sequence, refreshing settings after the mutation so a
@@ -3019,7 +3014,7 @@ fn print_raw_notifications_jsonl(
                         "characteristic": characteristic.to_string(),
                         "service": service.to_string(),
                         "len": bytes.len().as_bytes(),
-                        "bytes_hex": encode_hex(bytes.as_raw_bytes()),
+                        "bytes_hex": hex::encode(bytes.as_raw_bytes()),
                     }))?
                 );
             }
@@ -4064,7 +4059,7 @@ mod tests {
 
         report.telemetry_snapshot.at_ms = Some(ms(12));
         report.telemetry_snapshot.speed = Some(Measured::reported(
-            cutout_core::Speed::from_millimetres_per_second(500),
+            cutout_core::CONNECTED_WHEEL_MOVEMENT_THRESHOLD,
         ));
         assert!(aero_write_arm_from_probe(&report).is_ok());
 
@@ -4072,7 +4067,9 @@ mod tests {
         assert!(aero_write_arm_from_probe(&report).is_err());
         report.telemetry_snapshot.charge_mode = Some(Measured::reported(ChargeMode::NotCharging));
         report.telemetry_snapshot.speed = Some(Measured::reported(
-            cutout_core::Speed::from_millimetres_per_second(501),
+            cutout_core::Speed::from_millimetres_per_second(
+                cutout_core::CONNECTED_WHEEL_MOVEMENT_THRESHOLD.as_millimetres_per_second() + 1,
+            ),
         ));
         assert!(aero_write_arm_from_probe(&report).is_err());
     }
@@ -4494,7 +4491,7 @@ mod tests {
                 "resolved_protocol_family=VeteranLeaperkimNosfet".to_owned(),
             ]
         );
-        assert!(decoded.header.resolver_warnings.is_empty());
+        assert_eq!(decoded.header.resolver_warnings.len(), 0);
         assert_eq!(
             decoded.header.registry_hash,
             cutout_core::registry_entries_hash(&[&BEGODE_FALCON_REGISTRY_ENTRY])
@@ -4569,6 +4566,75 @@ mod tests {
             ],
             report: SessionBridgeReport::default(),
         }
+    }
+
+    #[test]
+    fn raw_notification_jsonl_preserves_hex_and_record_metadata() {
+        #[derive(Clone)]
+        struct LogWriter(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+        impl std::io::Write for LogWriter {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let output = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let writer = LogWriter(output.clone());
+        let subscriber = tracing_subscriber::fmt()
+            .with_ansi(false)
+            .without_time()
+            .with_target(false)
+            .with_level(false)
+            .with_writer(move || writer.clone())
+            .finish();
+        let mut capture = pevcap_test_capture();
+        capture.records.push(SessionCaptureRecord::Notification {
+            monotonic_ms: MonotonicMs::new(4),
+            characteristic: BEGODE_DATA_CHANNEL.as_uuid(),
+            service: Uuid::nil(),
+            bytes: CapturedBtlePacket::from_raw_bytes(bytes::Bytes::from_static(&[
+                0x00, 0x0f, 0x10, 0xab, 0xff,
+            ])),
+        });
+        capture.records.push(SessionCaptureRecord::Notification {
+            monotonic_ms: MonotonicMs::new(5),
+            characteristic: BEGODE_DATA_CHANNEL.as_uuid(),
+            service: Uuid::nil(),
+            bytes: CapturedBtlePacket::from_raw_bytes(bytes::Bytes::new()),
+        });
+
+        tracing::subscriber::with_default(subscriber, || {
+            print_raw_notifications_jsonl(&capture, false).unwrap();
+            assert_eq!(output.lock().unwrap().len(), 0);
+            print_raw_notifications_jsonl(&capture, true).unwrap();
+        });
+
+        let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        let records: Vec<serde_json::Value> = output
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(records.len(), 3);
+        assert_eq!(
+            records[1],
+            serde_json::json!({
+                "type": "raw_notification",
+                "sequence": 3,
+                "characteristic": BEGODE_DATA_CHANNEL.as_uuid().to_string(),
+                "service": Uuid::nil().to_string(),
+                "len": 5,
+                "bytes_hex": "000f10abff",
+            })
+        );
+        assert_eq!(records[2]["bytes_hex"], "");
+        assert_eq!(records[2]["len"], 0);
+        assert_eq!(records[2]["sequence"], 4);
     }
 
     #[test]
@@ -5512,7 +5578,7 @@ mod tests {
         );
 
         assert_eq!(report.diagnostic_errors, vec![error]);
-        assert!(report.diagnostic_snapshots.is_empty());
+        assert_eq!(report.diagnostic_snapshots.len(), 0);
     }
 
     #[test]
@@ -6239,7 +6305,7 @@ mod tests {
         assert_eq!(report.telemetry.get(), 576);
         assert_eq!(report.read_only_responses.get(), 576);
         assert_eq!(report.diagnostics.get(), 0);
-        assert!(report.diagnostic_errors.is_empty());
+        assert_eq!(report.diagnostic_errors.len(), 0);
         assert!(report.chunk_one_byte_matches);
         assert!(report.chunk_arbitrary_matches);
     }
@@ -7162,7 +7228,7 @@ mod tests {
 
             assert_eq!(encoded.protocol, protocol);
             assert_eq!(encoded.command, command);
-            assert!(!encoded.payload.is_empty());
+            assert_ne!(encoded.payload.len(), 0);
         }
     }
 

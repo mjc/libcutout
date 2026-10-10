@@ -1,5 +1,5 @@
 [toolchain]
-channel = "1.98.1"
+channel = "1.99.0"
 profile = "minimal"
 components = [
     "clippy",
@@ -11,7 +11,5 @@ components = [
 targets = [
     "aarch64-apple-ios",
     "aarch64-apple-ios-sim",
-    "x86_64-apple-ios",
-    "x86_64-apple-darwin",
     "aarch64-linux-android",
 ]

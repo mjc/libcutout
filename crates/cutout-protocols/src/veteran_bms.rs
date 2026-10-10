@@ -419,7 +419,7 @@ mod tests {
             .filter_map(hex_line)
             .flat_map(str::split_whitespace)
         {
-            for chunk in token.as_bytes().chunks_exact(2) {
+            for chunk in token.as_bytes().as_chunks::<2>().0 {
                 let high = hex_nibble(chunk[0]).expect("fixture hex high nibble is valid");
                 let low = hex_nibble(chunk[1]).expect("fixture hex low nibble is valid");
                 bytes.push((high << 4) | low);
@@ -574,7 +574,9 @@ mod tests {
     fn documented_cell_pages_start_at_absolute_offset_53() {
         let mut body = [0_u8; 36];
         for (index, slot) in body[body_offset(VETERAN_BMS_CELL_VALUES_OFFSET)..]
-            .chunks_exact_mut(2)
+            .as_chunks_mut::<2>()
+            .0
+            .iter_mut()
             .take(usize::from(VETERAN_BMS_CELL_VALUES_PER_PAGE))
             .enumerate()
         {

@@ -192,7 +192,7 @@ final class CaptureFeatureModel {
         switch annotationError {
         case .CapacityReached: localizedAppText("captures.labels_full")
         case .NotRecording: localizedAppText("captures.labels_not_recording")
-        case .WriterFailed: localizedAppText("captures.labels_failed")
+        case .AdmissionLost, .WriterFailed: localizedAppText("captures.labels_failed")
         case nil: nil
         }
     }
@@ -325,5 +325,93 @@ final class CaptureFeatureModel {
         }
         // Finish admission stays closed until an accepted new recording starts.
         clearLabels()
+    }
+}
+
+/// Presentation and off-main calls only; Rust owns history, completeness and export contents.
+@MainActor
+@Observable
+final class CaptureLibraryModel {
+    typealias Query = @Sendable (MobileLiveCaptureHistoryCursorDto?) async throws -> MobileLiveCaptureHistoryPageDto
+    @ObservationIgnored private let query: Query
+
+    init(
+        query: @escaping Query = { cursor in
+            let database = try await RustPersistenceStore.open()
+            return try await Task.detached(priority: .userInitiated) {
+                try database.listLiveCaptureHistory(cursor: cursor, limit: 50)
+            }.value
+        }
+    ) {
+        self.query = query
+    }
+
+    private(set) var captures: [MobileLiveCaptureHistoryEntryDto] = []
+    private(set) var isLoading = false
+    private(set) var error: String?
+    private(set) var hasMore = false
+    @ObservationIgnored private var cursor: MobileLiveCaptureHistoryCursorDto?
+    @ObservationIgnored private var refreshPending = false
+
+    func refresh() async {
+        guard !isLoading else {
+            refreshPending = true
+            return
+        }
+        await load(reset: true)
+    }
+
+    func loadMore() async {
+        guard !isLoading, hasMore else { return }
+        await load(reset: false)
+    }
+
+    private func load(reset: Bool) async {
+        isLoading = true
+        defer { isLoading = false }
+        var reset = reset
+        repeat {
+            refreshPending = false
+            if reset { cursor = nil }
+            do {
+                let page = try await query(cursor)
+                captures = reset ? page.captures : captures + page.captures
+                cursor = page.nextCursor
+                hasMore = page.nextCursor != nil
+                error = nil
+            } catch {
+                self.error = error.localizedDescription
+            }
+            // One pending native refresh replaces any number of requests during this query.
+            reset = true
+        } while refreshPending
+    }
+}
+
+@MainActor
+@Observable
+final class CaptureExportModel {
+    private(set) var fileURL: URL?
+    private(set) var isExporting = false
+    private(set) var error: String?
+
+    func export(id: String) async {
+        guard !isExporting, fileURL == nil else { return }
+        isExporting = true
+        defer { isExporting = false }
+        do {
+            let database = try await RustPersistenceStore.open()
+            let result = try await Task.detached(priority: .userInitiated) {
+                let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+                    "CaptureExports", isDirectory: true)
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                let path = directory.appendingPathComponent("capture-\(UUID().uuidString).jsonl").path
+                return try database.exportLiveCapture(liveCaptureId: id, path: path)
+            }.value
+            fileURL = URL(fileURLWithPath: result.path)
+            error = nil
+        } catch {
+            self.error = error.localizedDescription
+        }
     }
 }

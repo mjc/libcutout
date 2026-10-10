@@ -280,7 +280,7 @@ impl DeviceSettingsState {
     ) -> u64 {
         let record = self.records.entry(id).or_default();
         let request_id = NEXT_REQUEST_ID
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
                 next.checked_add(1)
             })
             .unwrap_or(u64::MAX);
@@ -355,6 +355,45 @@ impl DeviceSettingsState {
             SettingTransportStatus::Accepted => unreachable!(),
         }
         true
+    }
+
+    /// Earliest readable setting confirmation deadline; none while transport is pending.
+    #[must_use]
+    pub fn next_confirmation_at(&self) -> Option<MonotonicTimestamp> {
+        self.records
+            .values()
+            .filter_map(|record| {
+                if !record.completion.supports_readback() {
+                    return None;
+                }
+                match record.state {
+                    SettingState::Pending {
+                        submitted_at: Some(at),
+                        ..
+                    } => Some(at.saturating_add_duration(SETTING_CONFIRMATION_TIMEOUT)),
+                    _ => None,
+                }
+            })
+            .min()
+    }
+
+    /// Whether this operation still requires a native transport receipt.
+    #[must_use]
+    pub fn awaits_transport(&self, id: SettingId, request_id: u64) -> bool {
+        self.records.get(&id).is_some_and(|record| {
+            if record.request_id != Some(request_id) {
+                return false;
+            }
+            match record.transport {
+                Some(SettingTransportStatus::Accepted | SettingTransportStatus::Queued) => true,
+                Some(
+                    SettingTransportStatus::Submitted
+                    | SettingTransportStatus::Rejected
+                    | SettingTransportStatus::Cancelled,
+                )
+                | None => false,
+            }
+        })
     }
 
     /// Advances confirmation deadlines for readable settings only.
@@ -494,7 +533,7 @@ mod tests {
             10
         );
         settings.disconnect();
-        assert!(settings.snapshot(time(30)).is_empty());
+        assert_eq!(settings.snapshot(time(30)).len(), 0);
     }
 
     #[test]
@@ -552,7 +591,7 @@ mod tests {
     #[test]
     fn unknown_and_disabled_are_distinct_from_zero_and_false() {
         let mut settings = DeviceSettingsState::default();
-        assert!(settings.snapshot(time(0)).is_empty());
+        assert_eq!(settings.snapshot(time(0)).len(), 0);
         settings.observe(
             SettingId::PwmTiltback,
             DeviceSettingValue::Disabled,
@@ -895,7 +934,7 @@ mod tests {
         assert_eq!(snapshot[0].requested, Some(DeviceSettingValue::Number(40)));
         assert_eq!(snapshot[0].status, SettingCommandStatus::Failed);
         settings.disconnect();
-        assert!(settings.snapshot(time(30)).is_empty());
+        assert_eq!(settings.snapshot(time(30)).len(), 0);
     }
 
     #[test]

@@ -114,6 +114,16 @@ final class RideHistoryModel {
     private(set) var detailRouteLoading = false
     private(set) var selectedRideID: String?
 
+    #if DEBUG
+        /// Read-only fixture evidence from the same model state rendered by History.
+        var uiTestHistoryReadback: String {
+            "query=\(queryGeneration);selected=\(selectedRideID ?? "none");"
+                + "loading=\(isLoading || routeLoading || detailRouteLoading);"
+                + "projection=\(detailProjectionRideID ?? "none");"
+                + "listed=\(rides.map(\.rideID).joined(separator: ","))"
+        }
+    #endif
+
     init(
         stateProvider: @escaping @MainActor () -> (any RideHistoryQuerying)?,
         dateProvider: @escaping @MainActor () -> Date = { Date() },
@@ -127,6 +137,11 @@ final class RideHistoryModel {
     func prepareForReload() {
         searchTask?.cancel()
         searchTask = nil
+        loadTask?.cancel()
+        loadTask = nil
+        pageTask?.cancel()
+        pageTask = nil
+        queryGeneration &+= 1
         invalidateProjectionWork()
         error = nil
         routeError = nil
@@ -144,6 +159,10 @@ final class RideHistoryModel {
             return
         }
         load(selecting: requestedRideID)
+    }
+
+    func reloadPreservingSelection() {
+        reload(selecting: selectedRideID)
     }
 
     func applyLoadFailure(_ error: MobileRideMapError) {
@@ -545,9 +564,6 @@ final class RideHistoryModel {
     }
 
     private func load(selecting requestedRideID: String? = nil) {
-        loadTask?.cancel()
-        pageTask?.cancel()
-        queryGeneration &+= 1
         let generation = queryGeneration
         queryDateAfterMilliseconds = historyDateAfterMilliseconds
         error = nil

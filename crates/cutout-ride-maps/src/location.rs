@@ -1,4 +1,5 @@
-use crate::Coordinate;
+use crate::{Coordinate, RideMapPoint};
+use std::num::NonZeroU64;
 
 /// Monotonic milliseconds used for ordering samples and lifecycle events.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -84,15 +85,52 @@ pub struct LocationSample {
 /// The private field prevents callers from manufacturing an admitted sample without using
 /// [`crate::RideMapRecorder::admit_sample`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct AdmittedLocationSample(LocationSample);
+pub struct AdmittedLocationSample {
+    point: RideMapPoint,
+    boundary: AdmittedLocationBoundary,
+    recording_generation: NonZeroU64,
+    active_interval_generation: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum AdmittedLocationBoundary {
+    Continue,
+    Start,
+}
 
 impl AdmittedLocationSample {
-    pub(crate) const fn new(sample: LocationSample) -> Self {
-        Self(sample)
+    pub(crate) const fn new(
+        point: RideMapPoint,
+        boundary: AdmittedLocationBoundary,
+        recording_generation: NonZeroU64,
+        active_interval_generation: u64,
+    ) -> Self {
+        Self {
+            point,
+            boundary,
+            recording_generation,
+            active_interval_generation,
+        }
     }
 
     pub(crate) const fn sample(self) -> LocationSample {
-        self.0
+        self.point.sample()
+    }
+
+    pub(crate) const fn point(self) -> RideMapPoint {
+        self.point
+    }
+
+    pub(crate) const fn boundary(self) -> AdmittedLocationBoundary {
+        self.boundary
+    }
+
+    pub(crate) const fn recording_generation(self) -> NonZeroU64 {
+        self.recording_generation
+    }
+
+    pub(crate) const fn active_interval_generation(self) -> u64 {
+        self.active_interval_generation
     }
 }
 
@@ -143,6 +181,12 @@ impl LocationSample {
     #[must_use]
     pub const fn source(self) -> LocationSource {
         self.source
+    }
+
+    pub(crate) fn same_values(self, other: Self) -> bool {
+        self.coordinate == other.coordinate
+            && self.horizontal_accuracy_millimetres == other.horizontal_accuracy_millimetres
+            && self.source == other.source
     }
 
     /// Compares a candidate with the previous accepted sample.

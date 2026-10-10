@@ -524,6 +524,10 @@ public final class MusicProviderEffectExecutor {
         tasks[key].map { !$0.isCancelled } ?? false
     }
 
+    public func isRunning(in namespace: Namespace) -> Bool {
+        tasks.contains { $0.key.namespace == namespace && !$0.value.isCancelled }
+    }
+
     public static func wait(
         until deadlineMs: UInt64,
         nowMs: @escaping @MainActor @Sendable () -> UInt64
@@ -864,14 +868,16 @@ public struct MusicNowPlaying: Equatable, Sendable {
         item?.title.flatMap { $0.isEmpty ? nil : $0 }
             ?? pevLocalizedText(musicPlaybackTitleKey(state: state))
     }
-    public var artist: String { item?.artist ?? providerName }
+    public var artist: String { item?.artist ?? "" }
 
     public var showsCompactPlayer: Bool {
         switch state {
-        case .playing, .paused, .stopped, .buffering, .interrupted, .disconnected, .stale:
+        case .playing, .paused, .buffering, .interrupted:
             true
+        case .stopped, .disconnected, .stale:
+            item != nil
         case .unavailable where provider == .spotify && capabilities.play:
-            true
+            item != nil
         case .unauthorized, .unavailable:
             false
         }
@@ -915,11 +921,12 @@ public struct MusicNowPlaying: Equatable, Sendable {
     /// VoiceOver summary includes meaningful provider failure states without progress ticks.
     public var accessibilitySummary: String {
         var components = [providerName, title]
-        if artist != providerName && artist != title {
+        if !artist.isEmpty && artist != providerName && artist != title {
             components.append(artist)
         }
-        if let statusText {
-            components.append(statusText)
+        let playbackState = statusText ?? pevLocalizedText(musicPlaybackTitleKey(state: state))
+        if playbackState != title {
+            components.append(playbackState)
         }
         return components.joined(separator: ", ")
     }
@@ -986,13 +993,6 @@ public struct MusicNowPlaying: Equatable, Sendable {
     public func supports(_ command: MobileMusicCommandDto) -> Bool {
         capabilities.supports(command)
     }
-}
-
-func shouldShowSpotifyStartupPlayer(
-    selectedProvider: MobileMusicProviderDto,
-    nowPlaying: MusicNowPlaying?
-) -> Bool {
-    selectedProvider == .spotify && nowPlaying == nil
 }
 
 /// Deduplicates VoiceOver announcements while the provider is polled.
@@ -1222,21 +1222,47 @@ public enum MusicIntegrationIngestError: Error {
     case history(Error)
 }
 
+public struct MusicObservationCompletion {
+    public let settledCaptureTarget: MobileMusicCaptureTarget
+    public let effectivePolicy: MobileMusicHistoryPolicyDto?
+    public let previousRideHistoryFailure: MobileMusicHistoryTerminalFailure?
+    public let outcome: MobileMusicTimelineOutcomeDto?
+    public let settledTransition: MobileMusicHistoryTransition?
+    public let recordedSequence: UInt64?
+    public let nowPlaying: MusicNowPlaying?
+}
+
 @MainActor
 public final class MusicIntegrationCoordinator {
     public private(set) var nowPlaying: MusicNowPlaying?
     private let rideMapState: MobileRideMapState?
     private let lifecycle: MobileMusicProviderLifecycle
+    private let observationBindingError: Error?
 
+    private let correlationRideIDReader: (@MainActor () async -> String?)?
     private var lastCorrelationRideID: String?
     private var historyPolicy = MobileMusicHistoryPolicyDto.disabled
     public private(set) var lastRecordedSequence: UInt64?
+    public private(set) var previousRideHistoryFailure: MobileMusicHistoryTerminalFailure?
     public init(
         rideMapState: MobileRideMapState?,
-        lifecycle: MobileMusicProviderLifecycle
+        lifecycle: MobileMusicProviderLifecycle,
+        correlationRideIDReader: (@MainActor () async -> String?)? = nil
     ) {
         self.rideMapState = rideMapState
         self.lifecycle = lifecycle
+        self.correlationRideIDReader = correlationRideIDReader
+        do {
+            try rideMapState?.bindMusicObservationLifecycle(lifecycle: lifecycle)
+            observationBindingError = nil
+        } catch {
+            observationBindingError = error
+        }
+    }
+
+    /// Removes retained diagnostic metadata after explicit successful history deletion.
+    public func clearPresentationHistoryFailures() {
+        previousRideHistoryFailure = nil
     }
 
     public func update(snapshot: MobileMusicSnapshotDto, artwork: MusicArtwork? = nil) {
@@ -1260,61 +1286,126 @@ public final class MusicIntegrationCoordinator {
         )
     }
 
+    /// Admits callback ownership before any native asynchronous identity lookup.
+    public func beginObservation() -> MobileMusicObservationRequest {
+        lifecycle.beginMusicObservation()
+    }
+
+    /// The caller retains this request through capture publication and history readback.
+    public func completeObservation(
+        submission: MobileMusicObservationRequest,
+        observation: MusicProviderObservation,
+        wallClockAtMs: UInt64,
+        clockUncertaintyMs: UInt64,
+        captureTarget: MobileMusicCaptureTarget = .unavailable
+    ) async throws -> MusicObservationCompletion {
+        if let observationBindingError {
+            throw MusicIntegrationIngestError.history(observationBindingError)
+        }
+        func completion(
+            _ outcome: MobileMusicTimelineOutcomeDto? = nil,
+            _ transition: MobileMusicHistoryTransition? = nil, _ sequence: UInt64? = nil,
+            _ effectivePolicy: MobileMusicHistoryPolicyDto? = nil
+        )
+            -> MusicObservationCompletion
+        {
+            MusicObservationCompletion(
+                settledCaptureTarget: transition?.captureTarget ?? .unavailable,
+                effectivePolicy: effectivePolicy,
+                previousRideHistoryFailure: previousRideHistoryFailure,
+                outcome: outcome, settledTransition: transition,
+                recordedSequence: sequence, nowPlaying: nowPlaying)
+        }
+        let lease: MobileMusicObservationLease
+        switch submission.admission() {
+        case let .admitted(accepted): lease = accepted
+        case .full, .exhausted: return completion(.full)
+        }
+        guard try await lease.wait() == .ready, !Task.isCancelled, submission.isCurrent() else {
+            return completion()
+        }
+        do {
+            if let canonical = try lifecycle.observeAdmittedPlayer(lease: lease, snapshot: observation.snapshot) {
+                update(snapshot: canonical, artwork: observation.artwork)
+            }
+        } catch {
+            throw MusicIntegrationIngestError.observation(error)
+        }
+        if let rideMapState {
+            let failure = try await rideMapState.retireClosedMusicHistoryAsync(lifecycle: lifecycle, lease: lease)
+            guard !Task.isCancelled, submission.isCurrent() else { return completion() }
+            if let failure { previousRideHistoryFailure = failure }
+        }
+        let rideID: String?
+        if let correlationRideIDReader {
+            rideID = await correlationRideIDReader()
+        } else {
+            rideID = await rideMapState?.currentSnapshotAsync()?.rideID
+        }
+        guard !Task.isCancelled, submission.isCurrent() else { return completion() }
+        var recording: MobileRideMapRecordingTokenDto?
+        if let rideID, let rideMapState {
+            switch try await rideMapState.musicObservationContextAsync(
+                expectedRideID: rideID, observedAtMs: observation.snapshot.observedAtMs, lease: lease)
+            {
+            case let .ready(token): recording = token
+            case .rideNotOpen: break
+            case .outOfOrder: return completion(.outOfOrder)
+            }
+        }
+        guard !Task.isCancelled, submission.isCurrent() else { return completion() }
+        let decision: MobileMusicObservationDecision
+        do {
+            guard
+                let accepted = try lifecycle.observeAdmittedMusic(
+                    lease: lease, recording: recording, captureTarget: captureTarget,
+                    snapshot: observation.snapshot, wallClockAtMs: wallClockAtMs,
+                    clockUncertaintyMs: clockUncertaintyMs)
+            else { return completion() }
+            decision = accepted
+        } catch MobileRideMapCoreErrorDto.MusicHistoryFull {
+            return completion(.full)
+        } catch {
+            throw MusicIntegrationIngestError.observation(error)
+        }
+        guard let transition = decision.historyTransition else { return completion() }
+        guard let rideMapState, recording != nil else {
+            _ = lifecycle.acknowledgeHistoryTransition(id: transition.id)
+            return completion(.disabled, transition)
+        }
+        do {
+            let result = try await rideMapState.recordMusicObservationAsync(lease: lease)
+            guard !Task.isCancelled, submission.isCurrent() else { return completion() }
+            switch result.outcome {
+            case .recorded, .duplicate, .disabled:
+                _ = lifecycle.acknowledgeHistoryTransition(id: transition.id)
+            case .full, .outOfOrder, .rideNotOpen:
+                break
+            }
+            if let sequence = result.sequence { lastRecordedSequence = sequence }
+            return completion(result.outcome, transition, result.sequence, result.effectivePolicy)
+        } catch {
+            throw MusicIntegrationIngestError.history(error)
+        }
+    }
+
     private func ingestAsync(
         snapshot: MobileMusicSnapshotDto,
         artwork: MusicArtwork?,
         wallClockAtMs: UInt64,
         clockUncertaintyMs: UInt64
     ) async throws -> MobileMusicTimelineOutcomeDto? {
-        resetCorrelationIfRideChanged()
-        let decision: MobileMusicObservationDecision
-        do {
-            guard
-                let accepted = try lifecycle.observeMusic(
-                    snapshot: snapshot,
-                    wallClockAtMs: wallClockAtMs,
-                    clockUncertaintyMs: clockUncertaintyMs
-                )
-            else {
-                return nil
-            }
-            decision = accepted
-        } catch {
-            if let nowPlaying {
-                self.nowPlaying = nowPlaying.staleProjection
-            }
-            throw MusicIntegrationIngestError.observation(error)
+        let submission = beginObservation()
+        defer { submission.release() }
+        let completion = try await completeObservation(
+            submission: submission,
+            observation: MusicProviderObservation(snapshot: snapshot, artwork: artwork),
+            wallClockAtMs: wallClockAtMs, clockUncertaintyMs: clockUncertaintyMs
+        )
+        if completion.outcome != .full {
+            try submission.settle(capture: nil)
         }
-        let normalizedSnapshot = decision.snapshot
-        update(snapshot: normalizedSnapshot, artwork: artwork)
-        guard let transition = decision.historyTransition else {
-            return nil
-        }
-        do {
-            guard let rideMapState else {
-                _ = lifecycle.acknowledgeHistoryTransition(id: transition.id)
-                return .disabled
-            }
-            let result = try await rideMapState.recordMusicEventWithSequenceAsync(
-                snapshot: transition.snapshot,
-                kind: transition.kind,
-                monotonicAtMs: transition.snapshot.observedAtMs,
-                wallClockAtMs: transition.wallClockAtMs,
-                clockUncertaintyMs: transition.clockUncertaintyMs
-            )
-            if let sequence = result.sequence { lastRecordedSequence = sequence }
-            _ = lifecycle.acknowledgeHistoryTransition(id: transition.id)
-            let outcome = result.outcome
-            return outcome
-        } catch MobileRideMapError.noActiveRide {
-            if historyPolicy == .disabled {
-                _ = lifecycle.acknowledgeHistoryTransition(id: transition.id)
-                return .disabled
-            }
-            throw MusicIntegrationIngestError.history(MobileRideMapError.noActiveRide)
-        } catch {
-            throw MusicIntegrationIngestError.history(error)
-        }
+        return completion.outcome
     }
 
     /// Applies one provider observation through the same path used by ride
@@ -1421,7 +1512,7 @@ public final class MusicIntegrationCoordinator {
     /// Selection itself must not synthesize a stop, disconnect, or item change.
     public func resetProviderCorrelation() {
         lifecycle.resetObservationCorrelation()
-        lastCorrelationRideID = rideMapState?.currentSnapshot()?.rideID
+        lastCorrelationRideID = nil
         nowPlaying = nil
         lastRecordedSequence = nil
     }

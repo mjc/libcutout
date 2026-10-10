@@ -294,7 +294,7 @@ mod capture_label_transition_tests {
             ]
         );
         assert_eq!(labels.close().count(), 0);
-        assert!(labels.active().is_empty());
+        assert_eq!(labels.active().len(), 0);
         for label in CaptureSessionLabel::ALL {
             for boundary in [
                 CaptureLabelTransition::Started(label),
@@ -1717,7 +1717,7 @@ pub struct PevcapHeader {
     /// Version of the Cutout library that produced the capture.
     pub library_version: String,
 
-    /// Registry hash used to resolve the capture.
+    /// SHA-256 fingerprint of the canonical registry used to resolve the capture.
     pub registry_hash: [u8; 32],
 
     /// Human annotations attached to the capture.
@@ -4590,7 +4590,9 @@ mod tests {
     use super::*;
     use crate::{NotificationByteLen, VerificationStatus};
     use proptest::prelude::*;
-    use std::{cell::RefCell, io::Cursor, rc::Rc};
+    #[cfg(feature = "serde")]
+    use std::io::Cursor;
+    use std::{cell::RefCell, rc::Rc};
 
     const fn ms(value: u64) -> MonotonicTimestamp {
         MonotonicTimestamp::new(value)
@@ -4717,6 +4719,7 @@ mod tests {
         bytes.borrow().clone()
     }
 
+    #[cfg(feature = "serde")]
     #[test]
     fn independent_location_samples_round_trip_without_becoming_transport_records() {
         let header = PevcapHeader::new(
@@ -4755,7 +4758,7 @@ mod tests {
         let jsonl = capture.to_jsonl().expect("location JSONL should encode");
         let decoded_jsonl = PevcapCapture::from_jsonl(&jsonl).expect("location JSONL decodes");
         assert_eq!(decoded_jsonl.locations, capture.locations);
-        assert!(decoded_jsonl.records.is_empty());
+        assert_eq!(decoded_jsonl.records.len(), 0);
         let locations_v1_jsonl = jsonl.replacen(
             &format!("\"minor\":{PEVCAP_VERSION_MINOR}"),
             &format!("\"minor\":{PEVCAP_VERSION_MINOR_LOCATIONS}"),
@@ -4851,6 +4854,7 @@ mod tests {
         assert_eq!(event.monotonic_at_ms, 0);
     }
 
+    #[cfg(feature = "serde")]
     #[test]
     fn streaming_reader_replays_jsonl_one_record_at_a_time() {
         let characteristic = GattChannel::from_bytes([0x55; 16]);
@@ -4890,6 +4894,7 @@ mod tests {
         assert_eq!(records, capture.records);
     }
 
+    #[cfg(feature = "serde")]
     #[test]
     fn streaming_reader_replays_binary_one_record_at_a_time() {
         let characteristic = GattChannel::from_bytes([0x55; 16]);
@@ -5303,7 +5308,7 @@ mod tests {
         let decoded_jsonl =
             PevcapCapture::from_jsonl(&legacy_jsonl).expect("legacy JSONL should remain readable");
         assert_eq!(decoded_jsonl.version.minor, PEVCAP_VERSION_MINOR_LEGACY);
-        assert!(decoded_jsonl.locations.is_empty());
+        assert_eq!(decoded_jsonl.locations.len(), 0);
 
         let mut binary = capture.to_binary().expect("capture should encode");
         binary.truncate(binary.len().saturating_sub(8));
@@ -5313,9 +5318,10 @@ mod tests {
         let decoded_binary =
             PevcapCapture::from_binary(&binary).expect("legacy binary should remain readable");
         assert_eq!(decoded_binary.version.minor, PEVCAP_VERSION_MINOR_LEGACY);
-        assert!(decoded_binary.locations.is_empty());
+        assert_eq!(decoded_binary.locations.len(), 0);
     }
 
+    #[cfg(feature = "serde")]
     #[test]
     fn streaming_replay_preflight_preserves_late_link_up_behavior() {
         let characteristic = GattChannel::from_bytes([0x55; 16]);
@@ -6411,8 +6417,8 @@ mod tests {
 
         let binary = capture.to_binary().expect("legacy binary should encode");
         let decoded = PevcapCapture::from_binary(&binary).expect("legacy binary should decode");
-        assert!(decoded.locations.is_empty());
-        assert!(decoded.records.is_empty());
+        assert_eq!(decoded.locations.len(), 0);
+        assert_eq!(decoded.records.len(), 0);
 
         let mut capture_with_location = capture.clone();
         capture_with_location.locations.push(

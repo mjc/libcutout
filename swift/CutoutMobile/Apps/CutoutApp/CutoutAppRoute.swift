@@ -34,7 +34,7 @@ enum EucPackScreen: Hashable {
     }
 
     func hasAvailableSelectedGroup(in groupIndices: [Int]?) -> Bool {
-        guard case let .bmsCellDetail(selectedGroupIndex?) = self,
+        guard case .bmsCellDetail(let selectedGroupIndex?) = self,
             let groupIndices
         else {
             return true
@@ -45,6 +45,7 @@ enum EucPackScreen: Hashable {
 
 enum CutoutAppRoute: Hashable {
     case devicePicker
+    case more
     case eucRide
     case lighting(LightingRideContext)
     case eucPack(EucPackScreen)
@@ -95,6 +96,8 @@ enum CutoutAppRoute: Hashable {
         switch navigationTarget {
         case .devicePicker:
             .devicePicker
+        case .more:
+            .more
         case .camera:
             .camera
         case .screen(let screenID):
@@ -116,16 +119,42 @@ enum CutoutAppRoute: Hashable {
         switch route {
         case .devicePicker:
             []
-        case let .rideMapDetail(rideID):
+        case .rideMapDetail(let rideID):
             [.rideMap, .rideMapDetail(rideID: rideID)]
+        case .camera, .lighting, .eucPack, .vescDebug:
+            [.more, route]
         default:
             [route]
         }
     }
 
+    /// The first primary section selects a tab; only its children belong to the stack.
+    static func navigationRoot(for navigationPath: [Self]) -> Self {
+        switch navigationPath.first {
+        case .eucRide?, .vescRide?, .eucTune?, .rideMap?, .more?:
+            navigationPath[0]
+        default:
+            .devicePicker
+        }
+    }
+
+    static func stackNavigationPath(for navigationPath: [Self], root: Self? = nil) -> [Self] {
+        if let root, navigationRoot(for: navigationPath) != root { return [] }
+        return navigationRoot(for: navigationPath) == .devicePicker
+            ? navigationPath
+            : Array(navigationPath.dropFirst())
+    }
+
+    static func replacingStackNavigationPath(_ stackPath: [Self], in navigationPath: [Self], root: Self? = nil)
+        -> [Self]
+    {
+        if let root, navigationRoot(for: navigationPath) != root { return navigationPath }
+        return Self.navigationPath(for: navigationRoot(for: navigationPath)) + stackPath
+    }
+
     var preservesNavigationOnConnectionLoss: Bool {
         switch self {
-        case .capture, .camera, .rideMap, .rideMapDetail, .lighting:
+        case .capture, .camera, .rideMap, .rideMapDetail, .lighting, .more:
             true
         default:
             false
@@ -134,7 +163,7 @@ enum CutoutAppRoute: Hashable {
 
     private var routeTabs: [PevScreenTab] {
         switch self {
-        case .devicePicker, .capture, .camera, .rideMap, .rideMapDetail:
+        case .devicePicker, .capture, .camera, .rideMap, .rideMapDetail, .more:
             []
         case .eucRide:
             PevRideTabs.eucRideTabs(selected: .eucRide)
@@ -161,18 +190,29 @@ enum CutoutAppRoute: Hashable {
             id: .camera, title: localizedAppText("navigation.section.camera"),
             isSelected: self == .camera, destinationTarget: .camera
         )
-        if self == .devicePicker || (self == .camera && connectionRoute == nil) {
+        if self == .devicePicker
+            || (connectionRoute == nil
+                && (self == .camera || self == .more || self == .rideMap || isRideMapDetail || isMoreDestination))
+        {
             return [
                 PevScreenTab(
                     id: .devices, title: localizedAppText("navigation.tab.devices"),
                     isSelected: self == .devicePicker, destinationTarget: .devicePicker
                 ),
+                PevScreenTab(
+                    id: .map, title: pevLocalizedText("tab.map"),
+                    isSelected: self == .rideMap || isRideMapDetail, destinationTarget: .rideMap
+                ),
                 cameraTab,
+                PevScreenTab(
+                    id: .lighting, title: localizedAppText("navigation.section.lighting"),
+                    isSelected: self == .lighting(.euc) || self == .lighting(.vesc), destinationTarget: .lighting
+                ),
             ]
         }
         let tabs: [PevScreenTab]
         switch self {
-        case .camera, .rideMap, .rideMapDetail:
+        case .camera, .rideMap, .rideMapDetail, .more:
             guard let connectionRoute else {
                 return [
                     PevScreenTab(
@@ -192,7 +232,7 @@ enum CutoutAppRoute: Hashable {
                 PevScreenTab(
                     id: tab.id,
                     title: tab.title,
-                    isSelected: self != .camera && tab.id == .map,
+                    isSelected: (self == .rideMap || isRideMapDetail) && tab.id == .map,
                     destinationScreenID: tab.destinationScreenID,
                     destinationTarget: tab.destinationTarget,
                     disabledReason: tab.disabledReason
@@ -214,8 +254,41 @@ enum CutoutAppRoute: Hashable {
         navigationTabs(for: connectionRoute).filter { $0.isEnabled && $0.destinationTarget != nil }
     }
 
+    func primaryNavigationTabs(for connectionRoute: DevicePickerConnectionRoute?) -> [PevScreenTab] {
+        let destinations = availableNavigationTabs(for: connectionRoute)
+        let primary = destinations.filter { $0.id == .ride || $0.id == .map || $0.id == .tune || $0.id == .devices }
+        let secondary = moreNavigationTabs(for: connectionRoute)
+        guard !secondary.isEmpty else { return primary }
+        return primary + [
+            PevScreenTab(
+                id: .more, title: localizedAppText("navigation.section.more"),
+                isSelected: self == .more || secondary.contains(where: \.isSelected),
+                destinationTarget: .more
+            )
+        ]
+    }
+
+    func moreNavigationTabs(for connectionRoute: DevicePickerConnectionRoute?) -> [PevScreenTab] {
+        availableNavigationTabs(for: connectionRoute).filter {
+            $0.id != .ride && $0.id != .map && $0.id != .tune && $0.id != .devices
+        }
+    }
+
+    var isMoreDestination: Bool {
+        switch self {
+        case .camera, .lighting, .eucPack, .vescDebug: true
+        default: false
+        }
+    }
+
+    private var isRideMapDetail: Bool {
+        if case .rideMapDetail = self { return true }
+        return false
+    }
+
     func destination(for tab: PevScreenTab, connectionRoute: DevicePickerConnectionRoute? = nil) -> CutoutAppRoute? {
         guard let target = tab.destinationTarget else { return nil }
+        if tab.id == .more, isMoreDestination { return self }
         if tab.id == .pack, case .eucPack = self { return self }
         return destination(forNavigationTarget: target, connectionRoute: connectionRoute)
     }
@@ -237,7 +310,7 @@ enum CutoutAppRoute: Hashable {
     }
 
     var selectedBmsGroupIndex: Int? {
-        guard case let .eucPack(.bmsCellDetail(groupIndex)) = self else { return nil }
+        guard case .eucPack(.bmsCellDetail(let groupIndex)) = self else { return nil }
         return groupIndex
     }
 

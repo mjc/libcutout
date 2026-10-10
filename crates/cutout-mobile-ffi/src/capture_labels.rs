@@ -20,6 +20,12 @@ pub enum MobileCaptureAnnotationError {
     /// The requested capture no longer owns a recording writer.
     #[error("capture is not recording")]
     NotRecording,
+    /// Bounded queue admission lost this metadata update; the writer remains usable.
+    #[error("capture annotation admission lost {dropped_messages} messages")]
+    AdmissionLost {
+        /// Metadata messages not retained by the capture queue.
+        dropped_messages: u64,
+    },
     /// The writer could not accept the metadata update.
     #[error("capture writer rejected the annotation")]
     WriterFailed,
@@ -162,8 +168,8 @@ mod tests {
             ["balancing_start"]
         );
         assert_eq!(labels.close_intervals(), ["ride_stop", "balancing_stop"]);
-        assert!(labels.active().is_empty());
-        assert!(labels.close_intervals().is_empty());
+        assert_eq!(labels.active().len(), 0);
+        assert_eq!(labels.close_intervals().len(), 0);
         assert!(!capture_labels_are_mutually_exclusive(
             MobileCaptureLabelDto::LowBeamOn,
             MobileCaptureLabelDto::LowBeamOn

@@ -17,6 +17,7 @@ printf '%s\n' '{
     "enabledTests": [
       {"identifier": "CutoutAppUITests/CutoutAppUITests/testDefault()"},
       {"identifier": "CutoutAppUITests/CutoutAppUITests/testDarkInDarkAppearanceAtAccessibilityDynamicType()"},
+      {"identifier": "CutoutAppUITests/CutoutAppUITests/testVescLiveActivityLockScreenSecondarySpeechAcrossAccessibilityCategories()"},
       {"identifier": "CutoutAppUITests/CutoutAppUITests/testRTLInRightToLeftLayoutWithIncreasedContrast()"},
       {"identifier": "CutoutAppUITests/CutoutAppUITests/testLargeAtExtraExtraExtraLargeType()"}
     ]
@@ -28,7 +29,8 @@ grep -q "dark disabled accessibility-extra-extra-extra-large: 1 test" <<<"$plan"
 grep -q "light enabled accessibility-extra-extra-extra-large: 1 test" <<<"$plan"
 grep -q "light disabled extra-extra-extra-large: 1 test" <<<"$plan"
 grep -q "light disabled large: 1 test" <<<"$plan"
-grep -q "4 tests across 4 simulator-settings groups" <<<"$plan"
+grep -q "light disabled accessibility-extra-extra-extra-large: 1 test" <<<"$plan"
+grep -q "5 tests across 5 simulator-settings groups" <<<"$plan"
 
 dark_plan="$($matrix_runner \
   --plan-from "$tmp/enumeration.json" \
@@ -73,3 +75,34 @@ if grep -q "testUnrelated" <<<"$smoke_plan"; then
   echo "--smoke retained a test outside the smoke lane" >&2
   exit 1
 fi
+
+# Exercise the invocation budget without building or launching a simulator.
+mkdir -p "$tmp/project/scripts"
+cp "$matrix_runner" "$tmp/project/scripts/run-ios-ui-test-matrix.sh"
+cat >"$tmp/project/scripts/run-ios-ui-tests.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" == --enumerate-tests ]]; then
+  cp "$CUTOUT_MATRIX_TEST_ENUMERATION" "$2"
+else
+  printf '%s\n' "$*" >>"$CUTOUT_MATRIX_TEST_INVOCATIONS"
+fi
+EOF
+chmod +x "$tmp/project/scripts/run-ios-ui-tests.sh"
+printf '%s\n' '{
+  "errors": [],
+  "values": [{"enabledTests": [
+    {"identifier": "CutoutAppUITests/CutoutAppUITests/testDefault()"},
+    {"identifier": "CutoutAppUITests/CutoutAppUITests/testMusicPlayerPausedAcrossEucRideMapMoreAtAccessibilityDynamicType()"},
+    {"identifier": "CutoutAppUITests/CutoutAppUITests/testPickerSurfaceSavedHistoryPreservesSelectionAndClearsFiltersWithoutReflow()"},
+    {"identifier": "CutoutAppUITests/CutoutAppUITests/testEucPrimaryRoutesRemainUsableWithReduceMotionAndIncreasedContrastAtAccessibilityDynamicType()"},
+    {"identifier": "CutoutAppUITests/CutoutAppUITests/testVescLiveActivityLockScreenSecondarySpeechAcrossAccessibilityCategories()"},
+    {"identifier": "CutoutAppUITests/CutoutAppUITests/testVescLiveActivityAutoFixtureExpandedSecondarySpeechAcrossAccessibilityCategories()"}
+  ]}]
+}' >"$tmp/budget-enumeration.json"
+CUTOUT_MATRIX_TEST_ENUMERATION="$tmp/budget-enumeration.json" \
+  CUTOUT_MATRIX_TEST_INVOCATIONS="$tmp/budget-invocations" \
+  "$tmp/project/scripts/run-ios-ui-test-matrix.sh" >"$tmp/budget-run.log"
+grep -q -- '--timeout 660 --appearance light --increase-contrast disabled --content-size large' "$tmp/budget-invocations"
+grep -q -- '--timeout 1260 --appearance light --increase-contrast disabled --content-size accessibility-extra-extra-extra-large' "$tmp/budget-invocations"
+grep -q -- '--timeout 540 --appearance light --increase-contrast enabled --content-size accessibility-extra-extra-extra-large' "$tmp/budget-invocations"

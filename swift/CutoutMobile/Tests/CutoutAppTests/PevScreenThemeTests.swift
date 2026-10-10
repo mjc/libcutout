@@ -285,7 +285,7 @@ final class PevScreenThemeTests: XCTestCase {
         )
     }
 
-    func testEucHeroUsesTheTypedStaleWarningState() {
+    func testEucHeroKeepsOperatingStatusWhenTelemetryAges() {
         let state = EucRideScreenState(
             phase: .live,
             displayState: RideDisplayState(
@@ -306,8 +306,8 @@ final class PevScreenThemeTests: XCTestCase {
             )
         )
 
-        XCTAssertEqual(view.phaseText, "Telemetry stale")
-        XCTAssertEqual(view.statusTone, PevDashboardStatusPillTone.warning)
+        XCTAssertEqual(view.phaseText, "Riding")
+        XCTAssertEqual(view.statusTone, PevDashboardStatusPillTone.eucRide)
     }
 
     func testEucRideAppPresentationUsesTheAppCatalog() {
@@ -537,8 +537,10 @@ final class PevScreenThemeTests: XCTestCase {
         }
     }
 
-    func testRideWarningCardIsReservedForSafetyAndConnectionProblems() {
-        for (pwm, now, shouldWarn) in [(500, UInt64(1_000), false), (990, 1_000, true), (500, 4_000, true)] {
+    func testRideSafetyWarningsUseTheStatusPill() {
+        for (pwm, now, expectedStatus) in [
+            (500, UInt64(1_000), "Riding"), (990, 1_000, "Reduce acceleration"), (500, 4_000, "Riding"),
+        ] {
             let telemetry = TelemetrySnapshot(
                 at: MonotonicMilliseconds(1_000),
                 speed: Speed(value: 5_000),
@@ -555,7 +557,7 @@ final class PevScreenThemeTests: XCTestCase {
                     snapshot: MobilePhoneLocationSnapshotDto(latestSample: nil, gpsSpeed: nil)
                 )
             )
-            XCTAssertEqual(view.warningCard != nil, shouldWarn)
+            XCTAssertEqual(view.phaseText, expectedStatus)
         }
     }
 
@@ -566,7 +568,7 @@ final class PevScreenThemeTests: XCTestCase {
             let tile = liveDashboardTiles(from: state, telemetry: telemetry).first { $0.kind == .chargeEstimate }
             XCTAssertEqual(tile != nil, operatingState == .charging)
             if let tile {
-                XCTAssertEqual(tile.label, "Time to full")
+                XCTAssertEqual(tile.label, "Charging")
                 XCTAssertTrue(tile.detail.isEmpty)
             }
         }
@@ -902,6 +904,8 @@ final class PevScreenThemeTests: XCTestCase {
         )
         for kind in [
             ChargeEstimateStateKind.collectingSamples,
+            .full,
+            .balancing,
             .stale,
             .unavailable,
             .failed,

@@ -170,3 +170,125 @@ impl RideDatabaseHandle {
             .map_err(map_ride_database_error)
     }
 }
+
+/// Session-row history continuation, independent of optional file exports.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileLiveCaptureHistoryCursorDto {
+    /// Recording start wall clock.
+    pub started_at_milliseconds: u64,
+    /// Canonical database capture identity.
+    pub live_capture_id: String,
+}
+
+/// Capture retained in the canonical database, including interrupted captures.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileLiveCaptureHistoryEntryDto {
+    /// Canonical database capture identity.
+    pub live_capture_id: String,
+    /// Whether recovery found an unfinished session.
+    pub interrupted: bool,
+    /// Durable completeness evidence.
+    pub integrity: crate::MobileCaptureIntegrityDto,
+    /// Consumed-writer provenance, if publication succeeded.
+    pub recording: Option<MobileRecordedCaptureDto>,
+    /// Peripheral identity retained in the header.
+    pub platform_identifier: String,
+    /// Recording start wall clock.
+    pub started_at_milliseconds: u64,
+    /// Terminal wall clock; absent after interruption.
+    pub finished_at_milliseconds: Option<u64>,
+    /// Exact retained raw event count.
+    pub event_count: u64,
+    /// Uncompressed retained bytes excluding line delimiters.
+    pub stored_bytes: u64,
+}
+
+/// One bounded page of inactive database captures.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileLiveCaptureHistoryPageDto {
+    /// Bounded inactive-capture rows.
+    pub captures: Vec<MobileLiveCaptureHistoryEntryDto>,
+    /// Continuation when more sessions exist.
+    pub next_cursor: Option<MobileLiveCaptureHistoryCursorDto>,
+}
+
+/// Result of an explicit export; this is not capture-completion authority.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileLiveCaptureExportDto {
+    /// Synced export file location.
+    pub path: String,
+    /// SHA-256 of exact exported bytes.
+    pub content_digest: String,
+}
+
+#[uniffi::export]
+impl RideDatabaseHandle {
+    /// Queries only bounded session metadata, without reading captured event payloads.
+    ///
+    /// # Errors
+    /// Returns invalid cursor, limit or storage errors.
+    pub fn list_live_capture_history(
+        &self,
+        cursor: Option<MobileLiveCaptureHistoryCursorDto>,
+        limit: u32,
+    ) -> Result<MobileLiveCaptureHistoryPageDto, MobileRideDatabaseError> {
+        let cursor = cursor
+            .map(|cursor| {
+                Ok::<_, MobileRideDatabaseError>(persistence::LiveCaptureHistoryCursor {
+                    started_at_ms: cursor.started_at_milliseconds,
+                    id: persistence::LiveCaptureId::parse(&cursor.live_capture_id)
+                        .map_err(map_ride_database_error)?,
+                })
+            })
+            .transpose()?;
+        let page = self
+            .inner
+            .list_live_capture_history(cursor, mobile_query_limit(limit)?)
+            .map_err(map_ride_database_error)?;
+        Ok(MobileLiveCaptureHistoryPageDto {
+            captures: page
+                .captures
+                .into_iter()
+                .map(|capture| MobileLiveCaptureHistoryEntryDto {
+                    live_capture_id: capture.id.to_string(),
+                    interrupted: capture.state == persistence::LiveCaptureState::Interrupted,
+                    integrity: capture.integrity.into(),
+                    recording: capture.recording.map(Into::into),
+                    platform_identifier: capture.platform_identifier,
+                    started_at_milliseconds: capture.started_at_ms,
+                    finished_at_milliseconds: capture.finished_at_ms,
+                    event_count: capture.event_count,
+                    stored_bytes: capture.stored_bytes,
+                })
+                .collect(),
+            next_cursor: page
+                .next_cursor
+                .map(|cursor| MobileLiveCaptureHistoryCursorDto {
+                    started_at_milliseconds: cursor.started_at_ms,
+                    live_capture_id: cursor.id.to_string(),
+                }),
+        })
+    }
+
+    /// Exports exact retained JSONL on explicit user demand, off native callback/UI threads.
+    /// An existing output is never overwritten; failed partial files are removed.
+    ///
+    /// # Errors
+    /// Returns malformed identity, active-capture, output or storage failure.
+    pub fn export_live_capture(
+        &self,
+        live_capture_id: &str,
+        path: String,
+    ) -> Result<MobileLiveCaptureExportDto, MobileRideDatabaseError> {
+        let id =
+            persistence::LiveCaptureId::parse(live_capture_id).map_err(map_ride_database_error)?;
+        let content_digest = self
+            .inner
+            .export_live_capture(id, std::path::Path::new(&path))
+            .map_err(|_| MobileRideDatabaseError::StorageFailure)?;
+        Ok(MobileLiveCaptureExportDto {
+            path,
+            content_digest,
+        })
+    }
+}

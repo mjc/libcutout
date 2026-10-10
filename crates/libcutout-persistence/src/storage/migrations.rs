@@ -1,7 +1,7 @@
 use super::{MapPointId, SpatialRowId, StorageError};
 use rusqlite::{Connection, OptionalExtension, params};
 
-pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 35;
+pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 39;
 const APPLICATION_ID: i64 = 0x4355_544f;
 
 fn schema_pragmas(version: i64) -> String {
@@ -58,6 +58,10 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         32 => migrate_v32_to_current(connection)?,
         33 => migrate_v33_to_current(connection)?,
         34 => migrate_v34_to_current(connection)?,
+        35 => migrate_v35_to_current(connection)?,
+        36 => migrate_v36_to_current(connection)?,
+        37 => migrate_v37_to_current(connection)?,
+        38 => migrate_v38_to_current(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -110,6 +114,7 @@ fn initialize_current_schema(connection: &Connection) -> Result<(), StorageError
                 .execute_batch(RIDE_RECORDING_PREFERENCES_SCHEMA)
                 .map_err(Into::into)
         })
+        .and_then(|()| ensure_capture_payload_encoding(connection))
     {
         let _ = connection.execute_batch("ROLLBACK;");
         return Err(error);
@@ -187,7 +192,9 @@ pub(crate) fn create_current_schema(connection: &Connection) -> Result<(), Stora
             candidate_vehicle TEXT CHECK (candidate_vehicle IS NULL OR length(candidate_vehicle) BETWEEN 1 AND 512),
             associated_vehicle TEXT CHECK (associated_vehicle IS NULL OR length(associated_vehicle) BETWEEN 1 AND 512),
             associated_at_ms INTEGER CHECK (associated_at_ms IS NULL OR associated_at_ms >= 0),
-            last_telemetry_at_ms INTEGER CHECK (last_telemetry_at_ms IS NULL OR last_telemetry_at_ms >= 0)
+            last_telemetry_at_ms INTEGER CHECK (last_telemetry_at_ms IS NULL OR last_telemetry_at_ms >= 0),
+            last_location_observed_monotonic_ms INTEGER,
+            last_location_observed_wall_clock_ms INTEGER
         );
         CREATE INDEX rides_history_order ON rides(created_at_ms DESC, id DESC);
         CREATE TABLE ride_segments (
@@ -1371,7 +1378,127 @@ fn migrate_v34_to_current(connection: &mut Connection) -> Result<(), StorageErro
     Ok(())
 }
 
+fn migrate_v35_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction()?;
+    finish_migration(&transaction)?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn migrate_v36_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction()?;
+    finish_migration(&transaction)?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn migrate_v37_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction()?;
+    finish_migration(&transaction)?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn ensure_location_observation_clocks(connection: &Connection) -> Result<(), StorageError> {
+    if !table_exists(connection, "rides")? {
+        return Ok(());
+    }
+    for column in [
+        "last_location_observed_monotonic_ms",
+        "last_location_observed_wall_clock_ms",
+    ] {
+        if !table_has_column(connection, "rides", column)? {
+            // Nullable metadata adds no row rewrites or CHECK validation scan.
+            connection.execute_batch(&format!("ALTER TABLE rides ADD COLUMN {column} INTEGER;"))?;
+        }
+    }
+    Ok(())
+}
+
+const CAPTURE_PAYLOAD_ENCODING_TRIGGERS: &str = "
+    CREATE TRIGGER IF NOT EXISTS live_capture_payload_encoding_insert
+    BEFORE INSERT ON live_capture_events
+    WHEN NEW.payload_encoding NOT IN (0, 1)
+        OR (NEW.payload_encoding = 0 AND NEW.payload_original_bytes IS NOT NULL)
+        OR (NEW.payload_encoding = 1 AND (
+            NEW.payload_original_bytes IS NULL
+            OR typeof(NEW.payload_original_bytes) != 'integer'
+            OR NEW.payload_original_bytes NOT BETWEEN 1 AND 65536
+            OR length(NEW.payload) >= NEW.payload_original_bytes))
+    BEGIN
+        SELECT RAISE(ABORT, 'invalid live capture payload encoding');
+    END;
+    CREATE TRIGGER IF NOT EXISTS live_capture_payload_encoding_update
+    BEFORE UPDATE OF payload, payload_encoding, payload_original_bytes ON live_capture_events
+    WHEN NEW.payload_encoding NOT IN (0, 1)
+        OR (NEW.payload_encoding = 0 AND NEW.payload_original_bytes IS NOT NULL)
+        OR (NEW.payload_encoding = 1 AND (
+            NEW.payload_original_bytes IS NULL
+            OR typeof(NEW.payload_original_bytes) != 'integer'
+            OR NEW.payload_original_bytes NOT BETWEEN 1 AND 65536
+            OR length(NEW.payload) >= NEW.payload_original_bytes))
+    BEGIN
+        SELECT RAISE(ABORT, 'invalid live capture payload encoding');
+    END;
+";
+
+fn ensure_capture_payload_encoding(connection: &Connection) -> Result<(), StorageError> {
+    if !table_exists(connection, "live_capture_events")? {
+        return Ok(());
+    }
+    // ADD COLUMN with CHECK makes SQLite scan every existing event. Add only
+    // metadata here and enforce the shared invariant with write triggers instead.
+    // Both ALTERs remain transactional; old payloads stay raw with default zero.
+    if !table_has_column(connection, "live_capture_events", "payload_encoding")? {
+        connection.execute_batch(
+            "ALTER TABLE live_capture_events ADD COLUMN payload_encoding INTEGER NOT NULL DEFAULT 0;",
+        )?;
+    }
+    if !table_has_column(connection, "live_capture_events", "payload_original_bytes")? {
+        connection.execute_batch(
+            "ALTER TABLE live_capture_events ADD COLUMN payload_original_bytes INTEGER;",
+        )?;
+    }
+    connection.execute_batch(CAPTURE_PAYLOAD_ENCODING_TRIGGERS)?;
+    Ok(())
+}
+
+fn migrate_v38_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction()?;
+    finish_migration(&transaction)?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn ensure_live_capture_recording_context(connection: &Connection) -> Result<(), StorageError> {
+    if table_exists(connection, "live_capture_sessions")?
+        && !table_has_column(
+            connection,
+            "live_capture_sessions",
+            "recording_context_json",
+        )?
+    {
+        // Nullable addition: no event scan, data copy or retroactive provenance claim.
+        connection.execute_batch(
+            "ALTER TABLE live_capture_sessions ADD COLUMN recording_context_json TEXT;",
+        )?;
+    }
+    Ok(())
+}
+
 fn finish_migration(transaction: &rusqlite::Transaction<'_>) -> Result<(), StorageError> {
+    // Capture reads page by the existing (capture_id, sequence) primary keys.
+    // These unused secondary indexes add writes to every admitted observation.
+    transaction.execute_batch(
+        "DROP INDEX IF EXISTS live_capture_events_receipt_order;
+         DROP INDEX IF EXISTS live_capture_events_source_wall_clock;
+         DROP INDEX IF EXISTS live_capture_ble_characteristic;
+         DROP INDEX IF EXISTS live_capture_ble_raw_telemetry_field_id;
+         DROP INDEX IF EXISTS live_capture_ble_semantic_telemetry_time;",
+    )?;
+    ensure_capture_payload_encoding(transaction)?;
+    ensure_live_capture_recording_context(transaction)?;
+    ensure_location_observation_clocks(transaction)?;
     transaction.execute_batch(RIDE_RECORDING_PREFERENCES_SCHEMA)?;
     transaction.execute_batch(&current_schema_pragmas())?;
     Ok(())
@@ -1438,8 +1565,14 @@ pub(super) fn verify_current_schema(connection: &Connection) -> Result<(), Stora
             return Err(StorageError::InvalidDatabaseIdentity);
         }
     }
-    if !table_has_column(connection, "live_capture_sessions", "integrity")?
+    if !table_has_column(
+        connection,
+        "live_capture_sessions",
+        "recording_context_json",
+    )? || !table_has_column(connection, "live_capture_sessions", "integrity")?
         || !table_has_column(connection, "live_capture_sessions", "dropped_messages")?
+        || !table_has_column(connection, "live_capture_events", "payload_encoding")?
+        || !table_has_column(connection, "live_capture_events", "payload_original_bytes")?
     {
         return Err(StorageError::InvalidDatabaseIdentity);
     }
@@ -1550,6 +1683,629 @@ fn verify_device_schema(connection: &Connection) -> Result<(), StorageError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const CAPTURE_SCHEMA_V36: &str = "
+        CREATE TABLE IF NOT EXISTS live_capture_sessions (
+            capture_id TEXT PRIMARY KEY NOT NULL CHECK (length(capture_id) = 36),
+            state TEXT NOT NULL CHECK (state IN ('active', 'finished', 'interrupted')),
+            integrity TEXT NOT NULL CHECK (integrity IN ('complete', 'incomplete', 'unknown')),
+            dropped_messages INTEGER NOT NULL DEFAULT 0 CHECK (dropped_messages >= 0),
+            header_json BLOB NOT NULL CHECK (length(header_json) BETWEEN 1 AND 65536),
+            started_at_ms INTEGER NOT NULL CHECK (started_at_ms >= 0),
+            finished_at_ms INTEGER CHECK (finished_at_ms IS NULL OR finished_at_ms >= started_at_ms),
+            next_sequence INTEGER NOT NULL DEFAULT 0 CHECK (next_sequence >= 0),
+            stored_bytes INTEGER NOT NULL CHECK (stored_bytes BETWEEN 1 AND 536870912),
+            CHECK ((state = 'finished') = (finished_at_ms IS NOT NULL)),
+            CHECK ((integrity = 'complete' AND dropped_messages = 0)
+                OR (integrity = 'incomplete' AND dropped_messages > 0)
+                OR integrity = 'unknown')
+        );
+        CREATE TABLE IF NOT EXISTS live_capture_events (
+            capture_id TEXT NOT NULL REFERENCES live_capture_sessions(capture_id) ON DELETE CASCADE,
+            sequence INTEGER NOT NULL CHECK (sequence >= 0),
+            event_kind TEXT NOT NULL CHECK (event_kind IN
+                ('link_up', 'link_down', 'write', 'notification', 'location', 'music', 'metadata')),
+            receipt_monotonic_ms INTEGER NOT NULL CHECK (receipt_monotonic_ms >= 0),
+            source_monotonic_offset_ms INTEGER,
+            source_wall_clock_unix_ms INTEGER CHECK
+                (source_wall_clock_unix_ms IS NULL OR source_wall_clock_unix_ms >= 0),
+            payload BLOB NOT NULL CHECK (length(payload) BETWEEN 1 AND 65536),
+            PRIMARY KEY (capture_id, sequence)
+        ) WITHOUT ROWID;
+    ";
+
+    fn initialize_capture_schema_v36(connection: &Connection) {
+        create_current_schema(connection).unwrap();
+        for schema in [
+            CAPTURE_SCHEMA_V36,
+            super::super::live_capture::LOCATION_SCHEMA,
+            super::super::live_capture::BLE_SCHEMA,
+            super::super::live_capture::BLE_RAW_TELEMETRY_SCHEMA,
+            super::super::live_capture::BLE_SEMANTIC_TELEMETRY_SCHEMA,
+        ] {
+            connection.execute_batch(schema).unwrap();
+        }
+        connection.execute_batch(&schema_pragmas(36)).unwrap();
+    }
+
+    fn capture_rows_without_encoding(
+        connection: &Connection,
+    ) -> Vec<Vec<Vec<rusqlite::types::Value>>> {
+        let mut rows = capture_rows(connection);
+        // Compare the original schema fields; provenance is a nullable metadata addition.
+        for session in &mut rows[0] {
+            session.truncate(9);
+        }
+        if table_has_column(connection, "live_capture_events", "payload_encoding").unwrap() {
+            for event in &mut rows[1] {
+                event.truncate(7);
+            }
+        }
+        rows
+    }
+
+    fn assert_payload_encoding_constraints(connection: &Connection) {
+        for (encoding, original_bytes) in [
+            ("2", "NULL"),
+            ("NULL", "NULL"),
+            ("1", "NULL"),
+            ("0", "1"),
+            ("1", "0"),
+            ("1", "65537"),
+            ("1", "4"),
+            ("1", "3"),
+            ("1", "5.5"),
+        ] {
+            for statement in [
+                format!(
+                    "UPDATE live_capture_events SET payload_encoding = {encoding},
+                         payload_original_bytes = {original_bytes} WHERE sequence = 0"
+                ),
+                format!(
+                    "INSERT INTO live_capture_events
+                         (capture_id, sequence, event_kind, receipt_monotonic_ms, payload,
+                          payload_encoding, payload_original_bytes)
+                     SELECT capture_id, 99, event_kind, receipt_monotonic_ms, payload,
+                            {encoding}, {original_bytes}
+                     FROM live_capture_events WHERE sequence = 0"
+                ),
+            ] {
+                assert_eq!(
+                    connection
+                        .execute_batch(&statement)
+                        .unwrap_err()
+                        .sqlite_error_code(),
+                    Some(rusqlite::ErrorCode::ConstraintViolation),
+                    "must reject {statement}"
+                );
+            }
+        }
+        connection.execute_batch(
+            "UPDATE live_capture_events SET payload_encoding = 1, payload_original_bytes = 5 WHERE sequence = 0;"
+        ).unwrap();
+        assert_eq!(
+            connection
+                .execute_batch(
+                    "UPDATE live_capture_events SET payload = X'0001020304' WHERE sequence = 0;"
+                )
+                .unwrap_err()
+                .sqlite_error_code(),
+            Some(rusqlite::ErrorCode::ConstraintViolation)
+        );
+        connection.execute_batch(
+            "UPDATE live_capture_events SET payload_encoding = 0, payload_original_bytes = NULL WHERE sequence = 0;"
+        ).unwrap();
+    }
+
+    #[test]
+    fn payload_encoding_metadata_migration_preserves_existing_capture_values() {
+        // Older direct-to-current routes share the same metadata ensure boundary.
+        for version in [31, 32, 33, 34, 35, 36] {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("capture.sqlite");
+            let mut connection = Connection::open(&path).unwrap();
+            connection
+                .pragma_update(None, "foreign_keys", "ON")
+                .unwrap();
+            initialize_capture_schema_v36(&connection);
+            populate_indexed_capture(&connection);
+            connection
+                .pragma_update(None, "user_version", version)
+                .unwrap();
+            let before = capture_rows_without_encoding(&connection);
+
+            migrate(&mut connection).unwrap();
+
+            assert!(
+                table_has_column(&connection, "live_capture_events", "payload_encoding").unwrap()
+            );
+            assert!(
+                table_has_column(&connection, "live_capture_events", "payload_original_bytes")
+                    .unwrap()
+            );
+            assert_eq!(capture_rows_without_encoding(&connection), before);
+            let metadata: Vec<(i64, Option<i64>)> = connection.prepare(
+                "SELECT payload_encoding, payload_original_bytes FROM live_capture_events ORDER BY sequence"
+            ).unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().collect::<Result<_, _>>().unwrap();
+            assert_eq!(metadata, [(0, None), (0, None)]);
+            assert_payload_encoding_constraints(&connection);
+            assert_capture_constraints(&mut connection);
+            assert_eq!(capture_rows_without_encoding(&connection), before);
+            assert_eq!(
+                connection
+                    .pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
+                    .unwrap(),
+                CURRENT_SCHEMA_VERSION
+            );
+            drop(connection);
+            let mut reopened = Connection::open(&path).unwrap();
+            reopened.pragma_update(None, "foreign_keys", "ON").unwrap();
+            migrate(&mut reopened).unwrap();
+            verify_current_schema(&reopened).unwrap();
+            assert_eq!(capture_rows_without_encoding(&reopened), before);
+            assert_payload_encoding_constraints(&reopened);
+        }
+    }
+
+    #[test]
+    fn location_observation_clock_migration_preserves_rows_without_a_scan() {
+        use rusqlite::hooks::{AuthAction, AuthContext, Authorization};
+        let mut connection = old_location_clock_fixture();
+        let before: Vec<rusqlite::types::Value> = connection
+            .query_row("SELECT * FROM rides", [], |row| {
+                (0..row.as_ref().column_count())
+                    .map(|i| row.get(i))
+                    .collect()
+            })
+            .unwrap();
+        let changes = connection.total_changes();
+        connection.authorizer(Some(|context: AuthContext<'_>| match context.action {
+            AuthAction::Read {
+                table_name: "rides" | "pragma_quick_check",
+                ..
+            }
+            | AuthAction::Pragma {
+                pragma_name: "quick_check",
+                ..
+            } => Authorization::Deny,
+            _ => Authorization::Allow,
+        }));
+        migrate(&mut connection).unwrap();
+        connection.authorizer(None::<fn(AuthContext<'_>) -> Authorization>);
+        let after: Vec<rusqlite::types::Value> = connection
+            .query_row("SELECT * FROM rides", [], |row| {
+                (0..row.as_ref().column_count())
+                    .map(|i| row.get(i))
+                    .collect()
+            })
+            .unwrap();
+        assert_eq!(&after[..before.len()], before.as_slice());
+        assert_eq!(
+            &after[before.len()..],
+            [rusqlite::types::Value::Null, rusqlite::types::Value::Null]
+        );
+        assert_eq!(connection.total_changes(), changes);
+        assert_eq!(
+            connection
+                .pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
+                .unwrap(),
+            CURRENT_SCHEMA_VERSION
+        );
+    }
+
+    #[test]
+    fn location_observation_clock_migration_rolls_back_both_columns() {
+        use rusqlite::hooks::{AuthAction, AuthContext, Authorization};
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+        let mut connection = old_location_clock_fixture();
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let observed = Arc::clone(&attempts);
+        connection.authorizer(Some(move |context: AuthContext<'_>| match context.action {
+            AuthAction::AlterTable {
+                table_name: "rides",
+                ..
+            } if observed.fetch_add(1, Ordering::SeqCst) == 1 => Authorization::Deny,
+            _ => Authorization::Allow,
+        }));
+        assert!(migrate(&mut connection).is_err());
+        connection.authorizer(None::<fn(AuthContext<'_>) -> Authorization>);
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+        assert!(
+            !table_has_column(&connection, "rides", "last_location_observed_monotonic_ms").unwrap()
+        );
+        assert!(
+            !table_has_column(&connection, "rides", "last_location_observed_wall_clock_ms")
+                .unwrap()
+        );
+        assert_eq!(
+            connection
+                .pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
+                .unwrap(),
+            37
+        );
+        migrate(&mut connection).unwrap();
+        assert!(
+            table_has_column(&connection, "rides", "last_location_observed_monotonic_ms").unwrap()
+        );
+        assert!(
+            table_has_column(&connection, "rides", "last_location_observed_wall_clock_ms").unwrap()
+        );
+    }
+
+    fn old_location_clock_fixture() -> Connection {
+        let connection = Connection::open_in_memory().unwrap();
+        initialize_current_schema(&connection).unwrap();
+        for column in [
+            "last_location_observed_monotonic_ms",
+            "last_location_observed_wall_clock_ms",
+        ] {
+            if table_has_column(&connection, "rides", column).unwrap() {
+                connection
+                    .execute_batch(&format!("ALTER TABLE rides DROP COLUMN {column};"))
+                    .unwrap();
+            }
+        }
+        connection.execute_batch("INSERT INTO rides (id, source, state, created_at_ms, updated_at_ms, monotonic_created_at_ms, monotonic_last_event_ms, point_count, distance_mm) VALUES ('00000000-0000-0000-0000-000000000001', 'live', 'active', 100, 200, 10, 100, 0, 0); PRAGMA user_version = 37;").unwrap();
+        connection
+    }
+
+    #[test]
+    fn payload_encoding_metadata_migration_does_not_scan_existing_events() {
+        use rusqlite::hooks::{AuthAction, AuthContext, Authorization};
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+        let mut connection = Connection::open_in_memory().unwrap();
+        initialize_capture_schema_v36(&connection);
+        populate_indexed_capture(&connection);
+        let before = capture_rows(&connection);
+        let reads = Arc::new(AtomicUsize::new(0));
+        let observed = Arc::clone(&reads);
+        connection.authorizer(Some(move |context: AuthContext<'_>| match context.action {
+            AuthAction::Read {
+                table_name: "live_capture_events" | "pragma_quick_check",
+                ..
+            }
+            | AuthAction::Pragma {
+                pragma_name: "quick_check",
+                ..
+            } => {
+                observed.fetch_add(1, Ordering::SeqCst);
+                Authorization::Deny
+            }
+            _ => Authorization::Allow,
+        }));
+        migrate(&mut connection).unwrap();
+        connection.authorizer(None::<fn(AuthContext<'_>) -> Authorization>);
+        assert_eq!(reads.load(Ordering::SeqCst), 0);
+        assert_eq!(capture_rows_without_encoding(&connection), before);
+    }
+
+    #[test]
+    fn payload_encoding_metadata_fresh_schema_constraints() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection
+            .pragma_update(None, "foreign_keys", "ON")
+            .unwrap();
+        migrate(&mut connection).unwrap();
+        populate_indexed_capture(&connection);
+        assert_payload_encoding_constraints(&connection);
+    }
+
+    #[test]
+    fn payload_encoding_metadata_migration_rolls_back_partial_alter() {
+        use rusqlite::hooks::{AuthAction, AuthContext, Authorization};
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection
+            .pragma_update(None, "foreign_keys", "ON")
+            .unwrap();
+        initialize_capture_schema_v36(&connection);
+        populate_indexed_capture(&connection);
+        let before = capture_rows(&connection);
+        let indexes_before = capture_secondary_indexes(&connection);
+        let alters = Arc::new(AtomicUsize::new(0));
+        let observed = Arc::clone(&alters);
+        connection.authorizer(Some(move |context: AuthContext<'_>| match context.action {
+            AuthAction::AlterTable {
+                table_name: "live_capture_events",
+                ..
+            } if observed.fetch_add(1, Ordering::SeqCst) == 1 => Authorization::Deny,
+            _ => Authorization::Allow,
+        }));
+        assert!(migrate(&mut connection).is_err());
+        connection.authorizer(None::<fn(AuthContext<'_>) -> Authorization>);
+        assert_eq!(alters.load(Ordering::SeqCst), 2);
+        assert!(!table_has_column(&connection, "live_capture_events", "payload_encoding").unwrap());
+        assert!(
+            !table_has_column(&connection, "live_capture_events", "payload_original_bytes")
+                .unwrap()
+        );
+        assert_eq!(capture_rows(&connection), before);
+        assert_eq!(capture_secondary_indexes(&connection), indexes_before);
+        assert_eq!(
+            connection
+                .pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
+                .unwrap(),
+            36
+        );
+        migrate(&mut connection).unwrap();
+        assert_eq!(capture_rows_without_encoding(&connection), before);
+    }
+
+    const LEGACY_CAPTURE_INDEXES: &str = "
+        CREATE INDEX IF NOT EXISTS live_capture_events_receipt_order
+            ON live_capture_events(capture_id, receipt_monotonic_ms, sequence);
+        CREATE INDEX IF NOT EXISTS live_capture_events_source_wall_clock
+            ON live_capture_events(capture_id, source_wall_clock_unix_ms, sequence);
+        CREATE INDEX IF NOT EXISTS live_capture_ble_characteristic
+            ON live_capture_ble_observations(characteristic_uuid, capture_id, sequence);
+        CREATE INDEX IF NOT EXISTS live_capture_ble_raw_telemetry_field_id
+            ON live_capture_ble_raw_telemetry_fields(field_kind, field_id, capture_id, sequence);
+        CREATE INDEX IF NOT EXISTS live_capture_ble_semantic_telemetry_time
+            ON live_capture_ble_semantic_telemetry(provenance, observed_at_ms, capture_id, sequence);
+    ";
+
+    const CAPTURE_TABLES: [&str; 6] = [
+        "live_capture_sessions",
+        "live_capture_events",
+        "live_capture_location_observations",
+        "live_capture_ble_observations",
+        "live_capture_ble_raw_telemetry_fields",
+        "live_capture_ble_semantic_telemetry",
+    ];
+
+    fn capture_rows(connection: &Connection) -> Vec<Vec<Vec<rusqlite::types::Value>>> {
+        CAPTURE_TABLES
+            .iter()
+            .map(|table| {
+                let ordering = if *table == "live_capture_sessions" {
+                    "capture_id"
+                } else if *table == "live_capture_ble_raw_telemetry_fields" {
+                    "capture_id, sequence, field_kind, field_index"
+                } else {
+                    "capture_id, sequence"
+                };
+                let mut statement = connection
+                    .prepare(&format!("SELECT * FROM {table} ORDER BY {ordering}"))
+                    .unwrap();
+                let columns = statement.column_count();
+                statement
+                    .query_map([], |row| {
+                        (0..columns).map(|column| row.get(column)).collect()
+                    })
+                    .unwrap()
+                    .collect::<Result<Vec<_>, _>>()
+                    .unwrap()
+            })
+            .collect()
+    }
+
+    fn capture_secondary_indexes(connection: &Connection) -> Vec<String> {
+        connection
+            .prepare(
+                "SELECT name FROM sqlite_schema
+                 WHERE type = 'index' AND name NOT LIKE 'sqlite_%'
+                   AND tbl_name LIKE 'live_capture_%' ORDER BY name",
+            )
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    }
+
+    fn populate_indexed_capture(connection: &Connection) {
+        connection
+            .execute_batch(
+                r#"INSERT INTO live_capture_sessions
+                     (capture_id, state, integrity, header_json, started_at_ms,
+                      next_sequence, stored_bytes)
+                 VALUES ('00000000-0000-0000-0000-000000000001', 'active', 'complete',
+                         X'7B7D', 100, 2, 8);
+                 INSERT INTO live_capture_events
+                     (capture_id, sequence, event_kind, receipt_monotonic_ms,
+                      source_monotonic_offset_ms, source_wall_clock_unix_ms, payload)
+                 VALUES ('00000000-0000-0000-0000-000000000001', 0, 'notification',
+                         101, -9, 9001, X'0001FEFF'),
+                        ('00000000-0000-0000-0000-000000000001', 1, 'location',
+                         102, NULL, NULL, X'7B7D');
+                 INSERT INTO live_capture_location_observations
+                     (capture_id, sequence, latitude_degrees, longitude_degrees,
+                      validation_state, route_admission, raw_float_bits, raw_source_timestamp_bits)
+                 VALUES ('00000000-0000-0000-0000-000000000001', 1, 40.125, -105.25,
+                         'valid', 'accepted', zeroblob(73), X'FFFFFFFFFFFFFFFF');
+                 INSERT INTO live_capture_ble_observations
+                     (capture_id, sequence, direction, characteristic_uuid, service_uuid,
+                      transport_payload, raw_telemetry_json)
+                 VALUES ('00000000-0000-0000-0000-000000000001', 0, 'inbound',
+                         X'00112233445566778899AABBCCDDEEFF',
+                         X'FFEEDDCCBBAA99887766554433221100', X'0001FEFF', X'7B7D');
+                 INSERT INTO live_capture_ble_raw_telemetry_fields
+                     (capture_id, sequence, field_kind, field_index, field_id,
+                      integer_value, float_value_bits)
+                 VALUES ('00000000-0000-0000-0000-000000000001', 0, 'integer', 0,
+                         65535, -9223372036854775808, NULL),
+                        ('00000000-0000-0000-0000-000000000001', 0, 'float', 0,
+                         42, NULL, X'0100C07F');
+                 INSERT INTO live_capture_ble_semantic_telemetry
+                     (capture_id, sequence, observed_at_ms, provenance, snapshot_schema_version,
+                      library_version, snapshot_json)
+                 VALUES ('00000000-0000-0000-0000-000000000001', 0, 99, 'live_session',
+                         1, 'test-version', '{"unknown":[1,null,{"bits":"7fc00001"}]}');"#,
+            )
+            .unwrap();
+        connection.execute_batch(LEGACY_CAPTURE_INDEXES).unwrap();
+        assert_eq!(capture_secondary_indexes(connection).len(), 5);
+    }
+
+    fn assert_capture_constraints(connection: &mut Connection) {
+        for invalid in [
+            "INSERT INTO live_capture_events SELECT * FROM live_capture_events WHERE sequence = 0",
+            "INSERT INTO live_capture_ble_observations
+             (capture_id, sequence, direction, characteristic_uuid, transport_payload)
+             VALUES ('00000000-0000-0000-0000-000000000001', 99, 'inbound', zeroblob(16), X'01')",
+            "UPDATE live_capture_ble_raw_telemetry_fields SET float_value_bits = X'00'
+             WHERE field_kind = 'float'",
+            "UPDATE live_capture_sessions SET next_sequence = -1",
+        ] {
+            assert_eq!(
+                connection
+                    .execute_batch(invalid)
+                    .unwrap_err()
+                    .sqlite_error_code(),
+                Some(rusqlite::ErrorCode::ConstraintViolation),
+                "constraint must reject {invalid}"
+            );
+        }
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .unwrap(),
+            0
+        );
+        let integrity: String = connection
+            .pragma_query_value(None, "integrity_check", |row| row.get(0))
+            .unwrap();
+        assert_eq!(integrity, "ok");
+        let transaction = connection.transaction().unwrap();
+        transaction
+            .execute("DELETE FROM live_capture_sessions", [])
+            .unwrap();
+        assert!(capture_rows(&transaction).iter().all(Vec::is_empty));
+        transaction.rollback().unwrap();
+    }
+
+    fn assert_capture_page_uses_primary_keys(connection: &Connection) {
+        let mut statement = connection
+            .prepare(
+                "EXPLAIN QUERY PLAN SELECT event.sequence, event.payload, location.raw_float_bits
+                 FROM live_capture_events AS event
+                 LEFT JOIN live_capture_location_observations AS location
+                   ON location.capture_id = event.capture_id AND location.sequence = event.sequence
+                 WHERE event.capture_id = ?1 AND event.sequence > COALESCE(?2, -1)
+                 ORDER BY event.sequence LIMIT ?3",
+            )
+            .unwrap();
+        let plan = statement
+            .query_map(
+                params!["00000000-0000-0000-0000-000000000001", 0, 10],
+                |row| row.get::<_, String>(3),
+            )
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(
+            plan.iter()
+                .any(|step| step.contains("SEARCH event USING PRIMARY KEY"))
+        );
+        assert!(
+            plan.iter()
+                .any(|step| step.contains("SEARCH location USING PRIMARY KEY"))
+        );
+        assert!(plan.iter().all(|step| !step.contains("TEMP B-TREE")));
+    }
+
+    #[test]
+    fn fresh_schema_omits_unused_capture_indexes() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        migrate(&mut connection).unwrap();
+        assert_eq!(capture_secondary_indexes(&connection), Vec::<String>::new());
+        assert_capture_page_uses_primary_keys(&connection);
+    }
+
+    #[test]
+    fn capture_indexes_migration_preserves_every_value_and_constraint() {
+        // v34 exercises a prior direct-to-current entry as well as the v35 upgrade.
+        for version in [34, 35] {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("capture.sqlite3");
+            let mut connection = Connection::open(&path).unwrap();
+            connection
+                .pragma_update(None, "foreign_keys", "ON")
+                .unwrap();
+            initialize_current_schema(&connection).unwrap();
+            populate_indexed_capture(&connection);
+            let before = capture_rows(&connection);
+            connection
+                .pragma_update(None, "user_version", version)
+                .unwrap();
+
+            migrate(&mut connection).unwrap();
+
+            assert_eq!(capture_secondary_indexes(&connection), Vec::<String>::new());
+            assert_eq!(capture_rows(&connection), before);
+            assert_capture_constraints(&mut connection);
+            assert_eq!(capture_rows(&connection), before);
+            assert_capture_page_uses_primary_keys(&connection);
+            assert_eq!(
+                connection
+                    .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                    .unwrap(),
+                CURRENT_SCHEMA_VERSION
+            );
+            drop(connection);
+            let mut reopened = Connection::open(&path).unwrap();
+            reopened.pragma_update(None, "foreign_keys", "ON").unwrap();
+            migrate(&mut reopened).unwrap();
+            assert_eq!(capture_secondary_indexes(&reopened), Vec::<String>::new());
+            assert_eq!(capture_rows(&reopened), before);
+            assert_capture_constraints(&mut reopened);
+            assert_eq!(capture_rows(&reopened), before);
+        }
+    }
+
+    #[test]
+    fn capture_indexes_migration_rolls_back_partial_index_removal() {
+        use rusqlite::hooks::{AuthAction, AuthContext, Authorization};
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection
+            .pragma_update(None, "foreign_keys", "ON")
+            .unwrap();
+        initialize_current_schema(&connection).unwrap();
+        populate_indexed_capture(&connection);
+        connection.pragma_update(None, "user_version", 35).unwrap();
+        let before = capture_rows(&connection);
+        let indexes_before = capture_secondary_indexes(&connection);
+        let drops = Arc::new(AtomicUsize::new(0));
+        let observed_drops = Arc::clone(&drops);
+        connection.authorizer(Some(move |context: AuthContext<'_>| match context.action {
+            AuthAction::DropIndex { .. } if observed_drops.fetch_add(1, Ordering::SeqCst) == 1 => {
+                Authorization::Deny
+            }
+            _ => Authorization::Allow,
+        }));
+
+        assert!(migrate(&mut connection).is_err());
+
+        connection.authorizer(None::<fn(AuthContext<'_>) -> Authorization>);
+        assert_eq!(drops.load(Ordering::SeqCst), 2);
+        assert_eq!(capture_secondary_indexes(&connection), indexes_before);
+        assert_eq!(capture_rows(&connection), before);
+        assert_eq!(
+            connection
+                .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                .unwrap(),
+            35
+        );
+        migrate(&mut connection).unwrap();
+        assert_eq!(capture_secondary_indexes(&connection), Vec::<String>::new());
+        assert_eq!(capture_rows(&connection), before);
+    }
 
     #[test]
     fn schema_v30_migration_adds_raw_location_source_timestamp_bits() {
@@ -1787,15 +2543,11 @@ mod tests {
     fn schema_v28_migration_adds_structured_live_location_rows() {
         let mut connection = Connection::open_in_memory().unwrap();
         connection
-            .execute_batch(
-                "CREATE TABLE live_capture_events (
-                     capture_id TEXT NOT NULL,
-                     sequence INTEGER NOT NULL,
-                     PRIMARY KEY (capture_id, sequence)
-                 ) WITHOUT ROWID;
-                 PRAGMA application_id = 1129665615;
-                 PRAGMA user_version = 28;",
-            )
+            .execute_batch(&format!(
+                "{CAPTURE_SCHEMA_V36}
+                     PRAGMA application_id = 1129665615;
+                     PRAGMA user_version = 28;"
+            ))
             .unwrap();
 
         migrate(&mut connection).unwrap();

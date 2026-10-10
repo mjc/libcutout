@@ -23,6 +23,8 @@ pub struct DeviceSessionStep {
     pub bms_observation_summary: cutout_core::BmsObservationSummary,
     /// Retained BMS temperatures after applying this step.
     pub bms_temperature_summary: cutout_core::BmsTemperatureSummary,
+    /// Retained BMS currents after applying this step.
+    pub bms_current_summary: cutout_core::BmsCurrentSummary,
 }
 
 impl DeviceSessionStep {
@@ -56,6 +58,7 @@ impl DeviceSessionStep {
             error,
             bms_observation_summary: host.session_state().telemetry().bms.observation_summary(),
             bms_temperature_summary: host.session_state().telemetry().bms.temperature_summary(),
+            bms_current_summary: host.session_state().telemetry().bms.current_summary(),
         }
     }
 }
@@ -101,6 +104,38 @@ enum DeviceSessionEngine {
 }
 
 impl DeviceSession {
+    pub(crate) fn next_tick_at(&self) -> Option<cutout_core::MonotonicTimestamp> {
+        match &self.engine {
+            DeviceSessionEngine::Veteran(session) => session.next_tick_at(),
+            DeviceSessionEngine::Begode(session) => session.next_tick_at(),
+            DeviceSessionEngine::Vesc(session) => session.next_tick_at(),
+        }
+    }
+
+    pub(crate) fn setting_authorization_expires_at(
+        &self,
+        authorization: crate::session::SettingWriteAuthorization,
+    ) -> Option<cutout_core::MonotonicTimestamp> {
+        match &self.engine {
+            DeviceSessionEngine::Veteran(session) => {
+                Some(session.setting_authorization_expires_at(authorization))
+            }
+            DeviceSessionEngine::Begode(session) => {
+                Some(session.setting_authorization_expires_at(authorization))
+            }
+            DeviceSessionEngine::Vesc(_) => None,
+        }
+    }
+
+    pub(crate) fn notification_buffer_state(&self) -> crate::NotificationBufferState {
+        match &self.engine {
+            DeviceSessionEngine::Veteran(session) => session.notification_buffer_state(),
+            DeviceSessionEngine::Begode(_) | DeviceSessionEngine::Vesc(_) => {
+                crate::NotificationBufferState::Unknown
+            }
+        }
+    }
+
     /// Latest validated raw settings pages exposed without client protocol parsing.
     #[must_use]
     pub fn raw_settings_pages(&self) -> &[crate::RawSettingsPage] {
@@ -204,6 +239,7 @@ impl DeviceSession {
                     error: Some(refusal),
                     bms_observation_summary: cutout_core::BmsObservationSummary::default(),
                     bms_temperature_summary: cutout_core::BmsTemperatureSummary::default(),
+                    bms_current_summary: cutout_core::BmsCurrentSummary::default(),
                 };
             }
         }
@@ -339,7 +375,7 @@ mod tests {
         assert_eq!(session.identity().protocol, ProtocolFamily::Vesc);
         assert_eq!(session.identity().vehicle_kind, VehicleKind::Unknown);
         assert_eq!(session.identity().model, None);
-        assert!(session.control_profile().descriptors(true).is_empty());
+        assert_eq!(session.control_profile().descriptors(true).len(), 0);
     }
 
     #[test]
@@ -370,7 +406,7 @@ mod tests {
                 .all(|output| !matches!(output, SessionOutputDto::Transport(_)))
         );
         assert!(!session.arm_settings_writes(RideOperatingStateDto::Parked, Some(0), 1));
-        assert!(session.control_profile().descriptors(true).is_empty());
+        assert_eq!(session.control_profile().descriptors(true).len(), 0);
     }
 
     #[test]

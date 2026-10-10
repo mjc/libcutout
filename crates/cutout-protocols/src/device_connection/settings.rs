@@ -40,6 +40,43 @@ pub(super) struct SettingTransportOperation {
 }
 
 impl DeviceConnectionSession {
+    /// Next protocol or setting deadline owned by this verified attempt.
+    #[must_use]
+    pub fn next_wakeup_at(
+        &self,
+        token: &ConnectionAttemptToken,
+        can_poll: bool,
+    ) -> Option<MonotonicTimestamp> {
+        if !self.state.connection.is_verified(token) {
+            return None;
+        }
+        let device = self.device.as_ref()?;
+        let queued_expiry = self
+            .setting_operations
+            .iter()
+            .filter_map(|(&id, operation)| {
+                if !self
+                    .state
+                    .settings
+                    .awaits_transport(id, operation.request_id)
+                {
+                    return None;
+                }
+                operation.authorization.and_then(|authorization| {
+                    device.setting_authorization_expires_at(authorization)
+                })
+            })
+            .min();
+        [
+            self.state.settings.next_confirmation_at(),
+            queued_expiry,
+            can_poll.then(|| device.next_tick_at()).flatten(),
+        ]
+        .into_iter()
+        .flatten()
+        .min()
+    }
+
     /// Advances setting deadlines without producing protocol polling writes.
     pub fn tick_setting_transport(
         &mut self,
@@ -430,6 +467,49 @@ mod tests {
             .request_id
             .unwrap();
         (owner, token, frame, request)
+    }
+
+    #[test]
+    fn queued_setting_deadline_survives_native_backpressure_and_disarms_when_idle() {
+        let (mut owner, token, _, request) = queued_voltage_correction();
+        assert_eq!(
+            owner.next_wakeup_at(&token, false),
+            Some(MonotonicTimestamp::new(2_003))
+        );
+        owner.tick_setting_transport(&token, MonotonicTimestamp::new(2_003));
+        assert!(!owner.setting_transport_is_current(
+            &token,
+            request,
+            MonotonicTimestamp::new(2_003)
+        ));
+        assert_eq!(owner.next_wakeup_at(&token, false), None);
+        owner.begin_attempt("replacement".into(), MonotonicTimestamp::new(3_000));
+        assert_eq!(owner.next_wakeup_at(&token, true), None);
+    }
+
+    #[test]
+    fn submitted_confirmation_deadline_is_retained_under_backpressure() {
+        let (mut owner, token, _, request) = queued_voltage_correction();
+        assert!(owner.mark_setting_transport(
+            &token,
+            SettingId::VoltageCorrection,
+            request,
+            cutout_core::SettingTransportStatus::Submitted,
+            MonotonicTimestamp::new(10)
+        ));
+        assert_eq!(
+            owner.next_wakeup_at(&token, false),
+            Some(MonotonicTimestamp::new(2_010))
+        );
+        owner.tick_setting_transport(&token, MonotonicTimestamp::new(2_010));
+        let setting = owner
+            .settings_snapshot()
+            .settings
+            .into_iter()
+            .find(|setting| setting.id == SettingId::VoltageCorrection)
+            .unwrap();
+        assert_eq!(setting.status, cutout_core::SettingCommandStatus::TimedOut);
+        assert_eq!(owner.next_wakeup_at(&token, false), None);
     }
 
     #[test]
@@ -951,7 +1031,7 @@ mod tests {
             ),
             Err(DeviceSettingRequestError::ConnectionUnavailable)
         );
-        assert!(owner.settings_snapshot().settings.is_empty());
+        assert_eq!(owner.settings_snapshot().settings.len(), 0);
     }
 
     #[test]

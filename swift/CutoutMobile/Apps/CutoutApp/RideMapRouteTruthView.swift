@@ -5,7 +5,6 @@ struct RideMapRouteTruthView: View {
     let displayedPointCount: Int
     let recordedPointCount: UInt64?
     let rustSegmentCount: UInt64
-    let decision: MobileRideMapDecisionDto?
     let showsRecordedBounds: Bool
     let segmentsOmittedByBudget: Bool
     let segments: [MobileRideMapSegmentDisplayMetadata]
@@ -17,7 +16,6 @@ struct RideMapRouteTruthView: View {
         displayedPointCount: Int,
         recordedPointCount: UInt64?,
         rustSegmentCount: UInt64,
-        decision: MobileRideMapDecisionDto?,
         showsRecordedBounds: Bool,
         segmentsOmittedByBudget: Bool = false,
         segments: [MobileRideMapSegmentDisplayMetadata] = [],
@@ -28,7 +26,6 @@ struct RideMapRouteTruthView: View {
         self.displayedPointCount = displayedPointCount
         self.recordedPointCount = recordedPointCount
         self.rustSegmentCount = rustSegmentCount
-        self.decision = decision
         self.showsRecordedBounds = showsRecordedBounds
         self.segmentsOmittedByBudget = segmentsOmittedByBudget
         self.segments = segments
@@ -55,12 +52,6 @@ struct RideMapRouteTruthView: View {
                 .font(.caption)
                 .foregroundStyle(.orange)
                 .accessibilityIdentifier("ride-map.segments-omitted")
-            }
-            if let decisionText, !decisionIsAccepted {
-                Label(decisionText, systemImage: decisionSystemImage)
-                    .font(.caption)
-                    .foregroundStyle(decisionIsAccepted ? .green : .orange)
-                    .accessibilityIdentifier("ride-map.last-decision")
             }
         }
         .accessibilityElement(children: .combine)
@@ -90,39 +81,5 @@ struct RideMapRouteTruthView: View {
                 recordedPointCount: recordedPointCount,
                 displayedPointCount: displayedPointCount
             )
-    }
-
-    private var decisionText: String? {
-        guard let decision else { return nil }
-        switch decision {
-        case .accepted:
-            return localizedAppText("ride_map.decision.accepted")
-        case .pending:
-            return localizedAppText("ride_map.decision.pending")
-        case let .rejected(reason), let .ignored(reason):
-            switch reason {
-            case .rideNotRecording:
-                return localizedAppText("ride_map.decision.ride_not_recording")
-            case .duplicateLocation:
-                return localizedAppText("ride_map.decision.duplicate")
-            case .timestampOutOfOrder:
-                return localizedAppText("ride_map.decision.out_of_order")
-            case .accuracyTooLow:
-                return localizedAppText("ride_map.decision.accuracy")
-            case .unrealisticJump:
-                return localizedAppText("ride_map.decision.jump")
-            }
-        case let .storageError(message):
-            return localizedAppText("ride_map.decision.storage_error", message)
-        }
-    }
-
-    private var decisionIsAccepted: Bool {
-        if case .accepted? = decision { return true }
-        return false
-    }
-
-    private var decisionSystemImage: String {
-        decisionIsAccepted ? "checkmark.circle" : "exclamationmark.triangle"
     }
 }

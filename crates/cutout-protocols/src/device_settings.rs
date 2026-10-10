@@ -890,7 +890,7 @@ mod tests {
     fn completion_strategy_is_adapter_owned_and_explicit() {
         let available = Capabilities::from_supported_commands([CommandKind::SetLights]);
         let unknown = DeviceControlProfile::new(available, available);
-        assert!(unknown.descriptors(false).is_empty());
+        assert_eq!(unknown.descriptors(false).len(), 0);
         let aero = aero_control_profile().descriptors(true);
         for id in [
             SettingId::HighBeam,
@@ -959,7 +959,7 @@ mod tests {
     fn generic_capabilities_do_not_inherit_an_unrelated_settings_adapter() {
         let capabilities = Capabilities::from_supported_commands([CommandKind::SetLights]);
         let profile = DeviceControlProfile::new(capabilities, capabilities);
-        assert!(profile.descriptors(false).is_empty());
+        assert_eq!(profile.descriptors(false).len(), 0);
         assert_eq!(
             profile
                 .command(SettingId::PwmTiltback, DeviceSettingValue::Disabled, false)
@@ -1123,7 +1123,7 @@ mod tests {
                 }
                 SettingControl::ReadOnly => panic!("ordinary setting is read-only: {id:?}"),
             };
-            assert!(!values.is_empty());
+            assert_ne!(values.len(), 0);
             for value in values {
                 let command = profile.command(id, value, false).unwrap();
                 assert!(matches!(
@@ -1136,14 +1136,14 @@ mod tests {
                     crate::VeteranCommandMode::Ascii,
                 ] {
                     if let Some(encoded) = crate::NosfetDialect::encode_in_mode(command, mode) {
-                        assert!(!encoded.payload.as_slice().is_empty());
+                        assert_ne!(encoded.payload.as_slice().len(), 0);
                         assert_eq!(encoded.mode, cutout_core::WriteMode::WithoutResponse);
                     } else {
                         let sequence = crate::NosfetDialect::encode_settings_sequence(command)
                             .unwrap_or_else(|| {
                                 panic!("missing encoder: {id:?} {value:?} {mode:?}")
                             });
-                        assert!(!sequence.steps.is_empty());
+                        assert_ne!(sequence.steps.len(), 0);
                         assert!(
                             sequence.steps.iter().all(|step| {
                                 step.mode == cutout_core::WriteMode::WithoutResponse

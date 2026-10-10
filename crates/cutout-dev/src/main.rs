@@ -4,7 +4,6 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     env,
     ffi::OsStr,
-    fmt::Write,
     fs,
     path::{Path, PathBuf},
     process::{Command, ExitStatus},
@@ -245,7 +244,7 @@ fn run_aero_settings_simulator() -> Result<()> {
                 "  write channel={:?} mode={:?} payload={}",
                 write.channel,
                 write.mode,
-                hex(write.payload.as_slice())
+                hex::encode(write.payload.as_slice())
             );
         }
         println!("  readback={:?}", simulator.readback());
@@ -886,7 +885,7 @@ fn fingerprint_source_inputs(inputs: &BTreeMap<PathBuf, Vec<u8>>) -> String {
         if relative == Path::new("README.md") {
             continue;
         }
-        let file_hash = hex(Sha256::digest(bytes));
+        let file_hash = hex::encode(Sha256::digest(bytes));
         aggregate.update(relative.as_os_str().as_encoded_bytes());
         aggregate.update(b"  ");
         aggregate.update(file_hash.as_bytes());
@@ -894,7 +893,7 @@ fn fingerprint_source_inputs(inputs: &BTreeMap<PathBuf, Vec<u8>>) -> String {
         aggregate.update(relative.as_os_str().as_encoded_bytes());
         aggregate.update(b"\n");
     }
-    hex(aggregate.finalize())
+    hex::encode(aggregate.finalize())
 }
 
 struct FfiSourceSnapshot {
@@ -912,7 +911,7 @@ impl FfiSourceSnapshot {
         // lookup stays stable; project config and its relative inputs are
         // copied into matching paths below.
         let canonical = fs::canonicalize(root)?;
-        let repository = hex(Sha256::digest(canonical.as_os_str().as_encoded_bytes()));
+        let repository = hex::encode(Sha256::digest(canonical.as_os_str().as_encoded_bytes()));
         let parent = canonical
             .parent()
             .context("repository parent")?
@@ -1057,7 +1056,7 @@ fn ffi_output_hashes(package: &Path) -> Result<Value> {
         );
         hashes.insert(
             relative.to_string_lossy().into_owned(),
-            Value::String(hex(Sha256::digest(bytes))),
+            Value::String(hex::encode(Sha256::digest(bytes))),
         );
     }
     Ok(Value::Object(hashes))
@@ -1090,7 +1089,7 @@ fn verify_ffi_receipt(package: &Path, source: &str) -> Result<String> {
         receipt["outputs"] == ffi_output_hashes(package)?,
         "Swift FFI artifact contents changed after generation"
     );
-    Ok(hex(Sha256::digest(bytes)))
+    Ok(hex::encode(Sha256::digest(bytes)))
 }
 
 fn check_swift_ffi_build(root: &Path, package: &Path, output: &Path) -> Result<()> {
@@ -1250,13 +1249,6 @@ fn run(command: &mut Command, description: &str) -> Result<()> {
 fn ensure_success(status: ExitStatus, description: &str) -> Result<()> {
     ensure!(status.success(), "failed to {description}: {status}");
     Ok(())
-}
-
-fn hex(bytes: impl AsRef<[u8]>) -> String {
-    bytes.as_ref().iter().fold(String::new(), |mut hex, byte| {
-        write!(hex, "{byte:02x}").expect("writing to a String cannot fail");
-        hex
-    })
 }
 
 #[cfg(test)]
@@ -1691,10 +1683,9 @@ mod tests {
             ]
         );
         assert!(capture_names(&serde_json::json!({}), 5).is_err());
-        assert!(
-            capture_names(&serde_json::json!({"result": {"files": []}}), 5)
-                .unwrap()
-                .is_empty()
+        assert_eq!(
+            capture_names(&serde_json::json!({"result": {"files": []}}), 5).unwrap(),
+            [] as [&str; 0]
         );
         assert_eq!(
             parse_cli(&["ios".into(), "captures".into()]).unwrap(),
@@ -1736,6 +1727,28 @@ mod tests {
             Command::new("cmd").args(["/C", "exit 1"]).status().unwrap()
         };
         assert!(ensure_success(failed, "test command").is_err());
+    }
+
+    #[test]
+    fn source_fingerprint_preserves_the_existing_hex_digest_format() {
+        let inputs = BTreeMap::from([
+            (PathBuf::from("Cargo.toml"), b"[workspace]\n".to_vec()),
+            (
+                PathBuf::from("README.md"),
+                b"ignored documentation".to_vec(),
+            ),
+            (
+                PathBuf::from("crates/fixture/src/lib.rs"),
+                (0..=u8::MAX).collect(),
+            ),
+        ]);
+
+        // Independent SHA-256 reference over path + "  " + lowercase file digest
+        // + "  " + path + newline, in BTreeMap order, excluding README.md.
+        assert_eq!(
+            fingerprint_source_inputs(&inputs),
+            "c7c898e816b00e93c108f17ca7e85f2efeb0239fd4e50fd18d2abdcd84036031"
+        );
     }
 
     #[test]

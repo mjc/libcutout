@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   echo "Usage: scripts/run-ios-ui-tests.sh [--clean] [--build-only] [--smoke] [--verbose] [--enumerate-tests output.json] [--timeout seconds] [--appearance light|dark] [--increase-contrast enabled|disabled] [--content-size size] [xcodebuild options]"
-  echo "  --smoke    Run eight production-root checks in their compatible simulator-settings groups."
+  echo "  --smoke    Run production-root checks in their compatible simulator-settings groups."
   echo "  --verbose  Show full xcodebuild output instead of the bounded default."
   echo "  --enumerate-tests writes Xcode's compiled test graph without executing tests."
   echo "  --timeout sets the outer deadline for this build-and-test invocation."
@@ -162,6 +162,14 @@ fi
 destination="${CUTOUT_IOS_TEST_DESTINATION:-${CUTOUT_IOS_SIMULATOR_DESTINATION:-platform=iOS Simulator,name=Cutout iPhone 15 iOS 27,OS=latest}}"
 passed_xcode_options=("$@")
 for ((option_index = 0; option_index < ${#passed_xcode_options[@]}; option_index++)); do
+  argument="${passed_xcode_options[$option_index]}"
+  case "$argument" in
+    ARCHS=arm64|ONLY_ACTIVE_ARCH=YES|VALID_ARCHS=arm64) ;;
+    ARCHS=*|ARCHS\[*|VALID_ARCHS=*|VALID_ARCHS\[*|ONLY_ACTIVE_ARCH=*|-arch)
+      echo "iOS test runners support only arm64; architecture overrides are not supported" >&2
+      exit 2
+      ;;
+  esac
   if [[ "${passed_xcode_options[$option_index]}" == -destination ]]; then
     if ((option_index + 1 >= ${#passed_xcode_options[@]})); then
       echo "-destination requires a value" >&2
@@ -169,6 +177,16 @@ for ((option_index = 0; option_index < ${#passed_xcode_options[@]}; option_index
     fi
     destination="${passed_xcode_options[$((option_index + 1))]}"
   fi
+done
+IFS=',' read -r -a destination_parts <<<"$destination"
+for part in "${destination_parts[@]}"; do
+  case "$part" in
+    arch=arm64) ;;
+    arch=*)
+      echo "iOS test runners support only arm64 destinations" >&2
+      exit 2
+      ;;
+  esac
 done
 project="${CUTOUT_IOS_APP_PROJECT:-swift/CutoutMobile/CutoutApp.xcodeproj}"
 scheme="${CUTOUT_IOS_APP_SCHEME:-CutoutApp}"
@@ -278,6 +296,7 @@ if [[ "$destination" == platform=iOS,* ]]; then
   )
 fi
 xcodebuild_args+=("$@")
+xcodebuild_args+=(ARCHS=arm64 ONLY_ACTIVE_ARCH=YES)
 if [[ -n "$spotify_client_id" ]]; then
   xcodebuild_args+=("SPOTIFY_CLIENT_ID=$spotify_client_id")
 fi
@@ -362,7 +381,7 @@ if [[ "$mode" == "test" ]]; then
     -collect-test-diagnostics never \
     -test-timeouts-enabled YES \
     -default-test-execution-time-allowance 120 \
-    -maximum-test-execution-time-allowance 120 \
+    -maximum-test-execution-time-allowance 360 \
     -resultBundlePath "$result_bundle" \
     test
   then

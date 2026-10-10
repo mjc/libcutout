@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use cutout_core::{Duration, MonotonicTimestamp, WallClockUnixTimestamp};
+use cutout_core::{CaptureGeneration, Duration, MonotonicTimestamp, WallClockUnixTimestamp};
 
 use crate::{
     MusicPlaybackState, MusicProvider, MusicRideEventKind, MusicSnapshot,
@@ -37,11 +37,24 @@ pub(crate) enum SkipCommandOutcome {
     Rejected,
 }
 
+/// Capture ownership sampled before asynchronous observation processing.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum MusicCaptureTarget {
+    /// No capture existed when the observation was admitted.
+    NoCapture,
+    /// The caller did not supply usable capture ownership.
+    #[default]
+    Unavailable,
+    /// Original Rust-issued writer generation.
+    Capture(CaptureGeneration),
+}
+
 /// Wall-clock correlation retained with a history transition until durable acknowledgement.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MusicObservationTiming {
     wall_clock_at: WallClockUnixTimestamp,
     clock_uncertainty_milliseconds: u64,
+    capture_target: MusicCaptureTarget,
 }
 
 impl MusicObservationTiming {
@@ -54,7 +67,21 @@ impl MusicObservationTiming {
         Self {
             wall_clock_at,
             clock_uncertainty_milliseconds,
+            capture_target: MusicCaptureTarget::Unavailable,
         }
+    }
+
+    /// Associates the original capture owner with this source observation.
+    #[must_use]
+    pub const fn with_capture_target(mut self, target: MusicCaptureTarget) -> Self {
+        self.capture_target = target;
+        self
+    }
+
+    /// Returns capture ownership retained with the original pending transition.
+    #[must_use]
+    pub const fn capture_target(self) -> MusicCaptureTarget {
+        self.capture_target
     }
 
     /// Returns the correlated wall-clock time.
@@ -85,6 +112,32 @@ struct PendingHistoryTransition {
     snapshot: MusicSnapshot,
     kind: PendingHistoryKind,
     timing: MusicObservationTiming,
+}
+
+/// Original classification retained when a closed association cannot finish persistence.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum MusicUnsettledHistoryKind {
+    /// A confirmed material transition.
+    Confirmed(MusicRideEventKind),
+    /// A command-dependent transition awaiting provider confirmation.
+    AwaitingSkip {
+        /// The original accepted command identity.
+        transport_id: TransportRequestId,
+        /// The original classification if the command failed.
+        rejected_kind: Option<MusicRideEventKind>,
+    },
+}
+/// Exact metadata that remained unacknowledged when its ride association closed.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MusicUnsettledHistoryTransition {
+    /// Original durable acknowledgement identity.
+    pub id: HistoryTransitionId,
+    /// Original source observation.
+    pub snapshot: MusicSnapshot,
+    /// Original command-confirmed or provisional classification.
+    pub kind: MusicUnsettledHistoryKind,
+    /// Original correlated clocks and uncertainty.
+    pub timing: MusicObservationTiming,
 }
 
 /// A classified transition retained until the durable history owner acknowledges it.
@@ -159,6 +212,8 @@ pub enum MusicObservationOutcome {
     Accepted(Box<MusicObservationDecision>),
     /// The observation was not newer than that provider's current value.
     OutOfOrder,
+    /// Pending history is full; the observation and baseline remain retryable.
+    Full,
 }
 
 /// Owns provider observation ordering and command-to-transition correlation.
@@ -228,6 +283,36 @@ impl MusicObservationTracker {
         self.pending_skips.remove(index);
     }
 
+    pub(crate) fn retire_history_association(&mut self) -> Vec<MusicUnsettledHistoryTransition> {
+        let pending = self
+            .pending_history
+            .drain(..)
+            .map(|pending| MusicUnsettledHistoryTransition {
+                id: pending.id,
+                snapshot: pending.snapshot,
+                timing: pending.timing,
+                kind: match pending.kind {
+                    PendingHistoryKind::Confirmed(kind) => {
+                        MusicUnsettledHistoryKind::Confirmed(kind)
+                    }
+                    PendingHistoryKind::AwaitingSkip {
+                        transport_id,
+                        rejected_kind,
+                    } => MusicUnsettledHistoryKind::AwaitingSkip {
+                        transport_id,
+                        rejected_kind,
+                    },
+                },
+            })
+            .collect();
+        self.reset();
+        pending
+    }
+
+    pub(crate) fn has_pending_history(&self) -> bool {
+        !self.pending_history.is_empty()
+    }
+
     /// Clears observations and pending command correlation.
     pub(crate) fn reset(&mut self) {
         self.reset_observations();
@@ -272,6 +357,9 @@ impl MusicObservationTracker {
         });
         let skip_applies = skip_index.is_some();
         let transition = classify_transition(previous.as_ref(), &snapshot, skip_applies);
+        if transition.is_some() && self.pending_history.len() >= crate::MAX_MUSIC_TIMELINE_EVENTS {
+            return MusicObservationOutcome::Full;
+        }
         let rejected_transition = skip_applies
             .then(|| classify_transition(previous.as_ref(), &snapshot, false))
             .flatten();
@@ -347,9 +435,6 @@ impl MusicObservationTracker {
         let Some(kind) = transition else {
             return;
         };
-        if self.pending_history.len() >= crate::MAX_MUSIC_TIMELINE_EVENTS {
-            return;
-        }
         let pending_kind = if kind == MusicRideEventKind::Skip {
             let Some(index) = skip_index else { return };
             let pending = &mut self.pending_skips[index];
@@ -557,6 +642,170 @@ mod tests {
             MusicCapabilities::new(),
         )
         .expect("valid snapshot")
+    }
+
+    #[test]
+    fn pending_capture_target_survives_retry_from_a_replacement_capture() {
+        let mut tracker = MusicObservationTracker::new();
+        let original = MusicCaptureTarget::Capture(CaptureGeneration::new(1));
+        let replacement = MusicCaptureTarget::Capture(CaptureGeneration::new(2));
+        let MusicObservationOutcome::Accepted(first) = tracker.observe(
+            snapshot(
+                MusicProvider::AppleMusic,
+                Some("first"),
+                MusicPlaybackState::Playing,
+                None,
+                100,
+            ),
+            timing(1_000).with_capture_target(original),
+        ) else {
+            panic!("first observation accepted");
+        };
+        let pending = first.history_transition().unwrap().clone();
+        let MusicObservationOutcome::Accepted(retry) = tracker.observe(
+            snapshot(
+                MusicProvider::AppleMusic,
+                Some("second"),
+                MusicPlaybackState::Playing,
+                None,
+                200,
+            ),
+            timing(2_000).with_capture_target(replacement),
+        ) else {
+            panic!("replacement observation accepted");
+        };
+        assert_eq!(retry.history_transition(), Some(&pending));
+        assert_eq!(
+            retry
+                .history_transition()
+                .unwrap()
+                .timing()
+                .capture_target(),
+            original
+        );
+        assert_eq!(
+            tracker.acknowledge_history_transition(pending.id()),
+            MusicHistoryTransitionAcknowledgement::Acknowledged
+        );
+        let MusicObservationOutcome::Accepted(next) = tracker.observe(
+            snapshot(
+                MusicProvider::AppleMusic,
+                Some("second"),
+                MusicPlaybackState::Playing,
+                None,
+                300,
+            ),
+            timing(3_000).with_capture_target(MusicCaptureTarget::NoCapture),
+        ) else {
+            panic!("next observation accepted");
+        };
+        assert_eq!(
+            next.history_transition().unwrap().timing().capture_target(),
+            replacement
+        );
+    }
+
+    #[test]
+    fn provisional_skip_capture_target_survives_confirmation_and_retry() {
+        let mut tracker = MusicObservationTracker::new();
+        let MusicObservationOutcome::Accepted(first) = tracker.observe(
+            snapshot(
+                MusicProvider::Spotify,
+                Some("first"),
+                MusicPlaybackState::Playing,
+                None,
+                100,
+            ),
+            timing(1_000),
+        ) else {
+            panic!("first observation accepted");
+        };
+        let _ = tracker.acknowledge_history_transition(first.history_transition().unwrap().id());
+        let request = TransportRequestId::from_raw(1);
+        tracker.issue_skip(request, MonotonicTimestamp::new(150));
+        let original = MusicCaptureTarget::Capture(CaptureGeneration::new(1));
+        let _ = tracker.observe(
+            snapshot(
+                MusicProvider::Spotify,
+                Some("second"),
+                MusicPlaybackState::Playing,
+                None,
+                200,
+            ),
+            timing(2_000).with_capture_target(original),
+        );
+        tracker.finish_skip(request, SkipCommandOutcome::Accepted);
+        let MusicObservationOutcome::Accepted(retry) = tracker.observe(
+            snapshot(
+                MusicProvider::Spotify,
+                Some("second"),
+                MusicPlaybackState::Playing,
+                None,
+                300,
+            ),
+            timing(3_000)
+                .with_capture_target(MusicCaptureTarget::Capture(CaptureGeneration::new(2))),
+        ) else {
+            panic!("retry accepted");
+        };
+        let settled = retry.history_transition().unwrap();
+        assert_eq!(settled.kind(), MusicRideEventKind::Skip);
+        assert_eq!(settled.timing().capture_target(), original);
+        assert_eq!(
+            settled.timing().wall_clock_at(),
+            timing(2_000).wall_clock_at()
+        );
+    }
+
+    #[test]
+    fn full_pending_history_preserves_baseline_and_exact_retryable_observation() {
+        let mut tracker = MusicObservationTracker::new();
+        for index in 0..crate::MAX_MUSIC_TIMELINE_EVENTS {
+            let item = format!("track-{index}");
+            let _ = tracker.observe(
+                snapshot(
+                    MusicProvider::AppleMusic,
+                    Some(&item),
+                    MusicPlaybackState::Playing,
+                    None,
+                    u64::try_from(index).expect("bounded index") + 1,
+                ),
+                timing(1_000 + u64::try_from(index).expect("bounded index")),
+            );
+        }
+        let previous = tracker.latest(MusicProvider::AppleMusic).cloned();
+        let overflow = snapshot(
+            MusicProvider::AppleMusic,
+            Some("overflow"),
+            MusicPlaybackState::Playing,
+            Some(42),
+            10_000,
+        );
+        let rejected = tracker.observe(overflow.clone(), timing(20_000));
+        assert_eq!(rejected, MusicObservationOutcome::Full);
+        assert_eq!(tracker.latest(MusicProvider::AppleMusic), previous.as_ref());
+        let first = tracker
+            .current_history_transition()
+            .expect("pending prefix");
+        assert_eq!(
+            tracker.acknowledge_history_transition(first.id()),
+            MusicHistoryTransitionAcknowledgement::Acknowledged
+        );
+        let MusicObservationOutcome::Accepted(_) =
+            tracker.observe(overflow.clone(), timing(20_000))
+        else {
+            panic!("the exact rejected observation must be retryable after capacity frees");
+        };
+        let mut retained = Vec::new();
+        while let Some(transition) = tracker.current_history_transition() {
+            retained.push(transition.clone());
+            let _ = tracker.acknowledge_history_transition(transition.id());
+        }
+        assert_eq!(retained.len(), crate::MAX_MUSIC_TIMELINE_EVENTS);
+        let last = retained.last().expect("retained overflow retry");
+        assert_eq!(last.snapshot(), &overflow);
+        assert_eq!(last.timing(), timing(20_000));
+        assert_eq!(last.kind(), MusicRideEventKind::ItemChanged);
     }
 
     #[test]

@@ -1,4 +1,5 @@
 import CutoutMobile
+import CutoutMobileFFI
 import Foundation
 import Observation
 
@@ -9,7 +10,9 @@ final class CameraDiscoveryModel {
 
     private(set) var isReading = false
     private(set) var readErrorKey: String?
+    let origin = mobileNovatekR3ProOrigin()
 
+    @ObservationIgnored private let loadMediaEvidence: EvidenceLoader
     @ObservationIgnored private let loadEvidence: EvidenceLoader
     @ObservationIgnored private let observePermissionRequired: @MainActor () -> Void
     @ObservationIgnored private let prepareForEvidenceRefresh: @MainActor () -> Void
@@ -23,6 +26,9 @@ final class CameraDiscoveryModel {
         annotateCapture: ((String, String) -> Void)?
     ) {
         self.loadEvidence = { address, port in
+            try await adapter.loadReadOnlyEvidence(address: address, port: port, includeMedia: false)
+        }
+        self.loadMediaEvidence = { address, port in
             try await adapter.loadReadOnlyEvidence(address: address, port: port)
         }
         self.observePermissionRequired = adapter.observePermissionRequired
@@ -37,27 +43,33 @@ final class CameraDiscoveryModel {
         annotateCapture: ((String, String) -> Void)? = nil
     ) {
         self.loadEvidence = loadEvidence
+        self.loadMediaEvidence = loadEvidence
         self.observePermissionRequired = observePermissionRequired
         self.prepareForEvidenceRefresh = prepareForEvidenceRefresh
         self.annotateCapture = annotateCapture
     }
 
     @discardableResult
-    func load(address: String, port: String) -> Task<Void, Never>? {
-        guard let portNumber = UInt16(port) else {
-            readErrorKey = "camera.error.invalid_port"
-            return nil
-        }
+    func load() -> Task<Void, Never>? {
+        request(loader: loadEvidence, failureKey: "camera.error.read_failed")
+    }
 
+    @discardableResult
+    func loadMedia() -> Task<Void, Never>? {
+        request(loader: loadMediaEvidence, failureKey: "camera.error.media_list_failed")
+    }
+
+    private func request(loader: @escaping EvidenceLoader, failureKey: String) -> Task<Void, Never>? {
         isReading = true
         readErrorKey = nil
         prepareForEvidenceRefresh()
         readTask?.cancel()
         readGeneration &+= 1
         let generation = readGeneration
-        let loadEvidence = self.loadEvidence
+        let loadEvidence = loader
         let observePermissionRequired = self.observePermissionRequired
         let annotateCapture = self.annotateCapture
+        let origin = self.origin
         readTask = Task { @MainActor in
             defer {
                 if generation == readGeneration {
@@ -66,7 +78,7 @@ final class CameraDiscoveryModel {
                 }
             }
             do {
-                let evidence = try await loadEvidence(address, portNumber)
+                let evidence = try await loadEvidence(origin.address, origin.port)
                 guard generation == readGeneration, !Task.isCancelled else { return }
                 annotateCapture?("camera_profile", "novatek_r3_pro")
                 annotateCapture?("camera_firmware", evidence.firmwareVersion)
@@ -81,11 +93,17 @@ final class CameraDiscoveryModel {
                 }
             } catch {
                 if generation == readGeneration, !Task.isCancelled {
-                    readErrorKey = "camera.error.read_failed"
+                    readErrorKey = failureKey
                 }
             }
         }
         return readTask
+    }
+
+    @discardableResult
+    func connectIfNeeded(connection: CameraConnectionPresentation) -> Task<Void, Never>? {
+        guard connection == .notConfigured else { return nil }
+        return load()
     }
 
     func cancel() {

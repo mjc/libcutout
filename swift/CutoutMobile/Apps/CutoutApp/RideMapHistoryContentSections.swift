@@ -18,29 +18,48 @@ enum RideMapHistoryRouteState: Equatable {
 }
 
 struct RideMapHistoryFilterBar: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     let dateTitle: String
     let vehicleTitle: String
     let vehicleOptions: [RideMapVehicleOption]
+    let hasActiveFilters: Bool
     let setDateFilter: (RideHistoryModel.DateFilter) -> Void
     let setVehicleFilter: (String?) -> Void
+    let clearFilters: () -> Void
 
     var body: some View {
         Group {
-            if #available(iOS 26, macOS 26, *) {
-                GlassEffectContainer(spacing: 8) {
-                    filterMenus
+            // Text size chooses the arrangement; filter values never add or remove rows.
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(spacing: 0) {
+                    HStack(spacing: 0) {
+                        dateMenu
+                        clearButton
+                    }
+                    Divider().padding(.horizontal, 12)
+                    vehicleMenu
                 }
             } else {
-                filterMenus
+                HStack(spacing: 0) {
+                    dateMenu
+                    Divider().frame(height: 20)
+                    vehicleMenu
+                    Divider().frame(height: 20)
+                    clearButton
+                }
             }
         }
-    }
-
-    private var filterMenus: some View {
-        HStack(spacing: 8) {
-            dateMenu
-            vehicleMenu
+        .buttonStyle(.plain)
+        .menuStyle(.button)
+        .menuIndicator(.hidden)
+        .background(PevColors.cardFill, in: RoundedRectangle(cornerRadius: 14))
+        .overlay {
+            RoundedRectangle(cornerRadius: 14)
+                .strokeBorder(PevColors.cardStroke.opacity(0.5), lineWidth: 1)
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("ride-map.history-filters")
     }
 
     private var dateMenu: some View {
@@ -52,8 +71,10 @@ struct RideMapHistoryFilterBar: View {
                 setDateFilter(.allTime)
             }
         } label: {
-            filterLabel(title: dateTitle, systemImage: "calendar")
+            filterLabel(title: dateTitle)
         }
+        .frame(maxWidth: .infinity, minHeight: 44)
+        .accessibilityIdentifier("ride-map.history-date-filter")
     }
 
     private var vehicleMenu: some View {
@@ -65,20 +86,45 @@ struct RideMapHistoryFilterBar: View {
                 Button(vehicle.label) { setVehicleFilter(vehicle.identity) }
             }
         } label: {
-            filterLabel(title: vehicleTitle, systemImage: "car")
+            filterLabel(title: vehicleTitle)
         }
+        .frame(maxWidth: .infinity, minHeight: 44)
+        .accessibilityIdentifier("ride-map.history-vehicle-filter")
     }
 
-    private func filterLabel(title: String, systemImage: String) -> some View {
-        Label(title, systemImage: systemImage)
-            .font(.subheadline.weight(.semibold))
-            .lineLimit(1)
-            .frame(maxWidth: .infinity)
-            .labelStyle(.titleAndIcon)
-            .foregroundStyle(PevColors.primaryText)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 9)
-            .modifier(RideMapFilterSurface())
+    private var clearButton: some View {
+        Button(action: clearFilters) {
+            Image(systemName: "xmark")
+                .font(.subheadline.weight(.semibold))
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+        }
+        .foregroundStyle(hasActiveFilters ? PevColors.brand : Color.secondary)
+        .disabled(!hasActiveFilters)
+        .accessibilityLabel(localizedAppText("ride_map.history_clear_filters"))
+        .accessibilityIdentifier("ride-map.history-clear-filters")
+        .help(localizedAppText("ride_map.history_clear_filters"))
+    }
+
+    private func filterLabel(title: String) -> some View {
+        HStack(spacing: 6) {
+            Text(title)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Image(systemName: "chevron.down")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(Color.secondary)
+                .accessibilityHidden(true)
+        }
+        .font(.subheadline.weight(.semibold))
+        .foregroundStyle(PevColors.primaryText)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .frame(minHeight: 44)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(title)
     }
 }
 
@@ -90,6 +136,7 @@ struct RideMapHistoryRouteSection: View {
     let cameraRegion: MobileRideMapCameraRegion?
     let segments: [MobileRideMapSegmentDisplayMetadata]
     let cameraFitVersion: UInt64
+    let mapHeight: CGFloat
     let state: RideMapHistoryRouteState
     let pointsTruncated: Bool
     let segmentsOmittedByBudget: Bool
@@ -143,7 +190,7 @@ struct RideMapHistoryRouteSection: View {
                     .accessibilityIdentifier("ride-map.history-map-empty")
                 }
             }
-            .frame(height: 340)
+            .frame(height: mapHeight)
             .frame(maxWidth: .infinity)
 
             if pointsTruncated || segmentsOmittedByBudget {
@@ -159,58 +206,72 @@ struct RideMapHistoryRouteSection: View {
     }
 }
 
-struct RideMapHistoryListSection: View {
-    let isRecording: Bool
+struct RideMapHistorySearchField: View {
+    @Binding var searchText: String
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(PevColors.muted)
+                .accessibilityHidden(true)
+            TextField(localizedAppText("ride_map.history_search"), text: $searchText)
+                .textFieldStyle(.plain)
+                .submitLabel(.search)
+                .accessibilityIdentifier("ride-map.history-search")
+        }
+        .font(.subheadline)
+        .padding(.horizontal, 12)
+        .frame(minHeight: 44)
+        .background(PevColors.cardFill, in: RoundedRectangle(cornerRadius: 14))
+    }
+}
+
+struct RideMapHistoryRecordingStatus: View {
     let isPaused: Bool
+    let returnToLive: () -> Void
+
+    var body: some View {
+        Button(action: returnToLive) {
+            HStack(spacing: 10) {
+                Circle()
+                    .fill(isPaused ? PevColors.brand : PevColors.green)
+                    .frame(width: 8, height: 8)
+                    .accessibilityHidden(true)
+                Text(localizedAppText(isPaused ? "ride_map.history_paused" : "ride_map.history_recording_continues"))
+                    .font(.subheadline.weight(.semibold))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .accessibilityHidden(true)
+            }
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(PevColors.primaryText)
+        .accessibilityHint(localizedAppText("ride_map.return_live"))
+        .accessibilityIdentifier("ride-map.return-live")
+    }
+}
+
+struct RideMapHistoryListSection: View {
     let rides: [MobileRideMapHistorySummaryDto]
     let canLoadMore: Bool
     let selectedRideID: String?
-    let returnToLive: () -> Void
     let select: (String) -> Void
     let loadMore: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if isRecording || isPaused {
-                HStack(spacing: 10) {
-                    Circle()
-                        .fill(PevColors.green)
-                        .frame(width: 9, height: 9)
-                    Text(
-                        isPaused
-                            ? localizedAppText("ride_map.history_paused")
-                            : localizedAppText("ride_map.history_recording_continues")
-                    )
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(PevColors.green)
-                    Spacer()
-                    Button(localizedAppText("ride_map.return_live"), action: returnToLive)
-                        .font(.subheadline.weight(.semibold))
-                        .buttonStyle(.plain)
-                        .foregroundStyle(PevColors.green)
-                        .accessibilityIdentifier("ride-map.return-live")
-                }
-                .accessibilityIdentifier("ride-map.history-recording-banner")
-            }
-
-            RideMapHistoryListView(
-                rides: rides,
-                canLoadMore: canLoadMore,
-                selectedRideID: selectedRideID,
-                select: select,
-                loadMore: loadMore
-            )
-        }
-        .padding(16)
-        .background(
-            PevColors.cardFill,
-            in: UnevenRoundedRectangle(
-                topLeadingRadius: 28,
-                bottomLeadingRadius: 0,
-                bottomTrailingRadius: 0,
-                topTrailingRadius: 28
-            )
+        RideMapHistoryListView(
+            rides: rides,
+            canLoadMore: canLoadMore,
+            selectedRideID: selectedRideID,
+            select: select,
+            loadMore: loadMore
         )
+        .padding(16)
+        .background(PevColors.cardFill)
         .padding(.bottom, 8)
     }
 }
@@ -283,17 +344,5 @@ struct RideMapHistoryLoadingSurface: View {
         .padding(.vertical, 10)
         .modifier(RideMapLoadingSurface())
         .accessibilityIdentifier(identifier)
-    }
-}
-
-private struct RideMapFilterSurface: ViewModifier {
-    func body(content: Content) -> some View {
-        if #available(iOS 26, macOS 26, *) {
-            content.glassEffect(.regular.interactive(), in: .capsule)
-        } else {
-            content
-                .background(PevColors.pageBackground.opacity(0.72), in: Capsule())
-                .overlay { Capsule().stroke(PevColors.cardStroke.opacity(0.45), lineWidth: 1) }
-        }
     }
 }

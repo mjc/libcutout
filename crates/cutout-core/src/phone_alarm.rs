@@ -472,11 +472,11 @@ impl PhoneAlarmEvaluator {
             return;
         }
 
-        let Ok(id) = NEXT_PHONE_ALARM_REQUEST_ID.fetch_update(
-            Ordering::Relaxed,
-            Ordering::Relaxed,
-            |next| next.checked_add(1),
-        ) else {
+        let Ok(id) =
+            NEXT_PHONE_ALARM_REQUEST_ID.try_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
+                next.checked_add(1)
+            })
+        else {
             return;
         };
         state.pending_request_id = Some(id);
@@ -816,23 +816,26 @@ mod tests {
             .scheduled()[0];
         assert!(evaluator.complete_delivery(first.id, true, at(1_100)));
 
-        assert!(
+        assert_eq!(
             evaluator
                 .evaluate(policy(), pwm_evidence(860), at(2_000))
                 .scheduled()
-                .is_empty()
+                .len(),
+            0
         );
-        assert!(
+        assert_eq!(
             evaluator
                 .evaluate(policy(), pwm_evidence(790), at(3_000))
                 .scheduled()
-                .is_empty()
+                .len(),
+            0
         );
-        assert!(
+        assert_eq!(
             evaluator
                 .evaluate(policy(), pwm_evidence(810), at(4_000))
                 .scheduled()
-                .is_empty()
+                .len(),
+            0
         );
         assert_eq!(
             evaluator
@@ -850,11 +853,12 @@ mod tests {
             .evaluate(policy(), pwm_evidence(810), at(1))
             .scheduled()[0];
         assert!(evaluator.complete_delivery(first.id, true, at(2)));
-        assert!(
+        assert_eq!(
             evaluator
                 .evaluate(policy(), pwm_evidence(740), at(3))
                 .scheduled()
-                .is_empty()
+                .len(),
+            0
         );
         assert_eq!(
             evaluator
@@ -876,18 +880,20 @@ mod tests {
             cancelled.cancelled_request_ids(),
             &[first.scheduled()[0].id()]
         );
-        assert!(cancelled.scheduled().is_empty());
-        assert!(
+        assert_eq!(cancelled.scheduled().len(), 0);
+        assert_eq!(
             evaluator
                 .evaluate(policy(), pwm_evidence(810), at(3))
                 .scheduled()
-                .is_empty()
+                .len(),
+            0
         );
-        assert!(
+        assert_eq!(
             evaluator
                 .evaluate(policy(), pwm_evidence(740), at(4))
                 .scheduled()
-                .is_empty()
+                .len(),
+            0
         );
         assert_eq!(
             evaluator
@@ -906,20 +912,22 @@ mod tests {
             .scheduled()[0];
 
         let stale = evaluator.evaluate(policy(), PhoneAlarmEvidence::stale(), at(2));
-        assert!(stale.scheduled().is_empty());
+        assert_eq!(stale.scheduled().len(), 0);
         assert_eq!(stale.cancelled_request_ids(), &[request.id()]);
         assert!(!evaluator.complete_delivery(request.id(), true, at(3)));
-        assert!(
+        assert_eq!(
             evaluator
                 .evaluate(PhoneAlarmPolicy::disabled(), pwm_evidence(900), at(4))
                 .scheduled()
-                .is_empty()
+                .len(),
+            0
         );
-        assert!(
+        assert_eq!(
             evaluator
                 .evaluate(policy(), PhoneAlarmEvidence::unavailable(), at(5))
                 .scheduled()
-                .is_empty()
+                .len(),
+            0
         );
     }
 
@@ -959,22 +967,24 @@ mod tests {
             .scheduled()[0];
 
         assert!(evaluator.complete_delivery(first.id, false, at(1_100)));
-        assert!(
+        assert_eq!(
             evaluator
                 .evaluate(policy(), evidence, at(1_500))
                 .scheduled()
-                .is_empty()
+                .len(),
+            0
         );
         let retry = evaluator
             .evaluate(policy(), evidence, at(2_100))
             .scheduled()[0];
         assert_ne!(retry.id, first.id);
         assert!(evaluator.complete_delivery(retry.id, true, at(2_200)));
-        assert!(
+        assert_eq!(
             evaluator
                 .evaluate(policy(), evidence, at(11_000))
                 .scheduled()
-                .is_empty()
+                .len(),
+            0
         );
         assert_eq!(
             evaluator
@@ -1024,11 +1034,12 @@ mod tests {
 
         let request = manager.evaluate(pwm_evidence(850), at(1_000)).scheduled()[0];
         assert!(manager.complete_delivery(request.id(), true, at(1_100)));
-        assert!(
+        assert_eq!(
             manager
                 .evaluate(pwm_evidence(850), at(30_999))
                 .scheduled()
-                .is_empty()
+                .len(),
+            0
         );
         assert_eq!(
             manager
@@ -1067,7 +1078,7 @@ mod tests {
         );
         let stale_request = settings_actions.scheduled()[0];
         let stale_actions = manager.evaluate(PhoneAlarmEvidence::stale(), at(6));
-        assert!(stale_actions.scheduled().is_empty());
+        assert_eq!(stale_actions.scheduled().len(), 0);
         assert_eq!(stale_actions.cancelled_request_ids(), &[stale_request.id()]);
         assert!(!manager.complete_delivery(stale_request.id(), true, at(7)));
     }

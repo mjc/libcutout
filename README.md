@@ -2,6 +2,11 @@
 
 ## Development
 
+The workspace requires Rust 1.99, pinned to 1.99.0 in `rust-toolchain.toml`.
+Keep this pin and the workspace `rust-version` requirement aligned when updating
+to a newer stable release. The pin includes the iOS device/simulator targets and
+Android ARM64; Apple builds require Xcode and Android builds use the Devenv NDK.
+
 Use the pinned Devenv environment for repository commands:
 
 ```console

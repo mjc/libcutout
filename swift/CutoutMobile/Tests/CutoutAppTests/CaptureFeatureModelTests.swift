@@ -7,6 +7,34 @@ import XCTest
 
 @MainActor
 final class CaptureFeatureModelTests: XCTestCase {
+    func testLabelAdmissionLossKeepsRecordingUsableAndAllowsRetry() {
+        var requests = 0
+        let capture = CaptureFeatureModel(changeCaptureLabel: { _, _ in
+            requests += 1
+            if requests == 1 { throw MobileCaptureAnnotationError.AdmissionLost(droppedMessages: 2) }
+            return [.lowBeamOn]
+        })
+        capture.deliverCaptureEvent(.started(fileURL: URL(fileURLWithPath: "/tmp/labels-retry.jsonl")), origin: .manual)
+
+        capture.startLabel(.lowBeamOn)
+        XCTAssertTrue(capture.canAnnotate)
+        XCTAssertTrue(capture.activeLabels.isEmpty)
+        XCTAssertEqual(capture.annotationError, .AdmissionLost(droppedMessages: 2))
+        XCTAssertNotNil(capture.annotationErrorText)
+        capture.deliverCaptureEvent(
+            .progress(
+                CaptureProgress(
+                    elapsedMilliseconds: 1_000, notificationCount: 1, fileSizeBytes: 100,
+                    queuedMessageCount: 0, writerError: nil, droppedMessageCount: 2
+                )))
+        XCTAssertTrue(capture.canAnnotate)
+        XCTAssertEqual(capture.progress?.droppedMessageCount, 2)
+        capture.startLabel(.lowBeamOn)
+        XCTAssertEqual(capture.activeLabels, [.lowBeamOn])
+        XCTAssertNil(capture.annotationError)
+        XCTAssertEqual(requests, 2)
+    }
+
     func testRejectedLabelKeepsAcceptedStateAndErrorSurvivesProgress() {
         var labelRequests = 0
         let capture = CaptureFeatureModel(changeCaptureLabel: { _, action in
@@ -400,6 +428,23 @@ final class CaptureFeatureModelTests: XCTestCase {
         XCTAssertEqual(flushCalls, 2)
     }
 
+    func testCaptureWriterHealthDoesNotDependOnDiagnosticMessagePresence() {
+        let failedWithoutMessage = CaptureProgress(
+            elapsedMilliseconds: 0, notificationCount: 0, fileSizeBytes: 0,
+            queuedMessageCount: 0, writerError: nil, writerFailed: true
+        )
+        let healthyWithDiagnostic = CaptureProgress(
+            elapsedMilliseconds: 0, notificationCount: 0, fileSizeBytes: 0,
+            queuedMessageCount: 0, writerError: "queue admission lost", writerFailed: false,
+            droppedMessageCount: 1
+        )
+        XCTAssertEqual(failedWithoutMessage.writerHealth, .failed)
+        XCTAssertEqual(healthyWithDiagnostic.writerHealth, .healthy)
+        XCTAssertEqual(captureSessionDetailRows(progress: failedWithoutMessage).last?.accessibilityValueText, "Failed")
+        XCTAssertEqual(
+            captureSessionDetailRows(progress: healthyWithDiagnostic).last?.accessibilityValueText, "Healthy")
+    }
+
     func testCaptureSessionDetailsExposeTypedWriterHealth() {
         let healthyProgress = CaptureProgress(
             elapsedMilliseconds: 63_000,
@@ -413,7 +458,8 @@ final class CaptureFeatureModelTests: XCTestCase {
             notificationCount: 42,
             fileSizeBytes: 12_288,
             queuedMessageCount: 0,
-            writerError: "queue overrun"
+            writerError: "queue overrun",
+            writerFailed: true
         )
         let healthyRows = captureSessionDetailRows(progress: healthyProgress)
         let failedRows = captureSessionDetailRows(progress: failedProgress)
@@ -463,7 +509,7 @@ final class CaptureFeatureModelTests: XCTestCase {
                 guard let token = sessionState.beginCaptureFinish(generation: generation) else { return false }
                 finishEntered.fulfill()
                 let flushed = await withCheckedContinuation { releaseFlush = $0 }
-                return sessionState.finishCaptureFlush(token: token, succeeded: flushed)
+                return sessionState.finishCaptureFlush(token: token, outcome: flushed ? .flushed : .rejected)
             })
         capture.deliverCaptureEvent(
             .started(
@@ -509,7 +555,7 @@ final class CaptureFeatureModelTests: XCTestCase {
                 guard let token = sessionState.beginCaptureFinish(generation: generation) else { return false }
                 enteredFinish.fulfill()
                 let flushed = await withCheckedContinuation { releaseFlush = $0 }
-                let accepted = sessionState.finishCaptureFlush(token: token, succeeded: flushed)
+                let accepted = sessionState.finishCaptureFlush(token: token, outcome: flushed ? .flushed : .rejected)
                 if accepted { disconnectCalls += 1 }
                 return accepted
             })
@@ -554,7 +600,7 @@ final class CaptureFeatureModelTests: XCTestCase {
                     !flushOutcomes.isEmpty
                 else { return false }
                 let flushed = flushOutcomes.removeFirst()
-                let accepted = sessionState.finishCaptureFlush(token: token, succeeded: flushed)
+                let accepted = sessionState.finishCaptureFlush(token: token, outcome: flushed ? .flushed : .rejected)
                 if accepted { disconnectCalls += 1 }
                 return accepted
             })
@@ -591,9 +637,9 @@ final class CaptureFeatureModelTests: XCTestCase {
                 if attempt.generation.value == firstGeneration.value {
                     firstFinishEntered.fulfill()
                     let flushed = await withCheckedContinuation { releaseFirstFlush = $0 }
-                    return sessionState.finishCaptureFlush(token: token, succeeded: flushed)
+                    return sessionState.finishCaptureFlush(token: token, outcome: flushed ? .flushed : .rejected)
                 }
-                return sessionState.finishCaptureFlush(token: token, succeeded: true)
+                return sessionState.finishCaptureFlush(token: token, outcome: .flushed)
             })
         capture.deliverCaptureEvent(
             .started(
@@ -682,5 +728,119 @@ final class CaptureFeatureModelTests: XCTestCase {
         capture.deliverCaptureEvent(.finished(fileURL: url))
         capture.deliverCaptureEvent(.finished(fileURL: url))
         XCTAssertEqual(capture.completed.count, 1)
+    }
+}
+
+@MainActor
+final class CaptureLibraryModelTests: XCTestCase {
+    private enum QueryFailure: Error { case unavailable }
+
+    private actor BlockedQuery {
+        nonisolated let started = XCTestExpectation(description: "history query blocked")
+        private let pages: [Result<MobileLiveCaptureHistoryPageDto, QueryFailure>]
+        private let blockedCall: Int
+        private var requests: [MobileLiveCaptureHistoryCursorDto?] = []
+        private var release: CheckedContinuation<Void, Never>?
+
+        init(pages: [Result<MobileLiveCaptureHistoryPageDto, QueryFailure>], blockedCall: Int = 0) {
+            self.pages = pages
+            self.blockedCall = blockedCall
+        }
+
+        func query(_ cursor: MobileLiveCaptureHistoryCursorDto?) async throws -> MobileLiveCaptureHistoryPageDto {
+            let index = requests.count
+            requests.append(cursor)
+            if index == blockedCall {
+                await withCheckedContinuation { continuation in
+                    release = continuation
+                    started.fulfill()
+                }
+            }
+            guard index < pages.count else {
+                throw QueryFailure.unavailable
+            }
+            return try pages[index].get()
+        }
+
+        func releaseFirst() {
+            release?.resume()
+            release = nil
+        }
+
+        func requestedCursors() -> [MobileLiveCaptureHistoryCursorDto?] { requests }
+    }
+
+    private static func capture(_ id: String) -> MobileLiveCaptureHistoryEntryDto {
+        MobileLiveCaptureHistoryEntryDto(
+            liveCaptureId: id, interrupted: false, integrity: .complete, recording: nil,
+            platformIdentifier: "wheel", startedAtMilliseconds: 100, finishedAtMilliseconds: 200,
+            eventCount: 1, storedBytes: 100
+        )
+    }
+
+    func testCompletionRefreshDuringBlockedQueryLoadsNewestFirstPageOnce() async {
+        let old = Self.capture("old")
+        let newest = Self.capture("new")
+        let query = BlockedQuery(pages: [
+            .success(MobileLiveCaptureHistoryPageDto(captures: [old], nextCursor: nil)),
+            .success(MobileLiveCaptureHistoryPageDto(captures: [newest, old], nextCursor: nil)),
+        ])
+        let model = CaptureLibraryModel(query: { try await query.query($0) })
+        let first = Task { await model.refresh() }
+        await fulfillment(of: [query.started], timeout: 2)
+        XCTAssertTrue(model.isLoading)
+        for _ in 0..<20 { await model.refresh() }
+        await query.releaseFirst()
+        await first.value
+
+        let cursors = await query.requestedCursors()
+        XCTAssertEqual(cursors.count, 2, "refreshes during a load must coalesce into one required requery")
+        XCTAssertTrue(cursors.allSatisfy { $0 == nil })
+        XCTAssertEqual(model.captures.map(\.liveCaptureId), ["new", "old"])
+        XCTAssertFalse(model.isLoading)
+        XCTAssertNil(model.error)
+    }
+
+    func testCompletionRefreshDuringFailedQueryStillLoadsRetainedCapture() async {
+        let query = BlockedQuery(pages: [
+            .failure(.unavailable),
+            .success(MobileLiveCaptureHistoryPageDto(captures: [Self.capture("retained")], nextCursor: nil)),
+        ])
+        let model = CaptureLibraryModel(query: { try await query.query($0) })
+        let first = Task { await model.refresh() }
+        await fulfillment(of: [query.started], timeout: 2)
+        await model.refresh()
+        await query.releaseFirst()
+        await first.value
+
+        let cursors = await query.requestedCursors()
+        XCTAssertEqual(cursors.count, 2)
+        XCTAssertEqual(model.captures.map(\.liveCaptureId), ["retained"])
+        XCTAssertNil(model.error)
+        XCTAssertFalse(model.isLoading)
+    }
+
+    func testCompletionRefreshDuringPaginationReplacesPageFromStart() async {
+        let cursor = MobileLiveCaptureHistoryCursorDto(startedAtMilliseconds: 100, liveCaptureId: "old")
+        let query = BlockedQuery(
+            pages: [
+                .success(MobileLiveCaptureHistoryPageDto(captures: [Self.capture("old")], nextCursor: cursor)),
+                .success(MobileLiveCaptureHistoryPageDto(captures: [Self.capture("older")], nextCursor: nil)),
+                .success(MobileLiveCaptureHistoryPageDto(captures: [Self.capture("new")], nextCursor: cursor)),
+            ], blockedCall: 1)
+        let model = CaptureLibraryModel(query: { try await query.query($0) })
+        await model.refresh()
+        let page = Task { await model.loadMore() }
+        await fulfillment(of: [query.started], timeout: 2)
+        await model.refresh()
+        await model.refresh()
+        await query.releaseFirst()
+        await page.value
+
+        let cursors = await query.requestedCursors()
+        XCTAssertEqual(cursors, [nil, cursor, nil], "completion refresh must restart history pagination")
+        XCTAssertEqual(model.captures.map(\.liveCaptureId), ["new"])
+        XCTAssertTrue(model.hasMore)
+        XCTAssertFalse(model.isLoading)
     }
 }

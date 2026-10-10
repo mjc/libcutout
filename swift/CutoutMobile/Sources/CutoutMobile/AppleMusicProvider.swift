@@ -270,7 +270,6 @@ import Foundation
         public func perform(_ command: MobileMusicCommandDto) async -> MusicCommandOutcome {
             if command == .openProvider {
                 #if canImport(UIKit) && os(iOS)
-                    guard UIApplication.shared.canOpenURL(Self.providerURL) else { return .unavailable }
                     guard await UIApplication.shared.open(Self.providerURL) else { return .failed }
                     return .accepted
                 #else

@@ -16,12 +16,96 @@ enum DevicePairOutcome {
 final class DevicePresentationModel {
     private let selectedDeviceStore: DevicePickerSelectionStore
     private var vehicleNameCache = [String: String]()
+    private(set) var savedPlatformIdentifier: String?
+    @ObservationIgnored private var selectionRestoreTask: Task<Void, Never>?
+    @ObservationIgnored private var nameRestoreTask: Task<Void, Never>?
+    @ObservationIgnored private var pendingNameRestore: String?
+    @ObservationIgnored private var namePersistenceTask: Task<Void, Never>?
+    @ObservationIgnored private var pendingNamePersistence: (identity: String, name: String)?
+    @ObservationIgnored private var activeNamePersistenceCompletion: DispatchSemaphore?
+    private var selectionRestored: Bool
 
     var protocolIdentityCandidate: DevicePickerDiscoveryCandidate?
 
-    init(selectedDeviceStore: DevicePickerSelectionStore = DevicePickerSelectionStore()) {
+    init(
+        selectedDeviceStore: DevicePickerSelectionStore = DevicePickerSelectionStore(),
+        restoredSelection: DevicePickerSelectionSnapshot? = nil
+    ) {
         self.selectedDeviceStore = selectedDeviceStore
-        hasSavedDevice = selectedDeviceStore.platformIdentifier != nil
+        let selection = restoredSelection ?? selectedDeviceStore.immediateSelection
+        selectionRestored = restoredSelection != nil || !selectedDeviceStore.requiresDatabaseLoad
+        savedPlatformIdentifier = selection.platformIdentifier
+        if let identity = selection.platformIdentifier, let name = selection.displayName {
+            vehicleNameCache[identity] = name
+        }
+        hasSavedDevice = selection.platformIdentifier != nil
+    }
+
+    deinit {
+        selectionRestoreTask?.cancel()
+        nameRestoreTask?.cancel()
+        namePersistenceTask?.cancel()
+    }
+
+    @discardableResult
+    func restoreSavedSelection(onRestored: @escaping @MainActor () -> Void = {}) -> Task<Void, Never>? {
+        guard !selectionRestored else { return nil }
+        if let selectionRestoreTask { return selectionRestoreTask }
+        let store = selectedDeviceStore
+        let task = Task { [weak self, store] in
+            let selection = await store.load()
+            guard let self, !Task.isCancelled else { return }
+            selectionRestoreTask = nil
+            selectionRestored = true
+            savedPlatformIdentifier = selection.platformIdentifier
+            hasSavedDevice = selection.platformIdentifier != nil
+            if let identity = selection.platformIdentifier, let name = selection.displayName,
+                vehicleNameCache[identity] == nil
+            {
+                vehicleNameCache[identity] = name
+            }
+            onRestored()
+        }
+        selectionRestoreTask = task
+        return task
+    }
+
+    func restoreVehicleName(for identity: String) {
+        guard vehicleName(for: identity) == nil else { return }
+        pendingNameRestore = identity
+        guard nameRestoreTask == nil else { return }
+        let store = selectedDeviceStore
+        nameRestoreTask = Task { [weak self, store] in
+            while let identity = self?.takePendingNameRestore() {
+                let name = await store.loadDisplayName(for: identity)
+                guard !Task.isCancelled else { return }
+                self?.applyRestoredName(name, for: identity)
+            }
+        }
+    }
+
+    private func takePendingNameRestore() -> String? {
+        let identity = pendingNameRestore
+        pendingNameRestore = nil
+        if identity == nil { nameRestoreTask = nil }
+        return identity
+    }
+
+    private func applyRestoredName(_ name: String?, for identity: String) {
+        guard let name, vehicleNameCache[identity] == nil else { return }
+        vehicleNameCache[identity] = name
+        if let selection = connectionState.selection,
+            selection.platformIdentifier == identity,
+            selection.title == localizedAppText("setup.device")
+        {
+            connectionState = connectionState.replacingSelection(
+                with: ConnectionSelection(
+                    platformIdentifier: identity, title: name, route: selection.route))
+        }
+    }
+
+    func waitForVehicleNameRestoration() async {
+        await nameRestoreTask?.value
     }
 
     var displayState = RideDisplayState()
@@ -37,7 +121,7 @@ final class DevicePresentationModel {
     var settings: DeviceSettings?
 
     var rideMapVehicleIdentity: String? {
-        connectionState.selection?.platformIdentifier ?? selectedDeviceStore.platformIdentifier
+        connectionState.selection?.platformIdentifier ?? savedPlatformIdentifier
     }
 
     var rideMapVehicleName: String? {
@@ -70,33 +154,36 @@ final class DevicePresentationModel {
     }
 
     func persistedVehicleName(for identity: String) -> String? {
-        selectedDeviceStore.displayName(for: identity)
+        vehicleName(for: identity)
     }
 
     func rememberVehicleName(_ name: String, for identity: String) {
         vehicleNameCache[identity] = name
         selectedDeviceStore.save(platformIdentifier: identity, displayName: name)
+        savedPlatformIdentifier = identity
     }
 
+    @discardableResult
     func applyProtocolIdentityCandidate(
         _ candidate: DevicePickerDiscoveryCandidate?,
         allowsRidePresentation: Bool
-    ) {
+    ) -> Bool {
+        if let candidate, let selectedIdentifier = connectionState.selection?.platformIdentifier,
+            selectedIdentifier != candidate.platformIdentifier
+        {
+            return false
+        }
         protocolIdentityCandidate = candidate
-        guard allowsRidePresentation, let candidate else { return }
+        guard allowsRidePresentation, let candidate else { return true }
+
+        guard let selection = Self.connectionSelection(from: candidate) else { return true }
 
         if let displayName = Self.meaningfulDeviceName(
             candidate.displayName,
             identity: candidate.platformIdentifier
         ), persistedVehicleName(for: candidate.platformIdentifier) != displayName {
-            rememberVehicleName(displayName, for: candidate.platformIdentifier)
+            rememberProtocolVehicleName(displayName, for: candidate.platformIdentifier)
         }
-
-        guard let selection = Self.connectionSelection(from: candidate) else { return }
-        guard
-            connectionState.selection?.platformIdentifier == nil
-                || connectionState.selection?.platformIdentifier == selection.platformIdentifier
-        else { return }
 
         let resolvedSelection = ConnectionSelection(
             platformIdentifier: selection.platformIdentifier,
@@ -104,6 +191,7 @@ final class DevicePresentationModel {
             route: selection.route
         )
         connectionState = connectionState.replacingSelection(with: resolvedSelection)
+        return true
     }
 
     static func connectionSelection(from candidate: DevicePickerDiscoveryCandidate?) -> ConnectionSelection? {
@@ -120,6 +208,7 @@ final class DevicePresentationModel {
     func pair(
         platformIdentifier: String,
         mayRetryCurrentSelection: Bool,
+        persistAcceptedSelection: Bool = true,
         performPair: (DevicePickerRow) -> Bool
     ) -> DevicePairOutcome {
         switch connectionState {
@@ -147,6 +236,7 @@ final class DevicePresentationModel {
             route: selectedRow.connectionRoute ?? .electricUnicycle
         )
         settings = nil
+        protocolIdentityCandidate = nil
         connectionState = .connecting(selection, phase: .discoveringServices)
         phase = .discoveringServices
 
@@ -165,12 +255,18 @@ final class DevicePresentationModel {
             identity: platformIdentifier
         )
         let persistedDisplayName = persistedVehicleName(for: platformIdentifier)
-        let selectionChanged = selectedDeviceStore.platformIdentifier != platformIdentifier
+        guard persistAcceptedSelection else {
+            hasSavedDevice = savedPlatformIdentifier != nil
+            return .accepted(selectedRow)
+        }
+        retireSelectionRestoration()
+        let selectionChanged = savedPlatformIdentifier != platformIdentifier
         if selectionChanged {
             if let displayName {
                 rememberVehicleName(displayName, for: platformIdentifier)
             } else {
                 selectedDeviceStore.save(platformIdentifier: platformIdentifier)
+                savedPlatformIdentifier = platformIdentifier
             }
         } else if let displayName, displayName != persistedDisplayName {
             rememberVehicleName(displayName, for: platformIdentifier)
@@ -180,7 +276,9 @@ final class DevicePresentationModel {
     }
 
     func forgetSavedDevice() {
+        retireSelectionRestoration()
         try? selectedDeviceStore.clear()
+        savedPlatformIdentifier = nil
         hasSavedDevice = false
     }
 
@@ -204,9 +302,56 @@ final class DevicePresentationModel {
         if let name = vehicleNameCache[identity] {
             return name
         }
-        guard let name = selectedDeviceStore.displayName(for: identity) else { return nil }
+        guard let name = selectedDeviceStore.immediateDisplayName(for: identity) else { return nil }
         vehicleNameCache[identity] = name
         return name
+    }
+
+    private func retireSelectionRestoration() {
+        // Pair/forget already owns synchronous persistence. Finish the off-Main name
+        // receipt before settling its latest pending value at an identity change.
+        if let completion = activeNamePersistenceCompletion {
+            completion.wait()
+            completion.signal()
+        }
+        if let effect = pendingNamePersistence {
+            selectedDeviceStore.saveDisplayName(effect.name, for: effect.identity)
+            pendingNamePersistence = nil
+        }
+        selectionRestoreTask?.cancel()
+        selectionRestoreTask = nil
+        selectionRestored = true
+    }
+
+    private func rememberProtocolVehicleName(_ name: String, for identity: String) {
+        vehicleNameCache[identity] = name
+        guard selectedDeviceStore.requiresDatabaseLoad else {
+            selectedDeviceStore.saveDisplayName(name, for: identity)
+            return
+        }
+        pendingNamePersistence = (identity, name)
+        guard namePersistenceTask == nil else { return }
+        let store = selectedDeviceStore
+        namePersistenceTask = Task { [weak self, store] in
+            while let effect = self?.takePendingNamePersistence() {
+                guard !Task.isCancelled else { return }
+                let completion = DispatchSemaphore(value: 0)
+                self?.activeNamePersistenceCompletion = completion
+                await store.saveDisplayNameAsync(effect.name, for: effect.identity) { completion.signal() }
+                self?.activeNamePersistenceCompletion = nil
+            }
+        }
+    }
+
+    private func takePendingNamePersistence() -> (identity: String, name: String)? {
+        let effect = pendingNamePersistence
+        pendingNamePersistence = nil
+        if effect == nil { namePersistenceTask = nil }
+        return effect
+    }
+
+    func waitForProtocolNamePersistence() async {
+        await namePersistenceTask?.value
     }
 
     static func meaningfulDeviceName(_ candidate: String?, identity: String) -> String? {

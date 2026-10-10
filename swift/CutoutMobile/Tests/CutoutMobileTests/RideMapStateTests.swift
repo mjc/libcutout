@@ -111,6 +111,47 @@ final class RideMapStateTests: XCTestCase {
 
     }
 
+    func testNativeLocationCallbackPersistsEveryPointAcrossRustWriteGroups() throws {
+        let state = MobileRideMapState()
+        let started = try state.startGpsOnly(atMs: 100)
+        defer {
+            _ = try? state.stop(atMs: 400_000)
+            _ = try? state.discard()
+        }
+        let samples = (0..<322).map { index in
+            MobilePhoneLocationSampleDto(
+                wallClockUnixMs: 1_700_000_001_000 + UInt64(index) * 1_000,
+                sourceTimestampUnixSeconds: nil,
+                latitudeDegrees: 39.7392 + Double(index) * 0.00001,
+                longitudeDegrees: -104.9903,
+                altitudeMeters: 1_600,
+                horizontalAccuracyMeters: 4,
+                verticalAccuracyMeters: nil,
+                speedMetersPerSecond: nil,
+                speedAccuracyMetersPerSecond: nil,
+                courseDegrees: nil,
+                courseAccuracyDegrees: nil
+            )
+        }
+
+        let outcomes = try state.ingestLocationCallbackOutcomes(
+            recordingToken: started.recordingToken,
+            receiptMonotonicMs: 323_000,
+            receiptWallClockUnixMs: 1_700_000_323_000,
+            samples: samples
+        )
+        let accepted = outcomes.filter {
+            if case .accepted = $0.decision { return true }
+            return false
+        }
+        XCTAssertEqual(accepted.count, samples.count)
+        XCTAssertEqual(state.currentSnapshot(atMs: 323_000)?.summary.pointCount, 322)
+        let points = try state.pointsAfter(afterCursor: nil, limit: 500).points
+        XCTAssertEqual(points.count, 322)
+        XCTAssertEqual(points.first?.monotonicMs, 1_000)
+        XCTAssertEqual(points.last?.monotonicMs, 322_000)
+    }
+
     func testOversizedLocationBatchMapsToTypedError() throws {
         let state = MobileRideMapState()
         let started = try state.startGpsOnly(atMs: 100)
@@ -941,12 +982,14 @@ final class RideMapStateTests: XCTestCase {
         _ = try state.startGpsOnly(atMs: 1_000)
         for offset in 0..<4_097 {
             let monotonicMs = UInt64(1_001 + offset)
+            // One native E7 coordinate unit per millisecond is about 11 m/s.
+            // Paging needs distinct retained points, rather than clock-only observations.
             _ = await settle(
                 state,
                 try state.ingestLocation(
                     monotonicMs: monotonicMs,
                     wallClockUnixMs: 1_700_000_000_000 + monotonicMs,
-                    latitudeDegrees: 40.0,
+                    latitudeDegrees: 40.0 + Double(offset) * 0.0000001,
                     longitudeDegrees: -105.0,
                     horizontalAccuracyMeters: 3
                 ))
@@ -973,6 +1016,52 @@ final class RideMapStateTests: XCTestCase {
         XCTAssertFalse(hasMore, "the expected 4,097 points must fit in nine 500-point pages")
         XCTAssertEqual(points.map(\.sequence), Array(0...4_096))
         XCTAssertEqual(points.first?.startReason, .initial)
+    }
+
+    func testStaticLocationsAdvanceObservationWithoutAddingPointsOrCreatingAGap() async throws {
+        let state = MobileRideMapState()
+        _ = try state.startGpsOnly(atMs: 1_000)
+        _ = await settle(
+            state,
+            try state.ingestLocation(
+                monotonicMs: 1_000,
+                wallClockUnixMs: 1_700_000_001_000,
+                latitudeDegrees: 40.0,
+                longitudeDegrees: -105.0,
+                horizontalAccuracyMeters: 3
+            ))
+
+        for second in 2...41 {
+            let monotonicMs = UInt64(second) * 1_000
+            XCTAssertEqual(
+                try state.ingestLocation(
+                    monotonicMs: monotonicMs,
+                    wallClockUnixMs: 1_700_000_000_000 + monotonicMs,
+                    latitudeDegrees: 40.0,
+                    longitudeDegrees: -105.0,
+                    horizontalAccuracyMeters: 3
+                ),
+                .ignored(reason: .duplicateLocation)
+            )
+        }
+
+        let stationary = try XCTUnwrap(state.currentSnapshot(atMs: 41_000))
+        XCTAssertEqual(stationary.summary.pointCount, 1)
+        XCTAssertEqual(stationary.summary.durationMilliseconds, 40_000)
+        _ = await settle(
+            state,
+            try state.ingestLocation(
+                monotonicMs: 42_000,
+                wallClockUnixMs: 1_700_000_042_000,
+                latitudeDegrees: 40.00001,
+                longitudeDegrees: -105.0,
+                horizontalAccuracyMeters: 3
+            ))
+
+        let points = try state.pointsAfter(afterCursor: nil, limit: 10).points
+        XCTAssertEqual(points.map(\.sequence), [0, 1])
+        XCTAssertEqual(points.map(\.segmentId), [0, 0])
+        XCTAssertEqual(try state.projectCurrentRoutePoints(budget: 10).backgroundGapCount, 0)
     }
 
 }

@@ -105,10 +105,8 @@ public struct PevLiveActivityHeader: View {
             }
             Spacer(minLength: 8)
             if snapshot.connectionState != .connected {
-                ViewThatFits(in: .horizontal) {
-                    statusText(lineLimit: 1)
-                    statusText(lineLimit: 2)
-                }
+                statusText(lineLimit: 1)
+                    .fixedSize(horizontal: true, vertical: false)
             }
             Text(snapshot.identity.label)
                 .font(.system(size: compact ? compactIdentitySize : expandedIdentitySize, weight: .medium))
@@ -311,6 +309,24 @@ public struct PevLiveActivityMetricGrid: View {
             RoundedRectangle(cornerRadius: compact ? 8 : 10, style: .continuous)
                 .stroke(PevLiveActivityPalette.border, lineWidth: 1)
         }
+        .accessibilityRepresentation {
+            VStack {
+                spokenMetric(snapshot.battery)
+                spokenMetric(snapshot.packVoltage)
+                spokenMetric(snapshot.pwm)
+                spokenMetric(snapshot.mode)
+                spokenMetric(snapshot.duration)
+                spokenMetric(snapshot.distance)
+                spokenMetric(snapshot.chargeEstimate)
+            }
+            .accessibilityElement(children: .contain)
+        }
+    }
+
+    private func spokenMetric(_ value: LiveActivityRideValue) -> some View {
+        Text(value.label)
+            .accessibilityLabel(value.label)
+            .accessibilityValue(value.accessibilityValue)
     }
 
     private func metricCell(
@@ -325,9 +341,7 @@ public struct PevLiveActivityMetricGrid: View {
             compact: compact,
             showProgress: showProgress
         )
-        .accessibilityHidden(
-            role == .headroom || (role == .temperature && snapshot.showsSecondarySafetyMetrics)
-        )
+        .accessibilityHidden(role.isRepeatedInSafetyFooter)
     }
 }
 
@@ -378,6 +392,26 @@ public struct PevLiveActivitySafetyFooter: View {
             }
         }
         .font(.system(size: compact ? compactFontSize : expandedFontSize, weight: .medium))
+        // Compact visual layouts can omit secondary chips; their typed speech must remain available.
+        .accessibilityRepresentation {
+            VStack {
+                spokenValue(snapshot.headroom)
+                    .accessibilitySortPriority(
+                        PevLiveActivityMetricRole.headroom.accessibilitySortPriority(for: snapshot.headroomSeverity)
+                    )
+                spokenValue(snapshot.beeps)
+                spokenValue(snapshot.temperature)
+            }
+            .accessibilityElement(children: .contain)
+        }
+        .accessibilitySortPriority(
+            PevLiveActivityMetricRole.headroom.accessibilitySortPriority(for: snapshot.headroomSeverity)
+        )
+    }
+
+    private func spokenValue(_ value: LiveActivityRideValue) -> some View {
+        Text(value.label)
+            .accessibilityValue(value.accessibilityValue)
     }
 
     private var headroomChip: some View {
@@ -389,7 +423,7 @@ public struct PevLiveActivitySafetyFooter: View {
                 || snapshot.headroomSeverity == .reduceAcceleration ? 2 : 1,
             emphasizesValue: snapshot.headroomSeverity == .reduceAcceleration
         )
-        .fixedSize(horizontal: true, vertical: false)
+        .fixedSize(horizontal: false, vertical: true)
         .accessibilitySortPriority(
             PevLiveActivityMetricRole.headroom.accessibilitySortPriority(for: snapshot.headroomSeverity)
         )
@@ -426,7 +460,8 @@ public struct PevLiveActivityFooterChip: View {
                 .foregroundStyle(tint)
                 .accessibilityHidden(true)
             Text(value.displayValue)
-                .lineLimit(lineLimit)
+                .lineLimit(lineLimit, reservesSpace: lineLimit > 1)
+                .fixedSize(horizontal: false, vertical: true)
                 .foregroundStyle(
                     value.state == .available || emphasizesValue
                         ? PevLiveActivityPalette.primaryText

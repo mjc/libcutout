@@ -42,6 +42,16 @@ metadata policy and redaction rules; local files can contain opted-in metadata.
 Do not describe database deletion as deleting separate exported copies unless
 the implementation actually does so. No audio belongs in the music event format.
 
+The Music setting is a persisted preference for future rides. An explicit change
+also updates the active ride when Rust accepts the write. Rust commits the saved
+preference with each newly created ride, including automatic wheel-connected
+rides. The active ride's effective policy remains separate: restoring,
+associating, or resuming a ride must preserve its existing retention state.
+Deleted history stays deleted even when the preference enables history for the
+next ride. With no active ride, saving the preference must not enable history
+writes. Delayed history readbacks must not overwrite a newer policy change or
+deletion.
+
 ## Review and wording
 
 Use "ride listening history" for stored song metadata and "ride-data replay"
@@ -68,3 +78,35 @@ blanket provider-policy approval either.
 These are requirements for future replay integration, not claims of existing
 test coverage. This clarification changes documentation and permission copy;
 it does not add playback, capture, or replay behavior.
+
+## Explicit Stop and accepted observations
+
+The map Core binds the first music lifecycle's existing bounded admission queue.
+Replacement native models join that same queue before admitting observations.
+Each lease retains its original provider owner; classification and retirement
+validate that owner, while Stop covers the Core's complete queue. A lifecycle
+that already used another queue cannot be rebound and lose its obligations. An
+explicit asynchronous Stop captures its admitted prefix before returning the
+command. The existing Rust lifecycle worker waits for required history and
+capture effects; observations admitted after the cutoff stay pending until the
+durable Stop receipt. Native code carries the request and the actual capture
+outcome without maintaining a second queue.
+
+Only the music command's actual SQLite result can settle required history.
+Recorded observations with a capture target also require the existing capture
+writer's accepted receipt. That receipt proves writer admission, not a PEVCAP
+flush or filesystem synchronization. Optional history readback and presentation
+do not define successful settlement.
+
+Release, cancellation, provider retirement, storage failure, and rejected capture
+cannot acknowledge successful recording. Stop reports `MusicObservationIncomplete`
+and leaves the ride open when its accepted prefix is incomplete. The failure is
+reported once; an explicit Stop retry can close the ride. Pending history retains
+its original association and is never rebound to a replacement ride. Synchronous
+Stop rejects outstanding work instead of waiting while holding the Core mutex.
+
+The native required-error catch reports failed processing to the original Rust
+request before optional readback. Rust marks only that retained nonterminal
+obligation failed, wakes the next required owner, and preserves publication
+currency. Repeated failure reports and reports after settlement or retirement
+are no-ops. Optional readback errors do not change required recording outcomes.

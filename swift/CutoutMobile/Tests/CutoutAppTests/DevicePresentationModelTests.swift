@@ -5,6 +5,62 @@ import XCTest
 @testable import CutoutMobile
 
 final class DevicePresentationModelTests: XCTestCase {
+    @MainActor
+    func testNewPairClearsPreviousProtocolIdentityBeforeStartingTransport() {
+        for identifier in ["previous-wheel", "replacement-wheel"] {
+            let previous = CutoutUITestSessionFixture.euc.candidate
+            let model = DevicePresentationModel()
+            let row = DevicePickerRow(
+                id: identifier, title: "Selected wheel", subtitle: "Protocol detection required",
+                detail: "Read-only identification", state: .supported(action: "Connect"),
+                symbolName: "questionmark.circle", connectionRoute: .electricUnicycle)
+            model.protocolIdentityCandidate = DevicePickerDiscoveryCandidate(
+                platformIdentifier: "previous-wheel", displayName: previous.displayName,
+                productCategory: previous.productCategory, evidence: previous.evidence,
+                detail: previous.detail, support: previous.support, symbolName: previous.symbolName)
+            model.scanState = DevicePickerScanState(status: .scanning, rows: [row])
+
+            let outcome = model.pair(
+                platformIdentifier: identifier, mayRetryCurrentSelection: false,
+                persistAcceptedSelection: false
+            ) { _ in
+                XCTAssertNil(model.protocolIdentityCandidate)
+                return true
+            }
+
+            guard case .accepted = outcome else { return XCTFail("Expected the new attempt to be accepted") }
+            XCTAssertNil(model.protocolIdentityCandidate)
+            XCTAssertEqual(model.selectedRideIdentifier, identifier)
+        }
+    }
+
+    @MainActor
+    func testNewPairPreservesFreshProtocolIdentityDeliveredDuringTransportStart() async throws {
+        let suiteName = "DevicePresentationModelTests.freshProtocol.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let candidate = CutoutUITestSessionFixture.vesc.candidate
+        let model = DevicePresentationModel(selectedDeviceStore: DevicePickerSelectionStore(defaults: defaults))
+        let row = candidate.pickerRow
+        model.protocolIdentityCandidate = CutoutUITestSessionFixture.euc.candidate
+        model.scanState = DevicePickerScanState(status: .scanning, rows: [row])
+
+        let outcome = model.pair(
+            platformIdentifier: row.id, mayRetryCurrentSelection: false,
+            persistAcceptedSelection: false
+        ) { _ in
+            XCTAssertNil(model.protocolIdentityCandidate)
+            model.applyProtocolIdentityCandidate(candidate, allowsRidePresentation: true)
+            return true
+        }
+
+        guard case .accepted = outcome else { return XCTFail("Expected the new attempt to be accepted") }
+        XCTAssertEqual(model.protocolIdentityCandidate, candidate)
+        XCTAssertEqual(model.selectedRideIdentifier, row.id)
+        XCTAssertEqual(model.selectedConnectionRoute, .vescOnewheel)
+        await model.waitForProtocolNamePersistence()
+    }
+
     func testConnectionStateOwnsNavigationIntent() {
         let selection = ConnectionSelection(
             platformIdentifier: "vesc-1234",
@@ -186,7 +242,7 @@ final class DevicePresentationModelTests: XCTestCase {
     }
 
     @MainActor
-    func testProtocolIdentityPersistsMeaningfulNamesForUnselectedHistoryDevices() throws {
+    func testProtocolIdentityCannotPersistNamesForAnotherSelectedDevice() throws {
         let suiteName = "DevicePresentationModelTests.protocolName.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
@@ -211,8 +267,10 @@ final class DevicePresentationModelTests: XCTestCase {
 
         model.applyProtocolIdentityCandidate(candidate, allowsRidePresentation: true)
 
-        XCTAssertEqual(store.displayName(for: candidate.platformIdentifier), "NF2557")
+        XCTAssertNil(store.displayName(for: candidate.platformIdentifier))
+        XCTAssertNil(model.persistedVehicleName(for: candidate.platformIdentifier))
         XCTAssertEqual(model.selectedRideIdentifier, "current-wheel")
+        XCTAssertEqual(model.selectedRideTitle, "Current wheel")
     }
 
     @MainActor

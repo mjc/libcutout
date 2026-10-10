@@ -59,11 +59,6 @@ extension RideHeroSeverity {
 
 struct PevRideHeroSection: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @Environment(\.verticalSizeClass) private var verticalSizeClass
-    @ScaledMetric(relativeTo: .largeTitle) private var eucSpeedFontSize = PevRideHeroStyle
-        .electricUnicycleSpeedPointSize
-    @ScaledMetric(relativeTo: .largeTitle) private var vescSpeedFontSize = PevRideHeroStyle.vescOnewheelSpeedPointSize
-    @ScaledMetric(relativeTo: .title2) private var speedUnitFontSize = PevRideHeroStyle.unitPointSize
 
     let style: PevRideHeroStyle
     let title: String
@@ -72,100 +67,81 @@ struct PevRideHeroSection: View {
     let captureStatusText: String?
     let speedReadout: RideHeroReadout
     let speedCaption: String
+    var speedPointSize: CGFloat = 124
+    var gpsSpeed: PevDashboardTile? = nil
+    var compactLayout = false
 
     var body: some View {
-        Group {
-            if dynamicTypeSize.isAccessibilitySize && verticalSizeClass != .compact {
+        VStack(spacing: 6) {
+            let headerLayout =
+                dynamicTypeSize.isAccessibilitySize
+                ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6))
+                : AnyLayout(HStackLayout(spacing: 8))
+            headerLayout {
+                HStack(spacing: 8) {
+                    Text(title)
+                        .font(
+                            dynamicTypeSize.isAccessibilitySize
+                                ? .caption.weight(.semibold) : .headline.weight(.semibold)
+                        )
+                        .fixedSize(horizontal: false, vertical: true)
+                    Circle()
+                        .fill(PevColors.red)
+                        .frame(width: 8, height: 8)
+                        .opacity(captureStatusText == nil ? 0 : 1)
+                        .accessibilityLabel(captureStatusText ?? "")
+                        .accessibilityHidden(captureStatusText == nil)
+                        .accessibilityIdentifier("ride.recording.indicator")
+                    Spacer(minLength: 0)
+                }
+                .layoutPriority(1)
+                PevDashboardStatusPill(title: subtitle, tone: statusTone)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                    .minimumScaleFactor(dynamicTypeSize.isAccessibilitySize ? 1 : 0.6)
+                    .layoutPriority(1)
+            }
+            .frame(maxWidth: .infinity, minHeight: 34, alignment: .leading)
+            .accessibilityElement(children: .contain)
+            .accessibilityHeading(.h1)
+            .accessibilityLabel("\(title), \(subtitle)")
+            .accessibilityValue(statusTone == .warning ? pevLocalizedText("status.accessibility.warning") : "")
+            .accessibilityIdentifier("ride.hero.status")
+
+            HStack(alignment: .center, spacing: 8) {
+                Text(speedReadout.displayValue ?? localizedAppText("ride.hero.value.unavailable"))
+                    .font(
+                        dynamicTypeSize.isAccessibilitySize
+                            ? .title2.weight(.black) : .system(size: speedPointSize, weight: .black)
+                    )
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .minimumScaleFactor(dynamicTypeSize.isAccessibilitySize ? 1 : 0.4)
+                    .accessibilityLabel(speedCaption)
+                    .accessibilityValue(speedReadout.accessibilityValue)
+                    .accessibilityIdentifier("ride.hero.speed")
                 VStack(alignment: .leading, spacing: 8) {
-                    titleText
-                    PevDashboardStatusPill(title: subtitle, tone: statusTone)
-                }
-            } else {
-                HStack(alignment: .center, spacing: 12) {
-                    titleText
-                    Spacer(minLength: 8)
-                    PevDashboardStatusPill(title: subtitle, tone: statusTone)
-                }
-            }
-        }
-        .padding(.top, 8)
-        .accessibilityElement(children: .combine)
-        .accessibilityHeading(.h1)
-        .accessibilityIdentifier("ride.hero.status")
-
-        if let captureStatusText {
-            PevStatusStrip(
-                text: captureStatusText
-            )
-        }
-
-        VStack(alignment: .center, spacing: 2) {
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .firstTextBaseline, spacing: 9) {
-                    speed
-                    unit
-                }
-
-                VStack(spacing: 2) {
-                    speed
-                    unit
+                    Text(speedReadout.displayUnit ?? RideUnits.speedUnit)
+                        .font(dynamicTypeSize.isAccessibilitySize ? .caption.weight(.bold) : .headline.weight(.bold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(dynamicTypeSize.isAccessibilitySize ? 1 : 0.6)
+                        .foregroundStyle(PevColors.muted)
+                    if let gpsSpeed, !dynamicTypeSize.isAccessibilitySize || !compactLayout {
+                        Text("GPS \(gpsSpeed.value)")
+                            .font(.caption.weight(.semibold))
+                            .monospacedDigit()
+                            .lineLimit(1)
+                            .minimumScaleFactor(dynamicTypeSize.isAccessibilitySize ? 1 : 0.6)
+                            .foregroundStyle(PevColors.muted)
+                            .accessibilityLabel(gpsSpeed.label)
+                            .accessibilityValue(
+                                gpsSpeed.metricValue.accessibilityValue(unit: gpsSpeed.unit, detail: gpsSpeed.detail)
+                            )
+                            .accessibilityIdentifier("ride.gps.speed")
+                    }
                 }
             }
-            Text(speedCaption)
-                .font(.caption.weight(.bold))
-                .foregroundStyle(PevColors.muted)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(maxWidth: .infinity)
         .foregroundStyle(PevColors.primaryText)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(speedCaption)
-        .accessibilityValue(speedReadout.accessibilityValue)
-        .accessibilityIdentifier("ride.hero.speed")
-    }
-
-    private var titleText: some View {
-        Text(title)
-            .font(.system(.headline, design: .default, weight: .semibold))
-            .foregroundStyle(PevColors.primaryText)
-    }
-
-    @ViewBuilder
-    private var speed: some View {
-        if let displayValue = speedReadout.displayValue {
-            if dynamicTypeSize.isAccessibilitySize {
-                Text(displayValue)
-                    .font(.largeTitle.weight(.black))
-                    .monospacedDigit()
-            } else {
-                Text(displayValue)
-                    .font(.system(size: speedFontSize, weight: .black))
-                    .monospacedDigit()
-            }
-        } else {
-            Text(localizedAppText("ride.hero.value.unavailable"))
-                .font(.title2.weight(.semibold))
-        }
-    }
-
-    private var speedFontSize: CGFloat {
-        switch style {
-        case .electricUnicycle: eucSpeedFontSize
-        case .vescOnewheel: vescSpeedFontSize
-        }
-    }
-
-    @ViewBuilder
-    private var unit: some View {
-        if let unit = speedReadout.displayUnit, !unit.isEmpty {
-            if dynamicTypeSize.isAccessibilitySize {
-                Text(unit)
-                    .font(.title2.weight(.bold))
-                    .foregroundStyle(PevColors.muted)
-            } else {
-                Text(unit)
-                    .font(.system(size: speedUnitFontSize, weight: .bold))
-                    .foregroundStyle(PevColors.muted)
-            }
-        }
     }
 }

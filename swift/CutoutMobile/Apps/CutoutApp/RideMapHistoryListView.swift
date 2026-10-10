@@ -12,34 +12,42 @@ struct RideMapHistoryListView: View {
         VStack(spacing: 0) {
             Text(localizedAppText("ride_map.history_recent"))
                 .font(.title3.weight(.bold))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.bottom, 12)
                 .accessibilityAddTraits(.isHeader)
 
             LazyVStack(spacing: 8) {
                 ForEach(rides, id: \.rideID) { ride in
                     RideMapHistoryRow(
-                        ride: ride,
+                        rideID: ride.rideID,
                         isSelected: ride.rideID == selectedRideID,
                         title: rideTitle(for: ride),
-                        subtitle: rideSubtitle(for: ride),
+                        vehicle: RideMapMetricFormatting.vehicleLabel(
+                            identity: ride.associatedVehicle ?? ride.candidateVehicle,
+                            resolve: { _ in ride.vehicleDisplayName },
+                            noIdentityFallback: localizedAppText("ride_map.gps_only")
+                        ),
+                        distance: distanceText(for: ride.summary),
+                        duration: RideMapMetricFormatting.durationText(for: ride.summary),
                         select: { select(ride.rideID) }
                     )
                 }
             }
             if canLoadMore {
-                Button(localizedAppText("ride_map.history_load_more"), action: loadMore)
-                    .buttonStyle(.bordered)
-                    .accessibilityIdentifier("ride-map.history-load-more")
-                    .padding(.vertical, 8)
+                Button(action: loadMore) {
+                    Text(localizedAppText("ride_map.history_load_more"))
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("ride-map.history-load-more")
+                .padding(.vertical, 8)
             }
         }
     }
 
     private func distanceText(for summary: MobileRideMapSummaryDto) -> String {
         RideMapMetricFormatting.distanceText(for: summary)
-    }
-
-    private func rideSubtitle(for ride: MobileRideMapHistorySummaryDto) -> String {
-        distanceText(for: ride.summary)
     }
 
     static func selectionAccessibilityValue(isSelected: Bool) -> String {
@@ -51,53 +59,68 @@ struct RideMapHistoryListView: View {
     }
 }
 
-private struct RideMapHistoryRow: View {
-    let ride: MobileRideMapHistorySummaryDto
+struct RideMapHistoryRow: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    let rideID: String
     let isSelected: Bool
     let title: String
-    let subtitle: String
+    let vehicle: String
+    let distance: String
+    let duration: String
     let select: () -> Void
 
     var body: some View {
         Button(action: select) {
-            HStack(spacing: 12) {
-                Image(systemName: "point.topleft.down.curvedto.point.bottomright.up")
-                    .font(.title3)
-                    .foregroundStyle(isSelected ? PevColors.yellow : PevColors.muted)
-                    .frame(width: 30)
-                    .accessibilityHidden(true)
-
-                VStack(alignment: .leading, spacing: 3) {
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 6) {
                     Text(title)
                         .font(.headline)
-                        .lineLimit(1)
-                    Text(subtitle)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(vehicle)
                         .font(.subheadline)
                         .foregroundStyle(PevColors.muted)
-                        .lineLimit(1)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if dynamicTypeSize.isAccessibilitySize {
+                        measurements
+                    }
                 }
-
-                Spacer(minLength: 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                if !dynamicTypeSize.isAccessibilitySize {
+                    measurements
+                        .multilineTextAlignment(.trailing)
+                }
                 Image(systemName: "chevron.right")
-                    .font(.caption.weight(.bold))
+                    .font(.caption.weight(.semibold))
                     .foregroundStyle(PevColors.muted)
                     .accessibilityHidden(true)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(12)
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
             .background(
-                isSelected
-                    ? PevColors.yellow.opacity(0.13)
-                    : PevColors.pageBackground.opacity(0.55),
-                in: .rect(cornerRadius: 16)
+                isSelected ? PevColors.cardFill : PevColors.pageBackground,
+                in: RoundedRectangle(cornerRadius: 12)
             )
+            .overlay {
+                RoundedRectangle(cornerRadius: 12)
+                    .strokeBorder(isSelected ? PevColors.brand : PevColors.cardStroke.opacity(0.5), lineWidth: 1)
+            }
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .foregroundStyle(PevColors.primaryText)
+        .accessibilityElement(children: .combine)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
-        .accessibilityValue(
-            RideMapHistoryListView.selectionAccessibilityValue(isSelected: isSelected)
-        )
-        .accessibilityIdentifier("ride-map.history-\(ride.rideID)")
+        .accessibilityValue(RideMapHistoryListView.selectionAccessibilityValue(isSelected: isSelected))
+        .accessibilityIdentifier("ride-map.history-\(rideID)")
+    }
+
+    private var measurements: some View {
+        VStack(alignment: dynamicTypeSize.isAccessibilitySize ? .leading : .trailing, spacing: 6) {
+            Text(distance).font(.subheadline.weight(.semibold))
+            Text(duration).font(.caption).foregroundStyle(PevColors.muted)
+        }
+        .monospacedDigit()
+        .fixedSize(horizontal: false, vertical: true)
     }
 }

@@ -7,6 +7,8 @@ import SwiftUI
 #endif
 
 struct RideMapLiveContentView: View {
+    @Environment(\.musicCompactPlayerFrame) private var musicCompactPlayerFrame
+
     let displayPoints: [MobileRideMapRouteDisplayPoint]
     let routeID: String
     let projectionVersion: UInt64
@@ -18,11 +20,11 @@ struct RideMapLiveContentView: View {
     let speed: SpeedReadout
     let vehicleName: String?
     let mapError: MobileRideMapError?
-    let lastDecision: MobileRideMapDecisionDto?
     let telemetryState: MobileRideMapTelemetryStateDto?
     let pointsTruncated: Bool
     let segmentsOmittedByBudget: Bool
     let canonicalBackgroundGapCount: UInt64
+    let onVisibilityChange: (Bool) -> Void
     @Binding var mapPosition: MapCameraPosition
     @Binding var isApplyingCamera: Bool
     @Binding var followsLatestPoint: Bool
@@ -37,78 +39,92 @@ struct RideMapLiveContentView: View {
     @State private var followSpan: MKCoordinateSpan?
 
     var body: some View {
-        ScrollView(.vertical, showsIndicators: false) {
+        GeometryReader { viewport in
+            let visibleHeight = RideMapViewportLayout.visibleHeight(
+                in: viewport, musicPlayerFrame: musicCompactPlayerFrame)
             VStack(spacing: 0) {
-                RideMapCanvasView(
-                    points: displayPoints,
-                    routeID: routeID,
-                    projectionVersion: projectionVersion,
-                    showsStartMarker: showsRecordedBounds,
-                    showsEndMarker: showsRecordedBounds,
-                    showsCurrentMarker: true,
-                    endpointMetadata: endpointMetadata,
-                    cameraRegion: cameraRegion,
-                    segments: segments,
-                    contextRoutes: [],
-                    fitsRouteOnChange: isTerminalRide,
-                    cameraFitID: cameraFitID,
-                    mapPosition: $mapPosition,
-                    isApplyingCamera: $isApplyingCamera,
-                    cameraDidChange: { region in
-                        followSpan = region.span
-                        followsLatestPoint = false
-                    }
-                )
-                // Keep the live hero compact enough that the metrics and controls
-                // remain above a connected TabView on the smallest iPhone.
-                .frame(height: 330)
-                .frame(maxWidth: .infinity)
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(spacing: 0) {
+                        RideMapCanvasView(
+                            points: displayPoints,
+                            routeID: routeID,
+                            projectionVersion: projectionVersion,
+                            showsStartMarker: showsRecordedBounds,
+                            showsEndMarker: showsRecordedBounds,
+                            showsCurrentMarker: true,
+                            endpointMetadata: endpointMetadata,
+                            cameraRegion: cameraRegion,
+                            segments: segments,
+                            contextRoutes: [],
+                            fitsRouteOnChange: isTerminalRide,
+                            cameraFitID: cameraFitID,
+                            mapPosition: $mapPosition,
+                            isApplyingCamera: $isApplyingCamera,
+                            cameraDidChange: { region in
+                                followSpan = region.span
+                                followsLatestPoint = false
+                            }
+                        )
+                        .frame(height: RideMapViewportLayout.mapHeight(for: visibleHeight))
+                        .frame(maxWidth: .infinity)
+                        .overlay(alignment: .topTrailing) {
+                            RideMapCameraControlsView(
+                                followsLatestPoint: $followsLatestPoint,
+                                canRecenter: displayPoints.isEmpty == false && cameraRegion != nil,
+                                recenter: recenterOnLatestPoint
+                            )
+                            .padding(12)
+                        }
 
-                VStack(alignment: .leading, spacing: 12) {
-                    RideMapLiveStatusView(
-                        displayPointCount: displayPoints.count,
-                        snapshot: snapshot,
-                        availability: availability,
-                        vehicleName: vehicleName,
-                        mapError: mapError,
-                        lastDecision: lastDecision,
-                        telemetryState: telemetryState,
-                        pointsTruncated: pointsTruncated,
-                        segmentsOmittedByBudget: segmentsOmittedByBudget,
-                        segments: segments,
-                        canonicalBackgroundGapCount: canonicalBackgroundGapCount
-                    )
-                    RideMapSummaryView(snapshot: snapshot, speed: speed, vehicleName: vehicleName)
-                    RideMapControlsView(
-                        state: snapshot?.state,
-                        allowedActions: snapshot?.allowedActions ?? [.start],
-                        isDiscardConfirmationPresented: $isDiscardConfirmationPresented,
-                        pause: pause,
-                        resume: resume,
-                        save: save,
-                        stop: stop,
-                        start: start
-                    )
-                    RideMapCameraControlsView(
-                        followsLatestPoint: $followsLatestPoint,
-                        canRecenter: displayPoints.isEmpty == false && cameraRegion != nil,
-                        recenter: recenterOnLatestPoint
-                    )
+                        VStack(alignment: .leading, spacing: 12) {
+                            RideMapLiveStatusView(
+                                displayPointCount: displayPoints.count,
+                                snapshot: snapshot,
+                                availability: availability,
+                                vehicleName: vehicleName,
+                                mapError: mapError,
+                                telemetryState: telemetryState,
+                                pointsTruncated: pointsTruncated,
+                                segmentsOmittedByBudget: segmentsOmittedByBudget,
+                                segments: segments,
+                                canonicalBackgroundGapCount: canonicalBackgroundGapCount
+                            )
+                            RideMapSummaryView(snapshot: snapshot, speed: speed, vehicleName: vehicleName)
+                            RideMapControlsView(
+                                state: snapshot?.state,
+                                allowedActions: snapshot?.allowedActions ?? [.start],
+                                isDiscardConfirmationPresented: $isDiscardConfirmationPresented,
+                                pause: pause,
+                                resume: resume,
+                                save: save,
+                                stop: stop,
+                                start: start
+                            )
+
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.top, 16)
+                        .padding(.bottom, 16)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(
+                            PevColors.pageBackground,
+                            in: UnevenRoundedRectangle(
+                                topLeadingRadius: 28,
+                                bottomLeadingRadius: 0,
+                                bottomTrailingRadius: 0,
+                                topTrailingRadius: 28
+                            )
+                        )
+                    }
                 }
-                .padding(.horizontal, 16)
-                .padding(.top, 16)
-                .padding(.bottom, 72)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    PevColors.pageBackground,
-                    in: UnevenRoundedRectangle(
-                        topLeadingRadius: 28,
-                        bottomLeadingRadius: 0,
-                        bottomTrailingRadius: 0,
-                        topTrailingRadius: 28
-                    )
-                )
             }
+            .frame(height: visibleHeight, alignment: .top)
+            // Native scroll views extend into TabView's safe area; bound drawing
+            // and hit testing to the measured viewport above its music accessory.
+            .clipped()
+            .contentShape(Rectangle())
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("ride-map.live-viewport")
         }
         .onChange(of: routeID) { _, _ in
             followsLatestPoint = true
@@ -126,6 +142,8 @@ struct RideMapLiveContentView: View {
             Button(localizedAppText("ride_map.discard"), role: .destructive, action: discard)
             Button(localizedAppText("common.cancel"), role: .cancel) {}
         }
+        .onAppear { onVisibilityChange(true) }
+        .onDisappear { onVisibilityChange(false) }
     }
 
     private var showsRecordedBounds: Bool {
@@ -188,6 +206,31 @@ struct RideMapLiveContentView: View {
     }
 }
 
+private struct RideMapCameraControlsView: View {
+    @Binding var followsLatestPoint: Bool
+    let canRecenter: Bool
+    let recenter: () -> Void
+
+    var body: some View {
+        Button(action: recenter) {
+            Image(systemName: followsLatestPoint ? "location.fill" : "location")
+                .font(.body.weight(.semibold))
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(canRecenter ? PevColors.brand : PevColors.muted)
+        .background(PevColors.cardFill, in: RoundedRectangle(cornerRadius: 14))
+        .overlay {
+            RoundedRectangle(cornerRadius: 14).strokeBorder(PevColors.cardStroke, lineWidth: 1)
+        }
+        .disabled(!canRecenter)
+        .accessibilityLabel(localizedAppText("ride_map.recenter"))
+        .accessibilityValue(localizedAppText(followsLatestPoint ? "ride_map.following" : "ride_map.not_following"))
+        .accessibilityIdentifier("ride-map.recenter")
+    }
+}
+
 private struct RideMapLiveStatusView: View {
     @Environment(\.openURL) private var openURL
 
@@ -196,7 +239,6 @@ private struct RideMapLiveStatusView: View {
     let availability: MobileRideMapAvailability
     let vehicleName: String?
     let mapError: MobileRideMapError?
-    let lastDecision: MobileRideMapDecisionDto?
     let telemetryState: MobileRideMapTelemetryStateDto?
     let pointsTruncated: Bool
     let segmentsOmittedByBudget: Bool
@@ -204,17 +246,6 @@ private struct RideMapLiveStatusView: View {
     let canonicalBackgroundGapCount: UInt64
 
     var body: some View {
-        if snapshot?.state == .active {
-            Text(recordingPillText)
-                .font(.caption.weight(.black))
-                .foregroundStyle(.black)
-                .lineLimit(1)
-                .minimumScaleFactor(0.72)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(PevColors.green, in: Capsule())
-                .accessibilityIdentifier("ride-map.recording-pill")
-        }
 
         if availability == .storageUnavailable {
             Label(
@@ -253,14 +284,23 @@ private struct RideMapLiveStatusView: View {
             .accessibilityIdentifier("ride-map.command-error")
         }
 
-        Text(statusTitle)
-            .font(.title3.weight(.bold))
-            .accessibilityAddTraits(.isHeader)
+        HStack(spacing: 8) {
+            if snapshot?.state == .active || snapshot?.state == .paused {
+                Circle()
+                    .fill(snapshot?.state == .paused ? PevColors.brand : PevColors.green)
+                    .frame(width: 8, height: 8)
+                    .accessibilityHidden(true)
+            }
+            Text(statusTitle)
+                .font(.headline.weight(.semibold))
+                .accessibilityAddTraits(.isHeader)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("ride-map.recording-pill")
         RideMapRouteTruthView(
             displayedPointCount: displayPointCount,
             recordedPointCount: snapshot?.summary.pointCount,
             rustSegmentCount: snapshot?.segmentCount ?? 0,
-            decision: lastDecision,
             showsRecordedBounds: snapshot?.recordedBoundsAvailable == true,
             segmentsOmittedByBudget: segmentsOmittedByBudget,
             segments: segments,
@@ -320,43 +360,4 @@ private struct RideMapLiveStatusView: View {
         }
     }
 
-    private var recordingPillText: String {
-        let source = RideMapMetricFormatting.vehicleLabel(
-            identity: snapshot?.associatedVehicle,
-            resolve: { _ in vehicleName },
-            noIdentityFallback: localizedAppText("ride_map.gps_only")
-        )
-        return "\(localizedAppText("ride_map.status.recording")) · \(source)"
-    }
-}
-
-private struct RideMapCameraControlsView: View {
-    @Binding var followsLatestPoint: Bool
-    let canRecenter: Bool
-    let recenter: () -> Void
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Button(action: recenter) {
-                Label(
-                    localizedAppText("ride_map.recenter"),
-                    systemImage: followsLatestPoint ? "location.fill" : "location"
-                )
-            }
-            .buttonStyle(.bordered)
-            .disabled(!canRecenter)
-            .accessibilityValue(
-                localizedAppText(
-                    followsLatestPoint ? "ride_map.following" : "ride_map.not_following"
-                )
-            )
-            .accessibilityIdentifier("ride-map.recenter")
-
-            if followsLatestPoint {
-                Text(localizedAppText("ride_map.following"))
-                    .font(.caption)
-                    .foregroundStyle(PevColors.muted)
-            }
-        }
-    }
 }

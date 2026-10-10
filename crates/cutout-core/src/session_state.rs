@@ -845,6 +845,12 @@ impl BmsTelemetryState {
         crate::BmsTemperatureSummary::from_readbacks(&self.pages)
     }
 
+    /// Summarizes current readings retained across unrelated BMS source pages.
+    #[must_use]
+    pub fn current_summary(&self) -> crate::BmsCurrentSummary {
+        crate::BmsCurrentSummary::from_readbacks(&self.pages)
+    }
+
     fn observe_readback(&mut self, readback: &BatteryReadback) {
         self.latest = readback.clone();
         if readback.availability() != crate::BatteryReadbackAvailability::Available {
@@ -1071,6 +1077,64 @@ mod tests {
     }
 
     #[test]
+    fn bms_currents_retain_provenance_update_on_zero_and_clear_with_readback() {
+        fn metadata(selector: u8, first: i32, second: i32) -> BatteryReadback {
+            BatteryReadback::available(
+                crate::BatteryPagePayload::raw(
+                    BatteryPageMetadata::metadata(
+                        crate::ProtocolSelector::new(selector),
+                        crate::VerificationStatus::HardwareVerified,
+                    ),
+                    crate::BatteryInfo {
+                        current: Some(crate::Measured::reported(
+                            crate::BatteryCurrent::from_milliamps(first),
+                        )),
+                        ..crate::BatteryInfo::default()
+                    },
+                )
+                .with_bms_pack_currents(crate::BmsPackCurrents::reported(
+                    crate::BatteryCurrent::from_milliamps(first),
+                    crate::BatteryCurrent::from_milliamps(second),
+                )),
+            )
+        }
+
+        let mut state = CutoutSessionState::default();
+        assert_eq!(
+            state.telemetry.bms.current_summary(),
+            crate::BmsCurrentSummary::default()
+        );
+        let reported = metadata(0, -1_230, 450);
+        for readback in [
+            reported.clone(),
+            cell_readback(1, 0, 4_180, 1),
+            temperature_readback(3, &[32_000]),
+        ] {
+            state.observe_read_only_response(&ReadOnlyResponse::Battery(readback));
+        }
+        let summary = state.telemetry.bms.current_summary();
+        let page = reported.page().expect("metadata page");
+        assert_eq!(summary.current, page.battery().current);
+        assert_eq!(summary.pack_currents, page.bms_pack_currents());
+
+        let zero = metadata(4, 0, 0);
+        for readback in [zero.clone(), cell_readback(2, 15, 4_181, 2)] {
+            state.observe_read_only_response(&ReadOnlyResponse::Battery(readback));
+        }
+        let summary = state.telemetry.bms.current_summary();
+        let page = zero.page().expect("zero current metadata page");
+        assert_eq!(summary.current, page.battery().current);
+        assert_eq!(summary.pack_currents, page.bms_pack_currents());
+
+        state
+            .observe_read_only_response(&ReadOnlyResponse::Battery(BatteryReadback::unavailable()));
+        assert_eq!(
+            state.telemetry.bms.current_summary(),
+            crate::BmsCurrentSummary::default()
+        );
+    }
+
+    #[test]
     fn bms_telemetry_retains_latest_temperatures_from_every_source_page() {
         let mut state = CutoutSessionState::default();
         for readback in [
@@ -1210,7 +1274,7 @@ mod tests {
 
         state
             .observe_read_only_response(&ReadOnlyResponse::Battery(BatteryReadback::unavailable()));
-        assert!(state.telemetry.bms.pages.is_empty());
+        assert_eq!(state.telemetry.bms.pages.len(), 0);
         assert_eq!(
             state.telemetry.bms.observation_summary(),
             crate::BmsObservationSummary::default()
@@ -1339,7 +1403,7 @@ mod tests {
                     .collect(),
             ),
         )));
-        assert!(state.telemetry.bms.observation_history.is_empty());
+        assert_eq!(state.telemetry.bms.observation_history.len(), 0);
 
         for cycle in 0_u64..8 {
             for (selector, first) in [(1, 0), (2, 15), (5, 30), (6, 45)] {

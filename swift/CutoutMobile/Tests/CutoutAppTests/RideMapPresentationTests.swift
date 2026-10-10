@@ -193,6 +193,114 @@ final class RideMapPresentationTests: XCTestCase {
         )
     }
 
+    func testMapViewportDoesNotSubtractTheNativeAccessorySafeAreaTwice() {
+        let player = CGRect(x: 21, y: 737, width: 360, height: 48)
+        XCTAssertEqual(
+            RideMapViewportLayout.visibleHeight(
+                contentFrame: CGRect(x: 0, y: 147, width: 402, height: 590),
+                musicPlayerFrame: player
+            ),
+            590,
+            "The observed native TabView proposal already ends at the player"
+        )
+        XCTAssertEqual(
+            RideMapViewportLayout.visibleHeight(
+                contentFrame: CGRect(x: 0, y: 147, width: 402, height: 727),
+                musicPlayerFrame: player
+            ),
+            590,
+            "A proposal extending behind the player is capped at its measured top"
+        )
+    }
+
+    func testMapViewportKeepsItsProposalWithoutAnOverlappingPlayerAndClampsAtZero() {
+        let frame = CGRect(x: 0, y: 147, width: 402, height: 590)
+        XCTAssertEqual(
+            RideMapViewportLayout.visibleHeight(contentFrame: frame, musicPlayerFrame: nil), 590
+        )
+        XCTAssertEqual(
+            RideMapViewportLayout.visibleHeight(
+                contentFrame: frame,
+                musicPlayerFrame: CGRect(x: 21, y: 791, width: 360, height: 48)
+            ),
+            590
+        )
+        XCTAssertEqual(
+            RideMapViewportLayout.visibleHeight(
+                contentFrame: frame,
+                musicPlayerFrame: CGRect(x: 21, y: 100, width: 360, height: 48)
+            ),
+            0
+        )
+    }
+
+    func testHistoryDetailWaitsForTheRequestedProjectionInsteadOfShowingEmptyHistory() {
+        let requestedRide = "october-4"
+        for previousProjection in [nil, "another-ride"] {
+            // Covers loading the summary page and loading an already selected ride.
+            XCTAssertTrue(
+                RideMapHistoryDetailView.initialProjectionIsLoading(
+                    activeHistoryID: requestedRide, projectionRideID: previousProjection,
+                    hasSelectedRide: false, isLoading: true, hasError: false
+                )
+            )
+            XCTAssertTrue(
+                RideMapHistoryDetailView.initialProjectionIsLoading(
+                    activeHistoryID: requestedRide, projectionRideID: previousProjection,
+                    hasSelectedRide: true, isLoading: false, hasError: false
+                )
+            )
+        }
+        XCTAssertFalse(
+            RideMapHistoryDetailView.initialProjectionIsLoading(
+                activeHistoryID: requestedRide, projectionRideID: requestedRide,
+                hasSelectedRide: true, isLoading: true, hasError: false
+            ),
+            "A matching projection stays visible during refresh"
+        )
+    }
+
+    func testHistoryDetailDoesNotHideErrorsOrMissingRidesBehindInitialLoading() {
+        XCTAssertFalse(
+            RideMapHistoryDetailView.initialProjectionIsLoading(
+                activeHistoryID: "october-4", projectionRideID: nil,
+                hasSelectedRide: true, isLoading: true, hasError: true
+            ),
+            "A storage failure must remain actionable even when loading flags are stale"
+        )
+        XCTAssertFalse(
+            RideMapHistoryDetailView.initialProjectionIsLoading(
+                activeHistoryID: "missing", projectionRideID: nil,
+                hasSelectedRide: false, isLoading: false, hasError: false
+            )
+        )
+        XCTAssertFalse(
+            RideMapHistoryDetailView.initialProjectionIsLoading(
+                activeHistoryID: nil, projectionRideID: nil,
+                hasSelectedRide: false, isLoading: true, hasError: false
+            )
+        )
+    }
+
+    func testHistoryDetailShowsLoadingBeforeTheInitialSelectionTaskStarts() {
+        XCTAssertTrue(
+            RideMapHistoryDetailView.initialProjectionIsLoading(
+                activeHistoryID: "deep-linked-ride", projectionRideID: nil,
+                hasSelectedRide: false, isLoading: false, hasError: false,
+                hasStartedSelectionRequest: false
+            ),
+            "Do not flash confirmed-empty copy before the view can start its requested-ride lookup"
+        )
+        XCTAssertFalse(
+            RideMapHistoryDetailView.initialProjectionIsLoading(
+                activeHistoryID: "deep-linked-ride", projectionRideID: nil,
+                hasSelectedRide: false, isLoading: false, hasError: false,
+                hasStartedSelectionRequest: true
+            ),
+            "Once the requested lookup finishes without a matching ride, show the unavailable state"
+        )
+    }
+
     func testHistoryDetailRouteIdentityChangesForAReplacementFitWithoutChangingRideIdentity() {
         let initial = RideMapHistoryDetailView.routeID(
             for: "ride",

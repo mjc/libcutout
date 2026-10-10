@@ -290,6 +290,18 @@
       "comment" : "Charge estimate unavailable reason when no compatible charging profile is available.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "charging profile unavailable" } } }
     },
+    "charge.estimate.value.full" : {
+      "comment" : "Charge completed at full battery level.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Full" } } }
+    },
+    "charge.estimate.value.balancing" : {
+      "comment" : "Final charging taper and balancing phase.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Balancing" } } }
+    },
+    "charge.estimate.kind.observed_progress" : {
+      "comment" : "Estimate derived from observed battery level progress.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "from charging progress" } } }
+    },
     "charge.estimate.value.collecting" : {
       "comment" : "Charge estimate value while collecting samples.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "estimating" } } }
@@ -410,6 +422,10 @@
       "comment" : "Connection failure. The placeholder is the underlying session error description.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Session failed: %@" } } }
     },
+    "euc.status.connected" : {
+      "comment" : "Connected ride state before operating-state data arrives.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Connected" } } }
+    },
     "euc.status.charging" : {
       "comment" : "EUC operating state while charging.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Charging" } } }
@@ -423,8 +439,8 @@
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Riding" } } }
     },
     "euc.status.standing" : {
-      "comment" : "EUC operating state while standing.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Standing" } } }
+      "comment" : "EUC operating state while parked and stationary.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Parked" } } }
     },
     "euc.warning.connection_failed" : {
       "comment" : "Ride warning title when the Bluetooth connection has failed.",
@@ -476,7 +492,7 @@
     },
     "euc.warning.waiting_for_speed" : {
       "comment" : "Ride warning detail while live telemetry lacks a speed value.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Waiting for speed telemetry" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "No movement" } } }
     },
     "euc.warning.waiting_for_telemetry" : {
       "comment" : "Ride warning title while waiting for the first telemetry values.",

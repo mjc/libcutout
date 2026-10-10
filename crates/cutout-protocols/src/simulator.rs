@@ -239,7 +239,7 @@ impl AeroSettingsSimulator {
         self.drain_outputs()
     }
 
-    /// Issues a typed command with the same stationary/500-mm/s gate as Aero.
+    /// Issues a typed command with Aero's shared connected-wheel stationary gate.
     #[must_use]
     pub fn issue(
         &mut self,
@@ -891,12 +891,12 @@ mod tests {
     }
 
     #[test]
-    fn simulator_accepts_500_mm_per_second_and_refuses_above_it() {
+    fn simulator_uses_the_connected_wheel_speed_window() {
         let mut simulator = AeroSettingsSimulator::default();
         let accepted = simulator.issue(
             setting(SettingId::PwmTiltback, DeviceSettingValue::Number(70)),
             RideOperatingState::Riding,
-            Some(Speed::from_millimetres_per_second(500)),
+            Some(cutout_core::CONNECTED_WHEEL_MOVEMENT_THRESHOLD),
             MonotonicTimestamp::new(10),
         );
         assert!(accepted.iter().any(has_transport_write));
@@ -905,7 +905,9 @@ mod tests {
         let refused = simulator.issue(
             setting(SettingId::PwmTiltback, DeviceSettingValue::Number(69)),
             RideOperatingState::Riding,
-            Some(Speed::from_millimetres_per_second(501)),
+            Some(Speed::from_millimetres_per_second(
+                cutout_core::CONNECTED_WHEEL_MOVEMENT_THRESHOLD.as_millimetres_per_second() + 1,
+            )),
             MonotonicTimestamp::new(20),
         );
         assert_eq!(simulator.writes().len(), write_count);
@@ -928,7 +930,7 @@ mod tests {
             None,
             MonotonicTimestamp::new(10),
         );
-        assert!(simulator.writes().is_empty());
+        assert_eq!(simulator.writes().len(), 0);
         assert!(outputs.iter().any(|output| {
             matches!(
                 output,
@@ -980,10 +982,12 @@ mod tests {
         let _ = simulator.issue(
             setting(SettingId::PedalHardness, DeviceSettingValue::Number(50)),
             RideOperatingState::Riding,
-            Some(Speed::from_millimetres_per_second(501)),
+            Some(Speed::from_millimetres_per_second(
+                cutout_core::CONNECTED_WHEEL_MOVEMENT_THRESHOLD.as_millimetres_per_second() + 1,
+            )),
             MonotonicTimestamp::new(11),
         );
-        assert!(simulator.writes().is_empty());
+        assert_eq!(simulator.writes().len(), 0);
         assert_eq!(
             simulator.readback().pedal_hardness,
             VeteranPedalHardness::new(100)
@@ -1056,6 +1060,6 @@ mod tests {
 
         assert!(!outputs.iter().any(has_transport_write));
         assert_eq!(simulator.readback().headlight, Some(LightState::Off));
-        assert!(simulator.writes().is_empty());
+        assert_eq!(simulator.writes().len(), 0);
     }
 }

@@ -1,0 +1,163 @@
+//! Standalone release harness assembled by bench-novatek-xml.sh.
+#![allow(dead_code)]
+mod current;
+mod legacy;
+
+use std::alloc::{GlobalAlloc, Layout, System};
+use std::fmt::Write;
+use std::hint::black_box;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::Relaxed};
+use std::time::Instant;
+
+struct CountingAllocator;
+static TRACK: AtomicBool = AtomicBool::new(false);
+static CALLS: AtomicUsize = AtomicUsize::new(0);
+static BYTES: AtomicUsize = AtomicUsize::new(0);
+static LIVE: AtomicUsize = AtomicUsize::new(0);
+static PEAK: AtomicUsize = AtomicUsize::new(0);
+
+fn allocated(bytes: usize) {
+    CALLS.fetch_add(1, Relaxed);
+    BYTES.fetch_add(bytes, Relaxed);
+    let live = LIVE.fetch_add(bytes, Relaxed) + bytes;
+    PEAK.fetch_max(live, Relaxed);
+}
+
+// SAFETY: every allocation/deallocation is forwarded with its original layout
+// to System. Counters inspect sizes only and never modify allocated memory.
+unsafe impl GlobalAlloc for CountingAllocator {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        let pointer = unsafe { System.alloc(layout) };
+        if !pointer.is_null() && TRACK.load(Relaxed) {
+            allocated(layout.size());
+        }
+        pointer
+    }
+    unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
+        if TRACK.load(Relaxed) {
+            LIVE.fetch_sub(layout.size(), Relaxed);
+        }
+        unsafe { System.dealloc(pointer, layout) }
+    }
+    unsafe fn realloc(&self, pointer: *mut u8, layout: Layout, size: usize) -> *mut u8 {
+        let result = unsafe { System.realloc(pointer, layout, size) };
+        if !result.is_null() && TRACK.load(Relaxed) {
+            LIVE.fetch_sub(layout.size(), Relaxed);
+            allocated(size);
+        }
+        result
+    }
+}
+#[global_allocator]
+static ALLOCATOR: CountingAllocator = CountingAllocator;
+
+fn measure<T>(label: &str, input: &[u8], iterations: usize, parser: impl Fn(&[u8]) -> T) {
+    for _ in 0..10 {
+        drop(black_box(parser(black_box(input))));
+    }
+    let mut samples = [0_u128; 9];
+    for sample in &mut samples {
+        let start = Instant::now();
+        for _ in 0..iterations {
+            drop(black_box(parser(black_box(input))));
+        }
+        *sample = start.elapsed().as_nanos() / iterations as u128;
+    }
+    samples.sort_unstable();
+    CALLS.store(0, Relaxed);
+    BYTES.store(0, Relaxed);
+    LIVE.store(0, Relaxed);
+    PEAK.store(0, Relaxed);
+    TRACK.store(true, Relaxed);
+    drop(black_box(parser(black_box(input))));
+    TRACK.store(false, Relaxed);
+    assert_eq!(
+        LIVE.load(Relaxed),
+        0,
+        "all parser-owned allocations must be dropped"
+    );
+    let nanos = samples[4];
+    let throughput = input.len() as f64 / nanos as f64 * 1_000_000_000.0 / 1_048_576.0;
+    println!(
+        "{label},bytes={},median_ns={nanos},MiB_per_s={throughput:.2},alloc_calls={},allocated_bytes={},peak_live_bytes={}",
+        input.len(),
+        CALLS.load(Relaxed),
+        BYTES.load(Relaxed),
+        PEAK.load(Relaxed)
+    );
+}
+
+fn media(count: usize, pad: bool) -> Vec<u8> {
+    let mut input = String::from("<LIST>");
+    for index in 0..count {
+        write!(input, "<ALLFile><File><NAME>20260822112613_{index:06}.TS</NAME><FPATH>A:\\Novatek\\Movie\\20260822112613_{index:06}.TS</FPATH><SIZE>70827496</SIZE><TIMECODE>1561746275</TIMECODE><TIME>2026/08/22 11:27:06</TIME><ATTR>32</ATTR></File></ALLFile>").unwrap();
+    }
+    input.push_str("</LIST>");
+    if pad {
+        input.extend(std::iter::repeat_n(
+            ' ',
+            current::NOVATEK_MAX_MEDIA_RESPONSE_BYTES - input.len(),
+        ));
+    }
+    input.into_bytes()
+}
+
+fn main() {
+    println!(
+        "nine latency samples; ten warmups; allocations measured separately for one parse; output drop included; input/harness allocations excluded"
+    );
+    let firmware = br#"<?xml version="1.0" encoding="UTF-8" ?><Function><Cmd>3012</Cmd><Status>0</Status><String>R3V1.1_20240411</String></Function>"#;
+    assert_eq!(
+        format!("{:?}", legacy::parse_firmware_response(firmware)),
+        format!("{:?}", current::parse_firmware_response(firmware))
+    );
+    measure(
+        "firmware_before",
+        firmware,
+        20_000,
+        legacy::parse_firmware_response,
+    );
+    measure(
+        "firmware_after",
+        firmware,
+        20_000,
+        current::parse_firmware_response,
+    );
+    for (label, count, pad) in [
+        ("ordinary", 2, false),
+        ("observed_count", 1826, false),
+        ("max_entries", 2048, false),
+        ("max_bytes_entries", 2048, true),
+    ] {
+        let input = media(count, pad);
+        assert_eq!(
+            format!("{:?}", legacy::parse_media_list_response(&input)),
+            format!("{:?}", current::parse_media_list_response(&input)),
+            "identical typed output for {label}"
+        );
+        let iterations = if count == 2 { 10_000 } else { 50 };
+        measure(
+            &format!("{label}_before"),
+            &input,
+            iterations,
+            legacy::parse_media_list_response,
+        );
+        measure(
+            &format!("{label}_after"),
+            &input,
+            iterations,
+            current::parse_media_list_response,
+        );
+    }
+    for input in [
+        b"<LIST></LIST>trailing".as_slice(),
+        b"<LIST><File></File></LIST>",
+        b"<LIST><File></LIST>",
+    ] {
+        assert_eq!(
+            format!("{:?}", legacy::parse_media_list_response(input)),
+            format!("{:?}", current::parse_media_list_response(input)),
+            "retained malformed-input error"
+        );
+    }
+}

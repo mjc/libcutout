@@ -241,6 +241,17 @@ fn hot_paths_do_not_allocate_for_borrowed_or_bounded_inputs_locked() {
         assert_eq!(entry.registry.model, "Aero");
     });
 
+    // Warm platform CPU-feature detection outside the measured steady state.
+    std::hint::black_box(cutout_core::registry_entries_hash(&[
+        &CATALOG_REGISTRY_ENTRY,
+    ]));
+    assert_no_allocations("registry fingerprint", || {
+        std::hint::black_box(cutout_core::registry_entries_hash(&[]));
+        std::hint::black_box(cutout_core::registry_entries_hash(&[
+            &CATALOG_REGISTRY_ENTRY,
+        ]));
+    });
+
     assert_no_allocations("model catalog registration lookup", || {
         let catalog = ModelCatalog::new(&CATALOG_ENTRIES);
         let parser_entry = catalog

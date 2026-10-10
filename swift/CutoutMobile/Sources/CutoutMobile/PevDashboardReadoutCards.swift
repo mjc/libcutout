@@ -4,11 +4,12 @@ public enum PevDashboardMetricTileProminence: Sendable, Equatable {
     case standard
     case dashboard
     case compactDashboard
+    case ride
 
     var cornerRadius: CGFloat {
         switch self {
         case .standard: 20
-        case .dashboard, .compactDashboard: 16
+        case .dashboard, .compactDashboard, .ride: 16
         }
     }
 
@@ -17,6 +18,7 @@ public enum PevDashboardMetricTileProminence: Sendable, Equatable {
         case .standard: 106
         case .dashboard: 104
         case .compactDashboard: 96
+        case .ride: 0
         }
     }
 }
@@ -97,13 +99,17 @@ public struct PevDashboardMetricTile: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(label)
-                .font(.subheadline.weight(.bold))
+                .font(prominence == .ride ? .caption.weight(.bold) : .subheadline.weight(.bold))
+                .lineLimit(prominence == .ride ? 1 : nil)
+                .minimumScaleFactor(prominence == .ride ? 0.6 : 1)
                 .pevDashboardAccessibleForegroundStyle(PevDashboardColors.mutedText)
                 .accessibilityHidden(true)
 
             HStack(alignment: .firstTextBaseline, spacing: 4) {
                 Text(value)
                     .font(.title3.weight(.black))
+                    .lineLimit(prominence == .ride ? 1 : nil)
+                    .minimumScaleFactor(prominence == .ride ? 0.5 : 1)
                     .pevDashboardAccessibleForegroundStyle(resolvedValueColor)
                     .monospacedDigit()
                     .accessibilityHidden(true)
@@ -111,12 +117,14 @@ public struct PevDashboardMetricTile: View {
                 if !unit.isEmpty {
                     Text(unit)
                         .font(.subheadline.weight(.black))
+                        .lineLimit(prominence == .ride ? 1 : nil)
+                        .minimumScaleFactor(prominence == .ride ? 0.5 : 1)
                         .pevDashboardAccessibleForegroundStyle(PevDashboardColors.primaryText)
                         .accessibilityHidden(true)
                 }
             }
 
-            if !detail.isEmpty {
+            if !detail.isEmpty && prominence != .ride {
                 Text(detail)
                     .font(.subheadline.weight(.bold))
                     .pevDashboardAccessibleForegroundStyle(detailColor)
@@ -124,9 +132,14 @@ public struct PevDashboardMetricTile: View {
                     .accessibilityHidden(true)
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 14)
-        .frame(maxWidth: .infinity, minHeight: minHeight, alignment: .topLeading)
+        .padding(.horizontal, prominence == .ride ? 10 : 16)
+        .padding(.vertical, prominence == .ride ? 6 : 14)
+        .frame(
+            maxWidth: .infinity,
+            minHeight: minHeight,
+            maxHeight: prominence == .ride ? .infinity : nil,
+            alignment: .topLeading
+        )
         .background(
             PevDashboardCardBackground(
                 cornerRadius: cornerRadius,

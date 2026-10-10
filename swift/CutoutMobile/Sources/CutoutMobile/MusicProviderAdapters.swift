@@ -390,6 +390,8 @@ struct SpotifyRenewalRetryPolicy {
                 return false
             }
             #if canImport(UIKit) && os(iOS)
+                // iOS 27 deprecates this query in favor of opening. Passive restoration
+                // must not launch Spotify, so retain the installation check here.
                 guard UIApplication.shared.canOpenURL(Self.providerURL) else {
                     lifecycleState = .unavailable
                     emitChange()
@@ -1649,7 +1651,6 @@ struct SpotifyRenewalRetryPolicy {
         public func perform(_ command: MobileMusicCommandDto) async -> MusicCommandOutcome {
             guard case .openProvider = command else { return .unavailable }
             #if canImport(UIKit) && os(iOS)
-                guard UIApplication.shared.canOpenURL(Self.providerURL) else { return .unavailable }
                 guard await UIApplication.shared.open(Self.providerURL) else { return .failed }
                 return .accepted
             #else

@@ -64,28 +64,45 @@ enum MusicHistoryPresentation: Equatable {
 }
 
 struct RideMapHistoryDetailHeader: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let close: () -> Void
 
     var body: some View {
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 8) {
+                    backButton
+                    title
+                }
+            } else {
+                title
+                    .padding(.horizontal, 72)
+                    .overlay(alignment: .leading) { backButton }
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(PevColors.pageBackground)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("ride-map.detail-header")
+    }
+
+    private var title: some View {
         Text(localizedAppText("ride_map.detail_title"))
             .font(.headline.weight(.semibold))
-            .lineLimit(2)
-            .multilineTextAlignment(.center)
+            .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, minHeight: 44)
-            .padding(.horizontal, 72)
-            .overlay(alignment: .leading) {
-                Button(action: close) {
-                    Label(localizedAppText("ride_map.detail_back"), systemImage: "chevron.left")
-                        .labelStyle(.titleAndIcon)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(PevColors.yellow)
+    }
+
+    private var backButton: some View {
+        Button(action: close) {
+            Label(localizedAppText("ride_map.detail_back"), systemImage: "chevron.left")
+                .labelStyle(.titleAndIcon)
                 .frame(minWidth: 44, minHeight: 44)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-            .background(PevColors.pageBackground)
-            .accessibilityIdentifier("ride-map.detail-header")
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(PevColors.brand)
     }
 }
 
@@ -210,6 +227,12 @@ struct RideMapHistoryDetailSummary: View {
     @State private var isMusicHistoryForgetConfirmationPresented = false
     @State private var isMusicHistoryForgetErrorPresented = false
 
+    private var showsMusicHistory: Bool {
+        if musicTimelineUnavailable || musicHistoryError != nil || musicHistoryCanForget { return true }
+        if let musicHistoryState, musicHistoryState != .humanReadable { return false }
+        return !musicTimeline.listeningHistoryEvents.isEmpty
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if state == .loading {
@@ -239,25 +262,11 @@ struct RideMapHistoryDetailSummary: View {
                         .foregroundStyle(PevColors.muted)
                 }
                 .accessibilityElement(children: .combine)
-                HStack(alignment: .top, spacing: 0) {
-                    RideMapDetailMetric(
-                        value: distance,
-                        label: localizedAppText("ride_map.metric_distance")
-                    )
-                    RideMapDetailMetric(
-                        value: duration,
-                        label: localizedAppText("ride_map.metric_elapsed")
-                    )
-                    RideMapDetailMetric(
-                        value: averageSpeed,
-                        label: localizedAppText("ride_map.metric_average_speed")
-                    )
-                }
+                RideMapDetailMetrics(distance: distance, duration: duration, averageSpeed: averageSpeed)
                 RideMapRouteTruthView(
                     displayedPointCount: displayPointCount,
                     recordedPointCount: recordedPointCount,
                     rustSegmentCount: segmentCount,
-                    decision: nil,
                     showsRecordedBounds: !pointsTruncated,
                     segmentsOmittedByBudget: segmentsOmittedByBudget,
                     segments: segments,
@@ -268,7 +277,7 @@ struct RideMapHistoryDetailSummary: View {
                     ),
                     telemetryState: telemetryState
                 )
-                if musicTimeline.isEmpty == false || musicTimelineUnavailable || musicHistoryState != nil {
+                if showsMusicHistory {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack(alignment: .firstTextBaseline) {
                             Text(localizedAppText("music.timeline.title"))
@@ -280,20 +289,12 @@ struct RideMapHistoryDetailSummary: View {
                                 }
                             }
                         }
-                        switch MusicHistoryPresentation(
-                            events: musicTimeline,
-                            state: musicHistoryState,
-                            error: musicHistoryError
-                        ) {
-                        case .unavailable(let error):
-                            Text(error.musicHistoryAccessibilityText)
+                        if musicTimelineUnavailable && musicHistoryError == nil {
+                            Text(localizedAppText("music.history.unavailable"))
                                 .font(.caption)
                                 .foregroundStyle(PevColors.muted)
-                        case .status(let state):
-                            Label(state.detailTitle, systemImage: state.detailSymbol)
-                                .font(.caption.weight(.semibold))
-                        case .timeline(let events):
-                            MusicTimelineRows(events: events)
+                        } else {
+                            musicHistoryContent
                         }
                     }
                     .accessibilityIdentifier("ride-map.detail-music-timeline")
@@ -359,10 +360,47 @@ struct RideMapHistoryDetailSummary: View {
         .padding(.bottom, 8)
     }
 
+    @ViewBuilder
+    private var musicHistoryContent: some View {
+        switch MusicHistoryPresentation(events: musicTimeline, state: musicHistoryState, error: musicHistoryError) {
+        case .unavailable(let error):
+            Text(error.musicHistoryAccessibilityText)
+                .font(.caption)
+                .foregroundStyle(PevColors.muted)
+        case .status(let state):
+            Label(state.detailTitle, systemImage: state.detailSymbol)
+                .font(.caption.weight(.semibold))
+        case .timeline(let events):
+            MusicTimelineRows(events: events)
+        }
+    }
+
     private func showRoutePreview() {
         isApplyingCamera = true
         loadRoutePreview()
         mapPosition = .automatic
+    }
+}
+
+struct RideMapDetailMetrics: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    let distance: String
+    let duration: String
+    let averageSpeed: String
+
+    var body: some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(alignment: .leading, spacing: 12) { metrics }
+        } else {
+            HStack(alignment: .top, spacing: 12) { metrics }
+        }
+    }
+
+    @ViewBuilder
+    private var metrics: some View {
+        RideMapDetailMetric(value: distance, label: localizedAppText("ride_map.metric_distance"))
+        RideMapDetailMetric(value: duration, label: localizedAppText("ride_map.metric_elapsed"))
+        RideMapDetailMetric(value: averageSpeed, label: localizedAppText("ride_map.metric_average_speed"))
     }
 }
 

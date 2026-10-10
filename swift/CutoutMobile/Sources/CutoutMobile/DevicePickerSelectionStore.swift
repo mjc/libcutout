@@ -1,7 +1,18 @@
 import CutoutMobileFFI
 import Foundation
 
-public struct DevicePickerSelectionStore {
+public struct DevicePickerSelectionSnapshot: Equatable, Sendable {
+    public let platformIdentifier: String?
+    public let displayName: String?
+
+    public init(platformIdentifier: String?, displayName: String?) {
+        self.platformIdentifier = platformIdentifier
+        self.displayName = displayName
+    }
+}
+
+/// Immutable handles; UserDefaults supports concurrent access and Rust owns database serialization.
+public struct DevicePickerSelectionStore: @unchecked Sendable {
     private static let key = "io.cutout.devicePicker.selectedPlatformIdentifier"
     private static let deviceNameKeyPrefix = "io.cutout.devicePicker.deviceName."
     private let defaults: UserDefaults
@@ -15,6 +26,64 @@ public struct DevicePickerSelectionStore {
     init(database: RideDatabaseHandle, defaults: UserDefaults = .standard) {
         self.defaults = defaults
         self.database = database
+    }
+
+    public var requiresDatabaseLoad: Bool { database != nil }
+
+    /// Injected preference-only stores can seed presentation without a database round trip.
+    public var immediateSelection: DevicePickerSelectionSnapshot {
+        guard database == nil else {
+            return DevicePickerSelectionSnapshot(platformIdentifier: nil, displayName: nil)
+        }
+        let identifier = platformIdentifier
+        return DevicePickerSelectionSnapshot(
+            platformIdentifier: identifier, displayName: identifier.flatMap { displayName(for: $0) })
+    }
+
+    public func load() async -> DevicePickerSelectionSnapshot {
+        await Task.detached(priority: .utility) { [self] in
+            let identifier = platformIdentifier
+            return DevicePickerSelectionSnapshot(
+                platformIdentifier: identifier, displayName: identifier.flatMap { displayName(for: $0) })
+        }.value
+    }
+
+    public func loadDisplayName(for identifier: String) async -> String? {
+        await Task.detached(priority: .utility) { [self] in displayName(for: identifier) }.value
+    }
+
+    public func immediateDisplayName(for identifier: String) -> String? {
+        guard database == nil else { return nil }
+        return displayName(for: identifier)
+    }
+
+    /// Protocol naming must not change the user's saved device selection.
+    public func saveDisplayName(_ name: String, for identifier: String) {
+        let key = Self.deviceNameKeyPrefix + identifier
+        if let database {
+            if (try? database.saveDeviceName(
+                platformIdentifier: identifier, displayName: name,
+                updatedAtMilliseconds: UInt64(Date().timeIntervalSince1970 * 1_000))) != nil
+            {
+                defaults.removeObject(forKey: key)
+                return
+            }
+        }
+        if let normalized = try? normalizeDeviceDisplayName(platformIdentifier: identifier, displayName: name) {
+            defaults.set(normalized, forKey: key)
+        } else {
+            defaults.removeObject(forKey: key)
+        }
+    }
+
+    public func saveDisplayNameAsync(
+        _ name: String, for identifier: String, didFinish: @escaping @Sendable () -> Void = {}
+    ) async {
+        await Task.detached(priority: .utility) { [self] in
+            defer { didFinish() }
+            guard !Task.isCancelled else { return }
+            saveDisplayName(name, for: identifier)
+        }.value
     }
 
     public var platformIdentifier: String? {

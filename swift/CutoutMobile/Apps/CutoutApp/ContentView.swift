@@ -14,8 +14,13 @@ struct ContentView: View {
     @Binding private var navigationPath: [CutoutAppRoute]
     @AccessibilityFocusState private var focusedRoute: CutoutAppRoute?
     @State private var connectionAnnouncements = ConnectionAccessibilityAnnouncements()
-    @State private var isSetupPresented = false
+    @State private var presentedSheet: Sheet?
     @Environment(\.openURL) private var openURL
+
+    private enum Sheet: Identifiable {
+        case setup, music, musicSettings
+        var id: Self { self }
+    }
 
     init(
         model: CutoutAppModel,
@@ -33,70 +38,84 @@ struct ContentView: View {
         navigationPath.last ?? .devicePicker
     }
 
+    private var rootRoute: CutoutAppRoute {
+        CutoutAppRoute.navigationRoot(for: navigationPath)
+    }
+
+    private func stackNavigationPath(for tabRoute: CutoutAppRoute) -> Binding<[CutoutAppRoute]> {
+        Binding(
+            get: { CutoutAppRoute.stackNavigationPath(for: navigationPath, root: tabRoute) },
+            set: {
+                navigationPath = CutoutAppRoute.replacingStackNavigationPath($0, in: navigationPath, root: tabRoute)
+            }
+        )
+    }
+
     var body: some View {
-        NavigationStack(path: $navigationPath) {
-            destinationContent(for: .devicePicker)
-                .navigationDestination(for: CutoutAppRoute.self) { destination in
-                    destinationContent(for: destination)
-                        .navigationBarBackButtonHidden(destination != .capture)
+        primaryTabs
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(PevColors.pageBackground.ignoresSafeArea())
+            .sheet(item: $presentedSheet) { destination in
+                switch destination {
+                case .setup:
+                    AppSetupView(model: model)
+                case .music:
+                    AppMusicPlayerView(model: model, onOpenSettings: { presentedSheet = .musicSettings })
+                case .musicSettings:
+                    AppSetupView(model: model, opensMusic: true)
                 }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(PevColors.pageBackground.ignoresSafeArea())
-        .sheet(isPresented: $isSetupPresented) {
-            AppSetupView(model: model)
-        }
-        .safeAreaInset(edge: .top) {
-            if let presentation = model.liveActivityError?.failurePresentation {
-                liveActivityFailureBanner(presentation)
             }
-        }
-        .onChange(of: route, initial: true) { _, route in
-            focusedRoute = route
-        }
-        .onChange(of: model.capture.status) { _, status in
-            if let announcement = status?.accessibilityAnnouncement {
+            .safeAreaInset(edge: .top) {
+                if let presentation = model.liveActivityError?.failurePresentation {
+                    liveActivityFailureBanner(presentation)
+                }
+            }
+            .onChange(of: route, initial: true) { _, route in
+                focusedRoute = route
+            }
+            .onChange(of: model.capture.status) { _, status in
+                if let announcement = status?.accessibilityAnnouncement {
+                    AccessibilityNotification.Announcement(announcement).post()
+                }
+            }
+            .onChange(of: model.device.phase) { _, phase in
+                if let announcement = connectionAnnouncements.next(for: phase) {
+                    AccessibilityNotification.Announcement(announcement).post()
+                }
+            }
+            .onChange(of: model.device.connectionState, initial: true) { _, state in
+                if let announcement = connectionAnnouncements.next(for: state) {
+                    AccessibilityNotification.Announcement(announcement).post()
+                }
+                switch state.navigationIntent(isRecordOnlyCapture: model.isRecordOnlyCapture) {
+                case .returnToPicker where !route.preservesNavigationOnConnectionLoss:
+                    navigate(to: .devicePicker)
+                case .returnToPicker:
+                    break
+                case .openRide(let connectionRoute) where route == .devicePicker:
+                    navigate(to: CutoutAppRoute.route(for: connectionRoute))
+                case .stay, .openCapture, .openRide:
+                    break
+                }
+            }
+            .onChange(of: model.device.scanState?.status) { _, _ in
+                guard let scanState = model.device.scanState,
+                    let announcement = connectionAnnouncements.next(for: scanState)
+                else {
+                    return
+                }
                 AccessibilityNotification.Announcement(announcement).post()
             }
-        }
-        .onChange(of: model.device.phase) { _, phase in
-            if let announcement = connectionAnnouncements.next(for: phase) {
-                AccessibilityNotification.Announcement(announcement).post()
+            .onChange(of: model.device.bmsSnapshot?.accessibilityAlertLevel) { _, level in
+                if let announcement = level?.accessibilityAnnouncement {
+                    AccessibilityNotification.Announcement(announcement).post()
+                }
             }
-        }
-        .onChange(of: model.device.connectionState) { _, state in
-            if let announcement = connectionAnnouncements.next(for: state) {
-                AccessibilityNotification.Announcement(announcement).post()
+            .onChange(of: model.liveActivityError) { _, error in
+                if let error {
+                    AccessibilityNotification.Announcement(error.accessibilityAnnouncement).post()
+                }
             }
-            switch state.navigationIntent(isRecordOnlyCapture: model.isRecordOnlyCapture) {
-            case .returnToPicker where !route.preservesNavigationOnConnectionLoss:
-                navigate(to: .devicePicker)
-            case .returnToPicker:
-                break
-            case let .openRide(connectionRoute) where route == .devicePicker:
-                navigate(to: CutoutAppRoute.route(for: connectionRoute))
-            case .stay, .openCapture, .openRide:
-                break
-            }
-        }
-        .onChange(of: model.device.scanState?.status) { _, _ in
-            guard let scanState = model.device.scanState,
-                let announcement = connectionAnnouncements.next(for: scanState)
-            else {
-                return
-            }
-            AccessibilityNotification.Announcement(announcement).post()
-        }
-        .onChange(of: model.device.bmsSnapshot?.accessibilityAlertLevel) { _, level in
-            if let announcement = level?.accessibilityAnnouncement {
-                AccessibilityNotification.Announcement(announcement).post()
-            }
-        }
-        .onChange(of: model.liveActivityError) { _, error in
-            if let error {
-                AccessibilityNotification.Announcement(error.accessibilityAnnouncement).post()
-            }
-        }
     }
 
     private func liveActivityFailureBanner(_ presentation: LiveActivityFailurePresentation) -> some View {
@@ -149,6 +168,11 @@ struct ContentView: View {
             to: route.destination(forNavigationTarget: target, connectionRoute: model.device.selectedConnectionRoute))
     }
 
+    private func openMusicPlayer() {
+        model.music.restorePlayer()
+        presentedSheet = .music
+    }
+
     private func navigate(to route: CutoutAppRoute) {
         navigationPath = CutoutAppRoute.navigationPath(for: route)
     }
@@ -161,6 +185,11 @@ struct ContentView: View {
         navigationPath.removeLast()
     }
 
+    private func closeNestedDestination() {
+        guard !CutoutAppRoute.stackNavigationPath(for: navigationPath).isEmpty else { return }
+        navigationPath.removeLast()
+    }
+
     private func disconnectAndReturnToPicker() {
         Task { @MainActor in
             guard await model.disconnectTransport() else { return }
@@ -169,52 +198,57 @@ struct ContentView: View {
     }
 
     @ViewBuilder
-    private func destinationContent(for destination: CutoutAppRoute) -> some View {
-        if case .lighting = destination, model.device.selectedConnectionRoute == nil {
-            LightingRouteView(model: lighting, rideModel: model)
-                .toolbar {
-                    ToolbarItem(placement: .navigation) {
-                        Button(localizedAppText("ride_map.detail_back"), systemImage: "chevron.left") {
-                            navigate(to: .devicePicker)
-                        }
-                    }
-                }
-                .accessibilityFocused($focusedRoute, equals: destination)
-        } else if destination == .capture {
-            ZStack {
-                PevColors.pageBackground
-                    .ignoresSafeArea()
-                routedContent(for: destination)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .accessibilityFocused($focusedRoute, equals: destination)
-        } else if isRideMapDetail(destination)
-            || (destination == .rideMap && model.device.selectedConnectionRoute == nil)
-        {
-            destinationSurface(for: destination)
-        } else {
-            let tabs = TabView(selection: tabSelection) {
-                ForEach(availableTabs) { tab in
-                    if let tabRoute = destination.destination(
-                        for: tab, connectionRoute: model.device.selectedConnectionRoute)
-                    {
-                        Tab(value: tab.id) {
+    private var primaryTabs: some View {
+        let tabs = TabView(selection: tabSelection) {
+            ForEach(availableTabs) { tab in
+                if let tabRoute = rootRoute.destination(for: tab, connectionRoute: model.device.selectedConnectionRoute)
+                {
+                    Tab(value: tab.id) {
+                        NavigationStack(path: stackNavigationPath(for: tabRoute)) {
                             destinationSurface(for: tabRoute)
-                        } label: {
-                            Label(tab.title, systemImage: tab.id.systemImage)
+                                .navigationDestination(for: CutoutAppRoute.self) { destination in
+                                    destinationContent(for: destination)
+                                        .navigationBarBackButtonHidden(destination != .capture)
+                                        #if os(iOS)
+                                            .toolbarVisibility(
+                                                destination == .capture ? .visible : .hidden, for: .navigationBar)
+                                        #endif
+                                }
+                                #if os(iOS)
+                                    .toolbarVisibility(.hidden, for: .navigationBar)
+                                #endif
                         }
-                        .accessibilityIdentifier(tab.accessibilityIdentifier)
+                    } label: {
+                        Label(tab.title, systemImage: tab.id.systemImage)
                     }
+                    .accessibilityIdentifier(tab.accessibilityIdentifier)
                 }
             }
-            .tint(tabAccent)
-            #if os(iOS)
-                tabs
-                    .toolbarBackground(PevColors.pageBackground, for: .tabBar)
-                    .toolbarBackground(.visible, for: .tabBar)
-            #else
-                tabs
-            #endif
+        }
+        .tint(tabAccent)
+        .appMusicCompactPlayer(
+            model: model,
+            onOpenDetails: openMusicPlayer,
+            onOpenSettings: { presentedSheet = .musicSettings }
+        )
+        #if os(iOS)
+            tabs
+                .toolbarBackground(PevColors.pageBackground, for: .tabBar)
+                .toolbarBackgroundVisibility(.visible, for: .tabBar)
+        #else
+            tabs
+        #endif
+    }
+
+    @ViewBuilder
+    private func destinationContent(for destination: CutoutAppRoute) -> some View {
+        if destination == .capture {
+            routedContent(for: destination)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .background(PevColors.pageBackground.ignoresSafeArea())
+                .accessibilityFocused($focusedRoute, equals: destination)
+        } else {
+            destinationSurface(for: destination)
         }
     }
 
@@ -223,27 +257,35 @@ struct ContentView: View {
         return false
     }
 
-    private func isRideMapDestination(_ destination: CutoutAppRoute) -> Bool {
-        destination == .rideMap || isRideMapDetail(destination)
+    private func disconnectAction(for destination: CutoutAppRoute) -> (() -> Void)? {
+        guard
+            CutoutNavigationCommands.canDisconnect(
+                currentRoute: destination,
+                hasConnection: model.device.selectedConnectionRoute != nil
+            )
+        else { return nil }
+        return { disconnectAndReturnToPicker() }
     }
 
     @ViewBuilder
     private func destinationSurface(for destination: CutoutAppRoute) -> some View {
-        ZStack {
-            PevColors.pageBackground
-                .ignoresSafeArea()
-            if destination == .camera || destination == .devicePicker {
+        let back: (() -> Void)? = destination.isMoreDestination ? { closeNestedDestination() } : nil
+        Group {
+            if destination == .devicePicker || isRideMapDetail(destination) {
                 routedContent(for: destination)
             } else {
                 PevAppShell(
                     sectionTitle: appSectionTitle(for: destination),
-                    disconnect: disconnectAndReturnToPicker
+                    isRideScreen: destination == .eucRide || destination == .vescRide,
+                    disconnect: disconnectAction(for: destination),
+                    back: back
                 ) {
                     routedContent(for: destination)
                 }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(PevColors.pageBackground.ignoresSafeArea())
         .accessibilityElement(children: .contain)
         .accessibilityLabel(appSectionTitle(for: destination))
         .accessibilityFocused($focusedRoute, equals: destination)
@@ -252,6 +294,59 @@ struct ContentView: View {
     @ViewBuilder
     private func routedContent(for destination: CutoutAppRoute) -> some View {
         switch destination {
+        case .more:
+            List {
+                ForEach(destination.moreNavigationTabs(for: model.device.selectedConnectionRoute)) { tab in
+                    if let target = tab.destinationTarget {
+                        NavigationLink(
+                            value: destination.destination(
+                                forNavigationTarget: target, connectionRoute: model.device.selectedConnectionRoute)
+                        ) {
+                            HStack(spacing: 12) {
+                                Image(systemName: tab.id.systemImage)
+                                    .foregroundStyle(.tint)
+                                    .accessibilityHidden(true)
+                                Text(tab.title)
+                                    .lineLimit(nil)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .frame(minHeight: 44)
+                        }
+                        .accessibilityIdentifier(tab.accessibilityIdentifier)
+                    }
+                }
+                Section {
+                    Button(action: openMusicPlayer) {
+                        HStack(spacing: 12) {
+                            Image(systemName: "music.note")
+                                .accessibilityHidden(true)
+                            Text(pevLocalizedText("music.settings.title"))
+                                .lineLimit(nil)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .frame(minHeight: 44)
+                    }
+                    .accessibilityIdentifier("more.music")
+                    if model.music.isPlayerHidden {
+                        Button(action: model.music.restorePlayer) {
+                            HStack(spacing: 12) {
+                                Image(systemName: "play.rectangle")
+                                    .accessibilityHidden(true)
+                                Text(pevLocalizedText("music.restore"))
+                                    .lineLimit(nil)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .frame(minHeight: 44)
+                        }
+                        .accessibilityIdentifier("music.restore")
+                    }
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .accessibilityIdentifier("more.screen")
         case .eucRide:
             EucRideRouteView(model: model)
         case .lighting:
@@ -277,6 +372,7 @@ struct ContentView: View {
             CaptureRouteView(capture: model.capture)
         case .camera:
             CameraRouteContainerView(
+                showsHeader: false,
                 recordMediaReference: { fileName, generation, provenance, localURL in
                     model.recordCameraMediaReference(
                         captureFileName: fileName,
@@ -294,11 +390,8 @@ struct ContentView: View {
                 { rideID in
                     rideMapPresentation.mode = .history
                     navigate(to: .rideMapDetail(rideID: rideID))
-                },
-                showsNavigationHeader: model.device.selectedConnectionRoute == nil,
-                showBackButton: model.device.selectedConnectionRoute == nil,
-                back: { navigate(to: .devicePicker) })
-        case let .rideMapDetail(rideID):
+                })
+        case .rideMapDetail(let rideID):
             RideMapRouteView(
                 model: model,
                 presentation: rideMapPresentation,
@@ -311,7 +404,7 @@ struct ContentView: View {
                 device: model.device,
                 pair: pair,
                 navigate: navigate,
-                openSetup: { isSetupPresented = true }
+                openSetup: { presentedSheet = .setup }
             )
             .accessibilityLabel(localizedAppText("picker.title"))
         }
@@ -319,6 +412,8 @@ struct ContentView: View {
 
     private func appSectionTitle(for destination: CutoutAppRoute) -> String {
         switch destination {
+        case .more:
+            localizedAppText("navigation.section.more")
         case .eucRide, .vescRide:
             localizedAppText("navigation.section.ride")
         case .lighting:
@@ -341,7 +436,7 @@ struct ContentView: View {
     }
 
     private var availableTabs: [PevScreenTab] {
-        route.availableNavigationTabs(for: model.device.selectedConnectionRoute)
+        rootRoute.primaryNavigationTabs(for: model.device.selectedConnectionRoute)
     }
 
     private var tabSelection: Binding<PevScreenTabID> {
@@ -400,6 +495,8 @@ extension PevScreenTabID {
         switch self {
         case .devices:
             "bolt.horizontal.circle"
+        case .more:
+            "ellipsis"
         case .camera:
             "video"
         case .ride:

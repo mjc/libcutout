@@ -133,6 +133,10 @@ impl Default for VeteranFrameReassembler {
 }
 
 impl VeteranFrameReassembler {
+    pub(crate) fn has_pending_bytes(&self) -> bool {
+        !self.buffer.is_empty()
+    }
+
     #[cfg(test)]
     pub(crate) fn saturated_candidate_for_test() -> Self {
         Self {
@@ -530,7 +534,7 @@ mod tests {
         reassembler.reset();
         let frames = feed_chunk(&mut reassembler, b"\x5c\x01\xaa");
 
-        assert!(frames.is_empty());
+        assert_eq!(frames.len(), 0);
     }
 
     #[test]

@@ -161,7 +161,7 @@ impl RiderDashboardProjection {
         Self {
             dashboard_metrics,
             safety_metrics: vec![RiderSafetyMetricDescriptor::PwmHeadroom {
-                value: pwm_headroom(input.operating_state, input.pwm),
+                value: pwm_headroom(input.pwm),
             }],
         }
     }
@@ -201,20 +201,10 @@ fn thermal_value(
     })
 }
 
-fn pwm_headroom(
-    operating_state: RideOperatingState,
-    pwm: Option<Measured<DutyCycle>>,
-) -> RiderMetricValue<u16> {
+fn pwm_headroom(pwm: Option<Measured<DutyCycle>>) -> RiderMetricValue<u16> {
     let Some(pwm) = pwm else {
         return RiderMetricValue::Unavailable;
     };
-    if !(match operating_state {
-        RideOperatingState::Riding | RideOperatingState::Standing => true,
-        _ => false,
-    }) {
-        return RiderMetricValue::NotApplicable;
-    }
-
     let raw_used = pwm.value.as_permille().unsigned_abs().min(1_000);
     let used = if raw_used <= PWM_IDLE_DEADBAND_PERMILLE {
         0
@@ -422,11 +412,13 @@ mod tests {
     }
 
     #[test]
-    fn pwm_headroom_is_not_applicable_outside_balancing_states() {
+    fn pwm_headroom_is_available_in_every_operating_state() {
         for operating_state in [
             RideOperatingState::Unknown,
             RideOperatingState::Parked,
             RideOperatingState::Charging,
+            RideOperatingState::Standing,
+            RideOperatingState::Riding,
         ] {
             let projection = RiderDashboardProjection::from_input(RiderDashboardInput {
                 operating_state,
@@ -437,7 +429,7 @@ mod tests {
             assert_eq!(
                 projection.safety_metrics,
                 vec![RiderSafetyMetricDescriptor::PwmHeadroom {
-                    value: RiderMetricValue::NotApplicable,
+                    value: RiderMetricValue::Available(500),
                 }]
             );
         }

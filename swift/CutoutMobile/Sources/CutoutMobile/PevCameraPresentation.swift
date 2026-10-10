@@ -227,8 +227,10 @@ public struct CameraReadOnlyEvidence: Equatable, Sendable {
     }
     public var storagePresent: Bool { snapshot.storagePresent }
     public var media: [CameraMediaEvidence] {
-        snapshot.media.map(CameraMediaEvidence.init)
+        (snapshot.media ?? []).map(CameraMediaEvidence.init)
     }
+
+    public var isMediaListLoaded: Bool { snapshot.media != nil }
 
     /// Number of bounded media records returned by the camera.
     public var mediaCount: Int { media.count }

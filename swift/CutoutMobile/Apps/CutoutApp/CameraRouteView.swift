@@ -10,6 +10,7 @@ import SwiftUI
 #endif
 
 struct CameraRouteContainerView: View {
+    let showsHeader: Bool
     let annotateCapture: ((String, String) -> Void)?
     let recordMediaReference: ((String, CaptureGeneration, MobileCameraMediaProvenanceDto, URL) -> Void)?
     let currentCaptureIdentity: (() -> (fileName: String, generation: CaptureGeneration)?)?
@@ -18,19 +19,20 @@ struct CameraRouteContainerView: View {
     @State private var controlModel: CameraControlModel
     @State private var mediaModel: CameraMediaModel
     @State private var discoveryModel: CameraDiscoveryModel
-    @State private var address = "192.168.1.254"
-    @State private var port = "80"
+    @State private var isVisible = false
     @State private var previewErrorKey: String?
     @State private var previewStartTask: Task<Void, Never>?
     @Environment(\.scenePhase) private var scenePhase
 
     init(
+        showsHeader: Bool = true,
         annotateCapture: ((String, String) -> Void)? = nil,
         recordMediaReference:
             ((String, CaptureGeneration, MobileCameraMediaProvenanceDto, URL) -> Void)? = nil,
         currentCaptureIdentity: (() -> (fileName: String, generation: CaptureGeneration)?)? = nil,
         sessionState: CutoutSessionStateHandle = CutoutSessionStateHandle()
     ) {
+        self.showsHeader = showsHeader
         self.annotateCapture = annotateCapture
         self.recordMediaReference = recordMediaReference
         self.currentCaptureIdentity = currentCaptureIdentity
@@ -56,12 +58,11 @@ struct CameraRouteContainerView: View {
 
     var body: some View {
         CameraRouteView(
+            showsHeader: showsHeader,
             presentation: adapter.presentation,
             readOnlyEvidence: adapter.readOnlyEvidence,
             movieRTSPURI: adapter.readOnlyEvidence?.movieRTSPURI,
             mediaModel: mediaModel,
-            address: $address,
-            port: $port,
             isReading: discoveryModel.isReading,
             readErrorKey: discoveryModel.readErrorKey ?? previewErrorKey,
             recordingRequestKey: controlModel.recordingRequestKey,
@@ -74,15 +75,23 @@ struct CameraRouteContainerView: View {
             previewRenderer: previewRenderer,
             loadEvidence: {
                 previewErrorKey = nil
-                _ = discoveryModel.load(address: address, port: port)
+                _ = discoveryModel.load()
             },
-            requestRecording: { controlModel.requestRecording(address: address, port: port, start: $0) },
-            requestStillCapture: { controlModel.requestStillCapture(address: address, port: port) },
+            loadMedia: { _ = discoveryModel.loadMedia() },
+            requestRecording: {
+                controlModel.requestRecording(
+                    address: discoveryModel.origin.address, port: String(discoveryModel.origin.port), start: $0)
+            },
+            requestStillCapture: {
+                controlModel.requestStillCapture(
+                    address: discoveryModel.origin.address, port: String(discoveryModel.origin.port))
+            },
             startPreview: { startPreview(saveTo: nil) },
             savePreview: { startPreview(saveTo: previewOutputURL()) },
             stopPreview: adapter.stopPreview
         )
         .task {
+            isVisible = true
             adapter.setPreviewConfigurationHandler { configuration in
                 try previewRenderer.configure(configuration)
             }
@@ -99,18 +108,36 @@ struct CameraRouteContainerView: View {
             }
             adapter.start()
         }
+        .onChange(of: adapter.networkRevision) { _, _ in
+            guard isVisible, scenePhase == .active else { return }
+            if adapter.isWiFiReady {
+                previewErrorKey = nil
+                _ = discoveryModel.connectIfNeeded(connection: adapter.presentation.connection)
+            } else {
+                discoveryModel.cancel()
+            }
+        }
+        .onChange(of: adapter.presentation.connection) { _, connection in
+            if isVisible, scenePhase == .active, connection == .connected {
+                startPreview(saveTo: nil)
+            }
+        }
         .onChange(of: adapter.savedPreviewFileURL) { _, url in
             guard let url else { return }
             annotateCapture?("camera_preview_file", url.lastPathComponent)
         }
         .onDisappear {
+            isVisible = false
             stopCameraWork()
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .background {
                 stopCameraWork()
-            } else if phase == .active {
+            } else if phase == .active, isVisible {
                 adapter.start()
+                if adapter.isWiFiReady {
+                    _ = discoveryModel.connectIfNeeded(connection: adapter.presentation.connection)
+                }
             }
         }
     }
@@ -127,11 +154,11 @@ struct CameraRouteContainerView: View {
                 if let url {
                     try await adapter.startPreview(
                         uri: uri,
-                        expectedAddress: address,
+                        expectedAddress: discoveryModel.origin.address,
                         saveTo: url
                     )
                 } else {
-                    try await adapter.startPreview(uri: uri, expectedAddress: address)
+                    try await adapter.startPreview(uri: uri, expectedAddress: discoveryModel.origin.address)
                 }
             } catch CameraReadOnlyRequestError.originMismatch {
                 previewErrorKey = "camera.error.origin_mismatch"
@@ -171,13 +198,12 @@ func cameraMediaLocalFileComponent(_ name: String) -> String {
 }
 
 struct CameraRouteView: View {
+    let showsHeader: Bool
     let presentation: CameraPresentation
     let readOnlyEvidence: CameraReadOnlyEvidence?
     let movieRTSPURI: String?
     let mediaModel: CameraMediaModel
     let hasPreviewSource: Bool
-    @Binding var address: String
-    @Binding var port: String
     let isReading: Bool
     let readErrorKey: String?
     let recordingRequestKey: String?
@@ -189,6 +215,7 @@ struct CameraRouteView: View {
     let savedFileURL: URL?
     let previewRenderer: CameraPreviewRenderer?
     let loadEvidence: (() -> Void)?
+    let loadMedia: (() -> Void)?
     let requestRecording: ((Bool) -> Void)?
     let requestStillCapture: (() -> Void)?
     let startPreview: (() -> Void)?
@@ -196,12 +223,11 @@ struct CameraRouteView: View {
     let stopPreview: (() -> Void)?
 
     init(
+        showsHeader: Bool = true,
         presentation: CameraPresentation = .initial,
         readOnlyEvidence: CameraReadOnlyEvidence? = nil,
         movieRTSPURI: String? = nil,
         mediaModel: CameraMediaModel = CameraMediaModel(),
-        address: Binding<String> = .constant("192.168.1.254"),
-        port: Binding<String> = .constant("80"),
         isReading: Bool = false,
         readErrorKey: String? = nil,
         recordingRequestKey: String? = nil,
@@ -213,19 +239,19 @@ struct CameraRouteView: View {
         savedFileURL: URL? = nil,
         previewRenderer: CameraPreviewRenderer? = nil,
         loadEvidence: (() -> Void)? = nil,
+        loadMedia: (() -> Void)? = nil,
         requestRecording: ((Bool) -> Void)? = nil,
         requestStillCapture: (() -> Void)? = nil,
         startPreview: (() -> Void)? = nil,
         savePreview: (() -> Void)? = nil,
         stopPreview: (() -> Void)? = nil
     ) {
+        self.showsHeader = showsHeader
         self.presentation = presentation
         self.readOnlyEvidence = readOnlyEvidence
         self.movieRTSPURI = movieRTSPURI
         self.mediaModel = mediaModel
         self.hasPreviewSource = movieRTSPURI != nil
-        self._address = address
-        self._port = port
         self.isReading = isReading
         self.readErrorKey = readErrorKey
         self.recordingRequestKey = recordingRequestKey
@@ -237,6 +263,7 @@ struct CameraRouteView: View {
         self.savedFileURL = savedFileURL
         self.previewRenderer = previewRenderer
         self.loadEvidence = loadEvidence
+        self.loadMedia = loadMedia
         self.requestRecording = requestRecording
         self.requestStillCapture = requestStillCapture
         self.startPreview = startPreview
@@ -248,7 +275,8 @@ struct CameraRouteView: View {
         PevDashboardScaffold(
             sectionTitle: localizedAppText("navigation.section.camera"),
             bottomPadding: 32,
-            horizontalPadding: 20
+            horizontalPadding: 20,
+            showsHeader: showsHeader
         ) {
             if #available(iOS 26, macOS 26, *) {
                 GlassEffectContainer(spacing: 16) {
@@ -266,122 +294,86 @@ struct CameraRouteView: View {
     private var cameraCards: some View {
         CameraStatusCard(
             presentation: presentation,
-            readOnlyEvidence: readOnlyEvidence,
-            movieRTSPURI: movieRTSPURI,
-            mediaModel: mediaModel,
-            address: $address,
-            port: $port,
             isReading: isReading,
             readErrorKey: readErrorKey,
             loadEvidence: loadEvidence
         )
-        CameraTruthCard(
-            presentation: presentation,
-            readOnlyEvidence: readOnlyEvidence,
-            savedFileURL: savedFileURL,
-            previewRenderer: previewRenderer,
-            hasPreviewSource: hasPreviewSource,
-            recordingRequestKey: recordingRequestKey,
-            isRequestingRecording: isRequestingRecording,
-            supportsOnboardRecording: supportsOnboardRecording,
-            stillRequestKey: stillRequestKey,
-            isRequestingStill: isRequestingStill,
-            supportsStillCapture: supportsStillCapture,
-            requestRecording: requestRecording,
-            requestStillCapture: requestStillCapture,
-            startPreview: startPreview,
-            savePreview: savePreview,
-            stopPreview: stopPreview
-        )
+        if presentation.connection == .connected {
+            CameraCaptureCard(
+                presentation: presentation,
+                savedFileURL: savedFileURL,
+                previewRenderer: previewRenderer,
+                hasPreviewSource: hasPreviewSource,
+                recordingRequestKey: recordingRequestKey,
+                isRequestingRecording: isRequestingRecording,
+                supportsOnboardRecording: supportsOnboardRecording,
+                stillRequestKey: stillRequestKey,
+                isRequestingStill: isRequestingStill,
+                supportsStillCapture: supportsStillCapture,
+                requestRecording: requestRecording,
+                requestStillCapture: requestStillCapture,
+                startPreview: startPreview,
+                savePreview: savePreview,
+                stopPreview: stopPreview
+            )
+            if let readOnlyEvidence, readOnlyEvidence.isMediaListLoaded {
+                let origin = mobileNovatekR3ProOrigin()
+                CameraMediaEvidenceList(
+                    media: readOnlyEvidence.media,
+                    address: origin.address,
+                    port: String(origin.port),
+                    supportsMediaThumbnails: readOnlyEvidence.supportsMediaThumbnails,
+                    model: mediaModel
+                )
+                .padding(20)
+                .cameraSurface(tint: PevColors.cyan)
+            } else if let loadMedia {
+                Button(action: loadMedia) {
+                    Label(localizedAppText("camera.evidence.media_title"), systemImage: "film.stack")
+                }
+                .buttonStyle(.bordered)
+                .disabled(isReading)
+                .accessibilityIdentifier("camera.files.load")
+            }
+        }
     }
 }
 
 private struct CameraStatusCard: View {
     let presentation: CameraPresentation
-    let readOnlyEvidence: CameraReadOnlyEvidence?
-    let movieRTSPURI: String?
-    let mediaModel: CameraMediaModel
-    @Binding var address: String
-    @Binding var port: String
     let isReading: Bool
     let readErrorKey: String?
     let loadEvidence: (() -> Void)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Label(localizedAppText("camera.setup.title"), systemImage: "video.fill")
-                .font(.title3.weight(.bold))
-
-            Text(connectionTitle)
-                .font(.headline)
-
-            Text(connectionDetail)
-                .font(.body)
-                .foregroundStyle(PevColors.muted)
-
-            if let profileName = presentation.profileName {
-                Label(profileName, systemImage: "checkmark.seal")
-                    .font(.subheadline.weight(.semibold))
-            } else {
-                Label(localizedAppText("camera.profile.pending"), systemImage: "questionmark.diamond")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(PevColors.muted)
-            }
-
-            if let readOnlyEvidence {
-                Divider()
-                CameraTruthRow(
-                    title: localizedAppText("camera.evidence.firmware"),
-                    value: readOnlyEvidence.firmwareVersion,
-                    systemImage: "cpu"
-                )
-                CameraTruthRow(
-                    title: localizedAppText("camera.evidence.media_count"),
-                    value: String(readOnlyEvidence.mediaCount),
-                    systemImage: "film.stack"
-                )
-                CameraMediaEvidenceList(
-                    media: readOnlyEvidence.media,
-                    address: address,
-                    port: port,
-                    supportsMediaThumbnails: readOnlyEvidence.supportsMediaThumbnails,
-                    model: mediaModel
-                )
-            }
-
-            if let loadEvidence {
-                Divider()
-                TextField(localizedAppText("camera.origin.address"), text: $address)
-                    .textFieldStyle(.roundedBorder)
-                    .accessibilityIdentifier("camera.origin.address")
-                TextField(localizedAppText("camera.origin.port"), text: $port)
-                    .textFieldStyle(.roundedBorder)
-                    .accessibilityIdentifier("camera.origin.port")
-                Button(action: loadEvidence) {
-                    Label(
-                        localizedAppText(isReading ? "camera.origin.reading" : "camera.origin.read"),
-                        systemImage: isReading ? "arrow.triangle.2.circlepath" : "checkmark.shield"
-                    )
+            Label(
+                readErrorKey != nil && !isReading && presentation.connection != .connected
+                    ? localizedAppText("camera.connection.not_configured") : connectionTitle,
+                systemImage: "video.fill"
+            )
+            .font(.title3.weight(.bold))
+            if presentation.connection != .connected {
+                if readErrorKey == nil {
+                    Text(connectionDetail)
+                        .foregroundStyle(PevColors.muted)
                 }
-                .buttonStyle(.borderedProminent)
-                .disabled(
-                    isReading
-                        || address.isEmpty
-                        || port.isEmpty
-                        || presentation.connection.blocksReadOnlyDiscovery
-                )
-                .accessibilityIdentifier("camera.origin.read")
-
-                if let readErrorKey {
-                    Text(localizedAppText(readErrorKey))
-                        .font(.footnote)
-                        .foregroundStyle(.red)
+                if let loadEvidence {
+                    Button(action: loadEvidence) {
+                        Label(
+                            localizedAppText(isReading ? "camera.origin.reading" : "camera.origin.read"),
+                            systemImage: "arrow.triangle.2.circlepath"
+                        )
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isReading || presentation.connection.blocksReadOnlyDiscovery)
+                    .accessibilityIdentifier("camera.connect")
                 }
             }
-
-            if movieRTSPURI != nil {
-                Label(localizedAppText("camera.preview.source_ready"), systemImage: "checkmark.circle")
-                    .font(.footnote.weight(.semibold))
+            if let readErrorKey {
+                Text(localizedAppText(readErrorKey))
+                    .font(.footnote)
+                    .foregroundStyle(.red)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -586,9 +578,8 @@ private func cameraThumbnailImage(data: Data) -> CGImage? {
     return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
 }
 
-private struct CameraTruthCard: View {
+private struct CameraCaptureCard: View {
     let presentation: CameraPresentation
-    let readOnlyEvidence: CameraReadOnlyEvidence?
     let savedFileURL: URL?
     let previewRenderer: CameraPreviewRenderer?
     let hasPreviewSource: Bool
@@ -624,17 +615,6 @@ private struct CameraTruthCard: View {
                 value: storageText,
                 systemImage: "sdcard"
             )
-
-            Text(localizedAppText("camera.privacy.local_only"))
-                .font(.footnote)
-                .foregroundStyle(PevColors.muted)
-
-            if readOnlyEvidence != nil {
-                Label(localizedAppText("camera.connection.bluetooth_warning"), systemImage: "exclamationmark.triangle")
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(.orange)
-                    .accessibilityElement(children: .combine)
-            }
 
             CameraRecordingControls(
                 isConnected: presentation.connection == .connected,
@@ -742,9 +722,6 @@ private struct CameraRecordingControls: View {
                         .disabled(isRequestingRecording || isRequestingStill)
                         .accessibilityIdentifier("camera.recording.request-stop")
                     }
-                    Text(localizedAppText("camera.recording.request_detail"))
-                        .font(.footnote)
-                        .foregroundStyle(PevColors.muted)
                     if let recordingRequestKey {
                         Text(localizedAppText(recordingRequestKey))
                             .font(.footnote)
@@ -802,11 +779,6 @@ private struct CameraPreviewControls: View {
                         }
                         .buttonStyle(.bordered)
                         .accessibilityIdentifier("camera.preview.start")
-                        Button(action: savePreview) {
-                            Label(localizedAppText("camera.preview.save"), systemImage: "arrow.down.to.line")
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .accessibilityIdentifier("camera.preview.save")
                     } else if let stopPreview {
                         Button(action: stopPreview) {
                             Label(localizedAppText("camera.preview.stop"), systemImage: "stop.fill")
@@ -814,6 +786,12 @@ private struct CameraPreviewControls: View {
                         .buttonStyle(.bordered)
                         .accessibilityIdentifier("camera.preview.stop")
                     }
+                    Button(action: savePreview) {
+                        Label(localizedAppText("camera.preview.save"), systemImage: "arrow.down.to.line")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("camera.preview.save")
+
                 }
 
                 Text(localizedAppText("camera.preview.saved_detail"))

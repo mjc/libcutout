@@ -20,21 +20,13 @@
             } dynamicIsland: { context in
                 DynamicIsland {
                     DynamicIslandExpandedRegion(.leading) {
-                        ViewThatFits(in: .horizontal) {
-                            HStack(spacing: 5) {
-                                PevLiveActivityBrandMark(size: 15)
-                                Text("CUTOUT")
-                                    .font(.caption.weight(.bold))
-                            }
-                            Text("CUTOUT")
-                                .font(.caption.weight(.bold))
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        // The brand mark and wordmark are one visual identity;
-                        // expose one concise VoiceOver element instead of
-                        // announcing the same name twice.
-                        .accessibilityElement(children: .ignore)
-                        .accessibilityLabel("CutOut")
+                        DynamicIslandRideBrand()
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            // The brand mark and wordmark are one visual identity;
+                            // expose one concise VoiceOver element instead of
+                            // announcing the same name twice.
+                            .accessibilityElement(children: .ignore)
+                            .accessibilityLabel("CutOut")
                     }
                     DynamicIslandExpandedRegion(.trailing) {
                         ViewThatFits(in: .horizontal) {
@@ -123,6 +115,29 @@
                         .accessibilityValue(context.presentationSnapshot.minimalAccessibilitySummary)
                 }
             }
+        }
+    }
+
+    private struct DynamicIslandRideBrand: View {
+        @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+        var body: some View {
+            if dynamicTypeSize >= .accessibility5 {
+                wordmark
+            } else {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 5) {
+                        PevLiveActivityBrandMark(size: 15)
+                        wordmark
+                    }
+                    wordmark
+                }
+            }
+        }
+
+        private var wordmark: some View {
+            Text("CUTOUT")
+                .font(.caption.weight(.bold))
         }
     }
 

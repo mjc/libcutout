@@ -1332,7 +1332,9 @@ impl From<Measured<ChargeMode>> for ChargeModeReadingDto {
 }
 
 impl BatteryCurrentReadingDto {
-    fn from_bms_pack_current(current: BatteryCurrent, currents: BmsPackCurrents) -> Self {
+    /// Projects one pack current without losing the pair's source and verification.
+    #[must_use]
+    pub fn from_bms_pack_current(current: BatteryCurrent, currents: BmsPackCurrents) -> Self {
         Self {
             value: current.as_milliamps(),
             source: currents.source.into(),

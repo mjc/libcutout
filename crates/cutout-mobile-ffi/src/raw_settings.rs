@@ -94,7 +94,7 @@ mod tests {
         }
         let frame = captured.expect("independent captured page 8");
         let handle = CutoutSessionStateHandle::new();
-        assert!(handle.raw_settings_snapshot().pages.is_empty());
+        assert_eq!(handle.raw_settings_snapshot().pages.len(), 0);
         let token = handle
             .begin_connection_attempt("NF2557".into(), 0)
             .token
@@ -144,12 +144,12 @@ mod tests {
         assert_eq!(handle.raw_settings_snapshot(), snapshot);
         assert_eq!(handle.settings_snapshot(), settings);
         handle.connection_link_down(token);
-        assert!(handle.raw_settings_snapshot().pages.is_empty());
+        assert_eq!(handle.raw_settings_snapshot().pages.len(), 0);
         let replacement = handle.begin_connection_attempt("NF2557".into(), 100);
         assert_eq!(
             handle.raw_settings_snapshot().session.connection,
             replacement
         );
-        assert!(handle.raw_settings_snapshot().pages.is_empty());
+        assert_eq!(handle.raw_settings_snapshot().pages.len(), 0);
     }
 }

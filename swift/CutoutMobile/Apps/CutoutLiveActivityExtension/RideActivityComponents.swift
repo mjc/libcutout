@@ -3,9 +3,25 @@
     import SwiftUI
 
     struct DynamicIslandRideActivityView: View {
+        @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
         let snapshot: LiveActivityRideSnapshot
 
         var body: some View {
+            Group {
+                if dynamicTypeSize.isAccessibilitySize {
+                    compactComposition
+                } else {
+                    regularComposition
+                }
+            }
+            .padding(.top, 3)
+            .frame(maxWidth: .infinity)
+            .foregroundStyle(PevLiveActivityPalette.primaryText)
+            .accessibilityElement(children: .contain)
+        }
+
+        private var regularComposition: some View {
             ViewThatFits(in: [.horizontal, .vertical]) {
                 HStack(alignment: .center, spacing: 8) {
                     VStack(spacing: 4) {
@@ -31,17 +47,17 @@
                 }
                 .frame(maxWidth: .infinity)
 
-                HStack(spacing: 10) {
-                    PevLiveActivitySpeedGauge(snapshot: snapshot, diameter: 52)
-                    PevLiveActivitySafetyFooter(snapshot: snapshot, compact: true)
-                        .frame(maxWidth: .infinity)
-                }
-                .frame(maxWidth: .infinity)
+                compactComposition
             }
-            .padding(.top, 3)
+        }
+
+        private var compactComposition: some View {
+            HStack(spacing: 10) {
+                PevLiveActivitySpeedGauge(snapshot: snapshot, diameter: 52)
+                PevLiveActivitySafetyFooter(snapshot: snapshot, compact: true)
+                    .frame(maxWidth: .infinity)
+            }
             .frame(maxWidth: .infinity)
-            .foregroundStyle(PevLiveActivityPalette.primaryText)
-            .accessibilityElement(children: .contain)
         }
     }
 

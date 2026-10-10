@@ -33,6 +33,24 @@ final class CutoutSessionBluetoothWriteAdapter {
         isCurrent: @escaping () -> Bool,
         onReceipt: @escaping (CoreBluetoothWriteDisposition) -> Void
     ) -> CoreBluetoothWriteDisposition {
+        submit(
+            channel: channel,
+            bytes: bytes,
+            canSend: { peripheral.canSendWriteWithoutResponse },
+            isCurrent: isCurrent,
+            write: { peripheral.writeValue(bytes, for: characteristic, type: .withoutResponse) },
+            onReceipt: onReceipt
+        )
+    }
+
+    func submit(
+        channel: BluetoothUuid,
+        bytes: Data,
+        canSend: @escaping () -> Bool,
+        isCurrent: @escaping () -> Bool,
+        write: @escaping () -> Void,
+        onReceipt: @escaping (CoreBluetoothWriteDisposition) -> Void
+    ) -> CoreBluetoothWriteDisposition {
         let (writeID, overflow) = nextWriteID.addingReportingOverflow(1)
         guard !overflow else {
             onReceipt(.rejected)
@@ -47,13 +65,13 @@ final class CutoutSessionBluetoothWriteAdapter {
         }
         return pendingWrites.submit(
             canSend: {
-                isCurrent() && peripheral.canSendWriteWithoutResponse
+                isCurrent() && canSend()
             },
             isCurrent: {
                 isCurrent()
             },
             write: { [recordWrite] in
-                peripheral.writeValue(bytes, for: characteristic, type: .withoutResponse)
+                write()
                 recordWrite(channel, bytes)
             },
             onReceipt: { disposition in

@@ -161,6 +161,52 @@ final class DeviceSessionTransportTests: XCTestCase {
         }
     }
 
+    func testPassiveTelemetryTransportHasNoIdleClockUpdates() async throws {
+        let clockReads = TransportClockReadCount()
+        let (_, transport, sink) = try queue.sync {
+            try makeReadyTransport(
+                clock: MonotonicClock(now: {
+                    clockReads.increment()
+                    return MonotonicMilliseconds(100)
+                }))
+        }
+        let before = clockReads.value
+        try await Task.sleep(for: .milliseconds(250))
+        queue.sync {
+            let after = clockReads.value
+            XCTAssertEqual(after, before, "passive transport must not fire an idle timer")
+            XCTAssertTrue(sink.writes.isEmpty)
+            transport.invalidate()
+        }
+    }
+
+    func testInactiveSettingsPresentationPreservesTimeoutAndCatchesUpOnActivation() throws {
+        try queue.sync {
+            let now = Mutex<UInt64>(100)
+            let (state, transport, sink) = try makeReadyTransport(
+                clock: MonotonicClock(now: { MonotonicMilliseconds(now.withLock { $0 }) }))
+            defer { transport.invalidate() }
+            var published: [DeviceSettings] = []
+            transport.onSettingsChange = { published.append($0) }
+            transport.setPresentationActive(false)
+            _ = try transport.submitSetting(.displayBrightness, value: .number(value: 10), at: MonotonicMilliseconds(3))
+            XCTAssertEqual(state.settings().setting(for: .displayBrightness)?.transport, .submitted)
+            XCTAssertTrue(published.isEmpty)
+
+            sink.canSend = false
+            now.withLock { $0 = 2_100 }
+            transport.handleTimer()
+            XCTAssertEqual(state.settings().setting(for: .displayBrightness)?.status, .timedOut)
+            XCTAssertTrue(published.isEmpty, "settings deadlines must not require visible presentation")
+
+            transport.setPresentationActive(true)
+            XCTAssertEqual(published.count, 1)
+            XCTAssertEqual(published.last?.setting(for: .displayBrightness)?.status, .timedOut)
+            transport.setPresentationActive(true)
+            XCTAssertEqual(published.count, 1, "repeated active observations must not republish unchanged settings")
+        }
+    }
+
     func testUncorrelatedActionUsesConnectionGuardAndRetiredAttemptCannotFlush() throws {
         try queue.sync {
             let (state, transport, sink) = try makeReadyTransport(writeLimit: 64)
@@ -533,5 +579,15 @@ private final class TransportSink: CoreBluetoothOperationSink {
         self.pending.removeAll()
         receipts.removeAll()
         pending.forEach { $0(.cancelled) }
+    }
+}
+
+private final class TransportClockReadCount: Sendable {
+    private let count = Mutex(0)
+
+    var value: Int { count.withLock { $0 } }
+
+    func increment() {
+        count.withLock { $0 += 1 }
     }
 }

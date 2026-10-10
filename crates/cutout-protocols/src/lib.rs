@@ -92,8 +92,8 @@ pub use novatek::{
     NovatekStatusCode, NovatekStillCaptureCapability, NovatekStillCaptureCommand,
     NovatekStoragePresence, is_r3_pro_firmware, media_download_target, media_thumbnail_target,
     parse_command_response, parse_command_response_for_id, parse_configuration_response,
-    parse_firmware_response, parse_live_view_response, parse_media_list_response,
-    parse_read_only_snapshot, parse_storage_response,
+    parse_connection_snapshot, parse_firmware_response, parse_live_view_response,
+    parse_media_list_response, parse_read_only_snapshot, parse_storage_response,
 };
 mod rtsp;
 pub use rtsp::{
@@ -106,6 +106,7 @@ pub use probe::{AeroProbe, FalconProbe, ProtocolProbe};
 mod parser;
 mod refloat_codec;
 mod registry;
+mod wire_crc;
 pub use registry::{
     BEGODE_FALCON_REGISTRY_ENTRY, BEGODE_FALCON_SESSION_KEY, BEGODE_PARSER_KEY, MODEL_CATALOG,
     MODEL_REGISTRY, NOSFET_AERO_REGISTRY_ENTRY, NOSFET_AERO_SESSION_KEY, RegisteredEucSession,
@@ -145,11 +146,12 @@ pub use session::DangerousControlSession;
 pub use session::{
     BegodeFalconModel, BegodeNotificationDecoder, BenignControlOperation, BenignControlSession,
     DangerousActuationOperation, Manufacturer, NoopNotificationDecoder, NosfetAeroModel,
-    ProtocolModelSpec, ProtocolOperation, ReadOnlyModelSpec, ReadOnlyNotificationDecoder,
-    ReadOnlyOperation, ReadOnlySession, RegisteredModelSpec, SettingsWriteOperation,
-    StationarySettingsWriteSession, SupportsBenignControls, SupportsDangerousActuation,
-    SupportsReadRequests, SupportsSettingsWrites, VESC_RAW_ABSOLUTE_TACHOMETER_FIELD_ID,
-    VESC_RAW_CONTROLLER_ID_FIELD_ID, VESC_RAW_CURRENT_FAULT_CODE_FIELD_ID, VESC_RAW_ERPM_FIELD_ID,
+    NotificationBufferState, ProtocolModelSpec, ProtocolOperation, ReadOnlyModelSpec,
+    ReadOnlyNotificationDecoder, ReadOnlyOperation, ReadOnlySession, RegisteredModelSpec,
+    SettingsWriteOperation, StationarySettingsWriteSession, SupportsBenignControls,
+    SupportsDangerousActuation, SupportsReadRequests, SupportsSettingsWrites,
+    VESC_RAW_ABSOLUTE_TACHOMETER_FIELD_ID, VESC_RAW_CONTROLLER_ID_FIELD_ID,
+    VESC_RAW_CURRENT_FAULT_CODE_FIELD_ID, VESC_RAW_ERPM_FIELD_ID,
     VESC_RAW_STATS_COUNT_TIME_FIELD_ID, VESC_RAW_STATS_CURRENT_AVG_FIELD_ID,
     VESC_RAW_STATS_POWER_AVG_FIELD_ID, VESC_RAW_STATS_SPEED_AVG_FIELD_ID, VESC_RAW_STATUS_FIELD_ID,
     VESC_RAW_TACHOMETER_FIELD_ID, VescGenericModel, VescNotificationDecoder,

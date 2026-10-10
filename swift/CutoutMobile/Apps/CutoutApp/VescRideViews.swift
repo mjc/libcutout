@@ -4,8 +4,8 @@ import SwiftUI
 
 struct VescRideScreenView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @Environment(\.verticalSizeClass) private var verticalSizeClass
-
+    @ScaledMetric(relativeTo: .headline) private var headroomLineHeight: CGFloat = 21
+    @ScaledMetric(relativeTo: .caption) private var footerHeight: CGFloat = 20
     let liveSnapshot: VescRideSnapshot?
     let phase: SessionConnectionPhase
     let now: MonotonicMilliseconds
@@ -22,97 +22,79 @@ struct VescRideScreenView: View {
     }
 
     var dashboardTiles: [PevDashboardTile] {
-        presentation.dashboardTiles
-    }
-
-    private var prioritizesMetrics: Bool {
-        guard dynamicTypeSize.isAccessibilitySize && verticalSizeClass == .compact else {
-            return false
+        guard liveSnapshot != nil else {
+            return VescRideScreenPresentation(
+                snapshot: VescRideSnapshot(
+                    title: presentation.title, vehicleKind: .unknown,
+                    subProtocol: .generic, controllerState: .unknown),
+                phase: phase, now: now, connectionStatusText: connectionStatusText
+            ).dashboardTiles
         }
-        switch presentation.dashboardSupport {
-        case .telemetryStale, .telemetryPending:
-            return false
-        case .dutyHeadroom, .none:
-            return presentation.warningCard == nil
-        }
+        return presentation.dashboardTiles
     }
 
     var body: some View {
         PevRideDashboardShell(
-            sectionTitle: localizedAppText("navigation.section.ride"),
             heroStyle: .vescOnewheel,
             title: presentation.title,
             subtitle: presentation.subtitle,
             statusTone: presentation.statusTone,
             captureStatusText: captureStatusText,
             speedReadout: presentation.speedReadout,
-            speedCaption: localizedAppText("vesc.speed.caption"),
-            allowsVerticalScroll: true
+            speedCaption: localizedAppText("vesc.speed.caption")
         ) {
-
-            if prioritizesMetrics {
-                metricsGrid
-            }
-
-            switch presentation.dashboardSupport {
-            case let .telemetryStale(elapsed):
-                PevDashboardWarningCard(
-                    title: localizedAppText("vesc.warning.telemetry_stale"),
-                    detail: localizedAppText(
-                        "vesc.warning.telemetry_stale_detail",
-                        Int64(elapsed.rawValue)
-                    ),
-                    accent: PevColors.primaryText,
-                    detailColor: PevColors.primaryText,
-                    fill: PevColors.cardFill,
-                    stroke: PevColors.primaryText,
-                    cornerRadius: 24
+            if dynamicTypeSize.isAccessibilitySize {
+                PevRideAccessibleReadings(
+                    headroomLabel: localizedAppText("vesc.duty_headroom.label"),
+                    headroom: liveSnapshot?.dutyHeadroomMetricValue ?? .unavailable,
+                    headroomProgress: liveSnapshot?.dutyHeadroomProgress,
+                    tiles: dashboardTiles,
+                    footpadText: liveSnapshot?.footpad?.stateDisplayText
                 )
-                .accessibilityIdentifier("vesc.warning.telemetry-stale")
-                .padding(.top, 12)
-            case let .dutyHeadroom(metricValue, progress):
-                PevDashboardProgressCard(
-                    label: localizedAppText("vesc.duty_headroom.label"),
-                    metricValue: metricValue,
-                    detail: localizedAppText("vesc.duty_headroom.detail"),
-                    progress: progress
-                )
-                .padding(.top, 12)
-            case .telemetryPending:
-                PevDashboardWarningCard(
-                    title: localizedAppText("vesc.subtitle.telemetry_pending"),
-                    detail: localizedAppText("vesc.telemetry_pending.detail"),
-                    tone: .vesc
-                )
-                .accessibilityIdentifier("vesc.warning.telemetry-pending")
-                .padding(.top, 12)
-            case .none:
-                EmptyView()
-            }
-
-            if let warningCard = presentation.warningCard {
-                PevDashboardWarningCard(
-                    title: warningCard.title,
-                    detail: warningCard.detail,
-                    tone: .vesc
-                )
-                .accessibilityIdentifier("vesc.warning.active")
-                .padding(.top, 10)
-            }
-
-            if let footpad = liveSnapshot?.footpad {
-                PevDashboardFootpadReadout(
-                    leftLabel: localizedAppText("vesc.footpad.left"),
-                    leftMetricValue: footpad.adc1MetricValue,
-                    rightLabel: localizedAppText("vesc.footpad.right"),
-                    rightMetricValue: footpad.adc2MetricValue,
-                    detail: footpad.stateDisplayText
-                )
-                .padding(.top, 8)
-            }
-
-            if !prioritizesMetrics {
-                metricsGrid
+            } else {
+                GeometryReader { geometry in
+                    VStack(spacing: 8) {
+                        PevDashboardProgressBar(
+                            label: localizedAppText("vesc.duty_headroom.label"),
+                            metricValue: liveSnapshot?.dutyHeadroomMetricValue ?? .unavailable,
+                            progress: liveSnapshot?.dutyHeadroomProgress,
+                            height: 10
+                        )
+                        .fixedSize(horizontal: false, vertical: true)
+                        PevDashboardGrid(
+                            columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)],
+                            spacing: 8
+                        ) {
+                            ForEach(dashboardTiles) { tile in
+                                PevDashboardMetricTile(
+                                    label: tile.kind == .motorCurrent
+                                        ? localizedAppText("vesc.metric.motor_current.compact") : tile.label,
+                                    metricValue: tile.metricValue, unit: tile.unit,
+                                    prominence: .ride
+                                )
+                                .accessibilityLabel(tile.label)
+                                .frame(
+                                    height: min(
+                                        108,
+                                        max(0, (geometry.size.height - headroomLineHeight - 17 - footerHeight - 24) / 2)
+                                    ))
+                            }
+                        }
+                        Group {
+                            if let footpad = liveSnapshot?.footpad {
+                                Text(footpad.stateDisplayText)
+                                    .font(.caption.weight(.semibold))
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.6)
+                            } else {
+                                Color.clear
+                                    .accessibilityHidden(true)
+                            }
+                        }
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(minHeight: 20)
+                    }
+                }
             }
         }
         .accessibilityElement(children: .contain)
@@ -129,12 +111,4 @@ struct VescRideScreenView: View {
         }
     }
 
-    private var metricsGrid: some View {
-        PevDashboardGrid(columnSpacing: 12, spacing: 12) {
-            ForEach(dashboardTiles) { tile in
-                PevDashboardMetricTile(tile, prominence: .compactDashboard)
-            }
-        }
-        .padding(.top, 8)
-    }
 }

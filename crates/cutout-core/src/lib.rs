@@ -17,6 +17,7 @@ use std::{
 };
 
 use arrayvec::ArrayVec;
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -2113,12 +2114,15 @@ pub fn validate_model_catalog(
 
 /// Deterministic fingerprint for a registry snapshot.
 ///
+/// SHA-256 hashes the canonical registry fields under the
+/// `cutout-registry-sha256-v1` domain, preserving entry order and explicit
+/// lengths, integer widths and optional-value discriminants.
 /// This is intended for capture provenance and replay compatibility checks. It
 /// is not a cryptographic authenticity mechanism.
 #[must_use]
 pub fn registry_entries_hash(entries: &[&ModelRegistryEntry]) -> [u8; 32] {
     let mut hasher = RegistryHashBuilder::new();
-    hasher.write_bytes(b"cutout-registry-v1");
+    hasher.write_bytes(b"cutout-registry-sha256-v1");
     hasher.write_usize(entries.len());
     for entry in entries {
         hasher.write_registry_entry(entry);
@@ -2213,28 +2217,18 @@ fn first_invalid_gatt_fingerprint_index(gatt: &[GattFingerprint]) -> Option<usiz
 }
 
 struct RegistryHashBuilder {
-    lanes: [u64; 4],
+    digest: Sha256,
 }
 
 impl RegistryHashBuilder {
-    const fn new() -> Self {
+    fn new() -> Self {
         Self {
-            lanes: [
-                0xcbf2_9ce4_8422_2325,
-                0x9e37_79b9_7f4a_7c15,
-                0x517c_c1b7_2722_0a95,
-                0x94d0_49bb_1331_11eb,
-            ],
+            digest: Sha256::new(),
         }
     }
 
     fn finish(self) -> [u8; 32] {
-        let mut output = [0u8; 32];
-        for (index, lane) in self.lanes.into_iter().enumerate() {
-            let start = index * 8;
-            output[start..start + 8].copy_from_slice(&lane.to_le_bytes());
-        }
-        output
+        self.digest.finalize().into()
     }
 
     fn write_registry_entry(&mut self, entry: &ModelRegistryEntry) {
@@ -2358,15 +2352,7 @@ impl RegistryHashBuilder {
     }
 
     fn write_bytes(&mut self, bytes: &[u8]) {
-        for byte in bytes {
-            for ((lane_index_u64, lane_index_u32), lane) in
-                (0_u64..).zip(0_u32..).zip(self.lanes.iter_mut())
-            {
-                *lane ^= u64::from(*byte).wrapping_add(lane_index_u64 << 8);
-                *lane = lane.wrapping_mul(0x0000_0100_0000_01b3 + lane_index_u64);
-                *lane ^= lane.rotate_left(17 + lane_index_u32);
-            }
-        }
+        self.digest.update(bytes);
     }
 }
 
@@ -3109,10 +3095,10 @@ impl RetainedNotificationPayload {
             return Self::Empty;
         }
 
-        if bytes.len() <= INLINE_RETAINED_NOTIFICATION_PAYLOAD_BYTES {
-            if let Some(retained) = InlineRetainedNotificationPayload::from_bytes(bytes) {
-                return Self::Inline(retained);
-            }
+        if bytes.len() <= INLINE_RETAINED_NOTIFICATION_PAYLOAD_BYTES
+            && let Some(retained) = InlineRetainedNotificationPayload::from_bytes(bytes)
+        {
+            return Self::Inline(retained);
         }
 
         Self::Bytes(Box::new(
@@ -5724,11 +5710,29 @@ impl Capacity {
 /// Linear speed stored in millimetres per second.
 pub type Speed = Quantity<Velocity, MillimetrePerSecond, i32>;
 
+/// Maximum absolute speed considered stationary for a connected wheel.
+///
+/// Use current wheel telemetry, not GPS or retained disconnected samples. This
+/// classification never changes the measured speed or gates other ride events.
+pub const CONNECTED_WHEEL_MOVEMENT_THRESHOLD: Speed = Speed::from_millimetres_per_second(500);
+
 impl Speed {
     /// Creates a speed from millimetres per second.
     #[must_use]
     pub const fn from_millimetres_per_second(value: i32) -> Self {
         Self::from_unit_value(value)
+    }
+
+    /// Whether current connected-wheel telemetry exceeds the stationary window.
+    ///
+    /// The caller must establish connection and freshness. Missing or stale
+    /// evidence must not be converted to a stationary speed.
+    #[must_use]
+    pub const fn is_moving(self) -> bool {
+        self.as_millimetres_per_second().unsigned_abs()
+            > CONNECTED_WHEEL_MOVEMENT_THRESHOLD
+                .as_millimetres_per_second()
+                .unsigned_abs()
     }
 
     /// Creates a speed from centimetres per second.
@@ -6517,6 +6521,9 @@ pub enum RideOperatingState {
 
 impl RideOperatingState {
     /// Charging evidence wins over parked/speed state; otherwise use explicit state.
+    ///
+    /// Speed fallback requires current connected-wheel telemetry. Pass no speed
+    /// when it is unavailable or stale; retained samples are not motion evidence.
     #[must_use]
     pub fn resolve(
         reported: Option<Self>,
@@ -6529,9 +6536,9 @@ impl RideOperatingState {
         if let Some(state) = reported.filter(|state| *state != Self::Unknown) {
             return state;
         }
-        match speed.map(Speed::as_millimetres_per_second) {
-            Some(0) => Self::Standing,
-            Some(_) => Self::Riding,
+        match speed.map(Speed::is_moving) {
+            Some(false) => Self::Standing,
+            Some(true) => Self::Riding,
             None => Self::Unknown,
         }
     }
@@ -9207,7 +9214,7 @@ mod tests {
         );
         let drained = core::mem::take(&mut output);
 
-        assert!(output.is_empty());
+        assert_eq!(output.len(), 0);
         assert_eq!(
             drained.as_slice(),
             &[SessionOutput::Transport(TransportAction::Write {
@@ -9966,6 +9973,111 @@ mod tests {
         assert_eq!(bms.series_cells, SeriesCount::new(30));
         assert_eq!(bms.parallel_packs, ParallelCount::new(2));
         assert_eq!(bms.selectors[1].kind, crate::BatteryPageKind::CellVoltage);
+    }
+
+    #[test]
+    fn registry_hash_sha256_empty_golden() {
+        // SHA-256 reference: b"cutout-registry-sha256-v1" followed by
+        // an eight-byte little-endian zero entry count.
+        assert_eq!(
+            crate::registry_entries_hash(&[]),
+            [
+                0x62, 0x84, 0x6f, 0x95, 0xce, 0x06, 0x71, 0x09, 0xf0, 0xe4, 0xb1, 0xb2, 0x9f, 0x4f,
+                0xfe, 0xc6, 0x7b, 0xab, 0x7f, 0x27, 0x80, 0xa1, 0x9c, 0x9f, 0xf2, 0xb4, 0x8e, 0x8d,
+                0x2f, 0xe0, 0xdc, 0x6a,
+            ]
+        );
+    }
+
+    fn populated_hash_entry() -> crate::ModelRegistryEntry {
+        let mut entry = sample_registry_entry_with_bms("NOSFET", "Aero", 30, 2);
+        entry.wire_model_id = Some(crate::VerifiedValue {
+            value: 43,
+            verification: VerificationStatus::HardwareVerified,
+        });
+        entry.battery = Some(crate::BatterySpec {
+            series_cells: SeriesCount::new(30),
+            nominal_capacity: Some(Capacity::from_milliamp_hours(10_000)),
+            voltage_range: Voltage::from_millivolts(99_180)..=Voltage::from_millivolts(123_370),
+            verification: VerificationStatus::SourceAndHardwareVerified,
+        });
+        entry
+    }
+
+    #[test]
+    fn registry_hash_sha256_populated_golden() {
+        // Independent hashlib.sha256 reference over the canonical domain,
+        // entry count and fixed fields, including wire ID, battery, BMS,
+        // GATT roles, capability flags and verification discriminants.
+        assert_eq!(
+            crate::registry_entries_hash(&[&populated_hash_entry()]),
+            [
+                0x36, 0xda, 0x0d, 0x66, 0xcf, 0x0c, 0x91, 0x9d, 0xc2, 0xa6, 0x06, 0x76, 0x05, 0xee,
+                0xa9, 0xf0, 0xcf, 0x46, 0xcd, 0xbf, 0x77, 0xd0, 0xdc, 0x8c, 0x56, 0x2d, 0xcd, 0x6f,
+                0x91, 0xa9, 0xa5, 0x91,
+            ]
+        );
+    }
+
+    #[test]
+    fn registry_hash_sha256_preserves_entry_order_and_optional_fields() {
+        let populated = populated_hash_entry();
+        let absent = sample_registry_entry("NOSFET", "Aero");
+        assert_eq!(
+            crate::registry_entries_hash(&[&absent]),
+            [
+                0x7f, 0x11, 0xd5, 0xa6, 0x2b, 0x56, 0x62, 0xd2, 0xf8, 0xec, 0x9a, 0xfc, 0xa2, 0x6f,
+                0x69, 0x42, 0x02, 0x3a, 0xf3, 0xde, 0xf7, 0x5c, 0x2a, 0x65, 0x7e, 0x44, 0x0d, 0xdd,
+                0x06, 0xfe, 0x44, 0x5a,
+            ]
+        );
+        assert_eq!(
+            crate::registry_entries_hash(&[&populated, &absent]),
+            [
+                0x56, 0xce, 0xda, 0x48, 0x8e, 0xf2, 0x6c, 0x5d, 0xb8, 0x5a, 0xc9, 0x50, 0xa1, 0x15,
+                0xf8, 0x12, 0x3d, 0xf3, 0xec, 0x5f, 0xe9, 0xd8, 0xcb, 0x04, 0x27, 0x92, 0xe9, 0xdf,
+                0xee, 0xef, 0xb7, 0x24,
+            ]
+        );
+        assert_eq!(
+            crate::registry_entries_hash(&[&absent, &populated]),
+            [
+                0xc6, 0x7a, 0xa3, 0x37, 0x51, 0xc9, 0x11, 0x63, 0xa9, 0xe5, 0xf5, 0xf9, 0x1c, 0xcf,
+                0xaf, 0xaa, 0x27, 0xad, 0xa9, 0x5a, 0xbd, 0x0a, 0x12, 0x68, 0xd6, 0x99, 0xf0, 0x54,
+                0x8f, 0x1d, 0x1f, 0x98,
+            ]
+        );
+    }
+
+    #[test]
+    fn registry_hash_preserves_canonical_value_boundaries() {
+        let first = sample_registry_entry("AB", "C");
+        let second = sample_registry_entry("A", "BC");
+        assert_ne!(
+            crate::registry_entries_hash(&[&first]),
+            crate::registry_entries_hash(&[&second])
+        );
+
+        let absent = sample_registry_entry("NOSFET", "Aero");
+        let mut zero = absent.clone();
+        zero.wire_model_id = Some(crate::VerifiedValue {
+            value: 0,
+            verification: VerificationStatus::Unverified,
+        });
+        assert_ne!(
+            crate::registry_entries_hash(&[&absent]),
+            crate::registry_entries_hash(&[&zero])
+        );
+
+        let mut absent_capacity = populated_hash_entry();
+        absent_capacity.battery.as_mut().unwrap().nominal_capacity = None;
+        let mut zero_capacity = absent_capacity.clone();
+        zero_capacity.battery.as_mut().unwrap().nominal_capacity =
+            Some(Capacity::from_milliamp_hours(0));
+        assert_ne!(
+            crate::registry_entries_hash(&[&absent_capacity]),
+            crate::registry_entries_hash(&[&zero_capacity])
+        );
     }
 
     #[test]
@@ -10953,8 +11065,8 @@ mod tests {
             model: "NOSFET Aero",
             arm_duration: Duration::from_milliseconds(100),
         };
-        let low_speed = Speed::from_millimetres_per_second(500);
-        let max_speed = Speed::from_millimetres_per_second(500);
+        let low_speed = crate::CONNECTED_WHEEL_MOVEMENT_THRESHOLD;
+        let max_speed = crate::CONNECTED_WHEEL_MOVEMENT_THRESHOLD;
 
         assert!(
             policy
@@ -11014,6 +11126,52 @@ mod tests {
     }
 
     #[test]
+    fn connected_wheel_motion_uses_the_stationary_speed_window() {
+        let threshold = crate::CONNECTED_WHEEL_MOVEMENT_THRESHOLD.as_millimetres_per_second();
+        for raw_speed in [-threshold, -threshold + 1, 0, threshold - 1, threshold] {
+            assert_eq!(
+                crate::RideOperatingState::resolve(
+                    None,
+                    None,
+                    Some(Speed::from_millimetres_per_second(raw_speed)),
+                ),
+                crate::RideOperatingState::Standing,
+                "speed {raw_speed}",
+            );
+        }
+        for raw_speed in [i32::MIN, -threshold - 1, threshold + 1, i32::MAX] {
+            assert_eq!(
+                crate::RideOperatingState::resolve(
+                    None,
+                    None,
+                    Some(Speed::from_millimetres_per_second(raw_speed)),
+                ),
+                crate::RideOperatingState::Riding,
+                "speed {raw_speed}",
+            );
+        }
+        assert_eq!(
+            crate::RideOperatingState::resolve(None, None, None),
+            crate::RideOperatingState::Unknown,
+        );
+        for state in [
+            crate::RideOperatingState::Parked,
+            crate::RideOperatingState::Standing,
+            crate::RideOperatingState::Riding,
+            crate::RideOperatingState::Charging,
+        ] {
+            assert_eq!(
+                crate::RideOperatingState::resolve(
+                    Some(state),
+                    None,
+                    Some(crate::CONNECTED_WHEEL_MOVEMENT_THRESHOLD),
+                ),
+                state,
+            );
+        }
+    }
+
+    #[test]
     fn charging_evidence_overrides_parked_state_and_zero_speed() {
         assert_eq!(
             crate::RideOperatingState::resolve(
@@ -11043,13 +11201,14 @@ mod tests {
             crate::RideOperatingState::Parked,
             crate::RideOperatingState::Standing,
         ] {
-            for raw_speed in [-501, 501] {
+            let threshold = crate::CONNECTED_WHEEL_MOVEMENT_THRESHOLD.as_millimetres_per_second();
+            for raw_speed in [-threshold - 1, threshold + 1] {
                 assert!(
                     policy
                         .arm_with_speed(
                             state,
                             Some(Speed::from_millimetres_per_second(raw_speed)),
-                            Some(Speed::from_millimetres_per_second(500)),
+                            Some(crate::CONNECTED_WHEEL_MOVEMENT_THRESHOLD),
                             ms(10),
                         )
                         .is_none()
@@ -12277,7 +12436,7 @@ mod tests {
             drained.as_slice(),
             &[SessionOutput::Event(DeviceEvent::LinkUp(link))]
         );
-        assert!(host.drain_outputs().is_empty());
+        assert_eq!(host.drain_outputs().len(), 0);
     }
 
     #[test]

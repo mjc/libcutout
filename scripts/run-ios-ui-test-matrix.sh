@@ -4,7 +4,7 @@ set -euo pipefail
 usage() {
   echo "Usage: scripts/run-ios-ui-test-matrix.sh [--smoke] [--plan-from enumeration.json] [--only-group \"appearance contrast content-size\"]"
   echo "  With no arguments, enumerate the compiled UI tests and run every test in settings-compatible groups."
-  echo "  --smoke selects the eight production-root smoke tests and runs them in compatible settings groups."
+  echo "  --smoke selects the production-root smoke tests and runs them in compatible settings groups."
   echo "  --plan-from prints the groups in an existing Xcode enumeration without running tests."
   echo "  --only-group runs or prints one exact settings group from the compiled enumeration."
 }
@@ -49,7 +49,7 @@ matrix_rows() {
           appearance: (if contains("InDarkAppearance") then "dark" else "light" end),
           contrast: (if contains("IncreasedContrast") then "enabled" else "disabled" end),
           content_size: (
-            if contains("AccessibilityDynamicType") or contains("RightToLeft")
+            if contains("AccessibilityDynamicType") or contains("AcrossAccessibilityCategories") or contains("RightToLeft")
             then "accessibility-extra-extra-extra-large"
             elif contains("ExtraExtraExtraLarge")
             then "extra-extra-extra-large"
@@ -154,6 +154,15 @@ run_group() {
   local selectors=()
   local identifier
   for identifier in "${group_tests[@]}"; do
+    case "$identifier" in
+      */testMusicPlayerPausedAcrossEucRideMapMoreAtAccessibilityDynamicType | \
+        */testPickerSurfaceSavedHistoryPreservesSelectionAndClearsFiltersWithoutReflow | \
+        */testEucPrimaryRoutesRemainUsableWithReduceMotionAndIncreasedContrastAtAccessibilityDynamicType | \
+        */testVescLiveActivityLockScreenSecondarySpeechAcrossAccessibilityCategories | \
+        */testVescLiveActivityAutoFixtureExpandedSecondarySpeechAcrossAccessibilityCategories)
+        timeout_seconds=$((timeout_seconds + 240))
+        ;;
+    esac
     selectors+=("-only-testing:$identifier")
   done
   echo "Running ${#group_tests[@]} tests with $group_key"

@@ -4,7 +4,7 @@ import XCTest
 @testable import CutoutMobile
 
 final class LiveActivityRideSnapshotTests: XCTestCase {
-    func testChargeEstimateDisplayNamesPreserveCollectingAndNearFullStates() {
+    func testChargeEstimateDisplayNamesPreserveCollectingFullAndBalancingStates() {
         let collecting = ChargeEstimateState(
             MobileChargeEstimateStateDto(
                 kind: .collectingSamples,
@@ -19,19 +19,16 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
         XCTAssertEqual(collecting.displayValue, "estimating")
         XCTAssertEqual(collecting.displayDetail, "estimating charge time · 2 samples")
 
-        let nearFull = ChargeEstimateState(
-            MobileChargeEstimateStateDto(
-                kind: .unavailable,
-                estimate: nil,
-                voltageSag: nil,
-                unavailableReason: .fullOrNearFull,
-                error: nil,
-                resetReason: nil,
-                samples: 0,
-                observedFor: MobileDurationDto(milliseconds: 0)
-            ))
-        XCTAssertEqual(nearFull.displayValue, "near full")
-        XCTAssertEqual(nearFull.displayDetail, "near full")
+        for (kind, expected) in [(MobileChargeEstimateStateKindDto.full, "Full"), (.balancing, "Balancing")] {
+            let state = ChargeEstimateState(
+                MobileChargeEstimateStateDto(
+                    kind: kind, estimate: nil, voltageSag: nil, unavailableReason: nil,
+                    error: nil, resetReason: nil, samples: 0,
+                    observedFor: MobileDurationDto(milliseconds: 0)
+                ))
+            XCTAssertEqual(state.displayValue, expected)
+            XCTAssertEqual(state.displayDetail, expected)
+        }
     }
 
     func testChargeEstimateAccessibilityCarriesKindAndConfidence() {
@@ -617,7 +614,7 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
         XCTAssertEqual(snapshot.packVoltage, .unavailable(label: "Voltage", unit: "V"))
     }
 
-    func testParkedSnapshotMarksPwmHeadroomNotApplicable() {
+    func testParkedSnapshotKeepsPwmHeadroomAvailable() {
         let snapshot = LiveActivityRideSnapshot(
             identity: .model(.aero),
             rideState: liveRideState(
@@ -634,9 +631,9 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
         )
 
         XCTAssertEqual(snapshot.connectionState, .connected)
-        XCTAssertEqual(snapshot.pwm.state, .notApplicable)
-        XCTAssertEqual(snapshot.headroom.state, .notApplicable)
-        XCTAssertEqual(snapshot.headroomSeverity, .notApplicable)
+        XCTAssertEqual(snapshot.pwm.state, .available)
+        XCTAssertEqual(snapshot.headroom.state, .available)
+        XCTAssertEqual(snapshot.headroomSeverity, .nominal)
     }
 
     func testPercentProgressComesFromAvailableAndStaleValues() {

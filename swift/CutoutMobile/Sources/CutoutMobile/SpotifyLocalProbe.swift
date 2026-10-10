@@ -45,9 +45,11 @@
             status = "Opening Spotify"
             // This is a playback action. It is never called on launch or reconnect.
             remote.authorizeAndPlayURI("") { [weak self] installed in
-                guard let self, !installed else { return }
-                self.awaitingCallback = false
-                self.status = "Spotify is not installed"
+                guard !installed else { return }
+                Task { @MainActor [weak self] in
+                    self?.awaitingCallback = false
+                    self?.status = "Spotify is not installed"
+                }
             }
         }
 

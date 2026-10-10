@@ -226,7 +226,10 @@ mod tests {
     fn capture_history_keysets_exclude_staging_and_do_not_repeat_new_imports() {
         let connection = connection();
         let limit = QueryLimit::new(1).unwrap();
-        assert!(list(&connection, None, limit).unwrap().captures.is_empty());
+        assert_eq!(
+            list(&connection, None, limit).unwrap().captures,
+            Vec::<StoredPevcapCapture>::new()
+        );
         for (digit, at) in [('0', 0), ('1', 10), ('2', 10)] {
             let digest = receipt(&connection, digit, at);
             stored(&connection, &digest, true);

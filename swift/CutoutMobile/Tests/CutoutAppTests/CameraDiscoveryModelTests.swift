@@ -5,7 +5,7 @@ import XCTest
 
 @MainActor
 final class CameraDiscoveryModelTests: XCTestCase {
-    func testInvalidPortDoesNotStartDiscoveryOrClearMediaEvidence() {
+    func testAutomaticConnectionSkipsUnavailableAndAlreadyConnectedStates() {
         var loadCount = 0
         var refreshCount = 0
         let model = CameraDiscoveryModel(
@@ -15,9 +15,12 @@ final class CameraDiscoveryModelTests: XCTestCase {
             },
             prepareForEvidenceRefresh: { refreshCount += 1 }
         )
-
-        XCTAssertNil(model.load(address: "192.168.1.254", port: "65536"))
-        XCTAssertEqual(model.readErrorKey, "camera.error.invalid_port")
+        let connections: [CameraConnectionPresentation] = [
+            .wifiRequired, .permissionRequired, .discovering, .connected, .unsupported,
+        ]
+        for connection in connections {
+            XCTAssertNil(model.connectIfNeeded(connection: connection))
+        }
         XCTAssertFalse(model.isReading)
         XCTAssertEqual(loadCount, 0)
         XCTAssertEqual(refreshCount, 0)
@@ -36,13 +39,13 @@ final class CameraDiscoveryModelTests: XCTestCase {
             annotateCapture: { annotations.append(($0, $1)) }
         )
 
-        let task = model.load(address: "192.168.1.254", port: "8080")
+        let task = model.connectIfNeeded(connection: .notConfigured)
         XCTAssertTrue(model.isReading)
         XCTAssertNil(model.readErrorKey)
         await task?.value
 
         XCTAssertEqual(requestedOrigin?.0, "192.168.1.254")
-        XCTAssertEqual(requestedOrigin?.1, 8080)
+        XCTAssertEqual(requestedOrigin?.1, 80)
         XCTAssertEqual(refreshCount, 1)
         XCTAssertEqual(annotations.map(\.0), ["camera_profile", "camera_firmware"])
         XCTAssertEqual(annotations.map(\.1), ["novatek_r3_pro", Self.evidence.firmwareVersion])
@@ -57,7 +60,7 @@ final class CameraDiscoveryModelTests: XCTestCase {
             observePermissionRequired: { permissionRequired = true }
         )
 
-        await model.load(address: "192.168.1.254", port: "80")?.value
+        await model.load()?.value
 
         XCTAssertEqual(model.readErrorKey, "camera.connection.detail.wifi_required")
         XCTAssertFalse(permissionRequired)
@@ -71,7 +74,7 @@ final class CameraDiscoveryModelTests: XCTestCase {
             observePermissionRequired: { permissionRequired = true }
         )
 
-        await model.load(address: "192.168.1.254", port: "80")?.value
+        await model.load()?.value
 
         XCTAssertTrue(permissionRequired)
         XCTAssertEqual(model.readErrorKey, "camera.error.read_failed")
@@ -97,9 +100,9 @@ final class CameraDiscoveryModelTests: XCTestCase {
             annotateCapture: { annotations.append(($0, $1)) }
         )
 
-        let firstTask = model.load(address: "192.168.1.254", port: "80")
+        let firstTask = model.load()
         await waitUntil { firstContinuation != nil }
-        let secondTask = model.load(address: "192.168.1.254", port: "80")
+        let secondTask = model.load()
         await waitUntil { secondContinuation != nil }
 
         firstContinuation?.resume(throwing: CameraReadOnlyRequestError.pathUnavailable)
@@ -115,12 +118,21 @@ final class CameraDiscoveryModelTests: XCTestCase {
         XCTAssertEqual(annotations.count, 2)
     }
 
+    func testFileListFailureHasAFileBrowsingError() async {
+        let model = CameraDiscoveryModel(
+            loadEvidence: { _, _ in throw URLError(.timedOut) }
+        )
+        await model.loadMedia()?.value
+        XCTAssertEqual(model.readErrorKey, "camera.error.media_list_failed")
+        XCTAssertFalse(model.isReading)
+    }
+
     func testUnsupportedProfileMapsToProfileError() async {
         let model = CameraDiscoveryModel(
             loadEvidence: { _, _ in throw CameraReadOnlyRequestError.unsupportedProfile }
         )
 
-        await model.load(address: "192.168.1.254", port: "80")?.value
+        await model.load()?.value
 
         XCTAssertEqual(model.readErrorKey, "camera.error.unsupported_profile")
         XCTAssertFalse(model.isReading)
