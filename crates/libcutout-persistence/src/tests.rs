@@ -2599,6 +2599,49 @@ fn lifecycle_timing_is_persisted_across_pause_and_reopen() {
 }
 
 #[test]
+fn saved_ride_keeps_the_terminal_recording_watermark_after_reopen() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-terminal-watermark-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let stopped = database
+        .create_ride_with_monotonic_start(RideSource::Live, 1_700_000_000_000, Some(1_000))
+        .unwrap();
+    for (event, at) in [
+        (RideEvent::Start, 1_000),
+        (RideEvent::Pause, 3_000),
+        (RideEvent::Resume, 5_000),
+        (RideEvent::Stop, 7_000),
+        (RideEvent::Save, 50_000),
+    ] {
+        database.transition_at(stopped, event, at).unwrap();
+    }
+    let interrupted = database
+        .create_ride_with_monotonic_start(RideSource::Live, 1_700_000_100_000, Some(1_000))
+        .unwrap();
+    for (event, at) in [
+        (RideEvent::Start, 1_000),
+        (RideEvent::Interrupt, 3_000),
+        (RideEvent::Save, 50_000),
+    ] {
+        database.transition_at(interrupted, event, at).unwrap();
+    }
+    database.shutdown().unwrap();
+
+    let database = RideDatabase::open(&path).unwrap();
+    for (ride, watermark, duration) in [(stopped, 7_000, 4_000), (interrupted, 3_000, 2_000)] {
+        let record = database.find_ride(ride).unwrap().unwrap();
+        assert_eq!(record.state(), RideLifecycleState::Saved);
+        assert_eq!(record.monotonic_last_event_milliseconds(), Some(watermark));
+        assert_eq!(record.duration_milliseconds(), duration);
+    }
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn interrupted_ride_can_resume_without_counting_downtime() {
     let _guard = test_guard();
     let path = std::env::temp_dir().join(format!(

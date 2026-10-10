@@ -539,7 +539,13 @@ impl RideRecordingTiming {
             }
             _ => {}
         }
-        self.last_event = at;
+        match (previous, next) {
+            (
+                RideLifecycleState::Stopped | RideLifecycleState::Interrupted,
+                RideLifecycleState::Saved | RideLifecycleState::Discarded,
+            ) => {}
+            _ => self.last_event = at,
+        }
         self
     }
 }
@@ -1242,7 +1248,7 @@ impl RideMapRecorder {
             _ => self.active_started_at_milliseconds,
         };
         self.active_interval_generation = active_interval_generation;
-        self.last_monotonic_milliseconds = self.last_monotonic_milliseconds.max(at_milliseconds);
+        self.last_monotonic_milliseconds = timing.last_monotonic_milliseconds();
         self.state = Some(state);
         Ok(())
     }
@@ -1583,8 +1589,8 @@ impl RideMapRecorder {
 mod tests {
     use super::{
         MonotonicMilliseconds, RideDurationMilliseconds, RideMapRecorder, RideMapSegmentId,
-        RidePointSequence, RideSegmentCount, RideSegmentStartReason, VehicleAssociation,
-        route_admission,
+        RidePointSequence, RideRecordingTiming, RideSegmentCount, RideSegmentStartReason,
+        VehicleAssociation, route_admission,
     };
     use crate::{
         Coordinate, LocationAdmission, LocationSample, LocationSource, RideEvent,
@@ -1594,6 +1600,23 @@ mod tests {
     #[test]
     fn imported_recording_does_not_offer_start_as_a_lifecycle_event() {
         assert_eq!(RideLifecycleState::Imported.recording_actions().len(), 0);
+    }
+
+    #[test]
+    fn importing_a_draft_advances_its_lifecycle_watermark() {
+        let timing = RideRecordingTiming::new(
+            monotonic(1_000),
+            None,
+            RideDurationMilliseconds::new(0),
+            RideDurationMilliseconds::new(0),
+        );
+        let transition = RideLifecycleState::Draft
+            .transition(RideEvent::Import)
+            .expect("draft can be imported");
+
+        let timing = timing.transitioned(transition, monotonic(1_000), monotonic(5_000));
+
+        assert_eq!(timing.last_monotonic_milliseconds(), monotonic(5_000));
     }
 
     #[test]
@@ -2285,6 +2308,10 @@ mod tests {
         );
 
         assert_eq!(
+            recorder.recording_timing().last_monotonic_milliseconds(),
+            monotonic(8_000)
+        );
+        assert_eq!(
             recorder.duration_milliseconds_at(monotonic(9_000)).as_u64(),
             3_000
         );
@@ -2355,6 +2382,101 @@ mod tests {
         assert_eq!(
             recorder.duration_milliseconds_at(monotonic(20_000)),
             RideDurationMilliseconds::new(9_000)
+        );
+    }
+
+    #[test]
+    fn save_after_stop_preserves_the_terminal_recording_watermark() {
+        let mut recorder = RideMapRecorder::new();
+        recorder.start(monotonic(1_000), None).expect("starts");
+        for (event, at) in [
+            (RideEvent::Pause, 2_000),
+            (RideEvent::Resume, 4_000),
+            (RideEvent::Stop, 5_000),
+        ] {
+            recorder
+                .apply_transition_at(
+                    recorder
+                        .validate_transition(event)
+                        .expect("valid transition"),
+                    monotonic(at),
+                )
+                .expect("transition applies");
+        }
+
+        assert_eq!(
+            recorder.recording_timing().last_monotonic_milliseconds(),
+            monotonic(5_000)
+        );
+
+        recorder
+            .apply_transition_at(
+                recorder
+                    .validate_transition(RideEvent::Save)
+                    .expect("save is valid"),
+                monotonic(9_000),
+            )
+            .expect("save applies");
+
+        assert_eq!(
+            recorder.recording_timing().last_monotonic_milliseconds(),
+            monotonic(5_000)
+        );
+    }
+
+    #[test]
+    fn save_after_interruption_preserves_the_interrupted_recording_watermark() {
+        let mut recorder = RideMapRecorder::new();
+        recorder.start(monotonic(1_000), None).expect("starts");
+        recorder
+            .apply_transition_at(
+                recorder
+                    .validate_transition(RideEvent::Interrupt)
+                    .expect("interrupt is valid"),
+                monotonic(3_000),
+            )
+            .expect("interrupt applies");
+
+        recorder
+            .apply_transition_at(
+                recorder
+                    .validate_transition(RideEvent::Save)
+                    .expect("save is valid"),
+                monotonic(8_000),
+            )
+            .expect("save applies");
+
+        assert_eq!(
+            recorder.recording_timing().last_monotonic_milliseconds(),
+            monotonic(3_000)
+        );
+    }
+
+    #[test]
+    fn discard_after_stop_preserves_the_terminal_recording_watermark() {
+        let mut recorder = RideMapRecorder::new();
+        recorder.start(monotonic(1_000), None).expect("starts");
+        recorder
+            .apply_transition_at(
+                recorder
+                    .validate_transition(RideEvent::Stop)
+                    .expect("stop is valid"),
+                monotonic(5_000),
+            )
+            .expect("stop applies");
+
+        recorder
+            .apply_transition_at(
+                recorder
+                    .validate_transition(RideEvent::Discard)
+                    .expect("discard is valid"),
+                monotonic(9_000),
+            )
+            .expect("discard applies");
+
+        assert_eq!(
+            recorder.recording_timing().last_monotonic_milliseconds(),
+            monotonic(5_000)
         );
     }
 
