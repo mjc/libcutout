@@ -131,14 +131,162 @@ struct PhoneGpsReceipt {
 }
 
 /// Selects fresh, ride-correlated speed from vehicle telemetry and phone GPS.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug)]
 pub struct RecordingSpeedState {
     vehicle: Option<SpeedObservation>,
     phone_gps: Option<SpeedObservation>,
     phone_gps_receipt: Option<PhoneGpsReceipt>,
+    motion: [Option<RideMotionObservation>; 64],
+    motion_count: usize,
+    latest_verified_motion_at: Option<u64>,
+    first_verified_motion_at: Option<u64>,
+    retired_motion_before: Option<u64>,
+}
+
+/// Motion ownership established by fresh telemetry from the verified associated wheel.
+///
+/// Parked remains authoritative through missing telemetry and link loss. Only a newer
+/// verified moving observation releases it; Bluetooth loss alone cannot distinguish an
+/// accidental drop from a powered-off wheel in a car.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RideMotionObservation {
+    /// Whether the shared connected-wheel movement threshold classified the wheel as parked.
+    pub parked: bool,
+    /// Original logical source time, never the time of a later GPS callback.
+    pub observed_at_milliseconds: u64,
+    /// Last parked transition, retained through Riding until a material point crosses it.
+    pub last_stationary_at_milliseconds: Option<u64>,
+}
+
+impl Default for RecordingSpeedState {
+    fn default() -> Self {
+        Self {
+            vehicle: None,
+            phone_gps: None,
+            phone_gps_receipt: None,
+            motion: [None; 64],
+            motion_count: 0,
+            latest_verified_motion_at: None,
+            first_verified_motion_at: None,
+            retired_motion_before: None,
+        }
+    }
 }
 
 impl RecordingSpeedState {
+    /// Restores durable motion ownership without fabricating a fresh speed or connection.
+    pub fn restore_motion(&mut self, observation: RideMotionObservation) {
+        self.motion = [None; 64];
+        if !observation.parked
+            && let Some(at) = observation.last_stationary_at_milliseconds
+            && at < observation.observed_at_milliseconds
+        {
+            self.motion[0] = Some(RideMotionObservation {
+                parked: true,
+                observed_at_milliseconds: at,
+                last_stationary_at_milliseconds: Some(at),
+            });
+            self.motion[1] = Some(observation);
+            self.motion_count = 2;
+        } else {
+            self.motion[0] = Some(observation);
+            self.motion_count = 1;
+        }
+        self.latest_verified_motion_at = Some(observation.observed_at_milliseconds);
+        self.first_verified_motion_at =
+            self.motion[0].map(|motion| motion.observed_at_milliseconds);
+        self.retired_motion_before = None;
+    }
+
+    /// Admits motion evidence only after the caller verifies wheel identity and connection.
+    ///
+    /// The bounded history stores transitions rather than every telemetry frame. Callbacks
+    /// within retired history are rejected by the recording owner; they never become
+    /// unknown fallback or borrow a future wheel observation. True initial unknown motion
+    /// before the first verified observation retains GPS-only admission.
+    pub fn observe_verified_motion(
+        &mut self,
+        millimetres_per_second: i32,
+        source_at_milliseconds: u64,
+        receipt_at_milliseconds: u64,
+    ) -> bool {
+        if receipt_at_milliseconds < source_at_milliseconds
+            || receipt_at_milliseconds.saturating_sub(source_at_milliseconds)
+                > cutout_ride_maps::TELEMETRY_FRESHNESS_MILLISECONDS
+            || self
+                .latest_verified_motion_at
+                .is_some_and(|at| source_at_milliseconds <= at)
+        {
+            return false;
+        }
+        self.latest_verified_motion_at = Some(source_at_milliseconds);
+        self.first_verified_motion_at
+            .get_or_insert(source_at_milliseconds);
+        let parked =
+            !cutout_core::Speed::from_millimetres_per_second(millimetres_per_second).is_moving();
+        if self
+            .latest_motion()
+            .is_some_and(|previous| previous.parked == parked)
+        {
+            return false;
+        }
+        if self.motion_count == self.motion.len() {
+            self.motion.rotate_left(1);
+            self.motion_count -= 1;
+            self.retired_motion_before =
+                self.motion[0].map(|motion| motion.observed_at_milliseconds);
+        }
+        let last_stationary_at_milliseconds = if parked {
+            Some(source_at_milliseconds)
+        } else {
+            self.latest_motion()
+                .and_then(|motion| motion.last_stationary_at_milliseconds)
+        };
+        self.motion[self.motion_count] = Some(RideMotionObservation {
+            parked,
+            observed_at_milliseconds: source_at_milliseconds,
+            last_stationary_at_milliseconds,
+        });
+        self.motion_count += 1;
+        true
+    }
+
+    /// Returns the latest logical-ride motion transition for durable checkpointing.
+    #[must_use]
+    pub fn latest_motion(&self) -> Option<RideMotionObservation> {
+        self.motion_count
+            .checked_sub(1)
+            .and_then(|index| self.motion[index])
+    }
+
+    /// Whether wheel-owned distance is parked at this GPS source time.
+    #[must_use]
+    pub fn parked_at(&self, source_at_milliseconds: u64) -> bool {
+        self.motion_at(source_at_milliseconds)
+            .is_some_and(|motion| motion.parked)
+    }
+
+    /// Latest transition at or before the provider's source clock.
+    #[must_use]
+    pub fn motion_at(&self, source_at_milliseconds: u64) -> Option<RideMotionObservation> {
+        self.motion[..self.motion_count]
+            .iter()
+            .rev()
+            .flatten()
+            .find(|motion| motion.observed_at_milliseconds <= source_at_milliseconds)
+            .copied()
+    }
+
+    /// Whether the source clock falls inside known motion history that was retired.
+    #[must_use]
+    pub fn motion_history_retired_at(&self, source_at_milliseconds: u64) -> bool {
+        self.first_verified_motion_at
+            .is_some_and(|first| source_at_milliseconds >= first)
+            && self
+                .retired_motion_before
+                .is_some_and(|oldest| source_at_milliseconds < oldest)
+    }
+
     /// Replaces the vehicle observation when its speed is valid.
     pub fn observe_vehicle(
         &mut self,

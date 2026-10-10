@@ -239,6 +239,7 @@ public enum MobileRideMapSegmentStartReason: Equatable, Hashable, Sendable {
     case resume
     case backgroundGap
     case importBoundary
+    case stationary
     case unknown
 
     public var isBackgroundGap: Bool {
@@ -255,6 +256,8 @@ public enum MobileRideMapSegmentStartReason: Equatable, Hashable, Sendable {
             return pevLocalizedText("ride_map.segment.background_gap")
         case .importBoundary:
             return pevLocalizedText("ride_map.segment.import_boundary")
+        case .stationary:
+            return pevLocalizedText("ride_map.segment.stationary")
         case .unknown:
             return pevLocalizedText("ride_map.segment.unknown")
         }
@@ -274,6 +277,8 @@ public enum MobileRideMapSegmentStartReason: Equatable, Hashable, Sendable {
             return pevLocalizedText("ride_map.segment.singleton_background_gap")
         case .importBoundary:
             return pevLocalizedText("ride_map.segment.singleton_import_boundary")
+        case .stationary:
+            return pevLocalizedText("ride_map.segment.singleton_stationary")
         case .unknown:
             return pevLocalizedText("ride_map.segment.singleton_unknown")
         }
@@ -522,6 +527,7 @@ public struct MobileRideMapSnapshotDto: Equatable, Hashable, Sendable {
     public let allowedActions: [MobileRideMapActionDto]
     public let telemetryState: MobileRideMapTelemetryStateDto
     public let summary: MobileRideMapSummaryDto
+    public let liveActivityStatistics: MobileRideMapLiveActivityStatisticsDto?
     public let liveSpeed: MobileRideMapSpeedDto?
     public let segmentCount: UInt64
     public let associatedVehicle: String?
@@ -537,6 +543,7 @@ public struct MobileRideMapSnapshotDto: Equatable, Hashable, Sendable {
         allowedActions: [MobileRideMapActionDto] = [],
         telemetryState: MobileRideMapTelemetryStateDto = .unknown,
         summary: MobileRideMapSummaryDto,
+        liveActivityStatistics: MobileRideMapLiveActivityStatisticsDto? = nil,
         liveSpeed: MobileRideMapSpeedDto? = nil,
         segmentCount: UInt64,
         associatedVehicle: String?,
@@ -551,6 +558,7 @@ public struct MobileRideMapSnapshotDto: Equatable, Hashable, Sendable {
         self.allowedActions = allowedActions
         self.telemetryState = telemetryState
         self.summary = summary
+        self.liveActivityStatistics = liveActivityStatistics
         self.liveSpeed = liveSpeed
         self.segmentCount = segmentCount
         self.associatedVehicle = associatedVehicle
@@ -740,6 +748,8 @@ public enum MobileRideMapAssociationDto: Equatable, Hashable, Sendable {
 public enum MobileRideMapDecisionReason: Equatable, Hashable, Sendable {
     case rideNotRecording
     case duplicateLocation
+    case parked
+    case motionHistoryRetired
     case timestampOutOfOrder
     case accuracyTooLow
     case unrealisticJump
@@ -1780,6 +1790,7 @@ public final class MobileRideMapState: @unchecked Sendable {
                 distanceMeters: snapshot.summary.distanceMeters,
                 durationMilliseconds: snapshot.summary.durationMilliseconds
             ),
+            liveActivityStatistics: snapshot.liveActivityStatistics,
             liveSpeed: snapshot.liveSpeed.source == .unavailable ? nil : snapshot.liveSpeed,
             segmentCount: snapshot.segmentCount,
             associatedVehicle: snapshot.associatedVehicle,
@@ -1910,6 +1921,7 @@ public final class MobileRideMapState: @unchecked Sendable {
         case .resume: return .resume
         case .backgroundGap: return .backgroundGap
         case .importBoundary: return .importBoundary
+        case .stationary: return .stationary
         }
     }
 
@@ -1932,6 +1944,8 @@ public final class MobileRideMapState: @unchecked Sendable {
         switch reason {
         case .rideNotRecording: return .rideNotRecording
         case .duplicateLocation: return .duplicateLocation
+        case .parked: return .parked
+        case .motionHistoryRetired: return .motionHistoryRetired
         case .timestampOutOfOrder: return .timestampOutOfOrder
         case .accuracyTooLow: return .accuracyTooLow
         case .unrealisticJump: return .unrealisticJump

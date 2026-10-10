@@ -7137,6 +7137,10 @@ pub enum MobileRideMapDecisionReasonDto {
     RideNotRecording,
     /// The sample repeats the latest accepted location.
     DuplicateLocation,
+    /// The associated wheel is known parked; provider evidence advanced without route distance.
+    Parked,
+    /// The callback falls within retired wheel-motion history and cannot use unknown fallback.
+    MotionHistoryRetired,
     /// The sample timestamp is not newer than the latest accepted sample.
     TimestampOutOfOrder,
     /// The reported horizontal accuracy exceeds the admission threshold.
@@ -7380,6 +7384,8 @@ pub enum MobileRideSegmentStartReasonDto {
     BackgroundGap,
     /// An imported artifact established the first route segment.
     ImportBoundary,
+    /// Wheel movement resumed after a stationary interval.
+    Stationary,
 }
 
 /// Rust-owned options for a bounded route display projection.
@@ -8062,6 +8068,9 @@ fn mobile_segment_start_reason_dto(
         ride_maps::RideSegmentStartReason::ImportBoundary => {
             MobileRideSegmentStartReasonDto::ImportBoundary
         }
+        ride_maps::RideSegmentStartReason::Stationary => {
+            MobileRideSegmentStartReasonDto::Stationary
+        }
     }
 }
 
@@ -8076,6 +8085,9 @@ fn mobile_segment_start_reason(
         }
         MobileRideSegmentStartReasonDto::ImportBoundary => {
             ride_maps::RideSegmentStartReason::ImportBoundary
+        }
+        MobileRideSegmentStartReasonDto::Stationary => {
+            ride_maps::RideSegmentStartReason::Stationary
         }
     }
 }
@@ -10522,31 +10534,131 @@ fn wall_clock_milliseconds() -> Result<u64, MobileRideMapCoreErrorDto> {
         })
 }
 
+impl RideDatabaseHandle {
+    fn update_ride_map_metadata_with_motion(
+        &self,
+        id: &MobileRideIdDto,
+        candidate_vehicle: Option<&str>,
+        associated_vehicle: Option<&str>,
+        associated_at_milliseconds: Option<u64>,
+        last_telemetry_at_milliseconds: Option<u64>,
+        motion: Option<persistence::RideMotionObservation>,
+    ) -> Result<(), MobileRideDatabaseError> {
+        let id = parse_mobile_ride_id(id)?;
+        self.inner
+            .update_ride_map_metadata_with_motion(
+                id,
+                candidate_vehicle,
+                associated_vehicle,
+                associated_at_milliseconds,
+                last_telemetry_at_milliseconds,
+                motion,
+            )
+            .map_err(map_ride_database_error)
+    }
+}
+
+fn location_admission_decision(
+    reason: ride_maps::LocationAdmission,
+) -> MobileRideMapCoreDecisionDto {
+    match reason {
+        ride_maps::LocationAdmission::Duplicate => MobileRideMapCoreDecisionDto::Ignored {
+            reason: MobileRideMapDecisionReasonDto::DuplicateLocation,
+        },
+        ride_maps::LocationAdmission::OutOfOrder => MobileRideMapCoreDecisionDto::Rejected {
+            reason: MobileRideMapDecisionReasonDto::TimestampOutOfOrder,
+        },
+        ride_maps::LocationAdmission::AccuracyTooLow => MobileRideMapCoreDecisionDto::Rejected {
+            reason: MobileRideMapDecisionReasonDto::AccuracyTooLow,
+        },
+        ride_maps::LocationAdmission::UnrealisticJump => MobileRideMapCoreDecisionDto::Rejected {
+            reason: MobileRideMapDecisionReasonDto::UnrealisticJump,
+        },
+        ride_maps::LocationAdmission::Accepted => MobileRideMapCoreDecisionDto::StorageError {
+            message: "location admission returned an invalid accepted error".to_owned(),
+        },
+    }
+}
+
+fn location_observation_advances_speed(
+    decision: &MobileRideMapCoreDecisionDto,
+    repeated_observation: bool,
+) -> bool {
+    match (decision, repeated_observation) {
+        (
+            MobileRideMapCoreDecisionDto::Accepted { .. }
+            | MobileRideMapCoreDecisionDto::Pending { .. }
+            | MobileRideMapCoreDecisionDto::Ignored {
+                reason: MobileRideMapDecisionReasonDto::Parked,
+            },
+            _,
+        )
+        | (
+            MobileRideMapCoreDecisionDto::Ignored {
+                reason: MobileRideMapDecisionReasonDto::DuplicateLocation,
+            }
+            | MobileRideMapCoreDecisionDto::StorageError { .. },
+            true,
+        ) => true,
+        (
+            MobileRideMapCoreDecisionDto::Rejected { .. }
+            | MobileRideMapCoreDecisionDto::Ignored { .. }
+            | MobileRideMapCoreDecisionDto::StorageError { .. },
+            _,
+        ) => false,
+    }
+}
+
 fn observe_telemetry_locked(
     state: &mut MobileRideMapCoreInner,
     at_ms: u64,
+    speed_observation: Option<MobileRideMapSpeedObservationDto>,
 ) -> Result<MobileRideMapTelemetryObservationDto, MobileRideMapCoreErrorDto> {
     state.require_ready()?;
     let at_ms = state.logical_monotonic_milliseconds(at_ms);
     let mut staged = state.admission_recorder.clone();
     let mut durable_staged = state.recorder.clone();
     let observation = staged.observe_telemetry(ride_maps::MonotonicMilliseconds::new(at_ms));
-    if observation == ride_maps::TelemetryObservation::Observed {
+    let accepted = match observation {
+        ride_maps::TelemetryObservation::Observed
+        | ride_maps::TelemetryObservation::AlreadyObserved => true,
+        _ => false,
+    };
+    let mut staged_speed = state.speed;
+    let mut motion_changed = false;
+    if accepted && let Some(speed) = speed_observation {
+        let source_at = state.logical_monotonic_milliseconds(speed.observed_at_ms);
+        if source_at >= state.speed_generation_started_at_ms {
+            staged_speed.observe_vehicle(
+                Some(speed.millimetres_per_second),
+                source_at,
+                state.generation,
+            );
+            motion_changed = staged_speed.observe_verified_motion(
+                speed.millimetres_per_second,
+                source_at,
+                at_ms,
+            );
+        }
+    }
+    if observation == ride_maps::TelemetryObservation::Observed || motion_changed {
         let _ = durable_staged.observe_telemetry(ride_maps::MonotonicMilliseconds::new(at_ms));
-        if state.persisted_telemetry_receipt.as_ref().map(|(id, _)| id) != state.ride_id.as_ref()
+        if (state.persisted_telemetry_receipt.as_ref().map(|(id, _)| id) != state.ride_id.as_ref()
+            || motion_changed)
             && let (Some(database), Some(id)) = (state.database.as_ref(), state.ride_id.clone())
         {
             database
-                .update_ride_map_metadata(
-                    id.clone(),
-                    staged.candidate_vehicle().map(str::to_owned),
-                    staged.associated_vehicle().map(str::to_owned),
+                .update_ride_map_metadata_with_motion(
+                    &id,
+                    staged.candidate_vehicle(),
+                    staged.associated_vehicle(),
                     staged
                         .associated_at_milliseconds()
                         .map(ride_maps::MonotonicMilliseconds::as_u64),
                     staged
                         .last_telemetry_at_milliseconds()
                         .map(ride_maps::MonotonicMilliseconds::as_u64),
+                    staged_speed.latest_motion(),
                 )
                 .map_err(map_core_error)?;
             state.persisted_telemetry_receipt = Some((id, at_ms));
@@ -10555,6 +10667,7 @@ fn observe_telemetry_locked(
     }
     state.recorder = durable_staged;
     state.admission_recorder = staged;
+    state.speed = staged_speed;
     Ok(observation.into())
 }
 
@@ -11359,26 +11472,8 @@ impl MobileRideMapCoreInner {
                 horizontal_accuracy_meters,
                 submission,
             )?;
-            let location_admitted = match (&decision, repeated_observation) {
-                (
-                    MobileRideMapCoreDecisionDto::Accepted { .. }
-                    | MobileRideMapCoreDecisionDto::Pending { .. },
-                    _,
-                )
-                | (
-                    MobileRideMapCoreDecisionDto::Ignored {
-                        reason: MobileRideMapDecisionReasonDto::DuplicateLocation,
-                    }
-                    | MobileRideMapCoreDecisionDto::StorageError { .. },
-                    Some(_),
-                ) => true,
-                (
-                    MobileRideMapCoreDecisionDto::Rejected { .. }
-                    | MobileRideMapCoreDecisionDto::Ignored { .. }
-                    | MobileRideMapCoreDecisionDto::StorageError { .. },
-                    _,
-                ) => false,
-            };
+            let location_admitted =
+                location_observation_advances_speed(&decision, repeated_observation.is_some());
             if location_admitted {
                 self.speed.observe_phone_gps(
                     sample.speed_meters_per_second,
@@ -11403,6 +11498,36 @@ impl MobileRideMapCoreInner {
         &mut self,
         sample: ride_maps::LocationSample,
     ) -> Result<ride_maps::AdmittedLocationSample, MobileRideMapCoreDecisionDto> {
+        if self.recorder.associated_vehicle().is_some()
+            && self
+                .speed
+                .motion_history_retired_at(sample.monotonic_milliseconds().as_u64())
+        {
+            return Err(MobileRideMapCoreDecisionDto::Rejected {
+                reason: MobileRideMapDecisionReasonDto::MotionHistoryRetired,
+            });
+        }
+        if self.recorder.associated_vehicle().is_some()
+            && let Some(at) = self
+                .speed
+                .motion_at(sample.monotonic_milliseconds().as_u64())
+                .and_then(|motion| motion.last_stationary_at_milliseconds)
+        {
+            self.recorder
+                .mark_stationary_boundary(ride_maps::MonotonicMilliseconds::new(at));
+            self.admission_recorder
+                .mark_stationary_boundary(ride_maps::MonotonicMilliseconds::new(at));
+        }
+        if self.recorder.associated_vehicle().is_some()
+            && self
+                .speed
+                .parked_at(sample.monotonic_milliseconds().as_u64())
+        {
+            self.observe_stationary_location(sample)?;
+            return Err(MobileRideMapCoreDecisionDto::Ignored {
+                reason: MobileRideMapDecisionReasonDto::Parked,
+            });
+        }
         // A pending material point cannot establish the suppression baseline. On worker
         // rejection, the same changed values must still be eligible for a durable retry.
         let admission = if self.pending_location_writes.is_empty() {
@@ -11465,27 +11590,72 @@ impl MobileRideMapCoreInner {
         } else {
             self.admission_recorder.admit_sample(sample)
         };
-        admission.map_err(|reason| match reason {
-            ride_maps::LocationAdmission::Duplicate => MobileRideMapCoreDecisionDto::Ignored {
-                reason: MobileRideMapDecisionReasonDto::DuplicateLocation,
-            },
-            ride_maps::LocationAdmission::OutOfOrder => MobileRideMapCoreDecisionDto::Rejected {
-                reason: MobileRideMapDecisionReasonDto::TimestampOutOfOrder,
-            },
-            ride_maps::LocationAdmission::AccuracyTooLow => {
-                MobileRideMapCoreDecisionDto::Rejected {
-                    reason: MobileRideMapDecisionReasonDto::AccuracyTooLow,
+        admission.map_err(location_admission_decision)
+    }
+
+    fn observe_stationary_location(
+        &mut self,
+        sample: ride_maps::LocationSample,
+    ) -> Result<(), MobileRideMapCoreDecisionDto> {
+        // A parked observation is not a route write, but it still follows all earlier
+        // admitted material writes. Rebuilding from their outcomes keeps the checkpoint's
+        // point-count fence and the provider ordering baseline exact.
+        if !self.pending_location_writes.is_empty() {
+            let outcomes = self.checkpoint_location_outcomes().map_err(|error| {
+                MobileRideMapCoreDecisionDto::StorageError {
+                    message: error.to_string(),
+                }
+            })?;
+            self.settled_location_outcomes.extend(outcomes);
+        }
+        let observation = self
+            .recorder
+            .admit_stationary_sample(sample)
+            .map_err(location_admission_decision)?;
+        if let Some(database) = self.database.as_ref() {
+            let id = self.ride_id.as_ref().ok_or_else(|| {
+                MobileRideMapCoreDecisionDto::StorageError {
+                    message: "stationary observation has no ride identifier".to_owned(),
+                }
+            })?;
+            let ride_id = parse_mobile_ride_id(id).map_err(|error| {
+                MobileRideMapCoreDecisionDto::StorageError {
+                    message: error.to_string(),
+                }
+            })?;
+            match database.inner.checkpoint_stationary_location_observation(
+                persistence::RideStationaryLocationCheckpoint {
+                    ride_id,
+                    expected_point_count: self.recorder.point_count(),
+                    observation: sample,
+                },
+            ) {
+                Ok(
+                    persistence::RideLocationObservationCheckpointOutcome::Applied
+                    | persistence::RideLocationObservationCheckpointOutcome::AlreadyObserved,
+                ) => {}
+                Ok(persistence::RideLocationObservationCheckpointOutcome::PointChanged) => {
+                    return Err(MobileRideMapCoreDecisionDto::StorageError {
+                        message: "stationary observation no longer matches the durable ride"
+                            .to_owned(),
+                    });
+                }
+                Err(error) => {
+                    return Err(MobileRideMapCoreDecisionDto::StorageError {
+                        message: error.to_string(),
+                    });
                 }
             }
-            ride_maps::LocationAdmission::UnrealisticJump => {
-                MobileRideMapCoreDecisionDto::Rejected {
-                    reason: MobileRideMapDecisionReasonDto::UnrealisticJump,
-                }
-            }
-            ride_maps::LocationAdmission::Accepted => MobileRideMapCoreDecisionDto::StorageError {
-                message: "location admission returned an invalid accepted error".to_owned(),
-            },
-        })
+        }
+        if !self.recorder.observe_stationary(observation) {
+            return Err(MobileRideMapCoreDecisionDto::StorageError {
+                message: "stationary observation capability no longer matches the recorder"
+                    .to_owned(),
+            });
+        }
+        self.admission_recorder = self.recorder.clone();
+        self.revision = self.revision.saturating_add(1);
+        Ok(())
     }
 
     fn apply_music_history_policy(&mut self, policy: CoreMusicHistoryPolicy) {
@@ -11805,6 +11975,17 @@ impl MobileRideMapCoreInner {
     }
 
     fn restore_location_observation(&mut self, stored_ride: &persistence::RideRecord) {
+        if let Some(motion) = stored_ride.motion_observation() {
+            self.speed.restore_motion(motion);
+            if let Some(at) = motion.last_stationary_at_milliseconds {
+                self.recorder
+                    .mark_stationary_boundary(ride_maps::MonotonicMilliseconds::new(at));
+            }
+        }
+        if let Some(sample) = stored_ride.stationary_location_observation() {
+            self.recorder.restore_stationary_observation(sample);
+            return;
+        }
         if let (Some(at), Some(wall_clock)) = (
             stored_ride.last_location_observed_monotonic_milliseconds(),
             stored_ride.last_location_observed_wall_clock_milliseconds(),
@@ -13702,7 +13883,7 @@ impl MobileRideMapCore {
         at_ms: u64,
     ) -> Result<MobileRideMapTelemetryObservationDto, MobileRideMapCoreErrorDto> {
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        observe_telemetry_locked(&mut state, at_ms)
+        observe_telemetry_locked(&mut state, at_ms, None)
     }
 
     pub(crate) fn observe_telemetry_for_vehicle_on_connection(
@@ -13726,29 +13907,7 @@ impl MobileRideMapCore {
         if !is_current_vehicle || !is_associated_vehicle {
             return Ok(MobileRideMapTelemetryObservationDto::NotAssociated);
         }
-        let observation = observe_telemetry_locked(&mut state, at_ms)?;
-        let telemetry_accepted = match observation {
-            MobileRideMapTelemetryObservationDto::Observed
-            | MobileRideMapTelemetryObservationDto::AlreadyObserved => true,
-            MobileRideMapTelemetryObservationDto::NotAssociated
-            | MobileRideMapTelemetryObservationDto::TimestampOutOfOrder
-            | MobileRideMapTelemetryObservationDto::RideNotOpen
-            | MobileRideMapTelemetryObservationDto::Unknown => false,
-        };
-        if telemetry_accepted {
-            let generation = state.generation;
-            if let Some(speed) = speed_observation {
-                let observed_at_ms = state.logical_monotonic_milliseconds(speed.observed_at_ms);
-                if observed_at_ms >= state.speed_generation_started_at_ms {
-                    state.speed.observe_vehicle(
-                        Some(speed.millimetres_per_second),
-                        observed_at_ms,
-                        generation,
-                    );
-                }
-            }
-        }
-        Ok(observation)
+        observe_telemetry_locked(&mut state, at_ms, speed_observation)
     }
 
     /// Admits one Core Location sample into the active recording.
@@ -14349,14 +14508,15 @@ impl MobileRideMapCoreInner {
         };
         if let (Some(database), Some(id)) = (self.database.as_ref(), self.ride_id.clone()) {
             database
-                .update_ride_map_metadata(
-                    id.clone(),
-                    self.recorder.candidate_vehicle().map(str::to_owned),
-                    self.recorder.associated_vehicle().map(str::to_owned),
+                .update_ride_map_metadata_with_motion(
+                    &id,
+                    self.recorder.candidate_vehicle(),
+                    self.recorder.associated_vehicle(),
                     self.recorder
                         .associated_at_milliseconds()
                         .map(ride_maps::MonotonicMilliseconds::as_u64),
                     Some(at),
+                    self.speed.latest_motion(),
                 )
                 .map_err(map_core_error)?;
             self.persisted_telemetry_receipt = Some((id, at));
@@ -19131,6 +19291,9 @@ impl VescReadOnlySession {
 
 #[cfg(test)]
 mod capture_recording_policy_tests;
+
+#[cfg(test)]
+mod stationary_route_tests;
 
 #[cfg(test)]
 mod tests {

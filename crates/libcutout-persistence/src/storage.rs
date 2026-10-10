@@ -1,4 +1,5 @@
 use crate::pevcap_limits::{LimitExceeded, PevcapLimits, PevcapUsage, check_limit};
+use crate::recording::RideMotionObservation;
 use cutout_core::{PevcapEncoding, PevcapEvent, PevcapPhoneLocation, PevcapReader, PevcapRecord};
 use cutout_music::{
     MusicEventTiming, MusicHistoryPolicy, MusicHistoryState, MusicProvider, MusicRideEvent,
@@ -6,13 +7,13 @@ use cutout_music::{
 };
 use cutout_ride_maps::{
     AverageSpeedMillimetresPerSecond, Coordinate, LocationAdmission, LocationSample,
-    LocationSource, MAX_LIVE_ROUTE_POINTS, RideEvent, RideLifecycleState, RideMapPoint,
-    RideMapRecorder, RideMapSegmentId, RidePointCount, RidePointSequence, RideSegmentStartReason,
-    RideSummary, RouteCameraBounds, RouteCameraRegion, RouteDisplayBudget, RouteDisplayPoint,
-    RouteEndpointMetadata, RoutePrivacyPolicy, RouteProjectionAccumulator,
+    LocationSource, MAX_LIVE_ROUTE_POINTS, MonotonicMilliseconds, RideEvent, RideLifecycleState,
+    RideMapPoint, RideMapRecorder, RideMapSegmentId, RidePointCount, RidePointSequence,
+    RideSegmentStartReason, RideSummary, RouteCameraBounds, RouteCameraRegion, RouteDisplayBudget,
+    RouteDisplayPoint, RouteEndpointMetadata, RoutePrivacyPolicy, RouteProjectionAccumulator,
     RouteSegmentDisplayMetadata, RouteTelemetryState, RouteViewport, TransitionError,
-    VehicleIdentity, WallClockUnixMilliseconds, count_segment_runs, route_camera_region,
-    route_segment_display_metadata,
+    VehicleIdentity, WallClockUnixMilliseconds, count_segment_runs, route_admission,
+    route_camera_region, route_segment_display_metadata,
 };
 use hex::encode as hex_encode;
 use rusqlite::{Connection, ErrorCode, OptionalExtension, params};
@@ -460,6 +461,8 @@ pub struct RideRecord {
     associated_at_ms: Option<u64>,
     last_telemetry_at_ms: Option<u64>,
     last_location_observation: Option<LocationObservationClocks>,
+    motion_observation: Option<RideMotionObservation>,
+    stationary_location_observation: Option<LocationSample>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -469,6 +472,27 @@ struct LocationObservationClocks {
 }
 
 impl RideRecord {
+    /// Latest durable wheel-motion evidence.
+    #[must_use]
+    pub const fn motion_observation(&self) -> Option<RideMotionObservation> {
+        self.motion_observation
+    }
+
+    /// Most recent parked-motion boundary, retained even after subsequent riding telemetry.
+    #[must_use]
+    pub const fn last_stationary_motion_at_milliseconds(&self) -> Option<u64> {
+        match self.motion_observation {
+            Some(motion) => motion.last_stationary_at_milliseconds,
+            None => None,
+        }
+    }
+
+    /// Latest suppressed stationary GPS observation, separate from route geometry.
+    #[must_use]
+    pub const fn stationary_location_observation(&self) -> Option<LocationSample> {
+        self.stationary_location_observation
+    }
+
     /// Returns the ride identifier.
     #[must_use]
     pub const fn id(&self) -> RideId {
@@ -1699,6 +1723,17 @@ pub struct RideLocationObservationCheckpoint {
     pub observation: LocationSample,
 }
 
+/// Durable stationary GPS evidence that does not add geometry or distance.
+#[derive(Clone, Copy, Debug)]
+pub struct RideStationaryLocationCheckpoint {
+    /// Owning logical ride.
+    pub ride_id: RideId,
+    /// Route point count captured before this observation.
+    pub expected_point_count: u64,
+    /// Validated live observation with its original clocks.
+    pub observation: LocationSample,
+}
+
 /// Durable outcome of a clock-only location checkpoint.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RideLocationObservationCheckpointOutcome {
@@ -2872,6 +2907,30 @@ impl RideDatabase {
         associated_at_ms: Option<u64>,
         last_telemetry_at_ms: Option<u64>,
     ) -> Result<(), StorageError> {
+        self.update_ride_map_metadata_with_motion(
+            ride_id,
+            candidate_vehicle,
+            associated_vehicle,
+            associated_at_ms,
+            last_telemetry_at_ms,
+            None,
+        )
+    }
+
+    /// Updates complete association metadata and optional wheel-motion evidence atomically.
+    /// A missing motion observation preserves the prior durable observation.
+    ///
+    /// # Errors
+    /// Returns a storage error for missing rides or invalid/out-of-order evidence.
+    pub fn update_ride_map_metadata_with_motion(
+        &self,
+        ride_id: RideId,
+        candidate_vehicle: Option<&str>,
+        associated_vehicle: Option<&str>,
+        associated_at_ms: Option<u64>,
+        last_telemetry_at_ms: Option<u64>,
+        motion: Option<RideMotionObservation>,
+    ) -> Result<(), StorageError> {
         let candidate_vehicle =
             normalize_optional_stored_text(candidate_vehicle, "candidate vehicle")?;
         let associated_vehicle =
@@ -2882,8 +2941,22 @@ impl RideDatabase {
             associated_vehicle,
             associated_at_ms,
             last_telemetry_at_ms,
+            motion,
             reply,
         })
+    }
+
+    /// Checkpoints stationary GPS clocks and coordinates without adding route geometry.
+    ///
+    /// # Errors
+    /// Returns a storage error if the transaction cannot be committed.
+    pub fn checkpoint_stationary_location_observation(
+        &self,
+        checkpoint: RideStationaryLocationCheckpoint,
+    ) -> Result<RideLocationObservationCheckpointOutcome, StorageError> {
+        self.request_blocking(
+            move |reply| Command::CheckpointStationaryLocationObservation { checkpoint, reply },
+        )
     }
 
     /// Stores a batch of raw BMS voltage samples independently of ride lifecycle.
@@ -4864,6 +4937,7 @@ enum Command {
         associated_vehicle: Option<String>,
         associated_at_ms: Option<u64>,
         last_telemetry_at_ms: Option<u64>,
+        motion: Option<RideMotionObservation>,
         reply: Reply<()>,
     },
     RecordBmsVoltageSamples {
@@ -5174,6 +5248,10 @@ enum Command {
     },
     RideCheckpoint {
         reply: Reply<()>,
+    },
+    CheckpointStationaryLocationObservation {
+        checkpoint: RideStationaryLocationCheckpoint,
+        reply: Reply<RideLocationObservationCheckpointOutcome>,
     },
     CheckpointLocationObservation {
         checkpoint: RideLocationObservationCheckpoint,
@@ -5753,23 +5831,71 @@ fn update_ride_map_metadata(
     associated_at_ms: Option<u64>,
     last_telemetry_at_ms: Option<u64>,
 ) -> Result<(), StorageError> {
+    update_ride_map_metadata_with_motion(
+        connection,
+        ride_id,
+        candidate_vehicle,
+        associated_vehicle,
+        associated_at_ms,
+        last_telemetry_at_ms,
+        None,
+    )
+}
+
+fn update_ride_map_metadata_with_motion(
+    connection: &Connection,
+    ride_id: RideId,
+    candidate_vehicle: Option<&str>,
+    associated_vehicle: Option<&str>,
+    associated_at_ms: Option<u64>,
+    last_telemetry_at_ms: Option<u64>,
+    motion: Option<RideMotionObservation>,
+) -> Result<(), StorageError> {
+    if motion.is_some_and(|motion| {
+        associated_vehicle.is_none()
+            || last_telemetry_at_ms.is_none_or(|at| at < motion.observed_at_milliseconds)
+            || associated_at_ms.is_none_or(|at| at > motion.observed_at_milliseconds)
+            || motion
+                .last_stationary_at_milliseconds
+                .is_some_and(|at| at > motion.observed_at_milliseconds)
+            || (motion.parked
+                && motion.last_stationary_at_milliseconds != Some(motion.observed_at_milliseconds))
+    }) {
+        return Err(StorageError::InvalidStoredValue {
+            field: "wheel motion evidence",
+            value: "unassociated or non-current telemetry".to_owned(),
+        });
+    }
     let changed = connection.execute(
-        "UPDATE rides
-         SET candidate_vehicle = ?2,
-             associated_vehicle = ?3,
-             associated_at_ms = ?4,
-             last_telemetry_at_ms = ?5
-         WHERE id = ?1",
+        "UPDATE rides SET candidate_vehicle = ?2, associated_vehicle = ?3, associated_at_ms = ?4,
+             last_telemetry_at_ms = ?5,
+             motion_parked = COALESCE(?6, motion_parked),
+             motion_observed_monotonic_ms = COALESCE(?7, motion_observed_monotonic_ms),
+             last_stationary_motion_monotonic_ms = COALESCE(?8, last_stationary_motion_monotonic_ms)
+         WHERE id = ?1 AND (?7 IS NULL OR motion_observed_monotonic_ms IS NULL
+             OR motion_observed_monotonic_ms < ?7
+             OR (motion_observed_monotonic_ms = ?7 AND motion_parked = ?6))
+         AND (?8 IS NULL OR last_stationary_motion_monotonic_ms IS NULL
+             OR last_stationary_motion_monotonic_ms <= ?8)",
         params![
             ride_id.uuid().to_string(),
             candidate_vehicle,
             associated_vehicle,
             associated_at_ms,
             last_telemetry_at_ms,
+            motion.map(|value| value.parked),
+            motion.map(|value| value.observed_at_milliseconds),
+            motion.and_then(|value| value.last_stationary_at_milliseconds)
         ],
     )?;
     if changed == 0 {
-        return Err(StorageError::NotFound);
+        if find_ride(connection, ride_id)?.is_none() {
+            return Err(StorageError::NotFound);
+        }
+        return Err(StorageError::InvalidStoredValue {
+            field: "wheel motion evidence",
+            value: "out of order".to_owned(),
+        });
     }
     Ok(())
 }
@@ -8416,10 +8542,12 @@ fn load_previous_ride_point(
     connection
         .query_row(
             "SELECT point.sequence, point.segment_id,
-                    CASE WHEN ride.last_location_observed_monotonic_ms >= point.monotonic_ms
+                    CASE WHEN ride.stationary_latitude_e7 IS NULL
+                         AND ride.last_location_observed_monotonic_ms >= point.monotonic_ms
                          AND ride.last_location_observed_wall_clock_ms > 0
                          THEN ride.last_location_observed_monotonic_ms ELSE point.monotonic_ms END,
-                    CASE WHEN ride.last_location_observed_monotonic_ms >= point.monotonic_ms
+                    CASE WHEN ride.stationary_latitude_e7 IS NULL
+                         AND ride.last_location_observed_monotonic_ms >= point.monotonic_ms
                          AND ride.last_location_observed_wall_clock_ms > 0
                          THEN ride.last_location_observed_wall_clock_ms ELSE point.wall_clock_ms END,
                     point.latitude_e7, point.longitude_e7, point.horizontal_accuracy_mm, point.source,
@@ -8465,6 +8593,65 @@ fn load_previous_ride_point(
         .map_err(StorageError::from)
 }
 
+fn checkpoint_stationary_location_observation(
+    connection: &Connection,
+    checkpoint: RideStationaryLocationCheckpoint,
+) -> Result<RideLocationObservationCheckpointOutcome, StorageError> {
+    use RideLocationObservationCheckpointOutcome::{AlreadyObserved, Applied, PointChanged};
+    let transaction = connection.unchecked_transaction()?;
+    let ride = find_ride(&transaction, checkpoint.ride_id)?.ok_or(StorageError::NotFound)?;
+    let observation = checkpoint.observation;
+    if ride.state() != RideLifecycleState::Active
+        || ride.source() != RideSource::Live
+        || ride.summary().point_count().as_u64() != checkpoint.expected_point_count
+        || observation.source() != LocationSource::Live
+        || observation.wall_clock_unix_milliseconds().as_u64() == 0
+        || ride
+            .monotonic_last_event_milliseconds()
+            .is_some_and(|at| observation.monotonic_milliseconds().as_u64() < at)
+        || ride.motion_observation().is_none_or(|motion| {
+            !motion.parked
+                && motion.observed_at_milliseconds <= observation.monotonic_milliseconds().as_u64()
+        })
+    {
+        return Ok(PointChanged);
+    }
+    let previous_point = load_previous_ride_point(&transaction, checkpoint.ride_id)?;
+    let previous = ride
+        .stationary_location_observation()
+        .or_else(|| previous_point.map(|point| point.sample));
+    if previous == Some(observation) {
+        return Ok(AlreadyObserved);
+    }
+    if route_admission(
+        ride.monotonic_created_at_milliseconds()
+            .map(MonotonicMilliseconds::new),
+        previous.as_ref(),
+        &observation,
+    ) != LocationAdmission::Accepted
+    {
+        return Ok(PointChanged);
+    }
+    transaction.execute(
+        "UPDATE rides SET last_location_observed_monotonic_ms = ?2,
+             last_location_observed_wall_clock_ms = ?3,
+             stationary_latitude_e7 = ?4, stationary_longitude_e7 = ?5,
+             stationary_horizontal_accuracy_mm = ?6,
+             monotonic_last_event_ms = MAX(COALESCE(monotonic_last_event_ms, ?2), ?2),
+             updated_at_ms = MAX(updated_at_ms, ?3) WHERE id = ?1",
+        params![
+            checkpoint.ride_id.uuid().to_string(),
+            observation.monotonic_milliseconds().as_u64(),
+            observation.wall_clock_unix_milliseconds().as_u64(),
+            observation.coordinate().latitude().as_i32(),
+            observation.coordinate().longitude().as_i32(),
+            observation.horizontal_accuracy_millimetres()
+        ],
+    )?;
+    transaction.commit()?;
+    Ok(Applied)
+}
+
 fn checkpoint_location_observation(
     connection: &Connection,
     checkpoint: RideLocationObservationCheckpoint,
@@ -8478,6 +8665,9 @@ fn checkpoint_location_observation(
     // Revalidation and the row update share a snapshot even if another connection writes.
     let transaction = connection.unchecked_transaction()?;
     let ride = find_ride(&transaction, ride_id)?.ok_or(StorageError::NotFound)?;
+    if ride.stationary_location_observation().is_some() {
+        return Ok(PointChanged);
+    }
     let Some(previous) = load_previous_ride_point(&transaction, ride_id)? else {
         return Ok(PointChanged);
     };
@@ -8638,6 +8828,7 @@ fn ensure_ride_segment(
         RideSegmentStartReason::Resume => "resume",
         RideSegmentStartReason::BackgroundGap => "background_gap",
         RideSegmentStartReason::ImportBoundary => "import_boundary",
+        RideSegmentStartReason::Stationary => "stationary",
     };
     connection.execute(
         "INSERT INTO ride_segments
@@ -8688,6 +8879,7 @@ struct StoredRideWriteState {
     monotonic_created_at_ms: Option<u64>,
     monotonic_last_event_ms: Option<u64>,
     latest_observed_monotonic_ms: Option<u64>,
+    stationary_location_observation: Option<LocationSample>,
     paused_at_ms: Option<u64>,
     paused_duration_ms: u64,
     completed_duration_ms: u64,
@@ -8702,7 +8894,9 @@ fn load_ride_write_state(
         .query_row(
             "SELECT source, state, monotonic_created_at_ms, monotonic_last_event_ms,
                     (SELECT MAX(monotonic_ms) FROM ride_points WHERE ride_id = rides.id),
-                    paused_at_ms, paused_duration_ms, completed_duration_ms, updated_at_ms
+                    paused_at_ms, paused_duration_ms, completed_duration_ms, updated_at_ms,
+                    stationary_latitude_e7, stationary_longitude_e7, stationary_horizontal_accuracy_mm,
+                    last_location_observed_monotonic_ms, last_location_observed_wall_clock_ms
              FROM rides WHERE id = ?1",
             params![ride_id.uuid().to_string()],
             |row| {
@@ -8716,6 +8910,7 @@ fn load_ride_write_state(
                     paused_duration_ms: row.get(6)?,
                     completed_duration_ms: row.get(7)?,
                     updated_at_ms: row.get(8)?,
+                    stationary_location_observation: read_stationary_observation(row, 9, 10, 11, 12, 13)?,
                 })
             },
         )
@@ -8727,6 +8922,7 @@ fn load_ride_write_state(
         monotonic_created_at_ms: stored.monotonic_created_at_ms,
         monotonic_last_event_ms: stored.monotonic_last_event_ms,
         latest_observed_monotonic_ms: stored.latest_observed_monotonic_ms,
+        stationary_location_observation: stored.stationary_location_observation,
         paused_at_ms: stored.paused_at_ms,
         paused_duration_ms: stored.paused_duration_ms,
         completed_duration_ms: stored.completed_duration_ms,
@@ -8780,7 +8976,9 @@ fn insert_location(connection: &Connection, insert: &LocationInsert) -> Result<(
          END,
          updated_at_ms = ?3,
          last_location_observed_monotonic_ms = ?4,
-         last_location_observed_wall_clock_ms = ?5 WHERE id = ?1",
+         last_location_observed_wall_clock_ms = ?5,
+         stationary_latitude_e7 = NULL, stationary_longitude_e7 = NULL,
+         stationary_horizontal_accuracy_mm = NULL WHERE id = ?1",
         params![
             ride_id.uuid().to_string(),
             distance_millimetres,
@@ -8859,7 +9057,9 @@ fn find_ride(connection: &Connection, ride_id: RideId) -> Result<Option<RideReco
                      WHERE platform_identifier = rides.associated_vehicle),
                     (SELECT COUNT(*) FROM ride_segments
                      WHERE ride_id = rides.id AND point_count > 0 AND start_reason = 'background_gap'),
-                    rides.last_location_observed_monotonic_ms, rides.last_location_observed_wall_clock_ms
+                    rides.last_location_observed_monotonic_ms, rides.last_location_observed_wall_clock_ms,
+                    rides.motion_parked, rides.motion_observed_monotonic_ms, rides.stationary_latitude_e7,
+                    rides.stationary_longitude_e7, rides.stationary_horizontal_accuracy_mm, rides.last_stationary_motion_monotonic_ms
              FROM rides
              WHERE state NOT IN ('draft', 'discarded') AND id = ?1",
             params![ride_id.uuid().to_string()],
@@ -8905,7 +9105,9 @@ fn newest_recoverable_ride(connection: &Connection) -> Result<Option<RideRecord>
                      WHERE platform_identifier = rides.associated_vehicle),
                     (SELECT COUNT(*) FROM ride_segments
                      WHERE ride_id = rides.id AND point_count > 0 AND start_reason = 'background_gap'),
-                    rides.last_location_observed_monotonic_ms, rides.last_location_observed_wall_clock_ms
+                    rides.last_location_observed_monotonic_ms, rides.last_location_observed_wall_clock_ms,
+                    rides.motion_parked, rides.motion_observed_monotonic_ms, rides.stationary_latitude_e7,
+                    rides.stationary_longitude_e7, rides.stationary_horizontal_accuracy_mm, rides.last_stationary_motion_monotonic_ms
              FROM rides
              WHERE state IN ('active', 'paused', 'interrupted')
              ORDER BY created_at_ms DESC, id DESC
@@ -9011,7 +9213,9 @@ fn list_rides(
                            candidate_device.display_name, associated_device.display_name,
                            (SELECT COUNT(*) FROM ride_segments
                             WHERE ride_id = rides.id AND point_count > 0 AND start_reason = 'background_gap'),
-                    rides.last_location_observed_monotonic_ms, rides.last_location_observed_wall_clock_ms
+                    rides.last_location_observed_monotonic_ms, rides.last_location_observed_wall_clock_ms,
+                    rides.motion_parked, rides.motion_observed_monotonic_ms, rides.stationary_latitude_e7,
+                    rides.stationary_longitude_e7, rides.stationary_horizontal_accuracy_mm, rides.last_stationary_motion_monotonic_ms
                     FROM rides
                     LEFT JOIN devices AS associated_device
                         ON associated_device.platform_identifier = rides.associated_vehicle
@@ -9139,6 +9343,55 @@ fn read_location_observation_clocks(
     }
 }
 
+fn read_motion_observation(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<Option<RideMotionObservation>> {
+    let parked: Option<bool> = row.get(23)?;
+    let at: Option<u64> = row.get(24)?;
+    match (parked, at) {
+        (None, None) => Ok(None),
+        (Some(parked), Some(observed_at_milliseconds)) => Ok(Some(RideMotionObservation {
+            parked,
+            observed_at_milliseconds,
+            last_stationary_at_milliseconds: row.get(28)?,
+        })),
+        _ => Err(rusqlite::Error::InvalidQuery),
+    }
+}
+
+fn read_stationary_observation(
+    row: &rusqlite::Row<'_>,
+    latitude_column: usize,
+    longitude_column: usize,
+    accuracy_column: usize,
+    monotonic_column: usize,
+    wall_clock_column: usize,
+) -> rusqlite::Result<Option<LocationSample>> {
+    let latitude: Option<i32> = row.get(latitude_column)?;
+    let longitude: Option<i32> = row.get(longitude_column)?;
+    let accuracy: Option<u32> = row.get(accuracy_column)?;
+    match (
+        latitude,
+        longitude,
+        accuracy,
+        read_location_observation_clocks(row, monotonic_column, wall_clock_column)?,
+    ) {
+        (None, None, None, _) => Ok(None),
+        (Some(latitude), Some(longitude), accuracy, Some(clocks)) => {
+            let coordinate = Coordinate::from_fixed_parts(latitude, longitude)
+                .map_err(|_| rusqlite::Error::InvalidQuery)?;
+            Ok(Some(LocationSample::new(
+                coordinate,
+                clocks.monotonic_ms,
+                clocks.wall_clock_ms,
+                accuracy,
+                LocationSource::Live,
+            )))
+        }
+        _ => Err(rusqlite::Error::InvalidQuery),
+    }
+}
+
 fn ride_record_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RideRecord> {
     let id_value: String = row.get(0)?;
     let id = Uuid::parse_str(&id_value)
@@ -9183,6 +9436,8 @@ fn ride_record_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RideRecord>
         last_location_observation: read_location_observation_clocks(row, 21, 22)?,
         candidate_vehicle_name: row.get(18)?,
         associated_vehicle_name: row.get(19)?,
+        motion_observation: read_motion_observation(row)?,
+        stationary_location_observation: read_stationary_observation(row, 25, 26, 27, 21, 22)?,
     })
 }
 
@@ -9823,6 +10078,7 @@ fn segment_start_reason_from_db(value: &str) -> Result<RideSegmentStartReason, S
         "resume" => Ok(RideSegmentStartReason::Resume),
         "background_gap" => Ok(RideSegmentStartReason::BackgroundGap),
         "import_boundary" => Ok(RideSegmentStartReason::ImportBoundary),
+        "stationary" => Ok(RideSegmentStartReason::Stationary),
         other => Err(StorageError::InvalidStoredValue {
             field: "ride segment start reason",
             value: other.to_owned(),
@@ -10313,3 +10569,6 @@ mod ride_session_marker_idempotence_tests {
         assert!(save_ride_session_marker(&connection, &[7]).is_err());
     }
 }
+
+#[cfg(test)]
+mod stationary_motion_tests;

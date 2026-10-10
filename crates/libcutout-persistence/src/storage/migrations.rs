@@ -1,7 +1,7 @@
 use super::{MapPointId, SpatialRowId, StorageError};
 use rusqlite::{Connection, OptionalExtension, params};
 
-pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 39;
+pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 40;
 const APPLICATION_ID: i64 = 0x4355_544f;
 
 fn schema_pragmas(version: i64) -> String {
@@ -62,12 +62,18 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         36 => migrate_v36_to_current(connection)?,
         37 => migrate_v37_to_current(connection)?,
         38 => migrate_v38_to_current(connection)?,
+        39 => migrate_v39_to_current(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
             }
         }
         _ => return Err(StorageError::InvalidDatabaseIdentity),
+    }
+    if connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))?
+        < CURRENT_SCHEMA_VERSION
+    {
+        migrate_v39_to_current(connection)?;
     }
     Ok(())
 }
@@ -194,7 +200,13 @@ pub(crate) fn create_current_schema(connection: &Connection) -> Result<(), Stora
             associated_at_ms INTEGER CHECK (associated_at_ms IS NULL OR associated_at_ms >= 0),
             last_telemetry_at_ms INTEGER CHECK (last_telemetry_at_ms IS NULL OR last_telemetry_at_ms >= 0),
             last_location_observed_monotonic_ms INTEGER,
-            last_location_observed_wall_clock_ms INTEGER
+            last_location_observed_wall_clock_ms INTEGER,
+            motion_parked INTEGER CHECK (motion_parked IS NULL OR motion_parked IN (0, 1)),
+            motion_observed_monotonic_ms INTEGER CHECK (motion_observed_monotonic_ms IS NULL OR motion_observed_monotonic_ms >= 0),
+            last_stationary_motion_monotonic_ms INTEGER CHECK (last_stationary_motion_monotonic_ms IS NULL OR last_stationary_motion_monotonic_ms >= 0),
+            stationary_latitude_e7 INTEGER CHECK (stationary_latitude_e7 IS NULL OR stationary_latitude_e7 BETWEEN -900000000 AND 900000000),
+            stationary_longitude_e7 INTEGER CHECK (stationary_longitude_e7 IS NULL OR stationary_longitude_e7 BETWEEN -1800000000 AND 1800000000),
+            stationary_horizontal_accuracy_mm INTEGER CHECK (stationary_horizontal_accuracy_mm IS NULL OR stationary_horizontal_accuracy_mm >= 0)
         );
         CREATE INDEX rides_history_order ON rides(created_at_ms DESC, id DESC);
         CREATE TABLE ride_segments (
@@ -202,7 +214,7 @@ pub(crate) fn create_current_schema(connection: &Connection) -> Result<(), Stora
             segment_id INTEGER NOT NULL CHECK (segment_id >= 0),
             point_count INTEGER NOT NULL DEFAULT 0 CHECK (point_count >= 0),
             sequence INTEGER NOT NULL CHECK (sequence >= 0),
-            start_reason TEXT NOT NULL CHECK (start_reason IN ('initial', 'resume', 'background_gap', 'import_boundary')),
+            start_reason TEXT NOT NULL CHECK (start_reason IN ('initial', 'resume', 'background_gap', 'import_boundary', 'stationary')),
             source TEXT NOT NULL CHECK (source IN ('live', 'pevcap_import')),
             started_monotonic_ms INTEGER NOT NULL CHECK (started_monotonic_ms >= 0),
             ended_monotonic_ms INTEGER CHECK (ended_monotonic_ms IS NULL OR ended_monotonic_ms >= started_monotonic_ms),
@@ -1470,6 +1482,75 @@ fn migrate_v38_to_current(connection: &mut Connection) -> Result<(), StorageErro
     Ok(())
 }
 
+fn migrate_v39_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    // SQLite cannot disable foreign keys within a transaction. Only the small segment
+    // parent is rebuilt; route points and capture payload tables are never copied/scanned.
+    let foreign_keys: bool =
+        connection.pragma_query_value(None, "foreign_keys", |row| row.get(0))?;
+    connection.pragma_update(None, "foreign_keys", false)?;
+    let result = (|| {
+        let transaction = connection.transaction()?;
+        for (column, definition) in [
+            (
+                "motion_parked",
+                "INTEGER CHECK (motion_parked IS NULL OR motion_parked IN (0, 1))",
+            ),
+            (
+                "motion_observed_monotonic_ms",
+                "INTEGER CHECK (motion_observed_monotonic_ms IS NULL OR motion_observed_monotonic_ms >= 0)",
+            ),
+            (
+                "last_stationary_motion_monotonic_ms",
+                "INTEGER CHECK (last_stationary_motion_monotonic_ms IS NULL OR last_stationary_motion_monotonic_ms >= 0)",
+            ),
+            (
+                "stationary_latitude_e7",
+                "INTEGER CHECK (stationary_latitude_e7 IS NULL OR stationary_latitude_e7 BETWEEN -900000000 AND 900000000)",
+            ),
+            (
+                "stationary_longitude_e7",
+                "INTEGER CHECK (stationary_longitude_e7 IS NULL OR stationary_longitude_e7 BETWEEN -1800000000 AND 1800000000)",
+            ),
+            (
+                "stationary_horizontal_accuracy_mm",
+                "INTEGER CHECK (stationary_horizontal_accuracy_mm IS NULL OR stationary_horizontal_accuracy_mm >= 0)",
+            ),
+        ] {
+            if !table_has_column(&transaction, "rides", column)? {
+                transaction.execute_batch(&format!(
+                    "ALTER TABLE rides ADD COLUMN {column} {definition};"
+                ))?;
+            }
+        }
+        transaction.execute_batch(
+            "             CREATE TABLE ride_segments_v40 (
+                ride_id TEXT NOT NULL REFERENCES rides(id) ON DELETE CASCADE,
+                segment_id INTEGER NOT NULL CHECK (segment_id >= 0),
+                point_count INTEGER NOT NULL DEFAULT 0 CHECK (point_count >= 0),
+                sequence INTEGER NOT NULL CHECK (sequence >= 0),
+                start_reason TEXT NOT NULL CHECK (start_reason IN ('initial', 'resume', 'background_gap', 'import_boundary', 'stationary')),
+                source TEXT NOT NULL CHECK (source IN ('live', 'pevcap_import')),
+                started_monotonic_ms INTEGER NOT NULL CHECK (started_monotonic_ms >= 0),
+                ended_monotonic_ms INTEGER CHECK (ended_monotonic_ms IS NULL OR ended_monotonic_ms >= started_monotonic_ms),
+                started_wall_clock_ms INTEGER NOT NULL CHECK (started_wall_clock_ms >= 0),
+                ended_wall_clock_ms INTEGER CHECK (ended_wall_clock_ms IS NULL OR ended_wall_clock_ms >= started_wall_clock_ms),
+                PRIMARY KEY (ride_id, segment_id), UNIQUE (ride_id, sequence));
+             INSERT INTO ride_segments_v40 SELECT * FROM ride_segments;
+             DROP TABLE ride_segments;
+             ALTER TABLE ride_segments_v40 RENAME TO ride_segments;",
+        )?;
+        transaction.execute_batch(&current_schema_pragmas())?;
+        transaction.commit()?;
+        Ok(())
+    })();
+    let restore = connection.pragma_update(None, "foreign_keys", foreign_keys);
+    match (result, restore) {
+        (Err(error), _) => Err(error),
+        (Ok(()), Err(error)) => Err(error.into()),
+        (Ok(()), Ok(())) => Ok(()),
+    }
+}
+
 fn ensure_live_capture_recording_context(connection: &Connection) -> Result<(), StorageError> {
     if table_exists(connection, "live_capture_sessions")?
         && !table_has_column(
@@ -1500,7 +1581,7 @@ fn finish_migration(transaction: &rusqlite::Transaction<'_>) -> Result<(), Stora
     ensure_live_capture_recording_context(transaction)?;
     ensure_location_observation_clocks(transaction)?;
     transaction.execute_batch(RIDE_RECORDING_PREFERENCES_SCHEMA)?;
-    transaction.execute_batch(&current_schema_pragmas())?;
+    transaction.execute_batch(&schema_pragmas(39))?;
     Ok(())
 }
 
@@ -2310,6 +2391,8 @@ mod tests {
     #[test]
     fn schema_v30_migration_adds_raw_location_source_timestamp_bits() {
         let mut connection = Connection::open_in_memory().unwrap();
+        // Include the ride schema that exists in an actual historical app database.
+        create_current_schema(&connection).unwrap();
         connection
             .execute_batch(&format!(
                 "CREATE TABLE live_capture_location_observations (raw_float_bits BLOB);
@@ -2338,6 +2421,8 @@ mod tests {
     #[test]
     fn schema_v31_migration_adds_structured_live_ble_rows() {
         let mut connection = Connection::open_in_memory().unwrap();
+        // Include the ride schema that exists in an actual historical app database.
+        create_current_schema(&connection).unwrap();
         connection
             .execute_batch(&format!(
                 "PRAGMA application_id = {APPLICATION_ID};
@@ -2405,6 +2490,8 @@ mod tests {
     #[test]
     fn schema_v27_migration_preserves_rows_with_unknown_integrity() {
         let mut connection = Connection::open_in_memory().unwrap();
+        // Include the ride schema that exists in an actual historical app database.
+        create_current_schema(&connection).unwrap();
         connection
             .execute_batch(
                 "CREATE TABLE live_capture_sessions (
@@ -2542,6 +2629,8 @@ mod tests {
     #[test]
     fn schema_v28_migration_adds_structured_live_location_rows() {
         let mut connection = Connection::open_in_memory().unwrap();
+        // Include the ride schema that exists in an actual historical app database.
+        create_current_schema(&connection).unwrap();
         connection
             .execute_batch(&format!(
                 "{CAPTURE_SCHEMA_V36}

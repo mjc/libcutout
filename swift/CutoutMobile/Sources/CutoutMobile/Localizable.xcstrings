@@ -870,6 +870,14 @@
       "comment" : "Label for a segment resumed after a pause or reconnect.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Resumed segment" } } }
     },
+    "ride_map.segment.stationary" : {
+      "comment" : "Label for a route segment after the wheel resumed movement.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Movement resumed" } } }
+    },
+    "ride_map.segment.singleton_stationary" : {
+      "comment" : "Accessibility label for a displayed point after wheel movement resumed.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Movement resumed" } } }
+    },
     "ride_map.segment.singleton_background_gap" : {
       "comment" : "Accessibility label for a single-point background-gap segment.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Single background-gap point" } } }

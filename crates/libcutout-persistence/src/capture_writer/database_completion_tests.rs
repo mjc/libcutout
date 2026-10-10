@@ -495,7 +495,7 @@ fn v38_migration_preserves_raw_capture_data_and_history_does_not_scan_events() {
     let version: i64 = observer
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 39);
+    assert_eq!(version, crate::storage::CURRENT_SCHEMA_VERSION);
     let payload: Vec<u8> = observer
         .query_row(
             "SELECT payload FROM live_capture_events WHERE capture_id = ?1",

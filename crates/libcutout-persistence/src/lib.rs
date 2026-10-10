@@ -24,7 +24,7 @@ pub use recording::{
     LocationAcquisition, LocationAcquisitionState, LocationAuthorization, LocationAvailability,
     LocationDemand, LocationEnvironment, LocationRecoveryAction, RecordingError, RecordingSnapshot,
     RecordingSpeed, RecordingSpeedSource, RecordingSpeedState, RecordingToken,
-    RideRecordingSession, location_acquisition_for,
+    RideMotionObservation, RideRecordingSession, location_acquisition_for,
 };
 pub use ride_session_marker::{RideSessionMarkerWriteStatus, RideSessionMarkerWriter};
 pub use storage::*;

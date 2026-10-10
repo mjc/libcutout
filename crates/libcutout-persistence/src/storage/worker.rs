@@ -2,21 +2,21 @@ use super::{
     Command, SegmentStartReasonInput, SpatialSchemaState, abort_pevcap_import, append_location,
     append_location_with_result, append_pevcap_location_batch, append_trail_segment,
     apply_verified_connection_admission, backup, begin_pevcap_import,
-    checkpoint_location_observation, clear_last_connected_device, clear_ride_session_marker,
-    clear_selected_device, create_map_point, create_ride, create_started_live_ride,
-    create_started_ride, create_trail, delete_music_history, device_name, export_ride_json,
-    find_ride, finish_pevcap_import, integrity_check, last_connected_device,
-    list_ride_history_vehicle_options, list_rides, load_ride_restore_snapshot, load_summary,
-    load_summary_with_duration, map_points_in_bounds, migrate_device_name, music_events,
-    music_history, music_history_policy, music_history_state, newest_recoverable_ride,
-    pevcap_import_receipt, phone_alarm_preferences, project_history_context, project_route_points,
-    rebuild_spatial_indexes, record_bms_voltage_samples, record_music_event,
-    remember_last_connected_device, remember_selected_device, remove_voltage_sag_model,
-    ride_session_marker, route_points, save_device_name, save_music_event,
-    save_music_history_policy, save_phone_alarm_preferences, save_ride_session_marker,
-    save_selected_device, save_voltage_sag_model, selected_device, settle_recovered_ride,
-    sqlite_capabilities, trail_segments_in_bounds, transition_ride_with_telemetry,
-    update_ride_map_metadata, voltage_sag_model,
+    checkpoint_location_observation, checkpoint_stationary_location_observation,
+    clear_last_connected_device, clear_ride_session_marker, clear_selected_device,
+    create_map_point, create_ride, create_started_live_ride, create_started_ride, create_trail,
+    delete_music_history, device_name, export_ride_json, find_ride, finish_pevcap_import,
+    integrity_check, last_connected_device, list_ride_history_vehicle_options, list_rides,
+    load_ride_restore_snapshot, load_summary, load_summary_with_duration, map_points_in_bounds,
+    migrate_device_name, music_events, music_history, music_history_policy, music_history_state,
+    newest_recoverable_ride, pevcap_import_receipt, phone_alarm_preferences,
+    project_history_context, project_route_points, rebuild_spatial_indexes,
+    record_bms_voltage_samples, record_music_event, remember_last_connected_device,
+    remember_selected_device, remove_voltage_sag_model, ride_session_marker, route_points,
+    save_device_name, save_music_event, save_music_history_policy, save_phone_alarm_preferences,
+    save_ride_session_marker, save_selected_device, save_voltage_sag_model, selected_device,
+    settle_recovered_ride, sqlite_capabilities, trail_segments_in_bounds,
+    transition_ride_with_telemetry, update_ride_map_metadata_with_motion, voltage_sag_model,
 };
 use rusqlite::Connection;
 use std::ops::ControlFlow;
@@ -303,15 +303,17 @@ impl DatabaseWorker<'_> {
                 associated_vehicle,
                 associated_at_ms,
                 last_telemetry_at_ms,
+                motion,
                 reply,
             } => {
-                let _ = reply.send(update_ride_map_metadata(
+                let _ = reply.send(update_ride_map_metadata_with_motion(
                     connection,
                     ride_id,
                     candidate_vehicle.as_deref(),
                     associated_vehicle.as_deref(),
                     associated_at_ms,
                     last_telemetry_at_ms,
+                    motion,
                 ));
             }
             Command::RecordBmsVoltageSamples { samples, reply } => {
@@ -809,6 +811,11 @@ impl DatabaseWorker<'_> {
             }
             Command::RideCheckpoint { reply } => {
                 let _ = reply.send(Ok(()));
+            }
+            Command::CheckpointStationaryLocationObservation { checkpoint, reply } => {
+                let _ = reply.send(checkpoint_stationary_location_observation(
+                    connection, checkpoint,
+                ));
             }
             Command::CheckpointLocationObservation { checkpoint, reply } => {
                 let _ = reply.send(checkpoint_location_observation(connection, checkpoint));

@@ -7,6 +7,60 @@ use cutout_music::MusicHistoryPolicy;
 use cutout_ride_maps::{RideEvent, RideLifecycleState};
 
 #[test]
+fn wheel_motion_is_latched_and_fenced_by_source_time_and_fresh_verified_evidence() {
+    let mut state = RecordingSpeedState::default();
+    assert!(!state.parked_at(1_000));
+    assert!(state.observe_verified_motion(500, 1_000, 1_000));
+    assert!(!state.parked_at(999));
+    assert!(state.parked_at(1_000));
+    assert!(state.parked_at(90_000));
+    assert!(!state.observe_verified_motion(501, 2_000, 4_001));
+    assert!(state.parked_at(90_000));
+    assert!(state.observe_verified_motion(-501, 3_000, 5_000));
+    assert!(state.parked_at(2_999));
+    assert!(!state.parked_at(3_000));
+    assert_eq!(
+        state
+            .latest_motion()
+            .unwrap()
+            .last_stationary_at_milliseconds,
+        Some(1_000)
+    );
+    assert!(!state.observe_verified_motion(0, 2_000, 5_000));
+    let mut restored = RecordingSpeedState::default();
+    restored.restore_motion(state.latest_motion().unwrap());
+    assert!(
+        restored.parked_at(2_999),
+        "persisted prior Parked interval remains authoritative after restart"
+    );
+    assert!(!restored.parked_at(3_000));
+    assert_eq!(
+        restored.selected_at(RideLifecycleState::Active, 0, 3_000),
+        None
+    );
+}
+
+#[test]
+fn bounded_motion_history_never_borrows_a_future_transition() {
+    let mut state = RecordingSpeedState::default();
+    for at in 1..=100 {
+        assert!(state.observe_verified_motion(if at % 2 == 0 { 501 } else { 0 }, at, at));
+    }
+    assert_eq!(
+        state.motion_at(1),
+        None,
+        "retired history cannot borrow a future wheel state"
+    );
+    assert!(state.motion_history_retired_at(1));
+    assert!(
+        !state.motion_history_retired_at(0),
+        "true initial unknown remains independent GPS fallback"
+    );
+    assert!(state.parked_at(99));
+    assert!(!state.parked_at(100));
+}
+
+#[test]
 fn phone_gps_replayed_receipts_cannot_replace_speed_or_extend_freshness() {
     let mut speed = RecordingSpeedState::default();
     speed.observe_phone_gps(Some(7.0), 2_000, 7);

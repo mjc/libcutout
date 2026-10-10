@@ -46,6 +46,14 @@ pub struct ClockOnlyLocationObservation {
     active_interval_generation: u64,
 }
 
+/// Validated wheel-parked GPS evidence retained without a route point.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StationaryLocationObservation {
+    sample: LocationSample,
+    recording_generation: NonZeroU64,
+    active_interval_generation: u64,
+}
+
 /// Applies route admission policy to a candidate and its latest accepted predecessor.
 #[must_use]
 pub fn route_admission(
@@ -181,6 +189,8 @@ pub enum RideSegmentStartReason {
     BackgroundGap,
     /// An imported artifact established the first canonical route segment.
     ImportBoundary,
+    /// Wheel-owned recording resumed movement after a stationary interval.
+    Stationary,
 }
 
 /// Number of route segments admitted to one ride recording.
@@ -562,6 +572,7 @@ pub struct RideMapRecorder {
     associated_at_milliseconds: Option<MonotonicMilliseconds>,
     last_telemetry_at_milliseconds: Option<MonotonicMilliseconds>,
     latest_location_observation: Option<LocationSample>,
+    stationary_boundary_at: Option<MonotonicMilliseconds>,
     points: Vec<RideMapPoint>,
     first_point_sequence: RidePointSequence,
     summary: RideSummary,
@@ -595,6 +606,7 @@ impl RideMapRecorder {
             associated_at_milliseconds: None,
             last_telemetry_at_milliseconds: None,
             latest_location_observation: None,
+            stationary_boundary_at: None,
             points: Vec::new(),
             first_point_sequence: RidePointSequence::new(0),
             summary: RideSummary::from_stored(RidePointCount::new(0), 0),
@@ -747,6 +759,7 @@ impl RideMapRecorder {
             associated_at_milliseconds: metadata.associated_at_milliseconds,
             last_telemetry_at_milliseconds: metadata.last_telemetry_at_milliseconds,
             latest_location_observation: points.last().map(|point| point.sample()),
+            stationary_boundary_at: None,
             last_monotonic_milliseconds,
             active_started_at_milliseconds: (state == RideLifecycleState::Active)
                 .then_some(last_monotonic_milliseconds),
@@ -809,6 +822,7 @@ impl RideMapRecorder {
             associated_at_milliseconds: metadata.associated_at_milliseconds,
             last_telemetry_at_milliseconds: metadata.last_telemetry_at_milliseconds,
             latest_location_observation: points.last().map(|point| point.sample()),
+            stationary_boundary_at: None,
             last_monotonic_milliseconds: last,
             active_started_at_milliseconds: (state == RideLifecycleState::Active).then_some(last),
             paused_at_milliseconds: (state == RideLifecycleState::Paused)
@@ -866,6 +880,78 @@ impl RideMapRecorder {
         self.latest_location_observation
     }
 
+    /// Marks the next later material point as a new movement segment.
+    ///
+    /// The original source timestamp fences older admitted writes and delayed callbacks.
+    /// A newer stationary interval must not be cleared by settlement of an older point.
+    pub fn mark_stationary_boundary(&mut self, at: MonotonicMilliseconds) {
+        if self
+            .points
+            .last()
+            .is_some_and(|point| point.sample().monotonic_milliseconds() >= at)
+        {
+            return;
+        }
+        if self
+            .stationary_boundary_at
+            .is_none_or(|previous| at > previous)
+        {
+            self.stationary_boundary_at = Some(at);
+        }
+    }
+
+    /// Validates parked GPS evidence against the same quality and ordering policy as a point.
+    ///
+    /// # Errors
+    /// Returns the admission failure without advancing the observation baseline.
+    pub fn admit_stationary_sample(
+        &self,
+        sample: LocationSample,
+    ) -> Result<StationaryLocationObservation, LocationAdmission> {
+        if self.state != Some(RideLifecycleState::Active) || sample.source() != LocationSource::Live
+        {
+            return Err(LocationAdmission::OutOfOrder);
+        }
+        let admitted = self.admit_sample(sample)?;
+        Ok(StationaryLocationObservation {
+            sample,
+            recording_generation: admitted.recording_generation(),
+            active_interval_generation: self.active_interval_generation,
+        })
+    }
+
+    /// Advances parked observation clocks without changing route geometry or distance.
+    pub fn observe_stationary(&mut self, observation: StationaryLocationObservation) -> bool {
+        if self.recording_generation != Some(observation.recording_generation)
+            || self.active_interval_generation != observation.active_interval_generation
+            || self.admit_stationary_sample(observation.sample).is_err()
+        {
+            return false;
+        }
+        self.latest_location_observation = Some(observation.sample);
+        self.last_monotonic_milliseconds = self
+            .last_monotonic_milliseconds
+            .max(observation.sample.monotonic_milliseconds());
+        self.mark_stationary_boundary(observation.sample.monotonic_milliseconds());
+        true
+    }
+
+    /// Restores dedicated stationary provider evidence, including recordings with no points.
+    pub fn restore_stationary_observation(&mut self, sample: LocationSample) -> bool {
+        if sample.source() != LocationSource::Live
+            || sample.monotonic_milliseconds() < self.created_at_milliseconds
+            || sample.monotonic_milliseconds() > self.last_monotonic_milliseconds
+            || self.latest_location_observation.is_some_and(|previous| {
+                sample.monotonic_milliseconds() < previous.monotonic_milliseconds()
+            })
+        {
+            return false;
+        }
+        self.latest_location_observation = Some(sample);
+        self.mark_stationary_boundary(sample.monotonic_milliseconds());
+        true
+    }
+
     /// Restores dedicated durable location evidence anchored to the last retained point.
     ///
     /// Lifecycle timing alone is insufficient evidence of a location observation. Callers
@@ -907,6 +993,17 @@ impl RideMapRecorder {
     /// Returns the segment that would contain a candidate sample.
     #[must_use]
     pub fn segment_id_for_sample(&self, sample: &LocationSample) -> RideMapSegmentId {
+        if !self.points.is_empty()
+            && self
+                .stationary_boundary_at
+                .is_some_and(|at| sample.monotonic_milliseconds() > at)
+        {
+            return if self.segment_started {
+                self.segment_id
+            } else {
+                self.segment_id.next()
+            };
+        }
         let gap_started = !self.segment_started
             && self.latest_location_observation.is_some_and(|previous| {
                 sample
@@ -1039,6 +1136,7 @@ impl RideMapRecorder {
         self.associated_at_milliseconds = None;
         self.last_telemetry_at_milliseconds = None;
         self.latest_location_observation = None;
+        self.stationary_boundary_at = None;
         self.points.clear();
         self.first_point_sequence = RidePointSequence::new(0);
         self.summary = RideSummary::from_stored(RidePointCount::new(0), 0);
@@ -1438,6 +1536,12 @@ impl RideMapRecorder {
                 .as_u64(),
         );
         self.segment_started = preserve_resume_boundary;
+        if self
+            .stationary_boundary_at
+            .is_some_and(|at| sample.monotonic_milliseconds() > at)
+        {
+            self.stationary_boundary_at = None;
+        }
         true
     }
 
@@ -1446,6 +1550,14 @@ impl RideMapRecorder {
         sample: LocationSample,
         next_segment_id: RideMapSegmentId,
     ) -> RideSegmentStartReason {
+        if !self.segment_started
+            && !self.points.is_empty()
+            && self
+                .stationary_boundary_at
+                .is_some_and(|at| sample.monotonic_milliseconds() > at)
+        {
+            return RideSegmentStartReason::Stationary;
+        }
         if next_segment_id != self.segment_id {
             return RideSegmentStartReason::BackgroundGap;
         }
@@ -1482,6 +1594,82 @@ mod tests {
     #[test]
     fn imported_recording_does_not_offer_start_as_a_lifecycle_event() {
         assert_eq!(RideLifecycleState::Imported.recording_actions().len(), 0);
+    }
+
+    #[test]
+    fn stationary_observation_advances_time_without_points_and_resumes_without_bridge() {
+        let mut recorder = RideMapRecorder::new();
+        recorder.start(monotonic(1_000), None).unwrap();
+        assert!(recorder.record_sample(sample(1_100, 40.0)));
+        let parked = recorder
+            .admit_stationary_sample(sample(1_200, 40.000_01))
+            .unwrap();
+        assert!(recorder.observe_stationary(parked));
+        assert_eq!(recorder.point_count(), 1);
+        assert_eq!(
+            recorder.latest_location_observation(),
+            Some(sample(1_200, 40.000_01))
+        );
+        let resumed = recorder.admit_sample(sample(1_300, 40.000_02)).unwrap();
+        assert_eq!(
+            resumed.point().segment_start_reason(),
+            RideSegmentStartReason::Stationary
+        );
+        assert!(recorder.record_admitted_sample(resumed));
+        assert_eq!(recorder.summary().distance().as_u64(), 0);
+        assert!(recorder.record_sample(sample(1_400, 40.000_03)));
+        assert!(recorder.summary().distance().as_u64() > 1_000);
+        assert!(
+            !recorder.observe_stationary(parked),
+            "replayed capability cannot rewind provider evidence"
+        );
+    }
+
+    #[test]
+    fn settling_older_admitted_point_does_not_clear_newer_stationary_boundary() {
+        let mut recorder = RideMapRecorder::new();
+        recorder.start(monotonic(1_000), None).unwrap();
+        assert!(recorder.record_sample(sample(1_100, 40.0)));
+        let queued = recorder.admit_sample(sample(1_200, 40.000_01)).unwrap();
+        let parked = recorder
+            .admit_stationary_sample(sample(1_300, 40.000_02))
+            .unwrap();
+        assert!(recorder.observe_stationary(parked));
+        assert!(recorder.record_admitted_sample(queued));
+        let resumed = recorder.admit_sample(sample(1_400, 40.000_03)).unwrap();
+        assert_eq!(
+            resumed.point().segment_start_reason(),
+            RideSegmentStartReason::Stationary
+        );
+        let distance = recorder.summary().distance();
+        assert!(recorder.record_admitted_sample(resumed));
+        assert_eq!(recorder.summary().distance(), distance);
+    }
+
+    #[test]
+    fn explicit_pause_resume_keeps_resume_reason_after_stationary_observation() {
+        let mut recorder = RideMapRecorder::new();
+        recorder.start(monotonic(1_000), None).unwrap();
+        assert!(recorder.record_sample(sample(1_100, 40.0)));
+        let parked = recorder
+            .admit_stationary_sample(sample(1_200, 40.000_01))
+            .unwrap();
+        assert!(recorder.observe_stationary(parked));
+        let pause = recorder.validate_transition(RideEvent::Pause).unwrap();
+        recorder
+            .apply_transition_at(pause, monotonic(1_300))
+            .unwrap();
+        let resume = recorder.validate_transition(RideEvent::Resume).unwrap();
+        recorder
+            .apply_transition_at(resume, monotonic(1_400))
+            .unwrap();
+        let moving = recorder.admit_sample(sample(1_500, 40.000_02)).unwrap();
+        assert_eq!(
+            moving.point().segment_start_reason(),
+            RideSegmentStartReason::Resume
+        );
+        assert!(recorder.record_admitted_sample(moving));
+        assert_eq!(recorder.summary().distance().as_u64(), 0);
     }
 
     #[test]

@@ -28,7 +28,7 @@ pub use recording::{
     BackgroundGapCount, ClockOnlyLocationObservation, LocationRecordingDecision,
     MAX_GAP_MILLISECONDS, MAX_LIVE_ROUTE_POINTS, RideDurationMilliseconds, RideMapMetadata,
     RideMapPoint, RideMapRecorder, RideMapSegmentId, RidePointSequence, RideRecordingTiming,
-    RideSegmentCount, RideSegmentStartReason, RouteTelemetryState,
+    RideSegmentCount, RideSegmentStartReason, RouteTelemetryState, StationaryLocationObservation,
     TELEMETRY_FRESHNESS_MILLISECONDS, TelemetryObservation, VehicleAssociation, VehicleIdentity,
     VehicleIdentityError, clamped_transition_timestamp, route_admission,
 };
