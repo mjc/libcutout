@@ -241,6 +241,10 @@ final class LiveRideModel {
     func setMapVisible(_ visible: Bool) {
         guard isMapVisible != visible else { return }
         isMapVisible = visible
+        if snapshot?.state == .paused {
+            if visible { refreshDuration() } else { pendingDurationRead = nil }
+            updateDurationTicker()
+        }
         updateProjectionAvailability()
     }
 
@@ -274,7 +278,7 @@ final class LiveRideModel {
 
     @discardableResult
     func refreshDuration() -> Task<Void, Never>? {
-        guard isSceneActive, let state else { return nil }
+        guard allowsSnapshotRefresh, let state else { return nil }
         pendingDurationRead = (now(), snapshotGeneration)
         if let durationReadTask { return durationReadTask }
         durationReadTask = Task { [weak self] in
@@ -284,8 +288,8 @@ final class LiveRideModel {
                     state.currentSnapshot(atMs: pending.atMs)
                 }.value
                 guard !Task.isCancelled, let self else { return }
-                guard self.isSceneActive, pending.generation == self.snapshotGeneration,
-                    let next, next.state == .active
+                guard self.allowsSnapshotRefresh, pending.generation == self.snapshotGeneration,
+                    let next, next.state == .active || (next.state == .paused && self.isMapVisible)
                 else { continue }
                 if self.snapshot?.rideID != next.rideID || self.snapshot?.summary.pointCount != next.summary.pointCount
                 {
@@ -298,8 +302,12 @@ final class LiveRideModel {
         return durationReadTask
     }
 
+    private var allowsSnapshotRefresh: Bool {
+        isSceneActive && (snapshot?.state != .paused || isMapVisible)
+    }
+
     private func takePendingDurationRead() -> (atMs: UInt64, generation: UInt64)? {
-        guard isSceneActive else { return nil }
+        guard allowsSnapshotRefresh else { return nil }
         defer { pendingDurationRead = nil }
         return pendingDurationRead
     }
@@ -317,7 +325,7 @@ final class LiveRideModel {
     }
 
     private func updateDurationTicker() {
-        guard isSceneActive, snapshot?.state == .active else {
+        guard allowsSnapshotRefresh, snapshot?.state == .active || snapshot?.state == .paused else {
             durationTask?.cancel()
             durationTask = nil
             return

@@ -1923,6 +1923,18 @@
       "comment" : "Ride-map fallback when a vehicle is associated but its persisted display name is unavailable; never expose the platform identity in user-facing UI.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Vehicle name unavailable" } } }
     },
+    "ride_map.wheel_data.receiving" : {
+      "comment" : "Spoken wheel-data health in the Map vehicle row when Rust reports fresh data.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Receiving wheel data" } } }
+    },
+    "ride_map.wheel_data.waiting" : {
+      "comment" : "Spoken wheel-data health in the Map vehicle row before the associated wheel has supplied data.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Waiting for wheel data" } } }
+    },
+    "ride_map.wheel_data.unavailable" : {
+      "comment" : "Spoken wheel-data health in the Map vehicle row when Rust reports stale or unknown data.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Wheel data unavailable" } } }
+    },
     "ride_map.following" : {
       "comment" : "Camera state while the map follows the latest validated point.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Following route" } } }

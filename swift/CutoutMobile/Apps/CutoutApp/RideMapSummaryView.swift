@@ -11,34 +11,41 @@ struct RideMapSummaryView: View {
     let vehicleName: String?
 
     enum IndicatorState: Equatable {
+        case associatedFresh
         case associatedWithoutTelemetry
+        case associatedStale
         case gpsOnly
-        case paused
         case terminal
         case unavailable
 
-        static func state(
-            lifecycle: MobileRideMapStateDto?,
-            associatedVehicle: String?
-        ) -> Self {
-            guard let lifecycle else { return .unavailable }
-            switch lifecycle {
-            case .active:
-                return associatedVehicle == nil
-                    ? .gpsOnly
-                    : .associatedWithoutTelemetry
-            case .paused:
-                return .paused
+        static func state(for snapshot: MobileRideMapSnapshotDto?) -> Self {
+            guard let snapshot else { return .unavailable }
+            switch snapshot.state {
+            case .active, .paused:
+                switch snapshot.telemetryState {
+                case .associatedFresh: return .associatedFresh
+                case .associatedNoTelemetry: return .associatedWithoutTelemetry
+                case .associatedStale: return .associatedStale
+                case .gpsOnly: return .gpsOnly
+                case .unknown: return .unavailable
+                }
             case .draft, .stopped, .saved, .discarded, .interrupted, .imported:
                 return .terminal
             }
         }
 
-        static func state(for snapshot: MobileRideMapSnapshotDto?) -> Self {
-            state(
-                lifecycle: snapshot?.state,
-                associatedVehicle: snapshot?.associatedVehicle
-            )
+        @MainActor
+        var accessibilityValue: String {
+            switch self {
+            case .associatedFresh:
+                localizedAppText("ride_map.wheel_data.receiving")
+            case .associatedWithoutTelemetry:
+                localizedAppText("ride_map.wheel_data.waiting")
+            case .associatedStale, .unavailable:
+                localizedAppText("ride_map.wheel_data.unavailable")
+            case .gpsOnly, .terminal:
+                ""
+            }
         }
     }
 
@@ -68,12 +75,14 @@ struct RideMapSummaryView: View {
                     Circle()
                         .fill(indicatorColor(for: Self.IndicatorState.state(for: snapshot)))
                         .frame(width: 8, height: 8)
+                        .accessibilityHidden(true)
                     Text(vehicleName ?? Self.vehicleLabel(for: snapshot.associatedVehicle))
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(PevColors.muted)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .accessibilityElement(children: .combine)
+                .accessibilityValue(Self.IndicatorState.state(for: snapshot).accessibilityValue)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 14)
@@ -101,9 +110,11 @@ struct RideMapSummaryView: View {
 
     private func indicatorColor(for state: IndicatorState) -> Color {
         switch state {
-        case .associatedWithoutTelemetry, .gpsOnly, .paused:
+        case .associatedFresh:
+            PevColors.green
+        case .associatedWithoutTelemetry, .associatedStale:
             PevColors.yellow
-        case .terminal, .unavailable:
+        case .gpsOnly, .terminal, .unavailable:
             PevColors.muted
         }
     }

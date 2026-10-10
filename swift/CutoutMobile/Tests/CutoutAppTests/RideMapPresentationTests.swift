@@ -115,6 +115,81 @@ final class RideMapPresentationTests: XCTestCase {
         XCTAssertEqual(RideMapRouteView.liveRouteID(for: snapshot), "ride-b")
     }
 
+    private func summarySnapshot(
+        lifecycle: MobileRideMapStateDto = .active,
+        telemetry: MobileRideMapTelemetryStateDto
+    ) -> MobileRideMapSnapshotDto {
+        MobileRideMapSnapshotDto(
+            rideID: "ride",
+            state: lifecycle,
+            telemetryState: telemetry,
+            summary: MobileRideMapSummaryDto(pointCount: 0, distanceMeters: 0, durationMilliseconds: 0),
+            segmentCount: 0,
+            associatedVehicle: telemetry == .gpsOnly ? nil : "associated-wheel"
+        )
+    }
+
+    func testLiveSummaryIndicatorChangesWithRustTelemetryHealthWithoutChangingVehicle() {
+        let fresh = RideMapSummaryView.IndicatorState.state(for: summarySnapshot(telemetry: .associatedFresh))
+        let missing = RideMapSummaryView.IndicatorState.state(for: summarySnapshot(telemetry: .associatedNoTelemetry))
+        let stale = RideMapSummaryView.IndicatorState.state(for: summarySnapshot(telemetry: .associatedStale))
+        let unknown = RideMapSummaryView.IndicatorState.state(for: summarySnapshot(telemetry: .unknown))
+
+        XCTAssertNotEqual(fresh, missing, "A healthy wheel cannot look like a wheel with no data")
+        XCTAssertNotEqual(fresh, stale, "Stale Rust telemetry cannot keep the healthy indicator")
+        XCTAssertNotEqual(missing, stale, "Initial waiting and lost live data have different rider-facing status")
+        XCTAssertEqual(unknown, .unavailable, "Remembered association cannot invent telemetry health")
+        XCTAssertEqual(
+            RideMapSummaryView.IndicatorState.state(for: summarySnapshot(telemetry: .gpsOnly)), .gpsOnly)
+    }
+
+    func testPausingRecordingDoesNotReplaceTheAssociatedWheelHealthIndicator() {
+        for telemetry: MobileRideMapTelemetryStateDto in [.associatedFresh, .associatedNoTelemetry, .associatedStale] {
+            XCTAssertEqual(
+                RideMapSummaryView.IndicatorState.state(for: summarySnapshot(lifecycle: .paused, telemetry: telemetry)),
+                RideMapSummaryView.IndicatorState.state(for: summarySnapshot(telemetry: telemetry)),
+                "The separate recording pill owns Paused; this indicator owns wheel data health"
+            )
+        }
+    }
+
+    func testTerminalSummaryCannotClaimLiveWheelTelemetry() {
+        for lifecycle: MobileRideMapStateDto in [.draft, .stopped, .saved, .discarded, .interrupted, .imported] {
+            XCTAssertEqual(
+                RideMapSummaryView.IndicatorState.state(
+                    for: summarySnapshot(lifecycle: lifecycle, telemetry: .associatedFresh)), .terminal)
+        }
+        XCTAssertEqual(RideMapSummaryView.IndicatorState.state(for: nil), .unavailable)
+    }
+
+    @MainActor
+    func testWheelHealthSpeechUsesRiderCopyWithoutRepeatingRecordingOrSourceState() {
+        XCTAssertEqual(
+            RideMapSummaryView.IndicatorState.state(for: summarySnapshot(telemetry: .associatedFresh))
+                .accessibilityValue, "Receiving wheel data")
+        XCTAssertEqual(
+            RideMapSummaryView.IndicatorState.state(for: summarySnapshot(telemetry: .associatedNoTelemetry))
+                .accessibilityValue, "Waiting for wheel data")
+        for telemetry: MobileRideMapTelemetryStateDto in [.associatedStale, .unknown] {
+            XCTAssertEqual(
+                RideMapSummaryView.IndicatorState.state(for: summarySnapshot(telemetry: telemetry))
+                    .accessibilityValue, "Wheel data unavailable")
+        }
+        XCTAssertEqual(
+            RideMapSummaryView.IndicatorState.state(for: summarySnapshot(telemetry: .gpsOnly))
+                .accessibilityValue, "")
+        XCTAssertEqual(
+            RideMapSummaryView.IndicatorState.state(
+                for: summarySnapshot(lifecycle: .saved, telemetry: .associatedFresh)
+            )
+            .accessibilityValue, "")
+        XCTAssertEqual(
+            RideMapSummaryView.IndicatorState.state(
+                for: summarySnapshot(lifecycle: .paused, telemetry: .associatedFresh)
+            )
+            .accessibilityValue, "Receiving wheel data")
+    }
+
     func testRideMapVehicleLabelProjectionKeepsIdentityFallbackPolicy() {
         XCTAssertEqual(
             RideMapMetricFormatting.vehicleLabel(

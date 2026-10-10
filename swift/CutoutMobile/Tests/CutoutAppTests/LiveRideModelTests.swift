@@ -555,6 +555,199 @@ final class LiveRideModelTests: XCTestCase {
         XCTAssertEqual(model.snapshot?.summary.durationMilliseconds, 9_000)
     }
 
+    @MainActor
+    func testVisiblePausedMapTickerRefreshesRustTelemetryHealthWithoutAdvancingDuration() async throws {
+        let (state, paused) = try await Self.pausedRideWithFreshTelemetry()
+        let now = Mutex<UInt64>(3_000)
+        let query = CountingLiveRideQuery(state: state)
+        let model = LiveRideModel(
+            state: query, storageError: nil, availability: .ready,
+            now: { now.withLock { $0 } }
+        )
+        await model.restore()?.value
+        model.applyCommandSnapshot(paused, resetPoints: true)
+        model.setMapVisible(true)
+        model.setSceneActive(true)
+        defer { model.setSceneActive(false) }
+        await model.refreshDuration()?.value
+        XCTAssertEqual(model.snapshot?.telemetryState, .associatedFresh)
+
+        // Only the native query clock advances; no telemetry or location callback
+        // arrives to refresh the paused presentation.
+        now.withLock { $0 = 4_201 }
+        XCTAssertEqual(state.currentSnapshot(atMs: 4_201)?.telemetryState, .associatedStale)
+        try await Self.waitUntilTelemetryHealth(.associatedStale, model: model)
+        XCTAssertEqual(model.snapshot?.state, .paused)
+        XCTAssertEqual(model.snapshot?.summary.durationMilliseconds, 1_200)
+        XCTAssertEqual(model.snapshot?.rideID, paused.rideID)
+
+        XCTAssertEqual(try state.observeTelemetry(atMs: 5_000), .observed)
+        now.withLock { $0 = 5_000 }
+        await model.refreshDuration()?.value
+        XCTAssertEqual(model.snapshot?.telemetryState, .associatedFresh)
+        XCTAssertEqual(model.snapshot?.summary.durationMilliseconds, 1_200)
+    }
+
+    @MainActor
+    func testPausedMapHealthQueriesSleepWhenHiddenOrBackgroundedAndCatchUpOnReturn() async throws {
+        let (state, paused) = try await Self.pausedRideWithFreshTelemetry()
+        let now = Mutex<UInt64>(4_201)
+        let query = CountingLiveRideQuery(state: state)
+        let model = LiveRideModel(
+            state: query, storageError: nil, availability: .ready,
+            now: { now.withLock { $0 } }
+        )
+        await model.restore()?.value
+        model.applyCommandSnapshot(paused, resetPoints: true)
+        model.setSceneActive(true)
+        defer { model.setSceneActive(false) }
+        let hiddenRead = model.refreshDuration()
+        await hiddenRead?.value
+        XCTAssertNil(hiddenRead, "A hidden paused Map has no display deadline to refresh")
+        XCTAssertEqual(query.durationCalls.withLock { $0 }, 0)
+
+        model.setMapVisible(true)
+        try await Self.waitUntilTelemetryHealth(.associatedStale, model: model)
+        XCTAssertEqual(model.snapshot?.summary.durationMilliseconds, 1_200)
+        XCTAssertEqual(model.snapshot?.rideID, paused.rideID)
+
+        model.setMapVisible(false)
+        let callsWhenHidden = query.durationCalls.withLock { $0 }
+        XCTAssertEqual(try state.observeTelemetry(atMs: 5_000), .observed)
+        now.withLock { $0 = 5_000 }
+        let hiddenRefresh = model.refreshDuration()
+        await hiddenRefresh?.value
+        XCTAssertNil(hiddenRefresh)
+        XCTAssertEqual(query.durationCalls.withLock { $0 }, callsWhenHidden)
+        XCTAssertEqual(model.snapshot?.telemetryState, .associatedStale)
+
+        model.setMapVisible(true)
+        try await Self.waitUntilTelemetryHealth(.associatedFresh, model: model)
+        XCTAssertEqual(model.snapshot?.summary.durationMilliseconds, 1_200)
+        XCTAssertEqual(model.snapshot?.rideID, paused.rideID)
+        model.setSceneActive(false)
+        let callsWhenBackgrounded = query.durationCalls.withLock { $0 }
+        now.withLock { $0 = 7_001 }
+        let backgroundRead = model.refreshDuration()
+        await backgroundRead?.value
+        XCTAssertNil(backgroundRead)
+        XCTAssertEqual(query.durationCalls.withLock { $0 }, callsWhenBackgrounded)
+        XCTAssertEqual(model.snapshot?.telemetryState, .associatedFresh)
+
+        model.setSceneActive(true)
+        try await Self.waitUntilTelemetryHealth(.associatedStale, model: model)
+        XCTAssertEqual(model.snapshot?.state, .paused)
+        XCTAssertEqual(model.snapshot?.summary.durationMilliseconds, 1_200)
+        XCTAssertEqual(model.snapshot?.rideID, paused.rideID)
+    }
+
+    @MainActor
+    func testInFlightPausedHealthResultCannotPublishAfterMapHidesOrSceneBackgrounds() async throws {
+        for hidesMap in [true, false] {
+            let (state, paused) = try await Self.pausedRideWithFreshTelemetry()
+            let queryEntered = expectation(description: "Rust evaluated the paused health snapshot")
+            let release = DispatchSemaphore(value: 0)
+            defer { release.signal() }
+            let holdFirstRead = Mutex(true)
+            let query = CountingLiveRideQuery(
+                state: state,
+                afterTimedSnapshot: {
+                    let shouldHold = holdFirstRead.withLock { pending in
+                        let result = pending
+                        pending = false
+                        return result
+                    }
+                    if shouldHold {
+                        queryEntered.fulfill()
+                        release.wait()
+                    }
+                }
+            )
+            let model = LiveRideModel(
+                state: query, storageError: nil, availability: .ready, now: { 4_201 }
+            )
+            await model.restore()?.value
+            model.applyCommandSnapshot(paused, resetPoints: true)
+            model.setMapVisible(true)
+            model.setSceneActive(true)
+            defer { model.setSceneActive(false) }
+            let read = model.refreshDuration()
+            await fulfillment(of: [queryEntered], timeout: 3)
+            XCTAssertEqual(state.currentSnapshot(atMs: 4_201)?.telemetryState, .associatedStale)
+            if hidesMap {
+                model.setMapVisible(false)
+            } else {
+                model.setSceneActive(false)
+            }
+            release.signal()
+            await read?.value
+            XCTAssertEqual(model.snapshot?.telemetryState, .associatedFresh)
+            XCTAssertEqual(model.snapshot?.state, .paused)
+            XCTAssertEqual(model.snapshot?.summary.durationMilliseconds, 1_200)
+            XCTAssertEqual(model.snapshot?.rideID, paused.rideID)
+            XCTAssertEqual(query.durationCalls.withLock { $0 }, 1)
+
+            if hidesMap {
+                model.setMapVisible(true)
+            } else {
+                model.setSceneActive(true)
+            }
+            try await Self.waitUntilTelemetryHealth(.associatedStale, model: model)
+            XCTAssertEqual(model.snapshot?.summary.durationMilliseconds, 1_200)
+            XCTAssertEqual(model.snapshot?.rideID, paused.rideID)
+        }
+    }
+
+    @MainActor
+    private static func waitUntilTelemetryHealth(
+        _ expected: MobileRideMapTelemetryStateDto,
+        model: LiveRideModel
+    ) async throws {
+        let deadline = ContinuousClock.now + .seconds(3)
+        while model.snapshot?.telemetryState != expected, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(model.snapshot?.telemetryState, expected)
+    }
+
+    @MainActor
+    private static func pausedRideWithFreshTelemetry() async throws
+        -> (MobileRideMapState, MobileRideMapSnapshotDto)
+    {
+        let state = MobileRideMapState()
+        let started = try state.startGpsOnly(atMs: 1_000)
+        // DEBUG state restores the shared database's remembered connection. Use
+        // its authoritative candidate instead of asking Rust to reassign it.
+        let startedRecord = try XCTUnwrap(state.storedHistoryRide(rideID: started.rideID))
+        let vehicle = startedRecord.candidateVehicle ?? "paused-map-wheel"
+        let connection = CutoutSessionStateHandle()
+        defer { withExtendedLifetime(connection) {} }
+        let token = try XCTUnwrap(
+            connection.beginConnectionAttempt(platformIdentifier: vehicle, nowMs: 1_100).token
+        )
+        _ = connection.connectionLinkEstablished(token: token)
+        _ = connection.observeConnectionNotification(
+            token: token,
+            bytes: Data([
+                2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101,
+                114, 104, 97, 115, 104, 0, 38, 208, 3,
+            ])
+        )
+        _ = connection.resolveDeviceSession(token: token, identificationComplete: false, nowMs: 1_101)
+        let admission = try state.beginVerifiedConnectionAdmission(
+            connectionState: connection, token: token, atMs: 1_101
+        )
+        let settled = try await settleAdmission(state, admission)
+        let associated = try XCTUnwrap(settled)
+        XCTAssertEqual(try XCTUnwrap(associated.associatedVehicle), vehicle)
+        XCTAssertEqual(try state.observeTelemetry(atMs: 2_000), .observed)
+        let paused = try state.pause(atMs: 2_200)
+        XCTAssertEqual(paused.associatedVehicle, vehicle)
+        XCTAssertEqual(paused.telemetryState, .associatedFresh)
+        XCTAssertEqual(paused.summary.durationMilliseconds, 1_200)
+        return (state, paused)
+    }
+
     private func point(sequence: UInt64) -> MobileRideMapPointDto {
         MobileRideMapPointDto(
             sequence: sequence,
@@ -574,16 +767,20 @@ private final class CountingLiveRideQuery: LiveRideQuerying {
     let calls = Mutex(0)
     let durationCalls = Mutex(0)
     private let state: MobileRideMapState
+    private let afterTimedSnapshot: (@Sendable () -> Void)?
 
-    init(state: MobileRideMapState) {
+    init(state: MobileRideMapState, afterTimedSnapshot: (@Sendable () -> Void)? = nil) {
         self.state = state
+        self.afterTimedSnapshot = afterTimedSnapshot
     }
 
     func currentSnapshot() -> MobileRideMapSnapshotDto? { state.currentSnapshot() }
 
     func currentSnapshot(atMs: UInt64) -> MobileRideMapSnapshotDto? {
         durationCalls.withLock { $0 += 1 }
-        return state.currentSnapshot(atMs: atMs)
+        let snapshot = state.currentSnapshot(atMs: atMs)
+        afterTimedSnapshot?()
+        return snapshot
     }
 
     func projectStoredPoints(
