@@ -51,6 +51,13 @@ final class RideHistoryModelTests: XCTestCase {
         let summaries: [MobileRideMapHistorySummaryDto]
         private let lock = NSLock()
         private var nextPageGate: PageGate?
+        private var historyFilters = [MobileRideHistoryFilterDto]()
+
+        var historyFilterSnapshots: [MobileRideHistoryFilterDto] {
+            lock.lock()
+            defer { lock.unlock() }
+            return historyFilters
+        }
 
         init(count: Int) {
             summaries = (0..<count).map { RideHistoryModelTests.historySummary("ride-\($0)", pointCount: 1) }
@@ -81,6 +88,9 @@ final class RideHistoryModelTests: XCTestCase {
                     ) : nil
             )
             lock.lock()
+            if let filter {
+                historyFilters.append(filter)
+            }
             let gate = nextPageGate
             nextPageGate = nil
             lock.unlock()
@@ -248,11 +258,68 @@ final class RideHistoryModelTests: XCTestCase {
         )
         XCTAssertNil(filter.vehicleIdentity)
         XCTAssertNil(filter.searchText)
+        XCTAssertFalse(filter.includeShortRides)
+    }
+
+    @MainActor
+    func testShortRideOverrideIsSessionScopedAndClearRestoresDefault() async throws {
+        let query = InMemoryHistoryQuery(count: 2)
+        let model = RideHistoryModel(stateProvider: { query })
+
+        XCTAssertFalse(model.includeShortRides)
+        model.reload()
+        await Self.waitUntil("default history filter excludes short rides") {
+            !model.isLoading && !query.historyFilterSnapshots.isEmpty
+        }
+        XCTAssertFalse(try XCTUnwrap(query.historyFilterSnapshots.last).includeShortRides)
+
+        model.setDateFilter(.allTime)
+        await Self.waitUntil("all-time history filter") { !model.isLoading }
+        model.setIncludeShortRides(true)
+        await Self.waitUntil("short-ride override reaches the Rust query") {
+            !model.isLoading
+                && query.historyFilterSnapshots.last?.includeShortRides == true
+        }
+        XCTAssertTrue(model.includeShortRides)
+        XCTAssertTrue(
+            RideMapHistoryContentView.hasActiveFilters(
+                searchText: "",
+                dateFilter: .last30Days,
+                vehicleFilter: nil,
+                includeShortRides: true
+            )
+        )
+
+        model.reloadPreservingSelection()
+        await Self.waitUntil("short-ride override survives History re-entry") {
+            !model.isLoading
+                && query.historyFilterSnapshots.last?.includeShortRides == true
+        }
+        XCTAssertTrue(model.includeShortRides)
+
+        model.clearFilters()
+        await Self.waitUntil("clear filters restores the default short-ride filter") {
+            !model.isLoading
+                && query.historyFilterSnapshots.last?.includeShortRides == false
+        }
+        XCTAssertFalse(model.includeShortRides)
+        XCTAssertEqual(model.dateFilter, .last30Days)
+        XCTAssertFalse(
+            RideMapHistoryContentView.hasActiveFilters(
+                searchText: "",
+                dateFilter: .last30Days,
+                vehicleFilter: nil,
+                includeShortRides: false
+            )
+        )
+
+        let nextLaunchModel = RideHistoryModel(stateProvider: { query })
+        XCTAssertFalse(nextLaunchModel.includeShortRides)
     }
 
     #if os(macOS)
         @MainActor
-        func testOpeningHistoryLoadsDefaultRecentRidesWithoutChangingFilter() async throws {
+        func testOpeningHistoryHidesShortRideUntilSessionOverride() async throws {
             let state = MobileRideMapState()
             let rideID = try await Self.saveHistoryRide(in: state)
             let model = CutoutAppModel(core: CutoutSessionCore(rideMapState: state))
@@ -268,10 +335,17 @@ final class RideHistoryModelTests: XCTestCase {
             presentation.mode = .history
 
             await Self.waitUntil("initial Last 30 Days history load") {
-                model.rideHistory.rides.contains { $0.rideID == rideID }
+                !model.rideHistory.isLoading && model.rideHistory.rides.isEmpty
             }
             XCTAssertEqual(model.rideHistory.dateFilter, .last30Days)
+            XCTAssertFalse(model.rideHistory.includeShortRides)
             XCTAssertNil(model.rideHistory.error)
+
+            model.rideHistory.setIncludeShortRides(true)
+            await Self.waitUntil("short ride appears after session override") {
+                !model.rideHistory.isLoading
+                    && model.rideHistory.rides.contains { $0.rideID == rideID }
+            }
         }
     #endif
 
@@ -804,7 +878,7 @@ final class RideHistoryModelTests: XCTestCase {
             }
         )
 
-        model.setDateFilter(.allTime)
+        model.setIncludeShortRides(true)
         await Self.waitUntil("unfiltered history before selection and filter change") {
             !model.isLoading
                 && model.rides.contains { $0.rideID == previouslySelectedRideID }
@@ -883,8 +957,13 @@ final class RideHistoryModelTests: XCTestCase {
         _ = try state.stop(atMs: 1_100)
         let rideID = try state.save().rideID
         let query = GatedRideHistoryQuery(base: state, failAfterRelease: false)
-        query.armNextHistoryPage()
         let model = RideHistoryModel(stateProvider: { query })
+        model.setIncludeShortRides(true)
+        await Self.waitUntil("short ride is loaded before search race") {
+            !model.isLoading && model.rides.contains { $0.rideID == rideID }
+        }
+        query.resetHistoryPageSnapshots()
+        query.armNextHistoryPage()
 
         let unmatchedSearch = "no-match-\(UUID().uuidString)"
         model.searchText = unmatchedSearch
@@ -946,6 +1025,11 @@ final class RideHistoryModelTests: XCTestCase {
         let query = GatedRideHistoryQuery(base: state, failAfterRelease: false)
         let model = RideHistoryModel(stateProvider: { query })
         model.setDateFilter(.allTime)
+        await Self.waitUntil("all-time history load before short-ride override") {
+            !model.isLoading
+        }
+        query.resetHistoryPageSnapshots()
+        model.setIncludeShortRides(true)
         await Self.waitUntil("first Rust history page") {
             !model.isLoading && model.canLoadMore
         }
@@ -999,7 +1083,8 @@ final class RideHistoryModelTests: XCTestCase {
         let matchingFilter = MobileRideHistoryFilterDto(
             createdAfterMilliseconds: nil,
             vehicleIdentity: nil,
-            searchText: searchTerm
+            searchText: searchTerm,
+            includeShortRides: true
         )
         let firstFilteredPage = try state.storedHistoryPage(
             cursor: nil,
@@ -1018,7 +1103,7 @@ final class RideHistoryModelTests: XCTestCase {
 
         let query = GatedRideHistoryQuery(base: state, failAfterRelease: false)
         let model = RideHistoryModel(stateProvider: { query })
-        model.setDateFilter(.allTime)
+        model.setIncludeShortRides(true)
         await Self.waitUntil("first history page before explicit saved-ride entry") {
             !model.isLoading && model.rides.count == pageLimit && model.canLoadMore
         }
@@ -1208,8 +1293,20 @@ final class RideHistoryModelTests: XCTestCase {
         let query = GatedRideHistoryQuery(base: state, failAfterRelease: false)
         let model = RideHistoryModel(stateProvider: { query })
         model.setDateFilter(.allTime)
+        await Self.waitUntil("all-time history before selection race") {
+            !model.isLoading
+        }
+        model.setIncludeShortRides(true)
+        await Self.waitUntil("short-ride history before selection race") {
+            !model.isLoading
+        }
+        model.reload(selecting: secondRideID)
         await Self.waitUntil("initial selected history route") {
-            model.selectedRideID == secondRideID && !model.routeLoading
+            model.selectedRideID == secondRideID
+                && model.detailProjectionRideID == secondRideID
+                && !model.isLoading
+                && !model.routeLoading
+                && !model.detailRouteLoading
         }
         let currentPoints = model.displayPoints
         XCTAssertFalse(currentPoints.isEmpty)
@@ -1252,8 +1349,20 @@ final class RideHistoryModelTests: XCTestCase {
         let query = GatedRideHistoryQuery(base: state, failAfterRelease: true)
         let model = RideHistoryModel(stateProvider: { query })
         model.setDateFilter(.allTime)
+        await Self.waitUntil("all-time history page before short-ride override") {
+            !model.isLoading
+        }
+        model.setIncludeShortRides(true)
+        await Self.waitUntil("short-ride history page before explicit selection") {
+            !model.isLoading
+        }
+        model.reload(selecting: rideID)
         await Self.waitUntil("same-ride history detail") {
-            model.selectedRideID == rideID && !model.detailRouteLoading
+            model.selectedRideID == rideID
+                && model.detailProjectionRideID == rideID
+                && !model.isLoading
+                && !model.routeLoading
+                && !model.detailRouteLoading
         }
 
         query.armNextProjection()
@@ -1302,8 +1411,18 @@ final class RideHistoryModelTests: XCTestCase {
         let query = GatedRideHistoryQuery(base: state, failAfterRelease: true)
         let model = RideHistoryModel(stateProvider: { query })
         model.setDateFilter(.allTime)
+        await Self.waitUntil("all-time history page before short-ride override") {
+            !model.isLoading
+        }
+        model.setIncludeShortRides(true)
+        await Self.waitUntil("short-ride history page before explicit selection") {
+            !model.isLoading
+        }
+        model.reload(selecting: rideID)
         await Self.waitUntil("initial same-ride selection projection") {
             model.selectedRideID == rideID
+                && model.detailProjectionRideID == rideID
+                && !model.isLoading
                 && !model.routeLoading
                 && !model.detailRouteLoading
         }
@@ -1350,6 +1469,14 @@ final class RideHistoryModelTests: XCTestCase {
         let model = RideHistoryModel(stateProvider: { query })
         model.setDateFilter(.allTime)
         await Self.waitUntil("initial same-ride history load") {
+            !model.isLoading
+        }
+        model.setIncludeShortRides(true)
+        await Self.waitUntil("short-ride history page before explicit selection") {
+            !model.isLoading
+        }
+        model.reload(selecting: rideID)
+        await Self.waitUntil("initial same-ride history selection") {
             model.selectedRideID == rideID
                 && !model.isLoading
                 && !model.routeLoading

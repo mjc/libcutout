@@ -30,8 +30,9 @@ use super::{
     BmsVoltageSampleRecord, GeoBounds, HistoryContextBudget, LiveCaptureEventKind, LiveCaptureId,
     LiveCaptureIntegrity, LiveCaptureLocationAdmission, LiveCaptureLocationObservation,
     LiveCaptureLocationValidation, LiveCaptureState, PevcapImportOutcome, PevcapImportPreview,
-    PevcapImportWarning, PhoneAlarmPreferencesRecord, QueryLimit, RideDatabase, RideHistoryQuery,
-    RideId, RideRecord, RideSource, RouteProjectionCancellation, StorageError, StoredPevcapCapture,
+    PevcapImportWarning, PhoneAlarmPreferencesRecord, QueryLimit, RideDatabase,
+    RideHistoryDistanceFilter, RideHistoryQuery, RideId, RideRecord, RideSource,
+    RouteProjectionCancellation, StorageError, StoredPevcapCapture,
     VerifiedConnectionLifecycleMutation, VerifiedConnectionRideMetadata,
     VerifiedConnectionRideTarget, VoltageSagModelRecord, normalize_device_display_name,
 };
@@ -6642,7 +6643,7 @@ fn filtered_ride_history_queries_stay_rust_owned_and_bounded() {
         .list_rides_filtered(
             None,
             QueryLimit::new(10).unwrap(),
-            RideHistoryQuery::new(Some(15), None, None),
+            RideHistoryQuery::new(Some(15), None, None, RideHistoryDistanceFilter::AllRides),
         )
         .unwrap();
     assert_eq!(
@@ -6658,7 +6659,12 @@ fn filtered_ride_history_queries_stay_rust_owned_and_bounded() {
         .list_rides_filtered(
             None,
             QueryLimit::new(10).unwrap(),
-            RideHistoryQuery::new(None, Some("device-a"), None),
+            RideHistoryQuery::new(
+                None,
+                Some("device-a"),
+                None,
+                RideHistoryDistanceFilter::AllRides,
+            ),
         )
         .unwrap();
     assert_eq!(
@@ -6690,7 +6696,12 @@ fn filtered_ride_history_queries_stay_rust_owned_and_bounded() {
         .list_rides_filtered(
             None,
             QueryLimit::new(10).unwrap(),
-            RideHistoryQuery::new(None, None, Some("nf2557")),
+            RideHistoryQuery::new(
+                None,
+                None,
+                Some("nf2557"),
+                RideHistoryDistanceFilter::AllRides,
+            ),
         )
         .unwrap();
     assert_eq!(
@@ -6729,7 +6740,12 @@ fn filtered_single_ride_lookup_retains_matching_rows_beyond_the_first_page() {
         .update_ride_map_metadata(newer_matching, None, Some("matching-device"), None, None)
         .unwrap();
 
-    let query = RideHistoryQuery::new(None, Some("matching-device"), None);
+    let query = RideHistoryQuery::new(
+        None,
+        Some("matching-device"),
+        None,
+        RideHistoryDistanceFilter::AllRides,
+    );
     let first_page = database
         .list_rides_filtered(None, QueryLimit::new(1).unwrap(), query.clone())
         .unwrap();
@@ -6762,6 +6778,165 @@ fn filtered_single_ride_lookup_retains_matching_rows_beyond_the_first_page() {
 }
 
 #[test]
+fn history_distance_filter_excludes_short_rides_before_pagination() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-history-distance-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let (above, exact, below, newer_above) = create_history_distance_fixtures(&database);
+
+    let over_five_hundred_feet = RideHistoryQuery::new(
+        Some(1),
+        Some("distance-device"),
+        Some("nf2557"),
+        RideHistoryDistanceFilter::OverFiveHundredFeet,
+    );
+    let filtered_page = database
+        .list_rides_filtered(
+            None,
+            QueryLimit::new(1).unwrap(),
+            over_five_hundred_feet.clone(),
+        )
+        .unwrap();
+    assert_eq!(
+        filtered_page
+            .rides()
+            .iter()
+            .map(RideRecord::id)
+            .collect::<Vec<_>>(),
+        vec![newer_above]
+    );
+    let cursor_page = database
+        .list_rides_filtered(
+            filtered_page.next_cursor(),
+            QueryLimit::new(1).unwrap(),
+            over_five_hundred_feet.clone(),
+        )
+        .unwrap();
+    assert_eq!(
+        cursor_page
+            .rides()
+            .iter()
+            .map(RideRecord::id)
+            .collect::<Vec<_>>(),
+        vec![above]
+    );
+    let projection = database
+        .project_history_context(
+            over_five_hundred_feet.clone(),
+            None,
+            HistoryContextBudget::new(10, 3, 3, 2).unwrap(),
+            None,
+            RoutePrivacyPolicy::Precise,
+        )
+        .unwrap();
+    assert_eq!(projection.source_history_route_count(), 2);
+    assert_eq!(
+        database
+            .find_ride_filtered(above, over_five_hundred_feet.clone())
+            .unwrap()
+            .map(|ride| ride.id()),
+        Some(above)
+    );
+    assert_eq!(
+        database
+            .find_ride_filtered(exact, over_five_hundred_feet.clone())
+            .unwrap(),
+        None,
+        "the 500-foot boundary is exclusive"
+    );
+    assert_eq!(
+        database
+            .find_ride_filtered(below, over_five_hundred_feet)
+            .unwrap(),
+        None
+    );
+
+    let all_rides = database
+        .list_rides_filtered(
+            None,
+            QueryLimit::new(10).unwrap(),
+            RideHistoryQuery::new(None, None, None, RideHistoryDistanceFilter::AllRides),
+        )
+        .unwrap();
+    assert_eq!(
+        all_rides
+            .rides()
+            .iter()
+            .map(RideRecord::id)
+            .collect::<Vec<_>>(),
+        vec![newer_above, below, exact, above],
+        "the explicit AllRides override retains short saved rides"
+    );
+
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+fn create_saved_history_distance_ride(
+    database: &RideDatabase,
+    created_at: u64,
+    longitude_delta: i32,
+) -> RideId {
+    let ride = database.create_ride(RideSource::Live, created_at).unwrap();
+    database.transition(ride, RideEvent::Start).unwrap();
+    let first = LocationSample::new(
+        Coordinate::from_fixed_parts(0, 0).unwrap(),
+        1_000_u64,
+        created_at,
+        Some(1_000),
+        LocationSource::Live,
+    );
+    let second = LocationSample::new(
+        Coordinate::from_fixed_parts(-13_705, longitude_delta).unwrap(),
+        1_001_000_u64,
+        created_at + 1_000,
+        Some(1_000),
+        LocationSource::Live,
+    );
+    assert_eq!(
+        database.append_location(ride, first).unwrap(),
+        LocationAdmission::Accepted
+    );
+    assert_eq!(
+        database.append_location(ride, second).unwrap(),
+        LocationAdmission::Accepted
+    );
+    database.transition(ride, RideEvent::Stop).unwrap();
+    database.transition(ride, RideEvent::Save).unwrap();
+    ride
+}
+
+fn create_history_distance_fixtures(database: &RideDatabase) -> (RideId, RideId, RideId, RideId) {
+    // At latitude zero these fixed-point coordinate pairs round to the exact persisted
+    // millimetre values on either side of, and at, 500 feet (152,400 mm).
+    let above = create_saved_history_distance_ride(database, 10, 140);
+    let exact = create_saved_history_distance_ride(database, 20, 131);
+    let below = create_saved_history_distance_ride(database, 30, 121);
+    let newer_above = create_saved_history_distance_ride(database, 40, 140);
+    database
+        .save_device_name("distance-device", "NF2557", 50)
+        .unwrap();
+    for ride in [above, exact, below, newer_above] {
+        database
+            .update_ride_map_metadata(ride, None, Some("distance-device"), None, None)
+            .unwrap();
+    }
+    for (ride, expected_distance) in [(above, 152_401), (exact, 152_400), (below, 152_399)] {
+        let saved_distance = database
+            .find_ride(ride)
+            .unwrap()
+            .unwrap()
+            .summary()
+            .distance_millimetres();
+        assert_eq!(saved_distance, expected_distance);
+    }
+    (above, exact, below, newer_above)
+}
+
+#[test]
 fn rolling_ride_history_window_includes_recent_days_and_its_inclusive_boundary() {
     let _guard = test_guard();
     let path = std::env::temp_dir().join(format!(
@@ -6791,7 +6966,12 @@ fn rolling_ride_history_window_includes_recent_days_and_its_inclusive_boundary()
         .list_rides_filtered(
             None,
             QueryLimit::new(10).unwrap(),
-            RideHistoryQuery::new(Some(cutoff_ms), None, None),
+            RideHistoryQuery::new(
+                Some(cutoff_ms),
+                None,
+                None,
+                RideHistoryDistanceFilter::AllRides,
+            ),
         )
         .unwrap();
     assert_eq!(
@@ -6840,7 +7020,12 @@ fn filtered_history_escapes_like_wildcards() {
         .list_rides_filtered(
             None,
             QueryLimit::new(10).unwrap(),
-            RideHistoryQuery::new(None, None, Some("name_%\\literal")),
+            RideHistoryQuery::new(
+                None,
+                None,
+                Some("name_%\\literal"),
+                RideHistoryDistanceFilter::AllRides,
+            ),
         )
         .unwrap();
     assert_eq!(
@@ -7410,7 +7595,12 @@ fn music_event_text_constraints_measure_utf8_bytes() {
 
 #[test]
 fn history_query_preserves_typed_timestamp_and_vehicle_identity() {
-    let query = RideHistoryQuery::new(Some(15), Some(" device-a "), None);
+    let query = RideHistoryQuery::new(
+        Some(15),
+        Some(" device-a "),
+        None,
+        RideHistoryDistanceFilter::AllRides,
+    );
 
     assert_eq!(
         query.created_after_timestamp(),

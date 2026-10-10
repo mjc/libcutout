@@ -1655,7 +1655,7 @@ extension SessionConnectionPhase {
                 cursor: nil, limit: MobileRideMapLimits.rustOwned.historyPageLimit,
                 filter: MobileRideHistoryFilterDto(
                     createdAfterMilliseconds: nowMilliseconds > window ? nowMilliseconds - window : 0,
-                    vehicleIdentity: nil, searchText: nil
+                    vehicleIdentity: nil, searchText: nil, includeShortRides: true
                 )
             )
             return Report(

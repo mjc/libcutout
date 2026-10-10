@@ -160,6 +160,7 @@ struct RideMapRouteView: View {
             selectedRideID: history.selectedRideID,
             dateFilter: history.dateFilter,
             vehicleFilter: history.vehicleFilter,
+            includeShortRides: history.includeShortRides,
             vehicleFilterOptions: history.vehicleIdentities,
             select: { rideID in
                 presentation.mode = .history
@@ -173,6 +174,7 @@ struct RideMapRouteView: View {
             },
             setDateFilter: { history.setDateFilter($0) },
             setVehicleFilter: { history.setVehicleFilter($0) },
+            setIncludeShortRides: { history.setIncludeShortRides($0) },
             clearFilters: { history.clearFilters() },
             currentVehicleIdentity: model.device.rideMapVehicleIdentity,
             currentVehicleName: model.device.rideMapVehicleName,

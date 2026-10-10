@@ -992,15 +992,38 @@ final class CutoutAppUITests: XCTestCase {
         let initialFilterFrame = filters.frame
         let initialViewportFrame = viewport.frame
         XCTAssertGreaterThan(initialViewportFrame.height, 0)
+
+        let initiallyListedIDs = Set(
+            Self.historyFixtureFields(from: try XCTUnwrap(screen.value as? String))["listed"]?
+                .split(separator: ",").map(String.init) ?? []
+        )
+        XCTAssertTrue(initiallyListedIDs.isDisjoint(with: seededIDs), "Short rides are hidden by default")
+
         date.tap()
+        let showShortRides = app.descendants(matching: .any)["ride-map.history-show-short-rides"]
+        XCTAssertTrue(showShortRides.waitForExistence(timeout: 5), app.debugDescription)
+        showShortRides.tap()
+        let shortRidesGeneration = try waitForSettledHistory(in: screen, afterQueryGeneration: defaultGeneration)
+        let shortRideListedIDs = Set(
+            Self.historyFixtureFields(from: try XCTUnwrap(screen.value as? String))["listed"]?
+                .split(separator: ",").map(String.init) ?? []
+        )
+        let newestSeededID = try XCTUnwrap(seededIDs.last)
+        XCTAssertTrue(shortRideListedIDs.contains(newestSeededID), "The session override reveals short rides")
+        assertHistoryFrame(filters.frame, equals: initialFilterFrame)
+        assertHistoryFrame(viewport.frame, equals: initialViewportFrame)
+
         let allTime = app.buttons["All time"]
+        if !allTime.exists {
+            date.tap()
+        }
         XCTAssertTrue(allTime.waitForExistence(timeout: 5), app.debugDescription)
         allTime.tap()
         let filterApplied = XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "label == %@", "All time"), object: date
         )
         XCTAssertEqual(XCTWaiter.wait(for: [filterApplied], timeout: 5), .completed, app.debugDescription)
-        let initialGeneration = try waitForSettledHistory(in: screen, afterQueryGeneration: defaultGeneration)
+        let initialGeneration = try waitForSettledHistory(in: screen, afterQueryGeneration: shortRidesGeneration)
         XCTAssertTrue(clear.isEnabled)
         assertHistoryFrame(filters.frame, equals: initialFilterFrame)
         assertHistoryFrame(viewport.frame, equals: initialViewportFrame)
@@ -1050,11 +1073,19 @@ final class CutoutAppUITests: XCTestCase {
         _ = try waitForSettledHistory(in: screen, afterQueryGeneration: beforeReentry, selecting: selectedID)
         scrollElementFrameIntoViewport(selectedRow, in: scroll, maxScrolls: 60)
         XCTAssertEqual(selectedRow.value as? String, "Selected", app.debugDescription)
+        let reenteredListedIDs = Set(
+            Self.historyFixtureFields(from: try XCTUnwrap(screen.value as? String))["listed"]?
+                .split(separator: ",").map(String.init) ?? []
+        )
+        XCTAssertTrue(reenteredListedIDs.contains(newestSeededID), "The override survives Map reentry")
 
         XCTAssertEqual(date.label, "All time", "Map reentry must preserve the selected history filter")
         XCTAssertTrue(date.isHittable, app.debugDescription)
         XCTAssertTrue(clear.isEnabled)
         XCTAssertTrue(clear.isHittable, app.debugDescription)
+        date.tap()
+        XCTAssertTrue(showShortRides.waitForExistence(timeout: 5), app.debugDescription)
+        date.tap()
         assertHistoryFrame(filters.frame, equals: initialFilterFrame)
         assertHistoryFrame(viewport.frame, equals: initialViewportFrame)
         assertMinimumControlDimension(clear.frame.width)
@@ -1065,6 +1096,22 @@ final class CutoutAppUITests: XCTestCase {
         )
         XCTAssertEqual(XCTWaiter.wait(for: [filtersCleared], timeout: 5), .completed, app.debugDescription)
         XCTAssertFalse(clear.isEnabled)
+        _ = try waitForSettledHistory(in: screen, afterQueryGeneration: beforeReentry)
+        let listedAfterClear = Set(
+            Self.historyFixtureFields(from: try XCTUnwrap(screen.value as? String))["listed"]?
+                .split(separator: ",").map(String.init) ?? []
+        )
+        XCTAssertTrue(listedAfterClear.isDisjoint(with: seededIDs), "Clear restores the short-ride default")
+        let historyEmpty = app.descendants(matching: .any)["ride-map.history-empty"]
+        XCTAssertTrue(historyEmpty.waitForExistence(timeout: 5), app.debugDescription)
+        let emptyStateCopy = historyEmpty.label
+        XCTAssertTrue(emptyStateCopy.contains("No rides match these filters."), emptyStateCopy)
+        XCTAssertTrue(
+            emptyStateCopy.contains("To include shorter rides, turn on Show short rides in the date menu."),
+            emptyStateCopy
+        )
+        XCTAssertFalse(emptyStateCopy.localizedCaseInsensitiveContains("unavailable"), emptyStateCopy)
+        XCTAssertFalse(emptyStateCopy.localizedCaseInsensitiveContains("route map"), emptyStateCopy)
         assertHistoryFrame(filters.frame, equals: initialFilterFrame)
         assertHistoryFrame(viewport.frame, equals: initialViewportFrame)
         let clearedShot = XCTAttachment(screenshot: app.screenshot())
@@ -1081,6 +1128,20 @@ final class CutoutAppUITests: XCTestCase {
             (screen.value as? String)?.components(separatedBy: ";").first, receipt,
             "Relaunch must reuse the same validated Rust fixture IDs"
         )
+        let relaunchedPicker = app.descendants(matching: .any)["ride-map.mode-picker"].segmentedControls.firstMatch
+        relaunchedPicker.buttons["History"].tap()
+        let relaunchedGeneration = try waitForSettledHistory(in: screen, afterQueryGeneration: 0)
+        let relaunchedDate = app.buttons["ride-map.history-date-filter"]
+        relaunchedDate.tap()
+        let relaunchedShortRideToggle = app.descendants(matching: .any)["ride-map.history-show-short-rides"]
+        XCTAssertTrue(relaunchedShortRideToggle.waitForExistence(timeout: 5), app.debugDescription)
+        relaunchedDate.tap()
+        let relaunchedListedIDs = Set(
+            Self.historyFixtureFields(from: try XCTUnwrap(screen.value as? String))["listed"]?
+                .split(separator: ",").map(String.init) ?? []
+        )
+        XCTAssertTrue(relaunchedListedIDs.isDisjoint(with: seededIDs))
+        XCTAssertGreaterThan(relaunchedGeneration, 0)
     }
 
     private func waitForSettledHistory(

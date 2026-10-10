@@ -1694,7 +1694,8 @@ public final class MobileRideMapState: @unchecked Sendable {
                 ?? MobileRideHistoryFilterDto(
                     createdAfterMilliseconds: nil,
                     vehicleIdentity: nil,
-                    searchText: nil
+                    searchText: nil,
+                    includeShortRides: true
                 )
             let page = try database.listRidesFiltered(cursor: cursor, filter: filter, limit: limit)
             let summaries = page.rides.map(mapHistorySummary)

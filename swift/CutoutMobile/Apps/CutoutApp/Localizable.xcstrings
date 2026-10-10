@@ -1940,8 +1940,16 @@
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Following route" } } }
     },
     "ride_map.history_empty" : {
-      "comment" : "Ride-map history state before durable history queries are available.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Saved rides will appear here when history storage is available." } } }
+      "comment" : "History empty state when a successful query returns no rides matching the active filters.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "No rides match these filters." } } }
+    },
+    "ride_map.history_empty_filters_hint" : {
+      "comment" : "History empty-state hint when short rides are included and no rides match the other active filters.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Try a different date range or clear your filters." } } }
+    },
+    "ride_map.history_empty_short_rides_hint" : {
+      "comment" : "History empty-state hint when short rides are hidden by the default filter.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "To include shorter rides, turn on Show short rides in the date menu." } } }
     },
     "ride_map.history_clear_filters" : {
       "comment" : "Action that clears the history search, date, and vehicle filters.",
@@ -2058,6 +2066,10 @@
     "ride_map.history_all_time" : {
       "comment" : "History date filter showing every stored ride.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "All time" } } }
+    },
+    "ride_map.history_show_short_rides" : {
+      "comment" : "Session-only History override revealing saved rides at or below the default Rust-owned minimum distance without changing stored rides.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Show short rides" } } }
     },
     "ride_map.history_all_vehicles" : {
       "comment" : "History vehicle filter showing rides for every vehicle.",

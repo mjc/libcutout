@@ -419,7 +419,8 @@ final class RideMapStateTests: XCTestCase {
             filter: MobileRideHistoryFilterDto(
                 createdAfterMilliseconds: nil,
                 vehicleIdentity: nil,
-                searchText: nil
+                searchText: nil,
+                includeShortRides: true
             ),
             selectedRideID: selectedRideID,
             budget: MobileRideMapHistoryContextBudget(
@@ -464,12 +465,19 @@ final class RideMapStateTests: XCTestCase {
             filter: MobileRideHistoryFilterDto(
                 createdAfterMilliseconds: nil,
                 vehicleIdentity: platformIdentifier,
-                searchText: nil
+                searchText: nil,
+                includeShortRides: true
             ),
             limit: 50
         )
         XCTAssertEqual(page.rides.first?.associatedVehicle, platformIdentifier)
         XCTAssertEqual(page.rides.first?.associatedVehicleName, "NF2557")
+        XCTAssertTrue(
+            try state.storedHistoryPage(cursor: nil, limit: 50).summaries.contains {
+                $0.rideID == rideID
+            },
+            "The unfiltered library query continues to include short saved rides"
+        )
         let options = try database.listRideHistoryVehicleOptions()
         XCTAssertTrue(
             options.contains(

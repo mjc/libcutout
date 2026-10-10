@@ -13,7 +13,8 @@ import XCTest
                 for textSize in [DynamicTypeSize.large, .accessibility3] {
                     let baseline = try fittedSize(
                         width: width, textSize: textSize,
-                        date: "Last 30 Days", vehicle: "All vehicles", filtered: false
+                        date: "Last 30 Days", vehicle: "All vehicles", filtered: false,
+                        includeShortRides: false
                     )
                     for (date, vehicle) in [
                         ("All time", "All vehicles"),
@@ -22,7 +23,8 @@ import XCTest
                     ] {
                         let filtered = try fittedSize(
                             width: width, textSize: textSize,
-                            date: date, vehicle: vehicle, filtered: true
+                            date: date, vehicle: vehicle, filtered: true,
+                            includeShortRides: false
                         )
                         XCTAssertEqual(filtered.width, baseline.width, accuracy: 0.5)
                         XCTAssertEqual(
@@ -30,21 +32,30 @@ import XCTest
                             "Filter values and clear availability must not move the route below at width \(width), \(textSize)"
                         )
                     }
+                    let shortRides = try fittedSize(
+                        width: width, textSize: textSize,
+                        date: "Last 30 Days", vehicle: "All vehicles", filtered: true,
+                        includeShortRides: true
+                    )
+                    XCTAssertEqual(shortRides.width, baseline.width, accuracy: 0.5)
+                    XCTAssertEqual(shortRides.height, baseline.height, accuracy: 0.5)
                 }
             }
         }
 
         private func fittedSize(
             width: CGFloat, textSize: DynamicTypeSize,
-            date: String, vehicle: String, filtered: Bool
+            date: String, vehicle: String, filtered: Bool, includeShortRides: Bool
         ) throws -> NSSize {
             let view = RideMapHistoryFilterBar(
                 dateTitle: date,
                 vehicleTitle: vehicle,
                 vehicleOptions: [],
                 hasActiveFilters: filtered,
+                includeShortRides: includeShortRides,
                 setDateFilter: { _ in },
                 setVehicleFilter: { _ in },
+                setIncludeShortRides: { _ in },
                 clearFilters: {}
             )
             .environment(\.dynamicTypeSize, textSize)

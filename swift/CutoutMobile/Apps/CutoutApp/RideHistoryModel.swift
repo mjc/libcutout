@@ -82,6 +82,7 @@ final class RideHistoryModel {
     }
     private(set) var dateFilter = DateFilter.last30Days
     private(set) var vehicleFilter: String?
+    private(set) var includeShortRides = false
     private(set) var vehicleIdentities = [String]()
     private(set) var vehicleNames = [String: String]()
     private(set) var isLoading = false
@@ -711,13 +712,20 @@ final class RideHistoryModel {
         reload()
     }
 
+    func setIncludeShortRides(_ include: Bool) {
+        guard includeShortRides != include else { return }
+        includeShortRides = include
+        reload()
+    }
+
     func clearFilters() {
         let searchChanged = !searchText.isEmpty
-        let filtersChanged = dateFilter != .last30Days || vehicleFilter != nil
+        let filtersChanged = dateFilter != .last30Days || vehicleFilter != nil || includeShortRides
         guard searchChanged || filtersChanged else { return }
         searchText = ""
         dateFilter = .last30Days
         vehicleFilter = nil
+        includeShortRides = false
         if !searchChanged {
             reload()
         }
@@ -779,7 +787,8 @@ final class RideHistoryModel {
         MobileRideHistoryFilterDto(
             createdAfterMilliseconds: queryDateAfterMilliseconds ?? historyDateAfterMilliseconds,
             vehicleIdentity: vehicleFilter,
-            searchText: Self.normalizedSearchText(searchText)
+            searchText: Self.normalizedSearchText(searchText),
+            includeShortRides: includeShortRides
         )
     }
 

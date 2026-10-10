@@ -29,6 +29,7 @@ struct RideMapHistoryContentView: View {
     let selectedRideID: String?
     let dateFilter: RideHistoryModel.DateFilter
     let vehicleFilter: String?
+    let includeShortRides: Bool
     let vehicleFilterOptions: [String]
     let select: (String) -> Void
     let load: () -> Void
@@ -36,6 +37,7 @@ struct RideMapHistoryContentView: View {
     let returnToLive: () -> Void
     let setDateFilter: (RideHistoryModel.DateFilter) -> Void
     let setVehicleFilter: (String?) -> Void
+    let setIncludeShortRides: @MainActor @Sendable (Bool) -> Void
     let clearFilters: () -> Void
     let currentVehicleIdentity: String?
     let currentVehicleName: String?
@@ -94,7 +96,8 @@ struct RideMapHistoryContentView: View {
         Self.hasActiveFilters(
             searchText: searchText,
             dateFilter: dateFilter,
-            vehicleFilter: vehicleFilter
+            vehicleFilter: vehicleFilter,
+            includeShortRides: includeShortRides
         )
     }
 
@@ -147,11 +150,13 @@ struct RideMapHistoryContentView: View {
     static func hasActiveFilters(
         searchText: String,
         dateFilter: RideHistoryModel.DateFilter,
-        vehicleFilter: String?
+        vehicleFilter: String?,
+        includeShortRides: Bool
     ) -> Bool {
         !normalizedSearchText(searchText).isEmpty
             || dateFilter != .last30Days
             || vehicleFilter != nil
+            || includeShortRides
     }
 
     @MainActor
@@ -176,7 +181,11 @@ struct RideMapHistoryContentView: View {
                             } else if rides.isEmpty, historyError != nil {
                                 RideMapHistoryErrorState(load: load)
                             } else if rides.isEmpty {
-                                RideMapHistoryEmptyState(canLoadMore: canLoadMore, loadMore: loadMore)
+                                RideMapHistoryEmptyState(
+                                    canLoadMore: canLoadMore,
+                                    includeShortRides: includeShortRides,
+                                    loadMore: loadMore
+                                )
                             } else {
                                 RideMapHistoryRouteSection(
                                     displayPoints: displayPoints,
@@ -270,8 +279,10 @@ struct RideMapHistoryContentView: View {
                 vehicleTitle: vehicleFilter.map(vehicleLabel) ?? localizedAppText("ride_map.history_all_vehicles"),
                 vehicleOptions: vehicleOptions,
                 hasActiveFilters: hasActiveFilters,
+                includeShortRides: includeShortRides,
                 setDateFilter: setDateFilter,
                 setVehicleFilter: setVehicleFilter,
+                setIncludeShortRides: setIncludeShortRides,
                 clearFilters: clearFilters
             )
         }

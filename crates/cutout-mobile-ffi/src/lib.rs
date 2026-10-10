@@ -7239,6 +7239,8 @@ pub struct MobileRideHistoryFilterDto {
     pub created_after_milliseconds: Option<u64>,
     pub vehicle_identity: Option<String>,
     pub search_text: Option<String>,
+    /// Reveals saved short rides without changing their canonical measurements.
+    pub include_short_rides: bool,
 }
 
 /// Rust-owned bounds for the history overview's contextual route projection.
@@ -8297,6 +8299,11 @@ fn mobile_history_query(filter: &MobileRideHistoryFilterDto) -> persistence::Rid
         filter.created_after_milliseconds,
         filter.vehicle_identity.as_deref(),
         filter.search_text.as_deref(),
+        if filter.include_short_rides {
+            persistence::RideHistoryDistanceFilter::AllRides
+        } else {
+            persistence::RideHistoryDistanceFilter::OverFiveHundredFeet
+        },
     )
 }
 
@@ -8735,6 +8742,7 @@ impl RideDatabaseHandle {
                 created_after_milliseconds: None,
                 vehicle_identity: None,
                 search_text: None,
+                include_short_rides: true,
             },
             limit,
         )

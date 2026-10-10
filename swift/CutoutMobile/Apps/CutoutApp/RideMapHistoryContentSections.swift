@@ -24,8 +24,10 @@ struct RideMapHistoryFilterBar: View {
     let vehicleTitle: String
     let vehicleOptions: [RideMapVehicleOption]
     let hasActiveFilters: Bool
+    let includeShortRides: Bool
     let setDateFilter: (RideHistoryModel.DateFilter) -> Void
     let setVehicleFilter: (String?) -> Void
+    let setIncludeShortRides: @MainActor @Sendable (Bool) -> Void
     let clearFilters: () -> Void
 
     var body: some View {
@@ -70,6 +72,15 @@ struct RideMapHistoryFilterBar: View {
             Button(localizedAppText("ride_map.history_all_time")) {
                 setDateFilter(.allTime)
             }
+            Divider()
+            Toggle(
+                localizedAppText("ride_map.history_show_short_rides"),
+                isOn: Binding(
+                    get: { includeShortRides },
+                    set: setIncludeShortRides
+                )
+            )
+            .accessibilityIdentifier("ride-map.history-show-short-rides")
         } label: {
             filterLabel(title: dateTitle)
         }
@@ -278,6 +289,7 @@ struct RideMapHistoryListSection: View {
 
 struct RideMapHistoryEmptyState: View {
     let canLoadMore: Bool
+    let includeShortRides: Bool
     let loadMore: () -> Void
 
     var body: some View {
@@ -289,9 +301,15 @@ struct RideMapHistoryEmptyState: View {
                 .font(.title2.weight(.semibold))
             Text(localizedAppText("ride_map.history_empty"))
                 .foregroundStyle(PevColors.muted)
-            Text(localizedAppText("ride_map.map_alternative"))
-                .font(.subheadline)
-                .foregroundStyle(PevColors.muted)
+            Text(
+                localizedAppText(
+                    includeShortRides
+                        ? "ride_map.history_empty_filters_hint"
+                        : "ride_map.history_empty_short_rides_hint"
+                )
+            )
+            .font(.subheadline)
+            .foregroundStyle(PevColors.muted)
             if canLoadMore {
                 Button(localizedAppText("ride_map.history_load_more"), action: loadMore)
                     .buttonStyle(.bordered)

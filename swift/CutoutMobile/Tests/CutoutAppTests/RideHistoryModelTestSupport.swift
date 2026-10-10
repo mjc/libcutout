@@ -183,6 +183,13 @@ final class GatedRideHistoryQuery: RideHistoryQuerying, @unchecked Sendable {
         return historyPageCursorPresence
     }
 
+    func resetHistoryPageSnapshots() {
+        lock.lock()
+        historyPageFilters.removeAll(keepingCapacity: true)
+        historyPageCursorPresence.removeAll(keepingCapacity: true)
+        lock.unlock()
+    }
+
     func waitUntilHistoryPageFilter(_ searchText: String) async -> Bool {
         let deadline = ContinuousClock.now + .seconds(5)
         while ContinuousClock.now < deadline {

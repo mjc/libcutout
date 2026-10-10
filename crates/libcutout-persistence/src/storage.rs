@@ -363,12 +363,23 @@ impl RideCursor {
     }
 }
 
+/// Distance policy for bounded ride-history queries.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum RideHistoryDistanceFilter {
+    /// Include every saved ride, regardless of its recorded distance.
+    #[default]
+    AllRides,
+    /// Include rides whose persisted distance is strictly greater than 500 feet.
+    OverFiveHundredFeet,
+}
+
 /// Rust-owned filters for bounded ride-history queries.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RideHistoryQuery {
     created_after_ms: Option<WallClockUnixMilliseconds>,
     vehicle_identity: Option<VehicleIdentity>,
     search_text: Option<String>,
+    distance: RideHistoryDistanceFilter,
 }
 
 /// A vehicle identity used by at least one visible ride, with its persisted display name.
@@ -393,12 +404,13 @@ impl RideHistoryVehicleOption {
 }
 
 impl RideHistoryQuery {
-    /// Creates a query from optional date, vehicle-identity, and user search filters.
+    /// Creates a query from optional date, vehicle-identity, search, and distance filters.
     #[must_use]
     pub fn new(
         created_after_milliseconds: Option<u64>,
         vehicle_identity: Option<&str>,
         search_text: Option<&str>,
+        distance: RideHistoryDistanceFilter,
     ) -> Self {
         Self {
             created_after_ms: created_after_milliseconds.map(WallClockUnixMilliseconds::new),
@@ -407,6 +419,7 @@ impl RideHistoryQuery {
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .map(str::to_owned),
+            distance,
         }
     }
 
@@ -435,6 +448,12 @@ impl RideHistoryQuery {
     #[must_use]
     pub fn search_text(&self) -> Option<&str> {
         self.search_text.as_deref()
+    }
+
+    /// Returns the minimum-distance policy for this history query.
+    #[must_use]
+    pub const fn distance_filter(&self) -> RideHistoryDistanceFilter {
+        self.distance
     }
 }
 
@@ -9155,6 +9174,14 @@ fn history_filter_predicates(
                OR strftime('%Y-%m-%d', rides.created_at_ms / 1000, 'unixepoch') LIKE ?{parameter_index} ESCAPE '\\')"
         ));
         parameters.push(Value::Text(format!("%{escaped}%")));
+    }
+    match query.distance {
+        RideHistoryDistanceFilter::AllRides => {}
+        RideHistoryDistanceFilter::OverFiveHundredFeet => {
+            let parameter_index = first_parameter_index + parameters.len();
+            predicates.push(format!(" AND rides.distance_mm > ?{parameter_index}"));
+            parameters.push(Value::Integer(152_400));
+        }
     }
     (predicates.concat(), parameters)
 }

@@ -663,8 +663,18 @@ final class CutoutAppModelTests: XCTestCase {
             XCTAssertTrue(stopped)
             XCTAssertTrue(saved)
             XCTAssertFalse(try driver.rideMapState.storedMusicHistory(rideID: rideID).events.isEmpty)
+            model.rideHistory.setDateFilter(.allTime)
+            await Self.waitUntil("all-time music-history page") {
+                !model.rideHistory.isLoading
+            }
+            model.rideHistory.setIncludeShortRides(true)
+            await Self.waitUntil("short-ride music-history page") {
+                !model.rideHistory.isLoading
+            }
+            model.rideHistory.reload(selecting: rideID)
             await Self.waitUntil("music-history route before gated viewport") {
                 model.rideHistory.selectedRideID == rideID
+                    && !model.rideHistory.isLoading
                     && !model.rideHistory.detailMusicTimeline.isEmpty
                     && !model.rideHistory.routeLoading
             }
