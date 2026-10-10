@@ -1794,6 +1794,18 @@ private struct HistoricalRideQuery: RideHistoryQuerying {
         summary.rideID == rideID ? summary : nil
     }
 
+    func storedHistoryRide(
+        rideID: String,
+        filter: MobileRideHistoryFilterDto
+    ) throws -> MobileRideMapHistorySummaryDto? {
+        guard summary.rideID == rideID,
+            filter.createdAfterMilliseconds.map({ summary.createdAtMilliseconds >= $0 }) ?? true,
+            filter.vehicleIdentity == nil,
+            filter.searchText.map({ summary.rideID.localizedCaseInsensitiveContains($0) }) ?? true
+        else { return nil }
+        return summary
+    }
+
     func storedHistoryPage(
         cursor: MobileRideCursorDto?,
         limit: UInt32,

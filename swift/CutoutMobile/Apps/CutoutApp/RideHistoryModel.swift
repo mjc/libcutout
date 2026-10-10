@@ -26,6 +26,10 @@ protocol RideHistoryQuerying: Sendable {
     func storedMusicHistoryAsync(rideID: String) async throws -> MobileMusicHistoryDto
     func storedHistoryVehicleOptions() throws -> [MobileRideMapHistoryVehicleOptionDto]
     func storedHistoryRide(rideID: String) throws -> MobileRideMapHistorySummaryDto?
+    func storedHistoryRide(
+        rideID: String,
+        filter: MobileRideHistoryFilterDto
+    ) throws -> MobileRideMapHistorySummaryDto?
     func storedHistoryPage(
         cursor: MobileRideCursorDto?,
         limit: UInt32,
@@ -162,7 +166,9 @@ final class RideHistoryModel {
     }
 
     func reloadPreservingSelection() {
-        reload(selecting: selectedRideID)
+        // Normal refresh preserves selection only within the filtered result.
+        // Explicit saved-ride entry uses reload(selecting:) to bypass filters.
+        reload()
     }
 
     func applyLoadFailure(_ error: MobileRideMapError) {
@@ -578,6 +584,7 @@ final class RideHistoryModel {
         }
 
         let filter = historyFilter
+        let selectionToPreserve = requestedRideID == nil ? selectedRideID : nil
         loadTask = Task { [weak self] in
             do {
                 let result = try await Self.runCancellableDetached(priority: .userInitiated) {
@@ -588,15 +595,25 @@ final class RideHistoryModel {
                     )
                     let vehicleOptions = try state.storedHistoryVehicleOptions()
                     var summaries = page.summaries
+                    var retainedRide: MobileRideMapHistorySummaryDto?
                     if let requestedRideID,
-                        summaries.contains(where: { $0.rideID == requestedRideID }) == false,
-                        let requestedRide = try state.storedHistoryRide(rideID: requestedRideID)
+                        summaries.contains(where: { $0.rideID == requestedRideID }) == false
                     {
+                        retainedRide = try state.storedHistoryRide(rideID: requestedRideID)
+                    } else if let selectionToPreserve,
+                        summaries.contains(where: { $0.rideID == selectionToPreserve }) == false
+                    {
+                        retainedRide = try state.storedHistoryRide(
+                            rideID: selectionToPreserve,
+                            filter: filter
+                        )
+                    }
+                    if let retainedRide {
                         let insertionIndex =
                             summaries.firstIndex {
-                                $0.createdAtMilliseconds < requestedRide.createdAtMilliseconds
+                                $0.createdAtMilliseconds < retainedRide.createdAtMilliseconds
                             } ?? summaries.endIndex
-                        summaries.insert(requestedRide, at: insertionIndex)
+                        summaries.insert(retainedRide, at: insertionIndex)
                     }
                     return (summaries, page.nextCursor, vehicleOptions)
                 }

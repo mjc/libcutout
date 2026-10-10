@@ -166,7 +166,7 @@ struct RideMapRouteView: View {
                 history.selectFromHistoryList(rideID)
                 openHistory?(rideID)
             },
-            load: { history.reload(selecting: history.selectedRideID) },
+            load: { history.reload() },
             loadMore: { history.loadMore() },
             returnToLive: {
                 presentation.mode = .live

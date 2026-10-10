@@ -92,6 +92,18 @@ final class RideHistoryModelTests: XCTestCase {
             summaries.first { $0.rideID == rideID }
         }
 
+        func storedHistoryRide(
+            rideID: String,
+            filter: MobileRideHistoryFilterDto
+        ) throws -> MobileRideMapHistorySummaryDto? {
+            guard let summary = summaries.first(where: { $0.rideID == rideID }) else { return nil }
+            guard filter.createdAfterMilliseconds.map({ summary.createdAtMilliseconds >= $0 }) ?? true,
+                filter.vehicleIdentity == nil,
+                filter.searchText.map({ summary.rideID.localizedCaseInsensitiveContains($0) }) ?? true
+            else { return nil }
+            return summary
+        }
+
         func storedHistoryVehicleOptions() throws -> [MobileRideMapHistoryVehicleOptionDto] { [] }
 
         func storedMusicHistoryAsync(rideID: String) async throws -> MobileMusicHistoryDto {
@@ -777,6 +789,76 @@ final class RideHistoryModelTests: XCTestCase {
     }
 
     @MainActor
+    func testFilterFailureRetryDoesNotReinsertPreviouslySelectedRide() async throws {
+        let state = MobileRideMapState()
+        let previouslySelectedRideID = try await Self.saveHistoryRide(in: state, startingAt: 100)
+        let matchingRideID = try await Self.saveHistoryRide(in: state, startingAt: 10_000)
+        XCTAssertEqual(try state.storedHistoryRide(rideID: previouslySelectedRideID)?.state, .saved)
+        XCTAssertEqual(try state.storedHistoryRide(rideID: matchingRideID)?.state, .saved)
+        let query = GatedRideHistoryQuery(base: state, failAfterRelease: false)
+        let availability = RideHistoryAvailability()
+        let model = RideHistoryModel(
+            stateProvider: { availability.isAvailable ? query : nil },
+            storageErrorProvider: {
+                availability.isAvailable ? nil : "Rust ride database is unavailable"
+            }
+        )
+
+        model.setDateFilter(.allTime)
+        await Self.waitUntil("unfiltered history before selection and filter change") {
+            !model.isLoading
+                && model.rides.contains { $0.rideID == previouslySelectedRideID }
+                && model.rides.contains { $0.rideID == matchingRideID }
+        }
+        model.selectFromHistoryList(previouslySelectedRideID)
+        await Self.waitUntil("previously selected route before filter change") {
+            model.selectedRideID == previouslySelectedRideID
+                && !model.displayPoints.isEmpty
+                && !model.routeLoading
+                && !model.detailRouteLoading
+        }
+        let retainedRoute = model.displayPoints
+
+        query.armNextHistoryPage()
+        model.searchText = matchingRideID
+        let filteredQueryStarted = await query.waitUntilGatedHistoryPageStarts()
+        XCTAssertTrue(filteredQueryStarted)
+        XCTAssertEqual(query.gatedHistoryPageRideIDsSnapshot, [matchingRideID])
+        let activeFilter = try XCTUnwrap(query.historyPageFiltersSnapshot.compactMap { $0 }.last)
+        XCTAssertEqual(activeFilter.searchText, matchingRideID)
+
+        availability.isAvailable = false
+        model.reloadPreservingSelection()
+        XCTAssertEqual(model.error, .storageError("Rust ride database is unavailable"))
+        XCTAssertEqual(model.searchText, matchingRideID)
+        XCTAssertEqual(model.selectedRideID, previouslySelectedRideID)
+        XCTAssertEqual(model.displayPoints, retainedRoute)
+
+        query.releaseGatedHistoryPage()
+        let staleQueryFinished = await query.waitUntilGatedHistoryPageFinishes()
+        XCTAssertTrue(staleQueryFinished)
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertEqual(model.error, .storageError("Rust ride database is unavailable"))
+
+        availability.isAvailable = true
+        model.reloadPreservingSelection()
+        await Self.waitUntil("filtered retry excludes previous selection") {
+            !model.isLoading
+                && !model.routeLoading
+                && !model.detailRouteLoading
+                && model.rides.map(\.rideID) == [matchingRideID]
+                && model.selectedRideID == matchingRideID
+        }
+
+        XCTAssertEqual(model.rides.map(\.rideID), [matchingRideID])
+        XCTAssertFalse(model.rides.contains { $0.rideID == previouslySelectedRideID })
+        XCTAssertEqual(model.searchText, matchingRideID)
+        XCTAssertEqual(model.selectedRideID, matchingRideID)
+        XCTAssertFalse(model.displayPoints.isEmpty)
+        XCTAssertNil(model.error)
+    }
+
+    @MainActor
     func testSearchChangeRejectsLatePriorPageResult() async throws {
         let state = MobileRideMapState()
         _ = try state.startGpsOnly(atMs: 100)
@@ -893,6 +975,75 @@ final class RideHistoryModelTests: XCTestCase {
         XCTAssertTrue(model.canLoadMore)
         XCTAssertNil(model.error)
         XCTAssertEqual(query.historyPageCursorPresenceSnapshot, [false, true, false])
+    }
+
+    @MainActor
+    func testReloadPreservesSelectedRideBeyondFirstFilteredPage() async throws {
+        let state = MobileRideMapState()
+        let pageLimit = Int(MobileRideMapLimits.rustOwned.historyPageLimit)
+        var rideIDs = [String]()
+        for index in 0...pageLimit {
+            let startMs = UInt64(index + 1) * 10_000
+            rideIDs.append(try await Self.saveHistoryRide(in: state, startingAt: startMs))
+        }
+        let selectedRideID = try XCTUnwrap(rideIDs.first)
+        let selectedRide = try XCTUnwrap(try state.storedHistoryRide(rideID: selectedRideID))
+        XCTAssertEqual(selectedRide.state, .saved)
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyy-MM-dd"
+        let searchTerm = formatter.string(
+            from: Date(timeIntervalSince1970: Double(selectedRide.createdAtMilliseconds) / 1_000)
+        )
+        let matchingFilter = MobileRideHistoryFilterDto(
+            createdAfterMilliseconds: nil,
+            vehicleIdentity: nil,
+            searchText: searchTerm
+        )
+        let firstFilteredPage = try state.storedHistoryPage(
+            cursor: nil,
+            limit: UInt32(pageLimit),
+            filter: matchingFilter
+        )
+        XCTAssertEqual(firstFilteredPage.summaries.count, pageLimit)
+        XCTAssertFalse(firstFilteredPage.summaries.contains { $0.rideID == selectedRideID })
+        let nextCursor = try XCTUnwrap(firstFilteredPage.nextCursor)
+        let secondFilteredPage = try state.storedHistoryPage(
+            cursor: nextCursor,
+            limit: UInt32(pageLimit),
+            filter: matchingFilter
+        )
+        XCTAssertTrue(secondFilteredPage.summaries.contains { $0.rideID == selectedRideID })
+
+        let query = GatedRideHistoryQuery(base: state, failAfterRelease: false)
+        let model = RideHistoryModel(stateProvider: { query })
+        model.setDateFilter(.allTime)
+        await Self.waitUntil("first history page before explicit saved-ride entry") {
+            !model.isLoading && model.rides.count == pageLimit && model.canLoadMore
+        }
+        model.reload(selecting: selectedRideID)
+        await Self.waitUntil("explicitly selected older saved ride") {
+            !model.isLoading && model.selectedRideID == selectedRideID
+                && !model.routeLoading && !model.detailRouteLoading
+        }
+
+        model.searchText = searchTerm
+        await Self.waitUntil("matching search reload completes") {
+            query.historyPageFiltersSnapshot.compactMap { $0 }.last?.searchText == searchTerm
+                && !model.isLoading
+                && !model.routeLoading
+                && !model.detailRouteLoading
+        }
+
+        XCTAssertEqual(model.searchText, searchTerm)
+        XCTAssertEqual(model.rides.count, pageLimit + 1)
+        XCTAssertTrue(model.rides.contains { $0.rideID == selectedRideID })
+        XCTAssertEqual(
+            model.selectedRideID,
+            selectedRideID,
+            "A selected ride that matches the active Rust filter should remain in the displayed page even when it falls beyond page one"
+        )
     }
 
     @MainActor

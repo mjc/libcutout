@@ -8822,6 +8822,28 @@ impl RideDatabaseHandle {
             .map_err(map_ride_database_error)
     }
 
+    /// Finds one visible ride by stable identifier when it matches the active history filters.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the identifier, filter, worker, or stored record is
+    /// invalid.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "UniFFI owns boundary identifiers and filters"
+    )]
+    pub fn find_ride_filtered(
+        &self,
+        ride_id: MobileRideIdDto,
+        filter: MobileRideHistoryFilterDto,
+    ) -> Result<Option<MobileRideRecordDto>, MobileRideDatabaseError> {
+        let ride_id = parse_mobile_ride_id(&ride_id)?;
+        self.inner
+            .find_ride_filtered(ride_id, mobile_history_query(&filter))
+            .map(|ride| ride.as_ref().map(mobile_ride_record_dto))
+            .map_err(map_ride_database_error)
+    }
+
     /// Saves the user's bounded music-history retention choice for one ride.
     ///
     /// Disabling history also deletes previously retained music events.

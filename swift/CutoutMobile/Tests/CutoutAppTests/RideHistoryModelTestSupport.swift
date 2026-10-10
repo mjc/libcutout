@@ -80,6 +80,13 @@ final class GatedRideHistoryQuery: RideHistoryQuerying, @unchecked Sendable {
         try base.storedHistoryRide(rideID: rideID)
     }
 
+    func storedHistoryRide(
+        rideID: String,
+        filter: MobileRideHistoryFilterDto
+    ) throws -> MobileRideMapHistorySummaryDto? {
+        try base.storedHistoryRide(rideID: rideID, filter: filter)
+    }
+
     func storedHistoryPage(
         cursor: MobileRideCursorDto?,
         limit: UInt32,

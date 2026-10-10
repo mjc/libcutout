@@ -1670,6 +1670,19 @@ public final class MobileRideMapState: @unchecked Sendable {
         }
     }
 
+    public func storedHistoryRide(
+        rideID: String,
+        filter: MobileRideHistoryFilterDto
+    ) throws -> MobileRideMapHistorySummaryDto? {
+        try withDatabase { database in
+            let ride = try database.findRideFiltered(
+                rideId: try ffiRideID(rideID),
+                filter: filter
+            )
+            return ride.map(mapHistorySummary)
+        }
+    }
+
     public func storedHistoryPage(
         cursor: MobileRideCursorDto?,
         limit: UInt32,

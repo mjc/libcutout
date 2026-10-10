@@ -16,7 +16,8 @@ use cutout_ride_maps::{
     route_camera_region, route_segment_display_metadata,
 };
 use hex::encode as hex_encode;
-use rusqlite::{Connection, ErrorCode, OptionalExtension, params};
+use rusqlite::types::Value;
+use rusqlite::{Connection, ErrorCode, OptionalExtension, params, params_from_iter};
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
@@ -4390,6 +4391,23 @@ impl RideDatabase {
         self.request(move |reply| Command::FindRide { ride_id, reply })
     }
 
+    /// Loads one visible ride by id only when it still matches the active history filters.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] when the worker cannot query or decode the record.
+    pub fn find_ride_filtered(
+        &self,
+        ride_id: RideId,
+        query: RideHistoryQuery,
+    ) -> Result<Option<RideRecord>, StorageError> {
+        self.request(move |reply| Command::FindRideFiltered {
+            ride_id,
+            query,
+            reply,
+        })
+    }
+
     /// Finds the newest open ride that can be adopted by a map core.
     ///
     /// A database-open pass normally changes active and paused rides to interrupted. The active
@@ -5193,6 +5211,11 @@ enum Command {
     },
     FindRide {
         ride_id: RideId,
+        reply: Reply<Option<RideRecord>>,
+    },
+    FindRideFiltered {
+        ride_id: RideId,
+        query: RideHistoryQuery,
         reply: Reply<Option<RideRecord>>,
     },
     NewestRecoverableRide {
@@ -9069,6 +9092,73 @@ fn find_ride(connection: &Connection, ride_id: RideId) -> Result<Option<RideReco
         .map_err(StorageError::from)
 }
 
+fn find_ride_filtered(
+    connection: &Connection,
+    ride_id: RideId,
+    query: &RideHistoryQuery,
+) -> Result<Option<RideRecord>, StorageError> {
+    let (filters_sql, mut parameters) = history_filter_predicates(query, 2);
+    let sql = format!(
+        "SELECT 1 FROM rides
+         LEFT JOIN devices AS associated_device
+             ON associated_device.platform_identifier = rides.associated_vehicle
+         LEFT JOIN devices AS candidate_device
+             ON candidate_device.platform_identifier = rides.candidate_vehicle
+         WHERE rides.id = ?1 AND rides.state NOT IN ('draft', 'discarded'){filters_sql}"
+    );
+    parameters.insert(0, Value::Text(ride_id.uuid().to_string()));
+    let visible = connection
+        .query_row(&sql, params_from_iter(parameters.iter()), |_| Ok(()))
+        .optional()?
+        .is_some();
+    if visible {
+        find_ride(connection, ride_id)
+    } else {
+        Ok(None)
+    }
+}
+
+fn history_filter_predicates(
+    query: &RideHistoryQuery,
+    first_parameter_index: usize,
+) -> (String, Vec<Value>) {
+    let mut predicates = Vec::new();
+    let mut parameters = Vec::new();
+    if let Some(created_after) = query.created_after_ms {
+        let parameter_index = first_parameter_index + parameters.len();
+        predicates.push(format!(" AND rides.created_at_ms >= ?{parameter_index}"));
+        parameters.push(Value::Integer(
+            i64::try_from(created_after.as_u64()).unwrap_or(i64::MAX),
+        ));
+    }
+    if let Some(vehicle_identity) = query.vehicle_identity.as_ref() {
+        let parameter_index = first_parameter_index + parameters.len();
+        predicates.push(format!(
+            " AND (rides.associated_vehicle = ?{parameter_index} OR rides.candidate_vehicle = ?{parameter_index})"
+        ));
+        parameters.push(Value::Text(vehicle_identity.as_str().to_owned()));
+    }
+    if let Some(search_text) = query.search_text.as_deref() {
+        let parameter_index = first_parameter_index + parameters.len();
+        let escaped = search_text
+            .to_lowercase()
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_");
+        predicates.push(format!(
+            " AND (lower(rides.id) LIKE ?{parameter_index} ESCAPE '\\'
+               OR lower(COALESCE(rides.associated_vehicle, '')) LIKE ?{parameter_index} ESCAPE '\\'
+               OR lower(COALESCE(rides.candidate_vehicle, '')) LIKE ?{parameter_index} ESCAPE '\\'
+               OR lower(COALESCE(associated_device.display_name, '')) LIKE ?{parameter_index} ESCAPE '\\'
+               OR lower(COALESCE(candidate_device.display_name, '')) LIKE ?{parameter_index} ESCAPE '\\'
+               OR CAST(rides.created_at_ms AS TEXT) LIKE ?{parameter_index} ESCAPE '\\'
+               OR strftime('%Y-%m-%d', rides.created_at_ms / 1000, 'unixepoch') LIKE ?{parameter_index} ESCAPE '\\')"
+        ));
+        parameters.push(Value::Text(format!("%{escaped}%")));
+    }
+    (predicates.concat(), parameters)
+}
+
 fn newest_recoverable_ride(connection: &Connection) -> Result<Option<RideRecord>, StorageError> {
     connection
         .query_row(
@@ -9169,18 +9259,7 @@ fn list_rides(
     query: &RideHistoryQuery,
 ) -> Result<RidePage, StorageError> {
     let fetch_limit = i64::from(limit.get()) + 1;
-    let created_after = query
-        .created_after_ms
-        .map(|value| i64::try_from(value.as_u64()).unwrap_or(i64::MAX));
-    let vehicle_identity = query.vehicle_identity.as_ref().map(VehicleIdentity::as_str);
-    let search_text = query.search_text.as_deref().map(|value| {
-        let escaped = value
-            .to_lowercase()
-            .replace('\\', "\\\\")
-            .replace('%', "\\%")
-            .replace('_', "\\_");
-        format!("%{escaped}%")
-    });
+    let (filters_sql, mut parameters) = history_filter_predicates(query, 1);
     let base_sql = "SELECT rides.id, rides.source, rides.state, rides.created_at_ms,
                            rides.monotonic_created_at_ms, rides.monotonic_last_event_ms,
                            rides.paused_at_ms, rides.paused_duration_ms,
@@ -9221,56 +9300,45 @@ fn list_rides(
                         ON associated_device.platform_identifier = rides.associated_vehicle
                     LEFT JOIN devices AS candidate_device
                         ON candidate_device.platform_identifier = rides.candidate_vehicle
-                    WHERE rides.state NOT IN ('draft', 'discarded')
-                      AND (?1 IS NULL OR rides.created_at_ms >= ?1)
-                      AND (?2 IS NULL OR rides.associated_vehicle = ?2 OR rides.candidate_vehicle = ?2)
-                      AND (?3 IS NULL OR
-                           lower(rides.id) LIKE ?3 ESCAPE '\\'
-                           OR lower(COALESCE(rides.associated_vehicle, '')) LIKE ?3 ESCAPE '\\'
-                           OR lower(COALESCE(rides.candidate_vehicle, '')) LIKE ?3 ESCAPE '\\'
-                           OR lower(COALESCE(associated_device.display_name, '')) LIKE ?3 ESCAPE '\\'
-                           OR lower(COALESCE(candidate_device.display_name, '')) LIKE ?3 ESCAPE '\\'
-                           OR CAST(rides.created_at_ms AS TEXT) LIKE ?3 ESCAPE '\\'
-                           OR strftime('%Y-%m-%d', rides.created_at_ms / 1000, 'unixepoch') LIKE ?3 ESCAPE '\\')";
+                    WHERE rides.state NOT IN ('draft', 'discarded')";
+    let base_sql = format!("{base_sql}{filters_sql}");
     let mut rides = Vec::new();
     if let Some(cursor) = cursor {
+        let cursor_created_at_parameter = parameters.len() + 1;
+        let cursor_ride_id_parameter = parameters.len() + 2;
+        let limit_parameter = parameters.len() + 3;
         let sql = format!(
             "{base_sql}
-                      AND (rides.created_at_ms < ?4 OR (rides.created_at_ms = ?4 AND rides.id < ?5))
+                      AND (rides.created_at_ms < ?{cursor_created_at_parameter} OR
+                           (rides.created_at_ms = ?{cursor_created_at_parameter} AND
+                            rides.id < ?{cursor_ride_id_parameter}))
                     ORDER BY rides.created_at_ms DESC, rides.id DESC
-                    LIMIT ?6"
+                    LIMIT ?{limit_parameter}"
         );
+        parameters.extend([
+            Value::Integer(
+                i64::try_from(cursor.created_at_ms).map_err(|_| rusqlite::Error::InvalidQuery)?,
+            ),
+            Value::Text(cursor.ride_id.uuid().to_string()),
+            Value::Integer(fetch_limit),
+        ]);
         let mut statement = connection.prepare(&sql)?;
-        let rows = statement.query_map(
-            params![
-                created_after,
-                vehicle_identity,
-                search_text.as_deref(),
-                cursor.created_at_ms,
-                cursor.ride_id.uuid().to_string(),
-                fetch_limit
-            ],
-            ride_record_from_row,
-        )?;
+        let rows =
+            statement.query_map(params_from_iter(parameters.iter()), ride_record_from_row)?;
         for row in rows {
             rides.push(row?);
         }
     } else {
+        let limit_parameter = parameters.len() + 1;
         let sql = format!(
             "{base_sql}
                     ORDER BY rides.created_at_ms DESC, rides.id DESC
-                    LIMIT ?4"
+                    LIMIT ?{limit_parameter}"
         );
+        parameters.push(Value::Integer(fetch_limit));
         let mut statement = connection.prepare(&sql)?;
-        let rows = statement.query_map(
-            params![
-                created_after,
-                vehicle_identity,
-                search_text.as_deref(),
-                fetch_limit
-            ],
-            ride_record_from_row,
-        )?;
+        let rows =
+            statement.query_map(params_from_iter(parameters.iter()), ride_record_from_row)?;
         for row in rows {
             rides.push(row?);
         }
@@ -10357,7 +10425,7 @@ mod location_observation_checkpoint_tests {
 
     #[test]
     fn location_append_constraint_failure_rolls_back_every_write_and_retries() {
-        fn snapshot(connection: &Connection, table: &str) -> Vec<Vec<rusqlite::types::Value>> {
+        fn snapshot(connection: &Connection, table: &str) -> Vec<Vec<Value>> {
             let mut statement = connection
                 .prepare(&format!("SELECT * FROM {table} ORDER BY rowid"))
                 .unwrap();

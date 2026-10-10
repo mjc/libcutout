@@ -6707,6 +6707,61 @@ fn filtered_ride_history_queries_stay_rust_owned_and_bounded() {
 }
 
 #[test]
+fn filtered_single_ride_lookup_retains_matching_rows_beyond_the_first_page() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-filtered-single-ride-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let selected = database.create_ride(RideSource::Live, 10).unwrap();
+    let newer_matching = database.create_ride(RideSource::Live, 20).unwrap();
+    let excluded = database.create_ride(RideSource::Live, 30).unwrap();
+    for ride in [selected, newer_matching, excluded] {
+        database.transition(ride, RideEvent::Start).unwrap();
+        database.transition(ride, RideEvent::Stop).unwrap();
+        database.transition(ride, RideEvent::Save).unwrap();
+    }
+    database
+        .update_ride_map_metadata(selected, None, Some("matching-device"), None, None)
+        .unwrap();
+    database
+        .update_ride_map_metadata(newer_matching, None, Some("matching-device"), None, None)
+        .unwrap();
+
+    let query = RideHistoryQuery::new(None, Some("matching-device"), None);
+    let first_page = database
+        .list_rides_filtered(None, QueryLimit::new(1).unwrap(), query.clone())
+        .unwrap();
+    assert_eq!(
+        first_page
+            .rides()
+            .iter()
+            .map(RideRecord::id)
+            .collect::<Vec<_>>(),
+        vec![newer_matching]
+    );
+    assert!(first_page.next_cursor().is_some());
+
+    assert_eq!(
+        database
+            .find_ride_filtered(selected, query.clone())
+            .unwrap()
+            .map(|ride| ride.id()),
+        Some(selected),
+        "a selected matching ride outside page one remains available by id"
+    );
+    assert_eq!(
+        database.find_ride_filtered(excluded, query).unwrap(),
+        None,
+        "the id lookup must not reinsert a ride excluded by active history filters"
+    );
+
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn rolling_ride_history_window_includes_recent_days_and_its_inclusive_boundary() {
     let _guard = test_guard();
     let path = std::env::temp_dir().join(format!(
