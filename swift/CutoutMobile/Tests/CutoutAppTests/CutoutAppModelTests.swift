@@ -378,6 +378,7 @@ final class CutoutAppModelTests: XCTestCase {
         let finalSample = try XCTUnwrap(replay.notifications.last)
         let expectedSpeed = try XCTUnwrap(finalSample.speedMillimetresPerSecond)
         let expectedVoltage = try XCTUnwrap(finalSample.voltageMillivolts)
+        let expectedNotificationCount = UInt64(replay.notifications.count)
         let script = CutoutSessionTestScript(
             candidate: fixture.candidate,
             telemetry: nil,
@@ -389,7 +390,6 @@ final class CutoutAppModelTests: XCTestCase {
                 ])
             ],
             appliesProtocolNotificationSteps: true,
-            protocolNotificationIntervalMilliseconds: 1,
             connectionDelayMilliseconds: 0
         )
         let core = CutoutSessionCore(testScript: script)
@@ -411,7 +411,10 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertTrue(model.pair(platformIdentifier: fixture.candidate.platformIdentifier))
         let replayDeadline = ContinuousClock.now + .seconds(10)
         while ContinuousClock.now < replayDeadline, !Task.isCancelled {
+            // Earlier packets already have the final speed and voltage; wait for the
+            // complete one-shot replay to reach the coalesced display publication.
             if model.phase == .live
+                && model.displayState.notificationCount == expectedNotificationCount
                 && model.displayState.telemetry?.speed.map({ Int64($0.value) }) == expectedSpeed
                 && model.displayState.telemetry?.voltage.map({ Int64($0.value) }) == expectedVoltage
             {
@@ -420,10 +423,7 @@ final class CutoutAppModelTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(1))
         }
         XCTAssertEqual(model.phase, .live)
-        XCTAssertGreaterThanOrEqual(
-            model.displayState.notificationCount,
-            UInt64(replay.notifications.count)
-        )
+        XCTAssertEqual(model.displayState.notificationCount, expectedNotificationCount)
 
         let telemetry = try XCTUnwrap(model.displayState.telemetry)
         XCTAssertNotNil(telemetry.speed)
