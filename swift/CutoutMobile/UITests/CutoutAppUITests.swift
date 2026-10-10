@@ -7,6 +7,7 @@ import XCTest
 final class MusicPreferencesDeviceUITests: XCTestCase {
     func testSoundCloudUnavailableControlsMissingAppAndColdSelectionRestoration() throws {
         continueAfterFailure = false
+        executionTimeAllowance = 360
         #if !targetEnvironment(simulator)
             throw XCTSkip("SoundCloud acceptance is restricted to Simulator")
         #endif
@@ -56,6 +57,7 @@ final class MusicPreferencesDeviceUITests: XCTestCase {
 
     func testSoundCloudLiveStreamTransport() throws {
         continueAfterFailure = false
+        executionTimeAllowance = 360
         #if !targetEnvironment(simulator)
             throw XCTSkip("Live SoundCloud acceptance is restricted to Simulator")
         #endif
@@ -124,10 +126,15 @@ final class MusicPreferencesDeviceUITests: XCTestCase {
             predicate: NSPredicate(format: "label == %@", firstTitle), object: title)
         XCTAssertEqual(XCTWaiter.wait(for: [restored], timeout: 10), .completed, app.debugDescription)
         waitForPlayback(after: 2)
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "SoundCloud native playback controls"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
     }
 
     func testReadableHistorySelectionSurvivesSheetReopen() throws {
         continueAfterFailure = false
+        executionTimeAllowance = 360
         #if !targetEnvironment(simulator)
             throw XCTSkip("Music preference regression is restricted to Simulator")
         #endif
