@@ -22,7 +22,7 @@ let package = Package(
                 .product(name: "CutoutMobileFFI", package: "CutoutMobileFFI"),
                 .product(name: "SpotifyiOS", package: "ios-sdk", condition: .when(platforms: [.iOS])),
             ],
-            resources: [.process("Localizable.xcstrings"), .process("SoundCloudLogo.png")],
+            resources: [.process("Localizable.xcstrings"), .process("SoundCloudBranding.xcassets")],
             plugins: [.plugin(name: "VerifyRustArtifact")]
         ),
         .testTarget(
