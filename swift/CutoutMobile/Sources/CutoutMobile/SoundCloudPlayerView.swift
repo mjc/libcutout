@@ -15,7 +15,8 @@ public struct SoundCloudPlayerView: View {
                 if let source = URL(string: "https://soundcloud.com") {
                     Link(destination: source) {
                         Image("SoundCloudLogo", bundle: .module)
-                            .resizable().scaledToFit().frame(width: 40, height: 24)
+                            .renderingMode(.original)
+                            .resizable().scaledToFit().frame(width: 120, height: 15)
                             .padding(10).background(Color(red: 18 / 255, green: 18 / 255, blue: 18 / 255))
                     }
                     .accessibilityLabel(pevLocalizedText("music.provider.soundcloud"))
