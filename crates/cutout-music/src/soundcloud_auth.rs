@@ -3,7 +3,7 @@
 use crate::soundcloud_player::PlayerError;
 
 /// Official app-token service; confidential credentials stay off-device.
-pub const TOKEN_ENDPOINT: &str = "https://soundcloud.cutout.lol/v1/token";
+pub const TOKEN_ENDPOINT: &str = "https://music.cutout.lol/v1/token";
 
 /// Validated, expiring authorization. Debug output never includes the token.
 pub struct ApiAuthorization {
@@ -69,6 +69,10 @@ impl ApiAuthorization {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn token_endpoint_uses_provider_neutral_hostname() {
+        assert_eq!(TOKEN_ENDPOINT, "https://music.cutout.lol/v1/token");
+    }
     #[test]
     fn admitted_token_expires_before_its_reported_provider_deadline() {
         let authorization = ApiAuthorization::parse(
