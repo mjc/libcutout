@@ -134,8 +134,8 @@ public final class SoundCloudNativePlayer {
             ])
             try core.acceptAuthorization(json: data, nowMs: now)
         } else {
-            guard let url = URL(string: core.tokenEndpoint()), url.scheme == "https",
-                url.host == "soundcloud.cutout.lol"
+            // Rust owns the fixed broker endpoint; Swift only constructs the request URL.
+            guard let url = URL(string: core.tokenEndpoint()), url.scheme == "https"
             else { throw Failure.notConfigured }
             let (data, response) = try await session.data(from: url)
             guard let response = response as? HTTPURLResponse else { throw Failure.invalidResponse }
