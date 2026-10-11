@@ -266,9 +266,11 @@ impl MobileSoundCloudPlayer {
         self.lock().player.failed(id).into()
     }
 
-    /// Invalidates the native queue and all outstanding stream callbacks.
+    /// Ends the content session, clearing its catalogue, queue and stream callbacks.
     pub fn stop(&self) -> MobileSoundCloudEffect {
-        self.lock().player.stop().into()
+        let mut state = self.lock();
+        state.catalogue.clear();
+        state.player.stop().into()
     }
 
     /// Local pause/resume does not require HTTP or provider authorization.
@@ -344,5 +346,36 @@ impl MobileSoundCloudPlayer {
                 open_provider: true,
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        MobileSoundCloudCommand, MobileSoundCloudEffect, MobileSoundCloudError,
+        MobileSoundCloudPlayer,
+    };
+
+    #[test]
+    fn stopped_session_rejects_old_catalogue_and_accepts_fresh_search()
+    -> Result<(), MobileSoundCloudError> {
+        let player = MobileSoundCloudPlayer::new();
+        let catalogue = br#"{"collection":[{"urn":"soundcloud:tracks:42","title":"Ride song","duration":120000,"permalink_url":"https://soundcloud.com/artist/song","user":{"username":"Uploader"},"access":"playable","streamable":true}]}"#;
+        player.accept_catalogue(catalogue.to_vec())?;
+        player.select("soundcloud:tracks:42".to_owned())?;
+        player.command(MobileSoundCloudCommand::Pause)?;
+        assert!(matches!(
+            player.select("soundcloud:tracks:42".to_owned())?,
+            MobileSoundCloudEffect::Fetch { .. }
+        ));
+        player.stop();
+        assert!(player.select("soundcloud:tracks:42".to_owned()).is_err());
+        assert!(player.snapshot().track.is_none());
+        player.accept_catalogue(catalogue.to_vec())?;
+        assert!(matches!(
+            player.select("soundcloud:tracks:42".to_owned())?,
+            MobileSoundCloudEffect::Fetch { .. }
+        ));
+        Ok(())
     }
 }
