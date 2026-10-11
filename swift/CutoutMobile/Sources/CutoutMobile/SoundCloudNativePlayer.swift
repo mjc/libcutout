@@ -105,6 +105,9 @@ public final class SoundCloudNativePlayer {
     public func stop() {
         searchTask?.cancel()
         streamTask?.cancel()
+        tracks = []
+        isSearching = false
+        errorText = nil
         itemObservation = nil
         removeEndObservation()
         apply(core.stop())

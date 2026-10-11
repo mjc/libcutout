@@ -4,6 +4,19 @@ import XCTest
 @testable import CutoutMobile
 
 final class SoundCloudNativePlayerTests: XCTestCase {
+    @MainActor
+    func testStopClearsCancelledSearchBeforeItCanPublishFailure() async {
+        let player = SoundCloudNativePlayer()
+        player.search("")
+        XCTAssertTrue(player.isSearching)
+        player.stop()
+        XCTAssertFalse(player.isSearching)
+        for _ in 0..<3 { await Task.yield() }
+        XCTAssertNil(player.errorText)
+        XCTAssertTrue(player.tracks.isEmpty)
+        XCTAssertNil(player.snapshot.track)
+    }
+
     func testNativeQueueProjectsTrackAndLocalControlsIntoExistingPlayer() throws {
         let player = MobileSoundCloudPlayer()
         let response =
