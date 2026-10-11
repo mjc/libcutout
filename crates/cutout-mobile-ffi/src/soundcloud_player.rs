@@ -228,7 +228,7 @@ impl MobileSoundCloudPlayer {
         Ok(player.select(catalogue, &urn)?.into())
     }
 
-    /// Admits the full AAC HLS API endpoint, excluding previews.
+    /// Admits the full HLS API endpoint, excluding previews.
     ///
     /// # Errors
     /// Rejects unsupported streams or malformed data.

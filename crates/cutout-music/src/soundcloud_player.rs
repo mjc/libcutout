@@ -185,21 +185,27 @@ pub fn parse_tracks(json: &[u8]) -> Result<Vec<PlayableTrack>, PlayerError> {
     Ok(tracks)
 }
 
-/// Selects the official AAC HLS endpoint; preview audio is never a fallback.
+/// Selects the official full HLS endpoint, preferring AAC over MP3.
+/// Preview audio is never a fallback.
 ///
 /// # Errors
 /// Rejects missing full-playback streams or URLs outside the authenticated API.
 pub fn stream_endpoint(json: &[u8]) -> Result<String, PlayerError> {
     #[derive(Deserialize)]
     struct Streams {
-        hls_aac_160_url: String,
+        hls_aac_160_url: Option<String>,
+        hls_mp3_128_url: Option<String>,
     }
     if json.len() > MAX_RESPONSE_BYTES {
         return Err(PlayerError::TooLarge);
     }
     let streams: Streams =
         serde_json::from_slice(json).map_err(|_| PlayerError::InvalidResponse)?;
-    Ok(https_url(&streams.hls_aac_160_url, &["api.soundcloud.com"])?.into())
+    let endpoint = streams
+        .hls_aac_160_url
+        .or(streams.hls_mp3_128_url)
+        .ok_or(PlayerError::InvalidResponse)?;
+    Ok(https_url(&endpoint, &["api.soundcloud.com"])?.into())
 }
 
 /// Admits a signed HLS URL returned by the official stream redirect.
@@ -208,7 +214,14 @@ pub fn stream_endpoint(json: &[u8]) -> Result<String, PlayerError> {
 /// # Errors
 /// Rejects arbitrary media origins, non-HTTPS URLs, and embedded credentials.
 pub fn admit_media_url(value: &str) -> Result<String, PlayerError> {
-    Ok(https_url(value, &["playback.media-streaming.soundcloud.cloud"])?.into())
+    Ok(https_url(
+        value,
+        &[
+            "playback.media-streaming.soundcloud.cloud",
+            "cf-hls-media.sndcdn.com",
+        ],
+    )?
+    .into())
 }
 
 /// Identity fencing stream fetches and platform callbacks.
@@ -671,6 +684,54 @@ mod tests {
         });
         assert_eq!(player.snapshot().state, PlayerState::Idle);
         assert!(player.snapshot().track.is_none());
+    }
+
+    #[test]
+    fn full_mp3_hls_is_admitted_when_aac_is_absent() {
+        for json in [
+            r#"{"hls_mp3_128_url":"https://api.soundcloud.com/full-mp3"}"#,
+            r#"{"hls_aac_160_url":null,"hls_mp3_128_url":"https://api.soundcloud.com/full-mp3"}"#,
+        ] {
+            assert_eq!(
+                stream_endpoint(json.as_bytes()),
+                Ok("https://api.soundcloud.com/full-mp3".to_owned())
+            );
+        }
+    }
+
+    #[test]
+    fn full_hls_prefers_aac_and_validates_the_selected_api_origin() {
+        assert_eq!(
+            stream_endpoint(
+                br#"{"hls_aac_160_url":"https://api.soundcloud.com/full-aac","hls_mp3_128_url":"https://api.soundcloud.com/full-mp3"}"#
+            ),
+            Ok("https://api.soundcloud.com/full-aac".to_owned())
+        );
+        for json in [
+            r#"{"hls_mp3_128_url":"https://api.soundcloud.com.evil.test/full-mp3"}"#,
+            r#"{"hls_aac_160_url":"https://evil.test/full-aac","hls_mp3_128_url":"https://api.soundcloud.com/full-mp3"}"#,
+            r#"{"hls_aac_160_url":null,"hls_mp3_128_url":null}"#,
+        ] {
+            assert_eq!(
+                stream_endpoint(json.as_bytes()),
+                Err(PlayerError::InvalidResponse)
+            );
+        }
+    }
+
+    #[test]
+    fn full_mp3_hls_redirect_is_admitted_without_widening_the_origin_boundary() {
+        let media = "https://cf-hls-media.sndcdn.com/manifest.m3u8?token=session";
+        assert_eq!(admit_media_url(media), Ok(media.to_owned()));
+        for url in [
+            "http://cf-hls-media.sndcdn.com/a",
+            "https://cf-hls-media.sndcdn.com.evil.test/a",
+            "https://user:password@cf-hls-media.sndcdn.com/a",
+            "https://cf-hls-media.sndcdn.com:8443/a",
+            "https://cf-hls-media.sndcdn.com/a#fragment",
+        ] {
+            assert_eq!(admit_media_url(url), Err(PlayerError::InvalidResponse));
+        }
     }
 
     #[test]
