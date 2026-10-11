@@ -130,6 +130,15 @@ final class MusicPreferencesDeviceUITests: XCTestCase {
         screenshot.name = "SoundCloud native playback controls"
         screenshot.lifetime = .keepAlways
         add(screenshot)
+        app.buttons["music.soundcloud.done"].tap()
+        provider.tap()
+        app.buttons["Apple Music"].firstMatch.tap()
+        provider.tap()
+        app.buttons["SoundCloud"].firstMatch.tap()
+        app.buttons["music.soundcloud.choose-music"].tap()
+        XCTAssertTrue(search.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertEqual(rows.count, 0, "A retired SoundCloud session retained its catalogue")
+        XCTAssertFalse(title.exists, "A retired SoundCloud session retained its current track")
     }
 
     func testReadableHistorySelectionSurvivesSheetReopen() throws {
