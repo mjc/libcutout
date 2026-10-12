@@ -13,3 +13,6 @@ workspace = true
 [dependencies]
 cutout-core = { path = "../cutout-core", version = "0.1.0" }
 thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+url.workspace = true

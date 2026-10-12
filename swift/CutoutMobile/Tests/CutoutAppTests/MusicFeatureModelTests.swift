@@ -1,4 +1,5 @@
 import CutoutMobileFFI
+import SQLite3
 import XCTest
 
 @testable import CutoutApp
@@ -6,6 +7,73 @@ import XCTest
 
 @MainActor
 final class MusicFeatureModelTests: XCTestCase {
+    func testNativeSoundCloudRefusesUnavailableCommandsAndAcceptsAvailablePause() async throws {
+        let suite = try makeDefaults()
+        defer { suite.defaults.removePersistentDomain(forName: suite.name) }
+        let store = MusicProviderSelectionStore(defaults: suite.defaults)
+        store.set(.soundCloud)
+        let core = MobileSoundCloudPlayer()
+        let response =
+            #"{"collection":[{"urn":"soundcloud:tracks:42","title":"Ride song","duration":120000,"permalink_url":"https://soundcloud.com/artist/song","user":{"username":"Uploader"},"access":"playable","streamable":true}]}"#
+        let tracks = try core.acceptCatalogue(json: Data(response.utf8))
+        guard case .fetch(let id, _) = try core.select(urn: tracks[0].urn) else {
+            return XCTFail("Selection must fetch the stream")
+        }
+        _ = try core.streamResolved(
+            id: id, url: "https://playback.media-streaming.soundcloud.cloud/manifest.m3u8?token=session")
+        _ = core.playerReady(id: id)
+        let model = makeModel(defaults: suite.defaults, providerSelectionStore: store)
+        model.nativeSoundCloud = SoundCloudNativePlayer(core: core) { _ in }
+
+        let next = await model.handleCommand(.next)
+        let previous = await model.handleCommand(.previous)
+        let play = await model.handleCommand(.play)
+        XCTAssertEqual(next, .refused)
+        XCTAssertEqual(previous, .refused)
+        XCTAssertEqual(play, .refused)
+        XCTAssertEqual(model.commandStatusText, pevLocalizedText("music.command.refused"))
+        XCTAssertEqual(core.snapshot().state, .playing)
+        XCTAssertNil(model.nativeSoundCloud.errorText)
+
+        let pause = await model.handleCommand(.pause)
+        XCTAssertEqual(pause, .accepted)
+        XCTAssertNil(model.commandStatusText)
+        XCTAssertEqual(core.snapshot().state, .paused)
+    }
+
+    func testHistoryPreferenceStillSavesWhenSQLiteRideHasAlreadyStopped() async throws {
+        let suite = try makeDefaults()
+        defer { suite.defaults.removePersistentDomain(forName: suite.name) }
+        let state = MobileRideMapState()
+        let started = try await state.startGpsOnlyCommand(atMs: 1_000, musicHistoryPolicy: .opaqueItem)
+        let rideID = try XCTUnwrap(started.rideID)
+        let store = MusicHistoryPolicyStore(defaults: suite.defaults)
+        store.set(.opaqueItem)
+        let model = makeModel(state: state, defaults: suite.defaults, historyPolicyStore: store)
+        let adoptionError = await model.adoptHistoryForNewRideAsync()
+        XCTAssertNil(adoptionError)
+        var connection: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(MobileRideMapState.debugDatabasePath, &connection), SQLITE_OK)
+        defer {
+            sqlite3_close(connection)
+            _ = try? state.restore(atMs: 2_000)
+            _ = try? state.discard()
+        }
+        // Model the durable lifecycle having advanced before native presentation catches up.
+        XCTAssertEqual(
+            sqlite3_exec(connection, "UPDATE rides SET state = 'stopped' WHERE id = '\(rideID)'", nil, nil, nil),
+            SQLITE_OK)
+
+        let accepted = await model.setHistoryPolicyAsync(.humanReadable)
+
+        XCTAssertTrue(accepted)
+        XCTAssertEqual(model.preferredHistoryPolicy, .humanReadable)
+        XCTAssertEqual(store.policy, .humanReadable)
+        XCTAssertEqual(model.historyPolicy, .disabled)
+        XCTAssertNil(model.historySaveError)
+        XCTAssertEqual(state.currentMusicHistory()?.status, .redacted)
+    }
+
     func testBackgroundObservationDoesNotRetainMusicModelDuringSQLiteStall() async throws {
         let fixture = try await SQLiteRideStall.make()
         defer { fixture.release.signal() }
@@ -661,6 +729,7 @@ final class MusicFeatureModelTests: XCTestCase {
         XCTAssertEqual(store.policy, .opaqueItem)
         XCTAssertEqual(model.historyPolicy, .disabled)
         XCTAssertNotNil(model.historySaveError)
+        XCTAssertEqual(model.historyFailureContext, .preferences)
     }
 
     func testStaleHistoryReadbackCannotUndoPolicyChange() async throws {
@@ -870,6 +939,42 @@ final class MusicFeatureModelTests: XCTestCase {
         XCTAssertEqual(capturedPolicies.last, .disabled)
     }
 
+    func testSoundCloudRestorationAndSwitchingNeverDispatchAppleMusicOrHistory() async throws {
+        let suite = try makeDefaults()
+        defer { suite.defaults.removePersistentDomain(forName: suite.name) }
+        let store = MusicProviderSelectionStore(defaults: suite.defaults)
+        store.set(.soundCloud)
+        let historyStore = MusicHistoryPolicyStore(defaults: suite.defaults)
+        historyStore.set(.humanReadable)
+        var commands = [MobileMusicCommandDto]()
+        let model = makeModel(
+            defaults: suite.defaults, providerSelectionStore: store, historyPolicyStore: historyStore,
+            providerCommandHandler: { _, command in
+                commands.append(command)
+                return .accepted
+            })
+        model.start(sceneIsActive: true)
+        model.refreshSnapshot()
+        let snapshot = try XCTUnwrap(model.projectedNowPlaying())
+        XCTAssertEqual(snapshot.provider, .soundCloud)
+        XCTAssertEqual(snapshot.state, .unavailable)
+        XCTAssertNil(snapshot.item)
+        let result = await model.handleCommand(.play)
+        XCTAssertEqual(result, .refused)
+        XCTAssertTrue(commands.isEmpty)
+        XCTAssertTrue(model.timelineEvents.isEmpty)
+        XCTAssertEqual(model.historyPolicy, .disabled)
+        XCTAssertEqual(model.preferredHistoryPolicy, .humanReadable)
+        XCTAssertEqual(historyStore.policy, .humanReadable)
+        model.sceneDidEnterBackground()
+        XCTAssertEqual(model.projectedNowPlaying()?.state, .unavailable)
+        model.selectProvider(.appleMusic)
+        model.selectProvider(.soundCloud)
+        XCTAssertEqual(model.projectedNowPlaying()?.provider, .soundCloud)
+        XCTAssertEqual(store.provider, .soundCloud)
+        model.stopMonitoring()
+    }
+
     func testNewRideHistoryAdoptionReadsRustPolicyWithoutWritingSavedDefault() async throws {
         let suite = try makeDefaults()
         defer { suite.defaults.removePersistentDomain(forName: suite.name) }
@@ -942,6 +1047,7 @@ final class MusicFeatureModelTests: XCTestCase {
         XCTAssertEqual(error, .storageError("history storage unavailable"))
         XCTAssertEqual(reportedError, error)
         XCTAssertEqual(model.historySaveError, error)
+        XCTAssertEqual(model.historyFailureContext, .listeningHistory)
         XCTAssertEqual(model.historyPolicy, .disabled)
         XCTAssertTrue(model.timelineEvents.isEmpty)
     }

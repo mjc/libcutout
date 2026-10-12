@@ -224,6 +224,7 @@ pub enum MusicObservationOutcome {
 pub(crate) struct MusicObservationTracker {
     apple_music: Option<MusicSnapshot>,
     spotify: Option<MusicSnapshot>,
+    soundcloud: Option<MusicSnapshot>,
     pending_skips: VecDeque<PendingSkip>,
     pending_history: VecDeque<PendingHistoryTransition>,
     last_history_id: HistoryTransitionId,
@@ -242,6 +243,7 @@ impl MusicObservationTracker {
         Self {
             apple_music: None,
             spotify: None,
+            soundcloud: None,
             pending_skips: VecDeque::new(),
             pending_history: VecDeque::new(),
             last_history_id: HistoryTransitionId::from_raw(0),
@@ -335,6 +337,7 @@ impl MusicObservationTracker {
     pub(crate) fn reset_observations(&mut self) {
         self.apple_music = None;
         self.spotify = None;
+        self.soundcloud = None;
     }
 
     /// Orders and classifies one canonical provider observation.
@@ -402,6 +405,7 @@ impl MusicObservationTracker {
         match provider {
             MusicProvider::AppleMusic => self.apple_music.as_ref(),
             MusicProvider::Spotify => self.spotify.as_ref(),
+            MusicProvider::SoundCloud => self.soundcloud.as_ref(),
         }
     }
 
@@ -409,6 +413,7 @@ impl MusicObservationTracker {
         match snapshot.provider() {
             MusicProvider::AppleMusic => self.apple_music = Some(snapshot),
             MusicProvider::Spotify => self.spotify = Some(snapshot),
+            MusicProvider::SoundCloud => self.soundcloud = Some(snapshot),
         }
     }
 
