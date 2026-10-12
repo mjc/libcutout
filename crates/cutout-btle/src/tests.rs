@@ -1811,7 +1811,7 @@ async fn capture_session_records_subscribe_write_and_notification_bytes() {
 #[tokio::test]
 async fn capture_session_with_commands_records_command_writes_before_tick() {
     let peripheral = RecordingPeripheral::default();
-    let mut session = CommandWriteSession;
+    let mut session = CommandWriteSession::default();
     let summary = begode_falcon_summary("Begode_Falcon");
 
     let capture = crate::capture_session_with_commands(
@@ -1834,6 +1834,26 @@ async fn capture_session_with_commands_records_command_writes_before_tick() {
     .expect("capture records explicit command writes");
 
     assert_eq!(capture.report.writes, writes(2));
+
+    let write_times = capture
+        .records
+        .iter()
+        .filter_map(|record| match record {
+            crate::SessionCaptureRecord::Write { monotonic_ms, .. } => Some(*monotonic_ms),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(write_times.len(), 2);
+    assert!(write_times[0] > crate::MonotonicMs::new(0));
+    assert!(write_times[0] < write_times[1]);
+    let tick_time = session
+        .ticks
+        .expect("zero-length notification window still records the terminal tick");
+    assert!(
+        write_times[1].into_core() < tick_time,
+        "both command writes must precede the tick"
+    );
+
     assert_eq!(
         capture.records,
         vec![
@@ -1846,14 +1866,14 @@ async fn capture_session_with_commands_records_command_writes_before_tick() {
                 characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
             },
             crate::SessionCaptureRecord::Write {
-                monotonic_ms: crate::MonotonicMs::new(1),
+                monotonic_ms: write_times[0],
                 characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
                 mode: WriteMode::WithoutResponse,
                 bytes: crate::CapturedBtlePacket::from_raw_bytes(Bytes::from_static(b"N")),
                 provenance: crate::WriteProvenance::Stable,
             },
             crate::SessionCaptureRecord::Write {
-                monotonic_ms: crate::MonotonicMs::new(2),
+                monotonic_ms: write_times[1],
                 characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
                 mode: WriteMode::WithoutResponse,
                 bytes: crate::CapturedBtlePacket::from_raw_bytes(Bytes::from_static(b"V")),
@@ -2407,7 +2427,10 @@ impl ProtocolSession for SubscribeOnlySession {
     }
 }
 
-struct CommandWriteSession;
+#[derive(Default)]
+struct CommandWriteSession {
+    ticks: Option<cutout_core::MonotonicTimestamp>,
+}
 
 #[derive(Default)]
 struct CommandThenDisconnectSession {
@@ -2487,9 +2510,10 @@ impl ProtocolSession for CommandWriteSession {
                     mode: WriteMode::WithoutResponse,
                 }));
             }
-            SessionInput::LinkDown
-            | SessionInput::Tick { .. }
-            | SessionInput::Notification { .. } => {}
+            SessionInput::Tick { monotonic_ms } => {
+                self.ticks = Some(monotonic_ms);
+            }
+            SessionInput::LinkDown | SessionInput::Notification { .. } => {}
         }
     }
 }
