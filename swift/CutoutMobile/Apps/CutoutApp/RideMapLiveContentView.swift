@@ -47,7 +47,7 @@ struct RideMapLiveContentView: View {
             VStack(spacing: 0) {
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(spacing: 0) {
-                        if snapshot != nil || !displayPoints.isEmpty {
+                        if !displayPoints.isEmpty {
                             RideMapCanvasView(
                                 points: displayPoints,
                                 routeID: routeID,

@@ -959,31 +959,36 @@ final class CutoutAppUITests: XCTestCase {
         if pauseButton.waitForExistence(timeout: 2) {
             XCTAssertTrue(pauseButton.isEnabled)
             XCTAssertTrue(pauseButton.isHittable)
-        } else if restoredResumeButton.exists {
-            restoredResumeButton.tap()
         } else {
-            let startButton = app.buttons["ride-map.start"]
-            XCTAssertTrue(startButton.waitForExistence(timeout: 5), app.debugDescription)
-            XCTAssertFalse(app.descendants(matching: .any)["ride-map.map"].exists, app.debugDescription)
-            XCTAssertFalse(app.buttons["ride-map.recenter"].exists, app.debugDescription)
-            XCTAssertTrue(startButton.isEnabled)
-            XCTAssertTrue(startButton.isHittable)
-            assertMinimumControlDimension(startButton.frame.height)
-            startButton.tap()
+            XCTAssertTrue(restoredResumeButton.waitForExistence(timeout: 5), app.debugDescription)
+            XCTAssertFalse(app.buttons["ride-map.start"].exists, app.debugDescription)
+            restoredResumeButton.tap()
         }
+        XCTAssertFalse(app.buttons["ride-map.start"].exists, app.debugDescription)
         XCTAssertTrue(pauseButton.waitForExistence(timeout: 5), app.debugDescription)
         XCTAssertTrue(
             app.descendants(matching: .any)["ride-map.map"].waitForExistence(timeout: 5), app.debugDescription)
+        let recenterButton = app.buttons["ride-map.recenter"]
+        XCTAssertTrue(recenterButton.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(recenterButton.isEnabled, app.debugDescription)
+        XCTAssertTrue(recenterButton.isHittable, app.debugDescription)
+        let routeScreenshot = XCTAttachment(screenshot: app.screenshot())
+        routeScreenshot.name = "ride-map-rust-backed-point-route"
+        routeScreenshot.lifetime = .keepAlways
+        add(routeScreenshot)
+        let stopButton = app.buttons["ride-map.stop"]
+        XCTAssertTrue(stopButton.exists, app.debugDescription)
+        XCTAssertTrue(stopButton.isHittable, app.debugDescription)
+        XCTAssertTrue(pauseButton.isHittable, app.debugDescription)
         pauseButton.tap()
         let resumeButton = app.buttons["ride-map.resume"]
         XCTAssertTrue(resumeButton.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(resumeButton.isHittable, app.debugDescription)
+        XCTAssertTrue(stopButton.isHittable, app.debugDescription)
         resumeButton.tap()
         XCTAssertTrue(pauseButton.waitForExistence(timeout: 5), app.debugDescription)
-
-        let recenterButton = app.buttons["ride-map.recenter"]
-        XCTAssertTrue(recenterButton.waitForExistence(timeout: 5), app.debugDescription)
-        recenterButton.tap()
-        XCTAssertTrue(app.descendants(matching: .any)["ride-map.map"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["ride-map.map"].exists, app.debugDescription)
+        XCTAssertTrue(recenterButton.isEnabled, app.debugDescription)
     }
 
     func testHomeMapConfirmedIdleHidesRouteCanvasUntilRideStarts() throws {
@@ -1008,10 +1013,22 @@ final class CutoutAppUITests: XCTestCase {
 
         let pauseButton = app.buttons["ride-map.pause"]
         XCTAssertTrue(pauseButton.waitForExistence(timeout: 10), app.debugDescription)
-        XCTAssertTrue(
-            app.descendants(matching: .any)["ride-map.map"].waitForExistence(timeout: 5), app.debugDescription)
-        XCTAssertTrue(app.buttons["ride-map.recenter"].exists, app.debugDescription)
+        XCTAssertFalse(app.descendants(matching: .any)["ride-map.map"].exists, app.debugDescription)
+        XCTAssertFalse(app.buttons["ride-map.recenter"].exists, app.debugDescription)
+        XCTAssertTrue(app.descendants(matching: .any)["ride-map.recording-pill"].exists, app.debugDescription)
+        XCTAssertTrue(app.descendants(matching: .any)["ride-map.summary"].exists, app.debugDescription)
+        let stopButton = app.buttons["ride-map.stop"]
+        XCTAssertTrue(stopButton.exists, app.debugDescription)
+        XCTAssertTrue(stopButton.isHittable, app.debugDescription)
         XCTAssertTrue(pauseButton.isHittable, app.debugDescription)
+        pauseButton.tap()
+        let resumeButton = app.buttons["ride-map.resume"]
+        XCTAssertTrue(resumeButton.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(resumeButton.isHittable, app.debugDescription)
+        XCTAssertTrue(stopButton.isHittable, app.debugDescription)
+        resumeButton.tap()
+        XCTAssertTrue(pauseButton.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertFalse(app.descendants(matching: .any)["ride-map.map"].exists, app.debugDescription)
         let startedScreenshot = XCTAttachment(screenshot: app.screenshot())
         startedScreenshot.name = "ride-map-after-start"
         startedScreenshot.lifetime = .keepAlways
@@ -4620,6 +4637,9 @@ final class CutoutAppUITests: XCTestCase {
         // Launch-argument defaults persist in the app domain. Set the requested
         // category on every launch so a prior AX fixture cannot change this case.
         var arguments = fixture.launchArguments + ["-UIPreferredContentSizeCategoryName", rideTextSizeCategory]
+        if name.contains("PickerSurfaceHomeMapRouteKeepsMapAndLifecycleActionsReachable") {
+            arguments.append("--seed-ui-test-live-route")
+        }
         if name.contains("AcrossAccessibilityCategories") {
             arguments += ["-CUTOUT_UI_TEST_ENVIRONMENT_READBACK", "YES", "--ui-test-live-activity-readback"]
         }
@@ -4716,7 +4736,7 @@ final class CutoutAppUITests: XCTestCase {
 
     private var launchEnvironment: [String: String] {
         var environment = fixture.launchEnvironment
-        if name.contains("HomeMapConfirmedIdle") {
+        if name.contains("HomeMapConfirmedIdle") || name.contains("PickerSurfaceHomeMapRoute") {
             environment["CUTOUT_UI_TEST_RIDE_DATABASE_ID"] = UUID().uuidString
         }
         return environment

@@ -364,6 +364,7 @@ final class CutoutAppModel {
         #if DEBUG
             try await RideCaptureRecovery.runIfRequested(database: database)
             try await CutoutUITestSavedRideFixture.runIfRequested(database: database)
+            try await CutoutUITestLiveRouteFixture.runIfRequested(database: database)
         #endif
         #if DEBUG
             let state: MobileRideMapState

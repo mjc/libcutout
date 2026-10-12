@@ -566,6 +566,44 @@ import Foundation
             )
         }
     }
+    /// One real Rust-backed route in an isolated Simulator database.
+    enum CutoutUITestLiveRouteFixture {
+        static func runIfRequested(database: RideDatabaseHandle) async throws {
+            #if os(iOS) && targetEnvironment(simulator)
+                guard CommandLine.arguments.contains("--seed-ui-test-live-route") else { return }
+                guard CutoutUITestSessionFixture(arguments: CommandLine.arguments) != nil,
+                    let rawID = ProcessInfo.processInfo.environment["CUTOUT_UI_TEST_RIDE_DATABASE_ID"],
+                    UUID(uuidString: rawID) != nil
+                else { throw CocoaError(.coderInvalidValue) }
+                try await Task.detached(priority: .utility) {
+                    let wall = UInt64(Date().timeIntervalSince1970 * 1_000)
+                    let monotonic = UInt64(ProcessInfo.processInfo.systemUptime * 1_000)
+                    let id = try database.createRideWithMonotonicStart(
+                        source: .live,
+                        createdAtMilliseconds: wall,
+                        monotonicCreatedAtMilliseconds: monotonic
+                    )
+                    _ = try database.transition(id: id, event: .start, monotonicAtMilliseconds: monotonic)
+                    let admitted = try database.appendLocation(
+                        id: id,
+                        location: MobileRideLocationDto(
+                            latitudeDegrees: 39.7392,
+                            longitudeDegrees: -104.9903,
+                            monotonicMilliseconds: monotonic,
+                            wallClockUnixMilliseconds: wall,
+                            horizontalAccuracyMillimetres: 3_000,
+                            source: .live
+                        )
+                    )
+                    guard admitted == .accepted,
+                        let record = try database.findRide(rideId: id),
+                        record.state == .active, record.summary.pointCount == 1
+                    else { throw CocoaError(.coderInvalidValue) }
+                }.value
+            #endif
+        }
+    }
+
     /// Opt-in Simulator data for exercising the real saved-history queries and navigation.
     /// Rust creates IDs, admits samples, computes summaries, and applies lifecycle transitions.
     enum CutoutUITestSavedRideFixture {
