@@ -195,7 +195,7 @@ final class CutoutAppUITests: XCTestCase {
         XCUIDevice.shared.orientation = isLandscapeTest ? .landscapeLeft : .portrait
         app = XCUIApplication()
         app.launchArguments = launchArguments
-        app.launchEnvironment = fixture.launchEnvironment
+        app.launchEnvironment = launchEnvironment
         app.launch()
     }
 
@@ -231,6 +231,8 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertEqual(status.label, persistenceUnavailable, app.debugDescription)
         XCTAssertFalse(app.staticTexts["No active ride"].exists, app.debugDescription)
         XCTAssertFalse(app.buttons["ride-map.start"].exists, app.debugDescription)
+        XCTAssertFalse(app.descendants(matching: .any)["ride-map.map"].exists, app.debugDescription)
+        XCTAssertFalse(app.buttons["ride-map.recenter"].exists, app.debugDescription)
         XCTAssertFalse(app.descendants(matching: .any)["ride-map.persistence-warning"].exists, app.debugDescription)
         let screenshot = XCTAttachment(screenshot: app.screenshot())
         screenshot.name = "ride-map-storage-unavailable"
@@ -949,7 +951,6 @@ final class CutoutAppUITests: XCTestCase {
 
         let mapScreen = app.descendants(matching: .any)["ride-map.screen"]
         XCTAssertTrue(mapScreen.waitForExistence(timeout: 8), app.debugDescription)
-        XCTAssertTrue(app.descendants(matching: .any)["ride-map.map"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "ride-map.screen").count, 1)
         let modePicker = app.descendants(matching: .any)["ride-map.mode-picker"].segmentedControls.firstMatch
         XCTAssertTrue(modePicker.waitForExistence(timeout: 5), app.debugDescription)
@@ -963,12 +964,16 @@ final class CutoutAppUITests: XCTestCase {
         } else {
             let startButton = app.buttons["ride-map.start"]
             XCTAssertTrue(startButton.waitForExistence(timeout: 5), app.debugDescription)
+            XCTAssertFalse(app.descendants(matching: .any)["ride-map.map"].exists, app.debugDescription)
+            XCTAssertFalse(app.buttons["ride-map.recenter"].exists, app.debugDescription)
             XCTAssertTrue(startButton.isEnabled)
             XCTAssertTrue(startButton.isHittable)
             assertMinimumControlDimension(startButton.frame.height)
             startButton.tap()
         }
         XCTAssertTrue(pauseButton.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(
+            app.descendants(matching: .any)["ride-map.map"].waitForExistence(timeout: 5), app.debugDescription)
         pauseButton.tap()
         let resumeButton = app.buttons["ride-map.resume"]
         XCTAssertTrue(resumeButton.waitForExistence(timeout: 5), app.debugDescription)
@@ -979,6 +984,38 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(recenterButton.waitForExistence(timeout: 5), app.debugDescription)
         recenterButton.tap()
         XCTAssertTrue(app.descendants(matching: .any)["ride-map.map"].exists)
+    }
+
+    func testHomeMapConfirmedIdleHidesRouteCanvasUntilRideStarts() throws {
+        let mapButton = app.tabBars.buttons["Map"]
+        XCTAssertTrue(mapButton.waitForExistence(timeout: 8), app.debugDescription)
+        mapButton.tap()
+
+        let mapScreen = app.descendants(matching: .any)["ride-map.screen"]
+        XCTAssertTrue(mapScreen.waitForExistence(timeout: 8), app.debugDescription)
+        XCTAssertTrue(app.staticTexts["No active ride"].waitForExistence(timeout: 8), app.debugDescription)
+        XCTAssertFalse(app.descendants(matching: .any)["ride-map.map"].exists, app.debugDescription)
+        XCTAssertFalse(app.buttons["ride-map.recenter"].exists, app.debugDescription)
+        let idleScreenshot = XCTAttachment(screenshot: app.screenshot())
+        idleScreenshot.name = "ride-map-confirmed-idle"
+        idleScreenshot.lifetime = .keepAlways
+        add(idleScreenshot)
+
+        let startButton = app.buttons["ride-map.start"]
+        XCTAssertTrue(startButton.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(startButton.isHittable, app.debugDescription)
+        startButton.tap()
+
+        let pauseButton = app.buttons["ride-map.pause"]
+        XCTAssertTrue(pauseButton.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue(
+            app.descendants(matching: .any)["ride-map.map"].waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(app.buttons["ride-map.recenter"].exists, app.debugDescription)
+        XCTAssertTrue(pauseButton.isHittable, app.debugDescription)
+        let startedScreenshot = XCTAttachment(screenshot: app.screenshot())
+        startedScreenshot.name = "ride-map-after-start"
+        startedScreenshot.lifetime = .keepAlways
+        add(startedScreenshot)
     }
 
     func testPickerSurfaceSavedHistoryPreservesSelectionAndClearsFiltersWithoutReflow() throws {
@@ -4676,6 +4713,14 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     private var fixture: Fixture { Fixture.testFixture(for: name) }
+
+    private var launchEnvironment: [String: String] {
+        var environment = fixture.launchEnvironment
+        if name.contains("HomeMapConfirmedIdle") {
+            environment["CUTOUT_UI_TEST_RIDE_DATABASE_ID"] = UUID().uuidString
+        }
+        return environment
+    }
 
     private enum Fixture: Equatable {
         case unknownDevice

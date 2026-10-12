@@ -72,6 +72,15 @@ public enum RustPersistenceStore {
 
     private static func openDefaultDatabase() throws -> RideDatabaseHandle {
         let fileManager = FileManager.default
+        #if DEBUG && targetEnvironment(simulator)
+            if let rawID = ProcessInfo.processInfo.environment["CUTOUT_UI_TEST_RIDE_DATABASE_ID"],
+                let id = UUID(uuidString: rawID)
+            {
+                let directory = fileManager.temporaryDirectory
+                    .appendingPathComponent("CutoutUITestRideMaps", isDirectory: true)
+                return try prepareDatabase(at: directory.appendingPathComponent("\(id.uuidString).sqlite"))
+            }
+        #endif
         guard
             let applicationSupport = fileManager.urls(
                 for: .applicationSupportDirectory,

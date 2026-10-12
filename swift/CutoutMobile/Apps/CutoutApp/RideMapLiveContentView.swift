@@ -47,34 +47,36 @@ struct RideMapLiveContentView: View {
             VStack(spacing: 0) {
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(spacing: 0) {
-                        RideMapCanvasView(
-                            points: displayPoints,
-                            routeID: routeID,
-                            projectionVersion: projectionVersion,
-                            showsStartMarker: showsRecordedBounds,
-                            showsEndMarker: showsRecordedBounds,
-                            showsCurrentMarker: true,
-                            endpointMetadata: endpointMetadata,
-                            cameraRegion: cameraRegion,
-                            segments: segments,
-                            contextRoutes: [],
-                            fitsRouteOnChange: isTerminalRide,
-                            cameraFitID: cameraFitID,
-                            mapPosition: $mapPosition,
-                            isApplyingCamera: $isApplyingCamera,
-                            cameraDidChange: { region in
-                                followSpan = region.span
-                                followsLatestPoint = false
-                            }
-                        )
-                        .frame(height: RideMapViewportLayout.mapHeight(for: visibleHeight))
-                        .frame(maxWidth: .infinity)
-                        .overlay(alignment: .topTrailing) {
-                            RideMapCameraControlsView(
-                                mode: cameraActionMode,
-                                action: performCameraAction
+                        if snapshot != nil || !displayPoints.isEmpty {
+                            RideMapCanvasView(
+                                points: displayPoints,
+                                routeID: routeID,
+                                projectionVersion: projectionVersion,
+                                showsStartMarker: showsRecordedBounds,
+                                showsEndMarker: showsRecordedBounds,
+                                showsCurrentMarker: true,
+                                endpointMetadata: endpointMetadata,
+                                cameraRegion: cameraRegion,
+                                segments: segments,
+                                contextRoutes: [],
+                                fitsRouteOnChange: isTerminalRide,
+                                cameraFitID: cameraFitID,
+                                mapPosition: $mapPosition,
+                                isApplyingCamera: $isApplyingCamera,
+                                cameraDidChange: { region in
+                                    followSpan = region.span
+                                    followsLatestPoint = false
+                                }
                             )
-                            .padding(12)
+                            .frame(height: RideMapViewportLayout.mapHeight(for: visibleHeight))
+                            .frame(maxWidth: .infinity)
+                            .overlay(alignment: .topTrailing) {
+                                RideMapCameraControlsView(
+                                    mode: cameraActionMode,
+                                    action: performCameraAction
+                                )
+                                .padding(12)
+                            }
                         }
 
                         VStack(alignment: .leading, spacing: 12) {
