@@ -417,7 +417,7 @@ impl<P: TokenProvider> TokenBroker<P> {
                     let completed_at = elapsed_wall_time(base_now, request_started);
                     return self.replace_with(token, completed_at, &mut state).await;
                 }
-                Err(ProviderFailure::InvalidGrant) => {
+                Err(ProviderFailure::InvalidGrant | ProviderFailure::Rejected) => {
                     if let Some(cached) = &mut state.cached {
                         cached.refresh_token = None;
                     }
@@ -429,7 +429,7 @@ impl<P: TokenProvider> TokenBroker<P> {
                         )
                         .await;
                 }
-                Err(_) => {
+                Err(ProviderFailure::Unavailable) => {
                     return state
                         .cached
                         .as_ref()
@@ -802,50 +802,61 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn invalid_refresh_grant_uses_one_fresh_credentials_grant() {
-        let provider = FakeProvider::new(
-            [Ok(provider_token(
-                "replacement",
-                "refresh-replacement",
-                3_600,
-            ))],
-            [Err(ProviderFailure::InvalidGrant)],
-        );
-        let broker = TokenBroker::in_memory(provider, expired_state("consumed-refresh"));
+    async fn permanent_refresh_rejection_uses_one_fresh_credentials_grant() {
+        for failure in [ProviderFailure::InvalidGrant, ProviderFailure::Rejected] {
+            let provider = FakeProvider::new(
+                [Ok(provider_token(
+                    "replacement",
+                    "refresh-replacement",
+                    3_600,
+                ))],
+                [Err(failure)],
+            );
+            let broker = TokenBroker::in_memory(provider, expired_state("consumed-refresh"));
 
-        let token = broker.get_token(1_000).await.expect("fallback token");
-        let cached = broker.state.lock().await;
+            let token = broker.get_token(1_000).await.expect("fallback token");
+            let cached = broker.state.lock().await;
 
-        assert_eq!(token.access_token, "replacement");
-        assert_eq!(
-            cached
-                .cached
-                .as_ref()
-                .and_then(|value| value.refresh_token.as_ref())
-                .map(SecretToken::expose),
-            Some("refresh-replacement")
-        );
-        assert_eq!(broker.provider.refresh_calls.load(Ordering::SeqCst), 1);
-        assert_eq!(broker.provider.client_calls.load(Ordering::SeqCst), 1);
-        assert_eq!(cached.upstream_attempts.len(), 2);
+            assert_eq!(token.access_token, "replacement");
+            assert_eq!(
+                cached
+                    .cached
+                    .as_ref()
+                    .and_then(|value| value.refresh_token.as_ref())
+                    .map(SecretToken::expose),
+                Some("refresh-replacement")
+            );
+            assert_eq!(broker.provider.refresh_calls.load(Ordering::SeqCst), 1);
+            assert_eq!(broker.provider.client_calls.load(Ordering::SeqCst), 1);
+            assert_eq!(cached.upstream_attempts.len(), 2);
+        }
     }
 
     #[tokio::test]
     async fn refresh_and_fallback_are_separately_counted_against_upstream_budget() {
-        let provider = FakeProvider::new(
-            [Ok(provider_token("replacement", "refresh-new", 3_600))],
-            [Err(ProviderFailure::InvalidGrant)],
-        );
-        let mut state = expired_state("refresh-old");
-        state.upstream_attempts = vec![1_000; CLIENT_TOKEN_HOURLY_LIMIT - 1];
-        let broker = TokenBroker::in_memory(provider, state);
+        for failure in [ProviderFailure::InvalidGrant, ProviderFailure::Rejected] {
+            let provider = FakeProvider::new(
+                [Ok(provider_token("replacement", "refresh-new", 3_600))],
+                [Err(failure)],
+            );
+            let mut state = expired_state("refresh-old");
+            state.upstream_attempts = vec![1_000; CLIENT_TOKEN_HOURLY_LIMIT - 1];
+            let broker = TokenBroker::in_memory(provider, state);
 
-        assert!(broker.get_token(1_000).await.is_err());
-        let state = broker.state.lock().await;
+            assert!(broker.get_token(1_000).await.is_err());
+            let state = broker.state.lock().await;
 
-        assert_eq!(broker.provider.refresh_calls.load(Ordering::SeqCst), 1);
-        assert_eq!(broker.provider.client_calls.load(Ordering::SeqCst), 0);
-        assert_eq!(state.upstream_attempts.len(), CLIENT_TOKEN_HOURLY_LIMIT);
+            assert_eq!(broker.provider.refresh_calls.load(Ordering::SeqCst), 1);
+            assert_eq!(broker.provider.client_calls.load(Ordering::SeqCst), 0);
+            assert_eq!(state.upstream_attempts.len(), CLIENT_TOKEN_HOURLY_LIMIT);
+            assert!(
+                state
+                    .cached
+                    .as_ref()
+                    .and_then(|token| token.refresh_token.as_ref())
+                    .is_none()
+            );
+        }
     }
 
     #[tokio::test]
