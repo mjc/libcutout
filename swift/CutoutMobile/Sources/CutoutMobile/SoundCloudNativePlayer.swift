@@ -30,14 +30,20 @@ public final class SoundCloudNativePlayer {
     @ObservationIgnored private let session: URLSession
     @ObservationIgnored private var searchTask: Task<Void, Never>?
     @ObservationIgnored private var streamTask: Task<Void, Never>?
+    @ObservationIgnored private(set) var audioSessionTask: Task<Void, Never>?
+    @ObservationIgnored private let updateAudioSession: @Sendable (Bool) async throws -> Void
     @ObservationIgnored private var itemObservation: NSKeyValueObservation?
     @ObservationIgnored private var endObservation: NSObjectProtocol?
     @ObservationIgnored private var timeObservation: Any?
     @ObservationIgnored private var remoteTargets: [(MPRemoteCommand, Any)] = []
 
-    public init() {
-        let core = MobileSoundCloudPlayer()
+    public convenience init() {
+        self.init(core: MobileSoundCloudPlayer(), updateAudioSession: Self.updateSystemAudioSession)
+    }
+
+    init(core: MobileSoundCloudPlayer, updateAudioSession: @escaping @Sendable (Bool) async throws -> Void) {
         self.core = core
+        self.updateAudioSession = updateAudioSession
         snapshot = core.snapshot()
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 25
@@ -119,12 +125,42 @@ public final class SoundCloudNativePlayer {
             remoteTargets.removeAll()
             MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
         }
-        #if os(iOS)
-            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-        #endif
+        if let previous = audioSessionTask {
+            let updateAudioSession = updateAudioSession
+            audioSessionTask = Task {
+                await previous.value
+                try? await updateAudioSession(false)
+            }
+        }
     }
 
     private enum Failure: Error { case notConfigured, expiredToken, invalidResponse, player }
+
+    @concurrent
+    private static func updateSystemAudioSession(_ active: Bool) async throws {
+        #if os(iOS)
+            let session = AVAudioSession.sharedInstance()
+            if active, session.category != .playback || session.mode != .default {
+                try session.setCategory(.playback, mode: .default)
+            }
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+                let completion: @Sendable (Bool, (any Error)?) -> Void = { succeeded, error in
+                    if let error {
+                        continuation.resume(throwing: error)
+                    } else if succeeded {
+                        continuation.resume()
+                    } else {
+                        continuation.resume(throwing: Failure.player)
+                    }
+                }
+                if active {
+                    session.activate(options: [], completionHandler: completion)
+                } else {
+                    session.deactivate(options: .notifyOthersOnDeactivation, completionHandler: completion)
+                }
+            }
+        #endif
+    }
 
     private func authorization() async throws -> String {
         let now = DispatchTime.now().uptimeNanoseconds / 1_000_000
@@ -175,20 +211,33 @@ public final class SoundCloudNativePlayer {
     private func apply(_ effect: MobileSoundCloudEffect) {
         switch effect {
         case .none: break
-        case .pause: player.pause()
+        case .pause:
+            audioSessionTask?.cancel()
+            player.pause()
         case .play:
-            #if os(iOS)
+            let id = core.snapshot().playbackId
+            let previous = audioSessionTask
+            previous?.cancel()
+            let updateAudioSession = updateAudioSession
+            audioSessionTask = Task { [weak self] in
+                await previous?.value
+                guard !Task.isCancelled else { return }
                 do {
-                    try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
-                    try AVAudioSession.sharedInstance().setActive(true)
+                    try await updateAudioSession(true)
+                    guard !Task.isCancelled, let self,
+                        core.snapshot().playbackId == id, core.snapshot().state == .playing
+                    else { return }
+                    player.play()
                 } catch {
+                    guard !Task.isCancelled, let self,
+                        core.snapshot().playbackId == id, core.snapshot().state == .playing
+                    else { return }
                     errorText = pevLocalizedText("music.soundcloud.play_failed")
-                    apply(core.failed(id: core.snapshot().playbackId))
-                    return
+                    apply(core.failed(id: id))
                 }
-            #endif
-            player.play()
+            }
         case .fetch(let id, let endpoint):
+            audioSessionTask?.cancel()
             registerRemoteCommands()
             streamTask?.cancel()
             player.pause()
