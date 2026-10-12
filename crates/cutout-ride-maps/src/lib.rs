@@ -18,6 +18,11 @@ pub use location::{
     AdmittedLocationSample, LocationAdmission, LocationSample, LocationSource,
     MonotonicMilliseconds, WallClockUnixMilliseconds,
 };
+mod moving_time;
+pub use moving_time::{
+    MovingTimeAvailability, MovingTimeContinuation, MovingTimeError, MovingTimeObservation,
+    MovingTimeSource, MovingTimeSourceStateParts, MovingTimeStateParts, MovingTimeSummary,
+};
 mod summary;
 pub use summary::{
     AverageSpeedMillimetresPerSecond, DistanceMillimetres, RidePointCount, RideSummary,

@@ -1,6 +1,8 @@
+#[cfg(test)]
+use super::append_location_with_result;
 use super::{
     Command, SegmentStartReasonInput, SpatialSchemaState, abort_pevcap_import, append_location,
-    append_location_with_result, append_pevcap_location_batch, append_trail_segment,
+    append_location_with_moving_time, append_pevcap_location_batch, append_trail_segment,
     apply_verified_connection_admission, backup, begin_pevcap_import,
     checkpoint_location_observation, checkpoint_stationary_location_observation,
     clear_last_connected_device, clear_ride_session_marker, clear_selected_device,
@@ -17,7 +19,7 @@ use super::{
     save_music_history_policy, save_phone_alarm_preferences, save_ride_session_marker,
     save_selected_device, save_voltage_sag_model, selected_device, settle_recovered_ride,
     sqlite_capabilities, trail_segments_in_bounds, transition_ride_with_telemetry,
-    update_ride_map_metadata_with_motion, voltage_sag_model,
+    update_ride_map_metadata_with_moving_time, voltage_sag_model,
 };
 use rusqlite::Connection;
 use std::ops::ControlFlow;
@@ -256,13 +258,14 @@ impl DatabaseWorker<'_> {
                 music_history_policy,
                 reply,
             } => {
-                let _ = reply.send(create_started_live_ride(
+                let result = create_started_live_ride(
                     connection,
                     created_at_ms,
                     monotonic_created_at_ms,
                     candidate_vehicle.as_deref(),
                     music_history_policy,
-                ));
+                );
+                let _ = reply.send(result);
             }
             Command::SettleRecoveredRide {
                 ride_id,
@@ -305,9 +308,10 @@ impl DatabaseWorker<'_> {
                 associated_at_ms,
                 last_telemetry_at_ms,
                 motion,
+                moving_time_observation,
                 reply,
             } => {
-                let _ = reply.send(update_ride_map_metadata_with_motion(
+                let _ = reply.send(update_ride_map_metadata_with_moving_time(
                     connection,
                     ride_id,
                     candidate_vehicle.as_deref(),
@@ -315,6 +319,7 @@ impl DatabaseWorker<'_> {
                     associated_at_ms,
                     last_telemetry_at_ms,
                     motion,
+                    moving_time_observation,
                 ));
             }
             Command::RecordBmsVoltageSamples { samples, reply } => {
@@ -641,14 +646,15 @@ impl DatabaseWorker<'_> {
                 last_telemetry_at_ms,
                 reply,
             } => {
-                let _ = reply.send(transition_ride_with_telemetry(
+                let result = transition_ride_with_telemetry(
                     connection,
                     ride_id,
                     event,
                     occurred_at_ms,
                     monotonic_at_ms,
                     last_telemetry_at_ms,
-                ));
+                );
+                let _ = reply.send(result);
             }
             Command::AppendLocation {
                 ride_id,
@@ -671,15 +677,19 @@ impl DatabaseWorker<'_> {
                 segment_id,
                 start_reason,
                 telemetry_state,
+                moving_time_observation,
+                latest_vehicle_moving_time_observation,
                 reply,
             } => {
-                let _ = reply.send(append_location_with_result(
+                let _ = reply.send(append_location_with_moving_time(
                     connection,
                     ride_id,
                     sample,
                     segment_id,
                     telemetry_state,
                     SegmentStartReasonInput::Recorded(start_reason),
+                    moving_time_observation,
+                    latest_vehicle_moving_time_observation,
                 ));
             }
             #[cfg(test)]

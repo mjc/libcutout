@@ -7,10 +7,12 @@ use cutout_music::{
 };
 use cutout_ride_maps::{
     AverageSpeedMillimetresPerSecond, Coordinate, LocationAdmission, LocationSample,
-    LocationSource, MAX_LIVE_ROUTE_POINTS, MonotonicMilliseconds, RideEvent, RideLifecycleState,
-    RideMapPoint, RideMapRecorder, RideMapSegmentId, RidePointCount, RidePointSequence,
-    RideSegmentStartReason, RideSummary, RouteCameraBounds, RouteCameraRegion, RouteDisplayBudget,
-    RouteDisplayPoint, RouteEndpointMetadata, RoutePrivacyPolicy, RouteProjectionAccumulator,
+    LocationSource, MAX_LIVE_ROUTE_POINTS, MonotonicMilliseconds, MovingTimeAvailability,
+    MovingTimeContinuation, MovingTimeObservation, MovingTimeSource, MovingTimeSourceStateParts,
+    MovingTimeStateParts, MovingTimeSummary, RideEvent, RideLifecycleState, RideMapPoint,
+    RideMapRecorder, RideMapSegmentId, RidePointCount, RidePointSequence, RideSegmentStartReason,
+    RideSummary, RouteCameraBounds, RouteCameraRegion, RouteDisplayBudget, RouteDisplayPoint,
+    RouteEndpointMetadata, RoutePrivacyPolicy, RouteProjectionAccumulator,
     RouteSegmentDisplayMetadata, RouteTelemetryState, RouteViewport, TransitionError,
     VehicleIdentity, WallClockUnixMilliseconds, count_segment_runs, route_admission,
     route_camera_region, route_segment_display_metadata,
@@ -470,6 +472,8 @@ pub struct RideRecord {
     paused_duration_ms: u64,
     completed_duration_ms: u64,
     last_recorded_point_duration_ms: Option<u64>,
+    moving_time_checkpoint: MovingTimeCheckpoint,
+    last_recorded_point_moving_time: MovingTimeSummary,
     updated_at_ms: u64,
     duration_ms: u64,
     summary: RideSummary,
@@ -493,6 +497,24 @@ struct LocationObservationClocks {
 }
 
 impl RideRecord {
+    /// The durable moving-time continuation and its commit revision.
+    #[must_use]
+    pub const fn moving_time_checkpoint(&self) -> MovingTimeCheckpoint {
+        self.moving_time_checkpoint
+    }
+
+    /// Moving-time prefix captured at the latest accepted live route point.
+    #[must_use]
+    pub const fn last_recorded_point_moving_time(&self) -> MovingTimeSummary {
+        self.last_recorded_point_moving_time
+    }
+
+    /// Projects the current committed continuation to the caller's monotonic as-of time.
+    #[must_use]
+    pub fn moving_time_summary_at(&self, as_of: MonotonicMilliseconds) -> MovingTimeSummary {
+        self.moving_time_checkpoint.projected_at(as_of)
+    }
+
     /// Duration at the latest accepted live route point, if one has been recorded.
     #[must_use]
     pub const fn last_recorded_point_duration_milliseconds(
@@ -1807,7 +1829,7 @@ pub struct PendingMusicHistoryWrite {
 #[must_use = "poll or wait for the durable live ride creation result"]
 #[derive(Debug)]
 pub struct PendingLiveRideCreation {
-    response: Receiver<Result<RideId, StorageError>>,
+    response: Receiver<Result<CommittedRideMovingTimeCheckpoint, StorageError>>,
     consumed: bool,
 }
 
@@ -1823,7 +1845,7 @@ pub struct PendingRideRestoreSnapshot {
 #[must_use = "poll or wait for the durable lifecycle transition result"]
 #[derive(Debug)]
 pub struct PendingRideLifecycleTransition {
-    response: Receiver<Result<RideLifecycleState, StorageError>>,
+    response: Receiver<Result<CommittedRideMovingTimeCheckpoint, StorageError>>,
     consumed: bool,
 }
 
@@ -1876,15 +1898,19 @@ pub struct VerifiedConnectionRideMetadata {
     pub associated_at_ms: Option<u64>,
     /// Monotonic last-telemetry timestamp.
     pub last_telemetry_at_ms: Option<u64>,
+    /// Monotonic source boundary for a newly verified vehicle connection generation.
+    pub moving_time_source_boundary_at_ms: Option<u64>,
 }
 
 /// Durable result of one ordered verified-connection admission.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VerifiedConnectionAdmissionOutcome {
     /// Whether the verified identity matched the currently selected device.
     pub selected_device_matches: bool,
     /// Ride created by the automatic lifecycle plan, if any.
     pub created_ride_id: Option<RideId>,
+    /// Checkpoint committed for the final/current ride, when this admission changed one.
+    pub committed_ride_checkpoint: Option<CommittedRideMovingTimeCheckpoint>,
 }
 
 /// Verified connection admission accepted by the bounded worker but not necessarily committed.
@@ -1900,6 +1926,62 @@ pub struct PendingVerifiedConnectionAdmission {
 pub struct LocationWriteResult {
     admission: LocationAdmission,
     sequence: Option<u64>,
+    moving_time_checkpoint: MovingTimeCheckpoint,
+}
+
+/// Versioned durable moving-time continuation returned with a recording commit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MovingTimeCheckpoint {
+    revision: u64,
+    continuation: MovingTimeContinuation,
+}
+
+/// Moving-time checkpoint committed with a ride lifecycle or creation transaction.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CommittedRideMovingTimeCheckpoint {
+    ride_id: RideId,
+    lifecycle: RideLifecycleState,
+    checkpoint: MovingTimeCheckpoint,
+}
+
+impl CommittedRideMovingTimeCheckpoint {
+    /// Returns the ride whose transaction committed this checkpoint.
+    #[must_use]
+    pub const fn ride_id(self) -> RideId {
+        self.ride_id
+    }
+
+    /// Returns the lifecycle state committed with this checkpoint.
+    #[must_use]
+    pub const fn lifecycle(self) -> RideLifecycleState {
+        self.lifecycle
+    }
+
+    /// Returns the moving-time checkpoint committed with the ride.
+    #[must_use]
+    pub const fn checkpoint(self) -> MovingTimeCheckpoint {
+        self.checkpoint
+    }
+}
+
+impl MovingTimeCheckpoint {
+    /// Returns the monotonically increasing durable commit revision.
+    #[must_use]
+    pub const fn revision(self) -> u64 {
+        self.revision
+    }
+
+    /// Returns the continuation snapshot committed at `revision`.
+    #[must_use]
+    pub const fn continuation(self) -> MovingTimeContinuation {
+        self.continuation
+    }
+
+    /// Projects the committed continuation to an as-of monotonic instant without writing.
+    #[must_use]
+    pub fn projected_at(self, as_of: MonotonicMilliseconds) -> MovingTimeSummary {
+        self.continuation.projected_at(as_of)
+    }
 }
 
 /// One bounded, privacy-classified projection of a durable ride route.
@@ -2101,6 +2183,12 @@ impl LocationWriteResult {
     #[must_use]
     pub const fn sequence(self) -> Option<u64> {
         self.sequence
+    }
+
+    /// Returns the durable moving-time checkpoint associated with this write outcome.
+    #[must_use]
+    pub const fn moving_time_checkpoint(self) -> MovingTimeCheckpoint {
+        self.moving_time_checkpoint
     }
 }
 
@@ -2523,6 +2611,14 @@ impl PendingMusicHistoryWrite {
 impl PendingLiveRideCreation {
     /// Returns the new ride identity when the worker has committed the creation.
     pub fn try_result(&mut self) -> Option<Result<RideId, StorageError>> {
+        self.try_committed_result()
+            .map(|result| result.map(CommittedRideMovingTimeCheckpoint::ride_id))
+    }
+
+    /// Returns the creation and moving-time checkpoint when the worker has committed them.
+    pub fn try_committed_result(
+        &mut self,
+    ) -> Option<Result<CommittedRideMovingTimeCheckpoint, StorageError>> {
         if self.consumed {
             return None;
         }
@@ -2545,6 +2641,16 @@ impl PendingLiveRideCreation {
     ///
     /// Returns the storage error or [`StorageError::ResponseDropped`] if the worker stops.
     pub fn wait_result(self) -> Result<RideId, StorageError> {
+        self.wait_committed_result()
+            .map(CommittedRideMovingTimeCheckpoint::ride_id)
+    }
+
+    /// Waits for the ride and moving-time checkpoint committed by its creation transaction.
+    ///
+    /// # Errors
+    ///
+    /// Returns the storage error or [`StorageError::ResponseDropped`] if the worker stops.
+    pub fn wait_committed_result(self) -> Result<CommittedRideMovingTimeCheckpoint, StorageError> {
         self.response
             .recv()
             .map_err(|_| StorageError::ResponseDropped)?
@@ -2585,6 +2691,14 @@ impl PendingRideRestoreSnapshot {
 impl PendingRideLifecycleTransition {
     /// Returns the new lifecycle state when the worker has committed the transition.
     pub fn try_result(&mut self) -> Option<Result<RideLifecycleState, StorageError>> {
+        self.try_committed_result()
+            .map(|result| result.map(CommittedRideMovingTimeCheckpoint::lifecycle))
+    }
+
+    /// Returns the lifecycle state and moving-time checkpoint committed by the transition.
+    pub fn try_committed_result(
+        &mut self,
+    ) -> Option<Result<CommittedRideMovingTimeCheckpoint, StorageError>> {
         if self.consumed {
             return None;
         }
@@ -2609,6 +2723,16 @@ impl PendingRideLifecycleTransition {
     ///
     /// Returns the storage error or [`StorageError::ResponseDropped`] if the worker stops.
     pub fn wait_result(self) -> Result<RideLifecycleState, StorageError> {
+        self.wait_committed_result()
+            .map(CommittedRideMovingTimeCheckpoint::lifecycle)
+    }
+
+    /// Waits for the lifecycle state and checkpoint committed by the transition.
+    ///
+    /// # Errors
+    ///
+    /// Returns the storage error or [`StorageError::ResponseDropped`] if the worker stops.
+    pub fn wait_committed_result(self) -> Result<CommittedRideMovingTimeCheckpoint, StorageError> {
         self.response
             .recv()
             .map_err(|_| StorageError::ResponseDropped)?
@@ -2792,6 +2916,26 @@ impl RideDatabase {
         .wait_result()
     }
 
+    /// Creates a live ride and returns the checkpoint committed by the same transaction.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] when the candidate is invalid or the worker cannot commit the
+    /// ride.
+    pub fn create_started_live_ride_with_checkpoint(
+        &self,
+        created_at_ms: u64,
+        monotonic_created_at_ms: u64,
+        candidate_vehicle: Option<&str>,
+    ) -> Result<CommittedRideMovingTimeCheckpoint, StorageError> {
+        self.queue_create_started_live_ride(
+            created_at_ms,
+            monotonic_created_at_ms,
+            candidate_vehicle,
+        )?
+        .wait_committed_result()
+    }
+
     /// Queues an active live ride creation without waiting for SQLite.
     ///
     /// # Errors
@@ -2910,6 +3054,37 @@ impl RideDatabase {
         monotonic_at_ms: u64,
         replacement_candidate_vehicle: Option<&str>,
     ) -> Result<Option<RideId>, StorageError> {
+        self.settle_recovered_ride_with_checkpoint(
+            ride_id,
+            discard_empty,
+            occurred_at_ms,
+            monotonic_at_ms,
+            replacement_candidate_vehicle,
+        )
+        .map(|result| {
+            result
+                .filter(|checkpoint| checkpoint.lifecycle() == RideLifecycleState::Active)
+                .map(CommittedRideMovingTimeCheckpoint::ride_id)
+        })
+    }
+
+    /// Settles recovery and returns the final ride checkpoint from the same transaction.
+    ///
+    /// A replacement ride is returned when one was created; otherwise a continued or saved ride
+    /// is returned when its checkpoint was published. Empty rides discarded during recovery have
+    /// no current ride result.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] if recovery state is invalid or the worker cannot commit it.
+    pub fn settle_recovered_ride_with_checkpoint(
+        &self,
+        ride_id: RideId,
+        discard_empty: bool,
+        occurred_at_ms: u64,
+        monotonic_at_ms: u64,
+        replacement_candidate_vehicle: Option<&str>,
+    ) -> Result<Option<CommittedRideMovingTimeCheckpoint>, StorageError> {
         let replacement_candidate_vehicle = normalize_optional_stored_text(
             replacement_candidate_vehicle,
             "replacement candidate vehicle",
@@ -2949,6 +3124,7 @@ impl RideDatabase {
             last_telemetry_at_ms,
             None,
         )
+        .map(|_| ())
     }
 
     /// Updates complete association metadata and optional wheel-motion evidence atomically.
@@ -2964,7 +3140,38 @@ impl RideDatabase {
         associated_at_ms: Option<u64>,
         last_telemetry_at_ms: Option<u64>,
         motion: Option<RideMotionObservation>,
-    ) -> Result<(), StorageError> {
+    ) -> Result<MovingTimeCheckpoint, StorageError> {
+        self.update_ride_map_metadata_with_moving_time(
+            ride_id,
+            candidate_vehicle,
+            associated_vehicle,
+            associated_at_ms,
+            last_telemetry_at_ms,
+            motion,
+            None,
+        )
+    }
+
+    /// Updates complete metadata and persists an optional verified-wheel speed observation in
+    /// the same material write.
+    ///
+    /// # Errors
+    /// Returns a storage error when the ride is missing, evidence is invalid, or SQLite cannot
+    /// commit the metadata and moving-time checkpoint together.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the storage boundary keeps the complete metadata transaction payload explicit"
+    )]
+    pub fn update_ride_map_metadata_with_moving_time(
+        &self,
+        ride_id: RideId,
+        candidate_vehicle: Option<&str>,
+        associated_vehicle: Option<&str>,
+        associated_at_ms: Option<u64>,
+        last_telemetry_at_ms: Option<u64>,
+        motion: Option<RideMotionObservation>,
+        moving_time_observation: Option<MovingTimeObservation>,
+    ) -> Result<MovingTimeCheckpoint, StorageError> {
         let candidate_vehicle =
             normalize_optional_stored_text(candidate_vehicle, "candidate vehicle")?;
         let associated_vehicle =
@@ -2976,6 +3183,7 @@ impl RideDatabase {
             associated_at_ms,
             last_telemetry_at_ms,
             motion,
+            moving_time_observation,
             reply,
         })
     }
@@ -3106,6 +3314,7 @@ impl RideDatabase {
                 )?,
                 associated_at_ms: metadata.associated_at_ms,
                 last_telemetry_at_ms: metadata.last_telemetry_at_ms,
+                moving_time_source_boundary_at_ms: metadata.moving_time_source_boundary_at_ms,
             })
         };
         let metadata = metadata.map(normalize_metadata).transpose()?;
@@ -4136,6 +4345,21 @@ impl RideDatabase {
         self.transition_blocking_with_timestamp(ride_id, event, Some(monotonic_at_ms))
     }
 
+    /// Applies a timestamped lifecycle event and returns its transaction's moving-time checkpoint.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] when the ride or worker rejects the transition.
+    pub fn transition_at_with_checkpoint(
+        &self,
+        ride_id: RideId,
+        event: RideEvent,
+        monotonic_at_ms: u64,
+    ) -> Result<CommittedRideMovingTimeCheckpoint, StorageError> {
+        self.queue_transition_at(ride_id, event, monotonic_at_ms)?
+            .wait_committed_result()
+    }
+
     /// Applies a lifecycle event and checkpoints the latest telemetry receipt in one row update.
     ///
     /// # Errors
@@ -4148,6 +4372,27 @@ impl RideDatabase {
         monotonic_at_ms: u64,
         last_telemetry_at_ms: Option<u64>,
     ) -> Result<RideLifecycleState, StorageError> {
+        self.transition_at_with_telemetry_and_checkpoint(
+            ride_id,
+            event,
+            monotonic_at_ms,
+            last_telemetry_at_ms,
+        )
+        .map(CommittedRideMovingTimeCheckpoint::lifecycle)
+    }
+
+    /// Applies a lifecycle event with telemetry and returns the committed moving-time checkpoint.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] when the ride or worker rejects the transition.
+    pub fn transition_at_with_telemetry_and_checkpoint(
+        &self,
+        ride_id: RideId,
+        event: RideEvent,
+        monotonic_at_ms: u64,
+        last_telemetry_at_ms: Option<u64>,
+    ) -> Result<CommittedRideMovingTimeCheckpoint, StorageError> {
         let occurred_at_ms = wall_clock_now_milliseconds()?;
         self.request_blocking(move |reply| Command::Transition {
             ride_id,
@@ -4221,6 +4466,7 @@ impl RideDatabase {
             last_telemetry_at_ms: None,
             reply,
         })
+        .map(CommittedRideMovingTimeCheckpoint::lifecycle)
     }
 
     /// Appends one location through the worker, returning its admission decision.
@@ -4307,6 +4553,94 @@ impl RideDatabase {
             segment_id,
             start_reason,
             telemetry_state,
+            moving_time_observation: None,
+            latest_vehicle_moving_time_observation: None,
+            reply,
+        })?;
+        Ok(PendingLocationWrite {
+            response,
+            consumed: false,
+        })
+    }
+
+    /// Queues an accepted location with receipt-causal moving-time evidence in the same write.
+    ///
+    /// The optional verified-wheel observation is applied at the shared receipt boundary before
+    /// the phone observation, preserving wheel priority without a separate telemetry write.
+    ///
+    /// # Errors
+    /// Returns a storage error when observations are inconsistent or the bounded worker cannot
+    /// accept the queued write.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the queued location transaction carries the complete route and metric payload"
+    )]
+    pub fn queue_location_with_moving_time(
+        &self,
+        ride_id: RideId,
+        sample: LocationSample,
+        segment_id: RideMapSegmentId,
+        start_reason: RideSegmentStartReason,
+        telemetry_state: RouteTelemetryState,
+        moving_time_observation: MovingTimeObservation,
+        latest_vehicle_moving_time_observation: Option<MovingTimeObservation>,
+    ) -> Result<PendingLocationWrite, StorageError> {
+        validate_paired_moving_time_observations(
+            sample,
+            Some(moving_time_observation),
+            latest_vehicle_moving_time_observation,
+        )?;
+        let (reply, response) = response_channel();
+        self.enqueue(Command::AppendLocationAsync {
+            ride_id,
+            sample,
+            segment_id,
+            start_reason,
+            telemetry_state,
+            moving_time_observation: Some(moving_time_observation),
+            latest_vehicle_moving_time_observation,
+            reply,
+        })?;
+        Ok(PendingLocationWrite {
+            response,
+            consumed: false,
+        })
+    }
+
+    /// Queues a location with moving-time evidence, waiting until bounded worker capacity is
+    /// available. Use from background recorders, never from a UI executor or database worker.
+    ///
+    /// # Errors
+    /// Returns a storage error when observations are inconsistent or the bounded worker cannot
+    /// accept the queued write.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the queued location transaction carries the complete route and metric payload"
+    )]
+    pub fn queue_location_with_moving_time_waiting_for_capacity(
+        &self,
+        ride_id: RideId,
+        sample: LocationSample,
+        segment_id: RideMapSegmentId,
+        start_reason: RideSegmentStartReason,
+        telemetry_state: RouteTelemetryState,
+        moving_time_observation: MovingTimeObservation,
+        latest_vehicle_moving_time_observation: Option<MovingTimeObservation>,
+    ) -> Result<PendingLocationWrite, StorageError> {
+        validate_paired_moving_time_observations(
+            sample,
+            Some(moving_time_observation),
+            latest_vehicle_moving_time_observation,
+        )?;
+        let (reply, response) = response_channel();
+        self.enqueue_blocking(Command::AppendLocationAsync {
+            ride_id,
+            sample,
+            segment_id,
+            start_reason,
+            telemetry_state,
+            moving_time_observation: Some(moving_time_observation),
+            latest_vehicle_moving_time_observation,
             reply,
         })?;
         Ok(PendingLocationWrite {
@@ -4339,6 +4673,8 @@ impl RideDatabase {
             segment_id,
             start_reason,
             telemetry_state,
+            moving_time_observation: None,
+            latest_vehicle_moving_time_observation: None,
             reply,
         })?;
         Ok(PendingLocationWrite {
@@ -4964,7 +5300,7 @@ enum Command {
         monotonic_created_at_ms: u64,
         candidate_vehicle: Option<String>,
         music_history_policy: Option<MusicHistoryPolicy>,
-        reply: Reply<RideId>,
+        reply: Reply<CommittedRideMovingTimeCheckpoint>,
     },
     SettleRecoveredRide {
         ride_id: RideId,
@@ -4972,7 +5308,7 @@ enum Command {
         occurred_at_ms: u64,
         monotonic_at_ms: u64,
         replacement_candidate_vehicle: Option<String>,
-        reply: Reply<Option<RideId>>,
+        reply: Reply<Option<CommittedRideMovingTimeCheckpoint>>,
     },
     CreateStartedRide {
         source: RideSource,
@@ -4989,7 +5325,8 @@ enum Command {
         associated_at_ms: Option<u64>,
         last_telemetry_at_ms: Option<u64>,
         motion: Option<RideMotionObservation>,
-        reply: Reply<()>,
+        moving_time_observation: Option<MovingTimeObservation>,
+        reply: Reply<MovingTimeCheckpoint>,
     },
     RecordBmsVoltageSamples {
         samples: Vec<BmsVoltageSampleRecord>,
@@ -5202,7 +5539,7 @@ enum Command {
         occurred_at_ms: u64,
         monotonic_at_ms: Option<u64>,
         last_telemetry_at_ms: Option<u64>,
-        reply: Reply<RideLifecycleState>,
+        reply: Reply<CommittedRideMovingTimeCheckpoint>,
     },
     AppendLocation {
         ride_id: RideId,
@@ -5217,6 +5554,8 @@ enum Command {
         segment_id: RideMapSegmentId,
         start_reason: RideSegmentStartReason,
         telemetry_state: RouteTelemetryState,
+        moving_time_observation: Option<MovingTimeObservation>,
+        latest_vehicle_moving_time_observation: Option<MovingTimeObservation>,
         reply: Reply<LocationWriteResult>,
     },
     #[cfg(test)]
@@ -5598,6 +5937,34 @@ fn recover_interrupted_rides(connection: &mut Connection) -> Result<Vec<RideId>,
          WHERE state IN ('active', 'paused')",
         [],
     )?;
+    for ride_id in &recovered {
+        let checkpoint = load_moving_time_checkpoint(&transaction, *ride_id)?;
+        let parts = checkpoint.continuation.state_parts();
+        if parts.cursor_milliseconds.is_some()
+            || parts.phone_gps.is_some()
+            || parts.vehicle.is_some()
+            || parts.latest_phone_gps_source_milliseconds.is_some()
+            || parts.latest_vehicle_source_milliseconds.is_some()
+        {
+            let at = transaction.query_row(
+                "SELECT COALESCE(monotonic_last_event_ms, 0) FROM rides WHERE id = ?1",
+                [ride_id.uuid().to_string()],
+                |row| row.get::<_, u64>(0),
+            )?;
+            let continuation = MovingTimeContinuation::restored_after_restart(
+                parts,
+                MonotonicMilliseconds::new(at),
+            )
+            .map_err(moving_time_storage_error)?;
+            let revision = checkpoint.revision.checked_add(1).ok_or_else(|| {
+                StorageError::InvalidStoredValue {
+                    field: "moving-time revision",
+                    value: checkpoint.revision.to_string(),
+                }
+            })?;
+            save_moving_time_checkpoint(&transaction, *ride_id, revision, continuation, None)?;
+        }
+    }
     transaction.commit()?;
     Ok(recovered)
 }
@@ -5763,7 +6130,7 @@ fn create_started_live_ride(
     monotonic_created_at_ms: u64,
     candidate_vehicle: Option<&str>,
     music_history_policy: Option<MusicHistoryPolicy>,
-) -> Result<RideId, StorageError> {
+) -> Result<CommittedRideMovingTimeCheckpoint, StorageError> {
     let transaction = connection.transaction()?;
     let ride_id = create_started_live_ride_in_transaction(
         &transaction,
@@ -5774,10 +6141,28 @@ fn create_started_live_ride(
     if let Some(policy) = music_history_policy {
         apply_music_history_policy(&transaction, ride_id, policy)?;
     }
+    let committed =
+        committed_ride_moving_time_checkpoint(&transaction, ride_id, RideLifecycleState::Active)?;
     transaction.commit()?;
-    Ok(ride_id)
+    Ok(committed)
 }
 
+fn committed_ride_moving_time_checkpoint(
+    connection: &Connection,
+    ride_id: RideId,
+    lifecycle: RideLifecycleState,
+) -> Result<CommittedRideMovingTimeCheckpoint, StorageError> {
+    Ok(CommittedRideMovingTimeCheckpoint {
+        ride_id,
+        lifecycle,
+        checkpoint: load_moving_time_checkpoint(connection, ride_id)?,
+    })
+}
+
+#[allow(
+    clippy::too_many_lines,
+    reason = "recovery settlement keeps finalization, prefix restoration, and replacement atomic"
+)]
 fn settle_recovered_ride(
     connection: &mut Connection,
     ride_id: RideId,
@@ -5785,7 +6170,7 @@ fn settle_recovered_ride(
     occurred_at_ms: u64,
     monotonic_at_ms: u64,
     replacement_candidate_vehicle: Option<&str>,
-) -> Result<Option<RideId>, StorageError> {
+) -> Result<Option<CommittedRideMovingTimeCheckpoint>, StorageError> {
     let transaction = connection.transaction()?;
     if discard_empty {
         transition_ride(
@@ -5797,6 +6182,12 @@ fn settle_recovered_ride(
         )?;
     } else {
         let write_state = load_ride_write_state(&transaction, ride_id)?;
+        let interrupted_moving_prefix =
+            if write_state.lifecycle() == RideLifecycleState::Interrupted {
+                find_ride(&transaction, ride_id)?.map(|ride| ride.last_recorded_point_moving_time())
+            } else {
+                None
+            };
         let recovered_point_duration_ms = if write_state.lifecycle()
             == RideLifecycleState::Interrupted
             && write_state.paused_at_milliseconds().is_none()
@@ -5840,6 +6231,29 @@ fn settle_recovered_ride(
                 params![point_duration_ms, ride_id.uuid().to_string()],
             )?;
         }
+        if let Some(prefix) = interrupted_moving_prefix {
+            let checkpoint = load_moving_time_checkpoint(&transaction, ride_id)?;
+            let mut parts = checkpoint.continuation.state_parts();
+            parts.moving_milliseconds = prefix.moving.as_u64();
+            parts.observed_milliseconds = prefix.observed.as_u64();
+            parts.unknown_milliseconds = prefix.unknown.as_u64();
+            parts.cursor_milliseconds = None;
+            parts.phone_gps = None;
+            parts.vehicle = None;
+            parts.latest_phone_gps_source_milliseconds = None;
+            parts.latest_vehicle_source_milliseconds = None;
+            parts.availability = prefix.availability;
+            parts.incomplete_history = prefix.availability != MovingTimeAvailability::Complete;
+            let continuation = MovingTimeContinuation::from_state_parts(parts)
+                .map_err(moving_time_storage_error)?;
+            let revision = checkpoint.revision.checked_add(1).ok_or_else(|| {
+                StorageError::InvalidStoredValue {
+                    field: "moving-time revision",
+                    value: checkpoint.revision.to_string(),
+                }
+            })?;
+            save_moving_time_checkpoint(&transaction, ride_id, revision, continuation, None)?;
+        }
     }
     let replacement = replacement_candidate_vehicle.map(|candidate| {
         create_started_live_ride_in_transaction(
@@ -5853,8 +6267,22 @@ fn settle_recovered_ride(
         Some(result) => Some(result?),
         None => None,
     };
+    let has_replacement = replacement.is_some();
+    let result_ride = replacement.or_else(|| (!discard_empty).then_some(ride_id));
+    let result_lifecycle = if has_replacement {
+        RideLifecycleState::Active
+    } else if discard_empty {
+        RideLifecycleState::Discarded
+    } else {
+        RideLifecycleState::Saved
+    };
+    let committed = result_ride
+        .map(|result_ride_id| {
+            committed_ride_moving_time_checkpoint(&transaction, result_ride_id, result_lifecycle)
+        })
+        .transpose()?;
     transaction.commit()?;
-    Ok(replacement)
+    Ok(committed)
 }
 
 fn create_started_live_ride_in_transaction(
@@ -5867,8 +6295,8 @@ fn create_started_live_ride_in_transaction(
     transaction.execute(
         "INSERT INTO rides
             (id, source, state, created_at_ms, monotonic_created_at_ms, monotonic_last_event_ms,
-             updated_at_ms, point_count, distance_mm, candidate_vehicle)
-         VALUES (?1, 'live', 'active', ?2, ?3, ?3, ?2, 0, 0, ?4)",
+             updated_at_ms, point_count, distance_mm, candidate_vehicle, moving_time_cursor_ms)
+         VALUES (?1, 'live', 'active', ?2, ?3, ?3, ?2, 0, 0, ?4, ?3)",
         params![
             ride_id.uuid().to_string(),
             created_at_ms,
@@ -5918,6 +6346,7 @@ fn update_ride_map_metadata(
         last_telemetry_at_ms,
         None,
     )
+    .map(|_| ())
 }
 
 fn update_ride_map_metadata_with_motion(
@@ -5928,22 +6357,152 @@ fn update_ride_map_metadata_with_motion(
     associated_at_ms: Option<u64>,
     last_telemetry_at_ms: Option<u64>,
     motion: Option<RideMotionObservation>,
-) -> Result<(), StorageError> {
-    if motion.is_some_and(|motion| {
-        associated_vehicle.is_none()
-            || last_telemetry_at_ms.is_none_or(|at| at < motion.observed_at_milliseconds)
-            || associated_at_ms.is_none_or(|at| at > motion.observed_at_milliseconds)
-            || motion
-                .last_stationary_at_milliseconds
-                .is_some_and(|at| at > motion.observed_at_milliseconds)
-            || (motion.parked
-                && motion.last_stationary_at_milliseconds != Some(motion.observed_at_milliseconds))
-    }) {
-        return Err(StorageError::InvalidStoredValue {
-            field: "wheel motion evidence",
-            value: "unassociated or non-current telemetry".to_owned(),
-        });
-    }
+) -> Result<MovingTimeCheckpoint, StorageError> {
+    update_ride_map_metadata_with_moving_time_in_transaction(
+        connection,
+        ride_id,
+        candidate_vehicle,
+        associated_vehicle,
+        associated_at_ms,
+        last_telemetry_at_ms,
+        motion,
+        None,
+        None,
+    )
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "this wrapper forwards the complete metadata transaction payload"
+)]
+fn update_ride_map_metadata_with_moving_time(
+    connection: &mut Connection,
+    ride_id: RideId,
+    candidate_vehicle: Option<&str>,
+    associated_vehicle: Option<&str>,
+    associated_at_ms: Option<u64>,
+    last_telemetry_at_ms: Option<u64>,
+    motion: Option<RideMotionObservation>,
+    moving_time_observation: Option<MovingTimeObservation>,
+) -> Result<MovingTimeCheckpoint, StorageError> {
+    let transaction = connection.transaction()?;
+    update_ride_map_metadata_with_moving_time_in_transaction(
+        &transaction,
+        ride_id,
+        candidate_vehicle,
+        associated_vehicle,
+        associated_at_ms,
+        last_telemetry_at_ms,
+        motion,
+        moving_time_observation,
+        None,
+    )?;
+    transaction.commit()?;
+    load_moving_time_checkpoint(connection, ride_id)
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the metadata SQL update forwards its complete transaction payload"
+)]
+fn update_ride_map_metadata_with_moving_time_in_transaction(
+    connection: &Connection,
+    ride_id: RideId,
+    candidate_vehicle: Option<&str>,
+    associated_vehicle: Option<&str>,
+    associated_at_ms: Option<u64>,
+    last_telemetry_at_ms: Option<u64>,
+    motion: Option<RideMotionObservation>,
+    moving_time_observation: Option<MovingTimeObservation>,
+    moving_time_source_boundary_at_ms: Option<MonotonicMilliseconds>,
+) -> Result<MovingTimeCheckpoint, StorageError> {
+    validate_ride_metadata_moving_time(
+        associated_vehicle,
+        associated_at_ms,
+        last_telemetry_at_ms,
+        motion,
+        moving_time_observation,
+        moving_time_source_boundary_at_ms,
+    )?;
+    let (previous_state, previous_associated_vehicle) = update_ride_metadata_row_in_transaction(
+        connection,
+        ride_id,
+        candidate_vehicle,
+        associated_vehicle,
+        associated_at_ms,
+        last_telemetry_at_ms,
+        motion,
+    )?;
+    let current = load_moving_time_checkpoint(connection, ride_id)?;
+    let association_changed = previous_associated_vehicle.as_deref() != associated_vehicle;
+    let is_active = previous_state == RideLifecycleState::Active;
+    let inferred_boundary = if is_active && association_changed {
+        moving_time_observation
+            .map(|observation| observation.receipt_at)
+            .or_else(|| {
+                motion.map(|value| MonotonicMilliseconds::new(value.observed_at_milliseconds))
+            })
+            .or_else(|| last_telemetry_at_ms.map(MonotonicMilliseconds::new))
+            .or_else(|| associated_at_ms.map(MonotonicMilliseconds::new))
+            .or_else(|| {
+                current
+                    .continuation
+                    .state_parts()
+                    .cursor_milliseconds
+                    .map(MonotonicMilliseconds::new)
+            })
+    } else {
+        None
+    };
+    let source_boundary = if is_active {
+        if let Some(boundary) = moving_time_source_boundary_at_ms {
+            Some(boundary)
+        } else if association_changed {
+            Some(
+                inferred_boundary.ok_or_else(|| StorageError::InvalidStoredValue {
+                    field: "vehicle association boundary",
+                    value: "active association changed without a monotonic receipt".to_owned(),
+                })?,
+            )
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    commit_metadata_moving_time_checkpoint(
+        connection,
+        ride_id,
+        current,
+        is_active,
+        source_boundary,
+        moving_time_observation,
+    )
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "metadata columns are updated as one validated snapshot"
+)]
+fn update_ride_metadata_row_in_transaction(
+    connection: &Connection,
+    ride_id: RideId,
+    candidate_vehicle: Option<&str>,
+    associated_vehicle: Option<&str>,
+    associated_at_ms: Option<u64>,
+    last_telemetry_at_ms: Option<u64>,
+    motion: Option<RideMotionObservation>,
+) -> Result<(RideLifecycleState, Option<String>), StorageError> {
+    let previous_metadata: Option<(String, Option<String>)> = connection
+        .query_row(
+            "SELECT state, associated_vehicle FROM rides WHERE id = ?1",
+            [ride_id.uuid().to_string()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    let (previous_state, previous_associated_vehicle) =
+        previous_metadata.ok_or(StorageError::NotFound)?;
+    let previous_state = state_from_db(&previous_state)?;
     let changed = connection.execute(
         "UPDATE rides SET candidate_vehicle = ?2, associated_vehicle = ?3, associated_at_ms = ?4,
              last_telemetry_at_ms = ?5,
@@ -5967,13 +6526,136 @@ fn update_ride_map_metadata_with_motion(
         ],
     )?;
     if changed == 0 {
-        if find_ride(connection, ride_id)?.is_none() {
+        let exists = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM rides WHERE id = ?1)",
+            [ride_id.uuid().to_string()],
+            |row| row.get::<_, bool>(0),
+        )?;
+        if !exists {
             return Err(StorageError::NotFound);
         }
         return Err(StorageError::InvalidStoredValue {
             field: "wheel motion evidence",
             value: "out of order".to_owned(),
         });
+    }
+    Ok((previous_state, previous_associated_vehicle))
+}
+
+fn validate_ride_metadata_moving_time(
+    associated_vehicle: Option<&str>,
+    associated_at_ms: Option<u64>,
+    last_telemetry_at_ms: Option<u64>,
+    motion: Option<RideMotionObservation>,
+    moving_time_observation: Option<MovingTimeObservation>,
+    moving_time_source_boundary_at_ms: Option<MonotonicMilliseconds>,
+) -> Result<(), StorageError> {
+    if moving_time_source_boundary_at_ms.is_some_and(|boundary| {
+        associated_vehicle.is_none()
+            || associated_at_ms.is_none_or(|associated_at| associated_at > boundary.as_u64())
+    }) {
+        return Err(StorageError::InvalidStoredValue {
+            field: "moving-time source boundary",
+            value: "requires a confirmed association at or before the boundary".to_owned(),
+        });
+    }
+    if motion.is_some_and(|motion| {
+        associated_vehicle.is_none()
+            || last_telemetry_at_ms.is_none_or(|at| at < motion.observed_at_milliseconds)
+            || associated_at_ms.is_none_or(|at| at > motion.observed_at_milliseconds)
+            || motion
+                .last_stationary_at_milliseconds
+                .is_some_and(|at| at > motion.observed_at_milliseconds)
+            || (motion.parked
+                && motion.last_stationary_at_milliseconds != Some(motion.observed_at_milliseconds))
+    }) {
+        return Err(StorageError::InvalidStoredValue {
+            field: "wheel motion evidence",
+            value: "unassociated or non-current telemetry".to_owned(),
+        });
+    }
+    if moving_time_observation.is_some_and(|observation| {
+        observation.source != MovingTimeSource::Vehicle
+            || observation.speed_millimetres_per_second.is_none()
+            || associated_vehicle.is_none()
+            || associated_at_ms.is_none_or(|at| at > observation.source_at.as_u64())
+            || last_telemetry_at_ms.is_none_or(|at| at < observation.source_at.as_u64())
+    }) {
+        return Err(StorageError::InvalidStoredValue {
+            field: "verified vehicle moving-time observation",
+            value: "unassociated or inconsistent source time".to_owned(),
+        });
+    }
+    Ok(())
+}
+
+fn commit_metadata_moving_time_checkpoint(
+    connection: &Connection,
+    ride_id: RideId,
+    current: MovingTimeCheckpoint,
+    is_active: bool,
+    source_boundary: Option<MonotonicMilliseconds>,
+    moving_time_observation: Option<MovingTimeObservation>,
+) -> Result<MovingTimeCheckpoint, StorageError> {
+    let mut continuation = current.continuation;
+    if let Some(boundary) = source_boundary {
+        continuation
+            .close_at(boundary)
+            .map_err(moving_time_storage_error)?;
+        continuation
+            .resume_at(boundary)
+            .map_err(moving_time_storage_error)?;
+    }
+    if is_active && let Some(observation) = moving_time_observation {
+        apply_metadata_vehicle_observation(&mut continuation, observation)?;
+    }
+    let should_commit_checkpoint =
+        source_boundary.is_some() || (is_active && moving_time_observation.is_some());
+    if !should_commit_checkpoint {
+        return load_moving_time_checkpoint(connection, ride_id);
+    }
+    let revision =
+        current
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| StorageError::InvalidStoredValue {
+                field: "moving-time revision",
+                value: current.revision.to_string(),
+            })?;
+    save_moving_time_checkpoint(connection, ride_id, revision, continuation, None)?;
+    load_moving_time_checkpoint(connection, ride_id)
+}
+
+fn apply_metadata_vehicle_observation(
+    continuation: &mut MovingTimeContinuation,
+    observation: MovingTimeObservation,
+) -> Result<(), StorageError> {
+    let parts = continuation.state_parts();
+    if parts.latest_vehicle_source_milliseconds == Some(observation.source_at.as_u64()) {
+        if parts.vehicle.is_some_and(|value| {
+            value.source_at_milliseconds == observation.source_at.as_u64()
+                && Some(value.speed_millimetres_per_second)
+                    == observation.speed_millimetres_per_second
+        }) {
+            // The same current wheel sample may be repeated by metadata checkpoints.
+            return Ok(());
+        }
+        return Err(StorageError::InvalidStoredValue {
+            field: "verified vehicle moving-time observation",
+            value: "repeated source time changed its speed".to_owned(),
+        });
+    }
+    if parts
+        .latest_vehicle_source_milliseconds
+        .is_some_and(|latest| latest > observation.source_at.as_u64())
+    {
+        // A late metadata completion cannot replace newer vehicle evidence.
+        return Ok(());
+    }
+    if moving_time_observation_fresh(observation) {
+        continuation
+            .observe(observation)
+            .map_err(moving_time_storage_error)?;
     }
     Ok(())
 }
@@ -7298,6 +7980,8 @@ fn append_pevcap_location_batch(
             point.telemetry_state,
             SegmentStartReasonInput::Recorded(point.start_reason),
             LocationWriteMode::PevcapImport,
+            None,
+            None,
         )?
         .admission()
             == LocationAdmission::Accepted
@@ -7464,6 +8148,7 @@ fn apply_verified_connection_admission(
     let selected_device_matches =
         selected_device(&transaction)?.as_deref() == Some(platform_identifier);
     let mut created_ride_id = None;
+    let mut final_ride = None;
 
     if selected_device_matches {
         for mutation in lifecycle_mutations {
@@ -7474,13 +8159,14 @@ fn apply_verified_connection_admission(
                     occurred_at_ms,
                     monotonic_at_ms,
                 } => {
-                    transition_ride(
+                    let lifecycle = transition_ride(
                         &transaction,
                         *ride_id,
                         *event,
                         *occurred_at_ms,
                         *monotonic_at_ms,
                     )?;
+                    final_ride = Some((*ride_id, lifecycle));
                 }
                 VerifiedConnectionLifecycleMutation::StartLive {
                     created_at_ms,
@@ -7499,6 +8185,7 @@ fn apply_verified_connection_admission(
                     )?;
                     apply_music_history_policy(&transaction, ride_id, *music_history_policy)?;
                     created_ride_id = Some(ride_id);
+                    final_ride = Some((ride_id, RideLifecycleState::Active));
                 }
             }
         }
@@ -7515,21 +8202,38 @@ fn apply_verified_connection_admission(
             VerifiedConnectionRideTarget::Created => created_ride_id,
         };
         if let Some(ride_id) = ride_id {
-            update_ride_map_metadata(
+            update_ride_map_metadata_with_moving_time_in_transaction(
                 &transaction,
                 ride_id,
                 metadata.candidate_vehicle.as_deref(),
                 metadata.associated_vehicle.as_deref(),
                 metadata.associated_at_ms,
                 metadata.last_telemetry_at_ms,
+                None,
+                None,
+                metadata
+                    .moving_time_source_boundary_at_ms
+                    .map(MonotonicMilliseconds::new),
             )?;
+            let state = transaction.query_row(
+                "SELECT state FROM rides WHERE id = ?1",
+                [ride_id.uuid().to_string()],
+                |row| row.get::<_, String>(0),
+            )?;
+            final_ride = Some((ride_id, state_from_db(&state)?));
         }
     }
 
+    let committed_ride_checkpoint = final_ride
+        .map(|(ride_id, lifecycle)| {
+            committed_ride_moving_time_checkpoint(&transaction, ride_id, lifecycle)
+        })
+        .transpose()?;
     transaction.commit()?;
     Ok(VerifiedConnectionAdmissionOutcome {
         selected_device_matches,
         created_ride_id,
+        committed_ride_checkpoint,
     })
 }
 
@@ -8533,7 +9237,7 @@ fn transition_ride(
     occurred_at_ms: u64,
     monotonic_at_ms: Option<u64>,
 ) -> Result<RideLifecycleState, StorageError> {
-    transition_ride_with_telemetry(
+    transition_ride_in_transaction(
         connection,
         ride_id,
         event,
@@ -8544,6 +9248,28 @@ fn transition_ride(
 }
 
 fn transition_ride_with_telemetry(
+    connection: &mut Connection,
+    ride_id: RideId,
+    event: RideEvent,
+    occurred_at_ms: u64,
+    monotonic_at_ms: Option<u64>,
+    last_telemetry_at_ms: Option<u64>,
+) -> Result<CommittedRideMovingTimeCheckpoint, StorageError> {
+    let transaction = connection.transaction()?;
+    let lifecycle = transition_ride_in_transaction(
+        &transaction,
+        ride_id,
+        event,
+        occurred_at_ms,
+        monotonic_at_ms,
+        last_telemetry_at_ms,
+    )?;
+    let committed = committed_ride_moving_time_checkpoint(&transaction, ride_id, lifecycle)?;
+    transaction.commit()?;
+    Ok(committed)
+}
+
+fn transition_ride_in_transaction(
     connection: &Connection,
     ride_id: RideId,
     event: RideEvent,
@@ -8573,7 +9299,59 @@ fn transition_ride_with_telemetry(
             last_telemetry_at_ms,
         ],
     )?;
+    let checkpoint = load_moving_time_checkpoint(connection, ride_id)?;
+    let mut continuation = checkpoint.continuation;
+    match event {
+        RideEvent::Start => {
+            if monotonic_at_ms.is_some()
+                && connection.query_row(
+                    "SELECT source = 'live' FROM rides WHERE id = ?1",
+                    [ride_id.uuid().to_string()],
+                    |row| row.get::<_, bool>(0),
+                )?
+            {
+                continuation = MovingTimeContinuation::new_live(MonotonicMilliseconds::new(
+                    monotonic_at_ms.unwrap_or_default(),
+                ));
+            }
+        }
+        RideEvent::Resume => {
+            if let Some(at) = monotonic_at_ms {
+                continuation
+                    .resume_at(MonotonicMilliseconds::new(at))
+                    .map_err(moving_time_storage_error)?;
+            }
+        }
+        RideEvent::Pause
+        | RideEvent::Stop
+        | RideEvent::Interrupt
+        | RideEvent::Discard
+        | RideEvent::Save => {
+            if let Some(at) = monotonic_at_ms {
+                continuation
+                    .close_at(MonotonicMilliseconds::new(at))
+                    .map_err(moving_time_storage_error)?;
+            }
+        }
+        RideEvent::Import => {}
+    }
+    let revision =
+        checkpoint
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| StorageError::InvalidStoredValue {
+                field: "moving-time revision",
+                value: checkpoint.revision.to_string(),
+            })?;
+    save_moving_time_checkpoint(connection, ride_id, revision, continuation, None)?;
     Ok(update.lifecycle())
+}
+
+fn moving_time_storage_error(error: cutout_ride_maps::MovingTimeError) -> StorageError {
+    StorageError::InvalidStoredValue {
+        field: "moving-time lifecycle boundary",
+        value: error.to_string(),
+    }
 }
 
 fn append_location(
@@ -8602,6 +9380,37 @@ fn append_location_with_result(
     telemetry_state: RouteTelemetryState,
     start_reason: SegmentStartReasonInput,
 ) -> Result<LocationWriteResult, StorageError> {
+    append_location_with_moving_time(
+        connection,
+        ride_id,
+        sample,
+        segment_id,
+        telemetry_state,
+        start_reason,
+        None,
+        None,
+    )
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "this wrapper forwards the complete accepted-location transaction payload"
+)]
+fn append_location_with_moving_time(
+    connection: &mut Connection,
+    ride_id: RideId,
+    sample: LocationSample,
+    segment_id: RideMapSegmentId,
+    telemetry_state: RouteTelemetryState,
+    start_reason: SegmentStartReasonInput,
+    moving_time_observation: Option<MovingTimeObservation>,
+    latest_vehicle_moving_time_observation: Option<MovingTimeObservation>,
+) -> Result<LocationWriteResult, StorageError> {
+    validate_paired_moving_time_observations(
+        sample,
+        moving_time_observation,
+        latest_vehicle_moving_time_observation,
+    )?;
     let transaction = connection.transaction()?;
     let result = append_location_in_transaction(
         &transaction,
@@ -8611,9 +9420,46 @@ fn append_location_with_result(
         telemetry_state,
         start_reason,
         LocationWriteMode::Live,
+        moving_time_observation,
+        latest_vehicle_moving_time_observation,
     )?;
     transaction.commit()?;
     Ok(result)
+}
+
+fn validate_paired_moving_time_observations(
+    sample: LocationSample,
+    moving_time_observation: Option<MovingTimeObservation>,
+    latest_vehicle_moving_time_observation: Option<MovingTimeObservation>,
+) -> Result<(), StorageError> {
+    if let (Some(phone), Some(vehicle)) = (
+        moving_time_observation,
+        latest_vehicle_moving_time_observation,
+    ) && phone.receipt_at != vehicle.receipt_at
+    {
+        return Err(StorageError::InvalidStoredValue {
+            field: "moving-time observation receipt",
+            value: "paired phone and vehicle observations must share a receipt".to_owned(),
+        });
+    }
+    if moving_time_observation.is_some_and(|observation| {
+        observation.source_at != sample.monotonic_milliseconds()
+            || observation.source != MovingTimeSource::PhoneGps
+    }) {
+        return Err(StorageError::InvalidStoredValue {
+            field: "phone moving-time observation",
+            value: "source must match the accepted location timestamp".to_owned(),
+        });
+    }
+    if latest_vehicle_moving_time_observation
+        .is_some_and(|observation| observation.source != MovingTimeSource::Vehicle)
+    {
+        return Err(StorageError::InvalidStoredValue {
+            field: "verified vehicle moving-time observation",
+            value: "source must be verified vehicle evidence".to_owned(),
+        });
+    }
+    Ok(())
 }
 
 fn load_previous_ride_point(
@@ -8791,6 +9637,10 @@ fn checkpoint_location_observation(
     Ok(Applied)
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "point admission forwards the complete route and metric transaction payload"
+)]
 fn append_location_in_transaction(
     connection: &Connection,
     ride_id: RideId,
@@ -8799,6 +9649,8 @@ fn append_location_in_transaction(
     telemetry_state: RouteTelemetryState,
     start_reason: SegmentStartReasonInput,
     mode: LocationWriteMode,
+    moving_time_observation: Option<MovingTimeObservation>,
+    latest_vehicle_moving_time_observation: Option<MovingTimeObservation>,
 ) -> Result<LocationWriteResult, StorageError> {
     let write_state = load_ride_write_state(connection, ride_id)?;
     let previous = load_previous_ride_point(connection, ride_id)?;
@@ -8849,16 +9701,285 @@ fn append_location_in_transaction(
             // Admission already identifies duplicates. An insert or summary update
             // failure must abort the transaction rather than commit a partial point.
             insert_location(connection, &insert)?;
+            persist_location_moving_time_checkpoint(
+                connection,
+                ride_id,
+                sample,
+                moving_time_observation,
+                latest_vehicle_moving_time_observation,
+            )?;
             Ok(LocationWriteResult {
                 admission: LocationAdmission::Accepted,
                 sequence: Some(durable_sequence),
+                moving_time_checkpoint: load_moving_time_checkpoint(connection, ride_id)?,
             })
         }
         LocationWriteDecision::Rejected(admission) => Ok(LocationWriteResult {
             admission,
             sequence: None,
+            moving_time_checkpoint: load_moving_time_checkpoint(connection, ride_id)?,
         }),
     }
+}
+
+fn persist_location_moving_time_checkpoint(
+    connection: &Connection,
+    ride_id: RideId,
+    sample: LocationSample,
+    moving_time_observation: Option<MovingTimeObservation>,
+    latest_vehicle_moving_time_observation: Option<MovingTimeObservation>,
+) -> Result<(), StorageError> {
+    if moving_time_observation.is_none() && latest_vehicle_moving_time_observation.is_none() {
+        return Ok(());
+    }
+    let current = load_moving_time_checkpoint(connection, ride_id)?;
+    let mut continuation = current.continuation;
+    let prefix = continuation.prefix_before_source_time(sample.monotonic_milliseconds());
+    if let Some(mut observation) = latest_vehicle_moving_time_observation {
+        if observation.source != MovingTimeSource::Vehicle {
+            return Err(StorageError::InvalidStoredValue {
+                field: "moving-time source",
+                value: "expected verified vehicle evidence".to_owned(),
+            });
+        }
+        let ride = find_ride(connection, ride_id)?.ok_or(StorageError::NotFound)?;
+        let parts = continuation.state_parts();
+        let duplicate =
+            parts.latest_vehicle_source_milliseconds == Some(observation.source_at.as_u64());
+        if duplicate
+            && parts.vehicle.is_some_and(|value| {
+                value.source_at_milliseconds == observation.source_at.as_u64()
+                    && Some(value.speed_millimetres_per_second)
+                        == observation.speed_millimetres_per_second
+            })
+        {
+            // Replaying cached evidence retains its original source time and expiry.
+        } else if duplicate {
+            return Err(StorageError::InvalidStoredValue {
+                field: "verified vehicle moving-time observation",
+                value: "repeated source time changed its speed".to_owned(),
+            });
+        } else if parts
+            .latest_vehicle_source_milliseconds
+            .is_some_and(|latest| latest > observation.source_at.as_u64())
+        {
+            // A delayed cached value is obsolete and cannot move the source watermark.
+        } else {
+            if ride.associated_vehicle().is_none()
+                || ride
+                    .last_telemetry_at_milliseconds()
+                    .is_none_or(|latest| latest < observation.source_at.as_u64())
+            {
+                return Err(StorageError::InvalidStoredValue {
+                    field: "verified vehicle moving-time observation",
+                    value: "source is not current for an associated vehicle".to_owned(),
+                });
+            }
+            if observation.speed_millimetres_per_second.is_none() {
+                return Err(StorageError::InvalidStoredValue {
+                    field: "verified vehicle moving-time observation",
+                    value: "vehicle speed is required".to_owned(),
+                });
+            }
+            if !moving_time_observation_fresh(observation) {
+                observation.speed_millimetres_per_second = None;
+            }
+            if observation.speed_millimetres_per_second.is_some() {
+                continuation
+                    .observe(observation)
+                    .map_err(moving_time_storage_error)?;
+            }
+        }
+    }
+    if let Some(mut observation) = moving_time_observation {
+        if !moving_time_observation_fresh(observation) {
+            observation.speed_millimetres_per_second = None;
+        }
+        continuation
+            .observe(observation)
+            .map_err(moving_time_storage_error)?;
+    }
+    let revision =
+        current
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| StorageError::InvalidStoredValue {
+                field: "moving-time revision",
+                value: current.revision.to_string(),
+            })?;
+    save_moving_time_checkpoint(
+        connection,
+        ride_id,
+        revision,
+        continuation,
+        Some(prefix.unwrap_or(MovingTimeSummary {
+            moving: cutout_ride_maps::RideDurationMilliseconds::new(0),
+            observed: cutout_ride_maps::RideDurationMilliseconds::new(0),
+            unknown: cutout_ride_maps::RideDurationMilliseconds::new(0),
+            availability: MovingTimeAvailability::Unavailable,
+        })),
+    )
+}
+
+fn load_moving_time_checkpoint(
+    connection: &Connection,
+    ride_id: RideId,
+) -> Result<MovingTimeCheckpoint, StorageError> {
+    connection
+        .query_row(
+            "SELECT moving_time_revision, moving_time_ms, moving_time_observed_ms,
+                    moving_time_unknown_ms, moving_time_cursor_ms,
+                    moving_time_phone_speed_mm_s, moving_time_phone_source_ms,
+                    moving_time_vehicle_speed_mm_s, moving_time_vehicle_source_ms,
+                    moving_time_phone_watermark_ms, moving_time_vehicle_watermark_ms,
+                    moving_time_incomplete_history, moving_time_availability
+             FROM rides WHERE id = ?1",
+            [ride_id.uuid().to_string()],
+            |row| {
+                let revision: u64 = row.get(0)?;
+                let phone_speed: Option<i32> = row.get(5)?;
+                let phone_source_at: Option<u64> = row.get(6)?;
+                let vehicle_speed: Option<i32> = row.get(7)?;
+                let vehicle_source_at: Option<u64> = row.get(8)?;
+                let availability_value: String = row.get(12)?;
+                let availability =
+                    moving_time_availability_from_db(&availability_value).map_err(|error| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            12,
+                            rusqlite::types::Type::Text,
+                            Box::new(error),
+                        )
+                    })?;
+                let phone_gps = match (phone_speed, phone_source_at) {
+                    (Some(speed_millimetres_per_second), Some(source_at_milliseconds)) => {
+                        Some(MovingTimeSourceStateParts {
+                            speed_millimetres_per_second,
+                            source_at_milliseconds,
+                        })
+                    }
+                    (None, None) => None,
+                    _ => return Err(rusqlite::Error::InvalidQuery),
+                };
+                let vehicle = match (vehicle_speed, vehicle_source_at) {
+                    (Some(speed_millimetres_per_second), Some(source_at_milliseconds)) => {
+                        Some(MovingTimeSourceStateParts {
+                            speed_millimetres_per_second,
+                            source_at_milliseconds,
+                        })
+                    }
+                    (None, None) => None,
+                    _ => return Err(rusqlite::Error::InvalidQuery),
+                };
+                let parts = MovingTimeStateParts {
+                    moving_milliseconds: row.get(1)?,
+                    observed_milliseconds: row.get(2)?,
+                    unknown_milliseconds: row.get(3)?,
+                    cursor_milliseconds: row.get(4)?,
+                    phone_gps,
+                    vehicle,
+                    latest_phone_gps_source_milliseconds: row.get(9)?,
+                    latest_vehicle_source_milliseconds: row.get(10)?,
+                    incomplete_history: row.get::<_, bool>(11)?,
+                    availability,
+                };
+                let continuation =
+                    MovingTimeContinuation::from_state_parts(parts).map_err(|error| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            0,
+                            rusqlite::types::Type::Integer,
+                            Box::new(error),
+                        )
+                    })?;
+                Ok(MovingTimeCheckpoint {
+                    revision,
+                    continuation,
+                })
+            },
+        )
+        .optional()?
+        .ok_or(StorageError::NotFound)
+}
+
+fn moving_time_availability_from_db(value: &str) -> Result<MovingTimeAvailability, StorageError> {
+    match value {
+        "unavailable" => Ok(MovingTimeAvailability::Unavailable),
+        "partial" => Ok(MovingTimeAvailability::Partial),
+        "complete" => Ok(MovingTimeAvailability::Complete),
+        _ => Err(StorageError::InvalidStoredValue {
+            field: "moving-time availability",
+            value: value.to_owned(),
+        }),
+    }
+}
+
+fn moving_time_availability_to_db(value: MovingTimeAvailability) -> &'static str {
+    match value {
+        MovingTimeAvailability::Unavailable => "unavailable",
+        MovingTimeAvailability::Partial => "partial",
+        MovingTimeAvailability::Complete => "complete",
+    }
+}
+
+fn moving_time_observation_fresh(observation: MovingTimeObservation) -> bool {
+    observation.receipt_at >= observation.source_at
+        && observation.receipt_at.as_u64() - observation.source_at.as_u64()
+            <= cutout_ride_maps::TELEMETRY_FRESHNESS_MILLISECONDS
+}
+
+fn save_moving_time_checkpoint(
+    connection: &Connection,
+    ride_id: RideId,
+    revision: u64,
+    continuation: MovingTimeContinuation,
+    last_recorded_point: Option<MovingTimeSummary>,
+) -> Result<(), StorageError> {
+    let parts = continuation.state_parts();
+    connection.execute(
+        "UPDATE rides SET moving_time_revision = ?2, moving_time_ms = ?3,
+             moving_time_observed_ms = ?4, moving_time_unknown_ms = ?5,
+             moving_time_cursor_ms = ?6, moving_time_phone_speed_mm_s = ?7,
+             moving_time_phone_source_ms = ?8, moving_time_vehicle_speed_mm_s = ?9,
+             moving_time_vehicle_source_ms = ?10, moving_time_phone_watermark_ms = ?11,
+             moving_time_vehicle_watermark_ms = ?12, moving_time_incomplete_history = ?13,
+             moving_time_availability = ?14
+         WHERE id = ?1",
+        params![
+            ride_id.uuid().to_string(),
+            revision,
+            parts.moving_milliseconds,
+            parts.observed_milliseconds,
+            parts.unknown_milliseconds,
+            parts.cursor_milliseconds,
+            parts
+                .phone_gps
+                .map(|state| state.speed_millimetres_per_second),
+            parts.phone_gps.map(|state| state.source_at_milliseconds),
+            parts
+                .vehicle
+                .map(|state| state.speed_millimetres_per_second),
+            parts.vehicle.map(|state| state.source_at_milliseconds),
+            parts.latest_phone_gps_source_milliseconds,
+            parts.latest_vehicle_source_milliseconds,
+            parts.incomplete_history,
+            moving_time_availability_to_db(parts.availability),
+        ],
+    )?;
+    if let Some(prefix) = last_recorded_point {
+        connection.execute(
+            "UPDATE rides SET last_recorded_point_moving_time_ms = ?2,
+                 last_recorded_point_moving_observed_ms = ?3,
+                 last_recorded_point_moving_unknown_ms = ?4,
+                 last_recorded_point_moving_availability = ?5 WHERE id = ?1",
+            params![
+                ride_id.uuid().to_string(),
+                prefix.moving.as_u64(),
+                prefix.observed.as_u64(),
+                prefix.unknown.as_u64(),
+                moving_time_availability_to_db(prefix.availability),
+            ],
+        )?;
+    }
+    Ok(())
 }
 
 fn ensure_ride_segment(
@@ -9156,7 +10277,17 @@ fn find_ride(connection: &Connection, ride_id: RideId) -> Result<Option<RideReco
                     rides.last_location_observed_monotonic_ms, rides.last_location_observed_wall_clock_ms,
                     rides.motion_parked, rides.motion_observed_monotonic_ms, rides.stationary_latitude_e7,
                     rides.stationary_longitude_e7, rides.stationary_horizontal_accuracy_mm, rides.last_stationary_motion_monotonic_ms,
-                    rides.last_recorded_point_duration_ms
+                    rides.last_recorded_point_duration_ms,
+                    rides.moving_time_revision, rides.moving_time_ms, rides.moving_time_observed_ms,
+                    rides.moving_time_unknown_ms, rides.moving_time_cursor_ms,
+                    rides.moving_time_phone_speed_mm_s, rides.moving_time_phone_source_ms,
+                    rides.moving_time_vehicle_speed_mm_s, rides.moving_time_vehicle_source_ms,
+                    rides.moving_time_phone_watermark_ms, rides.moving_time_vehicle_watermark_ms,
+                    rides.moving_time_incomplete_history, rides.moving_time_availability,
+                    rides.last_recorded_point_moving_time_ms,
+                    rides.last_recorded_point_moving_observed_ms,
+                    rides.last_recorded_point_moving_unknown_ms,
+                    rides.last_recorded_point_moving_availability
              FROM rides
              WHERE state NOT IN ('draft', 'discarded') AND id = ?1",
             params![ride_id.uuid().to_string()],
@@ -9280,7 +10411,17 @@ fn newest_recoverable_ride(connection: &Connection) -> Result<Option<RideRecord>
                     rides.last_location_observed_monotonic_ms, rides.last_location_observed_wall_clock_ms,
                     rides.motion_parked, rides.motion_observed_monotonic_ms, rides.stationary_latitude_e7,
                     rides.stationary_longitude_e7, rides.stationary_horizontal_accuracy_mm, rides.last_stationary_motion_monotonic_ms,
-                    rides.last_recorded_point_duration_ms
+                    rides.last_recorded_point_duration_ms,
+                    rides.moving_time_revision, rides.moving_time_ms, rides.moving_time_observed_ms,
+                    rides.moving_time_unknown_ms, rides.moving_time_cursor_ms,
+                    rides.moving_time_phone_speed_mm_s, rides.moving_time_phone_source_ms,
+                    rides.moving_time_vehicle_speed_mm_s, rides.moving_time_vehicle_source_ms,
+                    rides.moving_time_phone_watermark_ms, rides.moving_time_vehicle_watermark_ms,
+                    rides.moving_time_incomplete_history, rides.moving_time_availability,
+                    rides.last_recorded_point_moving_time_ms,
+                    rides.last_recorded_point_moving_observed_ms,
+                    rides.last_recorded_point_moving_unknown_ms,
+                    rides.last_recorded_point_moving_availability
              FROM rides
              WHERE state IN ('active', 'paused', 'interrupted')
              ORDER BY created_at_ms DESC, id DESC
@@ -9293,11 +10434,45 @@ fn newest_recoverable_ride(connection: &Connection) -> Result<Option<RideRecord>
 }
 
 fn load_ride_restore_snapshot(
-    connection: &Connection,
+    connection: &mut Connection,
 ) -> Result<RideRestoreSnapshot, StorageError> {
-    let last_connected_device = last_connected_device(connection)?;
-    let ride = newest_recoverable_ride(connection)?;
+    let transaction = connection.transaction()?;
+    let last_connected_device = last_connected_device(&transaction)?;
+    let ride_id = newest_recoverable_ride(&transaction)?.map(|ride| ride.id());
+    if let Some(ride_id) = ride_id {
+        let checkpoint = load_moving_time_checkpoint(&transaction, ride_id)?;
+        let parts = checkpoint.continuation.state_parts();
+        if parts.cursor_milliseconds.is_some()
+            || parts.phone_gps.is_some()
+            || parts.vehicle.is_some()
+            || parts.latest_phone_gps_source_milliseconds.is_some()
+            || parts.latest_vehicle_source_milliseconds.is_some()
+        {
+            let at = transaction.query_row(
+                "SELECT COALESCE(monotonic_last_event_ms, 0) FROM rides WHERE id = ?1",
+                [ride_id.uuid().to_string()],
+                |row| row.get::<_, u64>(0),
+            )?;
+            let continuation = MovingTimeContinuation::restored_after_restart(
+                parts,
+                MonotonicMilliseconds::new(at),
+            )
+            .map_err(moving_time_storage_error)?;
+            let revision = checkpoint.revision.checked_add(1).ok_or_else(|| {
+                StorageError::InvalidStoredValue {
+                    field: "moving-time revision",
+                    value: checkpoint.revision.to_string(),
+                }
+            })?;
+            save_moving_time_checkpoint(&transaction, ride_id, revision, continuation, None)?;
+        }
+    }
+    let ride = match ride_id {
+        Some(ride_id) => find_ride(&transaction, ride_id)?,
+        None => None,
+    };
     let Some(ride) = ride else {
+        transaction.commit()?;
         return Ok(RideRestoreSnapshot {
             last_connected_device,
             ride: None,
@@ -9313,15 +10488,16 @@ fn load_ride_restore_snapshot(
     let limit = QueryLimit::new(MAX_QUERY_LIMIT)?;
     let mut restored_points = Vec::new();
     loop {
-        let page = route_points(connection, ride.id(), cursor, limit)?;
+        let page = route_points(&transaction, ride.id(), cursor, limit)?;
         restored_points.extend(page.points);
         cursor = page.next_cursor;
         if cursor.is_none() {
             break;
         }
     }
-    let music_history_policy = music_history_policy(connection, ride.id()).ok();
-    let music_history_available = music_history(connection, ride.id()).is_ok();
+    let music_history_policy = music_history_policy(&transaction, ride.id()).ok();
+    let music_history_available = music_history(&transaction, ride.id()).is_ok();
+    transaction.commit()?;
     Ok(RideRestoreSnapshot {
         last_connected_device,
         ride: Some(ride),
@@ -9378,7 +10554,17 @@ fn list_rides(
                     rides.last_location_observed_monotonic_ms, rides.last_location_observed_wall_clock_ms,
                     rides.motion_parked, rides.motion_observed_monotonic_ms, rides.stationary_latitude_e7,
                     rides.stationary_longitude_e7, rides.stationary_horizontal_accuracy_mm, rides.last_stationary_motion_monotonic_ms,
-                    rides.last_recorded_point_duration_ms
+                    rides.last_recorded_point_duration_ms,
+                    rides.moving_time_revision, rides.moving_time_ms, rides.moving_time_observed_ms,
+                    rides.moving_time_unknown_ms, rides.moving_time_cursor_ms,
+                    rides.moving_time_phone_speed_mm_s, rides.moving_time_phone_source_ms,
+                    rides.moving_time_vehicle_speed_mm_s, rides.moving_time_vehicle_source_ms,
+                    rides.moving_time_phone_watermark_ms, rides.moving_time_vehicle_watermark_ms,
+                    rides.moving_time_incomplete_history, rides.moving_time_availability,
+                    rides.last_recorded_point_moving_time_ms,
+                    rides.last_recorded_point_moving_observed_ms,
+                    rides.last_recorded_point_moving_unknown_ms,
+                    rides.last_recorded_point_moving_availability
                     FROM rides
                     LEFT JOIN devices AS associated_device
                         ON associated_device.platform_identifier = rides.associated_vehicle
@@ -9566,6 +10752,22 @@ fn ride_record_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RideRecord>
     let state = state_from_db(&state_value).map_err(|error| {
         rusqlite::Error::FromSqlConversionFailure(2, rusqlite::types::Type::Text, Box::new(error))
     })?;
+    let moving_time_checkpoint = read_moving_time_checkpoint_from_row(row, 30)?;
+    let prefix_availability_value: String = row.get(46)?;
+    let prefix_availability = moving_time_availability_from_db(&prefix_availability_value)
+        .map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                46,
+                rusqlite::types::Type::Text,
+                Box::new(error),
+            )
+        })?;
+    let last_recorded_point_moving_time = MovingTimeSummary {
+        moving: cutout_ride_maps::RideDurationMilliseconds::new(row.get(43)?),
+        observed: cutout_ride_maps::RideDurationMilliseconds::new(row.get(44)?),
+        unknown: cutout_ride_maps::RideDurationMilliseconds::new(row.get(45)?),
+        availability: prefix_availability,
+    };
     Ok(RideRecord {
         id,
         source,
@@ -9591,6 +10793,70 @@ fn ride_record_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RideRecord>
         motion_observation: read_motion_observation(row)?,
         stationary_location_observation: read_stationary_observation(row, 25, 26, 27, 21, 22)?,
         last_recorded_point_duration_ms: row.get(29)?,
+        moving_time_checkpoint,
+        last_recorded_point_moving_time,
+    })
+}
+
+fn read_moving_time_checkpoint_from_row(
+    row: &rusqlite::Row<'_>,
+    base: usize,
+) -> rusqlite::Result<MovingTimeCheckpoint> {
+    let revision: u64 = row.get(base)?;
+    let phone_speed: Option<i32> = row.get(base + 5)?;
+    let phone_source_at: Option<u64> = row.get(base + 6)?;
+    let vehicle_speed: Option<i32> = row.get(base + 7)?;
+    let vehicle_source_at: Option<u64> = row.get(base + 8)?;
+    let availability_value: String = row.get(base + 12)?;
+    let availability = moving_time_availability_from_db(&availability_value).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(
+            base + 12,
+            rusqlite::types::Type::Text,
+            Box::new(error),
+        )
+    })?;
+    let phone_gps = match (phone_speed, phone_source_at) {
+        (Some(speed_millimetres_per_second), Some(source_at_milliseconds)) => {
+            Some(MovingTimeSourceStateParts {
+                speed_millimetres_per_second,
+                source_at_milliseconds,
+            })
+        }
+        (None, None) => None,
+        _ => return Err(rusqlite::Error::InvalidQuery),
+    };
+    let vehicle = match (vehicle_speed, vehicle_source_at) {
+        (Some(speed_millimetres_per_second), Some(source_at_milliseconds)) => {
+            Some(MovingTimeSourceStateParts {
+                speed_millimetres_per_second,
+                source_at_milliseconds,
+            })
+        }
+        (None, None) => None,
+        _ => return Err(rusqlite::Error::InvalidQuery),
+    };
+    let continuation = MovingTimeContinuation::from_state_parts(MovingTimeStateParts {
+        moving_milliseconds: row.get(base + 1)?,
+        observed_milliseconds: row.get(base + 2)?,
+        unknown_milliseconds: row.get(base + 3)?,
+        cursor_milliseconds: row.get(base + 4)?,
+        phone_gps,
+        vehicle,
+        latest_phone_gps_source_milliseconds: row.get(base + 9)?,
+        latest_vehicle_source_milliseconds: row.get(base + 10)?,
+        incomplete_history: row.get(base + 11)?,
+        availability,
+    })
+    .map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(
+            base,
+            rusqlite::types::Type::Integer,
+            Box::new(error),
+        )
+    })?;
+    Ok(MovingTimeCheckpoint {
+        revision,
+        continuation,
     })
 }
 
@@ -10316,7 +11582,8 @@ mod location_observation_checkpoint_tests {
         let mut connection = Connection::open_in_memory().unwrap();
         migrate(&mut connection).unwrap();
         let id = create_started_live_ride(&mut connection, 1_700_000_000_000, 1_000, None, None)
-            .unwrap();
+            .unwrap()
+            .ride_id();
         assert_eq!(
             append_location(
                 &mut connection,

@@ -18,9 +18,10 @@ use cutout_music::{
     MusicRideEventKind,
 };
 use cutout_ride_maps::{
-    Coordinate, LocationAdmission, LocationSample, LocationSource, MAX_GAP_MILLISECONDS, RideEvent,
-    RouteDisplayBudget, RoutePrivacyGridE7, RoutePrivacyPolicy, RouteTelemetryState, RouteViewport,
-    VehicleIdentity, WallClockUnixMilliseconds,
+    Coordinate, LocationAdmission, LocationSample, LocationSource, MAX_GAP_MILLISECONDS,
+    MonotonicMilliseconds, MovingTimeAvailability, MovingTimeObservation, MovingTimeSource,
+    RideEvent, RouteDisplayBudget, RoutePrivacyGridE7, RoutePrivacyPolicy, RouteTelemetryState,
+    RouteViewport, VehicleIdentity, WallClockUnixMilliseconds,
 };
 use rusqlite::Connection;
 
@@ -32,8 +33,8 @@ use super::{
     LiveCaptureLocationValidation, LiveCaptureState, PevcapImportOutcome, PevcapImportPreview,
     PevcapImportWarning, PhoneAlarmPreferencesRecord, QueryLimit, RideDatabase,
     RideHistoryDistanceFilter, RideHistoryQuery, RideId, RideLocationObservationCheckpoint,
-    RideRecord, RideSource, RouteProjectionCancellation, StorageError, StoredPevcapCapture,
-    VerifiedConnectionLifecycleMutation, VerifiedConnectionRideMetadata,
+    RideMotionObservation, RideRecord, RideSource, RouteProjectionCancellation, StorageError,
+    StoredPevcapCapture, VerifiedConnectionLifecycleMutation, VerifiedConnectionRideMetadata,
     VerifiedConnectionRideTarget, VoltageSagModelRecord, normalize_device_display_name,
 };
 
@@ -5420,6 +5421,7 @@ fn verified_connection_admission_is_compound_and_does_not_wait_for_sqlite() {
                 associated_vehicle: Some("wheel-a".to_owned()),
                 associated_at_ms: Some(200),
                 last_telemetry_at_ms: None,
+                moving_time_source_boundary_at_ms: None,
             }),
             None,
         )
@@ -5472,6 +5474,7 @@ fn verified_connection_admission_rolls_back_lifecycle_and_history_together() {
                 associated_vehicle: Some("wheel-a".to_owned()),
                 associated_at_ms: Some(200),
                 last_telemetry_at_ms: None,
+                moving_time_source_boundary_at_ms: None,
             }),
             None,
         )
@@ -5614,6 +5617,7 @@ fn unselected_verified_connection_uses_its_metadata_branch_without_starting_a_ri
                 associated_vehicle: Some("wheel-b".to_owned()),
                 associated_at_ms: Some(200),
                 last_telemetry_at_ms: None,
+                moving_time_source_boundary_at_ms: None,
             }),
             Some(VerifiedConnectionRideMetadata {
                 target: VerifiedConnectionRideTarget::Existing(existing_ride),
@@ -5621,6 +5625,7 @@ fn unselected_verified_connection_uses_its_metadata_branch_without_starting_a_ri
                 associated_vehicle: Some("wheel-b".to_owned()),
                 associated_at_ms: Some(200),
                 last_telemetry_at_ms: None,
+                moving_time_source_boundary_at_ms: None,
             }),
         )
         .unwrap()
@@ -8489,4 +8494,912 @@ fn recovery_metadata_preserves_background_gaps_without_route_projection() {
     assert_eq!(recovered.segment_count(), 2);
     database.shutdown().expect("database shuts down");
     let _ = std::fs::remove_file(path);
+}
+
+fn moving_time_observation(
+    source: MovingTimeSource,
+    speed_mm_s: Option<i32>,
+    source_at_ms: u64,
+    receipt_at_ms: u64,
+) -> MovingTimeObservation {
+    MovingTimeObservation {
+        source,
+        speed_millimetres_per_second: speed_mm_s,
+        source_at: MonotonicMilliseconds::new(source_at_ms),
+        receipt_at: MonotonicMilliseconds::new(receipt_at_ms),
+    }
+}
+
+fn moving_time_wheel_motion(at_ms: u64) -> RideMotionObservation {
+    RideMotionObservation {
+        parked: false,
+        observed_at_milliseconds: at_ms,
+        last_stationary_at_milliseconds: None,
+    }
+}
+
+#[test]
+fn moving_time_pause_is_stable_and_resume_excludes_the_pause_gap() {
+    let _guard = test_guard();
+    let path = music_test_path();
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database
+        .create_started_live_ride(1_000, 1_000, Some("wheel-a"))
+        .unwrap();
+    database
+        .update_ride_map_metadata_with_moving_time(
+            ride,
+            Some("wheel-a"),
+            Some("wheel-a"),
+            Some(1_000),
+            Some(1_000),
+            Some(moving_time_wheel_motion(1_000)),
+            Some(moving_time_observation(
+                MovingTimeSource::Vehicle,
+                Some(1_000),
+                1_000,
+                1_000,
+            )),
+        )
+        .unwrap();
+    database
+        .update_ride_map_metadata_with_moving_time(
+            ride,
+            Some("wheel-a"),
+            Some("wheel-a"),
+            Some(2_000),
+            Some(2_000),
+            Some(moving_time_wheel_motion(2_000)),
+            Some(moving_time_observation(
+                MovingTimeSource::Vehicle,
+                Some(1_000),
+                2_000,
+                2_000,
+            )),
+        )
+        .unwrap();
+
+    database
+        .transition_at(ride, RideEvent::Pause, 2_000)
+        .unwrap();
+    let paused = database
+        .find_ride(ride)
+        .unwrap()
+        .unwrap()
+        .moving_time_summary_at(MonotonicMilliseconds::new(2_000));
+    let later_while_paused = database
+        .find_ride(ride)
+        .unwrap()
+        .unwrap()
+        .moving_time_summary_at(MonotonicMilliseconds::new(20_000));
+    assert_eq!(
+        paused, later_while_paused,
+        "pause must close the moving-time interval"
+    );
+
+    database
+        .transition_at(ride, RideEvent::Resume, 10_000)
+        .unwrap();
+    let at_resume = database
+        .find_ride(ride)
+        .unwrap()
+        .unwrap()
+        .moving_time_summary_at(MonotonicMilliseconds::new(10_000));
+    assert_eq!(paused.moving.as_u64(), at_resume.moving.as_u64());
+    let after_resume_without_fresh_source = database
+        .find_ride(ride)
+        .unwrap()
+        .unwrap()
+        .moving_time_summary_at(MonotonicMilliseconds::new(11_000));
+    assert_eq!(
+        paused.moving.as_u64(),
+        after_resume_without_fresh_source.moving.as_u64()
+    );
+    assert!(after_resume_without_fresh_source.unknown.as_u64() >= 1_000);
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn lifecycle_results_carry_the_checkpoint_committed_with_the_row() {
+    let _guard = test_guard();
+    let path = music_test_path();
+    let database = RideDatabase::open(&path).unwrap();
+    let creation = database
+        .create_started_live_ride_with_checkpoint(1_000, 1_000, None)
+        .unwrap();
+    let ride = creation.ride_id();
+    let created_record = database.find_ride(ride).unwrap().unwrap();
+    assert_eq!(creation.lifecycle(), RideLifecycleState::Active);
+    assert_eq!(
+        creation.checkpoint(),
+        created_record.moving_time_checkpoint()
+    );
+
+    let paused = database
+        .transition_at_with_checkpoint(ride, RideEvent::Pause, 2_000)
+        .unwrap();
+    let paused_record = database.find_ride(ride).unwrap().unwrap();
+    assert_eq!(paused.lifecycle(), RideLifecycleState::Paused);
+    assert_eq!(paused.checkpoint(), paused_record.moving_time_checkpoint());
+
+    database
+        .transition_at(ride, RideEvent::Resume, 3_000)
+        .unwrap();
+    database
+        .transition_at(ride, RideEvent::Stop, 4_000)
+        .unwrap();
+    let discarded = database
+        .transition_at_with_checkpoint(ride, RideEvent::Discard, 5_000)
+        .unwrap();
+    assert_eq!(discarded.lifecycle(), RideLifecycleState::Discarded);
+    assert!(database.find_ride(ride).unwrap().is_none());
+
+    let connection = Connection::open(&path).unwrap();
+    let (revision, moving, observed, unknown, cursor): (u64, u64, u64, u64, Option<u64>) =
+        connection
+            .query_row(
+                "SELECT moving_time_revision, moving_time_ms,
+                        moving_time_observed_ms, moving_time_unknown_ms,
+                        moving_time_cursor_ms
+                 FROM rides WHERE id = ?1",
+                [ride.uuid().to_string()],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
+            )
+            .unwrap();
+    let parts = discarded.checkpoint().continuation().state_parts();
+    assert_eq!(revision, discarded.checkpoint().revision());
+    assert_eq!(moving, parts.moving_milliseconds);
+    assert_eq!(observed, parts.observed_milliseconds);
+    assert_eq!(unknown, parts.unknown_milliseconds);
+    assert_eq!(cursor, parts.cursor_milliseconds);
+
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn discarding_a_stopped_complete_moving_time_checkpoint_preserves_closed_totals() {
+    let _guard = test_guard();
+    let path = music_test_path();
+    let database = RideDatabase::open(&path).unwrap();
+    let creation = database
+        .create_started_live_ride_with_checkpoint(1_000, 1_000, None)
+        .unwrap();
+    let ride = creation.ride_id();
+
+    for (at_ms, latitude) in [(1_000_u64, 40.0), (2_000, 40.0001)] {
+        let sample = LocationSample::new(
+            Coordinate::from_degrees(latitude, -105.0).unwrap(),
+            at_ms,
+            1_700_000_000_000 + at_ms,
+            None,
+            LocationSource::Live,
+        );
+        let result = database
+            .queue_location_with_moving_time(
+                ride,
+                sample,
+                RideMapSegmentId::new(0),
+                RideSegmentStartReason::Initial,
+                RouteTelemetryState::GpsOnly,
+                moving_time_observation(MovingTimeSource::PhoneGps, Some(8_000), at_ms, at_ms),
+                None,
+            )
+            .unwrap()
+            .wait_result()
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.admission(), LocationAdmission::Accepted);
+    }
+
+    let stopped = database
+        .transition_at_with_checkpoint(ride, RideEvent::Stop, 3_000)
+        .unwrap();
+    assert_eq!(stopped.lifecycle(), RideLifecycleState::Stopped);
+    let stopped_parts = stopped.checkpoint().continuation().state_parts();
+    assert_eq!(stopped_parts.availability, MovingTimeAvailability::Complete);
+    assert_eq!(stopped_parts.moving_milliseconds, 2_000);
+    assert_eq!(stopped_parts.observed_milliseconds, 2_000);
+    assert_eq!(stopped_parts.unknown_milliseconds, 0);
+    assert_eq!(stopped_parts.cursor_milliseconds, None);
+
+    let discarded = database
+        .transition_at_with_checkpoint(ride, RideEvent::Discard, 4_000)
+        .unwrap();
+    assert_eq!(discarded.lifecycle(), RideLifecycleState::Discarded);
+    let discarded_parts = discarded.checkpoint().continuation().state_parts();
+    assert_eq!(
+        discarded_parts.moving_milliseconds,
+        stopped_parts.moving_milliseconds
+    );
+    assert_eq!(
+        discarded_parts.observed_milliseconds,
+        stopped_parts.observed_milliseconds
+    );
+    assert_eq!(
+        discarded_parts.unknown_milliseconds,
+        stopped_parts.unknown_milliseconds
+    );
+    assert_eq!(discarded_parts.cursor_milliseconds, None);
+    assert_eq!(
+        discarded_parts.availability,
+        MovingTimeAvailability::Complete
+    );
+
+    let connection = Connection::open(&path).unwrap();
+    let (state, moving, observed, unknown, cursor, availability): (
+        String,
+        u64,
+        u64,
+        u64,
+        Option<u64>,
+        String,
+    ) = connection
+        .query_row(
+            "SELECT state, moving_time_ms, moving_time_observed_ms,
+                    moving_time_unknown_ms, moving_time_cursor_ms,
+                    moving_time_availability
+             FROM rides WHERE id = ?1",
+            [ride.uuid().to_string()],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            },
+        )
+        .unwrap();
+    assert_eq!(state, "discarded");
+    assert_eq!(
+        (moving, observed, unknown, cursor, availability.as_str()),
+        (2_000, 2_000, 0, None, "complete")
+    );
+
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn recovered_ride_replacement_returns_its_transaction_checkpoint() {
+    let _guard = test_guard();
+    let path = music_test_path();
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database
+        .create_started_live_ride(1_000, 1_000, Some("wheel-a"))
+        .unwrap();
+    database
+        .transition_at(ride, RideEvent::Interrupt, 2_000)
+        .unwrap();
+
+    let replacement = database
+        .settle_recovered_ride_with_checkpoint(ride, false, 3_000, 3_000, Some("wheel-b"))
+        .unwrap()
+        .unwrap();
+    let replacement_record = database.find_ride(replacement.ride_id()).unwrap().unwrap();
+    assert_eq!(replacement.lifecycle(), RideLifecycleState::Active);
+    assert_eq!(
+        replacement.checkpoint(),
+        replacement_record.moving_time_checkpoint()
+    );
+
+    let no_replacement = database
+        .create_started_live_ride(4_000, 4_000, Some("wheel-c"))
+        .unwrap();
+    database
+        .transition_at(no_replacement, RideEvent::Interrupt, 5_000)
+        .unwrap();
+    assert_eq!(
+        database
+            .settle_recovered_ride(no_replacement, false, 6_000, 6_000, None)
+            .unwrap(),
+        None,
+        "the legacy result is reserved for a newly created replacement"
+    );
+
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn moving_time_restore_clears_open_epoch_without_changing_plain_reads() {
+    let _guard = test_guard();
+    let path = music_test_path();
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database
+        .create_started_live_ride(1_000, 1_000, Some("wheel-a"))
+        .unwrap();
+    for at in [1_000, 2_000] {
+        database
+            .update_ride_map_metadata_with_moving_time(
+                ride,
+                Some("wheel-a"),
+                Some("wheel-a"),
+                Some(at),
+                Some(at),
+                Some(moving_time_wheel_motion(at)),
+                Some(moving_time_observation(
+                    MovingTimeSource::Vehicle,
+                    Some(1_000),
+                    at,
+                    at,
+                )),
+            )
+            .unwrap();
+    }
+    let before = database.find_ride(ride).unwrap().unwrap();
+    let before_revision = before.moving_time_checkpoint().revision();
+    let before_total = before
+        .moving_time_summary_at(MonotonicMilliseconds::new(2_000))
+        .moving
+        .as_u64();
+    database.shutdown().unwrap();
+
+    let reopened = RideDatabase::open(&path).unwrap();
+    let first_plain_read = reopened.find_ride(ride).unwrap().unwrap();
+    let second_plain_read = reopened.find_ride(ride).unwrap().unwrap();
+    assert_eq!(
+        first_plain_read.moving_time_checkpoint().revision(),
+        second_plain_read.moving_time_checkpoint().revision(),
+        "plain history reads must not reset or revise the continuation"
+    );
+    let snapshot = reopened
+        .queue_restore_snapshot()
+        .unwrap()
+        .wait_result()
+        .unwrap();
+    let restored = snapshot.ride().unwrap();
+    let parts = restored
+        .moving_time_checkpoint()
+        .continuation()
+        .state_parts();
+    assert_eq!(
+        restored.moving_time_checkpoint().revision(),
+        before_revision + 1
+    );
+    assert_eq!(parts.moving_milliseconds, before_total);
+    assert_eq!(parts.cursor_milliseconds, None);
+    assert_eq!(parts.vehicle, None);
+    assert_eq!(parts.phone_gps, None);
+    assert_eq!(parts.availability, MovingTimeAvailability::Partial);
+    reopened.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn moving_time_active_disconnect_closes_old_source_epoch() {
+    let _guard = test_guard();
+    let path = music_test_path();
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database
+        .create_started_live_ride(1_000, 1_000, Some("wheel-a"))
+        .unwrap();
+    for at in [1_000, 2_000] {
+        database
+            .update_ride_map_metadata_with_moving_time(
+                ride,
+                Some("wheel-a"),
+                Some("wheel-a"),
+                Some(at),
+                Some(at),
+                Some(moving_time_wheel_motion(at)),
+                Some(moving_time_observation(
+                    MovingTimeSource::Vehicle,
+                    Some(1_000),
+                    at,
+                    at,
+                )),
+            )
+            .unwrap();
+    }
+    database
+        .transition_at(ride, RideEvent::Interrupt, 2_000)
+        .unwrap();
+    database
+        .transition_at(ride, RideEvent::Resume, 10_000)
+        .unwrap();
+    let after_reconnect = database
+        .find_ride(ride)
+        .unwrap()
+        .unwrap()
+        .moving_time_summary_at(MonotonicMilliseconds::new(11_000));
+    assert_eq!(after_reconnect.moving.as_u64(), 1_000);
+    assert!(after_reconnect.unknown.as_u64() >= 1_000);
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn moving_time_expired_recovery_uses_last_point_prefix() {
+    let _guard = test_guard();
+    let path = music_test_path();
+    let database = RideDatabase::open(&path).unwrap();
+    let ride_with_prefix = database
+        .create_started_live_ride(1_000, 1_000, Some("wheel-a"))
+        .unwrap();
+    for at in [1_000, 2_000] {
+        database
+            .update_ride_map_metadata_with_moving_time(
+                ride_with_prefix,
+                Some("wheel-a"),
+                Some("wheel-a"),
+                Some(at),
+                Some(at),
+                Some(moving_time_wheel_motion(at)),
+                Some(moving_time_observation(
+                    MovingTimeSource::Vehicle,
+                    Some(1_000),
+                    at,
+                    at,
+                )),
+            )
+            .unwrap();
+    }
+    let point = LocationSample::new(
+        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        2_000,
+        1_700_000_002_000,
+        None,
+        LocationSource::Live,
+    );
+    let result = database
+        .queue_location_with_moving_time(
+            ride_with_prefix,
+            point,
+            RideMapSegmentId::new(0),
+            RideSegmentStartReason::Initial,
+            RouteTelemetryState::GpsOnly,
+            moving_time_observation(MovingTimeSource::PhoneGps, Some(0), 2_000, 2_000),
+            None,
+        )
+        .unwrap()
+        .wait_result()
+        .unwrap()
+        .unwrap();
+    assert_eq!(result.admission(), LocationAdmission::Accepted);
+    assert_eq!(
+        database
+            .find_ride(ride_with_prefix)
+            .unwrap()
+            .unwrap()
+            .last_recorded_point_moving_time()
+            .moving
+            .as_u64(),
+        1_000
+    );
+    database
+        .transition_at(ride_with_prefix, RideEvent::Interrupt, 3_000)
+        .unwrap();
+    database
+        .settle_recovered_ride(ride_with_prefix, false, 4_000, 4_000, None)
+        .unwrap();
+    let settled_prefix = database.find_ride(ride_with_prefix).unwrap().unwrap();
+    assert_eq!(
+        settled_prefix
+            .moving_time_checkpoint()
+            .continuation()
+            .state_parts()
+            .moving_milliseconds,
+        1_000
+    );
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn moving_time_expired_recovery_is_unavailable_without_reconstructible_prefix() {
+    let _guard = test_guard();
+    let path = music_test_path();
+    let database = RideDatabase::open(&path).unwrap();
+    let ride_without_prefix = database
+        .create_started_live_ride(10_000, 10_000, Some("wheel-b"))
+        .unwrap();
+    database
+        .update_ride_map_metadata_with_moving_time(
+            ride_without_prefix,
+            Some("wheel-b"),
+            Some("wheel-b"),
+            Some(12_000),
+            Some(12_000),
+            Some(moving_time_wheel_motion(12_000)),
+            Some(moving_time_observation(
+                MovingTimeSource::Vehicle,
+                Some(1_000),
+                12_000,
+                12_000,
+            )),
+        )
+        .unwrap();
+    let older_point = LocationSample::new(
+        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        11_000,
+        1_700_000_011_000,
+        None,
+        LocationSource::Live,
+    );
+    let result = database
+        .queue_location_with_moving_time(
+            ride_without_prefix,
+            older_point,
+            RideMapSegmentId::new(0),
+            RideSegmentStartReason::Initial,
+            RouteTelemetryState::GpsOnly,
+            moving_time_observation(MovingTimeSource::PhoneGps, Some(0), 11_000, 12_000),
+            None,
+        )
+        .unwrap()
+        .wait_result()
+        .unwrap()
+        .unwrap();
+    assert_eq!(result.admission(), LocationAdmission::Accepted);
+    assert_eq!(
+        database
+            .find_ride(ride_without_prefix)
+            .unwrap()
+            .unwrap()
+            .last_recorded_point_moving_time()
+            .availability,
+        MovingTimeAvailability::Unavailable
+    );
+    database
+        .transition_at(ride_without_prefix, RideEvent::Interrupt, 13_000)
+        .unwrap();
+    database
+        .settle_recovered_ride(ride_without_prefix, false, 14_000, 14_000, None)
+        .unwrap();
+    let unavailable = database.find_ride(ride_without_prefix).unwrap().unwrap();
+    assert_eq!(
+        unavailable
+            .moving_time_checkpoint()
+            .continuation()
+            .state_parts()
+            .availability,
+        MovingTimeAvailability::Unavailable
+    );
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn moving_time_location_and_checkpoint_roll_back_together_then_retry_once() {
+    let _guard = test_guard();
+    let path = music_test_path();
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database
+        .create_started_live_ride(1_000, 1_000, None)
+        .unwrap();
+    let observer = Connection::open(&path).unwrap();
+    observer
+        .execute_batch(
+            "CREATE TRIGGER reject_moving_time_checkpoint
+             BEFORE UPDATE OF moving_time_revision ON rides
+             BEGIN SELECT RAISE(ABORT, 'injected moving-time commit failure'); END;",
+        )
+        .unwrap();
+    let sample = LocationSample::new(
+        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        1_000,
+        1_700_000_000_000,
+        None,
+        LocationSource::Live,
+    );
+    let failed = database
+        .queue_location_with_moving_time(
+            ride,
+            sample,
+            RideMapSegmentId::new(0),
+            RideSegmentStartReason::Initial,
+            RouteTelemetryState::GpsOnly,
+            moving_time_observation(MovingTimeSource::PhoneGps, Some(1_000), 1_000, 1_000),
+            None,
+        )
+        .unwrap()
+        .wait_result()
+        .unwrap();
+    assert!(failed.is_err());
+    let (point_count, revision): (u64, u64) = observer
+        .query_row(
+            "SELECT point_count, moving_time_revision FROM rides WHERE id = ?1",
+            [ride.uuid().to_string()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!((point_count, revision), (0, 0));
+    observer
+        .execute_batch("DROP TRIGGER reject_moving_time_checkpoint;")
+        .unwrap();
+
+    let accepted = database
+        .queue_location_with_moving_time(
+            ride,
+            sample,
+            RideMapSegmentId::new(0),
+            RideSegmentStartReason::Initial,
+            RouteTelemetryState::GpsOnly,
+            moving_time_observation(MovingTimeSource::PhoneGps, Some(1_000), 1_000, 1_000),
+            None,
+        )
+        .unwrap()
+        .wait_result()
+        .unwrap()
+        .unwrap();
+    assert_eq!(accepted.admission(), LocationAdmission::Accepted);
+    assert_eq!(accepted.moving_time_checkpoint().revision(), 1);
+    let final_point_count: u64 = observer
+        .query_row(
+            "SELECT point_count FROM rides WHERE id = ?1",
+            [ride.uuid().to_string()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(final_point_count, 1);
+    drop(observer);
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn moving_time_cached_wheel_replay_does_not_refresh_original_expiry() {
+    let _guard = test_guard();
+    let path = music_test_path();
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database
+        .create_started_live_ride(1_000, 1_000, Some("wheel-a"))
+        .unwrap();
+    database
+        .update_ride_map_metadata_with_moving_time(
+            ride,
+            Some("wheel-a"),
+            Some("wheel-a"),
+            Some(1_000),
+            Some(1_000),
+            Some(moving_time_wheel_motion(1_000)),
+            Some(moving_time_observation(
+                MovingTimeSource::Vehicle,
+                Some(1_000),
+                1_000,
+                1_000,
+            )),
+        )
+        .unwrap();
+
+    let first = LocationSample::new(
+        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        2_000,
+        1_700_000_002_000,
+        None,
+        LocationSource::Live,
+    );
+    let first_result = database
+        .queue_location_with_moving_time(
+            ride,
+            first,
+            RideMapSegmentId::new(0),
+            RideSegmentStartReason::Initial,
+            RouteTelemetryState::GpsOnly,
+            moving_time_observation(MovingTimeSource::PhoneGps, Some(0), 2_000, 2_000),
+            Some(moving_time_observation(
+                MovingTimeSource::Vehicle,
+                Some(1_000),
+                1_000,
+                2_000,
+            )),
+        )
+        .unwrap()
+        .wait_result()
+        .unwrap()
+        .unwrap();
+    assert_eq!(first_result.admission(), LocationAdmission::Accepted);
+
+    let second = LocationSample::new(
+        Coordinate::from_degrees(40.000_001, -105.0).unwrap(),
+        2_500,
+        1_700_000_002_500,
+        None,
+        LocationSource::Live,
+    );
+    let second_result = database
+        .queue_location_with_moving_time(
+            ride,
+            second,
+            RideMapSegmentId::new(0),
+            RideSegmentStartReason::Initial,
+            RouteTelemetryState::GpsOnly,
+            moving_time_observation(MovingTimeSource::PhoneGps, None, 2_500, 2_500),
+            Some(moving_time_observation(
+                MovingTimeSource::Vehicle,
+                Some(1_000),
+                1_000,
+                2_500,
+            )),
+        )
+        .unwrap()
+        .wait_result()
+        .unwrap()
+        .unwrap();
+    assert_eq!(second_result.admission(), LocationAdmission::Accepted);
+    let checkpoint = second_result.moving_time_checkpoint();
+    let parts = checkpoint.continuation().state_parts();
+    assert_eq!(parts.vehicle.unwrap().source_at_milliseconds, 1_000);
+    assert_eq!(
+        checkpoint
+            .projected_at(MonotonicMilliseconds::new(5_000))
+            .moving
+            .as_u64(),
+        2_000,
+        "replaying the cached wheel sample must not extend its two-second source expiry"
+    );
+
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn moving_time_paired_observations_require_a_shared_receipt() {
+    let _guard = test_guard();
+    let path = music_test_path();
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database
+        .create_started_live_ride(1_000, 1_000, Some("wheel-a"))
+        .unwrap();
+    let mismatched_receipt = database.queue_location_with_moving_time(
+        ride,
+        LocationSample::new(
+            Coordinate::from_degrees(40.0, -105.0).unwrap(),
+            3_000,
+            1_700_000_003_000,
+            None,
+            LocationSource::Live,
+        ),
+        RideMapSegmentId::new(0),
+        RideSegmentStartReason::Initial,
+        RouteTelemetryState::GpsOnly,
+        moving_time_observation(MovingTimeSource::PhoneGps, None, 3_000, 3_000),
+        Some(moving_time_observation(
+            MovingTimeSource::Vehicle,
+            Some(1_000),
+            2_000,
+            2_999,
+        )),
+    );
+    assert!(mismatched_receipt.is_err());
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn verified_connection_generation_boundary_clears_cached_wheel_freshness() {
+    let _guard = test_guard();
+    let path = music_test_path();
+    let database = RideDatabase::open(&path).unwrap();
+    database
+        .remember_selected_device("wheel-a", None, 1_000)
+        .unwrap();
+    let ride = database
+        .create_started_live_ride(1_000, 1_000, Some("wheel-a"))
+        .unwrap();
+    database
+        .update_ride_map_metadata_with_moving_time(
+            ride,
+            Some("wheel-a"),
+            Some("wheel-a"),
+            Some(1_000),
+            Some(1_500),
+            Some(moving_time_wheel_motion(1_500)),
+            Some(moving_time_observation(
+                MovingTimeSource::Vehicle,
+                Some(1_000),
+                1_500,
+                1_500,
+            )),
+        )
+        .unwrap();
+
+    let before = database.find_ride(ride).unwrap().unwrap();
+    let expected_at_boundary = before
+        .moving_time_checkpoint()
+        .projected_at(MonotonicMilliseconds::new(2_000));
+    let pending = database
+        .queue_verified_connection_admission(
+            "wheel-a",
+            2_000,
+            Vec::new(),
+            Some(VerifiedConnectionRideMetadata {
+                target: VerifiedConnectionRideTarget::Existing(ride),
+                candidate_vehicle: Some("wheel-a".to_owned()),
+                associated_vehicle: Some("wheel-a".to_owned()),
+                associated_at_ms: Some(2_000),
+                last_telemetry_at_ms: Some(2_000),
+                moving_time_source_boundary_at_ms: Some(2_000),
+            }),
+            None,
+        )
+        .unwrap();
+    let admission = pending.wait_result().unwrap();
+
+    let after = database.find_ride(ride).unwrap().unwrap();
+    let committed = admission
+        .committed_ride_checkpoint
+        .expect("the metadata transaction returns its committed ride checkpoint");
+    assert_eq!(committed.ride_id(), ride);
+    assert_eq!(committed.checkpoint(), after.moving_time_checkpoint());
+    assert!(after.moving_time_checkpoint().revision() > before.moving_time_checkpoint().revision());
+    assert_eq!(
+        after
+            .moving_time_checkpoint()
+            .projected_at(MonotonicMilliseconds::new(2_000))
+            .moving
+            .as_u64(),
+        expected_at_boundary.moving.as_u64()
+    );
+    assert_eq!(
+        after
+            .moving_time_checkpoint()
+            .projected_at(MonotonicMilliseconds::new(4_000))
+            .moving
+            .as_u64(),
+        expected_at_boundary.moving.as_u64(),
+        "the new connection generation must not inherit old wheel freshness"
+    );
+
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn malformed_moving_time_source_pairs_fail_closed_on_fresh_and_migrated_reads() {
+    let _guard = test_guard();
+    for (migrated, speed_column) in [
+        (false, "moving_time_phone_speed_mm_s"),
+        (false, "moving_time_vehicle_speed_mm_s"),
+        (true, "moving_time_phone_speed_mm_s"),
+        (true, "moving_time_vehicle_speed_mm_s"),
+    ] {
+        let path = music_test_path();
+        let database = RideDatabase::open(&path).unwrap();
+        let ride = database
+            .create_started_live_ride(1_000, 1_000, Some("wheel-a"))
+            .unwrap();
+        database
+            .transition_at(ride, RideEvent::Stop, 2_000)
+            .unwrap();
+        database.shutdown().unwrap();
+
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .pragma_update(None, "ignore_check_constraints", "ON")
+            .unwrap();
+        connection
+            .execute(
+                &format!("UPDATE rides SET {speed_column} = 500 WHERE id = ?1"),
+                [ride.uuid().to_string()],
+            )
+            .unwrap();
+        if migrated {
+            connection
+                .pragma_update(None, "user_version", 41_i64)
+                .unwrap();
+        }
+        drop(connection);
+
+        let reopened = RideDatabase::open(&path).unwrap();
+        assert!(
+            reopened.find_ride(ride).is_err(),
+            "a mismatched {speed_column}/source pair must fail hydration (migrated={migrated})"
+        );
+        reopened.shutdown().unwrap();
+        let _ = std::fs::remove_file(path);
+    }
 }

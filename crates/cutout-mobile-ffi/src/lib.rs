@@ -6776,6 +6776,43 @@ pub struct MobileRideMapCoreSummaryDto {
     pub distance_meters: f64,
     /// Active recording duration in milliseconds, excluding paused and interrupted intervals.
     pub duration_milliseconds: u64,
+    /// Moving-time coverage and total projected in the ride's logical clock domain.
+    pub moving_time: MobileRideMovingTimeDto,
+}
+
+/// Rust-projected moving time and the evidence coverage behind it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileRideMovingTimeDto {
+    /// No interval evidence supports a moving-time value.
+    Unavailable,
+    /// Complete evidence covers the projected interval.
+    Complete {
+        moving_milliseconds: u64,
+        observed_milliseconds: u64,
+    },
+    /// Some intervals are unknown; zero unknown duration may mean the gap's duration is unknown.
+    Partial {
+        moving_milliseconds: u64,
+        observed_milliseconds: u64,
+        unknown_milliseconds: u64,
+    },
+}
+
+fn moving_time_summary_dto(summary: ride_maps::MovingTimeSummary) -> MobileRideMovingTimeDto {
+    let moving_milliseconds = summary.moving.as_u64();
+    let observed_milliseconds = summary.observed.as_u64();
+    match summary.availability {
+        ride_maps::MovingTimeAvailability::Unavailable => MobileRideMovingTimeDto::Unavailable,
+        ride_maps::MovingTimeAvailability::Complete => MobileRideMovingTimeDto::Complete {
+            moving_milliseconds,
+            observed_milliseconds,
+        },
+        ride_maps::MovingTimeAvailability::Partial => MobileRideMovingTimeDto::Partial {
+            moving_milliseconds,
+            observed_milliseconds,
+            unknown_milliseconds: summary.unknown.as_u64(),
+        },
+    }
 }
 
 /// Recording-scoped statistics for the current logical ride, never the wheel odometer.
@@ -7233,6 +7270,8 @@ pub struct MobileRideSummaryDto {
     pub distance_millimetres: u64,
     /// Rust-derived average speed in millimetres per second, when meaningful.
     pub average_speed_millimetres_per_second: Option<u64>,
+    /// Durable moving-time totals and their evidence coverage.
+    pub moving_time: MobileRideMovingTimeDto,
 }
 
 /// Stable cursor for a subsequent ride-history page.
@@ -7938,6 +7977,11 @@ fn mobile_ride_record_dto(ride: &persistence::RideRecord) -> MobileRideRecordDto
             point_count: summary.point_count().as_u64(),
             distance_millimetres: summary.distance_millimetres(),
             average_speed_millimetres_per_second: ride.average_speed_millimetres_per_second(),
+            moving_time: moving_time_summary_dto(ride.moving_time_checkpoint().projected_at(
+                ride_maps::MonotonicMilliseconds::new(
+                    ride.monotonic_last_event_milliseconds().unwrap_or(0),
+                ),
+            )),
         },
         segment_count: ride.segment_count(),
         candidate_vehicle: ride.candidate_vehicle().map(str::to_owned),
@@ -9815,16 +9859,52 @@ impl RideDatabaseHandle {
         id: MobileRideIdDto,
     ) -> Result<MobileRideSummaryDto, MobileRideDatabaseError> {
         let id = parse_mobile_ride_id(&id)?;
-        self.inner
-            .summary_with_duration(id)
-            .map(|(summary, duration_milliseconds)| MobileRideSummaryDto {
-                point_count: summary.point_count().as_u64(),
-                distance_millimetres: summary.distance_millimetres(),
-                average_speed_millimetres_per_second: summary
-                    .average_speed_millimetres_per_second(duration_milliseconds)
-                    .map(ride_maps::AverageSpeedMillimetresPerSecond::as_u64),
-            })
-            .map_err(map_ride_database_error)
+        let record = self
+            .inner
+            .find_ride(id)
+            .map_err(map_ride_database_error)?
+            .ok_or(MobileRideDatabaseError::NotFound)?;
+        Ok(MobileRideSummaryDto {
+            point_count: record.summary().point_count().as_u64(),
+            distance_millimetres: record.summary().distance_millimetres(),
+            average_speed_millimetres_per_second: record.average_speed_millimetres_per_second(),
+            moving_time: moving_time_summary_dto(record.moving_time_checkpoint().projected_at(
+                ride_maps::MonotonicMilliseconds::new(
+                    record.monotonic_last_event_milliseconds().unwrap_or(0),
+                ),
+            )),
+        })
+    }
+
+    /// Projects a stored ride summary to an explicit logical monotonic instant.
+    ///
+    /// This read-only projection lets live and durable views compare the same moving-time
+    /// interval without changing the ride or advancing its committed checkpoint.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the ride identifier is invalid, the ride is absent,
+    /// or the worker cannot provide the summary.
+    #[allow(clippy::needless_pass_by_value, reason = "UniFFI owns boundary DTOs")]
+    pub fn summary_at(
+        &self,
+        id: MobileRideIdDto,
+        logical_at_milliseconds: u64,
+    ) -> Result<MobileRideSummaryDto, MobileRideDatabaseError> {
+        let id = parse_mobile_ride_id(&id)?;
+        let record = self
+            .inner
+            .find_ride(id)
+            .map_err(map_ride_database_error)?
+            .ok_or(MobileRideDatabaseError::NotFound)?;
+        Ok(MobileRideSummaryDto {
+            point_count: record.summary().point_count().as_u64(),
+            distance_millimetres: record.summary().distance_millimetres(),
+            average_speed_millimetres_per_second: record.average_speed_millimetres_per_second(),
+            moving_time: moving_time_summary_dto(record.moving_time_summary_at(
+                ride_maps::MonotonicMilliseconds::new(logical_at_milliseconds),
+            )),
+        })
     }
 
     /// Stops the process-wide worker and invalidates every handle to it.
@@ -9855,16 +9935,15 @@ impl RideDatabaseHandle {
         event: MobileRideEventDto,
         monotonic_at_milliseconds: u64,
         last_telemetry_at_ms: Option<u64>,
-    ) -> Result<(), MobileRideDatabaseError> {
+    ) -> Result<persistence::CommittedRideMovingTimeCheckpoint, MobileRideDatabaseError> {
         let id = parse_mobile_ride_id(&id)?;
         self.inner
-            .transition_at_with_telemetry(
+            .transition_at_with_telemetry_and_checkpoint(
                 id,
                 event.into(),
                 monotonic_at_milliseconds,
                 last_telemetry_at_ms,
             )
-            .map(|_| ())
             .map_err(map_ride_database_error)
     }
 
@@ -9873,14 +9952,13 @@ impl RideDatabaseHandle {
         created_at_milliseconds: u64,
         monotonic_created_at_milliseconds: u64,
         candidate_vehicle: Option<&str>,
-    ) -> Result<MobileRideIdDto, MobileRideDatabaseError> {
+    ) -> Result<persistence::CommittedRideMovingTimeCheckpoint, MobileRideDatabaseError> {
         self.inner
-            .create_started_live_ride(
+            .create_started_live_ride_with_checkpoint(
                 created_at_milliseconds,
                 monotonic_created_at_milliseconds,
                 candidate_vehicle,
             )
-            .map(mobile_ride_id)
             .map_err(map_ride_database_error)
     }
 
@@ -9891,17 +9969,17 @@ impl RideDatabaseHandle {
         occurred_at_milliseconds: u64,
         monotonic_at_milliseconds: u64,
         replacement_candidate_vehicle: Option<&str>,
-    ) -> Result<Option<MobileRideIdDto>, MobileRideDatabaseError> {
+    ) -> Result<Option<persistence::CommittedRideMovingTimeCheckpoint>, MobileRideDatabaseError>
+    {
         let id = parse_mobile_ride_id(id)?;
         self.inner
-            .settle_recovered_ride(
+            .settle_recovered_ride_with_checkpoint(
                 id,
                 discard_empty,
                 occurred_at_milliseconds,
                 monotonic_at_milliseconds,
                 replacement_candidate_vehicle,
             )
-            .map(|replacement| replacement.map(mobile_ride_id))
             .map_err(map_ride_database_error)
     }
 }
@@ -9912,6 +9990,10 @@ enum LocationWriteSubmission {
     WaitForCapacity,
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the location command keeps route, telemetry, and moving-time evidence correlated"
+)]
 fn queue_location(
     database: &RideDatabaseHandle,
     id: &MobileRideIdDto,
@@ -9920,18 +10002,42 @@ fn queue_location(
     start_reason: ride_maps::RideSegmentStartReason,
     telemetry_state: MobileRideMapCoreTelemetryStateDto,
     submission: LocationWriteSubmission,
+    moving_time_observation: Option<ride_maps::MovingTimeObservation>,
+    latest_vehicle_moving_time_observation: Option<ride_maps::MovingTimeObservation>,
 ) -> Result<persistence::PendingLocationWrite, MobileRideDatabaseError> {
     let id = parse_mobile_ride_id(id)?;
     let location = mobile_ride_location(location)?;
     let telemetry_state = map_ride_telemetry_state(telemetry_state)
         .map_err(|_| MobileRideDatabaseError::StorageFailure)?;
-    let write = match submission {
-        LocationWriteSubmission::Nonblocking => {
+    let write = match (submission, moving_time_observation) {
+        (LocationWriteSubmission::Nonblocking, Some(observation)) => {
+            database.inner.queue_location_with_moving_time(
+                id,
+                location,
+                segment_id,
+                start_reason,
+                telemetry_state,
+                observation,
+                latest_vehicle_moving_time_observation,
+            )
+        }
+        (LocationWriteSubmission::WaitForCapacity, Some(observation)) => database
+            .inner
+            .queue_location_with_moving_time_waiting_for_capacity(
+                id,
+                location,
+                segment_id,
+                start_reason,
+                telemetry_state,
+                observation,
+                latest_vehicle_moving_time_observation,
+            ),
+        (LocationWriteSubmission::Nonblocking, None) => {
             database
                 .inner
                 .queue_location(id, location, segment_id, start_reason, telemetry_state)
         }
-        LocationWriteSubmission::WaitForCapacity => {
+        (LocationWriteSubmission::WaitForCapacity, None) => {
             database.inner.queue_location_waiting_for_capacity(
                 id,
                 location,
@@ -9966,6 +10072,10 @@ pub struct MobileRideMapConnectionAdmission {
 }
 
 #[derive(Debug)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "keep one completed snapshot inline instead of allocating an extra box"
+)]
 enum MobileRideMapLifecycleState {
     Pending(
         std::sync::mpsc::Receiver<Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto>>,
@@ -9995,7 +10105,7 @@ struct PendingMobileRideStart {
     candidate_vehicle: Option<String>,
     music_history_policy: CoreMusicHistoryPolicy,
     storage: Option<persistence::PendingLiveRideCreation>,
-    created_ride_id: Option<MobileRideIdDto>,
+    committed_ride_checkpoint: Option<persistence::CommittedRideMovingTimeCheckpoint>,
 }
 
 #[derive(Debug)]
@@ -10020,6 +10130,10 @@ pub struct MobileRideMapLifecycleCommand {
 }
 
 #[derive(Debug)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "keep one completed snapshot inline instead of allocating an extra box"
+)]
 enum MobileRideMapRestoreCommandState {
     Pending(
         std::sync::mpsc::Receiver<
@@ -10184,14 +10298,12 @@ impl PendingMobileRideCommand {
                 Self::Transition(transition).settle(core)
             }
             Self::Start(mut pending) => {
-                let storage_result = pending
-                    .storage
-                    .take()
-                    .map_or(Ok(None), |storage| storage.wait_result().map(Some));
+                let storage_result = pending.storage.take().map_or(Ok(None), |storage| {
+                    storage.wait_committed_result().map(Some)
+                });
                 let known_result = match storage_result {
-                    Ok(ride_id) => {
-                        pending.created_ride_id =
-                            ride_id.map(|ride_id| mobile_ride_id_from_uuid(ride_id.uuid()));
+                    Ok(committed_ride_checkpoint) => {
+                        pending.committed_ride_checkpoint = committed_ride_checkpoint;
                         Ok(())
                     }
                     Err(persistence::StorageError::ResponseDropped) => {
@@ -10205,12 +10317,11 @@ impl PendingMobileRideCommand {
                 core.complete_start_gps_only_command(&pending, known_result)
             }
             Self::Transition(mut pending) => {
-                let storage_result = pending
-                    .storage
-                    .take()
-                    .map_or(Ok(()), |storage| storage.wait_result().map(|_| ()));
+                let storage_result = pending.storage.take().map_or(Ok(None), |storage| {
+                    storage.wait_committed_result().map(Some)
+                });
                 let known_result = match storage_result {
-                    Ok(()) => Ok(()),
+                    Ok(committed_ride_checkpoint) => Ok(committed_ride_checkpoint),
                     Err(persistence::StorageError::ResponseDropped) => {
                         return core.fail_lifecycle_settlement(
                             pending.command_id,
@@ -10600,6 +10711,10 @@ fn wall_clock_milliseconds() -> Result<u64, MobileRideMapCoreErrorDto> {
 }
 
 impl RideDatabaseHandle {
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the metadata transaction carries correlated vehicle and motion observations"
+    )]
     fn update_ride_map_metadata_with_motion(
         &self,
         id: &MobileRideIdDto,
@@ -10608,16 +10723,18 @@ impl RideDatabaseHandle {
         associated_at_milliseconds: Option<u64>,
         last_telemetry_at_milliseconds: Option<u64>,
         motion: Option<persistence::RideMotionObservation>,
-    ) -> Result<(), MobileRideDatabaseError> {
+        moving_time_observation: Option<ride_maps::MovingTimeObservation>,
+    ) -> Result<persistence::MovingTimeCheckpoint, MobileRideDatabaseError> {
         let id = parse_mobile_ride_id(id)?;
         self.inner
-            .update_ride_map_metadata_with_motion(
+            .update_ride_map_metadata_with_moving_time(
                 id,
                 candidate_vehicle,
                 associated_vehicle,
                 associated_at_milliseconds,
                 last_telemetry_at_milliseconds,
                 motion,
+                moving_time_observation,
             )
             .map_err(map_ride_database_error)
     }
@@ -10674,10 +10791,22 @@ fn location_observation_advances_speed(
     }
 }
 
+fn phone_moving_time_speed_millimetres_per_second(
+    speed_meters_per_second: Option<f64>,
+) -> Option<i32> {
+    let speed = speed_meters_per_second.filter(|speed| speed.is_finite() && *speed >= 0.0)?;
+    let millimetres_per_second = speed * 1_000.0;
+    if !millimetres_per_second.is_finite() || millimetres_per_second > f64::from(i32::MAX) {
+        return None;
+    }
+    Some(round_f64_to_i32(millimetres_per_second))
+}
+
 fn observe_telemetry_locked(
     state: &mut MobileRideMapCoreInner,
     at_ms: u64,
     speed_observation: Option<MobileRideMapSpeedObservationDto>,
+    verified_vehicle: Option<(&str, u64)>,
 ) -> Result<MobileRideMapTelemetryObservationDto, MobileRideMapCoreErrorDto> {
     state.require_ready()?;
     let at_ms = state.logical_monotonic_milliseconds(at_ms);
@@ -10691,6 +10820,10 @@ fn observe_telemetry_locked(
     };
     let mut staged_speed = state.speed;
     let mut motion_changed = false;
+    let mut moving_time_observation = None;
+    let mut latest_verified_vehicle_moving_time = None;
+    let active_for_moving_time =
+        state.admission_recorder.state() == Some(ride_maps::RideLifecycleState::Active);
     if accepted && let Some(speed) = speed_observation {
         let source_at = state.logical_monotonic_milliseconds(speed.observed_at_ms);
         if source_at >= state.speed_generation_started_at_ms && source_at <= at_ms {
@@ -10704,6 +10837,42 @@ fn observe_telemetry_locked(
                 source_at,
                 at_ms,
             );
+            if active_for_moving_time
+                && at_ms.saturating_sub(source_at) <= ride_maps::TELEMETRY_FRESHNESS_MILLISECONDS
+                && let Some((platform_identifier, connection_generation)) = verified_vehicle
+                && state.recorder.associated_vehicle() == Some(platform_identifier)
+                && state.last_connection_transition_generation == Some(connection_generation)
+                && state.last_connection_transition_ride_id == state.ride_id
+                && let Some(ride_id) = state.ride_id.clone()
+            {
+                let observation = ride_maps::MovingTimeObservation {
+                    source: ride_maps::MovingTimeSource::Vehicle,
+                    speed_millimetres_per_second: Some(speed.millimetres_per_second),
+                    source_at: ride_maps::MonotonicMilliseconds::new(source_at),
+                    receipt_at: ride_maps::MonotonicMilliseconds::new(at_ms),
+                };
+                let is_newer_than_cache = state
+                    .latest_verified_vehicle_moving_time
+                    .as_ref()
+                    .is_none_or(|latest| latest.observation.source_at.as_u64() < source_at);
+                let is_newer_than_checkpoint = state.moving_time_checkpoint.is_none_or(|current| {
+                    current
+                        .continuation()
+                        .state_parts()
+                        .latest_vehicle_source_milliseconds
+                        .is_none_or(|committed| committed < source_at)
+                });
+                if is_newer_than_cache || is_newer_than_checkpoint {
+                    moving_time_observation = Some(observation);
+                    latest_verified_vehicle_moving_time = Some(LatestVerifiedVehicleMovingTime {
+                        ride_id,
+                        ride_generation: state.generation,
+                        connection_generation,
+                        platform_identifier: platform_identifier.to_owned(),
+                        observation,
+                    });
+                }
+            }
         }
     }
     if observation == ride_maps::TelemetryObservation::Observed || motion_changed {
@@ -10712,7 +10881,7 @@ fn observe_telemetry_locked(
             || motion_changed)
             && let (Some(database), Some(id)) = (state.database.as_ref(), state.ride_id.clone())
         {
-            database
+            let checkpoint = database
                 .update_ride_map_metadata_with_motion(
                     &id,
                     staged.candidate_vehicle(),
@@ -10724,8 +10893,10 @@ fn observe_telemetry_locked(
                         .last_telemetry_at_milliseconds()
                         .map(ride_maps::MonotonicMilliseconds::as_u64),
                     staged_speed.latest_motion(),
+                    moving_time_observation,
                 )
                 .map_err(map_core_error)?;
+            state.publish_moving_time_checkpoint(&id, checkpoint);
             state.persisted_telemetry_receipt = Some((id, at_ms));
         }
         state.revision = state.revision.saturating_add(1);
@@ -10733,6 +10904,9 @@ fn observe_telemetry_locked(
     state.recorder = durable_staged;
     state.admission_recorder = staged;
     state.speed = staged_speed;
+    if let Some(latest) = latest_verified_vehicle_moving_time {
+        state.latest_verified_vehicle_moving_time = Some(latest);
+    }
     Ok(observation.into())
 }
 
@@ -10751,6 +10925,10 @@ struct MobileRideMapCoreInner {
     admission_recorder: ride_maps::RideMapRecorder,
     /// Durable receipt checkpoint, separate from the live clocks in both recorders.
     persisted_telemetry_receipt: Option<(MobileRideIdDto, u64)>,
+    /// Latest moving-time state returned by a committed storage transaction.
+    moving_time_checkpoint: Option<persistence::MovingTimeCheckpoint>,
+    /// Fresh verified wheel evidence waiting to share a later accepted GPS transaction.
+    latest_verified_vehicle_moving_time: Option<LatestVerifiedVehicleMovingTime>,
     music_history_policy: CoreMusicHistoryPolicy,
     music_restore_failed: bool,
     pending_location_writes: VecDeque<PendingMapLocationWrite>,
@@ -10789,6 +10967,15 @@ struct PendingMapLocationWrite {
     admitted_sample: ride_maps::AdmittedLocationSample,
     point: MobileRideMapCorePointDto,
     write: persistence::PendingLocationWrite,
+}
+
+#[derive(Clone, Debug)]
+struct LatestVerifiedVehicleMovingTime {
+    ride_id: MobileRideIdDto,
+    ride_generation: u64,
+    connection_generation: u64,
+    platform_identifier: String,
+    observation: ride_maps::MovingTimeObservation,
 }
 
 #[derive(Debug)]
@@ -10997,6 +11184,11 @@ impl VerifiedConnectionAdmissionPreview {
                     .admission_recorder
                     .last_telemetry_at_milliseconds()
                     .map(ride_maps::MonotonicMilliseconds::as_u64),
+                moving_time_source_boundary_at_ms: match association {
+                    ride_maps::VehicleAssociation::Associated
+                    | ride_maps::VehicleAssociation::AlreadyAssociated => Some(at_ms),
+                    _ => None,
+                },
             });
         }
         Ok(association)
@@ -11218,6 +11410,10 @@ impl MobileRideMapCore {
         self.complete_verified_connection_admission(pending, storage_result)
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the completion atomically reconciles one verified admission with its committed checkpoint"
+    )]
     fn complete_verified_connection_admission(
         &self,
         pending: PendingVerifiedMapAdmission,
@@ -11239,13 +11435,19 @@ impl MobileRideMapCore {
                 return Err(map_storage_core_error(error));
             }
         };
-        let selected_device_matches =
-            outcome.is_some_and(|outcome| outcome.selected_device_matches);
-        let created_ride_id = outcome.and_then(|outcome| outcome.created_ride_id);
+        let selected_device_matches = outcome
+            .as_ref()
+            .is_some_and(|outcome| outcome.selected_device_matches);
+        let created_ride_id = outcome.as_ref().and_then(|outcome| outcome.created_ride_id);
+        let committed_ride_checkpoint =
+            outcome.and_then(|outcome| outcome.committed_ride_checkpoint);
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         if state.pending_connection_admission_id != Some(pending.admission_id) {
             return Err(MobileRideMapCoreErrorDto::StaleConnection);
         }
+        let previous_connection_transition_generation = state.last_connection_transition_generation;
+        let previous_connection_transition_ride_id =
+            state.last_connection_transition_ride_id.clone();
 
         state.last_connected_vehicle =
             ride_maps::VehicleIdentity::new(&pending.platform_identifier);
@@ -11267,10 +11469,13 @@ impl MobileRideMapCore {
                     } => {
                         let created_ride_id =
                             created_ride_id.ok_or(MobileRideMapCoreErrorDto::InvalidTransition)?;
-                        state.start_gps_only_at_with_id(
+                        let committed_ride_checkpoint = committed_ride_checkpoint
+                            .filter(|committed| committed.ride_id() == created_ride_id)
+                            .ok_or(MobileRideMapCoreErrorDto::InvalidTransition)?;
+                        state.start_gps_only_at_with_checkpoint(
                             *monotonic_created_at_ms,
                             candidate_vehicle.as_deref(),
-                            Some(mobile_ride_id(created_ride_id)),
+                            Some(committed_ride_checkpoint),
                         )?;
                         state.apply_music_history_policy(*music_history_policy);
                     }
@@ -11283,6 +11488,16 @@ impl MobileRideMapCore {
                 ..
             } = &mut *state;
             last_connection_transition_ride_id.clone_from(ride_id);
+        }
+
+        if selected_device_matches && let Some(committed) = committed_ride_checkpoint {
+            let ride_id = mobile_ride_id(committed.ride_id());
+            if state.ride_id.as_ref() == Some(&ride_id) {
+                if state.recorder.state() != Some(committed.lifecycle()) {
+                    return Err(MobileRideMapCoreErrorDto::InvalidTransition);
+                }
+                state.publish_moving_time_checkpoint(&ride_id, committed.checkpoint());
+            }
         }
 
         let Some(lifecycle) = state.recorder.state() else {
@@ -11314,6 +11529,11 @@ impl MobileRideMapCore {
         };
         if confirmed {
             let ride_id = state.ride_id.clone();
+            if previous_connection_transition_generation != Some(pending.connection_generation)
+                || previous_connection_transition_ride_id != ride_id
+            {
+                state.latest_verified_vehicle_moving_time = None;
+            }
             state.last_connection_transition_generation = Some(pending.connection_generation);
             state.last_connection_transition_ride_id = ride_id;
         }
@@ -11375,6 +11595,72 @@ impl MobileRideMapCore {
 }
 
 impl MobileRideMapCoreInner {
+    fn publish_moving_time_checkpoint(
+        &mut self,
+        ride_id: &MobileRideIdDto,
+        checkpoint: persistence::MovingTimeCheckpoint,
+    ) {
+        if self.ride_id.as_ref() != Some(ride_id)
+            || self
+                .moving_time_checkpoint
+                .is_some_and(|current| current.revision() >= checkpoint.revision())
+        {
+            return;
+        }
+        self.moving_time_checkpoint = Some(checkpoint);
+    }
+
+    fn verified_vehicle_observation_for_receipt(
+        &self,
+        receipt_at: u64,
+    ) -> Option<ride_maps::MovingTimeObservation> {
+        let latest = self.latest_verified_vehicle_moving_time.as_ref()?;
+        let ride_id = self.ride_id.as_ref()?;
+        if &latest.ride_id != ride_id
+            || latest.ride_generation != self.generation
+            || self.last_connection_transition_generation != Some(latest.connection_generation)
+            || self.last_connection_transition_ride_id.as_ref() != Some(ride_id)
+            || self
+                .last_connected_vehicle
+                .as_ref()
+                .map(ride_maps::VehicleIdentity::as_str)
+                != Some(latest.platform_identifier.as_str())
+            || self.recorder.associated_vehicle() != Some(latest.platform_identifier.as_str())
+        {
+            return None;
+        }
+        let source_at = latest.observation.source_at.as_u64();
+        if source_at > receipt_at
+            || receipt_at.saturating_sub(source_at) > ride_maps::TELEMETRY_FRESHNESS_MILLISECONDS
+        {
+            return None;
+        }
+        // Do not replay a wheel event already represented by the committed checkpoint. A
+        // repeated source can still be queued while an earlier GPS transaction is pending;
+        // persistence treats that identical replay idempotently.
+        if self.moving_time_checkpoint.is_some_and(|checkpoint| {
+            checkpoint
+                .continuation()
+                .state_parts()
+                .latest_vehicle_source_milliseconds
+                .is_some_and(|committed| committed >= source_at)
+        }) {
+            return None;
+        }
+        let mut observation = latest.observation;
+        observation.receipt_at = ride_maps::MonotonicMilliseconds::new(receipt_at);
+        Some(observation)
+    }
+
+    fn moving_time_at(&self, as_of: u64) -> MobileRideMovingTimeDto {
+        self.moving_time_checkpoint
+            .map_or(MobileRideMovingTimeDto::Unavailable, |checkpoint| {
+                moving_time_summary_dto(
+                    checkpoint.projected_at(ride_maps::MonotonicMilliseconds::new(as_of)),
+                )
+            })
+    }
+
     fn poll_location_write_outcomes(
         &mut self,
         at_milliseconds: u64,
@@ -11395,6 +11681,10 @@ impl MobileRideMapCoreInner {
             }
             let decision = match result {
                 Ok(result) if result.admission() == ride_maps::LocationAdmission::Accepted => {
+                    self.publish_moving_time_checkpoint(
+                        &pending.ride_id,
+                        result.moving_time_checkpoint(),
+                    );
                     if self
                         .recorder
                         .record_admitted_sample(pending.admitted_sample)
@@ -11505,6 +11795,20 @@ impl MobileRideMapCoreInner {
             let Some(monotonic_ms) = receipt_monotonic_ms.checked_sub(elapsed_ms) else {
                 continue;
             };
+            let logical_source_at = self.logical_monotonic_milliseconds(monotonic_ms);
+            let logical_receipt_at = self.logical_monotonic_milliseconds(receipt_monotonic_ms);
+            let speed_millimetres_per_second = logical_receipt_at
+                .checked_sub(logical_source_at)
+                .filter(|age| *age <= ride_maps::TELEMETRY_FRESHNESS_MILLISECONDS)
+                .and_then(|_| {
+                    phone_moving_time_speed_millimetres_per_second(sample.speed_meters_per_second)
+                });
+            let moving_time_observation = ride_maps::MovingTimeObservation {
+                source: ride_maps::MovingTimeSource::PhoneGps,
+                speed_millimetres_per_second,
+                source_at: ride_maps::MonotonicMilliseconds::new(logical_source_at),
+                receipt_at: ride_maps::MonotonicMilliseconds::new(logical_receipt_at),
+            };
             let repeated_observation = if self.pending_location_writes.is_empty() {
                 let candidate = MobileRideLocationDto {
                     latitude_degrees: sample.latitude_degrees,
@@ -11536,6 +11840,7 @@ impl MobileRideMapCoreInner {
                 sample.longitude_degrees,
                 horizontal_accuracy_meters,
                 submission,
+                Some(moving_time_observation),
             )?;
             let location_admitted =
                 location_observation_advances_speed(&decision, repeated_observation.is_some());
@@ -11747,7 +12052,7 @@ impl MobileRideMapCoreInner {
             .transition(event.into())
             .map_err(|_| MobileRideMapCoreErrorDto::InvalidTransition)?;
         if let Some(database) = self.database.as_ref() {
-            database
+            let committed = database
                 .transition_at(
                     id.clone(),
                     event,
@@ -11755,13 +12060,29 @@ impl MobileRideMapCoreInner {
                     self.pending_telemetry_receipt(),
                 )
                 .map_err(map_core_error)?;
+            let committed_id = mobile_ride_id(committed.ride_id());
+            if committed_id != id || committed.lifecycle() != transition.next() {
+                return Err(MobileRideMapCoreErrorDto::InvalidTransition);
+            }
+            if transition.next() == ride_maps::RideLifecycleState::Discarded {
+                // Discard removes the row from normal reads after committing its terminal
+                // lifecycle transition, so there is no visible checkpoint to refresh.
+                self.moving_time_checkpoint = None;
+            } else {
+                self.publish_moving_time_checkpoint(&committed_id, committed.checkpoint());
+            }
             if let Some(at) = self.pending_telemetry_receipt() {
                 self.persisted_telemetry_receipt = Some((id.clone(), at));
             }
         }
+        self.latest_verified_vehicle_moving_time = None;
         Ok((id, transition))
     }
 
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "one accepted location carries its route and moving-time inputs together"
+    )]
     fn ingest_location(
         &mut self,
         monotonic_ms: u64,
@@ -11770,6 +12091,7 @@ impl MobileRideMapCoreInner {
         longitude_degrees: f64,
         horizontal_accuracy_meters: f64,
         submission: LocationWriteSubmission,
+        moving_time_observation: Option<ride_maps::MovingTimeObservation>,
     ) -> Result<(MobileRideMapCoreDecisionDto, Option<u64>), MobileRideMapCoreErrorDto> {
         let monotonic_ms = self.logical_monotonic_milliseconds(monotonic_ms);
         let Some(id) = self.ride_id.clone() else {
@@ -11843,6 +12165,10 @@ impl MobileRideMapCoreInner {
                 start_reason,
                 telemetry_state.into(),
                 submission,
+                moving_time_observation,
+                moving_time_observation.and_then(|observation| {
+                    self.verified_vehicle_observation_for_receipt(observation.receipt_at.as_u64())
+                }),
             )
             .map_err(map_core_error)?;
             self.admission_recorder
@@ -11883,6 +12209,8 @@ impl MobileRideMapCoreInner {
             recorder: ride_maps::RideMapRecorder::new(),
             admission_recorder: ride_maps::RideMapRecorder::new(),
             persisted_telemetry_receipt: None,
+            moving_time_checkpoint: None,
+            latest_verified_vehicle_moving_time: None,
             music_history_policy: CoreMusicHistoryPolicy::Disabled,
             music_restore_failed: false,
             pending_location_writes: VecDeque::new(),
@@ -12013,6 +12341,8 @@ impl MobileRideMapCoreInner {
         );
         self.restore_location_observation(stored_ride);
         self.ride_id = Some(ride.id.clone());
+        self.moving_time_checkpoint = Some(stored_ride.moving_time_checkpoint());
+        self.latest_verified_vehicle_moving_time = None;
         self.persisted_telemetry_receipt = ride
             .last_telemetry_at_milliseconds
             .map(|at| (ride.id.clone(), at));
@@ -12101,7 +12431,7 @@ impl MobileRideMapCoreInner {
                         == Some(MobileRideMapAutomaticRecordingPolicyDto::StartAndResume)
             })
             .map(|identity| identity.as_str().to_owned());
-        let replacement = database
+        let committed_ride_checkpoint = database
             .settle_recovered_ride(
                 &mobile_ride_id(ride.id()),
                 discard_empty,
@@ -12111,16 +12441,22 @@ impl MobileRideMapCoreInner {
             )
             .map_err(map_core_error)?;
         self.recoverable_updated_at_milliseconds = None;
-        if let Some(replacement) = replacement {
+        if let Some(committed) = committed_ride_checkpoint
+            && committed.ride_id() != ride.id()
+        {
             self.reset_after_recovery_settlement();
-            self.start_gps_only_at_with_id(
+            self.start_gps_only_at_with_checkpoint(
                 at_ms,
                 replacement_candidate.as_deref(),
-                Some(replacement),
+                Some(committed),
             )?;
         } else if discard_empty {
             self.reset_after_recovery_settlement();
         } else {
+            if let Some(committed) = committed_ride_checkpoint {
+                let committed_id = mobile_ride_id(committed.ride_id());
+                self.publish_moving_time_checkpoint(&committed_id, committed.checkpoint());
+            }
             let recorded_duration = (!explicit_pause)
                 .then(|| ride.last_recorded_point_duration_milliseconds())
                 .flatten();
@@ -12169,6 +12505,7 @@ impl MobileRideMapCoreInner {
         [self.recorder, self.admission_recorder] = staged;
         self.revision = self.revision.saturating_add(1);
         self.generation = self.generation.saturating_add(1);
+        self.latest_verified_vehicle_moving_time = None;
         Ok(())
     }
 
@@ -12219,10 +12556,16 @@ impl MobileRideMapCoreInner {
 
     fn summary(&self) -> MobileRideMapCoreSummaryDto {
         let summary = self.recorder.summary();
+        let at = self
+            .recorder
+            .recording_timing()
+            .last_monotonic_milliseconds()
+            .as_u64();
         MobileRideMapCoreSummaryDto {
             point_count: summary.point_count().as_u64(),
             distance_meters: millimetres_to_meters(summary.distance_millimetres()),
             duration_milliseconds: self.recorder.duration_milliseconds().as_u64(),
+            moving_time: self.moving_time_at(at),
         }
     }
 
@@ -12332,6 +12675,7 @@ impl MobileRideMapCoreInner {
             .recorder
             .duration_milliseconds_at(ride_maps::MonotonicMilliseconds::new(at_milliseconds))
             .as_u64();
+        snapshot.summary.moving_time = self.moving_time_at(at_milliseconds);
         if let Some(statistics) = &mut snapshot.live_activity_statistics {
             statistics.duration_milliseconds = snapshot.summary.duration_milliseconds;
         }
@@ -12355,14 +12699,14 @@ impl MobileRideMapCoreInner {
         at_ms: u64,
         candidate_vehicle: Option<&str>,
     ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
-        self.start_gps_only_at_with_id(at_ms, candidate_vehicle, None)
+        self.start_gps_only_at_with_checkpoint(at_ms, candidate_vehicle, None)
     }
 
-    fn start_gps_only_at_with_id(
+    fn start_gps_only_at_with_checkpoint(
         &mut self,
         at_ms: u64,
         candidate_vehicle: Option<&str>,
-        existing_id: Option<MobileRideIdDto>,
+        committed_ride_checkpoint: Option<persistence::CommittedRideMovingTimeCheckpoint>,
     ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
         if self.recorder.state().is_some_and(|current| {
             !(match current {
@@ -12383,21 +12727,40 @@ impl MobileRideMapCoreInner {
                 candidate_vehicle.and_then(ride_maps::VehicleIdentity::new),
             )
             .map_err(|_| MobileRideMapCoreErrorDto::AlreadyRecording)?;
-        let id = if let Some(existing_id) = existing_id {
-            existing_id
-        } else if let Some(database) = self.database.as_ref() {
-            database
-                .create_started_live_ride(wall_clock_milliseconds()?, at_ms, candidate_vehicle)
-                .map_err(map_core_error)?
-        } else {
-            mobile_ride_id_from_uuid(Uuid::new_v4())
+        let committed_ride_checkpoint = match committed_ride_checkpoint {
+            Some(committed) => Some(committed),
+            None => match self.database.as_ref() {
+                Some(database) => Some(
+                    database
+                        .create_started_live_ride(
+                            wall_clock_milliseconds()?,
+                            at_ms,
+                            candidate_vehicle,
+                        )
+                        .map_err(map_core_error)?,
+                ),
+                None => None,
+            },
         };
+        if committed_ride_checkpoint
+            .is_some_and(|committed| committed.lifecycle() != ride_maps::RideLifecycleState::Active)
+        {
+            return Err(MobileRideMapCoreErrorDto::InvalidTransition);
+        }
+        let id = committed_ride_checkpoint.map_or_else(
+            || mobile_ride_id_from_uuid(Uuid::new_v4()),
+            |committed| mobile_ride_id(committed.ride_id()),
+        );
         self.recorder = staged_recorder.clone();
         self.admission_recorder = staged_recorder;
         self.ride_id = Some(id);
+        self.moving_time_checkpoint = committed_ride_checkpoint
+            .map(persistence::CommittedRideMovingTimeCheckpoint::checkpoint);
+        self.latest_verified_vehicle_moving_time = None;
         self.persisted_telemetry_receipt = None;
         self.revision = self.revision.saturating_add(1);
         self.generation = self.generation.saturating_add(1);
+        self.latest_verified_vehicle_moving_time = None;
         self.speed = persistence::RecordingSpeedState::default();
         self.speed_generation_started_at_ms = at_ms;
         self.reset_music_history_policy();
@@ -12841,7 +13204,7 @@ impl MobileRideMapCore {
                 candidate_vehicle,
                 music_history_policy,
                 storage,
-                created_ride_id: None,
+                committed_ride_checkpoint: None,
             }))
             .is_err()
         {
@@ -12890,14 +13253,10 @@ impl MobileRideMapCore {
             state.pending_lifecycle_command_id = None;
             return Err(error);
         }
-        let ride_id = pending
-            .created_ride_id
-            .clone()
-            .unwrap_or_else(|| mobile_ride_id_from_uuid(Uuid::new_v4()));
-        let result = state.start_gps_only_at_with_id(
+        let result = state.start_gps_only_at_with_checkpoint(
             pending.at_ms,
             pending.candidate_vehicle.as_deref(),
-            Some(ride_id),
+            pending.committed_ride_checkpoint,
         );
         match result {
             Ok(snapshot) => {
@@ -12915,7 +13274,10 @@ impl MobileRideMapCore {
     fn complete_lifecycle_command(
         &self,
         pending: &PendingMobileRideLifecycle,
-        storage_result: Result<(), MobileRideMapCoreErrorDto>,
+        storage_result: Result<
+            Option<persistence::CommittedRideMovingTimeCheckpoint>,
+            MobileRideMapCoreErrorDto,
+        >,
     ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         if state.pending_lifecycle_command_id != Some(pending.command_id)
@@ -12923,13 +13285,31 @@ impl MobileRideMapCore {
         {
             return Err(MobileRideMapCoreErrorDto::StaleConnection);
         }
-        if let Err(error) = storage_result {
-            state.pending_lifecycle_command_id = None;
-            return Err(error);
-        }
+        let committed_ride_checkpoint = match storage_result {
+            Ok(checkpoint) => checkpoint,
+            Err(error) => {
+                state.pending_lifecycle_command_id = None;
+                return Err(error);
+            }
+        };
         if let Some(at) = pending.last_telemetry_at_ms {
             state.persisted_telemetry_receipt = Some((pending.ride_id.clone(), at));
         }
+        if let Some(committed) = committed_ride_checkpoint {
+            let committed_id = mobile_ride_id(committed.ride_id());
+            if committed_id != pending.ride_id || committed.lifecycle() != pending.transition.next()
+            {
+                state.pending_lifecycle_command_id = None;
+                return Err(MobileRideMapCoreErrorDto::InvalidTransition);
+            }
+        }
+        if pending.transition.next() == ride_maps::RideLifecycleState::Discarded {
+            state.moving_time_checkpoint = None;
+        } else if let Some(committed) = committed_ride_checkpoint {
+            let committed_id = mobile_ride_id(committed.ride_id());
+            state.publish_moving_time_checkpoint(&committed_id, committed.checkpoint());
+        }
+        state.latest_verified_vehicle_moving_time = None;
         let outcomes = state.poll_location_write_outcomes(pending.logical_at_ms);
         state.settled_location_outcomes.extend(outcomes);
         let projection_result = state
@@ -13966,7 +14346,7 @@ impl MobileRideMapCore {
         at_ms: u64,
     ) -> Result<MobileRideMapTelemetryObservationDto, MobileRideMapCoreErrorDto> {
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        observe_telemetry_locked(&mut state, at_ms, None)
+        observe_telemetry_locked(&mut state, at_ms, None, None)
     }
 
     pub(crate) fn observe_telemetry_for_vehicle_on_connection(
@@ -13990,7 +14370,12 @@ impl MobileRideMapCore {
         if !is_current_vehicle || !is_associated_vehicle {
             return Ok(MobileRideMapTelemetryObservationDto::NotAssociated);
         }
-        observe_telemetry_locked(&mut state, at_ms, speed_observation)
+        observe_telemetry_locked(
+            &mut state,
+            at_ms,
+            speed_observation,
+            Some((platform_identifier, connection_generation)),
+        )
     }
 
     /// Admits one Core Location sample into the active recording.
@@ -14017,6 +14402,7 @@ impl MobileRideMapCore {
                 longitude_degrees,
                 horizontal_accuracy_meters,
                 LocationWriteSubmission::Nonblocking,
+                None,
             )
             .map(|(decision, _)| decision)
     }
@@ -14590,7 +14976,7 @@ impl MobileRideMapCoreInner {
             return Ok(());
         };
         if let (Some(database), Some(id)) = (self.database.as_ref(), self.ride_id.clone()) {
-            database
+            let checkpoint = database
                 .update_ride_map_metadata_with_motion(
                     &id,
                     self.recorder.candidate_vehicle(),
@@ -14600,8 +14986,10 @@ impl MobileRideMapCoreInner {
                         .map(ride_maps::MonotonicMilliseconds::as_u64),
                     Some(at),
                     self.speed.latest_motion(),
+                    None,
                 )
                 .map_err(map_core_error)?;
+            self.publish_moving_time_checkpoint(&id, checkpoint);
             self.persisted_telemetry_receipt = Some((id, at));
         }
         Ok(())
@@ -14791,6 +15179,7 @@ impl MobileRideMapCoreInner {
         if event == MobileRideEventDto::Resume {
             self.speed_generation_started_at_ms = logical_at_ms;
         }
+        self.latest_verified_vehicle_moving_time = None;
         Ok(())
     }
 }
@@ -19426,6 +19815,40 @@ mod tests {
 
     fn test_mobile_ride_id(value: &str) -> MobileRideIdDto {
         mobile_ride_id_from_uuid(Uuid::parse_str(value).expect("test ride ID is a UUID"))
+    }
+
+    fn moving_time_counts(value: MobileRideMovingTimeDto) -> Option<(u64, u64)> {
+        match value {
+            MobileRideMovingTimeDto::Unavailable => None,
+            MobileRideMovingTimeDto::Complete {
+                moving_milliseconds,
+                observed_milliseconds,
+            }
+            | MobileRideMovingTimeDto::Partial {
+                moving_milliseconds,
+                observed_milliseconds,
+                ..
+            } => Some((moving_milliseconds, observed_milliseconds)),
+        }
+    }
+
+    fn moving_phone_sample(
+        wall_clock_unix_ms: u64,
+        speed_meters_per_second: f64,
+    ) -> MobilePhoneLocationSampleDto {
+        MobilePhoneLocationSampleDto {
+            wall_clock_unix_ms,
+            source_timestamp_unix_seconds: None,
+            latitude_degrees: 40.0,
+            longitude_degrees: -105.0,
+            altitude_meters: 1_600.0,
+            horizontal_accuracy_meters: Some(3.0),
+            vertical_accuracy_meters: None,
+            speed_meters_per_second: Some(speed_meters_per_second),
+            speed_accuracy_meters_per_second: None,
+            course_degrees: None,
+            course_accuracy_degrees: None,
+        }
     }
 
     #[test]
@@ -27103,6 +27526,656 @@ mod tests {
     }
 
     #[test]
+    fn moving_gps_is_published_only_after_its_location_write_commits() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-map-moving-gps-{}-{}.sqlite3",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let _ = fs::remove_file(&path);
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+        let state = restored_database_core(database.clone());
+        let started = state.start_gps_only(1_000).expect("recording starts");
+        let pre_write_projection = state
+            .current_snapshot(1_001)
+            .expect("start checkpoint projects before location commit")
+            .summary
+            .moving_time;
+        let wall_clock = 1_700_000_001_001;
+        let pending_outcomes = state
+            .ingest_location_batch_with_outcomes(
+                started.recording_token,
+                1_001,
+                wall_clock,
+                vec![moving_phone_sample(wall_clock, 1.0)],
+            )
+            .expect("moving location queues");
+        let [pending] = pending_outcomes.as_slice() else {
+            panic!("one sample yields one queued outcome");
+        };
+        let request_id = pending.request_id.expect("queued sample has a request ID");
+        assert!(matches!(
+            pending.decision,
+            MobileRideMapCoreDecisionDto::Pending { .. }
+        ));
+        assert_eq!(pending.snapshot.summary.moving_time, pre_write_projection);
+
+        let terminal = (0..10_000).find_map(|_| {
+            state
+                .poll_location_write_outcomes(1_002)
+                .into_iter()
+                .find(|outcome| outcome.request_id == Some(request_id))
+                .or_else(|| {
+                    thread::yield_now();
+                    None
+                })
+        });
+        assert!(matches!(
+            terminal.map(|outcome| outcome.decision),
+            Some(MobileRideMapCoreDecisionDto::Accepted { .. })
+        ));
+
+        let projected = state
+            .current_snapshot(2_001)
+            .expect("live snapshot remains available");
+        let (moving_milliseconds, observed_milliseconds) =
+            moving_time_counts(projected.summary.moving_time)
+                .expect("committed phone speed publishes moving-time coverage");
+        assert!(moving_milliseconds > 0);
+        assert!(observed_milliseconds > 0);
+        assert_eq!(
+            database
+                .summary_at(test_mobile_ride_id(&started.ride_id), 2_001)
+                .expect("stored moving-time summary projects at the same instant")
+                .moving_time,
+            projected.summary.moving_time,
+            "live and stored summaries share the same Rust projection at equal as-of times"
+        );
+
+        database.shutdown().expect("database shuts down");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn pause_closes_committed_moving_time_before_pending_location_result_is_published() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-map-moving-pause-{}-{}.sqlite3",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let _ = fs::remove_file(&path);
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+        let state = restored_database_core(database.clone());
+        let started = state.start_gps_only(1_000).expect("recording starts");
+        let wall_clock = 1_700_000_001_001;
+        let outcomes = state
+            .ingest_location_batch_with_outcomes(
+                started.recording_token,
+                1_001,
+                wall_clock,
+                vec![moving_phone_sample(wall_clock, 2.0)],
+            )
+            .expect("moving location queues");
+        let [pending] = outcomes.as_slice() else {
+            panic!("one sample yields one pending outcome");
+        };
+        assert!(
+            pending.request_id.is_some(),
+            "queued sample has a request ID"
+        );
+
+        let paused = state
+            .pause(1_100)
+            .expect("pause closes the durable interval");
+        let paused_counts = moving_time_counts(paused.summary.moving_time)
+            .expect("pause retains the committed moving-time totals");
+        let later = state
+            .current_snapshot(20_000)
+            .expect("paused ride remains queryable");
+        assert_eq!(
+            moving_time_counts(later.summary.moving_time),
+            Some(paused_counts),
+            "paused time cannot extend the source-freshness interval"
+        );
+        let older_completion = state
+            .poll_location_writes()
+            .into_iter()
+            .any(|decision| matches!(decision, MobileRideMapCoreDecisionDto::Accepted { .. }));
+        assert!(older_completion, "the queued write still settles");
+        assert_eq!(
+            moving_time_counts(
+                state
+                    .current_snapshot(20_000)
+                    .expect("closed checkpoint remains visible")
+                    .summary
+                    .moving_time
+            ),
+            Some(paused_counts),
+            "an older accepted-location result cannot replace the newer closed checkpoint"
+        );
+
+        database.shutdown().expect("database shuts down");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn new_verified_connection_generation_clears_old_wheel_freshness_without_telemetry() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-map-moving-generation-{}-{}.sqlite3",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let _ = fs::remove_file(&path);
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+        database
+            .remember_selected_device("pev-1".to_owned(), None, 1_000)
+            .expect("selected device persists");
+        let state = restored_database_core(database.clone());
+        let started = state
+            .start_gps_only_with_candidate(1_000, Some("pev-1"))
+            .expect("recording starts");
+        state
+            .ensure_recording_for_vehicle_on_connection("pev-1", 1_001, 1)
+            .expect("first connection associates with the ride");
+        state
+            .observe_telemetry_for_vehicle_on_connection(
+                "pev-1",
+                1,
+                1_002,
+                Some(MobileRideMapSpeedObservationDto {
+                    millimetres_per_second: 2_000,
+                    observed_at_ms: 1_002,
+                }),
+            )
+            .expect("fresh wheel motion commits");
+        let before_boundary = state
+            .current_snapshot(1_004)
+            .expect("wheel checkpoint projects before the new generation");
+        let before_counts = moving_time_counts(before_boundary.summary.moving_time)
+            .expect("wheel evidence produced measured coverage");
+
+        state
+            .ensure_recording_for_vehicle_on_connection("pev-1", 1_004, 2)
+            .expect("new generation refreshes association metadata");
+        let at_boundary = state
+            .current_snapshot(1_004)
+            .expect("new generation checkpoint projects at the boundary");
+        assert_eq!(
+            moving_time_counts(at_boundary.summary.moving_time),
+            Some(before_counts),
+            "closing and resuming at one instant preserves the committed prefix"
+        );
+        let after_boundary = state
+            .current_snapshot(1_100)
+            .expect("ride projects after the new connection generation");
+        assert_eq!(
+            moving_time_counts(after_boundary.summary.moving_time),
+            Some(before_counts),
+            "the previous connection generation cannot extend moving or observed totals"
+        );
+        let stored = database
+            .summary_at(test_mobile_ride_id(&started.ride_id), 1_100)
+            .expect("stored summary projects after the connection boundary");
+        assert_eq!(stored.moving_time, after_boundary.summary.moving_time);
+
+        database.shutdown().expect("database shuts down");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn paused_wheel_telemetry_does_not_reopen_moving_time_but_remains_admitted() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-map-moving-paused-telemetry-{}-{}.sqlite3",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let _ = fs::remove_file(&path);
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+        database
+            .remember_selected_device("pev-1".to_owned(), None, 1_000)
+            .expect("selected device persists");
+        let state = restored_database_core(database.clone());
+        let started = state
+            .start_gps_only_with_candidate(1_000, Some("pev-1"))
+            .expect("recording starts");
+        state
+            .ensure_recording_for_vehicle_on_connection("pev-1", 1_001, 1)
+            .expect("wheel connection associates with the ride");
+        assert_eq!(
+            state
+                .observe_telemetry_for_vehicle_on_connection(
+                    "pev-1",
+                    1,
+                    1_010,
+                    Some(MobileRideMapSpeedObservationDto {
+                        millimetres_per_second: 2_000,
+                        observed_at_ms: 1_010,
+                    }),
+                )
+                .expect("active wheel telemetry is admitted"),
+            MobileRideMapTelemetryObservationDto::Observed
+        );
+        let paused = state.pause(1_100).expect("ride pauses");
+        let paused_moving_time = paused.summary.moving_time;
+        moving_time_counts(paused_moving_time)
+            .expect("paused ride retains its measured moving-time prefix");
+
+        assert_eq!(
+            state
+                .observe_telemetry_for_vehicle_on_connection(
+                    "pev-1",
+                    1,
+                    1_200,
+                    Some(MobileRideMapSpeedObservationDto {
+                        millimetres_per_second: 0,
+                        observed_at_ms: 1_200,
+                    }),
+                )
+                .expect("paused telemetry remains admitted for existing behavior"),
+            MobileRideMapTelemetryObservationDto::Observed
+        );
+        assert_eq!(
+            state
+                .current_snapshot(2_000)
+                .expect("paused snapshot remains available")
+                .state,
+            MobileRideLifecycleStateDto::Paused
+        );
+        assert_eq!(
+            state
+                .current_snapshot(2_000)
+                .expect("paused snapshot remains available")
+                .summary
+                .moving_time,
+            paused_moving_time,
+            "paused telemetry cannot reopen or extend the active moving-time interval"
+        );
+        assert_eq!(
+            database
+                .summary_at(test_mobile_ride_id(&started.ride_id), 2_000)
+                .expect("stored paused summary projects at the same instant")
+                .moving_time,
+            state
+                .current_snapshot(2_000)
+                .expect("live paused summary projects at the same instant")
+                .summary
+                .moving_time
+        );
+
+        database.shutdown().expect("database shuts down");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn signed_reverse_wheel_motion_counts_and_partial_telemetry_does_not_refresh_it() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-map-moving-reverse-partial-{}-{}.sqlite3",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let _ = fs::remove_file(&path);
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+        database
+            .remember_selected_device("pev-1".to_owned(), None, 1_000)
+            .expect("selected device persists");
+        let state = restored_database_core(database.clone());
+        let started = state
+            .start_gps_only_with_candidate(1_000, Some("pev-1"))
+            .expect("recording starts");
+        state
+            .ensure_recording_for_vehicle_on_connection("pev-1", 1_001, 1)
+            .expect("wheel connection associates with the ride");
+        assert_eq!(
+            state
+                .observe_telemetry_for_vehicle_on_connection(
+                    "pev-1",
+                    1,
+                    1_002,
+                    Some(MobileRideMapSpeedObservationDto {
+                        millimetres_per_second: -2_000,
+                        observed_at_ms: 1_002,
+                    }),
+                )
+                .expect("signed reverse telemetry remains valid motion evidence"),
+            MobileRideMapTelemetryObservationDto::Observed
+        );
+        assert_eq!(
+            moving_time_counts(
+                state
+                    .current_snapshot(1_102)
+                    .expect("reverse-motion snapshot is available")
+                    .summary
+                    .moving_time
+            ),
+            Some((100, 100)),
+            "signed reverse wheel speed counts as moving"
+        );
+
+        assert_eq!(
+            state
+                .observe_telemetry_for_vehicle_on_connection("pev-1", 1, 2_000, None)
+                .expect("partial telemetry frame remains admitted"),
+            MobileRideMapTelemetryObservationDto::Observed
+        );
+        let after_partial = state
+            .current_snapshot(3_003)
+            .expect("snapshot remains available after partial telemetry")
+            .summary
+            .moving_time;
+        assert_eq!(
+            moving_time_counts(after_partial),
+            Some((2_000, 2_000)),
+            "a frame without speed cannot refresh the reverse-speed source timestamp"
+        );
+        assert!(matches!(
+            after_partial,
+            MobileRideMovingTimeDto::Partial {
+                unknown_milliseconds: 3,
+                ..
+            }
+        ));
+        assert_eq!(
+            database
+                .summary_at(test_mobile_ride_id(&started.ride_id), 3_003)
+                .expect("stored summary projects at the same instant")
+                .moving_time,
+            after_partial
+        );
+
+        database.shutdown().expect("database shuts down");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn older_pending_gps_completion_cannot_replace_a_newer_wheel_checkpoint() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-map-moving-interleave-{}-{}.sqlite3",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let _ = fs::remove_file(&path);
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+        let state = restored_database_core(database.clone());
+        let started = state
+            .start_gps_only_with_candidate(1_000, Some("pev-1"))
+            .expect("recording starts");
+        state
+            .ensure_recording_for_vehicle_on_connection("pev-1", 1_001, 1)
+            .expect("wheel connection associates with the ride");
+        let pre_write_projection = state
+            .current_snapshot(1_002)
+            .expect("start checkpoint projects before location commit")
+            .summary
+            .moving_time;
+
+        let wall_clock = 1_700_000_001_002;
+        let pending_outcomes = state
+            .ingest_location_batch_with_outcomes(
+                started.recording_token,
+                1_002,
+                wall_clock,
+                vec![moving_phone_sample(wall_clock, 1.0)],
+            )
+            .expect("moving location queues");
+        let [pending] = pending_outcomes.as_slice() else {
+            panic!("one sample yields one queued outcome");
+        };
+        let request_id = pending.request_id.expect("queued sample has a request ID");
+        assert_eq!(pending.snapshot.summary.moving_time, pre_write_projection);
+
+        assert_eq!(
+            state
+                .observe_telemetry_for_vehicle_on_connection(
+                    "pev-1",
+                    1,
+                    1_003,
+                    Some(MobileRideMapSpeedObservationDto {
+                        millimetres_per_second: 0,
+                        observed_at_ms: 1_003,
+                    }),
+                )
+                .expect("stationary wheel observation commits"),
+            MobileRideMapTelemetryObservationDto::Observed
+        );
+        let after_wheel = state
+            .current_snapshot(2_003)
+            .expect("wheel checkpoint is projected");
+        assert!(
+            moving_time_counts(after_wheel.summary.moving_time)
+                .expect("wheel checkpoint publishes measured coverage")
+                .0
+                < 100,
+            "fresh wheel zero takes precedence over moving phone GPS"
+        );
+
+        let terminal = (0..10_000).find_map(|_| {
+            state
+                .poll_location_write_outcomes(2_004)
+                .into_iter()
+                .find(|outcome| outcome.request_id == Some(request_id))
+                .or_else(|| {
+                    thread::yield_now();
+                    None
+                })
+        });
+        assert!(matches!(
+            terminal.map(|outcome| outcome.decision),
+            Some(MobileRideMapCoreDecisionDto::Accepted { .. })
+        ));
+        assert!(
+            moving_time_counts(
+                state
+                    .current_snapshot(2_003)
+                    .expect("newer checkpoint remains visible")
+                    .summary
+                    .moving_time
+            )
+            .expect("published checkpoint remains available")
+            .0 < 100,
+            "settling an older GPS result cannot replace the newer wheel checkpoint"
+        );
+
+        database.shutdown().expect("database shuts down");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn parked_associated_wheel_keeps_gps_readout_without_counting_phone_motion() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-map-moving-parked-{}-{}.sqlite3",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let _ = fs::remove_file(&path);
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+        let state = restored_database_core(database.clone());
+        let started = state
+            .start_gps_only_with_candidate(1_000, Some("pev-1"))
+            .expect("recording starts");
+        state
+            .ensure_recording_for_vehicle_on_connection("pev-1", 1_001, 1)
+            .expect("wheel connection associates with the ride");
+        state
+            .observe_telemetry_for_vehicle_on_connection(
+                "pev-1",
+                1,
+                1_001,
+                Some(MobileRideMapSpeedObservationDto {
+                    millimetres_per_second: 0,
+                    observed_at_ms: 1_001,
+                }),
+            )
+            .expect("stationary wheel observation commits");
+
+        let wall_clock = 1_700_000_001_002;
+        let parked_outcomes = state
+            .ingest_location_batch_with_outcomes(
+                started.recording_token,
+                1_002,
+                wall_clock,
+                vec![moving_phone_sample(wall_clock, 1.0)],
+            )
+            .expect("phone callback is admitted");
+        let [parked] = parked_outcomes.as_slice() else {
+            panic!("one sample yields one outcome");
+        };
+        assert!(matches!(
+            parked.decision,
+            MobileRideMapCoreDecisionDto::Ignored {
+                reason: MobileRideMapDecisionReasonDto::Parked
+            }
+        ));
+        let after_expiry = state
+            .current_snapshot(3_002)
+            .expect("snapshot remains available after wheel evidence expires");
+        assert_eq!(
+            after_expiry.live_speed.source,
+            MobileRideMapSpeedSourceDto::PhoneGps,
+            "the phone speed remains available for the existing live readout"
+        );
+        assert_eq!(after_expiry.live_speed.millimetres_per_second, 1_000);
+        assert_eq!(
+            moving_time_counts(after_expiry.summary.moving_time)
+                .expect("parked wheel checkpoint remains projected")
+                .0,
+            0,
+            "a GPS sample classified Parked must not become recorded movement evidence"
+        );
+
+        database.shutdown().expect("database shuts down");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn moving_time_restore_keeps_committed_total_without_projecting_across_epochs() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-map-moving-restore-{}-{}.sqlite3",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let _ = fs::remove_file(&path);
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+        let state = restored_database_core(database.clone());
+        let started = state.start_gps_only(1_000).expect("recording starts");
+        for (at_ms, latitude, wall_clock) in [
+            (1_001, 40.0, 1_700_000_001_001),
+            (2_001, 40.000_1, 1_700_000_002_001),
+        ] {
+            let sample = MobilePhoneLocationSampleDto {
+                latitude_degrees: latitude,
+                ..moving_phone_sample(wall_clock, 1.0)
+            };
+            let outcomes = state
+                .ingest_location_batch_with_outcomes(
+                    started.recording_token.clone(),
+                    at_ms,
+                    wall_clock,
+                    vec![sample],
+                )
+                .expect("moving location queues");
+            let [pending] = outcomes.as_slice() else {
+                panic!("one sample yields one queued outcome");
+            };
+            let request_id = pending.request_id.expect("queued sample has a request ID");
+            let terminal = (0..10_000).find_map(|_| {
+                state
+                    .poll_location_write_outcomes(at_ms + 1)
+                    .into_iter()
+                    .find(|outcome| outcome.request_id == Some(request_id))
+                    .or_else(|| {
+                        thread::yield_now();
+                        None
+                    })
+            });
+            assert!(matches!(
+                terminal.map(|outcome| outcome.decision),
+                Some(MobileRideMapCoreDecisionDto::Accepted { .. })
+            ));
+        }
+        let before_restore = state
+            .current_snapshot(2_001)
+            .expect("snapshot projects the committed checkpoint");
+        let before_counts = moving_time_counts(before_restore.summary.moving_time)
+            .expect("committed interval evidence is available");
+        assert!(before_counts.0 > 0);
+        drop(state);
+
+        let restored = restored_database_core_at(database.clone(), 10);
+        let after_restore = restored
+            .current_snapshot(10)
+            .expect("restored ride has a snapshot");
+        assert_eq!(
+            moving_time_counts(after_restore.summary.moving_time)
+                .expect("committed moving total restores"),
+            before_counts,
+            "restart must retain committed totals without bridging old source freshness"
+        );
+
+        database.shutdown().expect("database shuts down");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn history_summary_reports_unavailable_when_ride_has_no_interval_evidence() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-map-moving-history-unavailable-{}-{}.sqlite3",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let _ = fs::remove_file(&path);
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+        let state = restored_database_core(database.clone());
+        let started = state.start_gps_only(1_000).expect("recording starts");
+        assert_eq!(
+            database
+                .summary(test_mobile_ride_id(&started.ride_id))
+                .expect("stored summary loads")
+                .moving_time,
+            MobileRideMovingTimeDto::Unavailable,
+            "missing historical interval evidence is distinct from measured zero"
+        );
+
+        database.shutdown().expect("database shuts down");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
     fn location_write_completion_keeps_request_and_snapshot_correlation() {
         let _guard = RIDE_DATABASE_TEST_LOCK
             .lock()
@@ -30243,7 +31316,7 @@ mod tests {
                 candidate_vehicle: None,
                 music_history_policy: CoreMusicHistoryPolicy::Disabled,
                 storage: Some(storage),
-                created_ride_id: None,
+                committed_ride_checkpoint: None,
             }))
             .unwrap();
         assert!(matches!(
