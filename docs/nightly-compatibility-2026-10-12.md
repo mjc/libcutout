@@ -1,10 +1,15 @@
 # Rust nightly compatibility trial, 2026-10-12
 
-The development toolchain is pinned to `nightly-2026-10-12`: rustc and Cargo
+The compatibility trial used `nightly-2026-10-12`: rustc and Cargo
 1.101.0-nightly, compiler commit `080cc27146389dbb5c8772c476b1937be9c6110f`,
 LLVM 23.1.3. Only the rust-overlay input was updated in `devenv.lock`; nixpkgs,
 the other inputs and Cargo.lock were retained. The workspace MSRV declaration is
 still Rust 1.99. No nightly-only language or library APIs were added.
+
+After the trial, development returned to the original stable Rust 1.99.0 pin
+and rust-overlay revision. The source fixes, regression test and dependency
+cleanup were retained. The nightly results below remain evidence for that
+dated compiler, rather than a requirement to develop on nightly.
 
 The trial addresses the [never-type stabilization](https://github.com/rust-lang/rust/pull/155499)
 and [Cargo intermediate-layout changes](https://github.com/rust-lang/cargo/issues/15010)
@@ -37,7 +42,7 @@ contains those changes; it is not an exact beta/stable 1.100 run.
 - Nightly rustfmt changed six macro-invocation layouts in `settings_wire.rs` and
   formatted the Option-expression change. No setting values or encodings changed.
 
-## Validation
+## Nightly validation
 
 | Gate | Result |
 | --- | --- |
@@ -55,7 +60,21 @@ All Rust source is frozen before Apple builds. Validation scope is the native
 Apple Silicon host and Simulator. No phone access, deployment, Android builds,
 x86 builds or remote Git publication are part of this trial. The unchanged
 Rust 1.99 MSRV declaration is not a claim that the final patch was re-tested on
-1.99; this trial runs nightly.
+1.99; the table above records the nightly run.
+
+## Return to stable
+
+The original Rust 1.99.0 toolchain and rust-overlay revision were restored.
+Stable validation passed on `aarch64-apple-darwin`: 2,386 nextest tests, three
+doctests, strict workspace all-target/all-feature Clippy, Rust lint policy and
+formatting (384 files, zero changes). The two configured subprocess helpers
+remain skipped. All four changed Rust files, Cargo.toml and Cargo.lock match
+the nightly-tested commit byte for byte.
+
+Stable logs are `target/stable-return-20261012/checks.log` and
+`target/test-logs/rust-workspace-20261012T122003-7643.log`. Apple builds were not
+repeated for the configuration-only return to the previously used stable
+toolchain. The Apple results above belong to the nightly run.
 
 ## Infrastructure and reproduction
 
@@ -102,4 +121,7 @@ Lific MCP and its public endpoint were unavailable during the run, and no local
 Lific CLI was installed. `target/nightly-20261012/tracker-pending.md` records the
 tracker update to make when the service returns; this repository report is the
 durable fallback. The canonical operating guide had already been read in this
-conversation; its current read also failed with HTTP522.
+conversation; the nightly trial's refresh also failed with HTTP522. Lific
+recovered during the return to stable; the guide was read again and the
+completed compatibility report was mirrored into
+[LIBCU-DOC-22](https://lific.mjc.lol/LIBCU/pages/165).

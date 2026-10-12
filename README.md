@@ -2,9 +2,7 @@
 
 ## Development
 
-The workspace declares Rust 1.99 as its minimum version. Development currently uses
-`nightly-2026-10-12`, pinned in `rust-toolchain.toml`, to exercise the upcoming never-type
-and Cargo build-directory changes.
+The workspace requires Rust 1.99, pinned to 1.99.0 in `rust-toolchain.toml`.
 Keep this pin and the workspace `rust-version` requirement aligned when updating
 to a newer stable release. The pin includes the iOS device/simulator targets and
 Android ARM64; Apple builds require Xcode and Android builds use the Devenv NDK.
