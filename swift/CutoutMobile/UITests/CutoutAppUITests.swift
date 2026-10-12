@@ -104,6 +104,32 @@ final class MusicPreferencesDeviceUITests: XCTestCase {
             XCTAssertFalse(app.staticTexts["music.soundcloud.error"].exists, app.debugDescription)
         }
         waitForPlayback(after: 2)
+        let backgroundAt = try XCTUnwrap(Int(try XCTUnwrap(elapsed.value as? String)))
+        XCUIDevice.shared.press(.home)
+        let enteredBackground = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in
+                app.state == .runningBackground || app.state == .runningBackgroundSuspended
+            }, object: app)
+        XCTAssertEqual(XCTWaiter.wait(for: [enteredBackground], timeout: 10), .completed)
+        let returnedEarly = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in app.state == .runningForeground }, object: app)
+        XCTAssertEqual(XCTWaiter.wait(for: [returnedEarly], timeout: 12), .timedOut)
+        let foregroundStartedAt = ProcessInfo.processInfo.systemUptime
+        app.activate()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
+        let foregroundAt = try XCTUnwrap(Int(try XCTUnwrap(elapsed.value as? String)))
+        let foregroundSeconds = Int(ProcessInfo.processInfo.systemUptime - foregroundStartedAt)
+        XCTAssertGreaterThanOrEqual(
+            foregroundAt, backgroundAt + foregroundSeconds + 10,
+            "Playback did not advance while CutOut was backgrounded")
+        XCTAssertEqual(title.label, firstTitle)
+        let backgroundClock = XCTAttachment(
+            string:
+                "Before background: \(backgroundAt)s; after foreground: \(foregroundAt)s; foreground handling: \(foregroundSeconds)s"
+        )
+        backgroundClock.name = "SoundCloud background playback clock"
+        backgroundClock.lifetime = .keepAlways
+        add(backgroundClock)
         app.buttons["music.soundcloud.music.pause"].tap()
         XCTAssertTrue(app.buttons["music.soundcloud.music.play"].waitForExistence(timeout: 5))
         let pausedAt = try XCTUnwrap(Int(try XCTUnwrap(elapsed.value as? String)))
