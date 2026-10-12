@@ -245,6 +245,7 @@ in
         -scheme CutoutAppIOSUnitTests \
         -destination "$destination" \
         -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testActualMonitorTaskUsesPassiveAuthorizationAndCancelsOnBackground \
+        -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testSoundCloudRestorationAndSwitchingNeverDispatchAppleMusicOrHistory \
         -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testExplicitConnectAllowsAuthorizationPrompt \
         -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testConnectAllowsAuthorizationPromptForUnauthorizedSnapshot \
         -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testConnectReusesAuthorizationForExistingPlaybackSnapshots \

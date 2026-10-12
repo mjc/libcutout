@@ -60,6 +60,8 @@ final class MusicFeatureModel {
     @ObservationIgnored private let rideMapState: MobileRideMapState?
     @ObservationIgnored private let historySnapshotReader: MusicHistorySnapshotReader
     @ObservationIgnored let spotifyProvider: SpotifyProviderAdapter
+    @ObservationIgnored lazy var nativeSoundCloud = SoundCloudNativePlayer()
+    @ObservationIgnored let soundcloudProvider: SoundCloudProviderAdapter
     @ObservationIgnored private let spotifyCallbackHandler: (@MainActor (URL) -> Bool)?
     @ObservationIgnored private let monotonicNow: @MainActor () -> UInt64
     @ObservationIgnored private let updateCapturePolicy: @MainActor (MobileMusicHistoryPolicyDto) -> Void
@@ -88,11 +90,15 @@ final class MusicFeatureModel {
     var historyPolicy: MobileMusicHistoryPolicyDto
     var historyUnavailable = false
     var historySaveError: MobileRideMapError?
+    var historyFailureContext: MusicHistoryFailureContext {
+        historyPreferenceSaveError == nil ? .listeningHistory : .preferences
+    }
     var commandFeedback: MusicCommandFeedback?
     @ObservationIgnored private var activeSpotifyHandoffFeedbackRequest: MusicCommandFeedbackRequest?
     @ObservationIgnored private var observationError: MobileRideMapError?
     @ObservationIgnored private(set) var captureFailureReceipt: MusicCaptureFailureReceipt?
     @ObservationIgnored private var historyPersistenceError: MobileRideMapError?
+    @ObservationIgnored private var historyPreferenceSaveError: MobileRideMapError?
     @ObservationIgnored private var historyReadbackRevisionStorage: UInt64 = 0
     @ObservationIgnored private var historyDiagnosticDeletionRevision: UInt64 = 0
     @ObservationIgnored private var closedHistoryReadTask: Task<Void, Never>?
@@ -101,7 +107,7 @@ final class MusicFeatureModel {
     var historyReadbackRevision: UInt64 { historyReadbackRevisionStorage }
 
     var nowPlaying: MusicNowPlaying? {
-        isPlayerHidden ? nil : settingsNowPlaying
+        isPlayerHidden ? nil : (selectedProvider == .soundCloud ? projectedNowPlaying() : settingsNowPlaying)
     }
 
     var commandStatusText: String? {
@@ -168,6 +174,8 @@ final class MusicFeatureModel {
             effects: effects
         )
         self.spotifyProvider = spotifyProvider
+        self.soundcloudProvider = SoundCloudProviderAdapter(
+            lifecycle: providerLifecycle, effects: effects, nowMs: monotonicNow)
         self.spotifyCallbackHandler = spotifyCallbackHandler
         #if canImport(MediaPlayer) && os(iOS)
             let appleProvider = AppleMusicProviderAdapter(
@@ -186,6 +194,10 @@ final class MusicFeatureModel {
         preferredHistoryPolicy = historyPolicyStore.policy
         historyPolicy = .disabled
         timelineEvents = []
+        if selectedProvider.profile.interface == .appHandoffOnly {
+            soundcloudProvider.start()
+            settingsNowPlaying = projectedNowPlaying()
+        }
     }
 
     @discardableResult
@@ -215,7 +227,8 @@ final class MusicFeatureModel {
                 print("music_history_rejected error=\(error)")
             #endif
             historyPolicy = previous
-            setHistoryPersistenceError(appRideMapError(error))
+            historyPreferenceSaveError = appRideMapError(error)
+            refreshHistoryErrorProjection()
             return false
         }
     }
@@ -288,7 +301,8 @@ final class MusicFeatureModel {
             guard operationRevision == historyReadbackRevision else { return false }
             if stillTargetsCurrentRide {
                 historyPolicy = previous
-                setHistoryPersistenceError(appRideMapError(error))
+                historyPreferenceSaveError = appRideMapError(error)
+                refreshHistoryErrorProjection()
             }
             return false
         }
@@ -520,6 +534,10 @@ final class MusicFeatureModel {
     }
 
     func refreshSnapshot() {
+        if selectedProvider.profile.interface == .appHandoffOnly {
+            settingsNowPlaying = projectedNowPlaying()
+            return
+        }
         #if canImport(MediaPlayer) && os(iOS)
             let observedAtMs = monotonicNow()
             let observation: MusicProviderObservation
@@ -529,6 +547,8 @@ final class MusicFeatureModel {
                 return
             case .spotifyAppRemote:
                 observation = spotifyProvider.observation(observedAtMs: observedAtMs)
+            case .appHandoffOnly:
+                return
             case .unavailable:
                 observation = MusicProviderObservation(
                     snapshot: spotifyProvider.unavailableSnapshot(observedAtMs: observedAtMs)
@@ -539,11 +559,21 @@ final class MusicFeatureModel {
     }
 
     func stopMonitoring() {
-        _ = providerLifecycle.cancelMonitor()
+        let completion = providerLifecycle.cancelMonitor()
+        soundcloudProvider.applyCompletion(completion)
+        let suspension = MobileMusicProviderSuspension(
+            observationGap: false,
+            cancelledTransportRequestId: completion.requestId
+        )
+        #if canImport(MediaPlayer) && os(iOS)
+            appleMonitor.applySuspension(suspension)
+        #endif
+        spotifyProvider.applySuspension(suspension)
         stopProviderWork()
     }
 
     private func stopProviderWork() {
+        soundcloudProvider.stop()
         effects.cancelAll(in: .monitor)
         #if canImport(MediaPlayer) && os(iOS)
             appleMonitor.stopMonitoring()
@@ -554,6 +584,11 @@ final class MusicFeatureModel {
     }
 
     func start(sceneIsActive: Bool) {
+        if selectedProvider.profile.interface == .appHandoffOnly {
+            if sceneIsActive { soundcloudProvider.start() }
+            settingsNowPlaying = projectedNowPlaying()
+            return
+        }
         guard monitoringPreferenceStore.isEnabled else { return }
         providerLifecycle.requestMonitor(request: .observe)
         guard sceneIsActive else {
@@ -565,6 +600,12 @@ final class MusicFeatureModel {
 
     func sceneDidEnterBackground() {
         let suspension = providerLifecycle.suspend()
+        soundcloudProvider.applySuspension(suspension)
+        if selectedProvider.profile.interface == .appHandoffOnly {
+            stopProviderWork()
+            settingsNowPlaying = projectedNowPlaying()
+            return
+        }
         #if canImport(MediaPlayer) && os(iOS)
             appleMonitor.applySuspension(suspension)
         #endif
@@ -637,6 +678,7 @@ final class MusicFeatureModel {
 
     func selectProvider(_ provider: MobileMusicProviderDto) {
         let previousProvider = selectedProvider
+        if previousProvider == .soundCloud, provider != .soundCloud { nativeSoundCloud.stop() }
         #if canImport(SpotifyiOS) && os(iOS)
             if previousProvider != provider {
                 spotifyProvider.cancelPendingPlayHandoff()
@@ -689,9 +731,28 @@ final class MusicFeatureModel {
 
     func handleCommand(_ command: MobileMusicCommandDto) async -> MusicCommandOutcome {
         let commandProvider = selectedProvider
+        if commandProvider == .soundCloud, nativeSoundCloud.snapshot.track != nil, command != .openProvider {
+            let requestID = beginCommandFeedback()
+            guard projectedNowPlaying()?.isCommandAvailable(command) == true else {
+                return finishCommand(.refused, provider: commandProvider, requestID: requestID)
+            }
+            switch command {
+            case .play: nativeSoundCloud.command(.play)
+            case .pause: nativeSoundCloud.command(.pause)
+            case .previous: nativeSoundCloud.command(.previous)
+            case .next: nativeSoundCloud.command(.next)
+            case .openProvider: break
+            }
+            return finishCommand(.accepted, provider: commandProvider, requestID: requestID)
+        }
+        if commandProvider.profile.interface == .appHandoffOnly { soundcloudProvider.start() }
         let feedbackRequest = MusicCommandFeedbackRequest(id: beginCommandFeedback())
         activeSpotifyHandoffFeedbackRequest = feedbackRequest
         let requestID = feedbackRequest.id
+        if commandProvider.profile.interface == .appHandoffOnly {
+            let result = await soundcloudProvider.perform(command)
+            return finishCommand(result, provider: commandProvider, requestID: requestID)
+        }
         #if canImport(MediaPlayer) && os(iOS)
             if command == .openProvider {
                 let result = await performProviderCommand(command, provider: commandProvider)
@@ -791,9 +852,11 @@ final class MusicFeatureModel {
             return await providerCommandHandler(provider, command)
         }
         #if canImport(MediaPlayer) && os(iOS)
-            return provider == .spotify
-                ? await spotifyProvider.perform(command)
-                : await appleProvider.perform(command)
+            switch provider.profile.interface {
+            case .spotifyAppRemote: return await spotifyProvider.perform(command)
+            case .appleMusicSystemPlayer: return await appleProvider.perform(command)
+            case .appHandoffOnly: return await soundcloudProvider.perform(command)
+            }
         #else
             return .unavailable
         #endif
@@ -804,16 +867,12 @@ final class MusicFeatureModel {
         to provider: MobileMusicProviderDto
     ) {
         switch provider.monitoringMode {
+        case .appHandoffOnly:
+            stopMonitoring()
+            soundcloudProvider.start()
+            settingsNowPlaying = projectedNowPlaying()
         case .unavailable:
-            let suspension = MobileMusicProviderSuspension(
-                observationGap: false,
-                cancelledTransportRequestId: providerLifecycle.cancelMonitor().requestId
-            )
-            #if canImport(MediaPlayer) && os(iOS)
-                appleProvider.applySuspension(suspension)
-            #endif
-            spotifyProvider.applySuspension(suspension)
-            stopProviderWork()
+            stopMonitoring()
         case .appleMusicSystemPlayer where previousProvider != provider:
             providerLifecycle.requestMonitor(request: .observe)
             beginMonitoring()
@@ -828,6 +887,12 @@ final class MusicFeatureModel {
     }
 
     func beginMonitoring() {
+        if selectedProvider.profile.interface == .appHandoffOnly {
+            stopProviderWork()
+            soundcloudProvider.start()
+            settingsNowPlaying = projectedNowPlaying()
+            return
+        }
         guard let effect = providerLifecycle.beginMonitor() else { return }
         // Invalidate before stopping: teardown may resume cancelled command work synchronously.
         providerLifecycle.invalidateCommandFeedback()
@@ -1201,6 +1266,7 @@ final class MusicFeatureModel {
     }
 
     func clearHistoryErrors() {
+        historyPreferenceSaveError = nil
         observationError = nil
         historyPersistenceError = nil
         refreshHistoryErrorProjection()
@@ -1208,7 +1274,7 @@ final class MusicFeatureModel {
 
     private func refreshHistoryErrorProjection() {
         historySaveError =
-            observationError ?? historyPersistenceError
+            historyPreferenceSaveError ?? observationError ?? historyPersistenceError
             ?? coordinator.previousRideHistoryFailure.map { _ in
                 .storageError("Previous ride listening history is incomplete")
             }
@@ -1223,6 +1289,12 @@ final class MusicFeatureModel {
     }
 
     func projectedNowPlaying() -> MusicNowPlaying? {
+        if selectedProvider == .soundCloud, nativeSoundCloud.snapshot.track != nil {
+            return MusicNowPlaying(snapshot: nativeSoundCloud.musicSnapshot(nowMs: monotonicNow()))
+        }
+        if selectedProvider.profile.interface == .appHandoffOnly {
+            return MusicNowPlaying(snapshot: soundcloudUnavailableSnapshot(nowMs: monotonicNow()))
+        }
         guard let current = coordinator.nowPlaying else { return nil }
         guard current.provider != selectedProvider else { return current }
         return MusicNowPlaying(
