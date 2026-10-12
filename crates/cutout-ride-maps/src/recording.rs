@@ -142,6 +142,14 @@ impl TryFrom<&str> for VehicleIdentity {
     }
 }
 
+impl std::str::FromStr for VehicleIdentity {
+    type Err = VehicleIdentityError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Self::try_from(value)
+    }
+}
+
 /// Maximum age of telemetry that qualifies a route point as fresh.
 pub const TELEMETRY_FRESHNESS_MILLISECONDS: u64 = 2_000;
 /// Maximum number of live route points retained by the in-memory projection.
@@ -1615,12 +1623,29 @@ mod tests {
     use super::{
         MonotonicMilliseconds, RideDurationMilliseconds, RideMapRecorder, RideMapSegmentId,
         RidePointSequence, RideRecordingTiming, RideSegmentCount, RideSegmentStartReason,
-        VehicleAssociation, route_admission,
+        VehicleAssociation, VehicleIdentityError, route_admission,
     };
     use crate::{
         Coordinate, LocationAdmission, LocationSample, LocationSource, RideEvent,
         RideLifecycleState, ValidatedRideTransition, VehicleIdentity, WallClockUnixMilliseconds,
     };
+
+    #[test]
+    fn vehicle_identity_string_parsing_preserves_validation_and_normalization() {
+        let identity = "  pev-1  ".parse::<VehicleIdentity>().unwrap();
+        assert_eq!(identity.as_str(), "pev-1");
+        assert_eq!(VehicleIdentity::try_from("  pev-1  "), Ok(identity));
+        for invalid in ["", " \t\n\u{2003}"] {
+            assert_eq!(
+                invalid.parse::<VehicleIdentity>(),
+                Err(VehicleIdentityError)
+            );
+            assert_eq!(
+                VehicleIdentity::try_from(invalid),
+                Err(VehicleIdentityError)
+            );
+        }
+    }
 
     #[test]
     fn imported_recording_does_not_offer_start_as_a_lifecycle_event() {

@@ -276,27 +276,39 @@ macro_rules! aero_bounded_setting {
 
 aero_bounded_setting!(
     /// Aero wheel display backlight brightness, from 0 through 100 percent.
-    VeteranDisplayBacklight(u8), 0..=100, percent
+    VeteranDisplayBacklight(u8),
+    0..=100,
+    percent
 );
 aero_bounded_setting!(
     /// Aero wheel beeper volume, from 0 through 100 percent.
-    VeteranBeeperVolume(u8), 0..=100, percent
+    VeteranBeeperVolume(u8),
+    0..=100,
+    percent
 );
 aero_bounded_setting!(
     /// Aero dynamic assist, from 0 through 100 percent.
-    VeteranDynamicAssist(u8), 0..=100, percent
+    VeteranDynamicAssist(u8),
+    0..=100,
+    percent
 );
 aero_bounded_setting!(
     /// Aero pedal-dip compensation, from 0 through 100 percent.
-    VeteranPedalDipCompensation(u8), 0..=100, percent
+    VeteranPedalDipCompensation(u8),
+    0..=100,
+    percent
 );
 aero_bounded_setting!(
     /// Aero lateral tilt limit, from 35 through 75 degrees.
-    VeteranLateralTiltLimit(u8), 35..=75, degrees
+    VeteranLateralTiltLimit(u8),
+    35..=75,
+    degrees
 );
 aero_bounded_setting!(
     /// Aero voltage correction, from -1.5 through +1.5 percent.
-    VeteranVoltageCorrection(i8), -15..=15, tenths_of_percent
+    VeteranVoltageCorrection(i8),
+    -15..=15,
+    tenths_of_percent
 );
 
 /// NOSFET/Veteran ANG (vertical angle) adjustment in tenths of a degree.

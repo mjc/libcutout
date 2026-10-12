@@ -42,430 +42,6 @@ impl ValidationGrant {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    const VESC_REPLY: &[u8] = &[
-        2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101, 114, 104, 97, 115, 104, 0,
-        38, 208, 3,
-    ];
-
-    fn begin(owner: &mut DeviceConnectionSession, name: &str) -> ConnectionAttemptToken {
-        owner.begin_attempt(name.into(), MonotonicTimestamp::new(0));
-        let token = owner.snapshot().connection.token.unwrap();
-        owner.state.connection.connected(&token);
-        token
-    }
-
-    #[test]
-    fn replacement_owns_selection_and_rejects_previous_wire_evidence() {
-        let mut owner = DeviceConnectionSession::default();
-        let previous = begin(&mut owner, "A");
-        let current = begin(&mut owner, "B");
-        assert_eq!(
-            owner
-                .state
-                .discovery()
-                .selected_platform_identifier
-                .as_deref(),
-            Some("B")
-        );
-        assert!(
-            owner
-                .observe_for_attempt(
-                    &previous,
-                    DeviceDetectionEvent::Notification { bytes: VESC_REPLY }
-                )
-                .is_none()
-        );
-        owner.resolve(&current, false, MonotonicTimestamp::new(1));
-        assert_eq!(
-            owner.snapshot().connection.readiness,
-            ConnectionReadiness::Pending
-        );
-        assert!(owner.snapshot().identity.is_none());
-    }
-
-    #[test]
-    fn admitted_retry_replaces_attempt_and_resets_device_scoped_state() {
-        let mut owner = DeviceConnectionSession::default();
-        let previous = begin(&mut owner, "A");
-        let cutout_core::ConnectionRetryDecision::Scheduled(retry) = owner
-            .state
-            .connection
-            .request_retry(&previous, MonotonicTimestamp::new(100), 500)
-        else {
-            panic!("current attempt should receive a retry");
-        };
-
-        let current = owner
-            .admit_retry(retry.token(), retry.deadline())
-            .expect("retry admitted at its deadline");
-
-        assert!(!owner.state.connection.is_current(&previous));
-        assert!(owner.state.connection.is_current(&current));
-        assert_eq!(current.platform_identifier(), "A");
-        assert_eq!(
-            owner.snapshot().connection.readiness,
-            ConnectionReadiness::Pending
-        );
-        assert!(owner.snapshot().identity.is_none());
-        assert_eq!(
-            owner
-                .state
-                .discovery()
-                .selected_platform_identifier
-                .as_deref(),
-            Some("A")
-        );
-    }
-
-    #[test]
-    fn stale_attempt_cannot_mutate_detector_or_probe_state() {
-        let mut owner = DeviceConnectionSession::default();
-        let previous = begin(&mut owner, "A");
-        let current = begin(&mut owner, "B");
-
-        assert!(
-            owner
-                .begin_identification_probes(&previous, MonotonicTimestamp::new(1))
-                .is_none()
-        );
-        assert!(
-            owner
-                .observe_detection(
-                    &previous,
-                    DeviceDetectionEvent::Notification { bytes: VESC_REPLY }
-                )
-                .is_none()
-        );
-        assert!(!owner.reset_detector(&previous));
-
-        assert!(
-            owner
-                .begin_identification_probes(&current, MonotonicTimestamp::new(1))
-                .is_some()
-        );
-    }
-
-    #[test]
-    fn standalone_probes_cannot_mutate_an_active_attempt() {
-        let mut owner = DeviceConnectionSession::default();
-        let _token = begin(&mut owner, "A");
-
-        assert_eq!(
-            owner.begin_identification_probes_unscoped(MonotonicTimestamp::new(1)),
-            crate::IdentificationProbePlan::Unsupported
-        );
-    }
-
-    #[test]
-    fn terminal_record_only_keeps_evidence_but_cannot_construct_decoder() {
-        let mut owner = DeviceConnectionSession::default();
-        let token = begin(&mut owner, "A");
-        owner.transport_failed(&token);
-        let evidence = owner.observe_for_attempt(
-            &token,
-            DeviceDetectionEvent::Notification { bytes: VESC_REPLY },
-        );
-        assert!(evidence.is_some());
-        owner.resolve(&token, true, MonotonicTimestamp::new(1));
-        assert_eq!(
-            owner.snapshot().connection.readiness,
-            ConnectionReadiness::RecordOnly
-        );
-        assert!(owner.snapshot().identity.is_none());
-        assert!(owner.state.connection.is_current(&token));
-    }
-
-    #[test]
-    fn saved_vesc_geometry_is_attempt_scoped_and_does_not_invent_vehicle_kind() {
-        let mut owner = DeviceConnectionSession::default();
-        let token = begin(&mut owner, "A");
-        let profile = crate::VescBoardProfile::new(
-            crate::MotorPolePairs::new(1),
-            crate::GearRatioDenominator::new(1),
-            cutout_core::Distance::from_millimetres(60),
-        );
-        assert!(owner.configure_vesc_board_profile(&token, profile));
-        let read = |owner: &mut DeviceConnectionSession, token: &ConnectionAttemptToken| {
-            let _ = owner.observe_for_attempt(
-                token,
-                DeviceDetectionEvent::Notification { bytes: VESC_REPLY },
-            );
-            owner.resolve(token, false, MonotonicTimestamp::new(1));
-            let _ = owner.ingest(
-                token,
-                &SessionInputDto::LinkUp {
-                    monotonic_ms: cutout_core::MonotonicMillisDto { milliseconds: 1 },
-                    max_write_len: None,
-                },
-            );
-            owner
-                .ingest(
-                    token,
-                    &SessionInputDto::Notification {
-                        channel: crate::VESC_NOTIFY_CHANNEL.as_bytes(),
-                        bytes: vec![
-                            2, 23, 50, 0, 2, 161, 138, 0, 0, 0, 0, 0, 4, 0, 0, 3, 221, 1, 119, 255,
-                            255, 170, 43, 0, 20, 45, 58, 3,
-                        ],
-                        monotonic_ms: cutout_core::MonotonicMillisDto { milliseconds: 2 },
-                    },
-                )
-                .unwrap()
-        };
-        let first = read(&mut owner, &token);
-        assert_eq!(first.telemetry.speed.unwrap().value, 989);
-        assert_eq!(
-            first.session.identity.unwrap().vehicle_kind,
-            crate::VehicleKind::Unknown
-        );
-        assert!(
-            !owner.configure_vesc_board_profile(&token, profile),
-            "live decoder configuration is immutable"
-        );
-        let replacement = begin(&mut owner, "B");
-        assert!(!owner.configure_vesc_board_profile(&token, profile));
-        assert!(read(&mut owner, &replacement).telemetry.speed.is_none());
-    }
-
-    #[test]
-    fn verified_vesc_starts_protocol_owned_polling_after_subscription() {
-        let mut owner = DeviceConnectionSession::default();
-        let token = begin(&mut owner, "VESC");
-        let _ = owner.observe_for_attempt(
-            &token,
-            DeviceDetectionEvent::Notification { bytes: VESC_REPLY },
-        );
-        owner.resolve(&token, false, MonotonicTimestamp::new(1));
-        let step = owner
-            .ingest(
-                &token,
-                &SessionInputDto::LinkUp {
-                    monotonic_ms: cutout_core::MonotonicMillisDto { milliseconds: 1 },
-                    max_write_len: None,
-                },
-            )
-            .unwrap();
-        let subscribe = step
-            .result
-            .outputs
-            .iter()
-            .position(|output| {
-                matches!(
-                    output,
-                    SessionOutput::Transport(cutout_core::TransportAction::Subscribe { .. })
-                )
-            })
-            .unwrap();
-        let write = step
-            .result
-            .outputs
-            .iter()
-            .position(|output| {
-                matches!(
-                    output,
-                    SessionOutput::Transport(cutout_core::TransportAction::Write { .. })
-                )
-            })
-            .expect("generic link-up starts the existing VESC polling owner");
-        assert!(
-            subscribe < write,
-            "native must enable notifications before initial requests"
-        );
-        assert_eq!(
-            owner.next_wakeup_at(&token, true),
-            Some(MonotonicTimestamp::new(101))
-        );
-        assert_eq!(owner.next_wakeup_at(&token, false), None);
-        let tick = owner
-            .ingest(
-                &token,
-                &SessionInputDto::Tick {
-                    monotonic_ms: cutout_core::MonotonicMillisDto {
-                        milliseconds: 2_001,
-                    },
-                },
-            )
-            .unwrap();
-        assert!(tick.result.outputs.iter().any(|output| matches!(
-            output,
-            SessionOutput::Transport(cutout_core::TransportAction::Write { .. })
-        )));
-        owner.link_down(&token);
-        assert_eq!(owner.next_wakeup_at(&token, true), None);
-        assert!(
-            owner
-                .ingest(
-                    &token,
-                    &SessionInputDto::Tick {
-                        monotonic_ms: cutout_core::MonotonicMillisDto {
-                            milliseconds: 4_001
-                        },
-                    }
-                )
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn verified_link_loss_retires_decoder_before_queued_input() {
-        let mut owner = DeviceConnectionSession::default();
-        let token = begin(&mut owner, "A");
-        let _ = owner.observe_for_attempt(
-            &token,
-            DeviceDetectionEvent::Notification { bytes: VESC_REPLY },
-        );
-        owner.resolve(&token, false, MonotonicTimestamp::new(1));
-        assert!(owner.state.connection.is_verified(&token));
-        assert!(owner.snapshot().identity.is_some());
-        owner.link_down(&token);
-        assert!(!owner.state.connection.is_verified(&token));
-        assert!(owner.snapshot().identity.is_none());
-        assert_eq!(
-            owner.snapshot().connection.readiness,
-            ConnectionReadiness::Failed
-        );
-    }
-
-    #[test]
-    fn verified_decoder_is_retired_when_later_evidence_conflicts() {
-        let mut owner = DeviceConnectionSession::default();
-        let token = connected_aero(&mut owner);
-        assert!(owner.state.connection.is_verified(&token));
-
-        let resolution = owner
-            .observe_detection(
-                &token,
-                DeviceDetectionEvent::Notification { bytes: VESC_REPLY },
-            )
-            .expect("current attempt evidence is retained");
-
-        assert_eq!(resolution.protocol, crate::ProtocolFamilyState::Conflict);
-        assert_eq!(
-            owner.snapshot().connection.readiness,
-            ConnectionReadiness::Conflicted
-        );
-        assert!(owner.snapshot().identity.is_none());
-        assert!(!owner.state.connection.is_current(&token));
-        assert!(
-            owner
-                .ingest(
-                    &token,
-                    &SessionInputDto::Tick {
-                        monotonic_ms: cutout_core::MonotonicMillisDto { milliseconds: 2 },
-                    }
-                )
-                .is_none()
-        );
-    }
-
-    pub(super) fn connected_aero(owner: &mut DeviceConnectionSession) -> ConnectionAttemptToken {
-        let token = begin(owner, "A");
-        let mut frame = vec![0_u8; 42];
-        frame[..4].copy_from_slice(&[0xdc, 0x5a, 0x5c, 38]);
-        frame[28..30].copy_from_slice(&43_000_u16.to_be_bytes());
-        let _ =
-            owner.observe_for_attempt(&token, DeviceDetectionEvent::Notification { bytes: &frame });
-        owner.resolve(&token, false, MonotonicTimestamp::new(1));
-        let _ = owner.ingest(
-            &token,
-            &SessionInputDto::LinkUp {
-                monotonic_ms: cutout_core::MonotonicMillisDto { milliseconds: 1 },
-                max_write_len: None,
-            },
-        );
-        token
-    }
-
-    pub(super) fn aero_mode_telemetry(at: u64) -> SessionInputDto {
-        let mut frame = vec![0_u8; 42];
-        frame[..4].copy_from_slice(&[0xdc, 0x5a, 0x5c, 38]);
-        frame[28..30].copy_from_slice(&43_000_u16.to_be_bytes());
-        SessionInputDto::Notification {
-            channel: crate::VETERAN_DATA_CHANNEL.as_bytes(),
-            bytes: frame,
-            monotonic_ms: cutout_core::MonotonicMillisDto { milliseconds: at },
-        }
-    }
-
-    fn pwm_duty_readback(pwm: u8, at: u64) -> SessionInputDto {
-        let mut frame = vec![0x80; 58];
-        frame[..4].copy_from_slice(&[0xdc, 0x5a, 0x5c, 54]);
-        frame[28..30].copy_from_slice(&43_000_u16.to_be_bytes());
-        frame[46] = 8;
-        frame[53] = pwm;
-        let checksum = crc32fast::hash(&frame[..54]);
-        frame[54..].copy_from_slice(&checksum.to_be_bytes());
-        SessionInputDto::Notification {
-            channel: crate::VETERAN_DATA_CHANNEL.as_bytes(),
-            bytes: frame,
-            monotonic_ms: cutout_core::MonotonicMillisDto { milliseconds: at },
-        }
-    }
-
-    #[test]
-    fn decoded_settings_update_only_the_current_connections_semantic_owner() {
-        let mut owner = DeviceConnectionSession::default();
-        let token = connected_aero(&mut owner);
-        assert!(owner.ingest(&token, &pwm_duty_readback(80, 10)).is_some());
-        let snapshots = owner.state.settings.snapshot(MonotonicTimestamp::new(15));
-        let pwm = snapshots
-            .iter()
-            .find(|snapshot| snapshot.id == cutout_core::SettingId::PwmTiltback)
-            .expect("decoded PWM reaches shared settings owner");
-        assert_eq!(
-            pwm.current.unwrap().value,
-            cutout_core::DeviceSettingValue::Number(80)
-        );
-        assert_eq!(pwm.age, Some(cutout_core::Duration::from_milliseconds(5)));
-        let _ = begin(&mut owner, "B");
-        assert!(owner.ingest(&token, &pwm_duty_readback(30, 20)).is_none());
-        assert_eq!(
-            owner.state.settings.snapshot(MonotonicTimestamp::new(20)),
-            [] as [cutout_core::DeviceSettingSnapshot; 0]
-        );
-    }
-
-    #[test]
-    fn explicit_unknown_settings_frame_clears_current_but_preserves_request() {
-        let mut owner = DeviceConnectionSession::default();
-        let token = connected_aero(&mut owner);
-        let _ = owner.ingest(&token, &pwm_duty_readback(80, 10));
-        assert!(
-            owner
-                .state
-                .settings
-                .snapshot(MonotonicTimestamp::new(10))
-                .iter()
-                .any(
-                    |snapshot| snapshot.id == cutout_core::SettingId::PwmTiltback
-                        && snapshot.current.is_some()
-                )
-        );
-        owner.state.settings.submission(
-            cutout_core::SettingId::PwmTiltback,
-            cutout_core::DeviceSettingValue::Number(85),
-            cutout_core::SettingSubmissionOutcome::Accepted,
-            cutout_core::SettingCompletionStrategy::MatchingReadback,
-            MonotonicTimestamp::new(11),
-        );
-        let _ = owner.ingest(&token, &pwm_duty_readback(128, 12));
-        let snapshots = owner.state.settings.snapshot(MonotonicTimestamp::new(12));
-        let pwm = snapshots
-            .iter()
-            .find(|snapshot| snapshot.id == cutout_core::SettingId::PwmTiltback)
-            .unwrap();
-        assert!(pwm.current.is_none());
-        assert_eq!(
-            pwm.requested,
-            Some(cutout_core::DeviceSettingValue::Number(85))
-        );
-    }
-}
-
 /// Parser boundaries for one input, independent of its semantic output count.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum NotificationFramingEvidence {
@@ -1021,5 +597,429 @@ impl DeviceConnectionSession {
             connection: self.state.connection.snapshot().clone(),
             identity: self.device.as_ref().map(DeviceSession::identity),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const VESC_REPLY: &[u8] = &[
+        2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101, 114, 104, 97, 115, 104, 0,
+        38, 208, 3,
+    ];
+
+    fn begin(owner: &mut DeviceConnectionSession, name: &str) -> ConnectionAttemptToken {
+        owner.begin_attempt(name.into(), MonotonicTimestamp::new(0));
+        let token = owner.snapshot().connection.token.unwrap();
+        owner.state.connection.connected(&token);
+        token
+    }
+
+    #[test]
+    fn replacement_owns_selection_and_rejects_previous_wire_evidence() {
+        let mut owner = DeviceConnectionSession::default();
+        let previous = begin(&mut owner, "A");
+        let current = begin(&mut owner, "B");
+        assert_eq!(
+            owner
+                .state
+                .discovery()
+                .selected_platform_identifier
+                .as_deref(),
+            Some("B")
+        );
+        assert!(
+            owner
+                .observe_for_attempt(
+                    &previous,
+                    DeviceDetectionEvent::Notification { bytes: VESC_REPLY }
+                )
+                .is_none()
+        );
+        owner.resolve(&current, false, MonotonicTimestamp::new(1));
+        assert_eq!(
+            owner.snapshot().connection.readiness,
+            ConnectionReadiness::Pending
+        );
+        assert!(owner.snapshot().identity.is_none());
+    }
+
+    #[test]
+    fn admitted_retry_replaces_attempt_and_resets_device_scoped_state() {
+        let mut owner = DeviceConnectionSession::default();
+        let previous = begin(&mut owner, "A");
+        let cutout_core::ConnectionRetryDecision::Scheduled(retry) = owner
+            .state
+            .connection
+            .request_retry(&previous, MonotonicTimestamp::new(100), 500)
+        else {
+            panic!("current attempt should receive a retry");
+        };
+
+        let current = owner
+            .admit_retry(retry.token(), retry.deadline())
+            .expect("retry admitted at its deadline");
+
+        assert!(!owner.state.connection.is_current(&previous));
+        assert!(owner.state.connection.is_current(&current));
+        assert_eq!(current.platform_identifier(), "A");
+        assert_eq!(
+            owner.snapshot().connection.readiness,
+            ConnectionReadiness::Pending
+        );
+        assert!(owner.snapshot().identity.is_none());
+        assert_eq!(
+            owner
+                .state
+                .discovery()
+                .selected_platform_identifier
+                .as_deref(),
+            Some("A")
+        );
+    }
+
+    #[test]
+    fn stale_attempt_cannot_mutate_detector_or_probe_state() {
+        let mut owner = DeviceConnectionSession::default();
+        let previous = begin(&mut owner, "A");
+        let current = begin(&mut owner, "B");
+
+        assert!(
+            owner
+                .begin_identification_probes(&previous, MonotonicTimestamp::new(1))
+                .is_none()
+        );
+        assert!(
+            owner
+                .observe_detection(
+                    &previous,
+                    DeviceDetectionEvent::Notification { bytes: VESC_REPLY }
+                )
+                .is_none()
+        );
+        assert!(!owner.reset_detector(&previous));
+
+        assert!(
+            owner
+                .begin_identification_probes(&current, MonotonicTimestamp::new(1))
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn standalone_probes_cannot_mutate_an_active_attempt() {
+        let mut owner = DeviceConnectionSession::default();
+        let _token = begin(&mut owner, "A");
+
+        assert_eq!(
+            owner.begin_identification_probes_unscoped(MonotonicTimestamp::new(1)),
+            crate::IdentificationProbePlan::Unsupported
+        );
+    }
+
+    #[test]
+    fn terminal_record_only_keeps_evidence_but_cannot_construct_decoder() {
+        let mut owner = DeviceConnectionSession::default();
+        let token = begin(&mut owner, "A");
+        owner.transport_failed(&token);
+        let evidence = owner.observe_for_attempt(
+            &token,
+            DeviceDetectionEvent::Notification { bytes: VESC_REPLY },
+        );
+        assert!(evidence.is_some());
+        owner.resolve(&token, true, MonotonicTimestamp::new(1));
+        assert_eq!(
+            owner.snapshot().connection.readiness,
+            ConnectionReadiness::RecordOnly
+        );
+        assert!(owner.snapshot().identity.is_none());
+        assert!(owner.state.connection.is_current(&token));
+    }
+
+    #[test]
+    fn saved_vesc_geometry_is_attempt_scoped_and_does_not_invent_vehicle_kind() {
+        let mut owner = DeviceConnectionSession::default();
+        let token = begin(&mut owner, "A");
+        let profile = crate::VescBoardProfile::new(
+            crate::MotorPolePairs::new(1),
+            crate::GearRatioDenominator::new(1),
+            cutout_core::Distance::from_millimetres(60),
+        );
+        assert!(owner.configure_vesc_board_profile(&token, profile));
+        let read = |owner: &mut DeviceConnectionSession, token: &ConnectionAttemptToken| {
+            let _ = owner.observe_for_attempt(
+                token,
+                DeviceDetectionEvent::Notification { bytes: VESC_REPLY },
+            );
+            owner.resolve(token, false, MonotonicTimestamp::new(1));
+            let _ = owner.ingest(
+                token,
+                &SessionInputDto::LinkUp {
+                    monotonic_ms: cutout_core::MonotonicMillisDto { milliseconds: 1 },
+                    max_write_len: None,
+                },
+            );
+            owner
+                .ingest(
+                    token,
+                    &SessionInputDto::Notification {
+                        channel: crate::VESC_NOTIFY_CHANNEL.as_bytes(),
+                        bytes: vec![
+                            2, 23, 50, 0, 2, 161, 138, 0, 0, 0, 0, 0, 4, 0, 0, 3, 221, 1, 119, 255,
+                            255, 170, 43, 0, 20, 45, 58, 3,
+                        ],
+                        monotonic_ms: cutout_core::MonotonicMillisDto { milliseconds: 2 },
+                    },
+                )
+                .unwrap()
+        };
+        let first = read(&mut owner, &token);
+        assert_eq!(first.telemetry.speed.unwrap().value, 989);
+        assert_eq!(
+            first.session.identity.unwrap().vehicle_kind,
+            crate::VehicleKind::Unknown
+        );
+        assert!(
+            !owner.configure_vesc_board_profile(&token, profile),
+            "live decoder configuration is immutable"
+        );
+        let replacement = begin(&mut owner, "B");
+        assert!(!owner.configure_vesc_board_profile(&token, profile));
+        assert!(read(&mut owner, &replacement).telemetry.speed.is_none());
+    }
+
+    #[test]
+    fn verified_vesc_starts_protocol_owned_polling_after_subscription() {
+        let mut owner = DeviceConnectionSession::default();
+        let token = begin(&mut owner, "VESC");
+        let _ = owner.observe_for_attempt(
+            &token,
+            DeviceDetectionEvent::Notification { bytes: VESC_REPLY },
+        );
+        owner.resolve(&token, false, MonotonicTimestamp::new(1));
+        let step = owner
+            .ingest(
+                &token,
+                &SessionInputDto::LinkUp {
+                    monotonic_ms: cutout_core::MonotonicMillisDto { milliseconds: 1 },
+                    max_write_len: None,
+                },
+            )
+            .unwrap();
+        let subscribe = step
+            .result
+            .outputs
+            .iter()
+            .position(|output| {
+                matches!(
+                    output,
+                    SessionOutput::Transport(cutout_core::TransportAction::Subscribe { .. })
+                )
+            })
+            .unwrap();
+        let write = step
+            .result
+            .outputs
+            .iter()
+            .position(|output| {
+                matches!(
+                    output,
+                    SessionOutput::Transport(cutout_core::TransportAction::Write { .. })
+                )
+            })
+            .expect("generic link-up starts the existing VESC polling owner");
+        assert!(
+            subscribe < write,
+            "native must enable notifications before initial requests"
+        );
+        assert_eq!(
+            owner.next_wakeup_at(&token, true),
+            Some(MonotonicTimestamp::new(101))
+        );
+        assert_eq!(owner.next_wakeup_at(&token, false), None);
+        let tick = owner
+            .ingest(
+                &token,
+                &SessionInputDto::Tick {
+                    monotonic_ms: cutout_core::MonotonicMillisDto {
+                        milliseconds: 2_001,
+                    },
+                },
+            )
+            .unwrap();
+        assert!(tick.result.outputs.iter().any(|output| matches!(
+            output,
+            SessionOutput::Transport(cutout_core::TransportAction::Write { .. })
+        )));
+        owner.link_down(&token);
+        assert_eq!(owner.next_wakeup_at(&token, true), None);
+        assert!(
+            owner
+                .ingest(
+                    &token,
+                    &SessionInputDto::Tick {
+                        monotonic_ms: cutout_core::MonotonicMillisDto {
+                            milliseconds: 4_001
+                        },
+                    }
+                )
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn verified_link_loss_retires_decoder_before_queued_input() {
+        let mut owner = DeviceConnectionSession::default();
+        let token = begin(&mut owner, "A");
+        let _ = owner.observe_for_attempt(
+            &token,
+            DeviceDetectionEvent::Notification { bytes: VESC_REPLY },
+        );
+        owner.resolve(&token, false, MonotonicTimestamp::new(1));
+        assert!(owner.state.connection.is_verified(&token));
+        assert!(owner.snapshot().identity.is_some());
+        owner.link_down(&token);
+        assert!(!owner.state.connection.is_verified(&token));
+        assert!(owner.snapshot().identity.is_none());
+        assert_eq!(
+            owner.snapshot().connection.readiness,
+            ConnectionReadiness::Failed
+        );
+    }
+
+    #[test]
+    fn verified_decoder_is_retired_when_later_evidence_conflicts() {
+        let mut owner = DeviceConnectionSession::default();
+        let token = connected_aero(&mut owner);
+        assert!(owner.state.connection.is_verified(&token));
+
+        let resolution = owner
+            .observe_detection(
+                &token,
+                DeviceDetectionEvent::Notification { bytes: VESC_REPLY },
+            )
+            .expect("current attempt evidence is retained");
+
+        assert_eq!(resolution.protocol, crate::ProtocolFamilyState::Conflict);
+        assert_eq!(
+            owner.snapshot().connection.readiness,
+            ConnectionReadiness::Conflicted
+        );
+        assert!(owner.snapshot().identity.is_none());
+        assert!(!owner.state.connection.is_current(&token));
+        assert!(
+            owner
+                .ingest(
+                    &token,
+                    &SessionInputDto::Tick {
+                        monotonic_ms: cutout_core::MonotonicMillisDto { milliseconds: 2 },
+                    }
+                )
+                .is_none()
+        );
+    }
+
+    pub(super) fn connected_aero(owner: &mut DeviceConnectionSession) -> ConnectionAttemptToken {
+        let token = begin(owner, "A");
+        let mut frame = vec![0_u8; 42];
+        frame[..4].copy_from_slice(&[0xdc, 0x5a, 0x5c, 38]);
+        frame[28..30].copy_from_slice(&43_000_u16.to_be_bytes());
+        let _ =
+            owner.observe_for_attempt(&token, DeviceDetectionEvent::Notification { bytes: &frame });
+        owner.resolve(&token, false, MonotonicTimestamp::new(1));
+        let _ = owner.ingest(
+            &token,
+            &SessionInputDto::LinkUp {
+                monotonic_ms: cutout_core::MonotonicMillisDto { milliseconds: 1 },
+                max_write_len: None,
+            },
+        );
+        token
+    }
+
+    pub(super) fn aero_mode_telemetry(at: u64) -> SessionInputDto {
+        let mut frame = vec![0_u8; 42];
+        frame[..4].copy_from_slice(&[0xdc, 0x5a, 0x5c, 38]);
+        frame[28..30].copy_from_slice(&43_000_u16.to_be_bytes());
+        SessionInputDto::Notification {
+            channel: crate::VETERAN_DATA_CHANNEL.as_bytes(),
+            bytes: frame,
+            monotonic_ms: cutout_core::MonotonicMillisDto { milliseconds: at },
+        }
+    }
+
+    fn pwm_duty_readback(pwm: u8, at: u64) -> SessionInputDto {
+        let mut frame = vec![0x80; 58];
+        frame[..4].copy_from_slice(&[0xdc, 0x5a, 0x5c, 54]);
+        frame[28..30].copy_from_slice(&43_000_u16.to_be_bytes());
+        frame[46] = 8;
+        frame[53] = pwm;
+        let checksum = crc32fast::hash(&frame[..54]);
+        frame[54..].copy_from_slice(&checksum.to_be_bytes());
+        SessionInputDto::Notification {
+            channel: crate::VETERAN_DATA_CHANNEL.as_bytes(),
+            bytes: frame,
+            monotonic_ms: cutout_core::MonotonicMillisDto { milliseconds: at },
+        }
+    }
+
+    #[test]
+    fn decoded_settings_update_only_the_current_connections_semantic_owner() {
+        let mut owner = DeviceConnectionSession::default();
+        let token = connected_aero(&mut owner);
+        assert!(owner.ingest(&token, &pwm_duty_readback(80, 10)).is_some());
+        let snapshots = owner.state.settings.snapshot(MonotonicTimestamp::new(15));
+        let pwm = snapshots
+            .iter()
+            .find(|snapshot| snapshot.id == cutout_core::SettingId::PwmTiltback)
+            .expect("decoded PWM reaches shared settings owner");
+        assert_eq!(
+            pwm.current.unwrap().value,
+            cutout_core::DeviceSettingValue::Number(80)
+        );
+        assert_eq!(pwm.age, Some(cutout_core::Duration::from_milliseconds(5)));
+        let _ = begin(&mut owner, "B");
+        assert!(owner.ingest(&token, &pwm_duty_readback(30, 20)).is_none());
+        assert_eq!(
+            owner.state.settings.snapshot(MonotonicTimestamp::new(20)),
+            [] as [cutout_core::DeviceSettingSnapshot; 0]
+        );
+    }
+
+    #[test]
+    fn explicit_unknown_settings_frame_clears_current_but_preserves_request() {
+        let mut owner = DeviceConnectionSession::default();
+        let token = connected_aero(&mut owner);
+        let _ = owner.ingest(&token, &pwm_duty_readback(80, 10));
+        assert!(
+            owner
+                .state
+                .settings
+                .snapshot(MonotonicTimestamp::new(10))
+                .iter()
+                .any(
+                    |snapshot| snapshot.id == cutout_core::SettingId::PwmTiltback
+                        && snapshot.current.is_some()
+                )
+        );
+        owner.state.settings.submission(
+            cutout_core::SettingId::PwmTiltback,
+            cutout_core::DeviceSettingValue::Number(85),
+            cutout_core::SettingSubmissionOutcome::Accepted,
+            cutout_core::SettingCompletionStrategy::MatchingReadback,
+            MonotonicTimestamp::new(11),
+        );
+        let _ = owner.ingest(&token, &pwm_duty_readback(128, 12));
+        let snapshots = owner.state.settings.snapshot(MonotonicTimestamp::new(12));
+        let pwm = snapshots
+            .iter()
+            .find(|snapshot| snapshot.id == cutout_core::SettingId::PwmTiltback)
+            .unwrap();
+        assert!(pwm.current.is_none());
+        assert_eq!(
+            pwm.requested,
+            Some(cutout_core::DeviceSettingValue::Number(85))
+        );
     }
 }

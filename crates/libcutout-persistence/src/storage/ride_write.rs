@@ -161,9 +161,7 @@ impl RideWriteState {
         let at = monotonic_at_ms
             .map(|milliseconds| {
                 clamped_transition_timestamp(
-                    self.monotonic_created_at_ms
-                        .map(MonotonicMilliseconds::new)
-                        .unwrap_or_default(),
+                    MonotonicMilliseconds::new(self.monotonic_created_at_ms.unwrap_or_default()),
                     self.latest_observed_monotonic_ms
                         .map(MonotonicMilliseconds::new),
                     MonotonicMilliseconds::new(milliseconds),
@@ -289,8 +287,9 @@ impl RideWriteState {
         Ok(LocationWriteDecision::Accepted {
             distance_millimetres: previous
                 .filter(|(previous_segment_id, _)| *previous_segment_id == segment_id.value())
-                .map(|(_, previous)| distance_between(previous, sample).as_u64())
-                .unwrap_or_default(),
+                .map_or(0, |(_, previous)| {
+                    distance_between(previous, sample).as_u64()
+                }),
             updated_at_ms: self
                 .updated_at_ms
                 .max(sample.wall_clock_unix_milliseconds().as_u64()),
