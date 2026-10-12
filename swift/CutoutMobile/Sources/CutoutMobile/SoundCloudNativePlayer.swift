@@ -30,7 +30,8 @@ public final class SoundCloudNativePlayer {
     @ObservationIgnored private let session: URLSession
     @ObservationIgnored private var searchTask: Task<Void, Never>?
     @ObservationIgnored private var streamTask: Task<Void, Never>?
-    @ObservationIgnored private(set) var audioSessionTask: Task<Void, Never>?
+    // The result retains actual audio-session ownership even when the play task is cancelled.
+    @ObservationIgnored private(set) var audioSessionTask: Task<Bool, Never>?
     @ObservationIgnored private let updateAudioSession: @Sendable (Bool) async throws -> Void
     @ObservationIgnored private var itemObservation: NSKeyValueObservation?
     @ObservationIgnored private var endObservation: NSObjectProtocol?
@@ -128,8 +129,12 @@ public final class SoundCloudNativePlayer {
         if let previous = audioSessionTask {
             let updateAudioSession = updateAudioSession
             audioSessionTask = Task {
-                await previous.value
-                try? await updateAudioSession(false)
+                let wasActive = await previous.value
+                guard wasActive else { return false }
+                do {
+                    try await updateAudioSession(false)
+                    return false
+                } catch { return wasActive }
             }
         }
     }
@@ -220,20 +225,22 @@ public final class SoundCloudNativePlayer {
             previous?.cancel()
             let updateAudioSession = updateAudioSession
             audioSessionTask = Task { [weak self] in
-                await previous?.value
-                guard !Task.isCancelled else { return }
+                let wasActive = await previous?.value ?? false
+                guard !Task.isCancelled else { return wasActive }
                 do {
                     try await updateAudioSession(true)
                     guard !Task.isCancelled, let self,
                         core.snapshot().playbackId == id, core.snapshot().state == .playing
-                    else { return }
+                    else { return true }
                     player.play()
+                    return true
                 } catch {
                     guard !Task.isCancelled, let self,
                         core.snapshot().playbackId == id, core.snapshot().state == .playing
-                    else { return }
+                    else { return wasActive }
                     errorText = pevLocalizedText("music.soundcloud.play_failed")
                     apply(core.failed(id: id))
+                    return wasActive
                 }
             }
         case .fetch(let id, let endpoint):

@@ -13,7 +13,7 @@ final class SoundCloudNativePlayerTests: XCTestCase {
         await audio.waitForActivation()
         player.command(.pause)
         await audio.finishActivation(failing: true)
-        await player.audioSessionTask?.value
+        _ = await player.audioSessionTask?.value
         XCTAssertEqual(player.snapshot.state, .paused)
         XCTAssertNil(player.errorText)
     }
@@ -28,9 +28,9 @@ final class SoundCloudNativePlayerTests: XCTestCase {
         player.stop()
         XCTAssertEqual(player.snapshot.state, .idle)
         await audio.finishActivation(failing: true)
-        await player.audioSessionTask?.value
+        _ = await player.audioSessionTask?.value
         let requests = await audio.requests
-        XCTAssertEqual(requests, [true, false])
+        XCTAssertEqual(requests, [true])
         XCTAssertNil(player.errorText)
         XCTAssertNil(player.snapshot.track)
     }
@@ -43,7 +43,7 @@ final class SoundCloudNativePlayerTests: XCTestCase {
         player.command(.play)
         await audio.waitForActivation()
         await audio.finishActivation(failing: true)
-        await player.audioSessionTask?.value
+        _ = await player.audioSessionTask?.value
         XCTAssertEqual(player.snapshot.state, .failed)
         XCTAssertNotNil(player.errorText)
     }
@@ -63,7 +63,7 @@ final class SoundCloudNativePlayerTests: XCTestCase {
         let requests = await audio.requests
         XCTAssertEqual(requests, [true, false, true])
         await audio.finishActivation(failing: false)
-        await player.audioSessionTask?.value
+        _ = await player.audioSessionTask?.value
         XCTAssertEqual(player.snapshot.state, .playing)
         XCTAssertNil(player.errorText)
     }
@@ -73,9 +73,36 @@ final class SoundCloudNativePlayerTests: XCTestCase {
         let audio = DelayedAudioSession()
         let player = SoundCloudNativePlayer(core: MobileSoundCloudPlayer()) { try await audio.update($0) }
         player.stop()
-        await player.audioSessionTask?.value
+        _ = await player.audioSessionTask?.value
         let requests = await audio.requests
         XCTAssertTrue(requests.isEmpty)
+    }
+
+    @MainActor
+    func testPauseBeforeActivationThenStopDoesNotReleaseAnotherSession() async throws {
+        let audio = DelayedAudioSession()
+        let player = SoundCloudNativePlayer(core: try pausedCore()) { try await audio.update($0) }
+        player.command(.play)
+        player.command(.pause)
+        player.stop()
+        _ = await player.audioSessionTask?.value
+        let requests = await audio.requests
+        XCTAssertTrue(requests.isEmpty)
+    }
+
+    @MainActor
+    func testStopReleasesSuccessfullyActivatedSessionAfterCancelledPlay() async throws {
+        let audio = DelayedAudioSession()
+        let player = SoundCloudNativePlayer(core: try pausedCore()) { try await audio.update($0) }
+        player.command(.play)
+        await audio.waitForActivation()
+        player.command(.pause)
+        player.stop()
+        await audio.finishActivation(failing: false)
+        _ = await player.audioSessionTask?.value
+        let requests = await audio.requests
+        XCTAssertEqual(requests, [true, false])
+        XCTAssertEqual(player.snapshot.state, .idle)
     }
 
     private func pausedCore(_ core: MobileSoundCloudPlayer = MobileSoundCloudPlayer()) throws -> MobileSoundCloudPlayer
