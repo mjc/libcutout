@@ -46,6 +46,7 @@ public final class SoundCloudNativePlayer {
         #if DEBUG && targetEnvironment(simulator)
             // Development provisioning only. Release token exchange is tracked in LIBCU-909.
             developmentToken = ProcessInfo.processInfo.environment["CUTOUT_SOUNDCLOUD_ACCESS_TOKEN"]
+            player.isMuted = ProcessInfo.processInfo.arguments.contains("-CUTOUT_UI_TEST_FIXTURE")
         #else
             developmentToken = nil
         #endif
