@@ -365,9 +365,22 @@ final class CutoutAppModel {
             try await RideCaptureRecovery.runIfRequested(database: database)
             try await CutoutUITestSavedRideFixture.runIfRequested(database: database)
         #endif
-        let state = MobileRideMapState(database: database)
+        #if DEBUG
+            let state: MobileRideMapState
+            if uiTestFixture == .rideMapStorageUnavailable {
+                state = MobileRideMapState.uiTestStorageUnavailable(
+                    message: "UI test forced ride-map storage failure"
+                )
+            } else {
+                state = MobileRideMapState(database: database)
+            }
+        #else
+            let state = MobileRideMapState(database: database)
+        #endif
         let now = UInt64(ProcessInfo.processInfo.systemUptime * 1_000)
-        _ = try await state.restoreCommand(atMs: now)
+        if state.initializationError == nil {
+            _ = try await state.restoreCommand(atMs: now)
+        }
         let selectedDeviceStore = DevicePickerSelectionStore()
         let restoredDeviceSelection = await selectedDeviceStore.load()
         try Task.checkCancellation()

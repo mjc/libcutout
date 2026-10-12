@@ -799,6 +799,13 @@ public final class MobileRideMapState: @unchecked Sendable {
     private let storageUnavailableError: MobileRideMapError?
 
     #if DEBUG
+        /// Creates the existing typed unavailable-storage state for deterministic app UI tests.
+        public static func uiTestStorageUnavailable(message: String) -> MobileRideMapState {
+            MobileRideMapState(storageUnavailable: message)
+        }
+    #endif
+
+    #if DEBUG
         static let debugDatabasePath = FileManager.default.temporaryDirectory
             .appendingPathComponent("cutout-map-test-\(UUID().uuidString).sqlite")
             .path

@@ -1992,8 +1992,8 @@
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Waiting for location." } } }
     },
     "ride_map.persistence_unavailable" : {
-      "comment" : "Warning shown when the ride-map database could not be opened and the map is session-only.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Ride maps are stored only for this session because durable storage is unavailable." } } }
+      "comment" : "Status shown when ride storage is unavailable and ride recording cannot start.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Ride storage is unavailable." } } }
     },
     "ride_map.command_failed" : {
       "comment" : "Warning shown when a Rust-owned ride-map command or query fails without changing ride state.",

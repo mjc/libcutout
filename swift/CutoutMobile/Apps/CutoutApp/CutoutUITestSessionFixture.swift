@@ -6,6 +6,7 @@ import Foundation
     enum CutoutUITestSessionFixture: Equatable {
         case unknownDevice
         case unknownDeviceFinishFailure
+        case rideMapStorageUnavailable
         case probeDevice
         case probeTimeout
         case probeMalformedResponse
@@ -42,6 +43,7 @@ import Foundation
             switch value {
             case "unknown-device": self = .unknownDevice
             case "unknown-device-finish-failure": self = .unknownDeviceFinishFailure
+            case "ride-map-storage-unavailable": self = .rideMapStorageUnavailable
             case "probe-device": self = .probeDevice
             case "probe-timeout": self = .probeTimeout
             case "probe-malformed": self = .probeMalformedResponse
@@ -120,7 +122,7 @@ import Foundation
 
         var candidate: DevicePickerDiscoveryCandidate {
             switch self {
-            case .unknownDevice, .unknownDeviceFinishFailure:
+            case .unknownDevice, .unknownDeviceFinishFailure, .rideMapStorageUnavailable:
                 DevicePickerDiscoveryCandidate(
                     platformIdentifier: "ui-test-unknown-device",
                     displayName: "Unknown BLE device",

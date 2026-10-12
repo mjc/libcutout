@@ -215,6 +215,29 @@ final class CutoutAppUITests: XCTestCase {
         try verifySetupNavigation()
     }
 
+    func testRideMapShowsUnavailableStorageWithoutFalseEmptyStateOrStart() throws {
+        let map = app.tabBars.buttons["Map"]
+        XCTAssertTrue(map.waitForExistence(timeout: 10), app.debugDescription)
+        map.tap()
+
+        let persistenceUnavailable = "Ride storage is unavailable."
+        let status = app.descendants(matching: .any)["ride-map.recording-pill"]
+        XCTAssertTrue(status.waitForExistence(timeout: 10), app.debugDescription)
+        let unavailableStatus = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label == %@", persistenceUnavailable),
+            object: status
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [unavailableStatus], timeout: 10), .completed, app.debugDescription)
+        XCTAssertEqual(status.label, persistenceUnavailable, app.debugDescription)
+        XCTAssertFalse(app.staticTexts["No active ride"].exists, app.debugDescription)
+        XCTAssertFalse(app.buttons["ride-map.start"].exists, app.debugDescription)
+        XCTAssertFalse(app.descendants(matching: .any)["ride-map.persistence-warning"].exists, app.debugDescription)
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "ride-map-storage-unavailable"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
     func testPickerSurfaceMusicHistoryPreferenceSurvivesRelaunchWithoutRide() throws {
         func assertNoActiveRide() {
             let map = app.tabBars.buttons["Map"]
@@ -4657,6 +4680,7 @@ final class CutoutAppUITests: XCTestCase {
     private enum Fixture: Equatable {
         case unknownDevice
         case unknownDeviceFinishFailure
+        case rideMapStorageUnavailable
         case probeDevice
         case probeTimeout
         case probeMalformedResponse
@@ -4707,6 +4731,7 @@ final class CutoutAppUITests: XCTestCase {
         case vescStaleLiveActivityAuto
 
         static func testFixture(for testName: String) -> Self {
+            if testName.contains("RideMapShowsUnavailableStorage") { return .rideMapStorageUnavailable }
             if testName.contains("BackgroundFlushFailure") || testName.contains("FinishCaptureFailure") {
                 return .unknownDeviceFinishFailure
             }
@@ -4794,6 +4819,7 @@ final class CutoutAppUITests: XCTestCase {
             switch self {
             case .unknownDevice: "unknown-device"
             case .unknownDeviceFinishFailure: "unknown-device-finish-failure"
+            case .rideMapStorageUnavailable: "ride-map-storage-unavailable"
             case .probeDevice: "probe-device"
             case .probeTimeout: "probe-timeout"
             case .probeMalformedResponse: "probe-malformed"
