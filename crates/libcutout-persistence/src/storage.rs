@@ -469,6 +469,7 @@ pub struct RideRecord {
     paused_at_ms: Option<u64>,
     paused_duration_ms: u64,
     completed_duration_ms: u64,
+    last_recorded_point_duration_ms: Option<u64>,
     updated_at_ms: u64,
     duration_ms: u64,
     summary: RideSummary,
@@ -492,6 +493,19 @@ struct LocationObservationClocks {
 }
 
 impl RideRecord {
+    /// Duration at the latest accepted live route point, if one has been recorded.
+    #[must_use]
+    pub const fn last_recorded_point_duration_milliseconds(
+        &self,
+    ) -> Option<cutout_ride_maps::RideDurationMilliseconds> {
+        match self.last_recorded_point_duration_ms {
+            Some(milliseconds) => Some(cutout_ride_maps::RideDurationMilliseconds::new(
+                milliseconds,
+            )),
+            None => None,
+        }
+    }
+
     /// Latest durable wheel-motion evidence.
     #[must_use]
     pub const fn motion_observation(&self) -> Option<RideMotionObservation> {
@@ -5783,6 +5797,22 @@ fn settle_recovered_ride(
         )?;
     } else {
         let write_state = load_ride_write_state(&transaction, ride_id)?;
+        let recovered_point_duration_ms = if write_state.lifecycle()
+            == RideLifecycleState::Interrupted
+            && write_state.paused_at_milliseconds().is_none()
+        {
+            write_state.last_recorded_point_duration_ms()
+        } else {
+            None
+        };
+        if let Some(point_duration_ms) = recovered_point_duration_ms
+            && point_duration_ms > write_state.completed_duration_ms()
+        {
+            return Err(StorageError::InvalidStoredValue {
+                field: "rides.last_recorded_point_duration_ms",
+                value: point_duration_ms.to_string(),
+            });
+        }
         // Database-open recovery stores an explicit pause as Interrupted so the mobile core can
         // decide whether the 24-hour policy has expired. Once it expires, settle it through the
         // effective Paused lifecycle: Stop closes the pause timing, then Save publishes history.
@@ -5804,6 +5834,12 @@ fn settle_recovered_ride(
             occurred_at_ms,
             Some(monotonic_at_ms),
         )?;
+        if let Some(point_duration_ms) = recovered_point_duration_ms {
+            transaction.execute(
+                "UPDATE rides SET completed_duration_ms = ?1 WHERE id = ?2 AND state = 'saved'",
+                params![point_duration_ms, ride_id.uuid().to_string()],
+            )?;
+        }
     }
     let replacement = replacement_candidate_vehicle.map(|candidate| {
         create_started_live_ride_in_transaction(
@@ -8800,6 +8836,12 @@ fn append_location_in_transaction(
                 telemetry_state,
                 distance_millimetres,
                 updated_at_ms,
+                last_recorded_point_duration_milliseconds: match mode {
+                    LocationWriteMode::Live => {
+                        write_state.duration_at_live_point(sample.monotonic_milliseconds())
+                    }
+                    LocationWriteMode::PevcapImport => None,
+                },
             };
             // Admission already identifies duplicates. An insert or summary update
             // failure must abort the transaction rather than commit a partial point.
@@ -8925,6 +8967,7 @@ struct StoredRideWriteState {
     paused_at_ms: Option<u64>,
     paused_duration_ms: u64,
     completed_duration_ms: u64,
+    last_recorded_point_duration_ms: Option<u64>,
     updated_at_ms: u64,
 }
 
@@ -8938,7 +8981,8 @@ fn load_ride_write_state(
                     (SELECT MAX(monotonic_ms) FROM ride_points WHERE ride_id = rides.id),
                     paused_at_ms, paused_duration_ms, completed_duration_ms, updated_at_ms,
                     stationary_latitude_e7, stationary_longitude_e7, stationary_horizontal_accuracy_mm,
-                    last_location_observed_monotonic_ms, last_location_observed_wall_clock_ms
+                    last_location_observed_monotonic_ms, last_location_observed_wall_clock_ms,
+                    last_recorded_point_duration_ms
              FROM rides WHERE id = ?1",
             params![ride_id.uuid().to_string()],
             |row| {
@@ -8953,6 +8997,7 @@ fn load_ride_write_state(
                     completed_duration_ms: row.get(7)?,
                     updated_at_ms: row.get(8)?,
                     stationary_location_observation: read_stationary_observation(row, 9, 10, 11, 12, 13)?,
+                    last_recorded_point_duration_ms: row.get(14)?,
                 })
             },
         )
@@ -8968,6 +9013,7 @@ fn load_ride_write_state(
         paused_at_ms: stored.paused_at_ms,
         paused_duration_ms: stored.paused_duration_ms,
         completed_duration_ms: stored.completed_duration_ms,
+        last_recorded_point_duration_ms: stored.last_recorded_point_duration_ms,
         updated_at_ms: stored.updated_at_ms,
     }))
 }
@@ -8981,6 +9027,7 @@ struct LocationInsert {
     telemetry_state: RouteTelemetryState,
     distance_millimetres: u64,
     updated_at_ms: u64,
+    last_recorded_point_duration_milliseconds: Option<cutout_ride_maps::RideDurationMilliseconds>,
 }
 
 fn insert_location(connection: &Connection, insert: &LocationInsert) -> Result<(), StorageError> {
@@ -8992,6 +9039,7 @@ fn insert_location(connection: &Connection, insert: &LocationInsert) -> Result<(
         telemetry_state,
         distance_millimetres,
         updated_at_ms,
+        last_recorded_point_duration_milliseconds,
     } = *insert;
     connection.execute(
         "INSERT INTO ride_points
@@ -9019,6 +9067,7 @@ fn insert_location(connection: &Connection, insert: &LocationInsert) -> Result<(
          updated_at_ms = ?3,
          last_location_observed_monotonic_ms = ?4,
          last_location_observed_wall_clock_ms = ?5,
+         last_recorded_point_duration_ms = ?6,
          stationary_latitude_e7 = NULL, stationary_longitude_e7 = NULL,
          stationary_horizontal_accuracy_mm = NULL WHERE id = ?1",
         params![
@@ -9027,6 +9076,8 @@ fn insert_location(connection: &Connection, insert: &LocationInsert) -> Result<(
             updated_at_ms,
             sample.monotonic_milliseconds().as_u64(),
             sample.wall_clock_unix_milliseconds().as_u64(),
+            last_recorded_point_duration_milliseconds
+                .map(cutout_ride_maps::RideDurationMilliseconds::as_u64),
         ],
     )?;
     connection.execute(
@@ -9101,7 +9152,8 @@ fn find_ride(connection: &Connection, ride_id: RideId) -> Result<Option<RideReco
                      WHERE ride_id = rides.id AND point_count > 0 AND start_reason = 'background_gap'),
                     rides.last_location_observed_monotonic_ms, rides.last_location_observed_wall_clock_ms,
                     rides.motion_parked, rides.motion_observed_monotonic_ms, rides.stationary_latitude_e7,
-                    rides.stationary_longitude_e7, rides.stationary_horizontal_accuracy_mm, rides.last_stationary_motion_monotonic_ms
+                    rides.stationary_longitude_e7, rides.stationary_horizontal_accuracy_mm, rides.last_stationary_motion_monotonic_ms,
+                    rides.last_recorded_point_duration_ms
              FROM rides
              WHERE state NOT IN ('draft', 'discarded') AND id = ?1",
             params![ride_id.uuid().to_string()],
@@ -9224,7 +9276,8 @@ fn newest_recoverable_ride(connection: &Connection) -> Result<Option<RideRecord>
                      WHERE ride_id = rides.id AND point_count > 0 AND start_reason = 'background_gap'),
                     rides.last_location_observed_monotonic_ms, rides.last_location_observed_wall_clock_ms,
                     rides.motion_parked, rides.motion_observed_monotonic_ms, rides.stationary_latitude_e7,
-                    rides.stationary_longitude_e7, rides.stationary_horizontal_accuracy_mm, rides.last_stationary_motion_monotonic_ms
+                    rides.stationary_longitude_e7, rides.stationary_horizontal_accuracy_mm, rides.last_stationary_motion_monotonic_ms,
+                    rides.last_recorded_point_duration_ms
              FROM rides
              WHERE state IN ('active', 'paused', 'interrupted')
              ORDER BY created_at_ms DESC, id DESC
@@ -9321,7 +9374,8 @@ fn list_rides(
                             WHERE ride_id = rides.id AND point_count > 0 AND start_reason = 'background_gap'),
                     rides.last_location_observed_monotonic_ms, rides.last_location_observed_wall_clock_ms,
                     rides.motion_parked, rides.motion_observed_monotonic_ms, rides.stationary_latitude_e7,
-                    rides.stationary_longitude_e7, rides.stationary_horizontal_accuracy_mm, rides.last_stationary_motion_monotonic_ms
+                    rides.stationary_longitude_e7, rides.stationary_horizontal_accuracy_mm, rides.last_stationary_motion_monotonic_ms,
+                    rides.last_recorded_point_duration_ms
                     FROM rides
                     LEFT JOIN devices AS associated_device
                         ON associated_device.platform_identifier = rides.associated_vehicle
@@ -9533,6 +9587,7 @@ fn ride_record_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RideRecord>
         associated_vehicle_name: row.get(19)?,
         motion_observation: read_motion_observation(row)?,
         stationary_location_observation: read_stationary_observation(row, 25, 26, 27, 21, 22)?,
+        last_recorded_point_duration_ms: row.get(29)?,
     })
 }
 

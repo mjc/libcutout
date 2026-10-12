@@ -1169,6 +1169,31 @@ impl RideMapRecorder {
             .transition(event)
     }
 
+    /// Saves an expired interruption using the duration captured at its last durable point.
+    ///
+    /// The lifecycle watermark remains available for ordering; later observations and pauses
+    /// must not be folded into this previously measured point-time duration.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TransitionError::Invalid`] unless the recorder is involuntarily interrupted
+    /// and the recorded duration does not exceed its known completed recording duration.
+    pub fn save_interrupted_at_recorded_duration(
+        &mut self,
+        recorded_duration: RideDurationMilliseconds,
+    ) -> Result<(), TransitionError> {
+        if self.state != Some(RideLifecycleState::Interrupted)
+            || self.paused_at_milliseconds.is_some()
+            || recorded_duration > self.completed_duration_milliseconds
+        {
+            return Err(TransitionError::Invalid);
+        }
+        let save = self.validate_transition(RideEvent::Save)?;
+        self.apply_transition(save)?;
+        self.completed_duration_milliseconds = recorded_duration;
+        Ok(())
+    }
+
     /// Applies a transition validated against this recorder's current state.
     ///
     /// # Errors
@@ -1727,6 +1752,38 @@ mod tests {
             None,
             LocationSource::Live,
         )
+    }
+
+    #[test]
+    fn interrupted_point_duration_save_preserves_ordering_and_rejects_invalid_rewrites() {
+        let mut recorder = RideMapRecorder::new();
+        recorder.start(monotonic(1_000), None).unwrap();
+        assert!(recorder.record_sample(sample(10_000, 40.0)));
+        assert!(!recorder.record_sample(sample(20_000, 40.0)));
+        let interrupt = recorder.validate_transition(RideEvent::Interrupt).unwrap();
+        recorder.apply_transition(interrupt).unwrap();
+
+        assert_eq!(
+            recorder.save_interrupted_at_recorded_duration(RideDurationMilliseconds::new(20_000)),
+            Err(crate::TransitionError::Invalid)
+        );
+        assert_eq!(recorder.state(), Some(RideLifecycleState::Interrupted));
+        assert_eq!(recorder.duration_milliseconds().as_u64(), 19_000);
+        recorder
+            .save_interrupted_at_recorded_duration(RideDurationMilliseconds::new(9_000))
+            .unwrap();
+        assert_eq!(recorder.state(), Some(RideLifecycleState::Saved));
+        assert_eq!(recorder.duration_milliseconds().as_u64(), 9_000);
+        assert_eq!(
+            recorder.recording_timing().last_monotonic_milliseconds(),
+            monotonic(20_000)
+        );
+        assert_eq!(recorder.point_count(), 1);
+        assert_eq!(
+            recorder.save_interrupted_at_recorded_duration(RideDurationMilliseconds::new(0)),
+            Err(crate::TransitionError::Invalid)
+        );
+        assert_eq!(recorder.duration_milliseconds().as_u64(), 9_000);
     }
 
     #[test]

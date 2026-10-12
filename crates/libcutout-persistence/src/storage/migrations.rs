@@ -1,7 +1,7 @@
 use super::{MapPointId, SpatialRowId, StorageError};
 use rusqlite::{Connection, OptionalExtension, params};
 
-pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 40;
+pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 41;
 const APPLICATION_ID: i64 = 0x4355_544f;
 
 fn schema_pragmas(version: i64) -> String {
@@ -63,6 +63,7 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         37 => migrate_v37_to_current(connection)?,
         38 => migrate_v38_to_current(connection)?,
         39 => migrate_v39_to_current(connection)?,
+        40 => migrate_v40_to_current(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -73,7 +74,14 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
     if connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))?
         < CURRENT_SCHEMA_VERSION
     {
-        migrate_v39_to_current(connection)?;
+        let version =
+            connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))?;
+        if version == 39 {
+            migrate_v39_to_current(connection)?;
+        }
+        if connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))? == 40 {
+            migrate_v40_to_current(connection)?;
+        }
     }
     Ok(())
 }
@@ -204,6 +212,7 @@ pub(crate) fn create_current_schema(connection: &Connection) -> Result<(), Stora
             motion_parked INTEGER CHECK (motion_parked IS NULL OR motion_parked IN (0, 1)),
             motion_observed_monotonic_ms INTEGER CHECK (motion_observed_monotonic_ms IS NULL OR motion_observed_monotonic_ms >= 0),
             last_stationary_motion_monotonic_ms INTEGER CHECK (last_stationary_motion_monotonic_ms IS NULL OR last_stationary_motion_monotonic_ms >= 0),
+            last_recorded_point_duration_ms INTEGER CHECK (last_recorded_point_duration_ms IS NULL OR last_recorded_point_duration_ms >= 0),
             stationary_latitude_e7 INTEGER CHECK (stationary_latitude_e7 IS NULL OR stationary_latitude_e7 BETWEEN -900000000 AND 900000000),
             stationary_longitude_e7 INTEGER CHECK (stationary_longitude_e7 IS NULL OR stationary_longitude_e7 BETWEEN -1800000000 AND 1800000000),
             stationary_horizontal_accuracy_mm INTEGER CHECK (stationary_horizontal_accuracy_mm IS NULL OR stationary_horizontal_accuracy_mm >= 0)
@@ -1539,7 +1548,7 @@ fn migrate_v39_to_current(connection: &mut Connection) -> Result<(), StorageErro
              DROP TABLE ride_segments;
              ALTER TABLE ride_segments_v40 RENAME TO ride_segments;",
         )?;
-        transaction.execute_batch(&current_schema_pragmas())?;
+        transaction.execute_batch(&schema_pragmas(40))?;
         transaction.commit()?;
         Ok(())
     })();
@@ -1549,6 +1558,19 @@ fn migrate_v39_to_current(connection: &mut Connection) -> Result<(), StorageErro
         (Ok(()), Err(error)) => Err(error.into()),
         (Ok(()), Ok(())) => Ok(()),
     }
+}
+
+fn migrate_v40_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction()?;
+    if !table_has_column(&transaction, "rides", "last_recorded_point_duration_ms")? {
+        transaction.execute_batch(
+            "ALTER TABLE rides ADD COLUMN last_recorded_point_duration_ms
+             INTEGER CHECK (last_recorded_point_duration_ms IS NULL OR last_recorded_point_duration_ms >= 0);",
+        )?;
+    }
+    transaction.execute_batch(&current_schema_pragmas())?;
+    transaction.commit()?;
+    Ok(())
 }
 
 fn ensure_live_capture_recording_context(connection: &Connection) -> Result<(), StorageError> {
@@ -1661,8 +1683,25 @@ pub(super) fn verify_current_schema(connection: &Connection) -> Result<(), Stora
     verify_singleton_schema(connection, "last_connected_device", "platform_identifier")?;
     verify_singleton_schema(connection, "ride_session_marker", "marker")?;
     verify_device_schema(connection)?;
+    verify_last_recorded_point_duration_schema(connection)?;
     verify_ride_segment_schema(connection)?;
     verify_spatial_identity_schema(connection)?;
+    Ok(())
+}
+
+fn verify_last_recorded_point_duration_schema(connection: &Connection) -> Result<(), StorageError> {
+    let column: Option<(String, i64)> = connection
+        .query_row(
+            "SELECT type, \"notnull\"
+             FROM pragma_table_info('rides')
+             WHERE name = 'last_recorded_point_duration_ms'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    if column != Some(("INTEGER".to_owned(), 0)) {
+        return Err(StorageError::InvalidDatabaseIdentity);
+    }
     Ok(())
 }
 
@@ -2031,6 +2070,97 @@ mod tests {
         }
         connection.execute_batch("INSERT INTO rides (id, source, state, created_at_ms, updated_at_ms, monotonic_created_at_ms, monotonic_last_event_ms, point_count, distance_mm) VALUES ('00000000-0000-0000-0000-000000000001', 'live', 'active', 100, 200, 10, 100, 0, 0); PRAGMA user_version = 37;").unwrap();
         connection
+    }
+
+    #[test]
+    fn v40_checkpoint_migration_is_nullable_and_survives_reopen() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("ride-checkpoint-v40.sqlite");
+        let connection = Connection::open(&path).unwrap();
+        initialize_current_schema(&connection).unwrap();
+        connection
+            .execute(
+                "INSERT INTO rides
+                    (id, source, state, created_at_ms, updated_at_ms, point_count, distance_mm)
+                 VALUES ('00000000-0000-0000-0000-000000000001', 'live', 'saved', 1, 1, 0, 0)",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute_batch(
+                "ALTER TABLE rides DROP COLUMN last_recorded_point_duration_ms;
+                 PRAGMA user_version = 40;",
+            )
+            .unwrap();
+        drop(connection);
+
+        let mut connection = Connection::open(&path).unwrap();
+        migrate(&mut connection).unwrap();
+        verify_current_schema(&connection).unwrap();
+        let checkpoint: Option<i64> = connection
+            .query_row(
+                "SELECT last_recorded_point_duration_ms FROM rides LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(checkpoint, None);
+        assert_eq!(
+            connection
+                .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                .unwrap(),
+            CURRENT_SCHEMA_VERSION
+        );
+        drop(connection);
+
+        let mut reopened = Connection::open(path).unwrap();
+        migrate(&mut reopened).unwrap();
+        verify_current_schema(&reopened).unwrap();
+        assert_eq!(
+            reopened
+                .query_row(
+                    "SELECT last_recorded_point_duration_ms FROM rides LIMIT 1",
+                    [],
+                    |row| row.get::<_, Option<i64>>(0),
+                )
+                .unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn current_schema_verification_rejects_missing_or_malformed_checkpoint_column() {
+        let missing = Connection::open_in_memory().unwrap();
+        missing
+            .execute_batch("CREATE TABLE rides (id TEXT);")
+            .unwrap();
+        assert!(matches!(
+            verify_last_recorded_point_duration_schema(&missing),
+            Err(StorageError::InvalidDatabaseIdentity)
+        ));
+
+        for column_definition in ["TEXT", "INTEGER NOT NULL"] {
+            let connection = Connection::open_in_memory().unwrap();
+            connection
+                .execute_batch(&format!(
+                    "CREATE TABLE rides (last_recorded_point_duration_ms {column_definition});"
+                ))
+                .unwrap();
+            assert!(matches!(
+                verify_last_recorded_point_duration_schema(&connection),
+                Err(StorageError::InvalidDatabaseIdentity)
+            ));
+        }
+
+        let connection = Connection::open_in_memory().unwrap();
+        initialize_current_schema(&connection).unwrap();
+        connection
+            .execute_batch("ALTER TABLE rides DROP COLUMN last_recorded_point_duration_ms;")
+            .unwrap();
+        assert!(matches!(
+            verify_current_schema(&connection),
+            Err(StorageError::InvalidDatabaseIdentity)
+        ));
     }
 
     #[test]

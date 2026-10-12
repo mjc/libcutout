@@ -25,6 +25,7 @@ pub(super) struct RideWriteStateParts {
     pub(super) paused_at_ms: Option<u64>,
     pub(super) paused_duration_ms: u64,
     pub(super) completed_duration_ms: u64,
+    pub(super) last_recorded_point_duration_ms: Option<u64>,
     pub(super) updated_at_ms: u64,
 }
 
@@ -39,6 +40,7 @@ pub(super) struct RideWriteState {
     paused_at_ms: Option<u64>,
     paused_duration_ms: u64,
     completed_duration_ms: u64,
+    last_recorded_point_duration_ms: Option<u64>,
     updated_at_ms: u64,
 }
 
@@ -49,6 +51,14 @@ impl RideWriteState {
 
     pub(super) const fn paused_at_milliseconds(&self) -> Option<u64> {
         self.paused_at_ms
+    }
+
+    pub(super) const fn last_recorded_point_duration_ms(&self) -> Option<u64> {
+        self.last_recorded_point_duration_ms
+    }
+
+    pub(super) const fn completed_duration_ms(&self) -> u64 {
+        self.completed_duration_ms
     }
 
     #[cfg(test)]
@@ -71,6 +81,7 @@ impl RideWriteState {
             paused_at_ms,
             paused_duration_ms,
             completed_duration_ms,
+            last_recorded_point_duration_ms: None,
             updated_at_ms,
         })
     }
@@ -91,6 +102,7 @@ impl RideWriteState {
             paused_at_ms: None,
             paused_duration_ms: 0,
             completed_duration_ms: 0,
+            last_recorded_point_duration_ms: None,
             updated_at_ms,
         })
     }
@@ -106,6 +118,7 @@ impl RideWriteState {
             paused_at_ms: parts.paused_at_ms,
             paused_duration_ms: parts.paused_duration_ms,
             completed_duration_ms: parts.completed_duration_ms,
+            last_recorded_point_duration_ms: parts.last_recorded_point_duration_ms,
             updated_at_ms: parts.updated_at_ms,
         }
     }
@@ -208,6 +221,29 @@ impl RideWriteState {
             completed_duration_ms,
             updated_at_ms: self.updated_at_ms.max(occurred_at_ms),
         })
+    }
+
+    pub(super) fn duration_at_live_point(
+        self,
+        monotonic_at_ms: MonotonicMilliseconds,
+    ) -> Option<RideDurationMilliseconds> {
+        let created_at_ms = self.monotonic_created_at_ms?;
+        Some(
+            RideRecordingTiming::new(
+                MonotonicMilliseconds::new(
+                    self.monotonic_last_event_ms
+                        .unwrap_or(monotonic_at_ms.as_u64()),
+                ),
+                self.paused_at_ms.map(MonotonicMilliseconds::new),
+                RideDurationMilliseconds::new(self.paused_duration_ms),
+                RideDurationMilliseconds::new(self.completed_duration_ms),
+            )
+            .duration_at(
+                self.lifecycle,
+                MonotonicMilliseconds::new(created_at_ms),
+                monotonic_at_ms,
+            ),
+        )
     }
 
     fn resume_crosses_monotonic_epoch(
@@ -431,6 +467,7 @@ mod tests {
             paused_at_ms: None,
             paused_duration_ms: 0,
             completed_duration_ms: 0,
+            last_recorded_point_duration_ms: None,
             updated_at_ms: 20,
         });
 
@@ -454,6 +491,7 @@ mod tests {
             paused_at_ms: None,
             paused_duration_ms: 0,
             completed_duration_ms: 0,
+            last_recorded_point_duration_ms: None,
             updated_at_ms: 20,
         });
 
@@ -487,6 +525,7 @@ mod tests {
             paused_at_ms: interrupted.paused_at_milliseconds(),
             paused_duration_ms: interrupted.paused_duration_milliseconds(),
             completed_duration_ms: interrupted.duration_milliseconds(),
+            last_recorded_point_duration_ms: None,
             updated_at_ms: interrupted.updated_at_milliseconds(),
         });
         let resumed = restored
@@ -513,6 +552,7 @@ mod tests {
             paused_at_ms: None,
             paused_duration_ms: 0,
             completed_duration_ms: 2_000,
+            last_recorded_point_duration_ms: None,
             updated_at_ms: 20,
         });
 
@@ -541,6 +581,7 @@ mod tests {
             paused_at_ms: None,
             paused_duration_ms: 0,
             completed_duration_ms: 8_000,
+            last_recorded_point_duration_ms: None,
             updated_at_ms: 20,
         });
         assert!(matches!(
@@ -561,6 +602,7 @@ mod tests {
             paused_at_ms: None,
             paused_duration_ms: 0,
             completed_duration_ms: 2_000,
+            last_recorded_point_duration_ms: None,
             updated_at_ms: 20,
         });
         assert!(matches!(

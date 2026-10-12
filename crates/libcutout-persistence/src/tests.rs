@@ -31,8 +31,8 @@ use super::{
     LiveCaptureIntegrity, LiveCaptureLocationAdmission, LiveCaptureLocationObservation,
     LiveCaptureLocationValidation, LiveCaptureState, PevcapImportOutcome, PevcapImportPreview,
     PevcapImportWarning, PhoneAlarmPreferencesRecord, QueryLimit, RideDatabase,
-    RideHistoryDistanceFilter, RideHistoryQuery, RideId, RideRecord, RideSource,
-    RouteProjectionCancellation, StorageError, StoredPevcapCapture,
+    RideHistoryDistanceFilter, RideHistoryQuery, RideId, RideLocationObservationCheckpoint,
+    RideRecord, RideSource, RouteProjectionCancellation, StorageError, StoredPevcapCapture,
     VerifiedConnectionLifecycleMutation, VerifiedConnectionRideMetadata,
     VerifiedConnectionRideTarget, VoltageSagModelRecord, normalize_device_display_name,
 };
@@ -6330,6 +6330,408 @@ fn settling_a_recovered_ride_and_replacement_is_atomic() {
     let replacement_record = database.find_ride(replacement).unwrap().unwrap();
     assert_eq!(replacement_record.state(), RideLifecycleState::Active);
     assert_eq!(replacement_record.candidate_vehicle(), Some("pev-1"));
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn expired_interrupted_ride_duration_ends_at_its_last_recorded_point() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-recovery-last-point-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database.create_ride(RideSource::Live, 1_000).unwrap();
+    database
+        .transition_at(ride, RideEvent::Start, 1_000)
+        .unwrap();
+    let point = LocationSample::new(
+        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        10_000,
+        1_700_000_010_000,
+        None,
+        LocationSource::Live,
+    );
+    assert_eq!(
+        database.append_location(ride, point).unwrap(),
+        LocationAdmission::Accepted
+    );
+    let clock_only = LocationSample::new(
+        point.coordinate(),
+        20_000,
+        1_700_000_020_000,
+        None,
+        LocationSource::Live,
+    );
+    assert_eq!(
+        database
+            .checkpoint_location_observation(RideLocationObservationCheckpoint {
+                ride_id: ride,
+                expected_point_sequence: 0,
+                observation: clock_only,
+            })
+            .unwrap(),
+        super::RideLocationObservationCheckpointOutcome::Applied
+    );
+    database
+        .transition_at(ride, RideEvent::Interrupt, 20_000)
+        .unwrap();
+    assert_eq!(
+        database
+            .find_ride(ride)
+            .unwrap()
+            .unwrap()
+            .last_recorded_point_duration_milliseconds()
+            .map(cutout_ride_maps::RideDurationMilliseconds::as_u64),
+        Some(9_000)
+    );
+
+    database
+        .settle_recovered_ride(ride, false, 1_700_010_000_000, 20_000, None)
+        .unwrap();
+
+    let saved = database.find_ride(ride).unwrap().unwrap();
+    assert_eq!(saved.state(), RideLifecycleState::Saved);
+    assert_eq!(saved.duration_milliseconds(), 9_000);
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn expired_interrupted_ride_does_not_subtract_a_pause_after_its_last_point() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-recovery-last-point-pause-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database.create_ride(RideSource::Live, 1_000).unwrap();
+    database
+        .transition_at(ride, RideEvent::Start, 1_000)
+        .unwrap();
+    let point = LocationSample::new(
+        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        10_000,
+        1_700_000_010_000,
+        None,
+        LocationSource::Live,
+    );
+    assert_eq!(
+        database.append_location(ride, point).unwrap(),
+        LocationAdmission::Accepted
+    );
+    database
+        .transition_at(ride, RideEvent::Pause, 15_000)
+        .unwrap();
+    database
+        .transition_at(ride, RideEvent::Resume, 20_000)
+        .unwrap();
+    database
+        .transition_at(ride, RideEvent::Interrupt, 25_000)
+        .unwrap();
+
+    database
+        .settle_recovered_ride(ride, false, 1_700_010_000_000, 25_000, None)
+        .unwrap();
+
+    let saved = database.find_ride(ride).unwrap().unwrap();
+    assert_eq!(saved.state(), RideLifecycleState::Saved);
+    assert_eq!(saved.duration_milliseconds(), 9_000);
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn expired_interrupted_ride_without_a_recorded_point_keeps_legacy_duration() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-recovery-no-point-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database.create_ride(RideSource::Live, 1_000).unwrap();
+    database
+        .transition_at(ride, RideEvent::Start, 1_000)
+        .unwrap();
+    database
+        .transition_at(ride, RideEvent::Interrupt, 20_000)
+        .unwrap();
+    assert_eq!(
+        database
+            .find_ride(ride)
+            .unwrap()
+            .unwrap()
+            .last_recorded_point_duration_milliseconds(),
+        None
+    );
+
+    database
+        .settle_recovered_ride(ride, false, 1_700_010_000_000, 20_000, None)
+        .unwrap();
+
+    assert_eq!(
+        database
+            .find_ride(ride)
+            .unwrap()
+            .unwrap()
+            .duration_milliseconds(),
+        19_000
+    );
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn expired_paused_interrupted_ride_uses_pause_boundary_instead_of_point_checkpoint() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-recovery-explicit-pause-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database.create_ride(RideSource::Live, 1_000).unwrap();
+    database
+        .transition_at(ride, RideEvent::Start, 1_000)
+        .unwrap();
+    let point = LocationSample::new(
+        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        10_000,
+        1_700_000_010_000,
+        None,
+        LocationSource::Live,
+    );
+    assert_eq!(
+        database.append_location(ride, point).unwrap(),
+        LocationAdmission::Accepted
+    );
+    database
+        .transition_at(ride, RideEvent::Pause, 15_000)
+        .unwrap();
+    database.shutdown().unwrap();
+
+    let database = RideDatabase::open(&path).unwrap();
+    assert_eq!(database.bootstrap().recovered_rides(), &[ride]);
+    let recovered = database.find_ride(ride).unwrap().unwrap();
+    assert_eq!(recovered.state(), RideLifecycleState::Interrupted);
+    assert_eq!(recovered.paused_at_milliseconds(), Some(15_000));
+    assert_eq!(recovered.duration_milliseconds(), 14_000);
+    assert_eq!(
+        recovered
+            .last_recorded_point_duration_milliseconds()
+            .map(cutout_ride_maps::RideDurationMilliseconds::as_u64),
+        Some(9_000)
+    );
+
+    database
+        .settle_recovered_ride(ride, false, 1_700_010_000_000, 20_000, None)
+        .unwrap();
+
+    let saved = database.find_ride(ride).unwrap().unwrap();
+    assert_eq!(saved.state(), RideLifecycleState::Saved);
+    assert_eq!(saved.duration_milliseconds(), 14_000);
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn failed_recovered_settlement_rolls_back_and_can_retry_with_point_checkpoint() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-recovery-checkpoint-retry-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database.create_ride(RideSource::Live, 1_000).unwrap();
+    database
+        .transition_at(ride, RideEvent::Start, 1_000)
+        .unwrap();
+    let point = LocationSample::new(
+        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        10_000,
+        1_700_000_010_000,
+        None,
+        LocationSource::Live,
+    );
+    assert_eq!(
+        database.append_location(ride, point).unwrap(),
+        LocationAdmission::Accepted
+    );
+    database
+        .transition_at(ride, RideEvent::Interrupt, 20_000)
+        .unwrap();
+
+    assert!(
+        database
+            .settle_recovered_ride(ride, false, 1_700_010_000_000, 20_000, Some(""))
+            .is_err()
+    );
+    let interrupted = database.find_ride(ride).unwrap().unwrap();
+    assert_eq!(interrupted.state(), RideLifecycleState::Interrupted);
+    assert_eq!(
+        interrupted
+            .last_recorded_point_duration_milliseconds()
+            .map(cutout_ride_maps::RideDurationMilliseconds::as_u64),
+        Some(9_000)
+    );
+
+    database
+        .settle_recovered_ride(ride, false, 1_700_010_000_000, 20_000, None)
+        .unwrap();
+    let saved = database.find_ride(ride).unwrap().unwrap();
+    assert_eq!(saved.state(), RideLifecycleState::Saved);
+    assert_eq!(saved.duration_milliseconds(), 9_000);
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn generic_interrupted_save_keeps_the_recorded_lifecycle_duration() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-generic-interrupted-save-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database.create_ride(RideSource::Live, 1_000).unwrap();
+    database
+        .transition_at(ride, RideEvent::Start, 1_000)
+        .unwrap();
+    let point = LocationSample::new(
+        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        10_000,
+        1_700_000_010_000,
+        None,
+        LocationSource::Live,
+    );
+    assert_eq!(
+        database.append_location(ride, point).unwrap(),
+        LocationAdmission::Accepted
+    );
+    database
+        .transition_at(ride, RideEvent::Interrupt, 20_000)
+        .unwrap();
+
+    database
+        .transition_at(ride, RideEvent::Save, 20_000)
+        .unwrap();
+
+    let saved = database.find_ride(ride).unwrap().unwrap();
+    assert_eq!(saved.state(), RideLifecycleState::Saved);
+    assert_eq!(saved.duration_milliseconds(), 19_000);
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn accepted_live_point_with_unknown_duration_clears_prior_checkpoint() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-checkpoint-clearing-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database.create_ride(RideSource::Live, 1_000).unwrap();
+    database
+        .transition_at(ride, RideEvent::Start, 1_000)
+        .unwrap();
+    let first_point = LocationSample::new(
+        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        10_000,
+        1_700_000_010_000,
+        None,
+        LocationSource::Live,
+    );
+    assert_eq!(
+        database.append_location(ride, first_point).unwrap(),
+        LocationAdmission::Accepted
+    );
+    assert_eq!(
+        database
+            .find_ride(ride)
+            .unwrap()
+            .unwrap()
+            .last_recorded_point_duration_milliseconds()
+            .map(cutout_ride_maps::RideDurationMilliseconds::as_u64),
+        Some(9_000)
+    );
+
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute(
+            "UPDATE rides SET monotonic_created_at_ms = NULL WHERE id = ?1",
+            [ride.uuid().to_string()],
+        )
+        .unwrap();
+    drop(connection);
+    let second_point = LocationSample::new(
+        Coordinate::from_degrees(40.0001, -105.0).unwrap(),
+        11_000,
+        1_700_000_011_000,
+        None,
+        LocationSource::Live,
+    );
+    assert_eq!(
+        database.append_location(ride, second_point).unwrap(),
+        LocationAdmission::Accepted
+    );
+    assert_eq!(
+        database
+            .find_ride(ride)
+            .unwrap()
+            .unwrap()
+            .last_recorded_point_duration_milliseconds(),
+        None
+    );
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn invalid_recovered_point_checkpoint_is_rejected_without_settlement() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-invalid-checkpoint-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database.create_ride(RideSource::Live, 1_000).unwrap();
+    database
+        .transition_at(ride, RideEvent::Start, 1_000)
+        .unwrap();
+    let point = LocationSample::new(
+        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        10_000,
+        1_700_000_010_000,
+        None,
+        LocationSource::Live,
+    );
+    assert_eq!(
+        database.append_location(ride, point).unwrap(),
+        LocationAdmission::Accepted
+    );
+    database
+        .transition_at(ride, RideEvent::Interrupt, 20_000)
+        .unwrap();
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute(
+            "UPDATE rides SET last_recorded_point_duration_ms = 20_000 WHERE id = ?1",
+            [ride.uuid().to_string()],
+        )
+        .unwrap();
+    drop(connection);
+
+    assert!(matches!(
+        database.settle_recovered_ride(ride, false, 1_700_010_000_000, 20_000, None),
+        Err(StorageError::InvalidStoredValue {
+            field: "rides.last_recorded_point_duration_ms",
+            value,
+        }) if value == "20000"
+    ));
+    let still_interrupted = database.find_ride(ride).unwrap().unwrap();
+    assert_eq!(still_interrupted.state(), RideLifecycleState::Interrupted);
+    assert_eq!(still_interrupted.duration_milliseconds(), 19_000);
     database.shutdown().unwrap();
     let _ = std::fs::remove_file(path);
 }

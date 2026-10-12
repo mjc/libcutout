@@ -12017,7 +12017,7 @@ impl MobileRideMapCoreInner {
         if apply_automatic_recovery {
             self.apply_automatic_recovery(
                 &database,
-                &ride,
+                stored_ride,
                 at_ms,
                 persisted_state,
                 timing_last,
@@ -12053,7 +12053,7 @@ impl MobileRideMapCoreInner {
     fn apply_automatic_recovery(
         &mut self,
         database: &RideDatabaseHandle,
-        ride: &MobileRideRecordDto,
+        ride: &persistence::RideRecord,
         at_ms: u64,
         persisted_state: ride_maps::RideLifecycleState,
         timing_last: u64,
@@ -12061,14 +12061,14 @@ impl MobileRideMapCoreInner {
     ) -> Result<(), MobileRideMapCoreErrorDto> {
         if persisted_state == ride_maps::RideLifecycleState::Active {
             let last_evidence = timing_last
-                .max(ride.associated_at_milliseconds.unwrap_or(0))
-                .max(ride.last_telemetry_at_milliseconds.unwrap_or(0));
+                .max(ride.associated_at_milliseconds().unwrap_or(0))
+                .max(ride.last_telemetry_at_milliseconds().unwrap_or(0));
             self.monotonic_epoch_offset_milliseconds = last_evidence.saturating_sub(at_ms);
             self.recoverable_updated_at_milliseconds = None;
             return Ok(());
         }
         let now = wall_clock_milliseconds()?;
-        let age = wall_clock_age_milliseconds(now, ride.updated_at_milliseconds);
+        let age = wall_clock_age_milliseconds(now, ride.updated_at_milliseconds());
         if !explicit_pause && age <= AUTO_RESUME_RIDE_WINDOW_MILLISECONDS {
             self.transition_inner_at(MobileRideEventDto::Resume, at_ms)?;
             self.recoverable_updated_at_milliseconds = None;
@@ -12077,8 +12077,8 @@ impl MobileRideMapCoreInner {
         if explicit_pause && age <= EXPLICIT_PAUSE_PERSISTENCE_WINDOW_MILLISECONDS {
             return Ok(());
         }
-        let discard_empty =
-            ride.summary.point_count == 0 && ride.last_telemetry_at_milliseconds.is_none();
+        let discard_empty = ride.summary().point_count().as_u64() == 0
+            && ride.last_telemetry_at_milliseconds().is_none();
         let autostart_enabled = self.ride_autostart_enabled()?;
         let replacement_candidate = self
             .last_connected_vehicle
@@ -12091,7 +12091,7 @@ impl MobileRideMapCoreInner {
             .map(|identity| identity.as_str().to_owned());
         let replacement = database
             .settle_recovered_ride(
-                &ride.id,
+                &mobile_ride_id(ride.id()),
                 discard_empty,
                 now,
                 at_ms,
@@ -12109,7 +12109,10 @@ impl MobileRideMapCoreInner {
         } else if discard_empty {
             self.reset_after_recovery_settlement();
         } else {
-            self.apply_local_recovery_transition(explicit_pause)?;
+            let recorded_duration = (!explicit_pause)
+                .then(|| ride.last_recorded_point_duration_milliseconds())
+                .flatten();
+            self.apply_local_recovery_transition(explicit_pause, recorded_duration)?;
         }
         Ok(())
     }
@@ -12126,29 +12129,32 @@ impl MobileRideMapCoreInner {
     fn apply_local_recovery_transition(
         &mut self,
         explicit_pause: bool,
+        recorded_duration: Option<ride_maps::RideDurationMilliseconds>,
     ) -> Result<(), MobileRideMapCoreErrorDto> {
-        if explicit_pause {
-            let stop = self
-                .recorder
-                .validate_transition(MobileRideEventDto::Stop.into())
-                .map_err(|_| MobileRideMapCoreErrorDto::InvalidTransition)?;
-            self.recorder
-                .apply_transition(stop)
-                .map_err(|_| MobileRideMapCoreErrorDto::InvalidTransition)?;
-            self.admission_recorder
-                .apply_transition(stop)
-                .map_err(|_| MobileRideMapCoreErrorDto::InvalidTransition)?;
+        let mut staged = [self.recorder.clone(), self.admission_recorder.clone()];
+        for recorder in &mut staged {
+            if let Some(recorded_duration) = recorded_duration {
+                recorder
+                    .save_interrupted_at_recorded_duration(recorded_duration)
+                    .map_err(|_| MobileRideMapCoreErrorDto::InvalidTransition)?;
+            } else {
+                if explicit_pause {
+                    let stop = recorder
+                        .validate_transition(MobileRideEventDto::Stop.into())
+                        .map_err(|_| MobileRideMapCoreErrorDto::InvalidTransition)?;
+                    recorder
+                        .apply_transition(stop)
+                        .map_err(|_| MobileRideMapCoreErrorDto::InvalidTransition)?;
+                }
+                let save = recorder
+                    .validate_transition(MobileRideEventDto::Save.into())
+                    .map_err(|_| MobileRideMapCoreErrorDto::InvalidTransition)?;
+                recorder
+                    .apply_transition(save)
+                    .map_err(|_| MobileRideMapCoreErrorDto::InvalidTransition)?;
+            }
         }
-        let save = self
-            .recorder
-            .validate_transition(MobileRideEventDto::Save.into())
-            .map_err(|_| MobileRideMapCoreErrorDto::InvalidTransition)?;
-        self.recorder
-            .apply_transition(save)
-            .map_err(|_| MobileRideMapCoreErrorDto::InvalidTransition)?;
-        self.admission_recorder
-            .apply_transition(save)
-            .map_err(|_| MobileRideMapCoreErrorDto::InvalidTransition)?;
+        [self.recorder, self.admission_recorder] = staged;
         self.revision = self.revision.saturating_add(1);
         self.generation = self.generation.saturating_add(1);
         Ok(())
@@ -28491,6 +28497,223 @@ mod tests {
             .expect("stale ride is replaced");
         assert_eq!(started.state, MobileRideLifecycleStateDto::Active);
         assert_ne!(started.ride_id, original_ride_id);
+
+        database.shutdown().expect("reopened database shuts down");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn expired_restore_uses_last_material_point_time_after_a_later_clock_only_observation() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-map-expired-point-time-{}-{}.sqlite3",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let wall_clock_now = u64::try_from(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock follows epoch")
+                .as_millis(),
+        )
+        .expect("wall clock fits u64");
+        let original_ride_id =
+            {
+                let database = open_ride_database(path.to_string_lossy().into_owned())
+                    .expect("database opens");
+                let core = restored_database_core(database.clone());
+                core.start_gps_only(1_000).expect("ride starts");
+                assert!(matches!(
+                    core.ingest_location(10_000, wall_clock_now + 9_000, 40.0, -105.0, 3.0)
+                        .expect("material point queues"),
+                    MobileRideMapCoreDecisionDto::Pending { .. }
+                ));
+                assert!(drain_location_writes(&core).iter().any(|decision| matches!(
+                    decision,
+                    MobileRideMapCoreDecisionDto::Accepted { .. }
+                )));
+                assert!(matches!(
+                    core.ingest_location(20_000, wall_clock_now + 19_000, 40.0, -105.0, 3.0)
+                        .expect("duplicate location advances the observation clock"),
+                    MobileRideMapCoreDecisionDto::Ignored {
+                        reason: MobileRideMapDecisionReasonDto::DuplicateLocation,
+                    }
+                ));
+                let ride_id = core.current_snapshot(20_000).unwrap().ride_id;
+                database.shutdown().expect("database shuts down");
+                ride_id
+            };
+        let stale_update = wall_clock_now
+            .saturating_sub(AUTO_RESUME_RIDE_WINDOW_MILLISECONDS)
+            .saturating_sub(1);
+        rusqlite::Connection::open(&path)
+            .expect("sqlite opens")
+            .execute(
+                "UPDATE rides SET created_at_ms = ?1, updated_at_ms = ?1 WHERE id = ?2",
+                rusqlite::params![stale_update, original_ride_id],
+            )
+            .expect("ride timestamp ages");
+
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database reopens");
+        let core = MobileRideMapCore::with_database(database.clone());
+        let restored = core
+            .restore(500)
+            .expect("expired ride restores")
+            .expect("saved ride remains visible");
+        let durable = database
+            .find_ride(test_mobile_ride_id(&original_ride_id))
+            .expect("saved ride loads")
+            .expect("saved ride exists");
+        assert_eq!(restored.ride_id, original_ride_id);
+        assert_eq!(restored.state, MobileRideLifecycleStateDto::Saved);
+        assert_eq!(restored.summary.duration_milliseconds, 9_000);
+        assert_eq!(durable.state, MobileRideLifecycleStateDto::Saved);
+        assert_eq!(durable.duration_milliseconds, 9_000);
+
+        database.shutdown().expect("reopened database shuts down");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn expired_restore_does_not_subtract_a_pause_after_the_last_material_point() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-map-expired-point-after-pause-{}-{}.sqlite3",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let wall_clock_now = u64::try_from(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock follows epoch")
+                .as_millis(),
+        )
+        .expect("wall clock fits u64");
+        let original_ride_id =
+            {
+                let database = open_ride_database(path.to_string_lossy().into_owned())
+                    .expect("database opens");
+                let core = restored_database_core(database.clone());
+                core.start_gps_only(1_000).expect("ride starts");
+                assert!(matches!(
+                    core.ingest_location(10_000, wall_clock_now + 9_000, 40.0, -105.0, 3.0)
+                        .expect("material point queues"),
+                    MobileRideMapCoreDecisionDto::Pending { .. }
+                ));
+                assert!(drain_location_writes(&core).iter().any(|decision| matches!(
+                    decision,
+                    MobileRideMapCoreDecisionDto::Accepted { .. }
+                )));
+                core.pause_at(12_000).expect("ride pauses after the point");
+                core.resume_at(15_000)
+                    .expect("ride resumes after the pause");
+                core.interrupt_at(20_000)
+                    .expect("ride interrupts after the point and pause");
+                let ride_id = core.current_snapshot(20_000).unwrap().ride_id;
+                database.shutdown().expect("database shuts down");
+                ride_id
+            };
+        let stale_update = wall_clock_now
+            .saturating_sub(AUTO_RESUME_RIDE_WINDOW_MILLISECONDS)
+            .saturating_sub(1);
+        rusqlite::Connection::open(&path)
+            .expect("sqlite opens")
+            .execute(
+                "UPDATE rides SET created_at_ms = ?1, updated_at_ms = ?1 WHERE id = ?2",
+                rusqlite::params![stale_update, original_ride_id],
+            )
+            .expect("ride timestamp ages");
+
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database reopens");
+        let core = MobileRideMapCore::with_database(database.clone());
+        let restored = core
+            .restore(500)
+            .expect("expired ride restores")
+            .expect("saved ride remains visible");
+        let durable = database
+            .find_ride(test_mobile_ride_id(&original_ride_id))
+            .expect("saved ride loads")
+            .expect("saved ride exists");
+        assert_eq!(restored.state, MobileRideLifecycleStateDto::Saved);
+        assert_eq!(restored.summary.duration_milliseconds, 9_000);
+        assert_eq!(durable.state, MobileRideLifecycleStateDto::Saved);
+        assert_eq!(durable.duration_milliseconds, 9_000);
+
+        database.shutdown().expect("reopened database shuts down");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn recent_restore_keeps_clock_only_recording_time_when_continuing_the_ride() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-map-recent-clock-only-time-{}-{}.sqlite3",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+        let core = restored_database_core(database.clone());
+        let started = core
+            .ensure_recording_for_vehicle(
+                "pev-1",
+                1_000,
+                MobileRideMapAutomaticRecordingPolicyDto::StartAndResume,
+            )
+            .expect("connection starts ride");
+        let point_wall_clock = wall_clock_milliseconds().expect("wall clock is available");
+        assert!(matches!(
+            core.ingest_location(10_000, point_wall_clock, 40.0, -105.0, 3.0)
+                .expect("material point queues"),
+            MobileRideMapCoreDecisionDto::Pending { .. }
+        ));
+        assert!(
+            drain_location_writes(&core)
+                .iter()
+                .any(|decision| matches!(decision, MobileRideMapCoreDecisionDto::Accepted { .. }))
+        );
+        let clock_only_wall_clock = wall_clock_milliseconds().expect("wall clock is available");
+        assert!(clock_only_wall_clock >= point_wall_clock);
+        assert!(matches!(
+            core.ingest_location(20_000, clock_only_wall_clock, 40.0, -105.0, 3.0)
+                .expect("duplicate location advances the observation clock"),
+            MobileRideMapCoreDecisionDto::Ignored {
+                reason: MobileRideMapDecisionReasonDto::DuplicateLocation,
+            }
+        ));
+        let durable_before_reopen = database
+            .find_ride(test_mobile_ride_id(&started.ride_id))
+            .expect("ride readback succeeds")
+            .expect("ride exists before reopen");
+        let now = wall_clock_milliseconds().expect("wall clock is available");
+        assert_eq!(
+            durable_before_reopen.updated_at_milliseconds,
+            clock_only_wall_clock
+        );
+        assert!(
+            wall_clock_age_milliseconds(now, durable_before_reopen.updated_at_milliseconds)
+                <= AUTO_RESUME_RIDE_WINDOW_MILLISECONDS
+        );
+        database.shutdown().expect("database shuts down");
+
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database reopens");
+        let core = MobileRideMapCore::with_database(database.clone());
+        let restored = core
+            .restore(20_000)
+            .expect("recent ride restores")
+            .expect("recent ride remains visible");
+        assert_eq!(restored.ride_id, started.ride_id);
+        assert_eq!(restored.state, MobileRideLifecycleStateDto::Active);
+        assert_eq!(restored.summary.duration_milliseconds, 19_000);
 
         database.shutdown().expect("reopened database shuts down");
         let _ = fs::remove_file(path);
