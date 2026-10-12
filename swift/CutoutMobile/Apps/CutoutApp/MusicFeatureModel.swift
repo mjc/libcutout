@@ -732,6 +732,10 @@ final class MusicFeatureModel {
     func handleCommand(_ command: MobileMusicCommandDto) async -> MusicCommandOutcome {
         let commandProvider = selectedProvider
         if commandProvider == .soundCloud, nativeSoundCloud.snapshot.track != nil, command != .openProvider {
+            let requestID = beginCommandFeedback()
+            guard projectedNowPlaying()?.isCommandAvailable(command) == true else {
+                return finishCommand(.refused, provider: commandProvider, requestID: requestID)
+            }
             switch command {
             case .play: nativeSoundCloud.command(.play)
             case .pause: nativeSoundCloud.command(.pause)
@@ -739,7 +743,7 @@ final class MusicFeatureModel {
             case .next: nativeSoundCloud.command(.next)
             case .openProvider: break
             }
-            return .accepted
+            return finishCommand(.accepted, provider: commandProvider, requestID: requestID)
         }
         if commandProvider.profile.interface == .appHandoffOnly { soundcloudProvider.start() }
         let feedbackRequest = MusicCommandFeedbackRequest(id: beginCommandFeedback())

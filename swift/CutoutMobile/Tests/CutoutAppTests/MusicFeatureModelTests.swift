@@ -7,6 +7,40 @@ import XCTest
 
 @MainActor
 final class MusicFeatureModelTests: XCTestCase {
+    func testNativeSoundCloudRefusesUnavailableCommandsAndAcceptsAvailablePause() async throws {
+        let suite = try makeDefaults()
+        defer { suite.defaults.removePersistentDomain(forName: suite.name) }
+        let store = MusicProviderSelectionStore(defaults: suite.defaults)
+        store.set(.soundCloud)
+        let core = MobileSoundCloudPlayer()
+        let response =
+            #"{"collection":[{"urn":"soundcloud:tracks:42","title":"Ride song","duration":120000,"permalink_url":"https://soundcloud.com/artist/song","user":{"username":"Uploader"},"access":"playable","streamable":true}]}"#
+        let tracks = try core.acceptCatalogue(json: Data(response.utf8))
+        guard case .fetch(let id, _) = try core.select(urn: tracks[0].urn) else {
+            return XCTFail("Selection must fetch the stream")
+        }
+        _ = try core.streamResolved(
+            id: id, url: "https://playback.media-streaming.soundcloud.cloud/manifest.m3u8?token=session")
+        _ = core.playerReady(id: id)
+        let model = makeModel(defaults: suite.defaults, providerSelectionStore: store)
+        model.nativeSoundCloud = SoundCloudNativePlayer(core: core) { _ in }
+
+        let next = await model.handleCommand(.next)
+        let previous = await model.handleCommand(.previous)
+        let play = await model.handleCommand(.play)
+        XCTAssertEqual(next, .refused)
+        XCTAssertEqual(previous, .refused)
+        XCTAssertEqual(play, .refused)
+        XCTAssertEqual(model.commandStatusText, pevLocalizedText("music.command.refused"))
+        XCTAssertEqual(core.snapshot().state, .playing)
+        XCTAssertNil(model.nativeSoundCloud.errorText)
+
+        let pause = await model.handleCommand(.pause)
+        XCTAssertEqual(pause, .accepted)
+        XCTAssertNil(model.commandStatusText)
+        XCTAssertEqual(core.snapshot().state, .paused)
+    }
+
     func testHistoryPreferenceStillSavesWhenSQLiteRideHasAlreadyStopped() async throws {
         let suite = try makeDefaults()
         defer { suite.defaults.removePersistentDomain(forName: suite.name) }
