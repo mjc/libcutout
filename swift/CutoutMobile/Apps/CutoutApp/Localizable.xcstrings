@@ -1896,8 +1896,8 @@
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Speed unavailable" } } }
     },
     "ride_map.current_marker" : {
-      "comment" : "Map marker for the most recent validated route point.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Current location" } } }
+      "comment" : "Map marker for the latest recorded route point.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Latest recorded point" } } }
     },
     "ride_map.end_marker" : {
       "comment" : "Map marker for the final point in a stopped or historical route.",

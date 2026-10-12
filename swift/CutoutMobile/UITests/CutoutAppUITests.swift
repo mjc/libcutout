@@ -966,16 +966,41 @@ final class CutoutAppUITests: XCTestCase {
         }
         XCTAssertFalse(app.buttons["ride-map.start"].exists, app.debugDescription)
         XCTAssertTrue(pauseButton.waitForExistence(timeout: 5), app.debugDescription)
-        XCTAssertTrue(
-            app.descendants(matching: .any)["ride-map.map"].waitForExistence(timeout: 5), app.debugDescription)
+        let routeMap = app.descendants(matching: .any)["ride-map.map"]
+        XCTAssertTrue(routeMap.waitForExistence(timeout: 5), app.debugDescription)
         let recenterButton = app.buttons["ride-map.recenter"]
         XCTAssertTrue(recenterButton.waitForExistence(timeout: 5), app.debugDescription)
         XCTAssertTrue(recenterButton.isEnabled, app.debugDescription)
         XCTAssertTrue(recenterButton.isHittable, app.debugDescription)
+        let latestPointMarker = app.descendants(matching: .any)["ride-map.latest-point-marker"]
+        XCTAssertTrue(latestPointMarker.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertEqual(latestPointMarker.label, "Latest recorded point")
+        XCTAssertFalse(app.staticTexts["Current location"].exists, app.debugDescription)
+        recenterButton.tap()
         let routeScreenshot = XCTAttachment(screenshot: app.screenshot())
-        routeScreenshot.name = "ride-map-rust-backed-point-route"
+        routeScreenshot.name = "ride-map-rust-backed-point-route-before-marker-center-assertion"
         routeScreenshot.lifetime = .keepAlways
         add(routeScreenshot)
+        // The caption group includes overlay text; the native Map pin bounds are the coordinate anchor.
+        let latestPointPin = routeMap.otherElements
+            .containing(.any, identifier: "ride-map.latest-point-marker")
+            .matching(NSPredicate(format: "label == %@", "Map pin"))
+            .firstMatch
+        XCTAssertTrue(latestPointPin.waitForExistence(timeout: 5), app.debugDescription)
+        let markerFrame = latestPointPin.frame
+        let mapFrame = routeMap.frame
+        let markerCenterDiagnostic =
+            "nativeMapPinFrame=\(markerFrame), mapFrame=\(mapFrame)\n\(app.debugDescription)"
+        XCTAssertEqual(markerFrame.width, 26, accuracy: 0.5, markerCenterDiagnostic)
+        XCTAssertEqual(markerFrame.height, 26, accuracy: 0.5, markerCenterDiagnostic)
+        XCTAssertEqual(
+            markerFrame.midX, mapFrame.midX, accuracy: 12,
+            "The latest recorded point marker stays centered on the single-point route after recentering. \(markerCenterDiagnostic)"
+        )
+        XCTAssertEqual(
+            markerFrame.midY, mapFrame.midY, accuracy: 12,
+            "The latest recorded point marker stays centered on the single-point route after recentering. \(markerCenterDiagnostic)"
+        )
         let stopButton = app.buttons["ride-map.stop"]
         XCTAssertTrue(stopButton.exists, app.debugDescription)
         XCTAssertTrue(stopButton.isHittable, app.debugDescription)
@@ -989,6 +1014,53 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(pauseButton.waitForExistence(timeout: 5), app.debugDescription)
         XCTAssertTrue(app.descendants(matching: .any)["ride-map.map"].exists, app.debugDescription)
         XCTAssertTrue(recenterButton.isEnabled, app.debugDescription)
+    }
+
+    func testPickerSurfaceHomeMapRouteKeepsMapAndLifecycleActionsReachableAtAccessibilityDynamicType() throws {
+        let mapButton = app.tabBars.buttons["Map"]
+        XCTAssertTrue(mapButton.waitForExistence(timeout: 8), app.debugDescription)
+        XCTAssertTrue(mapButton.isHittable)
+        mapButton.tap()
+
+        let mapScreen = app.descendants(matching: .any)["ride-map.screen"]
+        XCTAssertTrue(mapScreen.waitForExistence(timeout: 8), app.debugDescription)
+        let routeMap = app.descendants(matching: .any)["ride-map.map"]
+        XCTAssertTrue(routeMap.waitForExistence(timeout: 8), app.debugDescription)
+        let recenterButton = app.buttons["ride-map.recenter"]
+        XCTAssertTrue(recenterButton.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(recenterButton.isEnabled, app.debugDescription)
+
+        let latestPointMarker = app.descendants(matching: .any)["ride-map.latest-point-marker"]
+        XCTAssertTrue(latestPointMarker.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertEqual(latestPointMarker.label, "Latest recorded point")
+        XCTAssertFalse(app.staticTexts["Current location"].exists, app.debugDescription)
+
+        recenterButton.tap()
+        let routeScreenshot = XCTAttachment(screenshot: app.screenshot())
+        routeScreenshot.name =
+            "ride-map-rust-backed-point-route-accessibility-dynamic-type-before-marker-center-assertion"
+        routeScreenshot.lifetime = .keepAlways
+        add(routeScreenshot)
+        // The caption group includes overlay text; the native Map pin bounds are the coordinate anchor.
+        let latestPointPin = routeMap.otherElements
+            .containing(.any, identifier: "ride-map.latest-point-marker")
+            .matching(NSPredicate(format: "label == %@", "Map pin"))
+            .firstMatch
+        XCTAssertTrue(latestPointPin.waitForExistence(timeout: 5), app.debugDescription)
+        let markerFrame = latestPointPin.frame
+        let mapFrame = routeMap.frame
+        let markerCenterDiagnostic =
+            "nativeMapPinFrame=\(markerFrame), mapFrame=\(mapFrame)\n\(app.debugDescription)"
+        XCTAssertEqual(markerFrame.width, 26, accuracy: 0.5, markerCenterDiagnostic)
+        XCTAssertEqual(markerFrame.height, 26, accuracy: 0.5, markerCenterDiagnostic)
+        XCTAssertEqual(
+            markerFrame.midX, mapFrame.midX, accuracy: 12,
+            "The latest recorded point marker stays centered on the single-point route at accessibility text size. \(markerCenterDiagnostic)"
+        )
+        XCTAssertEqual(
+            markerFrame.midY, mapFrame.midY, accuracy: 12,
+            "The latest recorded point marker stays centered on the single-point route at accessibility text size. \(markerCenterDiagnostic)"
+        )
     }
 
     func testHomeMapConfirmedIdleHidesRouteCanvasUntilRideStarts() throws {

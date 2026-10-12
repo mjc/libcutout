@@ -93,19 +93,13 @@ struct RideMapCanvasView: View {
         dynamicTypeSize: DynamicTypeSize
     ) -> (start: CGSize, end: CGSize) {
         let scale: CGFloat = dynamicTypeSize.isAccessibilitySize ? 1.5 : 1
-        guard let first, let last, coordinateCount > 1 else {
-            guard coordinateCount > 0 else { return (.zero, .zero) }
-            return (
-                CGSize(width: -36 * scale, height: -18 * scale),
-                CGSize(width: 36 * scale, height: 18 * scale)
-            )
-        }
+        guard coordinateCount > 1, let first, let last else { return (.zero, .zero) }
         let distance = CLLocation(latitude: first.latitude, longitude: first.longitude)
             .distance(from: CLLocation(latitude: last.latitude, longitude: last.longitude))
         guard distance < 80 else { return (.zero, .zero) }
         return (
             CGSize(width: -56 * scale, height: -24 * scale),
-            CGSize(width: 56 * scale, height: 24 * scale)
+            CGSize(width: 56 * scale, height: 0)
         )
     }
 
@@ -246,12 +240,6 @@ struct RideMapCanvasView: View {
     }
 
     var body: some View {
-        let endpointOffsets = Self.markerOffsets(
-            first: points.first.map(coordinate(for:)),
-            last: points.last.map(coordinate(for:)),
-            coordinateCount: points.count,
-            dynamicTypeSize: dynamicTypeSize
-        )
         let startPoint = Self.canonicalEndpointPoint(
             in: points,
             sequence: endpointMetadata.canonicalStartSequence,
@@ -261,6 +249,16 @@ struct RideMapCanvasView: View {
             in: points,
             sequence: endpointMetadata.canonicalEndSequence,
             isVisible: endpointMetadata.canonicalEndVisible
+        )
+        let visibleMarkerCoordinates = [
+            (showsStartMarker ? startPoint : nil),
+            ((showsEndMarker || showsCurrentMarker) ? endPoint : nil),
+        ]
+        .compactMap { $0 }
+        .map(coordinate(for:))
+        let endpointOffsets = Self.markerOffsets(
+            for: visibleMarkerCoordinates,
+            dynamicTypeSize: dynamicTypeSize
         )
         let retainedSingletonSegmentIDs = Self.retainedSingletonSegmentIDs(in: points, segments: segments)
         let retainedSingletonPaths = segmentPaths.filter {
@@ -310,9 +308,9 @@ struct RideMapCanvasView: View {
                 ) {
                     RideMapRouteMarker(
                         title: localizedAppText("ride_map.start_marker"),
-                        color: PevColors.yellow
+                        color: PevColors.yellow,
+                        captionOffset: endpointOffsets.start
                     )
-                    .offset(x: endpointOffsets.start.width, y: endpointOffsets.start.height)
                 }
             }
             if showsEndMarker, let endPoint {
@@ -322,9 +320,9 @@ struct RideMapCanvasView: View {
                 ) {
                     RideMapRouteMarker(
                         title: localizedAppText("ride_map.end_marker"),
-                        color: PevColors.red
+                        color: PevColors.red,
+                        captionOffset: endpointOffsets.end
                     )
-                    .offset(x: endpointOffsets.end.width, y: endpointOffsets.end.height)
                 }
             }
             if showsCurrentMarker, !showsEndMarker, let endPoint {
@@ -334,9 +332,10 @@ struct RideMapCanvasView: View {
                 ) {
                     RideMapRouteMarker(
                         title: localizedAppText("ride_map.current_marker"),
-                        color: PevColors.green
+                        color: PevColors.green,
+                        captionOffset: endpointOffsets.end
                     )
-                    .offset(x: endpointOffsets.end.width, y: endpointOffsets.end.height)
+                    .accessibilityIdentifier("ride-map.latest-point-marker")
                 }
             }
         }
@@ -551,39 +550,44 @@ private struct RideMapRetainedSingletonSegmentMarker: View {
     }
 }
 
-private struct RideMapRouteMarker: View {
+struct RideMapRouteMarker: View {
     let title: String
     let color: Color
+    var captionOffset: CGSize = .zero
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
-        VStack(spacing: 3) {
+        ZStack {
+            Circle()
+                .fill(.black.opacity(0.85))
+                .frame(width: 26, height: 26)
+            Circle()
+                .stroke(color, lineWidth: 3)
+                .frame(width: 20, height: 20)
+            Circle()
+                .fill(color)
+                .frame(width: 8, height: 8)
+        }
+        .frame(width: 26, height: 26)
+        .overlay(alignment: .bottom) {
             if title.isEmpty == false {
                 Text(title)
-                    .font((dynamicTypeSize.isAccessibilitySize ? Font.caption : Font.caption2).weight(.black))
-                    .textCase(.uppercase)
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
-                    .background(.black.opacity(0.78), in: .rect(cornerRadius: 5))
+                    .font(.caption)
+                    .foregroundStyle(.primary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(.regularMaterial, in: .rect(cornerRadius: 5))
                     .lineLimit(RideMapCanvasView.markerTitleLineLimit(for: dynamicTypeSize))
-                    .minimumScaleFactor(0.75)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            ZStack {
-                Circle()
-                    .fill(.black.opacity(0.85))
-                    .frame(width: 26, height: 26)
-                Circle()
-                    .stroke(color, lineWidth: 3)
-                    .frame(width: 20, height: 20)
-                Circle()
-                    .fill(color)
-                    .frame(width: 8, height: 8)
+                    .fixedSize()
+                    // The caption sits 3 points above the fixed 26-point dot.
+                    .offset(
+                        x: captionOffset.width,
+                        y: captionOffset.height - CGFloat(26 + 3)
+                    )
+                    .accessibilityHidden(true)
             }
         }
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel(title.isEmpty ? localizedAppText("ride_map.current_marker") : title)
     }
 }

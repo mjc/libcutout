@@ -90,6 +90,24 @@ import XCTest
             _ = try renderedSize(shell.frame(height: 64), width: 390, textSize: .large, name: "map-shell")
         }
 
+        func testRouteMarkerAnchorStays26PointsWithLongCaptionAtAccessibleTextSizes() throws {
+            for textSize in [DynamicTypeSize.large, .accessibility3] {
+                let marker = RideMapRouteMarker(
+                    title: "Latest recorded point with a long accessible caption",
+                    color: PevColors.green
+                )
+                let size = try renderedSize(
+                    marker,
+                    width: 288,
+                    textSize: textSize,
+                    name: "route-marker-anchor",
+                    constrainWidth: false
+                )
+                XCTAssertEqual(size.width, 26, accuracy: 0.5)
+                XCTAssertEqual(size.height, 26, accuracy: 0.5)
+            }
+        }
+
         func testHistorySearchKeepsItsSizeWhenQueryIsCleared() throws {
             for textSize in [DynamicTypeSize.large, .accessibility3] {
                 let empty = try renderedSize(
@@ -151,17 +169,20 @@ import XCTest
         }
 
         private func renderedSize<Content: View>(
-            _ content: Content, width: CGFloat, textSize: DynamicTypeSize, name: String
+            _ content: Content, width: CGFloat, textSize: DynamicTypeSize, name: String,
+            constrainWidth: Bool = true
         ) throws -> NSSize {
-            let view =
+            let measuredContent =
                 content
                 .environment(\.dynamicTypeSize, textSize)
                 .environment(\.colorScheme, .dark)
-                .frame(width: width)
                 .background(PevColors.pageBackground)
+            let view = constrainWidth ? AnyView(measuredContent.frame(width: width)) : AnyView(measuredContent)
             let host = NSHostingView(rootView: view)
             let size = host.fittingSize
-            XCTAssertLessThanOrEqual(size.width, width + 0.5)
+            if constrainWidth {
+                XCTAssertLessThanOrEqual(size.width, width + 0.5)
+            }
             guard let directory = ProcessInfo.processInfo.environment["CUTOUT_MAP_LAYOUT_PREVIEW_DIR"] else {
                 return size
             }

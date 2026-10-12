@@ -758,17 +758,38 @@ final class RideMapPresentationTests: XCTestCase {
         XCTAssertNotEqual(canonical.singletonAccessibilityLabel, sampled.singletonAccessibilityLabel)
     }
 
-    func testMarkerOffsetsKeepSingletonAndNearbyEndpointsReadable() {
+    func testMarkerOffsetsOnlySeparateVisibleMarkerPairs() {
         let singleton = RideMapCanvasView.markerOffsets(for: [CLLocationCoordinate2D(latitude: 40, longitude: -105)])
-        XCTAssertEqual(singleton.start.width, -36)
-        XCTAssertEqual(singleton.end.width, 36)
+        XCTAssertEqual(singleton.start, .zero, "A lone visible latest-point marker stays on its route coordinate")
+        XCTAssertEqual(singleton.end, .zero)
+
+        let sameCoordinateEndpoints = RideMapCanvasView.markerOffsets(for: [
+            CLLocationCoordinate2D(latitude: 40, longitude: -105),
+            CLLocationCoordinate2D(latitude: 40, longitude: -105),
+        ])
+        XCTAssertEqual(sameCoordinateEndpoints.start.width, -56)
+        XCTAssertEqual(sameCoordinateEndpoints.end.width, 56)
 
         let nearby = RideMapCanvasView.markerOffsets(for: [
             CLLocationCoordinate2D(latitude: 40, longitude: -105),
             CLLocationCoordinate2D(latitude: 40.0001, longitude: -105),
         ])
         XCTAssertEqual(nearby.start.width, -56)
+        XCTAssertEqual(nearby.start.height, -24)
         XCTAssertEqual(nearby.end.width, 56)
+        XCTAssertEqual(nearby.end.height, 0, "The end dot stays anchored when its caption sits above it")
+
+        let nearbyAtAccessibilitySize = RideMapCanvasView.markerOffsets(
+            for: [
+                CLLocationCoordinate2D(latitude: 40, longitude: -105),
+                CLLocationCoordinate2D(latitude: 40.0001, longitude: -105),
+            ],
+            dynamicTypeSize: .accessibility3
+        )
+        XCTAssertEqual(nearbyAtAccessibilitySize.start.width, -84)
+        XCTAssertEqual(nearbyAtAccessibilitySize.start.height, -36)
+        XCTAssertEqual(nearbyAtAccessibilitySize.end.width, 84)
+        XCTAssertEqual(nearbyAtAccessibilitySize.end.height, 0)
 
         let distant = RideMapCanvasView.markerOffsets(for: [
             CLLocationCoordinate2D(latitude: 40, longitude: -105),
@@ -776,5 +797,10 @@ final class RideMapPresentationTests: XCTestCase {
         ])
         XCTAssertEqual(distant.start, .zero)
         XCTAssertEqual(distant.end, .zero)
+    }
+
+    func testRideMapMarkerLabelsDescribeRecordedPointsAndRideEndpoints() {
+        XCTAssertEqual(localizedAppText("ride_map.current_marker"), "Latest recorded point")
+        XCTAssertEqual(localizedAppText("ride_map.end_marker"), "Ride end")
     }
 }
