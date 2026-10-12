@@ -1879,16 +1879,28 @@
       "comment" : "Live map metric label for distance.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "distance" } } }
     },
-    "ride_map.metric_recording_time" : {
-      "comment" : "Live map and saved ride metric label for Rust recording duration, which excludes paused intervals. This value is neither elapsed nor moving time.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Recording time" } } }
+    "ride_map.metric_moving_time" : {
+      "comment" : "Ride metric for Rust-accounted moving intervals, excluding pauses and unobserved intervals.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Moving time" } } }
+    },
+    "ride_map.moving_time_unavailable" : {
+      "comment" : "Spoken metric value when a ride has no moving-time evidence. The surrounding metric supplies the label.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Unavailable" } } }
+    },
+    "ride_map.moving_time_partial" : {
+      "comment" : "Spoken lower bound for moving time. The placeholder is a formatted duration.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "At least %@; some intervals unavailable" } } }
+    },
+    "ride_map.moving_time" : {
+      "comment" : "Moving-time label for shared ride text and history row accessibility.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Moving time: %@" } } }
     },
     "ride_map.metric_speed" : {
       "comment" : "Live map metric label for speed when a typed speed value is available.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "speed" } } }
     },
     "ride_map.metric_average_speed" : {
-      "comment" : "Historical ride detail metric label for distance divided by elapsed duration.",
+      "comment" : "Historical ride detail metric label for the existing Rust average over recording duration.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "avg speed" } } }
     },
     "ride_map.speed_unavailable" : {
@@ -1902,10 +1914,6 @@
     "ride_map.end_marker" : {
       "comment" : "Map marker for the final point in a stopped or historical route.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Ride end" } } }
-    },
-    "ride_map.duration" : {
-      "comment" : "Labelled recording duration for shared ride text and accessibility. The placeholder is the formatted Rust recording duration, which excludes pauses.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Recording time: %@" } } }
     },
     "ride_map.discard" : {
       "comment" : "Ride-map destructive control that discards a stopped ride.",

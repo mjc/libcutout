@@ -37,7 +37,7 @@ import XCTest
             state: MobileMusicHistoryStateDto?, error: MobileRideMapError? = nil, canForget: Bool = false
         ) -> some View {
             RideMapHistoryDetailSummary(
-                distance: "75 mi", duration: "5 hr", averageSpeed: "15 mph",
+                distance: "75 mi", movingTime: "5 hr", averageSpeed: "15 mph",
                 recordedAt: "Oct 4", vehicle: "NOSFET Aero", telemetryState: .associatedNoTelemetry,
                 displayPointCount: 2, recordedPointCount: 2, pointsTruncated: false,
                 segmentCount: 1, segments: [], segmentsOmittedByBudget: false, canonicalBackgroundGapCount: 0,
@@ -70,7 +70,7 @@ import XCTest
             for width: CGFloat in [288, 358] {
                 let header = RideMapHistoryDetailHeader(close: {})
                 let metrics = RideMapDetailMetrics(
-                    distance: "75.0 mi", duration: "5 hr, 36 min", averageSpeed: "13.4 mph"
+                    distance: "75.0 mi", movingTime: "5 hr, 36 min", averageSpeed: "13.4 mph"
                 )
                 let normalHeader = try renderedSize(header, width: width, textSize: .large, name: "detail-header")
                 let accessibleHeader = try renderedSize(
@@ -164,7 +164,7 @@ import XCTest
                 rideID: "preview-ride", isSelected: selected,
                 title: "Oct 4, 2026 at 1:08 PM",
                 vehicle: "NOSFET Aero with a longer saved name",
-                distance: "75.0 mi", duration: "5 hr, 36 min", select: {}
+                distance: "75.0 mi", movingTime: "5 hr, 36 min", select: {}
             )
         }
 

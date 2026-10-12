@@ -1138,6 +1138,10 @@ final class CutoutAppUITests: XCTestCase {
         let mapScreen = app.descendants(matching: .any)["ride-map.screen"]
         XCTAssertTrue(mapScreen.waitForExistence(timeout: 8), app.debugDescription)
         XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "ride-map.screen").count, 1)
+        let summary = app.descendants(matching: .any)["ride-map.summary"]
+        XCTAssertTrue(summary.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(summary.label.contains("Moving time"), app.debugDescription)
+        XCTAssertFalse(summary.label.contains("Recording time"), app.debugDescription)
         let modePicker = app.descendants(matching: .any)["ride-map.mode-picker"].segmentedControls.firstMatch
         XCTAssertTrue(modePicker.waitForExistence(timeout: 5), app.debugDescription)
         let pauseButton = app.buttons["ride-map.pause"]
@@ -1210,6 +1214,10 @@ final class CutoutAppUITests: XCTestCase {
 
         let mapScreen = app.descendants(matching: .any)["ride-map.screen"]
         XCTAssertTrue(mapScreen.waitForExistence(timeout: 8), app.debugDescription)
+        let summary = app.descendants(matching: .any)["ride-map.summary"]
+        XCTAssertTrue(summary.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(summary.label.contains("Moving time"), app.debugDescription)
+        XCTAssertFalse(summary.label.contains("Recording time"), app.debugDescription)
         let routeMap = app.descendants(matching: .any)["ride-map.map"]
         XCTAssertTrue(routeMap.waitForExistence(timeout: 8), app.debugDescription)
         let recenterButton = app.buttons["ride-map.recenter"]

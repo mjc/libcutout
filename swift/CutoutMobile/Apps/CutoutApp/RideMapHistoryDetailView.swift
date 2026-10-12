@@ -246,7 +246,9 @@ struct RideMapHistoryDetailView: View {
                             } else if projectionRideID == activeHistoryID, let ride = selectedRide {
                                 RideMapHistoryDetailSummary(
                                     distance: distanceText(for: ride.summary),
-                                    duration: durationText(for: ride.summary),
+                                    movingTime: RideMapMetricFormatting.movingTimeText(for: ride.summary),
+                                    movingTimeSpokenValue: RideMapMetricFormatting.movingTimeSpokenValue(
+                                        for: ride.summary),
                                     averageSpeed: Self.averageSpeedText(
                                         millimetresPerSecond: ride.summary
                                             .averageSpeedMillimetresPerSecond,
@@ -306,10 +308,6 @@ struct RideMapHistoryDetailView: View {
         RideMapMetricFormatting.distanceText(for: summary)
     }
 
-    private func durationText(for summary: MobileRideMapSummaryDto) -> String {
-        RideMapMetricFormatting.durationText(for: summary)
-    }
-
     private func recordedAtText(for milliseconds: UInt64) -> String {
         RideMapMetricFormatting.recordedAtText(for: milliseconds)
     }
@@ -330,8 +328,8 @@ struct RideMapHistoryDetailView: View {
 
     private func shareText(for ride: MobileRideMapHistorySummaryDto) -> String {
         let distance = distanceText(for: ride.summary)
-        let duration = durationText(for: ride.summary)
+        let movingTime = RideMapMetricFormatting.movingTimeSpokenValue(for: ride.summary)
         let title = localizedAppText("ride_map.detail_title")
-        return "\(title)\n\(distance) · \(localizedAppText("ride_map.duration", duration))"
+        return "\(title)\n\(distance) · \(localizedAppText("ride_map.moving_time", movingTime))"
     }
 }

@@ -266,13 +266,47 @@ final class RideMapPresentationTests: XCTestCase {
                 .formatted(.measurement(width: .abbreviated, usage: .road))
         )
         XCTAssertEqual(
-            RideMapMetricFormatting.durationText(for: summary),
-            Duration.seconds(Double(summary.durationMilliseconds) / 1_000)
-                .formatted(.units(allowed: [.hours, .minutes, .seconds], width: .abbreviated))
-        )
-        XCTAssertEqual(
             RideMapMetricFormatting.recordedAtText(for: 0),
             localizedAppText("ride_map.untitled_ride")
+        )
+    }
+
+    func testMovingTimeFormattingDistinguishesUnavailableMeasuredZeroAndPartialCoverage() {
+        func summary(_ movingTime: MobileRideMapMovingTimeDto) -> MobileRideMapSummaryDto {
+            MobileRideMapSummaryDto(
+                pointCount: 2, distanceMeters: 10, durationMilliseconds: 999_000, movingTime: movingTime
+            )
+        }
+        let zero = Duration.seconds(0)
+            .formatted(.units(allowed: [.hours, .minutes, .seconds], width: .abbreviated))
+        let moving = Duration.seconds(61)
+            .formatted(.units(allowed: [.hours, .minutes, .seconds], width: .abbreviated))
+        XCTAssertEqual(RideMapMetricFormatting.movingTimeText(for: summary(.unavailable)), "--")
+        XCTAssertEqual(
+            RideMapMetricFormatting.movingTimeSpokenValue(for: summary(.unavailable)),
+            localizedAppText("ride_map.moving_time_unavailable")
+        )
+        XCTAssertEqual(
+            localizedAppText(
+                "ride_map.moving_time", RideMapMetricFormatting.movingTimeSpokenValue(for: summary(.unavailable))),
+            "Moving time: Unavailable"
+        )
+        XCTAssertEqual(
+            RideMapMetricFormatting.movingTimeText(
+                for: summary(.complete(movingMilliseconds: 0, observedMilliseconds: 10_000))), zero)
+        XCTAssertEqual(
+            RideMapMetricFormatting.movingTimeText(
+                for: summary(
+                    .partial(
+                        movingMilliseconds: 61_000, observedMilliseconds: 100_000, unknownMilliseconds: 30_000))),
+            "≥ \(moving)"
+        )
+        XCTAssertEqual(
+            RideMapMetricFormatting.movingTimeSpokenValue(
+                for: summary(
+                    .partial(
+                        movingMilliseconds: 61_000, observedMilliseconds: 100_000, unknownMilliseconds: 30_000))),
+            localizedAppText("ride_map.moving_time_partial", moving)
         )
     }
 
