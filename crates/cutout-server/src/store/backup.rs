@@ -5,6 +5,8 @@ use std::{fs, path::Path};
 use uuid::Uuid;
 
 pub(super) fn backup_database(connection: &Connection, output: &Path) -> Result<(), Error> {
+    let output = output.to_str().ok_or(Error::Invalid)?;
+    let output = Path::new(output);
     if output.try_exists().map_err(|_| Error::Unavailable)? {
         return Err(Error::Conflict);
     }
