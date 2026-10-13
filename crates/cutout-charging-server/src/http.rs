@@ -9,17 +9,19 @@ use crate::model::{
 use crate::{
     Error, Store,
     model::{CreateRequest, ListQuery, MutationReceipt, PublicSpot, SpotPage, id},
-    store::{Actor, Identity, ModeratorActor, Registration},
+    store::{Actor, ModeratorActor},
 };
 use axum::{
     Json, Router,
-    extract::{ConnectInfo, DefaultBodyLimit, Extension, Path, Query, State},
+    extract::{DefaultBodyLimit, Path, Query, State},
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
 use serde::Serialize;
-use std::net::{IpAddr, SocketAddr};
+use std::net::IpAddr;
+
+mod registration;
 
 /// A proxy peer allowed to supply one client address through `X-Real-IP`.
 /// The proxy must overwrite that header rather than forwarding caller input.
@@ -67,7 +69,7 @@ pub fn router(store: Store) -> Router {
     Router::new()
         .route("/healthz", get(|| async { StatusCode::OK }))
         .route("/readyz", get(ready))
-        .route("/v1/identities", post(identity))
+        .route("/v1/identities", post(registration::identity))
         .route("/v1/charging-spots", get(list).post(create))
         .route("/v1/charging-spots/changes", get(changes))
         .route(
@@ -114,37 +116,6 @@ pub(crate) async fn actor(store: &Store, headers: &HeaderMap) -> Result<Actor, E
 async fn ready(State(store): State<Store>) -> Result<StatusCode, Error> {
     store.ready().await?;
     Ok(StatusCode::OK)
-}
-async fn identity(
-    State(store): State<Store>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
-    trusted_proxy: Option<Extension<TrustedProxy>>,
-    headers: HeaderMap,
-    body: Result<axum::body::Bytes, axum::extract::rejection::BytesRejection>,
-) -> Result<(StatusCode, Json<Identity>), Error> {
-    if !body.map_err(|_| Error::Invalid)?.is_empty() {
-        return Err(Error::Invalid);
-    }
-    let source = if trusted_proxy.is_some_and(|Extension(TrustedProxy(proxy))| {
-        proxy.to_canonical() == peer.ip().to_canonical()
-    }) {
-        let mut addresses = headers.get_all("x-real-ip").iter();
-        let address = addresses.next().ok_or(Error::Invalid)?;
-        if addresses.next().is_some() {
-            return Err(Error::Invalid);
-        }
-        address
-            .to_str()
-            .map_err(|_| Error::Invalid)?
-            .parse::<IpAddr>()
-            .map_err(|_| Error::Invalid)?
-    } else {
-        peer.ip()
-    };
-    Ok((
-        StatusCode::CREATED,
-        Json(store.identity(Registration::Public { source }).await?),
-    ))
 }
 
 async fn verify(

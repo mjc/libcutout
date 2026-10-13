@@ -13,14 +13,16 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::sync::Semaphore;
-use uuid::Uuid;
 
+mod backup;
+mod budgets;
 mod identity;
 mod spots;
 #[cfg(test)]
 mod tests;
 mod votes;
 
+pub(crate) use budgets::{QuotaWindow, quota, write_quota};
 pub(crate) use identity::{Actor, Identity, ModeratorActor, Registration, Role, ensure_actor};
 pub(crate) use spots::{published_spot, state};
 pub(crate) use votes::clear_spot_votes;
@@ -139,34 +141,8 @@ impl Store {
     }
 
     pub(crate) async fn backup(&self, output: std::path::PathBuf) -> Result<(), Error> {
-        self.call(move |connection| {
-            if output.try_exists().map_err(|_| Error::Unavailable)? {
-                return Err(Error::Conflict);
-            }
-            let temporary = output.with_extension(format!("{}.tmp", Uuid::new_v4().simple()));
-            let name = temporary.to_str().ok_or(Error::Invalid)?;
-            create_empty(&temporary).map_err(|_| Error::Unavailable)?;
-            let result = (|| {
-                connection
-                    .execute("VACUUM INTO ?1", [name])
-                    .map_err(db_error)?;
-                std::fs::File::open(&temporary)
-                    .and_then(|file| file.sync_all())
-                    .map_err(|_| Error::Unavailable)?;
-                std::fs::hard_link(&temporary, &output).map_err(|_| Error::Unavailable)?;
-                let parent = output
-                    .parent()
-                    .filter(|parent| !parent.as_os_str().is_empty())
-                    .unwrap_or_else(|| Path::new("."));
-                std::fs::File::open(parent)
-                    .and_then(|directory| directory.sync_all())
-                    .map_err(|_| Error::Unavailable)?;
-                Ok(())
-            })();
-            let _ = std::fs::remove_file(&temporary);
-            result
-        })
-        .await
+        self.call(move |connection| backup::backup_database(connection, &output))
+            .await
     }
 }
 
@@ -304,50 +280,6 @@ pub(crate) fn next_change(connection: &Connection) -> Result<u64, Error> {
             |row| row.get(0),
         )
         .map_err(db_error)
-}
-
-pub(crate) fn quota(
-    connection: &Connection,
-    principal: &str,
-    period: u64,
-    limit: u32,
-    now: u64,
-) -> Result<(), Error> {
-    let start = now / period * period;
-    let count: Option<u32> = connection
-        .query_row(
-            "SELECT count FROM quotas WHERE principal=?1 AND period_ms=?2 AND window_start_ms=?3",
-            params![principal, period, start],
-            |row| row.get(0),
-        )
-        .optional()
-        .map_err(db_error)?;
-    if count.unwrap_or_default() >= limit {
-        return Err(Error::Throttled);
-    }
-    connection
-        .execute(
-            "INSERT INTO quotas (principal, period_ms, window_start_ms, count)
-         VALUES (?1, ?2, ?3, 1)
-         ON CONFLICT (principal, period_ms) DO UPDATE
-         SET window_start_ms = excluded.window_start_ms,
-             count = CASE WHEN quotas.window_start_ms = excluded.window_start_ms
-                          THEN quotas.count + 1 ELSE 1 END",
-            params![principal, period, start],
-        )
-        .map_err(db_error)?;
-    Ok(())
-}
-
-pub(crate) fn write_quota(connection: &Connection, actor: &Actor, now: u64) -> Result<(), Error> {
-    quota(connection, &format!("write:{}", actor.id), 60_000, 30, now)?;
-    quota(
-        connection,
-        &format!("write:{}", actor.id),
-        3_600_000,
-        600,
-        now,
-    )
 }
 
 fn open_connection(path: &Path, mode: OpenMode) -> Result<Connection, Error> {

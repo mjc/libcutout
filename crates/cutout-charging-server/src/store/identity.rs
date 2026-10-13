@@ -1,5 +1,5 @@
 use super::votes::advance_spot_change;
-use super::{Store, begin_write, db_error, hash, now_ms, quota};
+use super::{QuotaWindow, Store, begin_write, db_error, hash, now_ms, quota};
 use crate::Error;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
@@ -252,8 +252,20 @@ pub(super) fn registration_quota(
         "registration-source:{}",
         hash(source.to_canonical().to_string().as_bytes())
     );
-    quota(connection, &principal, 60_000, 20, now)?;
-    quota(connection, &principal, 3_600_000, 120, now)?;
-    quota(connection, "registration-global", 60_000, 200, now)?;
-    quota(connection, "registration-global", 3_600_000, 1_200, now)
+    quota(connection, &principal, QuotaWindow::Minute, 20, now)?;
+    quota(connection, &principal, QuotaWindow::Hour, 120, now)?;
+    quota(
+        connection,
+        "registration-global",
+        QuotaWindow::Minute,
+        200,
+        now,
+    )?;
+    quota(
+        connection,
+        "registration-global",
+        QuotaWindow::Hour,
+        1_200,
+        now,
+    )
 }

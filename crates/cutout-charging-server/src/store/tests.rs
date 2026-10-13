@@ -1,5 +1,5 @@
 use super::identity::registration_quota;
-use super::{Error, Registration, Role, Store, hash, quota, state};
+use super::{Error, QuotaWindow, Registration, Role, Store, hash, quota, state};
 use crate::model::SpotStatus;
 
 #[tokio::test]
@@ -189,25 +189,42 @@ async fn quota_budgets_persist_and_reset_only_for_a_new_window() {
     let directory = tempfile::TempDir::new().expect("directory");
     let path = directory.path().join("quota.sqlite");
     let store = Store::open(&path).expect("store");
+    let windows = [
+        (QuotaWindow::Minute, 60_000),
+        (QuotaWindow::Hour, 3_600_000),
+        (QuotaWindow::Day, 86_400_000),
+    ];
     store
-        .call(|connection| {
-            quota(connection, "contributor", 60_000, 2, 1_000)?;
-            quota(connection, "contributor", 60_000, 2, 2_000)
+        .call(move |connection| {
+            for (window, period) in windows {
+                assert_eq!(window.period_ms(), period);
+                quota(connection, "contributor", window, 2, 1_000)?;
+                quota(connection, "contributor", window, 2, 2_000)?;
+            }
+            Ok(())
         })
         .await
-        .expect("two allowed writes");
+        .expect("two allowed writes in each window");
     drop(store);
     let reopened = Store::open(&path).expect("reopen");
-    assert_eq!(
-        reopened
-            .call(|connection| quota(connection, "contributor", 60_000, 2, 3_000))
-            .await,
-        Err(Error::Throttled)
-    );
     reopened
-        .call(|connection| quota(connection, "contributor", 60_000, 2, 60_000))
+        .call(move |connection| {
+            for (window, boundary) in windows {
+                assert_eq!(
+                    quota(connection, "contributor", window, 2, 3_000),
+                    Err(Error::Throttled)
+                );
+                quota(connection, "contributor", window, 2, boundary)?;
+                quota(connection, "contributor", window, 2, boundary + 1)?;
+                assert_eq!(
+                    quota(connection, "contributor", window, 2, boundary + 2),
+                    Err(Error::Throttled)
+                );
+            }
+            Ok(())
+        })
         .await
-        .expect("new window");
+        .expect("each window resets at its boundary");
 }
 
 #[tokio::test]

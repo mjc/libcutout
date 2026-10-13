@@ -1,7 +1,8 @@
 use super::votes::{clear_spot_votes, counts};
 use super::{
-    Actor, OperationKind, Store, begin_write, db_error, ensure_actor, fingerprint, json,
-    mutation_receipt, next_change, next_revision, now_ms, quota, remember, replay, write_quota,
+    Actor, OperationKind, QuotaWindow, Store, begin_write, db_error, ensure_actor, fingerprint,
+    json, mutation_receipt, next_change, next_revision, now_ms, quota, remember, replay,
+    write_quota,
 };
 use crate::{
     Error,
@@ -248,7 +249,7 @@ fn charge_creation_budget(connection: &Connection, actor: &Actor, now: u64) -> R
     quota(
         connection,
         &format!("new-spots:{}", actor.id),
-        86_400_000,
+        QuotaWindow::Day,
         20,
         now,
     )

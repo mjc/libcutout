@@ -7,8 +7,9 @@ use crate::{
         ValidatedChangesQuery, ValidatedReportRequest, ValidatedReportsQuery,
     },
     store::{
-        Actor, ModeratorActor, OperationKind, begin_write, db_error, ensure_actor, fingerprint,
-        json, next_revision, now_ms, published_spot, quota, remember, replay, write_quota,
+        Actor, ModeratorActor, OperationKind, QuotaWindow, begin_write, db_error, ensure_actor,
+        fingerprint, json, next_revision, now_ms, published_spot, quota, remember, replay,
+        write_quota,
     },
 };
 use rusqlite::{Connection, OptionalExtension, params};
@@ -47,7 +48,7 @@ impl Store {
             quota(
                 &transaction,
                 &format!("report:{}:{target}", actor.id),
-                86_400_000,
+                QuotaWindow::Day,
                 3,
                 now,
             )?;
