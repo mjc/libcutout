@@ -1971,6 +1971,10 @@
       "comment" : "Explanation shown with the history query retry action.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Could not load saved rides." } } }
     },
+    "ride_map.history_refresh_failed" : {
+      "comment" : "Concise status shown when a refresh fails while saved rides remain visible.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "History refresh failed." } } }
+    },
     "ride_map.history_retry" : {
       "comment" : "Retry action for a failed history or selected-detail query.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Try again" } } }
