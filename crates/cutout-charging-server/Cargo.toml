@@ -1,0 +1,29 @@
+[package]
+name = "cutout-charging-server"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Community charging-spot directory for rides.cutout.lol"
+
+[dependencies]
+axum.workspace = true
+clap.workspace = true
+cutout-ride-maps = { path = "../cutout-ride-maps" }
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["net"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+reqwest = { workspace = true, features = ["json"] }
+tempfile = "3"
+
+[lints]
+workspace = true
