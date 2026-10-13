@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::{ChargingDetails, ChargingInputError, Coordinate};
+use crate::Coordinate;
 
 /// Maximum UTF-8 byte length of a normalized public access note.
 pub const MAX_ACCESS_NOTE_BYTES: usize = 2_000;
@@ -110,7 +110,6 @@ pub struct NewChargingSpot {
     coordinate: Coordinate,
     access_note: AccessNote,
     cost: ChargingCost,
-    details: ChargingDetails,
 }
 
 impl NewChargingSpot {
@@ -129,39 +128,7 @@ impl NewChargingSpot {
             coordinate,
             access_note: AccessNote::new(access_note)?,
             cost,
-            details: ChargingDetails::default(),
         })
-    }
-
-    /// Adds validated optional metadata without changing the required fields.
-    ///
-    /// # Errors
-    /// Rejects payment conditions or prices when the spot is Free.
-    pub fn with_details(mut self, details: ChargingDetails) -> Result<Self, ChargingInputError> {
-        details.validate_cost(self.cost)?;
-        self.details = details;
-        Ok(self)
-    }
-
-    /// Returns optional public place and power details.
-    #[must_use]
-    pub const fn details(&self) -> &ChargingDetails {
-        &self.details
-    }
-
-    /// Returns only charging information for community submission.
-    /// Draft country suggestions, identity credentials and private ride data have no fields here.
-    #[must_use]
-    pub fn community_submission(&self) -> ChargingSubmission {
-        ChargingSubmission {
-            coordinate: SubmissionPin {
-                latitude_e7: self.coordinate.latitude().as_i32(),
-                longitude_e7: self.coordinate.longitude().as_i32(),
-            },
-            access_note: self.access_note.as_str().to_owned(),
-            cost: self.cost,
-            details: self.details.clone(),
-        }
     }
 
     /// Returns the validated map pin.
@@ -181,19 +148,4 @@ impl NewChargingSpot {
     pub const fn cost(&self) -> ChargingCost {
         self.cost
     }
-}
-
-/// A public-only payload compatible with the directory's spot input.
-#[derive(Clone, Debug, Serialize)]
-pub struct ChargingSubmission {
-    coordinate: SubmissionPin,
-    access_note: String,
-    cost: ChargingCost,
-    #[serde(flatten)]
-    details: ChargingDetails,
-}
-#[derive(Clone, Debug, Serialize)]
-struct SubmissionPin {
-    latitude_e7: i32,
-    longitude_e7: i32,
 }

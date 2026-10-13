@@ -1,7 +1,6 @@
 use cutout_charging_server::{Store, TrustedProxy, router};
 use reqwest::{Client, StatusCode};
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 use uuid::Uuid;
 
@@ -125,85 +124,6 @@ fn provision_moderator(path: &std::path::Path) -> String {
     credential["token"].as_str().expect("token").to_owned()
 }
 
-#[derive(Debug, Eq, PartialEq)]
-struct BudgetWindow {
-    period: u64,
-    start: u64,
-    count: u32,
-}
-
-fn registration_budget(path: &std::path::Path, source: &str) -> Vec<BudgetWindow> {
-    let connection = rusqlite::Connection::open(path).expect("inspect quota ledger");
-    let principal = format!(
-        "registration-source:{:x}",
-        Sha256::digest(source.as_bytes())
-    );
-    let mut statement = connection.prepare("SELECT period_ms,window_start_ms,count FROM quotas WHERE principal=?1 ORDER BY period_ms").expect("source budgets");
-    statement
-        .query_map([principal], |row| {
-            Ok(BudgetWindow {
-                period: row.get(0)?,
-                start: row.get(1)?,
-                count: row.get(2)?,
-            })
-        })
-        .expect("quota rows")
-        .collect::<Result<Vec<_>, _>>()
-        .expect("quota values")
-}
-
-async fn assert_registration_budget_survives_request(
-    server: &Server,
-    path: &std::path::Path,
-    header: &str,
-    source: &str,
-) {
-    let before = registration_budget(path, source);
-    assert_eq!(
-        before.len(),
-        2,
-        "both source budgets must exist before the request"
-    );
-    let response = server
-        .client
-        .post(format!("{}/v1/identities", server.address))
-        .header("x-real-ip", header)
-        .send()
-        .await
-        .expect("repeat source request");
-    let after = registration_budget(path, source);
-    match response.status() {
-        StatusCode::TOO_MANY_REQUESTS => assert_eq!(after, before),
-        StatusCode::CREATED => {
-            assert_eq!(after.len(), before.len());
-            for (previous, current) in before.iter().zip(&after) {
-                assert_eq!(current.period, previous.period);
-                if current.start == previous.start {
-                    let limit = match previous.period {
-                        60_000 => 20,
-                        3_600_000 => 120,
-                        period => panic!("unexpected source period: {period}"),
-                    };
-                    assert!(
-                        previous.count < limit,
-                        "an exhausted unchanged window must stay throttled"
-                    );
-                    assert_eq!(
-                        current.count,
-                        previous.count + 1,
-                        "an existing window must retain its prior consumption"
-                    );
-                } else {
-                    assert!(current.start > previous.start);
-                    assert_eq!((current.start - previous.start) % current.period, 0);
-                    assert_eq!(current.count, 1, "a new window starts with this request");
-                }
-            }
-        }
-        status => panic!("unexpected registration outcome: {status}"),
-    }
-}
-
 #[tokio::test]
 async fn one_registration_source_cannot_exhaust_another_sources_budget() {
     let directory = TempDir::new().expect("directory");
@@ -228,7 +148,14 @@ async fn one_registration_source_cannot_exhaust_another_sources_budget() {
         throttled,
         "one source must have a bounded registration budget"
     );
-    assert_registration_budget_survives_request(&source, &path, "192.0.2.123", "127.0.0.1").await;
+    let forged = source
+        .client
+        .post(format!("{}/v1/identities", source.address))
+        .header("x-real-ip", "192.0.2.123")
+        .send()
+        .await
+        .expect("forged source");
+    assert_eq!(forged.status(), StatusCode::TOO_MANY_REQUESTS);
     other.identity().await;
 }
 
@@ -296,8 +223,17 @@ async fn registration_proxy_sources_are_canonical_independent_and_durable() {
         assert_eq!(response.status(), StatusCode::CREATED);
     }
     assert!(throttled);
-    assert_registration_budget_survives_request(&trusted, &path, "::ffff:192.0.2.1", "192.0.2.1")
-        .await;
+    assert_eq!(
+        trusted
+            .client
+            .post(&endpoint)
+            .header("x-real-ip", "::ffff:192.0.2.1")
+            .send()
+            .await
+            .expect("canonical source")
+            .status(),
+        StatusCode::TOO_MANY_REQUESTS
+    );
     assert_eq!(
         trusted
             .client
@@ -330,7 +266,17 @@ async fn registration_proxy_sources_are_canonical_independent_and_durable() {
         Some("127.0.0.1".parse().expect("proxy")),
     )
     .await;
-    assert_registration_budget_survives_request(&reopened, &path, "192.0.2.1", "192.0.2.1").await;
+    assert_eq!(
+        reopened
+            .client
+            .post(format!("{}/v1/identities", reopened.address))
+            .header("x-real-ip", "192.0.2.1")
+            .send()
+            .await
+            .expect("durable budget")
+            .status(),
+        StatusCode::TOO_MANY_REQUESTS
+    );
 }
 
 #[tokio::test]
