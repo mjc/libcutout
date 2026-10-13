@@ -9,6 +9,10 @@
 
 //! Rust-owned ride recording and geospatial domain primitives.
 
+mod charging;
+pub use charging::{
+    AccessNote, AccessNoteError, ChargingCost, ChargingVote, MAX_ACCESS_NOTE_BYTES, NewChargingSpot,
+};
 mod coordinate;
 pub use coordinate::{Coordinate, CoordinateError, LatitudeE7, LongitudeE7};
 mod lifecycle;

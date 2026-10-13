@@ -11,4 +11,5 @@ description = "Ride recording and geospatial domain types for Cutout"
 workspace = true
 
 [dependencies]
+serde.workspace = true
 thiserror.workspace = true
