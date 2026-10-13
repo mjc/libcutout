@@ -53,35 +53,25 @@ enum Command {
 /// Returns a classified error for database, command, output or listener failures.
 pub async fn run_from_arguments() -> Result<(), Error> {
     let arguments = Arguments::parse();
-    let store = match &arguments.command {
+    let store = open_store(&arguments)?;
+    dispatch_command(arguments.command, store).await
+}
+
+fn open_store(arguments: &Arguments) -> Result<Store, Error> {
+    match &arguments.command {
         Command::Serve { .. } | Command::Identity { .. } => Store::open(&arguments.database),
         Command::Revoke { .. } | Command::Backup { .. } | Command::Check => {
             Store::open_existing(&arguments.database)
         }
-    }?;
-    match arguments.command {
+    }
+}
+
+async fn dispatch_command(command: Command, store: Store) -> Result<(), Error> {
+    match command {
         Command::Serve {
             listen,
             trusted_proxy,
-        } => {
-            let listener = tokio::net::TcpListener::bind(listen)
-                .await
-                .map_err(|_| Error::Unavailable)?;
-            tracing::info!(address=%listener.local_addr().map_err(|_|Error::Unavailable)?,"charging directory listening");
-            let app = match trusted_proxy {
-                Some(proxy) => {
-                    crate::router(store).layer(axum::Extension(crate::TrustedProxy(proxy)))
-                }
-                None => crate::router(store),
-            };
-            axum::serve(
-                listener,
-                app.into_make_service_with_connect_info::<SocketAddr>(),
-            )
-            .with_graceful_shutdown(shutdown())
-            .await
-            .map_err(|_| Error::Unavailable)
-        }
+        } => serve(listen, trusted_proxy, store).await,
         Command::Identity { moderator } => {
             let role = if moderator {
                 Role::Moderator
@@ -95,6 +85,33 @@ pub async fn run_from_arguments() -> Result<(), Error> {
         Command::Revoke { identity } => store.revoke(id(&identity)?).await,
         Command::Backup { output } => store.backup(output).await,
         Command::Check => store.check().await,
+    }
+}
+
+async fn serve(
+    listen: SocketAddr,
+    trusted_proxy: Option<IpAddr>,
+    store: Store,
+) -> Result<(), Error> {
+    let listener = tokio::net::TcpListener::bind(listen)
+        .await
+        .map_err(|_| Error::Unavailable)?;
+    let address = listener.local_addr().map_err(|_| Error::Unavailable)?;
+    tracing::info!(%address, "charging directory listening");
+    let router = build_router(store, trusted_proxy);
+    axum::serve(
+        listener,
+        router.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown())
+    .await
+    .map_err(|_| Error::Unavailable)
+}
+
+fn build_router(store: Store, trusted_proxy: Option<IpAddr>) -> axum::Router {
+    match trusted_proxy {
+        Some(proxy) => crate::router(store).layer(axum::Extension(crate::TrustedProxy(proxy))),
+        None => crate::router(store),
     }
 }
 

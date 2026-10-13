@@ -1,6 +1,6 @@
 use crate::model::{
-    AuditPage, ModerationAction, ModerationRequest, ModeratorSpot, ReportReason, ReportReceipt,
-    ReportRequest, ReportsPage, ReportsQuery, ResolveRequest, optional_text,
+    AuditPage, ModerationRequest, ModeratorSpot, ReportReceipt, ReportRequest, ReportsPage,
+    ReportsQuery, ResolveRequest,
 };
 use crate::model::{
     ChangesPage, ChangesQuery, EditRequest, SpotMutation, VoteReceipt, VoteRequest, VoteState,
@@ -9,7 +9,7 @@ use crate::model::{
 use crate::{
     Error, Store,
     model::{CreateRequest, ListQuery, MutationReceipt, PublicSpot, SpotPage, id},
-    store::{Actor, Identity, Registration, Role},
+    store::{Actor, Identity, ModeratorActor, Registration},
 };
 use axum::{
     Json, Router,
@@ -249,12 +249,8 @@ async fn changes(
     Ok(Json(store.changes(query).await?))
 }
 
-async fn moderator_actor(store: &Store, headers: &HeaderMap) -> Result<Actor, Error> {
-    let actor = actor(store, headers).await?;
-    if actor.role != Role::Moderator {
-        return Err(Error::Forbidden);
-    }
-    Ok(actor)
+async fn moderator_actor(store: &Store, headers: &HeaderMap) -> Result<ModeratorActor, Error> {
+    actor(store, headers).await?.into_moderator()
 }
 
 async fn report(
@@ -264,13 +260,7 @@ async fn report(
     body: Result<Json<ReportRequest>, axum::extract::rejection::JsonRejection>,
 ) -> Result<(StatusCode, Json<ReportReceipt>), Error> {
     let actor = actor(&store, &headers).await?;
-    let mut request = body.map_err(|_| Error::Invalid)?.0;
-    request.message = optional_text(request.message, 1_000)?;
-    if let ReportReason::Other = request.reason
-        && request.message.is_none()
-    {
-        return Err(Error::Invalid);
-    }
+    let request = body.map_err(|_| Error::Invalid)?.0.into_validated()?;
     Ok((
         StatusCode::CREATED,
         Json(store.report(actor, id(&target)?, request).await?),
@@ -304,24 +294,7 @@ async fn moderate(
     body: Result<Json<ModerationRequest>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Json<MutationReceipt>, Error> {
     let actor = moderator_actor(&store, &headers).await?;
-    let request = body.map_err(|_| Error::Invalid)?.0;
-    let action = match request.action {
-        ModerationAction::Correct { spot } => ModerationAction::Correct {
-            spot: spot.validate()?,
-        },
-        ModerationAction::Duplicate { canonical_id } => ModerationAction::Duplicate {
-            canonical_id: id(&canonical_id)?,
-        },
-        ModerationAction::Hide => ModerationAction::Hide,
-        ModerationAction::Restore => ModerationAction::Restore,
-        ModerationAction::Remove => ModerationAction::Remove,
-    };
-    let request = ModerationRequest {
-        operation_id: request.operation_id,
-        expected_revision: request.expected_revision,
-        note: optional_text(Some(request.note), 500)?.ok_or(Error::Invalid)?,
-        action,
-    };
+    let request = body.map_err(|_| Error::Invalid)?.0.into_validated()?;
     Ok(Json(store.moderate(actor, id(&target)?, request).await?))
 }
 
@@ -332,8 +305,7 @@ async fn resolve(
     body: Result<Json<ResolveRequest>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Json<ReportReceipt>, Error> {
     let actor = moderator_actor(&store, &headers).await?;
-    let mut request = body.map_err(|_| Error::Invalid)?.0;
-    request.note = optional_text(Some(request.note), 500)?.ok_or(Error::Invalid)?;
+    let request = body.map_err(|_| Error::Invalid)?.0.into_validated()?;
     Ok(Json(store.resolve(actor, id(&target)?, request).await?))
 }
 

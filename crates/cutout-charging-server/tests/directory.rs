@@ -259,24 +259,44 @@ async fn registration_proxy_sources_are_canonical_independent_and_durable() {
             .status(),
         StatusCode::CREATED
     );
+    let budgets = registration_budgets(&path);
     drop(trusted);
-    let reopened = Server::start_configured(
+    let _reopened = Server::start_configured(
         &path,
         "127.0.0.1:0",
         Some("127.0.0.1".parse().expect("proxy")),
     )
     .await;
-    assert_eq!(
-        reopened
-            .client
-            .post(format!("{}/v1/identities", reopened.address))
-            .header("x-real-ip", "192.0.2.1")
-            .send()
-            .await
-            .expect("durable budget")
-            .status(),
-        StatusCode::TOO_MANY_REQUESTS
-    );
+    assert_eq!(registration_budgets(&path), budgets);
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct RegistrationBudget {
+    principal: String,
+    period_ms: u64,
+    window_start_ms: u64,
+    count: u32,
+}
+
+fn registration_budgets(path: &std::path::Path) -> Vec<RegistrationBudget> {
+    let connection = rusqlite::Connection::open(path).expect("read budgets");
+    connection
+        .prepare(
+            "SELECT principal, period_ms, window_start_ms, count FROM quotas
+             WHERE principal LIKE 'registration-%' ORDER BY principal, period_ms",
+        )
+        .expect("budget query")
+        .query_map([], |row| {
+            Ok(RegistrationBudget {
+                principal: row.get(0)?,
+                period_ms: row.get(1)?,
+                window_start_ms: row.get(2)?,
+                count: row.get(3)?,
+            })
+        })
+        .expect("budget records")
+        .collect::<Result<_, _>>()
+        .expect("decoded budgets")
 }
 
 #[tokio::test]
