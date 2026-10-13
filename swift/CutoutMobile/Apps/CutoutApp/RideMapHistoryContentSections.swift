@@ -120,7 +120,10 @@ struct RideMapHistoryFilterBar: View {
     private func filterLabel(title: String) -> some View {
         HStack(spacing: 6) {
             Text(title)
-                .lineLimit(1)
+                .lineLimit(
+                    dynamicTypeSize.isAccessibilitySize ? 2 : 1,
+                    reservesSpace: dynamicTypeSize.isAccessibilitySize
+                )
                 .truncationMode(.tail)
                 .frame(maxWidth: .infinity, alignment: .leading)
             Image(systemName: "chevron.down")
