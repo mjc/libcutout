@@ -2,6 +2,8 @@
 
 //! Concrete `UniFFI` mobile binding surface for Cutout.
 
+mod charging;
+pub use charging::*;
 mod rgb;
 pub use rgb::*;
 mod connection_attempt;
@@ -7830,6 +7832,10 @@ pub enum MobileRideDatabaseError {
 )]
 fn map_ride_database_error(error: persistence::StorageError) -> MobileRideDatabaseError {
     match error {
+        persistence::StorageError::ChargingInvalidInput
+        | persistence::StorageError::ChargingConflict
+        | persistence::StorageError::ChargingNotOwned
+        | persistence::StorageError::ChargingOutboxFull => MobileRideDatabaseError::StorageFailure,
         persistence::StorageError::CaptureIdentityConflict => {
             MobileRideDatabaseError::CaptureIdentityConflict
         }
@@ -14065,7 +14071,7 @@ impl MobileRideMapCore {
     /// # Errors
     ///
     /// Returns a typed error when the Rust ride core is not ready, a sample cannot be converted,
-    /// or the batch exceeds [`MAX_LOCATION_BATCH_SIZE`].
+    /// or the location batch exceeds its supported size.
     pub fn ingest_location_batch_with_outcomes(
         &self,
         recording: Option<MobileRideMapRecordingTokenDto>,
@@ -26284,6 +26290,142 @@ mod tests {
 
         database.shutdown().expect("database shuts down");
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "Exercises one asynchronous save, move, vote, verification, reopen and withdrawal lifecycle"
+    )]
+    fn mobile_charging_commands_commit_and_read_through_the_shared_owner() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let path =
+                std::env::temp_dir().join(format!("cutout-charging-{}.sqlite", Uuid::new_v4()));
+            let database = open_ride_database(path.to_string_lossy().into_owned()).unwrap();
+            let fields = MobileChargingInputDto {
+                coordinate: MobileMapCoordinateDto {
+                    latitude_degrees: 0.0,
+                    longitude_degrees: 179.5,
+                },
+                access_note: "Outlet by the door".into(),
+                cost: MobileChargingCostDto::Free,
+                name: None,
+                venue: None,
+                hours: None,
+                terms: None,
+                price: None,
+                supplies: vec![],
+            };
+            let mut invalid = fields.clone();
+            invalid.access_note = " ".into();
+            assert_eq!(
+                database.save_charging_spot(invalid).await,
+                Err(MobileChargingError::AccessNoteBlank)
+            );
+            assert_eq!(database.inner.charging_outbox_count().unwrap(), 0);
+            let saved = database.save_charging_spot(fields.clone()).await.unwrap();
+            let detail = database
+                .charging_spot(saved.id.clone())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(detail.input, Some(fields.clone()));
+            assert_eq!(detail.status, MobileChargingStatusDto::Queued);
+            assert!(detail.remote_id.is_none());
+            let bounds = MobileGeoBoundsDto {
+                minimum_latitude_degrees: -1.0,
+                maximum_latitude_degrees: 1.0,
+                minimum_longitude_degrees: 179.0,
+                maximum_longitude_degrees: -179.0,
+            };
+            let page = database
+                .charging_spots_in_bounds(bounds, MobileChargingFilterDto::default(), None, 1)
+                .await
+                .unwrap();
+            assert_eq!(page.spots[0].id, saved.id);
+            assert!(page.next_cursor.is_none());
+            assert_eq!(
+                database
+                    .charging_spots_in_bounds(bounds, MobileChargingFilterDto::default(), None, 0)
+                    .await,
+                Err(MobileChargingError::InvalidLimit)
+            );
+            let mut moved = fields;
+            moved.coordinate.longitude_degrees = -179.5;
+            let edited = database
+                .edit_charging_spot(saved.id.clone(), saved.local_revision, moved.clone())
+                .await
+                .unwrap();
+            assert_eq!(
+                database
+                    .withdraw_charging_spot(saved.id.clone(), saved.local_revision)
+                    .await,
+                Err(MobileChargingError::Conflict)
+            );
+            let vote = database
+                .vote_charging_spot(
+                    saved.id.clone(),
+                    edited.local_revision,
+                    Some(MobileChargingVoteDto::Up),
+                )
+                .await
+                .unwrap();
+            let verify = database
+                .verify_charging_spot(saved.id.clone(), vote.local_revision)
+                .await
+                .unwrap();
+            let detail = database
+                .charging_spot(saved.id.clone())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(detail.vote, Some(MobileChargingVoteDto::Up));
+            assert_eq!(detail.votes_up, 0);
+            assert!(detail.verified_at_ms.is_none());
+            database.shutdown().unwrap();
+            let database = open_ride_database(path.to_string_lossy().into_owned()).unwrap();
+            assert_eq!(
+                database
+                    .charging_spot(saved.id.clone())
+                    .await
+                    .unwrap()
+                    .unwrap(),
+                detail
+            );
+            assert_eq!(database.inner.charging_outbox_count().unwrap(), 4);
+            let withdrawn = database
+                .withdraw_charging_spot(saved.id.clone(), verify.local_revision)
+                .await
+                .unwrap();
+            assert_eq!(withdrawn.id, saved.id);
+            assert_eq!(
+                database
+                    .charging_spot(saved.id)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .status,
+                MobileChargingStatusDto::Withdrawn
+            );
+            database.rebuild_spatial_indexes().unwrap();
+            assert_eq!(
+                database
+                    .charging_spots_in_bounds(bounds, MobileChargingFilterDto::default(), None, 1)
+                    .await
+                    .unwrap()
+                    .spots,
+                []
+            );
+            database.shutdown().unwrap();
+            fs::remove_file(path).unwrap();
+        });
     }
 
     #[test]

@@ -594,6 +594,9 @@ impl DatabaseWorker<'_> {
                     limit,
                 ));
             }
+            Command::Charging(command) => {
+                super::charging::execute(connection, spatial_schema, command);
+            }
             Command::CreateMapPoint {
                 name,
                 coordinate,
