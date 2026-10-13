@@ -738,6 +738,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "cutout-charging-server"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "clap",
+ "cutout-ride-maps",
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
 name = "cutout-cli"
 version = "0.1.0"
 dependencies = [
@@ -850,7 +870,10 @@ name = "cutout-ride-maps"
 version = "0.1.0"
 dependencies = [
  "cutout-core",
+ "serde",
+ "serde_json",
  "thiserror 2.0.18",
+ "uuid",
 ]
 
 [[package]]
@@ -3773,6 +3796,7 @@ checksum = "144d6b123cef80b301b8f72a9e2ca4370ddec21950d0a103dd22c437006d2db7"
 dependencies = [
  "getrandom 0.4.3",
  "js-sys",
+ "serde_core",
  "wasm-bindgen",
 ]
 

@@ -9,6 +9,23 @@
 
 //! Rust-owned ride recording and geospatial domain primitives.
 
+mod charging;
+mod charging_identity;
+pub use charging_identity::{ChargingProvenance, ChargingSpot, ChargingSpotId};
+mod charging_power_draft;
+pub use charging_power_draft::{
+    CHARGING_OUTLET_CATALOGUE_VERSION, ChargingCountry, ChargingPowerDraft, ChargingSupplyKind,
+    DraftChargingSupply, charging_outlet_choices,
+};
+mod charging_details;
+pub use charging::{
+    AccessNote, AccessNoteError, ChargingCost, ChargingSubmission, ChargingVote,
+    MAX_ACCESS_NOTE_BYTES, NewChargingSpot,
+};
+pub use charging_details::{
+    ChargingConnector, ChargingDetails, ChargingInputError, ChargingPaidTerms, ChargingPrice,
+    ChargingPriceBasis, ChargingSupply, ChargingVenue, ConnectorLabel, SupplyVoltage,
+};
 mod coordinate;
 pub use coordinate::{Coordinate, CoordinateError, LatitudeE7, LongitudeE7};
 mod lifecycle;
