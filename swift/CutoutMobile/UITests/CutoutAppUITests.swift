@@ -378,7 +378,7 @@ final class CutoutAppUITests: XCTestCase {
 
     override func setUp() async throws {
         try await super.setUp()
-        if name.contains("RetainsThroughRefreshFailureAndRetry") {
+        if name.contains("RetainsThroughRefreshFailureAndRetry") || name.contains("KeepsDateValueReadable") {
             executionTimeAllowance = 360
         }
         continueAfterFailure = false
@@ -1411,6 +1411,251 @@ final class CutoutAppUITests: XCTestCase {
         try assertSavedHistoryEndpointCaptionsAtAccessibilityDynamicType()
     }
 
+    func
+        testPickerSurfaceHomeMapRouteSavedHistoryPreservesSelectionAtAccessibilityDynamicTypeKeepsDateValueReadable()
+        throws
+    {
+        try assertSavedHistoryDateFilterReadableAtAccessibilityDynamicType()
+    }
+
+    func
+        testPickerSurfaceHomeMapRouteSavedHistoryPreservesSelectionAtAccessibilityDynamicTypeKeepsDateValueReadableInLandscape()
+        throws
+    {
+        try assertSavedHistoryDateFilterReadableAtAccessibilityDynamicType()
+    }
+
+    private func assertSavedHistoryDateFilterReadableAtAccessibilityDynamicType() throws {
+        let mapTab = app.tabBars.buttons["Map"]
+        XCTAssertTrue(mapTab.waitForExistence(timeout: 10), app.debugDescription)
+        mapTab.tap()
+
+        let screen = app.descendants(matching: .any)["ride-map.screen"]
+        XCTAssertTrue(screen.waitForExistence(timeout: 8), app.debugDescription)
+        let readback = try XCTUnwrap(screen.value as? String)
+        let receipt = try XCTUnwrap(readback.components(separatedBy: ";").first)
+        XCTAssertTrue(receipt.hasPrefix("saved-rides:"), app.debugDescription)
+        let seededIDs = receipt.dropFirst("saved-rides:".count).split(separator: ",").map(String.init)
+        XCTAssertEqual(seededIDs.count, 2, "This scenario uses the persisted Rust history fixture")
+        XCTAssertTrue(seededIDs.allSatisfy { UUID(uuidString: $0) != nil }, app.debugDescription)
+
+        let picker = app.descendants(matching: .any)["ride-map.mode-picker"].segmentedControls.firstMatch
+        XCTAssertTrue(picker.waitForExistence(timeout: 5), app.debugDescription)
+        picker.buttons["History"].tap()
+        let initialGeneration = try waitForSettledHistory(in: screen, afterQueryGeneration: 0)
+
+        let date = app.buttons["ride-map.history-date-filter"]
+        let clear = app.buttons["ride-map.history-clear-filters"]
+        let filters = app.descendants(matching: .any)["ride-map.history-filters"]
+        let viewport = screen.scrollViews.firstMatch
+        let tabBar = app.tabBars.firstMatch
+        XCTAssertTrue(viewport.waitForExistence(timeout: 5), app.debugDescription)
+        scrollElementFrameIntoViewport(
+            date, in: viewport, maxScrolls: 8, occludedBy: tabBar, requiresFullVisibility: true
+        )
+        assertMinimumControlDimension(date.frame.width)
+        assertMinimumControlDimension(date.frame.height)
+        XCTAssertTrue(date.isHittable, app.debugDescription)
+
+        assertVisibleHistoryDateText(
+            "Last 30 days", in: date,
+            attachmentName: "saved-history-date-last-30-days-accessibility-before-filter-changes"
+        )
+
+        date.tap()
+        let shortRides = app.descendants(matching: .any)["ride-map.history-show-short-rides"]
+        XCTAssertTrue(shortRides.waitForExistence(timeout: 5), app.debugDescription)
+        scrollHistoryDateMenuOptionIntoView(shortRides)
+        assertMinimumControlDimension(shortRides.frame.height)
+        XCTAssertTrue(shortRides.isHittable, app.debugDescription)
+        shortRides.tap()
+        let shortRideGeneration = try waitForSettledHistory(in: screen, afterQueryGeneration: initialGeneration)
+
+        XCTAssertTrue(clear.exists, app.debugDescription)
+        XCTAssertTrue(clear.isEnabled, app.debugDescription)
+        let originalFiltersFrame = filters.frame
+        let originalViewportFrame = viewport.frame
+        let historyMap = app.descendants(matching: .any)["ride-map.map"]
+        XCTAssertTrue(historyMap.waitForExistence(timeout: 5), app.debugDescription)
+        let originalMapFrame = historyMap.frame
+        XCTAssertGreaterThan(originalMapFrame.height, 0, app.debugDescription)
+
+        date.tap()
+        let allTime = app.buttons["All time"]
+        XCTAssertTrue(allTime.waitForExistence(timeout: 5), app.debugDescription)
+        assertMinimumControlDimension(allTime.frame.width)
+        assertMinimumControlDimension(allTime.frame.height)
+        XCTAssertTrue(allTime.isHittable, app.debugDescription)
+        allTime.tap()
+        let allTimeGeneration = try waitForSettledHistory(in: screen, afterQueryGeneration: shortRideGeneration)
+        assertVisibleHistoryDateText(
+            "All time", in: date,
+            attachmentName: "saved-history-date-all-time-accessibility"
+        )
+        XCTAssertEqual(date.label, "All time", app.debugDescription)
+        XCTAssertTrue(clear.isEnabled, app.debugDescription)
+        assertMinimumControlDimension(clear.frame.width)
+        assertMinimumControlDimension(clear.frame.height)
+        XCTAssertTrue(clear.isHittable, app.debugDescription)
+        assertHistoryFrame(filters.frame, equals: originalFiltersFrame)
+        assertHistoryFrame(viewport.frame, equals: originalViewportFrame)
+        assertHistoryFrame(historyMap.frame, equals: originalMapFrame)
+
+        date.tap()
+        let last30Days = app.buttons["Last 30 days"]
+        XCTAssertTrue(last30Days.waitForExistence(timeout: 5), app.debugDescription)
+        assertMinimumControlDimension(last30Days.frame.width)
+        assertMinimumControlDimension(last30Days.frame.height)
+        XCTAssertTrue(last30Days.isHittable, app.debugDescription)
+        last30Days.tap()
+        _ = try waitForSettledHistory(in: screen, afterQueryGeneration: allTimeGeneration)
+        assertVisibleHistoryDateText(
+            "Last 30 days", in: date,
+            attachmentName: "saved-history-date-last-30-days-accessibility"
+        )
+        XCTAssertEqual(date.label, "Last 30 days", app.debugDescription)
+        XCTAssertTrue(clear.isEnabled, app.debugDescription)
+        XCTAssertTrue(clear.isHittable, app.debugDescription)
+        assertHistoryFrame(filters.frame, equals: originalFiltersFrame)
+        assertHistoryFrame(viewport.frame, equals: originalViewportFrame)
+        assertHistoryFrame(historyMap.frame, equals: originalMapFrame)
+
+        let last30Generation = try XCTUnwrap(
+            Self.historyFixtureFields(from: try XCTUnwrap(screen.value as? String))["query"].flatMap(UInt64.init)
+        )
+        clear.tap()
+        _ = try waitForSettledHistory(in: screen, afterQueryGeneration: last30Generation)
+        assertVisibleHistoryDateText(
+            "Last 30 days", in: date,
+            attachmentName: "saved-history-date-after-clear-accessibility"
+        )
+        XCTAssertTrue(clear.exists, app.debugDescription)
+        XCTAssertFalse(clear.isEnabled, app.debugDescription)
+        assertMinimumControlDimension(clear.frame.width)
+        assertMinimumControlDimension(clear.frame.height)
+        XCTAssertTrue(filters.frame.contains(clear.frame), app.debugDescription)
+        XCTAssertEqual(date.label, "Last 30 days", app.debugDescription)
+        XCTAssertTrue(
+            app.descendants(matching: .any)["ride-map.history-empty"].waitForExistence(timeout: 5), app.debugDescription
+        )
+        XCTAssertFalse(historyMap.exists, "Clearing also hides the Rust fixture's short routes")
+        assertMinimumControlDimension(date.frame.width)
+        assertMinimumControlDimension(date.frame.height)
+        XCTAssertTrue(date.isHittable, app.debugDescription)
+        assertHistoryFrame(filters.frame, equals: originalFiltersFrame)
+        assertHistoryFrame(viewport.frame, equals: originalViewportFrame)
+
+        let vehicle = app.buttons["ride-map.history-vehicle-filter"]
+        scrollElementFrameIntoViewport(
+            vehicle, in: viewport, maxScrolls: 8, occludedBy: tabBar, requiresFullVisibility: true
+        )
+        assertMinimumControlDimension(vehicle.frame.width)
+        assertMinimumControlDimension(vehicle.frame.height)
+        XCTAssertTrue(vehicle.isHittable, app.debugDescription)
+        let controlsAttachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        controlsAttachment.name = "saved-history-vehicle-control-accessibility"
+        controlsAttachment.lifetime = .keepAlways
+        add(controlsAttachment)
+    }
+
+    private func scrollHistoryDateMenuOptionIntoView(_ option: XCUIElement) {
+        let menu = app.collectionViews.firstMatch
+        XCTAssertTrue(menu.waitForExistence(timeout: 5), app.debugDescription)
+        // The collection's AX frame can extend below the clipped system popup.
+        // Use its smallest enclosing container and drag in the scroll-indicator gutter.
+        let containers = app.otherElements.containing(.collectionView, identifier: nil)
+            .allElementsBoundByIndex.map { (element: $0, frame: $0.frame) }
+            .filter { $0.frame.width > 0 && $0.frame.height > 0 }
+        guard
+            let container = containers.min(by: {
+                $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height
+            })
+        else {
+            XCTFail("Missing native date-menu popup container. \(app.debugDescription)")
+            return
+        }
+        let popup = container.element
+        let optionFrame = option.exists ? String(describing: option.frame) : "absent"
+        let diagnostic = XCTAttachment(
+            string: "Native menu=\(menu.frame); popup=\(container.frame); option=\(optionFrame)"
+        )
+        diagnostic.name = "saved-history-native-date-menu-frames"
+        diagnostic.lifetime = .keepAlways
+        add(diagnostic)
+        let before = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        before.name = "saved-history-date-menu-before-scroll"
+        before.lifetime = .keepAlways
+        add(before)
+        scrollElementFrameIntoViewport(
+            option, in: popup, maxScrolls: 8, horizontalFraction: 0.96
+        )
+        XCTAssertTrue(menu.exists, "Scrolling must preserve the native date menu")
+        let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        attachment.name = "saved-history-date-menu-option-reachable"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
+    private func assertVisibleHistoryDateText(
+        _ expectedText: String,
+        in element: XCUIElement,
+        attachmentName: String
+    ) {
+        let screenshot = XCUIScreen.main.screenshot()
+        let screenshotAttachment = XCTAttachment(screenshot: screenshot)
+        screenshotAttachment.name = attachmentName
+        screenshotAttachment.lifetime = .keepAlways
+        add(screenshotAttachment)
+
+        let screenshotImage = screenshot.image
+        guard let image = screenshotImage.cgImage,
+            let orientation = visionOrientation(for: screenshotImage.imageOrientation)
+        else {
+            XCTFail("Missing orientation-aware simulator screenshot for the selected History date")
+            return
+        }
+        let canvas = app.frame
+        let visibleFrame = element.frame.intersection(canvas)
+        guard canvas.width > 0, canvas.height > 0, !visibleFrame.isNull, !visibleFrame.isEmpty else {
+            XCTFail("Selected History date has no visible frame: element=\(element.frame), canvas=\(canvas)")
+            return
+        }
+        let region = CGRect(
+            x: (visibleFrame.minX - canvas.minX) / canvas.width,
+            y: 1 - (visibleFrame.maxY - canvas.minY) / canvas.height,
+            width: visibleFrame.width / canvas.width,
+            height: visibleFrame.height / canvas.height
+        ).intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+        let expectedWords = Set(expectedText.lowercased().split(whereSeparator: \.isWhitespace).map(String.init))
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.recognitionLanguages = ["en-US"]
+        request.usesLanguageCorrection = false
+        request.minimumTextHeight = 0
+        request.regionOfInterest = region
+
+        do {
+            try VNImageRequestHandler(cgImage: image, orientation: orientation, options: [:]).perform([request])
+            let lines = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+            let recognized = lines.joined(separator: " ").lowercased()
+                .filter { $0.isLetter || $0.isNumber || $0.isWhitespace }
+            let recognizedWords = Set(recognized.split(whereSeparator: \.isWhitespace).map(String.init))
+            let diagnostic =
+                "expected=\(expectedText); recognized=\(lines); frame=\(visibleFrame); canvas=\(canvas); "
+                + "region=\(region); orientation=\(screenshotImage.imageOrientation); "
+                + "imageSize=\(screenshotImage.size); scale=\(screenshotImage.scale); pixels=\(image.width)x\(image.height)"
+            let diagnosticAttachment = XCTAttachment(string: diagnostic)
+            diagnosticAttachment.name = attachmentName + "-recognition"
+            diagnosticAttachment.lifetime = .keepAlways
+            add(diagnosticAttachment)
+            for word in expectedWords {
+                XCTAssertTrue(recognizedWords.contains(word), "Selected date must be fully visible: \(diagnostic)")
+            }
+        } catch {
+            XCTFail("Selected History date recognition failed: \(error)")
+        }
+    }
+
     private func assertSavedHistoryEndpointCaptionsAtAccessibilityDynamicType() throws {
         let mapTab = app.tabBars.buttons["Map"]
         XCTAssertTrue(mapTab.waitForExistence(timeout: 10), app.debugDescription)
@@ -1557,6 +1802,7 @@ final class CutoutAppUITests: XCTestCase {
         dateFilter.tap()
         let shortRidesToggle = app.descendants(matching: .any)["ride-map.history-show-short-rides"]
         XCTAssertTrue(shortRidesToggle.waitForExistence(timeout: 5), app.debugDescription)
+        scrollHistoryDateMenuOptionIntoView(shortRidesToggle)
         shortRidesToggle.tap()
         let shortRideGeneration = try waitForSettledHistory(in: screen, afterQueryGeneration: initialGeneration)
         let newestRide = app.buttons["ride-map.history-\(newestSeededID)"]
