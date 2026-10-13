@@ -1248,11 +1248,16 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertFalse(app.staticTexts["Current location"].exists, app.debugDescription)
 
         recenterButton.tap()
-        let routeScreenshot = XCTAttachment(screenshot: app.screenshot())
+        let routeImage = app.screenshot()
+        let routeScreenshot = XCTAttachment(screenshot: routeImage)
         routeScreenshot.name =
             "ride-map-rust-backed-point-route-accessibility-dynamic-type-before-marker-center-assertion"
         routeScreenshot.lifetime = .keepAlways
         add(routeScreenshot)
+        assertRouteMarkerCaption(
+            "Latest recorded point", in: routeMap.frame, screenshot: routeImage,
+            attachmentName: "ride-map-latest-point-caption-accessibility-dynamic-type-OCR"
+        )
         // The caption group includes overlay text; the native Map pin bounds are the coordinate anchor.
         let latestPointPin = routeMap.otherElements
             .containing(.any, identifier: "ride-map.latest-point-marker")
@@ -3185,6 +3190,92 @@ final class CutoutAppUITests: XCTestCase {
                 "Visible warning must retain its full words, including when wrapped: \(lines)")
         } catch {
             XCTFail("Native visible warning recognition failed: \(error)")
+        }
+    }
+
+    private func assertRouteMarkerCaption(
+        _ expectedCaption: String,
+        in mapFrame: CGRect,
+        screenshot: XCUIScreenshot,
+        attachmentName: String
+    ) {
+        guard let image = screenshot.image.cgImage else {
+            XCTFail("Missing simulator screenshot for route-marker caption recognition")
+            return
+        }
+        let canvas = app.frame
+        guard canvas.width > 0, canvas.height > 0 else {
+            XCTFail("Missing simulator canvas for route-marker caption recognition: \(canvas)")
+            return
+        }
+        let recognitionFrame = mapFrame.intersection(canvas)
+        guard !recognitionFrame.isNull, !recognitionFrame.isEmpty else {
+            XCTFail("Missing visible map frame for route-marker caption recognition: map=\(mapFrame), canvas=\(canvas)")
+            return
+        }
+        let mapRegion = CGRect(
+            x: (recognitionFrame.minX - canvas.minX) / canvas.width,
+            y: 1 - (recognitionFrame.maxY - canvas.minY) / canvas.height,
+            width: recognitionFrame.width / canvas.width,
+            height: recognitionFrame.height / canvas.height
+        ).intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+        guard !mapRegion.isNull, !mapRegion.isEmpty else {
+            XCTFail("Missing rendered map region for route-marker caption: map=\(mapFrame), canvas=\(canvas)")
+            return
+        }
+
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.recognitionLanguages = ["en-US"]
+        request.usesLanguageCorrection = false
+        request.minimumTextHeight = 0
+        request.regionOfInterest = mapRegion
+        let expectedWords = Set(expectedCaption.lowercased().split(whereSeparator: \.isWhitespace).map(String.init))
+        do {
+            try VNImageRequestHandler(cgImage: image, options: [:]).perform([request])
+            let lines = (request.results ?? []).compactMap { observation -> (String, CGRect)? in
+                guard let text = observation.topCandidates(1).first?.string else { return nil }
+                let normalized = text.lowercased().filter { $0.isLetter || $0.isNumber || $0.isWhitespace }
+                let words = Set(normalized.split(whereSeparator: \.isWhitespace).map(String.init))
+                guard !expectedWords.isDisjoint(with: words) else { return nil }
+                let box = observation.boundingBox
+                let frame = CGRect(
+                    x: recognitionFrame.minX + box.minX * recognitionFrame.width,
+                    y: recognitionFrame.minY + (1 - box.maxY) * recognitionFrame.height,
+                    width: box.width * recognitionFrame.width,
+                    height: box.height * recognitionFrame.height
+                )
+                return (text, frame)
+            }
+            let recognized = lines.map(\.0).joined(separator: " ").lowercased()
+                .filter { $0.isLetter || $0.isNumber || $0.isWhitespace }
+            let recognizedWords = Set(recognized.split(whereSeparator: \.isWhitespace).map(String.init))
+            let captionFrames = lines.map(\.1)
+            let captionFrame = captionFrames.dropFirst().reduce(captionFrames.first ?? .zero) { partial, next in
+                partial.union(next)
+            }
+            let diagnostic =
+                "caption=\(expectedCaption); recognized=\(lines.map(\.0)); captionFrame=\(captionFrame); "
+                + "mapFrame=\(mapFrame); recognitionFrame=\(recognitionFrame); mapRegion=\(mapRegion); canvas=\(canvas)"
+            let attachment = XCTAttachment(string: diagnostic)
+            attachment.name = attachmentName + "-recognition"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+
+            for word in expectedWords {
+                XCTAssertTrue(recognizedWords.contains(word), "Caption text must be visibly rendered: \(diagnostic)")
+            }
+            XCTAssertFalse(captionFrame.isEmpty, "Caption must have rendered text bounds: \(diagnostic)")
+            XCTAssertTrue(
+                mapFrame.insetBy(dx: -2, dy: -2).contains(captionFrame),
+                "Caption text must remain inside the rendered map: \(diagnostic)"
+            )
+            XCTAssertLessThanOrEqual(
+                captionFrame.width, mapFrame.width * 0.8,
+                "Caption should wrap within a readable fraction of the map width: \(diagnostic)"
+            )
+        } catch {
+            XCTFail("Route-marker caption recognition failed: \(error)")
         }
     }
 

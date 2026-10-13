@@ -103,10 +103,6 @@ struct RideMapCanvasView: View {
         )
     }
 
-    static func markerTitleLineLimit(for dynamicTypeSize: DynamicTypeSize) -> Int {
-        dynamicTypeSize.isAccessibilitySize ? 2 : 1
-    }
-
     static func canonicalEndpointPoint(
         in points: [MobileRideMapRouteDisplayPoint],
         sequence: UInt64?,
@@ -265,111 +261,118 @@ struct RideMapCanvasView: View {
             retainedSingletonSegmentIDs.contains($0.id) && $0.coordinates.count == 1
         }
 
-        Map(position: $mapPosition, interactionModes: [.pan, .zoom]) {
-            ForEach(contextSegmentPaths) { segment in
-                MapPolyline(coordinates: segment.coordinates)
-                    .stroke(
-                        PevColors.muted.opacity(0.72),
-                        style: StrokeStyle(
-                            lineWidth: 3,
-                            lineCap: .round,
-                            dash: segment.isGap ? [7, 6] : []
+        GeometryReader { mapGeometry in
+            let markerCaptionWidth = min(300, mapGeometry.size.width * 0.75)
+
+            Map(position: $mapPosition, interactionModes: [.pan, .zoom]) {
+                ForEach(contextSegmentPaths) { segment in
+                    MapPolyline(coordinates: segment.coordinates)
+                        .stroke(
+                            PevColors.muted.opacity(0.72),
+                            style: StrokeStyle(
+                                lineWidth: 3,
+                                lineCap: .round,
+                                dash: segment.isGap ? [7, 6] : []
+                            )
                         )
-                    )
-            }
-            ForEach(segmentPaths) { segment in
-                MapPolyline(coordinates: segment.coordinates)
-                    .stroke(
-                        PevColors.yellow,
-                        style: StrokeStyle(
-                            lineWidth: 4,
-                            lineCap: .round,
-                            dash: segment.isGap ? [8, 6] : []
+                }
+                ForEach(segmentPaths) { segment in
+                    MapPolyline(coordinates: segment.coordinates)
+                        .stroke(
+                            PevColors.yellow,
+                            style: StrokeStyle(
+                                lineWidth: 4,
+                                lineCap: .round,
+                                dash: segment.isGap ? [8, 6] : []
+                            )
                         )
-                    )
-            }
-            ForEach(retainedSingletonPaths) { segment in
-                Annotation(
-                    segment.singletonAccessibilityLabel
-                        ?? segment.startReason.retainedSingletonAccessibilityLabel,
-                    coordinate: segment.coordinates[0]
-                ) {
-                    RideMapRetainedSingletonSegmentMarker(
-                        startReason: segment.startReason,
-                        accessibilityLabel: segment.singletonAccessibilityLabel
-                            ?? segment.startReason.retainedSingletonAccessibilityLabel
-                    )
+                }
+                ForEach(retainedSingletonPaths) { segment in
+                    Annotation(
+                        segment.singletonAccessibilityLabel
+                            ?? segment.startReason.retainedSingletonAccessibilityLabel,
+                        coordinate: segment.coordinates[0]
+                    ) {
+                        RideMapRetainedSingletonSegmentMarker(
+                            startReason: segment.startReason,
+                            accessibilityLabel: segment.singletonAccessibilityLabel
+                                ?? segment.startReason.retainedSingletonAccessibilityLabel
+                        )
+                    }
+                }
+                if showsStartMarker, let startPoint {
+                    Annotation(
+                        "",
+                        coordinate: coordinate(for: startPoint)
+                    ) {
+                        RideMapRouteMarker(
+                            title: localizedAppText("ride_map.start_marker"),
+                            color: PevColors.yellow,
+                            captionOffset: endpointOffsets.start,
+                            captionWidth: markerCaptionWidth
+                        )
+                    }
+                }
+                if showsEndMarker, let endPoint {
+                    Annotation(
+                        "",
+                        coordinate: coordinate(for: endPoint)
+                    ) {
+                        RideMapRouteMarker(
+                            title: localizedAppText("ride_map.end_marker"),
+                            color: PevColors.red,
+                            captionOffset: endpointOffsets.end,
+                            captionWidth: markerCaptionWidth
+                        )
+                    }
+                }
+                if showsCurrentMarker, !showsEndMarker, let endPoint {
+                    Annotation(
+                        "",
+                        coordinate: coordinate(for: endPoint)
+                    ) {
+                        RideMapRouteMarker(
+                            title: localizedAppText("ride_map.current_marker"),
+                            color: PevColors.green,
+                            captionOffset: endpointOffsets.end,
+                            captionWidth: markerCaptionWidth
+                        )
+                        .accessibilityIdentifier("ride-map.latest-point-marker")
+                    }
                 }
             }
-            if showsStartMarker, let startPoint {
-                Annotation(
-                    "",
-                    coordinate: coordinate(for: startPoint)
-                ) {
-                    RideMapRouteMarker(
-                        title: localizedAppText("ride_map.start_marker"),
-                        color: PevColors.yellow,
-                        captionOffset: endpointOffsets.start
-                    )
+            .mapStyle(.standard(elevation: .realistic, pointsOfInterest: .excludingAll, showsTraffic: false))
+            .onMapCameraChange(frequency: .onEnd) { context in
+                if isApplyingCamera {
+                    // Consume the callback generated by our own region update. Waiting for
+                    // MapKit's callback, instead of dispatching a delayed reset, keeps a
+                    // programmatic recenter from being mistaken for a user pan.
+                    isApplyingCamera = false
+                } else if mapPosition.positionedByUser {
+                    cameraDidChange(context.region)
                 }
             }
-            if showsEndMarker, let endPoint {
-                Annotation(
-                    "",
-                    coordinate: coordinate(for: endPoint)
-                ) {
-                    RideMapRouteMarker(
-                        title: localizedAppText("ride_map.end_marker"),
-                        color: PevColors.red,
-                        captionOffset: endpointOffsets.end
-                    )
+            .task(id: pathKey) {
+                let key = pathKey
+                let priorRouteID = renderedKey?.routeID
+                updatePaths(for: key)
+                rebuildContextPaths()
+                if priorRouteID != key.routeID, points.isEmpty {
+                    // Do not leave an unrelated route's camera behind while an empty route is
+                    // selected. Its first point will trigger the normal Rust-bounded fit below.
+                    mapPosition = .automatic
+                    isApplyingCamera = true
+                }
+                let cameraFitID = key.cameraFitID ?? key.routeID
+                if fitsRouteOnChange, fittedRouteID != cameraFitID, points.isEmpty == false,
+                    fitMap(to: cameraRegion)
+                {
+                    fittedRouteID = cameraFitID
                 }
             }
-            if showsCurrentMarker, !showsEndMarker, let endPoint {
-                Annotation(
-                    "",
-                    coordinate: coordinate(for: endPoint)
-                ) {
-                    RideMapRouteMarker(
-                        title: localizedAppText("ride_map.current_marker"),
-                        color: PevColors.green,
-                        captionOffset: endpointOffsets.end
-                    )
-                    .accessibilityIdentifier("ride-map.latest-point-marker")
-                }
-            }
+            .accessibilityLabel(localizedAppText("ride_map.map_alternative"))
+            .accessibilityIdentifier("ride-map.map")
         }
-        .mapStyle(.standard(elevation: .realistic, pointsOfInterest: .excludingAll, showsTraffic: false))
-        .onMapCameraChange(frequency: .onEnd) { context in
-            if isApplyingCamera {
-                // Consume the callback generated by our own region update. Waiting for
-                // MapKit's callback, instead of dispatching a delayed reset, keeps a
-                // programmatic recenter from being mistaken for a user pan.
-                isApplyingCamera = false
-            } else if mapPosition.positionedByUser {
-                cameraDidChange(context.region)
-            }
-        }
-        .task(id: pathKey) {
-            let key = pathKey
-            let priorRouteID = renderedKey?.routeID
-            updatePaths(for: key)
-            rebuildContextPaths()
-            if priorRouteID != key.routeID, points.isEmpty {
-                // Do not leave an unrelated route's camera behind while an empty route is
-                // selected. Its first point will trigger the normal Rust-bounded fit below.
-                mapPosition = .automatic
-                isApplyingCamera = true
-            }
-            let cameraFitID = key.cameraFitID ?? key.routeID
-            if fitsRouteOnChange, fittedRouteID != cameraFitID, points.isEmpty == false,
-                fitMap(to: cameraRegion)
-            {
-                fittedRouteID = cameraFitID
-            }
-        }
-        .accessibilityLabel(localizedAppText("ride_map.map_alternative"))
-        .accessibilityIdentifier("ride-map.map")
     }
 
     private var pathKey: PathKey {
@@ -554,7 +557,7 @@ struct RideMapRouteMarker: View {
     let title: String
     let color: Color
     var captionOffset: CGSize = .zero
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    var captionWidth: CGFloat = 300
 
     var body: some View {
         ZStack {
@@ -573,12 +576,13 @@ struct RideMapRouteMarker: View {
             if title.isEmpty == false {
                 Text(title)
                     .font(.caption)
+                    .multilineTextAlignment(.center)
                     .foregroundStyle(.primary)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
                     .background(.regularMaterial, in: .rect(cornerRadius: 5))
-                    .lineLimit(RideMapCanvasView.markerTitleLineLimit(for: dynamicTypeSize))
-                    .fixedSize()
+                    .frame(width: captionWidth)
+                    .fixedSize(horizontal: false, vertical: true)
                     // The caption sits 3 points above the fixed 26-point dot.
                     .offset(
                         x: captionOffset.width,
