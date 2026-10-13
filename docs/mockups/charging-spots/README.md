@@ -50,7 +50,7 @@ Propose **Live / History / Charging** within the existing Devices / Map / More s
 
 Map and list use the same bounded sample records. Pin-vote buttons have Vote up / Vote down accessible names, counts, selected state and 44-pixel targets. They do not imply electrical compatibility or automatically hide a disliked pin. Report a problem is separate.
 
-Optional supply groups pair voltage with connectors. Country suggestions are draft values; the prototype submits them only after the user chooses **Include voltage and plugs**. Changing those values or replacing their defaults requires confirmation again. Missing optional name uses a neutral location label in production, not an invented venue. All newly saved three-field records are valid across domain/storage/FFI/API layers.
+Optional supply groups pair voltage with connectors. Country suggestions are draft values; the prototype submits them only after the user chooses **Include voltage and plugs**. Changing those values or replacing their defaults requires confirmation again. Confirmation accepts Unknown voltage or whole volts from 1 to 1000, and Unknown connectors remain exclusive. Missing optional name uses a neutral location label in production, not an invented venue. All newly saved three-field records are valid across domain/storage/FFI/API layers.
 
 ## Country catalogue reference
 

@@ -87,6 +87,46 @@ const { pathToFileURL } = require('node:url');
         assert.equal(Object.hasOwn(submission, 'voltage'), false);
         assert.equal(Object.hasOwn(submission, 'plugs'), false);
       }],
+      ['Invalid voltage cannot be confirmed or submitted', 'edit', async () => {
+        for (const voltage of ['0', '-1', '1001', '1.5', '']) {
+          await page.goto(page.url());
+          await phone.locator('[data-action="details"]').click();
+          await phone.locator('[data-field="voltage"]').fill(voltage);
+          await phone.locator('[data-action="confirm-power"]').click();
+          assert.equal(await page.evaluate(() => state.demo.powerConfirmed), false, voltage);
+          await phone.locator('[data-action="finish"]').click();
+          const submission = await page.evaluate(() => state.demo.submission);
+          assert.equal(Object.hasOwn(submission, 'voltage'), false, voltage);
+          assert.equal(Object.hasOwn(submission, 'plugs'), false, voltage);
+        }
+      }],
+      ['Voltage range boundaries can be included', 'edit', async () => {
+        for (const voltage of ['1', '1000']) {
+          await page.goto(page.url());
+          await phone.locator('[data-action="details"]').click();
+          await phone.locator('[data-field="voltage"]').fill(voltage);
+          await phone.locator('[data-action="confirm-power"]').click();
+          await phone.locator('[data-action="finish"]').click();
+          const submission = await page.evaluate(() => state.demo.submission);
+          assert.equal(submission.voltage, voltage);
+        }
+      }],
+      ['Unknown connectors remain exclusive', 'edit', async () => {
+        await phone.locator('[data-action="details"]').click();
+        await phone.locator('[data-field="kind"]').selectOption('EV station');
+        await phone.locator('[data-action="plug"][data-value="J1772"]').click();
+        assert.deepEqual(await page.evaluate(() => state.demo.plugs), ['J1772']);
+        await phone.locator('[data-action="plug"][data-value="Unknown"]').click();
+        assert.deepEqual(await page.evaluate(() => state.demo.plugs), ['Unknown']);
+        await phone.locator('[data-action="plug"][data-value="NACS"]').click();
+        assert.deepEqual(await page.evaluate(() => state.demo.plugs), ['NACS']);
+        await phone.locator('[data-action="unknown"]').click();
+        await phone.locator('[data-action="confirm-power"]').click();
+        await phone.locator('[data-action="finish"]').click();
+        const submission = await page.evaluate(() => state.demo.submission);
+        assert.equal(submission.voltage, 'Unknown');
+        assert.deepEqual(submission.plugs, ['Unknown']);
+      }],
       ['Editing confirmed voltage updates its accessible confirmation', 'edit', async () => {
         await phone.locator('[data-action="details"]').click();
         await phone.locator('[data-action="confirm-power"]').click();
