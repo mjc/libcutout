@@ -65,6 +65,8 @@ struct RideMapCanvasView: View {
     let contextRoutes: [MobileRideMapHistoryContextRoute]
     let fitsRouteOnChange: Bool
     var cameraFitID: String? = nil
+    /// History omits pan so one-finger drags scroll its parent; pinch zoom remains enabled.
+    var interactionModes: MapInteractionModes = [.pan, .zoom]
     @Binding var mapPosition: MapCameraPosition
     @Binding var isApplyingCamera: Bool
     let cameraDidChange: (MKCoordinateRegion) -> Void
@@ -264,7 +266,7 @@ struct RideMapCanvasView: View {
         GeometryReader { mapGeometry in
             let markerCaptionWidth = min(300, mapGeometry.size.width * 0.75)
 
-            Map(position: $mapPosition, interactionModes: [.pan, .zoom]) {
+            Map(position: $mapPosition, interactionModes: interactionModes) {
                 ForEach(contextSegmentPaths) { segment in
                     MapPolyline(coordinates: segment.coordinates)
                         .stroke(

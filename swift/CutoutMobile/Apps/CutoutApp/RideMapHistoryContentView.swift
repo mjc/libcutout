@@ -166,13 +166,18 @@ struct RideMapHistoryContentView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            filterControls
+            if dynamicTypeSize.isAccessibilitySize == false {
+                filterControls
+            }
             GeometryReader { viewport in
                 let visibleHeight = RideMapViewportLayout.visibleHeight(
                     in: viewport, musicPlayerFrame: musicCompactPlayerFrame)
                 VStack(spacing: 0) {
                     ScrollView(.vertical, showsIndicators: false) {
                         VStack(spacing: 0) {
+                            if dynamicTypeSize.isAccessibilitySize {
+                                filterControls
+                            }
                             if isLoading && rides.isEmpty {
                                 ProgressView(localizedAppText("ride_map.history_loading"))
                                     .tint(PevColors.yellow)
@@ -216,55 +221,63 @@ struct RideMapHistoryContentView: View {
                     .scrollDismissesKeyboard(.interactively)
                 }
                 .frame(height: visibleHeight, alignment: .top)
-                .overlay(alignment: .topTrailing) {
-                    switch Self.retainedRefreshStatus(
-                        isLoading: isLoading,
-                        hasResults: !rides.isEmpty,
-                        hasHistoryError: historyError != nil,
-                        hasRouteError: routeError != nil,
-                        hasSelectedRide: selectedRide != nil
-                    ) {
-                    case .hidden:
-                        EmptyView()
-                    case .loading:
-                        ProgressView()
-                            .tint(PevColors.yellow)
-                            .padding(10)
-                            .background(PevColors.cardFill, in: Circle())
-                            .padding(12)
-                            .accessibilityLabel(localizedAppText("ride_map.history_loading"))
-                            .accessibilityIdentifier("ride-map.history-refreshing")
-                    case .retryableError:
-                        VStack(
-                            alignment: dynamicTypeSize.isAccessibilitySize ? .leading : .trailing,
-                            spacing: 8
-                        ) {
-                            if selectedRouteState != .error {
-                                Label(
-                                    localizedAppText("ride_map.command_failed"),
-                                    systemImage: "exclamationmark.triangle"
-                                )
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.orange)
-                                .fixedSize(horizontal: false, vertical: true)
-                            }
-                            Button(localizedAppText("ride_map.history_retry"), action: load)
-                                .buttonStyle(.borderedProminent)
-                                .tint(PevColors.yellow)
-                                .accessibilityIdentifier("ride-map.history-refresh-retry")
-                        }
-                        .padding(10)
-                        .background(PevColors.cardFill, in: RoundedRectangle(cornerRadius: 12))
-                        .padding(12)
-                        .accessibilityElement(children: .contain)
-                        .accessibilityIdentifier("ride-map.history-refresh-error")
-                    }
+                .overlay(
+                    alignment: dynamicTypeSize.isAccessibilitySize ? .bottomTrailing : .topTrailing
+                ) {
+                    retainedRefreshStatusView
                 }
                 .clipped()
                 .contentShape(Rectangle())
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("ride-map.history-viewport")
             }
+        }
+    }
+
+    @ViewBuilder
+    private var retainedRefreshStatusView: some View {
+        switch Self.retainedRefreshStatus(
+            isLoading: isLoading,
+            hasResults: !rides.isEmpty,
+            hasHistoryError: historyError != nil,
+            hasRouteError: routeError != nil,
+            hasSelectedRide: selectedRide != nil
+        ) {
+        case .hidden:
+            EmptyView()
+        case .loading:
+            ProgressView()
+                .tint(PevColors.yellow)
+                .padding(10)
+                .background(PevColors.cardFill, in: Circle())
+                .padding(12)
+                .accessibilityLabel(localizedAppText("ride_map.history_loading"))
+                .accessibilityIdentifier("ride-map.history-refreshing")
+        case .retryableError:
+            VStack(
+                alignment: dynamicTypeSize.isAccessibilitySize ? .leading : .trailing,
+                spacing: 8
+            ) {
+                if selectedRouteState != .error {
+                    Label(
+                        localizedAppText("ride_map.command_failed"),
+                        systemImage: "exclamationmark.triangle"
+                    )
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+                Button(localizedAppText("ride_map.history_retry"), action: load)
+                    .buttonStyle(.borderedProminent)
+                    .tint(PevColors.yellow)
+                    .frame(minHeight: 44)
+                    .accessibilityIdentifier("ride-map.history-refresh-retry")
+            }
+            .padding(10)
+            .background(PevColors.cardFill, in: RoundedRectangle(cornerRadius: 12))
+            .padding(12)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("ride-map.history-refresh-error")
         }
     }
 

@@ -1,3 +1,4 @@
+import ImageIO
 import UIKit
 import Vision
 import XCTest
@@ -1248,7 +1249,7 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertFalse(app.staticTexts["Current location"].exists, app.debugDescription)
 
         recenterButton.tap()
-        let routeImage = app.screenshot()
+        let routeImage = XCUIScreen.main.screenshot()
         let routeScreenshot = XCTAttachment(screenshot: routeImage)
         routeScreenshot.name =
             "ride-map-rust-backed-point-route-accessibility-dynamic-type-before-marker-center-assertion"
@@ -1380,6 +1381,136 @@ final class CutoutAppUITests: XCTestCase {
         startedScreenshot.name = "ride-map-after-start"
         startedScreenshot.lifetime = .keepAlways
         add(startedScreenshot)
+    }
+
+    func testPickerSurfaceHomeMapRouteSavedHistoryPreservesSelectionAtAccessibilityDynamicTypeShowsEndpoints() throws {
+        try assertSavedHistoryEndpointCaptionsAtAccessibilityDynamicType()
+    }
+
+    func
+        testPickerSurfaceHomeMapRouteSavedHistoryPreservesSelectionAtAccessibilityDynamicTypeShowsEndpointsInLandscape()
+        throws
+    {
+        try assertSavedHistoryEndpointCaptionsAtAccessibilityDynamicType()
+    }
+
+    private func assertSavedHistoryEndpointCaptionsAtAccessibilityDynamicType() throws {
+        let mapTab = app.tabBars.buttons["Map"]
+        XCTAssertTrue(mapTab.waitForExistence(timeout: 10), app.debugDescription)
+        mapTab.tap()
+
+        let screen = app.descendants(matching: .any)["ride-map.screen"]
+        XCTAssertTrue(screen.waitForExistence(timeout: 8), app.debugDescription)
+        let readback = try XCTUnwrap(screen.value as? String)
+        let receipt = try XCTUnwrap(readback.components(separatedBy: ";").first)
+        XCTAssertTrue(receipt.hasPrefix("saved-rides:"), app.debugDescription)
+        let seededIDs = receipt.dropFirst("saved-rides:".count).split(separator: ",").map(String.init)
+        XCTAssertEqual(seededIDs.count, 2, "The UI test reads the two Rust fixture receipts")
+        let newestSeededID = try XCTUnwrap(seededIDs.last)
+        XCTAssertNotNil(UUID(uuidString: newestSeededID))
+
+        let modePicker = app.descendants(matching: .any)["ride-map.mode-picker"].segmentedControls.firstMatch
+        XCTAssertTrue(modePicker.waitForExistence(timeout: 5), app.debugDescription)
+        modePicker.buttons["History"].tap()
+        let initialGeneration = try waitForSettledHistory(in: screen, afterQueryGeneration: 0)
+
+        let dateFilter = app.buttons["ride-map.history-date-filter"]
+        XCTAssertTrue(dateFilter.waitForExistence(timeout: 5), app.debugDescription)
+        dateFilter.tap()
+        let shortRidesToggle = app.descendants(matching: .any)["ride-map.history-show-short-rides"]
+        XCTAssertTrue(shortRidesToggle.waitForExistence(timeout: 5), app.debugDescription)
+        shortRidesToggle.tap()
+        let shortRideGeneration = try waitForSettledHistory(
+            in: screen, afterQueryGeneration: initialGeneration
+        )
+        let listedIDs = Set(
+            Self.historyFixtureFields(from: try XCTUnwrap(screen.value as? String))["listed"]?
+                .split(separator: ",").map(String.init) ?? []
+        )
+        XCTAssertTrue(listedIDs.contains(newestSeededID), "The newest fixture ride should be on the first page")
+
+        let historyScroll = app.scrollViews["ride-map.history-viewport"]
+        XCTAssertTrue(historyScroll.waitForExistence(timeout: 5), app.debugDescription)
+        let newestRide = app.buttons["ride-map.history-\(newestSeededID)"]
+        let tabBar = app.tabBars.firstMatch
+        scrollElementFrameIntoViewport(
+            newestRide, in: historyScroll, maxScrolls: 20, occludedBy: tabBar,
+            requiresFullVisibility: false
+        )
+        XCTAssertTrue(newestRide.isHittable, app.debugDescription)
+        let historyScreenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        historyScreenshot.name = "saved-history-newest-rust-ride-row-accessibility-dynamic-type"
+        historyScreenshot.lifetime = .keepAlways
+        add(historyScreenshot)
+        newestRide.tap()
+
+        let detailScreen = app.descendants(matching: .any)["ride-map.detail-screen"]
+        XCTAssertTrue(detailScreen.waitForExistence(timeout: 8), app.debugDescription)
+        _ = try waitForSettledHistory(
+            in: detailScreen,
+            afterQueryGeneration: shortRideGeneration - 1,
+            selecting: newestSeededID
+        )
+        let detailMap = detailScreen.descendants(matching: .any)["ride-map.map"]
+        XCTAssertTrue(detailMap.waitForExistence(timeout: 8), app.debugDescription)
+        XCTAssertFalse(app.descendants(matching: .any)["ride-map.detail-initial-loading"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["ride-map.detail-no-points"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["ride-map.detail-map-error"].exists)
+
+        let detailScreenshot = XCUIScreen.main.screenshot()
+        let detailAttachment = XCTAttachment(screenshot: detailScreenshot)
+        detailAttachment.name = "saved-history-rust-backed-endpoint-captions-accessibility-dynamic-type"
+        detailAttachment.lifetime = .keepAlways
+        add(detailAttachment)
+
+        let startRole = detailMap.otherElements.matching(NSPredicate(format: "label == %@", "Start"))
+        let endRole = detailMap.otherElements.matching(NSPredicate(format: "label == %@", "Ride end"))
+        XCTAssertTrue(startRole.firstMatch.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(endRole.firstMatch.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertEqual(startRole.count, 1, app.debugDescription)
+        XCTAssertEqual(endRole.count, 1, app.debugDescription)
+        XCTAssertEqual(startRole.firstMatch.label, "Start", app.debugDescription)
+        XCTAssertEqual(endRole.firstMatch.label, "Ride end", app.debugDescription)
+
+        let startMapPin = detailMap.otherElements
+            .containing(NSPredicate(format: "label == %@", "Start"))
+            .matching(NSPredicate(format: "label == %@", "Map pin"))
+            .firstMatch
+        let endMapPin = detailMap.otherElements
+            .containing(NSPredicate(format: "label == %@", "Ride end"))
+            .matching(NSPredicate(format: "label == %@", "Map pin"))
+            .firstMatch
+        XCTAssertTrue(startMapPin.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(endMapPin.waitForExistence(timeout: 5), app.debugDescription)
+        let mapFrame = detailMap.frame
+        let pinFrames = [startMapPin.frame, endMapPin.frame]
+        for pinFrame in pinFrames {
+            XCTAssertEqual(pinFrame.width, 26, accuracy: 0.5, app.debugDescription)
+            XCTAssertEqual(pinFrame.height, 26, accuracy: 0.5, app.debugDescription)
+            XCTAssertTrue(mapFrame.insetBy(dx: -2, dy: -2).contains(pinFrame), app.debugDescription)
+        }
+        XCTAssertGreaterThan(
+            hypot(pinFrames[0].midX - pinFrames[1].midX, pinFrames[0].midY - pinFrames[1].midY), 1,
+            "The seeded Rust route endpoints should have distinct rendered pin positions. \(app.debugDescription)"
+        )
+
+        let startCaptionFrame = try XCTUnwrap(
+            assertRouteMarkerCaption(
+                "Start", in: mapFrame, screenshot: detailScreenshot,
+                attachmentName: "saved-history-start-caption-accessibility-dynamic-type"
+            )
+        )
+        let endCaptionFrame = try XCTUnwrap(
+            assertRouteMarkerCaption(
+                "Ride end", in: mapFrame, screenshot: detailScreenshot,
+                attachmentName: "saved-history-end-caption-accessibility-dynamic-type"
+            )
+        )
+        XCTAssertFalse(
+            startCaptionFrame.intersects(endCaptionFrame),
+            "Endpoint caption text should not overlap on the shared History canvas. "
+                + "start=\(startCaptionFrame), end=\(endCaptionFrame), map=\(mapFrame)"
+        )
     }
 
     func testPickerSurfaceSavedHistoryPreservesSelectionAndClearsFiltersWithoutReflow() throws {
@@ -3193,25 +3324,31 @@ final class CutoutAppUITests: XCTestCase {
         }
     }
 
+    @discardableResult
     private func assertRouteMarkerCaption(
         _ expectedCaption: String,
         in mapFrame: CGRect,
         screenshot: XCUIScreenshot,
         attachmentName: String
-    ) {
-        guard let image = screenshot.image.cgImage else {
+    ) -> CGRect? {
+        let screenshotImage = screenshot.image
+        guard let image = screenshotImage.cgImage else {
             XCTFail("Missing simulator screenshot for route-marker caption recognition")
-            return
+            return nil
+        }
+        guard let orientation = visionOrientation(for: screenshotImage.imageOrientation) else {
+            XCTFail("Unsupported screenshot orientation: \(screenshotImage.imageOrientation)")
+            return nil
         }
         let canvas = app.frame
         guard canvas.width > 0, canvas.height > 0 else {
             XCTFail("Missing simulator canvas for route-marker caption recognition: \(canvas)")
-            return
+            return nil
         }
         let recognitionFrame = mapFrame.intersection(canvas)
         guard !recognitionFrame.isNull, !recognitionFrame.isEmpty else {
             XCTFail("Missing visible map frame for route-marker caption recognition: map=\(mapFrame), canvas=\(canvas)")
-            return
+            return nil
         }
         let mapRegion = CGRect(
             x: (recognitionFrame.minX - canvas.minX) / canvas.width,
@@ -3221,7 +3358,7 @@ final class CutoutAppUITests: XCTestCase {
         ).intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
         guard !mapRegion.isNull, !mapRegion.isEmpty else {
             XCTFail("Missing rendered map region for route-marker caption: map=\(mapFrame), canvas=\(canvas)")
-            return
+            return nil
         }
 
         let request = VNRecognizeTextRequest()
@@ -3232,7 +3369,7 @@ final class CutoutAppUITests: XCTestCase {
         request.regionOfInterest = mapRegion
         let expectedWords = Set(expectedCaption.lowercased().split(whereSeparator: \.isWhitespace).map(String.init))
         do {
-            try VNImageRequestHandler(cgImage: image, options: [:]).perform([request])
+            try VNImageRequestHandler(cgImage: image, orientation: orientation, options: [:]).perform([request])
             let lines = (request.results ?? []).compactMap { observation -> (String, CGRect)? in
                 guard let text = observation.topCandidates(1).first?.string else { return nil }
                 let normalized = text.lowercased().filter { $0.isLetter || $0.isNumber || $0.isWhitespace }
@@ -3256,7 +3393,9 @@ final class CutoutAppUITests: XCTestCase {
             }
             let diagnostic =
                 "caption=\(expectedCaption); recognized=\(lines.map(\.0)); captionFrame=\(captionFrame); "
-                + "mapFrame=\(mapFrame); recognitionFrame=\(recognitionFrame); mapRegion=\(mapRegion); canvas=\(canvas)"
+                + "mapFrame=\(mapFrame); recognitionFrame=\(recognitionFrame); mapRegion=\(mapRegion); canvas=\(canvas); "
+                + "imageOrientation=\(screenshotImage.imageOrientation); imageSize=\(screenshotImage.size); "
+                + "imageScale=\(screenshotImage.scale); pixelSize=\(image.width)x\(image.height)"
             let attachment = XCTAttachment(string: diagnostic)
             attachment.name = attachmentName + "-recognition"
             attachment.lifetime = .keepAlways
@@ -3274,8 +3413,25 @@ final class CutoutAppUITests: XCTestCase {
                 captionFrame.width, mapFrame.width * 0.8,
                 "Caption should wrap within a readable fraction of the map width: \(diagnostic)"
             )
+            guard !captionFrame.isEmpty else { return nil }
+            return captionFrame
         } catch {
             XCTFail("Route-marker caption recognition failed: \(error)")
+            return nil
+        }
+    }
+
+    private func visionOrientation(for orientation: UIImage.Orientation) -> CGImagePropertyOrientation? {
+        switch orientation {
+        case .up: return .up
+        case .upMirrored: return .upMirrored
+        case .down: return .down
+        case .downMirrored: return .downMirrored
+        case .left: return .left
+        case .leftMirrored: return .leftMirrored
+        case .right: return .right
+        case .rightMirrored: return .rightMirrored
+        @unknown default: return nil
         }
     }
 

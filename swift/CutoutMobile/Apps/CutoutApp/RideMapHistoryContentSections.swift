@@ -175,6 +175,7 @@ struct RideMapHistoryRouteSection: View {
                         routeID: routeID,
                         fitVersion: cameraFitVersion
                     ),
+                    interactionModes: .zoom,
                     mapPosition: $mapPosition,
                     isApplyingCamera: $isApplyingCamera,
                     cameraDidChange: cameraDidChange
