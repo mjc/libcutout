@@ -1,4 +1,4 @@
-use cutout_charging_server::{Store, TrustedProxy, router};
+use cutout_server::{Store, TrustedProxy, router};
 use reqwest::{Client, StatusCode};
 use serde_json::{Value, json};
 use tempfile::TempDir;
@@ -113,7 +113,7 @@ fn minimum(cost: &str) -> Value {
 }
 
 fn provision_moderator(path: &std::path::Path) -> String {
-    let provision = std::process::Command::new(env!("CARGO_BIN_EXE_cutout-charging-server"))
+    let provision = std::process::Command::new(env!("CARGO_BIN_EXE_cutout-server"))
         .arg("--database")
         .arg(path)
         .args(["identity", "--moderator"])
@@ -937,7 +937,7 @@ async fn live_backup_restores_spots_votes_and_tokens_and_revocation_clears_votes
     let directory = TempDir::new().expect("directory");
     let path = directory.path().join("spots.sqlite");
     let server = Server::start(&path).await;
-    let binary = env!("CARGO_BIN_EXE_cutout-charging-server");
+    let binary = env!("CARGO_BIN_EXE_cutout-server");
     let owner = server.identity().await;
     let response: Value = server
         .client

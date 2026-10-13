@@ -1,4 +1,7 @@
 use super::*;
+use cutout_ride_maps::{
+    ChargingConnector, ChargingCost, ChargingDetails, ChargingSpotId, ChargingSupply,
+};
 use rusqlite::hooks::{AuthAction, AuthContext, Authorization};
 
 fn database() -> Connection {
@@ -26,11 +29,11 @@ fn entry(
         id: ChargingSpotId::new(),
         input,
         status,
-        revision: ChargingRevision(revision),
-        change_sequence: ChargingRevision(revision),
+        revision: ChargingRevision::new(revision).unwrap(),
+        change_sequence: ChargingRevision::new(revision).unwrap(),
         verified_at_ms: None,
         vote: None,
-        vote_revision: ChargingRevision(0),
+        vote_revision: ChargingRevision::new(0).unwrap(),
         votes_up: 0,
         votes_down: 0,
     }
@@ -200,7 +203,7 @@ fn charging_receipts_bind_remote_identity_without_overwriting_later_edits() {
     let mut connection = database();
     let mut spatial = SpatialSchemaState::Uninitialized;
     let saved = save(&mut connection, &mut spatial, &input(179.5)).unwrap();
-    let operation = next(&mut connection).unwrap().unwrap();
+    let operation = next_operation(&mut connection).unwrap().unwrap();
     let edited = change(
         &mut connection,
         &mut spatial,
@@ -211,21 +214,21 @@ fn charging_receipts_bind_remote_identity_without_overwriting_later_edits() {
     .unwrap();
     let snapshot = entry(Some(input(179.5)), ChargingStatus::Published, 1);
     assert!(matches!(
-        acknowledge(
+        acknowledge_operation(
             &mut connection,
             &mut spatial,
             edited.operation_id,
-            ChargingRevision(1),
+            ChargingRevision::new(1).unwrap(),
             &snapshot
         ),
         Err(StorageError::ChargingConflict)
     ));
     assert_eq!(
-        acknowledge(
+        acknowledge_operation(
             &mut connection,
             &mut spatial,
             operation.id,
-            ChargingRevision(1),
+            ChargingRevision::new(1).unwrap(),
             &snapshot
         )
         .unwrap(),
@@ -239,32 +242,32 @@ fn charging_receipts_bind_remote_identity_without_overwriting_later_edits() {
             .unwrap(),
         input(-179.5)
     );
-    let edit = next(&mut connection).unwrap().unwrap();
+    let edit = next_operation(&mut connection).unwrap().unwrap();
     assert_eq!(
         edit.target,
         ChargingTarget::Existing {
             id: snapshot.id,
-            expected_revision: ChargingRevision(1)
+            expected_revision: ChargingRevision::new(1).unwrap()
         }
     );
-    assert_eq!(next(&mut connection).unwrap().unwrap(), edit);
+    assert_eq!(next_operation(&mut connection).unwrap().unwrap(), edit);
     let mut snapshot = snapshot;
     snapshot.input = Some(input(-179.5));
-    snapshot.revision = ChargingRevision(2);
-    snapshot.change_sequence = ChargingRevision(2);
-    acknowledge(
+    snapshot.revision = ChargingRevision::new(2).unwrap();
+    snapshot.change_sequence = ChargingRevision::new(2).unwrap();
+    acknowledge_operation(
         &mut connection,
         &mut spatial,
         edit.id,
-        ChargingRevision(2),
+        ChargingRevision::new(2).unwrap(),
         &snapshot,
     )
     .unwrap();
-    acknowledge(
+    acknowledge_operation(
         &mut connection,
         &mut spatial,
         edit.id,
-        ChargingRevision(2),
+        ChargingRevision::new(2).unwrap(),
         &snapshot,
     )
     .unwrap();
@@ -427,7 +430,7 @@ fn charging_directory_cache_vote_verification_and_tombstone_use_one_owner() {
     let mut connection = database();
     let mut spatial = SpatialSchemaState::Uninitialized;
     let snapshot = entry(Some(input(179.5)), ChargingStatus::Published, 5);
-    let id = cache(&mut connection, &mut spatial, &snapshot).unwrap();
+    let id = cache_directory_entry(&mut connection, &mut spatial, &snapshot).unwrap();
     assert_eq!(id.uuid(), snapshot.id.as_uuid());
     assert!(!detail(&connection, id).unwrap().unwrap().owned);
     assert!(matches!(
@@ -435,7 +438,7 @@ fn charging_directory_cache_vote_verification_and_tombstone_use_one_owner() {
             &mut connection,
             &mut spatial,
             id,
-            ChargingRevision(1),
+            ChargingRevision::new(1).unwrap(),
             &ChargingAction::Edit(input(-179.5))
         ),
         Err(StorageError::ChargingNotOwned)
@@ -444,32 +447,32 @@ fn charging_directory_cache_vote_verification_and_tombstone_use_one_owner() {
         &mut connection,
         &mut spatial,
         id,
-        ChargingRevision(1),
+        ChargingRevision::new(1).unwrap(),
         &ChargingAction::Vote(Some(ChargingVote::Down)),
     )
     .unwrap();
     assert_eq!(detail(&connection, id).unwrap().unwrap().votes_down, 0);
     assert!(matches!(
-        cache(&mut connection, &mut spatial, &snapshot),
+        cache_directory_entry(&mut connection, &mut spatial, &snapshot),
         Err(StorageError::ChargingConflict)
     ));
     assert_eq!(
-        next(&mut connection).unwrap().unwrap().target,
+        next_operation(&mut connection).unwrap().unwrap().target,
         ChargingTarget::Existing {
             id: snapshot.id,
-            expected_revision: ChargingRevision(0)
+            expected_revision: ChargingRevision::new(0).unwrap()
         }
     );
     let mut snapshot = snapshot;
     snapshot.vote = Some(ChargingVote::Down);
-    snapshot.vote_revision = ChargingRevision(1);
+    snapshot.vote_revision = ChargingRevision::new(1).unwrap();
     snapshot.votes_down = 1;
-    snapshot.change_sequence = ChargingRevision(6);
-    acknowledge(
+    snapshot.change_sequence = ChargingRevision::new(6).unwrap();
+    acknowledge_operation(
         &mut connection,
         &mut spatial,
         vote.operation_id,
-        ChargingRevision(1),
+        ChargingRevision::new(1).unwrap(),
         &snapshot,
     )
     .unwrap();
@@ -489,15 +492,15 @@ fn charging_directory_cache_vote_verification_and_tombstone_use_one_owner() {
             .verified_at_ms
             .is_none()
     );
-    next(&mut connection).unwrap();
-    snapshot.revision = ChargingRevision(6);
-    snapshot.change_sequence = ChargingRevision(7);
+    next_operation(&mut connection).unwrap();
+    snapshot.revision = ChargingRevision::new(6).unwrap();
+    snapshot.change_sequence = ChargingRevision::new(7).unwrap();
     snapshot.verified_at_ms = Some(123);
-    acknowledge(
+    acknowledge_operation(
         &mut connection,
         &mut spatial,
         verified.operation_id,
-        ChargingRevision(6),
+        ChargingRevision::new(6).unwrap(),
         &snapshot,
     )
     .unwrap();
@@ -509,9 +512,9 @@ fn charging_directory_cache_vote_verification_and_tombstone_use_one_owner() {
     tombstone.status = ChargingStatus::Removed;
     tombstone.input = None;
     tombstone.verified_at_ms = None;
-    tombstone.revision = ChargingRevision(7);
-    tombstone.change_sequence = ChargingRevision(8);
-    cache(&mut connection, &mut spatial, &tombstone).unwrap();
+    tombstone.revision = ChargingRevision::new(7).unwrap();
+    tombstone.change_sequence = ChargingRevision::new(8).unwrap();
+    cache_directory_entry(&mut connection, &mut spatial, &tombstone).unwrap();
     assert!(detail(&connection, id).unwrap().unwrap().input.is_none());
     super::super::rebuild_spatial_indexes(&mut connection, &mut spatial).unwrap();
     assert_eq!(
@@ -534,7 +537,7 @@ fn failed_edit_queue_insert_rolls_back_input_revision_and_spatial_move() {
     let mut connection = database();
     let mut spatial = SpatialSchemaState::Uninitialized;
     let saved = save(&mut connection, &mut spatial, &input(179.5)).unwrap();
-    let queued = next(&mut connection).unwrap().unwrap();
+    let queued = next_operation(&mut connection).unwrap().unwrap();
     let before = detail(&connection, saved.point_id).unwrap().unwrap();
     connection.authorizer(Some(|context: AuthContext<'_>| match context.action {
         AuthAction::Insert {
@@ -558,7 +561,7 @@ fn failed_edit_queue_insert_rolls_back_input_revision_and_spatial_move() {
         before
     );
     assert_eq!(count(&connection).unwrap(), 1);
-    assert_eq!(next(&mut connection).unwrap().unwrap(), queued);
+    assert_eq!(next_operation(&mut connection).unwrap().unwrap(), queued);
     assert_eq!(
         page(
             &connection,
@@ -591,36 +594,36 @@ fn withdrawal_before_create_ack_freezes_remote_target_after_create_ack() {
         &ChargingAction::Withdraw,
     )
     .unwrap();
-    let create = next(&mut connection).unwrap().unwrap();
+    let create = next_operation(&mut connection).unwrap().unwrap();
     assert_eq!(create.target, ChargingTarget::Create);
     let published = entry(Some(input(179.5)), ChargingStatus::Published, 1);
-    acknowledge(
+    acknowledge_operation(
         &mut connection,
         &mut spatial,
         create.id,
-        ChargingRevision(1),
+        ChargingRevision::new(1).unwrap(),
         &published,
     )
     .unwrap();
-    let operation = next(&mut connection).unwrap().unwrap();
+    let operation = next_operation(&mut connection).unwrap().unwrap();
     assert_eq!(operation.id, withdrawal.operation_id);
     assert_eq!(
         operation.target,
         ChargingTarget::Existing {
             id: published.id,
-            expected_revision: ChargingRevision(1),
+            expected_revision: ChargingRevision::new(1).unwrap(),
         }
     );
     let mut withdrawn = published;
     withdrawn.status = ChargingStatus::Withdrawn;
     withdrawn.input = None;
-    withdrawn.revision = ChargingRevision(2);
-    withdrawn.change_sequence = ChargingRevision(2);
-    acknowledge(
+    withdrawn.revision = ChargingRevision::new(2).unwrap();
+    withdrawn.change_sequence = ChargingRevision::new(2).unwrap();
+    acknowledge_operation(
         &mut connection,
         &mut spatial,
         operation.id,
-        ChargingRevision(2),
+        ChargingRevision::new(2).unwrap(),
         &withdrawn,
     )
     .unwrap();
@@ -635,13 +638,13 @@ fn stale_directory_cache_does_not_change_cached_body_or_index() {
     let mut connection = database();
     let mut spatial = SpatialSchemaState::Uninitialized;
     let current = entry(Some(input(179.5)), ChargingStatus::Published, 5);
-    let id = cache(&mut connection, &mut spatial, &current).unwrap();
+    let id = cache_directory_entry(&mut connection, &mut spatial, &current).unwrap();
     let mut stale = current.clone();
     stale.input = Some(input(-179.5));
-    stale.revision = ChargingRevision(4);
-    stale.change_sequence = ChargingRevision(4);
+    stale.revision = ChargingRevision::new(4).unwrap();
+    stale.change_sequence = ChargingRevision::new(4).unwrap();
     assert!(matches!(
-        cache(&mut connection, &mut spatial, &stale),
+        cache_directory_entry(&mut connection, &mut spatial, &stale),
         Err(StorageError::ChargingConflict)
     ));
     assert_eq!(
@@ -672,7 +675,7 @@ fn older_create_receipt_cannot_restore_verification_after_local_edit() {
     let mut connection = database();
     let mut spatial = SpatialSchemaState::Uninitialized;
     let saved = save(&mut connection, &mut spatial, &input(179.5)).unwrap();
-    let create = next(&mut connection).unwrap().unwrap();
+    let create = next_operation(&mut connection).unwrap().unwrap();
     let mut created = entry(Some(input(179.5)), ChargingStatus::Published, 1);
     created.verified_at_ms = Some(100);
     let edited = change(
@@ -690,11 +693,11 @@ fn older_create_receipt_cannot_restore_verification_after_local_edit() {
             .verified_at_ms,
         None
     );
-    acknowledge(
+    acknowledge_operation(
         &mut connection,
         &mut spatial,
         create.id,
-        ChargingRevision(1),
+        ChargingRevision::new(1).unwrap(),
         &created,
     )
     .unwrap();
@@ -702,7 +705,7 @@ fn older_create_receipt_cannot_restore_verification_after_local_edit() {
     assert_eq!(stored.verified_at_ms, None);
     assert_eq!(stored.input, Some(input(-179.5)));
     assert_eq!(
-        next(&mut connection).unwrap().unwrap().id,
+        next_operation(&mut connection).unwrap().unwrap().id,
         edited.operation_id
     );
 }
@@ -748,13 +751,16 @@ fn hidden_directory_snapshot_without_body_removes_index_and_keeps_identity() {
     let mut connection = database();
     let mut spatial = SpatialSchemaState::Uninitialized;
     let published = entry(Some(input(179.5)), ChargingStatus::Published, 5);
-    let id = cache(&mut connection, &mut spatial, &published).unwrap();
+    let id = cache_directory_entry(&mut connection, &mut spatial, &published).unwrap();
     let mut hidden = published.clone();
     hidden.input = None;
     hidden.status = ChargingStatus::Hidden;
-    hidden.revision = ChargingRevision(6);
-    hidden.change_sequence = ChargingRevision(6);
-    assert_eq!(cache(&mut connection, &mut spatial, &hidden).unwrap(), id);
+    hidden.revision = ChargingRevision::new(6).unwrap();
+    hidden.change_sequence = ChargingRevision::new(6).unwrap();
+    assert_eq!(
+        cache_directory_entry(&mut connection, &mut spatial, &hidden).unwrap(),
+        id
+    );
     let stored = detail(&connection, id).unwrap().unwrap();
     assert_eq!(stored.remote_id, Some(hidden.id));
     assert_eq!(stored.status, ChargingStatus::Hidden);
@@ -774,12 +780,12 @@ fn directory_cache_rejects_malformed_status_body_pairs() {
     let mut spatial = SpatialSchemaState::Uninitialized;
     let published_without_body = entry(None, ChargingStatus::Published, 1);
     assert!(matches!(
-        cache(&mut connection, &mut spatial, &published_without_body),
+        cache_directory_entry(&mut connection, &mut spatial, &published_without_body),
         Err(StorageError::ChargingInvalidInput)
     ));
     let hidden_with_body = entry(Some(input(179.5)), ChargingStatus::Hidden, 1);
     assert!(matches!(
-        cache(&mut connection, &mut spatial, &hidden_with_body),
+        cache_directory_entry(&mut connection, &mut spatial, &hidden_with_body),
         Err(StorageError::ChargingInvalidInput)
     ));
     assert_eq!(count(&connection).unwrap(), 0);
@@ -804,7 +810,7 @@ fn directory_cache_rejects_collision_with_legacy_map_point_uuid() {
         )
         .unwrap();
     assert!(matches!(
-        cache(&mut connection, &mut spatial, &collision),
+        cache_directory_entry(&mut connection, &mut spatial, &collision),
         Err(StorageError::ChargingConflict)
     ));
     assert_eq!(
@@ -851,7 +857,7 @@ fn corrupt_persisted_charging_inputs_are_invalid_stored_values() {
         })
     ));
     assert!(matches!(
-        next(&mut connection),
+        next_operation(&mut connection),
         Err(StorageError::InvalidStoredValue {
             field: "charging input",
             ..

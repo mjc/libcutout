@@ -10,7 +10,7 @@ use std::{
 };
 
 #[derive(Debug, Parser)]
-#[command(name = "cutout-charging-server", about = "Charging-spot directory")]
+#[command(name = "cutout-server", about = "Charging-spot directory")]
 struct Arguments {
     #[arg(long, env = "CHARGING_DATABASE")]
     database: PathBuf,
