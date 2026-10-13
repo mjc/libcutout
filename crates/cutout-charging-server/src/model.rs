@@ -1,4 +1,7 @@
-use cutout_ride_maps::{ChargingCost, ChargingVote, Coordinate, NewChargingSpot};
+use cutout_ride_maps::{
+    ChargingCost, ChargingDetails, ChargingPaidTerms as PaidTerms, ChargingPrice as Price,
+    ChargingSupply as Supply, ChargingVenue as Venue, ChargingVote, Coordinate, NewChargingSpot,
+};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -9,85 +12,6 @@ use crate::Error;
 pub(crate) struct Pin {
     pub latitude_e7: i32,
     pub longitude_e7: i32,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum Venue {
-    Restaurant,
-    Cafe,
-    Bar,
-    EvChargingStation,
-    Other,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum Connector {
-    TypeA,
-    TypeB,
-    TypeC,
-    TypeD,
-    TypeE,
-    TypeF,
-    TypeG,
-    TypeH,
-    TypeI,
-    TypeJ,
-    TypeK,
-    TypeL,
-    TypeM,
-    TypeN,
-    TypeO,
-    #[serde(rename = "nema_5_15")]
-    Nema5_15,
-    #[serde(rename = "nema_5_20")]
-    Nema5_20,
-    #[serde(rename = "nema_14_50")]
-    Nema14_50,
-    J1772,
-    #[serde(rename = "type_2")]
-    Type2,
-    Ccs1,
-    Ccs2,
-    Chademo,
-    Nacs,
-    Unknown,
-    Other(String),
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct Supply {
-    pub voltage_volts: Option<u16>,
-    #[serde(default)]
-    pub connectors: Vec<Connector>,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum PaidTerms {
-    DirectFee,
-    PurchaseRequired,
-    Both,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum PriceBasis {
-    PerCharge,
-    PerHour,
-    PerKwh,
-    Purchase,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct Price {
-    pub amount_minor: u64,
-    pub currency: String,
-    pub minor_unit_exponent: u8,
-    pub basis: PriceBasis,
 }
 
 /// Wire input is validated before it reaches persistence.
@@ -122,97 +46,26 @@ impl SpotInput {
         let coordinate =
             Coordinate::from_fixed_parts(self.coordinate.latitude_e7, self.coordinate.longitude_e7)
                 .map_err(|_| Error::Invalid)?;
-        let minimum = NewChargingSpot::new(coordinate, &self.access_note, self.cost)
+        let details = ChargingDetails::new(
+            self.name.as_deref(),
+            self.venue,
+            self.hours.as_deref(),
+            self.paid_terms,
+            self.price.clone(),
+            self.supplies.clone(),
+        )
+        .map_err(|_| Error::Invalid)?;
+        let validated = NewChargingSpot::new(coordinate, &self.access_note, self.cost)
+            .map_err(|_| Error::Invalid)?
+            .with_details(details)
             .map_err(|_| Error::Invalid)?;
-        minimum
+        validated
             .access_note()
             .as_str()
             .clone_into(&mut self.access_note);
-        self.name = optional_text(self.name, 120)?;
-        self.hours = optional_text(self.hours, 500)?;
-        self.validate_cost_metadata()?;
-        if let Some(price) = &self.price {
-            price.validate()?;
-        }
-        self.validate_supplies()?;
+        self.name = validated.details().name().map(str::to_owned);
+        self.hours = validated.details().hours().map(str::to_owned);
         Ok(ValidatedSpotInput(self))
-    }
-
-    fn validate_cost_metadata(&self) -> Result<(), Error> {
-        if self.cost == ChargingCost::Free && (self.paid_terms.is_some() || self.price.is_some()) {
-            return Err(Error::Invalid);
-        }
-        Ok(())
-    }
-
-    fn validate_supplies(&mut self) -> Result<(), Error> {
-        if self.supplies.len() > 8 {
-            return Err(Error::Invalid);
-        }
-        for supply in &mut self.supplies {
-            supply.validate()?;
-        }
-        Ok(())
-    }
-}
-
-impl Price {
-    fn validate(&self) -> Result<(), Error> {
-        if self.amount_minor == 0
-            || self.amount_minor > 9_000_000_000_000_000
-            || self.minor_unit_exponent > 4
-            || self.currency.len() != 3
-            || !self
-                .currency
-                .bytes()
-                .all(|value| value.is_ascii_uppercase())
-        {
-            return Err(Error::Invalid);
-        }
-        Ok(())
-    }
-}
-
-impl Supply {
-    fn validate(&mut self) -> Result<(), Error> {
-        if let Some(voltage) = self.voltage_volts
-            && !(1..=2_000).contains(&voltage)
-        {
-            return Err(Error::Invalid);
-        }
-        if self.connectors.len() > 16 {
-            return Err(Error::Invalid);
-        }
-        for connector in &mut self.connectors {
-            connector.normalize()?;
-        }
-        if self.connectors.contains(&Connector::Unknown) && self.connectors.len() != 1 {
-            return Err(Error::Invalid);
-        }
-        for (index, connector) in self.connectors.iter().enumerate() {
-            if self.connectors[..index].contains(connector) {
-                return Err(Error::Invalid);
-            }
-        }
-        Ok(())
-    }
-}
-
-impl Connector {
-    fn normalize(&mut self) -> Result<(), Error> {
-        if let Self::Other(label) = self {
-            *label = optional_text(Some(std::mem::take(label)), 80)?.ok_or(Error::Invalid)?;
-            if Self::is_known_id(label) {
-                return Err(Error::Invalid);
-            }
-        }
-        Ok(())
-    }
-
-    fn is_known_id(label: &str) -> bool {
-        let normalized = label.to_ascii_lowercase();
-        let value = serde::de::value::StrDeserializer::<serde::de::value::Error>::new(&normalized);
-        Self::deserialize(value).is_ok()
     }
 }
 
@@ -426,19 +279,7 @@ pub(crate) use queries::{
 
 #[cfg(test)]
 mod tests {
-    use super::{Connector, CreateRequest, OperationId};
-    use crate::Error;
-
-    #[test]
-    fn custom_connector_labels_cannot_alias_catalogue_ids() {
-        for label in [" type_c ", "TYPE_C", "J1772", "unknown", "nema_5_15", " \t"] {
-            let mut connector = Connector::Other(label.into());
-            assert_eq!(connector.normalize(), Err(Error::Invalid), "{label:?}");
-        }
-        let mut connector = Connector::Other(" Socket X ".into());
-        connector.normalize().expect("custom label");
-        assert_eq!(connector, Connector::Other("Socket X".into()));
-    }
+    use super::{CreateRequest, OperationId};
 
     #[test]
     fn validated_spot_keeps_canonical_request_bytes() {
