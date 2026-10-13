@@ -3,7 +3,7 @@ use tempfile::TempDir;
 
 #[test]
 fn operator_reads_refuse_missing_or_uninitialized_source_databases() {
-    let binary = env!("CARGO_BIN_EXE_cutout-charging-server");
+    let binary = env!("CARGO_BIN_EXE_cutout-server");
     for existing in [false, true] {
         for operation in ["check", "backup", "revoke"] {
             let directory = TempDir::new().expect("directory");
@@ -47,7 +47,7 @@ fn operator_reads_refuse_missing_or_uninitialized_source_databases() {
 fn operator_identity_is_explicit_and_backup_does_not_overwrite_existing_files() {
     let directory = TempDir::new().expect("directory");
     let database = directory.path().join("directory.sqlite");
-    let binary = env!("CARGO_BIN_EXE_cutout-charging-server");
+    let binary = env!("CARGO_BIN_EXE_cutout-server");
     let result = std::process::Command::new(binary)
         .arg("--database")
         .arg(&database)
@@ -86,6 +86,6 @@ fn operator_identity_is_explicit_and_backup_does_not_overwrite_existing_files() 
         .expect("repeat backup");
     assert!(!repeated.status.success());
     assert_eq!(std::fs::read(&backup).expect("preserved backup"), source);
-    let restored = cutout_charging_server::Store::open(&backup);
+    let restored = cutout_server::Store::open(&backup);
     assert!(restored.is_ok());
 }

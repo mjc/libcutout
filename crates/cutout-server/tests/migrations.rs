@@ -1,4 +1,4 @@
-use cutout_charging_server::{Error, Store};
+use cutout_server::{Error, Store};
 use rusqlite::Connection;
 use tempfile::TempDir;
 

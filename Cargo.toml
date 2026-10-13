@@ -12,7 +12,7 @@ members = [
     "crates/cutout-uniffi-bindgen",
     "crates/cutout-dev",
     "crates/cutout-soundcloud-auth-broker",
-    "crates/cutout-charging-server",
+    "crates/cutout-server",
 ]
 default-members = [
     "crates/cutout-core",

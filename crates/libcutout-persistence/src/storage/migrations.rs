@@ -1,7 +1,7 @@
 use super::{MapPointId, SpatialRowId, StorageError};
 use rusqlite::{Connection, OptionalExtension, params};
 
-pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 42;
+pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 43;
 const APPLICATION_ID: i64 = 0x4355_544f;
 
 fn schema_pragmas(version: i64) -> String {
@@ -64,7 +64,8 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         38 => migrate_v38_to_current(connection)?,
         39 => migrate_v39_to_current(connection)?,
         40 => migrate_v40_to_current(connection)?,
-        41 => migrate_v41_to_current(connection)?,
+        41 => migrate_v41_to_v42(connection)?,
+        42 => migrate_v42_to_current(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -84,7 +85,10 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
             migrate_v40_to_current(connection)?;
         }
         if connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))? == 41 {
-            migrate_v41_to_current(connection)?;
+            migrate_v41_to_v42(connection)?;
+        }
+        if connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))? == 42 {
+            migrate_v42_to_current(connection)?;
         }
     }
     Ok(())
@@ -396,6 +400,7 @@ pub(crate) fn create_current_schema(connection: &Connection) -> Result<(), Stora
     connection.execute_batch(super::capture_data::SCHEMA)?;
     connection.execute_batch(super::capture_history::HISTORY_INDEX)?;
     connection.execute_batch(super::recorded_capture::SCHEMA)?;
+    connection.execute_batch(super::charging::SCHEMA)?;
     Ok(())
 }
 
@@ -1596,8 +1601,27 @@ fn migrate_v40_to_current(connection: &mut Connection) -> Result<(), StorageErro
     Ok(())
 }
 
-fn migrate_v41_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+fn migrate_v41_to_v42(connection: &mut Connection) -> Result<(), StorageError> {
     let transaction = connection.transaction()?;
+    ensure_moving_time_columns(&transaction)?;
+    transaction.execute_batch(&schema_pragmas(42))?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn migrate_v42_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction()?;
+    // Earlier charging builds also used version 42, before moving time shipped.
+    ensure_moving_time_columns(&transaction)?;
+    if !table_exists(&transaction, "charging_spots")? {
+        transaction.execute_batch(super::charging::SCHEMA)?;
+    }
+    transaction.execute_batch(&current_schema_pragmas())?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn ensure_moving_time_columns(connection: &Connection) -> Result<(), StorageError> {
     for (column, declaration) in [
         (
             "moving_time_revision",
@@ -1662,14 +1686,12 @@ fn migrate_v41_to_current(connection: &mut Connection) -> Result<(), StorageErro
             "TEXT NOT NULL DEFAULT 'unavailable' CHECK (last_recorded_point_moving_availability IN ('unavailable', 'partial', 'complete'))",
         ),
     ] {
-        if !table_has_column(&transaction, "rides", column)? {
-            transaction.execute_batch(&format!(
+        if !table_has_column(connection, "rides", column)? {
+            connection.execute_batch(&format!(
                 "ALTER TABLE rides ADD COLUMN {column} {declaration};"
             ))?;
         }
     }
-    transaction.execute_batch(&schema_pragmas(CURRENT_SCHEMA_VERSION))?;
-    transaction.commit()?;
     Ok(())
 }
 
@@ -1752,6 +1774,8 @@ pub(super) fn verify_current_schema(connection: &Connection) -> Result<(), Stora
         "trail_segment_spatial_keys",
         "trail_segments_rtree",
         "map_points",
+        "charging_spots",
+        "charging_outbox",
         "map_point_spatial_keys",
         "map_points_rtree",
         "ride_music_history",
@@ -2912,7 +2936,7 @@ mod tests {
             _ => Authorization::Allow,
         }));
 
-        migrate_v41_to_current(&mut connection).unwrap();
+        migrate_v41_to_v42(&mut connection).unwrap();
 
         connection.authorizer(None::<fn(AuthContext<'_>) -> Authorization>);
         assert_eq!(connection.total_changes(), changes_before);
@@ -2956,7 +2980,7 @@ mod tests {
             connection
                 .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
                 .unwrap(),
-            CURRENT_SCHEMA_VERSION
+            42
         );
     }
 
@@ -2979,7 +3003,7 @@ mod tests {
             _ => Authorization::Allow,
         }));
 
-        assert!(migrate_v41_to_current(&mut connection).is_err());
+        assert!(migrate_v41_to_v42(&mut connection).is_err());
 
         connection.authorizer(None::<fn(AuthContext<'_>) -> Authorization>);
         assert_eq!(alterations.load(Ordering::SeqCst), 2);

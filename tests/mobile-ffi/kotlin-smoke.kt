@@ -89,7 +89,7 @@ fun main() {
             .encodeToByteArray(),
     )
     check(novatekSnapshot.firmwareVersion == "R3V1.1_20240411")
-    check(novatekSnapshot.media.single().path == "A:\\Novatek\\Movie\\clip.TS")
+    check(checkNotNull(novatekSnapshot.media).single().path == "A:\\Novatek\\Movie\\clip.TS")
 
     CutoutSessionStateHandle().use { cameraState ->
         val captureGeneration =

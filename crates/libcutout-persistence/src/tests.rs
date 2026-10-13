@@ -41,6 +41,55 @@ use super::{
 static TEST_LOCK: Mutex<()> = Mutex::new(());
 
 #[test]
+fn charging_save_and_outbox_survive_reopen_without_changing_legacy_points() {
+    use cutout_ride_maps::{ChargingCost, Coordinate, NewChargingSpot};
+    let _guard = test_guard();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("charging.sqlite");
+    let database = RideDatabase::open(&path).unwrap();
+    let coordinate = Coordinate::from_degrees(40.0, -105.0).unwrap();
+    let legacy = database.create_map_point("Old pin", coordinate).unwrap();
+    let receipt = database
+        .save_charging_spot(
+            NewChargingSpot::new(coordinate, "Patio outlet", ChargingCost::Free).unwrap(),
+        )
+        .unwrap();
+    assert!(database.charging_spot(legacy).unwrap().is_none());
+    assert_eq!(
+        database
+            .charging_spot(receipt.point_id)
+            .unwrap()
+            .unwrap()
+            .input
+            .unwrap()
+            .access_note()
+            .as_str(),
+        "Patio outlet"
+    );
+    let operation = database.next_charging_operation().unwrap().unwrap();
+    assert_eq!(operation.id, receipt.operation_id);
+    database.shutdown().unwrap();
+    let database = RideDatabase::open(&path).unwrap();
+    assert_eq!(
+        database.next_charging_operation().unwrap().unwrap(),
+        operation
+    );
+    assert!(database.charging_spot(legacy).unwrap().is_none());
+    assert_eq!(
+        database
+            .charging_spot(receipt.point_id)
+            .unwrap()
+            .unwrap()
+            .input
+            .unwrap()
+            .details()
+            .supplies(),
+        []
+    );
+    database.shutdown().unwrap();
+}
+
+#[test]
 fn late_corrupt_compressed_event_fails_export_without_losing_durable_capture() {
     let _guard = test_guard();
     let directory = tempfile::tempdir().unwrap();

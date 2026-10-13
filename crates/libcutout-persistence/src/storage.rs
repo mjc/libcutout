@@ -53,6 +53,8 @@ pub use live_capture::{
 };
 mod recorded_capture;
 pub use recorded_capture::RecordedCapture;
+mod charging;
+pub use charging::*;
 mod migrations;
 mod ride_write;
 mod service;
@@ -1549,6 +1551,18 @@ impl SqliteCapabilities {
 /// Errors from the Rust-owned ride database service.
 #[derive(Debug, Error)]
 pub enum StorageError {
+    /// A charging field or server snapshot is outside its supported contract.
+    #[error("invalid charging input")]
+    ChargingInvalidInput,
+    /// Charging revisions, state or operation identities do not match.
+    #[error("charging state changed")]
+    ChargingConflict,
+    /// A directory pin cannot be edited or withdrawn by this installation.
+    #[error("charging spot belongs to another contributor")]
+    ChargingNotOwned,
+    /// The durable community queue reached its bound.
+    #[error("charging outbox is full")]
+    ChargingOutboxFull,
     /// A recording identity or byte digest already belongs to different provenance.
     #[error("capture identity conflicts with retained provenance")]
     CaptureIdentityConflict,
@@ -5197,6 +5211,7 @@ struct PevcapImportCompletion {
 }
 
 enum Command {
+    Charging(charging::Command),
     BeginLiveCapture {
         id: LiveCaptureId,
         header_json: Vec<u8>,
@@ -7028,7 +7043,9 @@ fn rebuild_spatial_indexes(
         INSERT INTO map_points_rtree
         SELECT k.rtree_id, p.latitude_e7, p.latitude_e7, p.longitude_e7, p.longitude_e7
         FROM map_points p
-        JOIN map_point_spatial_keys k ON k.point_id = p.id;
+        JOIN map_point_spatial_keys k ON k.point_id = p.id
+        WHERE NOT EXISTS (SELECT 1 FROM charging_spots c WHERE c.point_id = p.id
+                          AND c.status NOT IN ('queued','published'));
         ",
     )?;
     transaction.commit()?;
