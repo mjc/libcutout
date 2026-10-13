@@ -1,4 +1,7 @@
-use cutout_ride_maps::{ChargingCost, ChargingVote, Coordinate, NewChargingSpot};
+use cutout_ride_maps::{
+    ChargingCost, ChargingDetails, ChargingPaidTerms as PaidTerms, ChargingPrice as Price,
+    ChargingSupply as Supply, ChargingVenue as Venue, ChargingVote, Coordinate, NewChargingSpot,
+};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -9,85 +12,6 @@ use crate::Error;
 pub(crate) struct Pin {
     pub latitude_e7: i32,
     pub longitude_e7: i32,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum Venue {
-    Restaurant,
-    Cafe,
-    Bar,
-    EvChargingStation,
-    Other,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum Connector {
-    TypeA,
-    TypeB,
-    TypeC,
-    TypeD,
-    TypeE,
-    TypeF,
-    TypeG,
-    TypeH,
-    TypeI,
-    TypeJ,
-    TypeK,
-    TypeL,
-    TypeM,
-    TypeN,
-    TypeO,
-    #[serde(rename = "nema_5_15")]
-    Nema5_15,
-    #[serde(rename = "nema_5_20")]
-    Nema5_20,
-    #[serde(rename = "nema_14_50")]
-    Nema14_50,
-    J1772,
-    #[serde(rename = "type_2")]
-    Type2,
-    Ccs1,
-    Ccs2,
-    Chademo,
-    Nacs,
-    Unknown,
-    Other(String),
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct Supply {
-    pub voltage_volts: Option<u16>,
-    #[serde(default)]
-    pub connectors: Vec<Connector>,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum PaidTerms {
-    DirectFee,
-    PurchaseRequired,
-    Both,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum PriceBasis {
-    PerCharge,
-    PerHour,
-    PerKwh,
-    Purchase,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct Price {
-    pub amount_minor: u64,
-    pub currency: String,
-    pub minor_unit_exponent: u8,
-    pub basis: PriceBasis,
 }
 
 /// Wire input is validated before it reaches persistence.
@@ -122,55 +46,25 @@ impl SpotInput {
         let coordinate =
             Coordinate::from_fixed_parts(self.coordinate.latitude_e7, self.coordinate.longitude_e7)
                 .map_err(|_| Error::Invalid)?;
-        let minimum = NewChargingSpot::new(coordinate, &self.access_note, self.cost)
+        let details = ChargingDetails::new(
+            self.name.as_deref(),
+            self.venue,
+            self.hours.as_deref(),
+            self.paid_terms,
+            self.price.clone(),
+            self.supplies.clone(),
+        )
+        .map_err(|_| Error::Invalid)?;
+        let validated = NewChargingSpot::new(coordinate, &self.access_note, self.cost)
+            .map_err(|_| Error::Invalid)?
+            .with_details(details)
             .map_err(|_| Error::Invalid)?;
-        minimum
+        validated
             .access_note()
             .as_str()
             .clone_into(&mut self.access_note);
-        self.name = optional_text(self.name, 120)?;
-        self.hours = optional_text(self.hours, 500)?;
-        if self.cost == ChargingCost::Free && (self.paid_terms.is_some() || self.price.is_some()) {
-            return Err(Error::Invalid);
-        }
-        if let Some(price) = &self.price
-            && (price.amount_minor == 0
-                || price.amount_minor > 9_000_000_000_000_000
-                || price.minor_unit_exponent > 4
-                || price.currency.len() != 3
-                || !price
-                    .currency
-                    .bytes()
-                    .all(|value| value.is_ascii_uppercase()))
-        {
-            return Err(Error::Invalid);
-        }
-        if self.supplies.len() > 8 {
-            return Err(Error::Invalid);
-        }
-        for supply in &mut self.supplies {
-            if let Some(voltage) = supply.voltage_volts
-                && !(1..=2_000).contains(&voltage)
-            {
-                return Err(Error::Invalid);
-            }
-            if supply.connectors.len() > 16 {
-                return Err(Error::Invalid);
-            }
-            for connector in &mut supply.connectors {
-                if let Connector::Other(label) = connector {
-                    *label = optional_text(Some(label.clone()), 80)?.ok_or(Error::Invalid)?;
-                }
-            }
-            if supply.connectors.contains(&Connector::Unknown) && supply.connectors.len() != 1 {
-                return Err(Error::Invalid);
-            }
-            for (index, connector) in supply.connectors.iter().enumerate() {
-                if supply.connectors[..index].contains(connector) {
-                    return Err(Error::Invalid);
-                }
-            }
-        }
+        self.name = validated.details().name().map(str::to_owned);
+        self.hours = validated.details().hours().map(str::to_owned);
         Ok(ValidatedSpotInput(self))
     }
 }
@@ -524,4 +418,24 @@ pub(crate) struct AuditPage {
     pub items: Vec<AuditRecord>,
     pub next_cursor: u64,
     pub has_more: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CreateRequest, id};
+
+    #[test]
+    fn shared_validation_preserves_the_existing_create_fingerprint_bytes() {
+        let wire = r#"{"operation_id":"00000000-0000-4000-8000-000000000001","spot":{"coordinate":{"latitude_e7":400000000,"longitude_e7":-1050000000},"access_note":" Ask staff. ","cost":"paid","name":" Cafe ","venue":"cafe","hours":" Open hours ","paid_terms":"direct_fee","price":{"amount_minor":125,"currency":"USD","minor_unit_exponent":2,"basis":"per_hour"},"supplies":[{"voltage_volts":120,"connectors":[{"other":" Socket X "}]}]}}"#;
+        let raw: CreateRequest = serde_json::from_str(wire).expect("wire fixture");
+        let validated = CreateRequest {
+            operation_id: id(&raw.operation_id).expect("operation identity"),
+            spot: raw.spot.validate().expect("valid input"),
+        };
+        let previous_bytes = r#"{"operation_id":"00000000-0000-4000-8000-000000000001","spot":{"coordinate":{"latitude_e7":400000000,"longitude_e7":-1050000000},"access_note":"Ask staff.","cost":"paid","name":"Cafe","venue":"cafe","hours":"Open hours","paid_terms":"direct_fee","price":{"amount_minor":125,"currency":"USD","minor_unit_exponent":2,"basis":"per_hour"},"supplies":[{"voltage_volts":120,"connectors":[{"other":"Socket X"}]}]}}"#;
+        assert_eq!(
+            serde_json::to_string(&validated).expect("canonical request"),
+            previous_bytes
+        );
+    }
 }
