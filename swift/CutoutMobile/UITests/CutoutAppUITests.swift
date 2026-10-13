@@ -1,3 +1,4 @@
+import ImageIO
 import UIKit
 import Vision
 import XCTest
@@ -377,6 +378,9 @@ final class CutoutAppUITests: XCTestCase {
 
     override func setUp() async throws {
         try await super.setUp()
+        if name.contains("RetainsThroughRefreshFailureAndRetry") || name.contains("KeepsDateValueReadable") {
+            executionTimeAllowance = 360
+        }
         continueAfterFailure = false
         XCUIDevice.shared.orientation = isLandscapeTest ? .landscapeLeft : .portrait
         app = XCUIApplication()
@@ -1138,6 +1142,10 @@ final class CutoutAppUITests: XCTestCase {
         let mapScreen = app.descendants(matching: .any)["ride-map.screen"]
         XCTAssertTrue(mapScreen.waitForExistence(timeout: 8), app.debugDescription)
         XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "ride-map.screen").count, 1)
+        let summary = app.descendants(matching: .any)["ride-map.summary"]
+        XCTAssertTrue(summary.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(summary.label.contains("Moving time"), app.debugDescription)
+        XCTAssertFalse(summary.label.contains("Recording time"), app.debugDescription)
         let modePicker = app.descendants(matching: .any)["ride-map.mode-picker"].segmentedControls.firstMatch
         XCTAssertTrue(modePicker.waitForExistence(timeout: 5), app.debugDescription)
         let pauseButton = app.buttons["ride-map.pause"]
@@ -1145,31 +1153,193 @@ final class CutoutAppUITests: XCTestCase {
         if pauseButton.waitForExistence(timeout: 2) {
             XCTAssertTrue(pauseButton.isEnabled)
             XCTAssertTrue(pauseButton.isHittable)
-        } else if restoredResumeButton.exists {
-            restoredResumeButton.tap()
         } else {
-            let startButton = app.buttons["ride-map.start"]
-            XCTAssertTrue(startButton.waitForExistence(timeout: 5), app.debugDescription)
-            XCTAssertFalse(app.descendants(matching: .any)["ride-map.map"].exists, app.debugDescription)
-            XCTAssertFalse(app.buttons["ride-map.recenter"].exists, app.debugDescription)
-            XCTAssertTrue(startButton.isEnabled)
-            XCTAssertTrue(startButton.isHittable)
-            assertMinimumControlDimension(startButton.frame.height)
-            startButton.tap()
+            XCTAssertTrue(restoredResumeButton.waitForExistence(timeout: 5), app.debugDescription)
+            XCTAssertFalse(app.buttons["ride-map.start"].exists, app.debugDescription)
+            restoredResumeButton.tap()
         }
+        XCTAssertFalse(app.buttons["ride-map.start"].exists, app.debugDescription)
         XCTAssertTrue(pauseButton.waitForExistence(timeout: 5), app.debugDescription)
+        let routeMap = app.descendants(matching: .any)["ride-map.map"]
+        XCTAssertTrue(routeMap.waitForExistence(timeout: 5), app.debugDescription)
+        let recenterButton = app.buttons["ride-map.recenter"]
+        XCTAssertTrue(recenterButton.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(recenterButton.isEnabled, app.debugDescription)
+        let cameraControlFrame = recenterButton.frame
+        let cameraControlDiagnostic =
+            "cameraControlFrame=\(cameraControlFrame), mapFrame=\(routeMap.frame)\n\(app.debugDescription)"
+        XCTAssertEqual(cameraControlFrame.width, 44, accuracy: 0.5, cameraControlDiagnostic)
+        XCTAssertEqual(cameraControlFrame.height, 44, accuracy: 0.5, cameraControlDiagnostic)
         XCTAssertTrue(
-            app.descendants(matching: .any)["ride-map.map"].waitForExistence(timeout: 5), app.debugDescription)
+            routeMap.frame.insetBy(dx: -2, dy: -2).contains(cameraControlFrame),
+            "The recenter hit target must stay inside the rendered map. \(cameraControlDiagnostic)"
+        )
+        XCTAssertTrue(recenterButton.isHittable, app.debugDescription)
+        let latestPointMarker = app.descendants(matching: .any)["ride-map.latest-point-marker"]
+        XCTAssertTrue(latestPointMarker.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertEqual(latestPointMarker.label, "Latest recorded point")
+        XCTAssertFalse(app.staticTexts["Current location"].exists, app.debugDescription)
+        recenterButton.tap()
+        let routeScreenshot = XCTAttachment(screenshot: app.screenshot())
+        routeScreenshot.name = "ride-map-rust-backed-point-route-before-marker-center-assertion"
+        routeScreenshot.lifetime = .keepAlways
+        add(routeScreenshot)
+        // The caption group includes overlay text; the native Map pin bounds are the coordinate anchor.
+        let latestPointPin = routeMap.otherElements
+            .containing(.any, identifier: "ride-map.latest-point-marker")
+            .matching(NSPredicate(format: "label == %@", "Map pin"))
+            .firstMatch
+        XCTAssertTrue(latestPointPin.waitForExistence(timeout: 5), app.debugDescription)
+        let markerFrame = latestPointPin.frame
+        let mapFrame = routeMap.frame
+        let markerCenterDiagnostic =
+            "nativeMapPinFrame=\(markerFrame), mapFrame=\(mapFrame)\n\(app.debugDescription)"
+        XCTAssertEqual(markerFrame.width, 26, accuracy: 0.5, markerCenterDiagnostic)
+        XCTAssertEqual(markerFrame.height, 26, accuracy: 0.5, markerCenterDiagnostic)
+        XCTAssertEqual(
+            markerFrame.midX, mapFrame.midX, accuracy: 12,
+            "The latest recorded point marker stays centered on the single-point route after recentering. \(markerCenterDiagnostic)"
+        )
+        XCTAssertEqual(
+            markerFrame.midY, mapFrame.midY, accuracy: 12,
+            "The latest recorded point marker stays centered on the single-point route after recentering. \(markerCenterDiagnostic)"
+        )
+        let stopButton = app.buttons["ride-map.stop"]
+        XCTAssertTrue(stopButton.exists, app.debugDescription)
+        XCTAssertTrue(stopButton.isHittable, app.debugDescription)
+        XCTAssertTrue(pauseButton.isHittable, app.debugDescription)
         pauseButton.tap()
         let resumeButton = app.buttons["ride-map.resume"]
         XCTAssertTrue(resumeButton.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(resumeButton.isHittable, app.debugDescription)
+        XCTAssertTrue(stopButton.isHittable, app.debugDescription)
         resumeButton.tap()
         XCTAssertTrue(pauseButton.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(app.descendants(matching: .any)["ride-map.map"].exists, app.debugDescription)
+        XCTAssertTrue(recenterButton.isEnabled, app.debugDescription)
+    }
 
+    func testPickerSurfaceHomeMapRouteKeepsMapAndLifecycleActionsReachableAtAccessibilityDynamicType() throws {
+        let mapButton = app.tabBars.buttons["Map"]
+        XCTAssertTrue(mapButton.waitForExistence(timeout: 8), app.debugDescription)
+        XCTAssertTrue(mapButton.isHittable)
+        mapButton.tap()
+
+        let mapScreen = app.descendants(matching: .any)["ride-map.screen"]
+        XCTAssertTrue(mapScreen.waitForExistence(timeout: 8), app.debugDescription)
+        let summary = app.descendants(matching: .any)["ride-map.summary"]
+        XCTAssertTrue(summary.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(summary.label.contains("Moving time"), app.debugDescription)
+        XCTAssertFalse(summary.label.contains("Recording time"), app.debugDescription)
+        let routeMap = app.descendants(matching: .any)["ride-map.map"]
+        XCTAssertTrue(routeMap.waitForExistence(timeout: 8), app.debugDescription)
         let recenterButton = app.buttons["ride-map.recenter"]
         XCTAssertTrue(recenterButton.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(recenterButton.isEnabled, app.debugDescription)
+        let cameraControlFrame = recenterButton.frame
+        let cameraControlDiagnostic =
+            "cameraControlFrame=\(cameraControlFrame), mapFrame=\(routeMap.frame)\n\(app.debugDescription)"
+        XCTAssertEqual(cameraControlFrame.width, 44, accuracy: 0.5, cameraControlDiagnostic)
+        XCTAssertEqual(cameraControlFrame.height, 44, accuracy: 0.5, cameraControlDiagnostic)
+        XCTAssertTrue(
+            routeMap.frame.insetBy(dx: -2, dy: -2).contains(cameraControlFrame),
+            "The recenter hit target must stay inside the rendered map. \(cameraControlDiagnostic)"
+        )
+
+        let latestPointMarker = app.descendants(matching: .any)["ride-map.latest-point-marker"]
+        XCTAssertTrue(latestPointMarker.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertEqual(latestPointMarker.label, "Latest recorded point")
+        XCTAssertFalse(app.staticTexts["Current location"].exists, app.debugDescription)
+
         recenterButton.tap()
-        XCTAssertTrue(app.descendants(matching: .any)["ride-map.map"].exists)
+        let routeImage = XCUIScreen.main.screenshot()
+        let routeScreenshot = XCTAttachment(screenshot: routeImage)
+        routeScreenshot.name =
+            "ride-map-rust-backed-point-route-accessibility-dynamic-type-before-marker-center-assertion"
+        routeScreenshot.lifetime = .keepAlways
+        add(routeScreenshot)
+        assertRouteMarkerCaption(
+            "Latest recorded point", in: routeMap.frame, screenshot: routeImage,
+            attachmentName: "ride-map-latest-point-caption-accessibility-dynamic-type-OCR"
+        )
+        // The caption group includes overlay text; the native Map pin bounds are the coordinate anchor.
+        let latestPointPin = routeMap.otherElements
+            .containing(.any, identifier: "ride-map.latest-point-marker")
+            .matching(NSPredicate(format: "label == %@", "Map pin"))
+            .firstMatch
+        XCTAssertTrue(latestPointPin.waitForExistence(timeout: 5), app.debugDescription)
+        let markerFrame = latestPointPin.frame
+        let mapFrame = routeMap.frame
+        let markerCenterDiagnostic =
+            "nativeMapPinFrame=\(markerFrame), mapFrame=\(mapFrame)\n\(app.debugDescription)"
+        XCTAssertEqual(markerFrame.width, 26, accuracy: 0.5, markerCenterDiagnostic)
+        XCTAssertEqual(markerFrame.height, 26, accuracy: 0.5, markerCenterDiagnostic)
+        XCTAssertEqual(
+            markerFrame.midX, mapFrame.midX, accuracy: 12,
+            "The latest recorded point marker stays centered on the single-point route at accessibility text size. \(markerCenterDiagnostic)"
+        )
+        XCTAssertEqual(
+            markerFrame.midY, mapFrame.midY, accuracy: 12,
+            "The latest recorded point marker stays centered on the single-point route at accessibility text size. \(markerCenterDiagnostic)"
+        )
+
+        let liveViewport = app.scrollViews["ride-map.live-viewport"]
+        XCTAssertTrue(liveViewport.waitForExistence(timeout: 5), app.debugDescription)
+        let tabBar = app.tabBars.firstMatch
+        XCTAssertTrue(tabBar.exists, app.debugDescription)
+        let availabilityNotice = app.descendants(matching: .any)["ride-map.location-availability"]
+        XCTAssertTrue(availabilityNotice.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertEqual(
+            availabilityNotice.label,
+            "Location access is denied. Enable it in Settings to record a route.",
+            app.debugDescription
+        )
+        scrollElementFrameIntoViewport(
+            availabilityNotice, in: liveViewport, maxScrolls: 8, occludedBy: tabBar)
+        let noticeScreenshot = XCTAttachment(screenshot: app.screenshot())
+        noticeScreenshot.name = "ride-map-denied-location-notice-accessibility-dynamic-type"
+        noticeScreenshot.lifetime = .keepAlways
+        add(noticeScreenshot)
+        let noticeFrame = availabilityNotice.frame
+        let viewportFrame = unobscuredFrame(in: liveViewport, above: tabBar)
+        let noticeDiagnostic =
+            "noticeFrame=\(noticeFrame), viewportFrame=\(viewportFrame), mapFrame=\(routeMap.frame)\n\(app.debugDescription)"
+        XCTAssertTrue(
+            viewportFrame.insetBy(dx: -2, dy: -2).contains(noticeFrame),
+            "The location notice must fit inside the live scroll viewport. \(noticeDiagnostic)"
+        )
+        XCTAssertGreaterThanOrEqual(
+            noticeFrame.minY, routeMap.frame.maxY - 2,
+            "The location notice must remain below the rendered route map. \(noticeDiagnostic)"
+        )
+        XCTAssertLessThanOrEqual(
+            noticeFrame.height, viewportFrame.height * 0.30,
+            "The visible denial notice must retain a compact footprint at accessibility text size while its full guidance remains available to VoiceOver. \(noticeDiagnostic)"
+        )
+
+        let locationSettingsButton = app.buttons["ride-map.location-settings"]
+        XCTAssertTrue(locationSettingsButton.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertEqual(locationSettingsButton.label, "Open location settings", app.debugDescription)
+        scrollElementFrameIntoViewport(
+            locationSettingsButton, in: liveViewport, maxScrolls: 8, occludedBy: tabBar)
+        XCTAssertTrue(locationSettingsButton.isEnabled, app.debugDescription)
+        let settingsScreenshot = XCTAttachment(screenshot: app.screenshot())
+        settingsScreenshot.name = "ride-map-location-settings-accessibility-dynamic-type"
+        settingsScreenshot.lifetime = .keepAlways
+        add(settingsScreenshot)
+
+        let pauseButton = app.buttons["ride-map.pause"]
+        let stopButton = app.buttons["ride-map.stop"]
+        scrollElementFrameIntoViewport(pauseButton, in: liveViewport, maxScrolls: 10, occludedBy: tabBar)
+        XCTAssertTrue(pauseButton.isEnabled, app.debugDescription)
+        XCTAssertTrue(pauseButton.isHittable, app.debugDescription)
+        scrollElementFrameIntoViewport(stopButton, in: liveViewport, maxScrolls: 10, occludedBy: tabBar)
+        XCTAssertTrue(stopButton.isEnabled, app.debugDescription)
+        XCTAssertTrue(stopButton.isHittable, app.debugDescription)
+        let controlsScreenshot = XCTAttachment(screenshot: app.screenshot())
+        controlsScreenshot.name = "ride-map-lifecycle-controls-accessibility-dynamic-type"
+        controlsScreenshot.lifetime = .keepAlways
+        add(controlsScreenshot)
     }
 
     func testHomeMapConfirmedIdleHidesRouteCanvasUntilRideStarts() throws {
@@ -1194,14 +1364,745 @@ final class CutoutAppUITests: XCTestCase {
 
         let pauseButton = app.buttons["ride-map.pause"]
         XCTAssertTrue(pauseButton.waitForExistence(timeout: 10), app.debugDescription)
-        XCTAssertTrue(
-            app.descendants(matching: .any)["ride-map.map"].waitForExistence(timeout: 5), app.debugDescription)
-        XCTAssertTrue(app.buttons["ride-map.recenter"].exists, app.debugDescription)
+        XCTAssertFalse(app.descendants(matching: .any)["ride-map.map"].exists, app.debugDescription)
+        XCTAssertFalse(app.buttons["ride-map.recenter"].exists, app.debugDescription)
+        XCTAssertTrue(app.descendants(matching: .any)["ride-map.recording-pill"].exists, app.debugDescription)
+        XCTAssertTrue(app.descendants(matching: .any)["ride-map.summary"].exists, app.debugDescription)
+        let stopButton = app.buttons["ride-map.stop"]
+        XCTAssertTrue(stopButton.exists, app.debugDescription)
+        XCTAssertTrue(stopButton.isHittable, app.debugDescription)
         XCTAssertTrue(pauseButton.isHittable, app.debugDescription)
+        pauseButton.tap()
+        let resumeButton = app.buttons["ride-map.resume"]
+        XCTAssertTrue(resumeButton.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(resumeButton.isHittable, app.debugDescription)
+        XCTAssertTrue(stopButton.isHittable, app.debugDescription)
+        resumeButton.tap()
+        XCTAssertTrue(pauseButton.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertFalse(app.descendants(matching: .any)["ride-map.map"].exists, app.debugDescription)
         let startedScreenshot = XCTAttachment(screenshot: app.screenshot())
         startedScreenshot.name = "ride-map-after-start"
         startedScreenshot.lifetime = .keepAlways
         add(startedScreenshot)
+    }
+
+    func testPickerSurfaceHomeMapRouteSavedHistoryPreservesSelectionAtAccessibilityDynamicTypeShowsEndpoints() throws {
+        try assertSavedHistoryEndpointCaptionsAtAccessibilityDynamicType()
+    }
+
+    func
+        testPickerSurfaceHomeMapRouteSavedHistoryPreservesSelectionAtAccessibilityDynamicTypeRetainsThroughRefreshFailureAndRetry()
+        throws
+    {
+        try assertSavedHistorySelectionSurvivesRefreshFailureAndRetryAtAccessibilityDynamicType()
+    }
+
+    func
+        testPickerSurfaceHomeMapRouteSavedHistoryPreservesSelectionAtAccessibilityDynamicTypeRetainsThroughRefreshFailureAndRetryInLandscape()
+        throws
+    {
+        try assertSavedHistorySelectionSurvivesRefreshFailureAndRetryAtAccessibilityDynamicType()
+    }
+
+    func
+        testPickerSurfaceHomeMapRouteSavedHistoryPreservesSelectionAtAccessibilityDynamicTypeShowsEndpointsInLandscape()
+        throws
+    {
+        try assertSavedHistoryEndpointCaptionsAtAccessibilityDynamicType()
+    }
+
+    func
+        testPickerSurfaceHomeMapRouteSavedHistoryPreservesSelectionAtAccessibilityDynamicTypeKeepsDateValueReadable()
+        throws
+    {
+        try assertSavedHistoryDateFilterReadableAtAccessibilityDynamicType()
+    }
+
+    func
+        testPickerSurfaceHomeMapRouteSavedHistoryPreservesSelectionAtAccessibilityDynamicTypeKeepsDateValueReadableInLandscape()
+        throws
+    {
+        try assertSavedHistoryDateFilterReadableAtAccessibilityDynamicType()
+    }
+
+    private func assertSavedHistoryDateFilterReadableAtAccessibilityDynamicType() throws {
+        let mapTab = app.tabBars.buttons["Map"]
+        XCTAssertTrue(mapTab.waitForExistence(timeout: 10), app.debugDescription)
+        mapTab.tap()
+
+        let screen = app.descendants(matching: .any)["ride-map.screen"]
+        XCTAssertTrue(screen.waitForExistence(timeout: 8), app.debugDescription)
+        let readback = try XCTUnwrap(screen.value as? String)
+        let receipt = try XCTUnwrap(readback.components(separatedBy: ";").first)
+        XCTAssertTrue(receipt.hasPrefix("saved-rides:"), app.debugDescription)
+        let seededIDs = receipt.dropFirst("saved-rides:".count).split(separator: ",").map(String.init)
+        XCTAssertEqual(seededIDs.count, 2, "This scenario uses the persisted Rust history fixture")
+        XCTAssertTrue(seededIDs.allSatisfy { UUID(uuidString: $0) != nil }, app.debugDescription)
+
+        let picker = app.descendants(matching: .any)["ride-map.mode-picker"].segmentedControls.firstMatch
+        XCTAssertTrue(picker.waitForExistence(timeout: 5), app.debugDescription)
+        picker.buttons["History"].tap()
+        let initialGeneration = try waitForSettledHistory(in: screen, afterQueryGeneration: 0)
+
+        let date = app.buttons["ride-map.history-date-filter"]
+        let clear = app.buttons["ride-map.history-clear-filters"]
+        let filters = app.descendants(matching: .any)["ride-map.history-filters"]
+        let viewport = screen.scrollViews.firstMatch
+        let tabBar = app.tabBars.firstMatch
+        XCTAssertTrue(viewport.waitForExistence(timeout: 5), app.debugDescription)
+        scrollElementFrameIntoViewport(
+            date, in: viewport, maxScrolls: 8, occludedBy: tabBar, requiresFullVisibility: true
+        )
+        assertMinimumControlDimension(date.frame.width)
+        assertMinimumControlDimension(date.frame.height)
+        XCTAssertTrue(date.isHittable, app.debugDescription)
+
+        assertVisibleHistoryDateText(
+            "Last 30 days", in: date,
+            attachmentName: "saved-history-date-last-30-days-accessibility-before-filter-changes"
+        )
+
+        date.tap()
+        let shortRides = app.descendants(matching: .any)["ride-map.history-show-short-rides"]
+        XCTAssertTrue(shortRides.waitForExistence(timeout: 5), app.debugDescription)
+        scrollHistoryDateMenuOptionIntoView(shortRides)
+        assertMinimumControlDimension(shortRides.frame.height)
+        XCTAssertTrue(shortRides.isHittable, app.debugDescription)
+        shortRides.tap()
+        let shortRideGeneration = try waitForSettledHistory(in: screen, afterQueryGeneration: initialGeneration)
+
+        XCTAssertTrue(clear.exists, app.debugDescription)
+        XCTAssertTrue(clear.isEnabled, app.debugDescription)
+        let originalFiltersFrame = filters.frame
+        let originalViewportFrame = viewport.frame
+        let historyMap = app.descendants(matching: .any)["ride-map.map"]
+        XCTAssertTrue(historyMap.waitForExistence(timeout: 5), app.debugDescription)
+        let originalMapFrame = historyMap.frame
+        XCTAssertGreaterThan(originalMapFrame.height, 0, app.debugDescription)
+
+        date.tap()
+        let allTime = app.buttons["All time"]
+        XCTAssertTrue(allTime.waitForExistence(timeout: 5), app.debugDescription)
+        assertMinimumControlDimension(allTime.frame.width)
+        assertMinimumControlDimension(allTime.frame.height)
+        XCTAssertTrue(allTime.isHittable, app.debugDescription)
+        allTime.tap()
+        let allTimeGeneration = try waitForSettledHistory(in: screen, afterQueryGeneration: shortRideGeneration)
+        assertVisibleHistoryDateText(
+            "All time", in: date,
+            attachmentName: "saved-history-date-all-time-accessibility"
+        )
+        XCTAssertEqual(date.label, "All time", app.debugDescription)
+        XCTAssertTrue(clear.isEnabled, app.debugDescription)
+        assertMinimumControlDimension(clear.frame.width)
+        assertMinimumControlDimension(clear.frame.height)
+        XCTAssertTrue(clear.isHittable, app.debugDescription)
+        assertHistoryFrame(filters.frame, equals: originalFiltersFrame)
+        assertHistoryFrame(viewport.frame, equals: originalViewportFrame)
+        assertHistoryFrame(historyMap.frame, equals: originalMapFrame)
+
+        date.tap()
+        let last30Days = app.buttons["Last 30 days"]
+        XCTAssertTrue(last30Days.waitForExistence(timeout: 5), app.debugDescription)
+        assertMinimumControlDimension(last30Days.frame.width)
+        assertMinimumControlDimension(last30Days.frame.height)
+        XCTAssertTrue(last30Days.isHittable, app.debugDescription)
+        last30Days.tap()
+        _ = try waitForSettledHistory(in: screen, afterQueryGeneration: allTimeGeneration)
+        assertVisibleHistoryDateText(
+            "Last 30 days", in: date,
+            attachmentName: "saved-history-date-last-30-days-accessibility"
+        )
+        XCTAssertEqual(date.label, "Last 30 days", app.debugDescription)
+        XCTAssertTrue(clear.isEnabled, app.debugDescription)
+        XCTAssertTrue(clear.isHittable, app.debugDescription)
+        assertHistoryFrame(filters.frame, equals: originalFiltersFrame)
+        assertHistoryFrame(viewport.frame, equals: originalViewportFrame)
+        assertHistoryFrame(historyMap.frame, equals: originalMapFrame)
+
+        let last30Generation = try XCTUnwrap(
+            Self.historyFixtureFields(from: try XCTUnwrap(screen.value as? String))["query"].flatMap(UInt64.init)
+        )
+        clear.tap()
+        _ = try waitForSettledHistory(in: screen, afterQueryGeneration: last30Generation)
+        assertVisibleHistoryDateText(
+            "Last 30 days", in: date,
+            attachmentName: "saved-history-date-after-clear-accessibility"
+        )
+        XCTAssertTrue(clear.exists, app.debugDescription)
+        XCTAssertFalse(clear.isEnabled, app.debugDescription)
+        assertMinimumControlDimension(clear.frame.width)
+        assertMinimumControlDimension(clear.frame.height)
+        XCTAssertTrue(filters.frame.contains(clear.frame), app.debugDescription)
+        XCTAssertEqual(date.label, "Last 30 days", app.debugDescription)
+        XCTAssertTrue(
+            app.descendants(matching: .any)["ride-map.history-empty"].waitForExistence(timeout: 5), app.debugDescription
+        )
+        XCTAssertFalse(historyMap.exists, "Clearing also hides the Rust fixture's short routes")
+        assertMinimumControlDimension(date.frame.width)
+        assertMinimumControlDimension(date.frame.height)
+        XCTAssertTrue(date.isHittable, app.debugDescription)
+        assertHistoryFrame(filters.frame, equals: originalFiltersFrame)
+        assertHistoryFrame(viewport.frame, equals: originalViewportFrame)
+
+        let vehicle = app.buttons["ride-map.history-vehicle-filter"]
+        scrollElementFrameIntoViewport(
+            vehicle, in: viewport, maxScrolls: 8, occludedBy: tabBar, requiresFullVisibility: true
+        )
+        assertMinimumControlDimension(vehicle.frame.width)
+        assertMinimumControlDimension(vehicle.frame.height)
+        XCTAssertTrue(vehicle.isHittable, app.debugDescription)
+        let controlsAttachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        controlsAttachment.name = "saved-history-vehicle-control-accessibility"
+        controlsAttachment.lifetime = .keepAlways
+        add(controlsAttachment)
+    }
+
+    private func scrollHistoryDateMenuOptionIntoView(_ option: XCUIElement) {
+        let menu = app.collectionViews.firstMatch
+        XCTAssertTrue(menu.waitForExistence(timeout: 5), app.debugDescription)
+        // The collection's AX frame can extend below the clipped system popup.
+        // Use its smallest enclosing container and drag in the scroll-indicator gutter.
+        let containers = app.otherElements.containing(.collectionView, identifier: nil)
+            .allElementsBoundByIndex.map { (element: $0, frame: $0.frame) }
+            .filter { $0.frame.width > 0 && $0.frame.height > 0 }
+        guard
+            let container = containers.min(by: {
+                $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height
+            })
+        else {
+            XCTFail("Missing native date-menu popup container. \(app.debugDescription)")
+            return
+        }
+        let popup = container.element
+        let optionFrame = option.exists ? String(describing: option.frame) : "absent"
+        let diagnostic = XCTAttachment(
+            string: "Native menu=\(menu.frame); popup=\(container.frame); option=\(optionFrame)"
+        )
+        diagnostic.name = "saved-history-native-date-menu-frames"
+        diagnostic.lifetime = .keepAlways
+        add(diagnostic)
+        let before = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        before.name = "saved-history-date-menu-before-scroll"
+        before.lifetime = .keepAlways
+        add(before)
+        scrollElementFrameIntoViewport(
+            option, in: popup, maxScrolls: 8, horizontalFraction: 0.96
+        )
+        XCTAssertTrue(menu.exists, "Scrolling must preserve the native date menu")
+        let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        attachment.name = "saved-history-date-menu-option-reachable"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
+    private func assertVisibleHistoryDateText(
+        _ expectedText: String,
+        in element: XCUIElement,
+        attachmentName: String
+    ) {
+        let screenshot = XCUIScreen.main.screenshot()
+        let screenshotAttachment = XCTAttachment(screenshot: screenshot)
+        screenshotAttachment.name = attachmentName
+        screenshotAttachment.lifetime = .keepAlways
+        add(screenshotAttachment)
+
+        let screenshotImage = screenshot.image
+        guard let image = screenshotImage.cgImage,
+            let orientation = visionOrientation(for: screenshotImage.imageOrientation)
+        else {
+            XCTFail("Missing orientation-aware simulator screenshot for the selected History date")
+            return
+        }
+        let canvas = app.frame
+        let visibleFrame = element.frame.intersection(canvas)
+        guard canvas.width > 0, canvas.height > 0, !visibleFrame.isNull, !visibleFrame.isEmpty else {
+            XCTFail("Selected History date has no visible frame: element=\(element.frame), canvas=\(canvas)")
+            return
+        }
+        let region = CGRect(
+            x: (visibleFrame.minX - canvas.minX) / canvas.width,
+            y: 1 - (visibleFrame.maxY - canvas.minY) / canvas.height,
+            width: visibleFrame.width / canvas.width,
+            height: visibleFrame.height / canvas.height
+        ).intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+        let expectedWords = Set(expectedText.lowercased().split(whereSeparator: \.isWhitespace).map(String.init))
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.recognitionLanguages = ["en-US"]
+        request.usesLanguageCorrection = false
+        request.minimumTextHeight = 0
+        request.regionOfInterest = region
+
+        do {
+            try VNImageRequestHandler(cgImage: image, orientation: orientation, options: [:]).perform([request])
+            let lines = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+            let recognized = lines.joined(separator: " ").lowercased()
+                .filter { $0.isLetter || $0.isNumber || $0.isWhitespace }
+            let recognizedWords = Set(recognized.split(whereSeparator: \.isWhitespace).map(String.init))
+            let diagnostic =
+                "expected=\(expectedText); recognized=\(lines); frame=\(visibleFrame); canvas=\(canvas); "
+                + "region=\(region); orientation=\(screenshotImage.imageOrientation); "
+                + "imageSize=\(screenshotImage.size); scale=\(screenshotImage.scale); pixels=\(image.width)x\(image.height)"
+            let diagnosticAttachment = XCTAttachment(string: diagnostic)
+            diagnosticAttachment.name = attachmentName + "-recognition"
+            diagnosticAttachment.lifetime = .keepAlways
+            add(diagnosticAttachment)
+            for word in expectedWords {
+                XCTAssertTrue(recognizedWords.contains(word), "Selected date must be fully visible: \(diagnostic)")
+            }
+        } catch {
+            XCTFail("Selected History date recognition failed: \(error)")
+        }
+    }
+
+    private func assertSavedHistoryEndpointCaptionsAtAccessibilityDynamicType() throws {
+        let mapTab = app.tabBars.buttons["Map"]
+        XCTAssertTrue(mapTab.waitForExistence(timeout: 10), app.debugDescription)
+        mapTab.tap()
+
+        let screen = app.descendants(matching: .any)["ride-map.screen"]
+        XCTAssertTrue(screen.waitForExistence(timeout: 8), app.debugDescription)
+        let readback = try XCTUnwrap(screen.value as? String)
+        let receipt = try XCTUnwrap(readback.components(separatedBy: ";").first)
+        XCTAssertTrue(receipt.hasPrefix("saved-rides:"), app.debugDescription)
+        let seededIDs = receipt.dropFirst("saved-rides:".count).split(separator: ",").map(String.init)
+        XCTAssertEqual(seededIDs.count, 2, "The UI test reads the two Rust fixture receipts")
+        let newestSeededID = try XCTUnwrap(seededIDs.last)
+        XCTAssertNotNil(UUID(uuidString: newestSeededID))
+
+        let modePicker = app.descendants(matching: .any)["ride-map.mode-picker"].segmentedControls.firstMatch
+        XCTAssertTrue(modePicker.waitForExistence(timeout: 5), app.debugDescription)
+        modePicker.buttons["History"].tap()
+        let initialGeneration = try waitForSettledHistory(in: screen, afterQueryGeneration: 0)
+
+        let dateFilter = app.buttons["ride-map.history-date-filter"]
+        XCTAssertTrue(dateFilter.waitForExistence(timeout: 5), app.debugDescription)
+        dateFilter.tap()
+        let shortRidesToggle = app.descendants(matching: .any)["ride-map.history-show-short-rides"]
+        XCTAssertTrue(shortRidesToggle.waitForExistence(timeout: 5), app.debugDescription)
+        shortRidesToggle.tap()
+        let shortRideGeneration = try waitForSettledHistory(
+            in: screen, afterQueryGeneration: initialGeneration
+        )
+        let listedIDs = Set(
+            Self.historyFixtureFields(from: try XCTUnwrap(screen.value as? String))["listed"]?
+                .split(separator: ",").map(String.init) ?? []
+        )
+        XCTAssertTrue(listedIDs.contains(newestSeededID), "The newest fixture ride should be on the first page")
+
+        let historyScroll = screen.scrollViews.firstMatch
+        XCTAssertTrue(historyScroll.waitForExistence(timeout: 5), app.debugDescription)
+        let newestRide = app.buttons["ride-map.history-\(newestSeededID)"]
+        let tabBar = app.tabBars.firstMatch
+        scrollElementFrameIntoViewport(
+            newestRide, in: historyScroll, maxScrolls: 20, occludedBy: tabBar,
+            requiresFullVisibility: false
+        )
+        XCTAssertTrue(newestRide.isHittable, app.debugDescription)
+        let historyScreenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        historyScreenshot.name = "saved-history-newest-rust-ride-row-accessibility-dynamic-type"
+        historyScreenshot.lifetime = .keepAlways
+        add(historyScreenshot)
+        newestRide.tap()
+
+        let detailScreen = app.descendants(matching: .any)["ride-map.detail-screen"]
+        XCTAssertTrue(detailScreen.waitForExistence(timeout: 8), app.debugDescription)
+        _ = try waitForSettledHistory(
+            in: detailScreen,
+            afterQueryGeneration: shortRideGeneration - 1,
+            selecting: newestSeededID
+        )
+        let detailMap = detailScreen.descendants(matching: .any)["ride-map.map"]
+        XCTAssertTrue(detailMap.waitForExistence(timeout: 8), app.debugDescription)
+        XCTAssertFalse(app.descendants(matching: .any)["ride-map.detail-initial-loading"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["ride-map.detail-no-points"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["ride-map.detail-map-error"].exists)
+
+        let detailScreenshot = XCUIScreen.main.screenshot()
+        let detailAttachment = XCTAttachment(screenshot: detailScreenshot)
+        detailAttachment.name = "saved-history-rust-backed-endpoint-captions-accessibility-dynamic-type"
+        detailAttachment.lifetime = .keepAlways
+        add(detailAttachment)
+
+        let startRole = detailMap.otherElements.matching(NSPredicate(format: "label == %@", "Start"))
+        let endRole = detailMap.otherElements.matching(NSPredicate(format: "label == %@", "Ride end"))
+        XCTAssertTrue(startRole.firstMatch.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(endRole.firstMatch.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertEqual(startRole.count, 1, app.debugDescription)
+        XCTAssertEqual(endRole.count, 1, app.debugDescription)
+        XCTAssertEqual(startRole.firstMatch.label, "Start", app.debugDescription)
+        XCTAssertEqual(endRole.firstMatch.label, "Ride end", app.debugDescription)
+
+        let startMapPin = detailMap.otherElements
+            .containing(NSPredicate(format: "label == %@", "Start"))
+            .matching(NSPredicate(format: "label == %@", "Map pin"))
+            .firstMatch
+        let endMapPin = detailMap.otherElements
+            .containing(NSPredicate(format: "label == %@", "Ride end"))
+            .matching(NSPredicate(format: "label == %@", "Map pin"))
+            .firstMatch
+        XCTAssertTrue(startMapPin.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(endMapPin.waitForExistence(timeout: 5), app.debugDescription)
+        let mapFrame = detailMap.frame
+        let pinFrames = [startMapPin.frame, endMapPin.frame]
+        for pinFrame in pinFrames {
+            XCTAssertEqual(pinFrame.width, 26, accuracy: 0.5, app.debugDescription)
+            XCTAssertEqual(pinFrame.height, 26, accuracy: 0.5, app.debugDescription)
+            XCTAssertTrue(mapFrame.insetBy(dx: -2, dy: -2).contains(pinFrame), app.debugDescription)
+        }
+        XCTAssertGreaterThan(
+            hypot(pinFrames[0].midX - pinFrames[1].midX, pinFrames[0].midY - pinFrames[1].midY), 1,
+            "The seeded Rust route endpoints should have distinct rendered pin positions. \(app.debugDescription)"
+        )
+
+        let startCaptionFrame = try XCTUnwrap(
+            assertRouteMarkerCaption(
+                "Start", in: mapFrame, screenshot: detailScreenshot,
+                attachmentName: "saved-history-start-caption-accessibility-dynamic-type"
+            )
+        )
+        let endCaptionFrame = try XCTUnwrap(
+            assertRouteMarkerCaption(
+                "Ride end", in: mapFrame, screenshot: detailScreenshot,
+                attachmentName: "saved-history-end-caption-accessibility-dynamic-type"
+            )
+        )
+        XCTAssertFalse(
+            startCaptionFrame.intersects(endCaptionFrame),
+            "Endpoint caption text should not overlap on the shared History canvas. "
+                + "start=\(startCaptionFrame), end=\(endCaptionFrame), map=\(mapFrame)"
+        )
+    }
+
+    private func assertSavedHistorySelectionSurvivesRefreshFailureAndRetryAtAccessibilityDynamicType() throws {
+        let mapTab = app.tabBars.buttons["Map"]
+        XCTAssertTrue(mapTab.waitForExistence(timeout: 10), app.debugDescription)
+        mapTab.tap()
+
+        let screen = app.descendants(matching: .any)["ride-map.screen"]
+        XCTAssertTrue(screen.waitForExistence(timeout: 8), app.debugDescription)
+        let initialReadback = try XCTUnwrap(screen.value as? String)
+        let receipt = try XCTUnwrap(initialReadback.components(separatedBy: ";").first)
+        XCTAssertTrue(receipt.hasPrefix("saved-rides:"), app.debugDescription)
+        let seededIDs = receipt.dropFirst("saved-rides:".count).split(separator: ",").map(String.init)
+        XCTAssertEqual(seededIDs.count, 2, "The UI test reads the two Rust fixture receipts")
+        let newestSeededID = try XCTUnwrap(seededIDs.last)
+        XCTAssertNotNil(UUID(uuidString: newestSeededID))
+
+        let modePicker = app.descendants(matching: .any)["ride-map.mode-picker"].segmentedControls.firstMatch
+        XCTAssertTrue(modePicker.waitForExistence(timeout: 5), app.debugDescription)
+        modePicker.buttons["History"].tap()
+        let initialGeneration = try waitForSettledHistory(in: screen, afterQueryGeneration: 0)
+
+        // The selected short ride is initially hidden. Show short rides while retaining Last 30 days,
+        // then open its real Rust-projected detail before changing the date to All time.
+        let dateFilter = app.buttons["ride-map.history-date-filter"]
+        XCTAssertTrue(dateFilter.waitForExistence(timeout: 5), app.debugDescription)
+        dateFilter.tap()
+        let shortRidesToggle = app.descendants(matching: .any)["ride-map.history-show-short-rides"]
+        XCTAssertTrue(shortRidesToggle.waitForExistence(timeout: 5), app.debugDescription)
+        scrollHistoryDateMenuOptionIntoView(shortRidesToggle)
+        shortRidesToggle.tap()
+        let shortRideGeneration = try waitForSettledHistory(in: screen, afterQueryGeneration: initialGeneration)
+        let newestRide = app.buttons["ride-map.history-\(newestSeededID)"]
+        let historyScroll = screen.scrollViews.firstMatch
+        let tabBar = app.tabBars.firstMatch
+        XCTAssertTrue(historyScroll.waitForExistence(timeout: 5), app.debugDescription)
+        scrollElementFrameIntoViewport(
+            newestRide,
+            in: historyScroll,
+            maxScrolls: 20,
+            occludedBy: tabBar,
+            requiresFullVisibility: false,
+            horizontalFraction: 0.5
+        )
+        XCTAssertTrue(newestRide.isHittable, app.debugDescription)
+        newestRide.tap()
+
+        let detailScreen = app.descendants(matching: .any)["ride-map.detail-screen"]
+        XCTAssertTrue(detailScreen.waitForExistence(timeout: 8), app.debugDescription)
+        _ = try waitForSettledHistory(
+            in: detailScreen,
+            afterQueryGeneration: shortRideGeneration - 1,
+            selecting: newestSeededID
+        )
+        let detailHeader = detailScreen.descendants(matching: .any)["ride-map.detail-header"]
+        let backButton = detailHeader.buttons.firstMatch
+        XCTAssertTrue(backButton.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(backButton.isHittable, app.debugDescription)
+        backButton.tap()
+
+        XCTAssertTrue(dateFilter.waitForExistence(timeout: 5), app.debugDescription)
+        let settledSelectionGeneration = try waitForSettledHistory(
+            in: screen,
+            afterQueryGeneration: shortRideGeneration - 1,
+            selecting: newestSeededID
+        )
+        XCTAssertEqual(newestRide.value as? String, "Selected", app.debugDescription)
+        scrollElementFrameIntoViewport(
+            dateFilter,
+            in: historyScroll,
+            maxScrolls: 20,
+            occludedBy: tabBar,
+            requiresFullVisibility: true,
+            horizontalFraction: 0.5
+        )
+        let filters = app.descendants(matching: .any)["ride-map.history-filters"]
+        let viewport = historyScroll
+        let historyMap = app.descendants(matching: .any)["ride-map.map"]
+        XCTAssertTrue(filters.exists, app.debugDescription)
+        XCTAssertTrue(viewport.exists, app.debugDescription)
+        XCTAssertTrue(historyMap.exists, app.debugDescription)
+        let originalFiltersFrame = filters.frame
+        let originalViewportFrame = viewport.frame
+        let originalMapFrame = historyMap.frame
+        XCTAssertGreaterThan(originalViewportFrame.height, 0, app.debugDescription)
+        XCTAssertGreaterThan(originalMapFrame.height, 0, app.debugDescription)
+        let originalFields = Self.historyFixtureFields(from: try XCTUnwrap(screen.value as? String))
+        let originalListedIDs = Set(originalFields["listed"]?.split(separator: ",").map(String.init) ?? [])
+        XCTAssertTrue(originalListedIDs.contains(newestSeededID), app.debugDescription)
+
+        attachHistoryRefreshEvidence(
+            named: "saved-history-before-refresh-failure",
+            screen: screen,
+            viewport: viewport,
+            filters: filters,
+            map: historyMap,
+            error: app.descendants(matching: .any)["ride-map.history-refresh-error"],
+            retry: app.buttons["ride-map.history-refresh-retry"]
+        )
+        dateFilter.tap()
+        let allTime = app.buttons["All time"]
+        XCTAssertTrue(allTime.waitForExistence(timeout: 5), app.debugDescription)
+        allTime.tap()
+        let failedGeneration = try waitForSettledHistory(
+            in: screen,
+            afterQueryGeneration: settledSelectionGeneration,
+            selecting: newestSeededID
+        )
+
+        let refreshError = app.descendants(matching: .any)["ride-map.history-refresh-error"]
+        let mapError = app.descendants(matching: .any)["ride-map.history-map-error"]
+        let retryButton = app.buttons["ride-map.history-refresh-retry"]
+        let loadMoreButton = app.buttons["ride-map.history-load-more"]
+        attachHistoryRefreshEvidence(
+            named: "saved-history-all-time-refresh-failed",
+            screen: screen,
+            viewport: viewport,
+            filters: filters,
+            map: historyMap,
+            error: refreshError,
+            retry: retryButton
+        )
+
+        let failedReadback = try XCTUnwrap(screen.value as? String)
+        let failedFields = Self.historyFixtureFields(from: failedReadback)
+        let failedListedIDs = Set(failedFields["listed"]?.split(separator: ",").map(String.init) ?? [])
+        XCTAssertEqual(dateFilter.label, "All time", app.debugDescription)
+        XCTAssertEqual(failedFields["loading"], "false", app.debugDescription)
+        XCTAssertEqual(failedFields["selected"], newestSeededID, app.debugDescription)
+        XCTAssertEqual(failedFields["projection"], newestSeededID, app.debugDescription)
+        XCTAssertEqual(failedListedIDs, originalListedIDs, app.debugDescription)
+        XCTAssertGreaterThan(failedGeneration, settledSelectionGeneration)
+        XCTAssertTrue(refreshError.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertFalse(
+            mapError.exists,
+            "A retained route with display points must not show the empty-map error. \(app.debugDescription)")
+        XCTAssertTrue(retryButton.exists, app.debugDescription)
+        XCTAssertEqual(retryButton.label, "Try again", app.debugDescription)
+        assertHistoryFrame(filters.frame, equals: originalFiltersFrame)
+        assertHistoryFrame(viewport.frame, equals: originalViewportFrame)
+        assertHistoryFrame(historyMap.frame, equals: originalMapFrame)
+
+        let retainedRow = app.buttons["ride-map.history-\(newestSeededID)"]
+        scrollHistoryElement(
+            retainedRow,
+            in: historyScroll,
+            above: tabBar,
+            and: refreshError,
+            minimumVisibleHeight: 44,
+            requiresFullVisibility: false
+        )
+        attachHistoryRefreshEvidence(
+            named: "saved-history-retained-row-reachable-after-refresh-error",
+            screen: screen,
+            viewport: viewport,
+            filters: filters,
+            map: historyMap,
+            error: refreshError,
+            retry: retryButton
+        )
+        let retainedRowVisibleFrame = retainedRow.frame.intersection(
+            historyContentFrameAboveOverlays(in: historyScroll, tabBar: tabBar, error: refreshError)
+        )
+        XCTAssertGreaterThanOrEqual(retainedRowVisibleFrame.height, 44, app.debugDescription)
+        XCTAssertTrue(retainedRow.isHittable, app.debugDescription)
+
+        scrollHistoryElement(
+            loadMoreButton,
+            in: historyScroll,
+            above: tabBar,
+            and: refreshError,
+            minimumVisibleHeight: 44,
+            requiresFullVisibility: true
+        )
+        attachHistoryRefreshEvidence(
+            named: "saved-history-load-more-and-refresh-error-accessibility-layout",
+            screen: screen,
+            viewport: viewport,
+            filters: filters,
+            map: historyMap,
+            error: refreshError,
+            retry: retryButton
+        )
+        XCTAssertTrue(loadMoreButton.waitForExistence(timeout: 5), app.debugDescription)
+        assertMinimumControlDimension(loadMoreButton.frame.height)
+        let loadMoreSafeFrame = historyContentFrameAboveOverlays(
+            in: historyScroll, tabBar: tabBar, error: refreshError
+        )
+        XCTAssertTrue(
+            loadMoreSafeFrame.contains(loadMoreButton.frame),
+            "Load more must be fully visible above both overlays. \(app.debugDescription)")
+        XCTAssertTrue(loadMoreButton.isHittable, app.debugDescription)
+
+        scrollElementFrameIntoViewport(
+            retryButton,
+            in: historyScroll,
+            maxScrolls: 1,
+            occludedBy: tabBar,
+            requiresFullVisibility: true,
+            horizontalFraction: 0.5
+        )
+        assertMinimumControlDimension(retryButton.frame.width)
+        assertMinimumControlDimension(retryButton.frame.height)
+        XCTAssertTrue(retryButton.isEnabled, app.debugDescription)
+        XCTAssertTrue(retryButton.isHittable, app.debugDescription)
+        retryButton.tap()
+
+        let retriedGeneration = try waitForSettledHistory(
+            in: screen,
+            afterQueryGeneration: failedGeneration,
+            selecting: newestSeededID
+        )
+        attachHistoryRefreshEvidence(
+            named: "saved-history-all-time-refresh-retried",
+            screen: screen,
+            viewport: viewport,
+            filters: filters,
+            map: historyMap,
+            error: refreshError,
+            retry: retryButton
+        )
+        let retriedFields = Self.historyFixtureFields(from: try XCTUnwrap(screen.value as? String))
+        let retriedListedIDs = Set(retriedFields["listed"]?.split(separator: ",").map(String.init) ?? [])
+        scrollElementFrameIntoViewport(
+            dateFilter,
+            in: historyScroll,
+            maxScrolls: 30,
+            occludedBy: tabBar,
+            requiresFullVisibility: true,
+            horizontalFraction: 0.5
+        )
+        XCTAssertGreaterThan(retriedGeneration, failedGeneration)
+        XCTAssertEqual(retriedFields["loading"], "false", app.debugDescription)
+        XCTAssertEqual(retriedFields["selected"], newestSeededID, app.debugDescription)
+        XCTAssertEqual(retriedFields["projection"], newestSeededID, app.debugDescription)
+        XCTAssertEqual(retriedListedIDs, originalListedIDs, app.debugDescription)
+        XCTAssertEqual(dateFilter.label, "All time", app.debugDescription)
+        XCTAssertFalse(refreshError.exists, app.debugDescription)
+        XCTAssertFalse(mapError.exists, app.debugDescription)
+        XCTAssertEqual(filters.frame.width, originalFiltersFrame.width, accuracy: 1)
+        XCTAssertEqual(filters.frame.height, originalFiltersFrame.height, accuracy: 1)
+        assertHistoryFrame(viewport.frame, equals: originalViewportFrame)
+        XCTAssertEqual(historyMap.frame.width, originalMapFrame.width, accuracy: 1)
+        XCTAssertEqual(historyMap.frame.height, originalMapFrame.height, accuracy: 1)
+    }
+
+    private func attachHistoryRefreshEvidence(
+        named name: String,
+        screen: XCUIElement,
+        viewport: XCUIElement,
+        filters: XCUIElement,
+        map: XCUIElement,
+        error: XCUIElement,
+        retry: XCUIElement
+    ) {
+        let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        screenshot.name = name
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        let diagnostic = XCTAttachment(
+            string: """
+                History readback: \(screen.value as? String ?? "<nil>")
+                Viewport frame: \(viewport.frame)
+                Filters frame: \(filters.frame)
+                Map frame: \(map.frame)
+                Error frame: \(error.exists ? String(describing: error.frame) : "absent"), exists: \(error.exists)
+                Retry frame: \(retry.exists ? String(describing: retry.frame) : "absent"), exists: \(retry.exists), label: \(retry.exists ? retry.label : "absent")
+                \(app.debugDescription)
+                """)
+        diagnostic.name = "\(name)-accessibility-diagnostics"
+        diagnostic.lifetime = .keepAlways
+        add(diagnostic)
+    }
+
+    private func scrollHistoryElement(
+        _ element: XCUIElement,
+        in historyScroll: XCUIElement,
+        above tabBar: XCUIElement,
+        and refreshError: XCUIElement,
+        minimumVisibleHeight: CGFloat,
+        requiresFullVisibility: Bool
+    ) {
+        var previousFrame: CGRect?
+        var consecutiveStalls = 0
+        for _ in 0..<40 {
+            let safeFrame = historyContentFrameAboveOverlays(
+                in: historyScroll, tabBar: tabBar, error: refreshError
+            )
+            if safeFrame.height < minimumVisibleHeight { break }
+            let elementFrame = element.exists ? element.frame : .zero
+            let visibleFrame = elementFrame.intersection(safeFrame)
+            let isVisible =
+                requiresFullVisibility
+                ? safeFrame.contains(elementFrame)
+                : visibleFrame.height >= minimumVisibleHeight
+            if element.exists, isVisible, element.isHittable { break }
+
+            let isAbove = element.exists && elementFrame.maxY < safeFrame.minY
+            let travel = safeFrame.height * 0.25
+            dragVertically(
+                in: historyScroll,
+                from: safeFrame.midY + (isAbove ? -travel : travel),
+                to: safeFrame.midY + (isAbove ? travel : -travel),
+                horizontalFraction: 0.5
+            )
+
+            if element.exists {
+                if previousFrame == element.frame {
+                    consecutiveStalls += 1
+                } else {
+                    consecutiveStalls = 0
+                }
+                previousFrame = element.frame
+                if consecutiveStalls >= 3 { break }
+            }
+        }
+    }
+
+    private func historyContentFrameAboveOverlays(
+        in historyScroll: XCUIElement, tabBar: XCUIElement, error: XCUIElement
+    ) -> CGRect {
+        let viewport = unobscuredFrame(in: historyScroll, above: tabBar)
+        guard error.exists else { return viewport }
+        let maxY = min(viewport.maxY, error.frame.minY)
+        return CGRect(
+            x: viewport.minX,
+            y: viewport.minY,
+            width: viewport.width,
+            height: max(0, maxY - viewport.minY)
+        )
     }
 
     func testPickerSurfaceSavedHistoryPreservesSelectionAndClearsFiltersWithoutReflow() throws {
@@ -1225,9 +2126,9 @@ final class CutoutAppUITests: XCTestCase {
         let picker = app.descendants(matching: .any)["ride-map.mode-picker"].segmentedControls.firstMatch
         XCTAssertTrue(picker.waitForExistence(timeout: 5), app.debugDescription)
         picker.buttons["History"].tap()
-        let viewport = app.descendants(matching: .any)["ride-map.history-viewport"]
+        let viewport = screen.scrollViews.firstMatch
         XCTAssertTrue(viewport.waitForExistence(timeout: 5), app.debugDescription)
-        let scroll = app.scrollViews["ride-map.history-viewport"]
+        let scroll = viewport
         XCTAssertTrue(scroll.waitForExistence(timeout: 5), app.debugDescription)
         let defaultGeneration = try waitForSettledHistory(in: screen, afterQueryGeneration: 0)
         let filters = app.descendants(matching: .any)["ride-map.history-filters"]
@@ -3012,6 +3913,117 @@ final class CutoutAppUITests: XCTestCase {
                 "Visible warning must retain its full words, including when wrapped: \(lines)")
         } catch {
             XCTFail("Native visible warning recognition failed: \(error)")
+        }
+    }
+
+    @discardableResult
+    private func assertRouteMarkerCaption(
+        _ expectedCaption: String,
+        in mapFrame: CGRect,
+        screenshot: XCUIScreenshot,
+        attachmentName: String
+    ) -> CGRect? {
+        let screenshotImage = screenshot.image
+        guard let image = screenshotImage.cgImage else {
+            XCTFail("Missing simulator screenshot for route-marker caption recognition")
+            return nil
+        }
+        guard let orientation = visionOrientation(for: screenshotImage.imageOrientation) else {
+            XCTFail("Unsupported screenshot orientation: \(screenshotImage.imageOrientation)")
+            return nil
+        }
+        let canvas = app.frame
+        guard canvas.width > 0, canvas.height > 0 else {
+            XCTFail("Missing simulator canvas for route-marker caption recognition: \(canvas)")
+            return nil
+        }
+        let recognitionFrame = mapFrame.intersection(canvas)
+        guard !recognitionFrame.isNull, !recognitionFrame.isEmpty else {
+            XCTFail("Missing visible map frame for route-marker caption recognition: map=\(mapFrame), canvas=\(canvas)")
+            return nil
+        }
+        let mapRegion = CGRect(
+            x: (recognitionFrame.minX - canvas.minX) / canvas.width,
+            y: 1 - (recognitionFrame.maxY - canvas.minY) / canvas.height,
+            width: recognitionFrame.width / canvas.width,
+            height: recognitionFrame.height / canvas.height
+        ).intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+        guard !mapRegion.isNull, !mapRegion.isEmpty else {
+            XCTFail("Missing rendered map region for route-marker caption: map=\(mapFrame), canvas=\(canvas)")
+            return nil
+        }
+
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.recognitionLanguages = ["en-US"]
+        request.usesLanguageCorrection = false
+        request.minimumTextHeight = 0
+        request.regionOfInterest = mapRegion
+        let expectedWords = Set(expectedCaption.lowercased().split(whereSeparator: \.isWhitespace).map(String.init))
+        do {
+            try VNImageRequestHandler(cgImage: image, orientation: orientation, options: [:]).perform([request])
+            let lines = (request.results ?? []).compactMap { observation -> (String, CGRect)? in
+                guard let text = observation.topCandidates(1).first?.string else { return nil }
+                let normalized = text.lowercased().filter { $0.isLetter || $0.isNumber || $0.isWhitespace }
+                let words = Set(normalized.split(whereSeparator: \.isWhitespace).map(String.init))
+                guard !expectedWords.isDisjoint(with: words) else { return nil }
+                let box = observation.boundingBox
+                let frame = CGRect(
+                    x: recognitionFrame.minX + box.minX * recognitionFrame.width,
+                    y: recognitionFrame.minY + (1 - box.maxY) * recognitionFrame.height,
+                    width: box.width * recognitionFrame.width,
+                    height: box.height * recognitionFrame.height
+                )
+                return (text, frame)
+            }
+            let recognized = lines.map(\.0).joined(separator: " ").lowercased()
+                .filter { $0.isLetter || $0.isNumber || $0.isWhitespace }
+            let recognizedWords = Set(recognized.split(whereSeparator: \.isWhitespace).map(String.init))
+            let captionFrames = lines.map(\.1)
+            let captionFrame = captionFrames.dropFirst().reduce(captionFrames.first ?? .zero) { partial, next in
+                partial.union(next)
+            }
+            let diagnostic =
+                "caption=\(expectedCaption); recognized=\(lines.map(\.0)); captionFrame=\(captionFrame); "
+                + "mapFrame=\(mapFrame); recognitionFrame=\(recognitionFrame); mapRegion=\(mapRegion); canvas=\(canvas); "
+                + "imageOrientation=\(screenshotImage.imageOrientation); imageSize=\(screenshotImage.size); "
+                + "imageScale=\(screenshotImage.scale); pixelSize=\(image.width)x\(image.height)"
+            let attachment = XCTAttachment(string: diagnostic)
+            attachment.name = attachmentName + "-recognition"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+
+            for word in expectedWords {
+                XCTAssertTrue(recognizedWords.contains(word), "Caption text must be visibly rendered: \(diagnostic)")
+            }
+            XCTAssertFalse(captionFrame.isEmpty, "Caption must have rendered text bounds: \(diagnostic)")
+            XCTAssertTrue(
+                mapFrame.insetBy(dx: -2, dy: -2).contains(captionFrame),
+                "Caption text must remain inside the rendered map: \(diagnostic)"
+            )
+            XCTAssertLessThanOrEqual(
+                captionFrame.width, mapFrame.width * 0.8,
+                "Caption should wrap within a readable fraction of the map width: \(diagnostic)"
+            )
+            guard !captionFrame.isEmpty else { return nil }
+            return captionFrame
+        } catch {
+            XCTFail("Route-marker caption recognition failed: \(error)")
+            return nil
+        }
+    }
+
+    private func visionOrientation(for orientation: UIImage.Orientation) -> CGImagePropertyOrientation? {
+        switch orientation {
+        case .up: return .up
+        case .upMirrored: return .upMirrored
+        case .down: return .down
+        case .downMirrored: return .downMirrored
+        case .left: return .left
+        case .leftMirrored: return .leftMirrored
+        case .right: return .right
+        case .rightMirrored: return .rightMirrored
+        @unknown default: return nil
         }
     }
 
@@ -4806,6 +5818,9 @@ final class CutoutAppUITests: XCTestCase {
         // Launch-argument defaults persist in the app domain. Set the requested
         // category on every launch so a prior AX fixture cannot change this case.
         var arguments = fixture.launchArguments + ["-UIPreferredContentSizeCategoryName", rideTextSizeCategory]
+        if name.contains("PickerSurfaceHomeMapRouteKeepsMapAndLifecycleActionsReachable") {
+            arguments.append("--seed-ui-test-live-route")
+        }
         if name.contains("AcrossAccessibilityCategories") {
             arguments += ["-CUTOUT_UI_TEST_ENVIRONMENT_READBACK", "YES", "--ui-test-live-activity-readback"]
         }
@@ -4826,6 +5841,9 @@ final class CutoutAppUITests: XCTestCase {
                 "-io.cutout.music.compact-player.hidden", "NO",
                 "-CUTOUT_UI_TEST_MUSIC", "silent",
             ]
+        }
+        if name.contains("RetainsThroughRefreshFailureAndRetry") {
+            arguments.append("--fail-ui-test-history-refresh-once")
         }
         if name.contains("MusicHistoryPreference") {
             arguments += [
@@ -4902,7 +5920,7 @@ final class CutoutAppUITests: XCTestCase {
 
     private var launchEnvironment: [String: String] {
         var environment = fixture.launchEnvironment
-        if name.contains("HomeMapConfirmedIdle") {
+        if name.contains("HomeMapConfirmedIdle") || name.contains("PickerSurfaceHomeMapRoute") {
             environment["CUTOUT_UI_TEST_RIDE_DATABASE_ID"] = UUID().uuidString
         }
         return environment

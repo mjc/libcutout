@@ -1,7 +1,7 @@
 use super::{MapPointId, SpatialRowId, StorageError};
 use rusqlite::{Connection, OptionalExtension, params};
 
-pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 42;
+pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 43;
 const APPLICATION_ID: i64 = 0x4355_544f;
 
 fn schema_pragmas(version: i64) -> String {
@@ -64,7 +64,8 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         38 => migrate_v38_to_current(connection)?,
         39 => migrate_v39_to_current(connection)?,
         40 => migrate_v40_to_current(connection)?,
-        41 => migrate_v41_to_current(connection)?,
+        41 => migrate_v41_to_v42(connection)?,
+        42 => migrate_v42_to_current(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -84,7 +85,10 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
             migrate_v40_to_current(connection)?;
         }
         if connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))? == 41 {
-            migrate_v41_to_current(connection)?;
+            migrate_v41_to_v42(connection)?;
+        }
+        if connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))? == 42 {
+            migrate_v42_to_current(connection)?;
         }
     }
     Ok(())
@@ -219,7 +223,26 @@ pub(crate) fn create_current_schema(connection: &Connection) -> Result<(), Stora
             last_recorded_point_duration_ms INTEGER CHECK (last_recorded_point_duration_ms IS NULL OR last_recorded_point_duration_ms >= 0),
             stationary_latitude_e7 INTEGER CHECK (stationary_latitude_e7 IS NULL OR stationary_latitude_e7 BETWEEN -900000000 AND 900000000),
             stationary_longitude_e7 INTEGER CHECK (stationary_longitude_e7 IS NULL OR stationary_longitude_e7 BETWEEN -1800000000 AND 1800000000),
-            stationary_horizontal_accuracy_mm INTEGER CHECK (stationary_horizontal_accuracy_mm IS NULL OR stationary_horizontal_accuracy_mm >= 0)
+            stationary_horizontal_accuracy_mm INTEGER CHECK (stationary_horizontal_accuracy_mm IS NULL OR stationary_horizontal_accuracy_mm >= 0),
+            moving_time_revision INTEGER NOT NULL DEFAULT 0 CHECK (moving_time_revision >= 0),
+            moving_time_ms INTEGER NOT NULL DEFAULT 0 CHECK (moving_time_ms >= 0),
+            moving_time_observed_ms INTEGER NOT NULL DEFAULT 0 CHECK (moving_time_observed_ms >= 0),
+            moving_time_unknown_ms INTEGER NOT NULL DEFAULT 0 CHECK (moving_time_unknown_ms >= 0),
+            moving_time_cursor_ms INTEGER CHECK (moving_time_cursor_ms IS NULL OR moving_time_cursor_ms >= 0),
+            moving_time_phone_speed_mm_s INTEGER,
+            moving_time_phone_source_ms INTEGER CHECK (moving_time_phone_source_ms IS NULL OR moving_time_phone_source_ms >= 0),
+            moving_time_vehicle_speed_mm_s INTEGER,
+            moving_time_vehicle_source_ms INTEGER CHECK (moving_time_vehicle_source_ms IS NULL OR moving_time_vehicle_source_ms >= 0),
+            moving_time_phone_watermark_ms INTEGER CHECK (moving_time_phone_watermark_ms IS NULL OR moving_time_phone_watermark_ms >= 0),
+            moving_time_vehicle_watermark_ms INTEGER CHECK (moving_time_vehicle_watermark_ms IS NULL OR moving_time_vehicle_watermark_ms >= 0),
+            moving_time_incomplete_history INTEGER NOT NULL DEFAULT 0 CHECK (moving_time_incomplete_history IN (0, 1)),
+            moving_time_availability TEXT NOT NULL DEFAULT 'unavailable'
+                CHECK (moving_time_availability IN ('unavailable', 'partial', 'complete')),
+            last_recorded_point_moving_time_ms INTEGER NOT NULL DEFAULT 0 CHECK (last_recorded_point_moving_time_ms >= 0),
+            last_recorded_point_moving_observed_ms INTEGER NOT NULL DEFAULT 0 CHECK (last_recorded_point_moving_observed_ms >= 0),
+            last_recorded_point_moving_unknown_ms INTEGER NOT NULL DEFAULT 0 CHECK (last_recorded_point_moving_unknown_ms >= 0),
+            last_recorded_point_moving_availability TEXT NOT NULL DEFAULT 'unavailable'
+                CHECK (last_recorded_point_moving_availability IN ('unavailable', 'partial', 'complete'))
         );
         CREATE INDEX rides_history_order ON rides(created_at_ms DESC, id DESC);
         CREATE TABLE ride_segments (
@@ -1578,13 +1601,97 @@ fn migrate_v40_to_current(connection: &mut Connection) -> Result<(), StorageErro
     Ok(())
 }
 
-fn migrate_v41_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+fn migrate_v41_to_v42(connection: &mut Connection) -> Result<(), StorageError> {
     let transaction = connection.transaction()?;
+    ensure_moving_time_columns(&transaction)?;
+    transaction.execute_batch(&schema_pragmas(42))?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn migrate_v42_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction()?;
+    // Earlier charging builds also used version 42, before moving time shipped.
+    ensure_moving_time_columns(&transaction)?;
     if !table_exists(&transaction, "charging_spots")? {
         transaction.execute_batch(super::charging::SCHEMA)?;
     }
     transaction.execute_batch(&current_schema_pragmas())?;
     transaction.commit()?;
+    Ok(())
+}
+
+fn ensure_moving_time_columns(connection: &Connection) -> Result<(), StorageError> {
+    for (column, declaration) in [
+        (
+            "moving_time_revision",
+            "INTEGER NOT NULL DEFAULT 0 CHECK (moving_time_revision >= 0)",
+        ),
+        (
+            "moving_time_ms",
+            "INTEGER NOT NULL DEFAULT 0 CHECK (moving_time_ms >= 0)",
+        ),
+        (
+            "moving_time_observed_ms",
+            "INTEGER NOT NULL DEFAULT 0 CHECK (moving_time_observed_ms >= 0)",
+        ),
+        (
+            "moving_time_unknown_ms",
+            "INTEGER NOT NULL DEFAULT 0 CHECK (moving_time_unknown_ms >= 0)",
+        ),
+        (
+            "moving_time_cursor_ms",
+            "INTEGER CHECK (moving_time_cursor_ms IS NULL OR moving_time_cursor_ms >= 0)",
+        ),
+        ("moving_time_phone_speed_mm_s", "INTEGER"),
+        (
+            "moving_time_phone_source_ms",
+            "INTEGER CHECK (moving_time_phone_source_ms IS NULL OR moving_time_phone_source_ms >= 0)",
+        ),
+        ("moving_time_vehicle_speed_mm_s", "INTEGER"),
+        (
+            "moving_time_vehicle_source_ms",
+            "INTEGER CHECK (moving_time_vehicle_source_ms IS NULL OR moving_time_vehicle_source_ms >= 0)",
+        ),
+        (
+            "moving_time_phone_watermark_ms",
+            "INTEGER CHECK (moving_time_phone_watermark_ms IS NULL OR moving_time_phone_watermark_ms >= 0)",
+        ),
+        (
+            "moving_time_vehicle_watermark_ms",
+            "INTEGER CHECK (moving_time_vehicle_watermark_ms IS NULL OR moving_time_vehicle_watermark_ms >= 0)",
+        ),
+        (
+            "moving_time_incomplete_history",
+            "INTEGER NOT NULL DEFAULT 0 CHECK (moving_time_incomplete_history IN (0, 1))",
+        ),
+        (
+            "moving_time_availability",
+            "TEXT NOT NULL DEFAULT 'unavailable' CHECK (moving_time_availability IN ('unavailable', 'partial', 'complete'))",
+        ),
+        (
+            "last_recorded_point_moving_time_ms",
+            "INTEGER NOT NULL DEFAULT 0 CHECK (last_recorded_point_moving_time_ms >= 0)",
+        ),
+        (
+            "last_recorded_point_moving_observed_ms",
+            "INTEGER NOT NULL DEFAULT 0 CHECK (last_recorded_point_moving_observed_ms >= 0)",
+        ),
+        (
+            "last_recorded_point_moving_unknown_ms",
+            "INTEGER NOT NULL DEFAULT 0 CHECK (last_recorded_point_moving_unknown_ms >= 0)",
+        ),
+        (
+            "last_recorded_point_moving_availability",
+            "TEXT NOT NULL DEFAULT 'unavailable' CHECK (last_recorded_point_moving_availability IN ('unavailable', 'partial', 'complete'))",
+        ),
+    ] {
+        if !table_has_column(connection, "rides", column)? {
+            connection.execute_batch(&format!(
+                "ALTER TABLE rides ADD COLUMN {column} {declaration};"
+            ))?;
+        }
+    }
     Ok(())
 }
 
@@ -2796,5 +2903,157 @@ mod tests {
                 .unwrap(),
             CURRENT_SCHEMA_VERSION
         );
+    }
+
+    fn moving_time_v41_fixture() -> Connection {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE rides (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    state TEXT NOT NULL,
+                    preserved_value TEXT NOT NULL
+                 );
+                 INSERT INTO rides VALUES ('ride-v41', 'active', 'keep');
+                 PRAGMA application_id = 1129665615;
+                 PRAGMA user_version = 41;",
+            )
+            .unwrap();
+        connection
+    }
+
+    #[test]
+    fn moving_time_v41_migration_preserves_rows_and_does_not_scan_them() {
+        use rusqlite::hooks::{AuthAction, AuthContext, Authorization};
+
+        let mut connection = moving_time_v41_fixture();
+        let changes_before = connection.total_changes();
+        connection.authorizer(Some(|context: AuthContext<'_>| match context.action {
+            AuthAction::Read {
+                table_name: "rides" | "ride_points",
+                ..
+            } => Authorization::Deny,
+            _ => Authorization::Allow,
+        }));
+
+        migrate_v41_to_v42(&mut connection).unwrap();
+
+        connection.authorizer(None::<fn(AuthContext<'_>) -> Authorization>);
+        assert_eq!(connection.total_changes(), changes_before);
+        assert_eq!(
+            connection
+                .query_row("SELECT id, state, preserved_value FROM rides", [], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                })
+                .unwrap(),
+            (
+                "ride-v41".to_owned(),
+                "active".to_owned(),
+                "keep".to_owned()
+            )
+        );
+        assert!(table_has_column(&connection, "rides", "moving_time_revision").unwrap());
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT moving_time_ms, moving_time_availability,
+                            moving_time_cursor_ms, moving_time_incomplete_history
+                     FROM rides WHERE id = 'ride-v41'",
+                    [],
+                    |row| {
+                        Ok((
+                            row.get::<_, u64>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, Option<u64>>(2)?,
+                            row.get::<_, bool>(3)?,
+                        ))
+                    },
+                )
+                .unwrap(),
+            (0, "unavailable".to_owned(), None, false)
+        );
+        assert_eq!(
+            connection
+                .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                .unwrap(),
+            42
+        );
+    }
+
+    #[test]
+    fn moving_time_v41_migration_rolls_back_partial_column_additions() {
+        use rusqlite::hooks::{AuthAction, AuthContext, Authorization};
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+
+        let mut connection = moving_time_v41_fixture();
+        let alterations = Arc::new(AtomicUsize::new(0));
+        let observed = Arc::clone(&alterations);
+        connection.authorizer(Some(move |context: AuthContext<'_>| match context.action {
+            AuthAction::AlterTable {
+                table_name: "rides",
+                ..
+            } if observed.fetch_add(1, Ordering::SeqCst) == 1 => Authorization::Deny,
+            _ => Authorization::Allow,
+        }));
+
+        assert!(migrate_v41_to_v42(&mut connection).is_err());
+
+        connection.authorizer(None::<fn(AuthContext<'_>) -> Authorization>);
+        assert_eq!(alterations.load(Ordering::SeqCst), 2);
+        assert!(!table_has_column(&connection, "rides", "moving_time_revision").unwrap());
+        assert!(!table_has_column(&connection, "rides", "moving_time_ms").unwrap());
+        assert_eq!(
+            connection
+                .query_row("SELECT id, state, preserved_value FROM rides", [], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                })
+                .unwrap(),
+            (
+                "ride-v41".to_owned(),
+                "active".to_owned(),
+                "keep".to_owned()
+            )
+        );
+        assert_eq!(
+            connection
+                .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                .unwrap(),
+            41
+        );
+    }
+
+    #[test]
+    fn moving_time_fresh_schema_defers_source_pair_validation_to_hydration() {
+        let connection = Connection::open_in_memory().unwrap();
+        initialize_current_schema(&connection).unwrap();
+        connection
+            .execute(
+                "INSERT INTO rides
+                    (id, source, state, created_at_ms, updated_at_ms, point_count, distance_mm,
+                     moving_time_phone_speed_mm_s)
+                 VALUES ('phone-pair', 'live', 'saved', 1, 1, 0, 0, 500)",
+                [],
+            )
+            .expect("nullable speed/source pairs should reach the Rust hydration validator");
+        connection
+            .execute(
+                "INSERT INTO rides
+                    (id, source, state, created_at_ms, updated_at_ms, point_count, distance_mm,
+                     moving_time_vehicle_speed_mm_s)
+                 VALUES ('vehicle-pair', 'live', 'saved', 1, 1, 0, 0, 500)",
+                [],
+            )
+            .expect("nullable speed/source pairs should reach the Rust hydration validator");
     }
 }

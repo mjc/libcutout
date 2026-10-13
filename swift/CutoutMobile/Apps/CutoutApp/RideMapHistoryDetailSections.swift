@@ -201,7 +201,8 @@ struct RideMapHistoryDetailUnavailableState: View {
 
 struct RideMapHistoryDetailSummary: View {
     let distance: String
-    let duration: String
+    let movingTime: String
+    var movingTimeSpokenValue: String? = nil
     let averageSpeed: String
     let recordedAt: String
     let vehicle: String
@@ -262,7 +263,10 @@ struct RideMapHistoryDetailSummary: View {
                         .foregroundStyle(PevColors.muted)
                 }
                 .accessibilityElement(children: .combine)
-                RideMapDetailMetrics(distance: distance, duration: duration, averageSpeed: averageSpeed)
+                RideMapDetailMetrics(
+                    distance: distance, movingTime: movingTime, movingTimeSpokenValue: movingTimeSpokenValue,
+                    averageSpeed: averageSpeed
+                )
                 RideMapRouteTruthView(
                     displayedPointCount: displayPointCount,
                     recordedPointCount: recordedPointCount,
@@ -385,7 +389,8 @@ struct RideMapHistoryDetailSummary: View {
 struct RideMapDetailMetrics: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let distance: String
-    let duration: String
+    let movingTime: String
+    var movingTimeSpokenValue: String? = nil
     let averageSpeed: String
 
     var body: some View {
@@ -399,7 +404,10 @@ struct RideMapDetailMetrics: View {
     @ViewBuilder
     private var metrics: some View {
         RideMapDetailMetric(value: distance, label: localizedAppText("ride_map.metric_distance"))
-        RideMapDetailMetric(value: duration, label: localizedAppText("ride_map.metric_recording_time"))
+        RideMapDetailMetric(
+            value: movingTime, label: localizedAppText("ride_map.metric_moving_time"),
+            spokenValue: movingTimeSpokenValue
+        )
         RideMapDetailMetric(value: averageSpeed, label: localizedAppText("ride_map.metric_average_speed"))
     }
 }
@@ -407,6 +415,7 @@ struct RideMapDetailMetrics: View {
 struct RideMapDetailMetric: View {
     let value: String
     let label: String
+    var spokenValue: String? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -419,5 +428,8 @@ struct RideMapDetailMetric: View {
                 .foregroundStyle(PevColors.muted)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(label)
+        .accessibilityValue(spokenValue ?? value)
     }
 }

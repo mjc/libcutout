@@ -47,7 +47,7 @@ struct RideMapLiveContentView: View {
             VStack(spacing: 0) {
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(spacing: 0) {
-                        if snapshot != nil || !displayPoints.isEmpty {
+                        if !displayPoints.isEmpty {
                             RideMapCanvasView(
                                 points: displayPoints,
                                 routeID: routeID,
@@ -325,9 +325,10 @@ private struct RideMapCameraControlsView: View {
     var body: some View {
         let button = Button(action: action) {
             Image(systemName: symbolName)
-                .font(.body.weight(.semibold))
+                .font(.system(size: 20, weight: .semibold))
                 .frame(width: 44, height: 44)
                 .contentShape(Rectangle())
+                .accessibilityHidden(true)
         }
         .buttonStyle(.plain)
         .foregroundStyle(mode == .unavailable ? PevColors.muted : PevColors.brand)
@@ -388,10 +389,18 @@ private struct RideMapLiveStatusView: View {
             .foregroundStyle(.orange)
             .accessibilityIdentifier("ride-map.persistence-warning")
         } else if availability != .ready && availability != .storageUnavailable {
-            Label(availabilityText, systemImage: "location.slash")
-                .font(.subheadline)
-                .foregroundStyle(.orange)
-                .accessibilityIdentifier("ride-map.location-availability")
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Image(systemName: "location.slash")
+                    .font(.system(size: 20))
+                    .accessibilityHidden(true)
+                Text(availabilityVisibleText)
+                    .font(.subheadline)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .foregroundStyle(.orange)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(availabilityText)
+            .accessibilityIdentifier("ride-map.location-availability")
         }
 
         #if os(iOS)
@@ -506,6 +515,25 @@ private struct RideMapLiveStatusView: View {
             localizedAppText("ride_map.location_unavailable")
         case .storageUnavailable:
             localizedAppText("ride_map.persistence_unavailable")
+        }
+    }
+
+    private var availabilityVisibleText: String {
+        switch availability {
+        case .checking:
+            localizedAppText("ride_map.location_checking")
+        case .ready, .storageUnavailable:
+            ""
+        case .permissionRequired:
+            localizedAppText("ride_map.location_permission_required_short")
+        case .denied:
+            localizedAppText("ride_map.location_denied_short")
+        case .restricted:
+            localizedAppText("ride_map.location_restricted_short")
+        case .servicesDisabled:
+            localizedAppText("ride_map.location_services_disabled_short")
+        case .locationUnavailable:
+            localizedAppText("ride_map.location_unavailable_short")
         }
     }
 

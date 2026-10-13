@@ -1879,16 +1879,28 @@
       "comment" : "Live map metric label for distance.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "distance" } } }
     },
-    "ride_map.metric_recording_time" : {
-      "comment" : "Live map and saved ride metric label for Rust recording duration, which excludes paused intervals. This value is neither elapsed nor moving time.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Recording time" } } }
+    "ride_map.metric_moving_time" : {
+      "comment" : "Ride metric for Rust-accounted moving intervals, excluding pauses and unobserved intervals.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Moving time" } } }
+    },
+    "ride_map.moving_time_unavailable" : {
+      "comment" : "Spoken metric value when a ride has no moving-time evidence. The surrounding metric supplies the label.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Unavailable" } } }
+    },
+    "ride_map.moving_time_partial" : {
+      "comment" : "Spoken lower bound for moving time. The placeholder is a formatted duration.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "At least %@; some intervals unavailable" } } }
+    },
+    "ride_map.moving_time" : {
+      "comment" : "Moving-time label for shared ride text and history row accessibility.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Moving time: %@" } } }
     },
     "ride_map.metric_speed" : {
       "comment" : "Live map metric label for speed when a typed speed value is available.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "speed" } } }
     },
     "ride_map.metric_average_speed" : {
-      "comment" : "Historical ride detail metric label for distance divided by elapsed duration.",
+      "comment" : "Historical ride detail metric label for the existing Rust average over recording duration.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "avg speed" } } }
     },
     "ride_map.speed_unavailable" : {
@@ -1896,16 +1908,12 @@
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Speed unavailable" } } }
     },
     "ride_map.current_marker" : {
-      "comment" : "Map marker for the most recent validated route point.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Current location" } } }
+      "comment" : "Map marker for the latest recorded route point.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Latest recorded point" } } }
     },
     "ride_map.end_marker" : {
       "comment" : "Map marker for the final point in a stopped or historical route.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Ride end" } } }
-    },
-    "ride_map.duration" : {
-      "comment" : "Labelled recording duration for shared ride text and accessibility. The placeholder is the formatted Rust recording duration, which excludes pauses.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Recording time: %@" } } }
     },
     "ride_map.discard" : {
       "comment" : "Ride-map destructive control that discards a stopped ride.",
@@ -1963,6 +1971,10 @@
       "comment" : "Explanation shown with the history query retry action.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Could not load saved rides." } } }
     },
+    "ride_map.history_refresh_failed" : {
+      "comment" : "Concise status shown when a refresh fails while saved rides remain visible.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "History refresh failed." } } }
+    },
     "ride_map.history_retry" : {
       "comment" : "Retry action for a failed history or selected-detail query.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Try again" } } }
@@ -2003,9 +2015,17 @@
       "comment" : "Map availability when Core Location permission has not been granted yet.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Allow location access to record a route." } } }
     },
+    "ride_map.location_permission_required_short" : {
+      "comment" : "Concise visible map status when Core Location permission has not been granted; full guidance remains available to assistive technology.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Location permission needed" } } }
+    },
     "ride_map.location_denied" : {
       "comment" : "Map availability when Core Location permission was denied.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Location access is denied. Enable it in Settings to record a route." } } }
+    },
+    "ride_map.location_denied_short" : {
+      "comment" : "Concise visible map status when Core Location permission was denied; full Settings guidance remains available to assistive technology.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Location access denied" } } }
     },
     "ride_map.open_settings" : {
       "comment" : "Button that opens app settings when Rust selects location recovery through Settings.",
@@ -2015,6 +2035,10 @@
       "comment" : "Map availability when Core Location is restricted by the system.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Location access is restricted on this device." } } }
     },
+    "ride_map.location_restricted_short" : {
+      "comment" : "Concise visible map status when Core Location is restricted by the system; full guidance remains available to assistive technology.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Location access restricted" } } }
+    },
     "ride_map.location_checking" : {
       "comment" : "Map availability while Core Location status is being resolved.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Checking location availability…" } } }
@@ -2023,9 +2047,17 @@
       "comment" : "Map availability when system-wide location services are disabled.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Location Services are disabled on this device." } } }
     },
+    "ride_map.location_services_disabled_short" : {
+      "comment" : "Concise visible map status when system-wide Location Services are disabled; full guidance remains available to assistive technology.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Location Services are off" } } }
+    },
     "ride_map.location_unavailable" : {
       "comment" : "Map availability after Core Location reports a recoverable location failure.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Location is temporarily unavailable; Bluetooth capture can continue." } } }
+    },
+    "ride_map.location_unavailable_short" : {
+      "comment" : "Concise visible map status after Core Location reports a recoverable failure; full Bluetooth guidance remains available to assistive technology.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Location temporarily unavailable" } } }
     },
     "ride_map.history_map_preview" : {
       "comment" : "History map shows a bounded preview of the stored route.",

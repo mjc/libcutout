@@ -88,7 +88,7 @@ fn charging_migration_preserves_legacy_and_rolls_back_on_failure() {
     .unwrap();
     connection
         .execute_batch(
-            "DROP TABLE charging_outbox; DROP TABLE charging_spots; PRAGMA user_version=41;",
+            "DROP TABLE charging_outbox; DROP TABLE charging_spots; PRAGMA user_version=42;",
         )
         .unwrap();
     connection.authorizer(Some(|context: AuthContext<'_>| match context.action {
@@ -104,7 +104,7 @@ fn charging_migration_preserves_legacy_and_rolls_back_on_failure() {
         connection
             .pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))
             .unwrap(),
-        41
+        42
     );
     super::super::migrations::migrate(&mut connection).unwrap();
     assert!(detail(&connection, id).unwrap().is_none());
@@ -863,4 +863,94 @@ fn corrupt_persisted_charging_inputs_are_invalid_stored_values() {
             ..
         })
     ));
+}
+
+#[test]
+fn charging_upgrade_preserves_existing_moving_time_checkpoints() {
+    let mut connection = database();
+    connection
+        .execute_batch(
+            "INSERT INTO rides
+            (id,source,state,created_at_ms,updated_at_ms,point_count,distance_mm,
+             moving_time_revision,moving_time_ms,moving_time_observed_ms,
+             moving_time_unknown_ms,moving_time_cursor_ms,moving_time_availability)
+         VALUES ('existing-ride','live','active',1,1,0,0,7,1200,2000,300,2300,'partial');
+         DROP TABLE charging_outbox;
+         DROP TABLE charging_spots;
+         PRAGMA user_version=42;",
+        )
+        .unwrap();
+    super::super::migrations::migrate(&mut connection).unwrap();
+    assert!(super::super::migrations::table_exists(&connection, "charging_spots").unwrap());
+    let checkpoint: (u64, u64, u64, u64, u64, String) = connection
+        .query_row(
+            "SELECT moving_time_revision,moving_time_ms,moving_time_observed_ms,
+                moving_time_unknown_ms,moving_time_cursor_ms,moving_time_availability
+         FROM rides WHERE id='existing-ride'",
+            [],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            },
+        )
+        .unwrap();
+    assert_eq!(checkpoint, (7, 1200, 2000, 300, 2300, "partial".into()));
+    assert_eq!(count(&connection).unwrap(), 0);
+    assert_eq!(
+        connection
+            .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+            .unwrap(),
+        super::super::migrations::CURRENT_SCHEMA_VERSION
+    );
+}
+
+#[test]
+fn charging_upgrade_accepts_earlier_charging_schema_without_moving_time() {
+    let mut connection = database();
+    let saved = save(
+        &mut connection,
+        &mut SpatialSchemaState::Uninitialized,
+        &input(179.5),
+    )
+    .unwrap();
+    let columns = connection
+        .prepare(
+            "SELECT name FROM pragma_table_info('rides')
+         WHERE name LIKE 'moving_time_%' OR name LIKE 'last_recorded_point_moving_%'",
+        )
+        .unwrap()
+        .query_map([], |row| row.get::<_, String>(0))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert!(!columns.is_empty());
+    for column in columns {
+        connection
+            .execute_batch(&format!("ALTER TABLE rides DROP COLUMN {column};"))
+            .unwrap();
+    }
+    connection.pragma_update(None, "user_version", 42).unwrap();
+    super::super::migrations::migrate(&mut connection).unwrap();
+    assert_eq!(
+        detail(&connection, saved.point_id).unwrap().unwrap().input,
+        Some(input(179.5))
+    );
+    assert_eq!(count(&connection).unwrap(), 1);
+    let has_moving_time: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('rides') WHERE name='moving_time_revision')",
+        [], |row|row.get(0),
+    ).unwrap();
+    assert!(has_moving_time);
+    assert_eq!(
+        connection
+            .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+            .unwrap(),
+        super::super::migrations::CURRENT_SCHEMA_VERSION
+    );
 }

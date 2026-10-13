@@ -104,10 +104,6 @@ struct RideMapSummaryView: View {
         RideMapMetricFormatting.distanceText(for: snapshot.summary)
     }
 
-    private func durationText(for snapshot: MobileRideMapSnapshotDto) -> String {
-        RideMapMetricFormatting.durationText(for: snapshot.summary)
-    }
-
     private func indicatorColor(for state: IndicatorState) -> Color {
         switch state {
         case .associatedFresh:
@@ -135,8 +131,9 @@ struct RideMapSummaryView: View {
             label: localizedAppText("ride_map.metric_distance")
         )
         RideMapMetric(
-            value: durationText(for: snapshot),
-            label: localizedAppText("ride_map.metric_recording_time")
+            value: RideMapMetricFormatting.movingTimeText(for: snapshot.summary),
+            label: localizedAppText("ride_map.metric_moving_time"),
+            spokenValue: RideMapMetricFormatting.movingTimeSpokenValue(for: snapshot.summary)
         )
         RideMapMetric(
             value: speed.millimetersPerSecond == nil ? speed.displayValue : Self.speedText(for: speed),

@@ -153,23 +153,48 @@ public enum MobileRideMapTelemetryObservation: Equatable, Hashable, Sendable {
     case unknown
 }
 
+/// Rust's moving-time value and coverage. The native shell only formats these values.
+public enum MobileRideMapMovingTimeDto: Equatable, Hashable, Sendable {
+    case unavailable
+    case complete(movingMilliseconds: UInt64, observedMilliseconds: UInt64)
+    case partial(movingMilliseconds: UInt64, observedMilliseconds: UInt64, unknownMilliseconds: UInt64)
+
+    fileprivate init(_ value: MobileRideMovingTimeDto) {
+        switch value {
+        case .unavailable:
+            self = .unavailable
+        case let .complete(movingMilliseconds, observedMilliseconds):
+            self = .complete(movingMilliseconds: movingMilliseconds, observedMilliseconds: observedMilliseconds)
+        case let .partial(movingMilliseconds, observedMilliseconds, unknownMilliseconds):
+            self = .partial(
+                movingMilliseconds: movingMilliseconds,
+                observedMilliseconds: observedMilliseconds,
+                unknownMilliseconds: unknownMilliseconds
+            )
+        }
+    }
+}
+
 public struct MobileRideMapSummaryDto: Equatable, Hashable, Sendable {
     public let pointCount: UInt64
     public let distanceMeters: Double
     /// Rust recording duration; excludes pauses and interruptions and is not moving or elapsed time.
     public let durationMilliseconds: UInt64
     public let averageSpeedMillimetresPerSecond: UInt64?
+    public let movingTime: MobileRideMapMovingTimeDto
 
     public init(
         pointCount: UInt64,
         distanceMeters: Double,
         durationMilliseconds: UInt64,
-        averageSpeedMillimetresPerSecond: UInt64? = nil
+        averageSpeedMillimetresPerSecond: UInt64? = nil,
+        movingTime: MobileRideMapMovingTimeDto = .unavailable
     ) {
         self.pointCount = pointCount
         self.distanceMeters = distanceMeters
         self.durationMilliseconds = durationMilliseconds
         self.averageSpeedMillimetresPerSecond = averageSpeedMillimetresPerSecond
+        self.movingTime = movingTime
     }
 }
 
@@ -1761,7 +1786,8 @@ public final class MobileRideMapState: @unchecked Sendable {
                 pointCount: ride.summary.pointCount,
                 distanceMeters: Double(ride.summary.distanceMillimetres) / 1_000,
                 durationMilliseconds: ride.durationMilliseconds,
-                averageSpeedMillimetresPerSecond: ride.summary.averageSpeedMillimetresPerSecond
+                averageSpeedMillimetresPerSecond: ride.summary.averageSpeedMillimetresPerSecond,
+                movingTime: MobileRideMapMovingTimeDto(ride.summary.movingTime)
             ),
             segmentCount: ride.segmentCount,
             createdAtMilliseconds: ride.createdAtMilliseconds,
@@ -1814,7 +1840,8 @@ public final class MobileRideMapState: @unchecked Sendable {
             summary: MobileRideMapSummaryDto(
                 pointCount: snapshot.summary.pointCount,
                 distanceMeters: snapshot.summary.distanceMeters,
-                durationMilliseconds: snapshot.summary.durationMilliseconds
+                durationMilliseconds: snapshot.summary.durationMilliseconds,
+                movingTime: MobileRideMapMovingTimeDto(snapshot.summary.movingTime)
             ),
             liveActivityStatistics: snapshot.liveActivityStatistics,
             liveSpeed: snapshot.liveSpeed.source == .unavailable ? nil : snapshot.liveSpeed,

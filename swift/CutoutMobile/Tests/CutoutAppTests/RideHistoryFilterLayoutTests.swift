@@ -10,16 +10,16 @@ import XCTest
     final class RideHistoryFilterLayoutTests: XCTestCase {
         func testChangingAndClearingFiltersKeepsControlStripHeight() throws {
             for width: CGFloat in [288, 358, 448] {
-                for textSize in [DynamicTypeSize.large, .accessibility3] {
+                for textSize in [DynamicTypeSize.large, .accessibility3, .accessibility5] {
                     let baseline = try fittedSize(
                         width: width, textSize: textSize,
-                        date: "Last 30 Days", vehicle: "All vehicles", filtered: false,
+                        date: "Last 30 days", vehicle: "All vehicles", filtered: false,
                         includeShortRides: false
                     )
                     for (date, vehicle) in [
                         ("All time", "All vehicles"),
-                        ("Last 30 Days", "NOSFET Aero"),
-                        ("Last 30 Days", "A wheel with a much longer saved name"),
+                        ("Last 30 days", "NOSFET Aero"),
+                        ("Last 30 days", "A wheel with a much longer saved name"),
                     ] {
                         let filtered = try fittedSize(
                             width: width, textSize: textSize,
@@ -34,7 +34,7 @@ import XCTest
                     }
                     let shortRides = try fittedSize(
                         width: width, textSize: textSize,
-                        date: "Last 30 Days", vehicle: "All vehicles", filtered: true,
+                        date: "Last 30 days", vehicle: "All vehicles", filtered: true,
                         includeShortRides: true
                     )
                     XCTAssertEqual(shortRides.width, baseline.width, accuracy: 0.5)

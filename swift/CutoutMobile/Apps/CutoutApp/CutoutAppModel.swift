@@ -364,6 +364,7 @@ final class CutoutAppModel {
         #if DEBUG
             try await RideCaptureRecovery.runIfRequested(database: database)
             try await CutoutUITestSavedRideFixture.runIfRequested(database: database)
+            try await CutoutUITestLiveRouteFixture.runIfRequested(database: database)
         #endif
         #if DEBUG
             let state: MobileRideMapState
@@ -384,6 +385,14 @@ final class CutoutAppModel {
         let selectedDeviceStore = DevicePickerSelectionStore()
         let restoredDeviceSelection = await selectedDeviceStore.load()
         try Task.checkCancellation()
+        let historyQueryProvider: RideHistoryQueryProvider?
+        #if DEBUG && os(iOS) && targetEnvironment(simulator)
+            historyQueryProvider = CutoutUITestHistoryQueryFixture.provider(
+                base: state
+            )
+        #else
+            historyQueryProvider = nil
+        #endif
         #if DEBUG
             let permitsStoredDeviceAutoPairing = uiTestFixture == nil
         #else
@@ -400,7 +409,7 @@ final class CutoutAppModel {
             musicProviderSelectionStore: MusicProviderSelectionStore(),
             musicMonitoringPreferenceStore: MusicMonitoringPreferenceStore(),
             phoneAlarmDelivery: makePhoneRideAlarmDelivery(),
-            rideHistoryQueryProvider: nil
+            rideHistoryQueryProvider: historyQueryProvider
         )
     }
 

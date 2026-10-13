@@ -21,8 +21,30 @@ enum RideMapMetricFormatting {
             .formatted(.measurement(width: .abbreviated, usage: .road))
     }
 
-    static func durationText(for summary: MobileRideMapSummaryDto) -> String {
-        Duration.seconds(Double(summary.durationMilliseconds) / 1_000)
+    static func movingTimeText(for summary: MobileRideMapSummaryDto) -> String {
+        switch summary.movingTime {
+        case .unavailable:
+            "--"
+        case let .complete(movingMilliseconds, _):
+            movingDurationText(milliseconds: movingMilliseconds)
+        case let .partial(movingMilliseconds, _, _):
+            "≥ \(movingDurationText(milliseconds: movingMilliseconds))"
+        }
+    }
+
+    static func movingTimeSpokenValue(for summary: MobileRideMapSummaryDto) -> String {
+        switch summary.movingTime {
+        case .unavailable:
+            localizedAppText("ride_map.moving_time_unavailable")
+        case let .complete(movingMilliseconds, _):
+            movingDurationText(milliseconds: movingMilliseconds)
+        case let .partial(movingMilliseconds, _, _):
+            localizedAppText("ride_map.moving_time_partial", movingDurationText(milliseconds: movingMilliseconds))
+        }
+    }
+
+    private static func movingDurationText(milliseconds: UInt64) -> String {
+        Duration.seconds(Double(milliseconds) / 1_000)
             .formatted(.units(allowed: [.hours, .minutes, .seconds], width: .abbreviated))
     }
 

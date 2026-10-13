@@ -121,7 +121,8 @@ fn parked_connection() -> (Connection, RideId) {
         Some("wheel"),
         None,
     )
-    .unwrap();
+    .unwrap()
+    .ride_id();
     update_ride_map_metadata_with_motion(
         &connection,
         id,
@@ -423,7 +424,8 @@ fn old_schema_fixture() -> (Connection, RideId, Vec<u8>) {
         Some("wheel"),
         None,
     )
-    .unwrap();
+    .unwrap()
+    .ride_id();
     append_location(
         &mut connection,
         id,

@@ -566,6 +566,44 @@ import Foundation
             )
         }
     }
+    /// One real Rust-backed route in an isolated Simulator database.
+    enum CutoutUITestLiveRouteFixture {
+        static func runIfRequested(database: RideDatabaseHandle) async throws {
+            #if os(iOS) && targetEnvironment(simulator)
+                guard CommandLine.arguments.contains("--seed-ui-test-live-route") else { return }
+                guard CutoutUITestSessionFixture(arguments: CommandLine.arguments) != nil,
+                    let rawID = ProcessInfo.processInfo.environment["CUTOUT_UI_TEST_RIDE_DATABASE_ID"],
+                    UUID(uuidString: rawID) != nil
+                else { throw CocoaError(.coderInvalidValue) }
+                try await Task.detached(priority: .utility) {
+                    let wall = UInt64(Date().timeIntervalSince1970 * 1_000)
+                    let monotonic = UInt64(ProcessInfo.processInfo.systemUptime * 1_000)
+                    let id = try database.createRideWithMonotonicStart(
+                        source: .live,
+                        createdAtMilliseconds: wall,
+                        monotonicCreatedAtMilliseconds: monotonic
+                    )
+                    _ = try database.transition(id: id, event: .start, monotonicAtMilliseconds: monotonic)
+                    let admitted = try database.appendLocation(
+                        id: id,
+                        location: MobileRideLocationDto(
+                            latitudeDegrees: 39.7392,
+                            longitudeDegrees: -104.9903,
+                            monotonicMilliseconds: monotonic,
+                            wallClockUnixMilliseconds: wall,
+                            horizontalAccuracyMillimetres: 3_000,
+                            source: .live
+                        )
+                    )
+                    guard admitted == .accepted,
+                        let record = try database.findRide(rideId: id),
+                        record.state == .active, record.summary.pointCount == 1
+                    else { throw CocoaError(.coderInvalidValue) }
+                }.value
+            #endif
+        }
+    }
+
     /// Opt-in Simulator data for exercising the real saved-history queries and navigation.
     /// Rust creates IDs, admits samples, computes summaries, and applies lifecycle transitions.
     enum CutoutUITestSavedRideFixture {
@@ -583,6 +621,14 @@ import Foundation
         static var accessibilityValue: String? {
             guard isEnabled, let ids = UserDefaults.standard.stringArray(forKey: receiptKey) else { return nil }
             return "saved-rides:\(ids.joined(separator: ","))"
+        }
+
+        static var hasValidatedReceipts: Bool {
+            guard let accessibilityValue,
+                accessibilityValue.hasPrefix("saved-rides:")
+            else { return false }
+            let ids = accessibilityValue.dropFirst("saved-rides:".count).split(separator: ",")
+            return ids.count == 2 && ids.allSatisfy { UUID(uuidString: String($0)) != nil }
         }
 
         static func runIfRequested(database: RideDatabaseHandle) async throws {
@@ -655,6 +701,95 @@ import Foundation
                 // Reuse the same validated Rust receipts when this explicit fixture relaunches.
                 defaults.set(receipts, forKey: receiptKey)
             }.value
+        }
+    }
+#endif
+
+#if DEBUG && os(iOS) && targetEnvironment(simulator)
+    /// Fails one real History refresh only for the explicitly seeded UI test session.
+    /// All other operations continue through the same Rust-backed state instance.
+    final class CutoutUITestHistoryQuery: RideHistoryQuerying, @unchecked Sendable {
+        private let base: MobileRideMapState
+        private let lock = NSLock()
+        private var shouldFailMatchingRefresh = true
+
+        init(base: MobileRideMapState) {
+            self.base = base
+        }
+
+        func projectStoredPoints(
+            rideID: String,
+            budget: UInt32,
+            viewport: MobileGeoBoundsDto?,
+            privacy: MobileRideMapRoutePrivacyPolicy,
+            cancellation: MobileRideMapProjectionCancellation?
+        ) throws -> MobileRideMapRouteProjection {
+            try base.projectStoredPoints(
+                rideID: rideID,
+                budget: budget,
+                viewport: viewport,
+                privacy: privacy,
+                cancellation: cancellation
+            )
+        }
+
+        func storedMusicHistoryAsync(rideID: String) async throws -> MobileMusicHistoryDto {
+            try await base.storedMusicHistoryAsync(rideID: rideID)
+        }
+
+        func storedHistoryVehicleOptions() throws -> [MobileRideMapHistoryVehicleOptionDto] {
+            try base.storedHistoryVehicleOptions()
+        }
+
+        func storedHistoryRide(rideID: String) throws -> MobileRideMapHistorySummaryDto? {
+            try base.storedHistoryRide(rideID: rideID)
+        }
+
+        func storedHistoryRide(
+            rideID: String,
+            filter: MobileRideHistoryFilterDto
+        ) throws -> MobileRideMapHistorySummaryDto? {
+            try base.storedHistoryRide(rideID: rideID, filter: filter)
+        }
+
+        func storedHistoryPage(
+            cursor: MobileRideCursorDto?,
+            limit: UInt32,
+            filter: MobileRideHistoryFilterDto?
+        ) throws -> MobileRideMapHistoryPageDto {
+            if shouldFailRefresh(cursor: cursor, filter: filter) {
+                throw MobileRideMapError.storageError("UI test failed one All time history refresh")
+            }
+            // Keep the UI fixture scrollable in a few gestures while Rust still owns real cursors.
+            return try base.storedHistoryPage(cursor: cursor, limit: min(limit, 2), filter: filter)
+        }
+
+        private func shouldFailRefresh(
+            cursor: MobileRideCursorDto?,
+            filter: MobileRideHistoryFilterDto?
+        ) -> Bool {
+            guard cursor == nil, let filter,
+                filter.createdAfterMilliseconds == nil,
+                filter.vehicleIdentity == nil,
+                filter.searchText == nil,
+                filter.includeShortRides
+            else { return false }
+
+            lock.lock()
+            defer { lock.unlock() }
+            guard shouldFailMatchingRefresh else { return false }
+            shouldFailMatchingRefresh = false
+            return true
+        }
+    }
+
+    enum CutoutUITestHistoryQueryFixture {
+        static func provider(base: MobileRideMapState) -> RideHistoryQueryProvider? {
+            guard CommandLine.arguments.contains("--fail-ui-test-history-refresh-once"),
+                CutoutUITestSavedRideFixture.hasValidatedReceipts
+            else { return nil }
+            let query = CutoutUITestHistoryQuery(base: base)
+            return { query }
         }
     }
 #endif

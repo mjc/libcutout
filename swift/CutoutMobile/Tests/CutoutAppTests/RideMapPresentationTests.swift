@@ -266,13 +266,47 @@ final class RideMapPresentationTests: XCTestCase {
                 .formatted(.measurement(width: .abbreviated, usage: .road))
         )
         XCTAssertEqual(
-            RideMapMetricFormatting.durationText(for: summary),
-            Duration.seconds(Double(summary.durationMilliseconds) / 1_000)
-                .formatted(.units(allowed: [.hours, .minutes, .seconds], width: .abbreviated))
-        )
-        XCTAssertEqual(
             RideMapMetricFormatting.recordedAtText(for: 0),
             localizedAppText("ride_map.untitled_ride")
+        )
+    }
+
+    func testMovingTimeFormattingDistinguishesUnavailableMeasuredZeroAndPartialCoverage() {
+        func summary(_ movingTime: MobileRideMapMovingTimeDto) -> MobileRideMapSummaryDto {
+            MobileRideMapSummaryDto(
+                pointCount: 2, distanceMeters: 10, durationMilliseconds: 999_000, movingTime: movingTime
+            )
+        }
+        let zero = Duration.seconds(0)
+            .formatted(.units(allowed: [.hours, .minutes, .seconds], width: .abbreviated))
+        let moving = Duration.seconds(61)
+            .formatted(.units(allowed: [.hours, .minutes, .seconds], width: .abbreviated))
+        XCTAssertEqual(RideMapMetricFormatting.movingTimeText(for: summary(.unavailable)), "--")
+        XCTAssertEqual(
+            RideMapMetricFormatting.movingTimeSpokenValue(for: summary(.unavailable)),
+            localizedAppText("ride_map.moving_time_unavailable")
+        )
+        XCTAssertEqual(
+            localizedAppText(
+                "ride_map.moving_time", RideMapMetricFormatting.movingTimeSpokenValue(for: summary(.unavailable))),
+            "Moving time: Unavailable"
+        )
+        XCTAssertEqual(
+            RideMapMetricFormatting.movingTimeText(
+                for: summary(.complete(movingMilliseconds: 0, observedMilliseconds: 10_000))), zero)
+        XCTAssertEqual(
+            RideMapMetricFormatting.movingTimeText(
+                for: summary(
+                    .partial(
+                        movingMilliseconds: 61_000, observedMilliseconds: 100_000, unknownMilliseconds: 30_000))),
+            "≥ \(moving)"
+        )
+        XCTAssertEqual(
+            RideMapMetricFormatting.movingTimeSpokenValue(
+                for: summary(
+                    .partial(
+                        movingMilliseconds: 61_000, observedMilliseconds: 100_000, unknownMilliseconds: 30_000))),
+            localizedAppText("ride_map.moving_time_partial", moving)
         )
     }
 
@@ -758,17 +792,38 @@ final class RideMapPresentationTests: XCTestCase {
         XCTAssertNotEqual(canonical.singletonAccessibilityLabel, sampled.singletonAccessibilityLabel)
     }
 
-    func testMarkerOffsetsKeepSingletonAndNearbyEndpointsReadable() {
+    func testMarkerOffsetsOnlySeparateVisibleMarkerPairs() {
         let singleton = RideMapCanvasView.markerOffsets(for: [CLLocationCoordinate2D(latitude: 40, longitude: -105)])
-        XCTAssertEqual(singleton.start.width, -36)
-        XCTAssertEqual(singleton.end.width, 36)
+        XCTAssertEqual(singleton.start, .zero, "A lone visible latest-point marker stays on its route coordinate")
+        XCTAssertEqual(singleton.end, .zero)
+
+        let sameCoordinateEndpoints = RideMapCanvasView.markerOffsets(for: [
+            CLLocationCoordinate2D(latitude: 40, longitude: -105),
+            CLLocationCoordinate2D(latitude: 40, longitude: -105),
+        ])
+        XCTAssertEqual(sameCoordinateEndpoints.start.width, -56)
+        XCTAssertEqual(sameCoordinateEndpoints.end.width, 56)
 
         let nearby = RideMapCanvasView.markerOffsets(for: [
             CLLocationCoordinate2D(latitude: 40, longitude: -105),
             CLLocationCoordinate2D(latitude: 40.0001, longitude: -105),
         ])
         XCTAssertEqual(nearby.start.width, -56)
+        XCTAssertEqual(nearby.start.height, -24)
         XCTAssertEqual(nearby.end.width, 56)
+        XCTAssertEqual(nearby.end.height, 0, "The end dot stays anchored when its caption sits above it")
+
+        let nearbyAtAccessibilitySize = RideMapCanvasView.markerOffsets(
+            for: [
+                CLLocationCoordinate2D(latitude: 40, longitude: -105),
+                CLLocationCoordinate2D(latitude: 40.0001, longitude: -105),
+            ],
+            dynamicTypeSize: .accessibility3
+        )
+        XCTAssertEqual(nearbyAtAccessibilitySize.start.width, -84)
+        XCTAssertEqual(nearbyAtAccessibilitySize.start.height, -36)
+        XCTAssertEqual(nearbyAtAccessibilitySize.end.width, 84)
+        XCTAssertEqual(nearbyAtAccessibilitySize.end.height, 0)
 
         let distant = RideMapCanvasView.markerOffsets(for: [
             CLLocationCoordinate2D(latitude: 40, longitude: -105),
@@ -776,5 +831,10 @@ final class RideMapPresentationTests: XCTestCase {
         ])
         XCTAssertEqual(distant.start, .zero)
         XCTAssertEqual(distant.end, .zero)
+    }
+
+    func testRideMapMarkerLabelsDescribeRecordedPointsAndRideEndpoints() {
+        XCTAssertEqual(localizedAppText("ride_map.current_marker"), "Latest recorded point")
+        XCTAssertEqual(localizedAppText("ride_map.end_marker"), "Ride end")
     }
 }

@@ -11,6 +11,7 @@ description = "Ride recording and geospatial domain types for Cutout"
 workspace = true
 
 [dependencies]
+cutout-core = { path = "../cutout-core", version = "0.1.0" }
 serde.workspace = true
 thiserror.workspace = true
 uuid = { workspace = true, features = ["serde"] }

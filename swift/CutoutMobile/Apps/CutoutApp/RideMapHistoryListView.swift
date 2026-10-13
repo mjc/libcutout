@@ -28,7 +28,8 @@ struct RideMapHistoryListView: View {
                             noIdentityFallback: localizedAppText("ride_map.gps_only")
                         ),
                         distance: distanceText(for: ride.summary),
-                        duration: RideMapMetricFormatting.durationText(for: ride.summary),
+                        movingTime: RideMapMetricFormatting.movingTimeText(for: ride.summary),
+                        movingTimeSpokenValue: RideMapMetricFormatting.movingTimeSpokenValue(for: ride.summary),
                         select: { select(ride.rideID) }
                     )
                 }
@@ -67,7 +68,8 @@ struct RideMapHistoryRow: View {
     let title: String
     let vehicle: String
     let distance: String
-    let duration: String
+    let movingTime: String
+    var movingTimeSpokenValue: String? = nil
     let select: () -> Void
 
     var body: some View {
@@ -118,8 +120,8 @@ struct RideMapHistoryRow: View {
     private var measurements: some View {
         VStack(alignment: dynamicTypeSize.isAccessibilitySize ? .leading : .trailing, spacing: 6) {
             Text(distance).font(.subheadline.weight(.semibold))
-            Text(duration).font(.caption).foregroundStyle(PevColors.muted)
-                .accessibilityLabel(localizedAppText("ride_map.duration", duration))
+            Text(movingTime).font(.caption).foregroundStyle(PevColors.muted)
+                .accessibilityLabel(localizedAppText("ride_map.moving_time", movingTimeSpokenValue ?? movingTime))
         }
         .monospacedDigit()
         .fixedSize(horizontal: false, vertical: true)

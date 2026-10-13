@@ -12,13 +12,15 @@ final class PhoneLocationStorageBackpressureTests: XCTestCase {
     func testActualSQLiteStallAnd64OwnedCallbacksLeaveMainResponsiveAndRetainEveryPoint() async throws {
         let state = MobileRideMapState()
         let callbacks = try await Task.detached {
-            _ = try state.startGpsOnly(atMs: 1_000)
+            _ = try Self.diagnose("startGpsOnly") { try state.startGpsOnly(atMs: 1_000) }
             return try (0..<64).map { index in
-                try state.admitLocationCallback(
-                    receiptMonotonicMs: UInt64(1_000 + index * 1_000),
-                    receiptWallClockUnixMs: UInt64(1_700_000_000_000 + index * 1_000),
-                    samples: [Self.sample(index)]
-                )
+                try Self.diagnose("admitLocationCallback[\(index)]") {
+                    try state.admitLocationCallback(
+                        receiptMonotonicMs: UInt64(1_000 + index * 1_000),
+                        receiptWallClockUnixMs: UInt64(1_700_000_000_000 + index * 1_000),
+                        samples: [Self.sample(index)]
+                    )
+                }
             }
         }.value
         let lockEntered = expectation(description: "SQLite write transaction owns worker")
@@ -47,7 +49,11 @@ final class PhoneLocationStorageBackpressureTests: XCTestCase {
         }
         try await Task.sleep(for: .milliseconds(50))
         XCTAssertFalse(writeFinished.withLock { $0 })
-        let first = Task.detached { try state.finishLocationCallback(callbacks[0]) }
+        let first = Task.detached {
+            try Self.diagnose("finishLocationCallback[0]") {
+                try state.finishLocationCallback(callbacks[0])
+            }
+        }
         let entered = expectation(description: "65th callback enters native recording owner")
         let admitted = expectation(description: "65th callback admitted after durable capacity returns")
         let next = Mutex<MobileRideMapLocationCallback?>(nil)
@@ -65,7 +71,9 @@ final class PhoneLocationStorageBackpressureTests: XCTestCase {
                         samples: update.samples
                     )
                     next.withLock { $0 = callback }
-                } catch { XCTFail("Lossless native admission failed: \(error)") }
+                } catch {
+                    XCTFail("admitLocationCallback[64] failed: \(String(reflecting: error))")
+                }
                 admitted.fulfill()
             }, onAvailabilityChange: {},
             managerFactory: {
@@ -89,13 +97,26 @@ final class PhoneLocationStorageBackpressureTests: XCTestCase {
         XCTAssertFalse(unlocked.withLock { $0 }, "Main progress must precede actual SQLite release")
         release.signal()
         await write.value
-        var outcomes = try await first.value
+        let firstOutcomes: [MobileRideMapOutcomeDto]
+        do {
+            firstOutcomes = try await first.value
+        } catch {
+            XCTFail("await first callback finish failed: \(String(reflecting: error))")
+            throw error
+        }
+        var outcomes = firstOutcomes
         outcomes += try await Task.detached {
-            try callbacks.dropFirst().flatMap { try state.finishLocationCallback($0) }
+            try callbacks.enumerated().dropFirst().flatMap { index, callback in
+                try Self.diagnose("finishLocationCallback[\(index)]") {
+                    try state.finishLocationCallback(callback)
+                }
+            }
         }.value
         await fulfillment(of: [admitted], timeout: 2)
         let last = try XCTUnwrap(next.withLock { $0 })
-        outcomes += try await Task.detached { try state.finishLocationCallback(last) }.value
+        outcomes += try await Task.detached {
+            try Self.diagnose("finishLocationCallback[64]") { try state.finishLocationCallback(last) }
+        }.value
         let points = outcomes.compactMap { outcome -> MobileRideMapPointDto? in
             if case let .accepted(point) = outcome.decision { return point }
             if case let .storageError(message) = outcome.decision { XCTFail(message) }
@@ -109,12 +130,23 @@ final class PhoneLocationStorageBackpressureTests: XCTestCase {
             XCTAssertEqual(point.wallClockUnixMs, UInt64(1_700_000_000_000 + index * 1_000))
             XCTAssertEqual(point.latitudeDegrees, Self.sample(index).latitudeDegrees, accuracy: 0.0000001)
         }
-        let repeated = try await state.checkpoint()
+        let repeated: [MobileRideMapOutcomeDto]
+        do {
+            repeated = try await state.checkpoint()
+        } catch {
+            XCTFail("checkpoint after settled callbacks failed: \(String(reflecting: error))")
+            throw error
+        }
         XCTAssertTrue(repeated.isEmpty, "Settled receipts are emitted once")
         try await Task.detached {
-            XCTAssertEqual(try state.pointsAfter(afterCursor: nil, limit: 256).points.count, 65)
-            _ = try state.stop(atMs: 66_000)
-            _ = try state.discard()
+            XCTAssertEqual(
+                try Self.diagnose("pointsAfter") {
+                    try state.pointsAfter(afterCursor: nil, limit: 256).points.count
+                },
+                65
+            )
+            _ = try Self.diagnose("stop") { try state.stop(atMs: 66_000) }
+            _ = try Self.diagnose("discard") { try state.discard() }
         }.value
         try markerStore.clear()
         await markerStore.waitForPersistence()
@@ -128,5 +160,14 @@ final class PhoneLocationStorageBackpressureTests: XCTestCase {
             speedMetersPerSecond: 8, speedAccuracyMetersPerSecond: 1,
             courseDegrees: 0, courseAccuracyDegrees: 1
         )
+    }
+
+    private static func diagnose<T>(_ phase: String, operation: () throws -> T) throws -> T {
+        do {
+            return try operation()
+        } catch {
+            XCTFail("\(phase) failed: \(String(reflecting: error))")
+            throw error
+        }
     }
 }
