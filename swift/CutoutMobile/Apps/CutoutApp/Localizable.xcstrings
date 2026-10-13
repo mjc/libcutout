@@ -2011,9 +2011,17 @@
       "comment" : "Map availability when Core Location permission has not been granted yet.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Allow location access to record a route." } } }
     },
+    "ride_map.location_permission_required_short" : {
+      "comment" : "Concise visible map status when Core Location permission has not been granted; full guidance remains available to assistive technology.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Location permission needed" } } }
+    },
     "ride_map.location_denied" : {
       "comment" : "Map availability when Core Location permission was denied.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Location access is denied. Enable it in Settings to record a route." } } }
+    },
+    "ride_map.location_denied_short" : {
+      "comment" : "Concise visible map status when Core Location permission was denied; full Settings guidance remains available to assistive technology.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Location access denied" } } }
     },
     "ride_map.open_settings" : {
       "comment" : "Button that opens app settings when Rust selects location recovery through Settings.",
@@ -2023,6 +2031,10 @@
       "comment" : "Map availability when Core Location is restricted by the system.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Location access is restricted on this device." } } }
     },
+    "ride_map.location_restricted_short" : {
+      "comment" : "Concise visible map status when Core Location is restricted by the system; full guidance remains available to assistive technology.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Location access restricted" } } }
+    },
     "ride_map.location_checking" : {
       "comment" : "Map availability while Core Location status is being resolved.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Checking location availability…" } } }
@@ -2031,9 +2043,17 @@
       "comment" : "Map availability when system-wide location services are disabled.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Location Services are disabled on this device." } } }
     },
+    "ride_map.location_services_disabled_short" : {
+      "comment" : "Concise visible map status when system-wide Location Services are disabled; full guidance remains available to assistive technology.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Location Services are off" } } }
+    },
     "ride_map.location_unavailable" : {
       "comment" : "Map availability after Core Location reports a recoverable location failure.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Location is temporarily unavailable; Bluetooth capture can continue." } } }
+    },
+    "ride_map.location_unavailable_short" : {
+      "comment" : "Concise visible map status after Core Location reports a recoverable failure; full Bluetooth guidance remains available to assistive technology.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Location temporarily unavailable" } } }
     },
     "ride_map.history_map_preview" : {
       "comment" : "History map shows a bounded preview of the stored route.",

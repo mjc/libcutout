@@ -1161,6 +1161,15 @@ final class CutoutAppUITests: XCTestCase {
         let recenterButton = app.buttons["ride-map.recenter"]
         XCTAssertTrue(recenterButton.waitForExistence(timeout: 5), app.debugDescription)
         XCTAssertTrue(recenterButton.isEnabled, app.debugDescription)
+        let cameraControlFrame = recenterButton.frame
+        let cameraControlDiagnostic =
+            "cameraControlFrame=\(cameraControlFrame), mapFrame=\(routeMap.frame)\n\(app.debugDescription)"
+        XCTAssertEqual(cameraControlFrame.width, 44, accuracy: 0.5, cameraControlDiagnostic)
+        XCTAssertEqual(cameraControlFrame.height, 44, accuracy: 0.5, cameraControlDiagnostic)
+        XCTAssertTrue(
+            routeMap.frame.insetBy(dx: -2, dy: -2).contains(cameraControlFrame),
+            "The recenter hit target must stay inside the rendered map. \(cameraControlDiagnostic)"
+        )
         XCTAssertTrue(recenterButton.isHittable, app.debugDescription)
         let latestPointMarker = app.descendants(matching: .any)["ride-map.latest-point-marker"]
         XCTAssertTrue(latestPointMarker.waitForExistence(timeout: 5), app.debugDescription)
@@ -1223,6 +1232,15 @@ final class CutoutAppUITests: XCTestCase {
         let recenterButton = app.buttons["ride-map.recenter"]
         XCTAssertTrue(recenterButton.waitForExistence(timeout: 5), app.debugDescription)
         XCTAssertTrue(recenterButton.isEnabled, app.debugDescription)
+        let cameraControlFrame = recenterButton.frame
+        let cameraControlDiagnostic =
+            "cameraControlFrame=\(cameraControlFrame), mapFrame=\(routeMap.frame)\n\(app.debugDescription)"
+        XCTAssertEqual(cameraControlFrame.width, 44, accuracy: 0.5, cameraControlDiagnostic)
+        XCTAssertEqual(cameraControlFrame.height, 44, accuracy: 0.5, cameraControlDiagnostic)
+        XCTAssertTrue(
+            routeMap.frame.insetBy(dx: -2, dy: -2).contains(cameraControlFrame),
+            "The recenter hit target must stay inside the rendered map. \(cameraControlDiagnostic)"
+        )
 
         let latestPointMarker = app.descendants(matching: .any)["ride-map.latest-point-marker"]
         XCTAssertTrue(latestPointMarker.waitForExistence(timeout: 5), app.debugDescription)
@@ -1255,6 +1273,64 @@ final class CutoutAppUITests: XCTestCase {
             markerFrame.midY, mapFrame.midY, accuracy: 12,
             "The latest recorded point marker stays centered on the single-point route at accessibility text size. \(markerCenterDiagnostic)"
         )
+
+        let liveViewport = app.scrollViews["ride-map.live-viewport"]
+        XCTAssertTrue(liveViewport.waitForExistence(timeout: 5), app.debugDescription)
+        let tabBar = app.tabBars.firstMatch
+        XCTAssertTrue(tabBar.exists, app.debugDescription)
+        let availabilityNotice = app.descendants(matching: .any)["ride-map.location-availability"]
+        XCTAssertTrue(availabilityNotice.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertEqual(
+            availabilityNotice.label,
+            "Location access is denied. Enable it in Settings to record a route.",
+            app.debugDescription
+        )
+        scrollElementFrameIntoViewport(
+            availabilityNotice, in: liveViewport, maxScrolls: 8, occludedBy: tabBar)
+        let noticeScreenshot = XCTAttachment(screenshot: app.screenshot())
+        noticeScreenshot.name = "ride-map-denied-location-notice-accessibility-dynamic-type"
+        noticeScreenshot.lifetime = .keepAlways
+        add(noticeScreenshot)
+        let noticeFrame = availabilityNotice.frame
+        let viewportFrame = unobscuredFrame(in: liveViewport, above: tabBar)
+        let noticeDiagnostic =
+            "noticeFrame=\(noticeFrame), viewportFrame=\(viewportFrame), mapFrame=\(routeMap.frame)\n\(app.debugDescription)"
+        XCTAssertTrue(
+            viewportFrame.insetBy(dx: -2, dy: -2).contains(noticeFrame),
+            "The location notice must fit inside the live scroll viewport. \(noticeDiagnostic)"
+        )
+        XCTAssertGreaterThanOrEqual(
+            noticeFrame.minY, routeMap.frame.maxY - 2,
+            "The location notice must remain below the rendered route map. \(noticeDiagnostic)"
+        )
+        XCTAssertLessThanOrEqual(
+            noticeFrame.height, viewportFrame.height * 0.30,
+            "The visible denial notice must retain a compact footprint at accessibility text size while its full guidance remains available to VoiceOver. \(noticeDiagnostic)"
+        )
+
+        let locationSettingsButton = app.buttons["ride-map.location-settings"]
+        XCTAssertTrue(locationSettingsButton.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertEqual(locationSettingsButton.label, "Open location settings", app.debugDescription)
+        scrollElementFrameIntoViewport(
+            locationSettingsButton, in: liveViewport, maxScrolls: 8, occludedBy: tabBar)
+        XCTAssertTrue(locationSettingsButton.isEnabled, app.debugDescription)
+        let settingsScreenshot = XCTAttachment(screenshot: app.screenshot())
+        settingsScreenshot.name = "ride-map-location-settings-accessibility-dynamic-type"
+        settingsScreenshot.lifetime = .keepAlways
+        add(settingsScreenshot)
+
+        let pauseButton = app.buttons["ride-map.pause"]
+        let stopButton = app.buttons["ride-map.stop"]
+        scrollElementFrameIntoViewport(pauseButton, in: liveViewport, maxScrolls: 10, occludedBy: tabBar)
+        XCTAssertTrue(pauseButton.isEnabled, app.debugDescription)
+        XCTAssertTrue(pauseButton.isHittable, app.debugDescription)
+        scrollElementFrameIntoViewport(stopButton, in: liveViewport, maxScrolls: 10, occludedBy: tabBar)
+        XCTAssertTrue(stopButton.isEnabled, app.debugDescription)
+        XCTAssertTrue(stopButton.isHittable, app.debugDescription)
+        let controlsScreenshot = XCTAttachment(screenshot: app.screenshot())
+        controlsScreenshot.name = "ride-map-lifecycle-controls-accessibility-dynamic-type"
+        controlsScreenshot.lifetime = .keepAlways
+        add(controlsScreenshot)
     }
 
     func testHomeMapConfirmedIdleHidesRouteCanvasUntilRideStarts() throws {
