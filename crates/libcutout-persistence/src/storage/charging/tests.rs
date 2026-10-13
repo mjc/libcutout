@@ -3,6 +3,10 @@ use cutout_ride_maps::{
     ChargingConnector, ChargingCost, ChargingDetails, ChargingSpotId, ChargingSupply,
 };
 use rusqlite::hooks::{AuthAction, AuthContext, Authorization};
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+};
 
 fn database() -> Connection {
     let mut connection = Connection::open_in_memory().unwrap();
@@ -329,6 +333,18 @@ fn charging_filters_preserve_supply_pairings_and_paginate_matching_pins() {
         ..filter
     };
     assert_eq!(
+        nearby(
+            &connection,
+            &mut spatial,
+            bounds(),
+            input(180.0).coordinate(),
+            &wrong,
+            QueryLimit(1),
+        )
+        .unwrap(),
+        []
+    );
+    assert_eq!(
         page(
             &connection,
             &mut spatial,
@@ -370,6 +386,28 @@ fn charging_nearby_ranks_beyond_the_first_candidate_page() {
         save(&mut connection, &mut spatial, &input(179.1)).unwrap();
     }
     let nearest = save(&mut connection, &mut spatial, &input(-179.99)).unwrap();
+    let detail_reads = Arc::new(AtomicUsize::new(0));
+    let candidate_scans = Arc::new(AtomicUsize::new(0));
+    let counted_details = Arc::clone(&detail_reads);
+    let counted_scans = Arc::clone(&candidate_scans);
+    connection.authorizer(Some(move |context: AuthContext<'_>| {
+        match context.action {
+            AuthAction::Read {
+                table_name: "charging_spots",
+                column_name: "local_revision",
+            } => {
+                counted_details.fetch_add(1, Ordering::Relaxed);
+            }
+            AuthAction::Read {
+                table_name: "map_points_rtree",
+                column_name: "max_lat_e7",
+            } => {
+                counted_scans.fetch_add(1, Ordering::Relaxed);
+            }
+            _ => {}
+        }
+        Authorization::Allow
+    }));
     let values = nearby(
         &connection,
         &mut spatial,
@@ -380,6 +418,38 @@ fn charging_nearby_ranks_beyond_the_first_candidate_page() {
     )
     .unwrap();
     assert_eq!(values[0].point_id, nearest.point_id);
+    assert_eq!(detail_reads.load(Ordering::Relaxed), 1);
+    assert_eq!(candidate_scans.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn charging_nearby_orders_equal_distances_by_point_id() {
+    let mut connection = database();
+    let mut spatial = SpatialSchemaState::Uninitialized;
+    let mut expected = Vec::new();
+    for value in [3, 1, 2] {
+        let mut snapshot = entry(Some(input(-179.9)), ChargingStatus::Published, 1);
+        snapshot.id = ChargingSpotId::parse(&uuid::Uuid::from_u128(value).to_string()).unwrap();
+        expected.push(cache_directory_entry(&mut connection, &mut spatial, &snapshot).unwrap());
+    }
+    expected.sort_unstable();
+    expected.truncate(2);
+    let actual = nearby(
+        &connection,
+        &mut spatial,
+        bounds(),
+        input(180.0).coordinate(),
+        &ChargingFilter::default(),
+        QueryLimit(2),
+    )
+    .unwrap();
+    assert_eq!(
+        actual
+            .into_iter()
+            .map(|spot| spot.point_id)
+            .collect::<Vec<_>>(),
+        expected
+    );
 }
 #[test]
 fn charging_queue_limit_rejects_save_and_edit_atomically() {
