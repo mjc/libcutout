@@ -929,7 +929,7 @@ fn charging_upgrade_accepts_earlier_charging_schema_without_moving_time() {
         .unwrap()
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
-    assert!(!columns.is_empty());
+    assert_ne!(columns.len(), 0);
     for column in columns {
         connection
             .execute_batch(&format!("ALTER TABLE rides DROP COLUMN {column};"))
