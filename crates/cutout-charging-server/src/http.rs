@@ -154,8 +154,7 @@ async fn verify(
     body: Result<Json<WithdrawRequest>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Json<MutationReceipt>, Error> {
     let actor = actor(&store, &headers).await?;
-    let mut request = body.map_err(|_| Error::Invalid)?.0;
-    request.operation_id = id(&request.operation_id)?;
+    let request = body.map_err(|_| Error::Invalid)?.0;
     Ok(Json(
         store.verify_access(actor, id(&target)?, request).await?,
     ))
@@ -168,7 +167,7 @@ async fn create(
     let actor = actor(&store, &headers).await?;
     let request = body.map_err(|_| Error::Invalid)?.0;
     let request = CreateRequest {
-        operation_id: id(&request.operation_id)?,
+        operation_id: request.operation_id,
         spot: request.spot.validate()?,
     };
     Ok((
@@ -187,7 +186,7 @@ async fn list(
     query: Result<Query<ListQuery>, axum::extract::rejection::QueryRejection>,
 ) -> Result<Json<SpotPage>, Error> {
     let query = query.map_err(|_| Error::Invalid)?.0;
-    query.validate()?;
+    let query = query.into_validated()?;
     Ok(Json(store.list(query).await?))
 }
 
@@ -200,7 +199,7 @@ async fn edit(
     let actor = actor(&store, &headers).await?;
     let request = body.map_err(|_| Error::Invalid)?.0;
     let request = EditRequest {
-        operation_id: id(&request.operation_id)?,
+        operation_id: request.operation_id,
         expected_revision: request.expected_revision,
         spot: request.spot.validate()?,
     };
@@ -217,8 +216,7 @@ async fn withdraw(
     body: Result<Json<WithdrawRequest>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Json<MutationReceipt>, Error> {
     let actor = actor(&store, &headers).await?;
-    let mut request = body.map_err(|_| Error::Invalid)?.0;
-    request.operation_id = id(&request.operation_id)?;
+    let request = body.map_err(|_| Error::Invalid)?.0;
     Ok(Json(
         store
             .mutate(actor, id(&target)?, SpotMutation::Withdraw(request))
@@ -232,8 +230,7 @@ async fn vote(
     body: Result<Json<VoteRequest>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Json<VoteReceipt>, Error> {
     let actor = actor(&store, &headers).await?;
-    let mut request = body.map_err(|_| Error::Invalid)?.0;
-    request.operation_id = id(&request.operation_id)?;
+    let request = body.map_err(|_| Error::Invalid)?.0;
     Ok(Json(store.vote(actor, id(&target)?, request).await?))
 }
 async fn current_vote(
@@ -248,12 +245,7 @@ async fn changes(
     State(store): State<Store>,
     query: Result<Query<ChangesQuery>, axum::extract::rejection::QueryRejection>,
 ) -> Result<Json<ChangesPage>, Error> {
-    let query = query.map_err(|_| Error::Invalid)?.0;
-    if !(1..=100).contains(&query.limit.unwrap_or(50))
-        || query.after.unwrap_or_default() > i64::MAX as u64
-    {
-        return Err(Error::Invalid);
-    }
+    let query = query.map_err(|_| Error::Invalid)?.0.into_validated()?;
     Ok(Json(store.changes(query).await?))
 }
 
@@ -273,7 +265,6 @@ async fn report(
 ) -> Result<(StatusCode, Json<ReportReceipt>), Error> {
     let actor = actor(&store, &headers).await?;
     let mut request = body.map_err(|_| Error::Invalid)?.0;
-    request.operation_id = id(&request.operation_id)?;
     request.message = optional_text(request.message, 1_000)?;
     if let ReportReason::Other = request.reason
         && request.message.is_none()
@@ -293,9 +284,7 @@ async fn reports(
 ) -> Result<Json<ReportsPage>, Error> {
     let actor = moderator_actor(&store, &headers).await?;
     let query = query.map_err(|_| Error::Invalid)?.0;
-    if !(1..=100).contains(&query.limit.unwrap_or(50)) {
-        return Err(Error::Invalid);
-    }
+    let query = query.into_validated()?;
     Ok(Json(store.reports(actor, query).await?))
 }
 
@@ -328,7 +317,7 @@ async fn moderate(
         ModerationAction::Remove => ModerationAction::Remove,
     };
     let request = ModerationRequest {
-        operation_id: id(&request.operation_id)?,
+        operation_id: request.operation_id,
         expected_revision: request.expected_revision,
         note: optional_text(Some(request.note), 500)?.ok_or(Error::Invalid)?,
         action,
@@ -344,7 +333,6 @@ async fn resolve(
 ) -> Result<Json<ReportReceipt>, Error> {
     let actor = moderator_actor(&store, &headers).await?;
     let mut request = body.map_err(|_| Error::Invalid)?.0;
-    request.operation_id = id(&request.operation_id)?;
     request.note = optional_text(Some(request.note), 500)?.ok_or(Error::Invalid)?;
     Ok(Json(store.resolve(actor, id(&target)?, request).await?))
 }
@@ -355,11 +343,6 @@ async fn audit(
     query: Result<Query<ChangesQuery>, axum::extract::rejection::QueryRejection>,
 ) -> Result<Json<AuditPage>, Error> {
     let actor = moderator_actor(&store, &headers).await?;
-    let query = query.map_err(|_| Error::Invalid)?.0;
-    if !(1..=100).contains(&query.limit.unwrap_or(50))
-        || query.after.unwrap_or_default() > i64::MAX as u64
-    {
-        return Err(Error::Invalid);
-    }
+    let query = query.map_err(|_| Error::Invalid)?.0.into_validated()?;
     Ok(Json(store.audit(actor, query).await?))
 }
