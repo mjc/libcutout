@@ -378,6 +378,9 @@ final class CutoutAppUITests: XCTestCase {
 
     override func setUp() async throws {
         try await super.setUp()
+        if name.contains("RetainsThroughRefreshFailureAndRetry") {
+            executionTimeAllowance = 360
+        }
         continueAfterFailure = false
         XCUIDevice.shared.orientation = isLandscapeTest ? .landscapeLeft : .portrait
         app = XCUIApplication()
@@ -1388,6 +1391,20 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func
+        testPickerSurfaceHomeMapRouteSavedHistoryPreservesSelectionAtAccessibilityDynamicTypeRetainsThroughRefreshFailureAndRetry()
+        throws
+    {
+        try assertSavedHistorySelectionSurvivesRefreshFailureAndRetryAtAccessibilityDynamicType()
+    }
+
+    func
+        testPickerSurfaceHomeMapRouteSavedHistoryPreservesSelectionAtAccessibilityDynamicTypeRetainsThroughRefreshFailureAndRetryInLandscape()
+        throws
+    {
+        try assertSavedHistorySelectionSurvivesRefreshFailureAndRetryAtAccessibilityDynamicType()
+    }
+
+    func
         testPickerSurfaceHomeMapRouteSavedHistoryPreservesSelectionAtAccessibilityDynamicTypeShowsEndpointsInLandscape()
         throws
     {
@@ -1429,7 +1446,7 @@ final class CutoutAppUITests: XCTestCase {
         )
         XCTAssertTrue(listedIDs.contains(newestSeededID), "The newest fixture ride should be on the first page")
 
-        let historyScroll = app.scrollViews["ride-map.history-viewport"]
+        let historyScroll = screen.scrollViews.firstMatch
         XCTAssertTrue(historyScroll.waitForExistence(timeout: 5), app.debugDescription)
         let newestRide = app.buttons["ride-map.history-\(newestSeededID)"]
         let tabBar = app.tabBars.firstMatch
@@ -1513,6 +1530,335 @@ final class CutoutAppUITests: XCTestCase {
         )
     }
 
+    private func assertSavedHistorySelectionSurvivesRefreshFailureAndRetryAtAccessibilityDynamicType() throws {
+        let mapTab = app.tabBars.buttons["Map"]
+        XCTAssertTrue(mapTab.waitForExistence(timeout: 10), app.debugDescription)
+        mapTab.tap()
+
+        let screen = app.descendants(matching: .any)["ride-map.screen"]
+        XCTAssertTrue(screen.waitForExistence(timeout: 8), app.debugDescription)
+        let initialReadback = try XCTUnwrap(screen.value as? String)
+        let receipt = try XCTUnwrap(initialReadback.components(separatedBy: ";").first)
+        XCTAssertTrue(receipt.hasPrefix("saved-rides:"), app.debugDescription)
+        let seededIDs = receipt.dropFirst("saved-rides:".count).split(separator: ",").map(String.init)
+        XCTAssertEqual(seededIDs.count, 2, "The UI test reads the two Rust fixture receipts")
+        let newestSeededID = try XCTUnwrap(seededIDs.last)
+        XCTAssertNotNil(UUID(uuidString: newestSeededID))
+
+        let modePicker = app.descendants(matching: .any)["ride-map.mode-picker"].segmentedControls.firstMatch
+        XCTAssertTrue(modePicker.waitForExistence(timeout: 5), app.debugDescription)
+        modePicker.buttons["History"].tap()
+        let initialGeneration = try waitForSettledHistory(in: screen, afterQueryGeneration: 0)
+
+        // The selected short ride is initially hidden. Show short rides while retaining Last 30 days,
+        // then open its real Rust-projected detail before changing the date to All time.
+        let dateFilter = app.buttons["ride-map.history-date-filter"]
+        XCTAssertTrue(dateFilter.waitForExistence(timeout: 5), app.debugDescription)
+        dateFilter.tap()
+        let shortRidesToggle = app.descendants(matching: .any)["ride-map.history-show-short-rides"]
+        XCTAssertTrue(shortRidesToggle.waitForExistence(timeout: 5), app.debugDescription)
+        shortRidesToggle.tap()
+        let shortRideGeneration = try waitForSettledHistory(in: screen, afterQueryGeneration: initialGeneration)
+        let newestRide = app.buttons["ride-map.history-\(newestSeededID)"]
+        let historyScroll = screen.scrollViews.firstMatch
+        let tabBar = app.tabBars.firstMatch
+        XCTAssertTrue(historyScroll.waitForExistence(timeout: 5), app.debugDescription)
+        scrollElementFrameIntoViewport(
+            newestRide,
+            in: historyScroll,
+            maxScrolls: 20,
+            occludedBy: tabBar,
+            requiresFullVisibility: false,
+            horizontalFraction: 0.5
+        )
+        XCTAssertTrue(newestRide.isHittable, app.debugDescription)
+        newestRide.tap()
+
+        let detailScreen = app.descendants(matching: .any)["ride-map.detail-screen"]
+        XCTAssertTrue(detailScreen.waitForExistence(timeout: 8), app.debugDescription)
+        _ = try waitForSettledHistory(
+            in: detailScreen,
+            afterQueryGeneration: shortRideGeneration - 1,
+            selecting: newestSeededID
+        )
+        let detailHeader = detailScreen.descendants(matching: .any)["ride-map.detail-header"]
+        let backButton = detailHeader.buttons.firstMatch
+        XCTAssertTrue(backButton.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(backButton.isHittable, app.debugDescription)
+        backButton.tap()
+
+        XCTAssertTrue(dateFilter.waitForExistence(timeout: 5), app.debugDescription)
+        let settledSelectionGeneration = try waitForSettledHistory(
+            in: screen,
+            afterQueryGeneration: shortRideGeneration - 1,
+            selecting: newestSeededID
+        )
+        XCTAssertEqual(newestRide.value as? String, "Selected", app.debugDescription)
+        scrollElementFrameIntoViewport(
+            dateFilter,
+            in: historyScroll,
+            maxScrolls: 20,
+            occludedBy: tabBar,
+            requiresFullVisibility: true,
+            horizontalFraction: 0.5
+        )
+        let filters = app.descendants(matching: .any)["ride-map.history-filters"]
+        let viewport = historyScroll
+        let historyMap = app.descendants(matching: .any)["ride-map.map"]
+        XCTAssertTrue(filters.exists, app.debugDescription)
+        XCTAssertTrue(viewport.exists, app.debugDescription)
+        XCTAssertTrue(historyMap.exists, app.debugDescription)
+        let originalFiltersFrame = filters.frame
+        let originalViewportFrame = viewport.frame
+        let originalMapFrame = historyMap.frame
+        XCTAssertGreaterThan(originalViewportFrame.height, 0, app.debugDescription)
+        XCTAssertGreaterThan(originalMapFrame.height, 0, app.debugDescription)
+        let originalFields = Self.historyFixtureFields(from: try XCTUnwrap(screen.value as? String))
+        let originalListedIDs = Set(originalFields["listed"]?.split(separator: ",").map(String.init) ?? [])
+        XCTAssertTrue(originalListedIDs.contains(newestSeededID), app.debugDescription)
+
+        attachHistoryRefreshEvidence(
+            named: "saved-history-before-refresh-failure",
+            screen: screen,
+            viewport: viewport,
+            filters: filters,
+            map: historyMap,
+            error: app.descendants(matching: .any)["ride-map.history-refresh-error"],
+            retry: app.buttons["ride-map.history-refresh-retry"]
+        )
+        dateFilter.tap()
+        let allTime = app.buttons["All time"]
+        XCTAssertTrue(allTime.waitForExistence(timeout: 5), app.debugDescription)
+        allTime.tap()
+        let failedGeneration = try waitForSettledHistory(
+            in: screen,
+            afterQueryGeneration: settledSelectionGeneration,
+            selecting: newestSeededID
+        )
+
+        let refreshError = app.descendants(matching: .any)["ride-map.history-refresh-error"]
+        let mapError = app.descendants(matching: .any)["ride-map.history-map-error"]
+        let retryButton = app.buttons["ride-map.history-refresh-retry"]
+        let loadMoreButton = app.buttons["ride-map.history-load-more"]
+        attachHistoryRefreshEvidence(
+            named: "saved-history-all-time-refresh-failed",
+            screen: screen,
+            viewport: viewport,
+            filters: filters,
+            map: historyMap,
+            error: refreshError,
+            retry: retryButton
+        )
+
+        let failedReadback = try XCTUnwrap(screen.value as? String)
+        let failedFields = Self.historyFixtureFields(from: failedReadback)
+        let failedListedIDs = Set(failedFields["listed"]?.split(separator: ",").map(String.init) ?? [])
+        XCTAssertEqual(dateFilter.label, "All time", app.debugDescription)
+        XCTAssertEqual(failedFields["loading"], "false", app.debugDescription)
+        XCTAssertEqual(failedFields["selected"], newestSeededID, app.debugDescription)
+        XCTAssertEqual(failedFields["projection"], newestSeededID, app.debugDescription)
+        XCTAssertEqual(failedListedIDs, originalListedIDs, app.debugDescription)
+        XCTAssertGreaterThan(failedGeneration, settledSelectionGeneration)
+        XCTAssertTrue(refreshError.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertFalse(
+            mapError.exists,
+            "A retained route with display points must not show the empty-map error. \(app.debugDescription)")
+        XCTAssertTrue(retryButton.exists, app.debugDescription)
+        XCTAssertEqual(retryButton.label, "Try again", app.debugDescription)
+        assertHistoryFrame(filters.frame, equals: originalFiltersFrame)
+        assertHistoryFrame(viewport.frame, equals: originalViewportFrame)
+        assertHistoryFrame(historyMap.frame, equals: originalMapFrame)
+
+        let retainedRow = app.buttons["ride-map.history-\(newestSeededID)"]
+        scrollHistoryElement(
+            retainedRow,
+            in: historyScroll,
+            above: tabBar,
+            and: refreshError,
+            minimumVisibleHeight: 44,
+            requiresFullVisibility: false
+        )
+        attachHistoryRefreshEvidence(
+            named: "saved-history-retained-row-reachable-after-refresh-error",
+            screen: screen,
+            viewport: viewport,
+            filters: filters,
+            map: historyMap,
+            error: refreshError,
+            retry: retryButton
+        )
+        let retainedRowVisibleFrame = retainedRow.frame.intersection(
+            historyContentFrameAboveOverlays(in: historyScroll, tabBar: tabBar, error: refreshError)
+        )
+        XCTAssertGreaterThanOrEqual(retainedRowVisibleFrame.height, 44, app.debugDescription)
+        XCTAssertTrue(retainedRow.isHittable, app.debugDescription)
+
+        scrollHistoryElement(
+            loadMoreButton,
+            in: historyScroll,
+            above: tabBar,
+            and: refreshError,
+            minimumVisibleHeight: 44,
+            requiresFullVisibility: true
+        )
+        attachHistoryRefreshEvidence(
+            named: "saved-history-load-more-and-refresh-error-accessibility-layout",
+            screen: screen,
+            viewport: viewport,
+            filters: filters,
+            map: historyMap,
+            error: refreshError,
+            retry: retryButton
+        )
+        XCTAssertTrue(loadMoreButton.waitForExistence(timeout: 5), app.debugDescription)
+        assertMinimumControlDimension(loadMoreButton.frame.height)
+        let loadMoreSafeFrame = historyContentFrameAboveOverlays(
+            in: historyScroll, tabBar: tabBar, error: refreshError
+        )
+        XCTAssertTrue(
+            loadMoreSafeFrame.contains(loadMoreButton.frame),
+            "Load more must be fully visible above both overlays. \(app.debugDescription)")
+        XCTAssertTrue(loadMoreButton.isHittable, app.debugDescription)
+
+        scrollElementFrameIntoViewport(
+            retryButton,
+            in: historyScroll,
+            maxScrolls: 1,
+            occludedBy: tabBar,
+            requiresFullVisibility: true,
+            horizontalFraction: 0.5
+        )
+        assertMinimumControlDimension(retryButton.frame.width)
+        assertMinimumControlDimension(retryButton.frame.height)
+        XCTAssertTrue(retryButton.isEnabled, app.debugDescription)
+        XCTAssertTrue(retryButton.isHittable, app.debugDescription)
+        retryButton.tap()
+
+        let retriedGeneration = try waitForSettledHistory(
+            in: screen,
+            afterQueryGeneration: failedGeneration,
+            selecting: newestSeededID
+        )
+        attachHistoryRefreshEvidence(
+            named: "saved-history-all-time-refresh-retried",
+            screen: screen,
+            viewport: viewport,
+            filters: filters,
+            map: historyMap,
+            error: refreshError,
+            retry: retryButton
+        )
+        let retriedFields = Self.historyFixtureFields(from: try XCTUnwrap(screen.value as? String))
+        let retriedListedIDs = Set(retriedFields["listed"]?.split(separator: ",").map(String.init) ?? [])
+        scrollElementFrameIntoViewport(
+            dateFilter,
+            in: historyScroll,
+            maxScrolls: 30,
+            occludedBy: tabBar,
+            requiresFullVisibility: true,
+            horizontalFraction: 0.5
+        )
+        XCTAssertGreaterThan(retriedGeneration, failedGeneration)
+        XCTAssertEqual(retriedFields["loading"], "false", app.debugDescription)
+        XCTAssertEqual(retriedFields["selected"], newestSeededID, app.debugDescription)
+        XCTAssertEqual(retriedFields["projection"], newestSeededID, app.debugDescription)
+        XCTAssertEqual(retriedListedIDs, originalListedIDs, app.debugDescription)
+        XCTAssertEqual(dateFilter.label, "All time", app.debugDescription)
+        XCTAssertFalse(refreshError.exists, app.debugDescription)
+        XCTAssertFalse(mapError.exists, app.debugDescription)
+        XCTAssertEqual(filters.frame.width, originalFiltersFrame.width, accuracy: 1)
+        XCTAssertEqual(filters.frame.height, originalFiltersFrame.height, accuracy: 1)
+        assertHistoryFrame(viewport.frame, equals: originalViewportFrame)
+        XCTAssertEqual(historyMap.frame.width, originalMapFrame.width, accuracy: 1)
+        XCTAssertEqual(historyMap.frame.height, originalMapFrame.height, accuracy: 1)
+    }
+
+    private func attachHistoryRefreshEvidence(
+        named name: String,
+        screen: XCUIElement,
+        viewport: XCUIElement,
+        filters: XCUIElement,
+        map: XCUIElement,
+        error: XCUIElement,
+        retry: XCUIElement
+    ) {
+        let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        screenshot.name = name
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        let diagnostic = XCTAttachment(
+            string: """
+                History readback: \(screen.value as? String ?? "<nil>")
+                Viewport frame: \(viewport.frame)
+                Filters frame: \(filters.frame)
+                Map frame: \(map.frame)
+                Error frame: \(error.exists ? String(describing: error.frame) : "absent"), exists: \(error.exists)
+                Retry frame: \(retry.exists ? String(describing: retry.frame) : "absent"), exists: \(retry.exists), label: \(retry.exists ? retry.label : "absent")
+                \(app.debugDescription)
+                """)
+        diagnostic.name = "\(name)-accessibility-diagnostics"
+        diagnostic.lifetime = .keepAlways
+        add(diagnostic)
+    }
+
+    private func scrollHistoryElement(
+        _ element: XCUIElement,
+        in historyScroll: XCUIElement,
+        above tabBar: XCUIElement,
+        and refreshError: XCUIElement,
+        minimumVisibleHeight: CGFloat,
+        requiresFullVisibility: Bool
+    ) {
+        var previousFrame: CGRect?
+        var consecutiveStalls = 0
+        for _ in 0..<40 {
+            let safeFrame = historyContentFrameAboveOverlays(
+                in: historyScroll, tabBar: tabBar, error: refreshError
+            )
+            if safeFrame.height < minimumVisibleHeight { break }
+            let elementFrame = element.exists ? element.frame : .zero
+            let visibleFrame = elementFrame.intersection(safeFrame)
+            let isVisible =
+                requiresFullVisibility
+                ? safeFrame.contains(elementFrame)
+                : visibleFrame.height >= minimumVisibleHeight
+            if element.exists, isVisible, element.isHittable { break }
+
+            let isAbove = element.exists && elementFrame.maxY < safeFrame.minY
+            let travel = safeFrame.height * 0.25
+            dragVertically(
+                in: historyScroll,
+                from: safeFrame.midY + (isAbove ? -travel : travel),
+                to: safeFrame.midY + (isAbove ? travel : -travel),
+                horizontalFraction: 0.5
+            )
+
+            if element.exists {
+                if previousFrame == element.frame {
+                    consecutiveStalls += 1
+                } else {
+                    consecutiveStalls = 0
+                }
+                previousFrame = element.frame
+                if consecutiveStalls >= 3 { break }
+            }
+        }
+    }
+
+    private func historyContentFrameAboveOverlays(
+        in historyScroll: XCUIElement, tabBar: XCUIElement, error: XCUIElement
+    ) -> CGRect {
+        let viewport = unobscuredFrame(in: historyScroll, above: tabBar)
+        guard error.exists else { return viewport }
+        let maxY = min(viewport.maxY, error.frame.minY)
+        return CGRect(
+            x: viewport.minX,
+            y: viewport.minY,
+            width: viewport.width,
+            height: max(0, maxY - viewport.minY)
+        )
+    }
+
     func testPickerSurfaceSavedHistoryPreservesSelectionAndClearsFiltersWithoutReflow() throws {
         // Traverse both pages and verify selection, reentry, filters, and relaunch in one scenario.
         executionTimeAllowance = 360
@@ -1534,9 +1880,9 @@ final class CutoutAppUITests: XCTestCase {
         let picker = app.descendants(matching: .any)["ride-map.mode-picker"].segmentedControls.firstMatch
         XCTAssertTrue(picker.waitForExistence(timeout: 5), app.debugDescription)
         picker.buttons["History"].tap()
-        let viewport = app.descendants(matching: .any)["ride-map.history-viewport"]
+        let viewport = screen.scrollViews.firstMatch
         XCTAssertTrue(viewport.waitForExistence(timeout: 5), app.debugDescription)
-        let scroll = app.scrollViews["ride-map.history-viewport"]
+        let scroll = viewport
         XCTAssertTrue(scroll.waitForExistence(timeout: 5), app.debugDescription)
         let defaultGeneration = try waitForSettledHistory(in: screen, afterQueryGeneration: 0)
         let filters = app.descendants(matching: .any)["ride-map.history-filters"]
@@ -5249,6 +5595,9 @@ final class CutoutAppUITests: XCTestCase {
                 "-io.cutout.music.compact-player.hidden", "NO",
                 "-CUTOUT_UI_TEST_MUSIC", "silent",
             ]
+        }
+        if name.contains("RetainsThroughRefreshFailureAndRetry") {
+            arguments.append("--fail-ui-test-history-refresh-once")
         }
         if name.contains("MusicHistoryPreference") {
             arguments += [

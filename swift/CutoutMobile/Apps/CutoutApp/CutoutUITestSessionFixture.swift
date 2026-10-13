@@ -623,6 +623,14 @@ import Foundation
             return "saved-rides:\(ids.joined(separator: ","))"
         }
 
+        static var hasValidatedReceipts: Bool {
+            guard let accessibilityValue,
+                accessibilityValue.hasPrefix("saved-rides:")
+            else { return false }
+            let ids = accessibilityValue.dropFirst("saved-rides:".count).split(separator: ",")
+            return ids.count == 2 && ids.allSatisfy { UUID(uuidString: String($0)) != nil }
+        }
+
         static func runIfRequested(database: RideDatabaseHandle) async throws {
             guard isEnabled else { return }
             try await Task.detached(priority: .utility) {
@@ -693,6 +701,95 @@ import Foundation
                 // Reuse the same validated Rust receipts when this explicit fixture relaunches.
                 defaults.set(receipts, forKey: receiptKey)
             }.value
+        }
+    }
+#endif
+
+#if DEBUG && os(iOS) && targetEnvironment(simulator)
+    /// Fails one real History refresh only for the explicitly seeded UI test session.
+    /// All other operations continue through the same Rust-backed state instance.
+    final class CutoutUITestHistoryQuery: RideHistoryQuerying, @unchecked Sendable {
+        private let base: MobileRideMapState
+        private let lock = NSLock()
+        private var shouldFailMatchingRefresh = true
+
+        init(base: MobileRideMapState) {
+            self.base = base
+        }
+
+        func projectStoredPoints(
+            rideID: String,
+            budget: UInt32,
+            viewport: MobileGeoBoundsDto?,
+            privacy: MobileRideMapRoutePrivacyPolicy,
+            cancellation: MobileRideMapProjectionCancellation?
+        ) throws -> MobileRideMapRouteProjection {
+            try base.projectStoredPoints(
+                rideID: rideID,
+                budget: budget,
+                viewport: viewport,
+                privacy: privacy,
+                cancellation: cancellation
+            )
+        }
+
+        func storedMusicHistoryAsync(rideID: String) async throws -> MobileMusicHistoryDto {
+            try await base.storedMusicHistoryAsync(rideID: rideID)
+        }
+
+        func storedHistoryVehicleOptions() throws -> [MobileRideMapHistoryVehicleOptionDto] {
+            try base.storedHistoryVehicleOptions()
+        }
+
+        func storedHistoryRide(rideID: String) throws -> MobileRideMapHistorySummaryDto? {
+            try base.storedHistoryRide(rideID: rideID)
+        }
+
+        func storedHistoryRide(
+            rideID: String,
+            filter: MobileRideHistoryFilterDto
+        ) throws -> MobileRideMapHistorySummaryDto? {
+            try base.storedHistoryRide(rideID: rideID, filter: filter)
+        }
+
+        func storedHistoryPage(
+            cursor: MobileRideCursorDto?,
+            limit: UInt32,
+            filter: MobileRideHistoryFilterDto?
+        ) throws -> MobileRideMapHistoryPageDto {
+            if shouldFailRefresh(cursor: cursor, filter: filter) {
+                throw MobileRideMapError.storageError("UI test failed one All time history refresh")
+            }
+            // Keep the UI fixture scrollable in a few gestures while Rust still owns real cursors.
+            return try base.storedHistoryPage(cursor: cursor, limit: min(limit, 2), filter: filter)
+        }
+
+        private func shouldFailRefresh(
+            cursor: MobileRideCursorDto?,
+            filter: MobileRideHistoryFilterDto?
+        ) -> Bool {
+            guard cursor == nil, let filter,
+                filter.createdAfterMilliseconds == nil,
+                filter.vehicleIdentity == nil,
+                filter.searchText == nil,
+                filter.includeShortRides
+            else { return false }
+
+            lock.lock()
+            defer { lock.unlock() }
+            guard shouldFailMatchingRefresh else { return false }
+            shouldFailMatchingRefresh = false
+            return true
+        }
+    }
+
+    enum CutoutUITestHistoryQueryFixture {
+        static func provider(base: MobileRideMapState) -> RideHistoryQueryProvider? {
+            guard CommandLine.arguments.contains("--fail-ui-test-history-refresh-once"),
+                CutoutUITestSavedRideFixture.hasValidatedReceipts
+            else { return nil }
+            let query = CutoutUITestHistoryQuery(base: base)
+            return { query }
         }
     }
 #endif
