@@ -3,10 +3,11 @@ use crate::{
     model::{
         AuditPage, AuditRecord, ChangesQuery, ModerationAction, ModerationRequest, ModeratorSpot,
         MutationReceipt, ReportReason, ReportReceipt, ReportRecord, ReportRequest, ReportStatus,
-        ReportsPage, ReportsQuery, ResolveRequest, WithdrawRequest, id,
+        ReportsPage, ReportsQuery, ResolveRequest, SpotStatus, ValidatedSpotInput, WithdrawRequest,
+        id,
     },
     store::{
-        Actor, db_error, ensure_actor, fingerprint, json, next_change, next_revision, now_ms,
+        Actor, Role, db_error, ensure_actor, fingerprint, json, next_change, next_revision, now_ms,
         quota, remember, replay, state, write_quota,
     },
 };
@@ -37,7 +38,7 @@ impl Store {
                 });
             }
             let current = state(&transaction, &target)?;
-            if current.status != "published" {
+            if current.status != SpotStatus::Published {
                 return Err(Error::NotFound);
             }
             if current.revision != request.expected_revision {
@@ -94,7 +95,7 @@ impl Store {
             ensure_actor(&transaction,&actor)?;
             let fingerprint=fingerprint(&format!("report:{target}"),&request)?;
             if let Some((target,revision))=replay(&transaction,&actor,&request.operation_id,&fingerprint)? {return report_receipt(&transaction,&target,request.operation_id,revision);}
-            if state(&transaction,&target)?.status!="published" {return Err(Error::NotFound);}
+            if state(&transaction,&target)?.status!=SpotStatus::Published {return Err(Error::NotFound);}
             let now=now_ms()?;
             write_quota(&transaction,&actor,now)?;
             quota(&transaction,&format!("report:{}:{target}",actor.id),86_400_000,3,now)?;
@@ -117,7 +118,7 @@ impl Store {
             moderator(&transaction,&actor)?;
             let limit=query.limit.unwrap_or(50);
             let after=query.after.as_deref().map(id).transpose()?.unwrap_or_default();
-            let status=query.status.map(|value|match value {ReportStatus::Open=>"open",ReportStatus::Resolved=>"resolved"});
+            let status=query.status.map(ReportStatus::as_str);
             let mut statement=transaction.prepare("SELECT id FROM reports WHERE id>?1 AND (?2 IS NULL OR status=?2) ORDER BY id LIMIT ?3").map_err(db_error)?;
             let targets=statement.query_map(params![after,status,limit+1],|row|row.get::<_,String>(0)).map_err(db_error)?.collect::<Result<Vec<_>,_>>().map_err(db_error)?;
             let has_more=targets.len()>limit as usize;
@@ -159,7 +160,7 @@ impl Store {
         &self,
         actor: Actor,
         target: String,
-        request: ModerationRequest,
+        request: ModerationRequest<ValidatedSpotInput>,
     ) -> Result<MutationReceipt, Error> {
         self.call(move |connection| {
             let transaction=connection.transaction_with_behavior(TransactionBehavior::Immediate).map_err(db_error)?;
@@ -167,29 +168,30 @@ impl Store {
             let fingerprint=fingerprint(&format!("moderate:{target}"),&request)?;
             if let Some((target,revision))=replay(&transaction,&actor,&request.operation_id,&fingerprint)? {return Ok(MutationReceipt {operation_id:request.operation_id,applied_revision:revision,state:state(&transaction,&target)?});}
             let current=state(&transaction,&target)?;
-            if current.revision!=request.expected_revision || (current.status!="published" && current.status!="hidden") {return Err(Error::Conflict);}
+            if current.revision!=request.expected_revision || !current.status.allows_edit() {return Err(Error::Conflict);}
             let revision=next_revision(current.revision)?;
             let now=now_ms()?;
             write_quota(&transaction,&actor,now)?;
             let sequence=next_change(&transaction)?;
             let (status,action,canonical)=match request.action {
-                ModerationAction::Hide if current.status=="published" => ("hidden","hide",None),
-                ModerationAction::Restore if current.status=="hidden" => ("published","restore",None),
-                ModerationAction::Remove => ("removed","remove",None),
+                ModerationAction::Hide if current.status==SpotStatus::Published => (SpotStatus::Hidden,"hide",None),
+                ModerationAction::Restore if current.status==SpotStatus::Hidden => (SpotStatus::Published,"restore",None),
+                ModerationAction::Remove => (SpotStatus::Removed,"remove",None),
                 ModerationAction::Correct {spot} => {
+                    let spot = spot.as_input();
                     let cost=match spot.cost {ChargingCost::Free=>"free",ChargingCost::Paid=>"paid"};
                     transaction.execute("UPDATE spots SET body=?2,latitude_e7=?3,longitude_e7=?4,cost=?5,verified_at_ms=NULL WHERE id=?1",params![target,json(&spot)?,spot.coordinate.latitude_e7,spot.coordinate.longitude_e7,cost]).map_err(db_error)?;
-                    (current.status.as_str(),"correct",None)
+                    (current.status,"correct",None)
                 },
                 ModerationAction::Duplicate {canonical_id} => {
                     if canonical_id==target {return Err(Error::Invalid);}
-                    if state(&transaction,&canonical_id)?.status!="published" {return Err(Error::Invalid);}
-                    ("removed","duplicate",Some(canonical_id))
+                    if state(&transaction,&canonical_id)?.status!=SpotStatus::Published {return Err(Error::Invalid);}
+                    (SpotStatus::Removed,"duplicate",Some(canonical_id))
                 },
                 _=>return Err(Error::Conflict),
             };
-            transaction.execute("UPDATE spots SET status=?2,revision=?3,updated_at_ms=?4,change_sequence=?5,duplicate_of=?6 WHERE id=?1",params![target,status,revision,now,sequence,canonical]).map_err(db_error)?;
-            if status=="removed" {
+            transaction.execute("UPDATE spots SET status=?2,revision=?3,updated_at_ms=?4,change_sequence=?5,duplicate_of=?6 WHERE id=?1",params![target,status.as_str(),revision,now,sequence,canonical]).map_err(db_error)?;
+            if status==SpotStatus::Removed {
                 transaction.execute("UPDATE spots SET body=NULL,latitude_e7=0,longitude_e7=0,verified_at_ms=NULL WHERE id=?1",[&target]).map_err(db_error)?;
                 transaction.execute("UPDATE votes SET value=NULL,revision=CASE WHEN revision<9223372036854775807 THEN revision+1 ELSE revision END WHERE spot_id=?1",[&target]).map_err(db_error)?;
             }
@@ -213,7 +215,7 @@ impl Store {
             let fingerprint=fingerprint(&format!("resolve:{target}"),&request)?;
             if let Some((target,revision))=replay(&transaction,&actor,&request.operation_id,&fingerprint)? {return report_receipt(&transaction,&target,request.operation_id,revision);}
             let current=report_record(&transaction,&target)?;
-            if current.revision!=request.expected_revision || current.status!="open" {return Err(Error::Conflict);}
+            if current.revision!=request.expected_revision || current.status!=ReportStatus::Open {return Err(Error::Conflict);}
             let revision=next_revision(current.revision)?;
             let now=now_ms()?;
             write_quota(&transaction,&actor,now)?;
@@ -246,7 +248,7 @@ impl Store {
 
 fn moderator(connection: &Connection, actor: &Actor) -> Result<(), Error> {
     ensure_actor(connection, actor)?;
-    if !actor.moderator {
+    if actor.role != Role::Moderator {
         return Err(Error::Forbidden);
     }
     Ok(())

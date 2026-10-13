@@ -1,6 +1,13 @@
-use crate::{Error, Store, model::id};
+use crate::{
+    Error, Store,
+    model::id,
+    store::{Registration, Role},
+};
 use clap::{Parser, Subcommand};
-use std::{net::SocketAddr, path::PathBuf};
+use std::{
+    net::{IpAddr, SocketAddr},
+    path::PathBuf,
+};
 
 #[derive(Debug, Parser)]
 #[command(name = "cutout-charging-server", about = "Charging-spot directory")]
@@ -17,6 +24,9 @@ enum Command {
     Serve {
         #[arg(long, env = "CHARGING_LISTEN", default_value = "127.0.0.1:8788")]
         listen: SocketAddr,
+        /// Trust X-Real-IP only from this peer; the proxy must overwrite that header.
+        #[arg(long, env = "CHARGING_TRUSTED_PROXY")]
+        trusted_proxy: Option<IpAddr>,
     },
     /// Provision an operator or contributor credential; stdout contains the secret.
     Identity {
@@ -43,20 +53,42 @@ enum Command {
 /// Returns a classified error for database, command, output or listener failures.
 pub async fn run_from_arguments() -> Result<(), Error> {
     let arguments = Arguments::parse();
-    let store = Store::open(&arguments.database)?;
+    let store = match &arguments.command {
+        Command::Serve { .. } | Command::Identity { .. } => Store::open(&arguments.database),
+        Command::Revoke { .. } | Command::Backup { .. } | Command::Check => {
+            Store::open_existing(&arguments.database)
+        }
+    }?;
     match arguments.command {
-        Command::Serve { listen } => {
+        Command::Serve {
+            listen,
+            trusted_proxy,
+        } => {
             let listener = tokio::net::TcpListener::bind(listen)
                 .await
                 .map_err(|_| Error::Unavailable)?;
             tracing::info!(address=%listener.local_addr().map_err(|_|Error::Unavailable)?,"charging directory listening");
-            axum::serve(listener, crate::router(store))
-                .with_graceful_shutdown(shutdown())
-                .await
-                .map_err(|_| Error::Unavailable)
+            let app = match trusted_proxy {
+                Some(proxy) => {
+                    crate::router(store).layer(axum::Extension(crate::TrustedProxy(proxy)))
+                }
+                None => crate::router(store),
+            };
+            axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .with_graceful_shutdown(shutdown())
+            .await
+            .map_err(|_| Error::Unavailable)
         }
         Command::Identity { moderator } => {
-            let identity = store.identity(moderator, false).await?;
+            let role = if moderator {
+                Role::Moderator
+            } else {
+                Role::Contributor
+            };
+            let identity = store.identity(Registration::Operator { role }).await?;
             serde_json::to_writer(std::io::stdout().lock(), &identity)
                 .map_err(|_| Error::Unavailable)
         }

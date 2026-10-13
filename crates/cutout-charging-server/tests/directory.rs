@@ -1,4 +1,4 @@
-use cutout_charging_server::{Store, router};
+use cutout_charging_server::{Store, TrustedProxy, router};
 use reqwest::{Client, StatusCode};
 use serde_json::{Value, json};
 use tempfile::TempDir;
@@ -12,15 +12,34 @@ struct Server {
 
 impl Server {
     async fn start(path: &std::path::Path) -> Self {
+        Self::start_on(path, "127.0.0.1:0").await
+    }
+
+    async fn start_on(path: &std::path::Path, listen: &str) -> Self {
+        Self::start_configured(path, listen, None).await
+    }
+
+    async fn start_configured(
+        path: &std::path::Path,
+        listen: &str,
+        proxy: Option<std::net::IpAddr>,
+    ) -> Self {
         let store = Store::open(path).expect("open database");
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        let listener = tokio::net::TcpListener::bind(listen)
             .await
             .expect("bind listener");
         let address = format!("http://{}", listener.local_addr().expect("local address"));
+        let app = match proxy {
+            Some(proxy) => router(store).layer(axum::Extension(TrustedProxy(proxy))),
+            None => router(store),
+        };
         let task = tokio::spawn(async move {
-            axum::serve(listener, router(store))
-                .await
-                .expect("serve requests");
+            axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
+            .await
+            .expect("serve requests");
         });
         Self {
             address,
@@ -103,6 +122,161 @@ fn provision_moderator(path: &std::path::Path) -> String {
     assert!(provision.status.success());
     let credential: Value = serde_json::from_slice(&provision.stdout).expect("credential");
     credential["token"].as_str().expect("token").to_owned()
+}
+
+#[tokio::test]
+async fn one_registration_source_cannot_exhaust_another_sources_budget() {
+    let directory = TempDir::new().expect("directory");
+    let path = directory.path().join("spots.sqlite");
+    let source = Server::start(&path).await;
+    let other = Server::start_on(&path, "[::1]:0").await;
+    let mut throttled = false;
+    for _ in 0..125 {
+        let response = source
+            .client
+            .post(format!("{}/v1/identities", source.address))
+            .send()
+            .await
+            .expect("registration");
+        if response.status() == StatusCode::TOO_MANY_REQUESTS {
+            throttled = true;
+            break;
+        }
+        assert_eq!(response.status(), StatusCode::CREATED);
+    }
+    assert!(
+        throttled,
+        "one source must have a bounded registration budget"
+    );
+    let forged = source
+        .client
+        .post(format!("{}/v1/identities", source.address))
+        .header("x-real-ip", "192.0.2.123")
+        .send()
+        .await
+        .expect("forged source");
+    assert_eq!(forged.status(), StatusCode::TOO_MANY_REQUESTS);
+    other.identity().await;
+}
+
+#[tokio::test]
+async fn registration_trusts_only_one_valid_address_from_the_configured_proxy() {
+    let directory = TempDir::new().expect("directory");
+    let path = directory.path().join("spots.sqlite");
+    let trusted = Server::start_configured(
+        &path,
+        "127.0.0.1:0",
+        Some("127.0.0.1".parse().expect("proxy")),
+    )
+    .await;
+    let endpoint = format!("{}/v1/identities", trusted.address);
+    for value in [None, Some("bad address"), Some("192.0.2.1, 192.0.2.2")] {
+        let request = trusted.client.post(&endpoint);
+        let request = match value {
+            Some(value) => request.header("x-real-ip", value),
+            None => request,
+        };
+        assert_eq!(
+            request
+                .send()
+                .await
+                .expect("invalid proxy address")
+                .status(),
+            StatusCode::UNPROCESSABLE_ENTITY
+        );
+    }
+    let duplicate = trusted
+        .client
+        .post(&endpoint)
+        .header("x-real-ip", "192.0.2.1")
+        .header("x-real-ip", "192.0.2.2")
+        .send()
+        .await
+        .expect("duplicate header");
+    assert_eq!(duplicate.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
+async fn registration_proxy_sources_are_canonical_independent_and_durable() {
+    let directory = TempDir::new().expect("directory");
+    let path = directory.path().join("spots.sqlite");
+    let trusted = Server::start_configured(
+        &path,
+        "127.0.0.1:0",
+        Some("127.0.0.1".parse().expect("proxy")),
+    )
+    .await;
+    let endpoint = format!("{}/v1/identities", trusted.address);
+    let mut throttled = false;
+    for _ in 0..125 {
+        let response = trusted
+            .client
+            .post(&endpoint)
+            .header("x-real-ip", "192.0.2.1")
+            .send()
+            .await
+            .expect("registration");
+        if response.status() == StatusCode::TOO_MANY_REQUESTS {
+            throttled = true;
+            break;
+        }
+        assert_eq!(response.status(), StatusCode::CREATED);
+    }
+    assert!(throttled);
+    assert_eq!(
+        trusted
+            .client
+            .post(&endpoint)
+            .header("x-real-ip", "::ffff:192.0.2.1")
+            .send()
+            .await
+            .expect("canonical source")
+            .status(),
+        StatusCode::TOO_MANY_REQUESTS
+    );
+    assert_eq!(
+        trusted
+            .client
+            .post(&endpoint)
+            .header("x-real-ip", "192.0.2.2")
+            .send()
+            .await
+            .expect("independent client")
+            .status(),
+        StatusCode::CREATED
+    );
+    let untrusted =
+        Server::start_configured(&path, "[::1]:0", Some("127.0.0.1".parse().expect("proxy"))).await;
+    // A peer outside the configured proxy is counted by transport address.
+    assert_eq!(
+        untrusted
+            .client
+            .post(format!("{}/v1/identities", untrusted.address))
+            .header("x-real-ip", "bad address")
+            .send()
+            .await
+            .expect("untrusted header ignored")
+            .status(),
+        StatusCode::CREATED
+    );
+    drop(trusted);
+    let reopened = Server::start_configured(
+        &path,
+        "127.0.0.1:0",
+        Some("127.0.0.1".parse().expect("proxy")),
+    )
+    .await;
+    assert_eq!(
+        reopened
+            .client
+            .post(format!("{}/v1/identities", reopened.address))
+            .header("x-real-ip", "192.0.2.1")
+            .send()
+            .await
+            .expect("durable budget")
+            .status(),
+        StatusCode::TOO_MANY_REQUESTS
+    );
 }
 
 #[tokio::test]
@@ -845,7 +1019,7 @@ async fn failed_creation_rolls_back_spot_operation_and_quota_and_can_be_retried(
     assert_eq!(operations, 0);
     let write_budgets: u64 = connection
         .query_row(
-            "SELECT COUNT(*) FROM quotas WHERE principal!='registration'",
+            "SELECT COUNT(*) FROM quotas WHERE principal LIKE 'write:%' OR principal LIKE 'new-spots:%'",
             [],
             |row| row.get(0),
         )

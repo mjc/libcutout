@@ -12,7 +12,7 @@ mod moderation;
 mod runtime;
 mod store;
 
-pub use http::router;
+pub use http::{TrustedProxy, router};
 pub use runtime::run_from_arguments;
 pub use store::Store;
 

@@ -9,16 +9,22 @@ use crate::model::{
 use crate::{
     Error, Store,
     model::{CreateRequest, ListQuery, MutationReceipt, PublicSpot, SpotPage, id},
-    store::{Actor, Identity},
+    store::{Actor, Identity, Registration, Role},
 };
 use axum::{
     Json, Router,
-    extract::{DefaultBodyLimit, Path, Query, State},
+    extract::{ConnectInfo, DefaultBodyLimit, Extension, Path, Query, State},
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
 use serde::Serialize;
+use std::net::{IpAddr, SocketAddr};
+
+/// A proxy peer allowed to supply one client address through `X-Real-IP`.
+/// The proxy must overwrite that header rather than forwarding caller input.
+#[derive(Clone, Copy, Debug)]
+pub struct TrustedProxy(pub IpAddr);
 
 impl IntoResponse for Error {
     fn into_response(self) -> Response {
@@ -52,6 +58,11 @@ impl IntoResponse for Error {
 }
 
 /// Builds the versioned HTTP directory, using the supplied durable store.
+/// Serve with `into_make_service_with_connect_info::<SocketAddr>()` so registration
+/// budgets use the transport peer rather than caller-supplied headers.
+/// Behind a proxy, add `Extension(TrustedProxy(proxy_ip))` and configure the proxy
+/// to overwrite `X-Real-IP` with the client address. Other peers cannot select
+/// their budget by sending forwarding headers.
 pub fn router(store: Store) -> Router {
     Router::new()
         .route("/healthz", get(|| async { StatusCode::OK }))
@@ -106,14 +117,33 @@ async fn ready(State(store): State<Store>) -> Result<StatusCode, Error> {
 }
 async fn identity(
     State(store): State<Store>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    trusted_proxy: Option<Extension<TrustedProxy>>,
+    headers: HeaderMap,
     body: Result<axum::body::Bytes, axum::extract::rejection::BytesRejection>,
 ) -> Result<(StatusCode, Json<Identity>), Error> {
     if !body.map_err(|_| Error::Invalid)?.is_empty() {
         return Err(Error::Invalid);
     }
+    let source = if trusted_proxy.is_some_and(|Extension(TrustedProxy(proxy))| {
+        proxy.to_canonical() == peer.ip().to_canonical()
+    }) {
+        let mut addresses = headers.get_all("x-real-ip").iter();
+        let address = addresses.next().ok_or(Error::Invalid)?;
+        if addresses.next().is_some() {
+            return Err(Error::Invalid);
+        }
+        address
+            .to_str()
+            .map_err(|_| Error::Invalid)?
+            .parse::<IpAddr>()
+            .map_err(|_| Error::Invalid)?
+    } else {
+        peer.ip()
+    };
     Ok((
         StatusCode::CREATED,
-        Json(store.identity(false, true).await?),
+        Json(store.identity(Registration::Public { source }).await?),
     ))
 }
 
@@ -136,9 +166,11 @@ async fn create(
     body: Result<Json<CreateRequest>, axum::extract::rejection::JsonRejection>,
 ) -> Result<(StatusCode, Json<MutationReceipt>), Error> {
     let actor = actor(&store, &headers).await?;
-    let mut request = body.map_err(|_| Error::Invalid)?.0;
-    request.operation_id = id(&request.operation_id)?;
-    request.spot = request.spot.validate()?;
+    let request = body.map_err(|_| Error::Invalid)?.0;
+    let request = CreateRequest {
+        operation_id: id(&request.operation_id)?,
+        spot: request.spot.validate()?,
+    };
     Ok((
         StatusCode::CREATED,
         Json(store.create(actor, request).await?),
@@ -166,9 +198,12 @@ async fn edit(
     body: Result<Json<EditRequest>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Json<MutationReceipt>, Error> {
     let actor = actor(&store, &headers).await?;
-    let mut request = body.map_err(|_| Error::Invalid)?.0;
-    request.operation_id = id(&request.operation_id)?;
-    request.spot = request.spot.validate()?;
+    let request = body.map_err(|_| Error::Invalid)?.0;
+    let request = EditRequest {
+        operation_id: id(&request.operation_id)?,
+        expected_revision: request.expected_revision,
+        spot: request.spot.validate()?,
+    };
     Ok(Json(
         store
             .mutate(actor, id(&target)?, SpotMutation::Edit(request))
@@ -224,7 +259,7 @@ async fn changes(
 
 async fn moderator_actor(store: &Store, headers: &HeaderMap) -> Result<Actor, Error> {
     let actor = actor(store, headers).await?;
-    if !actor.moderator {
+    if actor.role != Role::Moderator {
         return Err(Error::Forbidden);
     }
     Ok(actor)
@@ -280,17 +315,23 @@ async fn moderate(
     body: Result<Json<ModerationRequest>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Json<MutationReceipt>, Error> {
     let actor = moderator_actor(&store, &headers).await?;
-    let mut request = body.map_err(|_| Error::Invalid)?.0;
-    request.operation_id = id(&request.operation_id)?;
-    request.note = optional_text(Some(request.note), 500)?.ok_or(Error::Invalid)?;
-    request.action = match request.action {
+    let request = body.map_err(|_| Error::Invalid)?.0;
+    let action = match request.action {
         ModerationAction::Correct { spot } => ModerationAction::Correct {
             spot: spot.validate()?,
         },
         ModerationAction::Duplicate { canonical_id } => ModerationAction::Duplicate {
             canonical_id: id(&canonical_id)?,
         },
-        action => action,
+        ModerationAction::Hide => ModerationAction::Hide,
+        ModerationAction::Restore => ModerationAction::Restore,
+        ModerationAction::Remove => ModerationAction::Remove,
+    };
+    let request = ModerationRequest {
+        operation_id: id(&request.operation_id)?,
+        expected_revision: request.expected_revision,
+        note: optional_text(Some(request.note), 500)?.ok_or(Error::Invalid)?,
+        action,
     };
     Ok(Json(store.moderate(actor, id(&target)?, request).await?))
 }

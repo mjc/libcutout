@@ -106,8 +106,19 @@ pub(crate) struct SpotInput {
     pub supplies: Vec<Supply>,
 }
 
+/// Only validation can construct this input; persistence accepts this state.
+#[derive(Clone, Debug, Serialize)]
+#[serde(transparent)]
+pub(crate) struct ValidatedSpotInput(SpotInput);
+
+impl ValidatedSpotInput {
+    pub(crate) fn as_input(&self) -> &SpotInput {
+        &self.0
+    }
+}
+
 impl SpotInput {
-    pub(crate) fn validate(mut self) -> Result<Self, Error> {
+    pub(crate) fn validate(mut self) -> Result<ValidatedSpotInput, Error> {
         let coordinate =
             Coordinate::from_fixed_parts(self.coordinate.latitude_e7, self.coordinate.longitude_e7)
                 .map_err(|_| Error::Invalid)?;
@@ -160,7 +171,7 @@ impl SpotInput {
                 }
             }
         }
-        Ok(self)
+        Ok(ValidatedSpotInput(self))
     }
 }
 
@@ -190,17 +201,17 @@ pub(crate) fn id(value: &str) -> Result<String, Error> {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct CreateRequest {
+pub(crate) struct CreateRequest<Input = SpotInput> {
     pub operation_id: String,
-    pub spot: SpotInput,
+    pub spot: Input,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct EditRequest {
+pub(crate) struct EditRequest<Input = SpotInput> {
     pub operation_id: String,
     pub expected_revision: u64,
-    pub spot: SpotInput,
+    pub spot: Input,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -238,11 +249,52 @@ pub(crate) struct PublicSpot {
     pub votes: Counts,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum SpotStatus {
+    Published,
+    Hidden,
+    Withdrawn,
+    Removed,
+}
+
+impl SpotStatus {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Published => "published",
+            Self::Hidden => "hidden",
+            Self::Withdrawn => "withdrawn",
+            Self::Removed => "removed",
+        }
+    }
+
+    pub(crate) fn allows_edit(self) -> bool {
+        match self {
+            Self::Published | Self::Hidden => true,
+            Self::Withdrawn | Self::Removed => false,
+        }
+    }
+}
+
+impl rusqlite::types::FromSql for SpotStatus {
+    fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
+        match value.as_str()? {
+            "published" => Ok(Self::Published),
+            "hidden" => Ok(Self::Hidden),
+            "withdrawn" => Ok(Self::Withdrawn),
+            "removed" => Ok(Self::Removed),
+            _ => Err(rusqlite::types::FromSqlError::Other(Box::new(
+                Error::Unavailable,
+            ))),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct SpotState {
     pub id: String,
     pub revision: u64,
-    pub status: String,
+    pub status: SpotStatus,
     pub change_sequence: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub spot: Option<PublicSpot>,
@@ -262,7 +314,7 @@ pub(crate) struct VoteState {
     pub revision: u64,
     pub vote: Option<ChargingVote>,
     pub votes: Counts,
-    pub spot_status: String,
+    pub spot_status: SpotStatus,
     pub change_sequence: u64,
 }
 
@@ -276,7 +328,7 @@ pub(crate) struct VoteReceipt {
 
 #[derive(Clone, Debug)]
 pub(crate) enum SpotMutation {
-    Edit(EditRequest),
+    Edit(EditRequest<ValidatedSpotInput>),
     Withdraw(WithdrawRequest),
 }
 
@@ -359,21 +411,21 @@ pub(crate) struct ReportRequest {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
-pub(crate) enum ModerationAction {
+pub(crate) enum ModerationAction<Input = SpotInput> {
     Hide,
     Restore,
     Remove,
-    Correct { spot: SpotInput },
+    Correct { spot: Input },
     Duplicate { canonical_id: String },
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct ModerationRequest {
+pub(crate) struct ModerationRequest<Input = SpotInput> {
     pub operation_id: String,
     pub expected_revision: u64,
     pub note: String,
-    pub action: ModerationAction,
+    pub action: ModerationAction<Input>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -384,11 +436,32 @@ pub(crate) struct ResolveRequest {
     pub note: String,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ReportStatus {
     Open,
     Resolved,
+}
+
+impl ReportStatus {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Open => "open",
+            Self::Resolved => "resolved",
+        }
+    }
+}
+
+impl rusqlite::types::FromSql for ReportStatus {
+    fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
+        match value.as_str()? {
+            "open" => Ok(Self::Open),
+            "resolved" => Ok(Self::Resolved),
+            _ => Err(rusqlite::types::FromSqlError::Other(Box::new(
+                Error::Unavailable,
+            ))),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -407,7 +480,7 @@ pub(crate) struct ReportRecord {
     pub revision: u64,
     pub reason: ReportReason,
     pub message: Option<String>,
-    pub status: String,
+    pub status: ReportStatus,
     pub created_at_ms: u64,
     pub resolved_at_ms: Option<u64>,
     pub resolution_note: Option<String>,
@@ -419,7 +492,7 @@ pub(crate) struct ReportReceipt {
     pub id: String,
     pub applied_revision: u64,
     pub revision: u64,
-    pub status: String,
+    pub status: ReportStatus,
 }
 
 #[derive(Clone, Debug, Serialize)]

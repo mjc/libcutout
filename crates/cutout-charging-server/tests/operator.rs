@@ -2,6 +2,48 @@ use serde_json::Value;
 use tempfile::TempDir;
 
 #[test]
+fn operator_reads_refuse_missing_or_uninitialized_source_databases() {
+    let binary = env!("CARGO_BIN_EXE_cutout-charging-server");
+    for existing in [false, true] {
+        for operation in ["check", "backup", "revoke"] {
+            let directory = TempDir::new().expect("directory");
+            let database = directory.path().join("source.sqlite");
+            let backup = directory.path().join("backup.sqlite");
+            if existing {
+                std::fs::write(&database, []).expect("uninitialized database");
+            }
+            let mut command = std::process::Command::new(binary);
+            command.arg("--database").arg(&database).arg(operation);
+            match operation {
+                "backup" => {
+                    command.arg("--output").arg(&backup);
+                }
+                "revoke" => {
+                    command.args(["--identity", "00000000-0000-4000-8000-000000000001"]);
+                }
+                _ => {}
+            }
+            let result = command.output().expect("operator command");
+            assert!(
+                !result.status.success(),
+                "{operation} accepted an absent schema"
+            );
+            assert!(String::from_utf8_lossy(&result.stderr).contains("service unavailable"));
+            assert_eq!(database.exists(), existing, "{operation} created a source");
+            if existing {
+                assert_eq!(
+                    std::fs::read(&database)
+                        .expect("preserved source")
+                        .as_slice(),
+                    b""
+                );
+            }
+            assert!(!backup.exists(), "{operation} created a backup");
+        }
+    }
+}
+
+#[test]
 fn operator_identity_is_explicit_and_backup_does_not_overwrite_existing_files() {
     let directory = TempDir::new().expect("directory");
     let database = directory.path().join("directory.sqlite");

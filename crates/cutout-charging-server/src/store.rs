@@ -1,12 +1,13 @@
 use std::{
     fmt,
+    net::IpAddr,
     path::Path,
     sync::{Arc, Mutex},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use cutout_ride_maps::{ChargingCost, ChargingVote};
-use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
+use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior, params};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use tokio::sync::Semaphore;
@@ -16,7 +17,8 @@ use crate::{
     Error,
     model::{
         ChangesPage, ChangesQuery, Counts, CreateRequest, ListQuery, MutationReceipt, PublicSpot,
-        SpotInput, SpotMutation, SpotPage, SpotState, VoteReceipt, VoteRequest, VoteState,
+        SpotInput, SpotMutation, SpotPage, SpotState, SpotStatus, ValidatedSpotInput, VoteReceipt,
+        VoteRequest, VoteState,
     },
 };
 
@@ -30,7 +32,47 @@ pub struct Store {
 #[derive(Clone, Debug)]
 pub(crate) struct Actor {
     pub id: String,
-    pub moderator: bool,
+    pub role: Role,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Role {
+    Contributor,
+    Moderator,
+}
+
+impl Role {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Contributor => "contributor",
+            Self::Moderator => "moderator",
+        }
+    }
+}
+
+impl rusqlite::types::FromSql for Role {
+    fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
+        match value.as_str()? {
+            "contributor" => Ok(Self::Contributor),
+            "moderator" => Ok(Self::Moderator),
+            _ => Err(rusqlite::types::FromSqlError::Other(Box::new(
+                Error::Unavailable,
+            ))),
+        }
+    }
+}
+
+/// Public registration always has a source budget and cannot grant moderation.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum Registration {
+    Public { source: IpAddr },
+    Operator { role: Role },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OpenMode {
+    Initialize,
+    Existing,
 }
 
 #[derive(Serialize)]
@@ -55,15 +97,33 @@ impl Store {
     /// # Errors
     /// Returns [`Error::Unavailable`] for open, migration or schema failures.
     pub fn open(path: &Path) -> Result<Self, Error> {
+        Self::open_database(path, OpenMode::Initialize)
+    }
+
+    /// Opens an existing initialized database without creating or migrating it.
+    ///
+    /// # Errors
+    /// Returns [`Error::Unavailable`] for missing, uninitialized or incompatible databases.
+    pub fn open_existing(path: &Path) -> Result<Self, Error> {
+        Self::open_database(path, OpenMode::Existing)
+    }
+
+    fn open_database(path: &Path, mode: OpenMode) -> Result<Self, Error> {
         if path == Path::new(":memory:") || path.to_string_lossy().starts_with("file:") {
             return Err(Error::Invalid);
         }
-        match create_empty(path) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-            Err(_) => return Err(Error::Unavailable),
+        if mode == OpenMode::Initialize {
+            match create_empty(path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(_) => return Err(Error::Unavailable),
+            }
         }
-        let mut connection = Connection::open(path).map_err(db_error)?;
+        let mut connection = Connection::open_with_flags(
+            path,
+            OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )
+        .map_err(db_error)?;
         connection
             .busy_timeout(Duration::from_secs(2))
             .map_err(db_error)?;
@@ -74,7 +134,7 @@ impl Store {
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .map_err(db_error)?;
         match version {
-            0 => {
+            0 if mode == OpenMode::Initialize => {
                 let tables: u64 = connection
                     .query_row(
                         "SELECT COUNT(*) FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%'",
@@ -125,20 +185,19 @@ impl Store {
         .map_err(|_| Error::Unavailable)?
     }
 
-    pub(crate) async fn identity(
-        &self,
-        moderator: bool,
-        enforce_quota: bool,
-    ) -> Result<Identity, Error> {
+    pub(crate) async fn identity(&self, registration: Registration) -> Result<Identity, Error> {
         self.call(move |connection| {
             let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate).map_err(db_error)?;
             let now = now_ms()?;
-            if enforce_quota {
-                quota(&transaction, "registration", 60_000, 20, now)?;
-                quota(&transaction, "registration", 3_600_000, 120, now)?;
-            }
+            let role = match registration {
+                Registration::Public { source } => {
+                    registration_quota(&transaction, source, now)?;
+                    Role::Contributor
+                }
+                Registration::Operator { role } => role,
+            };
             let identity = Identity { id: Uuid::new_v4().to_string(), token: format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple()) };
-            transaction.execute("INSERT INTO contributors (id,token_hash,role,created_at_ms) VALUES (?1,?2,?3,?4)", params![identity.id, hash(identity.token.as_bytes()), if moderator { "moderator" } else { "contributor" },now]).map_err(db_error)?;
+            transaction.execute("INSERT INTO contributors (id,token_hash,role,created_at_ms) VALUES (?1,?2,?3,?4)", params![identity.id, hash(identity.token.as_bytes()), role.as_str(),now]).map_err(db_error)?;
             transaction.commit().map_err(db_error)?;
             Ok(identity)
         }).await
@@ -149,7 +208,7 @@ impl Store {
             return Err(Error::Unauthorized);
         }
         self.call(move |connection| {
-            connection.query_row("SELECT id,role FROM contributors WHERE token_hash=?1 AND revoked_at_ms IS NULL", [hash(token.as_bytes())], |row| Ok(Actor { id: row.get(0)?, moderator: row.get::<_,String>(1)? == "moderator" }))
+            connection.query_row("SELECT id,role FROM contributors WHERE token_hash=?1 AND revoked_at_ms IS NULL", [hash(token.as_bytes())], |row| Ok(Actor { id: row.get(0)?, role: row.get(1)? }))
                 .optional().map_err(db_error)?.ok_or(Error::Unauthorized)
         }).await
     }
@@ -157,7 +216,7 @@ impl Store {
     pub(crate) async fn create(
         &self,
         actor: Actor,
-        request: CreateRequest,
+        request: CreateRequest<ValidatedSpotInput>,
     ) -> Result<MutationReceipt, Error> {
         self.call(move |connection| {
             let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate).map_err(db_error)?;
@@ -171,7 +230,8 @@ impl Store {
             quota(&transaction,&format!("new-spots:{}",actor.id),86_400_000,20,now)?;
             let target = Uuid::new_v4().to_string();
             let sequence = next_change(&transaction)?;
-            transaction.execute("INSERT INTO spots (id,owner_id,revision,status,latitude_e7,longitude_e7,cost,body,created_at_ms,updated_at_ms,change_sequence) VALUES (?1,?2,1,'published',?3,?4,?5,?6,?7,?7,?8)", params![target,actor.id,request.spot.coordinate.latitude_e7,request.spot.coordinate.longitude_e7,cost(request.spot.cost),json(&request.spot)?,now,sequence]).map_err(db_error)?;
+            let spot = request.spot.as_input();
+            transaction.execute("INSERT INTO spots (id,owner_id,revision,status,latitude_e7,longitude_e7,cost,body,created_at_ms,updated_at_ms,change_sequence) VALUES (?1,?2,1,'published',?3,?4,?5,?6,?7,?7,?8)", params![target,actor.id,spot.coordinate.latitude_e7,spot.coordinate.longitude_e7,cost(spot.cost),json(&request.spot)?,now,sequence]).map_err(db_error)?;
             remember(&transaction,&actor,&request.operation_id,&fingerprint,&target,"spot",1)?;
             let state = state(&transaction,&target)?;
             transaction.commit().map_err(db_error)?;
@@ -224,14 +284,15 @@ impl Store {
             if let Some((target,revision))=replay(&transaction,&actor,&operation,&fingerprint)? {
                 return Ok(MutationReceipt {operation_id:operation,applied_revision:revision,state:state(&transaction,&target)?});
             }
-            let (owner,current,status)=transaction.query_row("SELECT owner_id,revision,status FROM spots WHERE id=?1",[&target],|row|Ok((row.get::<_,String>(0)?,row.get::<_,u64>(1)?,row.get::<_,String>(2)?))).optional().map_err(db_error)?.ok_or(Error::NotFound)?;
+            let (owner,current,status)=transaction.query_row("SELECT owner_id,revision,status FROM spots WHERE id=?1",[&target],|row|Ok((row.get::<_,String>(0)?,row.get::<_,u64>(1)?,row.get::<_,SpotStatus>(2)?))).optional().map_err(db_error)?.ok_or(Error::NotFound)?;
             if owner!=actor.id {return Err(Error::Forbidden);}
-            if current!=expected || (status!="published" && status!="hidden") {return Err(Error::Conflict);}
+            if current!=expected || !status.allows_edit() {return Err(Error::Conflict);}
             let revision=next_revision(current)?;
             let now=now_ms()?;
             write_quota(&transaction,&actor,now)?;
             let sequence=next_change(&transaction)?;
             if let Some(input)=input {
+                let input = input.as_input();
                 transaction.execute("UPDATE spots SET revision=?2,latitude_e7=?3,longitude_e7=?4,cost=?5,body=?6,updated_at_ms=?7,change_sequence=?8,verified_at_ms=NULL WHERE id=?1",params![target,revision,input.coordinate.latitude_e7,input.coordinate.longitude_e7,cost(input.cost),json(&input)?,now,sequence]).map_err(db_error)?;
             } else {
                 transaction.execute("UPDATE spots SET revision=?2,status='withdrawn',body=NULL,latitude_e7=0,longitude_e7=0,updated_at_ms=?3,verified_at_ms=NULL,change_sequence=?4 WHERE id=?1",params![target,revision,now,sequence]).map_err(db_error)?;
@@ -258,7 +319,7 @@ impl Store {
                 return Ok(VoteReceipt {operation_id:request.operation_id,applied_revision:revision,state:vote_state(&transaction,&target,&actor)?});
             }
             let spot=state(&transaction,&target)?;
-            if spot.status!="published" {return Err(Error::NotFound);}
+            if spot.status!=SpotStatus::Published {return Err(Error::NotFound);}
             let current=vote_state(&transaction,&target,&actor)?;
             if current.revision!=request.expected_revision {return Err(Error::Conflict);}
             let revision=next_revision(current.revision)?;
@@ -282,7 +343,7 @@ impl Store {
             let transaction = connection.transaction().map_err(db_error)?;
             ensure_actor(&transaction, &actor)?;
             let state = vote_state(&transaction, &target, &actor)?;
-            if state.spot_status != "published" {
+            if state.spot_status != SpotStatus::Published {
                 return Err(Error::NotFound);
             }
             Ok(state)
@@ -404,17 +465,16 @@ pub(crate) fn db_error(_: rusqlite::Error) -> Error {
 }
 
 pub(crate) fn ensure_actor(connection: &Connection, actor: &Actor) -> Result<(), Error> {
-    let moderator = connection
+    let role: Role = connection
         .query_row(
             "SELECT role FROM contributors WHERE id=?1 AND revoked_at_ms IS NULL",
             [&actor.id],
-            |row| row.get::<_, String>(0),
+            |row| row.get(0),
         )
         .optional()
         .map_err(db_error)?
-        .ok_or(Error::Unauthorized)?
-        == "moderator";
-    if moderator != actor.moderator {
+        .ok_or(Error::Unauthorized)?;
+    if role != actor.role {
         return Err(Error::Forbidden);
     }
     Ok(())
@@ -439,7 +499,7 @@ fn vote_state(connection: &Connection, target: &str, actor: &Actor) -> Result<Vo
         .query_row(
             "SELECT status,change_sequence FROM spots WHERE id=?1",
             [target],
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, u64>(1)?)),
+            |row| Ok((row.get::<_, SpotStatus>(0)?, row.get::<_, u64>(1)?)),
         )
         .optional()
         .map_err(db_error)?
@@ -462,7 +522,7 @@ fn vote_state(connection: &Connection, target: &str, actor: &Actor) -> Result<Vo
     Ok(VoteState {
         revision: current.0,
         vote,
-        votes: if status == "published" {
+        votes: if status == SpotStatus::Published {
             counts(connection, target)?
         } else {
             Counts::default()
@@ -558,6 +618,17 @@ pub(crate) fn quota(
     Ok(())
 }
 
+fn registration_quota(connection: &Connection, source: IpAddr, now: u64) -> Result<(), Error> {
+    let principal = format!(
+        "registration-source:{}",
+        hash(source.to_canonical().to_string().as_bytes())
+    );
+    quota(connection, &principal, 60_000, 20, now)?;
+    quota(connection, &principal, 3_600_000, 120, now)?;
+    quota(connection, "registration-global", 60_000, 200, now)?;
+    quota(connection, "registration-global", 3_600_000, 1_200, now)
+}
+
 pub(crate) fn write_quota(connection: &Connection, actor: &Actor, now: u64) -> Result<(), Error> {
     quota(connection, &format!("write:{}", actor.id), 60_000, 30, now)?;
     quota(
@@ -574,8 +645,8 @@ pub(crate) fn counts(connection: &Connection, target: &str) -> Result<Counts, Er
 }
 
 pub(crate) fn state(connection: &Connection, target: &str) -> Result<SpotState, Error> {
-    let row = connection.query_row("SELECT revision,status,body,created_at_ms,updated_at_ms,verified_at_ms,change_sequence,duplicate_of FROM spots WHERE id=?1",[target],|row|Ok((row.get::<_,u64>(0)?,row.get::<_,String>(1)?,row.get::<_,Option<String>>(2)?,row.get::<_,u64>(3)?,row.get::<_,u64>(4)?,row.get::<_,Option<u64>>(5)?,row.get::<_,u64>(6)?,row.get::<_,Option<String>>(7)?))).optional().map_err(db_error)?.ok_or(Error::NotFound)?;
-    let spot = if row.1 == "published" {
+    let row = connection.query_row("SELECT revision,status,body,created_at_ms,updated_at_ms,verified_at_ms,change_sequence,duplicate_of FROM spots WHERE id=?1",[target],|row|Ok((row.get::<_,u64>(0)?,row.get::<_,SpotStatus>(1)?,row.get::<_,Option<String>>(2)?,row.get::<_,u64>(3)?,row.get::<_,u64>(4)?,row.get::<_,Option<u64>>(5)?,row.get::<_,u64>(6)?,row.get::<_,Option<String>>(7)?))).optional().map_err(db_error)?.ok_or(Error::NotFound)?;
+    let spot = if row.1 == SpotStatus::Published {
         let input: SpotInput = serde_json::from_str(row.2.as_deref().ok_or(Error::Unavailable)?)
             .map_err(|_| Error::Unavailable)?;
         Some(PublicSpot {
@@ -603,7 +674,28 @@ pub(crate) fn state(connection: &Connection, target: &str) -> Result<SpotState, 
 
 #[cfg(test)]
 mod tests {
-    use super::{Error, Store, hash, quota};
+    use super::{Error, Registration, Role, Store, hash, quota, registration_quota};
+
+    #[tokio::test]
+    async fn registration_has_a_global_backstop_without_storing_raw_addresses() {
+        let directory = tempfile::TempDir::new().expect("directory");
+        let store = Store::open(&directory.path().join("quota.sqlite")).expect("store");
+        store.call(|connection| {
+            for suffix in 1..=200 {
+                let transaction = connection.transaction().expect("transaction");
+                registration_quota(&transaction, std::net::Ipv4Addr::new(192, 0, 2, suffix).into(), 1_000)?;
+                transaction.commit().expect("commit");
+            }
+            let transaction = connection.transaction().expect("transaction");
+            assert_eq!(registration_quota(&transaction, std::net::Ipv4Addr::new(192, 0, 2, 201).into(), 1_000), Err(Error::Throttled));
+            drop(transaction);
+            let raw: u64 = connection.query_row("SELECT COUNT(*) FROM quotas WHERE principal LIKE '%192.0.2.%'", [], |row| row.get(0)).expect("private principals");
+            assert_eq!(raw, 0);
+            let global: u64 = connection.query_row("SELECT count FROM quotas WHERE principal='registration-global' AND period_ms=60000", [], |row| row.get(0)).expect("global budget");
+            assert_eq!(global, 200, "a rejected registration must not consume another budget");
+            Ok(())
+        }).await.expect("backstop");
+    }
 
     #[tokio::test]
     async fn quota_budgets_persist_and_reset_only_for_a_new_window() {
@@ -632,11 +724,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn authentication_rejects_unknown_persisted_roles() {
+        let directory = tempfile::TempDir::new().expect("directory");
+        let path = directory.path().join("roles.sqlite");
+        let store = Store::open(&path).expect("store");
+        let identity = store
+            .identity(Registration::Operator {
+                role: Role::Contributor,
+            })
+            .await
+            .expect("identity");
+        let connection = rusqlite::Connection::open(&path).expect("inspect database");
+        connection
+            .execute_batch("PRAGMA ignore_check_constraints=ON")
+            .expect("simulate damaged role");
+        connection
+            .execute(
+                "UPDATE contributors SET role='unknown' WHERE id=?1",
+                [&identity.id],
+            )
+            .expect("damaged role");
+        assert_eq!(
+            store
+                .authenticate(identity.token)
+                .await
+                .expect_err("unknown role rejected"),
+            Error::Unavailable
+        );
+    }
+
+    #[tokio::test]
     async fn contributor_tokens_are_hashed_in_storage_and_redacted_in_debug() {
         let directory = tempfile::TempDir::new().expect("directory");
         let path = directory.path().join("tokens.sqlite");
         let store = Store::open(&path).expect("store");
-        let identity = store.identity(false, false).await.expect("identity");
+        let identity = store
+            .identity(Registration::Operator {
+                role: Role::Contributor,
+            })
+            .await
+            .expect("identity");
         assert!(!format!("{identity:?}").contains(&identity.token));
         let connection = rusqlite::Connection::open(&path).expect("inspect durable record");
         let stored: String = connection

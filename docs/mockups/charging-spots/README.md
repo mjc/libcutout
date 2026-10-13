@@ -18,7 +18,7 @@ The capture command renders both light and dark sets and runs the existing inter
 
 - Only a valid map pin, nonblank access note and explicit Free/Paid are needed to save a new spot.
 - Every Save creates a community submission. No sharing checkbox, private-save option or sharing-review gate.
-- Name, venue category, paid conditions/price, hours, voltage and plugs are optional behind **Add details (optional)**.
+- Name, venue category, paid conditions, voltage and plugs are optional behind **Add details (optional)**.
 - The plug picker starts with the national outlet standard for the country the user is currently in. It remains editable. Country unknown/catalogue gaps stay Unknown; manual overrides survive country changes. EV connectors do not inherit domestic defaults.
 - U.S. outlet voltage still suggests editable 120 V. Skipping optional power details does not submit defaults as confirmed observations.
 - Tap an existing map pin for **✓ / ×** voting and counts directly on that pin. Details is a separate action. A repeated choice removes the vote; choosing the other switches it.
@@ -50,7 +50,7 @@ Propose **Live / History / Charging** within the existing Devices / Map / More s
 
 Map and list use the same bounded sample records. Pin-vote buttons have Vote up / Vote down accessible names, counts, selected state and 44-pixel targets. They do not imply electrical compatibility or automatically hide a disliked pin. Report a problem is separate.
 
-Optional supply groups pair voltage with connectors. Country suggestions are draft values; the prototype submits them only after the user supplies/confirms power details. Missing optional name uses a neutral location label in production, not an invented venue. All newly saved three-field records are valid across domain/storage/FFI/API layers.
+Optional supply groups pair voltage with connectors. Country suggestions are draft values; the prototype submits them only after the user chooses **Include voltage and plugs**. Changing those values or replacing their defaults requires confirmation again. Missing optional name uses a neutral location label in production, not an invented venue. All newly saved three-field records are valid across domain/storage/FFI/API layers.
 
 ## Country catalogue reference
 
@@ -75,7 +75,8 @@ Actual non-map address/coordinate editor, complete connector catalogue, optional
 Run from the repository root in the existing Devenv environment with Node, Playwright and Chrome:
 
 ```sh
+node docs/mockups/charging-spots/check-interactions.cjs
 node docs/mockups/charging-spots/capture.cjs
 ```
 
-When using a desktop-bundled Playwright, set CUTOUT_MOCKUP_PLAYWRIGHT to its package directory. The check renders the assets and exercises minimum community Save with optional fields omitted, blank-note/missing-cost/missing-pin rejection, country plug defaults/manual override, EV Unknown state, direct-pin vote set/switch/remove, filters/details, larger text and a 375-pixel layout. Zero external requests/page errors were observed. This is browser design evidence; native/backend/device acceptance remains open.
+When using a desktop-bundled Playwright, set CUTOUT_MOCKUP_PLAYWRIGHT to its package directory. The interaction check covers filter reset, selected states, keyboard focus, live search, saving after typing an access note and explicit power confirmation, including changed defaults and accessible confirmation labels. The capture check renders the assets and exercises minimum community Save with optional fields omitted, blank-note/missing-cost/missing-pin rejection, country plug defaults/manual override, EV Unknown state, direct-pin vote set/switch/remove, filters/details, larger text and a 375-pixel layout. Zero external requests/page errors were observed. This is browser design evidence; native/backend/device acceptance remains open.
