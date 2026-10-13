@@ -202,8 +202,17 @@ impl Connector {
     fn normalize(&mut self) -> Result<(), Error> {
         if let Self::Other(label) = self {
             *label = optional_text(Some(std::mem::take(label)), 80)?.ok_or(Error::Invalid)?;
+            if Self::is_known_id(label) {
+                return Err(Error::Invalid);
+            }
         }
         Ok(())
+    }
+
+    fn is_known_id(label: &str) -> bool {
+        let normalized = label.to_ascii_lowercase();
+        let value = serde::de::value::StrDeserializer::<serde::de::value::Error>::new(&normalized);
+        Self::deserialize(value).is_ok()
     }
 }
 
@@ -417,7 +426,19 @@ pub(crate) use queries::{
 
 #[cfg(test)]
 mod tests {
-    use super::{CreateRequest, OperationId};
+    use super::{Connector, CreateRequest, OperationId};
+    use crate::Error;
+
+    #[test]
+    fn custom_connector_labels_cannot_alias_catalogue_ids() {
+        for label in [" type_c ", "TYPE_C", "J1772", "unknown", "nema_5_15", " \t"] {
+            let mut connector = Connector::Other(label.into());
+            assert_eq!(connector.normalize(), Err(Error::Invalid), "{label:?}");
+        }
+        let mut connector = Connector::Other(" Socket X ".into());
+        connector.normalize().expect("custom label");
+        assert_eq!(connector, Connector::Other("Socket X".into()));
+    }
 
     #[test]
     fn validated_spot_keeps_canonical_request_bytes() {

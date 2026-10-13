@@ -3,6 +3,83 @@ use super::{Error, QuotaWindow, Registration, Role, Store, hash, quota, state};
 use crate::model::SpotStatus;
 
 #[tokio::test]
+async fn ipv6_registration_budgets_share_prefixes_and_survive_reopening() {
+    let directory = tempfile::TempDir::new().expect("directory");
+    let path = directory.path().join("ipv6-budgets.sqlite");
+    let store = Store::open(&path).expect("store");
+    store
+        .call(|connection| {
+            for host in 1..=20 {
+                let transaction = connection.transaction().expect("transaction");
+                let source = format!("2001:db8:1:2::{host:x}").parse().expect("address");
+                registration_quota(&transaction, source, 1_000)?;
+                transaction.commit().expect("commit");
+            }
+            let transaction = connection.transaction().expect("transaction");
+            assert_eq!(
+                registration_quota(
+                    &transaction,
+                    "2001:db8:1:2::ffff".parse().expect("same prefix"),
+                    1_000,
+                ),
+                Err(Error::Throttled)
+            );
+            drop(transaction);
+            let global: u32 = connection
+                .query_row(
+                    "SELECT count FROM quotas WHERE principal='registration-global' AND period_ms=60000",
+                    [],
+                    |row| row.get(0),
+                )
+                .expect("global count");
+            assert_eq!(global, 20);
+            let transaction = connection.transaction().expect("transaction");
+            registration_quota(
+                &transaction,
+                "2001:db8:1:3::1".parse().expect("another prefix"),
+                1_000,
+            )?;
+            transaction.commit().expect("commit");
+            for minute in 1..6 {
+                for host in 1..=20 {
+                    let transaction = connection.transaction().expect("transaction");
+                    let source = format!("2001:db8:1:2::{host:x}").parse().expect("address");
+                    registration_quota(&transaction, source, minute * 60_000 + 1_000)?;
+                    transaction.commit().expect("commit");
+                }
+            }
+            Ok(())
+        })
+        .await
+        .expect("prefix budgets");
+    drop(store);
+    let reopened = Store::open(&path).expect("reopen");
+    reopened
+        .call(|connection| {
+            let transaction = connection.transaction().expect("transaction");
+            assert_eq!(
+                registration_quota(
+                    &transaction,
+                    "2001:db8:1:2::beef".parse().expect("same prefix"),
+                    6 * 60_000 + 1_000
+                ),
+                Err(Error::Throttled)
+            );
+            drop(transaction);
+            let transaction = connection.transaction().expect("transaction");
+            registration_quota(
+                &transaction,
+                "2001:db8:1:3::2".parse().expect("another prefix"),
+                6 * 60_000 + 1_000,
+            )?;
+            transaction.commit().expect("commit");
+            Ok(())
+        })
+        .await
+        .expect("durable prefix budgets");
+}
+
+#[tokio::test]
 async fn moderator_credentials_are_rechecked_after_authentication() {
     let directory = tempfile::TempDir::new().expect("directory");
     let path = directory.path().join("moderators.sqlite");
@@ -182,6 +259,89 @@ async fn registration_has_a_global_backstop_without_storing_raw_addresses() {
         assert_eq!(global, 200, "a rejected registration must not consume another budget");
         Ok(())
     }).await.expect("backstop");
+}
+
+#[tokio::test]
+async fn revoking_a_contributor_only_advances_active_vote_rows_and_spots() {
+    let directory = tempfile::TempDir::new().expect("directory");
+    let path = directory.path().join("revocation.sqlite");
+    let store = Store::open(&path).expect("store");
+    let owner = store
+        .identity(Registration::Operator {
+            role: Role::Contributor,
+        })
+        .await
+        .expect("owner identity");
+    let contributor = store
+        .identity(Registration::Operator {
+            role: Role::Contributor,
+        })
+        .await
+        .expect("contributor identity");
+
+    let connection = rusqlite::Connection::open(&path).expect("database");
+    for (spot_id, sequence) in [("active-spot", 1), ("null-spot", 2)] {
+        connection
+            .execute(
+                "INSERT INTO spots (id, owner_id, revision, status, latitude_e7,
+                 longitude_e7, cost, body, created_at_ms, updated_at_ms, change_sequence)
+                 VALUES (?1, ?2, 1, 'published', 0, 0, 'free', NULL, 1, 1, ?3)",
+                rusqlite::params![spot_id, owner.id, sequence],
+            )
+            .expect("spot fixture");
+    }
+    connection
+        .execute(
+            "UPDATE counters SET value = 2 WHERE name = 'change_sequence'",
+            [],
+        )
+        .expect("change counter");
+    connection
+        .execute(
+            "INSERT INTO votes (spot_id, contributor_id, revision, value)
+             VALUES ('active-spot', ?1, 4, 'up'), ('null-spot', ?1, 7, NULL)",
+            [&contributor.id],
+        )
+        .expect("vote fixtures");
+
+    store
+        .revoke(contributor.id)
+        .await
+        .expect("revoke contributor");
+
+    let active_vote: (Option<String>, u64) = connection
+        .query_row(
+            "SELECT value, revision FROM votes WHERE spot_id = 'active-spot'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("active vote readback");
+    assert_eq!(active_vote, (None, 5));
+    let null_vote_revision: u64 = connection
+        .query_row(
+            "SELECT revision FROM votes WHERE spot_id = 'null-spot'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("null vote readback");
+    assert_eq!(null_vote_revision, 7);
+
+    let active_sequence: u64 = connection
+        .query_row(
+            "SELECT change_sequence FROM spots WHERE id = 'active-spot'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("active spot sequence");
+    let null_sequence: u64 = connection
+        .query_row(
+            "SELECT change_sequence FROM spots WHERE id = 'null-spot'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("null spot sequence");
+    assert_eq!(active_sequence, 3);
+    assert_eq!(null_sequence, 2);
 }
 
 #[tokio::test]

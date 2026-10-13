@@ -5,6 +5,12 @@
 )]
 
 //! The Axum and SQLite community charging directory.
+//!
+//! Public registration budgets group canonical IPv4 addresses and IPv6 /64
+//! prefixes. IPv4-mapped IPv6 addresses use the corresponding IPv4 budget.
+//! Only hashes of those source keys are stored; global budgets remain separate.
+//! Upgrading from full-address IPv6 keys starts fresh prefix budgets because
+//! old hashes cannot be regrouped; existing global budget counts are retained.
 
 mod http;
 mod model;

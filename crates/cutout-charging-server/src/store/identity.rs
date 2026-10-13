@@ -220,7 +220,7 @@ fn clear_contributor_votes(connection: &Connection, target: &str) -> Result<(), 
         .execute(
             "UPDATE votes SET value = NULL,
             revision = CASE WHEN revision < 9223372036854775807 THEN revision + 1 ELSE revision END
-         WHERE contributor_id = ?1",
+         WHERE contributor_id = ?1 AND value IS NOT NULL",
             [target],
         )
         .map_err(db_error)?;
@@ -250,7 +250,7 @@ pub(super) fn registration_quota(
 ) -> Result<(), Error> {
     let principal = format!(
         "registration-source:{}",
-        hash(source.to_canonical().to_string().as_bytes())
+        hash(registration_budget_source(source).to_string().as_bytes())
     );
     quota(connection, &principal, QuotaWindow::Minute, 20, now)?;
     quota(connection, &principal, QuotaWindow::Hour, 120, now)?;
@@ -268,4 +268,14 @@ pub(super) fn registration_quota(
         1_200,
         now,
     )
+}
+
+/// IPv4 uses its canonical address; IPv6 privacy addresses share one /64 budget.
+fn registration_budget_source(source: IpAddr) -> IpAddr {
+    match source.to_canonical() {
+        IpAddr::V4(address) => address.into(),
+        IpAddr::V6(address) => {
+            std::net::Ipv6Addr::from(u128::from(address) & (u128::MAX << 64)).into()
+        }
+    }
 }

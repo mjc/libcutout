@@ -30,7 +30,7 @@ impl TemporaryBackup {
         connection
             .execute("VACUUM INTO ?1", [&self.path])
             .map_err(db_error)?;
-        sync_path(Path::new(&self.path))?;
+        sync_snapshot(Path::new(&self.path))?;
         Ok(BackupSnapshot(self))
     }
 }
@@ -47,16 +47,24 @@ struct BackupSnapshot(TemporaryBackup);
 impl BackupSnapshot {
     fn publish(self, output: &Path) -> Result<(), Error> {
         fs::hard_link(&self.0.path, output).map_err(|_| Error::Unavailable)?;
-        let parent = output
-            .parent()
-            .filter(|parent| !parent.as_os_str().is_empty())
-            .unwrap_or_else(|| Path::new("."));
-        sync_path(parent)
+        #[cfg(unix)]
+        {
+            let parent = output
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+                .unwrap_or_else(|| Path::new("."));
+            fs::File::open(parent)
+                .and_then(|directory| directory.sync_all())
+                .map_err(|_| Error::Unavailable)?;
+        }
+        Ok(())
     }
 }
 
-fn sync_path(path: &Path) -> Result<(), Error> {
-    fs::File::open(path)
+fn sync_snapshot(path: &Path) -> Result<(), Error> {
+    fs::OpenOptions::new()
+        .write(true)
+        .open(path)
         .and_then(|file| file.sync_all())
         .map_err(|_| Error::Unavailable)
 }
