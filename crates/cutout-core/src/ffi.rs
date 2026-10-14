@@ -2700,6 +2700,9 @@ pub struct TelemetrySnapshotDto {
     /// Host monotonic timestamp of the delta that last supplied speed, when known.
     pub speed_observed_at_ms: Option<MonotonicMillisDto>,
 
+    /// Observation time of the retained voltage reading.
+    pub voltage_observed_at_ms: Option<MonotonicMillisDto>,
+
     /// Observation time of the retained battery-current reading.
     pub battery_current_observed_at_ms: Option<MonotonicMillisDto>,
 
@@ -2776,6 +2779,9 @@ impl From<TelemetrySnapshot> for TelemetrySnapshotDto {
             at_ms: snapshot.at_ms.map(MonotonicMillisDto::from_core),
             speed_observed_at_ms: snapshot
                 .speed_observed_at_ms
+                .map(MonotonicMillisDto::from_core),
+            voltage_observed_at_ms: snapshot
+                .voltage_observed_at_ms
                 .map(MonotonicMillisDto::from_core),
             battery_current_observed_at_ms: snapshot
                 .battery_current_observed_at_ms
@@ -3361,6 +3367,7 @@ mod tests {
             at_ms: Some(MonotonicTimestamp::new(42)),
             speed_observed_at_ms: Some(MonotonicTimestamp::new(42)),
             battery_current_observed_at_ms: None,
+            voltage_observed_at_ms: Some(MonotonicTimestamp::new(42)),
             speed: Some(Measured::reported(Speed::from_millimetres_per_second(
                 1_200,
             ))),

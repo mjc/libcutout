@@ -9452,3 +9452,83 @@ fn malformed_moving_time_source_pairs_fail_closed_on_fresh_and_migrated_reads() 
         let _ = std::fs::remove_file(path);
     }
 }
+
+#[test]
+fn battery_current_snapshot_versions_survive_storage_without_relabeling() {
+    let _guard = test_guard();
+    let path = music_test_path();
+    let database = RideDatabase::open(&path).expect("database opens");
+    let capture_id = database.begin_live_capture(b"{}".to_vec(), 0).unwrap();
+    let snapshots = [
+        (
+            1_u16,
+            r#"{"battery_current":{"value":{"value":-2000},"source":"reported"}}"#,
+        ),
+        (
+            2_u16,
+            r#"{"battery_current":{"value":{"unknown":{"milliamps":2000}},"source":"reported"}}"#,
+        ),
+        (
+            2_u16,
+            r#"{"battery_current":{"value":{"in":{"milliamps":2000}},"source":"reported"}}"#,
+        ),
+    ];
+    for (index, (version, json)) in snapshots.iter().enumerate() {
+        let at = index as u64 + 1;
+        let record = PevcapRecord::inbound_notification(
+            MonotonicTimestamp::new(at),
+            GattChannel::from_bytes([0x11; 16]),
+            GattChannel::from_bytes([0x22; 16]),
+            vec![0xff, 0xf0],
+        )
+        .with_semantic_telemetry(cutout_core::PevcapSemanticTelemetry {
+            observed_at_ms: Some(MonotonicTimestamp::new(at)),
+            provenance: cutout_core::PevcapTelemetryProvenance::LiveSession,
+            snapshot_schema_version: *version,
+            library_version: "current-direction-test".into(),
+            snapshot_json: (*json).into(),
+        });
+        let payload = record.to_jsonl_line().unwrap().into_bytes();
+        database
+            .append_live_capture_record(capture_id, record, payload)
+            .unwrap();
+    }
+    database.finish_live_capture(capture_id, 10).unwrap();
+    database.shutdown().unwrap();
+    let connection = Connection::open(&path).unwrap();
+    let mut query = connection.prepare(
+        "SELECT snapshot_schema_version, snapshot_json FROM live_capture_ble_semantic_telemetry WHERE capture_id = ?1 ORDER BY sequence"
+    ).unwrap();
+    let stored: Vec<(u16, String)> = query
+        .query_map([capture_id.to_string()], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(stored.len(), snapshots.len());
+    for ((version, json), (expected_version, expected_json)) in stored.iter().zip(snapshots) {
+        assert_eq!(*version, expected_version);
+        assert_eq!(json, expected_json);
+    }
+    drop(query);
+    drop(connection);
+    let reopened = RideDatabase::open(&path).unwrap();
+    let restored = reopened
+        .live_capture(capture_id, QueryLimit::new(10).unwrap())
+        .unwrap();
+    assert_eq!(restored.events.len(), 3);
+    for (event, (version, json)) in restored.events.iter().zip(snapshots) {
+        let decoded: serde_json::Value = serde_json::from_slice(&event.payload).unwrap();
+        assert_eq!(
+            decoded["record"]["semantic_telemetry"]["snapshot_schema_version"],
+            version
+        );
+        assert_eq!(
+            decoded["record"]["semantic_telemetry"]["snapshot_json"],
+            json
+        );
+    }
+    reopened.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}

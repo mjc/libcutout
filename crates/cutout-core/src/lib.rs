@@ -5307,12 +5307,6 @@ impl ReportedBatteryCurrent {
         Self(Current::from_amps(value))
     }
 
-    /// Creates a battery current from amps represented as a floating-point number.
-    #[must_use]
-    pub fn from_amps_f32(value: f32) -> Self {
-        Self(Current::from_amps_f32(value))
-    }
-
     /// Returns this battery current in milliamps.
     #[must_use]
     pub const fn as_milliamps(self) -> i32 {
@@ -5600,18 +5594,6 @@ impl Power {
         };
         let milliwatts = i128::from(voltage.as_millivolts()) * i128::from(signed_milliamps) / 1_000;
         Some(Self::from_milliwatts(saturating_i128_to_i64(milliwatts)))
-    }
-
-    /// Estimates electrical power from pack voltage and motor/phase current.
-    ///
-    /// Phase current and battery current are not interchangeable. Callers
-    /// must preserve that this result is an estimate based on an explicit,
-    /// protocol-specific assumption.
-    #[must_use]
-    pub fn from_voltage_phase_current_estimate(voltage: Voltage, current: PhaseCurrent) -> Self {
-        let milliwatts =
-            i128::from(voltage.as_millivolts()) * i128::from(current.as_milliamps()) / 1_000;
-        Self::from_milliwatts(saturating_i128_to_i64(milliwatts))
     }
 
     /// Returns this power in milliwatts.
@@ -7463,6 +7445,9 @@ pub struct TelemetrySnapshot {
     /// Timestamp of the delta that last supplied speed, retained across unrelated deltas.
     pub speed_observed_at_ms: Option<MonotonicTimestamp>,
 
+    /// Timestamp of the delta that last supplied voltage.
+    pub voltage_observed_at_ms: Option<MonotonicTimestamp>,
+
     /// Timestamp of the delta that last supplied battery current.
     pub battery_current_observed_at_ms: Option<MonotonicTimestamp>,
 
@@ -7544,6 +7529,7 @@ impl TelemetrySnapshot {
         }
         if delta.voltage.is_some() {
             self.voltage = delta.voltage;
+            self.voltage_observed_at_ms = Some(delta.at_ms);
         }
         if delta.battery_current.is_some() {
             self.battery_current = delta.battery_current;

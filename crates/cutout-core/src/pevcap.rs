@@ -4815,6 +4815,37 @@ mod tests {
 
     #[cfg(feature = "serde")]
     #[test]
+    fn pevcap_preserves_old_signed_and_new_directional_current_without_reinterpretation() {
+        for (version, json) in [
+            (
+                1,
+                r#"{"battery_current":{"value":{"value":-2000},"source":"reported"}}"#,
+            ),
+            (
+                2,
+                r#"{"battery_current":{"value":{"unknown":{"milliamps":2000}},"source":"reported"}}"#,
+            ),
+        ] {
+            let mut capture = sample_pevcap_capture();
+            let bytes = capture.records[1].bytes.clone();
+            capture.records[1].semantic_telemetry = Some(PevcapSemanticTelemetry {
+                observed_at_ms: Some(ms(8)),
+                provenance: PevcapTelemetryProvenance::LiveSession,
+                snapshot_schema_version: version,
+                library_version: "test-build".to_owned(),
+                snapshot_json: json.to_owned(),
+            });
+            let decoded = PevcapCapture::from_jsonl(&capture.to_jsonl().unwrap()).unwrap();
+            assert_eq!(decoded.records[1].bytes, bytes);
+            assert_eq!(
+                decoded.records[1].semantic_telemetry,
+                capture.records[1].semantic_telemetry
+            );
+        }
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
     fn pevcap_semantic_telemetry_round_trips_with_its_own_observation_time() {
         let mut capture = sample_pevcap_capture();
         capture.records[1] =

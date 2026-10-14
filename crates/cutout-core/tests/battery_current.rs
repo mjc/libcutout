@@ -130,6 +130,7 @@ fn retained_current_has_its_own_clock_and_stale_flow_is_unknown() {
     let ms = MonotonicTimestamp::new;
     let mut snapshot = TelemetrySnapshot::default();
     snapshot.apply_delta(TelemetryDelta {
+        voltage: Some(Measured::reported(Voltage::from_volts(100))),
         battery_current: Some(Measured::reported(BatteryCurrent::current_out(2_000))),
         ..TelemetryDelta::empty(ms(100))
     });
@@ -139,6 +140,7 @@ fn retained_current_has_its_own_clock_and_stale_flow_is_unknown() {
     ] {
         snapshot.apply_delta(TelemetryDelta::empty(ms(at)));
         assert_eq!(snapshot.battery_current_observed_at_ms, Some(ms(100)));
+        assert_eq!(snapshot.voltage_observed_at_ms, Some(ms(100)));
         assert_eq!(
             snapshot.battery_current.unwrap().value.power_flow_fresh(
                 RideOperatingState::Riding,

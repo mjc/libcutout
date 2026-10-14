@@ -81,7 +81,12 @@ fn material_record(record: &PevcapRecord) -> Option<PreparedMaterialRecord> {
     let mut snapshot: RawObject = serde_json::from_str(&semantic.snapshot_json).ok()?;
     let object = &mut snapshot.0;
     // Only these documented root observation clocks are excluded. Presence and null remain material.
-    for key in ["at_ms", "speed_observed_at_ms"] {
+    for key in [
+        "at_ms",
+        "speed_observed_at_ms",
+        "battery_current_observed_at_ms",
+        "voltage_observed_at_ms",
+    ] {
         if let Some(value) = object.get_mut(key) {
             normalize_observation_clock(value)?;
         }
@@ -209,6 +214,29 @@ mod tests {
     }
 
     #[test]
+    fn current_direction_changes_remain_material_at_the_same_magnitude() {
+        let mut baseline = MaterialBaseline::new(CaptureRecordingPolicy::MaterialChanges);
+        for (at, direction) in [(1, "unknown"), (2, "in"), (3, "out")] {
+            let mut record = stationary_record(at);
+            let snapshot = record.semantic_telemetry.as_mut().unwrap();
+            snapshot.snapshot_schema_version = 2;
+            snapshot.snapshot_json = format!(
+                r#"{{"battery_current_observed_at_ms":{{"milliseconds":{at}}},"battery_current":{{"value":{{"{direction}":{{"milliamps":2000}}}}}}}}"#
+            );
+            let MaterialDecision::Retain(candidate) =
+                baseline.prepare(&record, CaptureRecordAdmission::StationaryTelemetry)
+            else {
+                panic!("changed current direction was suppressed");
+            };
+            baseline.commit(candidate);
+            assert!(matches!(
+                baseline.prepare(&record, CaptureRecordAdmission::StationaryTelemetry),
+                MaterialDecision::Suppress
+            ));
+        }
+    }
+
+    #[test]
     fn invalid_semantics_and_attached_music_break_the_baseline() {
         let mut invalid = stationary_record(2);
         invalid.semantic_telemetry.as_mut().unwrap().snapshot_json = "[]".into();
@@ -245,10 +273,10 @@ mod tests {
     fn mobile_clock_wrappers_preserve_unknown_fields_and_presence() {
         let mut first = stationary_record(1);
         first.semantic_telemetry.as_mut().unwrap().snapshot_json =
-            r#"{"at_ms":{"milliseconds":1,"other":7},"speed_observed_at_ms":{"milliseconds":1},"speed":0}"#.into();
+            r#"{"at_ms":{"milliseconds":1,"other":7},"speed_observed_at_ms":{"milliseconds":1},"battery_current_observed_at_ms":{"milliseconds":1},"voltage_observed_at_ms":{"milliseconds":1},"speed":0}"#.into();
         let mut second = stationary_record(2);
         second.semantic_telemetry.as_mut().unwrap().snapshot_json =
-            r#"{"at_ms":{"milliseconds":2,"other":7},"speed_observed_at_ms":{"milliseconds":2},"speed":0}"#.into();
+            r#"{"at_ms":{"milliseconds":2,"other":7},"speed_observed_at_ms":{"milliseconds":2},"battery_current_observed_at_ms":{"milliseconds":2},"voltage_observed_at_ms":{"milliseconds":2},"speed":0}"#.into();
         let mut baseline = MaterialBaseline::new(CaptureRecordingPolicy::MaterialChanges);
         let MaterialDecision::Retain(candidate) =
             baseline.prepare(&first, CaptureRecordAdmission::StationaryTelemetry)
@@ -261,7 +289,7 @@ mod tests {
             MaterialDecision::Suppress
         ));
         second.semantic_telemetry.as_mut().unwrap().snapshot_json =
-            r#"{"at_ms":{"milliseconds":2,"other":8},"speed_observed_at_ms":{"milliseconds":2},"speed":0}"#.into();
+            r#"{"at_ms":{"milliseconds":2,"other":8},"speed_observed_at_ms":{"milliseconds":2},"battery_current_observed_at_ms":{"milliseconds":2},"voltage_observed_at_ms":{"milliseconds":2},"speed":0}"#.into();
         assert!(matches!(
             baseline.prepare(&second, CaptureRecordAdmission::StationaryTelemetry),
             MaterialDecision::Retain(Some(_))
