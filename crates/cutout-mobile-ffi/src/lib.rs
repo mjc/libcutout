@@ -6791,6 +6791,33 @@ pub struct MobileRideMapCoreSummaryDto {
     pub duration_milliseconds: u64,
     /// Moving-time coverage and total projected in the ride's logical clock domain.
     pub moving_time: MobileRideMovingTimeDto,
+    /// Elapsed ride span, including pauses, with explicit coverage evidence.
+    pub elapsed_time: MobileRideElapsedTimeDto,
+}
+
+/// Rust-projected elapsed ride time, separate from active recording duration.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileRideElapsedTimeDto {
+    /// No timing evidence supports a measured elapsed value.
+    Unavailable,
+    /// Complete monotonic evidence covers the ride span, including pauses.
+    Complete { duration_milliseconds: u64 },
+    /// Measured lower bound; at least one interval has unknown duration.
+    Partial { duration_milliseconds: u64 },
+}
+
+fn elapsed_time_summary_dto(summary: ride_maps::ElapsedTimeSummary) -> MobileRideElapsedTimeDto {
+    match summary {
+        ride_maps::ElapsedTimeSummary::Unavailable => MobileRideElapsedTimeDto::Unavailable,
+        ride_maps::ElapsedTimeSummary::Complete { duration } => {
+            MobileRideElapsedTimeDto::Complete {
+                duration_milliseconds: duration.as_u64(),
+            }
+        }
+        ride_maps::ElapsedTimeSummary::Partial { duration } => MobileRideElapsedTimeDto::Partial {
+            duration_milliseconds: duration.as_u64(),
+        },
+    }
 }
 
 /// Rust-projected moving time and the evidence coverage behind it.
@@ -6831,7 +6858,7 @@ fn moving_time_summary_dto(summary: ride_maps::MovingTimeSummary) -> MobileRideM
 /// Recording-scoped statistics for the current logical ride, never the wheel odometer.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileRideMapLiveActivityStatisticsDto {
-    /// Elapsed recording duration, evaluated in Rust's logical clock domain.
+    /// Active recording duration, evaluated in Rust's logical clock domain, excluding pauses.
     pub duration_milliseconds: u64,
     /// Canonical accumulated route distance in millimetres.
     pub distance_millimetres: u64,
@@ -7285,6 +7312,8 @@ pub struct MobileRideSummaryDto {
     pub average_speed_millimetres_per_second: Option<u64>,
     /// Durable moving-time totals and their evidence coverage.
     pub moving_time: MobileRideMovingTimeDto,
+    /// Elapsed ride span, including pauses, with explicit coverage evidence.
+    pub elapsed_time: MobileRideElapsedTimeDto,
 }
 
 /// Stable cursor for a subsequent ride-history page.
@@ -7999,6 +8028,7 @@ fn mobile_ride_record_dto(ride: &persistence::RideRecord) -> MobileRideRecordDto
                     ride.monotonic_last_event_milliseconds().unwrap_or(0),
                 ),
             )),
+            elapsed_time: elapsed_time_summary_dto(ride.elapsed_time()),
         },
         segment_count: ride.segment_count(),
         candidate_vehicle: ride.candidate_vehicle().map(str::to_owned),
@@ -9865,7 +9895,10 @@ impl RideDatabaseHandle {
             .map_err(map_ride_database_error)
     }
 
-    /// Loads the durable summary projection for a ride.
+    /// Loads the committed durable summary prefix for a ride.
+    ///
+    /// Open rides do not acquire a current clock through this read. Use `summary_at` to project
+    /// moving and elapsed time to an explicit logical monotonic instant.
     ///
     /// # Errors
     ///
@@ -9890,13 +9923,14 @@ impl RideDatabaseHandle {
                     record.monotonic_last_event_milliseconds().unwrap_or(0),
                 ),
             )),
+            elapsed_time: elapsed_time_summary_dto(record.elapsed_time()),
         })
     }
 
     /// Projects a stored ride summary to an explicit logical monotonic instant.
     ///
-    /// This read-only projection lets live and durable views compare the same moving-time
-    /// interval without changing the ride or advancing its committed checkpoint.
+    /// This read-only projection lets live and durable views compare moving and elapsed time
+    /// at the same instant without changing the ride or advancing its committed checkpoint.
     ///
     /// # Errors
     ///
@@ -9919,6 +9953,9 @@ impl RideDatabaseHandle {
             distance_millimetres: record.summary().distance_millimetres(),
             average_speed_millimetres_per_second: record.average_speed_millimetres_per_second(),
             moving_time: moving_time_summary_dto(record.moving_time_summary_at(
+                ride_maps::MonotonicMilliseconds::new(logical_at_milliseconds),
+            )),
+            elapsed_time: elapsed_time_summary_dto(record.elapsed_time_summary_at(
                 ride_maps::MonotonicMilliseconds::new(logical_at_milliseconds),
             )),
         })
@@ -11678,6 +11715,15 @@ impl MobileRideMapCoreInner {
             })
     }
 
+    fn elapsed_time_at(&self, as_of: u64) -> MobileRideElapsedTimeDto {
+        self.moving_time_checkpoint
+            .map_or(MobileRideElapsedTimeDto::Unavailable, |checkpoint| {
+                elapsed_time_summary_dto(
+                    checkpoint.elapsed_time_at(ride_maps::MonotonicMilliseconds::new(as_of)),
+                )
+            })
+    }
+
     fn poll_location_write_outcomes(
         &mut self,
         at_milliseconds: u64,
@@ -12583,6 +12629,7 @@ impl MobileRideMapCoreInner {
             distance_meters: millimetres_to_meters(summary.distance_millimetres()),
             duration_milliseconds: self.recorder.duration_milliseconds().as_u64(),
             moving_time: self.moving_time_at(at),
+            elapsed_time: self.elapsed_time_at(at),
         }
     }
 
@@ -12693,6 +12740,7 @@ impl MobileRideMapCoreInner {
             .duration_milliseconds_at(ride_maps::MonotonicMilliseconds::new(at_milliseconds))
             .as_u64();
         snapshot.summary.moving_time = self.moving_time_at(at_milliseconds);
+        snapshot.summary.elapsed_time = self.elapsed_time_at(at_milliseconds);
         if let Some(statistics) = &mut snapshot.live_activity_statistics {
             statistics.duration_milliseconds = snapshot.summary.duration_milliseconds;
         }
@@ -28450,6 +28498,80 @@ mod tests {
     }
 
     #[test]
+    fn elapsed_time_live_and_history_include_pauses_but_recording_duration_does_not() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path =
+            std::env::temp_dir().join(format!("cutout-mobile-elapsed-{}.sqlite3", Uuid::new_v4()));
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+        let state = restored_database_core(database.clone());
+        let started = state.start_gps_only(1_000).expect("ride starts");
+        let id = test_mobile_ride_id(&started.ride_id);
+        assert_eq!(
+            started.summary.elapsed_time,
+            MobileRideElapsedTimeDto::Complete {
+                duration_milliseconds: 0
+            }
+        );
+        state.pause(61_000).expect("ride pauses");
+        let paused = state
+            .current_snapshot(121_000)
+            .expect("paused ride projects");
+        assert_eq!(paused.summary.duration_milliseconds, 60_000);
+        assert_eq!(
+            paused.summary.elapsed_time,
+            MobileRideElapsedTimeDto::Complete {
+                duration_milliseconds: 120_000
+            }
+        );
+        assert_eq!(
+            database
+                .summary_at(id.clone(), 121_000)
+                .unwrap()
+                .elapsed_time,
+            paused.summary.elapsed_time
+        );
+        state.resume(181_000).expect("ride resumes");
+        let stopped = state.stop(241_000).expect("ride stops");
+        assert_eq!(stopped.summary.duration_milliseconds, 120_000);
+        let expected = MobileRideElapsedTimeDto::Complete {
+            duration_milliseconds: 240_000,
+        };
+        assert_eq!(stopped.summary.elapsed_time, expected);
+        assert_eq!(
+            state
+                .current_snapshot(1_000_000)
+                .unwrap()
+                .summary
+                .elapsed_time,
+            expected
+        );
+        let saved = state.save().expect("ride saves");
+        assert_eq!(saved.summary.elapsed_time, expected);
+        assert_eq!(
+            database
+                .summary_at(id.clone(), 1_000_000)
+                .unwrap()
+                .elapsed_time,
+            expected
+        );
+        assert_eq!(database.summary(id.clone()).unwrap().elapsed_time, expected);
+        assert_eq!(
+            database
+                .find_ride(id)
+                .unwrap()
+                .unwrap()
+                .summary
+                .elapsed_time,
+            expected
+        );
+        database.shutdown().expect("database shuts down");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
     fn pause_closes_committed_moving_time_before_pending_location_result_is_published() {
         let _guard = RIDE_DATABASE_TEST_LOCK
             .lock()
@@ -28848,6 +28970,18 @@ mod tests {
             "settling an older GPS result cannot replace the newer wheel checkpoint"
         );
 
+        assert_eq!(
+            after_wheel.summary.elapsed_time,
+            MobileRideElapsedTimeDto::Complete {
+                duration_milliseconds: 1_003
+            }
+        );
+        assert_eq!(
+            state.current_snapshot(2_003).unwrap().summary.elapsed_time,
+            after_wheel.summary.elapsed_time,
+            "older queued outcomes cannot replace the elapsed checkpoint either"
+        );
+
         database.shutdown().expect("database shuts down");
         let _ = fs::remove_file(path);
     }
@@ -28990,6 +29124,20 @@ mod tests {
                 .expect("committed moving total restores"),
             before_counts,
             "restart must retain committed totals without bridging old source freshness"
+        );
+
+        assert_eq!(
+            before_restore.summary.elapsed_time,
+            MobileRideElapsedTimeDto::Complete {
+                duration_milliseconds: 1_001
+            }
+        );
+        assert_eq!(
+            after_restore.summary.elapsed_time,
+            MobileRideElapsedTimeDto::Partial {
+                duration_milliseconds: 1_001
+            },
+            "a restart preserves the elapsed prefix without claiming a measured gap"
         );
 
         database.shutdown().expect("database shuts down");
