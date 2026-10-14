@@ -1191,11 +1191,62 @@ measured_reading_dto!(
     Voltage::as_millivolts,
     "UniFFI-ready voltage reading with provenance."
 );
+/// Physical pack current for language boundaries. Magnitudes are unsigned;
+/// zero-valued directed inputs normalize to the distinct zero state on admission.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BatteryCurrentDto {
+    /// Measured zero current.
+    Zero,
+    /// Current entering the battery, in milliamps.
+    In {
+        /// Nonnegative current magnitude.
+        milliamps: u32,
+    },
+    /// Current leaving the battery, in milliamps.
+    Out {
+        /// Nonnegative current magnitude.
+        milliamps: u32,
+    },
+    /// Known magnitude with unestablished physical direction.
+    Unknown {
+        /// Nonnegative current magnitude.
+        milliamps: u32,
+    },
+}
+
+impl From<BatteryCurrent> for BatteryCurrentDto {
+    fn from(value: BatteryCurrent) -> Self {
+        match value {
+            BatteryCurrent::Zero => Self::Zero,
+            BatteryCurrent::In(magnitude) => Self::In {
+                milliamps: magnitude.as_milliamps(),
+            },
+            BatteryCurrent::Out(magnitude) => Self::Out {
+                milliamps: magnitude.as_milliamps(),
+            },
+            BatteryCurrent::Unknown(magnitude) => Self::Unknown {
+                milliamps: magnitude.as_milliamps(),
+            },
+        }
+    }
+}
+
+impl From<BatteryCurrentDto> for BatteryCurrent {
+    fn from(value: BatteryCurrentDto) -> Self {
+        match value {
+            BatteryCurrentDto::Zero => Self::Zero,
+            BatteryCurrentDto::In { milliamps } => Self::current_in(milliamps),
+            BatteryCurrentDto::Out { milliamps } => Self::current_out(milliamps),
+            BatteryCurrentDto::Unknown { milliamps } => Self::unknown(milliamps),
+        }
+    }
+}
+
 measured_reading_dto!(
     BatteryCurrentReadingDto,
     BatteryCurrent,
-    i32,
-    BatteryCurrent::as_milliamps,
+    BatteryCurrentDto,
+    BatteryCurrentDto::from,
     "UniFFI-ready battery current reading with provenance."
 );
 measured_reading_dto!(
@@ -1292,7 +1343,6 @@ macro_rules! measured_reading_from_i32 {
 
 measured_reading_from_i32!(SpeedReadingDto);
 measured_reading_from_i32!(VoltageReadingDto);
-measured_reading_from_i32!(BatteryCurrentReadingDto);
 measured_reading_from_i32!(PhaseCurrentReadingDto);
 measured_reading_from_i32!(TemperatureReadingDto);
 measured_reading_from_i32!(AngleReadingDto);
@@ -1340,7 +1390,7 @@ impl BatteryCurrentReadingDto {
     #[must_use]
     pub fn from_bms_pack_current(current: BatteryCurrent, currents: BmsPackCurrents) -> Self {
         Self {
-            value: current.as_milliamps(),
+            value: current.into(),
             source: currents.source.into(),
             quality: currents.quality.into(),
             verification: currents.verification.into(),
@@ -2650,6 +2700,9 @@ pub struct TelemetrySnapshotDto {
     /// Host monotonic timestamp of the delta that last supplied speed, when known.
     pub speed_observed_at_ms: Option<MonotonicMillisDto>,
 
+    /// Observation time of the retained battery-current reading.
+    pub battery_current_observed_at_ms: Option<MonotonicMillisDto>,
+
     /// Reported or calculated speed in millimeters per second.
     pub speed: Option<SpeedReadingDto>,
 
@@ -2723,6 +2776,9 @@ impl From<TelemetrySnapshot> for TelemetrySnapshotDto {
             at_ms: snapshot.at_ms.map(MonotonicMillisDto::from_core),
             speed_observed_at_ms: snapshot
                 .speed_observed_at_ms
+                .map(MonotonicMillisDto::from_core),
+            battery_current_observed_at_ms: snapshot
+                .battery_current_observed_at_ms
                 .map(MonotonicMillisDto::from_core),
             speed: snapshot.speed.map(Into::into),
             voltage: snapshot.voltage.map(Into::into),
@@ -2970,8 +3026,8 @@ mod tests {
                 },
             )
             .with_bms_pack_currents(BmsPackCurrents::reported(
-                BatteryCurrent::from_milliamps(-1_230),
-                BatteryCurrent::from_milliamps(450),
+                BatteryCurrent::current_in(1_230),
+                BatteryCurrent::current_out(450),
             )),
         ));
 
@@ -2996,14 +3052,14 @@ mod tests {
         assert_eq!(battery.current, None);
         assert_eq!(
             battery.bms_pack_current_0.expect("first BMS current").value,
-            -1_230
+            BatteryCurrentDto::In { milliamps: 1_230 }
         );
         assert_eq!(
             battery
                 .bms_pack_current_1
                 .expect("second BMS current")
                 .value,
-            450
+            BatteryCurrentDto::Out { milliamps: 450 }
         );
         assert_eq!(battery.level_reported.expect("level").value, 72);
         assert_eq!(battery.level_estimated, None);
@@ -3304,6 +3360,7 @@ mod tests {
         let snapshot = TelemetrySnapshot {
             at_ms: Some(MonotonicTimestamp::new(42)),
             speed_observed_at_ms: Some(MonotonicTimestamp::new(42)),
+            battery_current_observed_at_ms: None,
             speed: Some(Measured::reported(Speed::from_millimetres_per_second(
                 1_200,
             ))),

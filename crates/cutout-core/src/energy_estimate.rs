@@ -1,14 +1,15 @@
 //! Conservative, allocation-free charging time estimates.
 
 use crate::{
-    BatteryCurrent, BatteryLevel, Capacity, ChargeMode, Duration, Measured, MonotonicTimestamp,
-    Temperature, ValueQuality, ValueSource, VerificationStatus, Voltage,
+    BatteryCurrent, BatteryCurrentDirection, BatteryLevel, Capacity, ChargeMode, CurrentMagnitude,
+    Duration, Measured, MonotonicTimestamp, Temperature, ValueQuality, ValueSource,
+    VerificationStatus, Voltage,
 };
 use thiserror::Error;
 
 const MIN_SAMPLES: u16 = 3;
 const MIN_OBSERVATION_MILLISECONDS: u64 = 30_000;
-const MIN_CHARGE_CURRENT_MILLIAMPS: i64 = 100;
+const MIN_CHARGE_CURRENT_MILLIAMPS: u32 = 100;
 const MIN_SAG_CURRENT_STEP_MILLIAMPS: u64 = 500;
 const MIN_SAG_VOLTAGE_STEP_MILLIVOLTS: u64 = 50;
 const MAX_SAG_LOAD_STEP_MILLISECONDS: u64 = 5_000;
@@ -378,7 +379,6 @@ pub struct VoltageSagEstimator {
     resistance_q8: u64,
     observations: u16,
     all_hardware_verified: bool,
-    loaded_current_negative: Option<bool>,
 }
 
 impl VoltageSagEstimator {
@@ -390,7 +390,6 @@ impl VoltageSagEstimator {
             resistance_q8: 0,
             observations: 0,
             all_hardware_verified: false,
-            loaded_current_negative: None,
         }
     }
 
@@ -402,7 +401,6 @@ impl VoltageSagEstimator {
     /// Clears only the transient observation pair, preserving learned resistance.
     pub fn reset_observations(&mut self) {
         self.last = None;
-        self.loaded_current_negative = None;
     }
 
     /// Returns the durable learned resistance model, when available.
@@ -440,7 +438,12 @@ impl VoltageSagEstimator {
     /// Learns from consecutive load steps and projects sag at the latest current.
     #[must_use]
     pub fn update(&mut self, input: VoltageSagInput) -> Option<VoltageSagEstimate> {
+        let current_is_load = match input.battery_current.value.direction() {
+            BatteryCurrentDirection::Out | BatteryCurrentDirection::Zero => true,
+            BatteryCurrentDirection::In | BatteryCurrentDirection::Unknown => false,
+        };
         if input.flow != ChargeFlow::Discharging
+            || !current_is_load
             || !input.voltage.verification.is_trusted()
             || !input.battery_current.verification.is_trusted()
             || input.voltage.quality == ValueQuality::Inferred
@@ -455,7 +458,7 @@ impl VoltageSagEstimator {
             voltage: input.voltage,
             battery_current: input.battery_current,
         };
-        let current = u64::from(sample.battery_current.value.as_milliamps().unsigned_abs());
+        let current = u64::from(sample.battery_current.value.magnitude_milliamps());
         let Some(previous) = self.last else {
             self.seed(sample);
             return (self.observations > 0 && current >= MIN_SAG_CURRENT_STEP_MILLIAMPS)
@@ -476,18 +479,7 @@ impl VoltageSagEstimator {
             return None;
         }
 
-        let previous_current =
-            u64::from(previous.battery_current.value.as_milliamps().unsigned_abs());
-        let current_polarity = (current >= MIN_SAG_CURRENT_STEP_MILLIAMPS)
-            .then_some(sample.battery_current.value.as_milliamps().is_negative());
-        if current_polarity
-            .zip(self.loaded_current_negative)
-            .is_some_and(|(current, previous)| current != previous)
-        {
-            self.reset_observations();
-            self.seed(sample);
-            return None;
-        }
+        let previous_current = u64::from(previous.battery_current.value.magnitude_milliamps());
 
         let current_delta = i128::from(current).saturating_sub(i128::from(previous_current));
         let voltage_delta = i128::from(sample.voltage.value.as_millivolts())
@@ -509,9 +501,6 @@ impl VoltageSagEstimator {
         }
 
         self.last = Some(sample);
-        if let Some(polarity) = current_polarity {
-            self.loaded_current_negative = Some(polarity);
-        }
         if self.observations == 0 || current < MIN_SAG_CURRENT_STEP_MILLIAMPS {
             return None;
         }
@@ -586,10 +575,7 @@ impl VoltageSagEstimator {
     }
 
     fn seed(&mut self, sample: VoltageSagSample) {
-        let current = u64::from(sample.battery_current.value.as_milliamps().unsigned_abs());
         self.last = Some(sample);
-        self.loaded_current_negative = (current >= MIN_SAG_CURRENT_STEP_MILLIAMPS)
-            .then_some(sample.battery_current.value.as_milliamps().is_negative());
     }
 }
 
@@ -608,7 +594,7 @@ pub struct ChargeEstimateInput {
     /// Timestamp at which the measured values were observed.
     pub observed_at: MonotonicTimestamp,
 
-    /// Signed protocol battery current.
+    /// Protocol battery current with its interpreted direction.
     pub battery_current: Option<Measured<BatteryCurrent>>,
 
     /// Explicit protocol charge state.
@@ -641,7 +627,7 @@ pub enum ChargeEstimateUnavailableReason {
     NotCharging,
     /// No battery current was provided.
     CurrentMissing,
-    /// Current direction or charge semantics are not verified.
+    /// Current evidence is not trusted for charge estimation.
     CurrentDirectionUnverified,
     /// Current is zero or below the useful threshold.
     CurrentTooSmall,
@@ -699,11 +685,11 @@ pub enum ChargeEstimateError {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CurrentRateSummary {
     /// EWMA charging current.
-    pub mean: BatteryCurrent,
+    pub mean: CurrentMagnitude,
     /// Lowest admitted charging current magnitude.
-    pub minimum: BatteryCurrent,
+    pub minimum: CurrentMagnitude,
     /// Highest admitted charging current magnitude.
-    pub maximum: BatteryCurrent,
+    pub maximum: CurrentMagnitude,
     /// Range divided by mean, in permille.
     pub variability_permille: u16,
 }
@@ -849,9 +835,9 @@ impl CurrentRateWindow {
             .unwrap_or(i64::MAX)
             .clamp(0, i64::from(u16::MAX));
         Some(CurrentRateSummary {
-            mean: BatteryCurrent::from_milliamps(i32::try_from(mean).ok()?),
-            minimum: BatteryCurrent::from_milliamps(i32::try_from(self.minimum).ok()?),
-            maximum: BatteryCurrent::from_milliamps(i32::try_from(self.maximum).ok()?),
+            mean: CurrentMagnitude::new(u32::try_from(mean).ok()?)?,
+            minimum: CurrentMagnitude::new(u32::try_from(self.minimum).ok()?)?,
+            maximum: CurrentMagnitude::new(u32::try_from(self.maximum).ok()?)?,
             variability_permille: u16::try_from(variability).ok()?,
         })
     }
@@ -876,7 +862,7 @@ pub struct ChargeEstimator {
 
 #[derive(Clone, Copy)]
 struct ValidatedChargeSample {
-    current: i64,
+    current: u32,
     battery_current: Measured<BatteryCurrent>,
     level_confidence: EstimateConfidence,
 }
@@ -935,7 +921,8 @@ impl ChargeEstimator {
             return state;
         }
 
-        self.window.observe(input.observed_at, sample.current);
+        self.window
+            .observe(input.observed_at, i64::from(sample.current));
         self.last_current_source = Some(sample.battery_current.source);
         self.last_current_verification = Some(sample.battery_current.verification);
         self.last_charge_mode_source = Some(input.charge_mode.source);
@@ -973,28 +960,7 @@ impl ChargeEstimator {
         &mut self,
         input: ChargeEstimateInput,
     ) -> Result<ValidatedChargeSample, ChargeEstimateState> {
-        let inferred_charging = input.charge_mode.value == ChargeMode::Charging
-            && input.charge_mode.source == ValueSource::Estimated
-            && input.charge_mode.quality == ValueQuality::Inferred
-            && input.charge_mode.verification == VerificationStatus::Inferred;
-        if !(inferred_charging
-            || input.charge_mode.verification.is_trusted() && input.charge_mode.value.is_active())
-        {
-            self.reset_with_reason(ChargeEstimateResetReason::ChargingStopped);
-            return Err(unavailable(ChargeEstimateUnavailableReason::NotCharging));
-        }
-        // Explicit reported charging or bounded inferred charging establishes the
-        // mode. Inference remains low confidence. Current magnitude supplies the
-        // rate; explicit contradictory flow still invalidates the estimate.
-        match input.flow.value {
-            ChargeFlow::Charging | ChargeFlow::Unknown | ChargeFlow::Zero => {}
-            ChargeFlow::Discharging | ChargeFlow::Regeneration => {
-                self.reset_with_reason(ChargeEstimateResetReason::ChargingStopped);
-                return Err(unavailable(
-                    ChargeEstimateUnavailableReason::ContradictoryInputs,
-                ));
-            }
-        }
+        let inferred_charging = self.validate_charging_evidence(input)?;
         if !input.usable_capacity.verification.is_trusted()
             || input.usable_capacity.as_milliamp_hours() == 0
         {
@@ -1009,21 +975,13 @@ impl ChargeEstimator {
             level_confidence
         };
         validate_battery_temperature(input.battery_temperature)?;
-        if input
-            .battery_current
-            .is_some_and(|reading| !reading.verification.is_trusted())
-        {
-            return Err(unavailable(
-                ChargeEstimateUnavailableReason::CurrentDirectionUnverified,
-            ));
-        }
         let level = input
             .battery_level
             .level()
             .map_or(0, BatteryLevel::as_percent);
         let magnitude = input
             .battery_current
-            .map(|reading| reading.value.as_milliamps().unsigned_abs());
+            .map(|reading| reading.value.magnitude_milliamps());
         if inferred_charging && (level >= 99 || (level >= 95 && magnitude == Some(0))) {
             self.window.reset();
             self.progress_start = None;
@@ -1050,8 +1008,7 @@ impl ChargeEstimator {
         let Some(battery_current) = input.battery_current else {
             return Err(self.progress_state(input));
         };
-        let current = i64::from(battery_current.value.as_milliamps()).unsigned_abs();
-        let current = i64::try_from(current).unwrap_or(i64::MAX);
+        let current = battery_current.value.magnitude_milliamps();
         if current == 0 {
             return Err(self.progress_state(input));
         }
@@ -1069,6 +1026,49 @@ impl ChargeEstimator {
             battery_current,
             level_confidence,
         })
+    }
+
+    fn validate_charging_evidence(
+        &mut self,
+        input: ChargeEstimateInput,
+    ) -> Result<bool, ChargeEstimateState> {
+        let inferred_charging = input.charge_mode.value == ChargeMode::Charging
+            && input.charge_mode.source == ValueSource::Estimated
+            && input.charge_mode.quality == ValueQuality::Inferred
+            && input.charge_mode.verification == VerificationStatus::Inferred;
+        if !(inferred_charging
+            || input.charge_mode.verification.is_trusted() && input.charge_mode.value.is_active())
+        {
+            self.reset_with_reason(ChargeEstimateResetReason::ChargingStopped);
+            return Err(unavailable(ChargeEstimateUnavailableReason::NotCharging));
+        }
+        match input.flow.value {
+            ChargeFlow::Charging | ChargeFlow::Unknown | ChargeFlow::Zero => {}
+            ChargeFlow::Discharging | ChargeFlow::Regeneration => {
+                self.reset_with_reason(ChargeEstimateResetReason::ChargingStopped);
+                return Err(unavailable(
+                    ChargeEstimateUnavailableReason::ContradictoryInputs,
+                ));
+            }
+        }
+        if input
+            .battery_current
+            .is_some_and(|reading| !reading.verification.is_trusted())
+        {
+            return Err(unavailable(
+                ChargeEstimateUnavailableReason::CurrentDirectionUnverified,
+            ));
+        }
+        if input
+            .battery_current
+            .is_some_and(|reading| reading.value.direction() == BatteryCurrentDirection::Out)
+        {
+            self.reset_with_reason(ChargeEstimateResetReason::ChargingStopped);
+            return Err(unavailable(
+                ChargeEstimateUnavailableReason::ContradictoryInputs,
+            ));
+        }
+        Ok(inferred_charging)
     }
 
     fn prepare_sample(
@@ -1211,7 +1211,12 @@ impl ChargeEstimator {
                 observed_for,
             };
         }
-        let rate = BatteryCurrent::from_milliamps(rate);
+        let Ok(rate) = u32::try_from(rate) else {
+            return ChargeEstimateState::Failed(ChargeEstimateError::ArithmeticOverflow);
+        };
+        let Some(rate) = CurrentMagnitude::new(rate) else {
+            return ChargeEstimateState::Failed(ChargeEstimateError::ArithmeticOverflow);
+        };
         let summary = CurrentRateSummary {
             mean: rate,
             minimum: rate,
@@ -1376,9 +1381,9 @@ fn calculate_estimate(
 
 fn duration_at_current(
     remaining_milliamp_hours: u128,
-    current: BatteryCurrent,
+    current: CurrentMagnitude,
 ) -> Result<u128, ChargeEstimateError> {
-    let current_milliamps = u128::from(current.as_milliamps().unsigned_abs());
+    let current_milliamps = u128::from(current.as_milliamps());
     remaining_milliamp_hours
         .checked_mul(MILLISECONDS_PER_MILLIAMP_HOUR)
         .and_then(|value| value.checked_add(current_milliamps.saturating_sub(1)))
@@ -1401,6 +1406,23 @@ fn scaled_duration(value: u128, factor_permille: u64) -> Result<Duration, Charge
 mod tests {
     use super::*;
     use proptest::prelude::*;
+    use std::cmp::Ordering;
+
+    fn test_current(milliamps: i32) -> BatteryCurrent {
+        let magnitude = milliamps.unsigned_abs();
+        match milliamps.cmp(&0) {
+            Ordering::Less => BatteryCurrent::current_in(magnitude),
+            Ordering::Equal => BatteryCurrent::current_in(0),
+            Ordering::Greater => BatteryCurrent::current_out(magnitude),
+        }
+    }
+
+    fn current_magnitude(milliamps: u32) -> CurrentMagnitude {
+        match CurrentMagnitude::new(milliamps) {
+            Some(magnitude) => magnitude,
+            None => panic!("expected nonzero test current"),
+        }
+    }
 
     fn input(at: u64, current: i32, level: u8) -> ChargeEstimateInput {
         ChargeEstimateInput {
@@ -1408,7 +1430,9 @@ mod tests {
             profile: ChargeProfileIdentity::new(1),
             at: MonotonicTimestamp::new(at),
             observed_at: MonotonicTimestamp::new(at),
-            battery_current: Some(Measured::reported(BatteryCurrent::from_milliamps(current))),
+            battery_current: Some(Measured::reported(BatteryCurrent::current_in(
+                current.unsigned_abs(),
+            ))),
             charge_mode: Measured::reported(ChargeMode::Charging),
             flow: Measured::reported(ChargeFlow::Charging),
             battery_level: BatteryLevelBasis::reported(Measured::reported(
@@ -1526,7 +1550,7 @@ mod tests {
     #[test]
     fn completion_requires_active_charging_and_trusted_current() {
         let mut untrusted = input(0, 0, 100);
-        untrusted.battery_current = Some(Measured::estimated(BatteryCurrent::from_milliamps(0)));
+        untrusted.battery_current = Some(Measured::estimated(test_current(0)));
         assert_eq!(
             ChargeEstimator::new().update(untrusted),
             unavailable(ChargeEstimateUnavailableReason::CurrentDirectionUnverified)
@@ -1605,8 +1629,7 @@ mod tests {
         for (at, current) in [(0, -2_000), (15_000, -2_100), (30_000, -2_000)] {
             sample.at = MonotonicTimestamp::new(at);
             sample.observed_at = MonotonicTimestamp::new(at);
-            sample.battery_current =
-                Some(Measured::reported(BatteryCurrent::from_milliamps(current)));
+            sample.battery_current = Some(Measured::reported(test_current(current)));
             variable = match estimator.update(sample) {
                 ChargeEstimateState::Available(estimate) => Some(estimate),
                 ChargeEstimateState::CollectingSamples { .. } => variable,
@@ -1642,9 +1665,9 @@ mod tests {
         let estimate = calculate_estimate(
             input(30_000, -1_000, 50),
             CurrentRateSummary {
-                mean: BatteryCurrent::from_milliamps(1_000),
-                minimum: BatteryCurrent::from_milliamps(800),
-                maximum: BatteryCurrent::from_milliamps(1_000),
+                mean: current_magnitude(1_000),
+                minimum: current_magnitude(800),
+                maximum: current_magnitude(1_000),
                 variability_permille: 200,
             },
             EstimateConfidence::High,
@@ -1679,6 +1702,7 @@ mod tests {
     fn inferred_charging_requires_exact_provenance_and_trusted_current() {
         let mut estimator = ChargeEstimator::new();
         let mut sample = input(0, -2_000, 50);
+        sample.battery_current = Some(Measured::reported(BatteryCurrent::unknown(2_000)));
         sample.charge_mode = Measured::estimated(ChargeMode::Charging);
         assert_eq!(
             estimator.update(sample),
@@ -1723,8 +1747,7 @@ mod tests {
 
         let mut untrusted_current = input(3_000, -2_000, 50);
         untrusted_current.charge_mode = Measured::estimated(ChargeMode::Charging);
-        untrusted_current.battery_current =
-            Some(Measured::estimated(BatteryCurrent::from_milliamps(-2_000)));
+        untrusted_current.battery_current = Some(Measured::estimated(test_current(-2_000)));
         assert_eq!(
             ChargeEstimator::new().update(untrusted_current),
             unavailable(ChargeEstimateUnavailableReason::CurrentDirectionUnverified)
@@ -1776,6 +1799,7 @@ mod tests {
         ));
 
         let mut second = input(15_000, 5_000, 50);
+        second.battery_current = Some(Measured::reported(BatteryCurrent::unknown(5_000)));
         second.flow = Measured::estimated(ChargeFlow::Unknown);
         assert!(matches!(
             estimator.update(second),
@@ -1788,6 +1812,77 @@ mod tests {
             panic!("explicit charging mode and measured current magnitude should estimate time");
         };
         assert_eq!(estimate.expected.as_minutes(), 60);
+    }
+
+    #[test]
+    fn unknown_current_direction_needs_an_admitted_charge_mode() {
+        let mut sample = input(0, 2_000, 50);
+        sample.battery_current = Some(Measured::reported(BatteryCurrent::unknown(2_000)));
+        sample.charge_mode = Measured::reported(ChargeMode::NotCharging);
+        assert_eq!(
+            ChargeEstimator::new().update(sample),
+            unavailable(ChargeEstimateUnavailableReason::NotCharging)
+        );
+
+        sample.charge_mode = Measured::reported(ChargeMode::Charging);
+        let mut estimator = ChargeEstimator::new();
+        for at in [0, 15_000] {
+            sample.at = MonotonicTimestamp::new(at);
+            sample.observed_at = sample.at;
+            assert!(matches!(
+                estimator.update(sample),
+                ChargeEstimateState::CollectingSamples { .. }
+            ));
+        }
+        sample.at = MonotonicTimestamp::new(30_000);
+        sample.observed_at = sample.at;
+        let ChargeEstimateState::Available(estimate) = estimator.update(sample) else {
+            panic!("explicit charge mode may use known current magnitude");
+        };
+        assert_eq!(estimate.expected.as_minutes(), 150);
+    }
+
+    #[test]
+    fn outward_current_contradicts_explicit_or_inferred_charging() {
+        for inferred in [false, true] {
+            let mut sample = input(0, 2_000, 100);
+            sample.battery_current = Some(Measured::reported(BatteryCurrent::current_out(2_000)));
+            if inferred {
+                sample.charge_mode = Measured::estimated(ChargeMode::Charging);
+            }
+            assert_eq!(
+                ChargeEstimator::new().update(sample),
+                unavailable(ChargeEstimateUnavailableReason::ContradictoryInputs)
+            );
+        }
+    }
+
+    #[test]
+    fn sag_requires_discharging_flow_and_outward_current() {
+        let mut estimator = VoltageSagEstimator::new();
+        assert!(estimator.restore_model(VoltageSagModel::new(
+            EffectiveResistance::from_milliohms(100),
+            1,
+            true,
+        )));
+
+        for (flow, current) in [
+            (ChargeFlow::Discharging, BatteryCurrent::current_in(10_000)),
+            (ChargeFlow::Charging, BatteryCurrent::current_out(10_000)),
+            (ChargeFlow::Discharging, BatteryCurrent::unknown(10_000)),
+        ] {
+            assert_eq!(
+                estimator.update(VoltageSagInput {
+                    at: MonotonicTimestamp::new(1_000),
+                    flow,
+                    voltage: Measured::reported(Voltage::from_millivolts(99_000)),
+                    battery_current: Measured::reported(current),
+                    freshness: TelemetryFreshness::new(Duration::from_seconds(30)),
+                }),
+                None
+            );
+            assert_eq!(estimator.model().unwrap().observations, 1);
+        }
     }
 
     #[test]
@@ -1808,16 +1903,17 @@ mod tests {
     }
 
     #[test]
-    fn current_sign_change_does_not_reset_an_explicit_charge_magnitude_estimate() {
+    fn current_magnitude_change_does_not_reset_an_explicit_charge_estimate() {
         let mut estimator = ChargeEstimator::new();
         let _ = estimator.update(input(0, -2_000, 50));
         let _ = estimator.update(input(15_000, -2_000, 50));
 
-        let ChargeEstimateState::Available(estimate) = estimator.update(input(30_000, 2_000, 50))
+        let ChargeEstimateState::Available(estimate) = estimator.update(input(30_000, -2_500, 50))
         else {
             panic!("explicit charging mode should estimate from current magnitude");
         };
-        assert_eq!(estimate.expected.as_minutes(), 150);
+        assert_eq!(estimate.current_rate.mean.as_milliamps(), 2_125);
+        assert_eq!(estimate.expected.as_minutes(), 141);
         assert_eq!(estimator.last_reset_reason(), None);
     }
 
@@ -1852,7 +1948,7 @@ mod tests {
                 at: MonotonicTimestamp::new(0),
                 flow: ChargeFlow::Discharging,
                 voltage: Measured::reported(Voltage::from_millivolts(100_000)),
-                battery_current: Measured::reported(BatteryCurrent::from_milliamps(0)),
+                battery_current: Measured::reported(test_current(0)),
                 freshness: TelemetryFreshness::new(Duration::from_seconds(30)),
             }),
             None
@@ -1862,12 +1958,12 @@ mod tests {
                 at: MonotonicTimestamp::new(1_000),
                 flow: ChargeFlow::Discharging,
                 voltage: Measured::reported(Voltage::from_millivolts(99_000)),
-                battery_current: Measured::reported(BatteryCurrent::from_milliamps(10_000)),
+                battery_current: Measured::reported(test_current(10_000)),
                 freshness: TelemetryFreshness::new(Duration::from_seconds(30)),
             })
             .expect("an observed load step should produce sag");
         assert_eq!(evidence.delta.as_millivolts(), -1_000);
-        assert_eq!(evidence.load_current.value.as_milliamps(), 10_000);
+        assert_eq!(evidence.load_current.value.magnitude_milliamps(), 10_000);
         assert_eq!(evidence.effective_resistance.as_milliohms(), 100);
         assert_eq!(evidence.observations, 1);
         assert_eq!(evidence.confidence, EstimateConfidence::Low);
@@ -1882,7 +1978,7 @@ mod tests {
                 at: MonotonicTimestamp::new(at),
                 flow: ChargeFlow::Discharging,
                 voltage: Measured::reported(Voltage::from_millivolts(voltage)),
-                battery_current: Measured::reported(BatteryCurrent::from_milliamps(current)),
+                battery_current: Measured::reported(test_current(current)),
                 freshness: TelemetryFreshness::new(Duration::from_seconds(30)),
             })
         };
@@ -1899,7 +1995,7 @@ mod tests {
                 at: MonotonicTimestamp::new(at),
                 flow: ChargeFlow::Discharging,
                 voltage: Measured::reported(Voltage::from_millivolts(voltage)),
-                battery_current: Measured::reported(BatteryCurrent::from_milliamps(current)),
+                battery_current: Measured::reported(test_current(current)),
                 freshness: TelemetryFreshness::new(Duration::from_seconds(30)),
             })
         };
@@ -1921,7 +2017,7 @@ mod tests {
                 at: MonotonicTimestamp::new(at),
                 flow: ChargeFlow::Discharging,
                 voltage: Measured::reported(Voltage::from_millivolts(voltage)),
-                battery_current: Measured::reported(BatteryCurrent::from_milliamps(current)),
+                battery_current: Measured::reported(test_current(current)),
                 freshness: TelemetryFreshness::new(Duration::from_seconds(30)),
             })
         };
@@ -1971,7 +2067,7 @@ mod tests {
                 at: MonotonicTimestamp::new(1_000),
                 flow: ChargeFlow::Discharging,
                 voltage: Measured::reported(Voltage::from_millivolts(99_000)),
-                battery_current: Measured::reported(BatteryCurrent::from_milliamps(10_000)),
+                battery_current: Measured::reported(test_current(10_000)),
                 freshness: TelemetryFreshness::new(Duration::from_seconds(30)),
             })
             .expect("a restored model and current are sufficient to project sag");
@@ -1997,7 +2093,7 @@ mod tests {
                     at: MonotonicTimestamp::new(1_000),
                     flow,
                     voltage: Measured::reported(Voltage::from_millivolts(99_000)),
-                    battery_current: Measured::reported(BatteryCurrent::from_milliamps(10_000)),
+                    battery_current: Measured::reported(test_current(10_000)),
                     freshness: TelemetryFreshness::new(Duration::from_seconds(30)),
                 }),
                 None,
@@ -2015,7 +2111,7 @@ mod tests {
                 at: MonotonicTimestamp::new(at),
                 flow: ChargeFlow::Discharging,
                 voltage: Measured::reported(Voltage::from_millivolts(voltage)),
-                battery_current: Measured::reported(BatteryCurrent::from_milliamps(current)),
+                battery_current: Measured::reported(test_current(current)),
                 freshness: TelemetryFreshness::new(Duration::from_seconds(30)),
             })
         };
@@ -2052,7 +2148,7 @@ mod tests {
                 at: MonotonicTimestamp::new(at),
                 flow: ChargeFlow::Discharging,
                 voltage: Measured::reported(Voltage::from_millivolts(voltage)),
-                battery_current: Measured::reported(BatteryCurrent::from_milliamps(current)),
+                battery_current: Measured::reported(test_current(current)),
                 freshness: TelemetryFreshness::new(Duration::from_seconds(30)),
             })
         };
@@ -2081,7 +2177,7 @@ mod tests {
                 at: MonotonicTimestamp::new(at),
                 flow: ChargeFlow::Discharging,
                 voltage: Measured::reported(Voltage::from_millivolts(voltage)),
-                battery_current: Measured::reported(BatteryCurrent::from_milliamps(current)),
+                battery_current: Measured::reported(test_current(current)),
                 freshness: TelemetryFreshness::new(Duration::from_seconds(30)),
             })
         };
@@ -2103,7 +2199,7 @@ mod tests {
                 at: MonotonicTimestamp::new(at),
                 flow: ChargeFlow::Discharging,
                 voltage: Measured::reported(Voltage::from_millivolts(voltage)),
-                battery_current: Measured::reported(BatteryCurrent::from_milliamps(current)),
+                battery_current: Measured::reported(test_current(current)),
                 freshness: TelemetryFreshness::new(Duration::from_seconds(30)),
             })
         };

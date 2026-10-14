@@ -1092,15 +1092,15 @@ mod tests {
                         crate::VerificationStatus::HardwareVerified,
                     ),
                     crate::BatteryInfo {
-                        current: Some(crate::Measured::reported(
-                            crate::BatteryCurrent::from_milliamps(first),
-                        )),
+                        current: Some(crate::Measured::reported(crate::BatteryCurrent::unknown(
+                            first.unsigned_abs(),
+                        ))),
                         ..crate::BatteryInfo::default()
                     },
                 )
                 .with_bms_pack_currents(crate::BmsPackCurrents::reported(
-                    crate::BatteryCurrent::from_milliamps(first),
-                    crate::BatteryCurrent::from_milliamps(second),
+                    crate::BatteryCurrent::unknown(first.unsigned_abs()),
+                    crate::BatteryCurrent::unknown(second.unsigned_abs()),
                 )),
             )
         }

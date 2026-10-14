@@ -172,11 +172,10 @@ fn power_value(
     battery_current: Option<Measured<BatteryCurrent>>,
     reported_power: Option<Measured<Power>>,
 ) -> RiderPowerValue {
-    if let (Some(voltage), Some(current)) = (voltage, battery_current) {
-        return RiderPowerValue::CalculatedPackCurrent(Power::from_pack_voltage_current(
-            voltage.value,
-            current.value,
-        ));
+    if let (Some(voltage), Some(current)) = (voltage, battery_current)
+        && let Some(power) = Power::from_pack_voltage_current(voltage.value, current.value)
+    {
+        return RiderPowerValue::CalculatedPackCurrent(power);
     }
     reported_power.map_or(RiderPowerValue::Unavailable, RiderPowerValue::Measured)
 }
@@ -316,7 +315,7 @@ mod tests {
             battery_level_reported: None,
             battery_level_estimated: None,
             voltage: Some(Measured::reported(Voltage::from_millivolts(60_000))),
-            battery_current: Some(Measured::reported(BatteryCurrent::from_milliamps(0))),
+            battery_current: Some(Measured::reported(BatteryCurrent::Zero)),
             reported_power: Some(Measured::reported(Power::from_milliwatts(0))),
             controller_temperature: Some(Measured::reported(Temperature::from_millicelsius(
                 42_000,
@@ -363,7 +362,7 @@ mod tests {
         let projection = RiderDashboardProjection::from_input(RiderDashboardInput {
             operating_state: RideOperatingState::Standing,
             voltage: Some(Measured::reported(Voltage::from_millivolts(60_000))),
-            battery_current: Some(Measured::reported(BatteryCurrent::from_milliamps(10_000))),
+            battery_current: Some(Measured::reported(BatteryCurrent::current_out(10_000))),
             reported_power: Some(Measured::reported(Power::from_milliwatts(900_000))),
             pwm: Some(Measured::reported(DutyCycle::from_permille(-450))),
             ..empty_input()
@@ -433,5 +432,22 @@ mod tests {
                 }]
             );
         }
+    }
+    #[test]
+    fn unknown_current_does_not_manufacture_signed_power() {
+        let input = RiderDashboardInput {
+            voltage: Some(Measured::reported(Voltage::from_volts(100))),
+            battery_current: Some(Measured::reported(BatteryCurrent::unknown(2_000))),
+            ..empty_input()
+        };
+        assert_eq!(
+            power_value(input.voltage, input.battery_current, None),
+            RiderPowerValue::Unavailable
+        );
+        let reported = Measured::reported(Power::from_watts(25));
+        assert_eq!(
+            power_value(input.voltage, input.battery_current, Some(reported)),
+            RiderPowerValue::Measured(reported)
+        );
     }
 }

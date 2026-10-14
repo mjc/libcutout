@@ -292,7 +292,7 @@ fn charge_estimator_update_does_not_allocate_locked() {
             profile: ChargeProfileIdentity::new(1),
             at: ms(at),
             observed_at: ms(at),
-            battery_current: Some(Measured::reported(BatteryCurrent::from_milliamps(-2_000))),
+            battery_current: Some(Measured::reported(BatteryCurrent::current_in(2_000))),
             charge_mode: Measured::reported(ChargeMode::Charging),
             flow: Measured::reported(ChargeFlow::Charging),
             battery_level: BatteryLevelBasis::reported(Measured::reported(
@@ -328,7 +328,9 @@ fn voltage_sag_estimator_update_does_not_allocate_locked() {
             at: ms(at),
             flow: ChargeFlow::Discharging,
             voltage: Measured::reported(Voltage::from_millivolts(voltage)),
-            battery_current: Measured::reported(BatteryCurrent::from_milliamps(current)),
+            battery_current: Measured::reported(BatteryCurrent::current_out(
+                u32::try_from(current).unwrap(),
+            )),
             freshness: TelemetryFreshness::new(Duration::from_seconds(30)),
         })
     };

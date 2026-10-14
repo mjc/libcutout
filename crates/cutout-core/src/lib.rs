@@ -25,6 +25,8 @@ mod pevcap;
 pub use pevcap::*;
 mod capture_annotations;
 pub use capture_annotations::*;
+mod battery_current;
+pub use battery_current::*;
 mod battery_page;
 pub use battery_page::*;
 mod ffi;
@@ -5273,12 +5275,14 @@ impl CellVoltage {
 /// Electrical current stored in milliamps.
 pub type Current = Quantity<ElectricCurrent, MilliAmp, i32>;
 
-/// Battery/input current stored in milliamps.
+/// Signed battery-current measurement in protocol units converted to milliamps.
+///
+/// This is raw evidence, not a physical direction. Normalize at the adapter boundary.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(transparent)]
-pub struct BatteryCurrent(Current);
+pub struct ReportedBatteryCurrent(Current);
 
-impl BatteryCurrent {
+impl ReportedBatteryCurrent {
     /// Creates a battery current from milliamps.
     #[must_use]
     pub const fn from_milliamps(value: i32) -> Self {
@@ -5321,15 +5325,9 @@ impl BatteryCurrent {
     pub fn as_amps(self) -> f32 {
         self.0.as_amps()
     }
-
-    /// Returns the magnitude while preserving the battery-current role.
-    #[must_use]
-    pub fn abs(self) -> Self {
-        Self::from_milliamps(self.as_milliamps().saturating_abs())
-    }
 }
 
-impl fmt::Display for BatteryCurrent {
+impl fmt::Display for ReportedBatteryCurrent {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(f)
     }
@@ -5589,12 +5587,19 @@ impl Power {
         Self::from_unit_value(value)
     }
 
-    /// Calculates pack-side electrical power from voltage and battery current.
+    /// Calculates pack power: positive out of the battery, negative into it.
+    ///
+    /// Unknown current direction cannot establish signed power.
     #[must_use]
-    pub fn from_pack_voltage_current(voltage: Voltage, current: BatteryCurrent) -> Self {
-        let milliwatts =
-            i128::from(voltage.as_millivolts()) * i128::from(current.as_milliamps()) / 1_000;
-        Self::from_milliwatts(saturating_i128_to_i64(milliwatts))
+    pub fn from_pack_voltage_current(voltage: Voltage, current: BatteryCurrent) -> Option<Self> {
+        let signed_milliamps = match current {
+            BatteryCurrent::Zero => 0,
+            BatteryCurrent::Out(value) => i64::from(value.as_milliamps()),
+            BatteryCurrent::In(value) => -i64::from(value.as_milliamps()),
+            BatteryCurrent::Unknown(_) => return None,
+        };
+        let milliwatts = i128::from(voltage.as_millivolts()) * i128::from(signed_milliamps) / 1_000;
+        Some(Self::from_milliwatts(saturating_i128_to_i64(milliwatts)))
     }
 
     /// Estimates electrical power from pack voltage and motor/phase current.
@@ -7458,6 +7463,9 @@ pub struct TelemetrySnapshot {
     /// Timestamp of the delta that last supplied speed, retained across unrelated deltas.
     pub speed_observed_at_ms: Option<MonotonicTimestamp>,
 
+    /// Timestamp of the delta that last supplied battery current.
+    pub battery_current_observed_at_ms: Option<MonotonicTimestamp>,
+
     /// Latest known speed in millimeters per second.
     pub speed: Option<Measured<Speed>>,
 
@@ -7539,6 +7547,7 @@ impl TelemetrySnapshot {
         }
         if delta.battery_current.is_some() {
             self.battery_current = delta.battery_current;
+            self.battery_current_observed_at_ms = Some(delta.at_ms);
         }
         if delta.charge_mode.is_some() {
             self.charge_mode = delta.charge_mode;
@@ -8848,7 +8857,13 @@ mod tests {
         assert_eq!(size_of::<crate::BatteryPageKind>(), 1);
         assert_eq!(size_of::<crate::BatteryPageMetadata>(), 8);
         assert!(size_of::<crate::BatteryInfo>() <= 64);
-        assert!(size_of::<crate::BatteryPagePayload>() <= 128);
+        // Three currents now retain a direction tag as well as the full unsigned
+        // magnitude. Keep the payload inline and bounded without adding allocation.
+        assert!(
+            size_of::<crate::BatteryPagePayload>() <= 144,
+            "BatteryPagePayload size={}",
+            size_of::<crate::BatteryPagePayload>()
+        );
         // Eight raw integer slots plus thirty-two lossless float slots keep this
         // bounded while allowing the VESC read-only decoder to retain native data.
         assert!(
@@ -9456,16 +9471,16 @@ mod tests {
         assert_eq!(
             Power::from_pack_voltage_current(
                 Voltage::from_volts(53),
-                BatteryCurrent::from_amps(-6),
+                BatteryCurrent::current_in(6_000),
             ),
-            Power::from_watts(-318)
+            Some(Power::from_watts(-318))
         );
         assert_eq!(
             Power::from_pack_voltage_current(
                 Voltage::from_millivolts(i32::MAX),
-                BatteryCurrent::from_milliamps(i32::MAX),
+                BatteryCurrent::current_out(i32::MAX as u32),
             ),
-            Power::from_milliwatts(4_611_686_014_132_420)
+            Some(Power::from_milliwatts(4_611_686_014_132_420))
         );
         assert_eq!(DutyCycle::from_centipercent(755).as_permille(), 75);
     }
@@ -9509,7 +9524,7 @@ mod tests {
                 1_500,
             ))),
             voltage: Some(Measured::reported(Voltage::from_millivolts(81_000))),
-            battery_current: Some(Measured::reported(BatteryCurrent::from_milliamps(-2_000))),
+            battery_current: Some(Measured::reported(BatteryCurrent::current_in(2_000))),
             ..TelemetryDelta::empty(ms(100))
         };
         let second = TelemetryDelta {
@@ -9585,7 +9600,7 @@ mod tests {
         snapshot.apply_delta(TelemetryDelta {
             at_ms: ms(200),
             speed: Some(Measured::reported(Speed::from_millimetres_per_second(0))),
-            battery_current: Some(Measured::reported(BatteryCurrent::from_milliamps(0))),
+            battery_current: Some(Measured::reported(BatteryCurrent::Zero)),
             ..TelemetryDelta::empty(ms(200))
         });
 
@@ -9595,7 +9610,7 @@ mod tests {
         );
         assert_eq!(
             snapshot.battery_current,
-            Some(Measured::reported(BatteryCurrent::from_milliamps(0)))
+            Some(Measured::reported(BatteryCurrent::Zero))
         );
         assert_eq!(snapshot.motor_current, None);
     }
@@ -9616,7 +9631,10 @@ mod tests {
             10_000
         );
         assert_eq!(Energy::from_watt_hours(900).as_watt_hours(), 900);
-        assert_eq!(BatteryCurrent::from_milliamps(1_250).as_milliamps(), 1_250);
+        assert_eq!(
+            BatteryCurrent::current_out(1_250).magnitude_milliamps(),
+            1_250
+        );
         assert_eq!(PhaseCurrent::from_amps_f32(-1.25).as_milliamps(), -1_250);
         assert_eq!(PeakCurrent::from_milliamps(1_250).as_milliamps(), 1_250);
         assert_eq!(PeakCurrent::from_amps_f32(-1.25).as_milliamps(), -1_250);
@@ -9706,7 +9724,7 @@ mod tests {
 
         snapshot.apply_delta(TelemetryDelta {
             at_ms: ms(300),
-            battery_current: Some(Measured::reported(BatteryCurrent::from_milliamps(-1_200))),
+            battery_current: Some(Measured::reported(BatteryCurrent::current_in(1_200))),
             motor_current: Some(Measured::reported(PhaseCurrent::from_milliamps(3_400))),
             controller_temperature: Some(Measured::reported(Temperature::from_millicelsius(
                 35_000,
@@ -9720,7 +9738,7 @@ mod tests {
 
         assert_eq!(
             snapshot.battery_current,
-            Some(Measured::reported(BatteryCurrent::from_milliamps(-1_200)))
+            Some(Measured::reported(BatteryCurrent::current_in(1_200)))
         );
         assert_eq!(
             snapshot.motor_current,
@@ -9791,7 +9809,7 @@ mod tests {
     fn battery_response_distinguishes_reported_estimated_and_unknown_percent() {
         let battery = crate::BatteryInfo {
             voltage: Some(Measured::reported(Voltage::from_millivolts(80_400))),
-            current: Some(Measured::reported(BatteryCurrent::from_milliamps(0))),
+            current: Some(Measured::reported(BatteryCurrent::Zero)),
             level_reported: Some(Measured::reported(BatteryLevel::from_percent(0))),
             level_estimated: Some(Measured::estimated(BatteryLevel::from_percent(42))),
             temperature: None,
@@ -9814,7 +9832,7 @@ mod tests {
         );
         assert_eq!(
             response.battery().current,
-            Some(Measured::reported(BatteryCurrent::from_milliamps(0)))
+            Some(Measured::reported(BatteryCurrent::Zero))
         );
         assert_eq!(
             response.battery().level_reported,
