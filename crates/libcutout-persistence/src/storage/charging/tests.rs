@@ -1571,6 +1571,86 @@ fn accepting_server_vote_preserves_a_later_local_edit() {
 }
 
 #[test]
+fn accepting_server_vote_keeps_moderated_later_edit_out_of_the_map() {
+    for (status, status_name) in [
+        (ChargingStatus::Hidden, "hidden"),
+        (ChargingStatus::Removed, "removed"),
+    ] {
+        let mut connection = database();
+        let mut spatial = SpatialSchemaState::Uninitialized;
+        let published = entry(Some(input(0.5)), ChargingStatus::Published, 1);
+        let point_id = owned_remote(&mut connection, &mut spatial, &published);
+        let before_vote = detail(&connection, point_id).unwrap().unwrap();
+        let vote = change(
+            &mut connection,
+            &mut spatial,
+            point_id,
+            before_vote.local_revision,
+            &ChargingAction::Vote(Some(ChargingVote::Up)),
+        )
+        .unwrap();
+        assert_eq!(
+            next_operation(&mut connection).unwrap().unwrap().id,
+            vote.operation_id
+        );
+        let before_edit = detail(&connection, point_id).unwrap().unwrap();
+        let edit = change(
+            &mut connection,
+            &mut spatial,
+            point_id,
+            before_edit.local_revision,
+            &ChargingAction::Edit(input(1.5)),
+        )
+        .unwrap();
+        block_operation(
+            &mut connection,
+            vote.operation_id,
+            ChargingOperationBlockKind::Conflict,
+        )
+        .unwrap();
+        let remote_json = format!(
+            r#"{{"id":"{}","input_json":null,"revision":2,"change_sequence":2,"status":"{}","verified_at_ms":null,"vote":null,"vote_revision":0,"votes_up":0,"votes_down":0}}"#,
+            published.id.as_uuid(),
+            status_name,
+        );
+        connection
+            .execute(
+                "UPDATE charging_sync_conflicts SET remote_entry=?2 WHERE operation_id=?1",
+                rusqlite::params![vote.operation_id.uuid().to_string(), remote_json],
+            )
+            .unwrap();
+        let review = list_blocked_operations(&connection).unwrap().remove(0);
+        assert_eq!(review.operation.id, vote.operation_id);
+        assert_eq!(review.remote_entry.as_ref().unwrap().status, status);
+
+        resolve_operation(
+            &mut connection,
+            &mut spatial,
+            vote.operation_id,
+            review.local_revision,
+            ChargingOperationResolution::AcceptServer,
+        )
+        .unwrap();
+
+        let accepted = detail(&connection, point_id).unwrap().unwrap();
+        assert_eq!(accepted.status, status);
+        assert_eq!(accepted.input, None);
+        assert_eq!(accepted.pending_operations, 1);
+        assert_eq!(count(&connection).unwrap(), 1);
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM map_points_rtree", [], |row| row
+                    .get::<_, u32>(0))
+                .unwrap(),
+            0
+        );
+        let retained = next_operation(&mut connection).unwrap().unwrap();
+        assert_eq!(retained.id, edit.operation_id);
+        assert_eq!(retained.action, ChargingAction::Edit(input(1.5)));
+    }
+}
+
+#[test]
 fn vote_receipt_ack_does_not_resurrect_a_local_withdrawal() {
     let mut connection = database();
     let mut spatial = SpatialSchemaState::Uninitialized;

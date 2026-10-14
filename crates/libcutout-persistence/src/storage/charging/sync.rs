@@ -500,6 +500,7 @@ fn remove_superseded_field_operations(
 fn restore_pending_local_state(
     transaction: &Connection,
     current: &super::StoredChargingSpot,
+    accepted_status: ChargingStatus,
 ) -> Result<(), StorageError> {
     let point_id = current.point_id.uuid();
     let point = point_id.as_bytes();
@@ -531,8 +532,11 @@ fn restore_pending_local_state(
             ],
         )?;
     }
-    if pending_fields && let Some(input) = &current.input {
-        update_spatial_index(transaction, current.point_id, input, current.status)?;
+    if pending_fields
+        && accepted_status.visible()
+        && let Some(input) = &current.input
+    {
+        update_spatial_index(transaction, current.point_id, input, accepted_status)?;
         transaction.execute(
             "UPDATE charging_spots SET input=?2 WHERE point_id=?1",
             params![point, super::codec::input_json(input)?],
@@ -1183,7 +1187,7 @@ pub(super) fn resolve_operation(
                 carries_fields,
             )?;
             apply_entry(&transaction, point_id, &checked, EntryUpdate::ReplaceBody)?;
-            restore_pending_local_state(&transaction, &current)?;
+            restore_pending_local_state(&transaction, &current, entry.status)?;
             update_local_revision(&transaction, point_id, current.local_revision.next()?)?;
         }
     }
