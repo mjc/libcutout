@@ -340,6 +340,13 @@ pub struct ChargingPage {
 }
 
 impl ChargingAction {
+    pub(super) const fn is_withdraw(&self) -> bool {
+        match self {
+            Self::Withdraw => true,
+            Self::Create(_) | Self::Edit(_) | Self::Verify | Self::Vote(_) => false,
+        }
+    }
+
     pub(super) const fn is_vote(&self) -> bool {
         match self {
             Self::Vote(_) => true,

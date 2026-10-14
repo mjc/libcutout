@@ -106,6 +106,33 @@ fn pending_operation(connection: &Connection) -> Result<Option<PendingRow>, Stor
         .optional()?)
 }
 
+fn pending_operation_by_id(
+    connection: &Connection,
+    id: ChargingOperationId,
+) -> Result<Option<PendingRow>, StorageError> {
+    Ok(connection
+        .query_row(
+            "SELECT operation_id,point_id,action,local_revision,target
+         FROM charging_outbox AS current
+         WHERE operation_id=?1 AND blocked_kind IS NULL
+           AND NOT EXISTS (
+             SELECT 1 FROM charging_outbox AS prior
+             WHERE prior.point_id=current.point_id AND prior.sequence<current.sequence
+           )",
+            [id.uuid().to_string()],
+            |row| {
+                Ok(PendingRow {
+                    id: row.get(0)?,
+                    point: row.get(1)?,
+                    action: row.get(2)?,
+                    revision: row.get(3)?,
+                    target: row.get(4)?,
+                })
+            },
+        )
+        .optional()?)
+}
+
 pub(super) fn next_operation(
     connection: &mut Connection,
 ) -> Result<Option<ChargingOperation>, StorageError> {
@@ -218,14 +245,9 @@ pub(super) fn acknowledge_operation(
     let checked = ValidatedDirectoryEntry::new(entry)?;
     ensure_spatial_schema(connection, spatial)?;
     let transaction = connection.transaction()?;
-    let row = pending_operation(&transaction)?;
-    if row
-        .as_ref()
-        .is_none_or(|pending| pending.id != id.uuid().to_string())
-    {
+    let Some(pending) = pending_operation_by_id(&transaction, id)? else {
         return replayed_acknowledgment(&transaction, id, entry.id);
-    }
-    let pending = row.ok_or(StorageError::ChargingConflict)?;
+    };
     let point_id = point_id_from_bytes(&pending.point)?;
     let current = detail(&transaction, point_id)?.ok_or(StorageError::NotFound)?;
     let action = action_from_json(&pending.action)?;
@@ -361,6 +383,77 @@ fn remove_operation(connection: &Connection, id: ChargingOperationId) -> Result<
         "DELETE FROM charging_outbox WHERE operation_id=?1",
         [id.uuid().to_string()],
     )?;
+    Ok(())
+}
+
+fn remove_superseded_field_operations(
+    connection: &Connection,
+    point_id: MapPointId,
+    selected: ChargingOperationId,
+    supersede_fields: bool,
+) -> Result<(), StorageError> {
+    connection.execute(
+        "DELETE FROM charging_outbox
+         WHERE point_id=?1 AND (operation_id=?2 OR (?3 AND
+           (json_type(action,'$.Create') IS NOT NULL
+            OR json_type(action,'$.Edit') IS NOT NULL)))",
+        params![
+            point_id.uuid().as_bytes(),
+            selected.uuid().to_string(),
+            supersede_fields
+        ],
+    )?;
+    Ok(())
+}
+
+fn restore_pending_local_state(
+    transaction: &Connection,
+    current: &super::StoredChargingSpot,
+) -> Result<(), StorageError> {
+    let point_id = current.point_id.uuid();
+    let point = point_id.as_bytes();
+    let pending_vote: bool = transaction.query_row(
+        "SELECT EXISTS(SELECT 1 FROM charging_outbox WHERE point_id=?1 AND json_type(action,'$.Vote') IS NOT NULL)",
+        [point],
+        |row| row.get(0),
+    )?;
+    let pending_fields: bool = transaction.query_row(
+        "SELECT EXISTS(SELECT 1 FROM charging_outbox WHERE point_id=?1 AND (json_type(action,'$.Create') IS NOT NULL OR json_type(action,'$.Edit') IS NOT NULL))",
+        [point],
+        |row| row.get(0),
+    )?;
+    let pending_withdrawal: bool = transaction.query_row(
+        "SELECT EXISTS(SELECT 1 FROM charging_outbox WHERE point_id=?1 AND json_extract(action,'$')='Withdraw')",
+        [point],
+        |row| row.get(0),
+    )?;
+
+    if pending_vote {
+        transaction.execute(
+            "UPDATE charging_spots SET vote=?2 WHERE point_id=?1",
+            params![
+                point,
+                current.vote.map(|vote| match vote {
+                    ChargingVote::Up => "up",
+                    ChargingVote::Down => "down",
+                })
+            ],
+        )?;
+    }
+    if pending_fields && let Some(input) = &current.input {
+        update_spatial_index(transaction, current.point_id, input, current.status)?;
+        transaction.execute(
+            "UPDATE charging_spots SET input=?2 WHERE point_id=?1",
+            params![point, super::codec::input_json(input)?],
+        )?;
+    }
+    if pending_withdrawal {
+        remove_spatial_index(transaction, current.point_id)?;
+        transaction.execute(
+            "UPDATE charging_spots SET status='withdrawn',input=NULL WHERE point_id=?1",
+            [point],
+        )?;
+    }
     Ok(())
 }
 
@@ -920,8 +1013,9 @@ pub(super) fn resolve_operation(
         }
         ChargingOperationResolution::AcceptServer => false,
     };
+    let retryable_rejection = kind == ChargingOperationBlockKind::Invalid && action.is_withdraw();
     if retries
-        && (kind == ChargingOperationBlockKind::Invalid
+        && ((kind == ChargingOperationBlockKind::Invalid && !retryable_rejection)
             || remote.as_ref().is_some_and(|entry| !entry.status.visible()))
     {
         return Err(StorageError::ChargingConflict);
@@ -954,6 +1048,7 @@ pub(super) fn resolve_operation(
                 "UPDATE charging_outbox SET operation_id=?2,blocked_kind=NULL,target=NULL WHERE operation_id=?1",
                 params![id.uuid().to_string(), Uuid::new_v4().to_string()],
             )?;
+            update_local_revision(&transaction, point_id, current.local_revision.next()?)?;
         }
         ChargingOperationResolution::AcceptServer => {
             let Some(entry) = remote else {
@@ -988,24 +1083,14 @@ pub(super) fn resolve_operation(
             {
                 return Err(StorageError::ChargingConflict);
             }
+            remove_superseded_field_operations(&transaction, point_id, id, carries_fields)?;
+            apply_entry(&transaction, point_id, &checked, EntryUpdate::ReplaceBody)?;
+            restore_pending_local_state(&transaction, &current)?;
+            update_local_revision(&transaction, point_id, current.local_revision.next()?)?;
             transaction.execute(
-                "DELETE FROM charging_outbox WHERE point_id=?1 AND local_revision<=?2",
-                params![point_id.uuid().as_bytes(), expected_local_revision.get()],
-            )?;
-            let newer: bool = transaction.query_row(
-                "SELECT EXISTS(SELECT 1 FROM charging_outbox WHERE point_id=?1)",
+                "UPDATE charging_outbox SET target=NULL WHERE point_id=?1",
                 [point_id.uuid().as_bytes()],
-                |row| row.get(0),
             )?;
-            if newer {
-                apply_entry(&transaction, point_id, &checked, EntryUpdate::ReplaceBody)?;
-                transaction.execute(
-                    "UPDATE charging_outbox SET target=NULL WHERE point_id=?1",
-                    [point_id.uuid().as_bytes()],
-                )?;
-            } else {
-                apply_entry(&transaction, point_id, &checked, EntryUpdate::ReplaceBody)?;
-            }
         }
     }
     transaction.execute(
@@ -1027,14 +1112,15 @@ pub(super) fn replace_blocked_operation(
 ) -> Result<ChargingWriteReceipt, StorageError> {
     ensure_spatial_schema(connection, spatial)?;
     let transaction = connection.transaction()?;
-    let row: Option<(Vec<u8>, String)> = transaction
+    let row: Option<(Vec<u8>, String, String)> = transaction
         .query_row(
-            "SELECT point_id,blocked_kind FROM charging_outbox WHERE operation_id=?1",
+            "SELECT point_id,blocked_kind,action FROM charging_outbox WHERE operation_id=?1",
             [id.uuid().to_string()],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .optional()?;
-    let (point, _) = row.ok_or(StorageError::ChargingConflict)?;
+    let (point, _, blocked_action) = row.ok_or(StorageError::ChargingConflict)?;
+    let supersede_fields = action_from_json(&blocked_action)?.carries_fields();
     let point_id = point_id_from_bytes(&point)?;
     let current = detail(&transaction, point_id)?.ok_or(StorageError::NotFound)?;
     if current.local_revision != expected_local_revision || !current.owned {
@@ -1066,10 +1152,7 @@ pub(super) fn replace_blocked_operation(
         }
         ChargingAction::Create(input.clone())
     };
-    transaction.execute(
-        "DELETE FROM charging_outbox WHERE point_id=?1 AND local_revision<=?2",
-        params![point_id.uuid().as_bytes(), expected_local_revision.get()],
-    )?;
+    remove_superseded_field_operations(&transaction, point_id, id, supersede_fields)?;
     let revision = current.local_revision.next()?;
     transaction.execute(
         "UPDATE charging_spots SET input=?2,local_revision=?3 WHERE point_id=?1",
@@ -1080,6 +1163,10 @@ pub(super) fn replace_blocked_operation(
         ],
     )?;
     update_spatial_index(&transaction, point_id, input, current.status)?;
+    transaction.execute(
+        "UPDATE charging_outbox SET target=NULL WHERE point_id=?1",
+        [point_id.uuid().as_bytes()],
+    )?;
     let receipt = queue(&transaction, point_id, revision, &action)?;
     transaction.commit()?;
     Ok(receipt)

@@ -624,7 +624,9 @@ async fn upload_operation(
             .ok_or(MobileChargingError::StorageFailure)?;
         let entry = persistence::ChargingDirectoryEntry {
             id: remote_id,
-            input: if server_status(receipt.spot_status) == persistence::ChargingStatus::Published {
+            input: if cached.status == persistence::ChargingStatus::Withdrawn {
+                None
+            } else if server_status(receipt.spot_status) == persistence::ChargingStatus::Published {
                 cached.input
             } else {
                 None
@@ -633,7 +635,13 @@ async fn upload_operation(
             // The vote response has no spot body. Do not advance its cache sequence;
             // the public changes feed must deliver a coherent body before that happens.
             change_sequence: cached.change_sequence,
-            status: server_status(receipt.spot_status),
+            // A vote receipt has no body. Keep a local tombstone valid while the
+            // earlier vote is acknowledged; the feed remains responsible for body state.
+            status: if cached.status == persistence::ChargingStatus::Withdrawn {
+                persistence::ChargingStatus::Withdrawn
+            } else {
+                server_status(receipt.spot_status)
+            },
             verified_at_ms: cached.verified_at_ms,
             vote: receipt.vote,
             vote_revision: persistence::ChargingRevision::new(receipt.revision)
@@ -1252,7 +1260,7 @@ mod tests {
         synchronize(
             &ChargingHttpClient::loopback(&base_url)?,
             local.clone(),
-            identity.token,
+            identity.token.clone(),
         )
         .await?;
         let withdrawn = local
@@ -1269,10 +1277,60 @@ mod tests {
         )?;
         assert_eq!(visible.spots.len(), 0);
 
+        vote_then_withdraw_before_sync(&local, &base_url, &identity.token).await?;
+
         task.abort();
         drop(local);
         let _ = std::fs::remove_file(server_path);
         let _ = std::fs::remove_file(local_path);
+        Ok(())
+    }
+
+    async fn vote_then_withdraw_before_sync(
+        local: &persistence::RideDatabase,
+        base_url: &str,
+        token: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let client = ChargingHttpClient::loopback(base_url)?;
+        let queued = local.save_charging_spot(test_input()?)?;
+        synchronize(&client, local.clone(), token.to_owned()).await?;
+        let published = local
+            .charging_spot(queued.point_id)?
+            .ok_or("second published spot missing")?;
+        let remote_id = published.remote_id.ok_or("second remote ID missing")?;
+        local.vote_charging_spot(
+            queued.point_id,
+            published.local_revision,
+            Some(ride_maps::ChargingVote::Up),
+        )?;
+        let voted = local
+            .charging_spot(queued.point_id)?
+            .ok_or("second voted spot missing")?;
+        local.withdraw_charging_spot(queued.point_id, voted.local_revision)?;
+
+        let synchronized = synchronize(&client, local.clone(), token.to_owned()).await?;
+        assert_eq!(synchronized.pending_count, 0);
+        let withdrawn = local
+            .charging_spot(queued.point_id)?
+            .ok_or("withdrawn spot missing")?;
+        assert_eq!(withdrawn.status, persistence::ChargingStatus::Withdrawn);
+        assert!(withdrawn.input.is_none());
+        assert_eq!(withdrawn.pending_operations, 0);
+
+        let server_page: ChangesPageResponse = client
+            .request(
+                Method::GET,
+                "v1/charging-spots/changes?after=0&limit=10",
+                None,
+                None,
+            )
+            .await?;
+        let server_spot = server_page
+            .items
+            .iter()
+            .find(|item| item.id == remote_id.as_uuid().to_string())
+            .ok_or("withdrawn spot missing from server changes")?;
+        assert!(matches!(server_spot.status, ServerStatus::Withdrawn));
         Ok(())
     }
 
