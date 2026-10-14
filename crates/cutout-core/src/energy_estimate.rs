@@ -973,14 +973,19 @@ impl ChargeEstimator {
         &mut self,
         input: ChargeEstimateInput,
     ) -> Result<ValidatedChargeSample, ChargeEstimateState> {
-        if !input.charge_mode.verification.is_trusted() || !input.charge_mode.value.is_active() {
+        let inferred_charging = input.charge_mode.value == ChargeMode::Charging
+            && input.charge_mode.source == ValueSource::Estimated
+            && input.charge_mode.quality == ValueQuality::Inferred
+            && input.charge_mode.verification == VerificationStatus::Inferred;
+        if !(inferred_charging
+            || input.charge_mode.verification.is_trusted() && input.charge_mode.value.is_active())
+        {
             self.reset_with_reason(ChargeEstimateResetReason::ChargingStopped);
             return Err(unavailable(ChargeEstimateUnavailableReason::NotCharging));
         }
-        // A fresh, trusted protocol charging flag establishes that charging is
-        // active. Use the measured current magnitude as the rate; its sign is
-        // protocol-specific and is not needed for this estimate. Still reject
-        // explicit contradictory flow evidence.
+        // Explicit reported charging or bounded inferred charging establishes the
+        // mode. Inference remains low confidence. Current magnitude supplies the
+        // rate; explicit contradictory flow still invalidates the estimate.
         match input.flow.value {
             ChargeFlow::Charging | ChargeFlow::Unknown | ChargeFlow::Zero => {}
             ChargeFlow::Discharging | ChargeFlow::Regeneration => {
@@ -998,6 +1003,11 @@ impl ChargeEstimator {
             ));
         }
         let level_confidence = validate_battery_level(input.battery_level, input.profile)?;
+        let level_confidence = if inferred_charging {
+            EstimateConfidence::Low
+        } else {
+            level_confidence
+        };
         validate_battery_temperature(input.battery_temperature)?;
         if input
             .battery_current
@@ -1014,6 +1024,16 @@ impl ChargeEstimator {
         let magnitude = input
             .battery_current
             .map(|reading| reading.value.as_milliamps().unsigned_abs());
+        if inferred_charging && (level >= 99 || (level >= 95 && magnitude == Some(0))) {
+            self.window.reset();
+            self.progress_start = None;
+            self.progress_last = None;
+            self.progress_samples = 0;
+            return Err(ChargeEstimateState::CollectingSamples {
+                samples: 0,
+                observed_for: Duration::from_milliseconds(0),
+            });
+        }
         if level >= 99 || (level >= 95 && magnitude == Some(0)) {
             self.window.reset();
             self.progress_start = None;
@@ -1656,16 +1676,30 @@ mod tests {
     }
 
     #[test]
-    fn charging_requires_trusted_explicit_mode() {
+    fn inferred_charging_requires_exact_provenance_and_trusted_current() {
         let mut estimator = ChargeEstimator::new();
         let mut sample = input(0, -2_000, 50);
         sample.charge_mode = Measured::estimated(ChargeMode::Charging);
         assert_eq!(
             estimator.update(sample),
-            ChargeEstimateState::Unavailable {
-                reason: ChargeEstimateUnavailableReason::NotCharging,
+            ChargeEstimateState::CollectingSamples {
+                samples: 1,
+                observed_for: Duration::from_milliseconds(0),
             }
         );
+        sample.at = MonotonicTimestamp::new(15_000);
+        sample.observed_at = sample.at;
+        assert!(matches!(
+            estimator.update(sample),
+            ChargeEstimateState::CollectingSamples { .. }
+        ));
+        sample.at = MonotonicTimestamp::new(30_000);
+        sample.observed_at = sample.at;
+        let ChargeEstimateState::Available(estimate) = estimator.update(sample) else {
+            panic!("bounded inferred charging should allow a useful estimate");
+        };
+        assert_eq!(estimate.confidence, EstimateConfidence::Low);
+
         let mut sample = input(1_000, -2_000, 50);
         sample.charge_mode = Measured::reported(ChargeMode::NotCharging);
         assert_eq!(
@@ -1674,6 +1708,61 @@ mod tests {
                 reason: ChargeEstimateUnavailableReason::NotCharging,
             }
         );
+
+        let mut malformed = input(2_000, -2_000, 50);
+        malformed.charge_mode = Measured {
+            value: ChargeMode::Charging,
+            source: ValueSource::Estimated,
+            quality: ValueQuality::Known,
+            verification: VerificationStatus::Inferred,
+        };
+        assert_eq!(
+            ChargeEstimator::new().update(malformed),
+            unavailable(ChargeEstimateUnavailableReason::NotCharging)
+        );
+
+        let mut untrusted_current = input(3_000, -2_000, 50);
+        untrusted_current.charge_mode = Measured::estimated(ChargeMode::Charging);
+        untrusted_current.battery_current =
+            Some(Measured::estimated(BatteryCurrent::from_milliamps(-2_000)));
+        assert_eq!(
+            ChargeEstimator::new().update(untrusted_current),
+            unavailable(ChargeEstimateUnavailableReason::CurrentDirectionUnverified)
+        );
+    }
+
+    #[test]
+    fn inferred_charging_near_full_does_not_claim_full_or_balancing() {
+        for (level, current) in [(100, 0), (99, 2_000), (97, 0)] {
+            let mut sample = input(0, current, level);
+            sample.charge_mode = Measured::estimated(ChargeMode::Charging);
+            assert!(matches!(
+                ChargeEstimator::new().update(sample),
+                ChargeEstimateState::CollectingSamples { .. }
+                    | ChargeEstimateState::Unavailable { .. }
+            ));
+        }
+    }
+
+    #[test]
+    fn inferred_charging_can_use_trusted_zero_current_progress() {
+        let mut estimator = ChargeEstimator::new();
+        for (at, level) in [(0, 50), (15_000, 50)] {
+            let mut sample = input(at, 0, level);
+            sample.charge_mode = Measured::estimated(ChargeMode::Charging);
+            assert!(matches!(
+                estimator.update(sample),
+                ChargeEstimateState::CollectingSamples { .. }
+            ));
+        }
+        let mut sample = input(60_000, 0, 51);
+        sample.charge_mode = Measured::estimated(ChargeMode::Charging);
+        let ChargeEstimateState::Available(estimate) = estimator.update(sample) else {
+            panic!("trusted SOC progress after inferred charging should yield an estimate");
+        };
+        assert_eq!(estimate.kind, EstimateKind::ObservedProgressTimeToFull);
+        assert_eq!(estimate.expected.as_minutes(), 49);
+        assert_eq!(estimate.confidence, EstimateConfidence::Low);
     }
 
     #[test]

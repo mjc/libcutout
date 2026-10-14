@@ -58,6 +58,8 @@ use persistence::{
     VerifiedConnectionRideTarget,
 };
 
+#[cfg(test)]
+use cutout_core::RideOperatingStateDto;
 use cutout_core::{
     ActivityProjectionState as CoreActivityProjectionState, AngleReadingDto,
     BatteryCurrent as CoreBatteryCurrent, BatteryCurrentReadingDto, BatteryInfoDto,
@@ -97,7 +99,7 @@ use cutout_core::{
     PowerReadingDto, ProtocolFamily, ProtocolFamilyDto, RIDE_SESSION_STALE_AFTER, RawFieldValue,
     RawFieldValueDto, RawTelemetryReadback, RawTelemetryReadbackDto, ReadOnlyOutputPayload,
     ReservedPayloadEvidenceDto, RideOperatingModeDto, RideOperatingState as CoreRideOperatingState,
-    RideOperatingStateDto, RideSessionAppPresence as CoreRideSessionAppPresence,
+    RideSessionAppPresence as CoreRideSessionAppPresence,
     RideSessionDecision as CoreRideSessionDecision, RideSessionEffect as CoreRideSessionEffect,
     RideSessionEndReason as CoreRideSessionEndReason,
     RideSessionIdentity as CoreRideSessionIdentity, RideSessionInput as CoreRideSessionInput,
@@ -5507,6 +5509,8 @@ pub enum MobileBatteryLevelBasisDto {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MobileChargeModeDto {
+    /// Charging state is unknown, collecting evidence, or stale.
+    Unknown,
     /// The device reports that charging is active.
     Charging,
 
@@ -18449,6 +18453,7 @@ fn power_flow_from_signed_current(
     }
 }
 
+#[cfg(test)]
 fn ride_operating_state(
     operating_state: Option<RideOperatingStateDto>,
     charge_mode: Option<ChargeModeReadingDto>,
@@ -18459,6 +18464,16 @@ fn ride_operating_state(
         charge_mode.map(|mode| mode.value.into()),
         speed.map(|speed| cutout_core::Speed::from_millimetres_per_second(speed.value)),
     ) {
+        CoreRideOperatingState::Unknown => RideOperatingState::Unknown,
+        CoreRideOperatingState::Parked => RideOperatingState::Parked,
+        CoreRideOperatingState::Standing => RideOperatingState::Standing,
+        CoreRideOperatingState::Riding => RideOperatingState::Riding,
+        CoreRideOperatingState::Charging => RideOperatingState::Charging,
+    }
+}
+
+fn mobile_ride_operating_state(state: CoreRideOperatingState) -> RideOperatingState {
+    match state {
         CoreRideOperatingState::Unknown => RideOperatingState::Unknown,
         CoreRideOperatingState::Parked => RideOperatingState::Parked,
         CoreRideOperatingState::Standing => RideOperatingState::Standing,
@@ -18832,11 +18847,23 @@ impl From<cutout_core::RiderSafetyMetricDescriptor> for MobileRiderSafetyMetricD
 
 impl From<TelemetrySnapshotDto> for MobileTelemetrySnapshotDto {
     fn from(snapshot: TelemetrySnapshotDto) -> Self {
-        let operating_state = ride_operating_state(
-            snapshot.operating_state,
-            snapshot.charge_mode,
-            snapshot.speed,
+        let now = snapshot
+            .at_ms
+            .map(|at| MonotonicTimestamp::new(at.milliseconds));
+        let speed = snapshot
+            .speed
+            .map(|speed| cutout_core::Speed::from_millimetres_per_second(speed.value));
+        let speed_at = snapshot
+            .speed_observed_at_ms
+            .map(|at| MonotonicTimestamp::new(at.milliseconds));
+        let (core_operating_state, charge_mode_value) = CoreRideOperatingState::resolve_fresh(
+            snapshot.operating_state.map(Into::into),
+            snapshot.charge_mode.map(|mode| mode.value.into()),
+            speed,
+            speed_at,
+            now,
         );
+        let operating_state = mobile_ride_operating_state(core_operating_state);
         Self {
             at_ms: snapshot
                 .at_ms
@@ -18851,7 +18878,16 @@ impl From<TelemetrySnapshotDto> for MobileTelemetrySnapshotDto {
             vesc_stop_reason: snapshot.ride_stop_reason.map(Into::into),
             voltage: snapshot.voltage.map(Into::into),
             battery_current: snapshot.battery_current.map(Into::into),
-            charge_mode: snapshot.charge_mode.map(Into::into),
+            charge_mode: snapshot.charge_mode.map(|mut reading| {
+                let adjusted = charge_mode_value.unwrap_or(ChargeMode::Unknown);
+                if adjusted != reading.value.into() {
+                    reading.source = ValueSourceDto::Calculated;
+                    reading.quality = ValueQualityDto::Inferred;
+                    reading.verification = VerificationStatusDto::Inferred;
+                }
+                reading.value = adjusted.into();
+                reading.into()
+            }),
             motor_current: snapshot.motor_current.map(Into::into),
             power: snapshot.power.map(Into::into),
             power_flow: snapshot
@@ -18879,6 +18915,7 @@ impl From<ChargeModeReadingDto> for MobileChargeModeReadingDto {
     fn from(reading: ChargeModeReadingDto) -> Self {
         Self {
             value: match reading.value {
+                ChargeModeDto::Unknown => MobileChargeModeDto::Unknown,
                 ChargeModeDto::Charging => MobileChargeModeDto::Charging,
                 ChargeModeDto::NotCharging => MobileChargeModeDto::NotCharging,
             },
@@ -19079,9 +19116,36 @@ impl MobileChargeEstimator {
     pub fn update(&self, input: MobileChargeEstimateInputDto) -> MobileChargeEstimateStateDto {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         let snapshot = input.snapshot;
+        let now = input.at.into_core();
+        let reported = core_ride_operating_state(snapshot.operating_state);
+        let speed = snapshot
+            .speed
+            .map(|speed| cutout_core::Speed::from_millimetres_per_second(speed.value.value));
+        let speed_at = snapshot
+            .speed_observed_at_ms
+            .map(MobileMonotonicMillisDto::into_core);
+        let raw_charge_mode = snapshot
+            .charge_mode
+            .map(|mode| core_charge_mode(mode).value);
+        let (_, guarded_charge_mode) = CoreRideOperatingState::resolve_fresh(
+            Some(reported),
+            raw_charge_mode,
+            speed,
+            speed_at,
+            Some(now),
+        );
         let charge_mode = snapshot.charge_mode.map_or_else(
             || Measured::estimated(ChargeMode::NotCharging),
-            core_charge_mode,
+            |reading| {
+                let mut reading = core_charge_mode(reading);
+                reading.value = guarded_charge_mode.unwrap_or(ChargeMode::Unknown);
+                if reading.value != raw_charge_mode.unwrap_or(ChargeMode::NotCharging) {
+                    reading.source = ValueSource::Calculated;
+                    reading.quality = ValueQuality::Inferred;
+                    reading.verification = VerificationStatus::Inferred;
+                }
+                reading
+            },
         );
         let charge_flow_verification = state
             .profile
@@ -19226,6 +19290,7 @@ fn core_temperature(reading: TemperatureReading) -> Measured<cutout_core::Temper
 fn core_charge_mode(reading: MobileChargeModeReadingDto) -> Measured<ChargeMode> {
     core_measured(
         match reading.value {
+            MobileChargeModeDto::Unknown => ChargeMode::Unknown,
             MobileChargeModeDto::Charging => ChargeMode::Charging,
             MobileChargeModeDto::NotCharging => ChargeMode::NotCharging,
         },
@@ -23906,8 +23971,59 @@ mod tests {
                 }),
                 Some(speed_reading(1_000))
             ),
-            RideOperatingState::Charging
+            RideOperatingState::Riding
         );
+    }
+
+    #[test]
+    fn mobile_snapshot_charge_mode_respects_only_fresh_stationary_speed() {
+        let mut core_snapshot = cutout_core::TelemetrySnapshot {
+            at_ms: Some(MonotonicTimestamp::new(10_000)),
+            speed_observed_at_ms: Some(MonotonicTimestamp::new(10_000)),
+            speed: Some(Measured::reported(
+                cutout_core::Speed::from_millimetres_per_second(500),
+            )),
+            charge_mode: Some(Measured::reported(ChargeMode::Charging)),
+            ..Default::default()
+        };
+        let moving = MobileTelemetrySnapshotDto::from(TelemetrySnapshotDto::from(core_snapshot));
+        assert_eq!(moving.operating_state, RideOperatingState::Riding);
+        let moving_charge = moving.charge_mode.expect("reported charge mode");
+        assert_eq!(moving_charge.value, MobileChargeModeDto::NotCharging,);
+        assert_eq!(moving_charge.source, MobileValueSourceDto::Calculated);
+        assert_eq!(moving_charge.quality, MobileValueQualityDto::Inferred);
+        assert_eq!(
+            moving_charge.verification,
+            MobileVerificationStatusDto::Inferred
+        );
+
+        core_snapshot.speed = Some(Measured::reported(
+            cutout_core::Speed::from_millimetres_per_second(0),
+        ));
+        core_snapshot.speed_observed_at_ms = Some(MonotonicTimestamp::new(4_999));
+        let stale_stationary =
+            MobileTelemetrySnapshotDto::from(TelemetrySnapshotDto::from(core_snapshot));
+        assert_eq!(
+            stale_stationary.operating_state,
+            RideOperatingState::Unknown
+        );
+        assert_eq!(
+            stale_stationary
+                .charge_mode
+                .expect("reported charge mode")
+                .value,
+            MobileChargeModeDto::Unknown,
+        );
+
+        core_snapshot.operating_state = Some(CoreRideOperatingState::Charging);
+        core_snapshot.charge_mode = None;
+        let stale_explicit_charging =
+            MobileTelemetrySnapshotDto::from(TelemetrySnapshotDto::from(core_snapshot));
+        assert_eq!(
+            stale_explicit_charging.operating_state,
+            RideOperatingState::Unknown
+        );
+        assert_eq!(stale_explicit_charging.charge_mode, None);
     }
 
     const fn ms(value: u64) -> MobileMonotonicMillisDto {
@@ -26327,8 +26443,13 @@ mod tests {
     ) -> MobileTelemetrySnapshotDto {
         MobileTelemetrySnapshotDto {
             at_ms: Some(MobileMonotonicMillisDto { milliseconds: at }),
-            speed_observed_at_ms: None,
-            speed: None,
+            speed_observed_at_ms: Some(MobileMonotonicMillisDto { milliseconds: at }),
+            speed: Some(SpeedReading {
+                value: Speed { value: 0 },
+                source: MobileValueSourceDto::Reported,
+                quality: MobileValueQualityDto::Known,
+                verification: MobileVerificationStatusDto::SourceVerified,
+            }),
             operating_state: RideOperatingState::Charging,
             vesc_operating_mode: None,
             vesc_warning: None,
@@ -26388,6 +26509,63 @@ mod tests {
             .expect("fixture charge mode")
             .value = MobileChargeModeDto::NotCharging;
         snapshot
+    }
+
+    #[test]
+    fn charge_estimator_rejects_charging_while_riding() {
+        for (operating_state, speed) in [
+            (RideOperatingState::Riding, 0),
+            (RideOperatingState::Charging, 500),
+            (RideOperatingState::Charging, -500),
+        ] {
+            let estimator = MobileChargeEstimator::new();
+            estimator.configure_profile(charge_profile(
+                MobileVerificationStatusDto::HardwareVerified,
+            ));
+            let mut snapshot = charge_estimator_snapshot(0, PowerFlowDirection::Charging);
+            snapshot.operating_state = operating_state;
+            snapshot.speed = Some(SpeedReading {
+                value: Speed { value: speed },
+                source: MobileValueSourceDto::Reported,
+                quality: MobileValueQualityDto::Known,
+                verification: MobileVerificationStatusDto::SourceVerified,
+            });
+            snapshot.speed_observed_at_ms = Some(ms(0));
+            let result = estimator.update(MobileChargeEstimateInputDto {
+                at: ms(0),
+                snapshot,
+                freshness: MobileDurationDto {
+                    milliseconds: 60_000,
+                },
+            });
+            assert_eq!(
+                result.unavailable_reason,
+                Some(MobileChargeEstimateUnavailableReasonDto::NotCharging)
+            );
+            assert_eq!(result.estimate, None);
+        }
+    }
+
+    #[test]
+    fn charge_estimator_rejects_stale_stationary_speed_with_fresh_charge_snapshot() {
+        let estimator = MobileChargeEstimator::new();
+        estimator.configure_profile(charge_profile(
+            MobileVerificationStatusDto::HardwareVerified,
+        ));
+        let mut snapshot = charge_estimator_snapshot(10_000, PowerFlowDirection::Charging);
+        snapshot.speed_observed_at_ms = Some(ms(0));
+        let result = estimator.update(MobileChargeEstimateInputDto {
+            at: ms(10_000),
+            snapshot,
+            freshness: MobileDurationDto {
+                milliseconds: 60_000,
+            },
+        });
+        assert_eq!(
+            result.unavailable_reason,
+            Some(MobileChargeEstimateUnavailableReasonDto::NotCharging),
+        );
+        assert_eq!(result.estimate, None);
     }
 
     #[test]
@@ -26646,6 +26824,7 @@ mod tests {
         let update = |at| {
             let mut snapshot = snapshot.clone();
             snapshot.at_ms = Some(MobileMonotonicMillisDto { milliseconds: at });
+            snapshot.speed_observed_at_ms = Some(ms(at));
             estimator.update(MobileChargeEstimateInputDto {
                 at: MobileMonotonicMillisDto { milliseconds: at },
                 snapshot,

@@ -5716,6 +5716,9 @@ pub type Speed = Quantity<Velocity, MillimetrePerSecond, i32>;
 /// classification never changes the measured speed or gates other ride events.
 pub const CONNECTED_WHEEL_MOVEMENT_THRESHOLD: Speed = Speed::from_millimetres_per_second(500);
 
+/// Maximum age of connected-wheel speed evidence used to resolve charging state.
+pub const CONNECTED_WHEEL_MOTION_FRESHNESS_MS: u64 = 5_000;
+
 impl Speed {
     /// Creates a speed from millimetres per second.
     #[must_use]
@@ -5733,6 +5736,22 @@ impl Speed {
             >= CONNECTED_WHEEL_MOVEMENT_THRESHOLD
                 .as_millimetres_per_second()
                 .unsigned_abs()
+    }
+
+    /// Returns speed only when its observation timestamp is current and fresh.
+    #[must_use]
+    pub fn fresh_motion(
+        speed: Option<Self>,
+        observed_at: Option<MonotonicTimestamp>,
+        now: Option<MonotonicTimestamp>,
+    ) -> Option<Self> {
+        let (Some(speed), Some(observed_at), Some(now)) = (speed, observed_at, now) else {
+            return None;
+        };
+        (observed_at <= now
+            && now.saturating_duration_since(observed_at).as_milliseconds()
+                <= CONNECTED_WHEEL_MOTION_FRESHNESS_MS)
+            .then_some(speed)
     }
 
     /// Creates a speed from centimetres per second.
@@ -6469,9 +6488,11 @@ impl BmsPackCurrents {
     }
 }
 
-/// Device charging state decoded from protocol-specific status fields.
+/// Charging state from explicit protocol evidence or bounded electrical inference.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ChargeMode {
+    /// Current evidence cannot establish whether charging is active.
+    Unknown,
     /// The device reports that charging is not active.
     NotCharging,
 
@@ -6495,7 +6516,28 @@ impl ChargeMode {
     pub const fn is_active(self) -> bool {
         match self {
             Self::Charging => true,
-            Self::NotCharging => false,
+            Self::NotCharging | Self::Unknown => false,
+        }
+    }
+
+    /// Applies fresh connected-wheel motion evidence to this charging state.
+    #[must_use]
+    pub fn for_motion(
+        self,
+        reported: Option<RideOperatingState>,
+        speed: Option<Speed>,
+        speed_at: Option<MonotonicTimestamp>,
+        now: MonotonicTimestamp,
+    ) -> Self {
+        let fresh_speed = Speed::fresh_motion(speed, speed_at, Some(now));
+        if reported == Some(RideOperatingState::Riding) || fresh_speed.is_some_and(Speed::is_moving)
+        {
+            return Self::NotCharging;
+        }
+        if self == Self::Charging && fresh_speed.is_none() {
+            Self::Unknown
+        } else {
+            self
         }
     }
 }
@@ -6520,7 +6562,7 @@ pub enum RideOperatingState {
 }
 
 impl RideOperatingState {
-    /// Charging evidence wins over parked/speed state; otherwise use explicit state.
+    /// Explicit riding wins; live motion also overrides charging evidence.
     ///
     /// Speed fallback requires current connected-wheel telemetry. Pass no speed
     /// when it is unavailable or stale; retained samples are not motion evidence.
@@ -6530,6 +6572,14 @@ impl RideOperatingState {
         charge_mode: Option<ChargeMode>,
         speed: Option<Speed>,
     ) -> Self {
+        if reported == Some(Self::Riding) {
+            return Self::Riding;
+        }
+        if (reported == Some(Self::Charging) || charge_mode == Some(ChargeMode::Charging))
+            && speed.is_some_and(Speed::is_moving)
+        {
+            return Self::Riding;
+        }
         if charge_mode == Some(ChargeMode::Charging) {
             return Self::Charging;
         }
@@ -6541,6 +6591,37 @@ impl RideOperatingState {
             Some(true) => Self::Riding,
             None => Self::Unknown,
         }
+    }
+
+    /// Resolves charge and ride state using only fresh connected-wheel speed evidence.
+    #[must_use]
+    pub fn resolve_fresh(
+        reported: Option<Self>,
+        charge_mode: Option<ChargeMode>,
+        speed: Option<Speed>,
+        speed_at: Option<MonotonicTimestamp>,
+        now: Option<MonotonicTimestamp>,
+    ) -> (Self, Option<ChargeMode>) {
+        let fresh_speed = Speed::fresh_motion(speed, speed_at, now);
+        let charge_mode = charge_mode.map(|mode| match now {
+            Some(now) => mode.for_motion(reported, speed, speed_at, now),
+            None if reported == Some(Self::Riding) || fresh_speed.is_some_and(Speed::is_moving) => {
+                ChargeMode::NotCharging
+            }
+            None if mode == ChargeMode::Charging => ChargeMode::Unknown,
+            None => mode,
+        });
+        let effective_reported = match reported {
+            Some(Self::Charging) if fresh_speed.is_none() => None,
+            Some(Self::Charging) if fresh_speed.is_some_and(Speed::is_moving) => Some(Self::Riding),
+            state => state,
+        };
+        let state = Self::resolve(
+            effective_reported,
+            Some(charge_mode.unwrap_or(ChargeMode::Unknown)),
+            fresh_speed,
+        );
+        (state, charge_mode)
     }
 }
 
@@ -6622,6 +6703,7 @@ pub enum RideStopReason {
 impl core::fmt::Display for ChargeMode {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
+            Self::Unknown => f.write_str("unknown"),
             Self::NotCharging => f.write_str("not_charging"),
             Self::Charging => f.write_str("charging"),
         }
@@ -11167,13 +11249,18 @@ mod tests {
             crate::RideOperatingState::Riding,
             crate::RideOperatingState::Charging,
         ] {
+            let expected = if state == crate::RideOperatingState::Charging {
+                crate::RideOperatingState::Riding
+            } else {
+                state
+            };
             assert_eq!(
                 crate::RideOperatingState::resolve(
                     Some(state),
                     None,
                     Some(crate::CONNECTED_WHEEL_MOVEMENT_THRESHOLD),
                 ),
-                state,
+                expected,
             );
         }
     }
@@ -11195,6 +11282,92 @@ mod tests {
                 Some(Speed::from_millimetres_per_second(0)),
             ),
             crate::RideOperatingState::Parked,
+        );
+        assert_eq!(
+            crate::RideOperatingState::resolve(
+                Some(crate::RideOperatingState::Charging),
+                Some(crate::ChargeMode::NotCharging),
+                Some(crate::CONNECTED_WHEEL_MOVEMENT_THRESHOLD),
+            ),
+            crate::RideOperatingState::Riding,
+        );
+    }
+
+    #[test]
+    fn fresh_wheel_motion_overrides_all_charging_evidence() {
+        let threshold = crate::CONNECTED_WHEEL_MOVEMENT_THRESHOLD.as_millimetres_per_second();
+        for raw_speed in [-threshold, threshold] {
+            assert_eq!(
+                crate::RideOperatingState::resolve(
+                    Some(crate::RideOperatingState::Parked),
+                    Some(crate::ChargeMode::Charging),
+                    Some(Speed::from_millimetres_per_second(raw_speed)),
+                ),
+                crate::RideOperatingState::Riding,
+                "speed {raw_speed}",
+            );
+        }
+    }
+
+    #[test]
+    fn explicit_riding_overrides_charging_without_motion_speed() {
+        for speed in [None, Some(Speed::from_millimetres_per_second(0))] {
+            assert_eq!(
+                crate::RideOperatingState::resolve(
+                    Some(crate::RideOperatingState::Riding),
+                    Some(crate::ChargeMode::Charging),
+                    speed,
+                ),
+                crate::RideOperatingState::Riding,
+            );
+        }
+    }
+
+    #[test]
+    fn charge_mode_for_motion_requires_fresh_stationary_speed_to_remain_charging() {
+        let now = MonotonicTimestamp::new(10_000);
+        let threshold = crate::CONNECTED_WHEEL_MOVEMENT_THRESHOLD.as_millimetres_per_second();
+        assert_eq!(
+            crate::ChargeMode::Charging.for_motion(
+                None,
+                Some(Speed::from_millimetres_per_second(threshold)),
+                Some(MonotonicTimestamp::new(10_000)),
+                now,
+            ),
+            crate::ChargeMode::NotCharging,
+        );
+        assert_eq!(
+            crate::ChargeMode::Charging.for_motion(
+                Some(crate::RideOperatingState::Riding),
+                None,
+                None,
+                now,
+            ),
+            crate::ChargeMode::NotCharging,
+        );
+        for speed_at in [
+            None,
+            Some(MonotonicTimestamp::new(4_999)),
+            Some(MonotonicTimestamp::new(10_001)),
+        ] {
+            assert_eq!(
+                crate::ChargeMode::Charging.for_motion(
+                    None,
+                    Some(Speed::from_millimetres_per_second(0)),
+                    speed_at,
+                    now,
+                ),
+                crate::ChargeMode::Unknown,
+            );
+        }
+        assert_eq!(
+            crate::ChargeMode::Charging.for_motion(
+                None,
+                Some(Speed::from_millimetres_per_second(0)),
+                Some(MonotonicTimestamp::new(5_000)),
+                now,
+            ),
+            crate::ChargeMode::Charging,
         );
     }
 

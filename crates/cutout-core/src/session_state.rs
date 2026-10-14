@@ -174,9 +174,15 @@ impl CutoutSessionState {
             DeviceEvent::Telemetry(delta) => self.telemetry.observe_delta(*delta),
             DeviceEvent::ReadOnlyResponse(response) => self.observe_read_only_response(response),
             DeviceEvent::Diagnostics(diagnostics) => self.diagnostics.parser.merge(*diagnostics),
-            DeviceEvent::LinkUp(_)
-            | DeviceEvent::LinkDown
-            | DeviceEvent::Tick { .. }
+            DeviceEvent::LinkUp(_) | DeviceEvent::LinkDown => {
+                self.telemetry.current.charge_mode = None;
+                if self.telemetry.current.operating_state
+                    == Some(crate::RideOperatingState::Charging)
+                {
+                    self.telemetry.current.operating_state = None;
+                }
+            }
+            DeviceEvent::Tick { .. }
             | DeviceEvent::ControlRefusal(_)
             | DeviceEvent::DiagnosticError(_) => {}
         }

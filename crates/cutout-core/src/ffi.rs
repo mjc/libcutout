@@ -954,6 +954,8 @@ impl From<DiagnosticSeverity> for DiagnosticSeverityDto {
 /// UniFFI-ready charging state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ChargeModeDto {
+    /// Charging state is unknown, collecting evidence, or stale.
+    Unknown,
     /// The device reports that charging is active.
     Charging,
 
@@ -964,6 +966,7 @@ pub enum ChargeModeDto {
 impl From<ChargeMode> for ChargeModeDto {
     fn from(mode: ChargeMode) -> Self {
         match mode {
+            ChargeMode::Unknown => Self::Unknown,
             ChargeMode::Charging => Self::Charging,
             ChargeMode::NotCharging => Self::NotCharging,
         }
@@ -1016,6 +1019,7 @@ impl From<RideOperatingStateDto> for RideOperatingState {
 impl From<ChargeModeDto> for ChargeMode {
     fn from(mode: ChargeModeDto) -> Self {
         match mode {
+            ChargeModeDto::Unknown => Self::Unknown,
             ChargeModeDto::Charging => Self::Charging,
             ChargeModeDto::NotCharging => Self::NotCharging,
         }

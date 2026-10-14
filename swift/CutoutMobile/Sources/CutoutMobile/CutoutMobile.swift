@@ -718,11 +718,14 @@ public enum VerificationState: Equatable, Hashable, Sendable {
 }
 
 public enum ChargeMode: Equatable, Hashable, Sendable {
+    case unknown
     case charging
     case notCharging
 
     fileprivate init(_ dto: MobileChargeModeDto) {
         switch dto {
+        case .unknown:
+            self = .unknown
         case .charging:
             self = .charging
         case .notCharging:
