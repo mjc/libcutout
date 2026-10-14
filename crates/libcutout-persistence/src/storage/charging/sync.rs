@@ -113,41 +113,28 @@ pub(super) fn next_operation(
     let Some(pending) = pending_operation(&transaction)? else {
         return Ok(None);
     };
-    let operation = freeze_operation(&transaction, pending)?;
+    let operation = freeze_operation(&transaction, &pending)?;
     transaction.commit()?;
     Ok(Some(operation))
 }
 
 fn freeze_operation(
     connection: &Connection,
-    pending: PendingRow,
+    pending: &PendingRow,
 ) -> Result<ChargingOperation, StorageError> {
     let point_id = point_id_from_bytes(&pending.point)?;
     let id = Uuid::parse_str(&pending.id)
         .map(ChargingOperationId::from_uuid)
         .map_err(|_| StorageError::ChargingInvalidInput)?;
     let action = action_from_json(&pending.action)?;
-    let target = if let Some(target) = pending.target {
-        decode(&target)?
-    } else {
-        let current = detail(connection, point_id)?.ok_or(StorageError::NotFound)?;
-        let target = match action {
-            ChargingAction::Create(_) => ChargingTarget::Create,
-            _ => ChargingTarget::Existing {
-                id: current.remote_id.ok_or(StorageError::ChargingConflict)?,
-                expected_revision: if action.is_vote() {
-                    current.vote_revision
-                } else {
-                    current.remote_revision
-                },
-            },
-        };
-        connection.execute(
-            "UPDATE charging_outbox SET target=?2 WHERE operation_id=?1",
-            params![id.uuid().to_string(), encode(&target)?],
-        )?;
-        target
-    };
+    let current = detail(connection, point_id)?.ok_or(StorageError::NotFound)?;
+    let target = freeze_target(
+        connection,
+        &pending.id,
+        &action,
+        pending.target.as_deref(),
+        &current,
+    )?;
     Ok(ChargingOperation {
         id,
         point_id,
@@ -155,6 +142,37 @@ fn freeze_operation(
         target,
         action,
     })
+}
+
+fn freeze_target(
+    connection: &Connection,
+    operation_id: &str,
+    action: &ChargingAction,
+    saved_target: Option<&str>,
+    current: &super::StoredChargingSpot,
+) -> Result<ChargingTarget, StorageError> {
+    if let Some(target) = saved_target {
+        return decode(target);
+    }
+    let target = match action {
+        ChargingAction::Create(_) => ChargingTarget::Create,
+        ChargingAction::Edit(_)
+        | ChargingAction::Withdraw
+        | ChargingAction::Verify
+        | ChargingAction::Vote(_) => ChargingTarget::Existing {
+            id: current.remote_id.ok_or(StorageError::ChargingConflict)?,
+            expected_revision: if action.is_vote() {
+                current.vote_revision
+            } else {
+                current.remote_revision
+            },
+        },
+    };
+    connection.execute(
+        "UPDATE charging_outbox SET target=?2 WHERE operation_id=?1",
+        params![operation_id, encode(&target)?],
+    )?;
+    Ok(target)
 }
 pub(super) fn cache_directory_entry(
     connection: &mut Connection,
@@ -489,13 +507,9 @@ fn apply_change_entry(
         |row| row.get(0),
     )?;
     if pending_count > 0 {
-        let conflict = pending_change_conflicts(transaction, point_id, &current, entry)?;
-        if conflict {
-            let operation_id: String = transaction.query_row(
-                "SELECT operation_id FROM charging_outbox WHERE point_id=?1 ORDER BY sequence LIMIT 1",
-                [point_id.uuid().as_bytes()],
-                |row| row.get(0),
-            )?;
+        let (conflict, has_pending_fields) =
+            review_pending_changes(transaction, point_id, &current, entry)?;
+        if let Some(operation_id) = conflict {
             let was_blocked: bool = transaction.query_row(
                 "SELECT blocked_kind IS NOT NULL FROM charging_outbox WHERE operation_id=?1",
                 [&operation_id],
@@ -517,7 +531,12 @@ fn apply_change_entry(
             )?;
             remove_spatial_index(transaction, point_id)?;
         } else {
-            apply_entry(transaction, point_id, &checked, EntryUpdate::ReplaceBody)?;
+            let update = if has_pending_fields && entry.status.visible() {
+                EntryUpdate::PreserveInput
+            } else {
+                EntryUpdate::ReplaceBody
+            };
+            apply_entry(transaction, point_id, &checked, update)?;
             if current.pending_vote || public_only_vote {
                 restore_vote(transaction, point_id, &current, public_only_vote)?;
             } else if entry.input.is_none() && entry.status != ChargingStatus::Published {
@@ -571,38 +590,51 @@ fn restore_vote(
     Ok(())
 }
 
-fn pending_change_conflicts(
+fn review_pending_changes(
     connection: &Connection,
     point_id: MapPointId,
     current: &super::StoredChargingSpot,
     entry: &ChargingDirectoryEntry,
-) -> Result<bool, StorageError> {
-    let row: (String, Option<String>) = connection.query_row(
-        "SELECT action,target FROM charging_outbox WHERE point_id=?1 ORDER BY sequence LIMIT 1",
-        [point_id.uuid().as_bytes()],
-        |row| Ok((row.get(0)?, row.get(1)?)),
-    )?;
-    let action = action_from_json(&row.0)?;
-    if !entry.status.visible() || current.status != entry.status {
-        return Ok(true);
-    }
-    let expected = row
-        .1
-        .as_deref()
-        .map(decode::<ChargingTarget>)
-        .transpose()?
-        .and_then(|target| match target {
+) -> Result<(Option<String>, bool), StorageError> {
+    let rows: Vec<(String, String, Option<String>)> = {
+        let mut statement = connection.prepare(
+            "SELECT operation_id,action,target FROM charging_outbox WHERE point_id=?1 ORDER BY sequence",
+        )?;
+        let rows = statement.query_map([point_id.uuid().as_bytes()], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })?;
+        rows.collect::<Result<_, _>>()?
+    };
+    let status_conflict = !entry.status.visible() || current.status != entry.status;
+    let mut first_conflict = None;
+    let mut has_pending_fields = false;
+    for (operation_id, action_json, target_json) in rows {
+        let action = action_from_json(&action_json)?;
+        has_pending_fields |= action.carries_fields();
+        let saved_target = target_json.as_deref();
+        let target = saved_target.map(decode::<ChargingTarget>).transpose()?;
+        let expected = target.as_ref().and_then(|target| match target {
             ChargingTarget::Existing {
                 expected_revision, ..
-            } => Some(expected_revision),
+            } => Some(*expected_revision),
             ChargingTarget::Create => None,
         });
-    let (old_revision, incoming_revision) = if action.is_vote() {
-        (current.vote_revision, entry.vote_revision)
-    } else {
-        (current.remote_revision, entry.revision)
-    };
-    Ok(incoming_revision > expected.unwrap_or(old_revision))
+        let (old_revision, incoming_revision) = if action.is_vote() {
+            (current.vote_revision, entry.vote_revision)
+        } else {
+            (current.remote_revision, entry.revision)
+        };
+        let conflicts = status_conflict || incoming_revision > expected.unwrap_or(old_revision);
+        if conflicts {
+            // Freeze every operation whose revision domain this feed advanced. Later rows
+            // remain queued behind the first review, but cannot adopt the new base silently.
+            freeze_target(connection, &operation_id, &action, saved_target, current)?;
+            if first_conflict.is_none() {
+                first_conflict = Some(operation_id);
+            }
+        }
+    }
+    Ok((first_conflict, has_pending_fields))
 }
 
 fn store_conflict(
@@ -612,6 +644,21 @@ fn store_conflict(
     remote: &ChargingDirectoryEntry,
     kind: &str,
 ) -> Result<(), StorageError> {
+    let action: String = connection.query_row(
+        "SELECT action FROM charging_outbox WHERE operation_id=?1",
+        [operation_id],
+        |row| row.get(0),
+    )?;
+    let action = action_from_json(&action)?;
+    let local_draft = if action.carries_fields() {
+        current
+            .input
+            .as_ref()
+            .map(super::codec::input_json)
+            .transpose()?
+    } else {
+        None
+    };
     connection.execute(
         "UPDATE charging_outbox SET blocked_kind=COALESCE(blocked_kind,?2) WHERE operation_id=?1",
         params![operation_id, kind],
@@ -621,7 +668,7 @@ fn store_conflict(
          ON CONFLICT(operation_id) DO UPDATE SET
            local_draft=COALESCE(charging_sync_conflicts.local_draft,excluded.local_draft),
            remote_entry=excluded.remote_entry",
-        params![operation_id, current.input.as_ref().map(super::codec::input_json).transpose()?, directory_entry_json(remote)?],
+        params![operation_id, local_draft, directory_entry_json(remote)?],
     )?;
     Ok(())
 }
@@ -715,14 +762,24 @@ pub(super) fn block_operation(
     kind: ChargingOperationBlockKind,
 ) -> Result<(), StorageError> {
     let transaction = connection.transaction()?;
-    let row: Option<(Vec<u8>, String)> = transaction.query_row(
-        "SELECT point_id,operation_id FROM charging_outbox WHERE operation_id=?1 AND target IS NOT NULL",
+    let row: Option<(Vec<u8>, String, String)> = transaction.query_row(
+        "SELECT point_id,operation_id,action FROM charging_outbox WHERE operation_id=?1 AND target IS NOT NULL",
         [id.uuid().to_string()],
-        |row| Ok((row.get(0)?, row.get(1)?)),
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
     ).optional()?;
-    let (point, operation_id) = row.ok_or(StorageError::ChargingConflict)?;
+    let (point, operation_id, action) = row.ok_or(StorageError::ChargingConflict)?;
+    let action = action_from_json(&action)?;
     let point_id = point_id_from_bytes(&point)?;
     let current = detail(&transaction, point_id)?.ok_or(StorageError::NotFound)?;
+    let local_draft = if action.carries_fields() {
+        current
+            .input
+            .as_ref()
+            .map(super::codec::input_json)
+            .transpose()?
+    } else {
+        None
+    };
     transaction.execute(
         "UPDATE charging_outbox SET blocked_kind=?2 WHERE operation_id=?1",
         params![operation_id, block_kind_str(kind)],
@@ -730,7 +787,7 @@ pub(super) fn block_operation(
     transaction.execute(
         "INSERT INTO charging_sync_conflicts(operation_id,local_draft) VALUES (?1,?2)
          ON CONFLICT(operation_id) DO UPDATE SET local_draft=COALESCE(charging_sync_conflicts.local_draft,excluded.local_draft)",
-        params![operation_id, current.input.as_ref().map(super::codec::input_json).transpose()?],
+        params![operation_id, local_draft],
     )?;
     transaction.commit()?;
     Ok(())
@@ -762,6 +819,11 @@ pub(super) fn list_blocked_operations(
             .map(|value| directory_entry_from_json(&value))
             .transpose()?;
         let current = detail(connection, point_id)?.ok_or(StorageError::NotFound)?;
+        let local_draft = if action.carries_fields() {
+            local_draft.or(current.input)
+        } else {
+            None
+        };
         let target = if let Some(target) = target {
             decode(&target)?
         } else if match &action {
@@ -798,7 +860,7 @@ pub(super) fn list_blocked_operations(
             },
             kind,
             local_revision: current.local_revision,
-            local_draft: local_draft.or(current.input),
+            local_draft,
             can_rebase: kind == ChargingOperationBlockKind::Conflict
                 && remote_entry
                     .as_ref()
@@ -832,6 +894,7 @@ pub(super) fn resolve_operation(
     let (point, kind_text, action_text) = row.ok_or(StorageError::ChargingConflict)?;
     let kind = parse_block_kind(&kind_text)?;
     let action = action_from_json(&action_text)?;
+    let carries_fields = action.carries_fields();
     let point_id = point_id_from_bytes(&point)?;
     let current = detail(&transaction, point_id)?.ok_or(StorageError::NotFound)?;
     if current.local_revision != expected_local_revision {
@@ -871,7 +934,11 @@ pub(super) fn resolve_operation(
             )?;
         }
         ChargingOperationResolution::RebaseKeepingLocal => {
-            let draft = local_draft.or(current.input.clone());
+            let draft = if carries_fields {
+                local_draft.or(current.input.clone())
+            } else {
+                None
+            };
             if let Some(input) = &draft {
                 transaction.execute(
                     "UPDATE charging_spots SET input=?2 WHERE point_id=?1",

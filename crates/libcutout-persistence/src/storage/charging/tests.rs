@@ -47,6 +47,27 @@ fn entry(
         votes_down: 0,
     }
 }
+fn owned_remote(
+    connection: &mut Connection,
+    spatial: &mut SpatialSchemaState,
+    published: &ChargingDirectoryEntry,
+) -> MapPointId {
+    apply_changes_page(
+        connection,
+        spatial,
+        std::slice::from_ref(published),
+        ChargingChangeCursor::new(published.change_sequence.get()).unwrap(),
+    )
+    .unwrap();
+    let point_id = find_remote(connection, published.id).unwrap().unwrap();
+    connection
+        .execute(
+            "UPDATE charging_spots SET owned=1 WHERE point_id=?1",
+            [point_id.uuid().as_bytes()],
+        )
+        .unwrap();
+    point_id
+}
 fn bounds() -> GeoBounds {
     GeoBounds::new(-1.0, 1.0, 179.0, -179.0).unwrap()
 }
@@ -358,20 +379,7 @@ fn conflict_rebase_uses_fresh_operation_identity_and_latest_target() {
     let mut spatial = SpatialSchemaState::Uninitialized;
     let published = entry(Some(input(0.5)), ChargingStatus::Published, 1);
     let remote_id = published.id;
-    apply_changes_page(
-        &mut connection,
-        &mut spatial,
-        std::slice::from_ref(&published),
-        ChargingChangeCursor::new(1).unwrap(),
-    )
-    .unwrap();
-    let point_id = find_remote(&connection, remote_id).unwrap().unwrap();
-    connection
-        .execute(
-            "UPDATE charging_spots SET owned=1 WHERE point_id=?1",
-            [point_id.uuid().as_bytes()],
-        )
-        .unwrap();
+    let point_id = owned_remote(&mut connection, &mut spatial, &published);
     let before = detail(&connection, point_id).unwrap().unwrap();
     let edit = change(
         &mut connection,
@@ -414,6 +422,346 @@ fn conflict_rebase_uses_fresh_operation_identity_and_latest_target() {
         ChargingTarget::Existing {
             id: remote_id,
             expected_revision: ChargingRevision::new(2).unwrap(),
+        }
+    );
+}
+
+#[test]
+fn queued_edit_after_vote_keeps_its_base_and_local_draft_across_feed_and_retry() {
+    let mut connection = database();
+    let mut spatial = SpatialSchemaState::Uninitialized;
+    let published = entry(Some(input(0.5)), ChargingStatus::Published, 1);
+    let remote_id = published.id;
+    let point_id = owned_remote(&mut connection, &mut spatial, &published);
+
+    let before_vote = detail(&connection, point_id).unwrap().unwrap();
+    let vote = change(
+        &mut connection,
+        &mut spatial,
+        point_id,
+        before_vote.local_revision,
+        &ChargingAction::Vote(Some(ChargingVote::Up)),
+    )
+    .unwrap();
+    let before_edit = detail(&connection, point_id).unwrap().unwrap();
+    let edit = change(
+        &mut connection,
+        &mut spatial,
+        point_id,
+        before_edit.local_revision,
+        &ChargingAction::Edit(input(1.5)),
+    )
+    .unwrap();
+    let vote_operation = next_operation(&mut connection).unwrap().unwrap();
+    assert_eq!(vote_operation.id, vote.operation_id);
+    assert_eq!(
+        vote_operation.target,
+        ChargingTarget::Existing {
+            id: remote_id,
+            expected_revision: ChargingRevision::ZERO,
+        }
+    );
+
+    let mut changed = published.clone();
+    changed.change_sequence = ChargingRevision::new(2).unwrap();
+    changed.revision = ChargingRevision::new(2).unwrap();
+    changed.input = Some(input(0.75));
+    let result = apply_changes_page(
+        &mut connection,
+        &mut spatial,
+        &[changed.clone()],
+        ChargingChangeCursor::new(2).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(result.blocked_operations, 1);
+    let review = list_blocked_operations(&connection).unwrap().remove(0);
+    assert_eq!(review.operation.id, edit.operation_id);
+    assert_eq!(review.operation.action, ChargingAction::Edit(input(1.5)));
+    assert_eq!(review.local_draft, Some(input(1.5)));
+    assert_eq!(
+        review.operation.target,
+        ChargingTarget::Existing {
+            id: remote_id,
+            expected_revision: ChargingRevision::new(1).unwrap(),
+        }
+    );
+    assert_eq!(
+        detail(&connection, point_id).unwrap().unwrap().input,
+        Some(input(1.5))
+    );
+
+    changed.vote = Some(ChargingVote::Up);
+    changed.vote_revision = ChargingRevision::new(1).unwrap();
+    acknowledge_operation(
+        &mut connection,
+        &mut spatial,
+        vote_operation.id,
+        ChargingRevision::new(1).unwrap(),
+        &changed,
+    )
+    .unwrap();
+    assert!(next_operation(&mut connection).unwrap().is_none());
+    let review = list_blocked_operations(&connection).unwrap().remove(0);
+    assert_eq!(review.operation.id, edit.operation_id);
+    resolve_operation(
+        &mut connection,
+        &mut spatial,
+        review.operation.id,
+        review.local_revision,
+        ChargingOperationResolution::Retry,
+    )
+    .unwrap();
+    let retried = next_operation(&mut connection).unwrap().unwrap();
+    assert_eq!(retried.id, edit.operation_id);
+    assert_eq!(retried.action, ChargingAction::Edit(input(1.5)));
+    assert_eq!(
+        retried.target,
+        ChargingTarget::Existing {
+            id: remote_id,
+            expected_revision: ChargingRevision::new(1).unwrap(),
+        }
+    );
+}
+
+#[test]
+fn non_field_conflict_rebase_keeps_latest_body_even_with_legacy_saved_draft() {
+    let mut connection = database();
+    let mut spatial = SpatialSchemaState::Uninitialized;
+    let published = entry(Some(input(0.5)), ChargingStatus::Published, 1);
+    let point_id = owned_remote(&mut connection, &mut spatial, &published);
+    let current = detail(&connection, point_id).unwrap().unwrap();
+    let vote = change(
+        &mut connection,
+        &mut spatial,
+        point_id,
+        current.local_revision,
+        &ChargingAction::Vote(None),
+    )
+    .unwrap();
+    let operation = next_operation(&mut connection).unwrap().unwrap();
+    assert_eq!(operation.id, vote.operation_id);
+    block_operation(
+        &mut connection,
+        operation.id,
+        ChargingOperationBlockKind::Conflict,
+    )
+    .unwrap();
+
+    let mut newer = published;
+    newer.change_sequence = ChargingRevision::new(2).unwrap();
+    newer.revision = ChargingRevision::new(2).unwrap();
+    newer.input = Some(input(0.75));
+    newer.verified_at_ms = Some(1_000);
+    newer.vote = Some(ChargingVote::Down);
+    newer.vote_revision = ChargingRevision::new(1).unwrap();
+    apply_changes_page(
+        &mut connection,
+        &mut spatial,
+        &[newer],
+        ChargingChangeCursor::new(2).unwrap(),
+    )
+    .unwrap();
+    let review = list_blocked_operations(&connection).unwrap().remove(0);
+    assert_eq!(review.local_draft, None);
+    connection
+        .execute(
+            "UPDATE charging_sync_conflicts SET local_draft=?2 WHERE operation_id=?1",
+            rusqlite::params![
+                vote.operation_id.uuid().to_string(),
+                codec::input_json(&input(0.5)).unwrap(),
+            ],
+        )
+        .unwrap();
+    assert_eq!(
+        list_blocked_operations(&connection).unwrap()[0].local_draft,
+        None
+    );
+    resolve_operation(
+        &mut connection,
+        &mut spatial,
+        vote.operation_id,
+        review.local_revision,
+        ChargingOperationResolution::RebaseKeepingLocal,
+    )
+    .unwrap();
+    let current = detail(&connection, point_id).unwrap().unwrap();
+    assert_eq!(current.input, Some(input(0.75)));
+    assert_eq!(current.vote, None);
+    assert!(current.pending_vote);
+    let visible = page(
+        &connection,
+        &mut spatial,
+        GeoBounds::new(-1.0, 1.0, -1.0, 1.0).unwrap(),
+        &ChargingFilter::default(),
+        None,
+        QueryLimit(10),
+    )
+    .unwrap();
+    assert_eq!(visible.spots.len(), 1);
+    assert_eq!(visible.spots[0].point_id, point_id);
+}
+
+#[test]
+fn pending_edit_preserves_local_body_and_applies_authoritative_vote() {
+    let mut connection = database();
+    let mut spatial = SpatialSchemaState::Uninitialized;
+    let published = entry(Some(input(0.5)), ChargingStatus::Published, 1);
+    let point_id = owned_remote(&mut connection, &mut spatial, &published);
+    let current = detail(&connection, point_id).unwrap().unwrap();
+    let edit = change(
+        &mut connection,
+        &mut spatial,
+        point_id,
+        current.local_revision,
+        &ChargingAction::Edit(input(1.5)),
+    )
+    .unwrap();
+    let mut newer = published;
+    newer.change_sequence = ChargingRevision::new(2).unwrap();
+    newer.revision = ChargingRevision::new(2).unwrap();
+    newer.input = Some(input(0.75));
+    newer.vote = Some(ChargingVote::Down);
+    newer.vote_revision = ChargingRevision::new(1).unwrap();
+    let result = apply_changes_page(
+        &mut connection,
+        &mut spatial,
+        &[newer],
+        ChargingChangeCursor::new(2).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(result.blocked_operations, 1);
+    let review = list_blocked_operations(&connection).unwrap().remove(0);
+    assert_eq!(review.operation.id, edit.operation_id);
+    let current = detail(&connection, point_id).unwrap().unwrap();
+    assert_eq!(current.input, Some(input(1.5)));
+    assert_eq!(current.vote, Some(ChargingVote::Down));
+    assert_eq!(current.vote_revision, ChargingRevision::new(1).unwrap());
+    assert_eq!(current.verified_at_ms, None);
+}
+
+#[test]
+fn pending_vote_ignores_field_revision_changes_without_an_edit() {
+    let mut connection = database();
+    let mut spatial = SpatialSchemaState::Uninitialized;
+    let published = entry(Some(input(0.5)), ChargingStatus::Published, 1);
+    let remote_id = published.id;
+    apply_changes_page(
+        &mut connection,
+        &mut spatial,
+        std::slice::from_ref(&published),
+        ChargingChangeCursor::new(1).unwrap(),
+    )
+    .unwrap();
+    let point_id = find_remote(&connection, remote_id).unwrap().unwrap();
+    let current = detail(&connection, point_id).unwrap().unwrap();
+    let vote = change(
+        &mut connection,
+        &mut spatial,
+        point_id,
+        current.local_revision,
+        &ChargingAction::Vote(Some(ChargingVote::Up)),
+    )
+    .unwrap();
+    let operation = next_operation(&mut connection).unwrap().unwrap();
+    let mut newer = published;
+    newer.change_sequence = ChargingRevision::new(2).unwrap();
+    newer.revision = ChargingRevision::new(2).unwrap();
+    newer.input = Some(input(0.75));
+    let result = apply_changes_page(
+        &mut connection,
+        &mut spatial,
+        &[newer],
+        ChargingChangeCursor::new(2).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(result.blocked_operations, 0);
+    assert_eq!(list_blocked_operations(&connection).unwrap().len(), 0);
+    assert_eq!(
+        detail(&connection, point_id).unwrap().unwrap().input,
+        Some(input(0.75))
+    );
+    let still_pending = next_operation(&mut connection).unwrap().unwrap();
+    assert_eq!(still_pending.id, vote.operation_id);
+    assert_eq!(still_pending.target, operation.target);
+}
+
+#[test]
+fn conflict_scan_freezes_later_operation_in_its_own_revision_domain() {
+    let mut connection = database();
+    let mut spatial = SpatialSchemaState::Uninitialized;
+    let published = entry(Some(input(0.5)), ChargingStatus::Published, 1);
+    let remote_id = published.id;
+    let point_id = owned_remote(&mut connection, &mut spatial, &published);
+    let current = detail(&connection, point_id).unwrap().unwrap();
+    let vote = change(
+        &mut connection,
+        &mut spatial,
+        point_id,
+        current.local_revision,
+        &ChargingAction::Vote(None),
+    )
+    .unwrap();
+    let current = detail(&connection, point_id).unwrap().unwrap();
+    let edit = change(
+        &mut connection,
+        &mut spatial,
+        point_id,
+        current.local_revision,
+        &ChargingAction::Edit(input(1.5)),
+    )
+    .unwrap();
+    let first = next_operation(&mut connection).unwrap().unwrap();
+    assert_eq!(first.id, vote.operation_id);
+    let mut newer = published;
+    newer.change_sequence = ChargingRevision::new(2).unwrap();
+    newer.revision = ChargingRevision::new(2).unwrap();
+    newer.input = Some(input(0.75));
+    newer.vote_revision = ChargingRevision::new(1).unwrap();
+    newer.vote = Some(ChargingVote::Down);
+    apply_changes_page(
+        &mut connection,
+        &mut spatial,
+        &[newer.clone()],
+        ChargingChangeCursor::new(2).unwrap(),
+    )
+    .unwrap();
+    let review = list_blocked_operations(&connection).unwrap().remove(0);
+    assert_eq!(review.operation.id, vote.operation_id);
+    resolve_operation(
+        &mut connection,
+        &mut spatial,
+        vote.operation_id,
+        review.local_revision,
+        ChargingOperationResolution::RebaseKeepingLocal,
+    )
+    .unwrap();
+    let rebased_vote = next_operation(&mut connection).unwrap().unwrap();
+    assert_ne!(rebased_vote.id, vote.operation_id);
+    assert_eq!(
+        rebased_vote.target,
+        ChargingTarget::Existing {
+            id: remote_id,
+            expected_revision: ChargingRevision::new(1).unwrap(),
+        }
+    );
+    newer.change_sequence = ChargingRevision::new(3).unwrap();
+    newer.vote = None;
+    newer.vote_revision = ChargingRevision::new(2).unwrap();
+    acknowledge_operation(
+        &mut connection,
+        &mut spatial,
+        rebased_vote.id,
+        ChargingRevision::new(2).unwrap(),
+        &newer,
+    )
+    .unwrap();
+    let still_pending_edit = next_operation(&mut connection).unwrap().unwrap();
+    assert_eq!(still_pending_edit.id, edit.operation_id);
+    assert_eq!(
+        still_pending_edit.target,
+        ChargingTarget::Existing {
+            id: remote_id,
+            expected_revision: ChargingRevision::new(1).unwrap(),
         }
     );
 }

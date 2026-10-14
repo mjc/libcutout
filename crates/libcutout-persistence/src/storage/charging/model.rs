@@ -346,6 +346,13 @@ impl ChargingAction {
             Self::Create(_) | Self::Edit(_) | Self::Withdraw | Self::Verify => false,
         }
     }
+
+    pub(super) const fn carries_fields(&self) -> bool {
+        match self {
+            Self::Create(_) | Self::Edit(_) => true,
+            Self::Withdraw | Self::Verify | Self::Vote(_) => false,
+        }
+    }
 }
 
 /// Server data whose status, body and SQLite integer bounds have been checked.
