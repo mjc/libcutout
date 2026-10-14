@@ -1144,7 +1144,8 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "ride-map.screen").count, 1)
         let summary = app.descendants(matching: .any)["ride-map.summary"]
         XCTAssertTrue(summary.waitForExistence(timeout: 5), app.debugDescription)
-        XCTAssertTrue(summary.label.contains("Moving time"), app.debugDescription)
+        XCTAssertTrue(summary.label.contains("Elapsed time:"), app.debugDescription)
+        XCTAssertTrue(summary.label.contains("Moving time:"), app.debugDescription)
         XCTAssertFalse(summary.label.contains("Recording time"), app.debugDescription)
         let modePicker = app.descendants(matching: .any)["ride-map.mode-picker"].segmentedControls.firstMatch
         XCTAssertTrue(modePicker.waitForExistence(timeout: 5), app.debugDescription)
@@ -1229,7 +1230,8 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(mapScreen.waitForExistence(timeout: 8), app.debugDescription)
         let summary = app.descendants(matching: .any)["ride-map.summary"]
         XCTAssertTrue(summary.waitForExistence(timeout: 5), app.debugDescription)
-        XCTAssertTrue(summary.label.contains("Moving time"), app.debugDescription)
+        XCTAssertTrue(summary.label.contains("Elapsed time:"), app.debugDescription)
+        XCTAssertTrue(summary.label.contains("Moving time:"), app.debugDescription)
         XCTAssertFalse(summary.label.contains("Recording time"), app.debugDescription)
         let routeMap = app.descendants(matching: .any)["ride-map.map"]
         XCTAssertTrue(routeMap.waitForExistence(timeout: 8), app.debugDescription)
@@ -1700,6 +1702,8 @@ final class CutoutAppUITests: XCTestCase {
             requiresFullVisibility: false
         )
         XCTAssertTrue(newestRide.isHittable, app.debugDescription)
+        XCTAssertTrue(newestRide.label.contains("Elapsed time:"), app.debugDescription)
+        XCTAssertTrue(newestRide.label.contains("Moving time:"), app.debugDescription)
         let historyScreenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         historyScreenshot.name = "saved-history-newest-rust-ride-row-accessibility-dynamic-type"
         historyScreenshot.lifetime = .keepAlways
@@ -1713,6 +1717,9 @@ final class CutoutAppUITests: XCTestCase {
             afterQueryGeneration: shortRideGeneration - 1,
             selecting: newestSeededID
         )
+        XCTAssertTrue(
+            detailScreen.descendants(matching: .any)["Elapsed time"].waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(detailScreen.descendants(matching: .any)["Moving time"].exists, app.debugDescription)
         let detailMap = detailScreen.descendants(matching: .any)["ride-map.map"]
         XCTAssertTrue(detailMap.waitForExistence(timeout: 8), app.debugDescription)
         XCTAssertFalse(app.descendants(matching: .any)["ride-map.detail-initial-loading"].exists)

@@ -246,6 +246,9 @@ struct RideMapHistoryDetailView: View {
                             } else if projectionRideID == activeHistoryID, let ride = selectedRide {
                                 RideMapHistoryDetailSummary(
                                     distance: distanceText(for: ride.summary),
+                                    elapsedTime: RideMapMetricFormatting.elapsedTimeText(for: ride.summary),
+                                    elapsedTimeSpokenValue: RideMapMetricFormatting.elapsedTimeSpokenValue(
+                                        for: ride.summary),
                                     movingTime: RideMapMetricFormatting.movingTimeText(for: ride.summary),
                                     movingTimeSpokenValue: RideMapMetricFormatting.movingTimeSpokenValue(
                                         for: ride.summary),
@@ -274,7 +277,7 @@ struct RideMapHistoryDetailView: View {
                                     },
                                     state: routeState,
                                     loadRoutePreview: loadRoutePreview,
-                                    shareText: shareText(for: ride),
+                                    shareText: Self.shareText(for: ride),
                                     mapPosition: $mapPosition,
                                     isApplyingCamera: $isApplyingCamera
                                 )
@@ -326,10 +329,12 @@ struct RideMapHistoryDetailView: View {
         )
     }
 
-    private func shareText(for ride: MobileRideMapHistorySummaryDto) -> String {
-        let distance = distanceText(for: ride.summary)
+    static func shareText(for ride: MobileRideMapHistorySummaryDto) -> String {
+        let distance = RideMapMetricFormatting.distanceText(for: ride.summary)
+        let elapsedTime = RideMapMetricFormatting.elapsedTimeSpokenValue(for: ride.summary)
         let movingTime = RideMapMetricFormatting.movingTimeSpokenValue(for: ride.summary)
         let title = localizedAppText("ride_map.detail_title")
-        return "\(title)\n\(distance) · \(localizedAppText("ride_map.moving_time", movingTime))"
+        return "\(title)\n\(distance) · \(localizedAppText("ride_map.elapsed_time", elapsedTime)) · "
+            + localizedAppText("ride_map.moving_time", movingTime)
     }
 }

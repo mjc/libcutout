@@ -26,9 +26,9 @@ enum RideMapMetricFormatting {
         case .unavailable:
             "--"
         case let .complete(movingMilliseconds, _):
-            movingDurationText(milliseconds: movingMilliseconds)
+            durationText(milliseconds: movingMilliseconds)
         case let .partial(movingMilliseconds, _, _):
-            "≥ \(movingDurationText(milliseconds: movingMilliseconds))"
+            "≥ \(durationText(milliseconds: movingMilliseconds))"
         }
     }
 
@@ -37,13 +37,35 @@ enum RideMapMetricFormatting {
         case .unavailable:
             localizedAppText("ride_map.moving_time_unavailable")
         case let .complete(movingMilliseconds, _):
-            movingDurationText(milliseconds: movingMilliseconds)
+            durationText(milliseconds: movingMilliseconds)
         case let .partial(movingMilliseconds, _, _):
-            localizedAppText("ride_map.moving_time_partial", movingDurationText(milliseconds: movingMilliseconds))
+            localizedAppText("ride_map.moving_time_partial", durationText(milliseconds: movingMilliseconds))
         }
     }
 
-    private static func movingDurationText(milliseconds: UInt64) -> String {
+    static func elapsedTimeText(for summary: MobileRideMapSummaryDto) -> String {
+        switch summary.elapsedTime {
+        case .unavailable:
+            "--"
+        case let .complete(durationMilliseconds):
+            durationText(milliseconds: durationMilliseconds)
+        case let .partial(durationMilliseconds):
+            "≥ \(durationText(milliseconds: durationMilliseconds))"
+        }
+    }
+
+    static func elapsedTimeSpokenValue(for summary: MobileRideMapSummaryDto) -> String {
+        switch summary.elapsedTime {
+        case .unavailable:
+            localizedAppText("ride_map.elapsed_time_unavailable")
+        case let .complete(durationMilliseconds):
+            durationText(milliseconds: durationMilliseconds)
+        case let .partial(durationMilliseconds):
+            localizedAppText("ride_map.elapsed_time_partial", durationText(milliseconds: durationMilliseconds))
+        }
+    }
+
+    private static func durationText(milliseconds: UInt64) -> String {
         Duration.seconds(Double(milliseconds) / 1_000)
             .formatted(.units(allowed: [.hours, .minutes, .seconds], width: .abbreviated))
     }

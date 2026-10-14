@@ -120,7 +120,10 @@ struct RideMapSummaryView: View {
         if dynamicTypeSize.isAccessibilitySize {
             VStack(alignment: .leading, spacing: 12) { metrics(for: snapshot) }
         } else {
-            HStack(alignment: .firstTextBaseline, spacing: 12) { metrics(for: snapshot) }
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .firstTextBaseline, spacing: 12) { metrics(for: snapshot) }
+                VStack(alignment: .leading, spacing: 12) { metrics(for: snapshot) }
+            }
         }
     }
 
@@ -129,6 +132,11 @@ struct RideMapSummaryView: View {
         RideMapMetric(
             value: distanceText(for: snapshot),
             label: localizedAppText("ride_map.metric_distance")
+        )
+        RideMapMetric(
+            value: RideMapMetricFormatting.elapsedTimeText(for: snapshot.summary),
+            label: localizedAppText("ride_map.metric_elapsed_time"),
+            spokenValue: RideMapMetricFormatting.elapsedTimeSpokenValue(for: snapshot.summary)
         )
         RideMapMetric(
             value: RideMapMetricFormatting.movingTimeText(for: snapshot.summary),

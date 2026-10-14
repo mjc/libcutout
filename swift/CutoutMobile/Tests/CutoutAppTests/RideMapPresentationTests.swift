@@ -310,6 +310,81 @@ final class RideMapPresentationTests: XCTestCase {
         )
     }
 
+    func testElapsedTimeFormattingDistinguishesUnavailableZeroAndPartialCoverage() {
+        let localFixture = MobileRideMapSummaryDto(pointCount: 0, distanceMeters: 0, durationMilliseconds: 0)
+        XCTAssertEqual(localFixture.elapsedTime, .unavailable)
+
+        func summary(_ elapsedTime: MobileRideMapElapsedTimeDto) -> MobileRideMapSummaryDto {
+            MobileRideMapSummaryDto(
+                pointCount: 2, distanceMeters: 10, durationMilliseconds: 999_000, elapsedTime: elapsedTime
+            )
+        }
+        let zero = Duration.seconds(0)
+            .formatted(.units(allowed: [.hours, .minutes, .seconds], width: .abbreviated))
+        let elapsed = Duration.seconds(61)
+            .formatted(.units(allowed: [.hours, .minutes, .seconds], width: .abbreviated))
+
+        XCTAssertEqual(RideMapMetricFormatting.elapsedTimeText(for: summary(.unavailable)), "--")
+        XCTAssertEqual(
+            RideMapMetricFormatting.elapsedTimeSpokenValue(for: summary(.unavailable)),
+            localizedAppText("ride_map.elapsed_time_unavailable")
+        )
+        XCTAssertEqual(
+            RideMapMetricFormatting.elapsedTimeText(for: summary(.complete(durationMilliseconds: 0))), zero
+        )
+        XCTAssertEqual(
+            RideMapMetricFormatting.elapsedTimeText(for: summary(.complete(durationMilliseconds: 61_000))), elapsed
+        )
+        XCTAssertEqual(
+            RideMapMetricFormatting.elapsedTimeText(for: summary(.partial(durationMilliseconds: 61_000))),
+            "≥ \(elapsed)"
+        )
+        XCTAssertEqual(
+            RideMapMetricFormatting.elapsedTimeSpokenValue(for: summary(.partial(durationMilliseconds: 61_000))),
+            localizedAppText("ride_map.elapsed_time_partial", elapsed)
+        )
+        XCTAssertEqual(
+            localizedAppText(
+                "ride_map.elapsed_time",
+                RideMapMetricFormatting.elapsedTimeSpokenValue(
+                    for: summary(.unavailable)
+                )),
+            "Elapsed time: Unavailable"
+        )
+    }
+
+    func testSharedRideSummaryUsesTheSameElapsedAndMovingLabels() {
+        let summary = MobileRideMapSummaryDto(
+            pointCount: 2,
+            distanceMeters: 1_000,
+            durationMilliseconds: 180_000,
+            movingTime: .complete(movingMilliseconds: 121_000, observedMilliseconds: 180_000),
+            elapsedTime: .complete(durationMilliseconds: 180_000)
+        )
+        let ride = MobileRideMapHistorySummaryDto(
+            rideID: "ride",
+            state: .saved,
+            summary: summary,
+            segmentCount: 1,
+            createdAtMilliseconds: 1,
+            candidateVehicle: nil,
+            associatedVehicle: nil,
+            telemetryState: .gpsOnly
+        )
+        let elapsed = localizedAppText(
+            "ride_map.elapsed_time", RideMapMetricFormatting.elapsedTimeText(for: summary)
+        )
+        let moving = localizedAppText(
+            "ride_map.moving_time", RideMapMetricFormatting.movingTimeText(for: summary)
+        )
+
+        XCTAssertEqual(
+            RideMapHistoryDetailView.shareText(for: ride),
+            "\(localizedAppText("ride_map.detail_title"))\n\(RideMapMetricFormatting.distanceText(for: summary)) · "
+                + "\(elapsed) · \(moving)"
+        )
+    }
+
     func testHistorySelectionAccessibilityTextIsLocalized() {
         XCTAssertEqual(
             RideMapHistoryListView.selectionAccessibilityValue(isSelected: true),

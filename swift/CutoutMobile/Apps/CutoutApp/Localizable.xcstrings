@@ -1879,6 +1879,22 @@
       "comment" : "Live map metric label for distance.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "distance" } } }
     },
+    "ride_map.metric_elapsed_time" : {
+      "comment" : "Ride metric label for Rust-accounted elapsed ride time.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Elapsed time" } } }
+    },
+    "ride_map.elapsed_time_unavailable" : {
+      "comment" : "Spoken metric value when a ride has no elapsed-time evidence. The surrounding metric supplies the label.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Unavailable" } } }
+    },
+    "ride_map.elapsed_time_partial" : {
+      "comment" : "Spoken lower bound for elapsed time when ride time coverage is partial. The placeholder is a formatted duration.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "At least %@; coverage is partial" } } }
+    },
+    "ride_map.elapsed_time" : {
+      "comment" : "Elapsed-time label for shared ride text and history row accessibility.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Elapsed time: %@" } } }
+    },
     "ride_map.metric_moving_time" : {
       "comment" : "Ride metric for Rust-accounted moving intervals, excluding pauses and unobserved intervals.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Moving time" } } }

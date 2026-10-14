@@ -201,6 +201,8 @@ struct RideMapHistoryDetailUnavailableState: View {
 
 struct RideMapHistoryDetailSummary: View {
     let distance: String
+    var elapsedTime: String = "--"
+    var elapsedTimeSpokenValue: String? = nil
     let movingTime: String
     var movingTimeSpokenValue: String? = nil
     let averageSpeed: String
@@ -264,7 +266,9 @@ struct RideMapHistoryDetailSummary: View {
                 }
                 .accessibilityElement(children: .combine)
                 RideMapDetailMetrics(
-                    distance: distance, movingTime: movingTime, movingTimeSpokenValue: movingTimeSpokenValue,
+                    distance: distance, elapsedTime: elapsedTime,
+                    elapsedTimeSpokenValue: elapsedTimeSpokenValue,
+                    movingTime: movingTime, movingTimeSpokenValue: movingTimeSpokenValue,
                     averageSpeed: averageSpeed
                 )
                 RideMapRouteTruthView(
@@ -389,6 +393,8 @@ struct RideMapHistoryDetailSummary: View {
 struct RideMapDetailMetrics: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let distance: String
+    var elapsedTime: String = "--"
+    var elapsedTimeSpokenValue: String? = nil
     let movingTime: String
     var movingTimeSpokenValue: String? = nil
     let averageSpeed: String
@@ -397,13 +403,20 @@ struct RideMapDetailMetrics: View {
         if dynamicTypeSize.isAccessibilitySize {
             VStack(alignment: .leading, spacing: 12) { metrics }
         } else {
-            HStack(alignment: .top, spacing: 12) { metrics }
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: 12) { metrics }
+                VStack(alignment: .leading, spacing: 12) { metrics }
+            }
         }
     }
 
     @ViewBuilder
     private var metrics: some View {
         RideMapDetailMetric(value: distance, label: localizedAppText("ride_map.metric_distance"))
+        RideMapDetailMetric(
+            value: elapsedTime, label: localizedAppText("ride_map.metric_elapsed_time"),
+            spokenValue: elapsedTimeSpokenValue
+        )
         RideMapDetailMetric(
             value: movingTime, label: localizedAppText("ride_map.metric_moving_time"),
             spokenValue: movingTimeSpokenValue

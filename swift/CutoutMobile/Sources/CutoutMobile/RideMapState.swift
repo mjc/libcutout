@@ -175,6 +175,9 @@ public enum MobileRideMapMovingTimeDto: Equatable, Hashable, Sendable {
     }
 }
 
+/// Rust's elapsed-time value and coverage, rendered directly by the native shell.
+public typealias MobileRideMapElapsedTimeDto = MobileRideElapsedTimeDto
+
 public struct MobileRideMapSummaryDto: Equatable, Hashable, Sendable {
     public let pointCount: UInt64
     public let distanceMeters: Double
@@ -182,19 +185,22 @@ public struct MobileRideMapSummaryDto: Equatable, Hashable, Sendable {
     public let durationMilliseconds: UInt64
     public let averageSpeedMillimetresPerSecond: UInt64?
     public let movingTime: MobileRideMapMovingTimeDto
+    public let elapsedTime: MobileRideMapElapsedTimeDto
 
     public init(
         pointCount: UInt64,
         distanceMeters: Double,
         durationMilliseconds: UInt64,
         averageSpeedMillimetresPerSecond: UInt64? = nil,
-        movingTime: MobileRideMapMovingTimeDto = .unavailable
+        movingTime: MobileRideMapMovingTimeDto = .unavailable,
+        elapsedTime: MobileRideMapElapsedTimeDto = .unavailable
     ) {
         self.pointCount = pointCount
         self.distanceMeters = distanceMeters
         self.durationMilliseconds = durationMilliseconds
         self.averageSpeedMillimetresPerSecond = averageSpeedMillimetresPerSecond
         self.movingTime = movingTime
+        self.elapsedTime = elapsedTime
     }
 }
 
@@ -1787,7 +1793,8 @@ public final class MobileRideMapState: @unchecked Sendable {
                 distanceMeters: Double(ride.summary.distanceMillimetres) / 1_000,
                 durationMilliseconds: ride.durationMilliseconds,
                 averageSpeedMillimetresPerSecond: ride.summary.averageSpeedMillimetresPerSecond,
-                movingTime: MobileRideMapMovingTimeDto(ride.summary.movingTime)
+                movingTime: MobileRideMapMovingTimeDto(ride.summary.movingTime),
+                elapsedTime: ride.summary.elapsedTime
             ),
             segmentCount: ride.segmentCount,
             createdAtMilliseconds: ride.createdAtMilliseconds,
@@ -1841,7 +1848,8 @@ public final class MobileRideMapState: @unchecked Sendable {
                 pointCount: snapshot.summary.pointCount,
                 distanceMeters: snapshot.summary.distanceMeters,
                 durationMilliseconds: snapshot.summary.durationMilliseconds,
-                movingTime: MobileRideMapMovingTimeDto(snapshot.summary.movingTime)
+                movingTime: MobileRideMapMovingTimeDto(snapshot.summary.movingTime),
+                elapsedTime: snapshot.summary.elapsedTime
             ),
             liveActivityStatistics: snapshot.liveActivityStatistics,
             liveSpeed: snapshot.liveSpeed.source == .unavailable ? nil : snapshot.liveSpeed,
