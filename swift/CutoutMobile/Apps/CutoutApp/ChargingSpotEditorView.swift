@@ -176,12 +176,43 @@ struct ChargingSpotEditorView: View {
                     .accessibilityIdentifier(
                         isAccessNoteError ? "charging.editor.access-note-error" : "charging.editor.error")
             }
+            if model.hasRevisionConflict {
+                revisionConflictDetails
+            }
             if model.hasInvalidCoordinate {
                 Text(localizedAppText("charging.editor.error.coordinate"))
                     .font(.footnote)
                     .foregroundStyle(.red)
                     .accessibilityIdentifier("charging.editor.coordinate.error")
             }
+        }
+    }
+
+    @ViewBuilder private var revisionConflictDetails: some View {
+        if let latest = model.latestRevisionCandidate, let input = latest.input {
+            VStack(alignment: .leading, spacing: 8) {
+                ChargingInputSummary(input: input, title: "charging.editor.latest.title")
+                Text(localizedAppText("charging.editor.keep_draft_warning"))
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                Button(localizedAppText("charging.editor.keep_draft")) {
+                    model.keepDraftUsingLatestRevision()
+                }
+                .disabled(!model.canKeepDraftUsingLatestRevision)
+                .accessibilityIdentifier("charging.editor.keep-draft-latest")
+            }
+        } else {
+            if let errorKey = model.latestReloadErrorKey {
+                Text(localizedAppText(errorKey)).foregroundStyle(.red)
+            }
+            HStack {
+                Button(localizedAppText("charging.editor.review_latest")) {
+                    Task { await model.loadLatestForReconciliation() }
+                }
+                .disabled(model.isLoadingLatest)
+                if model.isLoadingLatest { ProgressView() }
+            }
+            .accessibilityIdentifier("charging.editor.review-latest")
         }
     }
 

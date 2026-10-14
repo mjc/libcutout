@@ -40,7 +40,7 @@ final class ChargingMapModel {
     private let queryBlockedOperations: ChargingBlockedOperationsQuery
     private let resolveOperation: ChargingOperationResolution
     private let communitySync: ChargingCommunitySync?
-    private var withdrawnIDs = Set<String>()
+    private var withdrawnAtMutation = [String: (mutation: UInt64, revision: UInt64)]()
     private var bounds: MobileGeoBoundsDto?
     private var cursor: MobileMapPointCursorDto?
     private var generation: UInt64 = 0
@@ -256,7 +256,44 @@ final class ChargingMapModel {
     ) async throws {
         try await resolveOperation(operation.operationId, operation.localRevision, resolution)
         await loadBlockedOperations()
+        await refreshAfterResolution(id: operation.id)
         communitySyncRequested()
+    }
+
+    private func refreshAfterResolution(id: String) async {
+        mutationSequence &+= 1
+        spotMutationSequence[id] = mutationSequence
+        if bounds != nil {
+            await fetchPage(append: false)
+        } else {
+            advanceQuery()
+        }
+        let requestGeneration = generation
+
+        let requestMutation = spotMutationSequence[id, default: 0]
+        let requestSelection = selectionSequence
+        do {
+            let updated = try await readSpot(id)
+            guard generation == requestGeneration,
+                spotMutationSequence[id, default: 0] == requestMutation
+            else { return }
+            guard let updated else {
+                spots.removeAll { $0.id == id }
+                if selectedSpot?.id == id { deselect() }
+                return
+            }
+            if updated.status == .published { withdrawnAtMutation.removeValue(forKey: id) }
+            if updated.status == .hidden || updated.status == .withdrawn || updated.status == .removed {
+                spots.removeAll { $0.id == id }
+            } else if let index = spots.firstIndex(where: { $0.id == id }) {
+                spots[index] = updated
+            }
+            if selectionSequence == requestSelection, selectedSpot?.id == id {
+                selectedSpot = updated
+            }
+        } catch {
+            // Keep the durable decision even when its local presentation read fails.
+        }
     }
 
     private func requestCommunitySync(explicitRetry: Bool) {
@@ -427,9 +464,6 @@ final class ChargingMapModel {
             voteReadbacks[id] = updated
             if let index = spots.firstIndex(where: { $0.id == id }) {
                 spots[index] = updated
-            } else {
-                if spots.count >= Self.resultLimit { spots.removeLast() }
-                spots.append(updated)
             }
             selectedSpot = updated
             error = nil
@@ -450,17 +484,22 @@ final class ChargingMapModel {
         }
     }
 
+    func consumeDiscoveryTarget() -> MobileMapCoordinateDto? {
+        defer { discoveryTarget = nil }
+        return discoveryTarget
+    }
+
     func withdraw(_ spot: MobileChargingSpotDto) async -> Bool {
         guard spot.owned, !pendingWithdrawalIDs.contains(spot.id), !pendingVoteIDs.contains(spot.id),
-            !withdrawnIDs.contains(spot.id)
+            withdrawnAtMutation[spot.id] == nil
         else { return false }
         pendingWithdrawalIDs.insert(spot.id)
         error = nil
         defer { pendingWithdrawalIDs.remove(spot.id) }
         do {
             try await writeWithdrawal(spot.id, spot.localRevision)
-            withdrawnIDs.insert(spot.id)
             mutationSequence &+= 1
+            withdrawnAtMutation[spot.id] = (mutationSequence, spot.localRevision)
             spotMutationSequence[spot.id] = mutationSequence
             voteReadbacks.removeValue(forKey: spot.id)
             spots.removeAll { $0.id == spot.id }
@@ -488,7 +527,7 @@ final class ChargingMapModel {
 
     func vote(_ selection: MobileChargingVoteDto, forSpotID: String? = nil) async {
         guard let selected = selectedSpot, !pendingVoteIDs.contains(selected.id),
-            !pendingWithdrawalIDs.contains(selected.id), !withdrawnIDs.contains(selected.id)
+            !pendingWithdrawalIDs.contains(selected.id), withdrawnAtMutation[selected.id] == nil
         else { return }
         guard forSpotID == nil || forSpotID == selected.id else { return }
         let id = selected.id
@@ -572,7 +611,14 @@ final class ChargingMapModel {
             return
         }
         var merged = append ? spots : []
-        for incoming in page.spots where !withdrawnIDs.contains(incoming.id) {
+        for incoming in page.spots {
+            if let withdrawal = withdrawnAtMutation[incoming.id] {
+                guard requestMutationSequence[incoming.id, default: 0] >= withdrawal.mutation,
+                    incoming.localRevision > withdrawal.revision,
+                    incoming.status == .published
+                else { continue }
+                withdrawnAtMutation.removeValue(forKey: incoming.id)
+            }
             let currentIndex = merged.firstIndex(where: { $0.id == incoming.id })
             let changedSinceRequest =
                 spotMutationSequence[incoming.id, default: 0]
@@ -708,7 +754,7 @@ final class ChargingMapModel {
     private func finishVote(id: String, updated: MobileChargingSpotDto?, error: MobileChargingError?) {
         pendingVoteIDs.remove(id)
         if let error, selectedSpot?.id == id { voteError = error }
-        guard let updated, updated.id == id, !withdrawnIDs.contains(id) else { return }
+        guard let updated, updated.id == id, withdrawnAtMutation[id] == nil else { return }
         let newestRevision = max(
             max(
                 spots.first(where: { $0.id == id })?.localRevision ?? 0,

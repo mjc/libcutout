@@ -4,6 +4,19 @@ import XCTest
 @testable import CutoutApp
 
 final class ChargingSpotPresentationTests: XCTestCase {
+    func testConflictSummaryShowsEachNameAndMakesMissingNamesExplicit() {
+        XCTAssertEqual(ChargingSpotPresentation.conflictName("West entrance outlet"), "West entrance outlet")
+        XCTAssertEqual(ChargingSpotPresentation.conflictName("Service entrance outlet"), "Service entrance outlet")
+        XCTAssertEqual(ChargingSpotPresentation.conflictName(nil), ChargingSpotPresentation.unknownName)
+        XCTAssertEqual(ChargingSpotPresentation.conflictName(" \n"), ChargingSpotPresentation.unknownName)
+    }
+
+    func testVoltageOptionsIncludeVoltagesFromAlreadyRetainedSpots() {
+        let retainedSupply = MobileChargingSupplyDto(voltageVolts: 100, connectors: [.typeB])
+
+        XCTAssertEqual(ChargingSpotPresentation.voltageOptions(in: [retainedSupply]), [100])
+    }
+
     func testUnknownPowerDoesNotInventVoltageOrConnector() {
         let unknown = MobileChargingSupplyDto(voltageVolts: nil, connectors: [])
         XCTAssertEqual(ChargingSpotPresentation.supplyText(unknown), "Voltage unknown")

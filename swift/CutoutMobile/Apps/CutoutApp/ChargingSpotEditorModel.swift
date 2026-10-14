@@ -4,7 +4,8 @@ import Foundation
 import Observation
 
 typealias ChargingSpotSave =
-    @MainActor @Sendable (MobileChargingInputDto) async throws -> MobileChargingWriteReceiptDto?
+    @MainActor @Sendable (MobileChargingInputDto, UInt64?) async throws -> MobileChargingWriteReceiptDto?
+typealias ChargingSpotReload = @MainActor @Sendable () async throws -> MobileChargingSpotDto?
 
 @MainActor
 @Observable
@@ -38,7 +39,7 @@ final class ChargingSpotEditorModel {
         }
     }
     var hours = "" { didSet { errorKey = nil } }
-    var cost: MobileChargingCostDto? {
+    var cost: MobileChargingCostDto = .free {
         didSet {
             errorKey = nil
             if cost == .free {
@@ -71,6 +72,10 @@ final class ChargingSpotEditorModel {
     var supplies = [ChargingSupplyDraft]()
     var areOptionalDetailsExpanded = false
     private(set) var errorKey: String?
+    private(set) var latestRevisionCandidate: MobileChargingSpotDto?
+    private(set) var hasRevisionConflict = false
+    private(set) var isLoadingLatest = false
+    private(set) var latestReloadErrorKey: String?
     private(set) var countryCode: String?
     private(set) var isCountryCodeManuallySelected = false
     @ObservationIgnored private var originalPrice: MobileChargingPriceDto?
@@ -84,6 +89,8 @@ final class ChargingSpotEditorModel {
     let inputLocale: Locale
 
     private let saveSpot: ChargingSpotSave
+    private let reloadLatest: ChargingSpotReload?
+    private var expectedRevision: UInt64?
 
     private var parsedCoordinate: MobileMapCoordinateDto? {
         guard let latitude = Double(latitudeText), let longitude = Double(longitudeText),
@@ -94,6 +101,12 @@ final class ChargingSpotEditorModel {
     }
 
     var hasInvalidCoordinate: Bool { parsedCoordinate == nil }
+
+    var canKeepDraftUsingLatestRevision: Bool {
+        guard let latestRevisionCandidate else { return false }
+        return hasRevisionConflict && latestRevisionCandidate.input != nil
+            && latestRevisionCandidate.localRevision >= (expectedRevision ?? 0)
+    }
 
     private var parsedPrice: MobileChargingPriceDto? {
         if let originalPrice { return originalPrice }
@@ -114,8 +127,7 @@ final class ChargingSpotEditorModel {
 
     var canSave: Bool {
         guard stage == .details, parsedCoordinate != nil,
-            !accessNote.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-            cost != nil
+            !accessNote.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else { return false }
         return !hasInvalidOptionalDetails
     }
@@ -135,23 +147,29 @@ final class ChargingSpotEditorModel {
         self.powerSuggestion = suggestion
         self.isEditing = false
         self.inputLocale = inputLocale
-        self.saveSpot = save ?? { fields in try await Self.persist(.create, fields: fields) }
+        self.saveSpot = save ?? { fields, _ in try await Self.persist(.create, fields: fields) }
+        self.reloadLatest = nil
+        self.expectedRevision = nil
     }
 
     convenience init?(
         spot: MobileChargingSpotDto, countryCode: String? = nil, inputLocale: Locale = .current,
+        reloadLatest: ChargingSpotReload? = nil,
         save: ChargingSpotSave? = nil
     ) {
         guard let input = spot.input else { return nil }
         self.init(
             draft: input, countryCode: countryCode, inputLocale: inputLocale,
-            save: save ?? { fields in
-                try await Self.persist(.edit(id: spot.id, revision: spot.localRevision), fields: fields)
+            expectedRevision: spot.localRevision, reloadLatest: reloadLatest,
+            save: save ?? { fields, revision in
+                guard let revision else { throw MobileChargingError.Conflict }
+                return try await Self.persist(.edit(id: spot.id, revision: revision), fields: fields)
             })
     }
 
     init(
         draft input: MobileChargingInputDto, countryCode: String? = nil, inputLocale: Locale = .current,
+        expectedRevision: UInt64? = nil, reloadLatest: ChargingSpotReload? = nil,
         save: @escaping ChargingSpotSave
     ) {
         let countryCode = Self.normalizedCountryCode(countryCode)
@@ -182,6 +200,8 @@ final class ChargingSpotEditorModel {
         self.isEditing = true
         self.inputLocale = inputLocale
         self.saveSpot = save
+        self.expectedRevision = expectedRevision
+        self.reloadLatest = reloadLatest
         for draft in supplies { observe(draft) }
     }
 
@@ -250,7 +270,8 @@ final class ChargingSpotEditorModel {
     func removeSupply(id: UUID) { supplies.removeAll { $0.id == id } }
 
     func save() async -> MobileChargingWriteReceiptDto? {
-        guard canSave, let coordinate = parsedCoordinate, let cost else { return nil }
+        guard canSave, let coordinate = parsedCoordinate else { return nil }
+        let cost = self.cost
         stage = .saving
         errorKey = nil
         let fields = MobileChargingInputDto(
@@ -265,7 +286,7 @@ final class ChargingSpotEditorModel {
             supplies: supplies.compactMap { $0.value() }
         )
         do {
-            guard let receipt = try await saveSpot(fields) else {
+            guard let receipt = try await saveSpot(fields, expectedRevision) else {
                 stage = .details
                 errorKey = "charging.editor.error.failed"
                 return nil
@@ -274,6 +295,13 @@ final class ChargingSpotEditorModel {
             return receipt
         } catch let error as MobileChargingError {
             stage = .details
+            if case .Conflict = error {
+                hasRevisionConflict = true
+                latestRevisionCandidate = nil
+                latestReloadErrorKey = nil
+                errorKey = "charging.editor.error.stale_revision"
+                return nil
+            }
             errorKey =
                 switch error {
                 case .AccessNoteBlank: "charging.editor.error.access_note_blank"
@@ -290,6 +318,34 @@ final class ChargingSpotEditorModel {
             errorKey = "charging.editor.error.failed"
             return nil
         }
+    }
+
+    func loadLatestForReconciliation() async {
+        guard hasRevisionConflict, !isLoadingLatest, let reloadLatest else { return }
+        isLoadingLatest = true
+        latestReloadErrorKey = nil
+        defer { isLoadingLatest = false }
+        do {
+            guard let latest = try await reloadLatest(), latest.input != nil else {
+                latestRevisionCandidate = nil
+                latestReloadErrorKey = "charging.editor.error.latest_unavailable"
+                return
+            }
+            latestRevisionCandidate = latest
+        } catch {
+            latestRevisionCandidate = nil
+            latestReloadErrorKey = "charging.editor.error.latest_unavailable"
+        }
+    }
+
+    func keepDraftUsingLatestRevision() {
+        guard canKeepDraftUsingLatestRevision, let latestRevisionCandidate
+        else { return }
+        expectedRevision = latestRevisionCandidate.localRevision
+        self.latestRevisionCandidate = nil
+        hasRevisionConflict = false
+        latestReloadErrorKey = nil
+        errorKey = nil
     }
 
     private func venueChanged(from oldValue: MobileChargingVenueDto?) {

@@ -41,6 +41,26 @@ final class ChargingMapCameraTests: XCTestCase {
         XCTAssertTrue(contains(target, in: region))
     }
 
+    func testPopupCenterUsesItsFullAccessibilityWidthAtBothMapEdges() {
+        for mapWidth: CGFloat in [390, 600] {
+            let panelWidth = mapWidth - 24
+            let left = ChargingMapCamera.popupCenterX(pinX: 60, mapWidth: mapWidth, panelWidth: panelWidth)
+            let right = ChargingMapCamera.popupCenterX(
+                pinX: mapWidth - 60, mapWidth: mapWidth, panelWidth: panelWidth
+            )
+
+            XCTAssertGreaterThanOrEqual(left - panelWidth / 2, 8)
+            XCTAssertLessThanOrEqual(left + panelWidth / 2, mapWidth - 8)
+            XCTAssertGreaterThanOrEqual(right - panelWidth / 2, 8)
+            XCTAssertLessThanOrEqual(right + panelWidth / 2, mapWidth - 8)
+        }
+    }
+
+    func testCompactPopupStaysPinRelativeUntilItReachesAnEdge() {
+        XCTAssertEqual(ChargingMapCamera.popupCenterX(pinX: 195, mapWidth: 390, panelWidth: 180), 195)
+        XCTAssertEqual(ChargingMapCamera.popupCenterX(pinX: 20, mapWidth: 390, panelWidth: 180), 98)
+    }
+
     private func coordinate(latitude: Double, longitude: Double) -> MobileMapCoordinateDto {
         MobileMapCoordinateDto(latitudeDegrees: latitude, longitudeDegrees: longitude)
     }

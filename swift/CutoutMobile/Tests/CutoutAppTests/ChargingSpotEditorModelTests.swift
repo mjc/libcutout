@@ -10,7 +10,7 @@ final class ChargingSpotEditorModelTests: XCTestCase {
         let draft = try XCTUnwrap(Self.spot().input)
         let model = ChargingSpotEditorModel(
             draft: draft,
-            save: { fields in
+            save: { fields, _ in
                 recorder.record(fields)
                 return Self.receipt("replacement")
             })
@@ -39,7 +39,7 @@ final class ChargingSpotEditorModelTests: XCTestCase {
     }
 
     func testCreateRequiresLocationConfirmationAndRequiredFields() async {
-        let model = ChargingSpotEditorModel(coordinate: coordinate(), save: { _ in nil })
+        let model = ChargingSpotEditorModel(coordinate: coordinate(), save: { _, _ in nil })
 
         XCTAssertEqual(model.stage, .moving)
         XCTAssertFalse(model.canSave)
@@ -47,7 +47,6 @@ final class ChargingSpotEditorModelTests: XCTestCase {
         XCTAssertNil(premature)
         model.confirmLocation()
         model.accessNote = "   "
-        model.cost = .free
         XCTAssertFalse(model.canSave)
         model.accessNote = "Outlet beside the picnic shelter"
         XCTAssertTrue(model.canSave)
@@ -114,13 +113,12 @@ final class ChargingSpotEditorModelTests: XCTestCase {
         let expected = Self.receipt("created")
         let model = ChargingSpotEditorModel(
             coordinate: coordinate(), countryCode: "US",
-            save: { fields in
+            save: { fields, _ in
                 recorder.record(fields)
                 return expected
             })
         model.confirmLocation()
         model.accessNote = "  Outlet beside the picnic shelter  "
-        model.cost = .free
 
         let result = await model.save()
 
@@ -137,11 +135,90 @@ final class ChargingSpotEditorModelTests: XCTestCase {
         XCTAssertEqual(fields?.supplies, [])
     }
 
+    func testMinimumCreateSaveUsesFreeDefaultWithOnlyPinAndAccessNote() async {
+        let recorder = ChargingEditorSaveRecorder()
+        let model = ChargingSpotEditorModel(
+            coordinate: coordinate(),
+            save: { fields, _ in
+                recorder.record(fields)
+                return Self.receipt("minimum")
+            })
+        model.confirmLocation()
+        model.accessNote = "Ask staff"
+
+        let receipt = await model.save()
+
+        XCTAssertEqual(receipt, Self.receipt("minimum"))
+        XCTAssertEqual(recorder.fields?.cost, .free)
+        XCTAssertNil(recorder.fields?.name)
+        XCTAssertNil(recorder.fields?.venue)
+        XCTAssertNil(recorder.fields?.hours)
+        XCTAssertNil(recorder.fields?.price)
+        XCTAssertEqual(recorder.fields?.supplies, [])
+    }
+
+    func testNormalEditConflictRequiresLatestComparisonBeforeRevisionAdvances() async {
+        let latest = Self.spot(localRevision: 4, accessNote: "Newest entrance instructions")
+        let recorder = ChargingEditorSaveRecorder()
+        recorder.conflictNextSave = true
+        let editor = ChargingSpotEditorModel(
+            spot: Self.spot(),
+            reloadLatest: { latest },
+            save: { _, revision in
+                if recorder.recordAttempt(revision) { throw MobileChargingError.Conflict }
+                return Self.receipt("edited")
+            })!
+        editor.accessNote = "My saved draft"
+
+        let failedSave = await editor.save()
+        XCTAssertNil(failedSave)
+        XCTAssertTrue(editor.hasRevisionConflict)
+        XCTAssertEqual(editor.accessNote, "My saved draft")
+        XCTAssertEqual(recorder.attemptedRevisions, [3])
+
+        await editor.loadLatestForReconciliation()
+        XCTAssertEqual(editor.latestRevisionCandidate?.localRevision, 4)
+        XCTAssertEqual(editor.latestRevisionCandidate?.input?.accessNote, "Newest entrance instructions")
+        editor.keepDraftUsingLatestRevision()
+        XCTAssertFalse(editor.hasRevisionConflict)
+        XCTAssertEqual(editor.accessNote, "My saved draft")
+
+        let retriedSave = await editor.save()
+        XCTAssertEqual(retriedSave, Self.receipt("edited"))
+        XCTAssertEqual(recorder.attemptedRevisions, [3, 4])
+    }
+
+    func testBlockedDraftCorrectionKeepsDraftAndUsesReviewedLatestRevision() async {
+        let latest = Self.spot(localRevision: 5, accessNote: "Community version")
+        let recorder = ChargingEditorSaveRecorder()
+        recorder.conflictNextSave = true
+        let editor = ChargingSpotEditorModel(
+            draft: Self.spot().input!, expectedRevision: 3,
+            reloadLatest: { latest },
+            save: { _, revision in
+                if recorder.recordAttempt(revision) { throw MobileChargingError.Conflict }
+                return Self.receipt("corrected")
+            })
+        editor.accessNote = "Corrected blocked draft"
+
+        let failedSave = await editor.save()
+        XCTAssertNil(failedSave)
+        XCTAssertEqual(editor.accessNote, "Corrected blocked draft")
+        await editor.loadLatestForReconciliation()
+        XCTAssertEqual(editor.latestRevisionCandidate?.input?.accessNote, "Community version")
+        editor.keepDraftUsingLatestRevision()
+
+        let retriedSave = await editor.save()
+        XCTAssertEqual(retriedSave, Self.receipt("corrected"))
+        XCTAssertEqual(recorder.attemptedRevisions, [3, 5])
+        XCTAssertEqual(editor.accessNote, "Corrected blocked draft")
+    }
+
     func testSuggestionIsIncludedOnlyAfterExplicitAddAndManualOverrideSurvivesCountryUpdate() async {
         let recorder = ChargingEditorSaveRecorder()
         let model = ChargingSpotEditorModel(
             coordinate: coordinate(), countryCode: "US",
-            save: { fields in
+            save: { fields, _ in
                 recorder.record(fields)
                 return Self.receipt("suggested")
             })
@@ -245,7 +322,7 @@ final class ChargingSpotEditorModelTests: XCTestCase {
         let recorder = ChargingEditorSaveRecorder()
         let model = ChargingSpotEditorModel(
             coordinate: coordinate(),
-            save: { fields in
+            save: { fields, _ in
                 recorder.record(fields)
                 return Self.receipt("without-empty-supply")
             })
@@ -265,7 +342,7 @@ final class ChargingSpotEditorModelTests: XCTestCase {
         let recorder = ChargingEditorSaveRecorder()
         let model = ChargingSpotEditorModel(
             coordinate: coordinate(),
-            save: { fields in
+            save: { fields, _ in
                 recorder.record(fields)
                 return Self.receipt("free")
             })
@@ -405,7 +482,7 @@ final class ChargingSpotEditorModelTests: XCTestCase {
         let recorder = ChargingEditorSaveRecorder()
         let model = ChargingSpotEditorModel(
             draft: Self.spot().input!, inputLocale: Locale(identifier: "de_DE"),
-            save: { fields in
+            save: { fields, _ in
                 recorder.record(fields)
                 return Self.receipt("localized-price")
             }
@@ -421,7 +498,7 @@ final class ChargingSpotEditorModelTests: XCTestCase {
         let recorder = ChargingEditorSaveRecorder()
         let editor = ChargingSpotEditorModel(
             spot: original, countryCode: "GB",
-            save: { fields in
+            save: { fields, _ in
                 recorder.record(fields)
                 return Self.receipt("edited")
             })
@@ -449,7 +526,7 @@ final class ChargingSpotEditorModelTests: XCTestCase {
         let recorder = ChargingEditorSaveRecorder()
         let editor = ChargingSpotEditorModel(
             spot: original,
-            save: { fields in
+            save: { fields, _ in
                 recorder.record(fields)
                 return Self.receipt("edited-exactly")
             })
@@ -465,7 +542,7 @@ final class ChargingSpotEditorModelTests: XCTestCase {
         let recorder = ChargingEditorSaveRecorder()
         let model = ChargingSpotEditorModel(
             coordinate: coordinate(),
-            save: { fields in
+            save: { fields, _ in
                 recorder.record(fields)
                 await gate.wait()
                 return Self.receipt("created")
@@ -491,7 +568,7 @@ final class ChargingSpotEditorModelTests: XCTestCase {
     func testFieldValidationFailureRetainsDraftAndReturnsToDetails() async {
         let model = ChargingSpotEditorModel(
             coordinate: coordinate(),
-            save: { _ in
+            save: { _, _ in
                 throw MobileChargingError.AccessNoteTooLong
             })
         model.confirmLocation()
@@ -515,10 +592,13 @@ final class ChargingSpotEditorModelTests: XCTestCase {
         MobileChargingWriteReceiptDto(id: id, localRevision: 1, operationId: "operation-\(id)")
     }
 
-    private nonisolated static func spot(priceExponent: UInt8 = 2) -> MobileChargingSpotDto {
+    private nonisolated static func spot(
+        priceExponent: UInt8 = 2, localRevision: UInt64 = 3,
+        accessNote: String = "Ask the barista"
+    ) -> MobileChargingSpotDto {
         let input = MobileChargingInputDto(
             coordinate: MobileMapCoordinateDto(latitudeDegrees: 1, longitudeDegrees: 2),
-            accessNote: "Ask the barista",
+            accessNote: accessNote,
             cost: .paid,
             name: "Cafe",
             venue: .cafe,
@@ -535,7 +615,7 @@ final class ChargingSpotEditorModelTests: XCTestCase {
         )
         return MobileChargingSpotDto(
             id: "spot-id", input: input, owned: true, status: .queued,
-            localRevision: 3, remoteId: nil, remoteRevision: 0, changeSequence: 3,
+            localRevision: localRevision, remoteId: nil, remoteRevision: 0, changeSequence: localRevision,
             verifiedAtMs: nil, vote: nil, voteRevision: 0, votesUp: 0, votesDown: 0,
             pendingOperations: 1, pendingVote: false
         )
@@ -546,9 +626,16 @@ final class ChargingSpotEditorModelTests: XCTestCase {
 private final class ChargingEditorSaveRecorder {
     private(set) var fields: MobileChargingInputDto?
     private(set) var count = 0
+    private(set) var attemptedRevisions = [UInt64?]()
+    var conflictNextSave = false
     func record(_ fields: MobileChargingInputDto) {
         self.fields = fields
         count += 1
+    }
+    func recordAttempt(_ revision: UInt64?) -> Bool {
+        attemptedRevisions.append(revision)
+        defer { conflictNextSave = false }
+        return conflictNextSave
     }
 }
 

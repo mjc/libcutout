@@ -726,7 +726,7 @@ final class ChargingMapModelTests: XCTestCase {
         XCTAssertNil(model.discoveryTarget)
     }
 
-    func testRefreshSavedSpotReadsLatestSpotAndSelectsItWithoutSavingAgain() async {
+    func testRefreshSavedSpotSelectsDirectReadWithoutChangingPageMembership() async {
         let writes = ChargingWriteCounter()
         let saved = Self.spot(
             "saved", coordinate: MobileMapCoordinateDto(latitudeDegrees: 4, longitudeDegrees: 5)
@@ -740,12 +740,118 @@ final class ChargingMapModelTests: XCTestCase {
 
         await model.refreshSavedSpot(id: saved.id)
 
-        XCTAssertEqual(model.spots.map(\.id), ["viewport", "saved"])
+        XCTAssertEqual(model.spots.map(\.id), ["viewport"])
         XCTAssertEqual(model.selectedSpot?.id, "saved")
         XCTAssertEqual(model.selectedSpot?.input?.coordinate, saved.input?.coordinate)
         let writeCount = await writes.count()
         XCTAssertEqual(writeCount, 0)
         XCTAssertNil(model.error)
+    }
+
+    func testRefreshSavedSpotKeepsEditedSpotOutOfActiveFilterResults() async {
+        let coordinate = MobileMapCoordinateDto(latitudeDegrees: 0.5, longitudeDegrees: 0.5)
+        let saved = Self.spot(
+            "saved", revision: 2, coordinate: coordinate,
+            cost: .paid
+        )
+        let model = ChargingMapModel(
+            queryPage: { _, _, _, _ in Self.page([], cursor: nil) },
+            readSpot: { _ in saved },
+            writeVote: { _, _, _ in }
+        )
+        model.setViewport(bounds())
+        model.setFilter(MobileChargingFilterDto(cost: .free, connector: nil, voltageVolts: nil, venue: nil))
+
+        await model.refreshSavedSpot(id: saved.id)
+
+        XCTAssertTrue(model.spots.isEmpty)
+        XCTAssertEqual(model.selectedSpot?.id, saved.id)
+        XCTAssertEqual(model.selectedSpot?.input?.cost, .paid)
+    }
+
+    func testAcceptingCommunityWithdrawalRestoresSpotAndActions() async throws {
+        let coordinate = MobileMapCoordinateDto(latitudeDegrees: 0.5, longitudeDegrees: 0.5)
+        let original = Self.spot("owned", revision: 1, coordinate: coordinate, owned: true)
+        let restored = Self.spot("owned", revision: 8, coordinate: coordinate, owned: true)
+        let blocked = MobileChargingSyncConflictDto(
+            operationId: "withdrawal", action: .withdraw, id: "owned", localRevision: 2,
+            input: nil, remoteInput: restored.input, remoteStatus: .published,
+            reason: .conflict, canRebase: false
+        )
+        let model = ChargingMapModel(
+            queryPage: { _, _, _, _ in Self.page([restored], cursor: nil) },
+            readSpot: { _ in restored },
+            writeVote: { _, _, _ in },
+            writeWithdrawal: { _, _ in },
+            resolveOperation: { _, _, _ in }
+        )
+        model.setViewport(bounds())
+        await model.load()
+        let firstWithdrawal = await model.withdraw(original)
+        XCTAssertTrue(firstWithdrawal)
+
+        try await model.resolveChargingOperation(blocked, resolution: .acceptServer)
+
+        XCTAssertEqual(model.spots.map(\.id), ["owned"])
+        XCTAssertEqual(model.spots.first?.localRevision, 8)
+        let secondWithdrawal = await model.withdraw(restored)
+        XCTAssertTrue(secondWithdrawal)
+    }
+
+    func testConflictResolutionRefreshesLocalStateWhileSyncIsOffline() async throws {
+        let coordinate = MobileMapCoordinateDto(latitudeDegrees: 0.5, longitudeDegrees: 0.5)
+        let draft = Self.spot("spot", revision: 1, coordinate: coordinate, cost: .free)
+        let accepted = Self.spot("spot", revision: 2, coordinate: coordinate, cost: .paid)
+        let pages = ChargingTestPageSequence([
+            Self.page([draft], cursor: nil), Self.page([accepted], cursor: nil),
+        ])
+        let blocked = MobileChargingSyncConflictDto(
+            operationId: "edit", action: .edit, id: "spot", localRevision: 1,
+            input: draft.input, remoteInput: accepted.input, remoteStatus: .published,
+            reason: .conflict, canRebase: false
+        )
+        let sync = ChargingCommunitySync(
+            credentialStore: ChargingModelCredentialStore(
+                initial: .ready(.init(identityID: "identity", token: "token"))
+            ),
+            registerIdentity: { .init(identityID: "identity", token: "token") },
+            synchronize: { _ in throw MobileChargingError.Network },
+            sleep: { _ in }, enabled: { true }
+        )
+        let model = ChargingMapModel(
+            queryPage: { _, _, _, _ in await pages.next() },
+            readSpot: { _ in accepted }, writeVote: { _, _, _ in },
+            queryBlockedOperations: { [] }, resolveOperation: { _, _, _ in }, communitySync: sync
+        )
+        model.setViewport(bounds())
+        await model.load()
+        model.select(draft)
+
+        try await model.resolveChargingOperation(blocked, resolution: .acceptServer)
+        for _ in 0..<100 where sync.status != .offline { await Task.yield() }
+
+        XCTAssertEqual(sync.status, .offline)
+        XCTAssertEqual(model.spots.first?.localRevision, 2)
+        XCTAssertEqual(model.spots.first?.input?.cost, .paid)
+        XCTAssertEqual(model.selectedSpot?.localRevision, 2)
+        XCTAssertEqual(model.selectedSpot?.input?.cost, .paid)
+    }
+
+    func testDiscoveryTargetCanBeConsumedOnlyOnce() async {
+        let coordinate = MobileMapCoordinateDto(latitudeDegrees: 39, longitudeDegrees: -105)
+        let model = ChargingMapModel(
+            queryPage: { _, _, _, _ in Self.page([], cursor: nil) },
+            readSpot: { _ in nil },
+            nearbySpots: { _, _, _, _ in [Self.spot("nearby", coordinate: coordinate)] },
+            writeVote: { _, _, _ in }
+        )
+        model.setViewport(bounds())
+        model.setUserLocation(coordinate)
+        await model.load()
+        await waitForTarget(on: model)
+
+        XCTAssertEqual(model.consumeDiscoveryTarget(), coordinate)
+        XCTAssertNil(model.consumeDiscoveryTarget())
     }
 
     func testRefreshSavedSpotStopsOnViewportLoadFailure() async {
@@ -888,6 +994,27 @@ final class ChargingMapModelTests: XCTestCase {
         XCTAssertEqual(writeCount, 1)
     }
 
+    func testPageStartedBeforeWithdrawalCannotRestoreSpot() async {
+        let gate = ChargingPageGate()
+        let original = Self.spot("owned", revision: 7, owned: true)
+        let model = ChargingMapModel(
+            queryPage: { _, _, _, _ in await gate.wait() },
+            readSpot: { _ in original },
+            writeVote: { _, _, _ in },
+            writeWithdrawal: { _, _ in }
+        )
+        model.setViewport(bounds())
+        let load = Task { await model.load() }
+        await gate.waitUntilStarted()
+
+        let deleted = await model.withdraw(original)
+        XCTAssertTrue(deleted)
+        await gate.release(Self.page([original], cursor: nil))
+        await load.value
+
+        XCTAssertTrue(model.spots.isEmpty)
+    }
+
     func testWithdrawalRejectsUnownedSpotAndKeepsFailedOwnedSpot() async {
         let original = Self.spot("owned", owned: true)
         let model = ChargingMapModel(
@@ -920,13 +1047,14 @@ final class ChargingMapModelTests: XCTestCase {
         votesUp: UInt64 = 4,
         coordinate: MobileMapCoordinateDto? = nil,
         owned: Bool = false,
-        status: MobileChargingStatusDto = .published
+        status: MobileChargingStatusDto = .published,
+        cost: MobileChargingCostDto = .free
     ) -> MobileChargingSpotDto {
         MobileChargingSpotDto(
             id: id,
             input: coordinate.map { coordinate in
                 MobileChargingInputDto(
-                    coordinate: coordinate, accessNote: "", cost: .free,
+                    coordinate: coordinate, accessNote: "", cost: cost,
                     name: nil, venue: nil, hours: nil, terms: nil, price: nil, supplies: []
                 )
             }, owned: owned, status: status,

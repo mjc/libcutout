@@ -1,5 +1,6 @@
 import CutoutMobileFFI
 import MapKit
+import SwiftUI
 
 /// Builds a camera region that keeps both the starting location and chosen pin visible.
 enum ChargingMapCamera {
@@ -53,5 +54,12 @@ enum ChargingMapCamera {
             longitudeDelta: min(width / worldWidth * 360, 360)
         )
         return MKCoordinateRegion(center: center, span: span)
+    }
+
+    static func popupCenterX(pinX: CGFloat, mapWidth: CGFloat, panelWidth: CGFloat, inset: CGFloat = 8) -> CGFloat {
+        let lower = panelWidth / 2 + inset
+        let upper = mapWidth - panelWidth / 2 - inset
+        guard lower <= upper else { return mapWidth / 2 }
+        return min(max(pinX, lower), upper)
     }
 }

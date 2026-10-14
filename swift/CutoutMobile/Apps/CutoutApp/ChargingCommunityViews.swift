@@ -102,10 +102,10 @@ struct ChargingSyncIssuesView: View {
                                 issue.reason == .invalid ? "charging.sync.rejected" : "charging.sync.conflict"))
                         Text(localizedAppText(issue.action.messageKey)).font(.headline)
                         if issue.action.editsFields, let input = issue.input {
-                            draftSummary(input, title: "charging.sync.your_changes")
+                            ChargingInputSummary(input: input, title: "charging.sync.your_changes")
                         }
                         if let input = issue.remoteInput {
-                            draftSummary(input, title: "charging.sync.community_version")
+                            ChargingInputSummary(input: input, title: "charging.sync.community_version")
                         } else if let status = issue.remoteStatus {
                             Text(localizedAppText(ChargingSpotPresentation.statusKey(status)))
                         }
@@ -188,25 +188,74 @@ struct ChargingSyncIssuesView: View {
         }
     }
 
-    private func draftSummary(_ input: MobileChargingInputDto, title: String) -> some View {
+}
+
+struct ChargingInputSummary: View {
+    let input: MobileChargingInputDto
+    let title: String?
+
+    var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(localizedAppText(title)).font(.headline)
-            Text(input.accessNote)
-            Text(localizedAppText(input.cost == .free ? "charging.cost.free" : "charging.cost.paid"))
-            Text("\(input.coordinate.latitudeDegrees), \(input.coordinate.longitudeDegrees)")
-            if let venue = input.venue { Text(ChargingSpotPresentation.venueName(venue)) }
-            if let hours = input.hours { Text(hours) }
-            if let terms = input.terms { Text(ChargingSpotPresentation.termsName(terms)) }
-            if let price = input.price { Text(ChargingSpotPresentation.priceText(price)) }
-            ForEach(Array(input.supplies.enumerated()), id: \.offset) { _, supply in
-                Text(ChargingSpotPresentation.supplyText(supply))
-            }
+            if let title { Text(localizedAppText(title)).font(.headline) }
+            LabeledContent(
+                localizedAppText("charging.sync.name"),
+                value: ChargingSpotPresentation.conflictName(input.name)
+            )
+            LabeledContent(localizedAppText("charging.editor.access_note"), value: input.accessNote)
+            LabeledContent(
+                localizedAppText("charging.editor.cost"),
+                value: localizedAppText(input.cost == .free ? "charging.cost.free" : "charging.cost.paid")
+            )
+            LabeledContent(
+                localizedAppText("charging.editor.latitude"),
+                value: String(input.coordinate.latitudeDegrees)
+            )
+            LabeledContent(
+                localizedAppText("charging.editor.longitude"),
+                value: String(input.coordinate.longitudeDegrees)
+            )
+            LabeledContent(
+                localizedAppText("charging.editor.venue"),
+                value: input.venue.map(ChargingSpotPresentation.venueName)
+                    ?? localizedAppText("charging.venue.unknown")
+            )
+            LabeledContent(
+                localizedAppText("charging.editor.hours"),
+                value: input.hours ?? localizedAppText("charging.editor.latest.none")
+            )
+            LabeledContent(
+                localizedAppText("charging.editor.terms"),
+                value: input.terms.map(ChargingSpotPresentation.termsName)
+                    ?? localizedAppText("charging.editor.latest.none")
+            )
+            LabeledContent(
+                localizedAppText("charging.editor.price.amount"),
+                value: input.price.map(ChargingSpotPresentation.priceText)
+                    ?? localizedAppText("charging.editor.latest.none")
+            )
+            LabeledContent(
+                localizedAppText("charging.details.supplies"),
+                value: input.supplies.isEmpty
+                    ? localizedAppText("charging.editor.latest.none")
+                    : input.supplies.map(ChargingSpotPresentation.supplyText).joined(separator: "; ")
+            )
         }
         .fixedSize(horizontal: false, vertical: true)
     }
 }
 
 extension ChargingSpotPresentation {
+    static func voltageOptions(in supplies: [MobileChargingSupplyDto]) -> Set<UInt16> {
+        Set(supplies.compactMap(\.voltageVolts))
+    }
+
+    static func conflictName(_ name: String?) -> String {
+        guard let name, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return unknownName
+        }
+        return name
+    }
+
     static func statusKey(_ status: MobileChargingStatusDto) -> String {
         switch status {
         case .queued: "charging.spot.status.pending"

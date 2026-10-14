@@ -45,6 +45,7 @@ struct ChargingMapContentView: View {
     @State private var detailItem: DetailItem?
     @State private var showsSyncIssues = false
     @State private var pendingEditor: ChargingSpotEditorModel?
+    @State private var editorLaunchError: MobileChargingError?
     @State private var knownVoltages: Set<UInt16> = [120, 230, 240]
     @State private var mapSelectedID: String?
     @State private var cameraRevision = 0
@@ -170,21 +171,39 @@ struct ChargingMapContentView: View {
     private var queryAwareContent: some View {
         mapLayout
             .task(id: model.queryID) { await model.load() }
-            .onChange(of: model.discoveryTarget) { _, target in
-                guard let target, let origin = model.userLocation, editor == nil, !userMovedCamera else { return }
-                mapPosition = .region(ChargingMapCamera.regionIncluding(origin: origin, target: target))
+            .onChange(of: model.discoveryTarget, initial: true) { _, _ in
+                applyPendingDiscoveryTarget()
             }
             .onChange(of: displayMode) { _, mode in
                 guard mode == .map else { return }
                 if pendingMapSelection {
                     pendingMapSelection = false
+                } else if applyPendingDiscoveryTarget() {
+                    return
                 } else if let camera = mapCameraSnapshot.camera {
                     mapPosition = .camera(camera)
                 }
             }
-            .onChange(of: model.spots) { _, spots in
-                knownVoltages.formUnion(spots.compactMap(\.input).flatMap(\.supplies).compactMap(\.voltageVolts))
+            .onChange(of: model.spots, initial: true) { _, spots in
+                let supplies = spots.compactMap(\.input).flatMap(\.supplies)
+                knownVoltages.formUnion(ChargingSpotPresentation.voltageOptions(in: supplies))
             }
+            .onChange(of: editor == nil) { _, isClosed in
+                if isClosed { applyPendingDiscoveryTarget() }
+            }
+            .onChange(of: model.userLocation) { _, _ in
+                applyPendingDiscoveryTarget()
+            }
+    }
+
+    @discardableResult
+    private func applyPendingDiscoveryTarget() -> Bool {
+        guard displayMode == .map, editor == nil, !userMovedCamera,
+            let origin = model.userLocation,
+            let target = model.consumeDiscoveryTarget()
+        else { return false }
+        mapPosition = .region(ChargingMapCamera.regionIncluding(origin: origin, target: target))
+        return true
     }
 
     private var locationAwareContent: some View {
@@ -458,16 +477,20 @@ struct ChargingMapContentView: View {
                             belowTop + selectedPopupHeight <= geometry.size.height - 8
                             ? belowTop
                             : max(8, point.y - pinHeight - 8 - selectedPopupHeight)
-                        let lowerX: CGFloat = min(98, geometry.size.width / 2)
-                        let upperX = max(lowerX, geometry.size.width - 98)
-                        votePanel(selected, mapWidth: geometry.size.width)
+                        let panelWidth =
+                            dynamicTypeSize.isAccessibilitySize
+                            ? max(0, geometry.size.width - 24)
+                            : 180
+                        votePanel(selected, panelWidth: panelWidth)
                             .onGeometryChange(for: CGFloat.self) { proxy in
                                 proxy.size.height
                             } action: { height in
                                 if selectedPopupHeight != height { selectedPopupHeight = height }
                             }
                             .position(
-                                x: min(max(point.x, lowerX), upperX),
+                                x: ChargingMapCamera.popupCenterX(
+                                    pinX: point.x, mapWidth: geometry.size.width, panelWidth: panelWidth
+                                ),
                                 y: top + selectedPopupHeight / 2
                             )
                     }
@@ -609,15 +632,33 @@ struct ChargingMapContentView: View {
     }
 
     private func beginEditing(_ spot: MobileChargingSpotDto) {
-        guard let editor = ChargingSpotEditorModel(spot: spot, inputLocale: locale) else { return }
-        model.cancelAutomaticDiscovery()
-        if displayMode == .list {
-            pendingMapSelection = true
-            displayMode = .map
+        editorLaunchError = nil
+        Task {
+            do {
+                let database = try await RustPersistenceStore.open()
+                guard
+                    let editor = ChargingSpotEditorModel(
+                        spot: spot,
+                        inputLocale: locale,
+                        reloadLatest: { try await database.chargingSpot(id: spot.id) },
+                        save: { fields, revision in
+                            guard let revision else { throw MobileChargingError.Conflict }
+                            return try await database.editChargingSpot(
+                                id: spot.id, expectedRevision: revision, fields: fields)
+                        }
+                    )
+                else { return }
+                model.cancelAutomaticDiscovery()
+                if displayMode == .list {
+                    pendingMapSelection = true
+                    displayMode = .map
+                }
+                pendingEditor = editor
+                detailItem = nil
+            } catch {
+                editorLaunchError = error as? MobileChargingError ?? .StorageFailure
+            }
         }
-        // Present the editor after the details sheet finishes dismissing.
-        pendingEditor = editor
-        detailItem = nil
     }
 
     private func beginEditingConflict(_ issue: MobileChargingSyncConflictDto) async throws {
@@ -626,10 +667,13 @@ struct ChargingMapContentView: View {
         let editor = ChargingSpotEditorModel(
             draft: draft,
             inputLocale: locale,
-            save: { fields in
-                try await database.replaceBlockedChargingOperation(
+            expectedRevision: issue.localRevision,
+            reloadLatest: { try await database.chargingSpot(id: issue.id) },
+            save: { fields, revision in
+                guard let revision else { throw MobileChargingError.Conflict }
+                return try await database.replaceBlockedChargingOperation(
                     operationId: issue.operationId,
-                    expectedLocalRevision: issue.localRevision,
+                    expectedLocalRevision: revision,
                     fields: fields)
             })
         pendingEditor = editor
@@ -731,7 +775,7 @@ struct ChargingMapContentView: View {
         .accessibilityIdentifier("charging.pin.\(spot.id)")
     }
 
-    private func votePanel(_ spot: MobileChargingSpotDto, mapWidth: CGFloat) -> some View {
+    private func votePanel(_ spot: MobileChargingSpotDto, panelWidth: CGFloat) -> some View {
         VStack(spacing: 6) {
             if let note = spot.input?.accessNote, !note.isEmpty {
                 Text(note)
@@ -769,7 +813,7 @@ struct ChargingMapContentView: View {
             .accessibilityIdentifier("charging.details.open")
         }
         .padding(8)
-        .frame(width: dynamicTypeSize.isAccessibilitySize ? max(0, mapWidth - 24) : 180)
+        .frame(width: panelWidth)
         .fixedSize(horizontal: false, vertical: true)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
     }
@@ -887,8 +931,8 @@ struct ChargingMapContentView: View {
     }
 
     @ViewBuilder private var status: some View {
-        if let error = model.error {
-            statusRow(ChargingSpotPresentation.loadErrorKey(error), retry: true)
+        if let error = model.error ?? editorLaunchError {
+            statusRow(ChargingSpotPresentation.loadErrorKey(error), retry: model.error != nil)
         } else if model.spots.isEmpty && !model.isLoading {
             statusRow("charging.status.empty", retry: false)
         } else if model.limitReached {
