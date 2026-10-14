@@ -1,10 +1,10 @@
 use core::ops::RangeInclusive;
 
 use cutout_core::{
-    BatteryCurrent, BatteryLevel, Capacity, DiagnosticDetail, DiagnosticReadback,
+    BatteryCurrentPolarity, BatteryLevel, Capacity, DiagnosticDetail, DiagnosticReadback,
     DiagnosticSeverity, Distance, Duration, DutyCycle, Energy, LightState, Measured,
-    MonotonicTimestamp, ParallelCount, PhaseCurrent, Power, ProtocolTag, RawFieldValue,
-    ReadOnlyResponse, SeriesCount, SettingsEntry, SettingsReadback, Speed, TelemetryDelta,
+    MonotonicTimestamp, ParallelCount, PhaseCurrent, ProtocolTag, RawFieldValue, ReadOnlyResponse,
+    ReportedBatteryCurrent, SeriesCount, SettingsEntry, SettingsReadback, Speed, TelemetryDelta,
     Temperature, ValueQuality, ValueSource, VerificationStatus, Voltage, WireVoltage,
 };
 use thiserror::Error;
@@ -1003,9 +1003,6 @@ impl BegodeLiveATelemetry {
             motor_current: Some(source_reported(PhaseCurrent::from_milliamps(
                 self.phase_current.as_milliamps(),
             ))),
-            power: Some(source_estimated(
-                Power::from_voltage_phase_current_estimate(self.voltage, self.phase_current),
-            )),
             controller_temperature: Some(source_reported(self.imu_temperature)),
             distance: Some(source_reported(unit_mode.distance(self.trip_distance_low))),
             battery_level_estimated: Some(source_estimated(self.battery_level)),
@@ -1167,7 +1164,7 @@ impl BegodeLiveBTelemetry {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BegodeExtraTelemetry {
     /// True battery current in milliamps.
-    pub battery_current: BatteryCurrent,
+    pub battery_current: ReportedBatteryCurrent,
 
     /// Motor temperature.
     pub motor_temperature: Temperature,
@@ -1187,7 +1184,7 @@ impl BegodeExtraTelemetry {
         require_tag(frame, 0x07)?;
         let cursor = ParserCursor::new(frame.as_slice());
         Ok(Self {
-            battery_current: BatteryCurrent::from_centiamps(i32::from(be_i16(
+            battery_current: ReportedBatteryCurrent::from_centiamps(i32::from(be_i16(
                 cursor,
                 ParserOffset::from_bytes(2),
             ))),
@@ -1205,7 +1202,10 @@ impl BegodeExtraTelemetry {
     #[must_use]
     pub fn to_delta(self, at_ms: MonotonicTimestamp) -> TelemetryDelta {
         TelemetryDelta {
-            battery_current: Some(source_reported(self.battery_current)),
+            battery_current: Some(source_reported(
+                self.battery_current
+                    .normalize(BatteryCurrentPolarity::Unknown),
+            )),
             motor_temperature: Some(source_reported(self.motor_temperature)),
             pwm: self
                 .true_pwm
@@ -1427,6 +1427,28 @@ mod tests {
     }
 
     #[test]
+    fn extra_current_extrema_preserve_signed_wire_values_and_unknown_magnitudes() {
+        for (raw, magnitude) in [(i16::MIN, 327_680), (i16::MAX, 327_670)] {
+            let mut bytes = EXTRA;
+            bytes[2..4].copy_from_slice(&raw.to_be_bytes());
+            let frame = BegodeFrame::try_from_slice(&bytes).expect("extra frame is valid");
+            let telemetry = BegodeExtraTelemetry::decode(&frame).expect("extra telemetry decodes");
+
+            assert_eq!(
+                telemetry.battery_current.as_milliamps(),
+                i32::from(raw) * 10
+            );
+            assert_eq!(
+                telemetry
+                    .to_delta(ms(1))
+                    .battery_current
+                    .map(|reading| reading.value),
+                Some(cutout_core::BatteryCurrent::unknown(magnitude))
+            );
+        }
+    }
+
+    #[test]
     fn live_a_maps_source_backed_fields_to_canonical_delta() {
         let frame = BegodeFrame::try_from_slice(&LIVE_A).expect("fixture frame is valid");
         let telemetry =
@@ -1445,9 +1467,6 @@ mod tests {
                 voltage: Some(source_reported(Voltage::from_millivolts(90_075))),
                 motor_current: Some(source_reported(cutout_core::PhaseCurrent::from_milliamps(
                     -11_800,
-                ))),
-                power: Some(source_estimated(cutout_core::Power::from_milliwatts(
-                    -1_062_885
                 ))),
                 controller_temperature: Some(source_reported(
                     cutout_core::Temperature::from_millicelsius(27_930,)
@@ -1597,9 +1616,7 @@ mod tests {
 
         assert_eq!(
             delta.battery_current,
-            Some(source_reported(
-                cutout_core::BatteryCurrent::from_milliamps(-1_000)
-            ))
+            Some(source_reported(cutout_core::BatteryCurrent::unknown(1_000)))
         );
         assert_eq!(
             delta.motor_temperature,

@@ -1,9 +1,9 @@
 use arrayvec::ArrayVec;
 use cutout_core::{
-    BatteryCurrent, BatteryInfo, BatteryPageMetadata, BatteryPagePayload, BmsCellIndex,
+    BatteryCurrentPolarity, BatteryInfo, BatteryPageMetadata, BatteryPagePayload, BmsCellIndex,
     BmsHalfIndex, BmsObservationIndex, BmsPackIndex, DutyCycle, Measured, MonotonicTimestamp,
-    ProtocolSelector, ProtocolTag, ReadOnlyResponse, TelemetryDelta, Temperature, ValueQuality,
-    ValueSource, VerificationStatus, Voltage,
+    ProtocolSelector, ProtocolTag, ReadOnlyResponse, ReportedBatteryCurrent, TelemetryDelta,
+    Temperature, ValueQuality, ValueSource, VerificationStatus, Voltage,
 };
 use thiserror::Error;
 
@@ -37,7 +37,7 @@ pub struct BegodeBmsSummary {
     pub pack_voltage: Voltage,
 
     /// BMS-reported pack current in milliamps.
-    pub current: BatteryCurrent,
+    pub current: ReportedBatteryCurrent,
 
     /// First temperature for the selected half in millicelsius.
     pub temperature_0: Temperature,
@@ -70,7 +70,7 @@ impl BegodeBmsSummary {
                 cursor,
                 ParserOffset::from_bytes(6),
             ))),
-            current: BatteryCurrent::from_deciamps(i32::from(be_i16(
+            current: ReportedBatteryCurrent::from_deciamps(i32::from(be_i16(
                 cursor,
                 ParserOffset::from_bytes(8),
             ))),
@@ -94,7 +94,9 @@ impl BegodeBmsSummary {
     pub fn to_delta(self, at_ms: MonotonicTimestamp) -> TelemetryDelta {
         TelemetryDelta {
             voltage: Some(source_reported(self.pack_voltage)),
-            battery_current: Some(source_reported(self.current)),
+            battery_current: Some(source_reported(
+                self.current.normalize(BatteryCurrentPolarity::Unknown),
+            )),
             battery_temperature: Some(source_reported(self.temperature_0)),
             ..TelemetryDelta::empty(at_ms)
         }
@@ -109,7 +111,9 @@ impl BegodeBmsSummary {
                     .with_tag(ProtocolTag::new(0x01)),
                 BatteryInfo {
                     voltage: Some(source_reported(self.pack_voltage)),
-                    current: Some(source_reported(self.current)),
+                    current: Some(source_reported(
+                        self.current.normalize(BatteryCurrentPolarity::Unknown),
+                    )),
                     temperature: Some(source_reported(self.temperature_0)),
                     ..BatteryInfo::default()
                 },
@@ -279,12 +283,41 @@ mod tests {
                 half_index: BmsHalfIndex::new(1),
                 pwm_limit: DutyCycle::from_permille(1_000),
                 pack_voltage: Voltage::from_millivolts(80_000),
-                current: BatteryCurrent::from_milliamps(-10_000),
+                current: ReportedBatteryCurrent::from_milliamps(-10_000),
                 temperature_0: Temperature::from_millicelsius(25_000),
                 temperature_1: Temperature::from_millicelsius(26_000),
                 half_pack_voltage: Voltage::from_millivolts(40_000),
             }
         );
+    }
+
+    #[test]
+    fn bms_summary_current_extrema_preserve_raw_and_unknown_semantics() {
+        for (raw, magnitude) in [(i16::MIN, 3_276_800), (i16::MAX, 3_276_700)] {
+            let mut bytes = SUMMARY;
+            bytes[8..10].copy_from_slice(&raw.to_be_bytes());
+            let frame = BegodeFrame::try_from_slice(&bytes).expect("summary frame is valid");
+            let summary = BegodeBmsSummary::decode(&frame).expect("summary decodes");
+
+            assert_eq!(summary.current.as_milliamps(), i32::from(raw) * 100);
+            assert_eq!(
+                summary
+                    .to_delta(ms(1))
+                    .battery_current
+                    .map(|reading| reading.value),
+                Some(cutout_core::BatteryCurrent::unknown(magnitude))
+            );
+            let ReadOnlyResponse::Battery(readback) = summary.to_battery_response() else {
+                panic!("summary maps to a battery readback");
+            };
+            assert_eq!(
+                readback
+                    .page()
+                    .and_then(|page| page.battery().current)
+                    .map(|reading| reading.value),
+                Some(cutout_core::BatteryCurrent::unknown(magnitude))
+            );
+        }
     }
 
     #[test]
@@ -296,7 +329,9 @@ mod tests {
             summary.to_delta(ms(77)),
             TelemetryDelta {
                 voltage: Some(source_reported(Voltage::from_millivolts(80_000))),
-                battery_current: Some(source_reported(BatteryCurrent::from_milliamps(-10_000))),
+                battery_current: Some(source_reported(cutout_core::BatteryCurrent::unknown(
+                    10_000
+                ))),
                 battery_temperature: Some(source_reported(Temperature::from_millicelsius(25_000,))),
                 ..TelemetryDelta::empty(ms(77))
             }
@@ -350,7 +385,9 @@ mod tests {
         );
         assert_eq!(
             payload.battery().current,
-            Some(source_reported(BatteryCurrent::from_milliamps(-10_000)))
+            Some(source_reported(cutout_core::BatteryCurrent::unknown(
+                10_000
+            )))
         );
     }
 

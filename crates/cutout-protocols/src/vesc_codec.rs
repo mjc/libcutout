@@ -1,10 +1,10 @@
 use arrayvec::{ArrayString, ArrayVec};
+use cutout_core::{BatteryLevel, SeriesCount, VescControllerId};
 use cutout_core::{
-    BatteryCurrent, Distance, Duration, DutyCycle, ElectricCharge, ElectricEnergy, PeakCurrent,
-    PhaseCurrent, PlaneAngle, Power, Quantity, RotationalSpeed, Speed, TachometerReading,
+    Distance, Duration, DutyCycle, ElectricCharge, ElectricEnergy, PeakCurrent, PhaseCurrent,
+    PlaneAngle, Power, Quantity, ReportedBatteryCurrent, RotationalSpeed, Speed, TachometerReading,
     Temperature, Unit, Voltage,
 };
-use cutout_core::{BatteryLevel, SeriesCount, VescControllerId};
 use thiserror::Error;
 
 use crate::{
@@ -367,7 +367,7 @@ pub struct VescValuesTelemetry {
     pub motor_current: PhaseCurrent,
 
     /// Average battery/input current.
-    pub input_current: BatteryCurrent,
+    pub input_current: ReportedBatteryCurrent,
 
     /// Direct-axis motor current.
     pub direct_axis_current: PhaseCurrent,
@@ -431,7 +431,7 @@ impl Default for VescValuesTelemetry {
             controller_temperature: Temperature::from_millicelsius(0),
             motor_temperature: Temperature::from_millicelsius(0),
             motor_current: PhaseCurrent::from_milliamps(0),
-            input_current: BatteryCurrent::from_milliamps(0),
+            input_current: ReportedBatteryCurrent::from_milliamps(0),
             direct_axis_current: PhaseCurrent::from_milliamps(0),
             quadrature_axis_current: PhaseCurrent::from_milliamps(0),
             rpm: RotationalSpeed::from_erpm(0),
@@ -1422,10 +1422,10 @@ fn phase_current_from_centi_amps(value: i32) -> Result<PhaseCurrent, VescCodecEr
         .ok_or(VescCodecError::DecodeFailed)
 }
 
-fn battery_current_from_centi_amps(value: i32) -> Result<BatteryCurrent, VescCodecError> {
+fn battery_current_from_centi_amps(value: i32) -> Result<ReportedBatteryCurrent, VescCodecError> {
     value
         .checked_mul(10)
-        .map(BatteryCurrent::from_milliamps)
+        .map(ReportedBatteryCurrent::from_milliamps)
         .ok_or(VescCodecError::DecodeFailed)
 }
 

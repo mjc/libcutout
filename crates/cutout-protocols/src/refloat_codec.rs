@@ -1,8 +1,8 @@
 use arrayvec::{ArrayString, ArrayVec};
 use cutout_core::{
-    Angle, BatteryCurrent, DutyCycle, FootpadContactState, FootpadTelemetry, Measured,
-    MonotonicTimestamp, PhaseCurrent, RideOperatingMode, RideOperatingState, RideStopReason,
-    RideWarning, Speed, TelemetryDelta, Temperature, Voltage,
+    Angle, BatteryCurrentPolarity, DutyCycle, FootpadContactState, FootpadTelemetry, Measured,
+    MonotonicTimestamp, PhaseCurrent, ReportedBatteryCurrent, RideOperatingMode,
+    RideOperatingState, RideStopReason, RideWarning, Speed, TelemetryDelta, Temperature, Voltage,
 };
 use thiserror::Error;
 
@@ -231,7 +231,13 @@ impl RefloatRealtimeData {
             battery_current: reports_battery_current
                 .then(|| self.value_with_legacy("batt_current", "motor.batt_current"))
                 .flatten()
-                .map(|amps| Measured::reported(BatteryCurrent::from_milliamps(milliscale(amps)))),
+                .and_then(battery_current_milliamps)
+                .map(|milliamps| {
+                    Measured::reported(
+                        ReportedBatteryCurrent::from_milliamps(milliamps)
+                            .normalize(BatteryCurrentPolarity::PositiveIsOut),
+                    )
+                }),
             voltage: self
                 .value_with_legacy("batt_voltage", "motor.batt_voltage")
                 .map(|volts| Measured::reported(Voltage::from_millivolts(milliscale(volts)))),
@@ -380,6 +386,22 @@ const fn refloat_operating_state(package_state: u8, charging: bool) -> RideOpera
 #[allow(clippy::cast_possible_truncation)]
 fn milliscale(value: f32) -> i32 {
     (value * 1_000.0).round() as i32
+}
+
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "milliamps are checked against i32 bounds"
+)]
+fn battery_current_milliamps(amps: f32) -> Option<i32> {
+    if !amps.is_finite() {
+        return None;
+    }
+
+    let milliamps = (f64::from(amps) * 1_000.0).round();
+    if milliamps < f64::from(i32::MIN) || milliamps > f64::from(i32::MAX) {
+        return None;
+    }
+    Some(milliamps as i32)
 }
 
 #[allow(clippy::cast_possible_truncation)]
@@ -1357,6 +1379,46 @@ mod tests {
     }
 
     #[test]
+    fn invalid_refloat_battery_current_is_not_projected_as_zero() {
+        for value in [
+            f32::NAN,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::MAX,
+            -f32::MAX,
+        ] {
+            let mut data = realtime_data_fixture();
+            data.values.push(RefloatRealtimeValue {
+                id: field_id("batt_current"),
+                value,
+            });
+
+            assert_eq!(
+                data.to_delta(MonotonicTimestamp::from_milliseconds(42), true)
+                    .battery_current,
+                None,
+                "invalid battery current {value:?} is omitted"
+            );
+        }
+    }
+
+    #[test]
+    fn valid_zero_refloat_battery_current_projects_to_zero() {
+        let mut data = realtime_data_fixture();
+        data.values.push(RefloatRealtimeValue {
+            id: field_id("batt_current"),
+            value: 0.0,
+        });
+
+        assert_eq!(
+            data.to_delta(MonotonicTimestamp::from_milliseconds(42), true)
+                .battery_current
+                .map(|reading| reading.value),
+            Some(cutout_core::BatteryCurrent::Zero)
+        );
+    }
+
+    #[test]
     fn finite_refloat_float16_keeps_extended_exponent_values_finite() {
         assert_eq!(float16_to_f32(0x7c00).to_bits(), 65_536.0_f32.to_bits());
         assert_eq!(float16_to_f32(0x7fff).to_bits(), 131_008.0_f32.to_bits());
@@ -1384,10 +1446,8 @@ mod tests {
         let delta = data.to_delta(MonotonicTimestamp::from_milliseconds(42), true);
 
         assert_eq!(
-            delta
-                .battery_current
-                .map(|value| value.value.as_milliamps()),
-            Some(-4_000)
+            delta.battery_current.map(|value| value.value),
+            Some(cutout_core::BatteryCurrent::current_in(4_000))
         );
         assert_eq!(
             delta.voltage.map(|value| value.value.as_millivolts()),

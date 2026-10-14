@@ -1,17 +1,18 @@
 use arrayvec::ArrayVec;
 use core::{fmt, marker::PhantomData};
 use cutout_core::{
-    BATTERY_TEMPERATURE_VALUES_PER_PAGE, BatteryInfo, BatteryPageKind, BatteryPageMetadata,
-    BatteryPagePayload, BatteryReadback, BatterySpec, Capabilities, CommandKind, ControlRefusal,
-    ControlRefusalReason, Count, DeviceCommand, DeviceEvent, DiagnosticDetail, DiagnosticReadback,
-    DiagnosticSeverity, FirmwareInfo, GattChannel, GattFingerprint, GattRoles, LightCommandState,
-    Measured, ModelRegistryEntry, MonotonicTimestamp, NotificationByteLen,
-    NotificationIngestOutcome, ParserDiagnostics, ParserError, ParserGapEvidence, PayloadBodyLen,
-    PayloadClassifier, ProtocolFamily, ProtocolSelector, ProtocolSession, Quantity, RawFieldValue,
-    RawTelemetryReadback, ReadOnlyResponse, RequestedLightState, ReservedPayloadEvidence,
-    RetainedNotificationPayload, SafetyClass, SemanticEventCount, SeriesCount, SessionInput,
-    SessionOutput, Temperature, TransportAction, Unit, ValueQuality, VerificationStatus,
-    VerifiedValue, Voltage, WriteMode, WritePayload,
+    BATTERY_TEMPERATURE_VALUES_PER_PAGE, BatteryCurrentPolarity, BatteryInfo, BatteryPageKind,
+    BatteryPageMetadata, BatteryPagePayload, BatteryReadback, BatterySpec, Capabilities,
+    CommandKind, ControlRefusal, ControlRefusalReason, Count, DeviceCommand, DeviceEvent,
+    DiagnosticDetail, DiagnosticReadback, DiagnosticSeverity, FirmwareInfo, GattChannel,
+    GattFingerprint, GattRoles, LightCommandState, Measured, ModelRegistryEntry,
+    MonotonicTimestamp, NotificationByteLen, NotificationIngestOutcome, ParserDiagnostics,
+    ParserError, ParserGapEvidence, PayloadBodyLen, PayloadClassifier, ProtocolFamily,
+    ProtocolSelector, ProtocolSession, Quantity, RawFieldValue, RawTelemetryReadback,
+    ReadOnlyResponse, RequestedLightState, ReservedPayloadEvidence, RetainedNotificationPayload,
+    SafetyClass, SemanticEventCount, SeriesCount, SessionInput, SessionOutput, Temperature,
+    TransportAction, Unit, ValueQuality, VerificationStatus, VerifiedValue, Voltage, WriteMode,
+    WritePayload,
 };
 
 #[cfg(test)]
@@ -1446,7 +1447,13 @@ fn vesc_values_to_delta(
                     .present_fields
                     .contains(VescValuesMask::AVG_CURRENT_INPUT)
             })
-            .map(|_| Measured::reported(values.input_current)),
+            .map(|_| {
+                Measured::reported(
+                    values
+                        .input_current
+                        .normalize(BatteryCurrentPolarity::PositiveIsOut),
+                )
+            }),
         motor_current: values
             .present_fields
             .contains(VescValuesMask::AVG_CURRENT_MOTOR)
@@ -1750,11 +1757,15 @@ fn veteran_bms_temperature_payload(page: VeteranBmsTemperaturePage) -> BatteryPa
 }
 
 fn veteran_bms_metadata_payload(page: VeteranBmsMetadataPage) -> BatteryPagePayload {
+    let currents = cutout_core::BmsPackCurrents::reported(
+        page.currents[0].normalize(BatteryCurrentPolarity::Unknown),
+        page.currents[1].normalize(BatteryCurrentPolarity::Unknown),
+    );
     BatteryPagePayload::raw(
         BatteryPageMetadata::metadata(page.selector, VerificationStatus::HardwareVerified),
         BatteryInfo::default(),
     )
-    .with_bms_pack_currents(page.currents)
+    .with_bms_pack_currents(currents)
 }
 
 fn diagnostics_for(error: ParserError) -> ParserDiagnostics {
@@ -3664,6 +3675,29 @@ mod tests {
     }
 
     #[test]
+    fn falcon_live_a_phase_current_does_not_become_pack_power_when_battery_direction_is_unknown() {
+        let live_a = live_begode_a_frame();
+        let extra = live_begode_extra_frame();
+        let deltas = falcon_telemetry_for_notifications(&[&live_a, &extra]);
+
+        assert_eq!(deltas.len(), 2);
+        assert_eq!(
+            deltas[0]
+                .motor_current
+                .map(|reading| reading.value.as_milliamps()),
+            Some(-11_800)
+        );
+        assert_eq!(deltas[0].power, None);
+        assert_eq!(
+            deltas[1]
+                .battery_current
+                .map(|reading| reading.value.direction()),
+            Some(cutout_core::BatteryCurrentDirection::Unknown)
+        );
+        assert_eq!(deltas[1].power, None);
+    }
+
+    #[test]
     fn falcon_snapshot_distinguishes_omitted_invalid_and_valid_pwm() {
         let live_a = live_begode_a_frame();
         let mut snapshot = cutout_core::TelemetrySnapshot::default();
@@ -4616,7 +4650,7 @@ mod tests {
                 motor_current: cutout_core::PhaseCurrent::from_milliamps(0),
                 rpm: cutout_core::RotationalSpeed::from_erpm(0),
                 voltage: Voltage::from_millivolts(0),
-                input_current: BatteryCurrent::from_milliamps(0),
+                input_current: cutout_core::ReportedBatteryCurrent::from_milliamps(0),
                 tachometer: cutout_core::TachometerReading::from_counts(0),
                 tachometer_absolute: cutout_core::TachometerReading::from_counts(0),
                 controller_id: cutout_core::VescControllerId::new(7),
@@ -4796,7 +4830,7 @@ mod tests {
                 motor_current: cutout_core::PhaseCurrent::from_milliamps(0),
                 rpm: cutout_core::RotationalSpeed::from_erpm(0),
                 voltage: Voltage::from_millivolts(37_500),
-                input_current: BatteryCurrent::from_milliamps(0),
+                input_current: cutout_core::ReportedBatteryCurrent::from_milliamps(0),
                 tachometer: cutout_core::TachometerReading::from_counts(0),
                 tachometer_absolute: cutout_core::TachometerReading::from_counts(0),
                 controller_id: cutout_core::VescControllerId::new(7),
@@ -4814,7 +4848,43 @@ mod tests {
         let delta = telemetry.last().expect("VESC values telemetry");
         assert_eq!(
             delta.battery_current,
-            Some(Measured::reported(BatteryCurrent::from_milliamps(0)))
+            Some(Measured::reported(BatteryCurrent::Zero))
+        );
+    }
+
+    #[test]
+    fn vesc_current_projection_normalizes_both_signs_and_preserves_raw_values() {
+        let profile = VescBoardProfile::new(
+            MotorPolePairs::new(1),
+            GearRatioDenominator::new(1),
+            cutout_core::Distance::from_millimetres(60),
+        )
+        .with_reported_battery_current();
+        let mut values = VescValuesTelemetry {
+            input_current: cutout_core::ReportedBatteryCurrent::from_milliamps(1_250),
+            present_fields: VescValuesMask::AVG_CURRENT_INPUT,
+            ..VescValuesTelemetry::default()
+        };
+
+        let discharge = vesc_values_to_delta(&values, ms(1), Some(profile));
+        assert_eq!(
+            discharge.battery_current.map(|current| current.value),
+            Some(BatteryCurrent::current_out(1_250))
+        );
+        assert_eq!(values.input_current.as_milliamps(), 1_250);
+
+        values.input_current = cutout_core::ReportedBatteryCurrent::from_milliamps(-2_500);
+        let regeneration = vesc_values_to_delta(&values, ms(2), Some(profile));
+        assert_eq!(
+            regeneration.battery_current.map(|current| current.value),
+            Some(BatteryCurrent::current_in(2_500))
+        );
+        assert_eq!(values.input_current.as_milliamps(), -2_500);
+
+        assert_eq!(
+            vesc_values_to_delta(&values, ms(3), None).battery_current,
+            None,
+            "default/unverified profiles must not publish the zero-filled placeholder"
         );
     }
 
@@ -5086,7 +5156,7 @@ mod tests {
         );
         assert_eq!(
             telemetry.battery_current,
-            Some(Measured::reported(BatteryCurrent::from_milliamps(0)))
+            Some(Measured::reported(BatteryCurrent::Zero))
         );
         assert_eq!(telemetry.motor_current, None);
         assert_eq!(
@@ -5231,8 +5301,8 @@ mod tests {
                         && payload.battery().current.is_none()
                         && payload.bms_pack_currents()
                             == Some(cutout_core::BmsPackCurrents::reported(
-                                BatteryCurrent::from_milliamps(20),
-                                BatteryCurrent::from_milliamps(20)
+                                BatteryCurrent::unknown(20),
+                                BatteryCurrent::unknown(20)
                             )))
                 )
         );
@@ -5240,22 +5310,25 @@ mod tests {
 
     #[test]
     fn veteran_bms_metadata_payload_preserves_two_distinct_pack_currents() {
+        let currents = [
+            cutout_core::ReportedBatteryCurrent::from_centiamps(i32::from(i16::MIN)),
+            cutout_core::ReportedBatteryCurrent::from_centiamps(i32::from(i16::MAX)),
+        ];
         let payload = veteran_bms_metadata_payload(VeteranBmsMetadataPage {
             selector: ProtocolSelector::new(4),
-            currents: cutout_core::BmsPackCurrents::reported(
-                BatteryCurrent::from_milliamps(-1_230),
-                BatteryCurrent::from_milliamps(450),
-            ),
+            currents,
         });
 
         let battery = payload.battery();
         assert_eq!(payload.page().kind, BatteryPageKind::Metadata);
         assert_eq!(battery.current, None);
+        assert_eq!(currents[0].as_milliamps(), i32::from(i16::MIN) * 10);
+        assert_eq!(currents[1].as_milliamps(), i32::from(i16::MAX) * 10);
         assert_eq!(
             payload.bms_pack_currents(),
             Some(cutout_core::BmsPackCurrents::reported(
-                BatteryCurrent::from_milliamps(-1_230),
-                BatteryCurrent::from_milliamps(450)
+                BatteryCurrent::unknown(327_680),
+                BatteryCurrent::unknown(327_670)
             ))
         );
     }

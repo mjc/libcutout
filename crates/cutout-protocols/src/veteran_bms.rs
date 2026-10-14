@@ -1,8 +1,8 @@
 use arrayvec::ArrayVec;
 use cutout_core::{
-    BatteryCellVoltages, BatteryCurrent, BatteryInfo, BatteryPageKind, BatteryPageMetadata,
-    BatteryPagePayload, BatteryReadback, BmsCellIndex, BmsObservationIndex, BmsPackCurrents,
-    BmsPackIndex, Information, ProtocolSelector, Quantity, Temperature, Unit, VerificationStatus,
+    BatteryCellVoltages, BatteryInfo, BatteryPageKind, BatteryPageMetadata, BatteryPagePayload,
+    BatteryReadback, BmsCellIndex, BmsObservationIndex, BmsPackIndex, Information,
+    ProtocolSelector, Quantity, ReportedBatteryCurrent, Temperature, Unit, VerificationStatus,
     Voltage,
 };
 use thiserror::Error;
@@ -246,7 +246,7 @@ pub struct VeteranBmsMetadataPage {
     pub selector: ProtocolSelector,
 
     /// Page-specific paired BMS pack-current values.
-    pub currents: BmsPackCurrents,
+    pub currents: [ReportedBatteryCurrent; 2],
 }
 
 impl VeteranBmsMetadataPage {
@@ -281,14 +281,14 @@ impl VeteranBmsMetadataPage {
 
         Ok(Self {
             selector,
-            currents: BmsPackCurrents::reported(
-                BatteryCurrent::from_centiamps(i32::from(
+            currents: [
+                ReportedBatteryCurrent::from_centiamps(i32::from(
                     cursor.be_i16(ParserOffset::from_bytes(0)).unwrap_or(0),
                 )),
-                BatteryCurrent::from_centiamps(i32::from(
+                ReportedBatteryCurrent::from_centiamps(i32::from(
                     cursor.be_i16(ParserOffset::from_bytes(2)).unwrap_or(0),
                 )),
-            ),
+            ],
         })
     }
 }
@@ -648,10 +648,32 @@ mod tests {
         assert_eq!(page.selector, sel(0));
         assert_eq!(
             page.currents,
-            BmsPackCurrents::reported(
-                BatteryCurrent::from_milliamps(-1230),
-                BatteryCurrent::from_milliamps(450)
-            )
+            [
+                ReportedBatteryCurrent::from_milliamps(-1230),
+                ReportedBatteryCurrent::from_milliamps(450),
+            ]
+        );
+    }
+
+    #[test]
+    fn metadata_current_extrema_preserve_raw_and_unknown_semantics() {
+        let mut body = [0_u8; body_offset(VETERAN_BMS_PACK_CURRENT_VALUES_OFFSET) + 4];
+        let offset = body_offset(VETERAN_BMS_PACK_CURRENT_VALUES_OFFSET);
+        body[offset..offset + 2].copy_from_slice(&i16::MIN.to_be_bytes());
+        body[offset + 2..offset + 4].copy_from_slice(&i16::MAX.to_be_bytes());
+
+        let page = VeteranBmsMetadataPage::from_body(sel(0), &body)
+            .expect("documented metadata current body decodes");
+
+        assert_eq!(page.currents[0].as_milliamps(), i32::from(i16::MIN) * 10);
+        assert_eq!(page.currents[1].as_milliamps(), i32::from(i16::MAX) * 10);
+        assert_eq!(
+            page.currents
+                .map(|raw| raw.normalize(cutout_core::BatteryCurrentPolarity::Unknown)),
+            [
+                cutout_core::BatteryCurrent::unknown(327_680),
+                cutout_core::BatteryCurrent::unknown(327_670),
+            ]
         );
     }
 

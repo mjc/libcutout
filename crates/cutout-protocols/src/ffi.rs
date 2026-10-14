@@ -660,11 +660,23 @@ mod tests {
             });
             let _ = session.drain_outputs();
             for (index, (frame, selector, expected_current)) in [
-                (&metadata[..], 0, 20),
-                (&cells[..], 2, 20),
-                (&temperatures[..], 3, 20),
-                (&zero_current[..], 0, 0),
-                (&cells[..], 2, 0),
+                (
+                    &metadata[..],
+                    0,
+                    cutout_core::BatteryCurrentDto::Unknown { milliamps: 20 },
+                ),
+                (
+                    &cells[..],
+                    2,
+                    cutout_core::BatteryCurrentDto::Unknown { milliamps: 20 },
+                ),
+                (
+                    &temperatures[..],
+                    3,
+                    cutout_core::BatteryCurrentDto::Unknown { milliamps: 20 },
+                ),
+                (&zero_current[..], 0, cutout_core::BatteryCurrentDto::Zero),
+                (&cells[..], 2, cutout_core::BatteryCurrentDto::Zero),
             ]
             .into_iter()
             .enumerate()

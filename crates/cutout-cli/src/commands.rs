@@ -178,7 +178,11 @@ fn voltage(value: i32) -> Measured<cutout_core::Voltage> {
 
 #[cfg(test)]
 fn battery_current(value: i32) -> Measured<cutout_core::BatteryCurrent> {
-    Measured::reported(cutout_core::BatteryCurrent::from_milliamps(value))
+    Measured::reported(if value >= 0 {
+        cutout_core::BatteryCurrent::current_out(value.unsigned_abs())
+    } else {
+        cutout_core::BatteryCurrent::current_in(value.unsigned_abs())
+    })
 }
 
 #[cfg(test)]
@@ -3086,7 +3090,8 @@ fn print_vesc_reply_summary(reply: &VescReadOnlyReply) {
         ),
         VescReadOnlyReply::Values(values) => info!(
             voltage_mv = values.voltage.as_millivolts(),
-            input_current_ma = values.input_current.as_milliamps(),
+            reported_input_current_ma = values.input_current.as_milliamps(),
+            input_current_direction = ?values.input_current.normalize(cutout_core::BatteryCurrentPolarity::PositiveIsOut).direction(),
             erpm = values.rpm.as_erpm(),
             tachometer = values.tachometer.as_counts(),
             controller_id = ?values.controller_id,
@@ -3130,7 +3135,9 @@ fn vesc_reply_json(reply: &VescReadOnlyReply) -> serde_json::Value {
         VescReadOnlyReply::Values(values) => serde_json::json!({
             "type": "vesc_values",
             "voltage_mv": values.voltage.as_millivolts(),
-            "input_current_ma": values.input_current.as_milliamps(),
+            "reported_input_current_ma": values.input_current.as_milliamps(),
+            "input_current_magnitude_ma": values.input_current.as_milliamps().unsigned_abs(),
+            "input_current_direction": battery_current_direction_name(values.input_current.normalize(cutout_core::BatteryCurrentPolarity::PositiveIsOut).direction()),
             "erpm": values.rpm.as_erpm(),
             "tachometer": values.tachometer.as_counts(),
             "controller_id": format!("{:?}", values.controller_id),
@@ -3467,9 +3474,7 @@ fn battery_info_json(payload: &BatteryPagePayload) -> serde_json::Value {
         "voltage": measured_i32_json(battery.voltage.map(|measured| {
             measured.map_value(cutout_core::Voltage::as_millivolts)
         })),
-        "current": measured_i32_json(battery.current.map(|measured| {
-            measured.map_value(cutout_core::BatteryCurrent::as_milliamps)
-        })),
+        "current": measured_battery_current_json(battery.current),
         "bms_pack_current_0": bms_pack_current_json(
             payload.bms_pack_currents(),
             cutout_core::BmsPackCurrents::current_0,
@@ -3496,12 +3501,44 @@ fn bms_pack_current_json(
     select: impl FnOnce(cutout_core::BmsPackCurrents) -> cutout_core::BatteryCurrent,
 ) -> serde_json::Value {
     currents.map_or(serde_json::Value::Null, |currents| {
-        measured_json_parts(
-            i64::from(select(currents).as_milliamps()),
+        let current = select(currents);
+        let mut value = measured_json_parts(
+            u64::from(current.magnitude_milliamps()),
             currents.source,
             currents.quality,
             currents.verification,
-        )
+        );
+        if let serde_json::Value::Object(fields) = &mut value {
+            fields.insert(
+                "direction".to_owned(),
+                serde_json::Value::String(
+                    battery_current_direction_name(current.direction()).to_owned(),
+                ),
+            );
+        }
+        value
+    })
+}
+
+fn measured_battery_current_json(
+    measured: Option<Measured<cutout_core::BatteryCurrent>>,
+) -> serde_json::Value {
+    measured.map_or(serde_json::Value::Null, |measured| {
+        let mut value = measured_json_parts(
+            u64::from(measured.value.magnitude_milliamps()),
+            measured.source,
+            measured.quality,
+            measured.verification,
+        );
+        if let serde_json::Value::Object(fields) = &mut value {
+            fields.insert(
+                "direction".to_owned(),
+                serde_json::Value::String(
+                    battery_current_direction_name(measured.value.direction()).to_owned(),
+                ),
+            );
+        }
+        value
     })
 }
 
@@ -3740,7 +3777,7 @@ impl fmt::Display for TelemetrySnapshotLine {
         let mut fields = CommandFieldWriter::new(f, "telemetry");
         fields.write_measured("speed", snapshot.speed)?;
         fields.write_measured("voltage", snapshot.voltage)?;
-        fields.write_measured("battery_current", snapshot.battery_current)?;
+        fields.write_battery_current(snapshot.battery_current)?;
         fields.write_measured("motor_current", snapshot.motor_current)?;
         fields.write_measured("power", snapshot.power)?;
         fields.write_measured("controller_temperature", snapshot.controller_temperature)?;
@@ -3859,6 +3896,21 @@ impl<'formatter, 'output> CommandFieldWriter<'formatter, 'output> {
         Ok(())
     }
 
+    fn write_battery_current(
+        &mut self,
+        measured: Option<Measured<cutout_core::BatteryCurrent>>,
+    ) -> fmt::Result {
+        if let Some(measured) = measured {
+            self.write_field_name("battery_current_ma")?;
+            write!(self.output, "{}", measured.value.magnitude_milliamps())?;
+            self.write_str_field(
+                "battery_current_direction",
+                battery_current_direction_name(measured.value.direction()),
+            )?;
+        }
+        Ok(())
+    }
+
     fn write_raw_field(&mut self, field: cutout_core::RawFieldValue) -> fmt::Result {
         if self.fields.is_empty() {
             write!(self.output, "{} ", self.prefix)?;
@@ -3882,6 +3934,15 @@ impl<'formatter, 'output> CommandFieldWriter<'formatter, 'output> {
         }
         self.fields = self.fields.increment();
         Ok(())
+    }
+}
+
+fn battery_current_direction_name(direction: cutout_core::BatteryCurrentDirection) -> &'static str {
+    match direction {
+        cutout_core::BatteryCurrentDirection::In => "in",
+        cutout_core::BatteryCurrentDirection::Out => "out",
+        cutout_core::BatteryCurrentDirection::Zero => "zero",
+        cutout_core::BatteryCurrentDirection::Unknown => "unknown",
     }
 }
 
@@ -5173,8 +5234,8 @@ mod tests {
                 },
             )
             .with_bms_pack_currents(cutout_core::BmsPackCurrents::reported(
-                cutout_core::BatteryCurrent::from_milliamps(-1_230),
-                cutout_core::BatteryCurrent::from_milliamps(450),
+                cutout_core::BatteryCurrent::unknown(1_230),
+                cutout_core::BatteryCurrent::unknown(450),
             )),
         );
 
@@ -5199,12 +5260,21 @@ mod tests {
             value["page"]["battery"]["voltage"]["verification"],
             "hardware_verified"
         );
-        assert_eq!(value["page"]["battery"]["current"]["value"], -10_000);
+        assert_eq!(value["page"]["battery"]["current"]["value"], 10_000);
+        assert_eq!(value["page"]["battery"]["current"]["direction"], "in");
         assert_eq!(
             value["page"]["battery"]["bms_pack_current_0"]["value"],
-            -1_230
+            1_230
+        );
+        assert_eq!(
+            value["page"]["battery"]["bms_pack_current_0"]["direction"],
+            "unknown"
         );
         assert_eq!(value["page"]["battery"]["bms_pack_current_1"]["value"], 450);
+        assert_eq!(
+            value["page"]["battery"]["bms_pack_current_1"]["direction"],
+            "unknown"
+        );
         assert_eq!(
             value["page"]["battery"]["level_reported"],
             serde_json::Value::Null
@@ -6335,8 +6405,8 @@ mod tests {
                 assert_eq!(payload.battery().current, None);
                 observed.insert((
                     payload.page().selector.get(),
-                    currents.current_0().as_milliamps(),
-                    currents.current_1().as_milliamps(),
+                    currents.current_0().magnitude_milliamps(),
+                    currents.current_1().magnitude_milliamps(),
                 ));
             }
         }
@@ -6408,8 +6478,8 @@ mod tests {
                         .expect("metadata page should carry typed BMS currents");
                     observed_currents.insert((
                         payload.page().selector.get(),
-                        currents.current_0().as_milliamps(),
-                        currents.current_1().as_milliamps(),
+                        currents.current_0().magnitude_milliamps(),
+                        currents.current_1().magnitude_milliamps(),
                     ));
                 }
             }
@@ -6485,7 +6555,7 @@ mod tests {
         assert_eq!(
             render_telemetry_snapshot(&snapshot).map(|telemetry| telemetry.to_string()),
             Some(
-                "telemetry speed=1200 voltage=108760 battery_current=-1700 power=-184892 controller_temperature=33270 pwm=-1000 distance=1551169000 pitch=69060 battery_level_estimated=47".to_owned()
+                "telemetry speed=1200 voltage=108760 battery_current_ma=1700 battery_current_direction=in power=-184892 controller_temperature=33270 pwm=-1000 distance=1551169000 pitch=69060 battery_level_estimated=47".to_owned()
             )
         );
     }

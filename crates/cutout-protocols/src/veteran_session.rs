@@ -1,12 +1,12 @@
 use cutout_core::{
-    BATTERY_TEMPERATURE_VALUES_PER_PAGE, BatteryCurrent, BatteryInfo, BatteryPageKind,
-    BatteryPageMetadata, BatteryPagePayload, BatteryReadback, BatterySpec, Capabilities,
-    CommandKind, Count, DeviceEvent, GattChannel, GattFingerprint, GattRoles, Measured,
-    ModelRegistryEntry, MonotonicTimestamp, NotificationByteLen, NotificationIngestOutcome,
-    ParserError, ParserGapEvidence, PayloadBodyLen, PayloadClassifier, ProtocolFamily,
-    ProtocolSelector, Quantity, ReadOnlyResponse, ReservedPayloadEvidence, SemanticEventCount,
-    SeriesCount, SessionOutput, SessionOutputError, SessionOutputSink, Temperature, Unit,
-    VerificationStatus, VerifiedValue, Voltage,
+    BATTERY_TEMPERATURE_VALUES_PER_PAGE, BatteryCurrentPolarity, BatteryInfo, BatteryPageKind,
+    BatteryPageMetadata, BatteryPagePayload, BatteryReadback, BatterySpec, BmsPackCurrents,
+    Capabilities, CommandKind, Count, DeviceEvent, GattChannel, GattFingerprint, GattRoles,
+    Measured, ModelRegistryEntry, MonotonicTimestamp, NotificationByteLen,
+    NotificationIngestOutcome, ParserError, ParserGapEvidence, PayloadBodyLen, PayloadClassifier,
+    ProtocolFamily, ProtocolSelector, Quantity, ReadOnlyResponse, ReservedPayloadEvidence,
+    SemanticEventCount, SeriesCount, SessionOutput, SessionOutputError, SessionOutputSink,
+    Temperature, Unit, VerificationStatus, VerifiedValue, Voltage,
 };
 
 use crate::{
@@ -278,17 +278,17 @@ fn veteran_bms_temperature_payload(page: VeteranBmsTemperaturePage) -> BatteryPa
 }
 
 pub(crate) fn veteran_bms_metadata_payload(page: VeteranBmsMetadataPage) -> BatteryPagePayload {
+    let current_0 = page.currents[0].normalize(BatteryCurrentPolarity::Unknown);
+    let current_1 = page.currents[1].normalize(BatteryCurrentPolarity::Unknown);
     let battery = BatteryInfo {
-        current: Some(Measured::reported(BatteryCurrent::from_milliamps(
-            page.currents.current_0().as_milliamps(),
-        ))),
+        current: Some(Measured::reported(current_0)),
         ..BatteryInfo::default()
     };
     BatteryPagePayload::raw(
         BatteryPageMetadata::metadata(page.selector, VerificationStatus::HardwareVerified),
         battery,
     )
-    .with_bms_pack_currents(page.currents)
+    .with_bms_pack_currents(BmsPackCurrents::reported(current_0, current_1))
 }
 
 /// NOSFET Aero read-only model spec.

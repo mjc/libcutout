@@ -1,10 +1,11 @@
 use core::ops::RangeInclusive;
 use cutout_core::{
-    Angle, BatteryCurrent, BatteryLevel, BmsCellValuesPerPage, BmsLayoutSpec, BmsPageSelectorSpec,
-    BmsTemperatureValuesPerPage, Capacity, ChargeMode, Distance, DistanceOffset, Duration,
-    DutyCycle, FirmwareInfo, Measured, MonotonicTimestamp, ParallelCount, Power, ProtocolSelector,
-    RawFieldValue, ReadOnlyResponse, SeriesCount, SettingsEntry, SettingsReadback, Speed,
-    TelemetryDelta, Temperature, ValueQuality, ValueSource, VerificationStatus, Voltage,
+    Angle, BatteryCurrentPolarity, BatteryLevel, BmsCellValuesPerPage, BmsLayoutSpec,
+    BmsPageSelectorSpec, BmsTemperatureValuesPerPage, Capacity, ChargeMode, Distance,
+    DistanceOffset, Duration, DutyCycle, FirmwareInfo, Measured, MonotonicTimestamp, ParallelCount,
+    Power, ProtocolSelector, RawFieldValue, ReadOnlyResponse, ReportedBatteryCurrent, SeriesCount,
+    SettingsEntry, SettingsReadback, Speed, TelemetryDelta, Temperature, ValueQuality, ValueSource,
+    VerificationStatus, Voltage,
 };
 use thiserror::Error;
 
@@ -85,7 +86,7 @@ pub struct VeteranTelemetry {
     pub total_distance: Distance,
 
     /// Battery current reported by the realtime frame.
-    pub battery_current: BatteryCurrent,
+    pub battery_current: ReportedBatteryCurrent,
 
     /// MOSFET/controller temperature.
     pub mosfet_temperature: Temperature,
@@ -559,7 +560,7 @@ impl VeteranTelemetry {
                     .veteran_swapped_u32(ParserOffset::from_bytes(12))
                     .ok_or(VeteranTelemetryError::FrameTooShort)?,
             )),
-            battery_current: BatteryCurrent::from_centiamps(i32::from(
+            battery_current: ReportedBatteryCurrent::from_centiamps(i32::from(
                 cursor
                     .be_i16(ParserOffset::from_bytes(16))
                     .ok_or(VeteranTelemetryError::FrameTooShort)?,
@@ -608,15 +609,18 @@ impl VeteranTelemetry {
     /// Converts decoded telemetry into the transport-independent telemetry delta.
     #[must_use]
     pub fn to_delta(self, at_ms: MonotonicTimestamp) -> TelemetryDelta {
-        let power = Power::from_pack_voltage_current(self.voltage, self.battery_current);
+        let battery_current = self
+            .battery_current
+            .normalize(BatteryCurrentPolarity::Unknown);
+        let power = Power::from_pack_voltage_current(self.voltage, battery_current);
         TelemetryDelta {
             speed: Some(Measured::reported(Speed::from_millimetres_per_second(
                 self.speed.as_millimetres_per_second(),
             ))),
             voltage: Some(Measured::reported(self.voltage)),
-            battery_current: Some(Measured::reported(self.battery_current)),
+            battery_current: Some(Measured::reported(battery_current)),
             charge_mode: Some(Measured::reported(self.charge_mode)),
-            power: Some(Measured::calculated(power)),
+            power: power.map(Measured::calculated),
             controller_temperature: Some(Measured::reported(self.mosfet_temperature)),
             pwm: cutout_core::TelemetryFieldUpdate::Set(Measured::reported(self.hardware_pwm)),
             distance: Some(Measured::reported(Distance::from_millimetres(
@@ -918,6 +922,7 @@ mod tests {
         ProtocolFamilyClassification, StagedIdentityInput, StagedIdentityOutcome,
         identify_known_model,
     };
+    use cutout_core::BatteryCurrent;
 
     const fn pct(value: u8) -> BatteryLevel {
         BatteryLevel::from_percent(value)
@@ -975,6 +980,28 @@ mod tests {
     }
 
     #[test]
+    fn realtime_current_extrema_preserve_raw_and_unknown_semantics() {
+        for (raw, magnitude) in [(i16::MIN, 327_680), (i16::MAX, 327_670)] {
+            let mut bytes = live_aero_frame().as_slice().to_vec();
+            bytes[16..18].copy_from_slice(&raw.to_be_bytes());
+            let frame = VeteranFrame::try_from_slice(&bytes).expect("modified frame is valid");
+            let telemetry = VeteranTelemetry::decode(&frame).expect("telemetry decodes");
+
+            assert_eq!(
+                telemetry.battery_current.as_milliamps(),
+                i32::from(raw) * 10
+            );
+            assert_eq!(
+                telemetry
+                    .to_delta(ms(1))
+                    .battery_current
+                    .map(|reading| reading.value),
+                Some(BatteryCurrent::unknown(magnitude))
+            );
+        }
+    }
+
+    #[test]
     fn veteran_telemetry_decodes_live_aero_fixed_header() {
         let telemetry = VeteranTelemetry::decode(&live_aero_frame()).expect("telemetry decodes");
 
@@ -991,7 +1018,7 @@ mod tests {
                 speed: Speed::from_millimetres_per_second(0),
                 trip_distance: Distance::from_millimetres(0),
                 total_distance: Distance::from_millimetres(1_551_169_000),
-                battery_current: BatteryCurrent::from_milliamps(0),
+                battery_current: ReportedBatteryCurrent::from_milliamps(0),
                 mosfet_temperature: Temperature::from_millicelsius(33_270),
                 auto_shutdown_time_remaining: Duration::from_seconds(0),
                 charge_mode: ChargeMode::NotCharging,
@@ -1529,7 +1556,7 @@ mod tests {
         );
         assert_eq!(
             delta.battery_current,
-            Some(Measured::reported(BatteryCurrent::from_milliamps(0)))
+            Some(Measured::reported(BatteryCurrent::Zero))
         );
         assert_eq!(
             delta.controller_temperature,
@@ -1780,7 +1807,7 @@ mod tests {
         let mut telemetry =
             VeteranTelemetry::decode(&live_aero_frame()).expect("telemetry decodes");
         telemetry.speed = Speed::from_deci_kmh(36);
-        telemetry.battery_current = BatteryCurrent::from_milliamps(-1_700);
+        telemetry.battery_current = ReportedBatteryCurrent::from_milliamps(-1_700);
 
         let delta = telemetry.to_delta(ms(42));
 
@@ -1792,12 +1819,9 @@ mod tests {
         );
         assert_eq!(
             delta.battery_current,
-            Some(Measured::reported(BatteryCurrent::from_milliamps(-1_700)))
+            Some(Measured::reported(BatteryCurrent::unknown(1_700)))
         );
-        assert_eq!(
-            delta.power,
-            Some(Measured::calculated(Power::from_milliwatts(-184_892)))
-        );
+        assert_eq!(delta.power, None);
     }
 
     #[test]
@@ -1832,11 +1856,10 @@ mod tests {
 
     #[test]
     fn veteran_power_conversion_uses_typed_battery_current() {
-        let current = BatteryCurrent::from_milliamps(-1_700);
-
-        assert_eq!(current.as_milliamps(), -1_700);
+        let current = BatteryCurrent::current_in(1_700);
         assert_eq!(
             Power::from_pack_voltage_current(Voltage::from_millivolts(108_760), current)
+                .expect("known direction yields power")
                 .as_milliwatts(),
             -184_892
         );

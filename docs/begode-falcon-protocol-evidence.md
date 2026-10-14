@@ -44,7 +44,7 @@ Offsets are zero-based within a 24-byte `55 aa ... 5a 5a 5a 5a` frame.
 | --- | --- | --- |
 | `00`, 14–15 | CF firmware: signed tenths of a percent PWM; stock firmware: settings bit word | Preserve the full word. Without qualifying firmware evidence, do not publish PWM from it. |
 | `00`, 17 | Beeper volume byte | Raw evidence is retained; actionable levels are 1–9. Zero and other invalid levels must not invent a setting value. |
-| `07`, 2–3 | Signed battery current, hundredths of an amp | Preserve valid zero and sign; do not replace invalid/missing evidence with zero. |
+| `07`, 2–3 | Signed battery current, hundredths of an amp | Preserve valid zero and wire sign in raw evidence; shared telemetry carries magnitude with unknown direction until polarity is established. Missing/invalid is not zero. |
 | `07`, 5 | Low nibble lateral tilt angle; high nibble field weakening | Source evidence only; generic setting bindings remain follow-up work. |
 | `07`, 6–7 | Signed whole degrees Celsius, motor temperature | Distinct from Live A controller-temperature scaling. |
 | `07`, 8–9 | Signed whole-percent PWM | Multiply by ten for permille with checked arithmetic; an unrepresentable reading invalidates the prior PWM, rather than wrapping or silently preserving it. |
@@ -74,7 +74,7 @@ smart-BMS pages.
 | --- | --- |
 | Battery percentage | Live A voltage and the selected model's voltage scale feed the existing piecewise estimate. The ride projection previously omitted this produced value. |
 | Pack voltage | Live A unsigned voltage field and model scale. |
-| Electrical power | Pack voltage multiplied by Extra-frame battery current, not Live A phase current. Valid zero and negative values remain representable. |
+| Electrical power | Requires qualified battery-current direction before calculating signed pack power; phase current is not a substitute. Begode direction is currently unknown, so only measured zero establishes calculated zero power. |
 | Controller / motor temperature | Live A's current temperature interpretation and Extra-frame whole-degree motor temperature; IMU identification/formula qualification remains separate work. |
 | PWM headroom | Extra-frame PWM and operating state; idle is not a moving headroom measurement. |
 | Time until fully charged | The estimator already has model capacity, but requires trusted charging-state and flow evidence plus sufficient samples. It is not a ride-time battery percentage and is now offered only in charging state. |
@@ -86,7 +86,9 @@ The inspected EUC World instruction listing preserves signed Extra-frame current
 at offset 2 with a 0.01 A scale. That agrees with the existing decoder; it does not
 by itself establish charger attachment or regenerative braking from a stationary
 negative sample. No current-sign inversion or verification upgrade was made for
-the ride UI cleanup. Technical provenance remains available in the typed snapshot;
+the ride UI cleanup. LIBCU-949 now separates that signed raw evidence from shared current magnitude
+and direction; Begode direction remains unknown pending polarity evidence (see
+[battery current](battery-current.md)). Technical provenance remains available in the typed snapshot;
 the ride summary does not print internal verification or implementation terminology.
 
 ## Standard-Falcon hardware captures
