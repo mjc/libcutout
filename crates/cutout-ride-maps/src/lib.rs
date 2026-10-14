@@ -28,6 +28,11 @@ pub use charging_details::{
 };
 mod coordinate;
 pub use coordinate::{Coordinate, CoordinateError, LatitudeE7, LongitudeE7};
+mod elapsed_time;
+pub use elapsed_time::{
+    ElapsedTimeContinuation, ElapsedTimeError, ElapsedTimeMilliseconds, ElapsedTimeStateParts,
+    ElapsedTimeSummary,
+};
 mod lifecycle;
 pub use lifecycle::{RideEvent, RideLifecycleState, TransitionError, ValidatedRideTransition};
 mod location;
