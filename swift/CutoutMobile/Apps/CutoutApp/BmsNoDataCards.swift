@@ -160,7 +160,7 @@ struct BmsNoDataTelemetryCard: View {
                     metricValue: rideSagMetricValue, unit: RideUnits.voltageUnit,
                     label: localizedAppText("bms.no_data.ride_sag"))
                 BmsNoDataMetric(
-                    metricValue: loadMetricValue, unit: RideUnits.currentUnit,
+                    metricValue: loadMetricValue, unit: "",
                     label: localizedAppText("bms.no_data.load_now"))
             }
         }

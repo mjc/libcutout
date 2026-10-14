@@ -326,7 +326,7 @@ import Foundation
                     speedQuality: .known,
                     operatingState: .riding,
                     voltage: Voltage(value: 82_000),
-                    batteryCurrent: BatteryCurrent(value: 8_000),
+                    batteryCurrent: BatteryCurrent.currentOut(milliamps: 8_000),
                     controllerTemperature: Temperature(value: 31_000),
                     batteryLevelReported: BatteryLevel(value: 64)
                 )
@@ -340,7 +340,7 @@ import Foundation
                 vescWarning: testVescWarning,
                 vescStopReason: testVescStopReason,
                 voltage: Voltage(value: 50_400),
-                batteryCurrent: BatteryCurrent(value: 12_000),
+                batteryCurrent: BatteryCurrent.currentOut(milliamps: 12_000),
                 controllerTemperature: Temperature(value: 32_000),
                 pwm: DutyCycle(permille: self == .autoCriticalVescLiveActivity ? 850 : 230),
                 batteryLevelReported: BatteryLevel(value: 72)
@@ -356,7 +356,7 @@ import Foundation
                     speedQuality: .known,
                     operatingState: .riding,
                     voltage: Voltage(value: 62_000),
-                    batteryCurrent: BatteryCurrent(value: 12_000),
+                    batteryCurrent: BatteryCurrent.currentOut(milliamps: 12_000),
                     motorCurrent: PhaseCurrent(value: 20_000),
                     controllerTemperature: Temperature(value: 43_000),
                     motorTemperature: Temperature(value: 49_000),
@@ -370,7 +370,7 @@ import Foundation
                     speedQuality: .known,
                     operatingState: .riding,
                     voltage: Voltage(value: 80_000),
-                    batteryCurrent: BatteryCurrent(value: 10_000),
+                    batteryCurrent: BatteryCurrent.currentOut(milliamps: 10_000),
                     controllerTemperature: Temperature(value: 35_000),
                     batteryLevelReported: BatteryLevel(value: 61)
                 )
@@ -449,7 +449,7 @@ import Foundation
                 pageVerification: .hardwareVerified,
                 energyPercent: BatteryLevel(value: 64),
                 voltage: Voltage(value: 82_000),
-                current: BatteryCurrent(value: 8_000),
+                current: BatteryCurrent.currentOut(milliamps: 8_000),
                 cellDelta: VoltageDelta(value: 24),
                 lowestGroupIndex: 7,
                 observedGroupCount: 2,
@@ -835,7 +835,7 @@ import Foundation
                 speed: Speed(value: 0),
                 operatingState: .charging,
                 voltage: Voltage(value: 82_000),
-                batteryCurrent: BatteryCurrent(value: 2_000),
+                batteryCurrent: BatteryCurrent.currentOut(milliamps: 2_000),
                 power: Power(value: 164_000),
                 powerFlow: .charging,
                 controllerTemperature: Temperature(value: 31_000),
@@ -883,7 +883,7 @@ import Foundation
                 dutyHeadroom: BatteryLevel(value: 77),
                 batteryVoltage: Voltage(value: 50_400),
                 batteryLevelReported: BatteryLevel(value: 72),
-                batteryCurrent: BatteryCurrent(value: 12_000),
+                batteryCurrent: BatteryCurrent.currentOut(milliamps: 12_000),
                 motorCurrent: PhaseCurrent(value: 5_000),
                 boardAngle: Angle(value: 1_500),
                 controllerTemperature: Temperature(value: 32_000),

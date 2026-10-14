@@ -4,6 +4,29 @@ import XCTest
 @testable import CutoutMobile
 
 final class BmsSnapshotContractTests: XCTestCase {
+    func testBatteryCurrentPreservesUnsignedMagnitudeAndExplicitDirection() {
+        let cases: [(BatteryCurrent, UInt32, String)] = [
+            (.currentIn(milliamps: 12_400), 12_400, "12.4 A in"),
+            (.currentOut(milliamps: 38_000), 38_000, "38 A out"),
+            (.unknown(milliamps: 2_000), 2_000, "2 A · direction unknown"),
+            (.zero, 0, "0 A"),
+        ]
+        for (current, magnitude, displayText) in cases {
+            XCTAssertEqual(current.magnitudeMilliamps, magnitude)
+            XCTAssertEqual(current.displayText, displayText)
+        }
+        XCTAssertEqual(BatteryCurrent.currentOut(milliamps: UInt32.max).magnitudeMilliamps, UInt32.max)
+    }
+
+    func testUnknownBatteryCurrentDoesNotProvideSignedPower() {
+        let snapshot = TelemetrySnapshot(
+            voltage: Voltage(value: 100_000),
+            batteryCurrent: .unknown(milliamps: 2_000)
+        )
+        XCTAssertEqual(snapshot.batteryCurrent, .unknown(milliamps: 2_000))
+        XCTAssertEqual(snapshot.powerPresentation, .unavailable)
+    }
+
     func testBmsCellMapPresentationResolvesFromThePackageCatalog() {
         XCTAssertEqual(pevLocalizedText("bms.cell_map.groups_visible", Int64(4)), "4 groups visible")
         XCTAssertEqual(pevLocalizedText("bms.cell_map.flagged", "17, 18"), "groups 17, 18 flagged")
@@ -224,7 +247,7 @@ final class BmsSnapshotContractTests: XCTestCase {
             .available(display: "0.0", accessibility: "0.0")
         )
         XCTAssertEqual(
-            bmsBatteryCurrentMetricValue(BatteryCurrent(value: 0)),
+            bmsBatteryCurrentMetricValue(BatteryCurrent.zero),
             .available(display: "0", accessibility: "0")
         )
     }
@@ -275,9 +298,9 @@ final class BmsSnapshotContractTests: XCTestCase {
             pageVerification: .hardwareVerified,
             energyPercent: BatteryLevel(value: 72),
             voltage: Voltage(value: 81_600),
-            current: BatteryCurrent(value: -12_400),
-            bmsPackCurrent0: BatteryCurrent(value: -8_100),
-            bmsPackCurrent1: BatteryCurrent(value: -4_300),
+            current: BatteryCurrent.currentIn(milliamps: 12_400),
+            bmsPackCurrent0: BatteryCurrent.currentIn(milliamps: 8_100),
+            bmsPackCurrent1: BatteryCurrent.currentIn(milliamps: 4_300),
             cellDelta: VoltageDelta(value: 18),
             lowestGroupIndex: 17,
             highestTemperature: Temperature(value: 37_800),
@@ -312,7 +335,7 @@ final class BmsSnapshotContractTests: XCTestCase {
         XCTAssertEqual(snapshot.topology.confidence, BmsTopologyConfidence.verified)
         XCTAssertEqual(snapshot.energyPercent, BatteryLevel(value: 72))
         XCTAssertEqual(snapshot.voltage, Voltage(value: 81_600))
-        XCTAssertEqual(snapshot.current, BatteryCurrent(value: -12_400))
+        XCTAssertEqual(snapshot.current, BatteryCurrent.currentIn(milliamps: 12_400))
         XCTAssertEqual(snapshot.cellDelta, VoltageDelta(value: 18))
         XCTAssertEqual(snapshot.groups.map { $0.label }, ["right pack group 17"])
         XCTAssertEqual(snapshot.groups.map { $0.isBalancing }, [true])
@@ -341,16 +364,16 @@ final class BmsSnapshotContractTests: XCTestCase {
                 bmsCount: 1,
                 confidence: .verified
             ),
-            current: BatteryCurrent(value: -10_000),
-            bmsPackCurrent0: BatteryCurrent(value: -5_000),
-            bmsPackCurrent1: BatteryCurrent(value: -5_000)
+            current: BatteryCurrent.currentIn(milliamps: 10_000),
+            bmsPackCurrent0: BatteryCurrent.currentIn(milliamps: 5_000),
+            bmsPackCurrent1: BatteryCurrent.currentIn(milliamps: 5_000)
         )
 
         XCTAssertEqual(
             snapshot.currentReadings,
             [
-                BmsCurrentReading(packIndex: 1, current: BatteryCurrent(value: -5_000)),
-                BmsCurrentReading(packIndex: 2, current: BatteryCurrent(value: -5_000)),
+                BmsCurrentReading(packIndex: 1, current: BatteryCurrent.currentIn(milliamps: 5_000)),
+                BmsCurrentReading(packIndex: 2, current: BatteryCurrent.currentIn(milliamps: 5_000)),
             ]
         )
     }
@@ -393,9 +416,9 @@ final class BmsSnapshotContractTests: XCTestCase {
             ),
             energyPercent: BatteryLevel(value: 72),
             voltage: Voltage(value: 81_600),
-            current: BatteryCurrent(value: -12_400),
-            bmsPackCurrent0: BatteryCurrent(value: -8_100),
-            bmsPackCurrent1: BatteryCurrent(value: -4_300),
+            current: BatteryCurrent.currentIn(milliamps: 12_400),
+            bmsPackCurrent0: BatteryCurrent.currentIn(milliamps: 8_100),
+            bmsPackCurrent1: BatteryCurrent.currentIn(milliamps: 4_300),
             cellDelta: VoltageDelta(value: 18),
             lowestGroupIndex: 17,
             highestTemperature: Temperature(value: 37_800),
@@ -456,9 +479,9 @@ final class BmsSnapshotContractTests: XCTestCase {
             pageVerification: .hardwareVerified,
             energyPercent: BatteryLevel(value: 72),
             voltage: Voltage(value: 81_600),
-            current: BatteryCurrent(value: -12_400),
-            bmsPackCurrent0: BatteryCurrent(value: -8_100),
-            bmsPackCurrent1: BatteryCurrent(value: -4_300),
+            current: BatteryCurrent.currentIn(milliamps: 12_400),
+            bmsPackCurrent0: BatteryCurrent.currentIn(milliamps: 8_100),
+            bmsPackCurrent1: BatteryCurrent.currentIn(milliamps: 4_300),
             cellDelta: VoltageDelta(value: 18),
             lowestGroupIndex: 17,
             highestTemperature: Temperature(value: 37_800),
@@ -506,13 +529,13 @@ final class BmsSnapshotContractTests: XCTestCase {
                     id: "voltage", label: "voltage", value: "81.6", accessibilityValue: "81.6 V"
                 ),
                 availableDebugRow(
-                    id: "current", label: "current", value: "-12.4", accessibilityValue: "-12.4 A"
+                    id: "current", label: "current", value: "12.4 A in", accessibilityValue: "12.4 A in"
                 ),
                 availableDebugRow(
-                    id: "bms-current-0", label: "bms current 0", value: "-8.1", accessibilityValue: "-8.1 A"
+                    id: "bms-current-0", label: "bms current 0", value: "8.1 A in", accessibilityValue: "8.1 A in"
                 ),
                 availableDebugRow(
-                    id: "bms-current-1", label: "bms current 1", value: "-4.3", accessibilityValue: "-4.3 A"
+                    id: "bms-current-1", label: "bms current 1", value: "4.3 A in", accessibilityValue: "4.3 A in"
                 ),
                 availableDebugRow(
                     id: "high-group", label: "high group", value: "4.089", accessibilityValue: "4.089 V"
@@ -828,7 +851,7 @@ final class BmsSnapshotContractTests: XCTestCase {
             ),
             energyPercent: BatteryLevel(value: 71),
             voltage: Voltage(value: 117_600),
-            current: BatteryCurrent(value: 38_000),
+            current: BatteryCurrent.currentOut(milliamps: 38_000),
             captureActionTitle: "Trust sag, alarms, and headroom more than percent.",
             captureActionState: "limited data"
         )

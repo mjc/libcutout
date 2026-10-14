@@ -3,6 +3,26 @@ import Foundation
 
 public typealias Angle = CutoutMobileFFI.Angle
 public typealias BatteryCurrent = CutoutMobileFFI.BatteryCurrent
+
+extension BatteryCurrent {
+    public var magnitudeMilliamps: UInt32 {
+        switch self {
+        case .zero: 0
+        case let .currentIn(milliamps), let .currentOut(milliamps), let .unknown(milliamps): milliamps
+        }
+    }
+
+    public var displayText: String {
+        let magnitude = RideUnits.currentText(milliamps: magnitudeMilliamps)
+        switch self {
+        case .zero: pevLocalizedText("battery.current.zero", magnitude)
+        case .currentIn: pevLocalizedText("battery.current.in", magnitude)
+        case .currentOut: pevLocalizedText("battery.current.out", magnitude)
+        case .unknown: pevLocalizedText("battery.current.unknown", magnitude)
+        }
+    }
+}
+
 public typealias BatteryLevel = CutoutMobileFFI.BatteryLevel
 public typealias Distance = CutoutMobileFFI.Distance
 public typealias MobileRideMapLiveActivityStatisticsDto = CutoutMobileFFI.MobileRideMapLiveActivityStatisticsDto
@@ -936,9 +956,9 @@ public struct ChargeEstimateDuration: Equatable, Hashable, Sendable {
 }
 
 public struct ChargeCurrentRateSummary: Equatable, Hashable, Sendable {
-    public let meanMilliamps: Int32
-    public let minimumMilliamps: Int32
-    public let maximumMilliamps: Int32
+    public let meanMilliamps: UInt32
+    public let minimumMilliamps: UInt32
+    public let maximumMilliamps: UInt32
     public let variabilityPermille: UInt16
 
     fileprivate init(_ dto: MobileCurrentRateSummaryDto) {
@@ -980,7 +1000,7 @@ public struct ChargeVoltageSagEstimate: Equatable, Hashable, Sendable {
                 millivolts: abs(Int64(deltaMillivolts)),
                 fractionDigits: 1
             ),
-            current: RideUnits.currentText(milliamps: abs(Int64(loadCurrent.value))),
+            current: loadCurrent.displayText,
             effectiveResistanceMilliohms: effectiveResistanceMilliohms
         )
     }
@@ -1348,6 +1368,8 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
     public let vescStopReason: VescRideStopReason?
     public let voltage: Voltage?
     public let batteryCurrent: BatteryCurrent?
+    public let batteryCurrentObservedAt: MonotonicMilliseconds?
+    public let voltageObservedAt: MonotonicMilliseconds?
     public let motorCurrent: PhaseCurrent?
     public let power: Power?
     public let powerFlow: PowerFlowDirection?
@@ -1380,6 +1402,8 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
         vescStopReason: VescRideStopReason? = nil,
         voltage: Voltage? = nil,
         batteryCurrent: BatteryCurrent? = nil,
+        batteryCurrentObservedAt: MonotonicMilliseconds? = nil,
+        voltageObservedAt: MonotonicMilliseconds? = nil,
         motorCurrent: PhaseCurrent? = nil,
         power: Power? = nil,
         powerFlow: PowerFlowDirection? = nil,
@@ -1411,6 +1435,8 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
         self.vescStopReason = vescStopReason
         self.voltage = voltage
         self.batteryCurrent = batteryCurrent
+        self.batteryCurrentObservedAt = batteryCurrentObservedAt
+        self.voltageObservedAt = voltageObservedAt
         self.motorCurrent = motorCurrent
         self.power = power
         self.powerFlow = powerFlow
@@ -1464,6 +1490,12 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
             vescStopReason: dto.vescStopReason.map(VescRideStopReason.init),
             voltage: dto.voltage?.value,
             batteryCurrent: dto.batteryCurrent?.value,
+            batteryCurrentObservedAt: dto.batteryCurrentObservedAtMs.map {
+                MonotonicMilliseconds($0.milliseconds)
+            },
+            voltageObservedAt: dto.voltageObservedAtMs.map {
+                MonotonicMilliseconds($0.milliseconds)
+            },
             motorCurrent: dto.motorCurrent?.value,
             power: dto.power?.value,
             powerFlow: dto.powerFlow,
@@ -2021,7 +2053,7 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
 
     public var batteryCurrentMetricValue: PevDashboardMetricValue {
         vescMetricValue(batteryCurrent) {
-            RideUnits.currentText(milliamps: $0.value)
+            $0.displayText
         }
     }
 
@@ -2104,15 +2136,15 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
         case let .reported(level, current):
             .reported(
                 level: RideUnits.percentText(level.value),
-                current: current.map { RideUnits.currentText(milliamps: $0.value) }
+                current: current.map(\.displayText)
             )
         case let .estimated(level, current):
             .estimated(
                 level: RideUnits.percentText(level.value),
-                current: current.map { RideUnits.currentText(milliamps: $0.value) }
+                current: current.map(\.displayText)
             )
         case let .unavailable(current):
-            .unavailable(current: current.map { RideUnits.currentText(milliamps: $0.value) })
+            .unavailable(current: current.map(\.displayText))
         }
     }
 
@@ -3075,8 +3107,8 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
             SessionDebugRow(
                 id: "current",
                 label: "current",
-                metricValue: bmsMetricValue(current, accessibilityUnit: RideUnits.currentUnit) {
-                    RideUnits.currentText(milliamps: $0.value)
+                metricValue: bmsMetricValue(current) {
+                    $0.displayText
                 }
             ),
         ]
@@ -3085,11 +3117,8 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
                 SessionDebugRow(
                     id: "bms-current-0",
                     label: "bms current 0",
-                    metricValue: bmsMetricValue(
-                        bmsPackCurrent0,
-                        accessibilityUnit: RideUnits.currentUnit
-                    ) {
-                        RideUnits.currentText(milliamps: $0.value)
+                    metricValue: bmsMetricValue(bmsPackCurrent0) {
+                        $0.displayText
                     }
                 )
             )
@@ -3099,11 +3128,8 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
                 SessionDebugRow(
                     id: "bms-current-1",
                     label: "bms current 1",
-                    metricValue: bmsMetricValue(
-                        bmsPackCurrent1,
-                        accessibilityUnit: RideUnits.currentUnit
-                    ) {
-                        RideUnits.currentText(milliamps: $0.value)
+                    metricValue: bmsMetricValue(bmsPackCurrent1) {
+                        $0.displayText
                     }
                 )
             )
@@ -3553,7 +3579,7 @@ public func bmsVoltageSagMetricValue(_ voltageSag: VoltageDelta?) -> PevDashboar
 
 public func bmsBatteryCurrentMetricValue(_ current: BatteryCurrent?) -> PevDashboardMetricValue {
     bmsMetricValue(current) {
-        RideUnits.decimalString(Double($0.value) / 1_000.0, fractionDigits: 0)
+        $0.displayText
     }
 }
 

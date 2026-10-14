@@ -59,7 +59,12 @@ final class PevScreenThemeTests: XCTestCase {
         )
 
         let current = PhaseCurrent(value: 71_000)
-        let batteryCurrent = BatteryCurrent(value: 12_400)
+        let batteryCurrent = BatteryCurrent.currentOut(milliamps: 12_400)
+        XCTAssertEqual(batteryCurrent.magnitudeMilliamps, 12_400)
+        XCTAssertEqual(batteryCurrent.direction, .outbound)
+        XCTAssertEqual(BatteryCurrent.currentIn(milliamps: 0), .zero)
+        XCTAssertEqual(BatteryCurrent.currentIn(milliamps: 2_000).displayText, "2.0 A in")
+        XCTAssertEqual(BatteryCurrent.unknown(milliamps: 2_000).displayText, "2.0 A · direction unknown")
         let angle = Angle(value: -1_800)
         let temperature = Temperature(value: 54_000)
         let dutyCycle = DutyCycle(permille: -450)
@@ -92,7 +97,7 @@ final class PevScreenThemeTests: XCTestCase {
             metrics.motorCurrentMetricValue,
             .available(display: currentText, accessibility: currentText)
         )
-        let batteryCurrentText = RideUnits.currentText(milliamps: batteryCurrent.value)
+        let batteryCurrentText = batteryCurrent.displayText
         XCTAssertEqual(
             metrics.batteryCurrentMetricValue,
             .available(display: batteryCurrentText, accessibility: batteryCurrentText)
@@ -137,7 +142,7 @@ final class PevScreenThemeTests: XCTestCase {
     func testVescSnapshotOwnsDashboardDetailFacts() {
         let reportedBattery = BatteryLevel(value: 71)
         let estimatedBattery = BatteryLevel(value: 68)
-        let current = BatteryCurrent(value: 12_400)
+        let current = BatteryCurrent.currentOut(milliamps: 12_400)
         let balance = Angle(value: 500)
         let motorTemperature = Temperature(value: 49_000)
 
@@ -467,7 +472,7 @@ final class PevScreenThemeTests: XCTestCase {
         let telemetry = TelemetrySnapshot(
             operatingState: .riding,
             voltage: Voltage(value: 60_000),
-            batteryCurrent: BatteryCurrent(value: 0),
+            batteryCurrent: BatteryCurrent.zero,
             power: Power(value: 0),
             pwm: DutyCycle(permille: 1_000),
             limpHomeRange: Distance(value: 22_852_500)
@@ -498,8 +503,8 @@ final class PevScreenThemeTests: XCTestCase {
             TelemetrySnapshot(),
             TelemetrySnapshot(
                 voltage: Voltage(value: 98_300),
-                batteryCurrent: BatteryCurrent(value: -1_220),
-                powerFlow: .negativeUnknown
+                batteryCurrent: BatteryCurrent.currentIn(milliamps: 1_220),
+                powerFlow: .unknown
             ),
         ] {
             let state = EucRideScreenState(
@@ -515,7 +520,7 @@ final class PevScreenThemeTests: XCTestCase {
                     tiles.first { $0.kind == .power }?.metricValue,
                     .available(display: "-0.12", accessibility: "-0.12")
                 )
-                XCTAssertEqual(telemetry.powerFlow, .negativeUnknown)
+                XCTAssertEqual(telemetry.powerFlow, .unknown)
             }
         }
     }
@@ -601,7 +606,7 @@ final class PevScreenThemeTests: XCTestCase {
 
         let derived = TelemetrySnapshot(
             voltage: Voltage(value: 60_000),
-            batteryCurrent: BatteryCurrent(value: 10_000),
+            batteryCurrent: BatteryCurrent.currentOut(milliamps: 10_000),
             power: Power(value: 900_000)
         )
         let derivedPower = Power(value: 600_000)
@@ -614,7 +619,7 @@ final class PevScreenThemeTests: XCTestCase {
 
         let reportedZero = TelemetrySnapshot(
             voltage: Voltage(value: 60_000),
-            batteryCurrent: BatteryCurrent(value: 0),
+            batteryCurrent: BatteryCurrent.zero,
             power: Power(value: 0)
         )
         let zeroText = RideUnits.powerText(milliwatts: 0, fractionDigits: 2)
@@ -850,7 +855,7 @@ final class PevScreenThemeTests: XCTestCase {
         XCTAssertEqual(powerFlowDetail(.zero, fallback: "fallback"), "idle")
         XCTAssertEqual(powerFlowDetail(.charging, fallback: "fallback"), "charging input")
         XCTAssertEqual(powerFlowDetail(.regeneration, fallback: "fallback"), "regen")
-        XCTAssertEqual(powerFlowDetail(.negativeUnknown, fallback: "fallback"), "fallback")
+        XCTAssertEqual(powerFlowDetail(.unknown, fallback: "fallback"), "fallback")
         XCTAssertEqual(powerFlowDetail(nil, fallback: "fallback"), "fallback")
     }
 
@@ -864,7 +869,7 @@ final class PevScreenThemeTests: XCTestCase {
     func testSharedRideTilePresentationUsesTheAppCatalog() throws {
         let telemetry = TelemetrySnapshot(
             voltage: Voltage(value: 54_300),
-            batteryCurrent: BatteryCurrent(value: 12_400),
+            batteryCurrent: BatteryCurrent.currentOut(milliamps: 12_400),
             powerFlow: .discharge,
             controllerTemperature: Temperature(value: 54_000),
             motorTemperature: Temperature(value: 49_000)
@@ -937,7 +942,7 @@ final class PevScreenThemeTests: XCTestCase {
             controllerState: .unknown,
             batteryVoltage: Voltage(value: 54_300),
             batteryLevelReported: BatteryLevel(value: 71),
-            batteryCurrent: BatteryCurrent(value: 12_400),
+            batteryCurrent: BatteryCurrent.currentOut(milliamps: 12_400),
             powerFlow: .discharge,
             motorCurrent: PhaseCurrent(value: 71_000),
             boardAngle: Angle(value: -1_800),
@@ -961,23 +966,23 @@ final class PevScreenThemeTests: XCTestCase {
         XCTAssertEqual(
             view.dashboardTiles.map(\.detail),
             [
-                "battery 71% · current 12.4 A",
+                "battery 71% · current → 12.4 A",
                 "discharging",
                 "nose down · balance 0.5°",
                 "motor 49.0 °C",
             ])
         XCTAssertEqual(localizedAppText("vesc.metric.battery_voltage"), "voltage")
         XCTAssertEqual(
-            localizedAppText("vesc.battery_detail.reported_current", "71%", "12.4"),
-            "battery 71% · current 12.4 A"
+            localizedAppText("vesc.battery_detail.reported_current", "71%", "12.4 A out"),
+            "battery 71% · current → 12.4 A"
         )
         XCTAssertEqual(
             localizedAppText("vesc.battery_detail.reported_unavailable", "71%"),
             "battery 71% · current unavailable"
         )
         XCTAssertEqual(
-            localizedAppText("vesc.battery_detail.estimated_current", "71%", "12.4"),
-            "battery 71% · current 12.4 A"
+            localizedAppText("vesc.battery_detail.estimated_current", "71%", "12.4 A out"),
+            "battery 71% · current → 12.4 A"
         )
         XCTAssertEqual(
             localizedAppText("vesc.battery_detail.estimated_unavailable", "71%"),
@@ -985,7 +990,7 @@ final class PevScreenThemeTests: XCTestCase {
         )
         XCTAssertEqual(
             localizedAppText("vesc.battery_detail.unavailable_current", "12.4"),
-            "battery level unavailable · current 12.4 A"
+            "battery level unavailable · current → 12.4 A"
         )
         XCTAssertEqual(
             localizedAppText("vesc.battery_detail.unavailable_unavailable"),
@@ -1145,7 +1150,7 @@ final class PevScreenThemeTests: XCTestCase {
                 confidence: .verified
             ),
             voltage: Voltage(value: 84_000),
-            current: BatteryCurrent(value: 12_400)
+            current: BatteryCurrent.currentOut(milliamps: 12_400)
         )
 
         let presentation = snapshot.noDataPresentation(rideState: nil)
@@ -1188,7 +1193,7 @@ final class PevScreenThemeTests: XCTestCase {
         )
         XCTAssertEqual(bmsBatteryCurrentMetricValue(nil), .unavailable)
         XCTAssertEqual(
-            bmsBatteryCurrentMetricValue(BatteryCurrent(value: 0)),
+            bmsBatteryCurrentMetricValue(BatteryCurrent.zero),
             .available(display: "0", accessibility: "0")
         )
     }

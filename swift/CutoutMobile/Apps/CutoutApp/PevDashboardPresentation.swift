@@ -162,7 +162,7 @@ func vescDebugRows(_ snapshot: VescRideSnapshot?, phase: SessionConnectionPhase,
             metricValue: vescDebugMetricValue(snapshot.batteryVoltageMetricValue, format: "vesc.debug.value.voltage")),
         PevDashboardKeyValueRow(
             id: "battery-current", label: localizedAppText("vesc.debug.row.battery_current"),
-            metricValue: vescDebugMetricValue(snapshot.batteryCurrentMetricValue, format: "vesc.debug.value.current")),
+            metricValue: snapshot.batteryCurrentMetricValue),
         PevDashboardKeyValueRow(
             id: "motor-current", label: localizedAppText("vesc.debug.row.motor_current"),
             metricValue: vescDebugMetricValue(snapshot.motorCurrentMetricValue, format: "vesc.debug.value.current")),
@@ -296,7 +296,7 @@ func powerFlowDetail(_ direction: PowerFlowDirection?, fallback: String) -> Stri
     case .zero: localizedAppText("telemetry.power_flow.zero")
     case .charging: localizedAppText("telemetry.power_flow.charging")
     case .regeneration: localizedAppText("telemetry.power_flow.regeneration")
-    case .negativeUnknown, nil: fallback
+    case .unknown, nil: fallback
     }
 }
 

@@ -2609,7 +2609,7 @@ final class CutoutSessionCoreTests: XCTestCase {
             speed: speedValue(1_234),
             operatingState: .riding,
             voltage: voltageValue(117_000),
-            powerFlow: .negativeUnknown,
+            powerFlow: .unknown,
             batteryLevelEstimated: batteryLevelValue(77)
         )
         let step = CoreBluetoothSessionStep(operations: [], snapshot: snapshot)
@@ -2625,7 +2625,7 @@ final class CutoutSessionCoreTests: XCTestCase {
             .riding
         )
         XCTAssertEqual(core.displayState.telemetry?.speed, Speed(value: 1_234))
-        XCTAssertEqual(core.displayState.telemetry?.powerFlow, .negativeUnknown)
+        XCTAssertEqual(core.displayState.telemetry?.powerFlow, .unknown)
         XCTAssertEqual(core.displayState.notificationCount, 1)
         XCTAssertEqual(core.displayState.lastUpdate, receivedAt)
     }
@@ -3129,7 +3129,7 @@ final class CutoutSessionCoreTests: XCTestCase {
             boardSpeed: speedValue(19_000),
             dutyCycle: dutyCycle(820),
             dutyHeadroom: batteryLevelValue(18),
-            batteryCurrent: batteryCurrentValue(38_000),
+            batteryCurrent: BatteryCurrent.currentOut(milliamps: 38_000),
             powerFlow: .discharge,
             motorCurrent: phaseCurrentValue(71_000),
             boardAngle: angleValue(-18),
@@ -3144,7 +3144,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(snapshot.boardSpeed, speedValue(19_000))
         XCTAssertEqual(snapshot.dutyCycle, dutyCycle(820))
         XCTAssertEqual(snapshot.dutyHeadroom, batteryLevelValue(18))
-        XCTAssertEqual(snapshot.batteryCurrent, batteryCurrentValue(38_000))
+        XCTAssertEqual(snapshot.batteryCurrent, BatteryCurrent.currentOut(milliamps: 38_000))
         XCTAssertEqual(snapshot.powerFlow, .discharge)
         XCTAssertEqual(snapshot.motorCurrent, phaseCurrentValue(71_000))
         XCTAssertEqual(snapshot.boardAngle, angleValue(-18))
@@ -3179,7 +3179,7 @@ final class CutoutSessionCoreTests: XCTestCase {
             subProtocol: .refloat,
             controllerState: .unknown,
             batteryLevelReported: batteryLevelValue(72),
-            batteryCurrent: batteryCurrentValue(38_000)
+            batteryCurrent: BatteryCurrent.currentOut(milliamps: 38_000)
         )
 
         XCTAssertEqual(
@@ -3289,7 +3289,7 @@ final class CutoutSessionCoreTests: XCTestCase {
     func testVescRideSnapshotProjectsLiveDisplayTelemetryWithoutInventingSpeed() throws {
         let telemetry = TelemetrySnapshot(
             voltage: voltageValue(75_400),
-            batteryCurrent: batteryCurrentValue(38_000),
+            batteryCurrent: BatteryCurrent.currentOut(milliamps: 38_000),
             motorCurrent: phaseCurrentValue(71_000),
             powerFlow: .discharge,
             controllerTemperature: temperatureValue(54_000),
@@ -3305,7 +3305,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(snapshot.controllerState, .unknown)
         XCTAssertNil(snapshot.boardSpeed)
         XCTAssertEqual(snapshot.batteryVoltage, voltageValue(75_400))
-        XCTAssertEqual(snapshot.batteryCurrent, batteryCurrentValue(38_000))
+        XCTAssertEqual(snapshot.batteryCurrent, BatteryCurrent.currentOut(milliamps: 38_000))
         XCTAssertEqual(snapshot.powerFlow, .discharge)
         XCTAssertEqual(snapshot.motorCurrent, phaseCurrentValue(71_000))
         XCTAssertEqual(snapshot.controllerTemperature, temperatureValue(54_000))
@@ -3668,7 +3668,7 @@ final class CutoutSessionCoreTests: XCTestCase {
             ),
             energyPercent: BatteryLevel(value: 72),
             voltage: Voltage(value: 81_600),
-            current: BatteryCurrent(value: -1_250),
+            current: BatteryCurrent.currentIn(milliamps: 1_250),
             highestTemperature: Temperature(value: 37_800)
         )
         var observedSnapshots: [BmsSnapshot?] = []
@@ -3760,7 +3760,7 @@ final class CutoutSessionCoreTests: XCTestCase {
             pageKind: "metadata",
             pageVerification: .sourceVerified,
             voltage: Voltage(value: 95_800),
-            current: BatteryCurrent(value: 0)
+            current: BatteryCurrent.zero
         )
         let cellPage = BmsSnapshot(
             topology: BmsTopology(
@@ -3951,7 +3951,7 @@ final class CutoutSessionCoreTests: XCTestCase {
                 bmsCount: 0,
                 confidence: .unverified
             ),
-            current: BatteryCurrent(value: 0)
+            current: BatteryCurrent.zero
         )
 
         core.applyNotificationStep(
@@ -3966,7 +3966,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(core.bmsSnapshot?.topology.layoutLabel, "unknown BMS topology")
         XCTAssertEqual(core.bmsSnapshot?.topology.bmsCount, 0)
         XCTAssertNil(core.bmsSnapshot?.voltage)
-        XCTAssertEqual(core.bmsSnapshot?.current, BatteryCurrent(value: 0))
+        XCTAssertEqual(core.bmsSnapshot?.current, BatteryCurrent.zero)
     }
 
     func testProtocolIdentityCandidateUpdatesFromVeteranModelId() {
@@ -4881,7 +4881,7 @@ final class CutoutSessionCoreTests: XCTestCase {
                     speed: speedValue(1_234),
                     operatingState: .riding,
                     voltage: voltageValue(118_000),
-                    batteryCurrent: batteryCurrentValue(2_000),
+                    batteryCurrent: BatteryCurrent.currentOut(milliamps: 2_000),
                     controllerTemperature: temperatureValue(31_000),
                     pwm: dutyCycle(230),
                     batteryLevelEstimated: batteryLevelValue(80)
@@ -4912,7 +4912,7 @@ final class CutoutSessionCoreTests: XCTestCase {
                     at: MonotonicMilliseconds(1_000),
                     speed: speedValue(1_234),
                     voltage: voltageValue(118_000),
-                    batteryCurrent: batteryCurrentValue(2_000),
+                    batteryCurrent: BatteryCurrent.currentOut(milliamps: 2_000),
                     controllerTemperature: temperatureValue(31_000),
                     pwm: dutyCycle(230)
                 )
@@ -4941,7 +4941,7 @@ final class CutoutSessionCoreTests: XCTestCase {
                 telemetry: TelemetrySnapshot(
                     operatingState: .riding,
                     voltage: voltageValue(96_700),
-                    batteryCurrent: batteryCurrentValue(-800),
+                    batteryCurrent: BatteryCurrent.currentIn(milliamps: 800),
                     powerFlow: .regeneration
                 )
             )
@@ -4958,8 +4958,8 @@ final class CutoutSessionCoreTests: XCTestCase {
             displayState: RideDisplayState(
                 telemetry: TelemetrySnapshot(
                     voltage: voltageValue(96_700),
-                    batteryCurrent: batteryCurrentValue(-800),
-                    powerFlow: .negativeUnknown
+                    batteryCurrent: BatteryCurrent.currentIn(milliamps: 800),
+                    powerFlow: .unknown
                 )
             )
         )
@@ -4968,7 +4968,7 @@ final class CutoutSessionCoreTests: XCTestCase {
             displayState: RideDisplayState(
                 telemetry: TelemetrySnapshot(
                     voltage: voltageValue(118_000),
-                    batteryCurrent: batteryCurrentValue(-2_000),
+                    batteryCurrent: BatteryCurrent.currentIn(milliamps: 2_000),
                     powerFlow: .charging
                 )
             )
@@ -5014,7 +5014,7 @@ final class CutoutSessionCoreTests: XCTestCase {
             displayState: RideDisplayState(
                 telemetry: TelemetrySnapshot(
                     voltage: voltageValue(117_600),
-                    batteryCurrent: batteryCurrentValue(38_000),
+                    batteryCurrent: BatteryCurrent.currentOut(milliamps: 38_000),
                     voltageSag: VoltageDelta(value: 4_800),
                     batteryLevelEstimated: batteryLevelValue(71)
                 )
@@ -5148,7 +5148,7 @@ final class CutoutSessionCoreTests: XCTestCase {
             displayState: RideDisplayState(
                 telemetry: TelemetrySnapshot(
                     voltage: voltageValue(118_000),
-                    batteryCurrent: batteryCurrentValue(0)
+                    batteryCurrent: BatteryCurrent.zero
                 )
             )
         )
@@ -5384,10 +5384,6 @@ private func speedValue(_ value: Int32) -> Speed {
 
 private func voltageValue(_ value: Int32) -> Voltage {
     Voltage(value: value)
-}
-
-private func batteryCurrentValue(_ value: Int32) -> BatteryCurrent {
-    BatteryCurrent(value: value)
 }
 
 private func phaseCurrentValue(_ value: Int32) -> PhaseCurrent {

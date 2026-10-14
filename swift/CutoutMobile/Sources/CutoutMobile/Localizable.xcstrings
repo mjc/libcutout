@@ -1,6 +1,22 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "battery.current.in" : {
+      "comment" : "Battery current flowing into the battery. The placeholder is the formatted current magnitude.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%@ A in" } } }
+    },
+    "battery.current.out" : {
+      "comment" : "Battery current flowing out of the battery. The placeholder is the formatted current magnitude.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%@ A out" } } }
+    },
+    "battery.current.unknown" : {
+      "comment" : "Battery current magnitude when its direction is unknown. The placeholder is the formatted current magnitude.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%@ A · direction unknown" } } }
+    },
+    "battery.current.zero" : {
+      "comment" : "Zero battery current. The placeholder is the formatted current magnitude.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%@ A" } } }
+    },
     "music.soundcloud.search" : {
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Search tracks" } } }
     },

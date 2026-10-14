@@ -255,7 +255,7 @@ struct BmsPackLayout: View {
                 BmsReadingMetric(
                     title: reading.packIndex.map { localizedAppText("bms.pack.current.pack_\($0)") }
                         ?? localizedAppText("bms.pack.current"),
-                    value: RideUnits.decimalString(Double(reading.current.value) / 1_000, fractionDigits: 1), unit: "A")
+                    value: reading.current.displayText, unit: "")
             }
         }
         .bmsPanel()

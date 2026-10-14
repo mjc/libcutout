@@ -48,7 +48,7 @@ final class VoltageSagModelStoreTests: XCTestCase {
                 voltageSag: MobileVoltageSagEstimateDto(
                     deltaMillivolts: -1_250,
                     loadCurrent: BatteryCurrentReading(
-                        value: BatteryCurrent(value: 10_000),
+                        value: BatteryCurrent.currentOut(milliamps: 10_000),
                         source: .reported,
                         quality: .known,
                         verification: .hardwareVerified

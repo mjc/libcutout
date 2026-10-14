@@ -326,7 +326,7 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
                     speed: Speed(value: 12_070),
                     operatingState: .riding,
                     voltage: Voltage(value: 118_400),
-                    batteryCurrent: BatteryCurrent(value: 2_000),
+                    batteryCurrent: BatteryCurrent.currentOut(milliamps: 2_000),
                     controllerTemperature: Temperature(value: 34_000),
                     pwm: DutyCycle(permille: 540),
                     distance: Distance(value: 12_552_883),
