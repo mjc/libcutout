@@ -14,9 +14,10 @@ mod records;
 mod sync;
 
 pub use model::{
-    ChargingAction, ChargingDirectoryEntry, ChargingFilter, ChargingOperation, ChargingOperationId,
-    ChargingPage, ChargingRevision, ChargingStatus, ChargingTarget, ChargingWriteReceipt,
-    StoredChargingSpot,
+    ChargingAction, ChargingBlockedOperation, ChargingChangeCursor, ChargingDirectoryEntry,
+    ChargingFilter, ChargingOperation, ChargingOperationBlockKind, ChargingOperationId,
+    ChargingOperationResolution, ChargingPage, ChargingPageApplyResult, ChargingRevision,
+    ChargingStatus, ChargingTarget, ChargingWriteReceipt, StoredChargingSpot,
 };
 use mutations::{change, save};
 use queries::{nearby, page};
@@ -47,10 +48,14 @@ CREATE TABLE charging_outbox (
  point_id BLOB NOT NULL REFERENCES charging_spots(point_id),
  action TEXT NOT NULL CHECK(json_valid(action) AND length(CAST(action AS BLOB)) <= 32768),
  local_revision INTEGER NOT NULL CHECK(local_revision > 0),
+ blocked_kind TEXT CHECK(blocked_kind IS NULL OR blocked_kind IN ('conflict','invalid')),
  target TEXT CHECK(target IS NULL OR json_valid(target))
 );
 CREATE INDEX charging_outbox_point ON charging_outbox(point_id,sequence);
 ";
+
+/// Maximum changes accepted in one durable directory transaction.
+pub const CHARGING_SYNC_PAGE_LIMIT: usize = 100;
 
 pub(super) enum Command {
     Save {
@@ -96,6 +101,46 @@ pub(super) enum Command {
     },
     Count {
         reply: Reply<u32>,
+    },
+    ChangesCursor {
+        reply: Reply<ChargingChangeCursor>,
+    },
+    ApplyChangesPage {
+        entries: Vec<ChargingDirectoryEntry>,
+        next_cursor: ChargingChangeCursor,
+        reply: Reply<ChargingPageApplyResult>,
+    },
+    CacheVote {
+        remote_id: cutout_ride_maps::ChargingSpotId,
+        vote: Option<ChargingVote>,
+        vote_revision: ChargingRevision,
+        votes_up: u64,
+        votes_down: u64,
+        change_sequence: ChargingChangeCursor,
+        reply: Reply<MapPointId>,
+    },
+    BlockOperation {
+        id: ChargingOperationId,
+        kind: ChargingOperationBlockKind,
+        reply: Reply<()>,
+    },
+    ListBlocked {
+        reply: Reply<Vec<ChargingBlockedOperation>>,
+    },
+    ResolveOperation {
+        id: ChargingOperationId,
+        expected_local_revision: ChargingRevision,
+        resolution: ChargingOperationResolution,
+        reply: Reply<()>,
+    },
+    ReplaceBlockedOperation {
+        id: ChargingOperationId,
+        expected_local_revision: ChargingRevision,
+        input: NewChargingSpot,
+        reply: Reply<ChargingWriteReceipt>,
+    },
+    DirectoryLastUpdated {
+        reply: Reply<Option<u64>>,
     },
 }
 impl RideDatabase {
@@ -226,6 +271,116 @@ impl RideDatabase {
     pub fn charging_outbox_count(&self) -> Result<u32, StorageError> {
         self.request(move |reply| DatabaseCommand::Charging(Command::Count { reply }))
     }
+    /// Returns the durable incremental directory-feed cursor.
+    /// # Errors
+    /// Returns worker/storage failures or a corrupt retained cursor.
+    pub fn charging_changes_cursor(&self) -> Result<ChargingChangeCursor, StorageError> {
+        self.request(move |reply| DatabaseCommand::Charging(Command::ChangesCursor { reply }))
+    }
+    /// Returns when a successful directory refresh last committed, if one has completed.
+    /// # Errors
+    /// Returns worker/storage failures or a corrupt retained timestamp.
+    pub fn charging_directory_last_updated_ms(&self) -> Result<Option<u64>, StorageError> {
+        self.request(move |reply| {
+            DatabaseCommand::Charging(Command::DirectoryLastUpdated { reply })
+        })
+    }
+    /// Applies one bounded directory page and advances its cursor in the same transaction.
+    /// # Errors
+    /// Rejects malformed, oversized, regressing or corrupt pages without partial writes.
+    pub fn apply_charging_changes_page(
+        &self,
+        entries: Vec<ChargingDirectoryEntry>,
+        next_cursor: ChargingChangeCursor,
+    ) -> Result<ChargingPageApplyResult, StorageError> {
+        self.request(move |reply| {
+            DatabaseCommand::Charging(Command::ApplyChangesPage {
+                entries,
+                next_cursor,
+                reply,
+            })
+        })
+    }
+    /// Refreshes confirmed vote state without replacing a queued local vote.
+    /// # Errors
+    /// Rejects missing spots, stale change state or invalid counters.
+    pub fn cache_charging_vote(
+        &self,
+        remote_id: cutout_ride_maps::ChargingSpotId,
+        vote: Option<ChargingVote>,
+        vote_revision: ChargingRevision,
+        votes_up: u64,
+        votes_down: u64,
+        change_sequence: ChargingChangeCursor,
+    ) -> Result<MapPointId, StorageError> {
+        self.request(move |reply| {
+            DatabaseCommand::Charging(Command::CacheVote {
+                remote_id,
+                vote,
+                vote_revision,
+                votes_up,
+                votes_down,
+                change_sequence,
+                reply,
+            })
+        })
+    }
+    /// Persists a classified refusal for an exact frozen operation.
+    /// # Errors
+    /// Rejects unknown operations or inconsistent retained state.
+    pub fn block_charging_operation(
+        &self,
+        id: ChargingOperationId,
+        kind: ChargingOperationBlockKind,
+    ) -> Result<(), StorageError> {
+        self.request(move |reply| {
+            DatabaseCommand::Charging(Command::BlockOperation { id, kind, reply })
+        })
+    }
+    /// Lists blocked operations and both versions required for conflict review.
+    /// # Errors
+    /// Returns worker/storage errors or malformed retained conflict state.
+    pub fn list_blocked_charging_operations(
+        &self,
+    ) -> Result<Vec<ChargingBlockedOperation>, StorageError> {
+        self.request(move |reply| DatabaseCommand::Charging(Command::ListBlocked { reply }))
+    }
+    /// Resolves a blocked operation only if its reviewed local revision is current.
+    /// # Errors
+    /// Rejects stale review, missing conflict data and unsafe tombstone rebases.
+    pub fn resolve_charging_operation(
+        &self,
+        id: ChargingOperationId,
+        expected_local_revision: ChargingRevision,
+        resolution: ChargingOperationResolution,
+    ) -> Result<(), StorageError> {
+        self.request(move |reply| {
+            DatabaseCommand::Charging(Command::ResolveOperation {
+                id,
+                expected_local_revision,
+                resolution,
+                reply,
+            })
+        })
+    }
+    /// Replaces a rejected local edit with user-corrected fields and a fresh operation identity.
+    /// # Errors
+    /// Rejects stale review, terminal remote state, invalid fields, or a full outbox.
+    pub fn replace_blocked_charging_operation(
+        &self,
+        id: ChargingOperationId,
+        expected_local_revision: ChargingRevision,
+        input: NewChargingSpot,
+    ) -> Result<ChargingWriteReceipt, StorageError> {
+        self.request(move |reply| {
+            DatabaseCommand::Charging(Command::ReplaceBlockedOperation {
+                id,
+                expected_local_revision,
+                input,
+                reply,
+            })
+        })
+    }
     /// Caches a server snapshot using the same map-point owner and spatial index.
     /// # Errors
     /// Rejects malformed/stale snapshots and refuses to overwrite pending local changes.
@@ -255,6 +410,10 @@ impl RideDatabase {
     }
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "the database actor keeps each command reply adjacent to its storage operation"
+)]
 pub(super) fn execute(
     connection: &mut Connection,
     spatial: &mut SpatialSchemaState,
@@ -311,6 +470,77 @@ pub(super) fn execute(
         }
         Command::Count { reply } => {
             let _ = reply.send(count(connection));
+        }
+        Command::ChangesCursor { reply } => {
+            let _ = reply.send(sync::changes_cursor(connection));
+        }
+        Command::ApplyChangesPage {
+            entries,
+            next_cursor,
+            reply,
+        } => {
+            let _ = reply.send(sync::apply_changes_page(
+                connection,
+                spatial,
+                &entries,
+                next_cursor,
+            ));
+        }
+        Command::CacheVote {
+            remote_id,
+            vote,
+            vote_revision,
+            votes_up,
+            votes_down,
+            change_sequence,
+            reply,
+        } => {
+            let _ = reply.send(sync::cache_vote(
+                connection,
+                remote_id,
+                vote,
+                vote_revision,
+                votes_up,
+                votes_down,
+                change_sequence,
+            ));
+        }
+        Command::BlockOperation { id, kind, reply } => {
+            let _ = reply.send(sync::block_operation(connection, id, kind));
+        }
+        Command::ListBlocked { reply } => {
+            let _ = reply.send(sync::list_blocked_operations(connection));
+        }
+        Command::ResolveOperation {
+            id,
+            expected_local_revision,
+            resolution,
+            reply,
+        } => {
+            let _ = reply.send(sync::resolve_operation(
+                connection,
+                spatial,
+                id,
+                expected_local_revision,
+                resolution,
+            ));
+        }
+        Command::ReplaceBlockedOperation {
+            id,
+            expected_local_revision,
+            input,
+            reply,
+        } => {
+            let _ = reply.send(sync::replace_blocked_operation(
+                connection,
+                spatial,
+                id,
+                expected_local_revision,
+                &input,
+            ));
+        }
+        Command::DirectoryLastUpdated { reply } => {
+            let _ = reply.send(sync::directory_last_updated(connection));
         }
     }
 }

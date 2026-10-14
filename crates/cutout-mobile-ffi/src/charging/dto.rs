@@ -350,6 +350,8 @@ pub struct MobileChargingSpotDto {
     pub vote_revision: u64,
     pub votes_up: u64,
     pub votes_down: u64,
+    pub pending_operations: u32,
+    pub pending_vote: bool,
 }
 /// Durable local receipt; publication requires a separate server receipt.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
@@ -358,12 +360,85 @@ pub struct MobileChargingWriteReceiptDto {
     pub local_revision: u64,
     pub operation_id: String,
 }
+
+/// One-time public identity credential; store it in Keychain before contributing.
+#[allow(
+    missing_debug_implementations,
+    reason = "The bearer token must not appear in debug output"
+)]
+#[derive(Clone, uniffi::Record)]
+pub struct MobileChargingIdentityDto {
+    pub identity_id: String,
+    pub token: String,
+}
+
+/// Result of one bounded synchronization pass.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileChargingSyncSummaryDto {
+    pub pending_count: u32,
+    pub downloaded: u32,
+    pub uploaded: u32,
+    pub more_work: bool,
+}
+
+/// Why a durable charging operation is waiting for explicit resolution.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileChargingBlockReasonDto {
+    /// The server revision or lifecycle changed before this operation could apply.
+    Conflict,
+    /// The server rejected the operation's public input.
+    Invalid,
+}
+
+/// Frozen local operation that was rejected or conflicts with newer server state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileChargingPendingActionDto {
+    /// A new charging spot submission.
+    Create,
+    /// An edit to the submitted charging spot.
+    Edit,
+    /// Withdrawal of the submitted charging spot.
+    Withdraw,
+    /// Verification of the submitted charging spot.
+    Verify,
+    /// Set or clear the contributor's vote.
+    Vote {
+        /// `None` means the pending operation explicitly clears the vote.
+        selection: Option<MobileChargingVoteDto>,
+    },
+}
+
+/// Resolution selected for a blocked local charging operation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileChargingResolutionDto {
+    /// Keep its frozen server target and retry the same idempotent request.
+    Retry,
+    /// Keep the local draft and prepare it against the latest server revision.
+    RebaseKeepingLocal,
+    /// Accept the retained server state and discard the blocked local operation.
+    AcceptServer,
+}
+
+/// A local contribution and the current server state that needs a rider decision.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct MobileChargingSyncConflictDto {
+    pub operation_id: String,
+    pub action: MobileChargingPendingActionDto,
+    pub id: String,
+    pub local_revision: u64,
+    pub input: Option<MobileChargingInputDto>,
+    pub remote_input: Option<MobileChargingInputDto>,
+    pub remote_status: Option<MobileChargingStatusDto>,
+    pub reason: MobileChargingBlockReasonDto,
+    pub can_rebase: bool,
+}
 /// Discovery filters applied in Rust before pagination/ranking.
 #[derive(Clone, Debug, Default, Eq, PartialEq, uniffi::Record)]
 pub struct MobileChargingFilterDto {
     pub cost: Option<MobileChargingCostDto>,
     pub connector: Option<MobileChargingConnectorDto>,
     pub voltage_volts: Option<u16>,
+    pub venue: Option<MobileChargingVenueDto>,
 }
 /// Bounded discovery page using the existing map-point cursor.
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
@@ -400,4 +475,12 @@ pub enum MobileChargingError {
     Unavailable,
     #[error("Could not save or read the spot")]
     StorageFailure,
+    #[error("A contributor identity is required")]
+    Unauthorized,
+    #[error("The directory rejected this contribution")]
+    Rejected,
+    #[error("The directory request budget is temporarily exhausted")]
+    Throttled,
+    #[error("The charging directory could not be reached")]
+    Network,
 }

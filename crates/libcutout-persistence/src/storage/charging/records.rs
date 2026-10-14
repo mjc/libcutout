@@ -55,7 +55,7 @@ pub(super) fn detail(
     connection: &Connection,
     id: MapPointId,
 ) -> Result<Option<StoredChargingSpot>, StorageError> {
-    let mut statement = connection.prepare("SELECT input,owned,status,local_revision,remote_id,remote_revision,change_sequence,verified_at_ms,vote,vote_revision,votes_up,votes_down FROM charging_spots WHERE point_id=?1")?;
+    let mut statement = connection.prepare("SELECT input,owned,status,local_revision,remote_id,remote_revision,change_sequence,verified_at_ms,vote,vote_revision,votes_up,votes_down,(SELECT COUNT(*) FROM charging_outbox o WHERE o.point_id=charging_spots.point_id),(SELECT EXISTS(SELECT 1 FROM charging_outbox o WHERE o.point_id=charging_spots.point_id AND json_type(o.action,'$.Vote') IS NOT NULL)) FROM charging_spots WHERE point_id=?1")?;
     let mut rows = statement.query([id.uuid().as_bytes()])?;
     let Some(row) = rows.next()? else {
         return Ok(None);
@@ -92,6 +92,8 @@ fn decode_spot(
         vote_revision: ChargingRevision::new(row.get(9)?)?,
         votes_up: row.get(10)?,
         votes_down: row.get(11)?,
+        pending_operations: row.get(12)?,
+        pending_vote: row.get(13)?,
     })
 }
 pub(super) fn find_remote(
