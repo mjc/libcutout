@@ -17,6 +17,44 @@ final class ChargingSpotPresentationTests: XCTestCase {
         XCTAssertEqual(ChargingSpotPresentation.voltageOptions(in: [retainedSupply]), [100])
     }
 
+    func testSavedSelectionPresentationDeduplicatesPageAndSeparatesOffPageFeedback() {
+        XCTAssertEqual(
+            ChargingSpotPresentation.savedSelectionVisibility(
+                selectedID: "page-2", pageIDs: ["page-1", "page-2"], hasValidInput: true,
+                hasVisibleStatus: true, filtersAreEmpty: true
+            ),
+            .page
+        )
+        XCTAssertEqual(
+            ChargingSpotPresentation.savedSelectionVisibility(
+                selectedID: "saved", pageIDs: ["first-page"], hasValidInput: true,
+                hasVisibleStatus: true, filtersAreEmpty: true
+            ),
+            .separateAnnotation
+        )
+        XCTAssertEqual(
+            ChargingSpotPresentation.savedSelectionVisibility(
+                selectedID: "filtered", pageIDs: ["first-page"], hasValidInput: true,
+                hasVisibleStatus: true, filtersAreEmpty: false
+            ),
+            .feedback
+        )
+        XCTAssertEqual(
+            ChargingSpotPresentation.savedSelectionVisibility(
+                selectedID: "invalid", pageIDs: [], hasValidInput: false,
+                hasVisibleStatus: true, filtersAreEmpty: true
+            ),
+            .none
+        )
+        XCTAssertEqual(
+            ChargingSpotPresentation.savedSelectionVisibility(
+                selectedID: "removed", pageIDs: [], hasValidInput: true,
+                hasVisibleStatus: false, filtersAreEmpty: true
+            ),
+            .none
+        )
+    }
+
     func testUnknownPowerDoesNotInventVoltageOrConnector() {
         let unknown = MobileChargingSupplyDto(voltageVolts: nil, connectors: [])
         XCTAssertEqual(ChargingSpotPresentation.supplyText(unknown), "Voltage unknown")

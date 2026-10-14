@@ -368,8 +368,27 @@ struct ChargingMapContentView: View {
         model.setFilter(filter)
     }
 
+    private var selectedSpotVisibility: ChargingSpotPresentation.SavedSelectionVisibility {
+        let selected = model.selectedSpot
+        let hasValidInput =
+            selected?.input.map {
+                CLLocationCoordinate2DIsValid(Self.coordinate($0.coordinate))
+            } ?? false
+        let hasVisibleStatus = selected.map { $0.status == .queued || $0.status == .published } ?? false
+        let filter = model.filter
+        return ChargingSpotPresentation.savedSelectionVisibility(
+            selectedID: selected?.id,
+            pageIDs: model.spots.map(\.id),
+            hasValidInput: hasValidInput,
+            hasVisibleStatus: hasVisibleStatus,
+            filtersAreEmpty: filter.cost == nil && filter.connector == nil
+                && filter.voltageVolts == nil && filter.venue == nil
+        )
+    }
+
     private var map: some View {
         let selected = model.selectedSpot
+        let selectedVisibility = selectedSpotVisibility
         let spots = model.spots
         let _ = cameraRevision
         return MapReader { proxy in
@@ -389,6 +408,17 @@ struct ChargingMapContentView: View {
                         .tag(spot.id)
                         .annotationTitles(.hidden)
                     }
+                }
+                if selectedVisibility == .separateAnnotation, let selected, let input = selected.input {
+                    Annotation(
+                        input.name ?? ChargingSpotPresentation.unknownName,
+                        coordinate: Self.coordinate(input.coordinate),
+                        anchor: .bottom
+                    ) {
+                        pinButton(selected, selected: true)
+                    }
+                    .tag(selected.id)
+                    .annotationTitles(.hidden)
                 }
                 if let editor, editor.stage == .details || editor.stage == .saving {
                     Annotation(
@@ -462,7 +492,7 @@ struct ChargingMapContentView: View {
                 GeometryReader { geometry in
                     if editor == nil, let selected,
                         let input = selected.input,
-                        spots.contains(where: { $0.id == selected.id }),
+                        selectedVisibility == .page || selectedVisibility == .separateAnnotation,
                         let point = proxy.convert(
                             CLLocationCoordinate2D(
                                 latitude: input.coordinate.latitudeDegrees,
@@ -937,6 +967,26 @@ struct ChargingMapContentView: View {
             statusRow("charging.status.empty", retry: false)
         } else if model.limitReached {
             Text(localizedAppText("charging.status.limit")).font(.footnote).padding(8)
+        }
+        if selectedSpotVisibility == .feedback, let spot = model.selectedSpot, let input = spot.input {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(localizedAppText("charging.spot.selected.label"))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(ChargingSpotPresentation.conflictName(input.name))
+                        .font(.subheadline)
+                        .lineLimit(2)
+                }
+                Spacer(minLength: 8)
+                Button(localizedAppText("charging.details.button")) {
+                    detailItem = DetailItem(spot)
+                }
+                .frame(minHeight: 44)
+                .accessibilityIdentifier("charging.saved-selection.details")
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 4)
         }
         if !model.spots.isEmpty && model.hasMore && !model.limitReached {
             Button(localizedAppText("charging.load_more")) { Task { await model.loadMore() } }

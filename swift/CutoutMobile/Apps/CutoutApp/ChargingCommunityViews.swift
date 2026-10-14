@@ -245,6 +245,22 @@ struct ChargingInputSummary: View {
 }
 
 extension ChargingSpotPresentation {
+    enum SavedSelectionVisibility: Equatable {
+        case none
+        case page
+        case separateAnnotation
+        case feedback
+    }
+
+    static func savedSelectionVisibility(
+        selectedID: String?, pageIDs: [String], hasValidInput: Bool,
+        hasVisibleStatus: Bool, filtersAreEmpty: Bool
+    ) -> SavedSelectionVisibility {
+        guard let selectedID, hasValidInput, hasVisibleStatus else { return .none }
+        if pageIDs.contains(selectedID) { return .page }
+        return filtersAreEmpty ? .separateAnnotation : .feedback
+    }
+
     static func voltageOptions(in supplies: [MobileChargingSupplyDto]) -> Set<UInt16> {
         Set(supplies.compactMap(\.voltageVolts))
     }
