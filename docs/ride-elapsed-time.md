@@ -42,6 +42,11 @@ lifecycle transaction cannot publish elapsed time separately. Read-only live
 and durable summaries project the same committed continuation. Older queued
 write outcomes cannot replace a newer timing revision.
 
+An FFI read with an explicit logical as-of timestamp projects live and durable
+summaries to that same instant. History list/find operations without such a
+clock return the committed prefix, rather than reading a wall clock or inventing
+a current monotonic epoch. Terminal rows stay frozen under either read API.
+
 Historical and imported rows without elapsed timing evidence remain unavailable.
 Migration does not backfill them from point span, active recording duration, or
 wall-clock dates. Physical phone and Android verification are outside LIBCU-943;

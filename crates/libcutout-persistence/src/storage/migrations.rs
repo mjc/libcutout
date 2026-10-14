@@ -1,7 +1,7 @@
 use super::{MapPointId, SpatialRowId, StorageError};
 use rusqlite::{Connection, OptionalExtension, params};
 
-pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 43;
+pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 44;
 const APPLICATION_ID: i64 = 0x4355_544f;
 
 fn schema_pragmas(version: i64) -> String {
@@ -66,6 +66,7 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         40 => migrate_v40_to_current(connection)?,
         41 => migrate_v41_to_v42(connection)?,
         42 => migrate_v42_to_current(connection)?,
+        43 => migrate_v43_to_current(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -89,6 +90,9 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         }
         if connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))? == 42 {
             migrate_v42_to_current(connection)?;
+        }
+        if connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))? == 43 {
+            migrate_v43_to_current(connection)?;
         }
     }
     Ok(())
@@ -243,6 +247,12 @@ pub(crate) fn create_current_schema(connection: &Connection) -> Result<(), Stora
             last_recorded_point_moving_unknown_ms INTEGER NOT NULL DEFAULT 0 CHECK (last_recorded_point_moving_unknown_ms >= 0),
             last_recorded_point_moving_availability TEXT NOT NULL DEFAULT 'unavailable'
                 CHECK (last_recorded_point_moving_availability IN ('unavailable', 'partial', 'complete'))
+            ,elapsed_time_ms INTEGER CHECK (elapsed_time_ms IS NULL OR elapsed_time_ms >= 0)
+            ,elapsed_time_anchor_ms INTEGER CHECK (elapsed_time_anchor_ms IS NULL OR elapsed_time_anchor_ms >= 0)
+            ,elapsed_time_running INTEGER NOT NULL DEFAULT 0 CHECK (elapsed_time_running IN (0, 1))
+            ,elapsed_time_partial INTEGER NOT NULL DEFAULT 0 CHECK (elapsed_time_partial IN (0, 1))
+            ,last_recorded_point_elapsed_time_ms INTEGER CHECK (last_recorded_point_elapsed_time_ms IS NULL OR last_recorded_point_elapsed_time_ms >= 0)
+            ,last_recorded_point_elapsed_partial INTEGER NOT NULL DEFAULT 0 CHECK (last_recorded_point_elapsed_partial IN (0, 1))
         );
         CREATE INDEX rides_history_order ON rides(created_at_ms DESC, id DESC);
         CREATE TABLE ride_segments (
@@ -1615,6 +1625,45 @@ fn migrate_v42_to_current(connection: &mut Connection) -> Result<(), StorageErro
     ensure_moving_time_columns(&transaction)?;
     if !table_exists(&transaction, "charging_spots")? {
         transaction.execute_batch(super::charging::SCHEMA)?;
+    }
+    transaction.execute_batch(&schema_pragmas(43))?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn migrate_v43_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction()?;
+    for (column, declaration) in [
+        (
+            "elapsed_time_ms",
+            "INTEGER CHECK (elapsed_time_ms IS NULL OR elapsed_time_ms >= 0)",
+        ),
+        (
+            "elapsed_time_anchor_ms",
+            "INTEGER CHECK (elapsed_time_anchor_ms IS NULL OR elapsed_time_anchor_ms >= 0)",
+        ),
+        (
+            "elapsed_time_running",
+            "INTEGER NOT NULL DEFAULT 0 CHECK (elapsed_time_running IN (0, 1))",
+        ),
+        (
+            "elapsed_time_partial",
+            "INTEGER NOT NULL DEFAULT 0 CHECK (elapsed_time_partial IN (0, 1))",
+        ),
+        (
+            "last_recorded_point_elapsed_time_ms",
+            "INTEGER CHECK (last_recorded_point_elapsed_time_ms IS NULL OR last_recorded_point_elapsed_time_ms >= 0)",
+        ),
+        (
+            "last_recorded_point_elapsed_partial",
+            "INTEGER NOT NULL DEFAULT 0 CHECK (last_recorded_point_elapsed_partial IN (0, 1))",
+        ),
+    ] {
+        if !table_has_column(&transaction, "rides", column)? {
+            transaction.execute_batch(&format!(
+                "ALTER TABLE rides ADD COLUMN {column} {declaration};"
+            ))?;
+        }
     }
     transaction.execute_batch(&current_schema_pragmas())?;
     transaction.commit()?;
@@ -3055,5 +3104,78 @@ mod tests {
                 [],
             )
             .expect("nullable speed/source pairs should reach the Rust hydration validator");
+    }
+
+    #[test]
+    fn elapsed_time_v43_migration_preserves_rows_as_unavailable() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE rides (
+                    id TEXT PRIMARY KEY,
+                    state TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    created_at_ms INTEGER NOT NULL,
+                    updated_at_ms INTEGER NOT NULL,
+                    point_count INTEGER NOT NULL,
+                    distance_mm INTEGER NOT NULL
+                 );
+                 INSERT INTO rides VALUES ('old', 'saved', 'live', 1, 2, 3, 4);
+                 PRAGMA user_version = 43;",
+            )
+            .unwrap();
+
+        migrate_v43_to_current(&mut connection).unwrap();
+
+        assert_eq!(
+            connection
+                .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                .unwrap(),
+            CURRENT_SCHEMA_VERSION
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT elapsed_time_ms, elapsed_time_anchor_ms,
+                            elapsed_time_running, elapsed_time_partial,
+                            last_recorded_point_elapsed_time_ms,
+                            last_recorded_point_elapsed_partial
+                     FROM rides WHERE id = 'old'",
+                    [],
+                    |row| {
+                        Ok((
+                            row.get::<_, Option<u64>>(0)?,
+                            row.get::<_, Option<u64>>(1)?,
+                            row.get::<_, bool>(2)?,
+                            row.get::<_, bool>(3)?,
+                            row.get::<_, Option<u64>>(4)?,
+                            row.get::<_, bool>(5)?,
+                        ))
+                    },
+                )
+                .unwrap(),
+            (None, None, false, false, None, false)
+        );
+    }
+
+    #[test]
+    fn elapsed_time_v43_migration_rolls_back_partial_column_additions() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE rides (id TEXT, ELAPSED_TIME_ANCHOR_MS INTEGER);
+                 PRAGMA user_version = 43;",
+            )
+            .unwrap();
+
+        assert!(migrate_v43_to_current(&mut connection).is_err());
+
+        assert!(!table_has_column(&connection, "rides", "elapsed_time_ms").unwrap());
+        assert_eq!(
+            connection
+                .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                .unwrap(),
+            43
+        );
     }
 }

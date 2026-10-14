@@ -9043,6 +9043,248 @@ fn moving_time_expired_recovery_uses_last_point_prefix() {
             .moving_milliseconds,
         1_000
     );
+    assert_eq!(
+        settled_prefix.elapsed_time(),
+        cutout_ride_maps::ElapsedTimeSummary::Complete {
+            duration: cutout_ride_maps::ElapsedTimeMilliseconds::new(1_000),
+        }
+    );
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn elapsed_time_start_uses_the_validated_lifecycle_watermark() {
+    let _guard = test_guard();
+    let path = music_test_path();
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database
+        .create_ride_with_monotonic_start(RideSource::Live, 1_700_000_000_000, Some(1_000))
+        .unwrap();
+    database.transition_at(ride, RideEvent::Start, 500).unwrap();
+    assert_eq!(
+        database
+            .find_ride(ride)
+            .unwrap()
+            .unwrap()
+            .elapsed_time_summary_at(MonotonicMilliseconds::new(1_000)),
+        cutout_ride_maps::ElapsedTimeSummary::Complete {
+            duration: cutout_ride_maps::ElapsedTimeMilliseconds::new(0)
+        }
+    );
+    database
+        .transition_at(ride, RideEvent::Stop, 1_010)
+        .unwrap();
+    assert_eq!(
+        database.find_ride(ride).unwrap().unwrap().elapsed_time(),
+        cutout_ride_maps::ElapsedTimeSummary::Complete {
+            duration: cutout_ride_maps::ElapsedTimeMilliseconds::new(10)
+        }
+    );
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn elapsed_time_counts_pause_and_projects_without_writes() {
+    let _guard = test_guard();
+    let path = music_test_path();
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database.create_started_live_ride(0, 0, None).unwrap();
+    database.transition_at(ride, RideEvent::Pause, 60).unwrap();
+    database
+        .transition_at(ride, RideEvent::Resume, 180)
+        .unwrap();
+    let before = database.find_ride(ride).unwrap().unwrap();
+    let revision = before.moving_time_checkpoint().revision();
+    assert_eq!(
+        before.elapsed_time_summary_at(MonotonicMilliseconds::new(240)),
+        cutout_ride_maps::ElapsedTimeSummary::Complete {
+            duration: cutout_ride_maps::ElapsedTimeMilliseconds::new(240),
+        }
+    );
+    let after = database.find_ride(ride).unwrap().unwrap();
+    assert_eq!(after.moving_time_checkpoint().revision(), revision);
+    assert_eq!(
+        after.elapsed_time_summary_at(MonotonicMilliseconds::new(240)),
+        before.elapsed_time_summary_at(MonotonicMilliseconds::new(240))
+    );
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn elapsed_time_counts_same_process_interruption_and_freezes_on_save() {
+    let _guard = test_guard();
+    let path = music_test_path();
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database.create_started_live_ride(0, 0, None).unwrap();
+    database
+        .transition_at(ride, RideEvent::Interrupt, 60)
+        .unwrap();
+    database
+        .transition_at(ride, RideEvent::Resume, 180)
+        .unwrap();
+    database.transition_at(ride, RideEvent::Stop, 240).unwrap();
+    database
+        .transition_at(ride, RideEvent::Save, 1_000)
+        .unwrap();
+    assert_eq!(
+        database.find_ride(ride).unwrap().unwrap().elapsed_time(),
+        cutout_ride_maps::ElapsedTimeSummary::Complete {
+            duration: cutout_ride_maps::ElapsedTimeMilliseconds::new(240),
+        }
+    );
+    database.shutdown().unwrap();
+
+    let reopened = RideDatabase::open(&path).unwrap();
+    assert_eq!(
+        reopened.find_ride(ride).unwrap().unwrap().elapsed_time(),
+        cutout_ride_maps::ElapsedTimeSummary::Complete {
+            duration: cutout_ride_maps::ElapsedTimeMilliseconds::new(240),
+        }
+    );
+    reopened.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn elapsed_time_point_receipt_advances_without_moving_evidence() {
+    let _guard = test_guard();
+    let path = music_test_path();
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database
+        .create_started_live_ride(1_000, 1_000, None)
+        .unwrap();
+    let sample = LocationSample::new(
+        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        1_060,
+        1_700_000_000_060,
+        None,
+        LocationSource::Live,
+    );
+    database
+        .queue_location(
+            ride,
+            sample,
+            RideMapSegmentId::new(0),
+            RideSegmentStartReason::Initial,
+            RouteTelemetryState::GpsOnly,
+        )
+        .unwrap()
+        .wait_result()
+        .unwrap()
+        .unwrap();
+    let record = database.find_ride(ride).unwrap().unwrap();
+    assert_eq!(
+        record.last_recorded_point_elapsed_time(),
+        cutout_ride_maps::ElapsedTimeSummary::Complete {
+            duration: cutout_ride_maps::ElapsedTimeMilliseconds::new(60),
+        }
+    );
+    assert_eq!(
+        record.elapsed_time_summary_at(MonotonicMilliseconds::new(1_060)),
+        record.last_recorded_point_elapsed_time()
+    );
+    assert_eq!(record.moving_time_checkpoint().revision(), 1);
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn elapsed_time_restart_marks_prefix_partial_without_counting_unknown_gap() {
+    let _guard = test_guard();
+    let path = music_test_path();
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database.create_started_live_ride(0, 0, None).unwrap();
+    let first_point = LocationSample::new(
+        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        60,
+        1_700_000_000_060,
+        None,
+        LocationSource::Live,
+    );
+    database
+        .queue_location(
+            ride,
+            first_point,
+            RideMapSegmentId::new(0),
+            RideSegmentStartReason::Initial,
+            RouteTelemetryState::GpsOnly,
+        )
+        .unwrap()
+        .wait_result()
+        .unwrap()
+        .unwrap();
+    database
+        .queue_restore_snapshot()
+        .unwrap()
+        .wait_result()
+        .unwrap();
+    assert_eq!(
+        database.find_ride(ride).unwrap().unwrap().elapsed_time(),
+        cutout_ride_maps::ElapsedTimeSummary::Partial {
+            duration: cutout_ride_maps::ElapsedTimeMilliseconds::new(60),
+        }
+    );
+    let resumed_point = LocationSample::new(
+        Coordinate::from_degrees(40.0001, -105.0).unwrap(),
+        1_000,
+        1_700_000_001_000,
+        None,
+        LocationSource::Live,
+    );
+    database
+        .queue_location(
+            ride,
+            resumed_point,
+            RideMapSegmentId::new(0),
+            RideSegmentStartReason::Initial,
+            RouteTelemetryState::GpsOnly,
+        )
+        .unwrap()
+        .wait_result()
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        database
+            .find_ride(ride)
+            .unwrap()
+            .unwrap()
+            .elapsed_time_summary_at(MonotonicMilliseconds::new(1_060)),
+        cutout_ride_maps::ElapsedTimeSummary::Partial {
+            duration: cutout_ride_maps::ElapsedTimeMilliseconds::new(120),
+        }
+    );
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn restored_pause_reopens_elapsed_epoch_at_fresh_metadata_receipt() {
+    let _guard = test_guard();
+    let path = music_test_path();
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database.create_started_live_ride(0, 0, None).unwrap();
+    database.transition_at(ride, RideEvent::Pause, 60).unwrap();
+    database
+        .queue_restore_snapshot()
+        .unwrap()
+        .wait_result()
+        .unwrap();
+    database
+        .update_ride_map_metadata_with_moving_time(ride, None, None, None, Some(1_000), None, None)
+        .unwrap();
+    assert_eq!(
+        database
+            .find_ride(ride)
+            .unwrap()
+            .unwrap()
+            .elapsed_time_summary_at(MonotonicMilliseconds::new(1_060)),
+        cutout_ride_maps::ElapsedTimeSummary::Partial {
+            duration: cutout_ride_maps::ElapsedTimeMilliseconds::new(120),
+        }
+    );
     database.shutdown().unwrap();
     let _ = std::fs::remove_file(path);
 }
@@ -9093,6 +9335,14 @@ fn moving_time_expired_recovery_is_unavailable_without_reconstructible_prefix() 
         .unwrap()
         .unwrap();
     assert_eq!(result.admission(), LocationAdmission::Accepted);
+    assert_eq!(
+        database
+            .find_ride(ride_without_prefix)
+            .unwrap()
+            .unwrap()
+            .last_recorded_point_elapsed_time(),
+        cutout_ride_maps::ElapsedTimeSummary::Unavailable
+    );
     assert_eq!(
         database
             .find_ride(ride_without_prefix)
@@ -9158,14 +9408,19 @@ fn moving_time_location_and_checkpoint_roll_back_together_then_retry_once() {
         .wait_result()
         .unwrap();
     assert!(failed.is_err());
-    let (point_count, revision): (u64, u64) = observer
-        .query_row(
-            "SELECT point_count, moving_time_revision FROM rides WHERE id = ?1",
-            [ride.uuid().to_string()],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .unwrap();
-    assert_eq!((point_count, revision), (0, 0));
+    let unchanged = database.find_ride(ride).unwrap().unwrap();
+    assert_eq!(unchanged.summary().point_count().as_u64(), 0);
+    assert_eq!(unchanged.moving_time_checkpoint().revision(), 0);
+    assert_eq!(
+        unchanged
+            .moving_time_checkpoint()
+            .elapsed_time_continuation(),
+        cutout_ride_maps::ElapsedTimeContinuation::started(MonotonicMilliseconds::new(1_000))
+    );
+    assert_eq!(
+        unchanged.last_recorded_point_elapsed_time(),
+        cutout_ride_maps::ElapsedTimeSummary::Unavailable
+    );
     observer
         .execute_batch("DROP TRIGGER reject_moving_time_checkpoint;")
         .unwrap();
@@ -9186,6 +9441,22 @@ fn moving_time_location_and_checkpoint_roll_back_together_then_retry_once() {
         .unwrap();
     assert_eq!(accepted.admission(), LocationAdmission::Accepted);
     assert_eq!(accepted.moving_time_checkpoint().revision(), 1);
+    assert_eq!(
+        accepted
+            .moving_time_checkpoint()
+            .elapsed_time_at(MonotonicMilliseconds::new(1_000)),
+        cutout_ride_maps::ElapsedTimeSummary::Complete {
+            duration: cutout_ride_maps::ElapsedTimeMilliseconds::new(0),
+        }
+    );
+    let point_elapsed: Option<u64> = observer
+        .query_row(
+            "SELECT last_recorded_point_elapsed_time_ms FROM rides WHERE id = ?1",
+            [ride.uuid().to_string()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(point_elapsed, Some(0));
     let final_point_count: u64 = observer
         .query_row(
             "SELECT point_count FROM rides WHERE id = ?1",
