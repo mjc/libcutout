@@ -149,7 +149,6 @@ struct RideMapHistoryRouteSection: View {
     let endpointMetadata: MobileRideMapRouteEndpointMetadata
     let cameraRegion: MobileRideMapCameraRegion?
     let segments: [MobileRideMapSegmentDisplayMetadata]
-    let cameraFitVersion: UInt64
     let mapHeight: CGFloat
     let state: RideMapHistoryRouteState
     let pointsTruncated: Bool
@@ -158,6 +157,10 @@ struct RideMapHistoryRouteSection: View {
     @Binding var isApplyingCamera: Bool
     @State private var fittedRouteID: String?
     let cameraDidChange: (MKCoordinateRegion) -> Void
+    let cameraSpanDidChange: (MKCoordinateSpan) -> Void
+    let defaultCameraSpan: MKCoordinateSpan
+    let previouslyFittedCameraID: String?
+    let cameraFitDidApply: (String) -> Void
 
     var body: some View {
         VStack(spacing: 0) {
@@ -174,14 +177,15 @@ struct RideMapHistoryRouteSection: View {
                     segments: segments,
                     contextRoutes: [],
                     fitsRouteOnChange: true,
-                    cameraFitID: RideMapCanvasView.cameraFitID(
-                        routeID: routeID,
-                        fitVersion: cameraFitVersion
-                    ),
+                    cameraFitID: RideMapCanvasView.cameraFitID(routeID: routeID),
                     interactionModes: .zoom,
                     mapPosition: $mapPosition,
                     isApplyingCamera: $isApplyingCamera,
-                    cameraDidChange: cameraDidChange
+                    cameraDidChange: cameraDidChange,
+                    cameraSpanDidChange: cameraSpanDidChange,
+                    defaultCameraSpan: defaultCameraSpan,
+                    previouslyFittedCameraID: previouslyFittedCameraID,
+                    cameraFitDidApply: cameraFitDidApply
                 )
 
                 if state == .loading {

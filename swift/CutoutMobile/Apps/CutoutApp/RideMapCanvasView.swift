@@ -70,6 +70,13 @@ struct RideMapCanvasView: View {
     @Binding var mapPosition: MapCameraPosition
     @Binding var isApplyingCamera: Bool
     let cameraDidChange: (MKCoordinateRegion) -> Void
+    var cameraDistanceDidChange: (CLLocationDistance) -> Void = { _ in }
+    var cameraDistance: CLLocationDistance? = nil
+    var cameraSpanDidChange: (MKCoordinateSpan) -> Void = { _ in }
+    var defaultCameraSpan: MKCoordinateSpan? = nil
+    var defaultCameraCenter: CLLocationCoordinate2D? = nil
+    var previouslyFittedCameraID: String? = nil
+    var cameraFitDidApply: (String) -> Void = { _ in }
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var segmentPaths = [SegmentPath]()
     @State private var contextSegmentPaths = [ContextSegmentPath]()
@@ -164,6 +171,8 @@ struct RideMapCanvasView: View {
         "\(routeID):fit-\(fitVersion)"
     }
 
+    static func cameraFitID(routeID: String) -> String { routeID }
+
     static func mapRegion(
         for cameraRegion: MobileRideMapCameraRegion,
         centeredOn latest: MobileRideMapRouteDisplayPoint? = nil
@@ -190,6 +199,17 @@ struct RideMapCanvasView: View {
                 latitudeDelta: min(cameraRegion.latitudeSpanDegrees, 180),
                 longitudeDelta: min(cameraRegion.longitudeSpanDegrees, 360)
             )
+        )
+    }
+
+    static func cameraPosition(
+        for cameraRegion: MobileRideMapCameraRegion?,
+        distance: CLLocationDistance?
+    ) -> MapCameraPosition? {
+        guard let cameraRegion, let region = mapRegion(for: cameraRegion) else { return nil }
+        guard let distance, distance.isFinite, distance > 0 else { return .region(region) }
+        return .camera(
+            MapCamera(centerCoordinate: region.center, distance: distance, heading: 0, pitch: 0)
         )
     }
 
@@ -352,6 +372,8 @@ struct RideMapCanvasView: View {
                     isApplyingCamera = false
                 } else if mapPosition.positionedByUser {
                     cameraDidChange(context.region)
+                    cameraDistanceDidChange(context.camera.distance)
+                    cameraSpanDidChange(context.region.span)
                 }
             }
             .task(id: pathKey) {
@@ -366,10 +388,12 @@ struct RideMapCanvasView: View {
                     isApplyingCamera = true
                 }
                 let cameraFitID = key.cameraFitID ?? key.routeID
-                if fitsRouteOnChange, fittedRouteID != cameraFitID, points.isEmpty == false,
+                if fitsRouteOnChange, fittedRouteID != cameraFitID,
+                    previouslyFittedCameraID != cameraFitID, points.isEmpty == false,
                     fitMap(to: cameraRegion)
                 {
                     fittedRouteID = cameraFitID
+                    cameraFitDidApply(cameraFitID)
                 }
             }
             .accessibilityLabel(localizedAppText("ride_map.map_alternative"))
@@ -530,12 +554,35 @@ struct RideMapCanvasView: View {
 
     @discardableResult
     private func fitMap(to cameraRegion: MobileRideMapCameraRegion?) -> Bool {
-        guard let cameraRegion, let region = Self.mapRegion(for: cameraRegion) else { return false }
+        guard let cameraRegion else { return false }
+        let position: MapCameraPosition
+        if let defaultCameraSpan,
+            let routeRegion = Self.mapRegion(for: cameraRegion)
+        {
+            guard
+                let region = RideMapPresentationState.localRegion(
+                    center: defaultCameraCenter ?? routeRegion.center,
+                    longitudeDelta: defaultCameraSpan.longitudeDelta
+                )
+            else { return false }
+            position = .region(region)
+        } else {
+            guard let fitted = Self.cameraPosition(for: cameraRegion, distance: cameraDistance) else {
+                return false
+            }
+            position = fitted
+        }
         isApplyingCamera = true
-        mapPosition = .region(region)
+        mapPosition = position
         return true
     }
 
+    static func localRegion(
+        center: CLLocationCoordinate2D,
+        span: MKCoordinateSpan
+    ) -> MKCoordinateRegion? {
+        RideMapPresentationState.localRegion(center: center, longitudeDelta: span.longitudeDelta)
+    }
 }
 
 private struct RideMapRetainedSingletonSegmentMarker: View {

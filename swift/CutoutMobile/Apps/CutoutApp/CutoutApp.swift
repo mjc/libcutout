@@ -62,9 +62,15 @@ struct CutoutApp: App {
                     switch phase {
                     case .active:
                         model?.appDidBecomeActive()
+                        if model != nil {
+                            rideMapPresentation.charging.applicationDidBecomeActive()
+                        }
                         lighting?.startIfRemembered()
                     case .background:
                         model?.appDidEnterBackground()
+                        if model != nil {
+                            rideMapPresentation.charging.applicationDidEnterBackground()
+                        }
                     case .inactive:
                         break
                     @unknown default:
@@ -167,6 +173,9 @@ struct CutoutApp: App {
             self.lighting = lighting
             model = opened
             opened.start(sceneIsActive: latestScenePhase == .active)
+            if latestScenePhase == .active {
+                rideMapPresentation.charging.applicationDidBecomeActive()
+            }
             lighting.selectVehicle(opened.selectedRideIdentifier)
             lighting.startIfRemembered()
             if let pendingMusicURL {

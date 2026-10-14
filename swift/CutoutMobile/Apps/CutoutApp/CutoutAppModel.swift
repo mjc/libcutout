@@ -36,6 +36,7 @@ final class CutoutAppModel {
     var faultHistoryReadback: FaultHistoryReadback? { device.faultHistoryReadback }
     var bmsSnapshot: BmsSnapshot? { device.bmsSnapshot }
     var phoneLocationReadback: PhoneLocationReadback { device.phoneLocationReadback }
+    private(set) var mapLocationSample: MobilePhoneLocationSampleDto?
     let liveRide: LiveRideModel
     let music: MusicFeatureModel
     private(set) var liveActivityError: LiveActivityRideLifecycleError?
@@ -364,6 +365,7 @@ final class CutoutAppModel {
         #if DEBUG
             try await RideCaptureRecovery.runIfRequested(database: database)
             try await CutoutUITestSavedRideFixture.runIfRequested(database: database)
+            try await CutoutUITestChargingFixture.runIfRequested(database: database)
             try await CutoutUITestLiveRouteFixture.runIfRequested(database: database)
         #endif
         #if DEBUG
@@ -585,6 +587,7 @@ final class CutoutAppModel {
                     self?.device.bmsSnapshot = bmsSnapshot
                 },
                 phoneLocation: { [weak self] snapshot, receivedAt in
+                    self?.mapLocationSample = snapshot.latestSample
                     self?.device.phoneLocationReadback = PhoneLocationReadback(
                         snapshot: snapshot, receivedAt: receivedAt)
                 },

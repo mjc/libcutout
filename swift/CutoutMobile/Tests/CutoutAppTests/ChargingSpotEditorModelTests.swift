@@ -1,0 +1,573 @@
+import CutoutMobileFFI
+import XCTest
+
+@testable import CutoutApp
+
+@MainActor
+final class ChargingSpotEditorModelTests: XCTestCase {
+    func testRetainedConflictDraftCanBeEditedWithoutLoadingTheCommunityVersion() async throws {
+        let recorder = ChargingEditorSaveRecorder()
+        let draft = try XCTUnwrap(Self.spot().input)
+        let model = ChargingSpotEditorModel(
+            draft: draft,
+            save: { fields in
+                recorder.record(fields)
+                return Self.receipt("replacement")
+            })
+
+        XCTAssertEqual(model.stage, .details)
+        XCTAssertTrue(model.isEditing)
+        XCTAssertEqual(model.accessNote, draft.accessNote)
+        XCTAssertTrue(model.areOptionalDetailsExpanded)
+        model.accessNote = "Corrected entrance instructions"
+        let receipt = await model.save()
+        XCTAssertEqual(receipt, Self.receipt("replacement"))
+        XCTAssertEqual(recorder.fields?.accessNote, "Corrected entrance instructions")
+        XCTAssertEqual(recorder.fields?.supplies, draft.supplies)
+    }
+
+    func testReviewOnlyOffersFieldEditingForCreateAndEditOperations() {
+        XCTAssertTrue(MobileChargingPendingActionDto.create.editsFields)
+        XCTAssertTrue(MobileChargingPendingActionDto.edit.editsFields)
+        XCTAssertFalse(MobileChargingPendingActionDto.withdraw.editsFields)
+        XCTAssertFalse(MobileChargingPendingActionDto.verify.editsFields)
+        XCTAssertFalse(MobileChargingPendingActionDto.vote(selection: .up).editsFields)
+        XCTAssertFalse(MobileChargingPendingActionDto.vote(selection: nil).editsFields)
+        XCTAssertEqual(MobileChargingPendingActionDto.vote(selection: .up).messageKey, "charging.vote.up")
+        XCTAssertEqual(MobileChargingPendingActionDto.vote(selection: .down).messageKey, "charging.vote.down")
+        XCTAssertEqual(MobileChargingPendingActionDto.vote(selection: nil).messageKey, "charging.sync.clear_vote")
+    }
+
+    func testCreateRequiresLocationConfirmationAndRequiredFields() async {
+        let model = ChargingSpotEditorModel(coordinate: coordinate(), save: { _ in nil })
+
+        XCTAssertEqual(model.stage, .moving)
+        XCTAssertFalse(model.canSave)
+        let premature = await model.save()
+        XCTAssertNil(premature)
+        model.confirmLocation()
+        model.accessNote = "   "
+        model.cost = .free
+        XCTAssertFalse(model.canSave)
+        model.accessNote = "Outlet beside the picnic shelter"
+        XCTAssertTrue(model.canSave)
+    }
+
+    func testMapAndManualCoordinatesUpdateWithoutFallbackToZero() {
+        let model = ChargingSpotEditorModel(coordinate: coordinate())
+        model.move(to: coordinate(latitude: 5, longitude: 7))
+        XCTAssertEqual(model.latitudeText, "5.0")
+        XCTAssertEqual(model.longitudeText, "7.0")
+        model.confirmLocation()
+        model.accessNote = "Ask staff"
+        model.cost = .free
+        model.latitudeText = "not a coordinate"
+        XCTAssertFalse(model.canSave)
+        XCTAssertEqual(model.coordinate, coordinate(latitude: 5, longitude: 7))
+        model.latitudeText = "6.25"
+        model.longitudeText = "8.5"
+        model.accessNote = "Ask staff"
+        model.cost = .paid
+        XCTAssertTrue(model.canSave)
+        XCTAssertEqual(model.coordinate, coordinate(latitude: 6.25, longitude: 8.5))
+    }
+
+    func testMovePinAndReturnToDetailsPreservesEnteredDraft() {
+        let model = ChargingSpotEditorModel(coordinate: coordinate())
+        model.confirmLocation()
+        model.accessNote = "Use the west entrance"
+        model.cost = .paid
+        model.name = "Cafe"
+        model.hours = "Open daily"
+        model.venue = .cafe
+        model.priceAmount = "2.50"
+        model.priceCurrency = "USD"
+        model.priceBasis = .perHour
+        model.addSupply()
+        model.supplies[0].voltageText = "120"
+        model.supplies[0].set(.typeB, selected: true)
+        model.latitudeText = "3.5"
+        model.longitudeText = "4.5"
+
+        model.areOptionalDetailsExpanded = true
+        model.movePin()
+        XCTAssertEqual(model.coordinate, coordinate(latitude: 3.5, longitude: 4.5))
+        model.move(to: coordinate(latitude: 6, longitude: 7))
+        model.confirmLocation()
+
+        XCTAssertEqual(model.stage, .details)
+        XCTAssertEqual(model.coordinate, coordinate(latitude: 6, longitude: 7))
+        XCTAssertEqual(model.accessNote, "Use the west entrance")
+        XCTAssertEqual(model.name, "Cafe")
+        XCTAssertEqual(model.hours, "Open daily")
+        XCTAssertEqual(model.venue, .cafe)
+        XCTAssertEqual(model.priceAmount, "2.50")
+        XCTAssertEqual(model.priceCurrency, "USD")
+        XCTAssertEqual(model.priceBasis, .perHour)
+        XCTAssertEqual(model.supplies[0].value()?.connectors, [.typeB])
+        XCTAssertTrue(model.canSave)
+        XCTAssertTrue(model.areOptionalDetailsExpanded)
+    }
+
+    func testBasicSaveOmitsEveryOptionalFieldAndDoesNotIncludeSuggestions() async {
+        let recorder = ChargingEditorSaveRecorder()
+        let expected = Self.receipt("created")
+        let model = ChargingSpotEditorModel(
+            coordinate: coordinate(), countryCode: "US",
+            save: { fields in
+                recorder.record(fields)
+                return expected
+            })
+        model.confirmLocation()
+        model.accessNote = "  Outlet beside the picnic shelter  "
+        model.cost = .free
+
+        let result = await model.save()
+
+        XCTAssertEqual(result, expected)
+        let fields = recorder.fields
+        XCTAssertEqual(fields?.coordinate, coordinate())
+        XCTAssertEqual(fields?.accessNote, "Outlet beside the picnic shelter")
+        XCTAssertEqual(fields?.cost, .free)
+        XCTAssertNil(fields?.name)
+        XCTAssertNil(fields?.venue)
+        XCTAssertNil(fields?.hours)
+        XCTAssertNil(fields?.terms)
+        XCTAssertNil(fields?.price)
+        XCTAssertEqual(fields?.supplies, [])
+    }
+
+    func testSuggestionIsIncludedOnlyAfterExplicitAddAndManualOverrideSurvivesCountryUpdate() async {
+        let recorder = ChargingEditorSaveRecorder()
+        let model = ChargingSpotEditorModel(
+            coordinate: coordinate(), countryCode: "US",
+            save: { fields in
+                recorder.record(fields)
+                return Self.receipt("suggested")
+            })
+        model.confirmLocation()
+        model.accessNote = "Ask staff"
+        model.cost = .paid
+        XCTAssertTrue(model.supplies.isEmpty)
+
+        model.addSuggestedSupply()
+        XCTAssertEqual(model.supplies.count, 1)
+        XCTAssertEqual(model.supplies[0].origin, .countrySuggestion)
+        model.setCountryCode("GB")
+        XCTAssertEqual(model.supplies[0].value(), mobileChargingPowerSuggestion(countryCode: "GB", evStation: false))
+
+        model.supplies[0].voltageText = "240"
+        model.setCountryCode("DE")
+        XCTAssertEqual(model.supplies[0].value()?.voltageVolts, 240)
+
+        _ = await model.save()
+        XCTAssertEqual(recorder.fields?.supplies.first?.voltageVolts, 240)
+    }
+
+    func testEVClearsSuggestionButPreservesExplicitSupply() {
+        let model = ChargingSpotEditorModel(coordinate: coordinate(), countryCode: "US")
+        model.addSuggestedSupply()
+        model.addSupply()
+        model.supplies[1].voltageText = "400"
+        model.supplies[1].set(.ccs2, selected: true)
+
+        model.setVenue(.evChargingStation)
+
+        XCTAssertEqual(model.supplies.count, 1)
+        XCTAssertEqual(model.supplies[0].value()?.voltageVolts, 400)
+        XCTAssertEqual(model.supplies[0].value()?.connectors, [.ccs2])
+        XCTAssertEqual(model.powerSuggestion.voltageVolts, nil)
+        XCTAssertEqual(model.powerSuggestion.connectors, [.unknown])
+
+        model.setCountryCode("DE")
+        XCTAssertEqual(model.supplies[0].value()?.voltageVolts, 400)
+        XCTAssertEqual(model.supplies[0].value()?.connectors, [.ccs2])
+    }
+
+    func testRemovingCustomConnectorDoesNotRestoreItAndUnknownRetainsDraftText() {
+        let draft = ChargingSupplyDraft(
+            supply: MobileChargingSupplyDto(
+                voltageVolts: 120, connectors: [.other(label: "Workshop plug"), .typeB]
+            ))
+        guard let customID = draft.otherConnectors.first?.id else {
+            XCTFail("Expected the original custom connector")
+            return
+        }
+        draft.removeOtherConnector(id: customID)
+        XCTAssertEqual(draft.value()?.connectors, [.typeB])
+
+        let customDraft = ChargingSupplyDraft(
+            supply: MobileChargingSupplyDto(
+                voltageVolts: 120, connectors: [.other(label: "Workshop plug")]
+            ))
+        customDraft.set(.unknown, selected: true)
+        XCTAssertEqual(customDraft.value()?.connectors, [.unknown])
+        XCTAssertEqual(customDraft.otherConnectors.first?.label, "Workshop plug")
+        customDraft.set(.unknown, selected: false)
+        XCTAssertEqual(customDraft.value()?.connectors, [.other(label: "Workshop plug")])
+    }
+
+    func testPlugSummaryIncludesCustomConnectorAndUnknownTakesPrecedence() {
+        let draft = ChargingSupplyDraft()
+        draft.addOtherConnector()
+        draft.otherConnectors[0].label = "Workshop plug"
+        XCTAssertEqual(draft.connectorSummary, [.other(label: "Workshop plug")])
+
+        draft.set(.typeB, selected: true)
+        XCTAssertEqual(draft.connectorSummary, [.typeB, .other(label: "Workshop plug")])
+
+        draft.set(.unknown, selected: true)
+        XCTAssertEqual(draft.connectorSummary, [.unknown])
+    }
+
+    func testAutomaticCountryCannotReplaceManualCountryChoice() {
+        let model = ChargingSpotEditorModel(coordinate: coordinate(), countryCode: "US")
+        model.chooseCountryCode("GB")
+        model.setCountryCode("DE")
+        XCTAssertEqual(model.countryCode, "GB")
+        XCTAssertTrue(model.isCountryCodeManuallySelected)
+    }
+
+    func testCountrySelectionSupportsAnyRegionAndUnknownManualOverride() {
+        let model = ChargingSpotEditorModel(coordinate: coordinate(), countryCode: "DE")
+
+        model.countrySelection = "FR"
+        XCTAssertEqual(model.countryCode, "FR")
+        XCTAssertTrue(model.isCountryCodeManuallySelected)
+        model.setCountryCode("GB")
+        XCTAssertEqual(model.countryCode, "FR")
+
+        model.countrySelection = nil
+        XCTAssertNil(model.countryCode)
+    }
+
+    func testBlankOptionalSupplyRowsAreOmittedOnSave() async {
+        let recorder = ChargingEditorSaveRecorder()
+        let model = ChargingSpotEditorModel(
+            coordinate: coordinate(),
+            save: { fields in
+                recorder.record(fields)
+                return Self.receipt("without-empty-supply")
+            })
+        model.confirmLocation()
+        model.accessNote = "Ask staff"
+        model.cost = .free
+        model.addSupply()
+        model.supplies[0].addOtherConnector()
+        model.supplies[0].otherConnectors[0].label = "   "
+
+        XCTAssertTrue(model.canSave)
+        _ = await model.save()
+        XCTAssertEqual(recorder.fields?.supplies, [])
+    }
+
+    func testChangingPaidSpotToFreeClearsPaidOnlyDraftMetadata() async {
+        let recorder = ChargingEditorSaveRecorder()
+        let model = ChargingSpotEditorModel(
+            coordinate: coordinate(),
+            save: { fields in
+                recorder.record(fields)
+                return Self.receipt("free")
+            })
+        model.confirmLocation()
+        model.accessNote = "Ask staff"
+        model.cost = .paid
+        model.terms = .both
+        model.priceAmount = "1.50"
+        model.priceCurrency = "USD"
+        model.priceBasis = .perHour
+        model.cost = .free
+
+        _ = await model.save()
+
+        XCTAssertEqual(recorder.fields?.cost, .free)
+        XCTAssertNil(recorder.fields?.terms)
+        XCTAssertNil(recorder.fields?.price)
+        XCTAssertEqual(model.priceAmount, "")
+        XCTAssertEqual(model.priceCurrency, "")
+        XCTAssertNil(model.priceBasis)
+    }
+
+    func testExactPriceUsesCurrencyMinorUnitsWithoutFloatingPointRounding() {
+        XCTAssertEqual(
+            ChargingPriceDraft.makePrice(
+                amount: "12.34", currency: "USD", basis: .perHour, locale: Locale(identifier: "en_US")
+            ),
+            MobileChargingPriceDto(amountMinor: 1_234, currency: "USD", minorUnitExponent: 2, basis: .perHour)
+        )
+        XCTAssertNil(
+            ChargingPriceDraft.makePrice(
+                amount: "12.345", currency: "USD", basis: .perHour, locale: Locale(identifier: "en_US")
+            ))
+        XCTAssertNil(
+            ChargingPriceDraft.makePrice(
+                amount: "12.34", currency: "", basis: .perHour, locale: Locale(identifier: "en_US")
+            ))
+    }
+
+    func testPriceDraftUsesLocaleDecimalSeparatorAndRejectsGroupingOrJunk() {
+        let expected = MobileChargingPriceDto(
+            amountMinor: 1_234, currency: "EUR", minorUnitExponent: 2, basis: .perHour
+        )
+        XCTAssertEqual(
+            ChargingPriceDraft.makePrice(
+                amount: "12.34", currency: "EUR", basis: .perHour, locale: Locale(identifier: "en_US")
+            ), expected
+        )
+        XCTAssertEqual(
+            ChargingPriceDraft.makePrice(
+                amount: "12,34", currency: "EUR", basis: .perHour, locale: Locale(identifier: "de_DE")
+            ), expected
+        )
+        XCTAssertEqual(
+            ChargingPriceDraft.makePrice(
+                amount: "12,34", currency: "EUR", basis: .perHour, locale: Locale(identifier: "fr_FR")
+            ), expected
+        )
+        XCTAssertEqual(
+            ChargingPriceDraft.makePrice(
+                amount: "١٢٫٣٤", currency: "EUR", basis: .perHour, locale: Locale(identifier: "ar_EG")
+            ), expected
+        )
+        XCTAssertNil(
+            ChargingPriceDraft.makePrice(
+                amount: "1,234.56", currency: "EUR", basis: .perHour, locale: Locale(identifier: "en_US")
+            ))
+        XCTAssertNil(
+            ChargingPriceDraft.makePrice(
+                amount: "1.234,56", currency: "EUR", basis: .perHour, locale: Locale(identifier: "de_DE")
+            ))
+        XCTAssertNil(
+            ChargingPriceDraft.makePrice(
+                amount: "12,3x", currency: "EUR", basis: .perHour, locale: Locale(identifier: "de_DE")
+            ))
+        XCTAssertNil(
+            ChargingPriceDraft.makePrice(
+                amount: "12.34", currency: "EUR", basis: .perHour, locale: Locale(identifier: "de_DE")
+            ))
+        XCTAssertEqual(
+            ChargingPriceDraft.makePrice(
+                amount: "12", currency: "EUR", basis: .perHour, locale: Locale(identifier: "en_US")
+            )?.amountMinor,
+            1_200
+        )
+        XCTAssertEqual(
+            ChargingPriceDraft.makePrice(
+                amount: "12", currency: "EUR", basis: .perHour, locale: Locale(identifier: "de_DE")
+            )?.amountMinor,
+            1_200
+        )
+    }
+
+    func testPriceDraftEnforcesCurrencyPrecisionAndMinorUnitOverflow() {
+        for locale in [Locale(identifier: "en_US"), Locale(identifier: "de_DE")] {
+            XCTAssertEqual(
+                ChargingPriceDraft.makePrice(amount: "12", currency: "JPY", basis: .perHour, locale: locale)?
+                    .amountMinor,
+                12
+            )
+        }
+        XCTAssertNil(
+            ChargingPriceDraft.makePrice(
+                amount: "12.1", currency: "JPY", basis: .perHour, locale: Locale(identifier: "en_US")
+            ))
+        XCTAssertEqual(
+            ChargingPriceDraft.makePrice(
+                amount: "1.234", currency: "KWD", basis: .perHour, locale: Locale(identifier: "en_US")
+            )?.amountMinor,
+            1_234
+        )
+        XCTAssertEqual(
+            ChargingPriceDraft.makePrice(
+                amount: "1.2300", currency: "USD", basis: .perHour, locale: Locale(identifier: "en_US")
+            )?.amountMinor,
+            123
+        )
+        XCTAssertNil(
+            ChargingPriceDraft.makePrice(
+                amount: "1.2301", currency: "USD", basis: .perHour, locale: Locale(identifier: "en_US")
+            ))
+        XCTAssertEqual(
+            ChargingPriceDraft.makePrice(
+                amount: "90000000000000.00", currency: "USD", basis: .perHour,
+                locale: Locale(identifier: "en_US")
+            )?.amountMinor,
+            9_000_000_000_000_000
+        )
+        XCTAssertNil(
+            ChargingPriceDraft.makePrice(
+                amount: "90000000000000.01", currency: "USD", basis: .perHour,
+                locale: Locale(identifier: "en_US")
+            ))
+    }
+
+    func testLocalizedEditPriceRoundTripsWithItsInputLocale() async {
+        let recorder = ChargingEditorSaveRecorder()
+        let model = ChargingSpotEditorModel(
+            draft: Self.spot().input!, inputLocale: Locale(identifier: "de_DE"),
+            save: { fields in
+                recorder.record(fields)
+                return Self.receipt("localized-price")
+            }
+        )
+        XCTAssertEqual(model.priceAmount, "1,25")
+        model.priceAmount = "1,50"
+        _ = await model.save()
+        XCTAssertEqual(recorder.fields?.price?.amountMinor, 150)
+    }
+
+    func testEditPreloadsAndSavesAllOptionalMetadataAndMultipleSupplies() async {
+        let original = Self.spot()
+        let recorder = ChargingEditorSaveRecorder()
+        let editor = ChargingSpotEditorModel(
+            spot: original, countryCode: "GB",
+            save: { fields in
+                recorder.record(fields)
+                return Self.receipt("edited")
+            })
+        XCTAssertNotNil(editor)
+        guard let editor else { return }
+        XCTAssertEqual(editor.stage, .details)
+        XCTAssertTrue(editor.isEditing)
+        XCTAssertEqual(editor.name, "Cafe")
+        XCTAssertEqual(editor.venue, .cafe)
+        XCTAssertEqual(editor.hours, "Open daily")
+        XCTAssertEqual(editor.terms, .both)
+        XCTAssertEqual(editor.priceAmount, "1.25")
+        XCTAssertEqual(editor.priceCurrency, "USD")
+        XCTAssertEqual(editor.supplies.count, 2)
+
+        let result = await editor.save()
+
+        XCTAssertEqual(result, Self.receipt("edited"))
+        let fields = recorder.fields
+        XCTAssertEqual(fields, original.input)
+    }
+
+    func testEditingPreservesExistingPriceExponentAndConnectorOrder() async {
+        let original = Self.spot(priceExponent: 4)
+        let recorder = ChargingEditorSaveRecorder()
+        let editor = ChargingSpotEditorModel(
+            spot: original,
+            save: { fields in
+                recorder.record(fields)
+                return Self.receipt("edited-exactly")
+            })
+        XCTAssertNotNil(editor)
+        _ = await editor?.save()
+
+        let fields = recorder.fields
+        XCTAssertEqual(fields, original.input)
+    }
+
+    func testWriteIsGatedWhileInFlightAndAfterDurableReceipt() async {
+        let gate = ChargingEditorSaveGate()
+        let recorder = ChargingEditorSaveRecorder()
+        let model = ChargingSpotEditorModel(
+            coordinate: coordinate(),
+            save: { fields in
+                recorder.record(fields)
+                await gate.wait()
+                return Self.receipt("created")
+            })
+        model.confirmLocation()
+        model.accessNote = "Ask staff"
+        model.cost = .paid
+
+        let first = Task { await model.save() }
+        await gate.waitUntilStarted()
+        XCTAssertEqual(model.stage, .saving)
+        let overlapping = await model.save()
+        XCTAssertNil(overlapping)
+        await gate.release()
+        let firstReceipt = await first.value
+        XCTAssertEqual(firstReceipt, Self.receipt("created"))
+        let repeated = await model.save()
+        XCTAssertNil(repeated)
+        XCTAssertEqual(model.stage, .saving)
+        XCTAssertEqual(recorder.count, 1)
+    }
+
+    func testFieldValidationFailureRetainsDraftAndReturnsToDetails() async {
+        let model = ChargingSpotEditorModel(
+            coordinate: coordinate(),
+            save: { _ in
+                throw MobileChargingError.AccessNoteTooLong
+            })
+        model.confirmLocation()
+        model.accessNote = "Use the east gate"
+        model.cost = .paid
+
+        let result = await model.save()
+
+        XCTAssertNil(result)
+        XCTAssertEqual(model.stage, .details)
+        XCTAssertEqual(model.accessNote, "Use the east gate")
+        XCTAssertEqual(model.cost, .paid)
+        XCTAssertEqual(model.errorKey, "charging.editor.error.access_note_too_long")
+    }
+
+    private func coordinate(latitude: Double = 1, longitude: Double = 2) -> MobileMapCoordinateDto {
+        MobileMapCoordinateDto(latitudeDegrees: latitude, longitudeDegrees: longitude)
+    }
+
+    private nonisolated static func receipt(_ id: String) -> MobileChargingWriteReceiptDto {
+        MobileChargingWriteReceiptDto(id: id, localRevision: 1, operationId: "operation-\(id)")
+    }
+
+    private nonisolated static func spot(priceExponent: UInt8 = 2) -> MobileChargingSpotDto {
+        let input = MobileChargingInputDto(
+            coordinate: MobileMapCoordinateDto(latitudeDegrees: 1, longitudeDegrees: 2),
+            accessNote: "Ask the barista",
+            cost: .paid,
+            name: "Cafe",
+            venue: .cafe,
+            hours: "Open daily",
+            terms: .both,
+            price: MobileChargingPriceDto(
+                amountMinor: priceExponent == 4 ? 12_500 : 125,
+                currency: "USD", minorUnitExponent: priceExponent, basis: .perHour
+            ),
+            supplies: [
+                MobileChargingSupplyDto(voltageVolts: 120, connectors: [.other(label: "Workshop plug"), .typeB]),
+                MobileChargingSupplyDto(voltageVolts: 240, connectors: [.j1772]),
+            ]
+        )
+        return MobileChargingSpotDto(
+            id: "spot-id", input: input, owned: true, status: .queued,
+            localRevision: 3, remoteId: nil, remoteRevision: 0, changeSequence: 3,
+            verifiedAtMs: nil, vote: nil, voteRevision: 0, votesUp: 0, votesDown: 0,
+            pendingOperations: 1, pendingVote: false
+        )
+    }
+}
+
+@MainActor
+private final class ChargingEditorSaveRecorder {
+    private(set) var fields: MobileChargingInputDto?
+    private(set) var count = 0
+    func record(_ fields: MobileChargingInputDto) {
+        self.fields = fields
+        count += 1
+    }
+}
+
+private actor ChargingEditorSaveGate {
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var startedContinuation: CheckedContinuation<Void, Never>?
+    private var started = false
+    func wait() async {
+        started = true
+        startedContinuation?.resume()
+        startedContinuation = nil
+        await withCheckedContinuation { continuation = $0 }
+    }
+    func waitUntilStarted() async {
+        if started { return }
+        await withCheckedContinuation { startedContinuation = $0 }
+    }
+    func release() {
+        continuation?.resume()
+        continuation = nil
+    }
+}

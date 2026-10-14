@@ -387,7 +387,11 @@ struct LightingPlaybackControls: View {
     func selectPattern(_ id: Int) {
         pattern = id
         selectGroup(for: id)
-        model.setPlayback(.effect(pattern: UInt8(id), speed: UInt8(speed)))
+        Self.applyPatternSelection(id, speed: UInt8(speed), to: model)
+    }
+
+    static func applyPatternSelection(_ id: Int, speed: UInt8, to model: LightingRouteModel) {
+        model.setPlayback(.effect(pattern: UInt8(id), speed: speed))
     }
 
     private func selectGroup(for id: Int) {

@@ -5,6 +5,24 @@ import XCTest
 @testable import CutoutMobile
 
 final class RustPersistenceStoreTests: XCTestCase {
+    #if DEBUG
+        func testChargingAcceptanceRequiresBothExplicitLaunchAndValidDatabaseIdentity() {
+            let id = UUID()
+            let environment = ["CUTOUT_CHARGING_ACCEPTANCE_DATABASE_ID": id.uuidString]
+            XCTAssertEqual(
+                ChargingAcceptanceEnvironment.databaseID(
+                    arguments: ["--charging-acceptance"], environment: environment),
+                id)
+            XCTAssertNil(ChargingAcceptanceEnvironment.databaseID(arguments: [], environment: environment))
+            XCTAssertNil(
+                ChargingAcceptanceEnvironment.databaseID(arguments: ["--charging-acceptance"], environment: [:]))
+            XCTAssertNil(
+                ChargingAcceptanceEnvironment.databaseID(
+                    arguments: ["--charging-acceptance"],
+                    environment: ["CUTOUT_CHARGING_ACCEPTANCE_DATABASE_ID": "not-an-id"]))
+        }
+    #endif
+
     func testExistingDatabaseAndSidecarsReceiveLockSafeProtectionBeforeRustIsAskedToOpenThem() async throws {
         let fileManager = ProtectionRecordingFileManager()
         let directory = fileManager.temporaryDirectory.appendingPathComponent(

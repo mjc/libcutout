@@ -72,6 +72,13 @@ public enum RustPersistenceStore {
 
     private static func openDefaultDatabase() throws -> RideDatabaseHandle {
         let fileManager = FileManager.default
+        #if DEBUG
+            if let id = ChargingAcceptanceEnvironment.databaseID {
+                let directory = fileManager.temporaryDirectory
+                    .appendingPathComponent("CutoutChargingAcceptance", isDirectory: true)
+                return try prepareDatabase(at: directory.appendingPathComponent("\(id.uuidString).sqlite"))
+            }
+        #endif
         #if DEBUG && targetEnvironment(simulator)
             if let rawID = ProcessInfo.processInfo.environment["CUTOUT_UI_TEST_RIDE_DATABASE_ID"],
                 let id = UUID(uuidString: rawID)
@@ -155,3 +162,19 @@ public enum RustPersistenceStore {
         try mutableURL.setResourceValues(values)
     }
 }
+
+#if DEBUG
+    /// An explicit developer launch uses isolated storage and never sends community traffic.
+    public enum ChargingAcceptanceEnvironment {
+        public static var databaseID: UUID? {
+            databaseID(arguments: CommandLine.arguments, environment: ProcessInfo.processInfo.environment)
+        }
+
+        static func databaseID(arguments: [String], environment: [String: String]) -> UUID? {
+            guard arguments.contains("--charging-acceptance"),
+                let value = environment["CUTOUT_CHARGING_ACCEPTANCE_DATABASE_ID"]
+            else { return nil }
+            return UUID(uuidString: value)
+        }
+    }
+#endif

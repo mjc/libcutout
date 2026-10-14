@@ -960,7 +960,7 @@ final class CutoutAppRouteTests: XCTestCase {
     }
 
     @MainActor
-    func testLightingEffectTileSelectionAppliesImmediately() throws {
+    func testLightingEffectSelectionAppliesImmediately() throws {
         let suiteName = "CutoutAppRouteTests.lightingEffectImmediate"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defaults.removePersistentDomain(forName: suiteName)
@@ -973,9 +973,7 @@ final class CutoutAppRouteTests: XCTestCase {
         )
         model.start()
         fake.emitState(.ready)
-        let controls = LightingPlaybackControls(model: model, page: .effects)
-
-        controls.selectPattern(16)
+        LightingPlaybackControls.applyPatternSelection(16, speed: 128, to: model)
 
         XCTAssertEqual(fake.stateRequests.last?.playback, .effect(pattern: 16, speed: 128))
     }

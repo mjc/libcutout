@@ -30,6 +30,9 @@ struct RideMapLiveContentView: View {
     @Binding var mapPosition: MapCameraPosition
     @Binding var isApplyingCamera: Bool
     @Binding var followsLatestPoint: Bool
+    var cameraSpan: MKCoordinateSpan = RideMapPresentationState.defaultLocalSpan
+    var userLocationCenter: CLLocationCoordinate2D? = nil
+    var cameraSpanDidChange: (MKCoordinateSpan) -> Void = { _ in }
     let pause: () -> Void
     let resume: () -> Void
     let save: () -> Void
@@ -38,7 +41,7 @@ struct RideMapLiveContentView: View {
     let discard: () -> Void
 
     @State private var isDiscardConfirmationPresented = false
-    @State private var followSpan: MKCoordinateSpan?
+    @State private var didPlaceInitialCamera = false
 
     var body: some View {
         GeometryReader { viewport in
@@ -63,10 +66,12 @@ struct RideMapLiveContentView: View {
                                 cameraFitID: cameraFitID,
                                 mapPosition: $mapPosition,
                                 isApplyingCamera: $isApplyingCamera,
-                                cameraDidChange: { region in
-                                    followSpan = region.span
+                                cameraDidChange: { _ in
                                     followsLatestPoint = false
-                                }
+                                },
+                                cameraSpanDidChange: cameraSpanDidChange,
+                                defaultCameraSpan: cameraSpan,
+                                defaultCameraCenter: userLocationCenter
                             )
                             .frame(height: RideMapViewportLayout.mapHeight(for: visibleHeight))
                             .frame(maxWidth: .infinity)
@@ -139,11 +144,22 @@ struct RideMapLiveContentView: View {
         }
         .onChange(of: routeID) { _, _ in
             followsLatestPoint = true
-            followSpan = nil
+            didPlaceInitialCamera = false
         }
         .onChange(of: projectionVersion, initial: true) { _, _ in
             guard followsLatestPoint else { return }
-            recenterOnLatestPoint()
+            recenterOnLatestPoint(centerOnUserLocation: !didPlaceInitialCamera)
+            didPlaceInitialCamera = userLocationCenter != nil
+        }
+        .onChange(of: userLocationCenter?.latitude) { _, _ in
+            guard followsLatestPoint, !didPlaceInitialCamera else { return }
+            recenterOnLatestPoint(centerOnUserLocation: true)
+            didPlaceInitialCamera = userLocationCenter != nil
+        }
+        .onChange(of: userLocationCenter?.longitude) { _, _ in
+            guard followsLatestPoint, !didPlaceInitialCamera else { return }
+            recenterOnLatestPoint(centerOnUserLocation: true)
+            didPlaceInitialCamera = userLocationCenter != nil
         }
         .confirmationDialog(
             localizedAppText("ride_map.discard_confirm_title"),
@@ -241,7 +257,6 @@ struct RideMapLiveContentView: View {
             let region = RideMapCanvasView.mapRegion(for: cameraRegion)
         else { return }
         followsLatestPoint = false
-        followSpan = nil
         isApplyingCamera = true
         mapPosition = .region(region)
     }
@@ -275,29 +290,24 @@ struct RideMapLiveContentView: View {
         }
     }
 
-    private func recenterOnLatestPoint() {
+    private func recenterOnLatestPoint(centerOnUserLocation: Bool = false) {
         guard Self.supportsLatestPointFollow(state: snapshot?.state),
             let point = displayPoints.last,
-            let cameraRegion,
-            let baseRegion = RideMapCanvasView.mapRegion(for: cameraRegion),
-            let region = Self.followRegion(
-                centeredOn: point,
-                span: followSpan ?? Self.stableFollowSpan(for: baseRegion.span)
-            )
+            cameraRegion != nil
         else {
             return
         }
-        followSpan = region.span
         followsLatestPoint = true
         isApplyingCamera = true
+        let center = centerOnUserLocation ? (userLocationCenter ?? coordinate(for: point)) : coordinate(for: point)
+        guard let region = RideMapCanvasView.localRegion(center: center, span: cameraSpan) else {
+            return
+        }
         mapPosition = .region(region)
     }
 
-    static func stableFollowSpan(for baseSpan: MKCoordinateSpan) -> MKCoordinateSpan {
-        MKCoordinateSpan(
-            latitudeDelta: min(max(baseSpan.latitudeDelta, 0.01), 0.05),
-            longitudeDelta: min(max(baseSpan.longitudeDelta, 0.01), 0.05)
-        )
+    private func coordinate(for point: MobileRideMapRouteDisplayPoint) -> CLLocationCoordinate2D {
+        CLLocationCoordinate2D(latitude: point.latitudeDegrees, longitude: point.longitudeDegrees)
     }
 
     static func followRegion(
