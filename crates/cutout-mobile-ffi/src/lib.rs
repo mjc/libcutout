@@ -28572,6 +28572,107 @@ mod tests {
     }
 
     #[test]
+    fn saved_history_seed_through_mobile_database_restores_map_state() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-saved-history-seed-{}.sqlite3",
+            Uuid::new_v4()
+        ));
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+
+        let route_count = mobile_ride_map_limits().history_page_limit + 1;
+        let total_offset = (u64::from(route_count) + 1) * 3_000;
+        let now_wall = u64::try_from(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock is after Unix epoch")
+                .as_millis(),
+        )
+        .expect("wall clock fits milliseconds");
+        let now_monotonic = total_offset + 100_000;
+        assert!(now_wall > total_offset && now_monotonic > total_offset);
+
+        for index in 0..route_count {
+            let offset = u64::from(index) * 3_000;
+            let started_monotonic = now_monotonic - total_offset + offset;
+            let started_wall = now_wall - total_offset + offset;
+            let id = database
+                .create_ride_with_monotonic_start(
+                    MobileRideSourceDto::Live,
+                    started_wall,
+                    Some(started_monotonic),
+                )
+                .expect("live ride is created");
+            assert_eq!(
+                database.transition(id.clone(), MobileRideEventDto::Start, started_monotonic,),
+                Ok(MobileRideLifecycleStateDto::Active)
+            );
+            for point in 0_u32..3 {
+                let elapsed = u64::from(point) * 1_000;
+                assert_eq!(
+                    database.append_location(
+                        id.clone(),
+                        MobileRideLocationDto {
+                            latitude_degrees: 39.7
+                                + f64::from(index) * 0.01
+                                + f64::from(point) * 0.0001,
+                            longitude_degrees: -104.9,
+                            monotonic_milliseconds: started_monotonic + elapsed,
+                            wall_clock_unix_milliseconds: started_wall + elapsed,
+                            horizontal_accuracy_millimetres: Some(3_000),
+                            source: MobileRideSourceDto::Live,
+                        },
+                    ),
+                    Ok(MobileRideLocationAdmissionDto::Accepted)
+                );
+            }
+            let stopped_at = started_monotonic + 2_000;
+            assert_eq!(
+                database.transition(id.clone(), MobileRideEventDto::Stop, stopped_at),
+                Ok(MobileRideLifecycleStateDto::Stopped)
+            );
+            assert_eq!(
+                database.transition(id.clone(), MobileRideEventDto::Save, stopped_at),
+                Ok(MobileRideLifecycleStateDto::Saved)
+            );
+            let record = database
+                .find_ride(id)
+                .expect("saved ride hydrates")
+                .expect("saved ride exists");
+            assert_eq!(record.state, MobileRideLifecycleStateDto::Saved);
+            assert_eq!(record.summary.point_count, 3);
+            assert_eq!(
+                record.summary.elapsed_time,
+                MobileRideElapsedTimeDto::Complete {
+                    duration_milliseconds: 2_000,
+                }
+            );
+            assert!(record.created_at_milliseconds <= now_wall);
+        }
+
+        let page = database
+            .list_rides(None, route_count)
+            .expect("saved history page loads");
+        assert_eq!(page.rides.len(), usize::try_from(route_count).unwrap());
+        assert!(page.rides.iter().all(|ride| {
+            ride.state == MobileRideLifecycleStateDto::Saved && ride.summary.point_count == 3
+        }));
+        let core = MobileRideMapCore::with_database(database.clone());
+        assert!(
+            core.restore(now_monotonic + total_offset + 1_000)
+                .expect("map restore succeeds after saved-history seeding")
+                .is_none()
+        );
+
+        drop(core);
+        database.shutdown().expect("database shuts down");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
     fn pause_closes_committed_moving_time_before_pending_location_result_is_published() {
         let _guard = RIDE_DATABASE_TEST_LOCK
             .lock()
