@@ -216,7 +216,12 @@ struct VoteReceiptResponse {
     revision: u64,
     vote: Option<ride_maps::ChargingVote>,
     votes: CountsResponse,
-    spot_status: ServerStatus,
+    #[allow(
+        dead_code,
+        reason = "vote receipts have no body; persistence preserves local spot status"
+    )]
+    #[serde(rename = "spot_status")]
+    _spot_status: ServerStatus,
     change_sequence: u64,
 }
 
@@ -609,52 +614,25 @@ async fn upload_operation(
         if receipt.operation_id != operation_id.to_string() {
             return Err(MobileChargingError::Network);
         }
-        let cached = database(database_handle.clone(), move |database| {
-            database.charging_spot(point_id)
-        })
-        .await?
-        .ok_or(MobileChargingError::StorageFailure)?;
-        if receipt.change_sequence < cached.change_sequence.get()
-            || receipt.revision < receipt.applied_revision
-        {
+        if receipt.revision < receipt.applied_revision {
             return Err(MobileChargingError::Network);
         }
-        let remote_id = cached
-            .remote_id
-            .ok_or(MobileChargingError::StorageFailure)?;
-        let entry = persistence::ChargingDirectoryEntry {
-            id: remote_id,
-            input: if cached.status == persistence::ChargingStatus::Withdrawn {
-                None
-            } else if server_status(receipt.spot_status) == persistence::ChargingStatus::Published {
-                cached.input
-            } else {
-                None
-            },
-            revision: cached.remote_revision,
-            // The vote response has no spot body. Do not advance its cache sequence;
-            // the public changes feed must deliver a coherent body before that happens.
-            change_sequence: cached.change_sequence,
-            // A vote receipt has no body. Keep a local tombstone valid while the
-            // earlier vote is acknowledged; the feed remains responsible for body state.
-            status: if cached.status == persistence::ChargingStatus::Withdrawn {
-                persistence::ChargingStatus::Withdrawn
-            } else {
-                server_status(receipt.spot_status)
-            },
-            verified_at_ms: cached.verified_at_ms,
-            vote: receipt.vote,
-            vote_revision: persistence::ChargingRevision::new(receipt.revision)
-                .map_err(|_| MobileChargingError::Network)?,
-            votes_up: receipt.votes.up,
-            votes_down: receipt.votes.down,
-        };
         database(database_handle.clone(), move |database| {
             database
-                .acknowledge_charging_operation(
+                .acknowledge_charging_vote_operation(
                     persistence::ChargingOperationId::from_uuid(operation_id),
-                    persistence::ChargingRevision::new(receipt.applied_revision)?,
-                    entry,
+                    persistence::ChargingVoteReceipt {
+                        applied_revision: persistence::ChargingRevision::new(
+                            receipt.applied_revision,
+                        )?,
+                        vote_revision: persistence::ChargingRevision::new(receipt.revision)?,
+                        vote: receipt.vote,
+                        votes_up: receipt.votes.up,
+                        votes_down: receipt.votes.down,
+                        change_sequence: persistence::ChargingChangeCursor::new(
+                            receipt.change_sequence,
+                        )?,
+                    },
                 )
                 .map(|_| ())
         })

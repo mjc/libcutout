@@ -230,6 +230,23 @@ pub struct ChargingWriteReceipt {
     pub operation_id: ChargingOperationId,
 }
 
+/// Vote-only server metadata acknowledged without replacing the cached spot body.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ChargingVoteReceipt {
+    /// Server revision applied by this operation.
+    pub applied_revision: ChargingRevision,
+    /// Contributor vote revision returned by the server.
+    pub vote_revision: ChargingRevision,
+    /// Authoritative contributor vote after applying the operation.
+    pub vote: Option<ChargingVote>,
+    /// Confirmed positive vote count.
+    pub votes_up: u64,
+    /// Confirmed negative vote count.
+    pub votes_down: u64,
+    /// Server change sequence accompanying the receipt; it does not advance body state.
+    pub change_sequence: ChargingChangeCursor,
+}
+
 /// Validated public directory data received by the future sync client.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ChargingDirectoryEntry {

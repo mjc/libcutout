@@ -17,7 +17,7 @@ pub use model::{
     ChargingAction, ChargingBlockedOperation, ChargingChangeCursor, ChargingDirectoryEntry,
     ChargingFilter, ChargingOperation, ChargingOperationBlockKind, ChargingOperationId,
     ChargingOperationResolution, ChargingPage, ChargingPageApplyResult, ChargingRevision,
-    ChargingStatus, ChargingTarget, ChargingWriteReceipt, StoredChargingSpot,
+    ChargingStatus, ChargingTarget, ChargingVoteReceipt, ChargingWriteReceipt, StoredChargingSpot,
 };
 use mutations::{change, save};
 use queries::{nearby, page};
@@ -97,6 +97,11 @@ pub(super) enum Command {
         id: ChargingOperationId,
         applied: ChargingRevision,
         entry: ChargingDirectoryEntry,
+        reply: Reply<MapPointId>,
+    },
+    AcknowledgeVote {
+        id: ChargingOperationId,
+        receipt: ChargingVoteReceipt,
         reply: Reply<MapPointId>,
     },
     Count {
@@ -408,6 +413,18 @@ impl RideDatabase {
             })
         })
     }
+    /// Atomically acknowledges a vote receipt without replacing cached body or feed state.
+    /// # Errors
+    /// Rejects stale, mismatched, or non-head vote receipts without partial writes.
+    pub fn acknowledge_charging_vote_operation(
+        &self,
+        id: ChargingOperationId,
+        receipt: ChargingVoteReceipt,
+    ) -> Result<MapPointId, StorageError> {
+        self.request(move |reply| {
+            DatabaseCommand::Charging(Command::AcknowledgeVote { id, receipt, reply })
+        })
+    }
 }
 
 #[allow(
@@ -467,6 +484,9 @@ pub(super) fn execute(
             let _ = reply.send(acknowledge_operation(
                 connection, spatial, id, applied, &entry,
             ));
+        }
+        Command::AcknowledgeVote { id, receipt, reply } => {
+            let _ = reply.send(sync::acknowledge_vote_operation(connection, id, receipt));
         }
         Command::Count { reply } => {
             let _ = reply.send(count(connection));

@@ -10,7 +10,7 @@ use super::{
     CHARGING_OUTBOX_CAPACITY, CHARGING_SYNC_PAGE_LIMIT, ChargingAction, ChargingBlockedOperation,
     ChargingChangeCursor, ChargingDirectoryEntry, ChargingOperation, ChargingOperationBlockKind,
     ChargingOperationId, ChargingOperationResolution, ChargingPageApplyResult, ChargingRevision,
-    ChargingStatus, ChargingTarget, ChargingWriteReceipt,
+    ChargingStatus, ChargingTarget, ChargingVoteReceipt, ChargingWriteReceipt,
 };
 use cutout_ride_maps::{ChargingSpotId, ChargingVote, NewChargingSpot};
 use rusqlite::{Connection, OptionalExtension, params};
@@ -67,6 +67,36 @@ pub(super) fn queue(
     }
     let operation_id = ChargingOperationId::from_uuid(Uuid::new_v4());
     connection.execute("INSERT INTO charging_outbox(operation_id,point_id,action,local_revision) VALUES (?1,?2,?3,?4)", params![operation_id.uuid().to_string(), id.uuid().as_bytes(), action_json(action)?, revision.get()])?;
+    Ok(ChargingWriteReceipt {
+        point_id: id,
+        revision,
+        operation_id,
+    })
+}
+
+fn queue_at_sequence(
+    connection: &Connection,
+    sequence: i64,
+    id: MapPointId,
+    revision: ChargingRevision,
+    action: &ChargingAction,
+    target: Option<&ChargingTarget>,
+) -> Result<ChargingWriteReceipt, StorageError> {
+    if count(connection)? >= CHARGING_OUTBOX_CAPACITY {
+        return Err(StorageError::ChargingOutboxFull);
+    }
+    let operation_id = ChargingOperationId::from_uuid(Uuid::new_v4());
+    connection.execute(
+        "INSERT INTO charging_outbox(sequence,operation_id,point_id,action,local_revision,target) VALUES (?1,?2,?3,?4,?5,?6)",
+        params![
+            sequence,
+            operation_id.uuid().to_string(),
+            id.uuid().as_bytes(),
+            action_json(action)?,
+            revision.get(),
+            target.map(encode).transpose()?
+        ],
+    )?;
     Ok(ChargingWriteReceipt {
         point_id: id,
         revision,
@@ -267,6 +297,65 @@ pub(super) fn acknowledge_operation(
     Ok(point_id)
 }
 
+pub(super) fn acknowledge_vote_operation(
+    connection: &mut Connection,
+    id: ChargingOperationId,
+    receipt: ChargingVoteReceipt,
+) -> Result<MapPointId, StorageError> {
+    ChargingRevision::new(receipt.votes_up)?;
+    ChargingRevision::new(receipt.votes_down)?;
+    let transaction = connection.transaction()?;
+    let Some(pending) = pending_operation_by_id(&transaction, id)? else {
+        let remote: Option<String> = transaction
+            .query_row(
+                "SELECT remote_id FROM charging_spots WHERE last_ack=?1",
+                [id.uuid().to_string()],
+                |row| row.get(0),
+            )
+            .optional()?
+            .flatten();
+        let remote = remote.ok_or(StorageError::ChargingConflict)?;
+        let remote =
+            ChargingSpotId::parse(&remote).map_err(|_| StorageError::ChargingInvalidInput)?;
+        return replayed_acknowledgment(&transaction, id, remote);
+    };
+    let point_id = point_id_from_bytes(&pending.point)?;
+    let current = detail(&transaction, point_id)?.ok_or(StorageError::NotFound)?;
+    let action = action_from_json(&pending.action)?;
+    if !action.is_vote() {
+        return Err(StorageError::ChargingConflict);
+    }
+    let target: ChargingTarget = decode(&pending.target.ok_or(StorageError::ChargingConflict)?)?;
+    let remote_id = current.remote_id.ok_or(StorageError::ChargingConflict)?;
+    let entry = ChargingDirectoryEntry {
+        id: remote_id,
+        input: current.input.clone(),
+        revision: current.remote_revision,
+        change_sequence: current.change_sequence,
+        status: current.status,
+        verified_at_ms: current.verified_at_ms,
+        vote: receipt.vote,
+        vote_revision: receipt.vote_revision,
+        votes_up: receipt.votes_up,
+        votes_down: receipt.votes_down,
+    };
+    validate_acknowledgment(&current, &action, &target, receipt.applied_revision, &entry)?;
+    if receipt.change_sequence.get() < current.change_sequence.get() {
+        return Err(StorageError::ChargingConflict);
+    }
+    // The vote receipt has no body; only feed pages advance body revision or cursor.
+    remove_operation(&transaction, id)?;
+    transaction.execute(
+        "UPDATE charging_spots SET vote=CASE WHEN EXISTS(
+            SELECT 1 FROM charging_outbox WHERE point_id=?1 AND json_type(action,'$.Vote') IS NOT NULL
+         ) THEN vote ELSE ?2 END,vote_revision=?3,votes_up=?4,votes_down=?5 WHERE point_id=?1",
+        params![point_id.uuid().as_bytes(), receipt.vote.map(|value| match value { ChargingVote::Up => "up", ChargingVote::Down => "down" }), receipt.vote_revision.get(), receipt.votes_up, receipt.votes_down],
+    )?;
+    remember_acknowledgment(&transaction, point_id, id)?;
+    transaction.commit()?;
+    Ok(point_id)
+}
+
 fn replayed_acknowledgment(
     connection: &Connection,
     id: ChargingOperationId,
@@ -390,17 +479,19 @@ fn remove_superseded_field_operations(
     connection: &Connection,
     point_id: MapPointId,
     selected: ChargingOperationId,
+    selected_sequence: i64,
     supersede_fields: bool,
 ) -> Result<(), StorageError> {
     connection.execute(
         "DELETE FROM charging_outbox
-         WHERE point_id=?1 AND (operation_id=?2 OR (?3 AND
+         WHERE point_id=?1 AND (operation_id=?2 OR (?3 AND sequence>?4 AND
            (json_type(action,'$.Create') IS NOT NULL
             OR json_type(action,'$.Edit') IS NOT NULL)))",
         params![
             point_id.uuid().as_bytes(),
             selected.uuid().to_string(),
-            supersede_fields
+            supersede_fields,
+            selected_sequence
         ],
     )?;
     Ok(())
@@ -977,14 +1068,15 @@ pub(super) fn resolve_operation(
 ) -> Result<(), StorageError> {
     ensure_spatial_schema(connection, spatial)?;
     let transaction = connection.transaction()?;
-    let row: Option<(Vec<u8>, String, String)> = transaction
+    let row: Option<(i64, Vec<u8>, String, String)> = transaction
         .query_row(
-            "SELECT point_id,blocked_kind,action FROM charging_outbox WHERE operation_id=?1",
+            "SELECT sequence,point_id,blocked_kind,action FROM charging_outbox WHERE operation_id=?1",
             [id.uuid().to_string()],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )
         .optional()?;
-    let (point, kind_text, action_text) = row.ok_or(StorageError::ChargingConflict)?;
+    let (selected_sequence, point, kind_text, action_text) =
+        row.ok_or(StorageError::ChargingConflict)?;
     let kind = parse_block_kind(&kind_text)?;
     let action = action_from_json(&action_text)?;
     let carries_fields = action.carries_fields();
@@ -1083,14 +1175,16 @@ pub(super) fn resolve_operation(
             {
                 return Err(StorageError::ChargingConflict);
             }
-            remove_superseded_field_operations(&transaction, point_id, id, carries_fields)?;
+            remove_superseded_field_operations(
+                &transaction,
+                point_id,
+                id,
+                selected_sequence,
+                carries_fields,
+            )?;
             apply_entry(&transaction, point_id, &checked, EntryUpdate::ReplaceBody)?;
             restore_pending_local_state(&transaction, &current)?;
             update_local_revision(&transaction, point_id, current.local_revision.next()?)?;
-            transaction.execute(
-                "UPDATE charging_outbox SET target=NULL WHERE point_id=?1",
-                [point_id.uuid().as_bytes()],
-            )?;
         }
     }
     transaction.execute(
@@ -1112,14 +1206,14 @@ pub(super) fn replace_blocked_operation(
 ) -> Result<ChargingWriteReceipt, StorageError> {
     ensure_spatial_schema(connection, spatial)?;
     let transaction = connection.transaction()?;
-    let row: Option<(Vec<u8>, String, String)> = transaction
+    let row: Option<(i64, Vec<u8>, String, String)> = transaction
         .query_row(
-            "SELECT point_id,blocked_kind,action FROM charging_outbox WHERE operation_id=?1",
+            "SELECT sequence,point_id,blocked_kind,action FROM charging_outbox WHERE operation_id=?1",
             [id.uuid().to_string()],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )
         .optional()?;
-    let (point, _, blocked_action) = row.ok_or(StorageError::ChargingConflict)?;
+    let (sequence, point, _, blocked_action) = row.ok_or(StorageError::ChargingConflict)?;
     let supersede_fields = action_from_json(&blocked_action)?.carries_fields();
     let point_id = point_id_from_bytes(&point)?;
     let current = detail(&transaction, point_id)?.ok_or(StorageError::NotFound)?;
@@ -1134,10 +1228,12 @@ pub(super) fn replace_blocked_operation(
         )
         .optional()?
         .flatten();
-    if let Some(entry) = remote
+    let reviewed_remote = remote
         .map(|value| directory_entry_from_json(&value))
-        .transpose()?
-        && !entry.status.visible()
+        .transpose()?;
+    if reviewed_remote
+        .as_ref()
+        .is_some_and(|entry| !entry.status.visible())
     {
         return Err(StorageError::ChargingConflict);
     }
@@ -1152,7 +1248,7 @@ pub(super) fn replace_blocked_operation(
         }
         ChargingAction::Create(input.clone())
     };
-    remove_superseded_field_operations(&transaction, point_id, id, supersede_fields)?;
+    remove_superseded_field_operations(&transaction, point_id, id, sequence, supersede_fields)?;
     let revision = current.local_revision.next()?;
     transaction.execute(
         "UPDATE charging_spots SET input=?2,local_revision=?3 WHERE point_id=?1",
@@ -1163,11 +1259,20 @@ pub(super) fn replace_blocked_operation(
         ],
     )?;
     update_spatial_index(&transaction, point_id, input, current.status)?;
-    transaction.execute(
-        "UPDATE charging_outbox SET target=NULL WHERE point_id=?1",
-        [point_id.uuid().as_bytes()],
+    let target = current.remote_id.map(|id| ChargingTarget::Existing {
+        id,
+        expected_revision: reviewed_remote
+            .as_ref()
+            .map_or(current.remote_revision, |entry| entry.revision),
+    });
+    let receipt = queue_at_sequence(
+        &transaction,
+        sequence,
+        point_id,
+        revision,
+        &action,
+        target.as_ref(),
     )?;
-    let receipt = queue(&transaction, point_id, revision, &action)?;
     transaction.commit()?;
     Ok(receipt)
 }
