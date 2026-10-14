@@ -1144,8 +1144,9 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "ride-map.screen").count, 1)
         let summary = app.descendants(matching: .any)["ride-map.summary"]
         XCTAssertTrue(summary.waitForExistence(timeout: 5), app.debugDescription)
-        XCTAssertTrue(summary.label.contains("Elapsed time:"), app.debugDescription)
-        XCTAssertTrue(summary.label.contains("Moving time:"), app.debugDescription)
+        XCTAssertTrue(summary.label.contains("Elapsed time"), app.debugDescription)
+        XCTAssertTrue(summary.label.contains("Moving time"), app.debugDescription)
+        XCTAssertFalse((summary.value as? String ?? "").isEmpty, app.debugDescription)
         XCTAssertFalse(summary.label.contains("Recording time"), app.debugDescription)
         let modePicker = app.descendants(matching: .any)["ride-map.mode-picker"].segmentedControls.firstMatch
         XCTAssertTrue(modePicker.waitForExistence(timeout: 5), app.debugDescription)
@@ -1230,8 +1231,9 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(mapScreen.waitForExistence(timeout: 8), app.debugDescription)
         let summary = app.descendants(matching: .any)["ride-map.summary"]
         XCTAssertTrue(summary.waitForExistence(timeout: 5), app.debugDescription)
-        XCTAssertTrue(summary.label.contains("Elapsed time:"), app.debugDescription)
-        XCTAssertTrue(summary.label.contains("Moving time:"), app.debugDescription)
+        XCTAssertTrue(summary.label.contains("Elapsed time"), app.debugDescription)
+        XCTAssertTrue(summary.label.contains("Moving time"), app.debugDescription)
+        XCTAssertFalse((summary.value as? String ?? "").isEmpty, app.debugDescription)
         XCTAssertFalse(summary.label.contains("Recording time"), app.debugDescription)
         let routeMap = app.descendants(matching: .any)["ride-map.map"]
         XCTAssertTrue(routeMap.waitForExistence(timeout: 8), app.debugDescription)
@@ -5927,7 +5929,9 @@ final class CutoutAppUITests: XCTestCase {
 
     private var launchEnvironment: [String: String] {
         var environment = fixture.launchEnvironment
-        if name.contains("HomeMapConfirmedIdle") || name.contains("PickerSurfaceHomeMapRoute") {
+        if name.contains("HomeMapConfirmedIdle") || name.contains("PickerSurfaceHomeMapRoute")
+            || name.contains("PickerSurfaceSavedHistory")
+        {
             environment["CUTOUT_UI_TEST_RIDE_DATABASE_ID"] = UUID().uuidString
         }
         return environment
