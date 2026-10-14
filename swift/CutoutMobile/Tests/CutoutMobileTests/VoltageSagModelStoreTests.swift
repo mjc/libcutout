@@ -82,7 +82,7 @@ final class VoltageSagModelStoreTests: XCTestCase {
         XCTAssertEqual(sag.deltaMillivolts, -1_250)
         XCTAssertEqual(estimateDetail, "estimating charge time · 0 samples")
         XCTAssertEqual(sag.detailReadback.voltage, "1.2")
-        XCTAssertEqual(sag.detailReadback.current, "10.0")
+        XCTAssertEqual(sag.detailReadback.current, "10.0 A out")
         XCTAssertEqual(sag.detailReadback.effectiveResistanceMilliohms, 125)
 
         XCTAssertEqual(TelemetrySnapshot().packVoltageDetail, .unavailable)

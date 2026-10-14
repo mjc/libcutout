@@ -3184,7 +3184,7 @@ final class CutoutSessionCoreTests: XCTestCase {
 
         XCTAssertEqual(
             snapshot.batteryReadback,
-            .reported(level: "72", current: "38.0")
+            .reported(level: "72", current: "38.0 A out")
         )
     }
 

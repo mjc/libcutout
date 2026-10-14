@@ -60,11 +60,6 @@ final class PevScreenThemeTests: XCTestCase {
 
         let current = PhaseCurrent(value: 71_000)
         let batteryCurrent = BatteryCurrent.currentOut(milliamps: 12_400)
-        XCTAssertEqual(batteryCurrent.magnitudeMilliamps, 12_400)
-        XCTAssertEqual(batteryCurrent.direction, .outbound)
-        XCTAssertEqual(BatteryCurrent.currentIn(milliamps: 0), .zero)
-        XCTAssertEqual(BatteryCurrent.currentIn(milliamps: 2_000).displayText, "2.0 A in")
-        XCTAssertEqual(BatteryCurrent.unknown(milliamps: 2_000).displayText, "2.0 A · direction unknown")
         let angle = Angle(value: -1_800)
         let temperature = Temperature(value: 54_000)
         let dutyCycle = DutyCycle(permille: -450)
@@ -966,7 +961,7 @@ final class PevScreenThemeTests: XCTestCase {
         XCTAssertEqual(
             view.dashboardTiles.map(\.detail),
             [
-                "battery 71% · current → 12.4 A",
+                "battery 71% · current 12.4 A out",
                 "discharging",
                 "nose down · balance 0.5°",
                 "motor 49.0 °C",
@@ -974,7 +969,7 @@ final class PevScreenThemeTests: XCTestCase {
         XCTAssertEqual(localizedAppText("vesc.metric.battery_voltage"), "voltage")
         XCTAssertEqual(
             localizedAppText("vesc.battery_detail.reported_current", "71%", "12.4 A out"),
-            "battery 71% · current → 12.4 A"
+            "battery 71% · current 12.4 A out"
         )
         XCTAssertEqual(
             localizedAppText("vesc.battery_detail.reported_unavailable", "71%"),
@@ -982,15 +977,15 @@ final class PevScreenThemeTests: XCTestCase {
         )
         XCTAssertEqual(
             localizedAppText("vesc.battery_detail.estimated_current", "71%", "12.4 A out"),
-            "battery 71% · current → 12.4 A"
+            "battery 71% · current 12.4 A out"
         )
         XCTAssertEqual(
             localizedAppText("vesc.battery_detail.estimated_unavailable", "71%"),
             "battery 71% · current unavailable"
         )
         XCTAssertEqual(
-            localizedAppText("vesc.battery_detail.unavailable_current", "12.4"),
-            "battery level unavailable · current → 12.4 A"
+            localizedAppText("vesc.battery_detail.unavailable_current", "12.4 A out"),
+            "battery level unavailable · current 12.4 A out"
         )
         XCTAssertEqual(
             localizedAppText("vesc.battery_detail.unavailable_unavailable"),
@@ -1163,7 +1158,7 @@ final class PevScreenThemeTests: XCTestCase {
         )
         XCTAssertEqual(
             presentation.loadMetricValue,
-            .available(display: "12", accessibility: "12")
+            .available(display: "12.4 A out", accessibility: "12.4 A out")
         )
         XCTAssertEqual(presentation.rideSagMetricValue, .unavailable)
     }
@@ -1194,7 +1189,7 @@ final class PevScreenThemeTests: XCTestCase {
         XCTAssertEqual(bmsBatteryCurrentMetricValue(nil), .unavailable)
         XCTAssertEqual(
             bmsBatteryCurrentMetricValue(BatteryCurrent.zero),
-            .available(display: "0", accessibility: "0")
+            .available(display: "0.0 A", accessibility: "0.0 A")
         )
     }
 

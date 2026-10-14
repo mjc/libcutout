@@ -7,9 +7,9 @@ final class BmsSnapshotContractTests: XCTestCase {
     func testBatteryCurrentPreservesUnsignedMagnitudeAndExplicitDirection() {
         let cases: [(BatteryCurrent, UInt32, String)] = [
             (.currentIn(milliamps: 12_400), 12_400, "12.4 A in"),
-            (.currentOut(milliamps: 38_000), 38_000, "38 A out"),
-            (.unknown(milliamps: 2_000), 2_000, "2 A · direction unknown"),
-            (.zero, 0, "0 A"),
+            (.currentOut(milliamps: 38_000), 38_000, "38.0 A out"),
+            (.unknown(milliamps: 2_000), 2_000, "2.0 A · direction unknown"),
+            (.zero, 0, "0.0 A"),
         ]
         for (current, magnitude, displayText) in cases {
             XCTAssertEqual(current.magnitudeMilliamps, magnitude)
@@ -248,7 +248,7 @@ final class BmsSnapshotContractTests: XCTestCase {
         )
         XCTAssertEqual(
             bmsBatteryCurrentMetricValue(BatteryCurrent.zero),
-            .available(display: "0", accessibility: "0")
+            .available(display: "0.0 A", accessibility: "0.0 A")
         )
     }
 
