@@ -1,7 +1,7 @@
 use super::{MapPointId, SpatialRowId, StorageError};
 use rusqlite::{Connection, OptionalExtension, params};
 
-pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 44;
+pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 45;
 const APPLICATION_ID: i64 = 0x4355_544f;
 
 fn schema_pragmas(version: i64) -> String {
@@ -66,7 +66,8 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         40 => migrate_v40_to_current(connection)?,
         41 => migrate_v41_to_v42(connection)?,
         42 => migrate_v42_to_current(connection)?,
-        43 => migrate_v43_to_current(connection)?,
+        43 => migrate_v43_to_v44(connection)?,
+        44 => migrate_v44_to_current(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -92,7 +93,10 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
             migrate_v42_to_current(connection)?;
         }
         if connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))? == 43 {
-            migrate_v43_to_current(connection)?;
+            migrate_v43_to_v44(connection)?;
+        }
+        if connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))? == 44 {
+            migrate_v44_to_current(connection)?;
         }
     }
     Ok(())
@@ -411,6 +415,7 @@ pub(crate) fn create_current_schema(connection: &Connection) -> Result<(), Stora
     connection.execute_batch(super::capture_history::HISTORY_INDEX)?;
     connection.execute_batch(super::recorded_capture::SCHEMA)?;
     connection.execute_batch(super::charging::SCHEMA)?;
+    ensure_charging_sync_schema(connection)?;
     Ok(())
 }
 
@@ -1631,7 +1636,7 @@ fn migrate_v42_to_current(connection: &mut Connection) -> Result<(), StorageErro
     Ok(())
 }
 
-fn migrate_v43_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+fn migrate_v43_to_v44(connection: &mut Connection) -> Result<(), StorageError> {
     let transaction = connection.transaction()?;
     for (column, declaration) in [
         (
@@ -1665,8 +1670,48 @@ fn migrate_v43_to_current(connection: &mut Connection) -> Result<(), StorageErro
             ))?;
         }
     }
+    transaction.execute_batch(&schema_pragmas(44))?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn migrate_v44_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction()?;
+    ensure_charging_sync_schema(&transaction)?;
     transaction.execute_batch(&current_schema_pragmas())?;
     transaction.commit()?;
+    Ok(())
+}
+
+fn ensure_charging_sync_schema(connection: &Connection) -> Result<(), StorageError> {
+    if !table_has_column(connection, "charging_outbox", "blocked_kind")? {
+        connection.execute_batch(
+            "ALTER TABLE charging_outbox ADD COLUMN blocked_kind TEXT
+             CHECK(blocked_kind IS NULL OR blocked_kind IN ('conflict','invalid'));",
+        )?;
+    }
+    connection.execute_batch(
+        "CREATE TABLE IF NOT EXISTS charging_sync_state (
+            singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+            cursor INTEGER NOT NULL CHECK(cursor>=0),
+            last_refreshed_at_ms INTEGER CHECK(last_refreshed_at_ms IS NULL OR last_refreshed_at_ms>=0)
+         );
+         CREATE TABLE IF NOT EXISTS charging_sync_conflicts (
+            operation_id TEXT PRIMARY KEY NOT NULL REFERENCES charging_outbox(operation_id) ON DELETE CASCADE,
+            local_draft TEXT CHECK(local_draft IS NULL OR (json_valid(local_draft) AND length(CAST(local_draft AS BLOB)) <= 65536)),
+            remote_entry TEXT CHECK(remote_entry IS NULL OR (json_valid(remote_entry) AND length(CAST(remote_entry AS BLOB)) <= 65536))
+         );",
+    )?;
+    if !table_has_column(connection, "charging_sync_state", "last_refreshed_at_ms")? {
+        connection.execute_batch(
+            "ALTER TABLE charging_sync_state ADD COLUMN last_refreshed_at_ms
+             INTEGER CHECK(last_refreshed_at_ms IS NULL OR last_refreshed_at_ms>=0);",
+        )?;
+    }
+    connection.execute(
+        "INSERT OR IGNORE INTO charging_sync_state(singleton,cursor,last_refreshed_at_ms) VALUES (1,0,NULL)",
+        [],
+    )?;
     Ok(())
 }
 
@@ -1825,6 +1870,8 @@ pub(super) fn verify_current_schema(connection: &Connection) -> Result<(), Stora
         "map_points",
         "charging_spots",
         "charging_outbox",
+        "charging_sync_state",
+        "charging_sync_conflicts",
         "map_point_spatial_keys",
         "map_points_rtree",
         "ride_music_history",
@@ -1849,6 +1896,11 @@ pub(super) fn verify_current_schema(connection: &Connection) -> Result<(), Stora
         || !table_has_column(connection, "live_capture_sessions", "dropped_messages")?
         || !table_has_column(connection, "live_capture_events", "payload_encoding")?
         || !table_has_column(connection, "live_capture_events", "payload_original_bytes")?
+    {
+        return Err(StorageError::InvalidDatabaseIdentity);
+    }
+    if !table_has_column(connection, "charging_outbox", "blocked_kind")?
+        || !table_has_column(connection, "charging_sync_state", "last_refreshed_at_ms")?
     {
         return Err(StorageError::InvalidDatabaseIdentity);
     }
@@ -3125,13 +3177,13 @@ mod tests {
             )
             .unwrap();
 
-        migrate_v43_to_current(&mut connection).unwrap();
+        migrate_v43_to_v44(&mut connection).unwrap();
 
         assert_eq!(
             connection
                 .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
                 .unwrap(),
-            CURRENT_SCHEMA_VERSION
+            44
         );
         assert_eq!(
             connection
@@ -3168,7 +3220,7 @@ mod tests {
             )
             .unwrap();
 
-        assert!(migrate_v43_to_current(&mut connection).is_err());
+        assert!(migrate_v43_to_v44(&mut connection).is_err());
 
         assert!(!table_has_column(&connection, "rides", "elapsed_time_ms").unwrap());
         assert_eq!(

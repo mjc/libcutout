@@ -1,5 +1,6 @@
 import CutoutMobileFFI
 import Foundation
+import Synchronization
 import XCTest
 
 @testable import CutoutApp
@@ -33,6 +34,45 @@ final class RideSessionMarkerNonblockingTests: XCTestCase {
         XCTAssertFalse(fixture.unlocked.withLock { $0 }, "Marker clear admission must not wait for durable SQL")
         fixture.release.signal()
         await store.waitForPersistence()
+        try store.clear()
+        await store.waitForPersistence()
+        try await fixture.finish()
+    }
+
+    @MainActor
+    func testMarkerLoadAwaitsSQLiteWithoutBlockingItsCaller() async throws {
+        let fixture = try await SQLiteRideStall.make()
+        defer { fixture.release.signal() }
+        let store = RideSessionMarkerStore(database: fixture.database)
+        let expected = Data([1, 2, 3])
+        store.save(expected)
+        await store.waitForPersistence()
+        try await fixture.holdWrite()
+
+        let completed = Mutex(false)
+        let loadStarted = expectation(description: "Marker load started")
+        let load = Task {
+            loadStarted.fulfill()
+            defer { completed.withLock { $0 = true } }
+            return try await store.load()
+        }
+        await fulfillment(of: [loadStarted], timeout: 1)
+        let callerProgressed = Mutex(false)
+        let callerProgress = expectation(description: "The caller progresses while SQLite remains locked")
+        Task { @MainActor in
+            XCTAssertFalse(fixture.unlocked.withLock { $0 })
+            XCTAssertFalse(completed.withLock { $0 }, "The marker read must remain suspended behind SQLite work")
+            callerProgressed.withLock { $0 = true }
+            callerProgress.fulfill()
+        }
+        await fulfillment(of: [callerProgress], timeout: 0.25)
+        XCTAssertTrue(callerProgressed.withLock { $0 })
+        XCTAssertFalse(fixture.unlocked.withLock { $0 })
+        XCTAssertFalse(completed.withLock { $0 }, "The marker read must wait behind SQLite work")
+
+        fixture.release.signal()
+        let loaded = try await load.value
+        XCTAssertEqual(loaded, expected)
         try store.clear()
         await store.waitForPersistence()
         try await fixture.finish()

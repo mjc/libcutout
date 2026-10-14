@@ -1,7 +1,7 @@
 use super::{
-    MobileChargingError, MobileChargingFilterDto, MobileChargingInputDto, MobileChargingPriceDto,
-    MobileChargingSpotDto, MobileChargingSupplyDto, MobileChargingTermsDto, MobileChargingVenueDto,
-    MobileChargingWriteReceiptDto,
+    MobileChargingConnectorDto, MobileChargingError, MobileChargingFilterDto,
+    MobileChargingInputDto, MobileChargingPriceDto, MobileChargingSpotDto, MobileChargingSupplyDto,
+    MobileChargingTermsDto, MobileChargingVenueDto, MobileChargingWriteReceiptDto,
 };
 use crate::{
     MobileMapCoordinateDto, mobile_map_coordinate, mobile_map_coordinate_dto, persistence,
@@ -137,7 +137,7 @@ fn invalid_metadata(_: impl std::fmt::Debug) -> MobileChargingError {
     MobileChargingError::InvalidMetadata
 }
 
-fn input_dto(value: &ride_maps::NewChargingSpot) -> MobileChargingInputDto {
+pub(super) fn input_dto(value: &ride_maps::NewChargingSpot) -> MobileChargingInputDto {
     let details = value.details();
     MobileChargingInputDto {
         coordinate: mobile_map_coordinate_dto(value.coordinate()),
@@ -187,6 +187,8 @@ pub(super) fn spot_dto(value: &persistence::StoredChargingSpot) -> MobileChargin
         vote_revision: value.vote_revision.get(),
         votes_up: value.votes_up,
         votes_down: value.votes_down,
+        pending_operations: value.pending_operations,
+        pending_vote: value.pending_vote,
     }
 }
 pub(super) fn receipt_dto(
@@ -206,7 +208,65 @@ pub(super) fn filter(
         cost: value.cost.map(Into::into),
         connector: value.connector.map(TryInto::try_into).transpose()?,
         voltage,
+        venue: value.venue.map(Into::into),
     })
+}
+
+/// Applies the domain vote toggle for mobile selection controls.
+#[must_use]
+#[uniffi::export]
+pub fn mobile_charging_vote_selection(
+    current: Option<super::MobileChargingVoteDto>,
+    selected: super::MobileChargingVoteDto,
+) -> Option<super::MobileChargingVoteDto> {
+    let selected: ride_maps::ChargingVote = selected.into();
+    let current = current.map(Into::into);
+    selected.select(current).map(Into::into)
+}
+
+/// Suggests a household outlet supply, or an Unknown supply for an EV station.
+/// Malformed and unsupported country codes have no country context and return Unknown.
+#[must_use]
+#[uniffi::export]
+pub fn mobile_charging_power_suggestion(
+    country_code: Option<String>,
+    ev_station: bool,
+) -> MobileChargingSupplyDto {
+    let country = country_code.and_then(|code| ride_maps::ChargingCountry::new(&code).ok());
+    let kind = if ev_station {
+        ride_maps::ChargingSupplyKind::EvStation
+    } else {
+        ride_maps::ChargingSupplyKind::Outlet
+    };
+    let draft = ride_maps::ChargingPowerDraft::new(country, kind);
+    MobileChargingSupplyDto {
+        voltage_volts: draft
+            .selection()
+            .voltage()
+            .map(ride_maps::SupplyVoltage::as_u16),
+        connectors: draft
+            .selection()
+            .connectors()
+            .iter()
+            .cloned()
+            .map(Into::into)
+            .collect(),
+    }
+}
+
+/// Returns canonical household outlet choices, with the editable default first.
+/// Malformed and unsupported country codes return the Unknown choice.
+#[must_use]
+#[uniffi::export]
+pub fn mobile_charging_outlet_choices(
+    country_code: Option<String>,
+) -> Vec<MobileChargingConnectorDto> {
+    let country = country_code.and_then(|code| ride_maps::ChargingCountry::new(&code).ok());
+    ride_maps::charging_outlet_choices(country.as_ref())
+        .iter()
+        .cloned()
+        .map(Into::into)
+        .collect()
 }
 
 fn charging_voltage(
@@ -222,6 +282,60 @@ fn charging_voltage(
 mod tests {
     use super::*;
     use crate::{MobileChargingConnectorDto, MobileChargingCostDto, MobileChargingPriceBasisDto};
+
+    #[test]
+    fn power_suggestions_follow_country_and_supply_kind() {
+        assert_eq!(
+            mobile_charging_power_suggestion(Some("US".into()), false),
+            MobileChargingSupplyDto {
+                voltage_volts: Some(120),
+                connectors: vec![MobileChargingConnectorDto::Nema5_15],
+            }
+        );
+        assert_eq!(
+            mobile_charging_power_suggestion(Some("gb".into()), false),
+            MobileChargingSupplyDto {
+                voltage_volts: None,
+                connectors: vec![MobileChargingConnectorDto::TypeG],
+            }
+        );
+        for country_code in [Some("ZZ".to_owned()), Some("USA".to_owned()), None] {
+            assert_eq!(
+                mobile_charging_power_suggestion(country_code, false),
+                MobileChargingSupplyDto {
+                    voltage_volts: None,
+                    connectors: vec![MobileChargingConnectorDto::Unknown],
+                }
+            );
+        }
+        assert_eq!(
+            mobile_charging_power_suggestion(Some("US".into()), true),
+            MobileChargingSupplyDto {
+                voltage_volts: None,
+                connectors: vec![MobileChargingConnectorDto::Unknown],
+            }
+        );
+    }
+
+    #[test]
+    fn outlet_choices_use_the_canonical_country_catalogue() {
+        assert_eq!(
+            mobile_charging_outlet_choices(Some("us".into())),
+            vec![
+                MobileChargingConnectorDto::Nema5_15,
+                MobileChargingConnectorDto::TypeA,
+            ]
+        );
+        assert_eq!(
+            mobile_charging_outlet_choices(Some("GB".into())),
+            vec![MobileChargingConnectorDto::TypeG]
+        );
+        assert_eq!(
+            mobile_charging_outlet_choices(Some("not-a-country".into())),
+            vec![MobileChargingConnectorDto::Unknown]
+        );
+    }
+
     fn fields() -> MobileChargingInputDto {
         MobileChargingInputDto {
             coordinate: MobileMapCoordinateDto {
@@ -274,6 +388,30 @@ mod tests {
         assert_eq!(input_dto(&value), full);
     }
     #[test]
+    fn charging_spot_dto_preserves_outbox_pending_state() {
+        let value = persistence::StoredChargingSpot {
+            point_id: persistence::MapPointId::new(),
+            input: None,
+            owned: true,
+            status: persistence::ChargingStatus::Queued,
+            local_revision: persistence::ChargingRevision::new(1).unwrap(),
+            remote_id: None,
+            remote_revision: persistence::ChargingRevision::new(0).unwrap(),
+            change_sequence: persistence::ChargingRevision::new(0).unwrap(),
+            verified_at_ms: None,
+            vote: Some(ride_maps::ChargingVote::Up),
+            vote_revision: persistence::ChargingRevision::new(0).unwrap(),
+            votes_up: 0,
+            votes_down: 0,
+            pending_operations: 2,
+            pending_vote: true,
+        };
+        let dto = spot_dto(&value);
+        assert_eq!(dto.pending_operations, 2);
+        assert!(dto.pending_vote);
+    }
+
+    #[test]
     fn charging_boundary_classifies_fields_before_any_write() {
         let mut value = fields();
         value.access_note = " \n ".into();
@@ -315,5 +453,44 @@ mod tests {
             storage_error(persistence::StorageError::InvalidDatabaseIdentity),
             MobileChargingError::StorageFailure
         );
+    }
+
+    #[test]
+    fn venue_filter_converts_and_vote_selection_toggles() {
+        let converted = filter(MobileChargingFilterDto {
+            venue: Some(MobileChargingVenueDto::Cafe),
+            ..MobileChargingFilterDto::default()
+        })
+        .unwrap();
+        assert_eq!(converted.venue, Some(ride_maps::ChargingVenue::Cafe));
+
+        assert_eq!(
+            mobile_charging_vote_selection(None, crate::MobileChargingVoteDto::Up),
+            Some(crate::MobileChargingVoteDto::Up)
+        );
+        assert_eq!(
+            mobile_charging_vote_selection(
+                Some(crate::MobileChargingVoteDto::Up),
+                crate::MobileChargingVoteDto::Up,
+            ),
+            None
+        );
+        assert_eq!(
+            mobile_charging_vote_selection(
+                Some(crate::MobileChargingVoteDto::Up),
+                crate::MobileChargingVoteDto::Down,
+            ),
+            Some(crate::MobileChargingVoteDto::Down)
+        );
+    }
+
+    #[test]
+    fn charging_venue_filter_converts_at_the_boundary() {
+        let selection = filter(MobileChargingFilterDto {
+            venue: Some(MobileChargingVenueDto::Cafe),
+            ..MobileChargingFilterDto::default()
+        })
+        .unwrap();
+        assert_eq!(selection.venue, Some(ride_maps::ChargingVenue::Cafe));
     }
 }

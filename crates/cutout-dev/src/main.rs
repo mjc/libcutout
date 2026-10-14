@@ -696,7 +696,8 @@ fn verify_ios_metadata(metadata: &Value) -> Result<()> {
         );
     }
     ensure!(
-        metadata["UIBackgroundModes"] == serde_json::json!(["bluetooth-central", "location"]),
+        metadata["UIBackgroundModes"]
+            == serde_json::json!(["audio", "bluetooth-central", "location"]),
         "unexpected background modes"
     );
     Ok(())
@@ -1592,7 +1593,7 @@ mod tests {
             "CFBundleDisplayName": "CutOut",
             "NSBluetoothAlwaysUsageDescription": "CutOut uses Bluetooth to show wheel data and record active rides while the screen is locked.",
             "NSLocationWhenInUseUsageDescription": "CutOut uses your location to record your ride route. An active ride can continue recording when the screen is locked.",
-            "UIBackgroundModes": ["bluetooth-central", "location"],
+            "UIBackgroundModes": ["audio", "bluetooth-central", "location"],
             "UIDeviceFamily": [1],
             "UISupportedInterfaceOrientations": [
                 "UIInterfaceOrientationPortrait",
@@ -1616,6 +1617,15 @@ mod tests {
             changed[key] = serde_json::json!("unused");
             assert!(verify_ios_metadata(&changed).is_err(), "unexpected {key}");
         }
+        let mut unexpected_mode = valid.clone();
+        unexpected_mode["UIBackgroundModes"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!("voip"));
+        assert!(verify_ios_metadata(&unexpected_mode).is_err());
+        let mut missing_audio = valid.clone();
+        missing_audio["UIBackgroundModes"] = serde_json::json!(["bluetooth-central", "location"]);
+        assert!(verify_ios_metadata(&missing_audio).is_err());
         assert_eq!(
             parse_cli(&["ios".into(), "verify-app".into(), "Cutout App.app".into()]).unwrap(),
             DevCommand::IosVerifyApp(PathBuf::from("Cutout App.app"))

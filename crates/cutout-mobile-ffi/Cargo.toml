@@ -25,12 +25,17 @@ libcutout-persistence = { path = "../libcutout-persistence", version = "0.1.0" }
 cutout-protocols = { path = "../cutout-protocols", version = "0.1.0" }
 serde.workspace = true
 serde_json.workspace = true
+reqwest = { workspace = true, features = ["rustls-tls-webpki-roots"] }
 thiserror.workspace = true
 tokio.workspace = true
 uniffi = { workspace = true, features = ["tokio"] }
 uuid.workspace = true
 
 [dev-dependencies]
+futures-util.workspace = true
 hex-literal.workspace = true
+axum.workspace = true
+cutout-server = { path = "../cutout-server", version = "0.1.0" }
 rusqlite.workspace = true
 serde_json.workspace = true
+tokio = { workspace = true, features = ["net"] }

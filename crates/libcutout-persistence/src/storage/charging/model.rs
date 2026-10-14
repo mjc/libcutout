@@ -1,6 +1,6 @@
 use super::super::{MapPointCursor, MapPointId, StorageError};
 use cutout_ride_maps::{
-    ChargingConnector, ChargingCost, ChargingSpotId, ChargingVote, NewChargingSpot,
+    ChargingConnector, ChargingCost, ChargingSpotId, ChargingVenue, ChargingVote, NewChargingSpot,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -59,6 +59,86 @@ impl ChargingOperationId {
     pub const fn uuid(self) -> Uuid {
         self.0
     }
+}
+
+/// Server change-feed position retained by this database owner.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(try_from = "u64", into = "u64")]
+pub struct ChargingChangeCursor(u64);
+impl ChargingChangeCursor {
+    /// The initial position before the first server change.
+    pub const ZERO: Self = Self(0);
+    /// Checks that SQLite can retain the cursor exactly.
+    /// # Errors
+    /// Rejects values exceeding SQLite's signed integer range.
+    pub fn new(value: u64) -> Result<Self, StorageError> {
+        i64::try_from(value).map_err(|_| StorageError::ChargingInvalidInput)?;
+        Ok(Self(value))
+    }
+    /// Returns the exact cursor value.
+    #[must_use]
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+}
+impl TryFrom<u64> for ChargingChangeCursor {
+    type Error = StorageError;
+    fn try_from(value: u64) -> Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
+impl From<ChargingChangeCursor> for u64 {
+    fn from(value: ChargingChangeCursor) -> Self {
+        value.0
+    }
+}
+
+/// Durable response to one atomic change-feed page.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ChargingPageApplyResult {
+    /// Cursor committed in the same transaction as the page.
+    pub cursor: ChargingChangeCursor,
+    /// Number of entries applied or already accounted for.
+    pub applied_entries: u32,
+    /// Number of pending operations durably marked as conflicted.
+    pub blocked_operations: u32,
+}
+
+/// Why the server stopped accepting a frozen outbox operation.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub enum ChargingOperationBlockKind {
+    /// Its frozen server revision is stale or the server reports a conflict.
+    Conflict,
+    /// The server rejected the retained operation as invalid.
+    Invalid,
+}
+
+/// Explicit user choice for a durably blocked operation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ChargingOperationResolution {
+    /// Retry with the same frozen target and operation identity.
+    Retry,
+    /// Keep the local action and draft, freezing a new target on the next read.
+    RebaseKeepingLocal,
+    /// Accept the retained server state and remove this local operation.
+    AcceptServer,
+}
+
+/// A blocked operation and both sides of its retained conflict.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ChargingBlockedOperation {
+    /// Original idempotent request and local action.
+    pub operation: ChargingOperation,
+    /// Classified server refusal.
+    pub kind: ChargingOperationBlockKind,
+    /// Current checked local revision required by resolution.
+    pub local_revision: ChargingRevision,
+    /// Locally retained draft fields, if the action carries public fields.
+    pub local_draft: Option<NewChargingSpot>,
+    /// Validated server version retained for review and explicit acceptance.
+    pub remote_entry: Option<ChargingDirectoryEntry>,
+    /// Whether rebasing this action can safely target the retained server state.
+    pub can_rebase: bool,
 }
 
 /// Local queue state or an acknowledged server state; legacy points have no charging row.
@@ -133,6 +213,10 @@ pub struct StoredChargingSpot {
     pub votes_up: u64,
     /// Last server-confirmed negative count.
     pub votes_down: u64,
+    /// Operations for this point that remain in the durable outbox.
+    pub pending_operations: u32,
+    /// Whether a vote operation for this point remains unacknowledged.
+    pub pending_vote: bool,
 }
 
 /// Result returned only after local data and its outbox operation commit together.
@@ -144,6 +228,23 @@ pub struct ChargingWriteReceipt {
     pub revision: ChargingRevision,
     /// Durable community operation identity.
     pub operation_id: ChargingOperationId,
+}
+
+/// Vote-only server metadata acknowledged without replacing the cached spot body.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ChargingVoteReceipt {
+    /// Server revision applied by this operation.
+    pub applied_revision: ChargingRevision,
+    /// Contributor vote revision returned by the server.
+    pub vote_revision: ChargingRevision,
+    /// Authoritative contributor vote after applying the operation.
+    pub vote: Option<ChargingVote>,
+    /// Confirmed positive vote count.
+    pub votes_up: u64,
+    /// Confirmed negative vote count.
+    pub votes_down: u64,
+    /// Server change sequence accompanying the receipt; it does not advance body state.
+    pub change_sequence: ChargingChangeCursor,
 }
 
 /// Validated public directory data received by the future sync client.
@@ -242,6 +343,8 @@ pub struct ChargingFilter {
     pub connector: Option<ChargingConnector>,
     /// Confirmed supply voltage only.
     pub voltage: Option<cutout_ride_maps::SupplyVoltage>,
+    /// Venue category, when selected.
+    pub venue: Option<ChargingVenue>,
 }
 
 /// Bounded page using the existing stable UUID cursor.
@@ -254,10 +357,24 @@ pub struct ChargingPage {
 }
 
 impl ChargingAction {
+    pub(super) const fn is_withdraw(&self) -> bool {
+        match self {
+            Self::Withdraw => true,
+            Self::Create(_) | Self::Edit(_) | Self::Verify | Self::Vote(_) => false,
+        }
+    }
+
     pub(super) const fn is_vote(&self) -> bool {
         match self {
             Self::Vote(_) => true,
             Self::Create(_) | Self::Edit(_) | Self::Withdraw | Self::Verify => false,
+        }
+    }
+
+    pub(super) const fn carries_fields(&self) -> bool {
+        match self {
+            Self::Create(_) | Self::Edit(_) => true,
+            Self::Withdraw | Self::Verify | Self::Vote(_) => false,
         }
     }
 }

@@ -8506,6 +8506,7 @@ pub struct RideDatabaseHandle {
     inner: persistence::RideDatabase,
     pending_bms_writes: Mutex<PendingBmsVoltageWrites>,
     marker_writer: persistence::RideSessionMarkerWriter,
+    charging_sync_lock: tokio::sync::Mutex<()>,
 }
 
 /// Durable status of the latest Rust-owned marker persistence intent.
@@ -8651,6 +8652,7 @@ pub fn open_ride_database(
             Arc::new(RideDatabaseHandle {
                 marker_writer: persistence::RideSessionMarkerWriter::new(inner.clone()),
                 inner,
+                charging_sync_lock: tokio::sync::Mutex::new(()),
                 pending_bms_writes: Mutex::new(PendingBmsVoltageWrites {
                     next_request_id: 1,
                     writes: VecDeque::new(),
@@ -9596,17 +9598,6 @@ impl RideDatabaseHandle {
             .map_err(map_ride_database_error)
     }
 
-    /// Loads opaque Rust-owned ride-session marker bytes.
-    ///
-    /// # Errors
-    ///
-    /// Returns a typed database error when the worker cannot read the marker.
-    pub fn ride_session_marker(&self) -> Result<Option<Vec<u8>>, MobileRideDatabaseError> {
-        self.inner
-            .ride_session_marker()
-            .map_err(map_ride_database_error)
-    }
-
     /// Admits marker replacement or removal without waiting for SQLite or queue capacity.
     pub fn request_ride_session_marker(
         &self,
@@ -9975,6 +9966,25 @@ impl RideDatabaseHandle {
             .clone()
             .shutdown()
             .map_err(map_ride_database_error)
+    }
+}
+
+#[uniffi::export(async_runtime = "tokio")]
+impl RideDatabaseHandle {
+    /// Loads opaque Rust-owned ride-session marker bytes without blocking the Swift executor.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the worker cannot read the marker.
+    pub async fn ride_session_marker(&self) -> Result<Option<Vec<u8>>, MobileRideDatabaseError> {
+        let database = self.inner.clone();
+        tokio::task::spawn_blocking(move || {
+            database
+                .ride_session_marker()
+                .map_err(map_ride_database_error)
+        })
+        .await
+        .map_err(|_| MobileRideDatabaseError::WorkerStopped)?
     }
 }
 

@@ -55,7 +55,7 @@ pub(super) fn detail(
     connection: &Connection,
     id: MapPointId,
 ) -> Result<Option<StoredChargingSpot>, StorageError> {
-    let mut statement = connection.prepare("SELECT input,owned,status,local_revision,remote_id,remote_revision,change_sequence,verified_at_ms,vote,vote_revision,votes_up,votes_down FROM charging_spots WHERE point_id=?1")?;
+    let mut statement = connection.prepare("SELECT input,owned,status,local_revision,remote_id,remote_revision,change_sequence,verified_at_ms,vote,vote_revision,votes_up,votes_down,(SELECT COUNT(*) FROM charging_outbox o WHERE o.point_id=charging_spots.point_id),(SELECT EXISTS(SELECT 1 FROM charging_outbox o WHERE o.point_id=charging_spots.point_id AND json_type(o.action,'$.Vote') IS NOT NULL)) FROM charging_spots WHERE point_id=?1")?;
     let mut rows = statement.query([id.uuid().as_bytes()])?;
     let Some(row) = rows.next()? else {
         return Ok(None);
@@ -92,6 +92,8 @@ fn decode_spot(
         vote_revision: ChargingRevision::new(row.get(9)?)?,
         votes_up: row.get(10)?,
         votes_down: row.get(11)?,
+        pending_operations: row.get(12)?,
+        pending_vote: row.get(13)?,
     })
 }
 pub(super) fn find_remote(
@@ -131,41 +133,68 @@ pub(super) fn apply_entry(
     update: EntryUpdate,
 ) -> Result<(), StorageError> {
     let entry = checked.as_entry();
-    let body = update.includes_body();
-    if body {
-        if let Some(input) = &entry.input {
-            update_spatial_index(connection, id, input, entry.status)?;
-        } else {
-            remove_spatial_index(connection, id)?;
+    match update {
+        EntryUpdate::ReplaceBody => {
+            if let Some(input) = &entry.input {
+                update_spatial_index(connection, id, input, entry.status)?;
+            } else {
+                remove_spatial_index(connection, id)?;
+            }
+            connection.execute(
+                "UPDATE charging_spots SET input=?2,status=?3,vote=?4 WHERE point_id=?1",
+                params![
+                    id.uuid().as_bytes(),
+                    entry.input.as_ref().map(input_json).transpose()?,
+                    entry.status.as_str(),
+                    entry.vote.map(|value| match value {
+                        ChargingVote::Up => "up",
+                        ChargingVote::Down => "down",
+                    })
+                ],
+            )?;
         }
-        connection.execute(
-            "UPDATE charging_spots SET input=?2,status=?3,vote=?4 WHERE point_id=?1",
-            params![
-                id.uuid().as_bytes(),
-                entry.input.as_ref().map(input_json).transpose()?,
-                entry.status.as_str(),
-                entry.vote.map(|value| match value {
-                    ChargingVote::Up => "up",
-                    ChargingVote::Down => "down",
-                })
-            ],
-        )?;
+        EntryUpdate::PreserveInput => {
+            let input: Option<String> = connection.query_row(
+                "SELECT input FROM charging_spots WHERE point_id=?1",
+                [id.uuid().as_bytes()],
+                |row| row.get(0),
+            )?;
+            if let Some(input) = input.map(|value| decode::<Input>(&value)).transpose()? {
+                let input = input.validated()?;
+                update_spatial_index(connection, id, &input, entry.status)?;
+            } else {
+                remove_spatial_index(connection, id)?;
+            }
+            connection.execute(
+                "UPDATE charging_spots SET status=?2,vote=?3 WHERE point_id=?1",
+                params![
+                    id.uuid().as_bytes(),
+                    entry.status.as_str(),
+                    entry.vote.map(|value| match value {
+                        ChargingVote::Up => "up",
+                        ChargingVote::Down => "down",
+                    })
+                ],
+            )?;
+        }
+        EntryUpdate::PreserveLocal => {}
     }
-    connection.execute("UPDATE charging_spots SET remote_id=?2,remote_revision=?3,change_sequence=?4,verified_at_ms=CASE WHEN ?9 THEN ?5 ELSE verified_at_ms END,vote_revision=?6,votes_up=?7,votes_down=?8 WHERE point_id=?1", params![id.uuid().as_bytes(), entry.id.as_uuid().to_string(), entry.revision.get(), entry.change_sequence.get(), entry.verified_at_ms, entry.vote_revision.get(), entry.votes_up, entry.votes_down, body])?;
+    connection.execute("UPDATE charging_spots SET remote_id=?2,remote_revision=?3,change_sequence=?4,verified_at_ms=CASE WHEN ?9 THEN ?5 ELSE verified_at_ms END,vote_revision=?6,votes_up=?7,votes_down=?8 WHERE point_id=?1", params![id.uuid().as_bytes(), entry.id.as_uuid().to_string(), entry.revision.get(), entry.change_sequence.get(), entry.verified_at_ms, entry.vote_revision.get(), entry.votes_up, entry.votes_down, update.updates_verification()])?;
     Ok(())
 }
 
 /// Whether a server response may replace local fields and requested vote state.
 pub(super) enum EntryUpdate {
     ReplaceBody,
+    PreserveInput,
     PreserveLocal,
 }
 
 impl EntryUpdate {
-    fn includes_body(self) -> bool {
+    fn updates_verification(self) -> bool {
         match self {
             Self::ReplaceBody => true,
-            Self::PreserveLocal => false,
+            Self::PreserveInput | Self::PreserveLocal => false,
         }
     }
 }

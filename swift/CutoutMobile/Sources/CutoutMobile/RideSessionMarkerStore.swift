@@ -41,9 +41,7 @@ public struct RideSessionMarkerStore: @unchecked Sendable {
         } else {
             await writer.waitForPersistence()
         }
-        return try await Task.detached(priority: .userInitiated) {
-            try database.rideSessionMarker()
-        }.value
+        return try await database.rideSessionMarker()
     }
 
     /// Admits current desired bytes; Rust acknowledges them only after durable storage success.

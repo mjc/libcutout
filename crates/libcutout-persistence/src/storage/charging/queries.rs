@@ -17,9 +17,11 @@ const FILTERS: &str = "WHERE c.status IN ('queued','published') AND c.input IS N
 AND r.max_lat_e7 >= ?1 AND r.min_lat_e7 <= ?2
 AND ((?5=0 AND r.max_lon_e7 >= ?3 AND r.min_lon_e7 <= ?4) OR (?5=1 AND (r.max_lon_e7 >= ?3 OR r.min_lon_e7 <= ?4)))
 AND (?6 IS NULL OR json_extract(c.input,'$.cost')=?6)
-AND ((?7 IS NULL AND ?8 IS NULL) OR EXISTS (SELECT 1 FROM json_each(c.input,'$.supplies') s
+AND (?11 IS NULL OR json_quote(json_extract(c.input,'$.venue'))=?11)
+AND (((?7 IS NULL AND ?8 IS NULL) OR EXISTS (SELECT 1 FROM json_each(c.input,'$.supplies') s
  WHERE (?8 IS NULL OR json_extract(s.value,'$.voltage_volts')=?8)
- AND (?7 IS NULL OR EXISTS (SELECT 1 FROM json_each(s.value,'$.connectors') p WHERE json_quote(p.value)=?7 OR p.value=?7))))";
+ AND (?7 IS NULL OR EXISTS (SELECT 1 FROM json_each(s.value,'$.connectors') p WHERE json_quote(p.value)=?7 OR p.value=?7))))
+ OR (?12=1 AND ((?8 IS NULL AND NOT EXISTS (SELECT 1 FROM json_each(c.input,'$.supplies'))) OR EXISTS (SELECT 1 FROM json_each(c.input,'$.supplies') s WHERE (?8 IS NULL OR json_extract(s.value,'$.voltage_volts')=?8) AND json_array_length(s.value,'$.connectors')=0))))";
 pub(super) fn page(
     connection: &Connection,
     spatial: &mut SpatialSchemaState,
@@ -31,6 +33,11 @@ pub(super) fn page(
     ensure_spatial_schema(connection, spatial)?;
     let after = cursor.map(|value| value.id().uuid().as_bytes().to_vec());
     let connector = filter.connector.as_ref().map(encode).transpose()?;
+    let venue = filter.venue.map(|value| encode(&value)).transpose()?;
+    let unknown_connector = match filter.connector.as_ref() {
+        Some(cutout_ride_maps::ChargingConnector::Unknown) => true,
+        Some(_) | None => false,
+    };
     let query = format!(
         "SELECT c.point_id {CANDIDATES} {FILTERS}
         AND (?9 IS NULL OR c.point_id > ?9) ORDER BY c.point_id LIMIT ?10"
@@ -50,7 +57,9 @@ pub(super) fn page(
             connector,
             filter.voltage.map(cutout_ride_maps::SupplyVoltage::as_u16),
             after,
-            limit.get() + 1
+            limit.get() + 1,
+            venue,
+            unknown_connector
         ],
         |row| row.get::<_, Vec<u8>>(0),
     )?;
@@ -80,6 +89,11 @@ pub(super) fn nearby(
 ) -> Result<Vec<StoredChargingSpot>, StorageError> {
     ensure_spatial_schema(connection, spatial)?;
     let connector = filter.connector.as_ref().map(encode).transpose()?;
+    let venue = filter.venue.map(|value| encode(&value)).transpose()?;
+    let unknown_connector = match filter.connector.as_ref() {
+        Some(cutout_ride_maps::ChargingConnector::Unknown) => true,
+        Some(_) | None => false,
+    };
     let query = format!(
         "SELECT c.point_id, p.latitude_e7, p.longitude_e7 {CANDIDATES}
         JOIN map_points p ON p.id=c.point_id {FILTERS}"
@@ -97,6 +111,10 @@ pub(super) fn nearby(
         }),
         connector,
         filter.voltage.map(cutout_ride_maps::SupplyVoltage::as_u16),
+        Option::<Vec<u8>>::None,
+        0,
+        venue,
+        unknown_connector,
     ])?;
     nearest_candidates(&mut rows, origin, limit)?
         .into_iter()
