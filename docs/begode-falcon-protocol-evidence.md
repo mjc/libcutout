@@ -193,3 +193,61 @@ Outstanding evidence-driven work:
   test their readback contracts before requesting stationary write tests.
 - Complete iOS capture/probe-outcome and reconnect validation in LIBCU-480;
   these CLI captures do not close the iOS acceptance requirement.
+
+## Charging-state inference — LIBCU-948
+
+Begode charging state is Rust-owned and travels through the existing typed
+`charge_mode` reading. `Unknown` means observations are incomplete, stale or
+insufficient; it is distinct from a positive observation of not charging.
+Reported and inferred values retain their existing measurement provenance.
+
+The standard-Falcon fallback is enabled by **recognized placeholders**, not by
+missing BMS traffic. Both the known summary signature (zero current, zero first
+temperature, raw second temperature 5000, zero half-pack voltage) and an all-zero
+cell page must be observed. Invalid frames, partial marker evidence, absence and
+staleness do not enable it. These placeholder readings remain raw evidence and
+never replace live voltage/current or become healthy zero-volt cells.
+
+Usable BMS summary and plausible real cells are a separate source. The detector
+uses bank zero as a representative voltage source; it does not sum currents or
+combine different banks/half-pack voltages into a single trend. Other banks must
+not alternate the selected source or refresh its timestamps. When genuine BMS
+data replaces placeholders, prior fallback history is discarded.
+
+The initial bounded heuristic requires fresh stationary wheel speed and fresh
+selected electrical/BMS observations. It waits one minute after stationarity,
+then requires a net voltage rise of at least 200 mV over at least two minutes,
+with at least three material 50 mV rises separated by at least 20 seconds. A
+single rebound, a signed current sample, phase current, duplicated frames, or
+voltage noise does not meet that gate. Placeholder mode uses the already
+normalized Live A pack voltage; usable-BMS mode uses its actual pack voltage.
+
+Movement uses the shared connected-wheel threshold, currently 500 mm/s in
+either direction. It immediately rules out charging and clears the candidate.
+Explicit riding evidence also dominates a contradictory charging report.
+Evidence expires after five seconds, including independently timed wheel speed;
+new unrelated telemetry cannot renew an old speed or voltage sample. Link reset,
+backward timestamps, source changes and a material 100 mV voltage drop discard
+the affected candidate. Inferred charging also expires when material voltage
+progress stops for two minutes. The decoder supplies its next expiry deadline
+so the transport can clear charging even without another notification. Its
+connection-owned state uses one allocation to retain the existing 64-byte
+read-only session-shell budget; telemetry updates and resets do not allocate.
+
+These are conservative software thresholds, not hardware-qualified charge or
+current-polarity measurements. A long stationary recovery can resemble charging;
+a flat-voltage charge, near-full taper, or an unplugged pack without measurable
+change can be indistinguishable from other conditions. The detector reports an
+inference and never declares Full or Balancing. The time estimator may consume
+confirmed inferred charging with low confidence, while retaining its capacity,
+current/SOC, freshness and contradiction gates. An inferred charge state cannot
+promote near-full voltage/SOC into a claim that charging completed.
+
+The mobile projection applies the same Rust motion guard to both exposed
+charging mode and operating state. Charging estimates independently reject
+riding/moving input, including contradictory caller-created DTOs. Swift maps the
+additional Unknown enum value and performs no charging inference.
+
+Validation belongs in the LIBCU-948 issue: deterministic decoder/session and
+FFI tests establish the software invariants. They do not establish physical
+Falcon/Pro charging acceptance or broaden the supported model registry.

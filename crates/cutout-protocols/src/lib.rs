@@ -28,6 +28,7 @@ pub use begode_banner::{
     BegodeBanner, BegodeBannerParse, BegodeFirmwarePrefix, BegodeImuKind,
     classify_begode_ascii_banner, parse_begode_ascii_banner,
 };
+mod begode_charging;
 mod begode_telemetry;
 pub use begode_telemetry::{
     BEGODE_FALCON_TARGET_VOLTAGE_PROFILE, BEGODE_FIELD_ALERT_FLAGS, BEGODE_FIELD_BEEPER_VOLUME,

@@ -155,21 +155,72 @@ impl BegodeUnitMode {
 }
 
 /// Stateful Begode telemetry normalizer for cross-frame unit-mode evidence.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct BegodeTelemetryContext {
     unit_mode: BegodeUnitMode,
+    charging: crate::begode_charging::BegodeCharging,
+    last_charge_mode: Option<cutout_core::Measured<cutout_core::ChargeMode>>,
 }
 
 impl BegodeTelemetryContext {
+    pub(crate) fn charging_delta(
+        &mut self,
+        frame: &crate::BegodeFrame,
+        mut delta: TelemetryDelta,
+        at: MonotonicTimestamp,
+    ) -> TelemetryDelta {
+        let mode = self.charging.observe(frame, &delta, at);
+        self.last_charge_mode = Some(mode);
+        delta.charge_mode = Some(mode);
+        delta
+    }
+
+    pub(crate) fn bms_charging_delta(
+        &mut self,
+        frame: &crate::BegodeFrame,
+        at: MonotonicTimestamp,
+    ) -> Option<TelemetryDelta> {
+        let mode = self.charging.observe(frame, &TelemetryDelta::empty(at), at);
+        self.changed_charging_delta(mode, at)
+    }
+
+    pub(crate) fn next_charging_tick_at(&self) -> Option<MonotonicTimestamp> {
+        self.charging.next_tick_at()
+    }
+
+    pub(crate) fn charging_tick(&mut self, at: MonotonicTimestamp) -> Option<TelemetryDelta> {
+        let mode = self.charging.tick(at);
+        self.changed_charging_delta(mode, at)
+    }
+
+    fn changed_charging_delta(
+        &mut self,
+        mode: cutout_core::Measured<cutout_core::ChargeMode>,
+        at: MonotonicTimestamp,
+    ) -> Option<TelemetryDelta> {
+        if self.last_charge_mode == Some(mode)
+            || (self.last_charge_mode.is_none() && mode.value == cutout_core::ChargeMode::Unknown)
+        {
+            return None;
+        }
+        self.last_charge_mode = Some(mode);
+        Some(TelemetryDelta {
+            charge_mode: Some(mode),
+            ..TelemetryDelta::empty(at)
+        })
+    }
+
     /// Returns the currently inferred unit mode.
     #[must_use]
-    pub const fn unit_mode(self) -> BegodeUnitMode {
+    pub const fn unit_mode(&self) -> BegodeUnitMode {
         self.unit_mode
     }
 
     /// Resets cross-frame evidence to the conservative metric default.
-    pub const fn reset(&mut self) {
+    pub fn reset(&mut self) {
         self.unit_mode = BegodeUnitMode::Metric;
+        self.charging.reset();
+        self.last_charge_mode = None;
     }
 
     /// Updates cross-frame evidence from a decoded Live B frame.
@@ -180,7 +231,7 @@ impl BegodeTelemetryContext {
     /// Converts decoded Live A fields into a normalized telemetry delta.
     #[must_use]
     pub fn live_a_to_delta(
-        self,
+        &self,
         telemetry: BegodeLiveATelemetry,
         at_ms: MonotonicTimestamp,
     ) -> TelemetryDelta {
@@ -190,7 +241,7 @@ impl BegodeTelemetryContext {
     /// Converts decoded Live B fields into a normalized telemetry delta.
     #[must_use]
     pub fn live_b_to_delta(
-        self,
+        &self,
         telemetry: BegodeLiveBTelemetry,
         at_ms: MonotonicTimestamp,
     ) -> TelemetryDelta {
@@ -199,7 +250,7 @@ impl BegodeTelemetryContext {
 
     /// Converts decoded Live B settings into normalized read-only settings.
     #[must_use]
-    pub fn live_b_to_settings_response(self, telemetry: BegodeLiveBTelemetry) -> ReadOnlyResponse {
+    pub fn live_b_to_settings_response(&self, telemetry: BegodeLiveBTelemetry) -> ReadOnlyResponse {
         telemetry.to_settings_response_with_units()
     }
 }

@@ -526,6 +526,11 @@ fn push_veteran_ingest_outcome_for_frame(
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BegodeNotificationDecoder {
     reassembler: BegodeFrameReassembler,
+    state: Box<BegodeDecoderState>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct BegodeDecoderState {
     context: BegodeTelemetryContext,
     pack_voltage_profile: BegodePackVoltageProfile,
 }
@@ -542,22 +547,34 @@ impl BegodeNotificationDecoder {
     pub fn with_pack_voltage_profile(profile: BegodePackVoltageProfile) -> Self {
         Self {
             reassembler: BegodeFrameReassembler::default(),
-            context: BegodeTelemetryContext::default(),
-            pack_voltage_profile: profile,
+            state: Box::new(BegodeDecoderState {
+                context: BegodeTelemetryContext::default(),
+                pack_voltage_profile: profile,
+            }),
         }
     }
 
     /// Returns the pack-voltage profile used for Live A scaling.
     #[must_use]
-    pub const fn pack_voltage_profile(&self) -> BegodePackVoltageProfile {
-        self.pack_voltage_profile
+    pub fn pack_voltage_profile(&self) -> BegodePackVoltageProfile {
+        self.state.pack_voltage_profile
     }
 }
 
 impl ReadOnlyNotificationDecoder for BegodeNotificationDecoder {
+    fn next_tick_at(&self) -> Option<MonotonicTimestamp> {
+        self.state.context.next_charging_tick_at()
+    }
+
+    fn on_tick(&mut self, at: MonotonicTimestamp, output: &mut Vec<SessionOutput>) {
+        if let Some(delta) = self.state.context.charging_tick(at) {
+            output.push(SessionOutput::Event(DeviceEvent::Telemetry(delta)));
+        }
+    }
+
     fn reset(&mut self) {
         self.reassembler.reset();
-        self.context.reset();
+        self.state.context.reset();
     }
 
     fn handle_notification(
@@ -577,8 +594,8 @@ impl ReadOnlyNotificationDecoder for BegodeNotificationDecoder {
                     event_count = event_count.saturating_add(push_begode_frame(
                         family,
                         channel,
-                        &mut self.context,
-                        self.pack_voltage_profile,
+                        &mut self.state.context,
+                        self.state.pack_voltage_profile,
                         &frame,
                         monotonic_ms,
                         output,
@@ -1569,9 +1586,10 @@ fn push_begode_frame(
     match frame.tag().get() {
         0x00 => match BegodeLiveATelemetry::decode(frame, pack_voltage_profile) {
             Ok(telemetry) => {
-                output.push(SessionOutput::Event(DeviceEvent::Telemetry(
-                    context.live_a_to_delta(telemetry, monotonic_ms),
-                )));
+                output.push(SessionOutput::Event(DeviceEvent::Telemetry({
+                    let delta = context.live_a_to_delta(telemetry, monotonic_ms);
+                    context.charging_delta(frame, delta, monotonic_ms)
+                })));
                 output.push(SessionOutput::Event(DeviceEvent::read_only_response(
                     telemetry.to_settings_response(),
                 )));
@@ -1585,14 +1603,20 @@ fn push_begode_frame(
             // with placeholder data. Keep the bytes, not battery measurements.
             // The standalone BMS codecs remain available for supported models.
             retain_known_frame(output);
-            SemanticEventCount::default()
+            if let Some(delta) = context.bms_charging_delta(frame, monotonic_ms) {
+                output.push(SessionOutput::Event(DeviceEvent::Telemetry(delta)));
+                SemanticEventCount::from_events(1)
+            } else {
+                SemanticEventCount::default()
+            }
         }
         0x04 => match BegodeLiveBTelemetry::decode(frame) {
             Ok(telemetry) => {
                 context.observe_live_b(telemetry);
-                output.push(SessionOutput::Event(DeviceEvent::Telemetry(
-                    context.live_b_to_delta(telemetry, monotonic_ms),
-                )));
+                output.push(SessionOutput::Event(DeviceEvent::Telemetry({
+                    let delta = context.live_b_to_delta(telemetry, monotonic_ms);
+                    context.charging_delta(frame, delta, monotonic_ms)
+                })));
                 output.push(SessionOutput::Event(DeviceEvent::read_only_response(
                     context.live_b_to_settings_response(telemetry),
                 )));
@@ -1607,7 +1631,7 @@ fn push_begode_frame(
         0x07 => match crate::BegodeExtraTelemetry::decode(frame) {
             Ok(telemetry) => {
                 output.push(SessionOutput::Event(DeviceEvent::Telemetry(
-                    telemetry.to_delta(monotonic_ms),
+                    context.charging_delta(frame, telemetry.to_delta(monotonic_ms), monotonic_ms),
                 )));
                 retain_known_frame(output);
                 SemanticEventCount::from_events(1)
@@ -3611,7 +3635,11 @@ mod tests {
 
     #[test]
     fn read_only_session_shells_remain_small() {
-        assert!(size_of::<ReadOnlySession<BegodeFalconModel>>() <= 64);
+        assert!(
+            size_of::<ReadOnlySession<BegodeFalconModel>>() <= 64,
+            "Falcon shell is {} bytes",
+            size_of::<ReadOnlySession<BegodeFalconModel>>()
+        );
         assert!(size_of::<ReadOnlySession<NosfetAeroModel>>() <= 288);
     }
 
