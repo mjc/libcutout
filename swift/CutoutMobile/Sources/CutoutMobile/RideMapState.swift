@@ -1290,6 +1290,16 @@ public final class MobileRideMapState: @unchecked Sendable {
         try await completeMusicHistoryWrite(command)
     }
 
+    /// Provider withdrawal runs on the existing Rust database worker, away from the UI thread.
+    public func deleteSpotifyMusicHistoryAsync(captureDirectories: [String] = []) async throws {
+        let core = try withCore { $0 }
+        do {
+            try await Task.detached { try core.deleteSpotifyMusicHistory(captureDirectories: captureDirectories) }.value
+        } catch {
+            throw map(error)
+        }
+    }
+
     private func completeMusicHistoryWrite(_ command: MobileRideMapMusicWriteCommand) async throws {
         // Once accepted, let the durable write settle independently of caller cancellation.
         let completion = Task {

@@ -33,11 +33,14 @@ pub use capture_identity::*;
 mod ride_map_ingress;
 pub use ride_map_ingress::*;
 mod music_observation_admission;
+mod music_privacy;
 pub use music_observation_admission::*;
+pub use music_privacy::{export_capture_file_without_music, spotify_content_url};
 mod ride_activity_work;
 pub use ride_activity_work::*;
 mod capture_start;
 pub use capture_start::*;
+mod diagnostic_consent;
 
 use std::{
     collections::VecDeque,
@@ -2054,6 +2057,7 @@ impl From<DeviceConnectionIntentDto> for CoreDeviceConnectionIntent {
 #[derive(Debug, uniffi::Object)]
 pub struct CutoutSessionStateHandle {
     inner: Mutex<MobileSessionState>,
+    diagnostic_database: Option<persistence::RideDatabase>,
     phone_alarm: Mutex<MobilePhoneAlarmState>,
     novatek_session: Mutex<NovatekCameraSessionState>,
 }
@@ -2780,6 +2784,7 @@ impl CutoutSessionStateHandle {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             inner: Mutex::new(MobileSessionState::default()),
+            diagnostic_database: None,
             phone_alarm: Mutex::new(MobilePhoneAlarmState::default()),
             novatek_session: Mutex::new(NovatekCameraSessionState::default()),
         })
@@ -2795,6 +2800,7 @@ impl CutoutSessionStateHandle {
     pub fn with_database(database: Arc<RideDatabaseHandle>) -> Arc<Self> {
         Arc::new(Self {
             inner: Mutex::new(MobileSessionState::default()),
+            diagnostic_database: Some(database.inner.clone()),
             phone_alarm: Mutex::new(MobilePhoneAlarmState {
                 database: Some(database.inner.clone()),
                 ..MobilePhoneAlarmState::default()

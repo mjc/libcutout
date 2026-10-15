@@ -9,7 +9,7 @@ use cutout_ride_maps::LocationAdmission;
 use rusqlite::{Connection, OptionalExtension, params};
 use uuid::Uuid;
 
-mod payload;
+pub(super) mod payload;
 
 /// Maximum header size retained for a live capture.
 pub const LIVE_CAPTURE_HEADER_LIMIT_BYTES: usize = 65_536;

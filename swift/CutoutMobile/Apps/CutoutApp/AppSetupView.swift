@@ -75,13 +75,50 @@ struct AppSetupView: View {
                     }
                 }
                 Section(localizedAppText("captures.diagnostics")) {
+                    if let enabled = model.automaticDiagnosticRecordingEnabled {
+                        Toggle(
+                            localizedAppText("setup.diagnostics.automatic"),
+                            isOn: Binding(
+                                get: { model.automaticDiagnosticRecordingEnabled ?? enabled },
+                                set: { value in
+                                    Task { await model.setAutomaticDiagnosticRecordingEnabled(value) }
+                                }
+                            )
+                        )
+                        .disabled(model.diagnosticSettingsBusy)
+                        .accessibilityIdentifier("setup.diagnostics.automatic")
+                    } else if !model.diagnosticSettingsError {
+                        ProgressView(localizedAppText("setup.diagnostics.automatic"))
+                    }
+                    Text(localizedAppText("setup.diagnostics.explanation"))
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    if model.diagnosticSettingsError {
+                        Text(localizedAppText("setup.diagnostics.failed"))
+                            .foregroundStyle(.red)
+                        Button(localizedAppText("setup.diagnostics.retry")) {
+                            Task { await model.loadDiagnosticRecordingSetting() }
+                        }
+                        .disabled(model.diagnosticSettingsBusy)
+                    }
                     NavigationLink(value: Destination.captures) {
                         Label(localizedAppText("captures.title"), systemImage: "waveform.path")
                     }
                     .accessibilityIdentifier("setup.captures")
                 }
+                Section {
+                    Link(destination: URL(string: "https://cutout.lol/privacy-policy")!) {
+                        Label(localizedAppText("setup.privacy_policy"), systemImage: "hand.raised")
+                    }
+                    .accessibilityIdentifier("setup.privacy-policy")
+                    Link(destination: URL(string: "https://cutout.lol/support")!) {
+                        Label(localizedAppText("setup.support"), systemImage: "envelope")
+                    }
+                    .accessibilityIdentifier("setup.support")
+                }
             }
             .task { await model.loadRideAutostartSetting() }
+            .task { await model.loadDiagnosticRecordingSetting() }
             .formStyle(.grouped)
             .navigationTitle(localizedAppText("picker.section.setup"))
             .accessibilityIdentifier("setup.screen")
@@ -112,6 +149,7 @@ struct AppSetupView: View {
                         historyFailureContext: music.historyFailureContext,
                         onConnect: music.connect,
                         onAuthorizeSpotify: music.authorizeSpotify,
+                        onDisconnectSpotify: { await music.disconnectSpotify() },
                         onPlaySoundCloud: { showsSoundCloud = true },
                         onOpenProvider: {
                             Task { @MainActor in

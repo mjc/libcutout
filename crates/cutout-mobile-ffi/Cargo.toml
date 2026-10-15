@@ -32,6 +32,7 @@ uniffi = { workspace = true, features = ["tokio"] }
 uuid.workspace = true
 
 [dev-dependencies]
+reqwest = { workspace = true, features = ["json"] }
 futures-util.workspace = true
 hex-literal.workspace = true
 axum.workspace = true

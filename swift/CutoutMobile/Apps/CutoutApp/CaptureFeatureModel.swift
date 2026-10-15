@@ -395,6 +395,26 @@ final class CaptureExportModel {
     private(set) var isExporting = false
     private(set) var error: String?
 
+    func export(source: URL) async {
+        guard !isExporting, fileURL == nil else { return }
+        isExporting = true
+        defer { isExporting = false }
+        do {
+            let result = try await Task.detached(priority: .userInitiated) {
+                let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+                    "CaptureExports", isDirectory: true)
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                let ext = source.pathExtension == "pevcap" ? "pevcap" : "jsonl"
+                let destination = directory.appendingPathComponent("capture-\(UUID().uuidString).\(ext)")
+                return try exportCaptureFileWithoutMusic(sourcePath: source.path, path: destination.path)
+            }.value
+            fileURL = URL(fileURLWithPath: result.path)
+            error = nil
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
     func export(id: String) async {
         guard !isExporting, fileURL == nil else { return }
         isExporting = true

@@ -10,6 +10,7 @@ struct ChargingSpotDetailView: View {
     let onEdit: (MobileChargingSpotDto) -> Void
     let onDelete: (MobileChargingSpotDto) -> Void
     @State private var confirmsDeletion = false
+    @State private var showsContentReport = false
     @Environment(\.dismiss) private var dismiss
 
     private var input: MobileChargingInputDto? { spot.input }
@@ -69,6 +70,12 @@ struct ChargingSpotDetailView: View {
                             Date(timeIntervalSince1970: Double($0) / 1_000).formatted(
                                 date: .abbreviated, time: .shortened)
                         } ?? localizedAppText("charging.details.not_verified"))
+                    if spot.remoteId != nil, spot.status == .published {
+                        Button(localizedAppText("charging.report.title"), systemImage: "flag") {
+                            showsContentReport = true
+                        }
+                        .accessibilityIdentifier("charging.details.report")
+                    }
                 }
             }
             .navigationTitle(input?.name ?? ChargingSpotPresentation.unknownName)
@@ -86,6 +93,9 @@ struct ChargingSpotDetailView: View {
             Button(localizedAppText("charging.editor.delete"), role: .destructive) { onDelete(spot) }
         }
         .interactiveDismissDisabled(isDeleting)
+        .sheet(isPresented: $showsContentReport) {
+            if let remoteID = spot.remoteId { ChargingContentReportView(remoteID: remoteID) }
+        }
         .accessibilityIdentifier("charging.spot.details-screen")
     }
 

@@ -19,6 +19,7 @@ pub use capture_writer::{
     CaptureMetadata, CaptureRecordAdmission, CaptureRecordingPolicy, CaptureWriteOutcome,
     CaptureWriter, CaptureWriterFinish, CaptureWriterIngress, CaptureWriterMonitor,
     CaptureWriterStatus, SavedCaptureArtifact, SavedDatabaseCapture,
+    export_capture_file_without_music,
 };
 pub use recording::{
     LocationAcquisition, LocationAcquisitionState, LocationAuthorization, LocationAvailability,

@@ -35,13 +35,10 @@ protocol CutoutSessionDriving: AnyObject {
     func changeCaptureLabel(generation: CaptureGeneration, action: MobileCaptureLabelActionDto) throws
         -> [MobileCaptureLabelDto]
     func annotateCapture(key: String, value: String) -> Bool
-    func updateMusicCapturePolicy(_ policy: MobileMusicHistoryPolicyDto)
-    func updateMusicCaptureObservation(_ observation: MobilePevcapMusicEventDto?)
-    func updateMusicCaptureObservationAsync(
-        _ observation: MobilePevcapMusicEventDto?, target: MobileMusicCaptureTarget
-    ) async -> MobileCaptureWriteOutcomeDto
+    func prepareCaptureMetadataCleanup() async -> Bool
     func flushCapture() async -> Bool
     func finishCapture() async -> Bool
+    func setAutomaticDiagnosticRecordingEnabled(_ enabled: Bool) async throws
     func disconnectAndScan()
     func disconnectAndScan(expectedGeneration: UInt64) -> Bool
     func submitDeviceSetting(token: ConnectionAttemptToken, id: DeviceSettingID, value: DeviceSettingValue) throws
@@ -69,6 +66,15 @@ protocol CutoutSessionDriving: AnyObject {
 extension CutoutSessionCore: CutoutSessionDriving {}
 
 extension CutoutSessionDriving {
+    func prepareCaptureMetadataCleanup() async -> Bool { true }
+
+    func setAutomaticDiagnosticRecordingEnabled(_ enabled: Bool) async throws {
+        let state = rideSessionStateHandle
+        _ = try await Task.detached(priority: .userInitiated) {
+            try state.setAutomaticDiagnosticRecordingEnabled(enabled: enabled)
+        }.value
+    }
+
     func setPresentationActive(_ active: Bool) {}
     func checkpointRideMap() async throws {}
     func prepareRideMapForDisconnect(

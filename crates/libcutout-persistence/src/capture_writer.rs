@@ -1456,8 +1456,8 @@ fn persist_database_capture(
 }
 
 impl RideDatabase {
-    /// Streams exact retained JSONL bytes on explicit demand. Interrupted/incomplete captures
-    /// remain exportable as evidence; their history integrity is never promoted to complete.
+    /// Streams retained Bluetooth evidence without obsolete music metadata on explicit demand.
+    /// Interrupted/incomplete captures remain exportable; integrity is never promoted to complete.
     /// Existing files are never overwritten and failed partial exports are removed.
     ///
     /// # Errors
@@ -1470,6 +1470,58 @@ impl RideDatabase {
         };
         export_database_capture(path, &capture, &CaptureWriterState::default())
     }
+}
+
+/// Exports a completed local capture with obsolete music metadata removed.
+/// The source and its receipt remain untouched; the returned digest identifies the new bytes.
+///
+/// # Errors
+/// Returns invalid source, transform, destination, or sync failure. Existing destinations
+/// are never replaced and a failed partial export is removed.
+pub fn export_capture_file_without_music(source: &Path, path: &Path) -> Result<String, String> {
+    let metadata = fs::symlink_metadata(source).map_err(|error| error.to_string())?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() {
+        return Err("capture source must be a regular file".to_owned());
+    }
+    let mut input = File::open(source).map_err(|error| error.to_string())?;
+    let mut prefix = [0_u8; 8];
+    let count = input.read(&mut prefix).map_err(|error| error.to_string())?;
+    input.rewind().map_err(|error| error.to_string())?;
+    let encoding = if count == 8 && prefix == cutout_core::PEVCAP_MAGIC {
+        cutout_core::PevcapEncoding::Binary
+    } else {
+        cutout_core::PevcapEncoding::Jsonl
+    };
+    let mut created = false;
+    let result = (|| {
+        let mut output = sync_parent_directory_after(path, || {
+            let file = OpenOptions::new()
+                .create_new(true)
+                .read(true)
+                .write(true)
+                .open(path)?;
+            created = true;
+            Ok(file)
+        })?;
+        crate::storage::sanitize_capture_music(&mut input, &mut output, encoding)
+            .map_err(|error| error.to_string())?;
+        output.sync_all().map_err(|error| error.to_string())?;
+        output.rewind().map_err(|error| error.to_string())?;
+        let mut digest = Sha256::new();
+        let mut chunk = vec![0; 65_536];
+        loop {
+            let count = output.read(&mut chunk).map_err(|error| error.to_string())?;
+            if count == 0 {
+                break;
+            }
+            digest.update(&chunk[..count]);
+        }
+        Ok(hex::encode(digest.finalize()))
+    })();
+    if result.is_err() && created {
+        let _ = fs::remove_file(path);
+    }
+    result
 }
 
 fn export_database_capture(
@@ -1513,13 +1565,23 @@ fn export_database_capture(
                     .map_err(|error| format!("could not continue live capture export: {error}"))?,
             };
             for event in &snapshot.events {
+                let mut retained = Vec::new();
+                crate::storage::sanitize_capture_music(
+                    &mut event.payload.as_slice(),
+                    &mut retained,
+                    cutout_core::PevcapEncoding::Jsonl,
+                )
+                .map_err(|error| error.to_string())?;
+                if retained.is_empty() {
+                    continue;
+                }
                 output
-                    .write_all(&event.payload)
+                    .write_all(&retained)
                     .and_then(|()| output.write_all(b"\n"))
                     .map_err(|error| error.to_string())?;
-                digest.update(&event.payload);
+                digest.update(&retained);
                 digest.update(b"\n");
-                bytes_written = bytes_written.saturating_add(event.payload.len() as u64 + 1);
+                bytes_written = bytes_written.saturating_add(retained.len() as u64 + 1);
             }
             let cursor = snapshot.events.last().map(|event| event.sequence);
             let has_more = cursor

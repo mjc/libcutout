@@ -406,6 +406,49 @@ final class CutoutAppUITests: XCTestCase {
         try verifySetupNavigation()
     }
 
+    func testPickerSurfaceDiagnosticsConsentPersistsAndPolicyLinksAreReachable() {
+        app.terminate()
+        app.launchEnvironment["CUTOUT_UI_TEST_RIDE_DATABASE_ID"] = UUID().uuidString
+        app.launch()
+
+        func openDiagnostics() -> XCUIElement {
+            let setup = app.buttons["device-picker.open-setup"]
+            XCTAssertTrue(setup.waitForExistence(timeout: 10), app.debugDescription)
+            setup.tap()
+            let consent = app.switches["setup.diagnostics.automatic"]
+            XCTAssertTrue(consent.waitForExistence(timeout: 10), app.debugDescription)
+            scrollElementFrameIntoViewport(consent, in: app.collectionViews.firstMatch, maxScrolls: 8)
+            return consent
+        }
+
+        func waitForValue(_ value: String, of control: XCUIElement) {
+            let saved = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", value), object: control)
+            XCTAssertEqual(XCTWaiter.wait(for: [saved], timeout: 10), .completed, app.debugDescription)
+        }
+
+        let consent = openDiagnostics()
+        waitForValue("0", of: consent)
+        consent.tap()
+        waitForValue("1", of: consent)
+        app.buttons["setup.done"].tap()
+        app.terminate()
+        app.launch()
+
+        let restored = openDiagnostics()
+        waitForValue("1", of: restored)
+        restored.tap()
+        waitForValue("0", of: restored)
+        for identifier in ["setup.privacy-policy", "setup.support"] {
+            let link = app.descendants(matching: .any)[identifier]
+            scrollElementFrameIntoViewport(link, in: app.collectionViews.firstMatch, maxScrolls: 8)
+            XCTAssertTrue(link.exists && link.isHittable, app.debugDescription)
+        }
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Diagnostics consent and privacy-contact links"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
     func testRideMapShowsUnavailableStorageWithoutFalseEmptyStateOrStart() throws {
         let map = app.tabBars.buttons["Map"]
         XCTAssertTrue(map.waitForExistence(timeout: 10), app.debugDescription)

@@ -880,6 +880,13 @@ public struct MusicNowPlaying: Equatable, Sendable {
 
     public var providerName: String { provider.title }
 
+    public var spotifyContentURL: URL? {
+        guard provider == .spotify, let identifier = item?.identifier,
+            let value = spotifyContentUrl(identifier: identifier)
+        else { return nil }
+        return URL(string: value)
+    }
+
     public var title: String {
         if provider.profile.interface == .appHandoffOnly && item == nil { return providerName }
         return item?.title.flatMap { $0.isEmpty ? nil : $0 }
@@ -1115,6 +1122,12 @@ extension Array where Element == MobileMusicRideEventDto {
 }
 
 extension MobileMusicRideEventDto {
+    public var spotifyContentURL: URL? {
+        guard provider == .spotify, let itemIdentifier,
+            let value = spotifyContentUrl(identifier: itemIdentifier)
+        else { return nil }
+        return URL(string: value)
+    }
     public var timelineID: String {
         [
             String(sequence),

@@ -38,11 +38,17 @@ pub(super) fn drop_next_pevcap_finish_response_for_test() {
     DROP_NEXT_PEVCAP_FINISH_RESPONSE.store(true, Ordering::Release);
 }
 
-pub(super) fn run(connection: Connection, receiver: &Receiver<Command>, worker_alive: &AtomicBool) {
+pub(super) fn run(
+    connection: Connection,
+    receiver: &Receiver<Command>,
+    worker_alive: &AtomicBool,
+    diagnostic_recording_enabled: &AtomicBool,
+) {
     let mut worker = DatabaseWorker {
         connection,
         spatial_schema: SpatialSchemaState::Uninitialized,
         worker_alive,
+        diagnostic_recording_enabled,
     };
     if super::live_capture::interrupt_active(&worker.connection).is_err() {
         worker.worker_alive.store(false, Ordering::Release);
@@ -60,6 +66,7 @@ struct DatabaseWorker<'a> {
     connection: Connection,
     spatial_schema: SpatialSchemaState,
     worker_alive: &'a AtomicBool,
+    diagnostic_recording_enabled: &'a AtomicBool,
 }
 
 impl DatabaseWorker<'_> {
@@ -430,6 +437,18 @@ impl DatabaseWorker<'_> {
                 ).map_err(Into::into);
                 let _ = reply.send(result);
             }
+            Command::SaveAutomaticDiagnosticRecordingEnabled { enabled, reply } => {
+                let result = connection.execute(
+                    "INSERT INTO diagnostic_recording_preferences (id, automatic_enabled) VALUES (1, ?1)
+                     ON CONFLICT(id) DO UPDATE SET automatic_enabled = excluded.automatic_enabled",
+                    [enabled],
+                ).map(|_| ()).map_err(Into::into);
+                if result.is_ok() {
+                    self.diagnostic_recording_enabled
+                        .store(enabled, Ordering::Release);
+                }
+                let _ = reply.send(result);
+            }
             Command::SaveRideAutostartEnabled { enabled, reply } => {
                 let result = connection.execute(
                     "INSERT INTO ride_recording_preferences (id, autostart_enabled) VALUES (1, ?1)
@@ -485,6 +504,22 @@ impl DatabaseWorker<'_> {
             }
             Command::DeleteMusicHistory { ride_id, reply } => {
                 let _ = reply.send(delete_music_history(connection, ride_id));
+            }
+            Command::DeleteSpotifyMusicHistory { reply } => {
+                let _ = reply.send(super::music_privacy::delete_spotify_music_history(
+                    connection,
+                ));
+            }
+            Command::PurgeCaptureMusicMetadata {
+                database_path,
+                owned_directories,
+                reply,
+            } => {
+                let _ = reply.send(super::capture_music_privacy::purge(
+                    connection,
+                    &database_path,
+                    &owned_directories,
+                ));
             }
             Command::MusicEvents { ride_id, reply } => {
                 let _ = reply.send(music_events(connection, ride_id));

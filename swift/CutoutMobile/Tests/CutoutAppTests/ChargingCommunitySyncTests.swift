@@ -450,3 +450,107 @@ private final class SyncRecorder {
     var tokens = [String]()
     var sawPersistedCredential = false
 }
+
+@MainActor
+final class ChargingContentReportTests: XCTestCase {
+    func testDisabledFixtureCannotRegisterOrSubmitToTheLiveService() async {
+        var registrations = 0
+        let sync = ChargingCommunitySync(
+            credentialStore: MemoryChargingCredentialStore(),
+            registerIdentity: {
+                registrations += 1
+                throw MobileChargingError.Network
+            },
+            synchronize: { _ in throw MobileChargingError.Network },
+            sleep: { _ in }, enabled: { false }
+        )
+        do {
+            _ = try await sync.credentialForReport()
+            XCTFail("Fixture service access must remain disabled")
+        } catch {
+            XCTAssertEqual(error as? MobileChargingError, .Unavailable)
+        }
+        XCTAssertEqual(registrations, 0)
+    }
+
+    func testRetryPreservesTheOriginalReportAndOnlyAReceiptShowsSuccess() async {
+        var requests = [MobileChargingContentReport]()
+        let model = ChargingContentReportModel(remoteID: UUID().uuidString) { report in
+            requests.append(report)
+            if requests.count == 1 { throw MobileChargingError.Network }
+            return MobileChargingReportReceiptDto(reportId: "confirmed-report")
+        }
+        model.details = "Offensive instructions."
+        await model.send()
+        XCTAssertEqual(model.state, .failed("charging.report.failed"))
+        model.details = "A later edit cannot change an ambiguous report."
+        await model.send()
+        XCTAssertEqual(model.state, .sent("confirmed-report"))
+        XCTAssertEqual(requests.count, 2)
+        XCTAssertTrue(requests[0] === requests[1])
+        await model.send()
+        XCTAssertEqual(requests.count, 2)
+    }
+
+    func testInvalidReportDetailsRemainEditableWithoutSending() async {
+        var submissions = 0
+        let model = ChargingContentReportModel(remoteID: UUID().uuidString) { _ in
+            submissions += 1
+            return MobileChargingReportReceiptDto(reportId: "should-not-send")
+        }
+        model.details = String(repeating: "é", count: 501)
+        await model.send()
+        XCTAssertEqual(model.state, .failed("charging.report.invalid_details"))
+        XCTAssertNil(model.preparedReport)
+        XCTAssertEqual(submissions, 0)
+    }
+
+    func testExplicitReportRegistersAndPersistsWithoutSyncingQueuedContributions() async throws {
+        let store = MemoryChargingCredentialStore()
+        let credential = ChargingCommunityCredential(
+            identityID: UUID().uuidString, token: String(repeating: "a", count: 64))
+        var registrations = 0
+        var syncCalls = 0
+        let sync = ChargingCommunitySync(
+            credentialStore: store,
+            registerIdentity: {
+                registrations += 1
+                return credential
+            },
+            synchronize: { _ in
+                syncCalls += 1
+                throw MobileChargingError.Network
+            },
+            sleep: { _ in }, enabled: { true }
+        )
+        let received = try await sync.credentialForReport()
+        XCTAssertEqual(received, credential)
+        let persisted = try await store.load()
+        XCTAssertEqual(persisted, .ready(credential))
+        let again = try await sync.credentialForReport()
+        XCTAssertEqual(again, credential)
+        XCTAssertEqual(registrations, 1)
+        XCTAssertEqual(syncCalls, 0)
+    }
+
+    func testReportDoesNotRecreateAnUncertainIdentity() async {
+        let store = MemoryChargingCredentialStore(initial: .registrationStarted)
+        var registrations = 0
+        let sync = ChargingCommunitySync(
+            credentialStore: store,
+            registerIdentity: {
+                registrations += 1
+                throw MobileChargingError.Network
+            },
+            synchronize: { _ in throw MobileChargingError.Network },
+            sleep: { _ in }, enabled: { true }
+        )
+        do {
+            _ = try await sync.credentialForReport()
+            XCTFail("Uncertain registration must require the existing explicit recovery")
+        } catch {
+            XCTAssertEqual(error as? MobileChargingError, .Unauthorized)
+        }
+        XCTAssertEqual(registrations, 0)
+    }
+}

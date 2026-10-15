@@ -494,12 +494,6 @@ public final class CutoutSessionCore: NSObject {
         rustSessionState.settings()
     }
 
-    #if DEBUG
-        var musicCaptureObservationForTesting: MobilePevcapMusicEventDto? {
-            onBleQueue { captureRecorder.currentMusicObservation }
-        }
-    #endif
-
     public var onDisplayStateChange: ((RideDisplayState) -> Void)?
     public var onPhaseChange: ((SessionConnectionPresentation) -> Void)?
     public var onConnectionSnapshotChange: ((ConnectionSnapshot) -> Void)?
@@ -1151,6 +1145,20 @@ public final class CutoutSessionCore: NSObject {
         }
     }
 
+    /// Persists diagnostics consent off Main and retires only its automatic writer on the BLE owner.
+    public func setAutomaticDiagnosticRecordingEnabled(_ enabled: Bool) async throws {
+        let state = rustSessionState
+        let withdrawal = try await Task.detached(priority: .userInitiated) {
+            try state.setAutomaticDiagnosticRecordingEnabled(enabled: enabled)
+        }.value
+        guard let withdrawal else { return }
+        onBleQueue {
+            guard captureGeneration?.dto == withdrawal else { return }
+            // Finish retained evidence; the connection and ride have independent ownership.
+            finishCaptureWriter()
+        }
+    }
+
     public func disconnectAndScan() {
         onBleQueue { disconnectAndScanOnBleQueue() }
     }
@@ -1613,7 +1621,6 @@ public final class CutoutSessionCore: NSObject {
         #endif
         suppressReconnect = true
         cancelPendingReconnect()
-        captureRecorder.resetMusicContext()
         #if DEBUG
             if testScript != nil, isRecordOnly, captureRecorder.hasWriter {
                 finishCaptureAfterLinkDown()
@@ -2645,51 +2652,11 @@ public final class CutoutSessionCore: NSObject {
         rideMapPresentation.publishAvailability(availability)
     }
 
-    /// Records one bounded music observation independently of BLE frame arrival.
-    /// The Rust writer owns the capture event and keeps metadata low-rate.
-    public func updateMusicCaptureObservation(_ observation: MobilePevcapMusicEventDto?) {
-        onBleQueue {
-            _ = self.acceptCaptureWrite(self.captureRecorder.recordMusicObservation(observation))
-        }
-    }
-
-    /// Main-thread callers await capture admission without releasing their Rust observation lease.
-    @MainActor
-    public func updateMusicCaptureObservationAsync(
-        _ observation: MobilePevcapMusicEventDto?, target: MobileMusicCaptureTarget
-    ) async -> MobileCaptureWriteOutcomeDto {
-        await withCheckedContinuation { continuation in
-            enqueueMusicCaptureObservation(observation, target: target, continuation: continuation)
-        }
-    }
-
-    private func enqueueMusicCaptureObservation(
-        _ observation: MobilePevcapMusicEventDto?, target: MobileMusicCaptureTarget,
-        continuation: CheckedContinuation<MobileCaptureWriteOutcomeDto, Never>
-    ) {
-        let queuedAt = clock.now()
-        let work = DispatchWorkItem(qos: .default, flags: .enforceQoS) { [self] in
-            dispatchPrecondition(condition: .onQueue(bleQueue))
-            let admission = rustSessionState.admitMusicCaptureTarget(target: target)
-            guard admission != .rejected else {
-                continuation.resume(returning: .rejected)
-                return
-            }
-            // Lifecycle admission and the native writer mutation share this owner turn.
-            let outcome = captureRecorder.recordMusicObservation(observation)
-            if admission == .recording { _ = acceptCaptureWrite(outcome) }
-            let waitMilliseconds = clock.now().elapsed(since: queuedAt).rawValue
-            if waitMilliseconds > 0 { record("ble_queue_wait_ms=\(waitMilliseconds)") }
-            continuation.resume(returning: outcome)
-        }
-        bleQueue.async(execute: work)
-    }
-
-    /// Applies the ride's Rust-owned retention policy to future PEVCAP music writes.
-    public func updateMusicCapturePolicy(_ policy: MobileMusicHistoryPolicyDto) {
-        onBleQueue {
-            _ = self.acceptCaptureWrite(self.captureRecorder.updateMusicPolicy(policy))
-        }
+    /// Waits for owned writer publication and durable admission before legacy metadata cleanup.
+    /// Native queue ownership is captured here; Rust owns flush and active-writer eligibility.
+    public func prepareCaptureMetadataCleanup() async -> Bool {
+        let barrier = onBleQueue { captureRecorder.musicMetadataCleanupBarrier() }
+        return await Task.detached(priority: .userInitiated) { barrier() }.value
     }
 
     func captureFrame(
@@ -2737,7 +2704,7 @@ public final class CutoutSessionCore: NSObject {
         evidence: String = "hardware_tested",
         origin: MobileCaptureOriginDto = .automatic
     ) -> Bool {
-        guard let identity = rustSessionState.beginCapture(origin: origin) else { return false }
+        guard let identity = rustSessionState.beginConsentedCapture(origin: origin) else { return false }
         let generation = CaptureGeneration(rawValue: identity.value)
         var directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         #if DEBUG

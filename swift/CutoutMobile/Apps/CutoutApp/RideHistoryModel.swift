@@ -547,6 +547,10 @@ final class RideHistoryModel {
         viewportLoadGeneration &+= 1
     }
 
+    func removeSpotifyMusicMetadata() {
+        detailMusicTimeline.removeAll { $0.provider == .spotify }
+    }
+
     func clearMusicMetadata() {
         detailMusicTimeline.removeAll(keepingCapacity: true)
         detailMusicTimelineUnavailable = false

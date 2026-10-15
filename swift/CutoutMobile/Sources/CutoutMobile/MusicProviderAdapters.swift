@@ -1581,18 +1581,27 @@ struct SpotifyRenewalRetryPolicy {
             }
         }
 
-        /// Called only by the explicit Reauthorize Spotify account action.
-        public func clearAuthorization() {
+        /// Retires provider work and removes credentials for explicit disconnect or reauthorization.
+        /// Returns false when Keychain deletion must be retried.
+        @discardableResult
+        public func clearAuthorization() -> Bool {
             stopMonitoring()
             retireAppRemoteHandoff(disconnect: true)
             invalidateAuthorizationTransaction()
             webPlayback = nil
             artwork = nil
+            artworkCache = MusicArtworkCache()
             accessToken = nil
             session = nil
-            Self.storeAccessToken(nil)
-            Self.storeSession(nil)
             authorizationNeedsUserAction = true
+            #if canImport(Security)
+                let tokenResult = SecItemDelete(Self.keychainQuery() as CFDictionary)
+                let sessionResult = SecItemDelete(Self.sessionQuery() as CFDictionary)
+                return (tokenResult == errSecSuccess || tokenResult == errSecItemNotFound)
+                    && (sessionResult == errSecSuccess || sessionResult == errSecItemNotFound)
+            #else
+                return true
+            #endif
         }
 
         public func cancelPendingPlayHandoff() {

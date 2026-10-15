@@ -24,6 +24,7 @@ pub struct MobileCaptureStartRequestDto {
     pub evidence: String,
     pub annotations: Vec<String>,
     pub origin: MobileCaptureOriginDto,
+    /// Legacy boundary input; Bluetooth diagnostics never retain provider music metadata.
     pub music_history_policy: MobileMusicHistoryPolicyDto,
 }
 
@@ -42,12 +43,26 @@ pub enum MobileCaptureStartError {
     AlreadyStarted,
     #[error("capture writer could not start")]
     WriterStartFailed,
+    #[error("automatic diagnostic recording requires consent")]
+    AutomaticRecordingDisabled,
 }
 
 #[derive(Debug)]
 struct PreparedCaptureWriter {
     builder: Arc<MobilePevcapCaptureBuilder>,
     path: String,
+    database: Option<Arc<RideDatabaseHandle>>,
+    origin: MobileCaptureOriginDto,
+}
+
+fn admits_recording(origin: MobileCaptureOriginDto, database: Option<&RideDatabaseHandle>) -> bool {
+    origin == MobileCaptureOriginDto::Manual
+        || database.is_some_and(|database| {
+            database
+                .inner
+                .automatic_diagnostic_recording_enabled()
+                .unwrap_or(false)
+        })
 }
 
 /// Admitted startup metadata. The writer remains untouched until `start` consumes it.
@@ -138,7 +153,8 @@ fn startup_owned_annotation(annotation: &str) -> bool {
 ///
 /// # Errors
 /// Rejects an invalid clock/path/nonce, truncated service evidence, contradictory
-/// startup annotations, or metadata that consumes reserved label-closure space.
+/// startup annotations, missing automatic-diagnostic consent, or metadata that
+/// consumes reserved label-closure space.
 #[uniffi::export]
 pub fn prepare_capture_writer(
     request: MobileCaptureStartRequestDto,
@@ -178,7 +194,7 @@ pub fn prepare_capture_writer(
         Some(MobileTransportWriteLimitDto { bytes: 23 }),
     );
     if !builder.set_recording_origin(request.origin)
-        || !builder.set_music_history_policy(request.music_history_policy)
+        || !builder.set_music_history_policy(MobileMusicHistoryPolicyDto::Disabled)
     {
         return Err(MobileCaptureStartError::InvalidMetadata);
     }
@@ -205,8 +221,11 @@ pub fn prepare_capture_writer(
             return Err(MobileCaptureStartError::InvalidMetadata);
         }
     }
-    if let Some(database) = database
-        && !builder.set_database(database)
+    if !admits_recording(request.origin, database.as_deref()) {
+        return Err(MobileCaptureStartError::AutomaticRecordingDisabled);
+    }
+    if let Some(database) = database.as_ref()
+        && !builder.set_database(Arc::clone(database))
     {
         return Err(MobileCaptureStartError::InvalidMetadata);
     }
@@ -214,6 +233,8 @@ pub fn prepare_capture_writer(
         prepared: Mutex::new(Some(PreparedCaptureWriter {
             builder,
             path: path.to_string_lossy().into_owned(),
+            database,
+            origin: request.origin,
         })),
     }))
 }
@@ -224,7 +245,8 @@ impl MobilePreparedCaptureStart {
     /// Optional stale music context cannot reject otherwise valid startup.
     ///
     /// # Errors
-    /// Returns `AlreadyStarted` for reuse and `WriterStartFailed` for writer admission failure.
+    /// Returns `AlreadyStarted` for reuse, `AutomaticRecordingDisabled` after consent
+    /// withdrawal, and `WriterStartFailed` for writer admission failure.
     pub fn start(
         &self,
         monotonic_ms: u64,
@@ -236,6 +258,9 @@ impl MobilePreparedCaptureStart {
             .unwrap_or_else(PoisonError::into_inner)
             .take()
             .ok_or(MobileCaptureStartError::AlreadyStarted)?;
+        if !admits_recording(prepared.origin, prepared.database.as_deref()) {
+            return Err(MobileCaptureStartError::AutomaticRecordingDisabled);
+        }
         if !prepared
             .builder
             .set_capture_start_monotonic_ms(monotonic_ms)
@@ -283,7 +308,7 @@ mod tests {
             reason: "ride".to_owned(),
             evidence: "verified".to_owned(),
             annotations: vec!["user_note=one=two\nthree\r四".to_owned()],
-            origin: MobileCaptureOriginDto::Automatic,
+            origin: MobileCaptureOriginDto::Manual,
             music_history_policy: MobileMusicHistoryPolicyDto::Disabled,
         }
     }
@@ -302,6 +327,58 @@ mod tests {
             cutout_core::PevcapEncoding::Jsonl,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn automatic_capture_requires_consent_before_writer_preparation() {
+        let directory = Directory::new();
+        let mut request = request(&directory);
+        request.origin = MobileCaptureOriginDto::Automatic;
+        assert!(prepare_capture_writer(request, None).is_err());
+        assert_eq!(fs::read_dir(&directory.0).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn automatic_capture_rechecks_persisted_consent_at_writer_start_and_fails_closed() {
+        let directory = Directory::new();
+        let database_path = directory.0.join("rides.sqlite");
+        let database =
+            crate::open_ride_database(database_path.to_string_lossy().into_owned()).unwrap();
+        let mut request = request(&directory);
+        request.origin = MobileCaptureOriginDto::Automatic;
+        assert_eq!(
+            prepare_capture_writer(request.clone(), Some(Arc::clone(&database))).err(),
+            Some(MobileCaptureStartError::AutomaticRecordingDisabled)
+        );
+        database
+            .inner
+            .save_automatic_diagnostic_recording_enabled(true)
+            .unwrap();
+        let prepared =
+            prepare_capture_writer(request.clone(), Some(Arc::clone(&database))).unwrap();
+        database
+            .inner
+            .save_automatic_diagnostic_recording_enabled(false)
+            .unwrap();
+        assert_eq!(
+            prepared.start(100, None).err(),
+            Some(MobileCaptureStartError::AutomaticRecordingDisabled)
+        );
+        let sql = rusqlite::Connection::open(&database_path).unwrap();
+        assert_eq!(
+            sql.query_row("SELECT COUNT(*) FROM live_capture_sessions", [], |row| row
+                .get::<_, u64>(
+                0
+            ))
+            .unwrap(),
+            0
+        );
+        drop(sql);
+        database.shutdown().unwrap();
+        assert_eq!(
+            prepare_capture_writer(request, Some(database)).err(),
+            Some(MobileCaptureStartError::AutomaticRecordingDisabled)
+        );
     }
 
     #[test]
@@ -386,7 +463,6 @@ mod tests {
         assert_eq!(
             started.builder.metadata().annotations,
             [
-                "capture_recording_policy=material_changes",
                 "source=ios-app",
                 "capture_reason=manual note next line",
                 "capture_privacy=private",
@@ -408,7 +484,12 @@ mod tests {
         let database_path = directory.0.join("rides.sqlite");
         let database =
             crate::open_ride_database(database_path.to_string_lossy().into_owned()).unwrap();
+        database
+            .inner
+            .save_automatic_diagnostic_recording_enabled(true)
+            .unwrap();
         let mut request = request(&directory);
+        request.origin = MobileCaptureOriginDto::Automatic;
         request
             .annotations
             .push("capture_label=ride_start".to_owned());
@@ -543,6 +624,58 @@ mod tests {
         let started = prepared.start(10_000, Some(music)).unwrap();
         assert_eq!(started.builder.music_context.lock().unwrap().len(), 0);
         let _ = finished_capture(&started);
+    }
+
+    #[test]
+    fn app_btle_capture_omits_all_music_but_preserves_raw_transport() {
+        for provider in [
+            crate::MobileMusicProviderDto::AppleMusic,
+            crate::MobileMusicProviderDto::Spotify,
+        ] {
+            let directory = Directory::new();
+            let mut request = request(&directory);
+            request.music_history_policy = MobileMusicHistoryPolicyDto::HumanReadable;
+            let prepared = prepare_capture_writer(request, None).unwrap();
+            let music = MobilePevcapMusicEventDto {
+                provider,
+                track_id: "provider-track".to_owned(),
+                monotonic_at_ms: 1_001,
+                wall_clock_unix_ms: 1_700_000_000_000,
+                clock_uncertainty_ms: 1,
+                ride_sequence: Some(0),
+            };
+            let started = prepared.start(1_000, Some(music.clone())).unwrap();
+            assert_eq!(
+                started.builder.record_music_event(music.clone()),
+                MobileCaptureWriteOutcomeDto::Accepted
+            );
+            let raw = vec![0x55, 0xaa, 0x01, 0x00, 0xff];
+            assert_eq!(
+                started.builder.record_notification_with_context_and_music(
+                    crate::MobileMonotonicMillisDto {
+                        milliseconds: 1_002
+                    },
+                    vec![1; 16],
+                    vec![2; 16],
+                    raw.clone(),
+                    None,
+                    None,
+                    Some(music),
+                ),
+                MobileCaptureWriteOutcomeDto::Accepted
+            );
+            let capture = finished_capture(&started);
+            assert!(
+                capture.music_events.is_empty(),
+                "no provider music event belongs in BLE diagnostics"
+            );
+            assert_eq!(capture.records.len(), 1);
+            assert_eq!(capture.records[0].bytes.as_ref(), raw.as_slice());
+            assert!(
+                capture.records[0].music.is_none(),
+                "notification context must omit music too"
+            );
+        }
     }
 
     #[test]
