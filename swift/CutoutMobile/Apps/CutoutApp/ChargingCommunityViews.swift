@@ -13,47 +13,49 @@ struct ChargingCommunityStatusView: View {
     }
 
     var body: some View {
-        VStack(spacing: 6) {
-            HStack(spacing: 8) {
-                if model.communitySyncStatus == .syncing { ProgressView().controlSize(.small) }
-                Text(localizedAppText(model.communitySyncStatus.messageKey))
-                if canRetry {
-                    Button(localizedAppText("charging.retry")) { model.retryCommunitySync() }
+        if messageKey != nil || model.communitySyncPendingCount > 0 || needsReview {
+            VStack(spacing: 6) {
+                if let messageKey {
+                    HStack(spacing: 8) {
+                        Text(localizedAppText(messageKey))
+                        if canRetry {
+                            Button(localizedAppText("charging.retry")) { model.retryCommunitySync() }
+                                .frame(minHeight: 44)
+                                .accessibilityIdentifier("charging.sync.retry")
+                        }
+                    }
+                }
+                if model.communitySyncPendingCount > 0 {
+                    LabeledContent(
+                        localizedAppText("charging.sync.pending_count"),
+                        value: model.communitySyncPendingCount.formatted())
+                }
+                if needsReview {
+                    Button(localizedAppText("charging.sync.review"), action: onReview)
                         .frame(minHeight: 44)
-                        .accessibilityIdentifier("charging.sync.retry")
+                        .accessibilityIdentifier("charging.sync.review")
                 }
             }
-            if model.communitySyncPendingCount > 0 {
-                LabeledContent(
-                    localizedAppText("charging.sync.pending_count"), value: model.communitySyncPendingCount.formatted())
-            }
-            if let date = model.communitySyncLastUpdated {
-                LabeledContent(localizedAppText("charging.sync.updated")) {
-                    Text(date, format: .dateTime.month(.abbreviated).day().hour().minute())
-                }
-            }
-            if !model.blockedChargingOperations.isEmpty || model.blockedOperationsError != nil
-                || model.communitySyncStatus.needsReview
-            {
-                Button(localizedAppText("charging.sync.review"), action: onReview)
-                    .frame(minHeight: 44)
-                    .accessibilityIdentifier("charging.sync.review")
-            }
+            .font(.caption)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("charging.sync.status")
         }
-        .font(.caption)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("charging.sync.status")
+    }
+
+    private var messageKey: String? { model.communitySyncStatus.messageKey }
+
+    private var needsReview: Bool {
+        !model.blockedChargingOperations.isEmpty || model.blockedOperationsError != nil
+            || model.communitySyncStatus.needsReview
     }
 }
 
 extension ChargingCommunitySyncStatus {
-    var messageKey: String {
+    var messageKey: String? {
         switch self {
-        case .notStarted: "charging.status.local_data"
-        case .syncing: "charging.sync.updating"
-        case .synced: "charging.sync.current"
+        case .notStarted, .syncing, .synced: nil
         case .pending: "charging.sync.pending"
         case .offline: "charging.sync.offline"
         case .authenticationRequired: "charging.sync.unauthorized"

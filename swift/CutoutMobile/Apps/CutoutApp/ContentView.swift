@@ -1,5 +1,6 @@
 import Accessibility
 import CutoutMobile
+import CutoutMobileFFI
 import Foundation
 import SwiftUI
 
@@ -16,6 +17,7 @@ struct ContentView: View {
     @State private var connectionAnnouncements = ConnectionAccessibilityAnnouncements()
     @State private var presentedSheet: Sheet?
     @Environment(\.openURL) private var openURL
+    @Environment(\.locale) private var locale
 
     private enum Sheet: Identifiable {
         case setup, music, musicSettings
@@ -70,6 +72,36 @@ struct ContentView: View {
                     liveActivityFailureBanner(presentation)
                 }
             }
+            .safeAreaInset(edge: .bottom) {
+                if chargingPromptBaseEligible,
+                    model.chargingStops.isNativePresentationAvailable,
+                    let candidate = model.chargingStops.prompt,
+                    let generation = model.chargingStops.promptGeneration
+                {
+                    chargingStopPrompt(candidate: candidate, generation: generation)
+                        .id(generation)
+                }
+            }
+            .task(id: chargingPromptBaseEligible) {
+                guard chargingPromptBaseEligible else {
+                    model.chargingStops.setBatteryMonitoring(false)
+                    model.chargingStops.dismiss()
+                    return
+                }
+                while !Task.isCancelled {
+                    let canPresent = !Self.nativePresentationUnavailable
+                    model.chargingStops.setBatteryMonitoring(canPresent)
+                    await model.chargingStops.refresh(
+                        location: model.mapLocationSample,
+                        canPresent: canPresent
+                    )
+                    do { try await Task.sleep(for: .seconds(2)) } catch { return }
+                }
+            }
+            .onDisappear {
+                model.chargingStops.setBatteryMonitoring(false)
+                model.chargingStops.dismiss()
+            }
             .onChange(of: route, initial: true) { _, route in
                 focusedRoute = route
             }
@@ -116,6 +148,88 @@ struct ContentView: View {
                     AccessibilityNotification.Announcement(error.accessibilityAnnouncement).post()
                 }
             }
+    }
+
+    private var chargingPromptBaseEligible: Bool {
+        model.liveRide.isSceneActive && presentedSheet == nil && rideMapPresentation.chargingEditor == nil
+    }
+
+    @MainActor
+    private static var nativePresentationUnavailable: Bool {
+        #if os(iOS)
+            let keyWindows = UIApplication.shared.connectedScenes
+                .compactMap { $0 as? UIWindowScene }
+                .filter { $0.activationState == .foregroundActive }
+                .compactMap { $0.windows.first(where: \.isKeyWindow) }
+            guard !keyWindows.isEmpty else { return true }
+            return keyWindows.contains { window in
+                guard let root = window.rootViewController else { return true }
+                return hasPresentedViewController(root)
+            }
+        #else
+            false
+        #endif
+    }
+
+    #if os(iOS)
+        @MainActor
+        private static func hasPresentedViewController(_ controller: UIViewController) -> Bool {
+            controller.presentedViewController != nil
+                || controller.children.contains(where: hasPresentedViewController)
+        }
+    #endif
+
+    private func chargingStopPrompt(
+        candidate: MobileChargingStopPromptDto,
+        generation: UInt64
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(localizedAppText("charging.stop.title"))
+                .font(.headline)
+                .accessibilityAddTraits(.isHeader)
+            HStack {
+                Button {
+                    model.chargingStops.dismiss()
+                } label: {
+                    Text(localizedAppText("charging.stop.dismiss"))
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
+                }
+                .accessibilityIdentifier("charging.stop.dismiss")
+                Spacer()
+                Button {
+                    guard let prompt = model.chargingStops.prompt,
+                        rideMapPresentation.beginChargingStop(prompt, locale: locale)
+                    else { return }
+                    model.chargingStops.dismiss()
+                    navigate(to: .rideMap)
+                } label: {
+                    Text(localizedAppText("charging.add"))
+                        .frame(minHeight: 44)
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("charging.stop.add")
+            }
+            .frame(minHeight: 44)
+        }
+        .padding(16)
+        .background(PevColors.cardFill)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("charging.stop.prompt")
+        .onAppear {
+            Task { @MainActor in
+                await Task.yield()
+                let canPresent = chargingPromptBaseEligible && !Self.nativePresentationUnavailable
+                guard
+                    model.chargingStops.didPresent(
+                        candidate,
+                        generation: generation,
+                        canPresent: canPresent
+                    )
+                else { return }
+                AccessibilityNotification.Announcement(localizedAppText("charging.stop.title")).post()
+            }
+        }
     }
 
     private func liveActivityFailureBanner(_ presentation: LiveActivityFailurePresentation) -> some View {

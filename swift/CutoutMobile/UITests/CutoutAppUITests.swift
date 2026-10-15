@@ -7016,7 +7016,7 @@ final class ChargingMapDeviceUITests: XCTestCase {
         app.buttons["charging.filters"].tap()
         app.buttons["Voltage"].firstMatch.tap()
         app.buttons["230 V"].firstMatch.tap()
-        let empty = app.staticTexts["No charging spots in this map area."]
+        let empty = app.buttons["charging.empty.add"]
         XCTAssertTrue(empty.waitForExistence(timeout: 15), app.debugDescription)
         XCTAssertEqual(map.frame.height, initialFrame.height, accuracy: 1)
         XCTAssertEqual(map.frame.minY, initialFrame.minY, accuracy: 1)
@@ -7075,7 +7075,7 @@ final class ChargingMapDeviceUITests: XCTestCase {
         XCTAssertTrue(
             (access.label + (access.value as? String ?? "")).contains("Outlet beside the entrance. Ask at the desk."),
             app.debugDescription)
-        let power = app.staticTexts["120 V · Type B"]
+        let power = app.staticTexts["120 V · US 3 Prong"]
         if !power.exists { app.swipeUp() }
         XCTAssertTrue(power.exists, app.debugDescription)
         attachScreenshot(app, name: "Charging supply details")
@@ -7168,7 +7168,7 @@ final class ChargingMapDeviceUITests: XCTestCase {
         XCTAssertTrue(waitForFrame(coffee, near: coffeeFrame, tolerance: 12), coffee.debugDescription)
     }
 
-    func testAddUsesAvailableLocationAfterMapPan() throws {
+    func testAddOpensPlacementThenUnselectedFormAfterMapPan() throws {
         continueAfterFailure = false
         let device = XCUIDevice.shared
         let previousLocation = device.location
@@ -7193,23 +7193,21 @@ final class ChargingMapDeviceUITests: XCTestCase {
         XCTAssertTrue(add.waitForExistence(timeout: 5), app.debugDescription)
         XCTAssertTrue(add.isEnabled, app.debugDescription)
         add.tap()
+        XCTAssertTrue(app.buttons["charging.placement.confirm"].waitForExistence(timeout: 5), app.debugDescription)
+        app.buttons["charging.placement.confirm"].tap()
         XCTAssertTrue(app.buttons["charging.editor.save"].waitForExistence(timeout: 5), app.debugDescription)
         XCTAssertFalse(app.buttons["charging.placement.confirm"].exists, app.debugDescription)
-        attachScreenshot(app, name: "Charging Add opens the form at GPS without a confirmation step")
+        attachScreenshot(app, name: "Charging Add opens placement before the unselected form")
 
-        let optionalDetails = app.buttons["charging.editor.add-details"]
-        revealChargingControl(optionalDetails, in: app)
-        XCTAssertTrue(optionalDetails.waitForExistence(timeout: 5), app.debugDescription)
-        optionalDetails.tap()
-        let latitude = app.textFields["charging.editor.latitude"]
-        let longitude = app.textFields["charging.editor.longitude"]
-        revealChargingControl(latitude, in: app)
-        XCTAssertTrue(latitude.waitForExistence(timeout: 5), app.debugDescription)
-        XCTAssertTrue(longitude.waitForExistence(timeout: 5), app.debugDescription)
-        let latitudeValue = try XCTUnwrap(Double(latitude.value as? String ?? ""), app.debugDescription)
-        let longitudeValue = try XCTUnwrap(Double(longitude.value as? String ?? ""), app.debugDescription)
-        XCTAssertEqual(latitudeValue, 39.73925, accuracy: 0.0002)
-        XCTAssertEqual(longitudeValue, -104.99025, accuracy: 0.0002)
+        XCTAssertFalse(app.textFields["charging.editor.latitude"].exists)
+        XCTAssertFalse(app.textFields["charging.editor.longitude"].exists)
+        for key in ["charging", "food", "ev"] {
+            let choice = app.buttons["charging.editor.kind.\(key)"]
+            XCTAssertTrue(choice.exists, app.debugDescription)
+            XCTAssertFalse(choice.isSelected, choice.debugDescription)
+        }
+        XCTAssertFalse(app.buttons["charging.editor.move-pin"].exists)
+
     }
 
     func testSpotCreationPersistsAcrossRelaunchAndCanBeEditedAndDeleted() throws {
@@ -7241,7 +7239,7 @@ final class ChargingMapDeviceUITests: XCTestCase {
         app.buttons["charging.details.open"].tap()
 
         app.buttons["charging.details.edit"].tap()
-        let paidCost = app.buttons["charging.editor.cost.paid"]
+        let paidCost = app.buttons["charging.editor.kind.food"]
         revealChargingControl(paidCost, in: app)
         XCTAssertTrue(paidCost.waitForExistence(timeout: 5), app.debugDescription)
         paidCost.tap()
@@ -7259,7 +7257,7 @@ final class ChargingMapDeviceUITests: XCTestCase {
         XCTAssertTrue(app.buttons[newPinID].waitForNonExistence(timeout: 10), app.debugDescription)
     }
 
-    func testChargingMapShortPressDoesNotStartPlacement() throws {
+    func testMapPressesDoNotStartPlacementUntilAddIsTapped() throws {
         continueAfterFailure = false
         let app = chargingApp()
         defer { app.terminate() }
@@ -7268,16 +7266,47 @@ final class ChargingMapDeviceUITests: XCTestCase {
         XCTAssertTrue(libraryPin(in: app).waitForExistence(timeout: 20), app.debugDescription)
         let map = app.maps.firstMatch
         let placementPoint = map.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.65))
-        placementPoint.press(forDuration: 0.1)
-        let placement = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "exists == true"),
-            object: app.buttons["charging.placement.confirm"]
-        )
-        placement.isInverted = true
-        XCTAssertEqual(XCTWaiter.wait(for: [placement], timeout: 1), .completed, app.debugDescription)
+        for duration in [0.1, 1.2] {
+            placementPoint.press(forDuration: duration)
+            let placement = XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "exists == true"),
+                object: app.buttons["charging.placement.confirm"]
+            )
+            placement.isInverted = true
+            XCTAssertEqual(XCTWaiter.wait(for: [placement], timeout: 1), .completed, app.debugDescription)
+        }
+        XCTAssertTrue(app.buttons["charging.add"].exists, app.debugDescription)
+        app.buttons["charging.add"].tap()
+        XCTAssertTrue(app.buttons["charging.placement.confirm"].waitForExistence(timeout: 5), app.debugDescription)
     }
 
-    func testOptionalDetailsSurviveMovingPinAndSave() throws {
+    func testSwipingAwayNewAndExistingEditorsCancelsWithoutPlacement() throws {
+        continueAfterFailure = false
+        let app = chargingApp()
+        defer { app.terminate() }
+        openCharging(app)
+        XCTAssertTrue(libraryPin(in: app).waitForExistence(timeout: 20), app.debugDescription)
+
+        beginChargingPlacement(in: app)
+        app.buttons["charging.placement.confirm"].tap()
+        XCTAssertTrue(app.buttons["charging.editor.kind.charging"].waitForExistence(timeout: 5))
+        dismissChargingEditor(in: app, title: "Add charging spot")
+        XCTAssertTrue(app.buttons["charging.add"].waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertFalse(app.buttons["charging.placement.confirm"].exists, app.debugDescription)
+        XCTAssertFalse(app.descendants(matching: .any)["charging.editor.screen"].exists)
+
+        libraryPin(in: app).tap()
+        app.buttons["charging.details.open"].tap()
+        XCTAssertTrue(app.buttons["charging.details.edit"].waitForExistence(timeout: 5))
+        app.buttons["charging.details.edit"].tap()
+        XCTAssertTrue(app.buttons["charging.editor.save"].waitForExistence(timeout: 5))
+        dismissChargingEditor(in: app, title: "Edit charging spot")
+        XCTAssertTrue(app.buttons["charging.add"].waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertFalse(app.buttons["charging.placement.confirm"].exists, app.debugDescription)
+        XCTAssertFalse(app.descendants(matching: .any)["charging.editor.screen"].exists)
+    }
+
+    func testOptionalDetailsSurvivePlacementAndSave() throws {
         continueAfterFailure = false
         executionTimeAllowance = 240
         let app = chargingApp()
@@ -7288,11 +7317,17 @@ final class ChargingMapDeviceUITests: XCTestCase {
         let existingPinIDs = pinIdentifiers(in: app)
         let map = app.maps.firstMatch
         let placementPoint = map.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.65))
-        placementPoint.press(forDuration: 1.2)
-        XCTAssertTrue(app.buttons["charging.placement.confirm"].waitForExistence(timeout: 5), app.debugDescription)
+        beginChargingPlacement(in: app)
+        placementPoint.press(
+            forDuration: 0.1,
+            thenDragTo: map.coordinate(withNormalizedOffset: CGVector(dx: 0.68, dy: 0.67))
+        )
         app.buttons["charging.placement.cancel"].tap()
-        placementPoint.press(forDuration: 1.2)
-        XCTAssertTrue(app.buttons["charging.placement.confirm"].waitForExistence(timeout: 5), app.debugDescription)
+        beginChargingPlacement(in: app)
+        placementPoint.press(
+            forDuration: 0.1,
+            thenDragTo: map.coordinate(withNormalizedOffset: CGVector(dx: 0.68, dy: 0.67))
+        )
         app.buttons["charging.placement.confirm"].tap()
 
         fillChargingRequiredFields(in: app, note: "Ask the front desk for access.")
@@ -7313,66 +7348,10 @@ final class ChargingMapDeviceUITests: XCTestCase {
         hours.tap()
         hours.typeText("Daily, 08:00–18:00")
         dismissChargingKeyboard(in: app)
-        let editorScreen = app.descendants(matching: .any)["charging.editor.screen"].firstMatch
-        for _ in 0..<2 {
-            if !editorScreen.exists { break }
-            let navigationBar = app.navigationBars["Add charging spot"].firstMatch
-            XCTAssertTrue(navigationBar.exists, app.debugDescription)
-            navigationBar.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(
-                forDuration: 0.1,
-                thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.95))
-            )
-        }
-        let confirmDismissedEditor = app.buttons["charging.placement.confirm"]
-        XCTAssertTrue(confirmDismissedEditor.waitForExistence(timeout: 5), app.debugDescription)
-        confirmDismissedEditor.tap()
-        XCTAssertTrue(editorScreen.waitForExistence(timeout: 5), app.debugDescription)
-        revealChargingControl(name, in: app)
-        XCTAssertEqual(name.value as? String, "Garden entrance outlet", app.debugDescription)
-        revealChargingControl(hours, in: app, direction: .up)
-        XCTAssertEqual(
-            hours.value as? String,
-            "Daily, 08:00–18:00",
-            app.debugDescription
-        )
-        let accessNoteAfterDismissal = app.descendants(matching: .any)["charging.editor.access-note"]
-        revealChargingControl(accessNoteAfterDismissal, in: app, direction: .down)
-        XCTAssertTrue(
-            (accessNoteAfterDismissal.value as? String ?? "").contains("Ask the front desk for access."),
-            app.debugDescription
-        )
-        let latitude = app.textFields["charging.editor.latitude"]
-        let longitude = app.textFields["charging.editor.longitude"]
-        revealChargingControl(latitude, in: app)
-        let originalLatitude = try XCTUnwrap(Double(latitude.value as? String ?? ""), app.debugDescription)
-        let originalLongitude = try XCTUnwrap(Double(longitude.value as? String ?? ""), app.debugDescription)
-        let movePin = app.buttons["charging.editor.move-pin"]
-        revealChargingControl(movePin, in: app, direction: .down)
-        XCTAssertTrue(movePin.waitForExistence(timeout: 5), app.debugDescription)
-        XCTAssertEqual(app.buttons.matching(identifier: "charging.editor.move-pin").count, 1)
-        movePin.tap()
-        XCTAssertTrue(app.buttons["charging.placement.confirm"].waitForExistence(timeout: 5), app.debugDescription)
-        let movingMap = app.maps.firstMatch
-        movingMap.coordinate(withNormalizedOffset: CGVector(dx: 0.48, dy: 0.50)).press(
-            forDuration: 0.1,
-            thenDragTo: movingMap.coordinate(withNormalizedOffset: CGVector(dx: 0.56, dy: 0.56))
-        )
-        app.buttons["charging.placement.confirm"].tap()
-
-        XCTAssertTrue(app.descendants(matching: .any)["charging.editor.screen"].waitForExistence(timeout: 5))
-        revealChargingControl(latitude, in: app)
-        let movedLatitude = try XCTUnwrap(Double(latitude.value as? String ?? ""), app.debugDescription)
-        let movedLongitude = try XCTUnwrap(Double(longitude.value as? String ?? ""), app.debugDescription)
-        XCTAssertGreaterThan(abs(movedLatitude - originalLatitude) + abs(movedLongitude - originalLongitude), 0.0001)
-        revealChargingControl(name, in: app, direction: .down)
-        XCTAssertEqual(name.value as? String, "Garden entrance outlet", app.debugDescription)
-        revealChargingControl(hours, in: app, direction: .down)
-        XCTAssertEqual(hours.value as? String, "Daily, 08:00–18:00", app.debugDescription)
-        let retainedAccessNote = app.descendants(matching: .any)["charging.editor.access-note"]
-        revealChargingControl(retainedAccessNote, in: app, direction: .down)
-        XCTAssertTrue(
-            (retainedAccessNote.value as? String ?? "").contains("Ask the front desk for access."), app.debugDescription
-        )
+        XCTAssertFalse(app.descendants(matching: .any)["charging.editor.country"].exists)
+        XCTAssertFalse(app.textFields["charging.editor.latitude"].exists)
+        XCTAssertFalse(app.textFields["charging.editor.longitude"].exists)
+        XCTAssertFalse(app.buttons["charging.editor.move-pin"].exists)
         app.buttons["charging.editor.save"].tap()
 
         XCTAssertTrue(
@@ -7391,7 +7370,7 @@ final class ChargingMapDeviceUITests: XCTestCase {
         XCTAssertTrue((savedAccess.label + (savedAccess.value as? String ?? "")).contains("Ask the front desk"))
     }
 
-    func testDraftSurvivesChangingRideMapModeWhileMovingPin() throws {
+    func testPlacementSurvivesChangingRideMapMode() throws {
         continueAfterFailure = false
         let app = chargingApp()
         defer { app.terminate() }
@@ -7399,25 +7378,11 @@ final class ChargingMapDeviceUITests: XCTestCase {
 
         let map = app.maps.firstMatch
         XCTAssertTrue(map.waitForExistence(timeout: 15), app.debugDescription)
-        map.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.65)).press(forDuration: 1.2)
-        app.buttons["charging.placement.confirm"].tap()
-        fillChargingRequiredFields(in: app, note: "Draft access note survives the mode switch.")
-        let addDetails = app.buttons["charging.editor.add-details"]
-        revealChargingControl(addDetails, in: app)
-        addDetails.tap()
-        let name = app.textFields["charging.editor.name"]
-        revealChargingControl(name, in: app, direction: .down)
-        name.tap()
-        name.typeText("North entrance")
-        dismissChargingKeyboard(in: app)
-        let latitude = app.textFields["charging.editor.latitude"]
-        revealChargingControl(latitude, in: app)
-        let originalLatitude = latitude.value as? String
-
-        let movePin = app.buttons["charging.editor.move-pin"]
-        revealChargingControl(movePin, in: app, direction: .down)
-        movePin.tap()
-        XCTAssertTrue(app.buttons["charging.placement.confirm"].waitForExistence(timeout: 5), app.debugDescription)
+        beginChargingPlacement(in: app)
+        map.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.65)).press(
+            forDuration: 0.1,
+            thenDragTo: map.coordinate(withNormalizedOffset: CGVector(dx: 0.68, dy: 0.67))
+        )
         let modePicker = app.descendants(matching: .any)["ride-map.mode-picker"].segmentedControls.firstMatch
         let live = modePicker.buttons["Live"]
         XCTAssertTrue(live.waitForExistence(timeout: 5), app.debugDescription)
@@ -7427,17 +7392,11 @@ final class ChargingMapDeviceUITests: XCTestCase {
         let confirm = app.buttons["charging.placement.confirm"]
         XCTAssertTrue(confirm.waitForExistence(timeout: 10), app.debugDescription)
         confirm.tap()
-        XCTAssertTrue(app.textFields["charging.editor.name"].waitForExistence(timeout: 5), app.debugDescription)
-        let retainedName = app.textFields["charging.editor.name"]
-        revealChargingControl(retainedName, in: app, direction: .down)
-        XCTAssertEqual(retainedName.value as? String, "North entrance", app.debugDescription)
-        let retainedNote = app.descendants(matching: .any)["charging.editor.access-note"]
-        revealChargingControl(retainedNote, in: app, direction: .down)
-        XCTAssertTrue(
-            (retainedNote.value as? String ?? "").contains("Draft access note survives"), app.debugDescription)
-        revealChargingControl(latitude, in: app)
-        XCTAssertEqual(latitude.value as? String, originalLatitude, app.debugDescription)
-        attachScreenshot(app, name: "Charging draft retained after changing map mode")
+        XCTAssertTrue(app.buttons["charging.editor.kind.charging"].waitForExistence(timeout: 5), app.debugDescription)
+        for kind in ["charging", "food", "ev"] {
+            XCTAssertFalse(app.buttons["charging.editor.kind.\(kind)"].isSelected)
+        }
+        attachScreenshot(app, name: "Charging placement retained after changing map mode")
     }
 
     func testCollapsedOptionalPriceErrorCanReopenDetails() throws {
@@ -7448,11 +7407,11 @@ final class ChargingMapDeviceUITests: XCTestCase {
 
         let map = app.maps.firstMatch
         XCTAssertTrue(map.waitForExistence(timeout: 15), app.debugDescription)
-        map.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.65)).press(forDuration: 1.2)
+        beginChargingPlacement(in: app)
         app.buttons["charging.placement.confirm"].tap()
         fillChargingRequiredFields(in: app, note: "Outlet beside the door.")
-        let paid = app.buttons["charging.editor.cost.paid"]
-        let free = app.buttons["charging.editor.cost.free"]
+        let paid = app.buttons["charging.editor.kind.food"]
+        let free = app.buttons["charging.editor.kind.charging"]
         paid.tap()
         XCTAssertTrue(paid.isSelected, app.debugDescription)
         XCTAssertFalse(free.isSelected, app.debugDescription)
@@ -7507,7 +7466,7 @@ final class ChargingMapDeviceUITests: XCTestCase {
         let map = app.maps.firstMatch
         XCTAssertTrue(map.waitForExistence(timeout: 10), app.debugDescription)
         XCTAssertTrue(libraryPin(in: app).waitForExistence(timeout: 10), app.debugDescription)
-        map.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.65)).press(forDuration: 1.2)
+        beginChargingPlacement(in: app)
         let placement = app.scrollViews["charging.placement.scroll"]
         let confirm = app.buttons["charging.placement.confirm"]
         let cancel = app.buttons["charging.placement.cancel"]
@@ -7569,10 +7528,7 @@ final class ChargingMapDeviceUITests: XCTestCase {
             note: "Outlet near the main entrance.",
             keyboardScreenshot: "Charging access note keyboard at largest text size"
         )
-        let movePin = app.buttons["charging.editor.move-pin"]
-        revealChargingControl(movePin, in: app)
-        XCTAssertTrue(movePin.exists, app.debugDescription)
-        XCTAssertEqual(app.buttons.matching(identifier: "charging.editor.move-pin").count, 1)
+        XCTAssertFalse(app.buttons["charging.editor.move-pin"].exists)
         let save = app.buttons["charging.editor.save"]
         XCTAssertTrue(save.isHittable, save.debugDescription)
         save.tap()
@@ -7636,13 +7592,17 @@ final class ChargingMapDeviceUITests: XCTestCase {
     private func createFreeSpot(in app: XCUIApplication, note: String) {
         let map = app.maps.firstMatch
         XCTAssertTrue(map.waitForExistence(timeout: 10), app.debugDescription)
-        map.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.65)).press(forDuration: 1.2)
+        beginChargingPlacement(in: app)
         let confirmPlacement = app.buttons["charging.placement.confirm"]
         XCTAssertTrue(confirmPlacement.waitForExistence(timeout: 5), app.debugDescription)
         confirmPlacement.tap()
-        XCTAssertTrue(app.buttons["charging.editor.cost.free"].waitForExistence(timeout: 5), app.debugDescription)
-        XCTAssertTrue(app.buttons["charging.editor.cost.free"].isHittable)
-        XCTAssertTrue(app.buttons["charging.editor.cost.paid"].isHittable)
+        XCTAssertTrue(app.buttons["charging.editor.kind.charging"].waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(app.buttons["charging.editor.kind.charging"].isHittable)
+        XCTAssertTrue(app.buttons["charging.editor.kind.food"].isHittable)
+        XCTAssertTrue(app.buttons["charging.editor.kind.ev"].isHittable)
+        for kind in ["charging", "food", "ev"] {
+            XCTAssertFalse(app.buttons["charging.editor.kind.\(kind)"].isSelected)
+        }
         XCTAssertFalse(app.textFields["charging.editor.latitude"].exists)
         let editor = app.descendants(matching: .any)["charging.editor.screen"].firstMatch
         let compactEditor = XCTNSPredicateExpectation(
@@ -7651,6 +7611,14 @@ final class ChargingMapDeviceUITests: XCTestCase {
         attachScreenshot(app, name: "Charging spot required fields")
 
         fillRequiredFieldsAndSave(in: app, note: note)
+    }
+
+    private func beginChargingPlacement(in app: XCUIApplication) {
+        let add = app.buttons["charging.add"]
+        XCTAssertTrue(add.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(add.isEnabled, app.debugDescription)
+        add.tap()
+        XCTAssertTrue(app.buttons["charging.placement.confirm"].waitForExistence(timeout: 5), app.debugDescription)
     }
 
     private func fillRequiredFieldsAndSave(in app: XCUIApplication, note: String) {
@@ -7677,10 +7645,22 @@ final class ChargingMapDeviceUITests: XCTestCase {
             attachScreenshot(app, name: keyboardScreenshot)
         }
         dismissChargingKeyboard(in: app)
-        let freeCost = app.buttons["charging.editor.cost.free"]
+        let freeCost = app.buttons["charging.editor.kind.charging"]
         revealChargingControl(freeCost, in: app)
         XCTAssertTrue(freeCost.waitForExistence(timeout: 5), app.debugDescription)
         freeCost.tap()
+    }
+
+    private func dismissChargingEditor(in app: XCUIApplication, title: String) {
+        let editor = app.descendants(matching: .any)["charging.editor.screen"].firstMatch
+        for _ in 0..<2 where editor.exists {
+            let bar = app.navigationBars[title].firstMatch
+            XCTAssertTrue(bar.exists, app.debugDescription)
+            bar.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(
+                forDuration: 0.1,
+                thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.95))
+            )
+        }
     }
 
     private func dismissChargingKeyboard(in app: XCUIApplication) {

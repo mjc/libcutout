@@ -8,7 +8,7 @@ use crate::{
     mobile_geo_bounds, mobile_map_coordinate, mobile_query_limit, persistence,
 };
 
-async fn run_database<T, F>(
+pub(super) async fn run_database<T, F>(
     database: persistence::RideDatabase,
     operation: F,
 ) -> Result<T, MobileChargingError>

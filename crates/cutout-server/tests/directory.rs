@@ -550,7 +550,7 @@ async fn optional_venue_price_and_paired_supplies_round_trip_without_power_defau
     input["price"] =
         json!({"amount_minor":500,"currency":"USD","minor_unit_exponent":2,"basis":"purchase"});
     input["supplies"] = json!([
-        {"voltage_volts":120,"connectors":["nema_5_15","nema_5_20"]},
+        {"voltage_volts":120,"connectors":["nema_5_15","nema_5_20"],"outlet_count":4},
         {"voltage_volts":null,"connectors":["type_2","ccs2"]}
     ]);
     let receipt = server.create(&token, input.clone()).await;
@@ -574,6 +574,10 @@ async fn invalid_payloads_and_untrusted_public_fields_are_rejected() {
             json!({"latitude_e7":900_000_001,"longitude_e7":0}),
         ),
         ("supplies", json!([{"voltage_volts":0,"connectors":[]}])),
+        (
+            "supplies",
+            json!([{"voltage_volts":null,"connectors":[],"outlet_count":0}]),
+        ),
         (
             "supplies",
             json!([{"voltage_volts":120,"connectors":["invented_connector"]}]),

@@ -27,7 +27,8 @@ final class ChargingSupplyDraftTests: XCTestCase {
     func testRestoredCustomAndUnknownSuppliesRemainConfirmedAcrossCountryAndEVChanges() {
         let custom = MobileChargingSupplyDto(
             voltageVolts: 240,
-            connectors: [.other(label: "über plug"), .type2]
+            connectors: [.other(label: "über plug"), .type2],
+            outletCount: nil
         )
         let draft = ChargingSupplyDraft(supply: custom, countryCode: "US", evStation: false)
 
@@ -38,13 +39,22 @@ final class ChargingSupplyDraftTests: XCTestCase {
         XCTAssertTrue(draft.isConfirmed)
         XCTAssertEqual(draft.value(), custom)
 
-        let unknown = MobileChargingSupplyDto(voltageVolts: nil, connectors: [.unknown])
+        let unknown = MobileChargingSupplyDto(voltageVolts: nil, connectors: [.unknown], outletCount: nil)
         let unknownDraft = ChargingSupplyDraft(supply: unknown, countryCode: nil, evStation: true)
         XCTAssertEqual(unknownDraft.value(), unknown)
     }
 
+    func testRestoredCountOnlySupplyRemainsConfirmed() {
+        let supply = MobileChargingSupplyDto(voltageVolts: nil, connectors: [], outletCount: 3)
+        let draft = ChargingSupplyDraft(supply: supply, countryCode: "US", evStation: false)
+
+        XCTAssertFalse(draft.isEmpty)
+        XCTAssertTrue(draft.isConfirmed)
+        XCTAssertEqual(draft.value(), supply)
+    }
+
     func testIncompleteEditCannotFallBackToThePreviouslyConfirmedSupply() {
-        let observed = MobileChargingSupplyDto(voltageVolts: 240, connectors: [.type2])
+        let observed = MobileChargingSupplyDto(voltageVolts: 240, connectors: [.type2], outletCount: nil)
         let draft = ChargingSupplyDraft(supply: observed, countryCode: nil, evStation: false)
 
         draft.voltageText = "24x"
@@ -83,7 +93,7 @@ final class ChargingSupplyDraftTests: XCTestCase {
     }
 
     func testRejectedCustomEditAndSnapshotLoadingKeepNativeConnectorText() {
-        let observed = MobileChargingSupplyDto(voltageVolts: 240, connectors: [.type2])
+        let observed = MobileChargingSupplyDto(voltageVolts: 240, connectors: [.type2], outletCount: nil)
         let draft = ChargingSupplyDraft(supply: observed, countryCode: "US", evStation: false)
         draft.addOtherConnector()
         let invalidLabel = String(repeating: "é", count: 41)
@@ -99,7 +109,7 @@ final class ChargingSupplyDraftTests: XCTestCase {
     }
 
     func testRejectedRestoredSupplyKeepsRawFieldsVisibleWithoutIncludingIt() {
-        let invalid = MobileChargingSupplyDto(voltageVolts: 2_001, connectors: [.unknown])
+        let invalid = MobileChargingSupplyDto(voltageVolts: 2_001, connectors: [.unknown], outletCount: nil)
         let draft = ChargingSupplyDraft(supply: invalid, countryCode: "US", evStation: false)
 
         XCTAssertEqual(draft.voltageText, "2001")
@@ -109,7 +119,7 @@ final class ChargingSupplyDraftTests: XCTestCase {
     }
 
     func testClearedObservedRowStaysEmptyWhenCountryChanges() {
-        let observed = MobileChargingSupplyDto(voltageVolts: 240, connectors: [.type2])
+        let observed = MobileChargingSupplyDto(voltageVolts: 240, connectors: [.type2], outletCount: nil)
         let draft = ChargingSupplyDraft(supply: observed, countryCode: "US", evStation: false)
         draft.voltageText = ""
         draft.set(.type2, selected: false)
@@ -127,11 +137,12 @@ final class ChargingSupplyDraftTests: XCTestCase {
             coordinate: MobileMapCoordinateDto(latitudeDegrees: 40, longitudeDegrees: -105)
         )
         model.confirmLocation()
+        model.chooseKind(.charging)
         model.accessNote = "Ask staff"
         model.addSupply()
         let draft = model.supplies[0]
         draft.voltageText = "\n 120 \r\n"
-        draft.set(.typeB, selected: true)
+        draft.set(.nema515, selected: true)
 
         XCTAssertFalse(draft.hasInvalidVoltage)
         XCTAssertEqual(draft.value()?.voltageVolts, 120)

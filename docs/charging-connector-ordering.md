@@ -1,0 +1,15 @@
+# Connector menu ordering
+
+The charging editor ranks connector choices using visible spots in the local database within 25 km of the rider's current GPS location. Each spot contributes once per connector, regardless of its outlet count or repeated supply groups. Hidden, withdrawn and removed spots do not contribute. Unknown and custom labels do not affect popularity. The lookup streams the spatial candidates without an arbitrary result cap and checks exact great-circle distance, including across the antimeridian and near the poles.
+
+Observed connectors sort by the number of supporting spots. Ties and connectors with no observations use the GPS-derived country mapping compiled into `cutout-ride-maps`. No nearby observations, or a failed local read, leaves that country fallback intact. Country resolution uses the existing native reverse-geocoding path and may require Apple services. Missing or unsupported country context uses the general catalogue order. Device language and locale never supply location context.
+
+The fallback mapping uses coarse groups: local household outlets, regional EV connectors, then the remaining catalogue. It does not estimate market share. US 3 Prong leads the US household fallback; other ties retain catalogue order. Stable sorting preserves the catalogue order for ties. Unknown stays available at the end, and custom connector labels retain their separate editor control. Reordering does not select, confirm or modify a supply.
+
+Household groups cover US/Canada, Mexico/Japan, Britain/Ireland, Germany/Austria, France/Belgium, Australia/New Zealand, Brazil and India. Regional EV groups cover US/Canada and the listed European countries. Other countries retain the general order until their mapping is added. Local observations take precedence over these national groups.
+
+The household groups follow the manufacturer's [Bel world plug guide](https://www.belfuse.com/resource-library/tech-paper/world-plug-and-input-voltage-guide). NEMA 5-15 is presented as US 3 Prong, and Type A as US 2 Prong. The regional EV groups follow [Quebec's connector guide](https://www.quebec.ca/en/transports/electric-transportation/charging/connectors) and [ChargePoint's regional connector guide](https://www.chargepoint.com/en-gb/drivers/support/faqs/what-are-different-public-ev-charging-connector-types). These sources identify regional connector families; they do not establish exact prevalence percentages. CHAdeMO remains available in the general group.
+
+The native menu renders the Rust-ordered array directly, so visible and accessibility encounter order share the same source. Location context used for ranking is not part of a charging-spot write or sync payload.
+
+Behavior tests cover representative local prefixes, regional EV priority, stable ties, the complete distinct-shape catalogue, local spot counting, distance and visibility exclusions, missing/unsupported location, the Swift FFI boundary, automatic country updates and preservation of explicit supplies.

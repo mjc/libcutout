@@ -3,11 +3,14 @@ use super::{
     Command as DatabaseCommand, GeoBounds, MapPointCursor, MapPointId, QueryLimit, Reply,
     RideDatabase, SpatialSchemaState, StorageError,
 };
-use cutout_ride_maps::{ChargingVote, Coordinate, NewChargingSpot};
+use cutout_ride_maps::{
+    ChargingConnector, ChargingCountry, ChargingVote, Coordinate, NewChargingSpot,
+};
 use rusqlite::Connection;
 
 mod account;
 mod codec;
+mod connector_ordering;
 mod model;
 mod mutations;
 mod queries;
@@ -78,6 +81,11 @@ pub(super) enum Command {
     Detail {
         id: MapPointId,
         reply: Reply<Option<StoredChargingSpot>>,
+    },
+    ConnectorChoices {
+        origin: Coordinate,
+        country: Option<ChargingCountry>,
+        reply: Reply<Vec<ChargingConnector>>,
     },
     Page {
         bounds: GeoBounds,
@@ -256,6 +264,23 @@ impl RideDatabase {
         id: MapPointId,
     ) -> Result<Option<StoredChargingSpot>, StorageError> {
         self.request(move |reply| DatabaseCommand::Charging(Command::Detail { id, reply }))
+    }
+    /// Orders the full connector catalogue by distinct visible spots within 25 km.
+    /// Ties and absent observations retain the GPS country fallback order.
+    /// # Errors
+    /// Returns worker, storage or invalid retained-data errors.
+    pub fn charging_connector_choices_near(
+        &self,
+        origin: Coordinate,
+        country: Option<ChargingCountry>,
+    ) -> Result<Vec<ChargingConnector>, StorageError> {
+        self.request(move |reply| {
+            DatabaseCommand::Charging(Command::ConnectorChoices {
+                origin,
+                country,
+                reply,
+            })
+        })
     }
     /// Queries visible charging spots through the existing `RTree` with bounded pagination.
     /// # Errors
@@ -486,6 +511,18 @@ pub(super) fn execute(
         }
         Command::Detail { id, reply } => {
             let _ = reply.send(detail(connection, id));
+        }
+        Command::ConnectorChoices {
+            origin,
+            country,
+            reply,
+        } => {
+            let _ = reply.send(connector_ordering::choices(
+                connection,
+                spatial,
+                origin,
+                country.as_ref(),
+            ));
         }
         Command::Page {
             bounds,
