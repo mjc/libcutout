@@ -47,7 +47,6 @@ struct ChargingMapContentView: View {
     @State private var pendingEditor: ChargingSpotEditorModel?
     @State private var editorLaunchError: MobileChargingError?
     @State private var knownVoltages: Set<UInt16> = [120, 230, 240]
-    @State private var mapSelectedID: String?
     @State private var cameraRevision = 0
     @State private var selectedPopupHeight: CGFloat = 154
 
@@ -389,10 +388,20 @@ struct ChargingMapContentView: View {
     private var map: some View {
         let selected = model.selectedSpot
         let selectedVisibility = selectedSpotVisibility
+        let selectionIsOnMap = selectedVisibility == .page || selectedVisibility == .separateAnnotation
         let spots = model.spots
         let _ = cameraRevision
         return MapReader { proxy in
-            Map(position: $mapPosition, interactionModes: [.pan, .zoom], selection: $mapSelectedID) {
+            Map(
+                position: $mapPosition, interactionModes: [.pan, .zoom],
+                selection: Binding<String?>(
+                    get: { selectionIsOnMap ? model.selectedSpot?.id : nil },
+                    set: { id in
+                        // Filtered-out and moderated selections remain available in details.
+                        if id != nil || selectionIsOnMap { model.select(id: id) }
+                    }
+                )
+            ) {
                 UserAnnotation()
                 ForEach(spots, id: \.id) { spot in
                     if let input = spot.input {
@@ -435,11 +444,7 @@ struct ChargingMapContentView: View {
             }
             .accessibilityLabel(localizedAppText("charging.map.label"))
             .mapStyle(.standard(elevation: .flat, pointsOfInterest: .excludingAll, showsTraffic: false))
-            .onChange(of: mapSelectedID) { _, id in
-                if let spot = spots.first(where: { $0.id == id }) { model.select(spot) }
-            }
-            .onChange(of: model.selectedSpot?.id, initial: true) { _, id in
-                mapSelectedID = id
+            .onChange(of: model.selectedSpot?.id, initial: true) { _, _ in
                 selectedPopupHeight = 154
             }
             .onMapCameraChange(frequency: .continuous) { context in
@@ -492,7 +497,7 @@ struct ChargingMapContentView: View {
                 GeometryReader { geometry in
                     if editor == nil, let selected,
                         let input = selected.input,
-                        selectedVisibility == .page || selectedVisibility == .separateAnnotation,
+                        selectionIsOnMap,
                         let point = proxy.convert(
                             CLLocationCoordinate2D(
                                 latitude: input.coordinate.latitudeDegrees,
@@ -807,14 +812,25 @@ struct ChargingMapContentView: View {
 
     private func votePanel(_ spot: MobileChargingSpotDto, panelWidth: CGFloat) -> some View {
         VStack(spacing: 6) {
-            if let note = spot.input?.accessNote, !note.isEmpty {
-                Text(note)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-                    .truncationMode(.tail)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .accessibilityIdentifier("charging.selected.access-note")
+            HStack(alignment: .top) {
+                if let note = spot.input?.accessNote, !note.isEmpty {
+                    Text(note)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .truncationMode(.tail)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityIdentifier("charging.selected.access-note")
+                } else {
+                    Spacer(minLength: 0)
+                }
+                Button(action: model.deselect) {
+                    Image(systemName: "xmark.circle.fill")
+                        .frame(minWidth: 44, minHeight: 44)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(localizedAppText("charging.selected.close"))
+                .accessibilityIdentifier("charging.selected.close")
             }
             HStack(spacing: 8) {
                 voteButton(spot, vote: .up, count: spot.votesUp, key: "charging.vote.up")

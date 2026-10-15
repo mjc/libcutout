@@ -127,6 +127,27 @@ final class ChargingMapModelTests: XCTestCase {
         XCTAssertEqual(model.voteError, .StorageFailure)
     }
 
+    func testNonvisibleVoteReadbackRemovesPageRowAndRetainsSelectedStatus() async {
+        for status: MobileChargingStatusDto in [.hidden, .withdrawn, .removed] {
+            let original = Self.spot("one", coordinate: .init(latitudeDegrees: 0.5, longitudeDegrees: 0.5))
+            let tombstone = Self.spot("one", revision: 2, status: status)
+            let model = ChargingMapModel(
+                queryPage: { _, _, _, _ in Self.page([original], cursor: nil) },
+                readSpot: { _ in tombstone },
+                writeVote: { _, _, _ in }
+            )
+            model.setViewport(bounds())
+            await model.load()
+            model.select(original)
+            await model.vote(.up)
+
+            XCTAssertTrue(model.spots.isEmpty, "\(status) must not remain in page membership")
+            XCTAssertEqual(model.selectedSpot, tombstone)
+            XCTAssertTrue(model.pendingVoteIDs.isEmpty)
+            XCTAssertNil(model.voteError)
+        }
+    }
+
     func testFilterChangeClearsResultsAndSelection() async {
         let model = ChargingMapModel(
             queryPage: { _, _, _, _ in Self.page([Self.spot("one")], cursor: nil) },
@@ -141,6 +162,28 @@ final class ChargingMapModelTests: XCTestCase {
         XCTAssertTrue(model.spots.isEmpty)
         XCTAssertNil(model.selectedSpot)
         XCTAssertEqual(model.queryID, 2)
+    }
+
+    func testClearingMapSelectionPreservesResultsAndFilter() async {
+        let original = Self.spot("one")
+        let filter = MobileChargingFilterDto(cost: .free, connector: nil, voltageVolts: nil, venue: nil)
+        let model = ChargingMapModel(
+            filter: filter,
+            queryPage: { _, _, _, _ in Self.page([original], cursor: nil) },
+            readSpot: { _ in nil },
+            writeVote: { _, _, _ in }
+        )
+        model.setViewport(bounds())
+        await model.load()
+        let queryID = model.queryID
+        model.select(id: original.id)
+        XCTAssertEqual(model.selectedSpot, original)
+        model.select(id: nil)
+
+        XCTAssertNil(model.selectedSpot)
+        XCTAssertEqual(model.spots, [original])
+        XCTAssertEqual(model.filter, filter)
+        XCTAssertEqual(model.queryID, queryID)
     }
 
     func testViewportFailureKeepsVisibleSpots() async {

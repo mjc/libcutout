@@ -24,6 +24,20 @@ typealias ChargingOperationResolution = @Sendable (
     String, UInt64, MobileChargingResolutionDto
 ) async throws -> Void
 
+func withChargingDatabase<Result: Sendable>(
+    open: @Sendable () async throws -> RideDatabaseHandle = { try await RustPersistenceStore.open() },
+    _ operation: @Sendable (RideDatabaseHandle) async throws -> Result
+) async throws -> Result {
+    do {
+        let database = try await open()
+        return try await operation(database)
+    } catch let error as MobileChargingError {
+        throw error
+    } catch {
+        throw MobileChargingError.Unavailable
+    }
+}
+
 @MainActor
 @Observable
 final class ChargingMapModel {
@@ -116,94 +130,55 @@ final class ChargingMapModel {
     }
 
     convenience init(
-        database: RideDatabaseHandle,
+        database: RideDatabaseHandle? = nil,
         filter: MobileChargingFilterDto = MobileChargingFilterDto(
             cost: nil, connector: nil, voltageVolts: nil, venue: nil)
     ) {
+        let openDatabase: @Sendable () async throws -> RideDatabaseHandle = {
+            if let database { return database }
+            return try await RustPersistenceStore.open()
+        }
         self.init(
             filter: filter,
             queryPage: { bounds, filter, cursor, limit in
-                try await database.chargingSpotsInBounds(
-                    bounds: bounds, selection: filter, cursor: cursor, limit: limit
-                )
-            },
-            readSpot: { id in try await database.chargingSpot(id: id) },
-            nearbySpots: { bounds, origin, filter, limit in
-                try await database.nearbyChargingSpots(
-                    bounds: bounds, origin: origin, selection: filter, limit: limit
-                )
-            },
-            writeVote: { id, revision, vote in
-                _ = try await database.voteChargingSpot(id: id, expectedRevision: revision, vote: vote)
-            },
-            writeWithdrawal: { id, revision in
-                _ = try await database.withdrawChargingSpot(id: id, expectedRevision: revision)
-            },
-            queryBlockedOperations: {
-                try await database.listBlockedChargingOperations()
-            },
-            resolveOperation: { operationID, revision, resolution in
-                try await database.resolveChargingOperation(
-                    operationId: operationID, expectedLocalRevision: revision,
-                    resolution: resolution
-                )
-            },
-            communitySync: nil
-        )
-    }
-
-    convenience init() {
-        self.init(
-            queryPage: { bounds, filter, cursor, limit in
-                do {
-                    let database = try await RustPersistenceStore.open()
-                    return try await database.chargingSpotsInBounds(
+                try await withChargingDatabase(open: openDatabase) { database in
+                    try await database.chargingSpotsInBounds(
                         bounds: bounds, selection: filter, cursor: cursor, limit: limit
                     )
-                } catch let error as MobileChargingError { throw error } catch { throw MobileChargingError.Unavailable }
+                }
             },
             readSpot: { id in
-                do {
-                    let database = try await RustPersistenceStore.open()
-                    return try await database.chargingSpot(id: id)
-                } catch let error as MobileChargingError { throw error } catch { throw MobileChargingError.Unavailable }
+                try await withChargingDatabase(open: openDatabase) { try await $0.chargingSpot(id: id) }
             },
             nearbySpots: { bounds, origin, filter, limit in
-                do {
-                    let database = try await RustPersistenceStore.open()
-                    return try await database.nearbyChargingSpots(
+                try await withChargingDatabase(open: openDatabase) { database in
+                    try await database.nearbyChargingSpots(
                         bounds: bounds, origin: origin, selection: filter, limit: limit
                     )
-                } catch let error as MobileChargingError { throw error } catch { throw MobileChargingError.Unavailable }
+                }
             },
             writeVote: { id, revision, vote in
-                do {
-                    let database = try await RustPersistenceStore.open()
+                try await withChargingDatabase(open: openDatabase) { database in
                     _ = try await database.voteChargingSpot(id: id, expectedRevision: revision, vote: vote)
-                } catch let error as MobileChargingError { throw error } catch { throw MobileChargingError.Unavailable }
+                }
             },
             writeWithdrawal: { id, revision in
-                do {
-                    let database = try await RustPersistenceStore.open()
+                try await withChargingDatabase(open: openDatabase) { database in
                     _ = try await database.withdrawChargingSpot(id: id, expectedRevision: revision)
-                } catch let error as MobileChargingError { throw error } catch { throw MobileChargingError.Unavailable }
+                }
             },
             queryBlockedOperations: {
-                do {
-                    let database = try await RustPersistenceStore.open()
-                    return try await database.listBlockedChargingOperations()
-                } catch let error as MobileChargingError { throw error } catch { throw MobileChargingError.Unavailable }
+                try await withChargingDatabase(open: openDatabase) { try await $0.listBlockedChargingOperations() }
             },
             resolveOperation: { operationID, revision, resolution in
-                do {
-                    let database = try await RustPersistenceStore.open()
+                try await withChargingDatabase(open: openDatabase) { database in
                     try await database.resolveChargingOperation(
                         operationId: operationID, expectedLocalRevision: revision,
                         resolution: resolution
                     )
-                } catch let error as MobileChargingError { throw error } catch { throw MobileChargingError.Unavailable }
+                }
             },
-            communitySync: .shared
+            communitySync: database == nil ? .shared : nil
         )
     }
 
@@ -270,11 +245,7 @@ final class ChargingMapModel {
                     requestTicket: requestTicket, spot: updated
                 )
             else { return }
-            if updated.status == .hidden || updated.status == .withdrawn || updated.status == .removed {
-                spots.removeAll { $0.id == id }
-            } else if let index = spots.firstIndex(where: { $0.id == id }) {
-                spots[index] = updated
-            }
+            updatePageMembership(with: updated)
             if selectionSequence == requestSelection, selectedSpot?.id == id {
                 selectedSpot = updated
             }
@@ -351,11 +322,7 @@ final class ChargingMapModel {
                 return
             }
             selectedSpot = updated
-            if updated.status == .hidden || updated.status == .withdrawn || updated.status == .removed {
-                spots.removeAll { $0.id == id }
-            } else if let index = spots.firstIndex(where: { $0.id == id }) {
-                spots[index] = updated
-            }
+            updatePageMembership(with: updated)
         } catch {
             // Keep the current detail visible when the local read cannot complete.
         }
@@ -445,9 +412,7 @@ final class ChargingMapModel {
                     requestTicket: requestTicket, spot: updated
                 )
             else { return }
-            if let index = spots.firstIndex(where: { $0.id == id }) {
-                spots[index] = updated
-            }
+            updatePageMembership(with: updated)
             selectedSpot = updated
             error = nil
         } catch let error as MobileChargingError {
@@ -497,6 +462,15 @@ final class ChargingMapModel {
         selectedSpot = spot
         voteError = nil
     }
+
+    func select(id: String?) {
+        guard let id else {
+            deselect()
+            return
+        }
+        if let spot = spots.first(where: { $0.id == id }) { select(spot) }
+    }
+
     func deselect() {
         selectionSequence &+= 1
         selectedSpot = nil
@@ -694,8 +668,17 @@ final class ChargingMapModel {
                 requestTicket: requestTicket, spot: updated
             )
         else { return }
-        if let index = spots.firstIndex(where: { $0.id == id }) { spots[index] = updated }
+        updatePageMembership(with: updated)
         if selectedSpot?.id == id { selectedSpot = updated }
+    }
+
+    private func updatePageMembership(with spot: MobileChargingSpotDto) {
+        switch spot.status {
+        case .hidden, .withdrawn, .removed:
+            spots.removeAll { $0.id == spot.id }
+        case .queued, .published:
+            if let index = spots.firstIndex(where: { $0.id == spot.id }) { spots[index] = spot }
+        }
     }
 }
 

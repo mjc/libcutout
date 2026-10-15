@@ -1,6 +1,7 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "charging.selected.close" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Close pin"}}}},
     "charging.sync.clear_vote" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Clear vote"}}}},
     "charging.sync.name" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Name"}}}},
     "charging.sync.verify" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Confirm availability"}}}},

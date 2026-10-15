@@ -430,17 +430,12 @@ final class ChargingSpotEditorModel {
     private static func persist(_ destination: Destination, fields: MobileChargingInputDto) async throws
         -> MobileChargingWriteReceiptDto
     {
-        do {
-            let database = try await RustPersistenceStore.open()
+        try await withChargingDatabase { database in
             switch destination {
             case .create: return try await database.saveChargingSpot(fields: fields)
             case .edit(let id, let revision):
                 return try await database.editChargingSpot(id: id, expectedRevision: revision, fields: fields)
             }
-        } catch let error as MobileChargingError {
-            throw error
-        } catch {
-            throw MobileChargingError.Unavailable
         }
     }
 }

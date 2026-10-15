@@ -7083,6 +7083,33 @@ final class ChargingMapDeviceUITests: XCTestCase {
         XCTAssertTrue(app.buttons["charging.vote.up"].waitForExistence(timeout: 5))
     }
 
+    func testSelectedPinCanCloseWithoutChangingMapOrFilters() throws {
+        continueAfterFailure = false
+        let app = chargingApp()
+        defer { app.terminate() }
+        openCharging(app)
+        let library = libraryPin(in: app)
+        XCTAssertTrue(library.waitForExistence(timeout: 20), app.debugDescription)
+        app.buttons["charging.filters"].tap()
+        app.buttons["Cost"].firstMatch.tap()
+        app.buttons["Free"].firstMatch.tap()
+        XCTAssertTrue(library.waitForExistence(timeout: 10), app.debugDescription)
+        let frame = library.frame
+        library.tap()
+        let close = app.buttons["charging.selected.close"]
+        XCTAssertTrue(close.waitForExistence(timeout: 5), app.debugDescription)
+        close.tap()
+
+        XCTAssertTrue(app.buttons["charging.vote.up"].waitForNonExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(waitForFrame(library, near: frame, tolerance: 1), library.debugDescription)
+        app.buttons["charging.view.list"].tap()
+        XCTAssertTrue(app.staticTexts["Library"].firstMatch.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertFalse(app.staticTexts["Coffee shop"].firstMatch.exists, app.debugDescription)
+        app.buttons["charging.view.map"].tap()
+        libraryPin(in: app).tap()
+        XCTAssertTrue(app.buttons["charging.vote.up"].waitForExistence(timeout: 5), app.debugDescription)
+    }
+
     func testMapListAndFiltersUseTheSameSpots() throws {
         continueAfterFailure = false
         executionTimeAllowance = 180
