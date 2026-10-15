@@ -226,6 +226,50 @@
     "setup.ride_autostart.retry" : {
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Retry" } } }
     },
+    "storage_cleanup.section" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Storage" } } }
+    },
+    "storage_cleanup.title" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Optimize storage" } } }
+    },
+    "storage_cleanup.description" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Rebuild the local ride database to reduce storage used by older records." } } }
+    },
+    "storage_cleanup.keeps_data" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Your saved rides and captures are kept. This starts only when you tap Optimize storage." } } }
+    },
+    "storage_cleanup.action" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Optimize storage" } } }
+    },
+    "storage_cleanup.retry" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Retry" } } }
+    },
+    "storage_cleanup.running" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Optimizing…" } } }
+    },
+    "storage_cleanup.running_detail" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Keep Cutout open until optimization finishes. Large databases can take several minutes." } } }
+    },
+    "storage_cleanup.completed_sizes" : {
+      "comment" : "Maintenance completion status; first placeholder is the database size before and second is the database size after.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Storage used: %@ before, %@ after." } } }
+    },
+    "storage_cleanup.active_ride" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Finish the active ride, then retry." } } }
+    },
+    "storage_cleanup.active_capture" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Stop the active Bluetooth capture, then retry." } } }
+    },
+    "storage_cleanup.import_in_progress" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "A PEVCAP capture import is in progress. Wait for it to finish, then retry." } } }
+    },
+    "storage_cleanup.insufficient_space_detail" : {
+      "comment" : "Storage refusal; first placeholder is the required free space and second is the available free space.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "This operation needs %@ free; %@ is available. Free some device storage, then retry." } } }
+    },
+    "storage_cleanup.failed" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Storage optimization could not finish. Try again later." } } }
+    },
     "captures.label_not_recorded" : {
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Label wasn't recorded" } } }
     },

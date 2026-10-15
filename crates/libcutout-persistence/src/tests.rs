@@ -1,6 +1,9 @@
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+#[path = "storage/maintenance_integration_tests.rs"]
+mod maintenance_integration_tests;
+
 #[path = "ride_session_marker_tests.rs"]
 mod ride_session_marker_tests;
 

@@ -38,6 +38,8 @@ mod ride_activity_work;
 pub use ride_activity_work::*;
 mod capture_start;
 pub use capture_start::*;
+mod storage_maintenance;
+pub use storage_maintenance::*;
 
 use std::{
     collections::VecDeque,
@@ -7907,7 +7909,8 @@ pub enum MobileRideDatabaseError {
 
 #[allow(
     clippy::needless_pass_by_value,
-    reason = "matches and consumes the storage error enum"
+    clippy::too_many_lines,
+    reason = "exhaustive boundary mapping consumes each storage error and makes new variants explicit"
 )]
 fn map_ride_database_error(error: persistence::StorageError) -> MobileRideDatabaseError {
     match error {
@@ -7976,6 +7979,15 @@ fn map_ride_database_error(error: persistence::StorageError) -> MobileRideDataba
         | persistence::StorageError::DeadlineExceeded => MobileRideDatabaseError::WorkerStopped,
         persistence::StorageError::Sqlite(_)
         | persistence::StorageError::Io(_)
+        | persistence::StorageError::MaintenanceActiveRide
+        | persistence::StorageError::MaintenanceActiveCapture
+        | persistence::StorageError::MaintenancePevcapImportInProgress
+        | persistence::StorageError::MaintenanceInsufficientSpace { .. }
+        | persistence::StorageError::MaintenanceCheckpointBusy
+        | persistence::StorageError::MaintenanceJournalModeUnavailable
+        | persistence::StorageError::MaintenanceSpaceCalculationOverflow
+        | persistence::StorageError::MaintenanceRestoreFailed { .. }
+        | persistence::StorageError::MaintenancePageSizeMismatch { .. }
         | persistence::StorageError::InvalidStoredValue { .. }
         | persistence::StorageError::InvalidSqliteVersion(_)
         | persistence::StorageError::PevcapImport(_)

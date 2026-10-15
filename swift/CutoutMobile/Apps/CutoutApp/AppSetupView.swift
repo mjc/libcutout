@@ -10,15 +10,18 @@ struct AppSetupView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var showsSoundCloud = false
     @State private var path: [Destination]
+    @State private var storageCleanupModel: StorageCleanupModel
 
     private enum Destination: Hashable {
         case music
         case captures
+        case storage
     }
 
     init(model: CutoutAppModel, opensMusic: Bool = false) {
         self.model = model
         _path = State(initialValue: opensMusic ? [.music] : [])
+        _storageCleanupModel = State(initialValue: StorageCleanupModel())
     }
 
     var body: some View {
@@ -66,6 +69,15 @@ struct AppSetupView: View {
                     }
                     .accessibilityIdentifier("setup.music")
                 }
+                Section(localizedAppText("storage_cleanup.section")) {
+                    NavigationLink(value: Destination.storage) {
+                        Label(
+                            localizedAppText("storage_cleanup.title"),
+                            systemImage: "externaldrive.badge.timemachine"
+                        )
+                    }
+                    .accessibilityIdentifier("setup.storage-cleanup")
+                }
                 if model.device.hasSavedDevice {
                     Section(localizedAppText("setup.device")) {
                         Button(localizedAppText("picker.saved_device.forget"), role: .destructive) {
@@ -90,6 +102,9 @@ struct AppSetupView: View {
                 switch destination {
                 case .captures:
                     BluetoothCapturesView(model: model)
+                        .toolbar { doneToolbar }
+                case .storage:
+                    StorageCleanupView(model: storageCleanupModel)
                         .toolbar { doneToolbar }
                 case .music:
                     let music = model.music
@@ -123,6 +138,7 @@ struct AppSetupView: View {
                 }
             }
         }
+        .interactiveDismissDisabled(!storageCleanupModel.canDismiss)
         .sheet(isPresented: $showsSoundCloud) {
             NavigationStack {
                 SoundCloudPlayerView(player: model.music.nativeSoundCloud)
@@ -147,6 +163,7 @@ struct AppSetupView: View {
                     .frame(minWidth: 44, minHeight: 44)
                     .contentShape(Rectangle())
             }
+            .disabled(!storageCleanupModel.canDismiss)
             .buttonStyle(.plain)
             .accessibilityIdentifier("setup.done")
         }

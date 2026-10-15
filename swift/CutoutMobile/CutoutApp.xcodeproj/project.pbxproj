@@ -75,6 +75,7 @@
 		300000000000000000000030 /* Apps/CutoutApp/RideMapHistoryStyling.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000030 /* Apps/CutoutApp/RideMapHistoryStyling.swift */; };
 		300000000000000000000033 /* Apps/CutoutApp/RideMapMetricFormatting.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000033 /* Apps/CutoutApp/RideMapMetricFormatting.swift */; };
 		300000000000000000000041 /* Apps/CutoutApp/AppSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000041 /* Apps/CutoutApp/AppSetupView.swift */; };
+		A93F00000000000000000001 /* Apps/CutoutApp/StorageCleanupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A93F00000000000000000002 /* Apps/CutoutApp/StorageCleanupView.swift */; };
 		300000000000000000000042 /* Apps/CutoutApp/PhoneRideAlarm.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000042 /* Apps/CutoutApp/PhoneRideAlarm.swift */; };
 		300000000000000000000043 /* Apps/CutoutApp/RideBackgroundTask.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000043 /* Apps/CutoutApp/RideBackgroundTask.swift */; };
 		300000000000000000000044 /* Apps/CutoutApp/PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000044 /* Apps/CutoutApp/PrivacyInfo.xcprivacy */; };
@@ -89,6 +90,7 @@
 		C00100000000000000000002 /* Apps/CutoutApp/TabAccentColors.swift in Sources */ = {isa = PBXBuildFile; fileRef = C00100000000000000000011 /* Apps/CutoutApp/TabAccentColors.swift */; };
 		C00100000000000000000003 /* UITests/TabAccentColorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C00100000000000000000012 /* UITests/TabAccentColorTests.swift */; };
 		D65100000000000000000001 /* MusicFeatureModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D65100000000000000000002 /* MusicFeatureModelTests.swift */; };
+		A93F00000000000000000003 /* StorageCleanupModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A93F00000000000000000004 /* StorageCleanupModelTests.swift */; };
 		D88100000000000000000001 /* RideBackgroundTaskTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D88100000000000000000002 /* RideBackgroundTaskTests.swift */; };
 		E75300000000000000000001 /* DevicePresentationModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E75300000000000000000002 /* DevicePresentationModelTests.swift */; };
 		C86400000000000000000001 /* CaptureStagingFilesystemTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C86400000000000000000002 /* CaptureStagingFilesystemTests.swift */; };
@@ -242,12 +244,14 @@
 		400000000000000000000030 /* Apps/CutoutApp/RideMapHistoryStyling.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/RideMapHistoryStyling.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000033 /* Apps/CutoutApp/RideMapMetricFormatting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/RideMapMetricFormatting.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000041 /* Apps/CutoutApp/AppSetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/AppSetupView.swift; sourceTree = SOURCE_ROOT; };
+		A93F00000000000000000002 /* Apps/CutoutApp/StorageCleanupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/StorageCleanupView.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000042 /* Apps/CutoutApp/PhoneRideAlarm.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/PhoneRideAlarm.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000043 /* Apps/CutoutApp/RideBackgroundTask.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/RideBackgroundTask.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000044 /* Apps/CutoutApp/PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Apps/CutoutApp/PrivacyInfo.xcprivacy; sourceTree = SOURCE_ROOT; };
 		444444444444444444444411 /* UITests/CutoutAppUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITests/CutoutAppUITests.swift; sourceTree = SOURCE_ROOT; };
 		444444444444444444444412 /* CutoutAppUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CutoutAppUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		D65100000000000000000002 /* MusicFeatureModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/CutoutAppTests/MusicFeatureModelTests.swift; sourceTree = SOURCE_ROOT; };
+		A93F00000000000000000004 /* StorageCleanupModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/CutoutAppTests/StorageCleanupModelTests.swift; sourceTree = SOURCE_ROOT; };
 		D88100000000000000000002 /* RideBackgroundTaskTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/CutoutAppTests/RideBackgroundTaskTests.swift; sourceTree = SOURCE_ROOT; };
 		E75300000000000000000002 /* DevicePresentationModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/CutoutAppTests/DevicePresentationModelTests.swift; sourceTree = SOURCE_ROOT; };
 		C86400000000000000000002 /* CaptureStagingFilesystemTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/CutoutAppTests/CaptureStagingFilesystemTests.swift; sourceTree = SOURCE_ROOT; };
@@ -362,6 +366,7 @@
 				4D554D2405BB2AAC12D7A966 /* ChargingMapCameraSnapshotTests.swift */,
 				2E9BA8958E2E459398811F07 /* ChargingCommunitySyncTests.swift */,
 				D65100000000000000000002 /* MusicFeatureModelTests.swift */,
+				A93F00000000000000000004 /* StorageCleanupModelTests.swift */,
 				C89200000000000000000002 /* PhoneLocationAdapterTests.swift */,
 				C89200000000000000000004 /* LockedRideMainThreadTests.swift */,
 				C61700000000000000000002 /* RideSessionMarkerNonblockingTests.swift */,
@@ -389,6 +394,7 @@
 				40000000000000000000001C /* Apps/CutoutApp/CutoutRouteViews.swift */,
 				5EC7F605A4BE4DD590E4C995 /* Apps/CutoutApp/DeviceControlsForm.swift */,
 				400000000000000000000041 /* Apps/CutoutApp/AppSetupView.swift */,
+				A93F00000000000000000002 /* Apps/CutoutApp/StorageCleanupView.swift */,
 				400000000000000000000042 /* Apps/CutoutApp/PhoneRideAlarm.swift */,
 				400000000000000000000043 /* Apps/CutoutApp/RideBackgroundTask.swift */,
 				AABBCC000000000000000002 /* Apps/CutoutApp/LightingPlaybackControls.swift */,
@@ -763,6 +769,7 @@
 				30000000000000000000001C /* Apps/CutoutApp/CutoutRouteViews.swift in Sources */,
 				A6FD381C839A4BD98A66DDD6 /* Apps/CutoutApp/DeviceControlsForm.swift in Sources */,
 				300000000000000000000041 /* Apps/CutoutApp/AppSetupView.swift in Sources */,
+				A93F00000000000000000001 /* Apps/CutoutApp/StorageCleanupView.swift in Sources */,
 				300000000000000000000042 /* Apps/CutoutApp/PhoneRideAlarm.swift in Sources */,
 				300000000000000000000043 /* Apps/CutoutApp/RideBackgroundTask.swift in Sources */,
 				AABBCC000000000000000001 /* Apps/CutoutApp/LightingPlaybackControls.swift in Sources */,
@@ -868,6 +875,7 @@
 				61F877609D8CC09F4856FDE5 /* ChargingMapCameraSnapshotTests.swift in Sources */,
 				8CAB8049064C4B658E51C7D6 /* ChargingCommunitySyncTests.swift in Sources */,
 				D65100000000000000000001 /* MusicFeatureModelTests.swift in Sources */,
+				A93F00000000000000000003 /* StorageCleanupModelTests.swift in Sources */,
 				C89200000000000000000001 /* PhoneLocationAdapterTests.swift in Sources */,
 				C89200000000000000000003 /* LockedRideMainThreadTests.swift in Sources */,
 				C61700000000000000000001 /* RideSessionMarkerNonblockingTests.swift in Sources */,

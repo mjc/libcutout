@@ -18,6 +18,96 @@ pub const LIVE_CAPTURE_EVENT_LIMIT_BYTES: usize = 65_536;
 /// Maximum total header and event bytes retained for one live capture.
 pub const LIVE_CAPTURE_TOTAL_LIMIT_BYTES: u64 = 536_870_912;
 
+const LEGACY_PAYLOAD_COMPACTION_BATCH_SIZE: usize = 256;
+
+/// Recompresses legacy raw event payloads in bounded, resumable batches.
+///
+/// The session's `stored_bytes` tracks logical capture bytes and intentionally does not change.
+/// Each replacement is committed only after decoding it reproduces the exact original bytes.
+pub(super) fn compress_legacy_payloads(connection: &mut Connection) -> Result<u64, StorageError> {
+    // Stored capture IDs have 36 characters and sequences are nonnegative, so this
+    // lower bound includes every valid key while preserving the primary-key range scan.
+    let mut cursor = (String::new(), -1_i64);
+    let mut compressed_count = 0_u64;
+
+    loop {
+        let transaction = connection.transaction()?;
+        let rows = {
+            let mut statement = transaction.prepare(
+                "SELECT capture_id, sequence, payload, payload_original_bytes
+                 FROM live_capture_events
+                 WHERE payload_encoding = 0
+                   AND (capture_id, sequence) > (?1, ?2)
+                 ORDER BY capture_id, sequence
+                 LIMIT ?3",
+            )?;
+            let rows = statement.query_map(
+                rusqlite::params![cursor.0, cursor.1, LEGACY_PAYLOAD_COMPACTION_BATCH_SIZE,],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, Vec<u8>>(2)?,
+                        row.get::<_, Option<i64>>(3)?,
+                    ))
+                },
+            )?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+
+        if rows.is_empty() {
+            transaction.commit()?;
+            break;
+        }
+
+        for (capture_id, sequence, original, original_bytes) in &rows {
+            cursor = (capture_id.clone(), *sequence);
+            let original = payload::decode(original.clone(), 0, *original_bytes)?;
+            let encoded = payload::encode(&original)?;
+            if encoded.encoding == 0 {
+                continue;
+            }
+
+            let stored_bytes = encoded.bytes.into_owned();
+            let decoded = payload::decode(
+                stored_bytes.clone(),
+                encoded.encoding,
+                encoded.original_bytes,
+            )?;
+            if decoded != original {
+                return Err(StorageError::InvalidStoredValue {
+                    field: "recompressed live capture payload",
+                    value: format!("{capture_id}:{sequence}"),
+                });
+            }
+
+            transaction.execute(
+                "UPDATE live_capture_events
+                 SET payload = ?1, payload_encoding = ?2, payload_original_bytes = ?3
+                 WHERE capture_id = ?4 AND sequence = ?5 AND payload_encoding = 0",
+                rusqlite::params![
+                    stored_bytes,
+                    encoded.encoding,
+                    encoded.original_bytes,
+                    capture_id,
+                    sequence,
+                ],
+            )?;
+            compressed_count =
+                compressed_count
+                    .checked_add(1)
+                    .ok_or(StorageError::InvalidStoredValue {
+                        field: "compressed live capture event count",
+                        value: "overflow".to_owned(),
+                    })?;
+        }
+
+        transaction.commit()?;
+    }
+
+    Ok(compressed_count)
+}
+
 /// Rust-issued identity for one live capture, independent of ride and artifact identity.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct LiveCaptureId(Uuid);

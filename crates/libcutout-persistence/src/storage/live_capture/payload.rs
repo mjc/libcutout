@@ -76,7 +76,114 @@ fn invalid(value: &str) -> StorageError {
 
 #[cfg(test)]
 mod tests {
+    use super::super::{LOCATION_SCHEMA, LiveCaptureId, SCHEMA, compress_legacy_payloads, read};
     use super::*;
+    use crate::storage::QueryLimit;
+    use rusqlite::{Connection, params};
+
+    type SessionSignature = (String, Vec<u8>, i64, i64, i64);
+
+    struct LegacyFixture {
+        connection: Connection,
+        id: LiveCaptureId,
+        header: Vec<u8>,
+        original: Vec<u8>,
+        event_count: usize,
+        session_before: SessionSignature,
+    }
+
+    fn legacy_fixture(event_count: usize) -> LegacyFixture {
+        let connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(SCHEMA).unwrap();
+        connection.execute_batch(LOCATION_SCHEMA).unwrap();
+        let id = LiveCaptureId::new();
+        let header = b"{\"capture\":\"legacy\"}".to_vec();
+        let original = [0xff, 0x00, 0x7f, b'\n', 0x80].repeat(160);
+        connection
+            .execute(
+                "INSERT INTO live_capture_sessions
+             (capture_id, state, integrity, header_json, started_at_ms, stored_bytes,
+              next_sequence)
+             VALUES (?1, 'interrupted', 'unknown', ?2, 100, ?3, ?4)",
+                params![
+                    id.as_string(),
+                    header.as_slice(),
+                    header.len() + original.len() * event_count,
+                    event_count,
+                ],
+            )
+            .unwrap();
+        for sequence in 0..event_count {
+            connection
+                .execute(
+                    "INSERT INTO live_capture_events
+                 (capture_id, sequence, event_kind, receipt_monotonic_ms, payload)
+                 VALUES (?1, ?2, 'notification', ?3, ?4)",
+                    params![id.as_string(), sequence, sequence * 3, original.as_slice()],
+                )
+                .unwrap();
+        }
+        let session_before = session_signature(&connection);
+        LegacyFixture {
+            connection,
+            id,
+            header,
+            original,
+            event_count,
+            session_before,
+        }
+    }
+
+    fn session_signature(connection: &Connection) -> SessionSignature {
+        connection
+            .query_row(
+                "SELECT capture_id, header_json, started_at_ms, next_sequence, stored_bytes
+             FROM live_capture_sessions",
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
+            )
+            .unwrap()
+    }
+
+    fn assert_compacted_readback(fixture: &LegacyFixture) {
+        let pages = [500, 500, 25];
+        let mut after_sequence = None;
+        let mut expected_sequence = 0_usize;
+        for page_size in pages {
+            let page = read(
+                &fixture.connection,
+                fixture.id,
+                after_sequence,
+                QueryLimit::new(page_size).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(page.id, fixture.id);
+            assert_eq!(page.header_json, fixture.header);
+            assert_eq!(page.events.len(), usize::try_from(page_size).unwrap());
+            for event in &page.events {
+                assert_eq!(event.sequence, u64::try_from(expected_sequence).unwrap());
+                assert_eq!(
+                    event.receipt_monotonic_ms,
+                    u64::try_from(expected_sequence * 3).unwrap()
+                );
+                assert_eq!(event.payload, fixture.original);
+                expected_sequence += 1;
+            }
+            after_sequence = page
+                .events
+                .last()
+                .map(|event| i64::try_from(event.sequence).unwrap());
+        }
+        assert_eq!(expected_sequence, fixture.event_count);
+    }
 
     #[test]
     fn database_compresses_new_rows_reads_mixed_rows_and_accounts_original_bytes() {
@@ -266,5 +373,250 @@ mod tests {
         assert!(decode(vec![0; 65537], 0, None).is_err());
         let bomb = miniz_oxide::deflate::compress_to_vec_zlib(&vec![0; 65537], 1);
         assert!(decode(bomb, 1, Some(65536)).is_err());
+    }
+
+    #[test]
+    fn legacy_compaction_is_lossless_bounded_and_idempotent() {
+        const EVENT_COUNT: usize = 1025;
+        let mut fixture = legacy_fixture(EVENT_COUNT);
+        assert_eq!(
+            compress_legacy_payloads(&mut fixture.connection).unwrap(),
+            u64::try_from(EVENT_COUNT).unwrap()
+        );
+        assert_eq!(
+            compress_legacy_payloads(&mut fixture.connection).unwrap(),
+            0
+        );
+        assert_compacted_readback(&fixture);
+
+        let event_rows: Vec<(i64, i64, Vec<u8>, i64, i64)> = {
+            let mut statement = fixture
+                .connection
+                .prepare(
+                    "SELECT sequence, receipt_monotonic_ms, payload, payload_encoding,
+                        payload_original_bytes
+                 FROM live_capture_events ORDER BY sequence",
+                )
+                .unwrap();
+            statement
+                .query_map([], |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                })
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap()
+        };
+        assert_eq!(event_rows.len(), EVENT_COUNT);
+        for (sequence, receipt, compressed, encoding, original_bytes) in event_rows {
+            assert_eq!(receipt, sequence * 3);
+            assert_eq!(encoding, 1);
+            assert_eq!(
+                original_bytes,
+                i64::try_from(fixture.original.len()).unwrap()
+            );
+            assert_eq!(
+                decode(compressed, encoding, Some(original_bytes)).unwrap(),
+                fixture.original
+            );
+        }
+        assert_eq!(
+            session_signature(&fixture.connection),
+            fixture.session_before
+        );
+    }
+
+    #[test]
+    fn legacy_compaction_leaves_incompressible_and_compressed_payloads_untouched() {
+        use super::super::{LOCATION_SCHEMA, LiveCaptureId, SCHEMA, compress_legacy_payloads};
+        use rusqlite::{Connection, params};
+
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(SCHEMA).unwrap();
+        connection.execute_batch(LOCATION_SCHEMA).unwrap();
+        let id = LiveCaptureId::new();
+        let small = b"x";
+        let mut state = 0x1234_5678_u32;
+        let incompressible: Vec<_> = (0..4096)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 17;
+                state ^= state << 5;
+                state.to_le_bytes()[0]
+            })
+            .collect();
+        let already_compressed = encode(&[0x42; 4096]).unwrap();
+        let compressed_bytes = already_compressed.bytes.into_owned();
+        connection
+            .execute(
+                "INSERT INTO live_capture_sessions
+             (capture_id, state, integrity, header_json, started_at_ms, stored_bytes,
+              next_sequence)
+             VALUES (?1, 'interrupted', 'unknown', X'7b7d', 0, ?2, 3)",
+                params![
+                    id.as_string(),
+                    2 + small.len() + incompressible.len() + 4096
+                ],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO live_capture_events
+             (capture_id, sequence, event_kind, receipt_monotonic_ms, payload)
+             VALUES (?1, 0, 'metadata', 0, ?2), (?1, 1, 'metadata', 1, ?3)",
+                params![id.as_string(), small.as_slice(), incompressible.as_slice()],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO live_capture_events
+             (capture_id, sequence, event_kind, receipt_monotonic_ms, payload,
+              payload_encoding, payload_original_bytes)
+             VALUES (?1, 2, 'metadata', 2, ?2, 1, 4096)",
+                params![id.as_string(), compressed_bytes.as_slice()],
+            )
+            .unwrap();
+
+        assert_eq!(compress_legacy_payloads(&mut connection).unwrap(), 0);
+        let encodings: Vec<(Vec<u8>, i64, Option<i64>)> = {
+            let mut statement = connection
+                .prepare(
+                    "SELECT payload, payload_encoding, payload_original_bytes
+                 FROM live_capture_events ORDER BY sequence",
+                )
+                .unwrap();
+            statement
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap()
+        };
+        assert_eq!(encodings[0], (small.to_vec(), 0, None));
+        assert_eq!(encodings[1], (incompressible, 0, None));
+        assert_eq!(encodings[2], (compressed_bytes, 1, Some(4096)));
+    }
+
+    #[test]
+    fn legacy_compaction_rolls_back_when_a_raw_row_has_invalid_encoding_metadata() {
+        use super::super::{LOCATION_SCHEMA, LiveCaptureId, SCHEMA, compress_legacy_payloads};
+        use rusqlite::{Connection, params};
+
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(SCHEMA).unwrap();
+        connection.execute_batch(LOCATION_SCHEMA).unwrap();
+        let id = LiveCaptureId::new();
+        let original = [0x5a; 1024];
+        connection
+            .execute(
+                "INSERT INTO live_capture_sessions
+             (capture_id, state, integrity, header_json, started_at_ms, stored_bytes,
+              next_sequence)
+             VALUES (?1, 'interrupted', 'unknown', X'7b7d', 0, ?2, 2)",
+                params![id.as_string(), 2 + original.len() * 2],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO live_capture_events
+                 (capture_id, sequence, event_kind, receipt_monotonic_ms, payload)
+                 VALUES (?1, 0, 'metadata', 0, ?2)",
+                params![id.as_string(), original.as_slice()],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO live_capture_events
+                 (capture_id, sequence, event_kind, receipt_monotonic_ms, payload,
+                  payload_original_bytes)
+                 VALUES (?1, 1, 'metadata', 1, ?2, ?3)",
+                params![id.as_string(), original.as_slice(), original.len()],
+            )
+            .unwrap();
+
+        assert!(compress_legacy_payloads(&mut connection).is_err());
+        let rows: Vec<(Vec<u8>, i64, Option<i64>)> = {
+            let mut statement = connection
+                .prepare(
+                    "SELECT payload, payload_encoding, payload_original_bytes
+                 FROM live_capture_events ORDER BY sequence",
+                )
+                .unwrap();
+            statement
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap()
+        };
+        assert_eq!(
+            rows,
+            vec![
+                (original.to_vec(), 0, None),
+                (
+                    original.to_vec(),
+                    0,
+                    Some(i64::try_from(original.len()).unwrap())
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn legacy_compaction_rolls_back_the_entire_batch_on_update_error() {
+        use super::super::{LOCATION_SCHEMA, LiveCaptureId, SCHEMA, compress_legacy_payloads};
+        use rusqlite::{Connection, params};
+
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(SCHEMA).unwrap();
+        connection.execute_batch(LOCATION_SCHEMA).unwrap();
+        let id = LiveCaptureId::new();
+        let original = [0x5a; 1024];
+        connection
+            .execute(
+                "INSERT INTO live_capture_sessions
+             (capture_id, state, integrity, header_json, started_at_ms, stored_bytes,
+              next_sequence)
+             VALUES (?1, 'interrupted', 'unknown', X'7b7d', 0, ?2, 2)",
+                params![id.as_string(), 2 + original.len() * 2],
+            )
+            .unwrap();
+        for sequence in 0..2 {
+            connection
+                .execute(
+                    "INSERT INTO live_capture_events
+                 (capture_id, sequence, event_kind, receipt_monotonic_ms, payload)
+                 VALUES (?1, ?2, 'metadata', ?2, ?3)",
+                    params![id.as_string(), sequence, original.as_slice()],
+                )
+                .unwrap();
+        }
+        connection
+            .execute_batch(
+                "CREATE TRIGGER reject_second_compression
+             BEFORE UPDATE OF payload_encoding ON live_capture_events
+             WHEN OLD.sequence = 1
+             BEGIN SELECT RAISE(ABORT, 'injected update failure'); END;",
+            )
+            .unwrap();
+
+        assert!(compress_legacy_payloads(&mut connection).is_err());
+        let rows: Vec<(Vec<u8>, i64, Option<i64>)> = {
+            let mut statement = connection
+                .prepare(
+                    "SELECT payload, payload_encoding, payload_original_bytes
+                 FROM live_capture_events ORDER BY sequence",
+                )
+                .unwrap();
+            statement
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap()
+        };
+        assert_eq!(rows, vec![(original.to_vec(), 0, None); 2]);
     }
 }
