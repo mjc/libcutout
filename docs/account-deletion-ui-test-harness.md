@@ -15,12 +15,20 @@ Simulator, free port `127.0.0.1:45987`, and available disk space before it
 builds anything. It refuses an occupied port and never signals its owner.
 
 Each run creates a fresh SQLite database and evidence directory under
-`target/account-deletion-ui-tests/`. It reuses the repository Cargo target and
-the UI runner's existing `target/xcode-ui-tests` Derived Data cache. The
+`~/Library/Logs/Cutout/account-deletion-ui-tests/`, outside disposable build
+caches. Use `--evidence-root PATH` to select another location. It reuses the
+repository Cargo target and the UI runner's existing `target/xcode-ui-tests`
+Derived Data cache. The
 harness initializes the database with `cutout-server`, seeds the three fixed
 test contributor IDs using SHA-256 token hashes, and creates their public
 points through the real local HTTP API. It starts only its own server process
 and stops that process on success or failure.
+
+Builds use two Cargo jobs with incremental compilation disabled and two Xcode
+jobs. The UI runner disables parallel testing. Coordinate one existing Simulator
+and build checkout with other active Libcutout work before starting; do not
+create another full target cache for this harness. Shut down the owned Simulator
+after both settings cells finish.
 
 The harness runs these existing tests through
 `scripts/run-ios-ui-tests.sh`, using the same Simulator for each settings cell:

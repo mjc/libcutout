@@ -44,7 +44,8 @@ BODY = {
 
 
 def run(args: list[str], **kwargs) -> subprocess.CompletedProcess:
-    return subprocess.run(args, cwd=ROOT, check=True, **kwargs)
+    environment = {**os.environ, "CARGO_BUILD_JOBS": "2", "CARGO_INCREMENTAL": "0"}
+    return subprocess.run(args, cwd=ROOT, check=True, env=environment, **kwargs)
 
 
 def api(path: str, token: str | None = None, payload: dict | None = None):
@@ -151,7 +152,7 @@ def run_ui_test(evidence: Path, udid: str, test: str, size: str, log_name: str) 
     selector = f"CutoutAppUITests/CutoutAppUITests/{test}"
     command = ["scripts/run-ios-ui-tests.sh", "--timeout", "1200", "--appearance", "light",
                "--content-size", size, "-destination", f"platform=iOS Simulator,id={udid}",
-               "-only-testing:" + selector]
+               "-jobs", "2", "-only-testing:" + selector]
     with (evidence / log_name).open("w") as log:
         run(command, stdout=log, stderr=subprocess.STDOUT)
 
@@ -200,9 +201,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--simulator-udid", required=True,
                         help="one available iOS Simulator used for both sequential settings cells")
+    parser.add_argument("--evidence-root", type=Path,
+                        default=Path.home() / "Library/Logs/Cutout/account-deletion-ui-tests",
+                        help="directory for small run receipts, database and logs, outside build caches")
     args = parser.parse_args()
     environment = check_environment(args.simulator_udid)
-    evidence = ROOT / "target/account-deletion-ui-tests" / (
+    evidence = args.evidence_root.expanduser().resolve() / (
         "run-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8]
     )
     evidence.mkdir(parents=True)
