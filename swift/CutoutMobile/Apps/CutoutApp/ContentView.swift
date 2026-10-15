@@ -1,5 +1,6 @@
 import Accessibility
 import CutoutMobile
+import CutoutMobileFFI
 import Foundation
 import SwiftUI
 
@@ -72,19 +73,34 @@ struct ContentView: View {
                 }
             }
             .safeAreaInset(edge: .bottom) {
-                if chargingPromptAvailable, model.chargingStops.prompt != nil {
-                    chargingStopPrompt
+                if chargingPromptBaseEligible,
+                    model.chargingStops.isNativePresentationAvailable,
+                    let candidate = model.chargingStops.prompt,
+                    let generation = model.chargingStops.promptGeneration
+                {
+                    chargingStopPrompt(candidate: candidate, generation: generation)
+                        .id(generation)
                 }
             }
-            .task(id: chargingPromptAvailable) {
-                guard chargingPromptAvailable else {
+            .task(id: chargingPromptBaseEligible) {
+                guard chargingPromptBaseEligible else {
+                    model.chargingStops.setBatteryMonitoring(false)
                     model.chargingStops.dismiss()
                     return
                 }
                 while !Task.isCancelled {
-                    await model.chargingStops.refresh(location: model.mapLocationSample)
+                    let canPresent = !Self.nativePresentationUnavailable
+                    model.chargingStops.setBatteryMonitoring(canPresent)
+                    await model.chargingStops.refresh(
+                        location: model.mapLocationSample,
+                        canPresent: canPresent
+                    )
                     do { try await Task.sleep(for: .seconds(2)) } catch { return }
                 }
+            }
+            .onDisappear {
+                model.chargingStops.setBatteryMonitoring(false)
+                model.chargingStops.dismiss()
             }
             .onChange(of: route, initial: true) { _, route in
                 focusedRoute = route
@@ -134,11 +150,39 @@ struct ContentView: View {
             }
     }
 
-    private var chargingPromptAvailable: Bool {
+    private var chargingPromptBaseEligible: Bool {
         model.liveRide.isSceneActive && presentedSheet == nil && rideMapPresentation.chargingEditor == nil
     }
 
-    private var chargingStopPrompt: some View {
+    @MainActor
+    private static var nativePresentationUnavailable: Bool {
+        #if os(iOS)
+            let keyWindows = UIApplication.shared.connectedScenes
+                .compactMap { $0 as? UIWindowScene }
+                .filter { $0.activationState == .foregroundActive }
+                .compactMap { $0.windows.first(where: \.isKeyWindow) }
+            guard !keyWindows.isEmpty else { return true }
+            return keyWindows.contains { window in
+                guard let root = window.rootViewController else { return true }
+                return hasPresentedViewController(root)
+            }
+        #else
+            false
+        #endif
+    }
+
+    #if os(iOS)
+        @MainActor
+        private static func hasPresentedViewController(_ controller: UIViewController) -> Bool {
+            controller.presentedViewController != nil
+                || controller.children.contains(where: hasPresentedViewController)
+        }
+    #endif
+
+    private func chargingStopPrompt(
+        candidate: MobileChargingStopPromptDto,
+        generation: UInt64
+    ) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(localizedAppText("charging.stop.title"))
                 .font(.headline)
@@ -173,7 +217,18 @@ struct ContentView: View {
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("charging.stop.prompt")
         .onAppear {
-            AccessibilityNotification.Announcement(localizedAppText("charging.stop.title")).post()
+            Task { @MainActor in
+                await Task.yield()
+                let canPresent = chargingPromptBaseEligible && !Self.nativePresentationUnavailable
+                guard
+                    model.chargingStops.didPresent(
+                        candidate,
+                        generation: generation,
+                        canPresent: canPresent
+                    )
+                else { return }
+                AccessibilityNotification.Announcement(localizedAppText("charging.stop.title")).post()
+            }
         }
     }
 
