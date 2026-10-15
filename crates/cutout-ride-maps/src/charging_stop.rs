@@ -1,4 +1,7 @@
-use cutout_core::{CONNECTED_WHEEL_MOTION_FRESHNESS_MS, RideOperatingState};
+use cutout_core::{
+    CONNECTED_WHEEL_MOTION_FRESHNESS_MS, ChargeMode, MonotonicTimestamp, RideOperatingState, Speed,
+    ValueQualityDto, VerificationStatus, VerificationStatusDto,
+};
 use uuid::Uuid;
 
 use crate::{ChargingLocationFix, Coordinate, MonotonicMilliseconds, RideLifecycleState};
@@ -22,6 +25,33 @@ pub enum ChargingStopEvidence {
 }
 
 impl ChargingStopEvidence {
+    /// Resolves wheel charging evidence using the core telemetry trust and freshness rules.
+    #[must_use]
+    pub fn from_wheel(
+        telemetry: cutout_core::TelemetrySnapshotDto,
+        now: MonotonicMilliseconds,
+    ) -> Self {
+        let operating_state = RideOperatingState::resolve_fresh(
+            telemetry.operating_state.map(Into::into),
+            telemetry.charge_mode.and_then(trusted_charge_mode),
+            telemetry
+                .speed
+                .map(|reading| Speed::from_millimetres_per_second(reading.value)),
+            telemetry
+                .speed_observed_at_ms
+                .map(|at| MonotonicTimestamp::new(at.milliseconds)),
+            Some(MonotonicTimestamp::new(now.as_u64())),
+        )
+        .0;
+
+        Self::Wheel {
+            operating_state,
+            telemetry_at: telemetry
+                .at_ms
+                .map(|at| MonotonicMilliseconds::new(at.milliseconds)),
+        }
+    }
+
     fn suppression(self, now: MonotonicMilliseconds) -> Option<ChargingStopSuppression> {
         let Self::Wheel {
             operating_state,
@@ -42,6 +72,24 @@ impl ChargingStopEvidence {
         }
         None
     }
+}
+
+fn trusted_charge_mode(reading: cutout_core::ChargeModeReadingDto) -> Option<ChargeMode> {
+    if reading.quality != ValueQualityDto::Known {
+        return None;
+    }
+    let verification = match reading.verification {
+        VerificationStatusDto::Unverified => VerificationStatus::Unverified,
+        VerificationStatusDto::Inferred => VerificationStatus::Inferred,
+        VerificationStatusDto::SourceVerified => VerificationStatus::SourceVerified,
+        VerificationStatusDto::HardwareVerified => VerificationStatus::HardwareVerified,
+        VerificationStatusDto::SourceAndHardwareVerified => {
+            VerificationStatus::SourceAndHardwareVerified
+        }
+    };
+    verification
+        .is_trusted()
+        .then(|| ChargeMode::from(reading.value))
 }
 
 /// Current ride and independently resolved charging evidence.
@@ -195,6 +243,21 @@ impl ChargingStopPrompts {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cutout_core::{Measured, TelemetrySnapshot, ValueQuality, ValueSource};
+
+    fn telemetry() -> TelemetrySnapshot {
+        TelemetrySnapshot {
+            at_ms: Some(MonotonicTimestamp::new(10_000)),
+            speed_observed_at_ms: Some(MonotonicTimestamp::new(10_000)),
+            speed: Some(Measured::reported(Speed::from_millimetres_per_second(0))),
+            charge_mode: Some(Measured::reported(ChargeMode::Charging)),
+            ..TelemetrySnapshot::default()
+        }
+    }
+
+    fn wheel_state(snapshot: TelemetrySnapshot) -> ChargingStopEvidence {
+        ChargingStopEvidence::from_wheel(snapshot.into(), MonotonicMilliseconds::new(10_000))
+    }
 
     fn observation(ride_id: Uuid, latitude: f64) -> ChargingStopObservation {
         ChargingStopObservation {
@@ -208,6 +271,105 @@ mod tests {
             location: ChargingLocationFix::new(latitude, 0.0, 1_000.0, 5.0),
             now_unix_seconds: 1_000.0,
         }
+    }
+
+    #[test]
+    fn wheel_evidence_uses_motion_guard_and_never_current_in_alone() {
+        let mut snapshot = telemetry();
+        assert!(matches!(
+            wheel_state(snapshot),
+            ChargingStopEvidence::Wheel {
+                operating_state: RideOperatingState::Charging,
+                ..
+            }
+        ));
+        snapshot.speed = Some(Measured::reported(Speed::from_millimetres_per_second(
+            1_000,
+        )));
+        assert!(matches!(
+            wheel_state(snapshot),
+            ChargingStopEvidence::Wheel {
+                operating_state: RideOperatingState::Riding,
+                ..
+            }
+        ));
+        snapshot = telemetry();
+        snapshot.operating_state = Some(RideOperatingState::Riding);
+        assert!(matches!(
+            wheel_state(snapshot),
+            ChargingStopEvidence::Wheel {
+                operating_state: RideOperatingState::Riding,
+                ..
+            }
+        ));
+        snapshot = telemetry();
+        snapshot.speed_observed_at_ms = Some(MonotonicTimestamp::new(4_999));
+        assert!(!matches!(
+            wheel_state(snapshot),
+            ChargingStopEvidence::Wheel {
+                operating_state: RideOperatingState::Charging,
+                ..
+            }
+        ));
+        snapshot = telemetry();
+        snapshot.charge_mode = None;
+        snapshot.battery_current = Some(Measured::reported(
+            cutout_core::BatteryCurrent::current_in(2_000),
+        ));
+        assert!(!matches!(
+            wheel_state(snapshot),
+            ChargingStopEvidence::Wheel {
+                operating_state: RideOperatingState::Charging,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn wheel_evidence_requires_trusted_known_charge_mode_unless_state_is_explicit() {
+        let mut snapshot = telemetry();
+        snapshot.charge_mode = Some(Measured::estimated(ChargeMode::Charging));
+        assert!(!matches!(
+            wheel_state(snapshot),
+            ChargingStopEvidence::Wheel {
+                operating_state: RideOperatingState::Charging,
+                ..
+            }
+        ));
+
+        snapshot = telemetry();
+        snapshot.charge_mode = Some(Measured {
+            value: ChargeMode::Charging,
+            source: ValueSource::Reported,
+            quality: ValueQuality::Known,
+            verification: VerificationStatus::Unverified,
+        });
+        assert!(!matches!(
+            wheel_state(snapshot),
+            ChargingStopEvidence::Wheel {
+                operating_state: RideOperatingState::Charging,
+                ..
+            }
+        ));
+
+        snapshot = telemetry();
+        assert!(matches!(
+            wheel_state(snapshot),
+            ChargingStopEvidence::Wheel {
+                operating_state: RideOperatingState::Charging,
+                ..
+            }
+        ));
+
+        snapshot.charge_mode = None;
+        snapshot.operating_state = Some(RideOperatingState::Charging);
+        assert!(matches!(
+            wheel_state(snapshot),
+            ChargingStopEvidence::Wheel {
+                operating_state: RideOperatingState::Charging,
+                ..
+            }
+        ));
     }
 
     #[test]

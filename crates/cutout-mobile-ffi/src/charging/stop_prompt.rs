@@ -1,6 +1,5 @@
 use std::sync::{Arc, Mutex, PoisonError};
 
-use cutout_core::{MonotonicTimestamp, RideOperatingState, Speed};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -244,12 +243,10 @@ fn observation_for_connection(
     }
     observation_for_ride(
         &state,
-        ride_maps::ChargingStopEvidence::Wheel {
-            operating_state: charging_operating_state(telemetry, context.now_ms),
-            telemetry_at: telemetry
-                .at_ms
-                .map(|at| ride_maps::MonotonicMilliseconds::new(at.milliseconds)),
-        },
+        ride_maps::ChargingStopEvidence::from_wheel(
+            telemetry,
+            ride_maps::MonotonicMilliseconds::new(context.now_ms),
+        ),
         context,
     )
 }
@@ -280,24 +277,6 @@ fn observation_for_ride(
     })
 }
 
-fn charging_operating_state(
-    telemetry: cutout_core::TelemetrySnapshotDto,
-    now_ms: u64,
-) -> RideOperatingState {
-    RideOperatingState::resolve_fresh(
-        telemetry.operating_state.map(Into::into),
-        telemetry.charge_mode.map(|reading| reading.value.into()),
-        telemetry
-            .speed
-            .map(|reading| Speed::from_millimetres_per_second(reading.value)),
-        telemetry
-            .speed_observed_at_ms
-            .map(|at| MonotonicTimestamp::new(at.milliseconds)),
-        Some(MonotonicTimestamp::new(now_ms)),
-    )
-    .0
-}
-
 #[allow(
     clippy::cast_precision_loss,
     reason = "Current Unix milliseconds fit f64 integer precision; this is the native GPS clock's seconds representation"
@@ -309,17 +288,9 @@ fn unix_seconds(milliseconds: u64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cutout_core::{ChargeMode, Measured, TelemetrySnapshot};
-
-    fn telemetry() -> TelemetrySnapshot {
-        TelemetrySnapshot {
-            at_ms: Some(MonotonicTimestamp::new(10_000)),
-            speed_observed_at_ms: Some(MonotonicTimestamp::new(10_000)),
-            speed: Some(Measured::reported(Speed::from_millimetres_per_second(0))),
-            charge_mode: Some(Measured::reported(ChargeMode::Charging)),
-            ..TelemetrySnapshot::default()
-        }
-    }
+    use cutout_core::{
+        ChargeMode, Measured, MonotonicTimestamp, RideOperatingState, Speed, TelemetrySnapshot,
+    };
 
     fn location() -> MobilePhoneLocationSampleDto {
         MobilePhoneLocationSampleDto {
@@ -338,44 +309,15 @@ mod tests {
     }
 
     #[test]
-    fn charging_stop_uses_motion_guard_and_never_current_in_alone() {
-        let mut snapshot = telemetry();
-        assert_eq!(
-            charging_operating_state(snapshot.into(), 10_000),
-            RideOperatingState::Charging
-        );
-        snapshot.speed = Some(Measured::reported(Speed::from_millimetres_per_second(
-            1_000,
-        )));
-        assert_eq!(
-            charging_operating_state(snapshot.into(), 10_000),
-            RideOperatingState::Riding
-        );
-        snapshot = telemetry();
-        snapshot.operating_state = Some(RideOperatingState::Riding);
-        assert_eq!(
-            charging_operating_state(snapshot.into(), 10_000),
-            RideOperatingState::Riding
-        );
-        snapshot = telemetry();
-        snapshot.speed_observed_at_ms = Some(MonotonicTimestamp::new(4_999));
-        assert_ne!(
-            charging_operating_state(snapshot.into(), 10_000),
-            RideOperatingState::Charging
-        );
-        snapshot = telemetry();
-        snapshot.charge_mode = None;
-        snapshot.battery_current = Some(Measured::reported(
-            cutout_core::BatteryCurrent::current_in(2_000),
-        ));
-        assert_ne!(
-            charging_operating_state(snapshot.into(), 10_000),
-            RideOperatingState::Charging
-        );
-    }
-
-    #[test]
     fn charging_stop_requires_the_current_connection_to_be_associated_with_the_recording() {
+        let telemetry = TelemetrySnapshot {
+            at_ms: Some(MonotonicTimestamp::new(10_000)),
+            speed_observed_at_ms: Some(MonotonicTimestamp::new(10_000)),
+            speed: Some(Measured::reported(Speed::from_millimetres_per_second(0))),
+            charge_mode: Some(Measured::reported(ChargeMode::Charging)),
+            ..TelemetrySnapshot::default()
+        }
+        .into();
         let ride = MobileRideMapCore::new();
         ride.ensure_recording_for_vehicle_with_connection_generation(
             "wheel",
@@ -391,15 +333,10 @@ mod tests {
             can_present: true,
             phone_connected_to_power: false,
         };
-        assert!(
-            observation_for_connection(&ride, "other-wheel", 3, telemetry().into(), context)
-                .is_none()
-        );
-        assert!(
-            observation_for_connection(&ride, "wheel", 2, telemetry().into(), context).is_none()
-        );
+        assert!(observation_for_connection(&ride, "other-wheel", 3, telemetry, context).is_none());
+        assert!(observation_for_connection(&ride, "wheel", 2, telemetry, context).is_none());
         let observation =
-            observation_for_connection(&ride, "wheel", 3, telemetry().into(), context).unwrap();
+            observation_for_connection(&ride, "wheel", 3, telemetry, context).unwrap();
         let mut state = ride_maps::ChargingStopPrompts::default();
         assert!(matches!(
             state.observe(Some(observation), true),
