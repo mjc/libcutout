@@ -560,8 +560,7 @@ struct ChargingMapContentView: View {
             },
             set: { route in
                 guard let route else {
-                    sheetRoute = nil
-                    if editor?.stage != .moving { editor?.movePin() }
+                    cancelEditor()
                     return
                 }
                 if case .editor = route {
