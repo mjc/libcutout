@@ -1,6 +1,6 @@
 # Connector menu ordering
 
-The charging editor ranks its complete fixed connector catalogue from the rider's GPS-derived country. A manually selected country controls national-default suggestions separately. Device language, locale and the pin's coordinates do not determine menu order.
+The charging editor ranks its complete fixed connector catalogue from the rider's GPS-derived country. That same detected country supplies the national-default suggestions; the form has no country selector. Device language, locale and the pin's coordinates do not determine menu order.
 
 The mapping is compiled into `cutout-ride-maps` and requires no directory request. Country resolution uses the existing native reverse-geocoding path; that lookup may require Apple services. If location or country resolution is unavailable, malformed or unsupported, the menu uses its general catalogue order.
 
@@ -12,4 +12,4 @@ The household groups follow the manufacturer's [Bel world plug guide](https://ww
 
 The native menu renders the Rust-ordered array directly, so visible and accessibility encounter order share the same source. Location context used for ranking is not part of a charging-spot write or sync payload.
 
-Behavior tests cover representative local prefixes, regional EV priority, stable ties, full catalogue preservation, malformed/missing/unsupported location, the Swift FFI boundary, separation from manual suggestion country and preservation of explicit supplies.
+Behavior tests cover representative local prefixes, regional EV priority, stable ties, full catalogue preservation, malformed/missing/unsupported location, the Swift FFI boundary, automatic country updates and preservation of explicit supplies.

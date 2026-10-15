@@ -1005,7 +1005,10 @@ struct ChargingMapContentView: View {
         if let error = model.error ?? editorLaunchError {
             statusRow(ChargingSpotPresentation.loadErrorKey(error), retry: model.error != nil)
         } else if model.spots.isEmpty && !model.isLoading {
-            statusRow("charging.status.empty", retry: false)
+            Button(localizedAppText("charging.status.empty"), action: beginAddingAtCurrentLocation)
+                .frame(minHeight: 44)
+                .font(.footnote)
+                .accessibilityIdentifier("charging.empty.add")
         } else if model.limitReached {
             Text(localizedAppText("charging.status.limit")).font(.footnote).padding(8)
         }

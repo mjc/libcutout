@@ -8,17 +8,12 @@ enum ChargingSpotEditorField: Hashable {
 }
 
 struct ChargingSpotEditorView: View {
-    private static let countryOptions: [(code: String, name: String)] = Locale.Region.isoRegions
-        .map(\.identifier)
-        .filter { $0.count == 2 }
-        .map { (code: $0, name: Locale.current.localizedString(forRegionCode: $0) ?? $0) }
-        .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-
     @Bindable var model: ChargingSpotEditorModel
     let onCancel: () -> Void
     let onSaved: (MobileChargingWriteReceiptDto) -> Void
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
     @FocusState private var focusedField: ChargingSpotEditorField?
     @State private var selectedDetent: PresentationDetent = .medium
 
@@ -327,20 +322,12 @@ struct ChargingSpotEditorView: View {
             }
             fieldFeedback(.payment, identifier: "charging.editor.price.error")
         }
-        Picker(localizedAppText("charging.editor.country"), selection: $model.countrySelection) {
-            Text(localizedAppText("charging.editor.country.unknown")).tag(nil as String?)
-            ForEach(Self.countryOptions, id: \.code) { country in
-                Text(country.name).tag(country.code as String?)
-            }
-        }
-        .pickerStyle(.menu)
-        .accessibilityIdentifier("charging.editor.country")
         Button(localizedAppText("charging.editor.supply.add")) {
             if model.venue == .evChargingStation { model.addSupply() } else { model.addSuggestedSupply() }
         }
         .accessibilityIdentifier("charging.editor.supply.add")
         fieldFeedback(.supply, identifier: "charging.editor.supplies.error")
-        coordinateFields
+        if voiceOverEnabled { coordinateFields }
         ForEach(model.supplies) { draft in
             ChargingSupplyForm(
                 draft: draft,

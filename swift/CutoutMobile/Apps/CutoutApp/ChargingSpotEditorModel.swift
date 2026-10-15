@@ -77,15 +77,9 @@ final class ChargingSpotEditorModel {
     private(set) var isLoadingLatest = false
     private(set) var latestReloadErrorKey: String?
     private(set) var countryCode: String?
-    private var locationCountryCode: String?
-    private(set) var isCountryCodeManuallySelected = false
     @ObservationIgnored private var originalPrice: MobileChargingPriceDto?
-    var countrySelection: String? {
-        get { countryCode }
-        set { chooseCountryCode(newValue) }
-    }
     var connectorChoices: [MobileChargingConnectorDto] {
-        mobileChargingConnectorChoices(locationCountryCode: locationCountryCode)
+        mobileChargingConnectorChoices(locationCountryCode: countryCode)
     }
     var powerSuggestion: MobileChargingSupplyDto {
         mobileChargingPowerSuggestion(countryCode: countryCode, evStation: venue == .evChargingStation)
@@ -264,19 +258,8 @@ final class ChargingSpotEditorModel {
         errorKey = nil
     }
 
-    /// Records GPS country for menu order; manual corrections only control suggestions.
-    func setCountryCode(_ countryCode: String?) {
-        locationCountryCode = Self.normalizedCountryCode(countryCode)
-        guard !isCountryCodeManuallySelected else { return }
-        applyCountryCode(countryCode)
-    }
-
-    func chooseCountryCode(_ countryCode: String?) {
-        isCountryCodeManuallySelected = true
-        applyCountryCode(countryCode)
-    }
-
-    private func applyCountryCode(_ value: String?) {
+    /// Uses the GPS-derived country for defaults and ordering, preserving explicit power edits.
+    func setCountryCode(_ value: String?) {
         let countryCode = Self.normalizedCountryCode(value)
         guard self.countryCode != countryCode else { return }
         self.countryCode = countryCode

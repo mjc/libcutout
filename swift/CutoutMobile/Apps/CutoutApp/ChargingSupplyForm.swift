@@ -42,9 +42,6 @@ struct ChargingSupplyForm: View {
                 Button(localizedAppText("charging.editor.supply.confirm"), action: draft.confirm)
                     .accessibilityIdentifier("charging.editor.supply.confirm")
             }
-            Text(localizedAppText("charging.editor.supply.unknown_hint"))
-                .font(.footnote)
-                .foregroundStyle(.secondary)
             Menu {
                 ForEach(connectorChoices, id: \.self) { connector in
                     Toggle(

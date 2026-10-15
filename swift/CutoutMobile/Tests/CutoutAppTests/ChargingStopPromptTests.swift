@@ -50,7 +50,15 @@ final class ChargingStopPromptTests: XCTestCase {
         XCTAssertEqual(histories, ["ride-specific-history"])
     }
 
-    func testCancelledOrRetiredReadCannotConsumeAnUnseenLocation() async {
+    func testCancelledReadCannotConsumeAnUnseenLocation() async {
+        await assertLateReadIsIgnored(cancel: true)
+    }
+
+    func testDismissedReadCannotResurrectThePromptWithoutTaskCancellation() async {
+        await assertLateReadIsIgnored(cancel: false)
+    }
+
+    private func assertLateReadIsIgnored(cancel: Bool) async {
         let entered = expectation(description: "Rust read entered")
         var continuation: CheckedContinuation<MobileChargingStopDecisionDto, Never>?
         var acknowledgements = 0
@@ -70,7 +78,7 @@ final class ChargingStopPromptTests: XCTestCase {
         let read = Task { await model.refresh(location: nil) }
         await fulfillment(of: [entered], timeout: 2)
         model.dismiss()
-        read.cancel()
+        if cancel { read.cancel() }
         continuation?.resume(returning: .offer(prompt: suggestion))
         await read.value
         XCTAssertNil(model.prompt)

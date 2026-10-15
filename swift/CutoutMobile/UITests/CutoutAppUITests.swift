@@ -7341,11 +7341,9 @@ final class ChargingMapDeviceUITests: XCTestCase {
             (accessNoteAfterDismissal.value as? String ?? "").contains("Ask the front desk for access."),
             app.debugDescription
         )
-        let latitude = app.textFields["charging.editor.latitude"]
-        let longitude = app.textFields["charging.editor.longitude"]
-        revealChargingControl(latitude, in: app)
-        let originalLatitude = try XCTUnwrap(Double(latitude.value as? String ?? ""), app.debugDescription)
-        let originalLongitude = try XCTUnwrap(Double(longitude.value as? String ?? ""), app.debugDescription)
+        XCTAssertFalse(app.descendants(matching: .any)["charging.editor.country"].exists)
+        XCTAssertFalse(app.textFields["charging.editor.latitude"].exists)
+        XCTAssertFalse(app.textFields["charging.editor.longitude"].exists)
         let movePin = app.buttons["charging.editor.move-pin"]
         revealChargingControl(movePin, in: app, direction: .down)
         XCTAssertTrue(movePin.waitForExistence(timeout: 5), app.debugDescription)
@@ -7360,10 +7358,6 @@ final class ChargingMapDeviceUITests: XCTestCase {
         app.buttons["charging.placement.confirm"].tap()
 
         XCTAssertTrue(app.descendants(matching: .any)["charging.editor.screen"].waitForExistence(timeout: 5))
-        revealChargingControl(latitude, in: app)
-        let movedLatitude = try XCTUnwrap(Double(latitude.value as? String ?? ""), app.debugDescription)
-        let movedLongitude = try XCTUnwrap(Double(longitude.value as? String ?? ""), app.debugDescription)
-        XCTAssertGreaterThan(abs(movedLatitude - originalLatitude) + abs(movedLongitude - originalLongitude), 0.0001)
         revealChargingControl(name, in: app, direction: .down)
         XCTAssertEqual(name.value as? String, "Garden entrance outlet", app.debugDescription)
         revealChargingControl(hours, in: app, direction: .down)
@@ -7410,10 +7404,6 @@ final class ChargingMapDeviceUITests: XCTestCase {
         name.tap()
         name.typeText("North entrance")
         dismissChargingKeyboard(in: app)
-        let latitude = app.textFields["charging.editor.latitude"]
-        revealChargingControl(latitude, in: app)
-        let originalLatitude = latitude.value as? String
-
         let movePin = app.buttons["charging.editor.move-pin"]
         revealChargingControl(movePin, in: app, direction: .down)
         movePin.tap()
@@ -7435,8 +7425,6 @@ final class ChargingMapDeviceUITests: XCTestCase {
         revealChargingControl(retainedNote, in: app, direction: .down)
         XCTAssertTrue(
             (retainedNote.value as? String ?? "").contains("Draft access note survives"), app.debugDescription)
-        revealChargingControl(latitude, in: app)
-        XCTAssertEqual(latitude.value as? String, originalLatitude, app.debugDescription)
         attachScreenshot(app, name: "Charging draft retained after changing map mode")
     }
 

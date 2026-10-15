@@ -6,10 +6,10 @@ use uuid::Uuid;
 
 use crate::{
     CutoutSessionStateHandle, MobileMapCoordinateDto, MobilePhoneLocationSampleDto,
-    MobileRideMapCore, ride_maps,
+    MobileRideMapCore, MobileRideMapCoreInner, ride_maps,
 };
 
-/// One unsaved location suggested by the connected wheel during an open ride.
+/// One unsaved location suggested while the wheel or phone is charging during an open ride.
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct MobileChargingStopPromptDto {
     /// Canonical recording identity.
@@ -29,6 +29,8 @@ pub struct MobileChargingStopContextDto {
     pub now_unix_seconds: f64,
     /// Whether native UI can currently show a prompt without replacing another editor.
     pub can_present: bool,
+    /// Current iOS battery state is charging or full on external power.
+    pub phone_connected_to_power: bool,
 }
 
 /// A suggestion or the portable policy's reason for suppressing it.
@@ -36,7 +38,7 @@ pub struct MobileChargingStopContextDto {
 pub enum MobileChargingStopDecisionDto {
     /// Offer the normal spot editor; nothing has been saved.
     Offer { prompt: MobileChargingStopPromptDto },
-    /// No associated open ride, or the verified device is disconnected.
+    /// No open ride, or the wheel trigger has no verified associated connection.
     NoAssociatedRide,
     /// Recording has ended.
     RideEnded,
@@ -202,6 +204,14 @@ fn charging_observation(
     session: &CutoutSessionStateHandle,
     context: MobileChargingStopContextDto,
 ) -> Option<ride_maps::ChargingStopObservation> {
+    if context.phone_connected_to_power {
+        let state = ride.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        return observation_for_ride(
+            &state,
+            ride_maps::ChargingStopEvidence::PhoneExternalPower,
+            context,
+        );
+    }
     // Match connection and telemetry under one owner; release it before acquiring the map owner.
     let (platform_identifier, generation, telemetry) = {
         let session = session.lock_inner();
@@ -232,7 +242,24 @@ fn observation_for_connection(
     {
         return None;
     }
-    let operating_state = charging_operating_state(telemetry, context.now_ms);
+    observation_for_ride(
+        &state,
+        ride_maps::ChargingStopEvidence::Wheel {
+            operating_state: charging_operating_state(telemetry, context.now_ms),
+            telemetry_at: telemetry
+                .at_ms
+                .map(|at| ride_maps::MonotonicMilliseconds::new(at.milliseconds)),
+        },
+        context,
+    )
+}
+
+fn observation_for_ride(
+    state: &MobileRideMapCoreInner,
+    evidence: ride_maps::ChargingStopEvidence,
+    context: MobileChargingStopContextDto,
+) -> Option<ride_maps::ChargingStopObservation> {
+    state.require_ready().ok()?;
     let location = context.location.and_then(|sample| {
         ride_maps::ChargingLocationFix::new(
             sample.latitude_degrees,
@@ -246,10 +273,7 @@ fn observation_for_connection(
     Some(ride_maps::ChargingStopObservation {
         ride_id: Uuid::from_slice(&state.ride_id.as_ref()?.bytes).ok()?,
         lifecycle: state.recorder.state()?,
-        operating_state,
-        telemetry_at: telemetry
-            .at_ms
-            .map(|at| ride_maps::MonotonicMilliseconds::new(at.milliseconds)),
+        evidence,
         now: ride_maps::MonotonicMilliseconds::new(context.now_ms),
         location,
         now_unix_seconds: context.now_unix_seconds,
@@ -365,6 +389,7 @@ mod tests {
             now_ms: 10_000,
             now_unix_seconds: 1_000.0,
             can_present: true,
+            phone_connected_to_power: false,
         };
         assert!(
             observation_for_connection(&ride, "other-wheel", 3, telemetry().into(), context)
@@ -383,13 +408,61 @@ mod tests {
     }
 
     #[test]
+    fn phone_power_reads_the_canonical_ride_without_requiring_wheel_connection() {
+        let ride = MobileRideMapCore::new();
+        let context = MobileChargingStopContextDto {
+            location: Some(location()),
+            now_ms: 10_000,
+            now_unix_seconds: 1_000.0,
+            can_present: true,
+            phone_connected_to_power: true,
+        };
+        let session = CutoutSessionStateHandle::new();
+        let observe = || charging_observation(&ride, &session, context);
+        assert!(observe().is_none());
+        ride.ensure_recording_for_vehicle_with_connection_generation(
+            "wheel",
+            1_000,
+            Some(3),
+            Some(crate::MobileRideMapAutomaticRecordingPolicyDto::StartAndResume),
+        )
+        .unwrap();
+        assert!(
+            charging_observation(
+                &ride,
+                &session,
+                MobileChargingStopContextDto {
+                    phone_connected_to_power: false,
+                    ..context
+                }
+            )
+            .is_none()
+        );
+        let mut policy = ride_maps::ChargingStopPrompts::default();
+        assert!(matches!(
+            policy.observe(observe(), true),
+            ride_maps::ChargingStopDecision::Offer(_)
+        ));
+        let mut stale = observe().unwrap();
+        stale.location = None;
+        assert_eq!(
+            policy.observe(Some(stale), true),
+            ride_maps::ChargingStopDecision::Suppressed(
+                ride_maps::ChargingStopSuppression::LocationUnavailable
+            )
+        );
+    }
+
+    #[test]
     fn charging_stop_history_round_trips_per_ride_and_rejects_invalid_coordinates() {
         let ride_id = Uuid::from_u128(1);
         let observation = ride_maps::ChargingStopObservation {
             ride_id,
             lifecycle: ride_maps::RideLifecycleState::Active,
-            operating_state: RideOperatingState::Charging,
-            telemetry_at: Some(ride_maps::MonotonicMilliseconds::new(10_000)),
+            evidence: ride_maps::ChargingStopEvidence::Wheel {
+                operating_state: RideOperatingState::Charging,
+                telemetry_at: Some(ride_maps::MonotonicMilliseconds::new(10_000)),
+            },
             now: ride_maps::MonotonicMilliseconds::new(10_000),
             location: ride_maps::ChargingLocationFix::new(0.0, 0.0, 1_000.0, 5.0),
             now_unix_seconds: 1_000.0,

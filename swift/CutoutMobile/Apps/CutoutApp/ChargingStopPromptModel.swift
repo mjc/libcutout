@@ -3,6 +3,10 @@ import CutoutMobileFFI
 import Foundation
 import Observation
 
+#if os(iOS)
+    import UIKit
+#endif
+
 /// Native scheduling, local preferences and presentation for the Rust-owned prompt policy.
 @MainActor
 @Observable
@@ -19,6 +23,9 @@ final class ChargingStopPromptModel {
         now: @escaping @MainActor () -> UInt64,
         defaults: UserDefaults = .standard
     ) {
+        #if os(iOS)
+            UIDevice.current.isBatteryMonitoringEnabled = true
+        #endif
         let key = "charging-stop-prompt-history"
         let policy = MobileChargingStopPrompts(historyJson: defaults.string(forKey: key))
         self.init(
@@ -28,7 +35,8 @@ final class ChargingStopPromptModel {
                     policy: policy, session: session,
                     context: MobileChargingStopContextDto(
                         location: location, nowMs: now(),
-                        nowUnixSeconds: Date().timeIntervalSince1970, canPresent: true
+                        nowUnixSeconds: Date().timeIntervalSince1970, canPresent: true,
+                        phoneConnectedToPower: Self.phoneConnectedToPower
                     )
                 )
             },
@@ -36,6 +44,18 @@ final class ChargingStopPromptModel {
             dismiss: { policy.dismiss() },
             saveHistory: { defaults.set($0, forKey: key) }
         )
+    }
+
+    private static var phoneConnectedToPower: Bool {
+        #if os(iOS)
+            switch UIDevice.current.batteryState {
+            case .charging, .full: true
+            case .unknown, .unplugged: false
+            @unknown default: false
+            }
+        #else
+            false
+        #endif
     }
 
     init(

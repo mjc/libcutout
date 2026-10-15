@@ -363,24 +363,21 @@ final class ChargingSpotEditorModelTests: XCTestCase {
         XCTAssertEqual(draft.connectorSummary, [.unknown])
     }
 
-    func testConnectorOrderingUsesGPSCountryIndependentlyOfManualSuggestionCountry() {
+    func testConnectorOrderingAndDefaultsUseGPSCountryRatherThanLanguage() {
         let model = ChargingSpotEditorModel(
             coordinate: coordinate(), countryCode: "GB", inputLocale: Locale(identifier: "de_DE"))
-        let fallback = mobileChargingConnectorChoices(locationCountryCode: nil)
-        XCTAssertEqual(model.connectorChoices, fallback)
-
-        model.chooseCountryCode("US")
-        XCTAssertEqual(model.connectorChoices, fallback)
-        model.setCountryCode("gb")
         XCTAssertEqual(model.connectorChoices.first, .typeG)
+        XCTAssertEqual(model.powerSuggestion.connectors, [.typeG])
+
+        model.setCountryCode("US")
         XCTAssertEqual(model.countryCode, "US")
         XCTAssertEqual(model.powerSuggestion.voltageVolts, 120)
+        XCTAssertEqual(model.connectorChoices, mobileChargingConnectorChoices(locationCountryCode: "US"))
 
-        model.setCountryCode(nil)
-        XCTAssertEqual(model.connectorChoices, fallback)
-        XCTAssertEqual(model.countryCode, "US")
-        model.setCountryCode("not-a-country")
-        XCTAssertEqual(model.connectorChoices, fallback)
+        model.setCountryCode("gb")
+        XCTAssertEqual(model.countryCode, "GB")
+        XCTAssertEqual(model.connectorChoices.first, .typeG)
+        XCTAssertEqual(model.powerSuggestion.connectors, [.typeG])
     }
 
     func testConnectorReorderingDoesNotSelectOrReplaceExistingSupplyChoices() {
@@ -402,25 +399,17 @@ final class ChargingSpotEditorModelTests: XCTestCase {
             Set(model.connectorChoices), Set(ChargingSpotPresentation.connectorOptions.map(\.value)))
     }
 
-    func testAutomaticCountryCannotReplaceManualCountryChoice() {
-        let model = ChargingSpotEditorModel(coordinate: coordinate(), countryCode: "US")
-        model.chooseCountryCode("GB")
-        model.setCountryCode("DE")
-        XCTAssertEqual(model.countryCode, "GB")
-        XCTAssertTrue(model.isCountryCodeManuallySelected)
-    }
-
-    func testCountrySelectionSupportsAnyRegionAndUnknownManualOverride() {
+    func testUnavailableCountryUsesFallbackWithoutAddingAnExtraRequiredField() {
         let model = ChargingSpotEditorModel(coordinate: coordinate(), countryCode: "DE")
-
-        model.countrySelection = "FR"
-        XCTAssertEqual(model.countryCode, "FR")
-        XCTAssertTrue(model.isCountryCodeManuallySelected)
-        model.setCountryCode("GB")
-        XCTAssertEqual(model.countryCode, "FR")
-
-        model.countrySelection = nil
+        model.confirmLocation()
+        model.accessNote = "Outlet beside the door"
+        model.setCountryCode(nil)
         XCTAssertNil(model.countryCode)
+        XCTAssertEqual(model.connectorChoices, mobileChargingConnectorChoices(locationCountryCode: nil))
+        XCTAssertTrue(model.canSave)
+        model.setCountryCode("not-a-country")
+        XCTAssertNil(model.countryCode)
+        XCTAssertTrue(model.canSave)
     }
 
     func testBlankOptionalSupplyRowsAreOmittedOnSave() async {

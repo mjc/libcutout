@@ -5,6 +5,14 @@ import XCTest
 
 @MainActor
 final class ChargingCommunitySyncTests: XCTestCase {
+    func testRoutineSyncHasNoStatusMessage() {
+        for status in [ChargingCommunitySyncStatus.notStarted, .syncing, .synced] {
+            XCTAssertNil(status.messageKey)
+        }
+        XCTAssertNotNil(ChargingCommunitySyncStatus.offline.messageKey)
+        XCTAssertNotNil(ChargingCommunitySyncStatus.conflict.messageKey)
+    }
+
     func testDebugEnablementDisablesSyncForEveryUIFixtureSource() {
         XCTAssertFalse(
             ChargingCommunitySyncDebugEnablement.isSyncEnabled(

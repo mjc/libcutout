@@ -7,6 +7,43 @@ use crate::{charging_location::coordinate_sample, distance_between, select_charg
 /// One international mile, expressed in the map domain's millimetres.
 pub const CHARGING_STOP_PROMPT_RADIUS_MILLIMETRES: u64 = 1_609_344;
 
+/// Independent evidence sources share one ride's geographic prompt history.
+#[derive(Clone, Copy, Debug)]
+pub enum ChargingStopEvidence {
+    /// Wheel state resolved with fresh motion evidence and its original telemetry time.
+    Wheel {
+        /// Resolved operating state.
+        operating_state: RideOperatingState,
+        /// Original telemetry update time.
+        telemetry_at: Option<MonotonicMilliseconds>,
+    },
+    /// The operating system currently reports the phone connected to external power.
+    PhoneExternalPower,
+}
+
+impl ChargingStopEvidence {
+    fn suppression(self, now: MonotonicMilliseconds) -> Option<ChargingStopSuppression> {
+        let Self::Wheel {
+            operating_state,
+            telemetry_at,
+        } = self
+        else {
+            return None;
+        };
+        if operating_state != RideOperatingState::Charging {
+            return Some(ChargingStopSuppression::NotCharging);
+        }
+        if !telemetry_at.is_some_and(|at| {
+            now.as_u64()
+                .checked_sub(at.as_u64())
+                .is_some_and(|age| age <= CONNECTED_WHEEL_MOTION_FRESHNESS_MS)
+        }) {
+            return Some(ChargingStopSuppression::StaleTelemetry);
+        }
+        None
+    }
+}
+
 /// Current ride and independently resolved charging evidence.
 #[derive(Clone, Copy, Debug)]
 pub struct ChargingStopObservation {
@@ -14,10 +51,8 @@ pub struct ChargingStopObservation {
     pub ride_id: Uuid,
     /// Current recording lifecycle.
     pub lifecycle: RideLifecycleState,
-    /// Charging state resolved with fresh wheel motion evidence.
-    pub operating_state: RideOperatingState,
-    /// Original telemetry update time.
-    pub telemetry_at: Option<MonotonicMilliseconds>,
+    /// A resolved wheel observation or current native phone power state.
+    pub evidence: ChargingStopEvidence,
     /// Current host monotonic time.
     pub now: MonotonicMilliseconds,
     /// Latest validated phone location.
@@ -38,7 +73,7 @@ pub struct ChargingStopPrompt {
 /// Why an automatic charging suggestion is currently unavailable.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ChargingStopSuppression {
-    /// No verified device is associated with an open ride.
+    /// No open ride is available, or wheel evidence lacks a verified association.
     NoAssociatedRide,
     /// The recording has ended.
     RideEnded,
@@ -103,17 +138,8 @@ impl ChargingStopPrompts {
         if !observation.lifecycle.is_recording() {
             return self.suppress(ChargingStopSuppression::RideEnded);
         }
-        if observation.operating_state != RideOperatingState::Charging {
-            return self.suppress(ChargingStopSuppression::NotCharging);
-        }
-        if !observation.telemetry_at.is_some_and(|at| {
-            observation
-                .now
-                .as_u64()
-                .checked_sub(at.as_u64())
-                .is_some_and(|age| age <= CONNECTED_WHEEL_MOTION_FRESHNESS_MS)
-        }) {
-            return self.suppress(ChargingStopSuppression::StaleTelemetry);
+        if let Some(reason) = observation.evidence.suppression(observation.now) {
+            return self.suppress(reason);
         }
         let location = observation
             .location
@@ -174,12 +200,49 @@ mod tests {
         ChargingStopObservation {
             ride_id,
             lifecycle: RideLifecycleState::Active,
-            operating_state: RideOperatingState::Charging,
-            telemetry_at: Some(MonotonicMilliseconds::new(10_000)),
+            evidence: ChargingStopEvidence::Wheel {
+                operating_state: RideOperatingState::Charging,
+                telemetry_at: Some(MonotonicMilliseconds::new(10_000)),
+            },
             now: MonotonicMilliseconds::new(10_000),
             location: ChargingLocationFix::new(latitude, 0.0, 1_000.0, 5.0),
             now_unix_seconds: 1_000.0,
         }
+    }
+
+    #[test]
+    fn phone_power_can_prompt_and_shares_suppression_with_the_wheel() {
+        let ride = Uuid::from_u128(1);
+        let phone = ChargingStopObservation {
+            evidence: ChargingStopEvidence::PhoneExternalPower,
+            ..observation(ride, 0.0)
+        };
+        let mut prompts = ChargingStopPrompts::default();
+        present_and_dismiss(&mut prompts, phone);
+        assert_eq!(
+            prompts.observe(Some(observation(ride, 0.0)), true),
+            ChargingStopDecision::Suppressed(ChargingStopSuppression::NearbyPrompt)
+        );
+        assert!(matches!(
+            prompts.observe(
+                Some(ChargingStopObservation {
+                    ride_id: Uuid::from_u128(2),
+                    ..phone
+                }),
+                true
+            ),
+            ChargingStopDecision::Offer(_)
+        ));
+        assert_eq!(
+            prompts.observe(
+                Some(ChargingStopObservation {
+                    lifecycle: RideLifecycleState::Stopped,
+                    ..phone
+                }),
+                true
+            ),
+            ChargingStopDecision::Suppressed(ChargingStopSuppression::RideEnded)
+        );
     }
 
     #[test]
@@ -296,7 +359,10 @@ mod tests {
             assert_eq!(
                 prompts.observe(
                     Some(ChargingStopObservation {
-                        telemetry_at,
+                        evidence: ChargingStopEvidence::Wheel {
+                            operating_state: RideOperatingState::Charging,
+                            telemetry_at,
+                        },
                         ..eligible
                     }),
                     true
@@ -330,7 +396,10 @@ mod tests {
             assert_eq!(
                 prompts.observe(
                     Some(ChargingStopObservation {
-                        operating_state,
+                        evidence: ChargingStopEvidence::Wheel {
+                            operating_state,
+                            telemetry_at: Some(eligible.now),
+                        },
                         ..eligible
                     }),
                     true

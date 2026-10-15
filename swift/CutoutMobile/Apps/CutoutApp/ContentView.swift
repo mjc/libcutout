@@ -144,15 +144,24 @@ struct ContentView: View {
                 .font(.headline)
                 .accessibilityAddTraits(.isHeader)
             HStack {
-                Button(localizedAppText("charging.stop.dismiss")) { model.chargingStops.dismiss() }
-                    .accessibilityIdentifier("charging.stop.dismiss")
+                Button {
+                    model.chargingStops.dismiss()
+                } label: {
+                    Text(localizedAppText("charging.stop.dismiss"))
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
+                }
+                .accessibilityIdentifier("charging.stop.dismiss")
                 Spacer()
-                Button(localizedAppText("charging.add")) {
+                Button {
                     guard let prompt = model.chargingStops.prompt,
                         rideMapPresentation.beginChargingStop(prompt, locale: locale)
                     else { return }
                     model.chargingStops.dismiss()
                     navigate(to: .rideMap)
+                } label: {
+                    Text(localizedAppText("charging.add"))
+                        .frame(minHeight: 44)
                 }
                 .buttonStyle(.borderedProminent)
                 .accessibilityIdentifier("charging.stop.add")
@@ -163,6 +172,9 @@ struct ContentView: View {
         .background(PevColors.cardFill)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("charging.stop.prompt")
+        .onAppear {
+            AccessibilityNotification.Announcement(localizedAppText("charging.stop.title")).post()
+        }
     }
 
     private func liveActivityFailureBanner(_ presentation: LiveActivityFailurePresentation) -> some View {
