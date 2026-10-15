@@ -442,6 +442,9 @@ final class ChargingCommunitySync {
 
     func allowPublicRefreshAfterDeletion() {
         accountDeletionInProgress = false
+        syncRunState = MobileChargingSyncRunState(
+            round: 0, attempt: 0, pendingCount: 0, downloaded: 0, uploaded: 0
+        )
         status = .deleted
     }
 

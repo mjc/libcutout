@@ -516,6 +516,37 @@ final class ChargingCommunitySyncTests: XCTestCase {
         XCTAssertEqual(recordAfterCleanupRetry, .deleted)
     }
 
+    func testConfirmedDeletionClearsObsoleteSyncCounts() async throws {
+        let credential = ChargingCommunityCredential(identityID: "account", token: "secret")
+        let store = MemoryDeletionCredentialStore(initial: .ready(credential))
+        let sync = ChargingCommunitySync(
+            credentialStore: store,
+            registerIdentity: {
+                XCTFail("Deletion must not register an account")
+                throw MobileChargingError.Unauthorized
+            },
+            synchronize: { _ in
+                ChargingCommunitySyncCounts(
+                    pendingCount: 2, downloaded: 3, uploaded: 1,
+                    outcome: .finished(result: .pending)
+                )
+            },
+            sleep: { _ in }, enabled: { true }
+        )
+        _ = await sync.run()
+        XCTAssertEqual(sync.pendingCount, 2)
+        let deletion = ChargingCommunityAccountDeletion(
+            credentialStore: store, sync: sync, deleteAccount: { _ in 42 }
+        )
+        await deletion.refresh()
+        await deletion.deleteAccount()
+        XCTAssertEqual(deletion.state, .deleted)
+        XCTAssertEqual(sync.status, .deleted)
+        XCTAssertEqual(sync.pendingCount, 0)
+        XCTAssertEqual(sync.downloaded, 0)
+        XCTAssertEqual(sync.uploaded, 0)
+    }
+
     func testPendingDeletionFailureResumesOnlyPublicRefreshInTheSameProcess() async throws {
         for failsCleanup in [false, true] {
             let credential = ChargingCommunityCredential(identityID: "account", token: "secret")
