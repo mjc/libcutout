@@ -17,6 +17,8 @@ pub use charging_stop::{
 };
 mod charging_connector_catalogue;
 pub use charging_connector_catalogue::charging_connector_choices;
+mod charging_connector_prevalence;
+pub use charging_connector_prevalence::ChargingConnectorPrevalence;
 mod charging_location;
 pub use charging_location::{
     CHARGING_LOCATION_FIX_MAXIMUM_AGE_SECONDS, ChargingLocationFix, select_charging_location_fix,
@@ -35,7 +37,7 @@ pub use charging::{
 };
 pub use charging_details::{
     ChargingConnector, ChargingDetails, ChargingInputError, ChargingPaidTerms, ChargingPrice,
-    ChargingPriceBasis, ChargingSupply, ChargingVenue, ConnectorLabel, SupplyVoltage,
+    ChargingPriceBasis, ChargingSupply, ChargingVenue, ConnectorLabel, OutletCount, SupplyVoltage,
 };
 mod coordinate;
 pub use coordinate::{Coordinate, CoordinateError, LatitudeE7, LongitudeE7};

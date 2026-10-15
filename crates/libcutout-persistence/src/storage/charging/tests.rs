@@ -1,4 +1,4 @@
-use super::records::find_remote;
+use super::records::{detail, find_remote};
 use super::sync::{
     acknowledge_vote_operation, apply_changes_page, block_operation, changes_cursor,
     directory_last_updated, list_blocked_operations, replace_blocked_operation, resolve_operation,
@@ -70,6 +70,23 @@ fn owned_remote(
 }
 fn bounds() -> GeoBounds {
     GeoBounds::new(-1.0, 1.0, 179.0, -179.0).unwrap()
+}
+
+#[test]
+fn outlet_count_survives_local_record_readback() {
+    let supply = ChargingSupply::single(None, ChargingConnector::Unknown)
+        .with_outlet_count(Some(4))
+        .unwrap();
+    let details = ChargingDetails::new(None, None, None, None, None, vec![supply]).unwrap();
+    let input = input(0.5).with_details(details).unwrap();
+    let mut connection = database();
+    let mut spatial = SpatialSchemaState::Uninitialized;
+    let receipt = save(&mut connection, &mut spatial, &input).unwrap();
+
+    let stored = detail(&connection, receipt.point_id).unwrap().unwrap();
+    let recovered = stored.input.unwrap();
+    let supply = &recovered.details().supplies()[0];
+    assert_eq!(supply.outlet_count().map(u16::from), Some(4));
 }
 
 #[test]

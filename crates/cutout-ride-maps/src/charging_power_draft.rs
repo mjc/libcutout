@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::charging_details::OutletCount;
 use crate::{ChargingConnector, ChargingInputError, ChargingSupply, SupplyVoltage};
 
 /// Canonical two-letter country context, supplied by location or user correction.
@@ -58,6 +59,11 @@ impl DraftChargingSupply {
     #[must_use]
     pub fn connectors(&self) -> &[ChargingConnector] {
         self.0.connectors()
+    }
+    /// Returns the displayed outlet count without marking it confirmed.
+    #[must_use]
+    pub const fn outlet_count(&self) -> Option<OutletCount> {
+        self.0.outlet_count()
     }
 }
 
@@ -321,6 +327,37 @@ mod tests {
         assert_eq!(
             draft.selection().voltage(),
             Some(SupplyVoltage::US_OUTLET_SUGGESTION)
+        );
+    }
+
+    #[test]
+    fn outlet_count_stays_absent_in_suggestions_and_survives_manual_confirmation() {
+        let suggested = ChargingPowerDraft::new(
+            Some(ChargingCountry::new("US").unwrap()),
+            ChargingSupplyKind::Outlet,
+        );
+        assert_eq!(suggested.selection().outlet_count(), None);
+        assert_eq!(
+            suggested
+                .clone()
+                .confirm()
+                .confirmed_supply()
+                .and_then(ChargingSupply::outlet_count),
+            None
+        );
+
+        let manual = ChargingSupply::new(None, vec![])
+            .unwrap()
+            .with_outlet_count(Some(3))
+            .unwrap();
+        let confirmed = suggested.with_selection(manual).confirm();
+        assert!(confirmed.is_manual());
+        assert_eq!(
+            confirmed
+                .confirmed_supply()
+                .and_then(ChargingSupply::outlet_count)
+                .map(OutletCount::get),
+            Some(3)
         );
     }
 }

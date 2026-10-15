@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::num::NonZeroU16;
 use thiserror::Error;
 
 use crate::ChargingCost;
@@ -24,6 +25,9 @@ pub enum ChargingInputError {
     /// Unknown must be the only connector in its group.
     #[error("unknown connector cannot be combined with another connector")]
     UnknownConnectorCombined,
+    /// An explicitly supplied outlet count must be greater than zero.
+    #[error("outlet count must be greater than zero")]
+    OutletCountZero,
     /// A spot has more than eight supply groups.
     #[error("too many supply groups")]
     TooManySupplies,
@@ -70,6 +74,43 @@ impl TryFrom<u16> for SupplyVoltage {
 impl From<SupplyVoltage> for u16 {
     fn from(value: SupplyVoltage) -> Self {
         value.0
+    }
+}
+
+/// A known number of outlets in one supply group.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(try_from = "u16", into = "u16")]
+pub struct OutletCount(NonZeroU16);
+
+impl OutletCount {
+    /// Validates a nonzero outlet count.
+    ///
+    /// # Errors
+    /// Returns [`ChargingInputError::OutletCountZero`] for zero.
+    pub fn new(value: u16) -> Result<Self, ChargingInputError> {
+        NonZeroU16::new(value)
+            .map(Self)
+            .ok_or(ChargingInputError::OutletCountZero)
+    }
+
+    /// Returns the number of outlets.
+    #[must_use]
+    pub const fn get(self) -> u16 {
+        self.0.get()
+    }
+}
+
+impl TryFrom<u16> for OutletCount {
+    type Error = ChargingInputError;
+
+    fn try_from(value: u16) -> Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
+
+impl From<OutletCount> for u16 {
+    fn from(value: OutletCount) -> Self {
+        value.get()
     }
 }
 
@@ -166,6 +207,18 @@ pub enum ChargingConnector {
     #[serde(rename = "nema_14_50")]
     /// NEMA 14-50 connector.
     Nema14_50,
+    #[serde(rename = "nema_14_30")]
+    /// NEMA 14-30 connector.
+    Nema14_30,
+    #[serde(rename = "nema_10_30")]
+    /// NEMA 10-30 connector.
+    Nema10_30,
+    #[serde(rename = "nema_6_50")]
+    /// NEMA 6-50 connector.
+    Nema6_50,
+    #[serde(rename = "nema_10_50")]
+    /// NEMA 10-50 connector.
+    Nema10_50,
     /// SAE J1772 connector.
     J1772,
     #[serde(rename = "type_2")]
@@ -225,6 +278,8 @@ pub enum ChargingPriceBasis {
 pub struct ChargingSupply {
     voltage_volts: Option<SupplyVoltage>,
     connectors: Vec<ChargingConnector>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    outlet_count: Option<OutletCount>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -232,6 +287,8 @@ struct UncheckedSupply {
     voltage_volts: Option<SupplyVoltage>,
     #[serde(default)]
     connectors: Vec<ChargingConnector>,
+    #[serde(default)]
+    outlet_count: Option<u16>,
 }
 impl ChargingSupply {
     /// Creates a single validated connector/voltage pairing, including Unknown.
@@ -240,6 +297,7 @@ impl ChargingSupply {
         Self {
             voltage_volts: voltage,
             connectors: vec![connector],
+            outlet_count: None,
         }
     }
     /// Validates a single supply group. An empty selection means Unknown.
@@ -263,7 +321,19 @@ impl ChargingSupply {
         Ok(Self {
             voltage_volts: voltage,
             connectors,
+            outlet_count: None,
         })
+    }
+    /// Sets the explicitly reported number of outlets in this supply group.
+    ///
+    /// # Errors
+    /// Rejects an explicitly supplied count of zero.
+    pub fn with_outlet_count(
+        mut self,
+        outlet_count: Option<u16>,
+    ) -> Result<Self, ChargingInputError> {
+        self.outlet_count = outlet_count.map(OutletCount::new).transpose()?;
+        Ok(self)
     }
     /// Returns a known supply voltage, or Unknown.
     #[must_use]
@@ -275,11 +345,16 @@ impl ChargingSupply {
     pub fn connectors(&self) -> &[ChargingConnector] {
         &self.connectors
     }
+    /// Returns the explicitly reported number of outlets, when known.
+    #[must_use]
+    pub const fn outlet_count(&self) -> Option<OutletCount> {
+        self.outlet_count
+    }
 }
 impl TryFrom<UncheckedSupply> for ChargingSupply {
     type Error = ChargingInputError;
     fn try_from(value: UncheckedSupply) -> Result<Self, Self::Error> {
-        Self::new(value.voltage_volts, value.connectors)
+        Self::new(value.voltage_volts, value.connectors)?.with_outlet_count(value.outlet_count)
     }
 }
 

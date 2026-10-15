@@ -1,6 +1,7 @@
 //! Typed charging product commands through the shared mobile database handle.
 
 mod api;
+mod connector_ordering;
 mod conversion;
 mod discovery;
 mod dto;

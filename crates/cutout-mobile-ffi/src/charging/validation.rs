@@ -103,6 +103,7 @@ mod tests {
         MobileChargingSupplyDto {
             voltage_volts: Some(120),
             connectors: vec![connector],
+            outlet_count: None,
         }
     }
 
@@ -182,10 +183,25 @@ mod tests {
                 MobileChargingConnectorDto::Nema5_15,
                 MobileChargingConnectorDto::Nema5_20,
             ],
+            outlet_count: None,
         }];
         assert_eq!(
             first_issue(value).reason,
             MobileChargingValidationReasonDto::TooMany
+        );
+    }
+
+    #[test]
+    fn zero_outlet_count_is_rejected_at_the_mobile_boundary() {
+        let mut value = input();
+        value.supplies = vec![MobileChargingSupplyDto {
+            voltage_volts: None,
+            connectors: Vec::new(),
+            outlet_count: Some(0),
+        }];
+        assert_eq!(
+            first_issue(value).field,
+            MobileChargingValidationFieldDto::Supply
         );
     }
 

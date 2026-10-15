@@ -62,7 +62,7 @@ pub(super) fn supply_checked(
                 .map_err(|_| ride_maps::ChargingInputError::Text),
         })
         .collect::<Result<_, _>>()?;
-    ride_maps::ChargingSupply::new(voltage, connectors)
+    ride_maps::ChargingSupply::new(voltage, connectors)?.with_outlet_count(value.outlet_count)
 }
 pub(super) fn input(
     value: MobileChargingInputDto,
@@ -250,6 +250,7 @@ pub(super) fn supply_dto(supply: &ride_maps::ChargingSupply) -> MobileChargingSu
             .cloned()
             .map(Into::into)
             .collect(),
+        outlet_count: supply.outlet_count().map(ride_maps::OutletCount::get),
     }
 }
 pub(super) fn spot_dto(value: &persistence::StoredChargingSpot) -> MobileChargingSpotDto {
@@ -331,6 +332,10 @@ pub fn mobile_charging_power_suggestion(
             .cloned()
             .map(Into::into)
             .collect(),
+        outlet_count: draft
+            .selection()
+            .outlet_count()
+            .map(ride_maps::OutletCount::get),
     }
 }
 
@@ -409,6 +414,7 @@ mod tests {
             MobileChargingSupplyDto {
                 voltage_volts: Some(120),
                 connectors: vec![MobileChargingConnectorDto::Nema5_15],
+                outlet_count: None,
             }
         );
         assert_eq!(
@@ -416,6 +422,7 @@ mod tests {
             MobileChargingSupplyDto {
                 voltage_volts: None,
                 connectors: vec![MobileChargingConnectorDto::TypeG],
+                outlet_count: None,
             }
         );
         for country_code in [Some("ZZ".to_owned()), Some("USA".to_owned()), None] {
@@ -424,6 +431,7 @@ mod tests {
                 MobileChargingSupplyDto {
                     voltage_volts: None,
                     connectors: vec![MobileChargingConnectorDto::Unknown],
+                    outlet_count: None,
                 }
             );
         }
@@ -432,6 +440,7 @@ mod tests {
             MobileChargingSupplyDto {
                 voltage_volts: None,
                 connectors: vec![MobileChargingConnectorDto::Unknown],
+                outlet_count: None,
             }
         );
     }
@@ -494,12 +503,14 @@ mod tests {
             MobileChargingSupplyDto {
                 voltage_volts: Some(120),
                 connectors: vec![MobileChargingConnectorDto::Nema5_15],
+                outlet_count: Some(6),
             },
             MobileChargingSupplyDto {
                 voltage_volts: None,
                 connectors: vec![MobileChargingConnectorDto::Other {
                     label: "Board charger".into(),
                 }],
+                outlet_count: None,
             },
         ];
         let value = input(full.clone()).unwrap();
@@ -551,6 +562,7 @@ mod tests {
         value.supplies = vec![MobileChargingSupplyDto {
             voltage_volts: Some(0),
             connectors: vec![],
+            outlet_count: None,
         }];
         assert_eq!(input(value), Err(MobileChargingError::InvalidMetadata));
         let mut value = fields();

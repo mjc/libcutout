@@ -219,6 +219,14 @@ pub enum MobileChargingConnectorDto {
     Nema5_20,
     /// `Nema14_50` connector.
     Nema14_50,
+    /// `Nema14_30` connector.
+    Nema14_30,
+    /// `Nema10_30` connector.
+    Nema10_30,
+    /// `Nema6_50` connector.
+    Nema6_50,
+    /// `Nema10_50` connector.
+    Nema10_50,
     /// `J1772` connector.
     J1772,
     /// `Type2` connector.
@@ -258,6 +266,10 @@ impl TryFrom<MobileChargingConnectorDto> for ride_maps::ChargingConnector {
             MobileChargingConnectorDto::Nema5_15 => Self::Nema5_15,
             MobileChargingConnectorDto::Nema5_20 => Self::Nema5_20,
             MobileChargingConnectorDto::Nema14_50 => Self::Nema14_50,
+            MobileChargingConnectorDto::Nema14_30 => Self::Nema14_30,
+            MobileChargingConnectorDto::Nema10_30 => Self::Nema10_30,
+            MobileChargingConnectorDto::Nema6_50 => Self::Nema6_50,
+            MobileChargingConnectorDto::Nema10_50 => Self::Nema10_50,
             MobileChargingConnectorDto::J1772 => Self::J1772,
             MobileChargingConnectorDto::Type2 => Self::Type2,
             MobileChargingConnectorDto::Ccs1 => Self::Ccs1,
@@ -293,6 +305,10 @@ impl From<ride_maps::ChargingConnector> for MobileChargingConnectorDto {
             ride_maps::ChargingConnector::Nema5_15 => Self::Nema5_15,
             ride_maps::ChargingConnector::Nema5_20 => Self::Nema5_20,
             ride_maps::ChargingConnector::Nema14_50 => Self::Nema14_50,
+            ride_maps::ChargingConnector::Nema14_30 => Self::Nema14_30,
+            ride_maps::ChargingConnector::Nema10_30 => Self::Nema10_30,
+            ride_maps::ChargingConnector::Nema6_50 => Self::Nema6_50,
+            ride_maps::ChargingConnector::Nema10_50 => Self::Nema10_50,
             ride_maps::ChargingConnector::J1772 => Self::J1772,
             ride_maps::ChargingConnector::Type2 => Self::Type2,
             ride_maps::ChargingConnector::Ccs1 => Self::Ccs1,
@@ -320,6 +336,8 @@ pub struct MobileChargingPriceDto {
 pub struct MobileChargingSupplyDto {
     pub voltage_volts: Option<u16>,
     pub connectors: Vec<MobileChargingConnectorDto>,
+    /// Explicitly reported number of outlets; zero is invalid.
+    pub outlet_count: Option<u16>,
 }
 /// Public charging fields; only pin, access note and cost are required.
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]

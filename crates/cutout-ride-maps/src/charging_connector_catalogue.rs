@@ -2,7 +2,6 @@ use crate::{ChargingConnector, ChargingCountry};
 
 const CONNECTORS: &[ChargingConnector] = &[
     ChargingConnector::TypeA,
-    ChargingConnector::TypeB,
     ChargingConnector::TypeC,
     ChargingConnector::TypeD,
     ChargingConnector::TypeE,
@@ -19,6 +18,10 @@ const CONNECTORS: &[ChargingConnector] = &[
     ChargingConnector::Nema5_15,
     ChargingConnector::Nema5_20,
     ChargingConnector::Nema14_50,
+    ChargingConnector::Nema14_30,
+    ChargingConnector::Nema10_30,
+    ChargingConnector::Nema6_50,
+    ChargingConnector::Nema10_50,
     ChargingConnector::J1772,
     ChargingConnector::Type2,
     ChargingConnector::Ccs1,
@@ -28,14 +31,21 @@ const CONNECTORS: &[ChargingConnector] = &[
     ChargingConnector::Unknown,
 ];
 
-/// Returns the full connector catalogue in stable order for a GPS-derived country.
+/// Returns the connector picker catalogue in stable order for a GPS-derived country.
+/// Type B remains a domain identifier for stored data, but shares a physical face
+/// with NEMA 5-15 and is represented by that single picker choice.
 /// This presentation policy neither selects nor confirms a connector.
 #[must_use]
 pub fn charging_connector_choices(
     location_country: Option<&ChargingCountry>,
 ) -> Vec<ChargingConnector> {
     let mut choices = CONNECTORS.to_vec();
-    choices.sort_by_key(|connector| prevalence(connector, location_country));
+    choices.sort_by_key(|connector| {
+        (
+            prevalence(connector, location_country),
+            country_priority(connector, location_country),
+        )
+    });
     choices
 }
 
@@ -44,6 +54,11 @@ enum Prevalence {
     LocalOutlet,
     RegionalEv,
     Other,
+}
+
+fn country_priority(connector: &ChargingConnector, country: Option<&ChargingCountry>) -> bool {
+    !(country.is_some_and(|country| country.as_str() == "US")
+        && connector == &ChargingConnector::Nema5_15)
 }
 
 fn prevalence(connector: &ChargingConnector, country: Option<&ChargingCountry>) -> Prevalence {
@@ -63,11 +78,20 @@ fn prevalence(connector: &ChargingConnector, country: Option<&ChargingCountry>) 
 // Sources and the distinction from national-default suggestions: docs/charging-connector-ordering.md.
 fn local_outlets(country: &ChargingCountry) -> &'static [ChargingConnector] {
     use ChargingConnector::{
-        Nema5_15, TypeA, TypeB, TypeC, TypeD, TypeE, TypeF, TypeG, TypeI, TypeM, TypeN,
+        Nema5_15, TypeA, TypeC, TypeD, TypeE, TypeF, TypeG, TypeI, TypeM, TypeN,
     };
     match country.as_str() {
-        "US" | "CA" => &[TypeA, TypeB, Nema5_15],
-        "MX" | "JP" => &[TypeA, TypeB],
+        "US" | "CA" => &[
+            TypeA,
+            Nema5_15,
+            ChargingConnector::Nema14_50,
+            ChargingConnector::Nema14_30,
+            ChargingConnector::Nema10_30,
+            ChargingConnector::Nema6_50,
+            ChargingConnector::Nema10_50,
+        ],
+        // Type B and NEMA 5-15 are the same physical face; keep one picker row.
+        "MX" | "JP" => &[TypeA, Nema5_15],
         "GB" | "IE" => &[TypeG],
         "DE" | "AT" => &[TypeC, TypeF],
         "FR" | "BE" => &[TypeC, TypeE],
@@ -97,9 +121,13 @@ mod tests {
             (
                 "US",
                 vec![
-                    ChargingConnector::TypeA,
-                    ChargingConnector::TypeB,
                     ChargingConnector::Nema5_15,
+                    ChargingConnector::TypeA,
+                    ChargingConnector::Nema14_50,
+                    ChargingConnector::Nema14_30,
+                    ChargingConnector::Nema10_30,
+                    ChargingConnector::Nema6_50,
+                    ChargingConnector::Nema10_50,
                 ],
             ),
             ("GB", vec![ChargingConnector::TypeG]),
@@ -133,7 +161,7 @@ mod tests {
             ("US", ChargingConnector::Nacs, ChargingConnector::TypeG),
             ("CA", ChargingConnector::J1772, ChargingConnector::TypeI),
             ("GB", ChargingConnector::Type2, ChargingConnector::TypeA),
-            ("DE", ChargingConnector::Ccs2, ChargingConnector::TypeB),
+            ("DE", ChargingConnector::Ccs2, ChargingConnector::TypeA),
         ] {
             let country = ChargingCountry::new(code).unwrap();
             let choices = charging_connector_choices(Some(&country));
@@ -146,11 +174,15 @@ mod tests {
     }
 
     #[test]
-    fn every_region_preserves_the_full_catalogue_without_duplicates() {
+    fn every_region_preserves_all_distinct_picker_choices_without_duplicates() {
         for code in ["US", "GB", "DE", "AU", "JP", "FR", "ZZ"] {
             let country = ChargingCountry::new(code).unwrap();
             let choices = charging_connector_choices(Some(&country));
             assert_eq!(choices.len(), CONNECTORS.len());
+            assert!(
+                !choices.contains(&ChargingConnector::TypeB),
+                "{code}: Type B is retained as a domain alias, not a second picker row"
+            );
             for connector in CONNECTORS {
                 assert_eq!(
                     choices.iter().filter(|value| *value == connector).count(),

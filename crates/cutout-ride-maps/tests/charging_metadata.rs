@@ -320,6 +320,48 @@ fn paired_supplies_reject_contradictory_or_duplicate_connectors() {
 }
 
 #[test]
+fn charging_supply_optional_count_is_validated_and_backward_compatible() {
+    let legacy: ChargingSupply = serde_json::from_value(json!({
+        "voltage_volts": null,
+        "connectors": ["nema_5_15"]
+    }))
+    .expect("legacy supply without an outlet count");
+    assert_eq!(legacy.outlet_count(), None);
+    assert!(
+        serde_json::to_value(&legacy)
+            .expect("serialized legacy supply")
+            .get("outlet_count")
+            .is_none()
+    );
+
+    let counted: ChargingSupply = serde_json::from_value(json!({
+        "voltage_volts": 120,
+        "connectors": ["nema_5_15"],
+        "outlet_count": 4
+    }))
+    .expect("counted supply");
+    assert_eq!(
+        counted
+            .outlet_count()
+            .map(cutout_ride_maps::OutletCount::get),
+        Some(4)
+    );
+    assert_eq!(
+        serde_json::to_value(&counted).expect("serialized supply")["outlet_count"],
+        json!(4)
+    );
+
+    assert!(
+        serde_json::from_value::<ChargingSupply>(json!({
+            "voltage_volts": null,
+            "connectors": [],
+            "outlet_count": 0
+        }))
+        .is_err()
+    );
+}
+
+#[test]
 fn exact_prices_validate_amount_currency_shape_and_decimal_scale() {
     let basis = ChargingPriceBasis::PerKwh;
     let valid = ChargingPrice::new(125, "USD", 2, basis).expect("exact price");
