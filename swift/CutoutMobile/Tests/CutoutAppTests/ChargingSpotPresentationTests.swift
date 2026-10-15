@@ -67,7 +67,7 @@ final class ChargingSpotPresentationTests: XCTestCase {
         XCTAssertEqual(
             ChargingSpotPresentation.supplyText(
                 MobileChargingSupplyDto(voltageVolts: 120, connectors: [.typeB], outletCount: nil)),
-            "120 V · Type B"
+            "120 V · US 3 Prong"
         )
         XCTAssertEqual(
             ChargingSpotPresentation.supplyText(

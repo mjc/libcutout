@@ -86,14 +86,23 @@ final class ChargingStopPromptTests: XCTestCase {
     }
 
     func testEndedRideWithdrawsThePendingPrompt() async {
-        var decision = MobileChargingStopDecisionDto.offer(prompt: suggestion)
+        let source = DecisionSource(.offer(prompt: suggestion))
         let model = ChargingStopPromptModel(
-            query: { _ in decision }, acknowledge: { _ in "history" }, dismiss: {}, saveHistory: { _ in }
+            query: { _ in source.decision }, acknowledge: { _ in "history" }, dismiss: {}, saveHistory: { _ in }
         )
         await model.refresh(location: nil)
         XCTAssertNotNil(model.prompt)
-        decision = .rideEnded
+        source.decision = .rideEnded
         await model.refresh(location: nil)
         XCTAssertNil(model.prompt)
+    }
+}
+
+@MainActor
+private final class DecisionSource {
+    var decision: MobileChargingStopDecisionDto
+
+    init(_ decision: MobileChargingStopDecisionDto) {
+        self.decision = decision
     }
 }

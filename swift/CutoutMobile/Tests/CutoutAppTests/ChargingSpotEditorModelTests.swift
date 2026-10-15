@@ -605,7 +605,8 @@ final class ChargingSpotEditorModelTests: XCTestCase {
         XCTAssertTrue(model.connectorChoices.contains(.typeI))
         XCTAssertEqual(Set(model.connectorChoices).count, model.connectorChoices.count)
         XCTAssertEqual(
-            Set(model.connectorChoices), Set(ChargingSpotPresentation.connectorOptions.map(\.value)))
+            Set(model.connectorChoices),
+            Set(ChargingSpotPresentation.connectorOptions.map(\.value)).subtracting([.typeB]))
     }
 
     func testUnavailableCountryUsesFallbackWithoutAddingAnExtraRequiredField() {
