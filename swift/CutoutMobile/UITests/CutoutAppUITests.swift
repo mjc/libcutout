@@ -2142,6 +2142,8 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(map.waitForExistence(timeout: 10), app.debugDescription)
         let rideReceipt = try XCTUnwrap((map.value as? String)?.components(separatedBy: ";").first)
         XCTAssertTrue(rideReceipt.hasPrefix("saved-rides:"), app.debugDescription)
+        let seededRideIDs = rideReceipt.dropFirst("saved-rides:".count).split(separator: ",")
+        XCTAssertEqual(seededRideIDs.count, 2, "The preservation check requires saved ride identifiers")
         app.tabBars.buttons["Devices"].tap()
         openAccountSetup()
         let delete = app.buttons["setup.account.delete"]
