@@ -62,12 +62,14 @@ extension ChargingCommunitySyncStatus {
         case .throttled: "charging.sync.throttled"
         case .storageUnavailable: "charging.status.storage_failed"
         case .registrationUncertain: "charging.sync.registration_interrupted"
+        case .deletionPending: "charging.account.deletion_pending"
+        case .deleted: "charging.account.deleted"
         }
     }
 
     var canRetry: Bool {
         switch self {
-        case .syncing, .synced, .conflict, .rejected: false
+        case .syncing, .synced, .conflict, .rejected, .deletionPending, .deleted: false
         case .notStarted, .pending, .offline, .authenticationRequired, .throttled, .storageUnavailable,
             .registrationUncertain:
             true
@@ -272,8 +274,9 @@ extension ChargingSpotPresentation {
         return name
     }
 
-    static func statusKey(_ status: MobileChargingStatusDto) -> String {
-        switch status {
+    static func statusKey(_ status: MobileChargingStatusDto, pendingOperations: UInt32? = nil) -> String {
+        if status == .queued && pendingOperations == 0 { return "charging.spot.status.local_only" }
+        return switch status {
         case .queued: "charging.spot.status.pending"
         case .published: "charging.status.published"
         case .hidden: "charging.status.hidden"

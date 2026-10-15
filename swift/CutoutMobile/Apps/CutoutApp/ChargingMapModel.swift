@@ -88,7 +88,7 @@ final class ChargingMapModel {
         let status = communitySync?.status ?? .notStarted
         switch status {
         case .syncing, .offline, .authenticationRequired, .throttled, .storageUnavailable,
-            .registrationUncertain:
+            .registrationUncertain, .deletionPending, .deleted:
             return status
         case .notStarted, .synced, .pending, .conflict, .rejected:
             guard blockedOperationsError == nil, !blockedChargingOperations.isEmpty else {
@@ -188,6 +188,20 @@ final class ChargingMapModel {
         requestCommunitySync(explicitRetry: false)
     }
 
+    func communityAccountDeletionCompleted() {
+        communitySyncGeneration &+= 1
+        communitySync?.cancel()
+        communitySyncTask?.cancel()
+        communitySyncTask = nil
+        communitySyncNeedsAnotherRun = false
+        communitySyncRetryRequested = false
+        Task { [weak self] in
+            guard let self else { return }
+            await refreshLocalCacheAfterSync()
+            await loadBlockedOperations()
+        }
+    }
+
     func retryCommunitySync() {
         requestCommunitySync(explicitRetry: true)
     }
@@ -273,7 +287,8 @@ final class ChargingMapModel {
                 let result = await communitySync.run(explicitRetry: retry)
                 guard communitySyncGeneration == requestGeneration, !Task.isCancelled else { return }
                 if result == .synced || result == .pending || result == .conflict
-                    || result == .rejected || communitySyncDownloaded > 0
+                    || result == .rejected || result == .deletionPending || result == .deleted
+                    || communitySyncDownloaded > 0
                 {
                     await refreshLocalCacheAfterSync()
                     guard communitySyncGeneration == requestGeneration, !Task.isCancelled else {
