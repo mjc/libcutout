@@ -7269,7 +7269,12 @@ final class ChargingMapDeviceUITests: XCTestCase {
         let map = app.maps.firstMatch
         let placementPoint = map.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.65))
         placementPoint.press(forDuration: 0.1)
-        XCTAssertFalse(app.buttons["charging.placement.confirm"].exists, app.debugDescription)
+        let placement = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == true"),
+            object: app.buttons["charging.placement.confirm"]
+        )
+        placement.isInverted = true
+        XCTAssertEqual(XCTWaiter.wait(for: [placement], timeout: 1), .completed, app.debugDescription)
     }
 
     func testOptionalDetailsSurviveMovingPinAndSave() throws {
