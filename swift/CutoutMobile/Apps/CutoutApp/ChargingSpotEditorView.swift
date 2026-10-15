@@ -277,6 +277,28 @@ struct ChargingSpotEditorView: View {
     }
 
     @ViewBuilder private var optionalDetails: some View {
+        Picker(
+            localizedAppText("charging.editor.outlet_count"),
+            selection: Binding(
+                get: { model.outletCount },
+                set: model.setOutletCount
+            )
+        ) {
+            if !(1...10).contains(model.outletCount) {
+                Text(String(model.outletCount)).tag(model.outletCount)
+            }
+            ForEach(1...10, id: \.self) { count in
+                Text(String(count)).tag(count)
+            }
+        }
+        .accessibilityIdentifier("charging.editor.outlet-count")
+
+        ChargingConnectorPicker(
+            choices: model.connectorChoices,
+            selection: model.plugWasEdited ? model.selectedPlug : (model.selectedPlug ?? model.suggestedPlug),
+            onSelect: model.setSelectedPlug
+        )
+
         LabeledContent(localizedAppText("charging.editor.name")) {
             TextField("", text: $model.name)
                 .focused($focusedField, equals: .name)
@@ -340,10 +362,6 @@ struct ChargingSpotEditorView: View {
             }
             fieldFeedback(.payment, identifier: "charging.editor.price.error")
         }
-        Button(localizedAppText("charging.editor.supply.add")) {
-            if model.venue == .evChargingStation { model.addSupply() } else { model.addSuggestedSupply() }
-        }
-        .accessibilityIdentifier("charging.editor.supply.add")
         fieldFeedback(.supply, identifier: "charging.editor.supplies.error")
         if voiceOverEnabled { coordinateFields }
         ForEach(model.supplies) { draft in

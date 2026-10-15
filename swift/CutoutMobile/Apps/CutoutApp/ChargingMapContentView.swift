@@ -236,11 +236,23 @@ struct ChargingMapContentView: View {
         guard let editor else { return }
         guard let location = locationSamples.freshLocation() else {
             editor.setCountryCode(nil)
+            editor.setConnectorChoices(nil)
             return
         }
-        let countryCode = await ChargingCountryLookup.countryCode(at: Self.dto(location.coordinate))
+        let origin = Self.dto(location.coordinate)
+        let countryCode = await ChargingCountryLookup.countryCode(at: origin)
         guard !Task.isCancelled else { return }
         editor.setCountryCode(countryCode)
+        do {
+            let database = try await RustPersistenceStore.open()
+            let choices = try await database.chargingConnectorChoicesNear(
+                origin: origin, locationCountryCode: countryCode)
+            guard !Task.isCancelled else { return }
+            editor.setConnectorChoices(choices)
+        } catch {
+            guard !Task.isCancelled else { return }
+            editor.setConnectorChoices(nil)
+        }
     }
 
     private func editorStageChanged(_: ChargingSpotEditorModel.Stage?, _ stage: ChargingSpotEditorModel.Stage?) {
@@ -470,14 +482,6 @@ struct ChargingMapContentView: View {
                 }
             }
             .onMapCameraChange(frequency: .onEnd, cameraChanged)
-            #if os(iOS)
-                .gesture(
-                    ChargingMapLongPressGesture { point in
-                        guard editor == nil, let coordinate = proxy.convert(point, from: .local) else { return }
-                        beginPlacement(at: coordinate)
-                    }
-                )
-            #endif
             .overlay {
                 if editor?.stage == .moving {
                     ChargingPlacementPin()
@@ -678,7 +682,6 @@ struct ChargingMapContentView: View {
         let coordinate = locationSamples.freshLocation(at: Date())?.coordinate ?? visibleCenter
         guard let coordinate, CLLocationCoordinate2DIsValid(coordinate) else { return }
         beginPlacement(at: coordinate)
-        editor?.confirmLocation()
     }
 
     private func finishAddingSpot(_ receipt: MobileChargingWriteReceiptDto, coordinate: MobileMapCoordinateDto) {

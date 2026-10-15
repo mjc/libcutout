@@ -1,6 +1,79 @@
 import CutoutMobileFFI
 import SwiftUI
 
+struct ChargingConnectorIcon: View {
+    let connector: MobileChargingConnectorDto
+    var size: CGFloat = 32
+
+    var body: some View {
+        let asset = "ChargingConnector_\(ChargingSpotPresentation.connectorAssetIdentifier(connector))"
+        Image(asset)
+            .resizable()
+            .renderingMode(.template)
+            .scaledToFit()
+            .frame(width: size, height: size)
+            .accessibilityHidden(true)
+    }
+}
+
+struct ChargingConnectorPicker: View {
+    let choices: [MobileChargingConnectorDto]
+    let selection: MobileChargingConnectorDto?
+    let onSelect: @MainActor (MobileChargingConnectorDto?) -> Void
+
+    var body: some View {
+        Menu {
+            Button {
+                onSelect(nil)
+            } label: {
+                Label {
+                    Text(localizedAppText("charging.editor.plug.choose"))
+                } icon: {
+                    Image(systemName: "minus.circle")
+                }
+            }
+            .accessibilityIdentifier("charging.editor.plug-choice.none")
+            ForEach(choices, id: \.self) { connector in
+                Button {
+                    onSelect(connector)
+                } label: {
+                    Label {
+                        Text(ChargingSpotPresentation.connectorName(connector))
+                    } icon: {
+                        ChargingConnectorIcon(connector: connector, size: 36)
+                    }
+                }
+                .accessibilityIdentifier(
+                    "charging.editor.plug-choice.\(ChargingSpotPresentation.connectorIdentifier(connector))")
+            }
+        } label: {
+            HStack(spacing: 12) {
+                Text(localizedAppText("charging.editor.plug_type"))
+                Spacer(minLength: 8)
+                if let selection {
+                    let visibleSelection = ChargingSpotPresentation.canonicalConnector(selection)
+                    ChargingConnectorIcon(connector: visibleSelection, size: 36)
+                    Text(ChargingSpotPresentation.connectorName(visibleSelection))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                } else {
+                    Text(localizedAppText("charging.editor.plug.choose"))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .menuOrder(.fixed)
+        .accessibilityIdentifier("charging.editor.plug-type")
+    }
+
+}
+
 struct ChargingSupplyForm: View {
     @Bindable var draft: ChargingSupplyDraft
     let connectorChoices: [MobileChargingConnectorDto]
@@ -46,20 +119,40 @@ struct ChargingSupplyForm: View {
                 ForEach(connectorChoices, id: \.self) { connector in
                     Toggle(
                         isOn: Binding(
-                            get: { draft.connectors.contains(connector) },
+                            get: {
+                                draft.connectors.contains {
+                                    ChargingSpotPresentation.connectorsMatch($0, connector)
+                                }
+                            },
                             set: { draft.set(connector, selected: $0) }
                         )
                     ) {
-                        Text(
-                            connector == .unknown
-                                ? localizedAppText("charging.connector.unknown")
-                                : ChargingSpotPresentation.connectorName(connector))
+                        Label {
+                            Text(
+                                connector == .unknown
+                                    ? localizedAppText("charging.connector.unknown")
+                                    : ChargingSpotPresentation.connectorName(connector))
+                        } icon: {
+                            ChargingConnectorIcon(connector: connector, size: 32)
+                        }
                     }
-                    .accessibilityIdentifier("charging.editor.supply.connector.\(connectorKey(connector))")
+                    .accessibilityIdentifier(
+                        "charging.editor.supply.connector.\(ChargingSpotPresentation.connectorIdentifier(connector))")
                 }
             } label: {
-                LabeledContent(localizedAppText("charging.editor.plugs"), value: selectedPlugs)
+                HStack(spacing: 8) {
+                    Text(localizedAppText("charging.editor.plugs"))
+                    Spacer(minLength: 8)
+                    ForEach(draft.connectorSummary, id: \.self) {
+                        ChargingConnectorIcon(connector: $0, size: 32)
+                    }
+                    Text(selectedPlugs)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                .contentShape(Rectangle())
             }
+            .menuOrder(.fixed)
             .accessibilityIdentifier("charging.editor.supply.plugs")
             ForEach(draft.otherConnectors) { connector in
                 @Bindable var connector = connector
@@ -95,9 +188,6 @@ struct ChargingSupplyForm: View {
         return labels.isEmpty ? localizedAppText("charging.editor.plugs.none") : labels.joined(separator: ", ")
     }
 
-    private func connectorKey(_ value: MobileChargingConnectorDto) -> String {
-        ChargingSpotPresentation.connectorName(value).lowercased().replacingOccurrences(of: " ", with: "-")
-    }
 }
 
 extension Array where Element: Hashable {

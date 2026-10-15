@@ -71,6 +71,98 @@ final class ChargingSpotEditorModelTests: XCTestCase {
         }
     }
 
+    func testSuggestedCountAndPlugAreNotSubmittedUntilEdited() async {
+        let recorder = ChargingEditorSaveRecorder()
+        let model = ChargingSpotEditorModel(
+            coordinate: coordinate(), countryCode: "US",
+            save: { fields, _ in
+                recorder.record(fields)
+                return Self.receipt("suggestion-not-confirmed")
+            })
+        model.confirmLocation()
+        model.chooseKind(.charging)
+        model.accessNote = "Outlet beside the shelter"
+
+        XCTAssertEqual(model.outletCount, 1)
+        XCTAssertNotNil(model.suggestedPlug)
+        XCTAssertTrue(model.canSave)
+        _ = await model.save()
+
+        XCTAssertEqual(recorder.fields?.supplies, [])
+    }
+
+    func testExplicitOutletCountAndPlugAreSubmittedWithoutSuggestedVoltage() async {
+        let recorder = ChargingEditorSaveRecorder()
+        let model = ChargingSpotEditorModel(
+            coordinate: coordinate(), countryCode: "US",
+            save: { fields, _ in
+                recorder.record(fields)
+                return Self.receipt("explicit-outlet-details")
+            })
+        model.confirmLocation()
+        model.chooseKind(.charging)
+        model.accessNote = "Outlet beside the shelter"
+        model.setOutletCount(3)
+        model.setSelectedPlug(.typeB)
+
+        XCTAssertTrue(model.canSave)
+        _ = await model.save()
+
+        XCTAssertEqual(
+            recorder.fields?.supplies,
+            [
+                MobileChargingSupplyDto(voltageVolts: nil, connectors: [.typeB], outletCount: 3)
+            ])
+    }
+
+    func testUnrelatedEditPreservesEveryRestoredSupplyGroupAndOutletCount() async {
+        let recorder = ChargingEditorSaveRecorder()
+        guard var input = Self.spot().input else {
+            XCTFail("Expected the charging fixture input")
+            return
+        }
+        input.supplies = [
+            MobileChargingSupplyDto(voltageVolts: 120, connectors: [.typeB], outletCount: 4),
+            MobileChargingSupplyDto(voltageVolts: 240, connectors: [.j1772], outletCount: 2),
+        ]
+        let model = ChargingSpotEditorModel(
+            draft: input,
+            save: { fields, _ in
+                recorder.record(fields)
+                return Self.receipt("preserved-groups")
+            })
+        model.accessNote = "Use the west entrance"
+
+        XCTAssertTrue(model.canSave)
+        _ = await model.save()
+
+        XCTAssertEqual(recorder.fields?.supplies, input.supplies)
+    }
+
+    func testFoodAndEVCanSaveWithoutTheirOptionalInlineFields() async {
+        for kind in [ChargingSpotEditorModel.Kind.food, .ev] {
+            let recorder = ChargingEditorSaveRecorder()
+            let model = ChargingSpotEditorModel(
+                coordinate: coordinate(),
+                save: { fields, _ in
+                    recorder.record(fields)
+                    return Self.receipt("optional-inline-fields")
+                })
+            model.confirmLocation()
+            model.chooseKind(kind)
+            model.accessNote = "Ask staff"
+
+            XCTAssertTrue(model.canSave)
+            _ = await model.save()
+            if kind == .food {
+                XCTAssertNil(recorder.fields?.venue)
+            } else {
+                XCTAssertEqual(recorder.fields?.venue, .evChargingStation)
+            }
+            XCTAssertEqual(recorder.fields?.cost, kind == .food ? .paid : .free)
+        }
+    }
+
     func testChangingKindClearsInapplicableFieldsButKeepsTheNoteAndPin() {
         let model = ChargingSpotEditorModel(coordinate: coordinate())
         model.confirmLocation()
@@ -436,7 +528,7 @@ final class ChargingSpotEditorModelTests: XCTestCase {
     func testRemovingCustomConnectorDoesNotRestoreItAndUnknownRetainsDraftText() {
         let draft = ChargingSupplyDraft(
             supply: MobileChargingSupplyDto(
-                voltageVolts: 120, connectors: [.other(label: "Workshop plug"), .typeB]
+                voltageVolts: 120, connectors: [.other(label: "Workshop plug"), .typeB], outletCount: nil
             ), countryCode: nil, evStation: false)
         guard let customID = draft.otherConnectors.first?.id else {
             XCTFail("Expected the original custom connector")
@@ -447,7 +539,7 @@ final class ChargingSpotEditorModelTests: XCTestCase {
 
         let customDraft = ChargingSupplyDraft(
             supply: MobileChargingSupplyDto(
-                voltageVolts: 120, connectors: [.other(label: "Workshop plug")]
+                voltageVolts: 120, connectors: [.other(label: "Workshop plug")], outletCount: nil
             ), countryCode: nil, evStation: false)
         customDraft.set(.unknown, selected: true)
         XCTAssertEqual(customDraft.value()?.connectors, [.unknown])
@@ -463,7 +555,7 @@ final class ChargingSpotEditorModelTests: XCTestCase {
         XCTAssertEqual(draft.connectorSummary, [.other(label: "Workshop plug")])
 
         draft.set(.typeB, selected: true)
-        XCTAssertEqual(draft.connectorSummary, [.typeB, .other(label: "Workshop plug")])
+        XCTAssertEqual(draft.connectorSummary, [.nema515, .other(label: "Workshop plug")])
 
         draft.set(.unknown, selected: true)
         XCTAssertEqual(draft.connectorSummary, [.unknown])
@@ -484,6 +576,17 @@ final class ChargingSpotEditorModelTests: XCTestCase {
         XCTAssertEqual(model.countryCode, "GB")
         XCTAssertEqual(model.connectorChoices.first, .typeG)
         XCTAssertEqual(model.powerSuggestion.connectors, [.typeG])
+    }
+
+    func testConnectorChoicesUseTheSuppliedRustProjectionVerbatim() {
+        let model = ChargingSpotEditorModel(coordinate: coordinate(), countryCode: "US")
+        let ordered: [MobileChargingConnectorDto] = [.nacs, .typeB, .unknown]
+
+        model.setConnectorChoices(ordered)
+
+        XCTAssertEqual(model.connectorChoices, ordered)
+        model.setConnectorChoices(nil)
+        XCTAssertEqual(model.connectorChoices, mobileChargingConnectorChoices(locationCountryCode: "US"))
     }
 
     func testConnectorReorderingDoesNotSelectOrReplaceExistingSupplyChoices() {
@@ -814,8 +917,9 @@ final class ChargingSpotEditorModelTests: XCTestCase {
                 currency: "USD", minorUnitExponent: priceExponent, basis: .perHour
             ),
             supplies: [
-                MobileChargingSupplyDto(voltageVolts: 120, connectors: [.other(label: "Workshop plug"), .typeB]),
-                MobileChargingSupplyDto(voltageVolts: 240, connectors: [.j1772]),
+                MobileChargingSupplyDto(
+                    voltageVolts: 120, connectors: [.other(label: "Workshop plug"), .typeB], outletCount: 2),
+                MobileChargingSupplyDto(voltageVolts: 240, connectors: [.j1772], outletCount: 1),
             ]
         )
         return MobileChargingSpotDto(

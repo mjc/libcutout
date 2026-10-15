@@ -119,6 +119,8 @@ extension ChargingSpotPresentation {
         ("charging.connector.j1772", .j1772), ("charging.connector.type2", .type2),
         ("charging.connector.ccs1", .ccs1), ("charging.connector.ccs2", .ccs2),
         ("charging.connector.chademo", .chademo), ("charging.connector.nacs", .nacs),
+        ("charging.connector.nema_14_30", .nema1430), ("charging.connector.nema_10_30", .nema1030),
+        ("charging.connector.nema_6_50", .nema650), ("charging.connector.nema_10_50", .nema1050),
         ("charging.connector.unknown", .unknown),
     ]
 
@@ -152,10 +154,69 @@ extension ChargingSpotPresentation {
             connectorOptions.first(where: { $0.value == connector })?.key ?? "charging.connector.unknown")
     }
 
+    static func connectorIdentifier(_ connector: MobileChargingConnectorDto) -> String {
+        switch connector {
+        case .typeA: "type-a"
+        case .typeB: "type-b"
+        case .typeC: "type-c"
+        case .typeD: "type-d"
+        case .typeE: "type-e"
+        case .typeF: "type-f"
+        case .typeG: "type-g"
+        case .typeH: "type-h"
+        case .typeI: "type-i"
+        case .typeJ: "type-j"
+        case .typeK: "type-k"
+        case .typeL: "type-l"
+        case .typeM: "type-m"
+        case .typeN: "type-n"
+        case .typeO: "type-o"
+        case .nema515: "nema-5-15"
+        case .nema520: "nema-5-20"
+        case .nema1430: "nema-14-30"
+        case .nema1450: "nema-14-50"
+        case .nema1030: "nema-10-30"
+        case .nema650: "nema-6-50"
+        case .nema1050: "nema-10-50"
+        case .j1772: "j1772"
+        case .type2: "type-2"
+        case .ccs1: "ccs-1"
+        case .ccs2: "ccs-2"
+        case .chademo: "chademo"
+        case .nacs: "nacs"
+        case .unknown: "unknown"
+        case .other: "other"
+        }
+    }
+
+    static func connectorAssetIdentifier(_ connector: MobileChargingConnectorDto) -> String {
+        if case .other = connector { return "unknown" }
+        if connector == .typeB { return "nema-5-15" }
+        return connectorIdentifier(connector)
+    }
+
+    static func canonicalConnector(_ connector: MobileChargingConnectorDto) -> MobileChargingConnectorDto {
+        connector == .typeB ? .nema515 : connector
+    }
+
+    static func connectorsMatch(_ lhs: MobileChargingConnectorDto?, _ rhs: MobileChargingConnectorDto) -> Bool {
+        guard let lhs else { return false }
+        return canonicalConnector(lhs) == canonicalConnector(rhs)
+    }
+
+    static func displayConnectors(_ connectors: [MobileChargingConnectorDto]) -> [MobileChargingConnectorDto] {
+        var seen = Set<MobileChargingConnectorDto>()
+        return connectors.map(canonicalConnector).filter { seen.insert($0).inserted }
+    }
+
     static func supplyText(_ supply: MobileChargingSupplyDto) -> String {
         let voltage = supply.voltageVolts.map { "\($0) V" } ?? localizedAppText("charging.spot.power.unknown")
-        let connectors = supply.connectors.map(connectorName).joined(separator: ", ")
-        return connectors.isEmpty ? voltage : "\(voltage) · \(connectors)"
+        let connectors = displayConnectors(supply.connectors).map(connectorName).joined(separator: ", ")
+        let power = connectors.isEmpty ? voltage : "\(voltage) · \(connectors)"
+        guard let count = supply.outletCount else { return power }
+        let countText = localizedAppText(count == 1 ? "charging.spot.outlets.one" : "charging.spot.outlets.other")
+            .replacingOccurrences(of: "%d", with: String(count))
+        return "\(countText) · \(power)"
     }
 
     static func venueName(_ venue: MobileChargingVenueDto) -> String {

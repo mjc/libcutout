@@ -12,7 +12,7 @@ final class ChargingSpotPresentationTests: XCTestCase {
     }
 
     func testVoltageOptionsIncludeVoltagesFromAlreadyRetainedSpots() {
-        let retainedSupply = MobileChargingSupplyDto(voltageVolts: 100, connectors: [.typeB])
+        let retainedSupply = MobileChargingSupplyDto(voltageVolts: 100, connectors: [.typeB], outletCount: nil)
 
         XCTAssertEqual(ChargingSpotPresentation.voltageOptions(in: [retainedSupply]), [100])
     }
@@ -56,7 +56,7 @@ final class ChargingSpotPresentationTests: XCTestCase {
     }
 
     func testUnknownPowerDoesNotInventVoltageOrConnector() {
-        let unknown = MobileChargingSupplyDto(voltageVolts: nil, connectors: [])
+        let unknown = MobileChargingSupplyDto(voltageVolts: nil, connectors: [], outletCount: nil)
         XCTAssertEqual(ChargingSpotPresentation.supplyText(unknown), "Voltage unknown")
         XCTAssertEqual(ChargingSpotPresentation.connectorName(.unknown), "Unknown connector")
         XCTAssertEqual(
@@ -65,11 +65,13 @@ final class ChargingSpotPresentationTests: XCTestCase {
 
     func testDistinctSupplyGroupsKeepTheirOwnVoltageAndConnector() {
         XCTAssertEqual(
-            ChargingSpotPresentation.supplyText(MobileChargingSupplyDto(voltageVolts: 120, connectors: [.typeB])),
+            ChargingSpotPresentation.supplyText(
+                MobileChargingSupplyDto(voltageVolts: 120, connectors: [.typeB], outletCount: nil)),
             "120 V · Type B"
         )
         XCTAssertEqual(
-            ChargingSpotPresentation.supplyText(MobileChargingSupplyDto(voltageVolts: 240, connectors: [.j1772])),
+            ChargingSpotPresentation.supplyText(
+                MobileChargingSupplyDto(voltageVolts: 240, connectors: [.j1772], outletCount: nil)),
             "240 V · J1772"
         )
     }

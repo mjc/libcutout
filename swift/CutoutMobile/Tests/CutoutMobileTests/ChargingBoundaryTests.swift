@@ -43,7 +43,7 @@ final class ChargingBoundaryTests: XCTestCase {
             }
         }
         fields.accessNote = "Patio outlet"
-        fields.supplies = [MobileChargingSupplyDto(voltageVolts: 0, connectors: [.unknown])]
+        fields.supplies = [MobileChargingSupplyDto(voltageVolts: 0, connectors: [.unknown], outletCount: nil)]
         do {
             _ = try await database.saveChargingSpot(fields: fields)
             XCTFail("Expected the Rust supply validation error")

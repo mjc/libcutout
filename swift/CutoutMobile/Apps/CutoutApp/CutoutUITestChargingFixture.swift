@@ -41,19 +41,19 @@
                     coordinate: MobileMapCoordinateDto(latitudeDegrees: 39.74, longitudeDegrees: -104.99),
                     accessNote: "Outlet beside the entrance. Ask at the desk.", cost: .free,
                     name: "Library", venue: .other, hours: "09:00–18:00", terms: nil, price: nil,
-                    supplies: [MobileChargingSupplyDto(voltageVolts: 120, connectors: [.typeB])]
+                    supplies: [MobileChargingSupplyDto(voltageVolts: 120, connectors: [.typeB], outletCount: nil)]
                 ),
                 MobileChargingInputDto(
                     coordinate: MobileMapCoordinateDto(latitudeDegrees: 39.744, longitudeDegrees: -104.986),
                     accessNote: "Ask staff before using the patio outlet.", cost: .paid,
                     name: "Coffee shop", venue: .cafe, hours: nil, terms: .purchaseRequired, price: nil,
-                    supplies: [MobileChargingSupplyDto(voltageVolts: nil, connectors: [])]
+                    supplies: [MobileChargingSupplyDto(voltageVolts: nil, connectors: [], outletCount: nil)]
                 ),
                 MobileChargingInputDto(
                     coordinate: MobileMapCoordinateDto(latitudeDegrees: 39.736, longitudeDegrees: -104.995),
                     accessNote: "Chargers on the east side of the parking lot.", cost: .paid,
                     name: nil, venue: .evChargingStation, hours: nil, terms: .directFee, price: nil,
-                    supplies: [MobileChargingSupplyDto(voltageVolts: 240, connectors: [.j1772])]
+                    supplies: [MobileChargingSupplyDto(voltageVolts: 240, connectors: [.j1772], outletCount: nil)]
                 ),
             ]
             for input in inputs { _ = try await database.saveChargingSpot(fields: input) }

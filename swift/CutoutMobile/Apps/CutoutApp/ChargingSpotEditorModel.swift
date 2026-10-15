@@ -73,15 +73,20 @@ final class ChargingSpotEditorModel {
     }
     var supplies = [ChargingSupplyDraft]()
     var areOptionalDetailsExpanded = false
+    private(set) var outletCount = 1
+    private(set) var outletCountWasEdited = false
+    private(set) var selectedPlug: MobileChargingConnectorDto?
+    private(set) var plugWasEdited = false
     private(set) var errorKey: String?
     private(set) var latestRevisionCandidate: MobileChargingSpotDto?
     private(set) var hasRevisionConflict = false
     private(set) var isLoadingLatest = false
     private(set) var latestReloadErrorKey: String?
     private(set) var countryCode: String?
+    private(set) var orderedConnectorChoices: [MobileChargingConnectorDto]?
     @ObservationIgnored private var originalPrice: MobileChargingPriceDto?
     var connectorChoices: [MobileChargingConnectorDto] {
-        mobileChargingConnectorChoices(locationCountryCode: countryCode)
+        orderedConnectorChoices ?? mobileChargingConnectorChoices(locationCountryCode: countryCode)
     }
     var powerSuggestion: MobileChargingSupplyDto {
         mobileChargingPowerSuggestion(countryCode: countryCode, evStation: venue == .evChargingStation)
@@ -135,7 +140,7 @@ final class ChargingSpotEditorModel {
             hours: optionalText(hours),
             terms: cost == .paid ? terms : nil,
             price: cost == .paid ? parsedPrice : nil,
-            supplies: supplies.compactMap { $0.value() }
+            supplies: suppliesForSave
         )
     }
 
@@ -232,6 +237,10 @@ final class ChargingSpotEditorModel {
         self.supplies = input.supplies.map {
             ChargingSupplyDraft(supply: $0, countryCode: countryCode, evStation: input.venue == .evChargingStation)
         }
+        if let first = input.supplies.first {
+            self.outletCount = Int(first.outletCount ?? 1)
+            self.selectedPlug = first.connectors.first
+        }
         self.errorKey = nil
         self.countryCode = countryCode
         self.isEditing = true
@@ -286,11 +295,65 @@ final class ChargingSpotEditorModel {
         for draft in supplies { draft.setCountryCode(countryCode) }
     }
 
+    /// Applies Rust's complete, already ordered regional projection to the picker.
+    func setConnectorChoices(_ choices: [MobileChargingConnectorDto]?) {
+        orderedConnectorChoices = choices
+    }
+
     private func updateCoordinateFromText() {
         if let parsedCoordinate { coordinate = parsedCoordinate }
     }
 
     func setVenue(_ venue: MobileChargingVenueDto?) { self.venue = venue }
+
+    /// The visible default is a suggestion. Only user changes add outlet data to the submitted input.
+    var suggestedPlug: MobileChargingConnectorDto? {
+        guard venue != .evChargingStation else { return nil }
+        return connectorChoices.first
+    }
+
+    private var formSupply: MobileChargingSupplyDto? {
+        guard supplies.isEmpty, outletCountWasEdited || plugWasEdited else { return nil }
+        let connectors = plugWasEdited ? selectedPlug.map { [$0] } ?? [] : []
+        let count = outletCountWasEdited ? UInt16(exactly: outletCount) : nil
+        guard count != nil || !connectors.isEmpty else { return nil }
+        return MobileChargingSupplyDto(
+            voltageVolts: nil,
+            connectors: connectors,
+            outletCount: count
+        )
+    }
+
+    private var suppliesForSave: [MobileChargingSupplyDto] {
+        var values = supplies.compactMap { $0.value() }
+        if isEditing, !values.isEmpty, outletCountWasEdited || plugWasEdited {
+            var first = values[0]
+            if outletCountWasEdited { first.outletCount = UInt16(exactly: outletCount) }
+            if plugWasEdited { first.connectors = selectedPlug.map { [$0] } ?? [] }
+            if first.voltageVolts == nil && first.connectors.isEmpty && first.outletCount == nil {
+                values.removeFirst()
+            } else {
+                values[0] = first
+            }
+            return values
+        }
+        if let formSupply { values.append(formSupply) }
+        return values
+    }
+
+    func setOutletCount(_ count: Int) {
+        guard (1...10).contains(count) else { return }
+        outletCount = count
+        outletCountWasEdited = true
+        errorKey = nil
+    }
+
+    func setSelectedPlug(_ connector: MobileChargingConnectorDto?) {
+        guard selectedPlug != connector || !plugWasEdited else { return }
+        selectedPlug = connector
+        plugWasEdited = true
+        errorKey = nil
+    }
 
     func addSuggestedSupply() {
         guard venue != .evChargingStation else { return }
@@ -305,7 +368,20 @@ final class ChargingSpotEditorModel {
         observe(draft)
         supplies.append(draft)
     }
-    func removeSupply(id: UUID) { supplies.removeAll { $0.id == id } }
+    func removeSupply(id: UUID) {
+        let removedFirst = supplies.first?.id == id
+        supplies.removeAll { $0.id == id }
+        guard removedFirst else { return }
+        if let supply = supplies.first?.value() {
+            outletCount = Int(supply.outletCount ?? 1)
+            selectedPlug = supply.connectors.first
+        } else {
+            outletCount = 1
+            selectedPlug = nil
+        }
+        outletCountWasEdited = false
+        plugWasEdited = false
+    }
 
     func save() async -> MobileChargingWriteReceiptDto? {
         guard canSave, let coordinate = parsedCoordinate else { return nil }
