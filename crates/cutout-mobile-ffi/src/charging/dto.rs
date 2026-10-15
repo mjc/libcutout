@@ -185,8 +185,6 @@ impl From<MobileChargingStatusDto> for persistence::ChargingStatus {
 pub enum MobileChargingConnectorDto {
     /// `TypeA` connector.
     TypeA,
-    /// `TypeB` connector.
-    TypeB,
     /// `TypeC` connector.
     TypeC,
     /// `TypeD` connector.
@@ -249,7 +247,6 @@ impl TryFrom<MobileChargingConnectorDto> for ride_maps::ChargingConnector {
     fn try_from(value: MobileChargingConnectorDto) -> Result<Self, Self::Error> {
         Ok(match value {
             MobileChargingConnectorDto::TypeA => Self::TypeA,
-            MobileChargingConnectorDto::TypeB => Self::TypeB,
             MobileChargingConnectorDto::TypeC => Self::TypeC,
             MobileChargingConnectorDto::TypeD => Self::TypeD,
             MobileChargingConnectorDto::TypeE => Self::TypeE,
@@ -288,7 +285,6 @@ impl From<ride_maps::ChargingConnector> for MobileChargingConnectorDto {
     fn from(value: ride_maps::ChargingConnector) -> Self {
         match value {
             ride_maps::ChargingConnector::TypeA => Self::TypeA,
-            ride_maps::ChargingConnector::TypeB => Self::TypeB,
             ride_maps::ChargingConnector::TypeC => Self::TypeC,
             ride_maps::ChargingConnector::TypeD => Self::TypeD,
             ride_maps::ChargingConnector::TypeE => Self::TypeE,

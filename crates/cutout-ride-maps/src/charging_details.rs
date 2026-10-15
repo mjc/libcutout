@@ -170,8 +170,6 @@ pub enum ChargingVenue {
 pub enum ChargingConnector {
     /// Household type A connector.
     TypeA,
-    /// Household type B connector.
-    TypeB,
     /// Household type C connector.
     TypeC,
     /// Household type D connector.

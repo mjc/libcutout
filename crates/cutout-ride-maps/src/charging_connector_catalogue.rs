@@ -32,8 +32,6 @@ const CONNECTORS: &[ChargingConnector] = &[
 ];
 
 /// Returns the connector picker catalogue in stable order for a GPS-derived country.
-/// Type B remains a domain identifier for stored data, but shares a physical face
-/// with NEMA 5-15 and is represented by that single picker choice.
 /// This presentation policy neither selects nor confirms a connector.
 #[must_use]
 pub fn charging_connector_choices(
@@ -57,6 +55,7 @@ enum Prevalence {
 }
 
 fn country_priority(connector: &ChargingConnector, country: Option<&ChargingCountry>) -> bool {
+    // Ascending sort puts the preferred US household face (false) first.
     !(country.is_some_and(|country| country.as_str() == "US")
         && connector == &ChargingConnector::Nema5_15)
 }
@@ -90,7 +89,6 @@ fn local_outlets(country: &ChargingCountry) -> &'static [ChargingConnector] {
             ChargingConnector::Nema6_50,
             ChargingConnector::Nema10_50,
         ],
-        // Type B and NEMA 5-15 are the same physical face; keep one picker row.
         "MX" | "JP" => &[TypeA, Nema5_15],
         "GB" | "IE" => &[TypeG],
         "DE" | "AT" => &[TypeC, TypeF],
@@ -179,10 +177,6 @@ mod tests {
             let country = ChargingCountry::new(code).unwrap();
             let choices = charging_connector_choices(Some(&country));
             assert_eq!(choices.len(), CONNECTORS.len());
-            assert!(
-                !choices.contains(&ChargingConnector::TypeB),
-                "{code}: Type B is retained as a domain alias, not a second picker row"
-            );
             for connector in CONNECTORS {
                 assert_eq!(
                     choices.iter().filter(|value| *value == connector).count(),

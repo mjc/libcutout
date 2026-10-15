@@ -135,7 +135,7 @@ mod tests {
     fn typed_supply_validation_keeps_the_eight_row_and_connector_constructor_limits() {
         let mut value = input();
         value.supplies = (0..8)
-            .map(|_| supply(MobileChargingConnectorDto::TypeB))
+            .map(|_| supply(MobileChargingConnectorDto::Nema5_15))
             .collect();
         assert!(matches!(
             mobile_charging_validate_editor(value.clone()),
@@ -144,21 +144,10 @@ mod tests {
 
         value
             .supplies
-            .push(supply(MobileChargingConnectorDto::TypeB));
+            .push(supply(MobileChargingConnectorDto::Nema5_15));
         assert_eq!(
             first_issue(value).reason,
             MobileChargingValidationReasonDto::TooMany
-        );
-
-        let mut value = input();
-        value
-            .supplies
-            .push(supply(MobileChargingConnectorDto::Other {
-                label: "type_b".into(),
-            }));
-        assert_eq!(
-            first_issue(value).field,
-            MobileChargingValidationFieldDto::Supply
         );
 
         let mut value = input();
@@ -166,7 +155,6 @@ mod tests {
             voltage_volts: None,
             connectors: vec![
                 MobileChargingConnectorDto::TypeA,
-                MobileChargingConnectorDto::TypeB,
                 MobileChargingConnectorDto::TypeC,
                 MobileChargingConnectorDto::TypeD,
                 MobileChargingConnectorDto::TypeE,
@@ -182,6 +170,7 @@ mod tests {
                 MobileChargingConnectorDto::TypeO,
                 MobileChargingConnectorDto::Nema5_15,
                 MobileChargingConnectorDto::Nema5_20,
+                MobileChargingConnectorDto::Nema14_50,
             ],
             outlet_count: None,
         }];

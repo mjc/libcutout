@@ -10,13 +10,11 @@ with a particular vehicle or charger.
 
 ## United States
 
-Keep the common household choices recognizable as **US 2 Prong** (Type A) and
-**US 3 Prong** (NEMA 5-15). Put US 3 Prong ahead of US 2 Prong in the general
+Keep the common household choices recognizable as **US 3 Prong** (NEMA 5-15)
+and **US 2 Prong** (Type A). Put US 3 Prong ahead of US 2 Prong in the general
 US fallback order because its grounding contact is more useful for PEV
-charging. The legacy Type B enum and NEMA 5-15 describe the same physical face;
-the picker presents only NEMA 5-15, while stored Type B values remain valid.
-The standardized family may appear in secondary text when the user needs to
-identify an exact shape.
+charging. The standardized family may appear in secondary text when the user
+needs to identify an exact shape.
 
 Keep each larger US connector as its own choice. Suggested display text:
 
@@ -73,10 +71,8 @@ drawings.
 ## Catalogue ordering
 
 Keep all distinct physical choices and stable ties. When GPS identifies the
-US, put the canonical **US 3 Prong** household choice (NEMA 5-15) before Type A,
-as requested for PEV usefulness. Keep US regional EV connectors available in
-their existing group. If local database prevalence provides a useful ranking,
-that measured ordering takes priority; otherwise use this GPS-country
-fallback. Count legacy Type B data together with NEMA 5-15 for prevalence, but
-do not show a second Type B picker row. This is a coarse presentation order,
+US, put **US 3 Prong** (NEMA 5-15) before Type A for PEV usefulness. Keep US
+regional EV connectors available in their existing group. If local database
+prevalence provides a useful ranking, that measured ordering takes priority;
+otherwise use this GPS-country fallback. This is a coarse presentation order,
 not market-share data or an electrical compatibility check.

@@ -41,7 +41,7 @@
                     coordinate: MobileMapCoordinateDto(latitudeDegrees: 39.74, longitudeDegrees: -104.99),
                     accessNote: "Outlet beside the entrance. Ask at the desk.", cost: .free,
                     name: "Library", venue: .other, hours: "09:00–18:00", terms: nil, price: nil,
-                    supplies: [MobileChargingSupplyDto(voltageVolts: 120, connectors: [.typeB], outletCount: nil)]
+                    supplies: [MobileChargingSupplyDto(voltageVolts: 120, connectors: [.nema515], outletCount: nil)]
                 ),
                 MobileChargingInputDto(
                     coordinate: MobileMapCoordinateDto(latitudeDegrees: 39.744, longitudeDegrees: -104.986),

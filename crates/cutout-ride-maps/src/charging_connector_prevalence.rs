@@ -21,12 +21,9 @@ impl ChargingConnectorPrevalence {
     pub fn record_spot(&mut self, supplies: &[ChargingSupply]) {
         for (connector, count) in &mut self.0 {
             if *connector != ChargingConnector::Unknown
-                && supplies.iter().any(|supply| {
-                    supply
-                        .connectors()
-                        .iter()
-                        .any(|observed| same_connector(observed, connector))
-                })
+                && supplies
+                    .iter()
+                    .any(|supply| supply.connectors().contains(connector))
             {
                 *count = count.saturating_add(1);
             }
@@ -39,9 +36,4 @@ impl ChargingConnectorPrevalence {
         self.0.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
         self.0.into_iter().map(|(connector, _)| connector).collect()
     }
-}
-
-fn same_connector(observed: &ChargingConnector, choice: &ChargingConnector) -> bool {
-    observed == choice
-        || (*observed == ChargingConnector::TypeB && *choice == ChargingConnector::Nema5_15)
 }

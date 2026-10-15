@@ -293,11 +293,13 @@ struct ChargingSpotEditorView: View {
         }
         .accessibilityIdentifier("charging.editor.outlet-count")
 
-        ChargingConnectorPicker(
-            choices: model.connectorChoices,
-            selection: model.plugWasEdited ? model.selectedPlug : (model.selectedPlug ?? model.suggestedPlug),
-            onSelect: model.setSelectedPlug
-        )
+        if model.supplies.isEmpty {
+            ChargingConnectorPicker(
+                choices: model.connectorChoices,
+                selection: model.plugWasEdited ? model.selectedPlug : (model.selectedPlug ?? model.suggestedPlug),
+                onSelect: model.setSelectedPlug
+            )
+        }
 
         LabeledContent(localizedAppText("charging.editor.name")) {
             TextField("", text: $model.name)

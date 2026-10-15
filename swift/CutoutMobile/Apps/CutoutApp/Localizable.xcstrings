@@ -141,7 +141,6 @@
     "charging.venue.ev" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "EV charging station" } } } },
     "charging.venue.other" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Other" } } } },
     "charging.connector.type_a" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "US 2 Prong" } } } },
-    "charging.connector.type_b" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "US 3 Prong" } } } },
     "charging.connector.type_c" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Type C" } } } },
     "charging.connector.type_d" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Type D" } } } },
     "charging.connector.type_e" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Type E" } } } },

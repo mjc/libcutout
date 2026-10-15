@@ -103,7 +103,7 @@ final class ChargingSpotEditorModelTests: XCTestCase {
         model.chooseKind(.charging)
         model.accessNote = "Outlet beside the shelter"
         model.setOutletCount(3)
-        model.setSelectedPlug(.typeB)
+        model.setSelectedPlug(.nema515)
 
         XCTAssertTrue(model.canSave)
         _ = await model.save()
@@ -111,7 +111,7 @@ final class ChargingSpotEditorModelTests: XCTestCase {
         XCTAssertEqual(
             recorder.fields?.supplies,
             [
-                MobileChargingSupplyDto(voltageVolts: nil, connectors: [.typeB], outletCount: 3)
+                MobileChargingSupplyDto(voltageVolts: nil, connectors: [.nema515], outletCount: 3)
             ])
     }
 
@@ -122,7 +122,7 @@ final class ChargingSpotEditorModelTests: XCTestCase {
             return
         }
         input.supplies = [
-            MobileChargingSupplyDto(voltageVolts: 120, connectors: [.typeB], outletCount: 4),
+            MobileChargingSupplyDto(voltageVolts: 120, connectors: [.nema515], outletCount: 4),
             MobileChargingSupplyDto(voltageVolts: 240, connectors: [.j1772], outletCount: 2),
         ]
         let model = ChargingSpotEditorModel(
@@ -137,6 +137,118 @@ final class ChargingSpotEditorModelTests: XCTestCase {
         _ = await model.save()
 
         XCTAssertEqual(recorder.fields?.supplies, input.supplies)
+    }
+
+    func testFirstSupplyRowEditIsTheOnlyPlugEditorWhenSuppliesExist() async throws {
+        var input = try XCTUnwrap(Self.spot().input)
+        let first = MobileChargingSupplyDto(
+            voltageVolts: 120, connectors: [.nema515, .other(label: "Workshop plug"), .ccs2], outletCount: 4)
+        let second = MobileChargingSupplyDto(
+            voltageVolts: 240, connectors: [.type2, .other(label: "CCS custom")], outletCount: 2)
+        input.supplies = [first, second]
+        let recorder = ChargingEditorSaveRecorder()
+        let model = ChargingSpotEditorModel(
+            draft: input,
+            save: { fields, _ in
+                recorder.record(fields)
+                return Self.receipt("compact-then-row")
+            })
+
+        model.setSelectedPlug(.j1772)
+        model.supplies[0].set(.nema515, selected: false)
+        model.supplies[0].set(.ccs2, selected: true)
+        _ = await model.save()
+
+        XCTAssertEqual(
+            recorder.fields?.supplies,
+            [
+                MobileChargingSupplyDto(
+                    voltageVolts: 120, connectors: [.ccs2, .other(label: "Workshop plug")], outletCount: 4), second,
+            ])
+    }
+
+    func testCompactPlugSetterCannotOverlayARowEditOrLaterGroups() async throws {
+        var input = try XCTUnwrap(Self.spot().input)
+        let first = MobileChargingSupplyDto(
+            voltageVolts: 120, connectors: [.nema515, .other(label: "Workshop plug"), .ccs2], outletCount: 4)
+        let second = MobileChargingSupplyDto(
+            voltageVolts: 240, connectors: [.type2, .other(label: "CCS custom")], outletCount: 2)
+        input.supplies = [first, second]
+        let recorder = ChargingEditorSaveRecorder()
+        let model = ChargingSpotEditorModel(
+            draft: input,
+            save: { fields, _ in
+                recorder.record(fields)
+                return Self.receipt("row-then-compact")
+            })
+
+        model.supplies[0].set(.ccs2, selected: true)
+        let rowValue = try XCTUnwrap(model.supplies[0].value())
+        model.setSelectedPlug(.j1772)
+        _ = await model.save()
+
+        XCTAssertEqual(recorder.fields?.supplies, [rowValue, second])
+    }
+
+    func testCompactPlugSelectionAndClearingCannotChangeExistingComplexSupply() async throws {
+        var input = try XCTUnwrap(Self.spot().input)
+        let other = MobileChargingSupplyDto(
+            voltageVolts: 120, connectors: [.nema515, .other(label: "Workshop plug"), .ccs2], outletCount: 4)
+        input.supplies = [other]
+        let recorder = ChargingEditorSaveRecorder()
+        let model = ChargingSpotEditorModel(
+            draft: input,
+            save: { fields, _ in
+                recorder.record(fields)
+                return Self.receipt("compact-preserves-rest")
+            })
+
+        model.setSelectedPlug(.j1772)
+        _ = await model.save()
+
+        XCTAssertEqual(recorder.fields?.supplies, [other])
+
+        let clearRecorder = ChargingEditorSaveRecorder()
+        let clearModel = ChargingSpotEditorModel(
+            draft: input,
+            save: { fields, _ in
+                clearRecorder.record(fields)
+                return Self.receipt("compact-clear-preserves-rest")
+            })
+        clearModel.setSelectedPlug(nil)
+        _ = await clearModel.save()
+
+        XCTAssertEqual(clearRecorder.fields?.supplies, [other])
+
+        var customFirstInput = try XCTUnwrap(Self.spot().input)
+        customFirstInput.supplies = [
+            MobileChargingSupplyDto(
+                voltageVolts: 120, connectors: [.other(label: "Workshop plug"), .nema515, .ccs2], outletCount: 4)
+        ]
+        let customFirstRecorder = ChargingEditorSaveRecorder()
+        let customFirstModel = ChargingSpotEditorModel(
+            draft: customFirstInput,
+            save: { fields, _ in
+                customFirstRecorder.record(fields)
+                return Self.receipt("custom-first")
+            })
+
+        customFirstModel.setSelectedPlug(.j1772)
+        _ = await customFirstModel.save()
+
+        XCTAssertEqual(customFirstRecorder.fields?.supplies, customFirstInput.supplies)
+
+        let customFirstClearRecorder = ChargingEditorSaveRecorder()
+        let customFirstClearModel = ChargingSpotEditorModel(
+            draft: customFirstInput,
+            save: { fields, _ in
+                customFirstClearRecorder.record(fields)
+                return Self.receipt("custom-first-clear")
+            })
+        customFirstClearModel.setSelectedPlug(nil)
+        _ = await customFirstClearModel.save()
+
+        XCTAssertEqual(customFirstClearRecorder.fields?.supplies, customFirstInput.supplies)
     }
 
     func testFoodAndEVCanSaveWithoutTheirOptionalInlineFields() async {
@@ -262,44 +374,6 @@ final class ChargingSpotEditorModelTests: XCTestCase {
         model.cost = .paid
         XCTAssertTrue(model.canSave)
         XCTAssertEqual(model.coordinate, coordinate(latitude: 6.25, longitude: 8.5))
-    }
-
-    func testMovePinAndReturnToDetailsPreservesEnteredDraft() {
-        let model = ChargingSpotEditorModel(coordinate: coordinate())
-        model.confirmLocation()
-        model.chooseKind(.charging)
-        model.accessNote = "Use the west entrance"
-        model.cost = .paid
-        model.name = "Cafe"
-        model.hours = "Open daily"
-        model.venue = .cafe
-        model.priceAmount = "2.50"
-        model.priceCurrency = "USD"
-        model.priceBasis = .perHour
-        model.addSupply()
-        model.supplies[0].voltageText = "120"
-        model.supplies[0].set(.typeB, selected: true)
-        model.latitudeText = "3.5"
-        model.longitudeText = "4.5"
-
-        model.areOptionalDetailsExpanded = true
-        model.movePin()
-        XCTAssertEqual(model.coordinate, coordinate(latitude: 3.5, longitude: 4.5))
-        model.move(to: coordinate(latitude: 6, longitude: 7))
-        model.confirmLocation()
-
-        XCTAssertEqual(model.stage, .details)
-        XCTAssertEqual(model.coordinate, coordinate(latitude: 6, longitude: 7))
-        XCTAssertEqual(model.accessNote, "Use the west entrance")
-        XCTAssertEqual(model.name, "Cafe")
-        XCTAssertEqual(model.hours, "Open daily")
-        XCTAssertEqual(model.venue, .cafe)
-        XCTAssertEqual(model.priceAmount, "2.50")
-        XCTAssertEqual(model.priceCurrency, "USD")
-        XCTAssertEqual(model.priceBasis, .perHour)
-        XCTAssertEqual(model.supplies[0].value()?.connectors, [.typeB])
-        XCTAssertTrue(model.canSave)
-        XCTAssertTrue(model.areOptionalDetailsExpanded)
     }
 
     func testBasicSaveOmitsEveryOptionalFieldAndDoesNotIncludeSuggestions() async {
@@ -528,14 +602,14 @@ final class ChargingSpotEditorModelTests: XCTestCase {
     func testRemovingCustomConnectorDoesNotRestoreItAndUnknownRetainsDraftText() {
         let draft = ChargingSupplyDraft(
             supply: MobileChargingSupplyDto(
-                voltageVolts: 120, connectors: [.other(label: "Workshop plug"), .typeB], outletCount: nil
+                voltageVolts: 120, connectors: [.other(label: "Workshop plug"), .nema515], outletCount: nil
             ), countryCode: nil, evStation: false)
         guard let customID = draft.otherConnectors.first?.id else {
             XCTFail("Expected the original custom connector")
             return
         }
         draft.removeOtherConnector(id: customID)
-        XCTAssertEqual(draft.value()?.connectors, [.typeB])
+        XCTAssertEqual(draft.value()?.connectors, [.nema515])
 
         let customDraft = ChargingSupplyDraft(
             supply: MobileChargingSupplyDto(
@@ -554,7 +628,7 @@ final class ChargingSpotEditorModelTests: XCTestCase {
         draft.otherConnectors[0].label = "Workshop plug"
         XCTAssertEqual(draft.connectorSummary, [.other(label: "Workshop plug")])
 
-        draft.set(.typeB, selected: true)
+        draft.set(.nema515, selected: true)
         XCTAssertEqual(draft.connectorSummary, [.nema515, .other(label: "Workshop plug")])
 
         draft.set(.unknown, selected: true)
@@ -580,7 +654,7 @@ final class ChargingSpotEditorModelTests: XCTestCase {
 
     func testConnectorChoicesUseTheSuppliedRustProjectionVerbatim() {
         let model = ChargingSpotEditorModel(coordinate: coordinate(), countryCode: "US")
-        let ordered: [MobileChargingConnectorDto] = [.nacs, .typeB, .unknown]
+        let ordered: [MobileChargingConnectorDto] = [.nacs, .nema515, .unknown]
 
         model.setConnectorChoices(ordered)
 
@@ -606,7 +680,7 @@ final class ChargingSpotEditorModelTests: XCTestCase {
         XCTAssertEqual(Set(model.connectorChoices).count, model.connectorChoices.count)
         XCTAssertEqual(
             Set(model.connectorChoices),
-            Set(ChargingSpotPresentation.connectorOptions.map(\.value)).subtracting([.typeB]))
+            Set(ChargingSpotPresentation.connectorOptions.map(\.value)))
     }
 
     func testUnavailableCountryUsesFallbackWithoutAddingAnExtraRequiredField() {
@@ -919,7 +993,7 @@ final class ChargingSpotEditorModelTests: XCTestCase {
             ),
             supplies: [
                 MobileChargingSupplyDto(
-                    voltageVolts: 120, connectors: [.other(label: "Workshop plug"), .typeB], outletCount: 2),
+                    voltageVolts: 120, connectors: [.other(label: "Workshop plug"), .nema515], outletCount: 2),
                 MobileChargingSupplyDto(voltageVolts: 240, connectors: [.j1772], outletCount: 1),
             ]
         )

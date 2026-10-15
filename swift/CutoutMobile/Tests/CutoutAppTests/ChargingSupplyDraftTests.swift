@@ -53,24 +53,6 @@ final class ChargingSupplyDraftTests: XCTestCase {
         XCTAssertEqual(draft.value(), supply)
     }
 
-    func testNema515AliasIsDeduplicatedForDisplayAndExplicitSelectionReplacesLegacyTypeB() {
-        let observed = MobileChargingSupplyDto(
-            voltageVolts: 120, connectors: [.typeB, .nema515], outletCount: nil)
-        let draft = ChargingSupplyDraft(supply: observed, countryCode: "US", evStation: false)
-
-        XCTAssertEqual(draft.connectorSummary, [.nema515])
-        XCTAssertEqual(draft.value(), observed)
-        XCTAssertEqual(ChargingSpotPresentation.supplyText(observed), "120 V · US 3 Prong")
-
-        draft.set(.nema515, selected: true)
-
-        XCTAssertEqual(
-            draft.value(),
-            MobileChargingSupplyDto(voltageVolts: 120, connectors: [.nema515], outletCount: nil))
-        draft.set(.nema515, selected: false)
-        XCTAssertEqual(draft.value()?.connectors, [])
-    }
-
     func testIncompleteEditCannotFallBackToThePreviouslyConfirmedSupply() {
         let observed = MobileChargingSupplyDto(voltageVolts: 240, connectors: [.type2], outletCount: nil)
         let draft = ChargingSupplyDraft(supply: observed, countryCode: nil, evStation: false)
@@ -160,7 +142,7 @@ final class ChargingSupplyDraftTests: XCTestCase {
         model.addSupply()
         let draft = model.supplies[0]
         draft.voltageText = "\n 120 \r\n"
-        draft.set(.typeB, selected: true)
+        draft.set(.nema515, selected: true)
 
         XCTAssertFalse(draft.hasInvalidVoltage)
         XCTAssertEqual(draft.value()?.voltageVolts, 120)

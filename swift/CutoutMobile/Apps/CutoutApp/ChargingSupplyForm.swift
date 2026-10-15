@@ -51,11 +51,10 @@ struct ChargingConnectorPicker: View {
                 Text(localizedAppText("charging.editor.plug_type"))
                 Spacer(minLength: 8)
                 if let selection {
-                    let visibleSelection = ChargingSpotPresentation.canonicalConnector(selection)
-                    ChargingConnectorIcon(connector: visibleSelection, size: 36)
-                    Text(ChargingSpotPresentation.connectorName(visibleSelection))
+                    ChargingConnectorIcon(connector: selection, size: 36)
+                    Text(ChargingSpotPresentation.connectorName(selection))
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                        .fixedSize(horizontal: false, vertical: true)
                 } else {
                     Text(localizedAppText("charging.editor.plug.choose"))
                         .foregroundStyle(.secondary)
@@ -120,9 +119,7 @@ struct ChargingSupplyForm: View {
                     Toggle(
                         isOn: Binding(
                             get: {
-                                draft.connectors.contains {
-                                    ChargingSpotPresentation.connectorsMatch($0, connector)
-                                }
+                                draft.connectors.contains(connector)
                             },
                             set: { draft.set(connector, selected: $0) }
                         )
@@ -140,17 +137,26 @@ struct ChargingSupplyForm: View {
                         "charging.editor.supply.connector.\(ChargingSpotPresentation.connectorIdentifier(connector))")
                 }
             } label: {
-                HStack(spacing: 8) {
-                    Text(localizedAppText("charging.editor.plugs"))
-                    Spacer(minLength: 8)
-                    ForEach(draft.connectorSummary, id: \.self) {
-                        ChargingConnectorIcon(connector: $0, size: 32)
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 8) {
+                        Text(localizedAppText("charging.editor.plugs"))
+                        Spacer(minLength: 8)
+                        ForEach(Array(draft.connectorSummary.prefix(2)), id: \.self) {
+                            ChargingConnectorIcon(connector: $0, size: 32)
+                        }
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
                     }
                     Text(selectedPlugs)
+                        .font(.subheadline)
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 .contentShape(Rectangle())
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(localizedAppText("charging.editor.plugs"))
+                .accessibilityValue(selectedPlugs)
             }
             .menuOrder(.fixed)
             .accessibilityIdentifier("charging.editor.supply.plugs")

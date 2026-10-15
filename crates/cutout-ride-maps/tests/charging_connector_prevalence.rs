@@ -7,7 +7,7 @@ use cutout_ride_maps::{
 fn local_spot_counts_override_country_order_without_outlet_count_bias() {
     let country = ChargingCountry::new("US").unwrap();
     let mut prevalence = ChargingConnectorPrevalence::new(Some(&country));
-    let many_outlets = ChargingSupply::single(None, ChargingConnector::Nacs)
+    let many_outlets = ChargingSupply::single(None, ChargingConnector::Nema5_15)
         .with_outlet_count(Some(100))
         .unwrap();
     prevalence.record_spot(&[many_outlets.clone(), many_outlets]);
@@ -17,7 +17,7 @@ fn local_spot_counts_override_country_order_without_outlet_count_bias() {
     let choices = prevalence.into_choices();
     assert_eq!(
         &choices[..2],
-        &[ChargingConnector::J1772, ChargingConnector::Nacs]
+        &[ChargingConnector::J1772, ChargingConnector::Nema5_15]
     );
     assert_eq!(
         choices.len(),
@@ -44,16 +44,4 @@ fn ties_retain_country_order_and_missing_gps_retains_the_full_catalogue() {
         ChargingSupply::single(None, ChargingConnector::TypeA),
     ]);
     assert_eq!(prevalence.into_choices(), charging_connector_choices(None));
-}
-
-#[test]
-fn legacy_household_alias_counts_toward_one_visible_choice() {
-    let mut prevalence = ChargingConnectorPrevalence::new(None);
-    prevalence.record_spot(&[
-        ChargingSupply::single(None, ChargingConnector::TypeB),
-        ChargingSupply::single(None, ChargingConnector::Nema5_15),
-    ]);
-    let choices = prevalence.into_choices();
-    assert_eq!(choices[0], ChargingConnector::Nema5_15);
-    assert!(!choices.contains(&ChargingConnector::TypeB));
 }

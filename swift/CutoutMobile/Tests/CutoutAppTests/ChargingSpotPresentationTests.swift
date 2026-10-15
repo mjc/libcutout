@@ -12,7 +12,7 @@ final class ChargingSpotPresentationTests: XCTestCase {
     }
 
     func testVoltageOptionsIncludeVoltagesFromAlreadyRetainedSpots() {
-        let retainedSupply = MobileChargingSupplyDto(voltageVolts: 100, connectors: [.typeB], outletCount: nil)
+        let retainedSupply = MobileChargingSupplyDto(voltageVolts: 100, connectors: [.nema515], outletCount: nil)
 
         XCTAssertEqual(ChargingSpotPresentation.voltageOptions(in: [retainedSupply]), [100])
     }
@@ -66,7 +66,7 @@ final class ChargingSpotPresentationTests: XCTestCase {
     func testDistinctSupplyGroupsKeepTheirOwnVoltageAndConnector() {
         XCTAssertEqual(
             ChargingSpotPresentation.supplyText(
-                MobileChargingSupplyDto(voltageVolts: 120, connectors: [.typeB], outletCount: nil)),
+                MobileChargingSupplyDto(voltageVolts: 120, connectors: [.nema515], outletCount: nil)),
             "120 V · US 3 Prong"
         )
         XCTAssertEqual(

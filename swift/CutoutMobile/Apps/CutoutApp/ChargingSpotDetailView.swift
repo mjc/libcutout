@@ -107,14 +107,14 @@ struct ChargingSpotDetailView: View {
 
 extension ChargingSpotPresentation {
     static let connectorOptions: [(key: String, value: MobileChargingConnectorDto)] = [
-        ("charging.connector.type_a", .typeA), ("charging.connector.type_b", .typeB),
+        ("charging.connector.nema_5_15", .nema515), ("charging.connector.type_a", .typeA),
         ("charging.connector.type_c", .typeC), ("charging.connector.type_d", .typeD),
         ("charging.connector.type_e", .typeE), ("charging.connector.type_f", .typeF),
         ("charging.connector.type_g", .typeG), ("charging.connector.type_h", .typeH),
         ("charging.connector.type_i", .typeI), ("charging.connector.type_j", .typeJ),
         ("charging.connector.type_k", .typeK), ("charging.connector.type_l", .typeL),
         ("charging.connector.type_m", .typeM), ("charging.connector.type_n", .typeN),
-        ("charging.connector.type_o", .typeO), ("charging.connector.nema_5_15", .nema515),
+        ("charging.connector.type_o", .typeO),
         ("charging.connector.nema_5_20", .nema520), ("charging.connector.nema_14_50", .nema1450),
         ("charging.connector.j1772", .j1772), ("charging.connector.type2", .type2),
         ("charging.connector.ccs1", .ccs1), ("charging.connector.ccs2", .ccs2),
@@ -157,7 +157,6 @@ extension ChargingSpotPresentation {
     static func connectorIdentifier(_ connector: MobileChargingConnectorDto) -> String {
         switch connector {
         case .typeA: "type-a"
-        case .typeB: "type-b"
         case .typeC: "type-c"
         case .typeD: "type-d"
         case .typeE: "type-e"
@@ -191,27 +190,12 @@ extension ChargingSpotPresentation {
 
     static func connectorAssetIdentifier(_ connector: MobileChargingConnectorDto) -> String {
         if case .other = connector { return "unknown" }
-        if connector == .typeB { return "nema-5-15" }
         return connectorIdentifier(connector)
-    }
-
-    static func canonicalConnector(_ connector: MobileChargingConnectorDto) -> MobileChargingConnectorDto {
-        connector == .typeB ? .nema515 : connector
-    }
-
-    static func connectorsMatch(_ lhs: MobileChargingConnectorDto?, _ rhs: MobileChargingConnectorDto) -> Bool {
-        guard let lhs else { return false }
-        return canonicalConnector(lhs) == canonicalConnector(rhs)
-    }
-
-    static func displayConnectors(_ connectors: [MobileChargingConnectorDto]) -> [MobileChargingConnectorDto] {
-        var seen = Set<MobileChargingConnectorDto>()
-        return connectors.map(canonicalConnector).filter { seen.insert($0).inserted }
     }
 
     static func supplyText(_ supply: MobileChargingSupplyDto) -> String {
         let voltage = supply.voltageVolts.map { "\($0) V" } ?? localizedAppText("charging.spot.power.unknown")
-        let connectors = displayConnectors(supply.connectors).map(connectorName).joined(separator: ", ")
+        let connectors = supply.connectors.map(connectorName).joined(separator: ", ")
         let power = connectors.isEmpty ? voltage : "\(voltage) · \(connectors)"
         guard let count = supply.outletCount else { return power }
         let countText = localizedAppText(count == 1 ? "charging.spot.outlets.one" : "charging.spot.outlets.other")

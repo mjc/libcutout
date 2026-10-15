@@ -280,13 +280,6 @@ final class ChargingSpotEditorModel {
         }
     }
 
-    func movePin() {
-        guard stage == .details else { return }
-        if let coordinate = parsedCoordinate { self.coordinate = coordinate }
-        stage = .moving
-        errorKey = nil
-    }
-
     /// Uses the GPS-derived country for defaults and ordering, preserving explicit power edits.
     func setCountryCode(_ value: String?) {
         let countryCode = Self.normalizedCountryCode(value)
@@ -326,18 +319,7 @@ final class ChargingSpotEditorModel {
 
     private var suppliesForSave: [MobileChargingSupplyDto] {
         var values = supplies.compactMap { $0.value() }
-        if isEditing, !values.isEmpty, outletCountWasEdited || plugWasEdited {
-            var first = values[0]
-            if outletCountWasEdited { first.outletCount = UInt16(exactly: outletCount) }
-            if plugWasEdited { first.connectors = selectedPlug.map { [$0] } ?? [] }
-            if first.voltageVolts == nil && first.connectors.isEmpty && first.outletCount == nil {
-                values.removeFirst()
-            } else {
-                values[0] = first
-            }
-            return values
-        }
-        if let formSupply { values.append(formSupply) }
+        if supplies.isEmpty, let formSupply { values.append(formSupply) }
         return values
     }
 
@@ -345,10 +327,12 @@ final class ChargingSpotEditorModel {
         guard (1...10).contains(count) else { return }
         outletCount = count
         outletCountWasEdited = true
+        supplies.first?.setCompactOutletCount(UInt16(count))
         errorKey = nil
     }
 
     func setSelectedPlug(_ connector: MobileChargingConnectorDto?) {
+        guard supplies.isEmpty else { return }
         guard selectedPlug != connector || !plugWasEdited else { return }
         selectedPlug = connector
         plugWasEdited = true
@@ -359,12 +343,20 @@ final class ChargingSpotEditorModel {
         guard venue != .evChargingStation else { return }
         let draft = ChargingSupplyDraft(countryCode: countryCode, evStation: false)
         draft.confirm()
-        observe(draft)
-        supplies.append(draft)
+        appendSupply(draft)
     }
 
     func addSupply() {
         let draft = ChargingSupplyDraft()
+        appendSupply(draft)
+    }
+
+    private func appendSupply(_ draft: ChargingSupplyDraft) {
+        if supplies.isEmpty {
+            if outletCountWasEdited, let count = UInt16(exactly: outletCount) {
+                draft.setCompactOutletCount(count)
+            }
+        }
         observe(draft)
         supplies.append(draft)
     }
@@ -372,9 +364,9 @@ final class ChargingSpotEditorModel {
         let removedFirst = supplies.first?.id == id
         supplies.removeAll { $0.id == id }
         guard removedFirst else { return }
-        if let supply = supplies.first?.value() {
-            outletCount = Int(supply.outletCount ?? 1)
-            selectedPlug = supply.connectors.first
+        if let first = supplies.first {
+            outletCount = first.compactOutletCount
+            selectedPlug = first.snapshot.selection.connectors.first
         } else {
             outletCount = 1
             selectedPlug = nil
@@ -467,7 +459,8 @@ final class ChargingSpotEditorModel {
 
     private func observe(_ draft: ChargingSupplyDraft) {
         draft.onChange = { [weak self] in
-            self?.errorKey = nil
+            guard let self else { return }
+            self.errorKey = nil
         }
     }
 

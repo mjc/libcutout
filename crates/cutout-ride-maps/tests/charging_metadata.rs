@@ -314,7 +314,7 @@ fn paired_supplies_reject_contradictory_or_duplicate_connectors() {
         Err(ChargingInputError::DuplicateConnector)
     );
     assert_eq!(
-        ChargingSupply::new(None, vec![ChargingConnector::TypeB; 17]),
+        ChargingSupply::new(None, vec![ChargingConnector::Nema5_15; 17]),
         Err(ChargingInputError::TooManyConnectors)
     );
 }

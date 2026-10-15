@@ -57,6 +57,7 @@ final class ChargingSupplyDraft: Identifiable {
     }
 
     var snapshot: MobileChargingPowerDraftSnapshot { powerDraft.snapshot() }
+    var compactOutletCount: Int { Int(outletCount ?? 1) }
     var isConfirmed: Bool { snapshot.includedSupply != nil }
     var hasIncompleteEdit: Bool { !isEmpty && snapshot.origin == .manual && !isConfirmed }
     var requiresConfirmation: Bool {
@@ -72,14 +73,14 @@ final class ChargingSupplyDraft: Identifiable {
 
     var connectorSummary: [MobileChargingConnectorDto] {
         if isEmpty { return [] }
-        if !hasIncompleteEdit { return ChargingSpotPresentation.displayConnectors(snapshot.selection.connectors) }
+        if !hasIncompleteEdit { return snapshot.selection.connectors }
         if connectors.contains(.unknown) { return [.unknown] }
         var selected = connectors
         for connector in otherConnectors {
             let label = connector.label.trimmingCharacters(in: .whitespacesAndNewlines)
             if !label.isEmpty, !selected.contains(.other(label: label)) { selected.append(.other(label: label)) }
         }
-        return ChargingSpotPresentation.displayConnectors(selected)
+        return selected
     }
 
     var hasInvalidVoltage: Bool {
@@ -105,6 +106,11 @@ final class ChargingSupplyDraft: Identifiable {
         guard !isEmpty, !hasInvalidVoltage, !hasIncompleteEdit else { return }
         self.powerDraft = powerDraft.confirm()
         onChange?()
+    }
+
+    func setCompactOutletCount(_ count: UInt16) {
+        outletCount = count
+        syncManualEdit()
     }
 
     private func loadSelection(_ supply: MobileChargingSupplyDto) {
@@ -150,7 +156,7 @@ final class ChargingSupplyDraft: Identifiable {
             return
         }
         connectors.removeAll { $0 == .unknown }
-        connectors.removeAll { ChargingSpotPresentation.connectorsMatch($0, connector) }
+        connectors.removeAll { $0 == connector }
         if selected { connectors.append(connector) }
         syncManualEdit()
     }
