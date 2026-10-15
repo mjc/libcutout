@@ -54,7 +54,8 @@ struct ChargingSpotDetailView: View {
                 Section(localizedAppText("charging.details.community")) {
                     detail(
                         "charging.details.status",
-                        localizedAppText(ChargingSpotPresentation.statusKey(spot.status)))
+                        localizedAppText(
+                            ChargingSpotPresentation.statusKey(spot.status, pendingOperations: spot.pendingOperations)))
                     detail(
                         "charging.details.votes",
                         spot.remoteId == nil

@@ -58,7 +58,9 @@ struct ContentView: View {
             .sheet(item: $presentedSheet) { destination in
                 switch destination {
                 case .setup:
-                    AppSetupView(model: model)
+                    AppSetupView(model: model) {
+                        rideMapPresentation.charging.communityAccountDeletionCompleted()
+                    }
                 case .music:
                     AppMusicPlayerView(model: model, onOpenSettings: { presentedSheet = .musicSettings })
                 case .musicSettings:
