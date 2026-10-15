@@ -11,6 +11,8 @@ typealias ChargingSpotReload = @MainActor @Sendable () async throws -> MobileCha
 @Observable
 final class ChargingSpotEditorModel {
     enum Stage: Equatable { case moving, details, saving }
+    enum Kind: String, CaseIterable { case charging, food, ev }
+    private(set) var selectedKind: Kind?
     private enum Destination: Sendable {
         case create
         case edit(id: String, revision: UInt64)
@@ -170,7 +172,7 @@ final class ChargingSpotEditorModel {
     }
 
     var canSave: Bool {
-        stage == .details && parsedCoordinate != nil && validationIssues.isEmpty
+        stage == .details && selectedKind != nil && parsedCoordinate != nil && validationIssues.isEmpty
     }
 
     init(
@@ -221,6 +223,7 @@ final class ChargingSpotEditorModel {
         self.venue = input.venue
         self.hours = input.hours ?? ""
         self.cost = input.cost
+        self.selectedKind = input.venue == .evChargingStation ? .ev : (input.cost == .paid ? .food : .charging)
         self.terms = input.terms
         self.priceAmount = Self.amountText(input.price, locale: inputLocale)
         self.priceCurrency = input.price?.currency ?? ""
@@ -249,6 +252,23 @@ final class ChargingSpotEditorModel {
     func confirmLocation() {
         guard stage == .moving else { return }
         stage = .details
+    }
+
+    /// The native add-form choice fills existing domain fields without another cost question.
+    func chooseKind(_ kind: Kind) {
+        guard selectedKind != kind else { return }
+        selectedKind = kind
+        switch kind {
+        case .charging:
+            cost = .free
+            venue = nil
+        case .food:
+            cost = .paid
+            if venue == .evChargingStation { venue = nil }
+        case .ev:
+            cost = .free
+            venue = .evChargingStation
+        }
     }
 
     func movePin() {

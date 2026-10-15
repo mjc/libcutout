@@ -7,6 +7,103 @@ import XCTest
 
 @MainActor
 final class ChargingSpotEditorModelTests: XCTestCase {
+    func testNewSpotHasNoSelectedKindAndCannotSaveUntilOneIsChosen() async {
+        let model = ChargingSpotEditorModel(
+            coordinate: coordinate(),
+            save: { _, _ in
+                XCTFail("A new spot requires the user's category choice")
+                return nil
+            })
+        model.confirmLocation()
+        model.accessNote = "Outlet beside the shelter"
+        XCTAssertNil(model.selectedKind)
+        XCTAssertFalse(model.canSave)
+        let receipt = await model.save()
+        XCTAssertNil(receipt)
+        model.chooseKind(.charging)
+        XCTAssertEqual(model.selectedKind, .charging)
+        XCTAssertEqual(model.cost, .free)
+        XCTAssertNil(model.venue)
+        XCTAssertTrue(model.canSave)
+    }
+
+    func testFoodChoiceSetsPaidWithoutChoosingAPlaceType() async {
+        let recorder = ChargingEditorSaveRecorder()
+        let model = ChargingSpotEditorModel(
+            coordinate: coordinate(),
+            save: { fields, _ in
+                recorder.record(fields)
+                return Self.receipt("food")
+            })
+        model.confirmLocation()
+        model.chooseKind(.food)
+        XCTAssertEqual(model.cost, .paid)
+        XCTAssertNil(model.venue)
+        XCTAssertFalse(model.areOptionalDetailsExpanded)
+        model.venue = .cafe
+        model.accessNote = "Ask the barista"
+        _ = await model.save()
+        XCTAssertEqual(recorder.fields?.cost, .paid)
+        XCTAssertEqual(recorder.fields?.venue, .cafe)
+        XCTAssertEqual(recorder.fields?.supplies, [])
+    }
+
+    func testEVChoiceKeepsPaidAsAnIndependentBooleanAndAddsNoHouseholdSupply() async {
+        for cost in [MobileChargingCostDto.free, .paid] {
+            let recorder = ChargingEditorSaveRecorder()
+            let model = ChargingSpotEditorModel(
+                coordinate: coordinate(), countryCode: "US",
+                save: { fields, _ in
+                    recorder.record(fields)
+                    return Self.receipt("ev")
+                })
+            model.confirmLocation()
+            model.chooseKind(.ev)
+            XCTAssertEqual(model.cost, .free)
+            model.cost = cost
+            model.chooseKind(.ev)
+            XCTAssertEqual(model.cost, cost)
+            model.accessNote = "Adapter required"
+            _ = await model.save()
+            XCTAssertEqual(recorder.fields?.venue, .evChargingStation)
+            XCTAssertEqual(recorder.fields?.cost, cost)
+            XCTAssertEqual(recorder.fields?.supplies, [])
+        }
+    }
+
+    func testChangingKindClearsInapplicableFieldsButKeepsTheNoteAndPin() {
+        let model = ChargingSpotEditorModel(coordinate: coordinate())
+        model.confirmLocation()
+        model.accessNote = "West entrance"
+        model.chooseKind(.ev)
+        model.cost = .paid
+        model.chooseKind(.food)
+        XCTAssertNil(model.venue)
+        XCTAssertEqual(model.cost, .paid)
+        model.venue = .restaurant
+        model.priceAmount = "2"
+        model.priceCurrency = "USD"
+        model.priceBasis = .perHour
+        model.chooseKind(.charging)
+        XCTAssertNil(model.venue)
+        XCTAssertEqual(model.cost, .free)
+        XCTAssertEqual(model.priceAmount, "")
+        XCTAssertEqual(model.accessNote, "West entrance")
+        XCTAssertEqual(model.coordinate, coordinate())
+    }
+
+    func testExistingPaidEVRestoresItsChoiceWithoutResettingThePriceOrPaidState() throws {
+        var input = try XCTUnwrap(Self.spot().input)
+        input.venue = .evChargingStation
+        input.cost = .paid
+        let model = ChargingSpotEditorModel(draft: input, save: { _, _ in nil })
+        XCTAssertEqual(model.selectedKind, .ev)
+        XCTAssertEqual(model.cost, .paid)
+        model.chooseKind(.ev)
+        XCTAssertEqual(model.cost, .paid)
+        XCTAssertEqual(model.accessNote, input.accessNote)
+    }
+
     func testRetainedConflictDraftCanBeEditedWithoutLoadingTheCommunityVersion() async throws {
         let recorder = ChargingEditorSaveRecorder()
         let draft = try XCTUnwrap(Self.spot().input)
@@ -48,6 +145,7 @@ final class ChargingSpotEditorModelTests: XCTestCase {
         let premature = await model.save()
         XCTAssertNil(premature)
         model.confirmLocation()
+        model.chooseKind(.charging)
         model.accessNote = "   "
         XCTAssertFalse(model.canSave)
         model.accessNote = "Outlet beside the picnic shelter"
@@ -60,6 +158,7 @@ final class ChargingSpotEditorModelTests: XCTestCase {
         XCTAssertEqual(model.latitudeText, "5.0")
         XCTAssertEqual(model.longitudeText, "7.0")
         model.confirmLocation()
+        model.chooseKind(.charging)
         model.accessNote = "Ask staff"
         model.cost = .free
         model.latitudeText = "not a coordinate"
@@ -76,6 +175,7 @@ final class ChargingSpotEditorModelTests: XCTestCase {
     func testMovePinAndReturnToDetailsPreservesEnteredDraft() {
         let model = ChargingSpotEditorModel(coordinate: coordinate())
         model.confirmLocation()
+        model.chooseKind(.charging)
         model.accessNote = "Use the west entrance"
         model.cost = .paid
         model.name = "Cafe"
@@ -120,6 +220,7 @@ final class ChargingSpotEditorModelTests: XCTestCase {
                 return expected
             })
         model.confirmLocation()
+        model.chooseKind(.charging)
         model.accessNote = "  Outlet beside the picnic shelter  "
 
         let result = await model.save()
@@ -146,6 +247,7 @@ final class ChargingSpotEditorModelTests: XCTestCase {
                 return Self.receipt("minimum")
             })
         model.confirmLocation()
+        model.chooseKind(.charging)
         model.accessNote = "Ask staff"
 
         let receipt = await model.save()
@@ -225,6 +327,7 @@ final class ChargingSpotEditorModelTests: XCTestCase {
                 return Self.receipt("suggested")
             })
         model.confirmLocation()
+        model.chooseKind(.charging)
         model.accessNote = "Ask staff"
         model.cost = .paid
         XCTAssertTrue(model.supplies.isEmpty)
@@ -251,6 +354,7 @@ final class ChargingSpotEditorModelTests: XCTestCase {
     func testRustValidationRejectsLongAndControlCharacterAccessNotesWithTypedFeedback() {
         let model = ChargingSpotEditorModel(coordinate: coordinate())
         model.confirmLocation()
+        model.chooseKind(.charging)
         model.accessNote = String(repeating: "a", count: 2_001)
         XCTAssertFalse(model.canSave)
         XCTAssertEqual(model.validationIssues.first?.field, .accessNote)
@@ -264,6 +368,7 @@ final class ChargingSpotEditorModelTests: XCTestCase {
     func testIncompletePaidPriceAndSupplyRowsStayVisibleAsTypedIssues() {
         let model = ChargingSpotEditorModel(coordinate: coordinate())
         model.confirmLocation()
+        model.chooseKind(.charging)
         model.accessNote = "Ask staff"
         model.cost = .paid
         model.priceAmount = "2."
@@ -279,6 +384,7 @@ final class ChargingSpotEditorModelTests: XCTestCase {
     func testSupplyDraftMutationDeliversObservationForSaveEligibility() {
         let model = ChargingSpotEditorModel(coordinate: coordinate())
         model.confirmLocation()
+        model.chooseKind(.charging)
         model.accessNote = "Ask staff"
         model.addSuggestedSupply()
         XCTAssertTrue(model.canSave)
@@ -402,6 +508,7 @@ final class ChargingSpotEditorModelTests: XCTestCase {
     func testUnavailableCountryUsesFallbackWithoutAddingAnExtraRequiredField() {
         let model = ChargingSpotEditorModel(coordinate: coordinate(), countryCode: "DE")
         model.confirmLocation()
+        model.chooseKind(.charging)
         model.accessNote = "Outlet beside the door"
         model.setCountryCode(nil)
         XCTAssertNil(model.countryCode)
@@ -421,6 +528,7 @@ final class ChargingSpotEditorModelTests: XCTestCase {
                 return Self.receipt("without-empty-supply")
             })
         model.confirmLocation()
+        model.chooseKind(.charging)
         model.accessNote = "Ask staff"
         model.cost = .free
         model.addSupply()
@@ -441,6 +549,7 @@ final class ChargingSpotEditorModelTests: XCTestCase {
                 return Self.receipt("free")
             })
         model.confirmLocation()
+        model.chooseKind(.charging)
         model.accessNote = "Ask staff"
         model.cost = .paid
         model.terms = .both
@@ -642,6 +751,7 @@ final class ChargingSpotEditorModelTests: XCTestCase {
                 return Self.receipt("created")
             })
         model.confirmLocation()
+        model.chooseKind(.charging)
         model.accessNote = "Ask staff"
         model.cost = .paid
 
@@ -666,6 +776,7 @@ final class ChargingSpotEditorModelTests: XCTestCase {
                 throw MobileChargingError.AccessNoteTooLong
             })
         model.confirmLocation()
+        model.chooseKind(.charging)
         model.accessNote = "Use the east gate"
         model.cost = .paid
 

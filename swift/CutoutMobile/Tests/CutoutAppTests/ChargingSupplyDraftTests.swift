@@ -127,6 +127,7 @@ final class ChargingSupplyDraftTests: XCTestCase {
             coordinate: MobileMapCoordinateDto(latitudeDegrees: 40, longitudeDegrees: -105)
         )
         model.confirmLocation()
+        model.chooseKind(.charging)
         model.accessNote = "Ask staff"
         model.addSupply()
         let draft = model.supplies[0]
