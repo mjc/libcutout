@@ -349,6 +349,21 @@ pub fn mobile_charging_outlet_choices(
         .collect()
 }
 
+/// Orders the complete connector catalogue for a GPS-derived country.
+/// Invalid or unavailable location context preserves the general catalogue order.
+#[must_use]
+#[uniffi::export]
+pub fn mobile_charging_connector_choices(
+    location_country_code: Option<String>,
+) -> Vec<MobileChargingConnectorDto> {
+    let country =
+        location_country_code.and_then(|code| ride_maps::ChargingCountry::new(&code).ok());
+    ride_maps::charging_connector_choices(country.as_ref())
+        .into_iter()
+        .map(Into::into)
+        .collect()
+}
+
 fn charging_voltage(
     voltage_volts: Option<u16>,
 ) -> Result<Option<ride_maps::SupplyVoltage>, MobileChargingError> {
@@ -361,6 +376,27 @@ fn charging_voltage(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn connector_catalogue_normalizes_location_and_preserves_invalid_location_fallback() {
+        let fallback = mobile_charging_connector_choices(None);
+        assert_eq!(
+            mobile_charging_connector_choices(Some("not-a-country".into())),
+            fallback
+        );
+        assert_eq!(
+            mobile_charging_connector_choices(Some("ZZ".into())),
+            fallback
+        );
+        let british = mobile_charging_connector_choices(Some("gb".into()));
+        assert_eq!(british.first(), Some(&MobileChargingConnectorDto::TypeG));
+        assert_eq!(british.len(), fallback.len());
+        assert_eq!(
+            british,
+            mobile_charging_connector_choices(Some("GB".into()))
+        );
+    }
+
     use crate::{
         MobileChargingConnectorDto, MobileChargingCostDto, MobileChargingPriceBasisDto,
         MobileMapCoordinateDto,

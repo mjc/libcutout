@@ -5,6 +5,16 @@ import XCTest
 @testable import CutoutMobile
 
 final class ChargingBoundaryTests: XCTestCase {
+    func testRegionalConnectorCatalogueCrossesTheSharedBoundaryWithoutDroppingOptions() {
+        let fallback = mobileChargingConnectorChoices(locationCountryCode: nil)
+        let british = mobileChargingConnectorChoices(locationCountryCode: "gb")
+        XCTAssertEqual(british.first, .typeG)
+        XCTAssertEqual(british.last, .unknown)
+        XCTAssertEqual(Set(british), Set(fallback))
+        XCTAssertEqual(british.count, fallback.count)
+        XCTAssertEqual(mobileChargingConnectorChoices(locationCountryCode: "invalid"), fallback)
+    }
+
     func testMinimumFieldsStayOptionalAndBlankAccessNoteReturnsTypedRustError() async throws {
         var fields = MobileChargingInputDto(
             coordinate: MobileMapCoordinateDto(latitudeDegrees: 40, longitudeDegrees: -105),

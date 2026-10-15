@@ -363,6 +363,45 @@ final class ChargingSpotEditorModelTests: XCTestCase {
         XCTAssertEqual(draft.connectorSummary, [.unknown])
     }
 
+    func testConnectorOrderingUsesGPSCountryIndependentlyOfManualSuggestionCountry() {
+        let model = ChargingSpotEditorModel(
+            coordinate: coordinate(), countryCode: "GB", inputLocale: Locale(identifier: "de_DE"))
+        let fallback = mobileChargingConnectorChoices(locationCountryCode: nil)
+        XCTAssertEqual(model.connectorChoices, fallback)
+
+        model.chooseCountryCode("US")
+        XCTAssertEqual(model.connectorChoices, fallback)
+        model.setCountryCode("gb")
+        XCTAssertEqual(model.connectorChoices.first, .typeG)
+        XCTAssertEqual(model.countryCode, "US")
+        XCTAssertEqual(model.powerSuggestion.voltageVolts, 120)
+
+        model.setCountryCode(nil)
+        XCTAssertEqual(model.connectorChoices, fallback)
+        XCTAssertEqual(model.countryCode, "US")
+        model.setCountryCode("not-a-country")
+        XCTAssertEqual(model.connectorChoices, fallback)
+    }
+
+    func testConnectorReorderingDoesNotSelectOrReplaceExistingSupplyChoices() {
+        let model = ChargingSpotEditorModel(coordinate: coordinate())
+        model.setCountryCode("US")
+        XCTAssertTrue(model.supplies.isEmpty)
+        model.addSupply()
+        model.supplies[0].voltageText = "240"
+        model.supplies[0].set(.typeI, selected: true)
+        let original = model.supplies[0].value()
+
+        model.setCountryCode("GB")
+
+        XCTAssertEqual(model.connectorChoices.first, .typeG)
+        XCTAssertEqual(model.supplies[0].value(), original)
+        XCTAssertTrue(model.connectorChoices.contains(.typeI))
+        XCTAssertEqual(Set(model.connectorChoices).count, model.connectorChoices.count)
+        XCTAssertEqual(
+            Set(model.connectorChoices), Set(ChargingSpotPresentation.connectorOptions.map(\.value)))
+    }
+
     func testAutomaticCountryCannotReplaceManualCountryChoice() {
         let model = ChargingSpotEditorModel(coordinate: coordinate(), countryCode: "US")
         model.chooseCountryCode("GB")

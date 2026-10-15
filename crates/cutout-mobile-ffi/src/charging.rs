@@ -12,8 +12,8 @@ mod sync_policy;
 mod validation;
 
 pub use conversion::{
-    mobile_charging_outlet_choices, mobile_charging_power_suggestion,
-    mobile_charging_vote_selection,
+    mobile_charging_connector_choices, mobile_charging_outlet_choices,
+    mobile_charging_power_suggestion, mobile_charging_vote_selection,
 };
 pub use discovery::{MobileChargingDiscovery, MobileChargingDiscoveryRequestDto};
 pub use dto::*;

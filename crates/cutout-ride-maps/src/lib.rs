@@ -10,6 +10,8 @@
 //! Rust-owned ride recording and geospatial domain primitives.
 
 mod charging;
+mod charging_connector_catalogue;
+pub use charging_connector_catalogue::charging_connector_choices;
 mod charging_location;
 pub use charging_location::{
     CHARGING_LOCATION_FIX_MAXIMUM_AGE_SECONDS, ChargingLocationFix, select_charging_location_fix,

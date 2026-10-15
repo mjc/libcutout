@@ -344,7 +344,7 @@ struct ChargingSpotEditorView: View {
         ForEach(model.supplies) { draft in
             ChargingSupplyForm(
                 draft: draft,
-                outletChoices: model.outletChoices,
+                connectorChoices: model.connectorChoices,
                 focusedField: $focusedField,
                 validationIssue: supplyIssue(for: draft.id)
             ) {

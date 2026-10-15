@@ -3,16 +3,10 @@ import SwiftUI
 
 struct ChargingSupplyForm: View {
     @Bindable var draft: ChargingSupplyDraft
-    let outletChoices: [MobileChargingConnectorDto]
+    let connectorChoices: [MobileChargingConnectorDto]
     @FocusState.Binding var focusedField: ChargingSpotEditorField?
     var validationIssue: MobileChargingFieldIssueDto? = nil
     let onRemove: () -> Void
-
-    private var choices: [MobileChargingConnectorDto] {
-        var values = outletChoices + ChargingSpotPresentation.connectorOptions.map(\.value) + draft.connectors
-        if !values.contains(.unknown) { values.append(.unknown) }
-        return values.filter { if case .other = $0 { false } else { true } }.uniqued()
-    }
 
     var body: some View {
         Group {
@@ -52,7 +46,7 @@ struct ChargingSupplyForm: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
             Menu {
-                ForEach(choices, id: \.self) { connector in
+                ForEach(connectorChoices, id: \.self) { connector in
                     Toggle(
                         isOn: Binding(
                             get: { draft.connectors.contains(connector) },

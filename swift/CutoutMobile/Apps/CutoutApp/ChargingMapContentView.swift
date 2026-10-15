@@ -233,7 +233,11 @@ struct ChargingMapContentView: View {
     }
 
     private func resolveEditorCountry() async {
-        guard let editor, let location = locationSamples.freshLocation() else { return }
+        guard let editor else { return }
+        guard let location = locationSamples.freshLocation() else {
+            editor.setCountryCode(nil)
+            return
+        }
         let countryCode = await ChargingCountryLookup.countryCode(at: Self.dto(location.coordinate))
         guard !Task.isCancelled else { return }
         editor.setCountryCode(countryCode)
