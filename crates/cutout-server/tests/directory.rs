@@ -1,6 +1,7 @@
 use cutout_server::{Store, TrustedProxy, router};
 use reqwest::{Client, StatusCode};
 use serde_json::{Value, json};
+use sha2::Digest;
 use tempfile::TempDir;
 use uuid::Uuid;
 
@@ -1075,6 +1076,427 @@ async fn failed_creation_rolls_back_spot_operation_and_quota_and_can_be_retried(
             .len(),
         1
     );
+}
+
+#[tokio::test]
+#[allow(clippy::too_many_lines)]
+async fn deleting_current_identity_preserves_public_spots_and_returns_a_durable_receipt() {
+    let directory = TempDir::new().expect("directory");
+    let path = directory.path().join("deletion.sqlite");
+    let server = Server::start(&path).await;
+    let owner = server.identity().await;
+    let other = server.identity().await;
+    let created = server.create(&owner, minimum("paid")).await;
+    let spot_id = created["state"]["id"].as_str().expect("spot id");
+    let other_vote = json!({
+        "operation_id":Uuid::new_v4().to_string(),
+        "expected_revision":0,
+        "vote":"up"
+    });
+    assert_eq!(
+        server
+            .write(
+                reqwest::Method::PUT,
+                &format!("/v1/charging-spots/{spot_id}/vote"),
+                &other,
+                &other_vote,
+            )
+            .await
+            .status(),
+        StatusCode::OK
+    );
+
+    let connection = rusqlite::Connection::open(&path).expect("database");
+    let owner_id: String = connection
+        .query_row(
+            "SELECT owner_id FROM spots WHERE id = ?1",
+            [spot_id],
+            |row| row.get(0),
+        )
+        .expect("owner id");
+    let report_id = Uuid::new_v4().to_string();
+    connection
+        .execute(
+            "INSERT INTO votes (spot_id, contributor_id, revision, value)
+             VALUES (?1, ?2, 1, 'down')",
+            [spot_id, owner_id.as_str()],
+        )
+        .expect("owner vote");
+    connection
+        .execute(
+            "INSERT INTO reports
+             (id, spot_id, reporter_id, revision, reason, message, status, created_at_ms)
+             VALUES (?1, ?2, ?3, 1, 'other', 'private report text', 'open', 1)",
+            rusqlite::params![report_id, spot_id, owner_id],
+        )
+        .expect("private report");
+    connection
+        .execute(
+            "INSERT INTO verifications
+             (spot_id, contributor_id, operation_id, observed_revision, created_at_ms)
+             VALUES (?1, ?2, ?3, 1, 1)",
+            rusqlite::params![spot_id, owner_id, Uuid::new_v4().to_string()],
+        )
+        .expect("verification receipt");
+    connection
+        .execute(
+            "INSERT INTO moderation_audit
+             (actor_id, target_id, action, note, created_at_ms)
+             VALUES (?1, ?2, 'review', 'private authored audit note', 1)",
+            [owner_id.as_str(), spot_id],
+        )
+        .expect("authored audit entry");
+    connection
+        .execute(
+            "INSERT INTO moderation_audit
+             (actor_id, target_id, action, note, created_at_ms)
+             VALUES (?1, ?2, 'resolve_report', 'private report note', 1)",
+            [owner_id.as_str(), report_id.as_str()],
+        )
+        .expect("audit entry for deleted report");
+
+    let endpoint = format!("{}/v1/identities/current", server.address);
+    let supplied_identity = server
+        .client
+        .delete(&endpoint)
+        .bearer_auth(&other)
+        .json(&json!({"identity":owner_id}))
+        .send()
+        .await
+        .expect("caller-supplied identity");
+    assert_eq!(supplied_identity.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        server
+            .client
+            .delete(&endpoint)
+            .send()
+            .await
+            .expect("unauthenticated deletion")
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    let deletion_a = server.client.delete(&endpoint).bearer_auth(&owner).send();
+    let deletion_b = server.client.delete(&endpoint).bearer_auth(&owner).send();
+    let (first, concurrent_retry) = tokio::join!(deletion_a, deletion_b);
+    let first = first.expect("delete current identity");
+    let concurrent_retry = concurrent_retry.expect("concurrent deletion retry");
+    assert_eq!(first.status(), StatusCode::OK);
+    assert_eq!(concurrent_retry.status(), StatusCode::OK);
+    let first: Value = first.json().await.expect("deletion receipt");
+    assert_eq!(
+        concurrent_retry
+            .json::<Value>()
+            .await
+            .expect("concurrent receipt"),
+        first
+    );
+    assert_eq!(first["status"], "completed");
+    assert!(first["completed_at_ms"].as_u64().is_some());
+
+    let retry = server
+        .client
+        .delete(&endpoint)
+        .bearer_auth(&owner)
+        .send()
+        .await
+        .expect("retry deletion");
+    assert_eq!(retry.status(), StatusCode::OK);
+    assert_eq!(retry.json::<Value>().await.expect("retry receipt"), first);
+    assert_eq!(
+        server
+            .write(
+                reqwest::Method::POST,
+                "/v1/charging-spots",
+                &owner,
+                &json!({"operation_id":Uuid::new_v4().to_string(),"spot":minimum("free")}),
+            )
+            .await
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+
+    let public = server
+        .read(&format!("/v1/charging-spots/{spot_id}"), None)
+        .await;
+    assert_eq!(
+        public["access_note"],
+        created["state"]["spot"]["access_note"]
+    );
+    assert!(
+        public["change_sequence"].as_u64().expect("sequence")
+            > created["state"]["change_sequence"]
+                .as_u64()
+                .expect("created sequence")
+    );
+    assert_eq!(public["votes"], json!({"up":1,"down":0}));
+
+    let (anonymous_owner_id, token_hash): (String, String) = connection
+        .query_row(
+            "SELECT owner_id, token_hash FROM spots
+             JOIN contributors ON contributors.id = spots.owner_id
+             WHERE spots.id = ?1",
+            [spot_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("anonymous spot owner");
+    assert_eq!(anonymous_owner_id, "00000000-0000-4000-8000-000000000001");
+    assert_eq!(token_hash, "anonymous-system-principal-no-login");
+    let status: String = connection
+        .query_row("SELECT status FROM spots WHERE id = ?1", [spot_id], |row| {
+            row.get(0)
+        })
+        .expect("retained status");
+    assert_eq!(status, "published");
+    for (table, column) in [
+        ("votes", "contributor_id"),
+        ("operations", "contributor_id"),
+        ("reports", "reporter_id"),
+        ("verifications", "contributor_id"),
+    ] {
+        let count: u64 = connection
+            .query_row(
+                &format!("SELECT COUNT(*) FROM {table} WHERE {column} = ?1"),
+                [&owner_id],
+                |row| row.get(0),
+            )
+            .expect("private account data");
+        assert_eq!(count, 0, "{table} retains deleted account data");
+    }
+    let remaining_quotas: u64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM quotas
+             WHERE principal = ?1 OR principal = ?2 OR principal LIKE ?3",
+            rusqlite::params![
+                format!("write:{owner_id}"),
+                format!("new-spots:{owner_id}"),
+                format!("report:{owner_id}:%")
+            ],
+            |row| row.get(0),
+        )
+        .expect("deleted account quotas");
+    assert_eq!(remaining_quotas, 0);
+    let (audit_actor, audit_note): (String, String) = connection
+        .query_row(
+            "SELECT actor_id, note FROM moderation_audit WHERE target_id = ?1",
+            [spot_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("anonymized audit");
+    assert_eq!(audit_actor, "00000000-0000-4000-8000-000000000001");
+    assert_eq!(audit_note, "Account deleted; author anonymized.");
+    let deleted_report_audit: u64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM moderation_audit WHERE target_id = ?1",
+            [&report_id],
+            |row| row.get(0),
+        )
+        .expect("deleted report audit count");
+    assert_eq!(deleted_report_audit, 0);
+    let deleted_identities: u64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM contributors WHERE token_hash = ?1",
+            [format!("{:x}", sha2::Sha256::digest(owner.as_bytes()))],
+            |row| row.get(0),
+        )
+        .expect("deleted credential count");
+    assert_eq!(deleted_identities, 0);
+
+    drop(server);
+    let restarted = Server::start(&path).await;
+    let after_restart = restarted
+        .client
+        .delete(endpoint_for(&restarted, "/v1/identities/current"))
+        .bearer_auth(&owner)
+        .send()
+        .await
+        .expect("restart retry");
+    assert_eq!(after_restart.status(), StatusCode::OK);
+    assert_eq!(after_restart.json::<Value>().await.expect("receipt"), first);
+    assert_eq!(
+        restarted
+            .write(
+                reqwest::Method::PUT,
+                &format!("/v1/charging-spots/{spot_id}/vote"),
+                &owner,
+                &json!({"operation_id":Uuid::new_v4().to_string(),"expected_revision":0,"vote":"down"}),
+            )
+            .await
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+}
+
+#[tokio::test]
+async fn failed_deletion_rolls_back_account_transfer_and_can_be_retried() {
+    let directory = TempDir::new().expect("directory");
+    let path = directory.path().join("deletion-rollback.sqlite");
+    let server = Server::start(&path).await;
+    let owner = server.identity().await;
+    let created = server.create(&owner, minimum("paid")).await;
+    let spot_id = created["state"]["id"].as_str().expect("spot id");
+    let connection = rusqlite::Connection::open(&path).expect("database");
+    connection
+        .execute_batch(
+            "CREATE TRIGGER reject_deletion_receipt BEFORE INSERT ON deletion_receipts
+             BEGIN SELECT RAISE(ABORT, 'test receipt failure'); END;",
+        )
+        .expect("install failure trigger");
+
+    let endpoint = format!("{}/v1/identities/current", server.address);
+    let failed = server
+        .client
+        .delete(&endpoint)
+        .bearer_auth(&owner)
+        .send()
+        .await
+        .expect("failed deletion");
+    assert_eq!(failed.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let account_rows: u64 = connection
+        .query_row("SELECT COUNT(*) FROM contributors", [], |row| row.get(0))
+        .expect("account row rollback");
+    assert_eq!(
+        account_rows, 2,
+        "deleted account and Anonymous principal remain"
+    );
+    let owner_id: String = connection
+        .query_row(
+            "SELECT owner_id FROM spots WHERE id = ?1",
+            [spot_id],
+            |row| row.get(0),
+        )
+        .expect("ownership rollback");
+    let still_authenticates = server
+        .client
+        .post(format!("{}/v1/charging-spots", server.address))
+        .bearer_auth(&owner)
+        .json(&json!({"operation_id":Uuid::new_v4().to_string(),"spot":minimum("free")}))
+        .send()
+        .await
+        .expect("credential after rollback");
+    assert_eq!(still_authenticates.status(), StatusCode::CREATED);
+    assert_ne!(owner_id, "00000000-0000-4000-8000-000000000001");
+    let receipts: u64 = connection
+        .query_row("SELECT COUNT(*) FROM deletion_receipts", [], |row| {
+            row.get(0)
+        })
+        .expect("receipt rollback");
+    assert_eq!(receipts, 0);
+
+    connection
+        .execute_batch("DROP TRIGGER reject_deletion_receipt;")
+        .expect("remove failure trigger");
+    let completed = server
+        .client
+        .delete(&endpoint)
+        .bearer_auth(&owner)
+        .send()
+        .await
+        .expect("retry deletion");
+    assert_eq!(completed.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn a_revoked_account_can_still_be_deleted_with_its_own_credential() {
+    let directory = TempDir::new().expect("directory");
+    let path = directory.path().join("revoked-deletion.sqlite");
+    let server = Server::start(&path).await;
+    let owner = server.identity().await;
+    let created = server.create(&owner, minimum("paid")).await;
+    let spot_id = created["state"]["id"].as_str().expect("spot id");
+    let connection = rusqlite::Connection::open(&path).expect("database");
+    let owner_id: String = connection
+        .query_row(
+            "SELECT owner_id FROM spots WHERE id = ?1",
+            [spot_id],
+            |row| row.get(0),
+        )
+        .expect("owner id");
+
+    let revoked = std::process::Command::new(env!("CARGO_BIN_EXE_cutout-server"))
+        .arg("--database")
+        .arg(&path)
+        .arg("revoke")
+        .arg("--identity")
+        .arg(&owner_id)
+        .output()
+        .expect("revoke account");
+    assert!(revoked.status.success());
+    assert_eq!(
+        server
+            .write(
+                reqwest::Method::POST,
+                "/v1/charging-spots",
+                &owner,
+                &json!({"operation_id":Uuid::new_v4().to_string(),"spot":minimum("free")}),
+            )
+            .await
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+
+    let deletion = server
+        .client
+        .delete(format!("{}/v1/identities/current", server.address))
+        .bearer_auth(&owner)
+        .send()
+        .await
+        .expect("delete revoked account");
+    assert_eq!(deletion.status(), StatusCode::OK);
+    assert_eq!(
+        deletion.json::<Value>().await.expect("receipt")["status"],
+        "completed"
+    );
+    let anonymous_owner: String = connection
+        .query_row(
+            "SELECT owner_id FROM spots WHERE id = ?1",
+            [spot_id],
+            |row| row.get(0),
+        )
+        .expect("retained spot owner");
+    assert_eq!(anonymous_owner, "00000000-0000-4000-8000-000000000001");
+}
+
+#[tokio::test]
+async fn expired_deletion_receipts_are_pruned_even_when_authentication_fails() {
+    let directory = TempDir::new().expect("directory");
+    let path = directory.path().join("expired-deletion-receipts.sqlite");
+    let server = Server::start(&path).await;
+    let owner = server.identity().await;
+    let deletion = server
+        .client
+        .delete(format!("{}/v1/identities/current", server.address))
+        .bearer_auth(&owner)
+        .send()
+        .await
+        .expect("delete account");
+    assert_eq!(deletion.status(), StatusCode::OK);
+
+    let connection = rusqlite::Connection::open(&path).expect("database");
+    connection
+        .execute(
+            "UPDATE deletion_receipts SET completed_at_ms = 0, expires_at_ms = 1",
+            [],
+        )
+        .expect("expire receipt");
+    let invalid_token = "a".repeat(64);
+    let failed_authentication = server
+        .client
+        .delete(format!("{}/v1/identities/current", server.address))
+        .bearer_auth(invalid_token)
+        .send()
+        .await
+        .expect("invalid deletion credential");
+    assert_eq!(failed_authentication.status(), StatusCode::UNAUTHORIZED);
+    let remaining: u64 = connection
+        .query_row("SELECT COUNT(*) FROM deletion_receipts", [], |row| {
+            row.get(0)
+        })
+        .expect("expired receipt count");
+    assert_eq!(remaining, 0);
+}
+
+fn endpoint_for(server: &Server, path: &str) -> String {
+    format!("{}{}", server.address, path)
 }
 
 #[tokio::test]

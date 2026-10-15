@@ -43,3 +43,38 @@ fn an_unknown_future_schema_is_rejected_without_downgrading() {
         .expect("version");
     assert_eq!(version, 2);
 }
+
+#[test]
+fn schema_one_receives_the_additive_account_deletion_migration() {
+    let directory = TempDir::new().expect("directory");
+    let path = directory.path().join("schema-one.sqlite");
+    let connection = Connection::open(&path).expect("database");
+    connection
+        .execute_batch(include_str!("../migrations/001_directory.sql"))
+        .expect("schema one");
+    drop(connection);
+
+    let store = Store::open(&path).expect("migrate schema one");
+    drop(store);
+    let connection = Connection::open(&path).expect("migrated database");
+    let version: u32 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .expect("version");
+    assert_eq!(version, 2);
+    let (token_hash, revoked_at_ms): (String, Option<u64>) = connection
+        .query_row(
+            "SELECT token_hash, revoked_at_ms FROM contributors
+             WHERE id = '00000000-0000-4000-8000-000000000001'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("anonymous system principal");
+    assert_eq!(token_hash, "anonymous-system-principal-no-login");
+    assert!(revoked_at_ms.is_some());
+    let receipts: u64 = connection
+        .query_row("SELECT COUNT(*) FROM deletion_receipts", [], |row| {
+            row.get(0)
+        })
+        .expect("deletion receipts table");
+    assert_eq!(receipts, 0);
+}

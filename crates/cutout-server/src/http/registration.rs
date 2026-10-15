@@ -1,7 +1,7 @@
 use super::TrustedProxy;
 use crate::{
     Error, Store,
-    store::{Identity, Registration},
+    store::{DeletionReceipt, Identity, Registration},
 };
 use axum::{
     Json,
@@ -29,6 +29,18 @@ pub(super) async fn identity(
         StatusCode::CREATED,
         Json(store.identity(Registration::Public { source }).await?),
     ))
+}
+
+pub(super) async fn delete_current(
+    State(store): State<Store>,
+    headers: HeaderMap,
+    body: Result<axum::body::Bytes, axum::extract::rejection::BytesRejection>,
+) -> Result<Json<DeletionReceipt>, Error> {
+    if !body.map_err(|_| Error::Invalid)?.is_empty() {
+        return Err(Error::Invalid);
+    }
+    let token = super::bearer_token(&headers)?.to_owned();
+    Ok(Json(store.delete_current(token).await?))
 }
 
 fn registration_source(

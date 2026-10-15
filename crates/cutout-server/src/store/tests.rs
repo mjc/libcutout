@@ -117,6 +117,99 @@ async fn moderator_credentials_are_rechecked_after_authentication() {
     assert_moderation_rejects(&store, &moderator, Error::Unauthorized).await;
 }
 
+#[tokio::test]
+async fn a_write_authenticated_before_deletion_is_fenced_in_its_transaction() {
+    use crate::model::{CreateRequest, OperationId, Pin, SpotInput};
+
+    let directory = tempfile::TempDir::new().expect("directory");
+    let store = Store::open(&directory.path().join("stale-actor.sqlite")).expect("store");
+    let identity = store
+        .identity(Registration::Operator {
+            role: Role::Contributor,
+        })
+        .await
+        .expect("identity");
+    let stale_actor = store
+        .authenticate(identity.token.clone())
+        .await
+        .expect("authenticate before deletion");
+    store
+        .revoke(identity.id)
+        .await
+        .expect("operator revoke before deletion");
+    store
+        .delete_current(identity.token)
+        .await
+        .expect("revoked identity can complete deletion");
+
+    let request = CreateRequest {
+        operation_id: OperationId::parse("00000000-0000-4000-8000-000000000123")
+            .expect("operation id"),
+        spot: SpotInput {
+            coordinate: Pin {
+                latitude_e7: 400_000_000,
+                longitude_e7: -1_050_000_000,
+            },
+            access_note: "Ask staff.".to_owned(),
+            cost: cutout_ride_maps::ChargingCost::Free,
+            name: None,
+            venue: None,
+            hours: None,
+            paid_terms: None,
+            price: None,
+            supplies: Vec::new(),
+        }
+        .validate()
+        .expect("valid spot"),
+    };
+    assert_eq!(
+        store
+            .create(stale_actor, request)
+            .await
+            .expect_err("stale actor write is rejected"),
+        Error::Unauthorized
+    );
+}
+
+#[tokio::test]
+async fn anonymous_principal_cannot_authenticate_even_if_its_row_is_misconfigured() {
+    use super::identity::ANONYMOUS_ID;
+
+    let directory = tempfile::TempDir::new().expect("directory");
+    let path = directory.path().join("anonymous-login.sqlite");
+    let store = Store::open(&path).expect("store");
+    let token = "a".repeat(64);
+    let connection = rusqlite::Connection::open(&path).expect("database");
+    connection
+        .execute(
+            "UPDATE contributors SET token_hash = ?1, revoked_at_ms = NULL WHERE id = ?2",
+            rusqlite::params![hash(token.as_bytes()), ANONYMOUS_ID],
+        )
+        .expect("misconfigured system principal");
+
+    assert_eq!(
+        store
+            .authenticate(token)
+            .await
+            .expect_err("Anonymous is never a login"),
+        Error::Unauthorized
+    );
+    let actor = super::Actor {
+        id: ANONYMOUS_ID.to_owned(),
+        role: Role::Contributor,
+    };
+    assert_eq!(
+        store
+            .call(move |connection| {
+                let transaction = connection.transaction().map_err(super::db_error)?;
+                super::ensure_actor(&transaction, &actor)
+            })
+            .await
+            .expect_err("Anonymous is never a write actor"),
+        Error::Unauthorized
+    );
+}
+
 async fn assert_moderation_rejects(store: &Store, actor: &super::ModeratorActor, expected: Error) {
     use crate::model::{
         ChangesQuery, ModerationAction, ModerationRequest, OperationId, ReportsQuery,
