@@ -80,3 +80,8 @@ or App Review acceptance. LIBCU-953 retains the existing review question about
 the product's public-content retention policy. Operators must enforce the
 documented 30-day backup expiry and deletion reconciliation before restoring
 older snapshots; the current service does not automate external backup handling.
+
+Deploy and verify the server deletion route before releasing the client flow.
+An older service returning 404 cannot confirm deletion; the client keeps the
+credential and contribution fence pending until a retry succeeds. A merged PR
+does not establish that the production service has been updated.
