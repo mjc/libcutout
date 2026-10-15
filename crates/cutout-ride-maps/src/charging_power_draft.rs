@@ -136,6 +136,19 @@ impl ChargingPowerDraft {
             PowerState::Confirmed(selection) => Some(&selection.supply().0),
         }
     }
+    /// Whether the displayed selection came from an explicit manual choice.
+    #[must_use]
+    pub fn is_manual(&self) -> bool {
+        match self.state.selection() {
+            Selection::Manual(_) => true,
+            Selection::Suggested(_) => false,
+        }
+    }
+    /// Whether the displayed selection has been explicitly included.
+    #[must_use]
+    pub fn is_confirmed(&self) -> bool {
+        self.confirmed_supply().is_some()
+    }
     /// Preserves deliberate manual choices when the current country changes.
     /// A replaced suggested value requires confirmation again.
     #[must_use]
@@ -173,10 +186,29 @@ impl ChargingPowerDraft {
         }
         self
     }
+    /// Changes editor venue context while preserving an explicit manual row.
+    /// Suggested rows follow [`Self::with_kind`] and remain unconfirmed.
+    #[must_use]
+    pub fn with_venue_kind(mut self, kind: ChargingSupplyKind) -> Self {
+        if self.is_manual() {
+            self.kind = kind;
+            self
+        } else {
+            self.with_kind(kind)
+        }
+    }
     /// Replaces the displayed power with a validated manual selection, still unconfirmed.
     #[must_use]
     pub fn with_selection(mut self, supply: ChargingSupply) -> Self {
         self.state = PowerState::Unconfirmed(Selection::Manual(DraftChargingSupply(supply)));
+        self
+    }
+    /// Marks the current displayed selection manual as soon as an editor gesture begins.
+    /// The current value is retained until a complete replacement is validated.
+    #[must_use]
+    pub fn begin_edit(mut self) -> Self {
+        let supply = self.state.selection().supply().clone();
+        self.state = PowerState::Unconfirmed(Selection::Manual(supply));
         self
     }
     /// Explicitly includes the current validated voltage/connector pairing.
@@ -229,4 +261,66 @@ fn suggestion(country: Option<&ChargingCountry>, kind: ChargingSupplyKind) -> Ch
         ChargingSupplyKind::EvStation => (None, ChargingConnector::Unknown),
     };
     ChargingSupply::single(voltage, connector)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ConnectorLabel;
+
+    #[test]
+    fn replaced_country_suggestion_loses_confirmation_but_same_suggestion_keeps_it() {
+        let us = ChargingCountry::new("us").unwrap();
+        let gb = ChargingCountry::new("GB").unwrap();
+        let confirmed =
+            ChargingPowerDraft::new(Some(us.clone()), ChargingSupplyKind::Outlet).confirm();
+        assert!(confirmed.is_confirmed());
+        assert!(confirmed.clone().with_country(Some(us)).is_confirmed());
+        let replaced = confirmed.with_country(Some(gb));
+        assert!(!replaced.is_confirmed());
+        assert!(!replaced.is_manual());
+    }
+
+    #[test]
+    fn manual_unknown_and_custom_rows_survive_country_and_ev_context() {
+        let original = ChargingSupply::new(
+            None,
+            vec![ChargingConnector::Other(
+                ConnectorLabel::new("über plug").unwrap(),
+            )],
+        )
+        .unwrap();
+        let draft = ChargingPowerDraft::new(None, ChargingSupplyKind::Outlet)
+            .with_selection(original.clone())
+            .confirm()
+            .with_country(Some(ChargingCountry::new("US").unwrap()))
+            .with_venue_kind(ChargingSupplyKind::EvStation);
+        assert!(draft.is_manual());
+        assert!(draft.is_confirmed());
+        assert_eq!(draft.confirmed_supply(), Some(&original));
+
+        let unknown = ChargingSupply::single(None, ChargingConnector::Unknown);
+        let draft = ChargingPowerDraft::new(None, ChargingSupplyKind::Outlet)
+            .with_selection(unknown.clone())
+            .confirm()
+            .with_venue_kind(ChargingSupplyKind::EvStation);
+        assert_eq!(draft.confirmed_supply(), Some(&unknown));
+    }
+
+    #[test]
+    fn beginning_an_incomplete_edit_changes_provenance_and_requires_confirmation() {
+        let draft = ChargingPowerDraft::new(
+            Some(ChargingCountry::new("US").unwrap()),
+            ChargingSupplyKind::Outlet,
+        )
+        .confirm()
+        .begin_edit();
+        assert!(draft.is_manual());
+        assert!(!draft.is_confirmed());
+        assert!(draft.confirmed_supply().is_none());
+        assert_eq!(
+            draft.selection().voltage(),
+            Some(SupplyVoltage::US_OUTLET_SUGGESTION)
+        );
+    }
 }

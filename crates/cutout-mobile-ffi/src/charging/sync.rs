@@ -1,7 +1,9 @@
+use super::sync_policy::result_for_error;
 use super::{
     MobileChargingBlockReasonDto, MobileChargingError, MobileChargingIdentityDto,
     MobileChargingInputDto, MobileChargingPendingActionDto, MobileChargingResolutionDto,
-    MobileChargingSyncConflictDto, MobileChargingSyncSummaryDto, MobileChargingWriteReceiptDto,
+    MobileChargingSyncConflictDto, MobileChargingSyncOutcome, MobileChargingSyncResult,
+    MobileChargingSyncSummaryDto, MobileChargingWriteReceiptDto,
     conversion::{input, input_dto, receipt_dto, storage_error},
 };
 use crate::{RideDatabaseHandle, persistence, ride_maps};
@@ -134,7 +136,7 @@ struct CountsResponse {
     down: u64,
 }
 
-#[derive(Clone, Copy, Deserialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
 enum ServerStatus {
     Published,
@@ -682,87 +684,224 @@ async fn synchronize(
     database_handle: persistence::RideDatabase,
     token: String,
 ) -> Result<MobileChargingSyncSummaryDto, MobileChargingError> {
-    tokio::time::timeout(
-        SYNC_TIMEOUT,
-        synchronize_once(client, database_handle, token),
-    )
-    .await
-    .map_err(|_| MobileChargingError::Network)?
+    synchronize_once(client, database_handle, token).await
 }
 
+#[cfg(test)]
 async fn synchronize_once(
     client: &ChargingHttpClient,
     database_handle: persistence::RideDatabase,
     token: String,
 ) -> Result<MobileChargingSyncSummaryDto, MobileChargingError> {
-    if token.len() != 64 || !token.bytes().all(|value| value.is_ascii_hexdigit()) {
-        return Err(MobileChargingError::Unauthorized);
+    synchronize_once_with_timeout(client, database_handle, token, SYNC_TIMEOUT).await
+}
+
+async fn synchronize_once_with_timeout(
+    client: &ChargingHttpClient,
+    database_handle: persistence::RideDatabase,
+    token: String,
+    timeout: Duration,
+) -> Result<MobileChargingSyncSummaryDto, MobileChargingError> {
+    let mut progress = None;
+    let result = tokio::time::timeout(timeout, async {
+        let pending_count = database(database_handle.clone(), |database| {
+            database.charging_outbox_count()
+        })
+        .await?;
+        let progress = progress.insert(MobileChargingSyncProgress {
+            pending_count,
+            downloaded: 0,
+            uploaded: 0,
+        });
+        let mut outcome =
+            match synchronize_once_pass(client, &database_handle, &token, progress).await {
+                Ok(outcome) => outcome,
+                Err(error) => finished(result_for_error(error)),
+            };
+        match database(database_handle, |database| database.charging_outbox_count()).await {
+            Ok(pending_count) => progress.pending_count = pending_count,
+            Err(error) if !is_terminal_block(outcome) => {
+                outcome = finished(result_for_error(error));
+            }
+            Err(_) => {}
+        }
+        Ok::<_, MobileChargingError>(outcome)
+    })
+    .await;
+    match result {
+        Ok(Ok(outcome)) => sync_summary(progress, outcome),
+        Ok(Err(error)) => Err(error),
+        Err(_) => sync_summary(progress, finished(MobileChargingSyncResult::Offline)),
     }
-    let mut uploaded = 0;
-    let mut blocked_error = None;
+}
+
+struct MobileChargingSyncProgress {
+    pending_count: u32,
+    downloaded: u32,
+    uploaded: u32,
+}
+
+fn sync_summary(
+    progress: Option<MobileChargingSyncProgress>,
+    outcome: MobileChargingSyncOutcome,
+) -> Result<MobileChargingSyncSummaryDto, MobileChargingError> {
+    let Some(progress) = progress else {
+        return Err(MobileChargingError::Network);
+    };
+    Ok(MobileChargingSyncSummaryDto {
+        pending_count: progress.pending_count,
+        downloaded: progress.downloaded,
+        uploaded: progress.uploaded,
+        outcome,
+    })
+}
+
+async fn synchronize_once_pass(
+    client: &ChargingHttpClient,
+    database_handle: &persistence::RideDatabase,
+    token: &str,
+    progress: &mut MobileChargingSyncProgress,
+) -> Result<MobileChargingSyncOutcome, MobileChargingError> {
+    if token.len() != 64 || !token.bytes().all(|value| value.is_ascii_hexdigit()) {
+        return Ok(finished(MobileChargingSyncResult::AuthenticationRequired));
+    }
+    let blocked_outcome =
+        upload_pending_operations(client, database_handle, token, progress).await?;
+    let more_changes = reconcile_directory(client, database_handle, token, progress).await?;
+    Ok(make_sync_outcome(
+        blocked_outcome,
+        more_changes,
+        progress.pending_count,
+    ))
+}
+
+async fn upload_pending_operations(
+    client: &ChargingHttpClient,
+    database_handle: &persistence::RideDatabase,
+    token: &str,
+    progress: &mut MobileChargingSyncProgress,
+) -> Result<Option<MobileChargingSyncResult>, MobileChargingError> {
+    let mut blocked_outcome = None;
     for _ in 0..MAX_UPLOADS_PER_SYNC {
         let operation = database(database_handle.clone(), |database| {
             database.next_charging_operation()
         })
         .await?;
         let Some(operation) = operation else { break };
-        match upload_operation(client, &database_handle, &token, operation.clone()).await {
-            Ok(()) => uploaded += 1,
-            Err(error @ (MobileChargingError::Conflict | MobileChargingError::Rejected)) => {
-                let kind = match error {
-                    MobileChargingError::Conflict => {
-                        persistence::ChargingOperationBlockKind::Conflict
-                    }
-                    MobileChargingError::Rejected => {
-                        persistence::ChargingOperationBlockKind::Invalid
-                    }
-                    _ => return Err(MobileChargingError::Network),
-                };
-                let already_blocked = if error == MobileChargingError::Conflict {
-                    let (_, mut more_changes) =
-                        download_page(client, &database_handle, Some(&token)).await?;
-                    for _ in 0..4 {
-                        if !more_changes {
-                            break;
-                        }
-                        (_, more_changes) =
-                            download_page(client, &database_handle, Some(&token)).await?;
-                    }
-                    let operation_id = operation.id;
-                    database(database_handle.clone(), move |database| {
-                        database.list_blocked_charging_operations().map(|blocked| {
-                            blocked
-                                .iter()
-                                .any(|value| value.operation.id == operation_id)
-                        })
-                    })
-                    .await?
-                } else {
-                    false
-                };
-                if !already_blocked {
-                    database(database_handle.clone(), move |database| {
-                        database.block_charging_operation(operation.id, kind)
-                    })
-                    .await?;
-                }
-                blocked_error.get_or_insert(error);
+        match upload_operation(client, database_handle, token, operation.clone()).await {
+            Ok(()) => {
+                progress.uploaded = progress.uploaded.saturating_add(1);
+                progress.pending_count = progress.pending_count.saturating_sub(1);
             }
-            Err(error) => return Err(error),
+            Err(error) => {
+                if let Some(kind) = block_kind(error) {
+                    block_rejected_operation(
+                        client,
+                        database_handle,
+                        token,
+                        operation,
+                        kind,
+                        progress,
+                    )
+                    .await?;
+                    if blocked_outcome.is_none() {
+                        blocked_outcome = Some(result_for_error(error));
+                    }
+                } else {
+                    return Err(error);
+                }
+            }
         }
     }
-    let (downloaded, more_changes) = download_page(client, &database_handle, Some(&token)).await?;
-    let pending_count =
-        database(database_handle, |database| database.charging_outbox_count()).await?;
-    if let Some(error) = blocked_error {
-        return Err(error);
-    }
-    Ok(MobileChargingSyncSummaryDto {
-        pending_count,
-        downloaded,
-        uploaded,
-        more_work: more_changes || pending_count > 0,
+    Ok(blocked_outcome)
+}
+
+async fn reconcile_directory(
+    client: &ChargingHttpClient,
+    database_handle: &persistence::RideDatabase,
+    token: &str,
+    progress: &mut MobileChargingSyncProgress,
+) -> Result<bool, MobileChargingError> {
+    let (count, more_changes) = download_page(client, database_handle, Some(token)).await?;
+    progress.downloaded = progress.downloaded.saturating_add(count);
+    progress.pending_count = database(database_handle.clone(), |database| {
+        database.charging_outbox_count()
     })
+    .await?;
+    Ok(more_changes)
+}
+
+fn make_sync_outcome(
+    blocked: Option<MobileChargingSyncResult>,
+    more_changes: bool,
+    pending_count: u32,
+) -> MobileChargingSyncOutcome {
+    match blocked {
+        Some(result) => finished(result),
+        None if more_changes || pending_count > 0 => MobileChargingSyncOutcome::MoreWork,
+        None => finished(MobileChargingSyncResult::Synced),
+    }
+}
+
+fn is_terminal_block(outcome: MobileChargingSyncOutcome) -> bool {
+    match outcome {
+        MobileChargingSyncOutcome::MoreWork => false,
+        MobileChargingSyncOutcome::Finished { result } => {
+            result == MobileChargingSyncResult::Conflict
+                || result == MobileChargingSyncResult::Rejected
+        }
+    }
+}
+
+fn block_kind(error: MobileChargingError) -> Option<persistence::ChargingOperationBlockKind> {
+    match error {
+        MobileChargingError::Conflict => Some(persistence::ChargingOperationBlockKind::Conflict),
+        MobileChargingError::Rejected => Some(persistence::ChargingOperationBlockKind::Invalid),
+        _ => None,
+    }
+}
+
+async fn block_rejected_operation(
+    client: &ChargingHttpClient,
+    database_handle: &persistence::RideDatabase,
+    token: &str,
+    operation: persistence::ChargingOperation,
+    kind: persistence::ChargingOperationBlockKind,
+    progress: &mut MobileChargingSyncProgress,
+) -> Result<(), MobileChargingError> {
+    let already_blocked = if kind == persistence::ChargingOperationBlockKind::Conflict {
+        let mut more_changes = true;
+        for _ in 0..5 {
+            if !more_changes {
+                break;
+            }
+            let (count, remaining) = download_page(client, database_handle, Some(token)).await?;
+            progress.downloaded = progress.downloaded.saturating_add(count);
+            more_changes = remaining;
+        }
+        let operation_id = operation.id;
+        database(database_handle.clone(), move |database| {
+            database.list_blocked_charging_operations().map(|blocked| {
+                blocked
+                    .iter()
+                    .any(|value| value.operation.id == operation_id)
+            })
+        })
+        .await?
+    } else {
+        false
+    };
+    if !already_blocked {
+        database(database_handle.clone(), move |database| {
+            database.block_charging_operation(operation.id, kind)
+        })
+        .await?;
+    }
+    Ok(())
+}
+
+fn finished(result: MobileChargingSyncResult) -> MobileChargingSyncOutcome {
+    MobileChargingSyncOutcome::Finished { result }
 }
 
 #[cfg(test)]
@@ -791,7 +930,7 @@ async fn refresh_directory_once(
             pending_count,
             downloaded: 0,
             uploaded: 0,
-            more_work: true,
+            outcome: finished(MobileChargingSyncResult::Pending),
         });
     }
     let (downloaded, more_changes) = download_page(client, &database_handle, None).await?;
@@ -801,7 +940,13 @@ async fn refresh_directory_once(
         pending_count,
         downloaded,
         uploaded: 0,
-        more_work: more_changes || pending_count > 0,
+        outcome: if more_changes {
+            MobileChargingSyncOutcome::MoreWork
+        } else if pending_count > 0 {
+            finished(MobileChargingSyncResult::Pending)
+        } else {
+            finished(MobileChargingSyncResult::Synced)
+        },
     })
 }
 
@@ -810,23 +955,27 @@ async fn refresh_directory_once(
 impl RideDatabaseHandle {
     /// Synchronizes bounded directory changes and retryable local submissions.
     ///
+    /// Progress and service failures are returned as a typed summary outcome. A storage setup,
+    /// database read, or lock timeout can still return an error before a progress record exists.
+    ///
     /// # Errors
-    /// Returns a typed authentication, server, network, or storage error.
+    /// Returns an error when the database is unavailable, the sync lock times out, or request
+    /// setup fails before the progress summary can be constructed.
     pub async fn synchronize_charging_spots(
         &self,
         token: String,
     ) -> Result<MobileChargingSyncSummaryDto, MobileChargingError> {
-        tokio::time::timeout(SYNC_TIMEOUT, async {
-            let _guard = self.charging_sync_lock.lock().await;
-            synchronize_once(
-                &ChargingHttpClient::production()?,
-                self.inner.clone(),
-                token,
-            )
+        let started = tokio::time::Instant::now();
+        let _guard = tokio::time::timeout(SYNC_TIMEOUT, self.charging_sync_lock.lock())
             .await
-        })
+            .map_err(|_| MobileChargingError::Network)?;
+        synchronize_once_with_timeout(
+            &ChargingHttpClient::production()?,
+            self.inner.clone(),
+            token,
+            SYNC_TIMEOUT.saturating_sub(started.elapsed()),
+        )
         .await
-        .map_err(|_| MobileChargingError::Network)?
     }
 
     /// Refreshes public directory pages when no local contribution is awaiting acknowledgement.
@@ -966,6 +1115,14 @@ mod tests {
 
     fn database_path(label: &str) -> PathBuf {
         std::env::temp_dir().join(format!("cutout-charging-{label}-{}.sqlite", Uuid::new_v4()))
+    }
+
+    #[test]
+    fn sync_timeout_without_initial_progress_returns_network_error() {
+        assert_eq!(
+            sync_summary(None, finished(MobileChargingSyncResult::Offline)),
+            Err(MobileChargingError::Network)
+        );
     }
 
     fn test_input() -> Result<ride_maps::NewChargingSpot, Box<dyn std::error::Error>> {
@@ -1129,6 +1286,33 @@ mod tests {
         }
     }
 
+    async fn fail_second_create_request(
+        State(failed_second): State<Arc<AtomicBool>>,
+        request: Request<axum::body::Body>,
+        next: Next,
+    ) -> Response {
+        let is_create =
+            request.method() == Method::POST && request.uri().path() == "/v1/charging-spots";
+        if is_create && failed_second.swap(true, Ordering::SeqCst) {
+            StatusCode::SERVICE_UNAVAILABLE.into_response()
+        } else {
+            next.run(request).await
+        }
+    }
+
+    async fn delay_second_create_request(
+        State(delayed_second): State<Arc<AtomicBool>>,
+        request: Request<axum::body::Body>,
+        next: Next,
+    ) -> Response {
+        let is_create =
+            request.method() == Method::POST && request.uri().path() == "/v1/charging-spots";
+        if is_create && delayed_second.swap(true, Ordering::SeqCst) {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        }
+        next.run(request).await
+    }
+
     #[test]
     fn removed_duplicate_state_accepts_only_a_valid_canonical_uuid() {
         let duplicate_id = Uuid::new_v4().to_string();
@@ -1264,6 +1448,145 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn conflict_summary_keeps_downloaded_and_uploaded_progress()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let server_path = database_path("sync-conflict-progress-server");
+        let local_path = database_path("sync-conflict-progress-local");
+        let server_store = cutout_server::Store::open(&server_path)?;
+        let (base_url, task) = start_server(cutout_server::router(server_store)).await?;
+        let client = ChargingHttpClient::loopback(&base_url)?;
+        let local = persistence::RideDatabase::open(&local_path)?;
+        let identity = register(&client).await?;
+        let receipt = local.save_charging_spot(test_input()?)?;
+        let initial = synchronize(&client, local.clone(), identity.token.clone()).await?;
+        assert_eq!(initial.uploaded, 1);
+
+        let spot = local
+            .charging_spot(receipt.point_id)?
+            .ok_or("created spot missing")?;
+        let remote_id = spot.remote_id.ok_or("remote identity missing")?;
+        let verification = json_body(&RevisionRequest {
+            operation_id: Uuid::new_v4(),
+            expected_revision: 1,
+        })?;
+        let _: MutationReceiptResponse = client
+            .request(
+                Method::POST,
+                &format!("v1/charging-spots/{}/verification", remote_id.as_uuid()),
+                Some(&identity.token),
+                Some(verification),
+            )
+            .await?;
+        let edited_input = ride_maps::NewChargingSpot::new(
+            ride_maps::Coordinate::from_degrees(39.7392, -104.9903)?,
+            "Use the north entrance",
+            ride_maps::ChargingCost::Free,
+        )?;
+        local.edit_charging_spot(receipt.point_id, spot.local_revision, edited_input)?;
+        let second_input = ride_maps::NewChargingSpot::new(
+            ride_maps::Coordinate::from_degrees(39.8, -104.9)?,
+            "Ask at the front desk",
+            ride_maps::ChargingCost::Free,
+        )?;
+        local.save_charging_spot(second_input)?;
+
+        let summary = synchronize(&client, local.clone(), identity.token).await?;
+
+        assert_eq!(
+            summary.outcome,
+            finished(MobileChargingSyncResult::Conflict)
+        );
+        assert_eq!(summary.pending_count, 1);
+        assert_eq!(summary.uploaded, 1);
+        assert_eq!(summary.downloaded, 2);
+        assert_eq!(local.list_blocked_charging_operations()?.len(), 1);
+
+        task.abort();
+        drop(local);
+        let _ = std::fs::remove_file(server_path);
+        let _ = std::fs::remove_file(local_path);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn midpass_network_failure_keeps_earlier_upload_progress()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let server_path = database_path("sync-network-progress-server");
+        let local_path = database_path("sync-network-progress-local");
+        let server_store = cutout_server::Store::open(&server_path)?;
+        let router = cutout_server::router(server_store).layer(middleware::from_fn_with_state(
+            Arc::new(AtomicBool::new(false)),
+            fail_second_create_request,
+        ));
+        let (base_url, task) = start_server(router).await?;
+        let client = ChargingHttpClient::loopback(&base_url)?;
+        let local = persistence::RideDatabase::open(&local_path)?;
+        let identity = register(&client).await?;
+        local.save_charging_spot(test_input()?)?;
+        let second_input = ride_maps::NewChargingSpot::new(
+            ride_maps::Coordinate::from_degrees(39.8, -104.9)?,
+            "Ask at the front desk",
+            ride_maps::ChargingCost::Free,
+        )?;
+        local.save_charging_spot(second_input)?;
+
+        let summary = synchronize(&client, local.clone(), identity.token).await?;
+
+        assert_eq!(summary.outcome, finished(MobileChargingSyncResult::Offline));
+        assert_eq!(summary.pending_count, 1);
+        assert_eq!(summary.uploaded, 1);
+        assert_eq!(summary.downloaded, 0);
+
+        task.abort();
+        drop(local);
+        let _ = std::fs::remove_file(server_path);
+        let _ = std::fs::remove_file(local_path);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn sync_deadline_keeps_committed_upload_progress()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let server_path = database_path("sync-deadline-progress-server");
+        let local_path = database_path("sync-deadline-progress-local");
+        let server_store = cutout_server::Store::open(&server_path)?;
+        let router = cutout_server::router(server_store).layer(middleware::from_fn_with_state(
+            Arc::new(AtomicBool::new(false)),
+            delay_second_create_request,
+        ));
+        let (base_url, task) = start_server(router).await?;
+        let client = ChargingHttpClient::loopback(&base_url)?;
+        let local = persistence::RideDatabase::open(&local_path)?;
+        let identity = register(&client).await?;
+        local.save_charging_spot(test_input()?)?;
+        let second_input = ride_maps::NewChargingSpot::new(
+            ride_maps::Coordinate::from_degrees(39.8, -104.9)?,
+            "Ask at the front desk",
+            ride_maps::ChargingCost::Free,
+        )?;
+        local.save_charging_spot(second_input)?;
+
+        let summary = synchronize_once_with_timeout(
+            &client,
+            local.clone(),
+            identity.token,
+            Duration::from_secs(2),
+        )
+        .await?;
+
+        assert_eq!(summary.outcome, finished(MobileChargingSyncResult::Offline));
+        assert_eq!(summary.pending_count, 1);
+        assert_eq!(summary.uploaded, 1);
+        assert_eq!(summary.downloaded, 0);
+
+        task.abort();
+        drop(local);
+        let _ = std::fs::remove_file(server_path);
+        let _ = std::fs::remove_file(local_path);
+        Ok(())
+    }
+
     async fn vote_then_withdraw_before_sync(
         local: &persistence::RideDatabase,
         base_url: &str,
@@ -1308,7 +1631,7 @@ mod tests {
             .iter()
             .find(|item| item.id == remote_id.as_uuid().to_string())
             .ok_or("withdrawn spot missing from server changes")?;
-        assert!(matches!(server_spot.status, ServerStatus::Withdrawn));
+        assert_eq!(server_spot.status, ServerStatus::Withdrawn);
         Ok(())
     }
 
@@ -1337,7 +1660,14 @@ mod tests {
             identity.token.clone(),
         )
         .await;
-        assert!(matches!(first, Err(MobileChargingError::Network)));
+        let retained_failure_progress = match first {
+            Ok(summary) => {
+                summary.outcome == finished(MobileChargingSyncResult::Offline)
+                    && summary.uploaded == 0
+            }
+            Err(_) => false,
+        };
+        assert!(retained_failure_progress);
 
         // The operation replay keeps its original applied_revision, while the server
         // returns the current state after a later verification has advanced the spot.
@@ -1518,7 +1848,10 @@ mod tests {
         let (url, task) =
             start_server(Router::new().route("/v1/identities", post(malformed))).await?;
         let result = register(&ChargingHttpClient::loopback(&url)?).await;
-        assert!(matches!(result, Err(MobileChargingError::Network)));
+        assert!(match result {
+            Err(MobileChargingError::Network) => true,
+            _ => false,
+        });
         task.abort();
         Ok(())
     }
@@ -1540,7 +1873,10 @@ mod tests {
         );
         let huge: Result<serde_json::Value, _> =
             client.request(Method::GET, "huge", None, None).await;
-        assert!(matches!(huge, Err(MobileChargingError::Network)));
+        assert!(match huge {
+            Err(MobileChargingError::Network) => true,
+            _ => false,
+        });
         task.abort();
         Ok(())
     }
@@ -1559,7 +1895,10 @@ mod tests {
         let token = "a".repeat(64);
         let result =
             download_page(&ChargingHttpClient::loopback(&url)?, &local, Some(&token)).await;
-        assert!(matches!(result, Err(MobileChargingError::Network)));
+        assert!(match result {
+            Err(MobileChargingError::Network) => true,
+            _ => false,
+        });
         assert_eq!(local.charging_changes_cursor()?.get(), 0);
         task.abort();
         drop(local);

@@ -16,9 +16,9 @@ struct RideMapHistoryContentView: View {
     /// Rust's bounded projection supplies the camera; the default keeps older route-shell
     /// callers source-compatible until they pass the projection metadata through.
     var cameraRegion: MobileRideMapCameraRegion? = nil
+    var defaultCameraSpan: MKCoordinateSpan = RideMapPresentationState.defaultLocalSpan
     let endpointMetadata: MobileRideMapRouteEndpointMetadata
     let segments: [MobileRideMapSegmentDisplayMetadata]
-    let cameraFitVersion: UInt64
     let projectionVersion: UInt64
     let pointsTruncated: Bool
     let segmentsOmittedByBudget: Bool
@@ -43,6 +43,9 @@ struct RideMapHistoryContentView: View {
     let currentVehicleName: String?
     let vehicleName: (String?) -> String?
     let cameraDidChange: (MKCoordinateRegion) -> Void
+    let cameraSpanDidChange: (MKCoordinateSpan) -> Void
+    let previouslyFittedCameraID: String?
+    let cameraFitDidApply: (String) -> Void
 
     @Binding var mapPosition: MapCameraPosition
     @Binding var isApplyingCamera: Bool
@@ -199,14 +202,17 @@ struct RideMapHistoryContentView: View {
                                     endpointMetadata: endpointMetadata,
                                     cameraRegion: cameraRegion,
                                     segments: segments,
-                                    cameraFitVersion: cameraFitVersion,
                                     mapHeight: RideMapViewportLayout.mapHeight(for: visibleHeight),
                                     state: selectedRouteState,
                                     pointsTruncated: pointsTruncated,
                                     segmentsOmittedByBudget: segmentsOmittedByBudget,
                                     mapPosition: $mapPosition,
                                     isApplyingCamera: $isApplyingCamera,
-                                    cameraDidChange: cameraDidChange
+                                    cameraDidChange: cameraDidChange,
+                                    cameraSpanDidChange: cameraSpanDidChange,
+                                    defaultCameraSpan: defaultCameraSpan,
+                                    previouslyFittedCameraID: previouslyFittedCameraID,
+                                    cameraFitDidApply: cameraFitDidApply
                                 )
                                 RideMapHistoryListSection(
                                     rides: rides,

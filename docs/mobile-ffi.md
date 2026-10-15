@@ -30,6 +30,44 @@ Keep this boundary when changing the app: a policy fix must be testable without
 an Apple runtime. Swift tests verify observation delivery, native effect
 ownership, and presentation; Rust tests verify the portable invariants.
 
+The charging editor uses Rust's power draft for suggested/manual provenance and
+explicit inclusion. Adding a suggested supply confirms that value; a country
+change that replaces it requires confirmation again. Manual observations survive
+country and venue changes. Swift retains incomplete field text and translates
+native edits into one draft transition. An incomplete edit marks the row manual
+and revokes inclusion before validation; reading a draft never confirms it.
+Inclusion is represented by the optional confirmed supply, without a separate
+confirmation flag in the mobile snapshot.
+
+Charging preflight and persistence use the same Rust constructor pipeline.
+Preflight returns a normalized input or a typed field issue. Swift adds typed
+feedback for incomplete native text and unconfirmed supplies, and renders the
+issues beside the affected fields. Persistence validates again when saving.
+
+Charging map reconciliation belongs to Rust: revision preference, delayed readback
+admission, withdrawal suppression and restoration are one projection policy.
+Swift supplies observations and publishes the resulting page and selection while
+retaining native task cancellation and map presentation. Cached observations
+carry checked revisions; raw revisions are validated at the boundary.
+
+The charging sync policy owns registration admission, bounded attempts and rounds,
+retry delays, progress accumulation and terminal outcomes. Swift executes Keychain
+operations and native tasks, and maps typed outcomes to localized presentation.
+Committed upload/download progress remains available when work is blocked.
+Pass disposition and retry actions share one terminal result vocabulary. Native
+progress reads the returned run state directly. Keychain claim rereads remain
+native record extraction, and a lost claim cannot initiate registration.
+
+Nearby discovery uses explicit state transitions for empty results, location
+availability, cache updates and user cancellation. Swift executes one-shot search
+and camera decisions without deriving another discovery state from UI flags.
+Rust emits a validated camera target once; Swift owns its pending presentation
+and consumption. One native sheet route selects details, issues, or the existing
+editor model; moving the pin dismisses the form while retaining that model.
+Charging location selection validates freshness and chooses fixes in Rust; Swift
+uses acceptance predicates and retains the original accepted native location
+and its platform metadata.
+
 ## Shared settings ownership
 
 For settings, that ownership includes value domains, applicability, observations,

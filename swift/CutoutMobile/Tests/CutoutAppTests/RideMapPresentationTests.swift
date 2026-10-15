@@ -1,4 +1,5 @@
 import MapKit
+import SwiftUI
 import XCTest
 
 @testable import CutoutApp
@@ -6,6 +7,132 @@ import XCTest
 
 @MainActor
 final class RideMapPresentationTests: XCTestCase {
+    func testChargingModeUsesTheSharedGeographicSpanAtItsExistingCenter() throws {
+        let presentation = RideMapPresentationState()
+        presentation.liveMapPosition = .region(
+            MKCoordinateRegion(
+                center: CLLocationCoordinate2D(latitude: 40, longitude: -105),
+                span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.02)
+            ))
+
+        presentation.mode = .charging
+
+        let region = try XCTUnwrap(presentation.chargingMapPosition.region)
+        XCTAssertEqual(region.center.latitude, 40)
+        XCTAssertEqual(region.center.longitude, -105)
+        XCTAssertEqual(region.span.longitudeDelta, presentation.sharedCameraSpan.longitudeDelta)
+    }
+
+    func testUserZoomBecomesTheSharedGeographicSpanForTheNextMapMode() throws {
+        let presentation = RideMapPresentationState()
+        let span = MKCoordinateSpan(latitudeDelta: 0.07, longitudeDelta: 0.09)
+        presentation.recordUserCameraSpan(span)
+        presentation.liveMapPosition = .region(
+            MKCoordinateRegion(
+                center: CLLocationCoordinate2D(latitude: 40, longitude: -105),
+                span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.02)
+            ))
+
+        presentation.mode = .charging
+
+        let region = try XCTUnwrap(presentation.chargingMapPosition.region)
+        XCTAssertEqual(presentation.sharedCameraSpan.longitudeDelta, span.longitudeDelta)
+        XCTAssertEqual(region.span.longitudeDelta, span.longitudeDelta)
+    }
+
+    func testLiveAndHistoryModesApplyTheLatestSpanAtTheirOwnCenters() throws {
+        let presentation = RideMapPresentationState()
+        presentation.liveMapPosition = .camera(
+            MapCamera(
+                centerCoordinate: CLLocationCoordinate2D(latitude: 39, longitude: -104),
+                distance: 20_000,
+                heading: 15,
+                pitch: 30
+            ))
+        presentation.historyMapPosition = .camera(
+            MapCamera(
+                centerCoordinate: CLLocationCoordinate2D(latitude: 41, longitude: -106),
+                distance: 20_000,
+                heading: 0,
+                pitch: 0
+            ))
+        let span = MKCoordinateSpan(latitudeDelta: 0.06, longitudeDelta: 0.08)
+        presentation.recordUserCameraSpan(span)
+
+        presentation.mode = .live
+        let live = try XCTUnwrap(presentation.liveMapPosition.region)
+        XCTAssertEqual(live.center.latitude, 39)
+        XCTAssertEqual(live.center.longitude, -104)
+        XCTAssertEqual(live.span.longitudeDelta, span.longitudeDelta)
+
+        presentation.mode = .history
+        let history = try XCTUnwrap(presentation.historyMapPosition.region)
+        XCTAssertEqual(history.center.latitude, 41)
+        XCTAssertEqual(history.center.longitude, -106)
+        XCTAssertEqual(history.span.longitudeDelta, span.longitudeDelta)
+    }
+
+    func testTerminalRideFitKeepsRouteExtentWhileHistoryOverviewUsesLocalSpan() throws {
+        let routeCamera = MobileRideMapCameraRegion(
+            centerLatitudeDegrees: 40,
+            centerLongitudeDegrees: -105,
+            latitudeSpanDegrees: 0.8,
+            longitudeSpanDegrees: 1.2
+        )
+
+        let overview = try XCTUnwrap(
+            RideMapCanvasView.localRegion(
+                center: CLLocationCoordinate2D(latitude: 40, longitude: -105),
+                span: RideMapPresentationState.defaultLocalSpan
+            )
+        )
+        XCTAssertEqual(overview.center.latitude, 40)
+        XCTAssertEqual(overview.center.longitude, -105)
+        XCTAssertLessThan(overview.span.latitudeDelta, 0.000_01)
+        XCTAssertEqual(overview.span.longitudeDelta, RideMapPresentationState.defaultLocalSpan.longitudeDelta)
+
+        let detailFit = try XCTUnwrap(
+            RideMapCanvasView.cameraPosition(for: routeCamera, distance: nil)?.region
+        )
+        XCTAssertEqual(detailFit.span.latitudeDelta, 0.8)
+        XCTAssertEqual(detailFit.span.longitudeDelta, 1.2)
+    }
+
+    func testChargingModeUsesCurrentLocationWithoutARideAndPreservesAnExistingViewport() throws {
+        let presentation = RideMapPresentationState()
+        presentation.mode = .charging
+        XCTAssertTrue(presentation.chargingMapPosition.followsUserLocation)
+
+        let panned = MapCameraPosition.region(
+            MKCoordinateRegion(
+                center: CLLocationCoordinate2D(latitude: 41, longitude: -106),
+                span: MKCoordinateSpan(latitudeDelta: 0.03, longitudeDelta: 0.04)
+            ))
+        presentation.chargingMapPosition = panned
+        presentation.mode = .live
+        presentation.mode = .charging
+        let region = try XCTUnwrap(presentation.chargingMapPosition.region)
+        XCTAssertEqual(region.center.latitude, 41)
+        XCTAssertEqual(region.center.longitude, -106)
+        XCTAssertEqual(region.span.longitudeDelta, presentation.sharedCameraSpan.longitudeDelta)
+    }
+
+    func testFirstLocationDoesNotReplaceAnAlreadyFittedDistantRide() throws {
+        let presentation = RideMapPresentationState()
+        presentation.historyMapPosition = .region(
+            MKCoordinateRegion(
+                center: CLLocationCoordinate2D(latitude: 10, longitude: 20),
+                span: MKCoordinateSpan(latitudeDelta: 0.02, longitudeDelta: 0.03)
+            ))
+
+        presentation.updateCurrentLocation(CLLocationCoordinate2D(latitude: 40, longitude: -105))
+
+        let history = try XCTUnwrap(presentation.historyMapPosition.region)
+        XCTAssertEqual(history.center.latitude, 10)
+        XCTAssertEqual(history.center.longitude, 20)
+        XCTAssertEqual(history.span.longitudeDelta, 0.03)
+    }
+
     func testInterruptedRideOffersResumeInsteadOfStartNew() {
         XCTAssertEqual(RideMapControlsView.controlSet(for: .interrupted), .resumable)
         XCTAssertEqual(RideMapControlsView.controlSet(for: .paused), .resumable)
@@ -544,6 +671,13 @@ final class RideMapPresentationTests: XCTestCase {
         XCTAssertTrue(initial.hasPrefix("ride:fit-"))
     }
 
+    func testHistoryOverviewFitIdentityDoesNotChangeForProjectionRefresh() {
+        XCTAssertEqual(
+            RideMapCanvasView.cameraFitID(routeID: "ride"),
+            RideMapCanvasView.cameraFitID(routeID: "ride")
+        )
+    }
+
     func testHistoryDetailVehicleAndSpeedFormattingKeepUnavailableExplicit() {
         XCTAssertEqual(
             RideMapHistoryDetailView.resolvedVehicleLabel(
@@ -659,12 +793,53 @@ final class RideMapPresentationTests: XCTestCase {
         XCTAssertNotEqual(first.projectionVersion, replacement.projectionVersion)
     }
 
-    func testInitialFollowClampsWholeRideFitToAStableNavigationScale() {
-        let span = RideMapLiveContentView.stableFollowSpan(
-            for: MKCoordinateSpan(latitudeDelta: 12, longitudeDelta: 24)
+    func testDefaultLocalViewportIsSharedGeographicSpanAroundActualCenter() {
+        let center = CLLocationCoordinate2D(latitude: 40, longitude: -105)
+        let local = RideMapPresentationState.defaultLocalRegion(center: center)
+        XCTAssertEqual(local.center.latitude, 40)
+        XCTAssertEqual(local.center.longitude, -105)
+        XCTAssertLessThan(local.span.latitudeDelta, 0.000_01)
+        XCTAssertEqual(local.span.longitudeDelta, RideMapPresentationState.sharedLocalSpan.longitudeDelta)
+    }
+
+    func testSharedZoomUsesLongitudeSpanAndDoesNotRatchetWithViewportHeight() throws {
+        let presentation = RideMapPresentationState()
+        presentation.recordUserCameraSpan(
+            MKCoordinateSpan(latitudeDelta: 0.08, longitudeDelta: 0.04)
         )
-        XCTAssertEqual(span.latitudeDelta, 0.05)
-        XCTAssertEqual(span.longitudeDelta, 0.05)
+        let firstViewport = try XCTUnwrap(
+            RideMapPresentationState.localRegion(
+                center: CLLocationCoordinate2D(latitude: 40, longitude: -105),
+                longitudeDelta: presentation.sharedCameraSpan.longitudeDelta
+            )
+        )
+        presentation.recordUserCameraSpan(
+            MKCoordinateSpan(latitudeDelta: 0.22, longitudeDelta: firstViewport.span.longitudeDelta)
+        )
+        let secondViewport = try XCTUnwrap(
+            RideMapPresentationState.localRegion(
+                center: CLLocationCoordinate2D(latitude: 41, longitude: -106),
+                longitudeDelta: presentation.sharedCameraSpan.longitudeDelta
+            )
+        )
+
+        XCTAssertEqual(firstViewport.span.longitudeDelta, secondViewport.span.longitudeDelta)
+        XCTAssertEqual(secondViewport.span.longitudeDelta, 0.04)
+        XCTAssertEqual(secondViewport.span.latitudeDelta, 0.000_001)
+    }
+
+    func testFirstRealLocationCentersUnpositionedMapModes() throws {
+        let presentation = RideMapPresentationState()
+        presentation.updateCurrentLocation(CLLocationCoordinate2D(latitude: 40, longitude: -105))
+
+        let live = try XCTUnwrap(presentation.liveMapPosition.region)
+        let history = try XCTUnwrap(presentation.historyMapPosition.region)
+        let charging = try XCTUnwrap(presentation.chargingMapPosition.region)
+        for region in [live, history, charging] {
+            XCTAssertEqual(region.center.latitude, 40)
+            XCTAssertEqual(region.center.longitude, -105)
+            XCTAssertEqual(region.span.longitudeDelta, RideMapPresentationState.sharedLocalSpan.longitudeDelta)
+        }
     }
 
     func testMapRejectsInvalidRecenterInputBeforeItReachesMapKit() {

@@ -281,7 +281,7 @@ struct EucPackRouteView: View {
 
     var body: some View {
         if let screen = bmsScreen {
-            let rideState = screen.bmsContentOrUnavailable.kind == .noData ? device.rideState : nil
+            let rideState = Self.rideState(for: screen, device: device)
             BmsScreenView(
                 screen: screen,
                 rideState: rideState,
@@ -313,6 +313,10 @@ struct EucPackRouteView: View {
                 rootScreenID = catalog.presentedBmsScreen(liveBmsSnapshot: snapshot).id
             }
         }
+    }
+
+    static func rideState(for screen: PevScreen, device: DevicePresentationModel) -> EucRideScreenState? {
+        screen.bmsContentOrUnavailable.kind == .noData ? device.rideState : nil
     }
 
     private var bmsScreen: PevScreen? {

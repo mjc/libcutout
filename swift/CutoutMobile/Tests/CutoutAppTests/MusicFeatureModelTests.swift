@@ -369,7 +369,7 @@ final class MusicFeatureModelTests: XCTestCase {
         _ = try await state.startGpsOnlyCommand(atMs: 100, musicHistoryPolicy: .humanReadable)
         let originalTarget = MobileMusicCaptureTarget.capture(generation: MobileCaptureGenerationDto(value: 41))
         let replacementTarget = MobileMusicCaptureTarget.capture(generation: MobileCaptureGenerationDto(value: 42))
-        var target = originalTarget
+        let target = MutableCaptureTarget(originalTarget)
         var deliveries = [(MobilePevcapMusicEventDto?, MobileMusicCaptureTarget)]()
         let model = makeModel(
             state: state, defaults: suite.defaults,
@@ -377,7 +377,7 @@ final class MusicFeatureModelTests: XCTestCase {
                 deliveries.append((observation, target))
                 return deliveries.count == 1 ? .rejected : .accepted
             },
-            captureTarget: { target }
+            captureTarget: { target.value }
         )
         let adoptionError = await model.adoptHistoryForNewRideAsync()
         XCTAssertNil(adoptionError)
@@ -400,7 +400,7 @@ final class MusicFeatureModelTests: XCTestCase {
         XCTAssertNotNil(model.historySaveError)
         XCTAssertEqual(model.settingsNowPlaying?.item?.identifier, "first-track")
 
-        target = replacementTarget
+        target.value = replacementTarget
         let secondAccepted = await model.ingestObservationAsync(
             observation(atMs: 300, identifier: "replacement-track"),
             wallClockAtMs: 1_700_000_000_300, clockUncertaintyMs: 9)
@@ -1752,6 +1752,15 @@ final class MusicFeatureModelTests: XCTestCase {
             XCTAssertTrue(model.settingsNowPlaying?.capabilities.pause ?? false)
         }
     #endif
+
+    @MainActor
+    private final class MutableCaptureTarget {
+        var value: MobileMusicCaptureTarget
+
+        init(_ value: MobileMusicCaptureTarget) {
+            self.value = value
+        }
+    }
 
     private func makeModel(
         state: MobileRideMapState? = nil,

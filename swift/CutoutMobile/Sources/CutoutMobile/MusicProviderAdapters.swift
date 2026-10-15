@@ -389,15 +389,6 @@ struct SpotifyRenewalRetryPolicy {
                 emitChange()
                 return false
             }
-            #if canImport(UIKit) && os(iOS)
-                // iOS 27 deprecates this query in favor of opening. Passive restoration
-                // must not launch Spotify, so retain the installation check here.
-                guard UIApplication.shared.canOpenURL(Self.providerURL) else {
-                    lifecycleState = .unavailable
-                    emitChange()
-                    return false
-                }
-            #endif
             // A scene transition can stop and restart observation while the SDK's
             // authorization callback is still in flight. Keep that transaction
             // alive and let the single monitor loop observe its completion.

@@ -176,7 +176,9 @@ impl ChargingStatus {
             _ => Err(StorageError::ChargingInvalidInput),
         }
     }
-    pub(super) const fn visible(self) -> bool {
+    /// Whether this status belongs in discovery and map page membership.
+    #[must_use]
+    pub const fn visible(self) -> bool {
         match self {
             Self::Queued | Self::Published => true,
             Self::Hidden | Self::Withdrawn | Self::Removed => false,

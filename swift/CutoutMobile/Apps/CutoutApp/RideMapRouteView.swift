@@ -9,16 +9,115 @@ final class RideMapPresentationState {
     enum Mode: String {
         case live
         case history
+        case charging
     }
 
-    var mode: Mode = .live
+    var mode: Mode = .live {
+        didSet { prepareCameraForMode() }
+    }
     var liveMapPosition: MapCameraPosition = .automatic
     var historyMapPosition: MapCameraPosition = .automatic
     var detailMapPosition: MapCameraPosition = .automatic
+    var chargingMapPosition: MapCameraPosition = .automatic
+    let charging = ChargingMapModel()
+    var chargingEditor: ChargingSpotEditorModel?
     var liveIsApplyingCamera = false
     var historyIsApplyingCamera = false
     var detailIsApplyingCamera = false
     var followsLatestPoint = true
+    static let sharedLocalSpan = MKCoordinateSpan(latitudeDelta: 0.000_001, longitudeDelta: 0.01)
+    static var defaultLocalSpan: MKCoordinateSpan { sharedLocalSpan }
+    var sharedCameraSpan = RideMapPresentationState.sharedLocalSpan
+    var currentLocation: CLLocationCoordinate2D?
+    var historyFittedCameraID: String?
+
+    static func defaultLocalRegion(center: CLLocationCoordinate2D) -> MKCoordinateRegion {
+        MKCoordinateRegion(center: center, span: sharedLocalSpan)
+    }
+
+    static func localRegion(
+        center: CLLocationCoordinate2D,
+        longitudeDelta: CLLocationDegrees
+    ) -> MKCoordinateRegion? {
+        guard CLLocationCoordinate2DIsValid(center), longitudeDelta.isFinite,
+            longitudeDelta > 0, longitudeDelta <= 360
+        else { return nil }
+        return MKCoordinateRegion(
+            center: center,
+            span: MKCoordinateSpan(latitudeDelta: 0.000_001, longitudeDelta: longitudeDelta)
+        )
+    }
+
+    func recordUserCameraSpan(_ span: MKCoordinateSpan) {
+        guard span.latitudeDelta.isFinite, span.longitudeDelta.isFinite,
+            span.latitudeDelta > 0, span.longitudeDelta > 0,
+            span.latitudeDelta <= 180, span.longitudeDelta <= 360
+        else { return }
+        sharedCameraSpan = MKCoordinateSpan(
+            latitudeDelta: 0.000_001,
+            longitudeDelta: span.longitudeDelta
+        )
+    }
+
+    func updateCurrentLocation(_ coordinate: CLLocationCoordinate2D?) {
+        guard let coordinate, CLLocationCoordinate2DIsValid(coordinate) else { return }
+        let isFirstLocation = currentLocation == nil
+        currentLocation = coordinate
+        guard isFirstLocation else { return }
+        initializeLocalPositionIfNeeded(&liveMapPosition)
+        initializeLocalPositionIfNeeded(&historyMapPosition)
+        initializeLocalPositionIfNeeded(&chargingMapPosition)
+    }
+
+    private func prepareCameraForMode() {
+        switch mode {
+        case .live:
+            applySharedSpan(to: &liveMapPosition)
+        case .history:
+            applySharedSpan(to: &historyMapPosition)
+        case .charging:
+            prepareChargingCamera()
+        }
+    }
+
+    private func prepareChargingCamera() {
+        let center =
+            cameraCenter(chargingMapPosition)
+            ?? currentLocation
+            ?? cameraCenter(liveMapPosition)
+            ?? cameraCenter(historyMapPosition)
+        guard let center else {
+            chargingMapPosition = .userLocation(fallback: .automatic)
+            return
+        }
+        guard
+            let region = Self.localRegion(
+                center: center,
+                longitudeDelta: sharedCameraSpan.longitudeDelta
+            )
+        else { return }
+        chargingMapPosition = .region(region)
+    }
+
+    private func applySharedSpan(to position: inout MapCameraPosition) {
+        guard let center = cameraCenter(position) ?? currentLocation else { return }
+        guard
+            let region = Self.localRegion(
+                center: center,
+                longitudeDelta: sharedCameraSpan.longitudeDelta
+            )
+        else { return }
+        position = .region(region)
+    }
+
+    private func initializeLocalPositionIfNeeded(_ position: inout MapCameraPosition) {
+        guard !position.positionedByUser, cameraCenter(position) == nil, let currentLocation else { return }
+        position = .region(Self.defaultLocalRegion(center: currentLocation))
+    }
+
+    private func cameraCenter(_ position: MapCameraPosition) -> CLLocationCoordinate2D? {
+        position.region?.center ?? position.camera?.centerCoordinate
+    }
 }
 
 struct RideMapRouteView: View {
@@ -69,6 +168,7 @@ struct RideMapRouteView: View {
                     Picker(localizedAppText("navigation.section.map"), selection: $presentation.mode) {
                         Text(localizedAppText("ride_map.mode.live")).tag(RideMapPresentationState.Mode.live)
                         Text(localizedAppText("ride_map.mode.history")).tag(RideMapPresentationState.Mode.history)
+                        Text(localizedAppText("charging.mode")).tag(RideMapPresentationState.Mode.charging)
                     }
                     .pickerStyle(.segmented)
                 }
@@ -81,10 +181,24 @@ struct RideMapRouteView: View {
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("ride-map.mode-picker")
 
-                if presentation.mode == .live {
+                switch presentation.mode {
+                case .live:
                     liveContent
-                } else {
+                case .history:
                     historyContent
+                case .charging:
+                    ChargingMapContentView(
+                        model: presentation.charging,
+                        editor: $presentation.chargingEditor,
+                        mapPosition: $presentation.chargingMapPosition,
+                        cameraDidChange: { context in
+                            if presentation.chargingMapPosition.positionedByUser {
+                                presentation.recordUserCameraSpan(context.region.span)
+                            }
+                        },
+                        defaultCameraSpan: presentation.sharedCameraSpan,
+                        phoneLocationSample: model.mapLocationSample
+                    )
                 }
             }
         }
@@ -95,8 +209,24 @@ struct RideMapRouteView: View {
         // the segmented picker and native scroll view as separate AX elements.
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(detailOnly ? "ride-map.detail-screen" : "ride-map.screen")
+        .onChange(of: model.mapLocationSample, initial: true) { _, sample in
+            presentation.updateCurrentLocation(
+                sample.map {
+                    CLLocationCoordinate2D(
+                        latitude: $0.latitudeDegrees,
+                        longitude: $0.longitudeDegrees
+                    )
+                }
+            )
+        }
         #if DEBUG
             .modifier(CutoutUITestSavedRideReadback(history: history))
+            .onAppear {
+                if CutoutUITestChargingFixture.isEnabled {
+                    presentation.mode = .charging
+                    presentation.chargingMapPosition = .region(CutoutUITestChargingFixture.region)
+                }
+            }
         #endif
         #if os(iOS)
             // Ride Detail owns its compact header so it remains attached to the map
@@ -130,6 +260,9 @@ struct RideMapRouteView: View {
             mapPosition: $presentation.liveMapPosition,
             isApplyingCamera: $presentation.liveIsApplyingCamera,
             followsLatestPoint: $presentation.followsLatestPoint,
+            cameraSpan: presentation.sharedCameraSpan,
+            userLocationCenter: presentation.currentLocation,
+            cameraSpanDidChange: presentation.recordUserCameraSpan,
             pause: { Task { _ = await model.pauseRideMap() } },
             resume: { Task { _ = await model.resumeRideMap() } },
             save: { Task { _ = await model.saveRideMap() } },
@@ -148,9 +281,9 @@ struct RideMapRouteView: View {
             canLoadMore: history.canLoadMore,
             displayPoints: history.displayPoints,
             cameraRegion: history.cameraRegion,
+            defaultCameraSpan: presentation.sharedCameraSpan,
             endpointMetadata: history.endpointMetadata,
             segments: history.segments,
-            cameraFitVersion: history.cameraFitVersion,
             projectionVersion: history.projectionVersion,
             pointsTruncated: history.pointsTruncated,
             segmentsOmittedByBudget: history.segmentsOmittedByBudget,
@@ -184,6 +317,9 @@ struct RideMapRouteView: View {
             // viewport projection. A detail pan must not replace the list's display
             // projection while both destinations remain alive in the navigation stack.
             cameraDidChange: { _ in },
+            cameraSpanDidChange: presentation.recordUserCameraSpan,
+            previouslyFittedCameraID: presentation.historyFittedCameraID,
+            cameraFitDidApply: { presentation.historyFittedCameraID = $0 },
             mapPosition: $presentation.historyMapPosition,
             isApplyingCamera: $presentation.historyIsApplyingCamera
         )
