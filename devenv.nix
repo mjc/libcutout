@@ -256,11 +256,14 @@ in
         -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testAppModelKeepsOneMusicMonitorAcrossStartupAndSceneResume \
         -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testOpeningHistoricalRideDetailDoesNotDispatchMusicTransport \
         -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testSpotifyCallbackAdmissionSurvivesEitherSceneEventOrder \
-        -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testStopWaitsForRequiredMusicCaptureReceipt \
+        -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testStopWaitsForSQLiteHistoryWithoutABluetoothCaptureReceipt \
         -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testProviderResetMakesUnsettledAcceptedObservationFailStopExplicitly \
         -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testOptionalOldMusicReadbackCannotDelayStopOrOverwriteNewerPresentation \
-        -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testRejectedCaptureDiagnosticIsVisibleBeforeOptionalErrorReadbackReturns \
+        -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testHistoryDeletionPreventsLateReadbackFromRestoringMetadataAndKeepsLivePlayer \
         -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testStaleRideContextFailsStopBeforeOptionalErrorReadbackReturns \
+        -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testSpotifyDisconnectRemovesOnlySpotifyHistoryAndPersistsMonitoringOptOut \
+        -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testSpotifyDisconnectReportsFailedDeletionAndCanRetryWithoutReconnect \
+        -only-testing:CutoutAppIOSUnitTests/MusicFeatureModelTests/testSpotifyDisconnectRejectsAnObservationWhoseHistoryReadbackFinishesLate \
         -parallel-testing-enabled NO \
         -collect-test-diagnostics never \
         ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
