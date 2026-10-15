@@ -2155,7 +2155,7 @@ final class CutoutAppUITests: XCTestCase {
         let confirmation = app.descendants(matching: .any)["setup.account.confirmation"]
         XCTAssertTrue(confirmation.waitForExistence(timeout: 5), app.debugDescription)
         XCTAssertTrue(
-            confirmation.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Anonymous")).firstMatch
+            confirmation.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Anonymous")).firstMatch
                 .exists, app.debugDescription)
         let cancel = app.buttons["setup.account.cancel-delete"]
         XCTAssertTrue(cancel.isHittable, app.debugDescription)
