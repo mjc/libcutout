@@ -8,13 +8,13 @@ import hashlib
 import json
 import os
 import platform
+import re
 import shutil
 import socket
 import sqlite3
 import subprocess
 import sys
 import time
-import tomllib
 import urllib.error
 import urllib.request
 import uuid
@@ -72,8 +72,13 @@ def check_environment(udid: str) -> dict:
     for executable in ("cargo", "rustc", "xcrun"):
         if shutil.which(executable) is None:
             raise RuntimeError(f"Required Devenv command is missing: {executable}")
-    toolchain = tomllib.loads((ROOT / "rust-toolchain.toml").read_text())
-    expected = toolchain["toolchain"]["channel"]
+    # The repository owns this literal version pin; avoid a Python 3.11-only
+    # TOML dependency in a harness that also runs with Xcode's Python.
+    channel = re.search(r'(?m)^\s*channel\s*=\s*"([^"\n]+)"\s*(?:#.*)?$',
+                        (ROOT / "rust-toolchain.toml").read_text())
+    if channel is None:
+        raise RuntimeError("Expected a literal channel version in rust-toolchain.toml.")
+    expected = channel[1]
     actual = subprocess.check_output(["rustc", "--version"], text=True).strip()
     if not expected or not actual.startswith(f"rustc {expected} "):
         raise RuntimeError(f"Configured Rust is {expected!r}, active compiler is {actual!r}.")
