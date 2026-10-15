@@ -72,7 +72,7 @@ final class RideMapPresentationTests: XCTestCase {
         XCTAssertEqual(history.span.longitudeDelta, span.longitudeDelta)
     }
 
-    func testHistoryOverviewUsesLocalSpanWhileDetailFitKeepsRouteExtent() throws {
+    func testTerminalRideFitKeepsRouteExtentWhileHistoryOverviewUsesLocalSpan() throws {
         let routeCamera = MobileRideMapCameraRegion(
             centerLatitudeDegrees: 40,
             centerLongitudeDegrees: -105,
@@ -98,7 +98,7 @@ final class RideMapPresentationTests: XCTestCase {
         XCTAssertEqual(detailFit.span.longitudeDelta, 1.2)
     }
 
-    func testChargingModeUsesCurrentLocationWithoutARideAndPreservesAnExistingViewport() {
+    func testChargingModeUsesCurrentLocationWithoutARideAndPreservesAnExistingViewport() throws {
         let presentation = RideMapPresentationState()
         presentation.mode = .charging
         XCTAssertTrue(presentation.chargingMapPosition.followsUserLocation)
@@ -111,7 +111,7 @@ final class RideMapPresentationTests: XCTestCase {
         presentation.chargingMapPosition = panned
         presentation.mode = .live
         presentation.mode = .charging
-        let region = try! XCTUnwrap(presentation.chargingMapPosition.region)
+        let region = try XCTUnwrap(presentation.chargingMapPosition.region)
         XCTAssertEqual(region.center.latitude, 41)
         XCTAssertEqual(region.center.longitude, -106)
         XCTAssertEqual(region.span.longitudeDelta, presentation.sharedCameraSpan.longitudeDelta)

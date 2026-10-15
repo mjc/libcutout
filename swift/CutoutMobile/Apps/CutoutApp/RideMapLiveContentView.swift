@@ -70,8 +70,8 @@ struct RideMapLiveContentView: View {
                                     followsLatestPoint = false
                                 },
                                 cameraSpanDidChange: cameraSpanDidChange,
-                                defaultCameraSpan: cameraSpan,
-                                defaultCameraCenter: userLocationCenter
+                                defaultCameraSpan: isTerminalRide ? nil : cameraSpan,
+                                defaultCameraCenter: isTerminalRide ? nil : userLocationCenter
                             )
                             .frame(height: RideMapViewportLayout.mapHeight(for: visibleHeight))
                             .frame(maxWidth: .infinity)

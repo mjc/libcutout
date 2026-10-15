@@ -7229,7 +7229,7 @@ final class ChargingMapDeviceUITests: XCTestCase {
         let confirmDelete = app.sheets.buttons["Delete spot"].firstMatch
         XCTAssertTrue(confirmDelete.waitForExistence(timeout: 5), app.debugDescription)
         confirmDelete.tap()
-        XCTAssertFalse(app.buttons[newPinID].waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue(app.buttons[newPinID].waitForNonExistence(timeout: 10), app.debugDescription)
     }
 
     func testOptionalDetailsSurviveMovingPinAndSave() throws {
@@ -7298,8 +7298,8 @@ final class ChargingMapDeviceUITests: XCTestCase {
         )
         app.buttons["charging.editor.save"].tap()
 
-        XCTAssertFalse(
-            app.descendants(matching: .any)["charging.editor.screen"].waitForExistence(timeout: 10),
+        XCTAssertTrue(
+            app.descendants(matching: .any)["charging.editor.screen"].waitForNonExistence(timeout: 10),
             app.debugDescription)
         let spotID = try XCTUnwrap(waitForNewPin(in: app, excluding: existingPinIDs), app.debugDescription)
         let savedPin = app.buttons[spotID]
@@ -7410,8 +7410,8 @@ final class ChargingMapDeviceUITests: XCTestCase {
         XCTAssertEqual(amount.value as? String, "", app.debugDescription)
         XCTAssertTrue(app.buttons["charging.editor.save"].isEnabled, app.debugDescription)
         app.buttons["charging.editor.save"].tap()
-        XCTAssertFalse(
-            app.descendants(matching: .any)["charging.editor.screen"].waitForExistence(timeout: 10),
+        XCTAssertTrue(
+            app.descendants(matching: .any)["charging.editor.screen"].waitForNonExistence(timeout: 10),
             app.debugDescription
         )
     }
@@ -7499,8 +7499,9 @@ final class ChargingMapDeviceUITests: XCTestCase {
         let save = app.buttons["charging.editor.save"]
         XCTAssertTrue(save.isHittable, save.debugDescription)
         save.tap()
-        XCTAssertFalse(
-            app.descendants(matching: .any)["charging.editor.screen"].waitForExistence(timeout: 5), app.debugDescription
+        XCTAssertTrue(
+            app.descendants(matching: .any)["charging.editor.screen"].waitForNonExistence(timeout: 5),
+            app.debugDescription
         )
         let savedAccessNote = "Outlet near the main entrance."
         let selectedAccessNote = app.staticTexts["charging.selected.access-note"]

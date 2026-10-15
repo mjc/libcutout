@@ -116,9 +116,11 @@ final class ChargingSupplyDraft: Identifiable {
     }
 
     private func currentSupply() -> MobileChargingSupplyDto? {
-        guard !hasInvalidVoltage else { return nil }
-        let voltage = UInt16(voltageText.trimmingCharacters(in: .whitespacesAndNewlines))
-        if !voltageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, voltage == nil { return nil }
+        let trimmedVoltage = voltageText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let voltage = trimmedVoltage.isEmpty ? nil : UInt16(trimmedVoltage)
+        guard trimmedVoltage.isEmpty || voltage != nil,
+            voltage.map({ mobileChargingPowerVoltageIsValid(voltageVolts: $0) }) ?? true
+        else { return nil }
         if connectors.contains(.unknown) {
             return MobileChargingSupplyDto(voltageVolts: voltage, connectors: [.unknown])
         }

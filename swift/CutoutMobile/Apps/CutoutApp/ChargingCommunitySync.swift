@@ -4,6 +4,28 @@ import Foundation
 import Observation
 import Security
 
+enum ChargingCommunitySyncDebugEnablement {
+    static func isSyncEnabled(
+        environmentFixtureValue: String?,
+        persistedFixtureValue: String?,
+        arguments: [String],
+        chargingFixtureEnabled: Bool
+    ) -> Bool {
+        guard environmentFixtureValue == nil,
+            persistedFixtureValue == nil,
+            !chargingFixtureEnabled
+        else { return false }
+        return !arguments.contains(where: isFixtureArgument)
+    }
+
+    private static func isFixtureArgument(_ argument: String) -> Bool {
+        argument.hasPrefix("-CUTOUT_UI_TEST_")
+            || argument.hasPrefix("--ui-test-")
+            || argument.hasPrefix("--seed-ui-test-")
+            || argument.hasPrefix("--fail-ui-test-")
+    }
+}
+
 struct ChargingCommunityCredential: Codable, Equatable, Sendable {
     let identityID: String
     let token: String
@@ -202,7 +224,12 @@ final class ChargingCommunitySync {
             sleep: waitForRetry,
             enabled: {
                 #if DEBUG
-                    !CutoutUITestChargingFixture.isEnabled
+                    ChargingCommunitySyncDebugEnablement.isSyncEnabled(
+                        environmentFixtureValue: ProcessInfo.processInfo.environment["CUTOUT_UI_TEST_FIXTURE"],
+                        persistedFixtureValue: UserDefaults.standard.string(forKey: "CUTOUT_UI_TEST_FIXTURE"),
+                        arguments: CommandLine.arguments,
+                        chargingFixtureEnabled: CutoutUITestChargingFixture.isEnabled
+                    )
                 #else
                     true
                 #endif

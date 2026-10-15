@@ -5,6 +5,72 @@ import XCTest
 
 @MainActor
 final class ChargingCommunitySyncTests: XCTestCase {
+    func testDebugEnablementDisablesSyncForEveryUIFixtureSource() {
+        XCTAssertFalse(
+            ChargingCommunitySyncDebugEnablement.isSyncEnabled(
+                environmentFixtureValue: "bluetooth-unavailable",
+                persistedFixtureValue: nil,
+                arguments: [],
+                chargingFixtureEnabled: false
+            ))
+        XCTAssertFalse(
+            ChargingCommunitySyncDebugEnablement.isSyncEnabled(
+                environmentFixtureValue: nil,
+                persistedFixtureValue: "euc",
+                arguments: [],
+                chargingFixtureEnabled: false
+            ))
+        XCTAssertFalse(
+            ChargingCommunitySyncDebugEnablement.isSyncEnabled(
+                environmentFixtureValue: nil,
+                persistedFixtureValue: nil,
+                arguments: ["-CUTOUT_UI_TEST_FIXTURE", "vesc"],
+                chargingFixtureEnabled: false
+            ))
+        XCTAssertFalse(
+            ChargingCommunitySyncDebugEnablement.isSyncEnabled(
+                environmentFixtureValue: nil,
+                persistedFixtureValue: nil,
+                arguments: ["--seed-ui-test-charging-spots"],
+                chargingFixtureEnabled: false
+            ))
+        XCTAssertFalse(
+            ChargingCommunitySyncDebugEnablement.isSyncEnabled(
+                environmentFixtureValue: nil,
+                persistedFixtureValue: nil,
+                arguments: ["--seed-ui-test-ride-history"],
+                chargingFixtureEnabled: false
+            ))
+        XCTAssertFalse(
+            ChargingCommunitySyncDebugEnablement.isSyncEnabled(
+                environmentFixtureValue: nil,
+                persistedFixtureValue: nil,
+                arguments: ["--seed-ui-test-live-route"],
+                chargingFixtureEnabled: false
+            ))
+        XCTAssertFalse(
+            ChargingCommunitySyncDebugEnablement.isSyncEnabled(
+                environmentFixtureValue: nil,
+                persistedFixtureValue: nil,
+                arguments: ["--ui-test-ride-secondary-readings", "--fail-ui-test-history-refresh-once"],
+                chargingFixtureEnabled: false
+            ))
+        XCTAssertFalse(
+            ChargingCommunitySyncDebugEnablement.isSyncEnabled(
+                environmentFixtureValue: nil,
+                persistedFixtureValue: nil,
+                arguments: [],
+                chargingFixtureEnabled: true
+            ))
+        XCTAssertTrue(
+            ChargingCommunitySyncDebugEnablement.isSyncEnabled(
+                environmentFixtureValue: nil,
+                persistedFixtureValue: nil,
+                arguments: ["--ordinary-launch-option"],
+                chargingFixtureEnabled: false
+            ))
+    }
+
     func testRegistrationIsPersistedBeforeSyncAndQueuedWorkIsReported() async throws {
         let store = MemoryChargingCredentialStore()
         let recorder = SyncRecorder()

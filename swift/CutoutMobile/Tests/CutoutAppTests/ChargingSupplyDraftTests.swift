@@ -108,4 +108,20 @@ final class ChargingSupplyDraftTests: XCTestCase {
         XCTAssertTrue(draft.isEmpty)
         XCTAssertNil(draft.value())
     }
+
+    func testWhitespacePastedVoltageIsParsedConsistentlyForSaveEligibility() {
+        let model = ChargingSpotEditorModel(
+            coordinate: MobileMapCoordinateDto(latitudeDegrees: 40, longitudeDegrees: -105)
+        )
+        model.confirmLocation()
+        model.accessNote = "Ask staff"
+        model.addSupply()
+        let draft = model.supplies[0]
+        draft.voltageText = "\n 120 \r\n"
+        draft.set(.typeB, selected: true)
+
+        XCTAssertFalse(draft.hasInvalidVoltage)
+        XCTAssertEqual(draft.value()?.voltageVolts, 120)
+        XCTAssertTrue(model.canSave)
+    }
 }
