@@ -372,13 +372,36 @@ pub struct MobileChargingIdentityDto {
     pub token: String,
 }
 
-/// Result of one bounded synchronization pass.
-#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+/// Terminal state of one bounded synchronization pass.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileChargingSyncOutcome {
+    /// Directory pages or runnable outbox work remain for another round.
+    MoreWork,
+    /// The directory and local outbox are both caught up.
+    Synced,
+    /// The bounded run finished with work still pending.
+    Pending,
+    /// A local operation was blocked by a concurrent server revision.
+    Conflict,
+    /// A local operation was rejected by server validation.
+    Rejected,
+    /// The caller is not authorized to sync with the stored identity.
+    AuthenticationRequired,
+    /// The request budget is temporarily exhausted.
+    Throttled,
+    /// The directory could not be reached.
+    Offline,
+    /// Local storage could not complete the pass.
+    StorageUnavailable,
+}
+
+/// Result and committed progress of one bounded synchronization pass.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileChargingSyncSummaryDto {
     pub pending_count: u32,
     pub downloaded: u32,
     pub uploaded: u32,
-    pub more_work: bool,
+    pub outcome: MobileChargingSyncOutcome,
 }
 
 /// Why a durable charging operation is waiting for explicit resolution.

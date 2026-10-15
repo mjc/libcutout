@@ -85,7 +85,7 @@ final class ChargingCommunitySyncTests: XCTestCase {
                 recorder.tokens.append(token)
                 recorder.sawPersistedCredential = try await store.load() == .ready(credential)
                 return ChargingCommunitySyncCounts(
-                    pendingCount: 2, downloaded: 3, uploaded: 1, moreWork: false
+                    pendingCount: 2, downloaded: 3, uploaded: 1, outcome: .pending
                 )
             },
             sleep: { _ in },
@@ -122,7 +122,7 @@ final class ChargingCommunitySyncTests: XCTestCase {
             refreshDirectory: {
                 recorder.directoryRefreshes += 1
                 return ChargingCommunitySyncCounts(
-                    pendingCount: 0, downloaded: 4, uploaded: 0, moreWork: false
+                    pendingCount: 0, downloaded: 4, uploaded: 0, outcome: .synced
                 )
             },
             readLastUpdated: { UInt64(cachedDate.timeIntervalSince1970 * 1_000) },
@@ -156,7 +156,7 @@ final class ChargingCommunitySyncTests: XCTestCase {
             refreshDirectory: {
                 recorder.directoryRefreshes += 1
                 return ChargingCommunitySyncCounts(
-                    pendingCount: 1, downloaded: 0, uploaded: 0, moreWork: true
+                    pendingCount: 1, downloaded: 0, uploaded: 0, outcome: .moreWork
                 )
             },
             readLastUpdated: { UInt64(cachedDate.timeIntervalSince1970 * 1_000) },
@@ -183,7 +183,7 @@ final class ChargingCommunitySyncTests: XCTestCase {
             },
             synchronize: { _ in
                 ChargingCommunitySyncCounts(
-                    pendingCount: 0, downloaded: 0, uploaded: 0, moreWork: false
+                    pendingCount: 0, downloaded: 0, uploaded: 0, outcome: .synced
                 )
             },
             sleep: { _ in },
@@ -196,6 +196,42 @@ final class ChargingCommunitySyncTests: XCTestCase {
         let retryResult = await sync.run(explicitRetry: true)
         XCTAssertEqual(retryResult, .synced)
         XCTAssertEqual(recorder.registrations, 1)
+    }
+
+    func testLostRegistrationClaimDoesNotRetryIdentityCreationOnExplicitRetry() async {
+        let store = MemoryChargingCredentialStore(
+            loseRegistrationClaim: true,
+            recordAfterLostClaim: .registrationStarted
+        )
+        let recorder = SyncRecorder()
+        let sync = ChargingCommunitySync(
+            credentialStore: store,
+            registerIdentity: {
+                recorder.registrations += 1
+                return ChargingCommunityCredential(identityID: "identity", token: "secret")
+            },
+            synchronize: { _ in
+                recorder.syncCalls += 1
+                return ChargingCommunitySyncCounts(
+                    pendingCount: 0, downloaded: 0, uploaded: 0, outcome: .synced
+                )
+            },
+            refreshDirectory: {
+                recorder.directoryRefreshes += 1
+                return ChargingCommunitySyncCounts(
+                    pendingCount: 0, downloaded: 0, uploaded: 0, outcome: .synced
+                )
+            },
+            sleep: { _ in },
+            enabled: { true }
+        )
+
+        let result = await sync.run(explicitRetry: true)
+
+        XCTAssertEqual(result, .registrationUncertain)
+        XCTAssertEqual(recorder.registrations, 0)
+        XCTAssertEqual(recorder.syncCalls, 0)
+        XCTAssertEqual(recorder.directoryRefreshes, 1)
     }
 
     func testConcurrentRequestsShareOneSyncAndUnauthorizedKeepsCredential() async throws {
@@ -253,18 +289,94 @@ final class ChargingCommunitySyncTests: XCTestCase {
         XCTAssertEqual(recorder.syncCalls, 3)
         XCTAssertEqual(recorder.backoffCount, 2)
     }
+
+    func testFirstErrorOfNewRunKeepsLastKnownPendingCount() async {
+        let store = MemoryChargingCredentialStore(
+            initial: .ready(ChargingCommunityCredential(identityID: "identity", token: "secret"))
+        )
+        var syncCalls = 0
+        let sync = ChargingCommunitySync(
+            credentialStore: store,
+            registerIdentity: {
+                XCTFail("Existing identity must be reused")
+                return .init(identityID: "", token: "")
+            },
+            synchronize: { _ in
+                syncCalls += 1
+                if syncCalls == 1 {
+                    return ChargingCommunitySyncCounts(
+                        pendingCount: 6, downloaded: 0, uploaded: 0, outcome: .pending
+                    )
+                }
+                throw MobileChargingError.Network
+            },
+            sleep: { _ in },
+            enabled: { true }
+        )
+
+        let firstResult = await sync.run()
+        XCTAssertEqual(firstResult, .pending)
+        XCTAssertEqual(sync.pendingCount, 6)
+        let secondResult = await sync.run()
+        XCTAssertEqual(secondResult, .offline)
+        XCTAssertEqual(sync.pendingCount, 6)
+    }
+
+    func testConflictOutcomePublishesProgressFromTheTerminalRound() async {
+        let store = MemoryChargingCredentialStore(
+            initial: .ready(ChargingCommunityCredential(identityID: "identity", token: "secret"))
+        )
+        let cachedDate = Date(timeIntervalSince1970: 1_700_000_456)
+        var dateReads = 0
+        let sync = ChargingCommunitySync(
+            credentialStore: store,
+            registerIdentity: {
+                XCTFail("Existing identity must be reused")
+                return .init(identityID: "", token: "")
+            },
+            synchronize: { _ in
+                ChargingCommunitySyncCounts(
+                    pendingCount: 2,
+                    downloaded: 4,
+                    uploaded: 3,
+                    outcome: .conflict
+                )
+            },
+            readLastUpdated: {
+                dateReads += 1
+                return UInt64(cachedDate.timeIntervalSince1970 * 1_000)
+            },
+            sleep: { _ in },
+            enabled: { true }
+        )
+
+        let result = await sync.run()
+
+        XCTAssertEqual(result, .conflict)
+        XCTAssertEqual(sync.pendingCount, 2)
+        XCTAssertEqual(sync.downloaded, 4)
+        XCTAssertEqual(sync.uploaded, 3)
+        XCTAssertEqual(dateReads, 2)
+        XCTAssertEqual(sync.lastUpdated, cachedDate)
+    }
 }
 
 private actor MemoryChargingCredentialStore: ChargingCredentialStore {
     private var record: ChargingCredentialRecord?
     private let loadFailure: ChargingCredentialStoreError?
+    private let loseRegistrationClaim: Bool
+    private let recordAfterLostClaim: ChargingCredentialRecord?
 
     init(
         initial: ChargingCredentialRecord? = nil,
-        failLoad: ChargingCredentialStoreError? = nil
+        failLoad: ChargingCredentialStoreError? = nil,
+        loseRegistrationClaim: Bool = false,
+        recordAfterLostClaim: ChargingCredentialRecord? = nil
     ) {
         record = initial
         loadFailure = failLoad
+        self.loseRegistrationClaim = loseRegistrationClaim
+        self.recordAfterLostClaim = recordAfterLostClaim
     }
 
     func load() async throws -> ChargingCredentialRecord? {
@@ -273,6 +385,10 @@ private actor MemoryChargingCredentialStore: ChargingCredentialStore {
     }
 
     func beginRegistration() async throws -> Bool {
+        if loseRegistrationClaim {
+            record = recordAfterLostClaim
+            return false
+        }
         guard record == nil else { return false }
         record = .registrationStarted
         return true

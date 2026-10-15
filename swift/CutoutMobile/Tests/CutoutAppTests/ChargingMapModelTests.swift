@@ -279,13 +279,21 @@ final class ChargingMapModelTests: XCTestCase {
         XCTAssertEqual(observed[0].origin, origin)
         XCTAssertEqual(observed[0].filter, filter)
         XCTAssertEqual(observed[0].limit, 1)
-        let expectedMetro = RideMapCanvasView.geoBounds(
-            for: MKCoordinateRegion(
-                center: CLLocationCoordinate2D(latitude: 39.74, longitude: -104.99),
-                latitudinalMeters: 100_000, longitudinalMeters: 100_000
-            ))
-        XCTAssertEqual(observed[0].metro, expectedMetro)
-        XCTAssertLessThan(observed[0].metro.maximumLatitudeDegrees - observed[0].metro.minimumLatitudeDegrees, 1)
+        let expectedLatitudeSpan = 100_000.0 / 6_371_000.0 * 180.0 / Double.pi
+        XCTAssertEqual(
+            observed[0].metro.maximumLatitudeDegrees - observed[0].metro.minimumLatitudeDegrees,
+            expectedLatitudeSpan,
+            accuracy: 0.01
+        )
+        let expectedLongitudeSpan = expectedLatitudeSpan / cos(39.74 * Double.pi / 180.0)
+        let longitudeSpan =
+            observed[0].metro.minimumLongitudeDegrees
+                > observed[0].metro.maximumLongitudeDegrees
+            ? 360 - observed[0].metro.minimumLongitudeDegrees
+                + observed[0].metro.maximumLongitudeDegrees
+            : observed[0].metro.maximumLongitudeDegrees
+                - observed[0].metro.minimumLongitudeDegrees
+        XCTAssertEqual(longitudeSpan, expectedLongitudeSpan, accuracy: 0.02)
         XCTAssertGreaterThan(observed[0].metro.minimumLongitudeDegrees, -106)
         XCTAssertLessThan(observed[0].metro.maximumLongitudeDegrees, -104)
         XCTAssertEqual(model.userLocation, origin)
@@ -559,14 +567,14 @@ final class ChargingMapModelTests: XCTestCase {
         model.applicationDidBecomeActive()
         await gate.waitForCallCount(2)
 
-        await gate.release(1, counts: .init(pendingCount: 0, downloaded: 1, uploaded: 0, moreWork: false))
+        await gate.release(1, counts: .init(pendingCount: 0, downloaded: 1, uploaded: 0, outcome: .synced))
         await Task.yield()
         await Task.yield()
         let callsAfterCancelledRun = await gate.callCount()
         XCTAssertEqual(callsAfterCancelledRun, 2)
 
         model.communitySyncRequested()
-        await gate.release(2, counts: .init(pendingCount: 0, downloaded: 2, uploaded: 0, moreWork: false))
+        await gate.release(2, counts: .init(pendingCount: 0, downloaded: 2, uploaded: 0, outcome: .synced))
         await gate.waitForCallCount(3)
         for _ in 0..<100 where model.communitySyncDownloaded != 3 {
             await Task.yield()
@@ -603,7 +611,7 @@ final class ChargingMapModelTests: XCTestCase {
                 ),
                 registerIdentity: { .init(identityID: "identity", token: "token") },
                 synchronize: { _ in
-                    .init(pendingCount: 1, downloaded: 0, uploaded: 0, moreWork: false)
+                    .init(pendingCount: 1, downloaded: 0, uploaded: 0, outcome: .pending)
                 },
                 sleep: { _ in },
                 enabled: { true }
@@ -953,7 +961,7 @@ final class ChargingMapModelTests: XCTestCase {
             registerIdentity: { .init(identityID: "test", token: "test") },
             synchronize: { _ in
                 ChargingCommunitySyncCounts(
-                    pendingCount: 0, downloaded: 1, uploaded: 0, moreWork: false
+                    pendingCount: 0, downloaded: 1, uploaded: 0, outcome: .synced
                 )
             },
             sleep: { _ in },
@@ -1112,7 +1120,7 @@ private actor ChargingSyncRunGate {
         countWaiters.filter { $0.0 <= current }.forEach { $0.1.resume() }
         countWaiters.removeAll { $0.0 <= current }
         if current > 2 {
-            return .init(pendingCount: 0, downloaded: 3, uploaded: 0, moreWork: false)
+            return .init(pendingCount: 0, downloaded: 3, uploaded: 0, outcome: .synced)
         }
         return try await withCheckedThrowingContinuation { waiters[current] = $0 }
     }

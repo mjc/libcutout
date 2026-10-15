@@ -41,6 +41,22 @@ Preflight returns a normalized input or a typed field issue. Swift adds typed
 feedback for incomplete native text and unconfirmed supplies, and renders the
 issues beside the affected fields. Persistence validates again when saving.
 
+Charging map reconciliation belongs to Rust: revision preference, delayed readback
+admission, withdrawal suppression and restoration are one projection policy.
+Swift supplies observations and publishes the resulting page and selection while
+retaining native task cancellation and map presentation.
+
+The charging sync policy owns registration admission, bounded attempts and rounds,
+retry delays, progress accumulation and terminal outcomes. Swift executes Keychain
+operations and native tasks, and maps typed outcomes to localized presentation.
+Committed upload/download progress remains available when work is blocked.
+
+Nearby discovery uses explicit state transitions for empty results, location
+availability, cache updates and user cancellation. Swift executes one-shot search
+and camera decisions without deriving another discovery state from UI flags.
+Charging location selection validates freshness and chooses fixes in Rust; Swift
+retains the original accepted native location and its platform metadata.
+
 ## Shared settings ownership
 
 For settings, that ownership includes value domains, applicability, observations,

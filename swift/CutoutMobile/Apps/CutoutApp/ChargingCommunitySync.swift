@@ -153,12 +153,7 @@ struct KeychainChargingCredentialStore: ChargingCredentialStore {
     }
 }
 
-struct ChargingCommunitySyncCounts: Equatable, Sendable {
-    let pendingCount: UInt32
-    let downloaded: UInt32
-    let uploaded: UInt32
-    let moreWork: Bool
-}
+typealias ChargingCommunitySyncCounts = MobileChargingSyncSummaryDto
 
 enum ChargingCommunitySyncStatus: Equatable, Sendable {
     case notStarted
@@ -183,9 +178,6 @@ final class ChargingCommunitySync {
     typealias ReadLastUpdated = @MainActor () async throws -> UInt64?
     typealias Sleep = @MainActor (Duration) async throws -> Void
 
-    private static let maximumSyncRounds = 3
-    private static let maximumAttempts = 3
-
     static let shared = makeShared()
 
     private static func makeShared() -> ChargingCommunitySync {
@@ -204,7 +196,7 @@ final class ChargingCommunitySync {
                     pendingCount: summary.pendingCount,
                     downloaded: summary.downloaded,
                     uploaded: summary.uploaded,
-                    moreWork: summary.moreWork
+                    outcome: summary.outcome
                 )
             },
             refreshDirectory: {
@@ -214,7 +206,7 @@ final class ChargingCommunitySync {
                     pendingCount: summary.pendingCount,
                     downloaded: summary.downloaded,
                     uploaded: summary.uploaded,
-                    moreWork: summary.moreWork
+                    outcome: summary.outcome
                 )
             },
             readLastUpdated: {
@@ -250,6 +242,9 @@ final class ChargingCommunitySync {
     private let enabled: @MainActor () -> Bool
     private var activeTask: Task<ChargingCommunitySyncStatus, Never>?
     private var runGeneration: UInt64 = 0
+    private var syncRunState = MobileChargingSyncRunState(
+        round: 0, attempt: 0, pendingCount: 0, downloaded: 0, uploaded: 0
+    )
 
     private(set) var status: ChargingCommunitySyncStatus = .notStarted
     private(set) var pendingCount: UInt32 = 0
@@ -301,81 +296,115 @@ final class ChargingCommunitySync {
         status = .syncing
         downloaded = 0
         uploaded = 0
+        syncRunState = MobileChargingSyncRunState(
+            round: 0, attempt: 0, pendingCount: pendingCount, downloaded: 0, uploaded: 0
+        )
         await refreshPersistedLastUpdated()
         guard !Task.isCancelled else { return .notStarted }
         let credential: ChargingCommunityCredential
         do {
             let stored = try await credentialStore.load()
             try Task.checkCancellation()
-            switch stored {
-            case .ready(let saved):
+            let admission = mobileChargingRegistrationAdmission(
+                state: credentialState(stored), explicitRetry: explicitRetry
+            )
+            switch admission {
+            case .synchronize:
+                guard case .ready(let saved) = stored else { return .storageUnavailable }
                 credential = saved
-            case .registrationStarted:
-                guard explicitRetry else {
-                    await refreshUnauthenticatedDirectory()
-                    return .registrationUncertain
-                }
+            case .registerIdentity:
                 credential = try await registerAndPersist()
-            case nil:
+            case .beginRegistration:
                 let beganRegistration = try await credentialStore.beginRegistration()
                 try Task.checkCancellation()
                 if beganRegistration {
+                    let registration = mobileChargingRegistrationAdmission(
+                        state: .registrationStarted, explicitRetry: true
+                    )
+                    guard registration == .registerIdentity else { return .storageUnavailable }
                     credential = try await registerAndPersist()
                 } else {
-                    switch try await credentialStore.load() {
-                    case .ready(let saved): credential = saved
-                    case .registrationStarted, nil:
+                    let currentRecord = try await credentialStore.load()
+                    let claimResult: MobileChargingRegistrationClaimResult
+                    if case .ready = currentRecord {
+                        claimResult = .readyCredential
+                    } else {
+                        claimResult = .unavailable
+                    }
+                    let current = mobileChargingRegistrationClaimAdmission(result: claimResult)
+                    switch current {
+                    case .synchronize:
+                        guard case .ready(let saved) = currentRecord else {
+                            return .storageUnavailable
+                        }
+                        credential = saved
+                    case .requireExplicitRetry:
                         await refreshUnauthenticatedDirectory()
                         return .registrationUncertain
                     }
                 }
+            case .publicRefresh:
+                await refreshUnauthenticatedDirectory()
+                return .storageUnavailable
+            case .requireExplicitRetry:
+                await refreshUnauthenticatedDirectory()
+                return .registrationUncertain
             }
         } catch {
-            await refreshUnauthenticatedDirectory()
+            let unreadable = mobileChargingRegistrationAdmission(
+                state: .unreadable, explicitRetry: explicitRetry
+            )
+            if unreadable == .publicRefresh {
+                await refreshUnauthenticatedDirectory()
+            }
             return status(for: error)
         }
 
-        for round in 0..<Self.maximumSyncRounds {
-            let summary: ChargingCommunitySyncCounts
+        while !Task.isCancelled {
+            let step: MobileChargingSyncStep
             do {
-                try Task.checkCancellation()
-                summary = try await synchronizeWithRetry(token: credential.token)
-                try Task.checkCancellation()
+                step = try await synchronizeWithPolicy(token: credential.token)
             } catch {
-                if (error as? MobileChargingError) == .Unauthorized {
-                    await refreshUnauthenticatedDirectory()
-                }
                 return status(for: error)
             }
-            pendingCount = summary.pendingCount
-            downloaded &+= summary.downloaded
-            uploaded &+= summary.uploaded
-            if !summary.moreWork {
-                lastUpdated = Date()
-                await refreshPersistedLastUpdated()
-                return summary.pendingCount == 0 ? .synced : .pending
+            publish(step.state)
+            if step.action == .nextRound { continue }
+            if step.action == .authenticationRequired {
+                await refreshUnauthenticatedDirectory()
             }
-            if round == Self.maximumSyncRounds - 1 { return .pending }
+            if step.action == .synced || step.state.downloaded > 0 {
+                if step.action == .synced { lastUpdated = Date() }
+                await refreshPersistedLastUpdated()
+            }
+            return status(for: step.action)
         }
-        return .pending
+        return .notStarted
     }
 
     private func refreshUnauthenticatedDirectory() async {
-        guard let refreshDirectory, !Task.isCancelled else { return }
-        for round in 0..<Self.maximumSyncRounds {
+        guard let refreshDirectory else { return }
+        while !Task.isCancelled {
             do {
                 let summary = try await refreshDirectory()
                 try Task.checkCancellation()
-                pendingCount = summary.pendingCount
-                downloaded &+= summary.downloaded
-                if summary.downloaded > 0 || !summary.moreWork {
+                let step = mobileChargingSyncObserveSummary(state: syncRunState, summary: summary)
+                publish(step.state)
+                if summary.downloaded > 0 || step.action != .nextRound {
                     await refreshPersistedLastUpdated()
                 }
-                if !summary.moreWork || round == Self.maximumSyncRounds - 1 {
-                    return
+                if case let .retry(afterSeconds: delay) = step.action {
+                    syncRunState = step.state
+                    do { try await sleep(.seconds(Int64(delay))) } catch { return }
+                    continue
                 }
+                guard step.action == .nextRound else { return }
             } catch {
-                return
+                guard !(error is CancellationError) else { return }
+                let failure = (error as? MobileChargingError) ?? .StorageFailure
+                let step = mobileChargingSyncObserveError(state: syncRunState, error: failure)
+                publish(step.state)
+                guard case let .retry(afterSeconds: delay) = step.action else { return }
+                do { try await sleep(.seconds(Int64(delay))) } catch { return }
             }
         }
     }
@@ -399,23 +428,59 @@ final class ChargingCommunitySync {
         return credential
     }
 
-    private func synchronizeWithRetry(token: String) async throws -> ChargingCommunitySyncCounts {
-        for attempt in 0..<Self.maximumAttempts {
+    private func synchronizeWithPolicy(token: String) async throws -> MobileChargingSyncStep {
+        var state = syncRunState
+        while true {
+            try Task.checkCancellation()
             do {
-                return try await synchronize(token)
+                let summary = try await synchronize(token)
+                try Task.checkCancellation()
+                let step = mobileChargingSyncObserveSummary(state: state, summary: summary)
+                state = step.state
+                if case let .retry(afterSeconds: delay) = step.action {
+                    try await sleep(.seconds(Int64(delay)))
+                    continue
+                }
+                return step
+            } catch is CancellationError {
+                throw CancellationError()
             } catch {
-                guard attempt < Self.maximumAttempts - 1, isTransient(error) else { throw error }
-                try await sleep(.seconds(Int64(1 << attempt)))
+                let failure = (error as? MobileChargingError) ?? .StorageFailure
+                let step = mobileChargingSyncObserveError(state: state, error: failure)
+                state = step.state
+                guard case let .retry(afterSeconds: delay) = step.action else { return step }
+                try await sleep(.seconds(Int64(delay)))
             }
         }
-        throw MobileChargingError.Network
     }
 
-    private func isTransient(_ error: Error) -> Bool {
-        guard let error = error as? MobileChargingError else { return false }
-        return switch error {
-        case .Network: true
-        default: false
+    private func credentialState(
+        _ record: ChargingCredentialRecord?
+    ) -> MobileChargingSyncCredentialState {
+        switch record {
+        case .ready: .ready
+        case .registrationStarted: .registrationStarted
+        case nil: .missing
+        }
+    }
+
+    private func publish(_ state: MobileChargingSyncRunState) {
+        syncRunState = state
+        pendingCount = state.pendingCount
+        downloaded = state.downloaded
+        uploaded = state.uploaded
+    }
+
+    private func status(for action: MobileChargingSyncAction) -> ChargingCommunitySyncStatus {
+        switch action {
+        case .synced: .synced
+        case .pending, .nextRound, .retry(_): .pending
+        case .offline: .offline
+        case .authenticationRequired: .authenticationRequired
+        case .conflict: .conflict
+        case .rejected: .rejected
+        case .throttled: .throttled
+        case .storageUnavailable: .storageUnavailable
         }
     }
 
@@ -425,14 +490,13 @@ final class ChargingCommunitySync {
             return .storageUnavailable
         }
         guard let error = error as? MobileChargingError else { return .storageUnavailable }
-        return switch error {
-        case .Unauthorized: .authenticationRequired
-        case .Conflict: .conflict
-        case .Rejected: .rejected
-        case .Throttled: .throttled
-        case .Network, .Unavailable: .offline
-        case .StorageFailure: .storageUnavailable
-        default: .storageUnavailable
+        return switch mobileChargingSyncFailure(error: error) {
+        case .offline: .offline
+        case .authenticationRequired: .authenticationRequired
+        case .conflict: .conflict
+        case .rejected: .rejected
+        case .throttled: .throttled
+        case .storageUnavailable: .storageUnavailable
         }
     }
 }

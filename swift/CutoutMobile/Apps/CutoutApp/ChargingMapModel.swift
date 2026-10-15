@@ -29,8 +29,6 @@ typealias ChargingOperationResolution = @Sendable (
 final class ChargingMapModel {
     private static let pageSize: UInt32 = 100
     private static let resultLimit = 500
-    private static let nearbyLimit: UInt32 = 1
-    private static let metroWindowMeters = 100_000.0
 
     private let queryPage: ChargingMapPageQuery
     private let readSpot: ChargingMapSpotQuery
@@ -40,14 +38,12 @@ final class ChargingMapModel {
     private let queryBlockedOperations: ChargingBlockedOperationsQuery
     private let resolveOperation: ChargingOperationResolution
     private let communitySync: ChargingCommunitySync?
-    private var withdrawnAtMutation = [String: (mutation: UInt64, revision: UInt64)]()
+    private let reconciliation = MobileChargingReconciliation()
+    private let discovery: MobileChargingDiscovery
     private var bounds: MobileGeoBoundsDto?
     private var cursor: MobileMapPointCursorDto?
     private var generation: UInt64 = 0
-    private var mutationSequence: UInt64 = 0
-    private var spotMutationSequence = [String: UInt64]()
     private var selectionSequence: UInt64 = 0
-    private var voteReadbacks = [String: MobileChargingSpotDto]()
     private var loadingTask: Task<Void, Never>?
     private var discoveryTask: Task<Void, Never>?
     private var communitySyncTask: Task<Void, Never>?
@@ -55,8 +51,6 @@ final class ChargingMapModel {
     private var communitySyncNeedsAnotherRun = false
     private var communitySyncRetryRequested = false
     private var discoveryGeneration: UInt64 = 0
-    private var discoveryState: InitialDiscoveryState = .eligible
-    private var initialNearbySearchWasEmpty = false
 
     private(set) var spots = [MobileChargingSpotDto]()
     private(set) var selectedSpot: MobileChargingSpotDto?
@@ -94,14 +88,6 @@ final class ChargingMapModel {
     var communitySyncUploaded: UInt32 { communitySync?.uploaded ?? 0 }
     var communitySyncLastUpdated: Date? { communitySync?.lastUpdated }
 
-    private enum InitialDiscoveryState: Equatable {
-        case eligible
-        case waitingForLocation
-        case searching
-        case settled
-        case cancelled
-    }
-
     init(
         filter: MobileChargingFilterDto = MobileChargingFilterDto(
             cost: nil, connector: nil, voltageVolts: nil, venue: nil
@@ -118,6 +104,7 @@ final class ChargingMapModel {
         communitySync: ChargingCommunitySync? = nil
     ) {
         self.filter = filter
+        self.discovery = MobileChargingDiscovery(filter: filter)
         self.queryPage = queryPage
         self.readSpot = readSpot
         self.nearbySpots = nearbySpots
@@ -261,28 +248,28 @@ final class ChargingMapModel {
     }
 
     private func refreshAfterResolution(id: String) async {
-        mutationSequence &+= 1
-        spotMutationSequence[id] = mutationSequence
         if bounds != nil {
             await fetchPage(append: false)
         } else {
             advanceQuery()
         }
         let requestGeneration = generation
+        let requestTicket = reconciliation.beginObservation()
 
-        let requestMutation = spotMutationSequence[id, default: 0]
         let requestSelection = selectionSequence
         do {
             let updated = try await readSpot(id)
-            guard generation == requestGeneration,
-                spotMutationSequence[id, default: 0] == requestMutation
-            else { return }
+            guard generation == requestGeneration else { return }
             guard let updated else {
                 spots.removeAll { $0.id == id }
                 if selectedSpot?.id == id { deselect() }
                 return
             }
-            if updated.status == .published { withdrawnAtMutation.removeValue(forKey: id) }
+            guard
+                let updated = reconciliation.reconcileResolution(
+                    requestTicket: requestTicket, spot: updated
+                )
+            else { return }
             if updated.status == .hidden || updated.status == .withdrawn || updated.status == .removed {
                 spots.removeAll { $0.id == id }
             } else if let index = spots.firstIndex(where: { $0.id == id }) {
@@ -346,27 +333,27 @@ final class ChargingMapModel {
         guard let selected = selectedSpot else { return }
         let id = selected.id
         let requestGeneration = generation
-        let requestMutation = spotMutationSequence[id, default: 0]
+        let requestTicket = reconciliation.beginObservation()
         let requestSelection = selectionSequence
         do {
             let updated = try await readSpot(id)
             guard generation == requestGeneration,
                 selectionSequence == requestSelection,
                 selectedSpot?.id == id,
-                spotMutationSequence[id, default: 0] == requestMutation,
                 !Task.isCancelled
             else { return }
-            guard let updated else {
+            guard let updated,
+                let updated = reconciliation.reconcileReadback(
+                    requestTicket: requestTicket, spot: updated
+                )
+            else {
                 deselect()
                 return
             }
-            guard let current = selectedSpot, updated.localRevision >= current.localRevision else { return }
             selectedSpot = updated
             if updated.status == .hidden || updated.status == .withdrawn || updated.status == .removed {
                 spots.removeAll { $0.id == id }
-            } else if let index = spots.firstIndex(where: { $0.id == id }),
-                updated.localRevision >= spots[index].localRevision
-            {
+            } else if let index = spots.firstIndex(where: { $0.id == id }) {
                 spots[index] = updated
             }
         } catch {
@@ -375,18 +362,12 @@ final class ChargingMapModel {
     }
 
     private func rearmEmptyInitialDiscoveryAfterCacheUpdate() {
-        guard communitySyncDownloaded > 0,
-            initialNearbySearchWasEmpty,
-            discoveryState == .settled,
-            spots.isEmpty
+        guard
+            let request = discovery.communityCacheUpdated(
+                downloadedCount: communitySyncDownloaded, hasLocalResults: !spots.isEmpty
+            )
         else { return }
-        initialNearbySearchWasEmpty = false
-        discoveryState = .eligible
-        if userLocation == nil {
-            discoveryState = .waitingForLocation
-        } else {
-            beginInitialDiscovery()
-        }
+        beginInitialDiscovery(request)
     }
 
     func setViewport(_ bounds: MobileGeoBoundsDto) {
@@ -398,7 +379,11 @@ final class ChargingMapModel {
     func setFilter(_ filter: MobileChargingFilterDto) {
         guard self.filter != filter else { return }
         self.filter = filter
-        if discoveryState != .eligible { cancelAutomaticDiscovery() }
+        discovery.setFilter(filter: filter)
+        discoveryTarget = nil
+        discoveryGeneration &+= 1
+        discoveryTask?.cancel()
+        discoveryTask = nil
         spots = []
         selectedSpot = nil
         cursor = nil
@@ -409,14 +394,14 @@ final class ChargingMapModel {
 
     func setUserLocation(_ coordinate: MobileMapCoordinateDto) {
         userLocation = coordinate
-        if discoveryState == .waitingForLocation { beginInitialDiscovery() }
+        if let request = discovery.locationAvailable(location: coordinate) {
+            beginInitialDiscovery(request)
+        }
     }
 
     func cancelAutomaticDiscovery() {
+        discovery.userOverride()
         discoveryTarget = nil
-        guard discoveryState != .cancelled else { return }
-        discoveryState = .cancelled
-        initialNearbySearchWasEmpty = false
         discoveryGeneration &+= 1
         discoveryTask?.cancel()
         discoveryTask = nil
@@ -445,23 +430,21 @@ final class ChargingMapModel {
         }
 
         let requestGeneration = generation
-        let requestMutation = spotMutationSequence[id, default: 0]
+        let requestTicket = reconciliation.beginObservation()
         do {
             guard let updated = try await readSpot(id) else {
-                guard generation == requestGeneration,
-                    spotMutationSequence[id, default: 0] == requestMutation
-                else { return }
+                guard generation == requestGeneration else { return }
                 error = .NotFound
                 return
             }
-            guard generation == requestGeneration,
-                spotMutationSequence[id, default: 0] == requestMutation
-            else { return }
+            guard generation == requestGeneration else { return }
             guard !Task.isCancelled else { return }
 
-            mutationSequence &+= 1
-            spotMutationSequence[id] = mutationSequence
-            voteReadbacks[id] = updated
+            guard
+                let updated = reconciliation.reconcileReadback(
+                    requestTicket: requestTicket, spot: updated
+                )
+            else { return }
             if let index = spots.firstIndex(where: { $0.id == id }) {
                 spots[index] = updated
             }
@@ -469,7 +452,6 @@ final class ChargingMapModel {
             error = nil
         } catch let error as MobileChargingError {
             guard generation == requestGeneration,
-                spotMutationSequence[id, default: 0] == requestMutation,
                 !Task.isCancelled
             else { return }
             self.error = error
@@ -477,7 +459,6 @@ final class ChargingMapModel {
             return
         } catch {
             guard generation == requestGeneration,
-                spotMutationSequence[id, default: 0] == requestMutation,
                 !Task.isCancelled
             else { return }
             self.error = .StorageFailure
@@ -486,22 +467,19 @@ final class ChargingMapModel {
 
     func consumeDiscoveryTarget() -> MobileMapCoordinateDto? {
         defer { discoveryTarget = nil }
-        return discoveryTarget
+        return discovery.consumeTarget()
     }
 
     func withdraw(_ spot: MobileChargingSpotDto) async -> Bool {
         guard spot.owned, !pendingWithdrawalIDs.contains(spot.id), !pendingVoteIDs.contains(spot.id),
-            withdrawnAtMutation[spot.id] == nil
+            !reconciliation.isWithdrawn(id: spot.id)
         else { return false }
         pendingWithdrawalIDs.insert(spot.id)
         error = nil
         defer { pendingWithdrawalIDs.remove(spot.id) }
         do {
             try await writeWithdrawal(spot.id, spot.localRevision)
-            mutationSequence &+= 1
-            withdrawnAtMutation[spot.id] = (mutationSequence, spot.localRevision)
-            spotMutationSequence[spot.id] = mutationSequence
-            voteReadbacks.removeValue(forKey: spot.id)
+            reconciliation.recordWithdrawal(id: spot.id, revision: spot.localRevision)
             spots.removeAll { $0.id == spot.id }
             if selectedSpot?.id == spot.id { deselect() }
             communitySyncRequested()
@@ -527,7 +505,8 @@ final class ChargingMapModel {
 
     func vote(_ selection: MobileChargingVoteDto, forSpotID: String? = nil) async {
         guard let selected = selectedSpot, !pendingVoteIDs.contains(selected.id),
-            !pendingWithdrawalIDs.contains(selected.id), withdrawnAtMutation[selected.id] == nil
+            !pendingWithdrawalIDs.contains(selected.id),
+            !reconciliation.isWithdrawn(id: selected.id)
         else { return }
         guard forSpotID == nil || forSpotID == selected.id else { return }
         let id = selected.id
@@ -538,14 +517,19 @@ final class ChargingMapModel {
             do {
                 try await writeVote(id, selected.localRevision, chosen)
                 self.communitySyncRequested()
+                let requestTicket = self.reconciliation.beginObservation()
                 let updated = try await readSpot(id)
-                self.finishVote(id: id, updated: updated, error: nil)
+                self.finishVote(
+                    id: id, updated: updated, error: nil, requestTicket: requestTicket
+                )
             } catch let error as MobileChargingError {
-                self.finishVote(id: id, updated: nil, error: error)
+                self.finishVote(id: id, updated: nil, error: error, requestTicket: nil)
             } catch is CancellationError {
-                self.finishVote(id: id, updated: nil, error: nil)
+                self.finishVote(id: id, updated: nil, error: nil, requestTicket: nil)
             } catch {
-                self.finishVote(id: id, updated: nil, error: .StorageFailure)
+                self.finishVote(
+                    id: id, updated: nil, error: .StorageFailure, requestTicket: nil
+                )
             }
         }
         await task.value
@@ -574,13 +558,13 @@ final class ChargingMapModel {
         let requestCursor = append ? cursor : nil
         let requestFilter = filter
         let requestBounds = bounds
-        let requestMutationSequence = spotMutationSequence
+        let requestTicket = reconciliation.beginObservation()
         let task = Task { [queryPage] in
             do {
                 let page = try await queryPage(requestBounds, requestFilter, requestCursor, Self.pageSize)
                 self.apply(
                     page, append: append, generation: requestGeneration,
-                    mutationSequence: requestMutationSequence
+                    requestTicket: requestTicket
                 )
             } catch let error as MobileChargingError {
                 self.fail(error, append: append, generation: requestGeneration)
@@ -603,44 +587,19 @@ final class ChargingMapModel {
         _ page: MobileChargingPageDto,
         append: Bool,
         generation: UInt64,
-        mutationSequence requestMutationSequence: [String: UInt64]
+        requestTicket: UInt64
     ) {
         guard self.generation == generation else { return }
         if Task.isCancelled {
             cancelled(generation: generation)
             return
         }
-        var merged = append ? spots : []
-        for incoming in page.spots {
-            if let withdrawal = withdrawnAtMutation[incoming.id] {
-                guard requestMutationSequence[incoming.id, default: 0] >= withdrawal.mutation,
-                    incoming.localRevision > withdrawal.revision,
-                    incoming.status == .published
-                else { continue }
-                withdrawnAtMutation.removeValue(forKey: incoming.id)
-            }
-            let currentIndex = merged.firstIndex(where: { $0.id == incoming.id })
-            let changedSinceRequest =
-                spotMutationSequence[incoming.id, default: 0]
-                > requestMutationSequence[incoming.id, default: 0]
-            var candidate =
-                changedSinceRequest
-                ? (voteReadbacks[incoming.id] ?? currentIndex.map { merged[$0] } ?? incoming)
-                : incoming
-            if let known = spots.first(where: { $0.id == incoming.id })
-                ?? (selectedSpot?.id == incoming.id ? selectedSpot : nil),
-                known.localRevision > candidate.localRevision
-            {
-                candidate = known
-            }
-            if let currentIndex {
-                if candidate.localRevision >= merged[currentIndex].localRevision {
-                    merged[currentIndex] = candidate
-                }
-            } else if merged.count < Self.resultLimit {
-                merged.append(candidate)
-            }
-        }
+        let merged = Array(
+            reconciliation.reconcilePage(
+                requestTicket: requestTicket, append: append, currentPage: spots,
+                selectedSpotId: selectedSpot?.id,
+                incoming: page.spots
+            ).prefix(Self.resultLimit))
         spots = merged
         cursor = page.nextCursor
         hasMore = page.nextCursor != nil && spots.count < Self.resultLimit
@@ -651,46 +610,19 @@ final class ChargingMapModel {
         error = nil
         isLoading = false
         loadingTask = nil
-        if !append { considerInitialDiscovery(hasLocalResults: !merged.isEmpty) }
+        if !append, let request = discovery.viewportLoaded(hasLocalResults: !merged.isEmpty) {
+            beginInitialDiscovery(request)
+        }
     }
 
-    private func considerInitialDiscovery(hasLocalResults: Bool) {
-        guard discoveryState == .eligible else { return }
-        guard !hasLocalResults else {
-            initialNearbySearchWasEmpty = false
-            discoveryState = .settled
-            return
-        }
-        guard userLocation != nil else {
-            discoveryState = .waitingForLocation
-            return
-        }
-        beginInitialDiscovery()
-    }
-
-    private func beginInitialDiscovery() {
-        guard discoveryState == .waitingForLocation || discoveryState == .eligible,
-            let origin = userLocation
-        else { return }
-        discoveryState = .searching
+    private func beginInitialDiscovery(_ request: MobileChargingDiscoveryRequestDto) {
         discoveryGeneration &+= 1
         let requestGeneration = discoveryGeneration
-        let requestFilter = filter
-        let region = MKCoordinateRegion(
-            center: CLLocationCoordinate2D(
-                latitude: origin.latitudeDegrees, longitude: origin.longitudeDegrees
-            ),
-            latitudinalMeters: Self.metroWindowMeters,
-            longitudinalMeters: Self.metroWindowMeters
-        )
-        guard let metroBounds = RideMapCanvasView.geoBounds(for: region) else {
-            discoveryState = .settled
-            discoveryTask = nil
-            return
-        }
         let task = Task { [nearbySpots] in
             do {
-                let matches = try await nearbySpots(metroBounds, origin, requestFilter, Self.nearbyLimit)
+                let matches = try await nearbySpots(
+                    request.bounds, request.origin, request.filter, request.limit
+                )
                 self.finishInitialDiscovery(matches.first, generation: requestGeneration)
             } catch let error as MobileChargingError {
                 self.failInitialDiscovery(error, generation: requestGeneration)
@@ -704,33 +636,33 @@ final class ChargingMapModel {
     }
 
     private func finishInitialDiscovery(_ nearest: MobileChargingSpotDto?, generation: UInt64) {
-        guard discoveryGeneration == generation, discoveryState == .searching else { return }
+        guard discoveryGeneration == generation else { return }
         if Task.isCancelled {
             cancelInitialDiscovery(generation: generation)
             return
         }
-        discoveryState = .settled
+        let coordinate = nearest?.input?.coordinate
+        discovery.searchCompleted(nearest: coordinate)
         discoveryTask = nil
-        initialNearbySearchWasEmpty = nearest == nil
-        discoveryTarget = nearest?.input?.coordinate
+        discoveryTarget = coordinate
     }
 
     private func failInitialDiscovery(_ error: MobileChargingError, generation: UInt64) {
-        guard discoveryGeneration == generation, discoveryState == .searching else { return }
+        guard discoveryGeneration == generation else { return }
         if Task.isCancelled {
             cancelInitialDiscovery(generation: generation)
             return
         }
-        discoveryState = .settled
+        discovery.searchFailed()
         discoveryTask = nil
-        initialNearbySearchWasEmpty = false
         self.error = error
     }
 
     private func cancelInitialDiscovery(generation: UInt64) {
         guard discoveryGeneration == generation else { return }
-        discoveryState = .cancelled
+        discovery.searchCancelled()
         discoveryTask = nil
+        discoveryTarget = nil
     }
 
     private func fail(_ error: MobileChargingError, append: Bool, generation: UInt64) {
@@ -751,20 +683,17 @@ final class ChargingMapModel {
         loadingTask = nil
     }
 
-    private func finishVote(id: String, updated: MobileChargingSpotDto?, error: MobileChargingError?) {
+    private func finishVote(
+        id: String, updated: MobileChargingSpotDto?, error: MobileChargingError?,
+        requestTicket: UInt64?
+    ) {
         pendingVoteIDs.remove(id)
         if let error, selectedSpot?.id == id { voteError = error }
-        guard let updated, updated.id == id, withdrawnAtMutation[id] == nil else { return }
-        let newestRevision = max(
-            max(
-                spots.first(where: { $0.id == id })?.localRevision ?? 0,
-                selectedSpot?.id == id ? selectedSpot?.localRevision ?? 0 : 0),
-            voteReadbacks[id]?.localRevision ?? 0
-        )
-        guard updated.localRevision > newestRevision else { return }
-        mutationSequence &+= 1
-        spotMutationSequence[id] = mutationSequence
-        voteReadbacks[id] = updated
+        guard let updated, let requestTicket, updated.id == id,
+            let updated = reconciliation.reconcileReadback(
+                requestTicket: requestTicket, spot: updated
+            )
+        else { return }
         if let index = spots.firstIndex(where: { $0.id == id }) { spots[index] = updated }
         if selectedSpot?.id == id { selectedSpot = updated }
     }
