@@ -62,6 +62,7 @@ pub(super) fn queue(
     revision: ChargingRevision,
     action: &ChargingAction,
 ) -> Result<ChargingWriteReceipt, StorageError> {
+    super::account::ensure_active(connection)?;
     if count(connection)? >= CHARGING_OUTBOX_CAPACITY {
         return Err(StorageError::ChargingOutboxFull);
     }
@@ -82,6 +83,7 @@ fn queue_at_sequence(
     action: &ChargingAction,
     target: Option<&ChargingTarget>,
 ) -> Result<ChargingWriteReceipt, StorageError> {
+    super::account::ensure_active(connection)?;
     if count(connection)? >= CHARGING_OUTBOX_CAPACITY {
         return Err(StorageError::ChargingOutboxFull);
     }
@@ -167,6 +169,7 @@ pub(super) fn next_operation(
     connection: &mut Connection,
 ) -> Result<Option<ChargingOperation>, StorageError> {
     let transaction = connection.transaction()?;
+    super::account::ensure_active(&transaction)?;
     let Some(pending) = pending_operation(&transaction)? else {
         return Ok(None);
     };
@@ -275,6 +278,7 @@ pub(super) fn acknowledge_operation(
     let checked = ValidatedDirectoryEntry::new(entry)?;
     ensure_spatial_schema(connection, spatial)?;
     let transaction = connection.transaction()?;
+    super::account::ensure_active(&transaction)?;
     let Some(pending) = pending_operation_by_id(&transaction, id)? else {
         return replayed_acknowledgment(&transaction, id, entry.id);
     };
@@ -305,6 +309,7 @@ pub(super) fn acknowledge_vote_operation(
     ChargingRevision::new(receipt.votes_up)?;
     ChargingRevision::new(receipt.votes_down)?;
     let transaction = connection.transaction()?;
+    super::account::ensure_active(&transaction)?;
     let Some(pending) = pending_operation_by_id(&transaction, id)? else {
         let remote: Option<String> = transaction
             .query_row(
@@ -904,6 +909,7 @@ pub(super) fn cache_vote(
     ChargingRevision::new(votes_down)?;
     let point_id = find_remote(connection, remote_id)?.ok_or(StorageError::NotFound)?;
     let transaction = connection.transaction()?;
+    super::account::ensure_active(&transaction)?;
     let current = detail(&transaction, point_id)?.ok_or(StorageError::NotFound)?;
     if change_sequence.get() < current.change_sequence.get()
         || vote_revision < current.vote_revision
@@ -1072,6 +1078,7 @@ pub(super) fn resolve_operation(
 ) -> Result<(), StorageError> {
     ensure_spatial_schema(connection, spatial)?;
     let transaction = connection.transaction()?;
+    super::account::ensure_active(&transaction)?;
     let row: Option<(i64, Vec<u8>, String, String)> = transaction
         .query_row(
             "SELECT sequence,point_id,blocked_kind,action FROM charging_outbox WHERE operation_id=?1",
@@ -1210,6 +1217,7 @@ pub(super) fn replace_blocked_operation(
 ) -> Result<ChargingWriteReceipt, StorageError> {
     ensure_spatial_schema(connection, spatial)?;
     let transaction = connection.transaction()?;
+    super::account::ensure_active(&transaction)?;
     let row: Option<(i64, Vec<u8>, String, String)> = transaction
         .query_row(
             "SELECT sequence,point_id,blocked_kind,action FROM charging_outbox WHERE operation_id=?1",

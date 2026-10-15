@@ -6,6 +6,7 @@ use super::{
 use cutout_ride_maps::{ChargingVote, Coordinate, NewChargingSpot};
 use rusqlite::Connection;
 
+mod account;
 mod codec;
 mod model;
 mod mutations;
@@ -13,6 +14,8 @@ mod queries;
 mod records;
 mod sync;
 
+use account::AccountEvent;
+pub use account::CommunityAccountState;
 pub use model::{
     ChargingAction, ChargingBlockedOperation, ChargingChangeCursor, ChargingDirectoryEntry,
     ChargingFilter, ChargingOperation, ChargingOperationBlockKind, ChargingOperationId,
@@ -58,6 +61,10 @@ CREATE INDEX charging_outbox_point ON charging_outbox(point_id,sequence);
 pub const CHARGING_SYNC_PAGE_LIMIT: usize = 100;
 
 pub(super) enum Command {
+    Account {
+        event: AccountEvent,
+        reply: Reply<CommunityAccountState>,
+    },
     Save {
         input: NewChargingSpot,
         reply: Reply<ChargingWriteReceipt>,
@@ -149,6 +156,32 @@ pub(super) enum Command {
     },
 }
 impl RideDatabase {
+    /// Reads the durable community deletion gate without opening an account.
+    /// # Errors
+    /// Returns storage or malformed-state errors.
+    pub fn community_account_state(&self) -> Result<CommunityAccountState, StorageError> {
+        self.account_event(AccountEvent::Read)
+    }
+    /// Fences community writes before a request can leave the process.
+    /// # Errors
+    /// Returns storage failures; no HTTP operation should follow a failed fence.
+    pub fn begin_community_account_deletion(&self) -> Result<CommunityAccountState, StorageError> {
+        self.account_event(AccountEvent::BeginDeletion)
+    }
+    /// Settles confirmed service deletion and removes obsolete community work atomically.
+    /// Local rides, captures and point geometry are preserved.
+    /// # Errors
+    /// Rejects completion without a durable request, invalid times, or storage errors.
+    pub fn complete_community_account_deletion(
+        &self,
+        at_ms: u64,
+    ) -> Result<CommunityAccountState, StorageError> {
+        self.account_event(AccountEvent::CompleteDeletion { at_ms })
+    }
+    fn account_event(&self, event: AccountEvent) -> Result<CommunityAccountState, StorageError> {
+        self.request(move |reply| DatabaseCommand::Charging(Command::Account { event, reply }))
+    }
+
     /// Atomically stores a new minimum-field spot and queues its community submission.
     /// # Errors
     /// Returns storage failures or a full outbox; neither leaves a partial pin.
@@ -437,6 +470,9 @@ pub(super) fn execute(
     command: Command,
 ) {
     match command {
+        Command::Account { event, reply } => {
+            let _ = reply.send(account::apply(connection, event));
+        }
         Command::Save { input, reply } => {
             let _ = reply.send(save(connection, spatial, &input));
         }

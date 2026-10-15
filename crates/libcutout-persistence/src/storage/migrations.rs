@@ -1,7 +1,7 @@
 use super::{MapPointId, SpatialRowId, StorageError};
 use rusqlite::{Connection, OptionalExtension, params};
 
-pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 45;
+pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 46;
 const APPLICATION_ID: i64 = 0x4355_544f;
 
 fn schema_pragmas(version: i64) -> String {
@@ -67,7 +67,8 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         41 => migrate_v41_to_v42(connection)?,
         42 => migrate_v42_to_current(connection)?,
         43 => migrate_v43_to_v44(connection)?,
-        44 => migrate_v44_to_current(connection)?,
+        44 => migrate_v44_to_v45(connection)?,
+        45 => migrate_v45_to_current(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -96,7 +97,10 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
             migrate_v43_to_v44(connection)?;
         }
         if connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))? == 44 {
-            migrate_v44_to_current(connection)?;
+            migrate_v44_to_v45(connection)?;
+        }
+        if connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))? == 45 {
+            migrate_v45_to_current(connection)?;
         }
     }
     Ok(())
@@ -1675,11 +1679,39 @@ fn migrate_v43_to_v44(connection: &mut Connection) -> Result<(), StorageError> {
     Ok(())
 }
 
-fn migrate_v44_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+fn migrate_v44_to_v45(connection: &mut Connection) -> Result<(), StorageError> {
     let transaction = connection.transaction()?;
     ensure_charging_sync_schema(&transaction)?;
+    transaction.execute_batch(&schema_pragmas(45))?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn migrate_v45_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction()?;
+    ensure_community_account_columns(&transaction)?;
     transaction.execute_batch(&current_schema_pragmas())?;
     transaction.commit()?;
+    Ok(())
+}
+
+fn ensure_community_account_columns(connection: &Connection) -> Result<(), StorageError> {
+    for (name, declaration) in [
+        (
+            "account_state",
+            "TEXT NOT NULL DEFAULT 'active' CHECK(account_state IN ('active','deleting','deleted'))",
+        ),
+        (
+            "account_deleted_at_ms",
+            "INTEGER CHECK(account_deleted_at_ms IS NULL OR account_deleted_at_ms>=0)",
+        ),
+    ] {
+        if !table_has_column(connection, "charging_sync_state", name)? {
+            connection.execute_batch(&format!(
+                "ALTER TABLE charging_sync_state ADD COLUMN {name} {declaration};"
+            ))?;
+        }
+    }
     Ok(())
 }
 
@@ -1712,6 +1744,7 @@ fn ensure_charging_sync_schema(connection: &Connection) -> Result<(), StorageErr
         "INSERT OR IGNORE INTO charging_sync_state(singleton,cursor,last_refreshed_at_ms) VALUES (1,0,NULL)",
         [],
     )?;
+    ensure_community_account_columns(connection)?;
     Ok(())
 }
 

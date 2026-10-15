@@ -7914,6 +7914,7 @@ fn map_ride_database_error(error: persistence::StorageError) -> MobileRideDataba
         persistence::StorageError::ChargingInvalidInput
         | persistence::StorageError::ChargingConflict
         | persistence::StorageError::ChargingNotOwned
+        | persistence::StorageError::CommunityAccountUnavailable
         | persistence::StorageError::ChargingOutboxFull => MobileRideDatabaseError::StorageFailure,
         persistence::StorageError::CaptureIdentityConflict => {
             MobileRideDatabaseError::CaptureIdentityConflict
