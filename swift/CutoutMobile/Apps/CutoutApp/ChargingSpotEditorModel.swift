@@ -121,15 +121,57 @@ final class ChargingSpotEditorModel {
             : parsedPrice == nil
     }
 
+    private var editorInput: MobileChargingInputDto {
+        MobileChargingInputDto(
+            coordinate: MobileMapCoordinateDto(
+                latitudeDegrees: Double(latitudeText) ?? .nan,
+                longitudeDegrees: Double(longitudeText) ?? .nan
+            ),
+            accessNote: accessNote,
+            cost: cost,
+            name: optionalText(name),
+            venue: venue,
+            hours: optionalText(hours),
+            terms: cost == .paid ? terms : nil,
+            price: cost == .paid ? parsedPrice : nil,
+            supplies: supplies.compactMap { $0.value() }
+        )
+    }
+
+    private var rustValidation: MobileChargingValidationDto {
+        mobileChargingValidateEditor(input: editorInput)
+    }
+
+    var validationIssues: [MobileChargingFieldIssueDto] {
+        var issues: [MobileChargingFieldIssueDto] =
+            switch rustValidation {
+            case .valid: []
+            case .invalid(let issue): [issue]
+            }
+        if cost == .paid && hasIncompletePrice {
+            issues.append(MobileChargingFieldIssueDto(field: .payment, reason: .incomplete, supplyIndex: nil))
+        }
+        for (index, draft) in supplies.enumerated() where !draft.isEmpty {
+            let incomplete = draft.value() == nil || draft.hasInvalidVoltage
+            let awaitingConfirmation = draft.requiresConfirmation
+            if incomplete || awaitingConfirmation {
+                issues.append(
+                    MobileChargingFieldIssueDto(
+                        field: .supply,
+                        reason: awaitingConfirmation ? .required : .incomplete,
+                        supplyIndex: UInt32(exactly: index)
+                    ))
+            }
+        }
+        return issues
+    }
+
     var hasInvalidOptionalDetails: Bool {
-        (cost == .paid && hasIncompletePrice) || supplies.contains { $0.value() == nil && !$0.isEmpty }
+        validationIssues.contains { $0.field != .accessNote && $0.field != .coordinate }
     }
 
     var canSave: Bool {
-        guard stage == .details, parsedCoordinate != nil,
-            !accessNote.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        else { return false }
-        return !hasInvalidOptionalDetails
+        stage == .details && parsedCoordinate != nil && validationIssues.isEmpty
     }
 
     init(
@@ -192,7 +234,9 @@ final class ChargingSpotEditorModel {
         self.priceCurrency = input.price?.currency ?? ""
         self.priceBasis = input.price?.basis
         self.originalPrice = input.price
-        self.supplies = input.supplies.map { ChargingSupplyDraft(supply: $0) }
+        self.supplies = input.supplies.map {
+            ChargingSupplyDraft(supply: $0, countryCode: countryCode, evStation: input.venue == .evChargingStation)
+        }
         self.errorKey = nil
         self.countryCode = countryCode
         self.outletChoices = mobileChargingOutletChoices(countryCode: countryCode)
@@ -242,11 +286,7 @@ final class ChargingSpotEditorModel {
         outletChoices = mobileChargingOutletChoices(countryCode: countryCode)
         powerSuggestion = mobileChargingPowerSuggestion(
             countryCode: countryCode, evStation: venue == .evChargingStation)
-        if venue != .evChargingStation {
-            for draft in supplies where draft.origin == .countrySuggestion {
-                draft.updateFromCountrySuggestion(powerSuggestion)
-            }
-        }
+        for draft in supplies { draft.setCountryCode(countryCode) }
     }
 
     private func updateCoordinateFromText() {
@@ -257,7 +297,8 @@ final class ChargingSpotEditorModel {
 
     func addSuggestedSupply() {
         guard venue != .evChargingStation else { return }
-        let draft = ChargingSupplyDraft(supply: powerSuggestion, origin: .countrySuggestion)
+        let draft = ChargingSupplyDraft(countryCode: countryCode, evStation: false)
+        draft.confirm()
         observe(draft)
         supplies.append(draft)
     }
@@ -271,20 +312,15 @@ final class ChargingSpotEditorModel {
 
     func save() async -> MobileChargingWriteReceiptDto? {
         guard canSave, let coordinate = parsedCoordinate else { return nil }
-        let cost = self.cost
         stage = .saving
         errorKey = nil
-        let fields = MobileChargingInputDto(
-            coordinate: coordinate,
-            accessNote: accessNote.trimmingCharacters(in: .whitespacesAndNewlines),
-            cost: cost,
-            name: optionalText(name),
-            venue: venue,
-            hours: optionalText(hours),
-            terms: cost == .paid ? terms : nil,
-            price: cost == .paid ? parsedPrice : nil,
-            supplies: supplies.compactMap { $0.value() }
-        )
+        let fields: MobileChargingInputDto
+        switch rustValidation {
+        case .valid(let input): fields = input
+        case .invalid:
+            stage = .details
+            return nil
+        }
         do {
             guard let receipt = try await saveSpot(fields, expectedRevision) else {
                 stage = .details
@@ -354,11 +390,16 @@ final class ChargingSpotEditorModel {
             countryCode: countryCode,
             evStation: venue == .evChargingStation
         )
-        if venue == .evChargingStation { supplies.removeAll { $0.origin == .countrySuggestion } }
+        for draft in supplies { draft.setVenue(isEV: venue == .evChargingStation) }
+        if venue == .evChargingStation {
+            supplies.removeAll { $0.snapshot?.origin == .suggested }
+        }
     }
 
     private func observe(_ draft: ChargingSupplyDraft) {
-        draft.onChange = { [weak self] in self?.errorKey = nil }
+        draft.onChange = { [weak self] in
+            self?.errorKey = nil
+        }
     }
 
     private static func normalizedCountryCode(_ value: String?) -> String? {

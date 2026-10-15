@@ -5,6 +5,7 @@ struct ChargingSupplyForm: View {
     @Bindable var draft: ChargingSupplyDraft
     let outletChoices: [MobileChargingConnectorDto]
     @FocusState.Binding var focusedField: ChargingSpotEditorField?
+    var validationIssue: MobileChargingFieldIssueDto? = nil
     let onRemove: () -> Void
 
     private var choices: [MobileChargingConnectorDto] {
@@ -32,6 +33,20 @@ struct ChargingSupplyForm: View {
                     .font(.footnote)
                     .foregroundStyle(.red)
                     .accessibilityIdentifier("charging.editor.supply.voltage-error")
+            }
+            if let validationIssue, !draft.hasInvalidVoltage {
+                Text(localizedAppText(ChargingEditorValidationPresentation.messageKey(for: validationIssue)))
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+                    .accessibilityIdentifier("charging.editor.supply.error")
+            } else if draft.requiresConfirmation {
+                Text(localizedAppText("charging.editor.error.supply_confirmation"))
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            if draft.requiresConfirmation {
+                Button(localizedAppText("charging.editor.supply.confirm"), action: draft.confirm)
+                    .accessibilityIdentifier("charging.editor.supply.confirm")
             }
             Text(localizedAppText("charging.editor.supply.unknown_hint"))
                 .font(.footnote)

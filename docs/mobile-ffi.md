@@ -30,6 +30,17 @@ Keep this boundary when changing the app: a policy fix must be testable without
 an Apple runtime. Swift tests verify observation delivery, native effect
 ownership, and presentation; Rust tests verify the portable invariants.
 
+The charging editor uses Rust's power draft for suggested/manual provenance and
+explicit inclusion. Adding a suggested supply confirms that value; a country
+change that replaces it requires confirmation again. Manual observations survive
+country and venue changes. Swift retains incomplete field text and translates
+native edits into draft transitions; reading a draft never confirms it.
+
+Charging preflight and persistence use the same Rust constructor pipeline.
+Preflight returns a normalized input or a typed field issue. Swift adds typed
+feedback for incomplete native text and unconfirmed supplies, and renders the
+issues beside the affected fields. Persistence validates again when saving.
+
 ## Shared settings ownership
 
 For settings, that ownership includes value domains, applicability, observations,

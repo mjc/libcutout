@@ -1,4 +1,6 @@
 import CutoutMobileFFI
+import Observation
+import Synchronization
 import XCTest
 
 @testable import CutoutApp
@@ -229,8 +231,13 @@ final class ChargingSpotEditorModelTests: XCTestCase {
 
         model.addSuggestedSupply()
         XCTAssertEqual(model.supplies.count, 1)
-        XCTAssertEqual(model.supplies[0].origin, .countrySuggestion)
+        XCTAssertFalse(model.supplies[0].requiresConfirmation)
+        XCTAssertTrue(model.canSave)
         model.setCountryCode("GB")
+        XCTAssertTrue(model.supplies[0].requiresConfirmation)
+        XCTAssertNil(model.supplies[0].value())
+        XCTAssertFalse(model.canSave)
+        model.supplies[0].confirm()
         XCTAssertEqual(model.supplies[0].value(), mobileChargingPowerSuggestion(countryCode: "GB", evStation: false))
 
         model.supplies[0].voltageText = "240"
@@ -239,6 +246,53 @@ final class ChargingSpotEditorModelTests: XCTestCase {
 
         _ = await model.save()
         XCTAssertEqual(recorder.fields?.supplies.first?.voltageVolts, 240)
+    }
+
+    func testRustValidationRejectsLongAndControlCharacterAccessNotesWithTypedFeedback() {
+        let model = ChargingSpotEditorModel(coordinate: coordinate())
+        model.confirmLocation()
+        model.accessNote = String(repeating: "a", count: 2_001)
+        XCTAssertFalse(model.canSave)
+        XCTAssertEqual(model.validationIssues.first?.field, .accessNote)
+        XCTAssertEqual(model.validationIssues.first?.reason, .tooLong)
+
+        model.accessNote = "Ask\u{0}staff"
+        XCTAssertEqual(model.validationIssues.first?.field, .accessNote)
+        XCTAssertEqual(model.validationIssues.first?.reason, .controlCharacter)
+    }
+
+    func testIncompletePaidPriceAndSupplyRowsStayVisibleAsTypedIssues() {
+        let model = ChargingSpotEditorModel(coordinate: coordinate())
+        model.confirmLocation()
+        model.accessNote = "Ask staff"
+        model.cost = .paid
+        model.priceAmount = "2."
+        XCTAssertTrue(model.validationIssues.contains { $0.field == .payment && $0.reason == .incomplete })
+
+        model.addSupply()
+        model.supplies[0].voltageText = "2001"
+        XCTAssertTrue(
+            model.validationIssues.contains { $0.field == .supply && $0.reason == .incomplete && $0.supplyIndex == 0 })
+        XCTAssertFalse(model.canSave)
+    }
+
+    func testSupplyDraftMutationDeliversObservationForSaveEligibility() {
+        let model = ChargingSpotEditorModel(coordinate: coordinate())
+        model.confirmLocation()
+        model.accessNote = "Ask staff"
+        model.addSuggestedSupply()
+        XCTAssertTrue(model.canSave)
+        let changed = Mutex(false)
+        withObservationTracking {
+            _ = model.canSave
+        } onChange: {
+            changed.withLock { $0 = true }
+        }
+
+        model.setCountryCode("GB")
+
+        XCTAssertTrue(changed.withLock { $0 })
+        XCTAssertFalse(model.canSave)
     }
 
     func testEVClearsSuggestionButPreservesExplicitSupply() {
@@ -261,11 +315,23 @@ final class ChargingSpotEditorModelTests: XCTestCase {
         XCTAssertEqual(model.supplies[0].value()?.connectors, [.ccs2])
     }
 
+    func testVenueChangePreservesIncompleteEditsToSuggestedSupply() {
+        let model = ChargingSpotEditorModel(coordinate: coordinate(), countryCode: "US")
+        model.addSuggestedSupply()
+        model.supplies[0].voltageText = "12x"
+
+        model.setVenue(.evChargingStation)
+
+        XCTAssertEqual(model.supplies.count, 1)
+        XCTAssertEqual(model.supplies[0].voltageText, "12x")
+        XCTAssertFalse(model.canSave)
+    }
+
     func testRemovingCustomConnectorDoesNotRestoreItAndUnknownRetainsDraftText() {
         let draft = ChargingSupplyDraft(
             supply: MobileChargingSupplyDto(
                 voltageVolts: 120, connectors: [.other(label: "Workshop plug"), .typeB]
-            ))
+            ), countryCode: nil, evStation: false)
         guard let customID = draft.otherConnectors.first?.id else {
             XCTFail("Expected the original custom connector")
             return
@@ -276,7 +342,7 @@ final class ChargingSpotEditorModelTests: XCTestCase {
         let customDraft = ChargingSupplyDraft(
             supply: MobileChargingSupplyDto(
                 voltageVolts: 120, connectors: [.other(label: "Workshop plug")]
-            ))
+            ), countryCode: nil, evStation: false)
         customDraft.set(.unknown, selected: true)
         XCTAssertEqual(customDraft.value()?.connectors, [.unknown])
         XCTAssertEqual(customDraft.otherConnectors.first?.label, "Workshop plug")

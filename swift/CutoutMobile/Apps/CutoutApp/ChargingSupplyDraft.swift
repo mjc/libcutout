@@ -16,29 +16,151 @@ final class ChargingOtherConnectorDraft: Identifiable {
 @MainActor
 @Observable
 final class ChargingSupplyDraft: Identifiable {
-    enum Origin: Equatable { case manual, countrySuggestion }
-
     let id = UUID()
-    private(set) var origin: Origin
     var voltageText: String { didSet { markModified() } }
     private(set) var connectors: [MobileChargingConnectorDto]
     private(set) var otherConnectors: [ChargingOtherConnectorDraft]
-    private var originalSupply: MobileChargingSupplyDto?
-    private var isModified = false
+    private var powerDraft: MobileChargingPowerDraft?
+    private var hasIncompleteEdit = false
+    private var isApplyingSnapshot = false
     var onChange: (@MainActor () -> Void)?
 
-    init(
-        supply: MobileChargingSupplyDto = MobileChargingSupplyDto(voltageVolts: nil, connectors: []),
-        origin: Origin = .manual
-    ) {
-        self.origin = origin
-        self.voltageText = supply.voltageVolts.map(String.init) ?? ""
-        self.connectors = supply.connectors.filter { if case .other = $0 { false } else { true } }
-        self.originalSupply = supply.voltageVolts == nil && supply.connectors.isEmpty ? nil : supply
-        self.otherConnectors = supply.connectors.compactMap {
+    /// Starts an empty manual row. Incomplete text remains local until it forms a valid supply.
+    init() {
+        self.voltageText = ""
+        self.connectors = []
+        self.otherConnectors = []
+        self.powerDraft = nil
+    }
+
+    /// Starts a country or venue suggestion. Rust owns its provenance and confirmation state.
+    init(countryCode: String?, evStation: Bool) {
+        self.voltageText = ""
+        self.connectors = []
+        self.otherConnectors = []
+        self.powerDraft = mobileChargingPowerDraft(countryCode: countryCode, evStation: evStation)
+        loadSelection(powerDraft?.snapshot().selection)
+    }
+
+    /// Restores an observed supply as confirmed manual power, preserving its connector order.
+    init(supply: MobileChargingSupplyDto, countryCode: String?, evStation: Bool) {
+        self.voltageText = ""
+        self.connectors = []
+        self.otherConnectors = []
+        self.powerDraft = try? mobileChargingPowerDraftRestored(
+            supply: supply, countryCode: countryCode, evStation: evStation)
+        loadSelection(powerDraft?.snapshot().selection ?? supply)
+    }
+
+    var snapshot: MobileChargingPowerDraftSnapshot? { powerDraft?.snapshot() }
+    var isConfirmed: Bool { snapshot?.confirmation == .confirmed }
+    var requiresConfirmation: Bool {
+        snapshot?.origin == .suggested && !isConfirmed && !hasIncompleteEdit && !hasInvalidVoltage && !isEmpty
+    }
+
+    var isEmpty: Bool {
+        voltageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && connectors.isEmpty
+            && otherConnectors.allSatisfy { $0.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+
+    var connectorSummary: [MobileChargingConnectorDto] {
+        if !hasIncompleteEdit, let selection = snapshot?.selection { return selection.connectors }
+        if connectors.contains(.unknown) { return [.unknown] }
+        var selected = connectors
+        for connector in otherConnectors {
+            let label = connector.label.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !label.isEmpty, !selected.contains(.other(label: label)) { selected.append(.other(label: label)) }
+        }
+        return selected
+    }
+
+    var hasInvalidVoltage: Bool {
+        let value = voltageText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return false }
+        guard let volts = UInt16(value) else { return true }
+        return !mobileChargingPowerVoltageIsValid(voltageVolts: volts)
+    }
+
+    func setCountryCode(_ countryCode: String?) {
+        guard let powerDraft else { return }
+        self.powerDraft = powerDraft.withCountry(countryCode: countryCode)
+        if !hasIncompleteEdit && !isEmpty { loadSelection(self.powerDraft?.snapshot().selection) }
+        onChange?()
+    }
+
+    func setVenue(isEV: Bool) {
+        guard let powerDraft else { return }
+        self.powerDraft = powerDraft.withKind(evStation: isEV)
+        if !hasIncompleteEdit && !isEmpty { loadSelection(self.powerDraft?.snapshot().selection) }
+        onChange?()
+    }
+
+    func confirm() {
+        guard let powerDraft, !isEmpty, !hasInvalidVoltage, !hasIncompleteEdit else { return }
+        self.powerDraft = powerDraft.confirm()
+        onChange?()
+    }
+
+    private func loadSelection(_ supply: MobileChargingSupplyDto?) {
+        guard let supply else { return }
+        isApplyingSnapshot = true
+        defer { isApplyingSnapshot = false }
+        voltageText = supply.voltageVolts.map(String.init) ?? ""
+        connectors = supply.connectors.filter { if case .other = $0 { false } else { true } }
+        hasIncompleteEdit = false
+        otherConnectors = supply.connectors.compactMap {
             if case .other(let label) = $0 { ChargingOtherConnectorDraft(label: label) } else { nil }
         }
         for connector in otherConnectors { connector.onChange = { [weak self] in self?.markModified() } }
+    }
+
+    private func currentSupply() -> MobileChargingSupplyDto? {
+        guard !hasInvalidVoltage else { return nil }
+        let voltage = UInt16(voltageText.trimmingCharacters(in: .whitespacesAndNewlines))
+        if !voltageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, voltage == nil { return nil }
+        if connectors.contains(.unknown) {
+            return MobileChargingSupplyDto(voltageVolts: voltage, connectors: [.unknown])
+        }
+        var selected = connectors
+        for connector in otherConnectors {
+            let label = connector.label.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !label.isEmpty, !selected.contains(.other(label: label)) { selected.append(.other(label: label)) }
+        }
+        guard voltage != nil || !selected.isEmpty else { return nil }
+        return MobileChargingSupplyDto(voltageVolts: voltage, connectors: selected)
+    }
+
+    private func syncManualEdit() {
+        guard !isApplyingSnapshot else { return }
+        defer { onChange?() }
+        if let powerDraft { self.powerDraft = powerDraft.beginEdit() }
+        guard let supply = currentSupply() else {
+            hasIncompleteEdit = !isEmpty
+            return
+        }
+        if let powerDraft {
+            if let edited = try? powerDraft.edit(supply: supply) {
+                self.powerDraft = edited
+                hasIncompleteEdit = false
+            } else {
+                hasIncompleteEdit = true
+            }
+        } else {
+            if let edited = try? mobileChargingPowerDraftRestored(
+                supply: supply, countryCode: nil, evStation: false)
+            {
+                self.powerDraft = edited
+                hasIncompleteEdit = false
+            } else {
+                hasIncompleteEdit = true
+            }
+        }
+    }
+
+    private func markModified() {
+        guard !isApplyingSnapshot else { return }
+        syncManualEdit()
     }
 
     func set(_ connector: MobileChargingConnectorDto, selected: Bool) {
@@ -66,76 +188,11 @@ final class ChargingSupplyDraft: Identifiable {
         markModified()
     }
 
-    func updateFromCountrySuggestion(_ supply: MobileChargingSupplyDto) {
-        guard origin == .countrySuggestion else { return }
-        voltageText = supply.voltageVolts.map(String.init) ?? ""
-        connectors = supply.connectors.filter { if case .other = $0 { false } else { true } }
-        otherConnectors.removeAll()
-        for case .other(let label) in supply.connectors {
-            let item = ChargingOtherConnectorDraft(label: label)
-            item.onChange = { [weak self] in self?.markModified() }
-            otherConnectors.append(item)
-        }
-        origin = .countrySuggestion
-        originalSupply = supply
-        isModified = false
-    }
-
-    var isEmpty: Bool {
-        voltageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && connectors.isEmpty
-            && otherConnectors.allSatisfy { $0.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-    }
-
-    var hasInvalidVoltage: Bool {
-        let value = voltageText.trimmingCharacters(in: .whitespacesAndNewlines)
-        return !value.isEmpty && (!(UInt16(value).map { (1...2_000).contains($0) } ?? false))
-    }
-
-    var connectorSummary: [MobileChargingConnectorDto] {
-        if !isModified, let originalSupply {
-            return originalSupply.connectors.contains(.unknown) ? [.unknown] : originalSupply.connectors
-        }
-        if connectors.contains(.unknown) { return [.unknown] }
-        var selected = connectors
-        for connector in otherConnectors {
-            let label = connector.label.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !label.isEmpty, !selected.contains(.other(label: label)) { selected.append(.other(label: label)) }
-        }
-        return selected
-    }
-
     func value() -> MobileChargingSupplyDto? {
-        if !isModified, let originalSupply {
-            if connectors.contains(.unknown) {
-                return MobileChargingSupplyDto(voltageVolts: originalSupply.voltageVolts, connectors: [.unknown])
-            }
-            return originalSupply
-        }
-        let voltage: UInt16?
-        if voltageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            voltage = nil
-        } else {
-            guard let parsed = UInt16(voltageText), (1...2_000).contains(parsed) else { return nil }
-            voltage = parsed
-        }
-        if connectors.contains(.unknown) {
-            return MobileChargingSupplyDto(voltageVolts: voltage, connectors: [.unknown])
-        }
-        var selected = connectors
-        for connector in otherConnectors {
-            let label = connector.label.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !label.isEmpty, !selected.contains(.other(label: label)) { selected.append(.other(label: label)) }
-        }
-        guard voltage != nil || !selected.isEmpty else { return nil }
-        return MobileChargingSupplyDto(voltageVolts: voltage, connectors: selected)
+        guard !isEmpty, !hasInvalidVoltage, !hasIncompleteEdit else { return nil }
+        return powerDraft?.snapshot().includedSupply
     }
 
-    private func markModified() {
-        isModified = true
-        origin = .manual
-        onChange?()
-    }
 }
 
 enum ChargingPriceDraft {

@@ -34,13 +34,6 @@ struct ChargingSpotEditorView: View {
     }
 
     private var isSaving: Bool { model.stage == .saving }
-    private var isAccessNoteError: Bool {
-        [
-            "charging.editor.error.access_note_blank",
-            "charging.editor.error.access_note_too_long",
-            "charging.editor.error.access_note_control_character",
-        ].contains(model.errorKey ?? "")
-    }
 
     var body: some View {
         NavigationStack {
@@ -159,6 +152,9 @@ struct ChargingSpotEditorView: View {
                     .accessibilityLabel(localizedAppText("charging.editor.access_note"))
                     .accessibilityIdentifier("charging.editor.access-note")
             }
+            if !model.accessNote.isEmpty {
+                fieldFeedback(.accessNote, identifier: "charging.editor.access-note-error")
+            }
             if dynamicTypeSize.isAccessibilitySize {
                 VStack(spacing: 8) {
                     costChoice(.free)
@@ -173,8 +169,7 @@ struct ChargingSpotEditorView: View {
             if let errorKey = model.errorKey {
                 Text(localizedAppText(errorKey))
                     .foregroundStyle(.red)
-                    .accessibilityIdentifier(
-                        isAccessNoteError ? "charging.editor.access-note-error" : "charging.editor.error")
+                    .accessibilityIdentifier("charging.editor.error")
             }
             if model.hasRevisionConflict {
                 revisionConflictDetails
@@ -264,6 +259,7 @@ struct ChargingSpotEditorView: View {
                 .accessibilityLabel(localizedAppText("charging.editor.name"))
                 .accessibilityIdentifier("charging.editor.name")
         }
+        fieldFeedback(.name, identifier: "charging.editor.name.error")
         Picker(localizedAppText("charging.editor.venue"), selection: $model.venue) {
             Text(localizedAppText("charging.editor.venue.choose")).tag(nil as MobileChargingVenueDto?)
             Text(localizedAppText("charging.venue.restaurant")).tag(
@@ -286,6 +282,7 @@ struct ChargingSpotEditorView: View {
                 .accessibilityLabel(localizedAppText("charging.editor.hours"))
                 .accessibilityIdentifier("charging.editor.hours")
         }
+        fieldFeedback(.hours, identifier: "charging.editor.hours.error")
         if model.cost == .paid {
             Picker(localizedAppText("charging.editor.terms"), selection: $model.terms) {
                 Text(localizedAppText("charging.editor.terms.choose")).tag(nil as MobileChargingTermsDto?)
@@ -328,12 +325,7 @@ struct ChargingSpotEditorView: View {
                     .accessibilityLabel(localizedAppText("charging.editor.price.currency"))
                     .accessibilityIdentifier("charging.editor.price.currency")
             }
-            if model.hasIncompletePrice {
-                Text(localizedAppText("charging.editor.error.price"))
-                    .font(.footnote)
-                    .foregroundStyle(.red)
-                    .accessibilityIdentifier("charging.editor.price.error")
-            }
+            fieldFeedback(.payment, identifier: "charging.editor.price.error")
         }
         Picker(localizedAppText("charging.editor.country"), selection: $model.countrySelection) {
             Text(localizedAppText("charging.editor.country.unknown")).tag(nil as String?)
@@ -347,15 +339,35 @@ struct ChargingSpotEditorView: View {
             if model.venue == .evChargingStation { model.addSupply() } else { model.addSuggestedSupply() }
         }
         .accessibilityIdentifier("charging.editor.supply.add")
+        fieldFeedback(.supply, identifier: "charging.editor.supplies.error")
         coordinateFields
         ForEach(model.supplies) { draft in
             ChargingSupplyForm(
                 draft: draft,
                 outletChoices: model.outletChoices,
-                focusedField: $focusedField
+                focusedField: $focusedField,
+                validationIssue: supplyIssue(for: draft.id)
             ) {
                 model.removeSupply(id: draft.id)
             }
         }
+    }
+
+    @ViewBuilder private func fieldFeedback(
+        _ field: MobileChargingValidationFieldDto, identifier: String
+    ) -> some View {
+        if let issue = model.validationIssues.first(where: { $0.field == field && $0.supplyIndex == nil }) {
+            Text(localizedAppText(ChargingEditorValidationPresentation.messageKey(for: issue)))
+                .font(.footnote)
+                .foregroundStyle(.red)
+                .accessibilityIdentifier(identifier)
+        }
+    }
+
+    private func supplyIssue(for id: UUID) -> MobileChargingFieldIssueDto? {
+        guard let index = model.supplies.firstIndex(where: { $0.id == id }),
+            let supplyIndex = UInt32(exactly: index)
+        else { return nil }
+        return model.validationIssues.first { $0.field == .supply && $0.supplyIndex == supplyIndex }
     }
 }
