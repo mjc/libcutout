@@ -56,7 +56,6 @@ mod recorded_capture;
 pub use recorded_capture::RecordedCapture;
 mod charging;
 pub use charging::*;
-mod maintenance;
 mod migrations;
 mod ride_write;
 mod service;
@@ -1575,51 +1574,6 @@ impl SqliteCapabilities {
 /// Errors from the Rust-owned ride database service.
 #[derive(Debug, Error)]
 pub enum StorageError {
-    /// Storage maintenance is unavailable while a ride is active or paused.
-    #[error("storage maintenance is unavailable while a ride is active or paused")]
-    MaintenanceActiveRide,
-    /// Storage maintenance is unavailable while a live capture is active.
-    #[error("storage maintenance is unavailable while a live capture is active")]
-    MaintenanceActiveCapture,
-    /// Storage maintenance is unavailable during PEVCAP import publication or backfill.
-    #[error("storage maintenance is unavailable while a PEVCAP import is in progress")]
-    MaintenancePevcapImportInProgress,
-    /// There is not enough available space for a crash-safe SQLite compaction.
-    #[error(
-        "storage maintenance needs {required_bytes} bytes but only {available_bytes} are available"
-    )]
-    MaintenanceInsufficientSpace {
-        /// Conservative required free space.
-        required_bytes: u64,
-        /// Free space reported for the database filesystem.
-        available_bytes: u64,
-    },
-    /// The database's WAL could not be checkpointed before maintenance.
-    #[error("the database WAL could not be checkpointed for storage maintenance")]
-    MaintenanceCheckpointBusy,
-    /// SQLite did not apply a requested maintenance journal mode.
-    #[error("SQLite could not change journal mode for storage maintenance")]
-    MaintenanceJournalModeUnavailable,
-    /// The conservative space requirement overflowed its integer representation.
-    #[error("storage maintenance space requirement overflowed")]
-    MaintenanceSpaceCalculationOverflow,
-    /// SQLite failed to restore the worker's normal durable operating mode after maintenance.
-    #[error("storage maintenance could not restore the database's operational mode: {source}")]
-    MaintenanceRestoreFailed {
-        /// SQLite failure while restoring WAL or synchronous configuration.
-        #[source]
-        source: rusqlite::Error,
-    },
-    /// SQLite did not retain the requested database page size after VACUUM.
-    #[error(
-        "storage maintenance expected {expected_bytes}-byte pages but SQLite reports {actual_bytes}"
-    )]
-    MaintenancePageSizeMismatch {
-        /// Requested page size.
-        expected_bytes: u32,
-        /// Page size reported by SQLite.
-        actual_bytes: u32,
-    },
     /// A charging field or server snapshot is outside its supported contract.
     #[error("invalid charging input")]
     ChargingInvalidInput,
@@ -1840,25 +1794,6 @@ pub struct PendingBmsVoltageWrite {
 #[derive(Debug)]
 pub struct PendingRideCheckpoint {
     response: Receiver<Result<(), StorageError>>,
-    consumed: bool,
-}
-
-/// Result of one completed user-requested database maintenance run.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct DatabaseMaintenanceReport {
-    /// Database, WAL, and shared-memory bytes before maintenance.
-    pub bytes_before: u64,
-    /// Database, WAL, and shared-memory bytes after maintenance.
-    pub bytes_after: u64,
-    /// Legacy live-capture payloads changed to the supported compressed encoding.
-    pub compressed_event_count: u64,
-}
-
-/// User-requested maintenance accepted by the database worker but not yet complete.
-#[must_use = "poll or wait for the database maintenance result"]
-#[derive(Debug)]
-pub struct PendingStorageMaintenance {
-    response: Receiver<Result<DatabaseMaintenanceReport, StorageError>>,
     consumed: bool,
 }
 
@@ -2605,38 +2540,6 @@ impl PendingBmsVoltageWrite {
     }
 }
 
-impl PendingStorageMaintenance {
-    /// Returns the completed maintenance result once; `None` means the worker is still busy.
-    pub fn try_result(&mut self) -> Option<Result<DatabaseMaintenanceReport, StorageError>> {
-        if self.consumed {
-            return None;
-        }
-        match self.response.try_recv() {
-            Ok(result) => {
-                self.consumed = true;
-                Some(result)
-            }
-            Err(mpsc::TryRecvError::Empty) => None,
-            Err(mpsc::TryRecvError::Disconnected) => {
-                self.consumed = true;
-                Some(Err(StorageError::ResponseDropped))
-            }
-        }
-    }
-
-    /// Waits for explicit storage maintenance to reach a durable result.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StorageError::ResponseDropped`] if the worker exits before sending its result,
-    /// or the typed admission, space, filesystem, and SQLite error produced by maintenance.
-    pub fn wait_result(self) -> Result<DatabaseMaintenanceReport, StorageError> {
-        self.response
-            .recv()
-            .map_err(|_| StorageError::ResponseDropped)?
-    }
-}
-
 impl PendingRideCheckpoint {
     /// Returns the barrier result when all earlier worker commands have settled.
     ///
@@ -2980,28 +2883,6 @@ impl RideDatabase {
     /// [`StorageError`] when the worker cannot complete the check.
     pub fn integrity_check(&self) -> Result<(), StorageError> {
         self.request(|reply| Command::IntegrityCheck { reply })
-    }
-
-    /// Queues explicit storage maintenance on the serialized database worker.
-    ///
-    /// The returned operation can be polled or awaited away from a platform main actor. It
-    /// rejects active rides and captures, then losslessly compresses legacy payloads and
-    /// compacts the database in place.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StorageError::QueueFull`] or [`StorageError::WorkerStopped`] when the worker
-    /// cannot accept the request.
-    pub fn queue_storage_maintenance(&self) -> Result<PendingStorageMaintenance, StorageError> {
-        let (reply, response) = response_channel();
-        self.enqueue(Command::StorageMaintenance {
-            database_path: (*self.path).clone(),
-            reply,
-        })?;
-        Ok(PendingStorageMaintenance {
-            response,
-            consumed: false,
-        })
     }
 
     /// Creates a draft ride record.
@@ -5459,10 +5340,6 @@ enum Command {
     IntegrityCheck {
         reply: Reply<()>,
     },
-    StorageMaintenance {
-        database_path: PathBuf,
-        reply: Reply<DatabaseMaintenanceReport>,
-    },
     CreateRide {
         source: RideSource,
         created_at_ms: u64,
@@ -5895,7 +5772,10 @@ fn configure_connection(
 
 #[cfg(test)]
 mod sqlite_durability_tests {
-    use super::{Connection, LiveCaptureEventKind, LiveCaptureId, configure_connection};
+    use super::{
+        Connection, DATABASE_PAGE_SIZE_BYTES, LiveCaptureEventKind, LiveCaptureId,
+        configure_connection,
+    };
 
     #[test]
     fn file_database_uses_wal_with_full_commit_durability() {
@@ -5914,8 +5794,12 @@ mod sqlite_durability_tests {
         let synchronous: u32 = connection
             .pragma_query_value(None, "synchronous", |row| row.get(0))
             .unwrap();
+        let page_size: u32 = connection
+            .pragma_query_value(None, "page_size", |row| row.get(0))
+            .unwrap();
         assert_eq!(journal, "wal");
         assert_eq!(synchronous, 2);
+        assert_eq!(page_size, DATABASE_PAGE_SIZE_BYTES);
     }
 
     #[test]

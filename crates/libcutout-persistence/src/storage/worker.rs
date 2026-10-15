@@ -238,21 +238,6 @@ impl DatabaseWorker<'_> {
             Command::IntegrityCheck { reply } => {
                 let _ = reply.send(integrity_check(connection));
             }
-            Command::StorageMaintenance {
-                database_path,
-                reply,
-            } => {
-                let result = super::maintenance::run(connection, &database_path);
-                let retire = match &result {
-                    Err(super::StorageError::MaintenanceRestoreFailed { .. }) => true,
-                    _ => false,
-                };
-                let _ = reply.send(result);
-                if retire {
-                    worker_alive.store(false, Ordering::Release);
-                    return ControlFlow::Break(());
-                }
-            }
             Command::CreateRide {
                 source,
                 created_at_ms,
