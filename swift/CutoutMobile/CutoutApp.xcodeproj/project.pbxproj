@@ -117,13 +117,11 @@
 		F1D000000000000000000003 /* ChargingMapCameraTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1D000000000000000000004 /* ChargingMapCameraTests.swift */; };
 		51E5F4B8FC5D05450088BD57 /* Apps/CutoutApp/ChargingCountryLookup.swift in Sources */ = {isa = PBXBuildFile; fileRef = B86DC0176B41944C4B7B7BCD /* Apps/CutoutApp/ChargingCountryLookup.swift */; };
 		33B6D0240997FA3A8F811F38 /* Apps/CutoutApp/ChargingLocationSampleSelector.swift in Sources */ = {isa = PBXBuildFile; fileRef = B6E796B68799DC58EA6B2E36 /* Apps/CutoutApp/ChargingLocationSampleSelector.swift */; };
-		021B31AD32355FE4FDCB3975 /* Apps/CutoutApp/ChargingMapLongPressGesture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32910593A4EB99D62FBF1D4E /* Apps/CutoutApp/ChargingMapLongPressGesture.swift */; };
 		DD608E4B4BBF6697368DC923 /* Apps/CutoutApp/ChargingMapCameraSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51E8C20ACFA76B9F38C1B6A8 /* Apps/CutoutApp/ChargingMapCameraSnapshot.swift */; };
 		1ED7768B474F353F005F5583 /* Apps/CutoutApp/ChargingEditorValidationPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAC54A074878CAA2E7A98218 /* Apps/CutoutApp/ChargingEditorValidationPresentation.swift */; };
 		543286F8034E52897C5D0487 /* Apps/CutoutApp/ChargingSupplyDraft.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07CCC0DAA7F8CE4C1264DE46 /* Apps/CutoutApp/ChargingSupplyDraft.swift */; };
 		146CA1018817129D2890732F /* Apps/CutoutApp/ChargingSupplyForm.swift in Sources */ = {isa = PBXBuildFile; fileRef = F976A9CFEA6CF1EB0B1052AF /* Apps/CutoutApp/ChargingSupplyForm.swift */; };
 		ECABD2F5D768D4FFF2766F2F /* ChargingLocationSampleSelectorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8A4266071908B8715EE5BEF /* ChargingLocationSampleSelectorTests.swift */; };
-		9C904127C7BA70852C0FDC3F /* ChargingMapLongPressGestureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9895EF606FFF72A58A1316B /* ChargingMapLongPressGestureTests.swift */; };
 		61F877609D8CC09F4856FDE5 /* ChargingMapCameraSnapshotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D554D2405BB2AAC12D7A966 /* ChargingMapCameraSnapshotTests.swift */; };
 		946EE99D912442079575B7A2 /* Apps/CutoutApp/ChargingCommunitySync.swift in Sources */ = {isa = PBXBuildFile; fileRef = 877CED53FA48465CB8FB1533 /* Apps/CutoutApp/ChargingCommunitySync.swift */; };
 		7EF1923CCBBD4BAFB32DCB46 /* Apps/CutoutApp/ChargingCommunityViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBDB868FC3F44EFDA34A6773 /* Apps/CutoutApp/ChargingCommunityViews.swift */; };
@@ -283,13 +281,11 @@
 		F1D000000000000000000004 /* ChargingMapCameraTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/CutoutAppTests/ChargingMapCameraTests.swift; sourceTree = SOURCE_ROOT; };
 		B86DC0176B41944C4B7B7BCD /* Apps/CutoutApp/ChargingCountryLookup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/ChargingCountryLookup.swift; sourceTree = SOURCE_ROOT; };
 		B6E796B68799DC58EA6B2E36 /* Apps/CutoutApp/ChargingLocationSampleSelector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/ChargingLocationSampleSelector.swift; sourceTree = SOURCE_ROOT; };
-		32910593A4EB99D62FBF1D4E /* Apps/CutoutApp/ChargingMapLongPressGesture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/ChargingMapLongPressGesture.swift; sourceTree = SOURCE_ROOT; };
 		51E8C20ACFA76B9F38C1B6A8 /* Apps/CutoutApp/ChargingMapCameraSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/ChargingMapCameraSnapshot.swift; sourceTree = SOURCE_ROOT; };
 		CAC54A074878CAA2E7A98218 /* Apps/CutoutApp/ChargingEditorValidationPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/ChargingEditorValidationPresentation.swift; sourceTree = SOURCE_ROOT; };
 		07CCC0DAA7F8CE4C1264DE46 /* Apps/CutoutApp/ChargingSupplyDraft.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/ChargingSupplyDraft.swift; sourceTree = SOURCE_ROOT; };
 		F976A9CFEA6CF1EB0B1052AF /* Apps/CutoutApp/ChargingSupplyForm.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/ChargingSupplyForm.swift; sourceTree = SOURCE_ROOT; };
 		A8A4266071908B8715EE5BEF /* ChargingLocationSampleSelectorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/CutoutAppTests/ChargingLocationSampleSelectorTests.swift; sourceTree = SOURCE_ROOT; };
-		E9895EF606FFF72A58A1316B /* ChargingMapLongPressGestureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/CutoutAppTests/ChargingMapLongPressGestureTests.swift; sourceTree = SOURCE_ROOT; };
 		4D554D2405BB2AAC12D7A966 /* ChargingMapCameraSnapshotTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/CutoutAppTests/ChargingMapCameraSnapshotTests.swift; sourceTree = SOURCE_ROOT; };
 		877CED53FA48465CB8FB1533 /* Apps/CutoutApp/ChargingCommunitySync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/ChargingCommunitySync.swift; sourceTree = SOURCE_ROOT; };
 		EBDB868FC3F44EFDA34A6773 /* Apps/CutoutApp/ChargingCommunityViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/ChargingCommunityViews.swift; sourceTree = SOURCE_ROOT; };
@@ -363,7 +359,6 @@
 				931000000000000000000004 /* ChargingStopPromptTests.swift */,
 				CE0000000000000000000006 /* ChargingSpotEditorModelTests.swift */,
 				A8A4266071908B8715EE5BEF /* ChargingLocationSampleSelectorTests.swift */,
-				E9895EF606FFF72A58A1316B /* ChargingMapLongPressGestureTests.swift */,
 				4D554D2405BB2AAC12D7A966 /* ChargingMapCameraSnapshotTests.swift */,
 				2E9BA8958E2E459398811F07 /* ChargingCommunitySyncTests.swift */,
 				D65100000000000000000002 /* MusicFeatureModelTests.swift */,
@@ -407,7 +402,6 @@
 				CE0000000000000000000002 /* Apps/CutoutApp/ChargingSpotEditorModel.swift */,
 				B86DC0176B41944C4B7B7BCD /* Apps/CutoutApp/ChargingCountryLookup.swift */,
 				B6E796B68799DC58EA6B2E36 /* Apps/CutoutApp/ChargingLocationSampleSelector.swift */,
-				32910593A4EB99D62FBF1D4E /* Apps/CutoutApp/ChargingMapLongPressGesture.swift */,
 				51E8C20ACFA76B9F38C1B6A8 /* Apps/CutoutApp/ChargingMapCameraSnapshot.swift */,
 				EBDB868FC3F44EFDA34A6773 /* Apps/CutoutApp/ChargingCommunityViews.swift */,
 				877CED53FA48465CB8FB1533 /* Apps/CutoutApp/ChargingCommunitySync.swift */,
@@ -782,7 +776,6 @@
 				CE0000000000000000000001 /* Apps/CutoutApp/ChargingSpotEditorModel.swift in Sources */,
 				51E5F4B8FC5D05450088BD57 /* Apps/CutoutApp/ChargingCountryLookup.swift in Sources */,
 				33B6D0240997FA3A8F811F38 /* Apps/CutoutApp/ChargingLocationSampleSelector.swift in Sources */,
-				021B31AD32355FE4FDCB3975 /* Apps/CutoutApp/ChargingMapLongPressGesture.swift in Sources */,
 				DD608E4B4BBF6697368DC923 /* Apps/CutoutApp/ChargingMapCameraSnapshot.swift in Sources */,
 				7EF1923CCBBD4BAFB32DCB46 /* Apps/CutoutApp/ChargingCommunityViews.swift in Sources */,
 				946EE99D912442079575B7A2 /* Apps/CutoutApp/ChargingCommunitySync.swift in Sources */,
@@ -872,7 +865,6 @@
 				931000000000000000000003 /* ChargingStopPromptTests.swift in Sources */,
 				CE0000000000000000000005 /* ChargingSpotEditorModelTests.swift in Sources */,
 				ECABD2F5D768D4FFF2766F2F /* ChargingLocationSampleSelectorTests.swift in Sources */,
-				9C904127C7BA70852C0FDC3F /* ChargingMapLongPressGestureTests.swift in Sources */,
 				61F877609D8CC09F4856FDE5 /* ChargingMapCameraSnapshotTests.swift in Sources */,
 				8CAB8049064C4B658E51C7D6 /* ChargingCommunitySyncTests.swift in Sources */,
 				D65100000000000000000001 /* MusicFeatureModelTests.swift in Sources */,
