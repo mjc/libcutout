@@ -76,6 +76,19 @@ final class ChargingSpotPresentationTests: XCTestCase {
         )
     }
 
+    func testSupplyTextUsesSingularAndPluralOutletCounts() {
+        XCTAssertEqual(
+            ChargingSpotPresentation.supplyText(
+                MobileChargingSupplyDto(voltageVolts: 120, connectors: [.nema515], outletCount: 1)),
+            "1 outlet · 120 V · US 3 Prong"
+        )
+        XCTAssertEqual(
+            ChargingSpotPresentation.supplyText(
+                MobileChargingSupplyDto(voltageVolts: 120, connectors: [.nema515], outletCount: 2)),
+            "2 outlets · 120 V · US 3 Prong"
+        )
+    }
+
     func testPricesKeepTheRecordedMinorUnitPrecision() {
         let yen = ChargingSpotPresentation.priceText(
             MobileChargingPriceDto(amountMinor: 120, currency: "JPY", minorUnitExponent: 0, basis: .perCharge)

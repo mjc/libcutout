@@ -198,8 +198,7 @@ extension ChargingSpotPresentation {
         let connectors = supply.connectors.map(connectorName).joined(separator: ", ")
         let power = connectors.isEmpty ? voltage : "\(voltage) · \(connectors)"
         guard let count = supply.outletCount else { return power }
-        let countText = localizedAppText(count == 1 ? "charging.spot.outlets.one" : "charging.spot.outlets.other")
-            .replacingOccurrences(of: "%d", with: String(count))
+        let countText = localizedAppText("charging.spot.outlets", count)
         return "\(countText) · \(power)"
     }
 

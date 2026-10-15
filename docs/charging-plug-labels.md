@@ -27,9 +27,11 @@ Keep each larger US connector as its own choice. Suggested display text:
 | `Nema10_50` | US 3 Prong · 50 A | NEMA 10-50 · 120/240 V · straight neutral |
 | `Nema6_50` | US 3 Prong · 50 A · Grounded | NEMA 6-50 · 250 V · U-shaped ground |
 
-The 10-series is an older three-wire, non-grounding 125/250 V configuration;
-the 6-50 is a grounded 250 V configuration. Their three-contact faces are
-different. The 14-30 and 14-50 both have four contacts, but their keyed neutral
+The 10-series is an older three-wire, non-grounding configuration for nominal
+120/240 V supplies. Its receptacles are rated 125/250 V; the 6-50 is a grounded
+250 V configuration. The 10-30 has an L-shaped neutral and the 10-50 has a
+straight neutral. These three-contact faces differ from the 6-50. The 14-30
+and 14-50 both have four contacts, but their keyed neutral
 blades differ as well as their current ratings. Include the secondary
 identifier and rating so users can tell each option apart; do not collapse
 these into a generic “240 V outlet” choice.
