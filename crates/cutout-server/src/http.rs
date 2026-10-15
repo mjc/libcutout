@@ -16,7 +16,7 @@ use axum::{
     extract::{DefaultBodyLimit, Path, Query, State},
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{delete, get, post},
 };
 use serde::Serialize;
 use std::net::IpAddr;
@@ -70,6 +70,10 @@ pub fn router(store: Store) -> Router {
         .route("/healthz", get(|| async { StatusCode::OK }))
         .route("/readyz", get(ready))
         .route("/v1/identities", post(registration::identity))
+        .route(
+            "/v1/identities/current",
+            delete(registration::delete_current),
+        )
         .route("/v1/charging-spots", get(list).post(create))
         .route("/v1/charging-spots/changes", get(changes))
         .route(
@@ -105,12 +109,16 @@ async fn deadline(request: axum::extract::Request, next: axum::middleware::Next)
 }
 
 pub(crate) async fn actor(store: &Store, headers: &HeaderMap) -> Result<Actor, Error> {
+    let token = bearer_token(headers)?;
+    store.authenticate(token.to_owned()).await
+}
+
+pub(crate) fn bearer_token(headers: &HeaderMap) -> Result<&str, Error> {
     let value = headers
         .get(header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
         .ok_or(Error::Unauthorized)?;
-    let token = value.strip_prefix("Bearer ").ok_or(Error::Unauthorized)?;
-    store.authenticate(token.to_owned()).await
+    value.strip_prefix("Bearer ").ok_or(Error::Unauthorized)
 }
 
 async fn ready(State(store): State<Store>) -> Result<StatusCode, Error> {

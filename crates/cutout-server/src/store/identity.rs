@@ -1,10 +1,13 @@
 use super::votes::advance_spot_change;
-use super::{QuotaWindow, Store, begin_write, db_error, hash, now_ms, quota};
+use super::{QuotaWindow, Store, begin_write, db_error, hash, next_change, now_ms, quota};
 use crate::Error;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
 use std::{fmt, net::IpAddr};
 use uuid::Uuid;
+
+pub(crate) const ANONYMOUS_ID: &str = "00000000-0000-4000-8000-000000000001";
+const DELETION_RECEIPT_RETENTION_MS: u64 = 30 * 24 * 60 * 60 * 1_000;
 
 #[derive(Clone, Debug)]
 pub(crate) struct Actor {
@@ -72,6 +75,12 @@ pub(crate) struct Identity {
     pub token: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub(crate) struct DeletionReceipt {
+    pub status: &'static str,
+    pub completed_at_ms: u64,
+}
+
 struct ContributorTokenHash(String);
 
 impl ContributorTokenHash {
@@ -113,6 +122,67 @@ impl Store {
             .await
     }
 
+    pub(crate) async fn delete_current(&self, token: String) -> Result<DeletionReceipt, Error> {
+        self.call(move |connection| {
+            let transaction = begin_write(connection)?;
+            let now = now_ms()?;
+            purge_expired_deletion_receipts(&transaction, now)?;
+            let token = match ContributorTokenHash::from_token(&token) {
+                Ok(token) => token,
+                Err(error) => {
+                    transaction.commit().map_err(db_error)?;
+                    return Err(error);
+                }
+            };
+            if let Some(receipt) = completed_deletion(&transaction, &token, now)? {
+                transaction.commit().map_err(db_error)?;
+                return Ok(receipt);
+            }
+            let actor = match deletion_actor(&transaction, &token) {
+                Ok(actor) => actor,
+                Err(error @ Error::Unauthorized) => {
+                    transaction.commit().map_err(db_error)?;
+                    return Err(error);
+                }
+                Err(error) => return Err(error),
+            };
+
+            let affected_spots = deletion_affected_spots(&transaction, &actor.id)?;
+            retain_public_spots(&transaction, &actor.id)?;
+            delete_private_account_data(&transaction, &actor.id)?;
+            for spot_id in affected_spots {
+                let sequence = next_change(&transaction)?;
+                transaction
+                    .execute(
+                        "UPDATE spots SET change_sequence = ?2 WHERE id = ?1",
+                        params![spot_id, sequence],
+                    )
+                    .map_err(db_error)?;
+            }
+            transaction
+                .execute("DELETE FROM contributors WHERE id = ?1", [&actor.id])
+                .map_err(db_error)?;
+
+            let expires_at = now
+                .checked_add(DELETION_RECEIPT_RETENTION_MS)
+                .filter(|value| i64::try_from(*value).is_ok())
+                .ok_or(Error::Conflict)?;
+            transaction
+                .execute(
+                    "INSERT INTO deletion_receipts (token_hash, completed_at_ms, expires_at_ms)
+                     VALUES (?1, ?2, ?3)",
+                    params![token.0, now, expires_at],
+                )
+                .map_err(db_error)?;
+            transaction.commit().map_err(db_error)?;
+            Ok(DeletionReceipt {
+                status: "completed",
+                completed_at_ms: now,
+            })
+        })
+        .await
+    }
+
     pub(crate) async fn revoke(&self, target: String) -> Result<(), Error> {
         self.call(move |connection| {
             let transaction = begin_write(connection)?;
@@ -126,6 +196,123 @@ impl Store {
         })
         .await
     }
+}
+
+fn purge_expired_deletion_receipts(connection: &Connection, now: u64) -> Result<(), Error> {
+    connection
+        .execute(
+            "DELETE FROM deletion_receipts WHERE expires_at_ms <= ?1",
+            [now],
+        )
+        .map_err(db_error)?;
+    Ok(())
+}
+
+fn completed_deletion(
+    connection: &Connection,
+    token: &ContributorTokenHash,
+    now: u64,
+) -> Result<Option<DeletionReceipt>, Error> {
+    connection
+        .query_row(
+            "SELECT completed_at_ms FROM deletion_receipts
+             WHERE token_hash = ?1 AND expires_at_ms > ?2",
+            params![token.0, now],
+            |row| {
+                Ok(DeletionReceipt {
+                    status: "completed",
+                    completed_at_ms: row.get(0)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(db_error)
+}
+
+fn deletion_actor(connection: &Connection, token: &ContributorTokenHash) -> Result<Actor, Error> {
+    connection
+        .query_row(
+            "SELECT id, role FROM contributors WHERE token_hash = ?1 AND id != ?2",
+            params![token.0, ANONYMOUS_ID],
+            |row| {
+                Ok(Actor {
+                    id: row.get(0)?,
+                    role: row.get(1)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(db_error)?
+        .ok_or(Error::Unauthorized)
+}
+
+fn deletion_affected_spots(connection: &Connection, target: &str) -> Result<Vec<String>, Error> {
+    let mut statement = connection
+        .prepare(
+            "SELECT id FROM spots WHERE owner_id = ?1
+             UNION SELECT spot_id FROM votes WHERE contributor_id = ?1 AND value IS NOT NULL
+             ORDER BY 1",
+        )
+        .map_err(db_error)?;
+    statement
+        .query_map([target], |row| row.get(0))
+        .map_err(db_error)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(db_error)
+}
+
+fn retain_public_spots(connection: &Connection, target: &str) -> Result<(), Error> {
+    connection
+        .execute(
+            "UPDATE spots SET owner_id = ?2 WHERE owner_id = ?1",
+            params![target, ANONYMOUS_ID],
+        )
+        .map_err(db_error)?;
+    Ok(())
+}
+
+fn delete_private_account_data(connection: &Connection, target: &str) -> Result<(), Error> {
+    connection
+        .execute(
+            "DELETE FROM moderation_audit
+             WHERE target_id IN (SELECT id FROM reports WHERE reporter_id = ?1)",
+            [target],
+        )
+        .map_err(db_error)?;
+    connection
+        .execute("DELETE FROM votes WHERE contributor_id = ?1", [target])
+        .map_err(db_error)?;
+    connection
+        .execute("DELETE FROM operations WHERE contributor_id = ?1", [target])
+        .map_err(db_error)?;
+    connection
+        .execute("DELETE FROM reports WHERE reporter_id = ?1", [target])
+        .map_err(db_error)?;
+    connection
+        .execute(
+            "DELETE FROM verifications WHERE contributor_id = ?1",
+            [target],
+        )
+        .map_err(db_error)?;
+    connection
+        .execute(
+            "DELETE FROM quotas WHERE principal = ?1 OR principal LIKE ?2 OR principal LIKE ?3",
+            params![
+                format!("write:{target}"),
+                format!("report:{target}:%"),
+                format!("new-spots:{target}")
+            ],
+        )
+        .map_err(db_error)?;
+    connection
+        .execute(
+            "UPDATE moderation_audit SET actor_id = ?2,
+                 note = 'Account deleted; author anonymized.'
+             WHERE actor_id = ?1",
+            params![target, ANONYMOUS_ID],
+        )
+        .map_err(db_error)?;
+    Ok(())
 }
 
 fn registration_role(
@@ -177,8 +364,8 @@ fn authenticated_actor(
     connection
         .query_row(
             "SELECT id, role FROM contributors
-         WHERE token_hash = ?1 AND revoked_at_ms IS NULL",
-            [&token.0],
+         WHERE token_hash = ?1 AND revoked_at_ms IS NULL AND id != ?2",
+            params![token.0, ANONYMOUS_ID],
             |row| {
                 Ok(Actor {
                     id: row.get(0)?,
@@ -228,6 +415,9 @@ fn clear_contributor_votes(connection: &Connection, target: &str) -> Result<(), 
 }
 
 pub(crate) fn ensure_actor(connection: &Connection, actor: &Actor) -> Result<(), Error> {
+    if actor.id == ANONYMOUS_ID {
+        return Err(Error::Unauthorized);
+    }
     let role: Role = connection
         .query_row(
             "SELECT role FROM contributors WHERE id=?1 AND revoked_at_ms IS NULL",

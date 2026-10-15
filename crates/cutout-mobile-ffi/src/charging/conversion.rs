@@ -17,6 +17,7 @@ pub(super) fn storage_error(value: persistence::StorageError) -> MobileChargingE
         persistence::StorageError::ChargingInvalidInput => MobileChargingError::InvalidMetadata,
         persistence::StorageError::ChargingConflict => MobileChargingError::Conflict,
         persistence::StorageError::ChargingNotOwned => MobileChargingError::NotOwned,
+        persistence::StorageError::CommunityAccountUnavailable => MobileChargingError::Unauthorized,
         persistence::StorageError::ChargingOutboxFull => MobileChargingError::OutboxFull,
         persistence::StorageError::NotFound => MobileChargingError::NotFound,
         persistence::StorageError::QueueFull

@@ -1,7 +1,7 @@
 use super::{MapPointId, SpatialRowId, StorageError};
 use rusqlite::{Connection, OptionalExtension, params};
 
-pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 46;
+pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 47;
 const APPLICATION_ID: i64 = 0x4355_544f;
 
 fn schema_pragmas(version: i64) -> String {
@@ -69,6 +69,7 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         43 => migrate_v43_to_v44(connection)?,
         44 => migrate_v44_to_v45(connection)?,
         45 => migrate_v45_to_v46(connection)?,
+        46 => migrate_v46_to_v47(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -101,6 +102,9 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         }
         if connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))? == 45 {
             migrate_v45_to_v46(connection)?;
+        }
+        if connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))? == 46 {
+            migrate_v46_to_v47(connection)?;
         }
     }
     Ok(())
@@ -420,6 +424,7 @@ pub(crate) fn create_current_schema(connection: &Connection) -> Result<(), Stora
     connection.execute_batch(super::recorded_capture::SCHEMA)?;
     connection.execute_batch(super::charging::SCHEMA)?;
     ensure_charging_sync_schema(connection)?;
+    ensure_community_account_columns(connection)?;
     Ok(())
 }
 
@@ -1694,9 +1699,38 @@ fn migrate_v44_to_v45(connection: &mut Connection) -> Result<(), StorageError> {
 
 fn migrate_v45_to_v46(connection: &mut Connection) -> Result<(), StorageError> {
     let transaction = connection.transaction()?;
-    ensure_elapsed_time_columns(&transaction)?;
+    ensure_community_account_columns(&transaction)?;
     transaction.execute_batch(&schema_pragmas(46))?;
     transaction.commit()?;
+    Ok(())
+}
+
+fn migrate_v46_to_v47(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction()?;
+    ensure_elapsed_time_columns(&transaction)?;
+    ensure_community_account_columns(&transaction)?;
+    transaction.execute_batch(&schema_pragmas(47))?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn ensure_community_account_columns(connection: &Connection) -> Result<(), StorageError> {
+    for (name, declaration) in [
+        (
+            "account_state",
+            "TEXT NOT NULL DEFAULT 'active' CHECK(account_state IN ('active','deleting','deleted'))",
+        ),
+        (
+            "account_deleted_at_ms",
+            "INTEGER CHECK(account_deleted_at_ms IS NULL OR account_deleted_at_ms>=0)",
+        ),
+    ] {
+        if !table_has_column(connection, "charging_sync_state", name)? {
+            connection.execute_batch(&format!(
+                "ALTER TABLE charging_sync_state ADD COLUMN {name} {declaration};"
+            ))?;
+        }
+    }
     Ok(())
 }
 

@@ -10,6 +10,8 @@ pub enum MobileChargingSyncCredentialState {
     RegistrationStarted,
     Ready,
     Unreadable,
+    DeletionPending,
+    Deleted,
 }
 
 /// Native work selected for the observed credential state.
@@ -67,7 +69,9 @@ pub fn mobile_charging_registration_admission(
         MobileChargingSyncCredentialState::Ready => {
             MobileChargingRegistrationAdmission::Synchronize
         }
-        MobileChargingSyncCredentialState::Unreadable => {
+        MobileChargingSyncCredentialState::Unreadable
+        | MobileChargingSyncCredentialState::DeletionPending
+        | MobileChargingSyncCredentialState::Deleted => {
             MobileChargingRegistrationAdmission::PublicRefresh
         }
     }
@@ -391,5 +395,24 @@ mod tests {
             mobile_charging_sync_result(MobileChargingError::Unavailable),
             MobileChargingSyncResult::Offline
         );
+    }
+}
+
+#[cfg(test)]
+mod account_deletion_tests {
+    use super::*;
+    #[test]
+    fn deleted_credentials_never_admit_registration_or_authenticated_sync() {
+        for state in [
+            MobileChargingSyncCredentialState::DeletionPending,
+            MobileChargingSyncCredentialState::Deleted,
+        ] {
+            for explicit_retry in [false, true] {
+                assert_eq!(
+                    mobile_charging_registration_admission(state, explicit_retry),
+                    MobileChargingRegistrationAdmission::PublicRefresh
+                );
+            }
+        }
     }
 }

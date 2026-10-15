@@ -9,7 +9,6 @@ use super::{
 use crate::{RideDatabaseHandle, persistence, ride_maps};
 use reqwest::{Client, Method, StatusCode, Url, header};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-#[cfg(test)]
 use std::net::IpAddr;
 use std::time::Duration;
 use uuid::Uuid;
@@ -22,30 +21,36 @@ const MAX_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
 const CHANGE_PAGE_SIZE: u32 = 10;
 const MAX_UPLOADS_PER_SYNC: u32 = 8;
 
-struct ChargingHttpClient {
+pub(super) struct ChargingHttpClient {
     client: Client,
     base_url: Url,
 }
 
 impl ChargingHttpClient {
-    fn production() -> Result<Self, MobileChargingError> {
+    pub(super) fn production() -> Result<Self, MobileChargingError> {
         Self::build(DIRECTORY_URL)
     }
 
     fn build(base_url: &str) -> Result<Self, MobileChargingError> {
         let base_url = Url::parse(base_url).map_err(|_| MobileChargingError::Network)?;
-        let client = Client::builder()
+        let mut builder = Client::builder()
             .timeout(REQUEST_TIMEOUT)
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .map_err(|_| MobileChargingError::Network)?;
+            .redirect(reqwest::redirect::Policy::none());
+        if base_url.scheme() == "http" {
+            builder = builder.no_proxy();
+        }
+        let client = builder.build().map_err(|_| MobileChargingError::Network)?;
         Ok(Self { client, base_url })
     }
 
-    #[cfg(test)]
-    fn loopback(base_url: &str) -> Result<Self, MobileChargingError> {
+    pub(super) fn loopback(base_url: &str) -> Result<Self, MobileChargingError> {
         let url = Url::parse(base_url).map_err(|_| MobileChargingError::Network)?;
         let loopback = url.scheme() == "http"
+            && url.username().is_empty()
+            && url.password().is_none()
+            && url.query().is_none()
+            && url.fragment().is_none()
+            && url.path() == "/"
             && url
                 .host_str()
                 .and_then(|host| {
@@ -61,7 +66,7 @@ impl ChargingHttpClient {
         Self::build(base_url)
     }
 
-    async fn request<T: DeserializeOwned>(
+    pub(super) async fn request<T: DeserializeOwned>(
         &self,
         method: Method,
         path: &str,
@@ -397,7 +402,7 @@ fn blocked_operation_dto(
     }
 }
 
-async fn database<T, F>(
+pub(super) async fn database<T, F>(
     database: persistence::RideDatabase,
     action: F,
 ) -> Result<T, MobileChargingError>
@@ -763,6 +768,13 @@ async fn synchronize_once_pass(
     progress: &mut MobileChargingSyncProgress,
 ) -> Result<MobileChargingSyncOutcome, MobileChargingError> {
     if token.len() != 64 || !token.bytes().all(|value| value.is_ascii_hexdigit()) {
+        return Ok(finished(MobileChargingSyncResult::AuthenticationRequired));
+    }
+    let account = database(database_handle.clone(), |database| {
+        database.community_account_state()
+    })
+    .await?;
+    if account != persistence::CommunityAccountState::Active {
         return Ok(finished(MobileChargingSyncResult::AuthenticationRequired));
     }
     let blocked_outcome =

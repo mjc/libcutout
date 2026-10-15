@@ -2978,7 +2978,7 @@ fn charging_sync_upgrade_preserves_elapsed_time_and_pending_spots() {
             connection
                 .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
                 .unwrap(),
-            46
+            super::super::migrations::CURRENT_SCHEMA_VERSION
         );
 
         drop(connection);
@@ -2991,7 +2991,7 @@ fn charging_sync_upgrade_preserves_elapsed_time_and_pending_spots() {
             reopened
                 .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
                 .unwrap(),
-            46
+            super::super::migrations::CURRENT_SCHEMA_VERSION
         );
     }
 }
@@ -3015,4 +3015,275 @@ fn current_schema_verification_rejects_invalid_elapsed_column_shapes() {
         )
         .unwrap();
     assert!(super::super::migrations::verify_current_schema(&wrong_nullability).is_err());
+}
+
+#[test]
+fn community_account_deletion_fences_pending_and_new_writes() {
+    let mut connection = database();
+    let mut spatial = SpatialSchemaState::Uninitialized;
+    save(&mut connection, &mut spatial, &input(0.5)).unwrap();
+    assert_eq!(count(&connection).unwrap(), 1);
+    assert_eq!(
+        account::apply(&mut connection, AccountEvent::BeginDeletion).unwrap(),
+        CommunityAccountState::Deleting
+    );
+    assert!(next_operation(&mut connection).is_err());
+    assert!(save(&mut connection, &mut spatial, &input(0.6)).is_err());
+    assert_eq!(count(&connection).unwrap(), 1);
+}
+
+#[test]
+fn community_account_deletion_preserves_points_and_detaches_public_ownership() {
+    let mut connection = database();
+    let mut spatial = SpatialSchemaState::Uninitialized;
+    let published = entry(Some(input(0.5)), ChargingStatus::Published, 1);
+    let public_id = owned_remote(&mut connection, &mut spatial, &published);
+    let draft = save(&mut connection, &mut spatial, &input(0.6)).unwrap();
+    let delayed = next_operation(&mut connection).unwrap().unwrap();
+    account::apply(&mut connection, AccountEvent::BeginDeletion).unwrap();
+    let completed = account::apply(
+        &mut connection,
+        AccountEvent::CompleteDeletion { at_ms: 1234 },
+    )
+    .unwrap();
+    assert_eq!(
+        completed,
+        CommunityAccountState::Deleted {
+            completed_at_milliseconds: 1234
+        }
+    );
+    assert_eq!(count(&connection).unwrap(), 0);
+    let point = detail(&connection, public_id).unwrap().unwrap();
+    assert_eq!(point.input, published.input);
+    assert_eq!(point.remote_id, Some(published.id));
+    assert!(!point.owned);
+    let local = detail(&connection, draft.point_id).unwrap().unwrap();
+    assert_eq!(local.input, Some(input(0.6)));
+    assert_eq!(local.remote_id, None);
+    assert!(!local.owned);
+    assert!(
+        acknowledge_operation(
+            &mut connection,
+            &mut spatial,
+            delayed.id,
+            ChargingRevision::new(1).unwrap(),
+            &published
+        )
+        .is_err()
+    );
+    assert_eq!(
+        account::apply(
+            &mut connection,
+            AccountEvent::CompleteDeletion { at_ms: 5678 }
+        )
+        .unwrap(),
+        completed
+    );
+    assert_eq!(
+        account::apply(&mut connection, AccountEvent::BeginDeletion).unwrap(),
+        completed
+    );
+}
+
+#[test]
+fn community_account_deletion_cleanup_rolls_back_as_one_transaction() {
+    let mut connection = database();
+    let mut spatial = SpatialSchemaState::Uninitialized;
+    save(&mut connection, &mut spatial, &input(0.5)).unwrap();
+    account::apply(&mut connection, AccountEvent::BeginDeletion).unwrap();
+    connection.execute_batch("CREATE TRIGGER fail_deletion BEFORE UPDATE ON charging_sync_state WHEN new.account_state='deleted' BEGIN SELECT RAISE(ABORT,'injected failure'); END;").unwrap();
+    assert!(
+        account::apply(
+            &mut connection,
+            AccountEvent::CompleteDeletion { at_ms: 1234 }
+        )
+        .is_err()
+    );
+    assert_eq!(
+        account::state(&connection).unwrap(),
+        CommunityAccountState::Deleting
+    );
+    assert_eq!(count(&connection).unwrap(), 1);
+    connection
+        .execute_batch("DROP TRIGGER fail_deletion;")
+        .unwrap();
+    account::apply(
+        &mut connection,
+        AccountEvent::CompleteDeletion { at_ms: 1234 },
+    )
+    .unwrap();
+    assert_eq!(count(&connection).unwrap(), 0);
+}
+
+#[test]
+fn community_account_deletion_survives_reopen_and_rejects_unconfirmed_completion() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("account.sqlite");
+    {
+        let mut connection = Connection::open(&path).unwrap();
+        super::super::migrations::migrate(&mut connection).unwrap();
+        assert!(
+            account::apply(
+                &mut connection,
+                AccountEvent::CompleteDeletion { at_ms: 1234 }
+            )
+            .is_err()
+        );
+        account::apply(&mut connection, AccountEvent::BeginDeletion).unwrap();
+    }
+    let mut reopened = Connection::open(&path).unwrap();
+    assert_eq!(
+        account::state(&reopened).unwrap(),
+        CommunityAccountState::Deleting
+    );
+    account::apply(
+        &mut reopened,
+        AccountEvent::CompleteDeletion { at_ms: 1234 },
+    )
+    .unwrap();
+    drop(reopened);
+    let reopened = Connection::open(&path).unwrap();
+    assert_eq!(
+        account::state(&reopened).unwrap(),
+        CommunityAccountState::Deleted {
+            completed_at_milliseconds: 1234
+        }
+    );
+}
+
+#[test]
+fn community_account_migration_preserves_version45_pins_and_fails_closed_on_bad_state() {
+    let mut connection = database();
+    let mut spatial = SpatialSchemaState::Uninitialized;
+    let pin = save(&mut connection, &mut spatial, &input(0.5)).unwrap();
+    connection.execute_batch("ALTER TABLE charging_sync_state DROP COLUMN account_state; ALTER TABLE charging_sync_state DROP COLUMN account_deleted_at_ms; PRAGMA user_version=45;").unwrap();
+    super::super::migrations::migrate(&mut connection).unwrap();
+    assert_eq!(
+        account::state(&connection).unwrap(),
+        CommunityAccountState::Active
+    );
+    assert_eq!(
+        detail(&connection, pin.point_id).unwrap().unwrap().input,
+        Some(input(0.5))
+    );
+    connection
+        .execute("UPDATE charging_sync_state SET account_state='deleted'", [])
+        .unwrap();
+    assert!(account::state(&connection).is_err());
+    assert!(save(&mut connection, &mut spatial, &input(0.6)).is_err());
+}
+
+#[test]
+fn community_account_deletion_rejects_personal_vote_cache_and_keeps_public_refresh() {
+    let mut connection = database();
+    let mut spatial = SpatialSchemaState::Uninitialized;
+    let mut published = entry(Some(input(0.5)), ChargingStatus::Published, 1);
+    let public_id = owned_remote(&mut connection, &mut spatial, &published);
+    account::apply(&mut connection, AccountEvent::BeginDeletion).unwrap();
+    account::apply(
+        &mut connection,
+        AccountEvent::CompleteDeletion { at_ms: 1234 },
+    )
+    .unwrap();
+    published.vote = Some(ChargingVote::Up);
+    published.vote_revision = ChargingRevision::new(1).unwrap();
+    published.revision = ChargingRevision::new(2).unwrap();
+    published.change_sequence = ChargingRevision::new(2).unwrap();
+    cache_directory_entry(&mut connection, &mut spatial, &published).unwrap();
+    let cached = detail(&connection, public_id).unwrap().unwrap();
+    assert_eq!(cached.vote, None);
+    assert_eq!(cached.vote_revision.get(), 0);
+    assert!(!cached.owned);
+    assert_eq!(cached.input, published.input);
+}
+
+#[test]
+fn schema_46_migration_repairs_both_historical_shapes_and_preserves_account_fences() {
+    for (missing_account_columns, missing_elapsed_columns, expected_state, has_elapsed) in [
+        (true, false, CommunityAccountState::Active, true),
+        (false, true, CommunityAccountState::Deleting, false),
+    ] {
+        let mut connection = database();
+        let mut spatial = SpatialSchemaState::Uninitialized;
+        let saved = save(&mut connection, &mut spatial, &input(179.5)).unwrap();
+        let pending = next_operation(&mut connection).unwrap().unwrap();
+        seed_elapsed_migration_ride(&connection, 46, true);
+        if expected_state == CommunityAccountState::Deleting {
+            account::apply(&mut connection, AccountEvent::BeginDeletion).unwrap();
+        }
+        if missing_account_columns {
+            connection
+                .execute_batch(
+                    "ALTER TABLE charging_sync_state DROP COLUMN account_deleted_at_ms;
+                     ALTER TABLE charging_sync_state DROP COLUMN account_state;",
+                )
+                .unwrap();
+        }
+        if missing_elapsed_columns {
+            connection
+                .execute_batch(
+                    "ALTER TABLE rides DROP COLUMN elapsed_time_ms;
+                     ALTER TABLE rides DROP COLUMN elapsed_time_anchor_ms;
+                     ALTER TABLE rides DROP COLUMN elapsed_time_running;
+                     ALTER TABLE rides DROP COLUMN elapsed_time_partial;
+                     ALTER TABLE rides DROP COLUMN last_recorded_point_elapsed_time_ms;
+                     ALTER TABLE rides DROP COLUMN last_recorded_point_elapsed_partial;",
+                )
+                .unwrap();
+        }
+        connection.pragma_update(None, "user_version", 46).unwrap();
+
+        super::super::migrations::migrate(&mut connection).unwrap();
+        super::super::migrations::verify_current_schema(&connection).unwrap();
+        assert_eq!(account::state(&connection).unwrap(), expected_state);
+        assert_eq!(count(&connection).unwrap(), 1);
+        assert_eq!(
+            detail(&connection, saved.point_id).unwrap().unwrap().input,
+            Some(input(179.5))
+        );
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM charging_outbox", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        if expected_state == CommunityAccountState::Active {
+            assert_eq!(
+                next_operation(&mut connection).unwrap().as_ref(),
+                Some(&pending)
+            );
+        }
+        assert_elapsed_migration_ride_preserved(&connection, has_elapsed);
+        assert_eq!(
+            connection
+                .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                .unwrap(),
+            super::super::migrations::CURRENT_SCHEMA_VERSION,
+        );
+    }
+}
+
+#[test]
+fn schema_46_elapsed_repair_preserves_completed_account_deletion() {
+    let mut connection = database();
+    let mut spatial = SpatialSchemaState::Uninitialized;
+    account::apply(&mut connection, AccountEvent::BeginDeletion).unwrap();
+    account::apply(
+        &mut connection,
+        AccountEvent::CompleteDeletion { at_ms: 9876 },
+    )
+    .unwrap();
+    seed_elapsed_migration_ride(&connection, 46, false);
+
+    super::super::migrations::migrate(&mut connection).unwrap();
+    super::super::migrations::verify_current_schema(&connection).unwrap();
+    assert_eq!(
+        account::state(&connection).unwrap(),
+        CommunityAccountState::Deleted {
+            completed_at_milliseconds: 9876
+        }
+    );
+    assert_elapsed_migration_ride_preserved(&connection, false);
+    assert!(save(&mut connection, &mut spatial, &input(0.5)).is_err());
 }

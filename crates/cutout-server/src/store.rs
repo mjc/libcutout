@@ -23,7 +23,9 @@ mod tests;
 mod votes;
 
 pub(crate) use budgets::{QuotaWindow, quota, write_quota};
-pub(crate) use identity::{Actor, Identity, ModeratorActor, Registration, Role, ensure_actor};
+pub(crate) use identity::{
+    Actor, DeletionReceipt, Identity, ModeratorActor, Registration, Role, ensure_actor,
+};
 pub(crate) use spots::{published_spot, state};
 pub(crate) use votes::clear_spot_votes;
 
@@ -109,7 +111,7 @@ impl Store {
             let version: u32 = connection
                 .pragma_query_value(None, "user_version", |row| row.get(0))
                 .map_err(db_error)?;
-            if version != 1 {
+            if version != 2 {
                 return Err(Error::Unavailable);
             }
             connection
@@ -328,16 +330,35 @@ fn prepare_schema(connection: &mut Connection, mode: OpenMode) -> Result<(), Err
                 .execute_batch(include_str!("../migrations/001_directory.sql"))
                 .map_err(db_error)?;
             transaction.commit().map_err(db_error)?;
+            migrate_account_deletion(connection)?;
         }
-        1 if application == 0x4353_5054 => {}
+        1 if application == 0x4353_5054 && mode == OpenMode::Initialize => {}
+        1 if application == 0x4353_5054 => return Err(Error::Unavailable),
+        2 if application == 0x4353_5054 => return Ok(()),
         _ => return Err(Error::Unavailable),
+    }
+    if version == 1 {
+        migrate_account_deletion(connection)?;
     }
     Ok(())
 }
 
+fn migrate_account_deletion(connection: &mut Connection) -> Result<(), Error> {
+    let transaction = connection.transaction().map_err(db_error)?;
+    transaction
+        .execute_batch(include_str!("../migrations/002_account_deletion.sql"))
+        .map_err(db_error)?;
+    transaction.commit().map_err(db_error)
+}
+
 fn configure_durability(connection: &Connection) -> Result<(), Error> {
     connection
-        .execute_batch("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;")
+        .execute_batch(
+            "PRAGMA foreign_keys=ON;
+             PRAGMA journal_mode=WAL;
+             PRAGMA synchronous=FULL;
+             PRAGMA secure_delete=ON;",
+        )
         .map_err(db_error)?;
     Ok(())
 }

@@ -1583,6 +1583,9 @@ pub enum StorageError {
     /// A directory pin cannot be edited or withdrawn by this installation.
     #[error("charging spot belongs to another contributor")]
     ChargingNotOwned,
+    /// Community mutations are fenced by a pending or completed account deletion.
+    #[error("community account deletion prevents contributions")]
+    CommunityAccountUnavailable,
     /// The durable community queue reached its bound.
     #[error("charging outbox is full")]
     ChargingOutboxFull,

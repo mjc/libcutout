@@ -132,7 +132,17 @@ pub(super) fn apply_entry(
     checked: &ValidatedDirectoryEntry<'_>,
     update: EntryUpdate,
 ) -> Result<(), StorageError> {
-    let entry = checked.as_entry();
+    let anonymous;
+    let entry = if super::account::state(connection)? == super::CommunityAccountState::Active {
+        checked.as_entry()
+    } else {
+        anonymous = super::ChargingDirectoryEntry {
+            vote: None,
+            vote_revision: ChargingRevision::ZERO,
+            ..checked.as_entry().clone()
+        };
+        &anonymous
+    };
     match update {
         EntryUpdate::ReplaceBody => {
             if let Some(input) = &entry.input {
