@@ -83,8 +83,12 @@ final class ChargingSpotEditorModel {
         get { countryCode }
         set { chooseCountryCode(newValue) }
     }
-    private(set) var outletChoices: [MobileChargingConnectorDto]
-    private(set) var powerSuggestion: MobileChargingSupplyDto
+    var outletChoices: [MobileChargingConnectorDto] {
+        mobileChargingOutletChoices(countryCode: countryCode)
+    }
+    var powerSuggestion: MobileChargingSupplyDto {
+        mobileChargingPowerSuggestion(countryCode: countryCode, evStation: venue == .evChargingStation)
+    }
     private(set) var isEditing: Bool
     let inputLocale: Locale
 
@@ -179,14 +183,11 @@ final class ChargingSpotEditorModel {
         save: ChargingSpotSave? = nil
     ) {
         let countryCode = Self.normalizedCountryCode(countryCode)
-        let suggestion = mobileChargingPowerSuggestion(countryCode: countryCode, evStation: false)
         self.stage = .moving
         self.coordinate = coordinate
         self.latitudeText = Self.coordinateText(coordinate.latitudeDegrees)
         self.longitudeText = Self.coordinateText(coordinate.longitudeDegrees)
         self.countryCode = countryCode
-        self.outletChoices = mobileChargingOutletChoices(countryCode: countryCode)
-        self.powerSuggestion = suggestion
         self.isEditing = false
         self.inputLocale = inputLocale
         self.saveSpot = save ?? { fields, _ in try await Self.persist(.create, fields: fields) }
@@ -215,10 +216,6 @@ final class ChargingSpotEditorModel {
         save: @escaping ChargingSpotSave
     ) {
         let countryCode = Self.normalizedCountryCode(countryCode)
-        let suggestion = mobileChargingPowerSuggestion(
-            countryCode: countryCode,
-            evStation: input.venue == .evChargingStation
-        )
         self.stage = .details
         self.areOptionalDetailsExpanded = true
         self.coordinate = input.coordinate
@@ -239,8 +236,6 @@ final class ChargingSpotEditorModel {
         }
         self.errorKey = nil
         self.countryCode = countryCode
-        self.outletChoices = mobileChargingOutletChoices(countryCode: countryCode)
-        self.powerSuggestion = suggestion
         self.isEditing = true
         self.inputLocale = inputLocale
         self.saveSpot = save
@@ -283,9 +278,6 @@ final class ChargingSpotEditorModel {
         let countryCode = Self.normalizedCountryCode(value)
         guard self.countryCode != countryCode else { return }
         self.countryCode = countryCode
-        outletChoices = mobileChargingOutletChoices(countryCode: countryCode)
-        powerSuggestion = mobileChargingPowerSuggestion(
-            countryCode: countryCode, evStation: venue == .evChargingStation)
         for draft in supplies { draft.setCountryCode(countryCode) }
     }
 
@@ -386,13 +378,9 @@ final class ChargingSpotEditorModel {
 
     private func venueChanged(from oldValue: MobileChargingVenueDto?) {
         guard oldValue != venue else { return }
-        powerSuggestion = mobileChargingPowerSuggestion(
-            countryCode: countryCode,
-            evStation: venue == .evChargingStation
-        )
         for draft in supplies { draft.setVenue(isEV: venue == .evChargingStation) }
         if venue == .evChargingStation {
-            supplies.removeAll { $0.snapshot?.origin == .suggested }
+            supplies.removeAll { $0.snapshot.origin == .suggested }
         }
     }
 

@@ -85,7 +85,7 @@ final class ChargingCommunitySyncTests: XCTestCase {
                 recorder.tokens.append(token)
                 recorder.sawPersistedCredential = try await store.load() == .ready(credential)
                 return ChargingCommunitySyncCounts(
-                    pendingCount: 2, downloaded: 3, uploaded: 1, outcome: .pending
+                    pendingCount: 2, downloaded: 3, uploaded: 1, outcome: .finished(result: .pending)
                 )
             },
             sleep: { _ in },
@@ -122,7 +122,7 @@ final class ChargingCommunitySyncTests: XCTestCase {
             refreshDirectory: {
                 recorder.directoryRefreshes += 1
                 return ChargingCommunitySyncCounts(
-                    pendingCount: 0, downloaded: 4, uploaded: 0, outcome: .synced
+                    pendingCount: 0, downloaded: 4, uploaded: 0, outcome: .finished(result: .synced)
                 )
             },
             readLastUpdated: { UInt64(cachedDate.timeIntervalSince1970 * 1_000) },
@@ -183,7 +183,7 @@ final class ChargingCommunitySyncTests: XCTestCase {
             },
             synchronize: { _ in
                 ChargingCommunitySyncCounts(
-                    pendingCount: 0, downloaded: 0, uploaded: 0, outcome: .synced
+                    pendingCount: 0, downloaded: 0, uploaded: 0, outcome: .finished(result: .synced)
                 )
             },
             sleep: { _ in },
@@ -213,13 +213,13 @@ final class ChargingCommunitySyncTests: XCTestCase {
             synchronize: { _ in
                 recorder.syncCalls += 1
                 return ChargingCommunitySyncCounts(
-                    pendingCount: 0, downloaded: 0, uploaded: 0, outcome: .synced
+                    pendingCount: 0, downloaded: 0, uploaded: 0, outcome: .finished(result: .synced)
                 )
             },
             refreshDirectory: {
                 recorder.directoryRefreshes += 1
                 return ChargingCommunitySyncCounts(
-                    pendingCount: 0, downloaded: 0, uploaded: 0, outcome: .synced
+                    pendingCount: 0, downloaded: 0, uploaded: 0, outcome: .finished(result: .synced)
                 )
             },
             sleep: { _ in },
@@ -232,6 +232,37 @@ final class ChargingCommunitySyncTests: XCTestCase {
         XCTAssertEqual(recorder.registrations, 0)
         XCTAssertEqual(recorder.syncCalls, 0)
         XCTAssertEqual(recorder.directoryRefreshes, 1)
+    }
+
+    func testLostRegistrationClaimUsesAReadyCredentialWithoutRegistering() async {
+        let credential = ChargingCommunityCredential(identityID: "identity", token: "secret")
+        let store = MemoryChargingCredentialStore(
+            loseRegistrationClaim: true,
+            recordAfterLostClaim: .ready(credential)
+        )
+        let recorder = SyncRecorder()
+        let sync = ChargingCommunitySync(
+            credentialStore: store,
+            registerIdentity: {
+                recorder.registrations += 1
+                return ChargingCommunityCredential(identityID: "new", token: "new-token")
+            },
+            synchronize: { token in
+                recorder.tokens.append(token)
+                return ChargingCommunitySyncCounts(
+                    pendingCount: 0, downloaded: 0, uploaded: 0,
+                    outcome: .finished(result: .synced)
+                )
+            },
+            sleep: { _ in },
+            enabled: { true }
+        )
+
+        let result = await sync.run(explicitRetry: true)
+
+        XCTAssertEqual(result, .synced)
+        XCTAssertEqual(recorder.registrations, 0)
+        XCTAssertEqual(recorder.tokens, ["secret"])
     }
 
     func testConcurrentRequestsShareOneSyncAndUnauthorizedKeepsCredential() async throws {
@@ -305,7 +336,7 @@ final class ChargingCommunitySyncTests: XCTestCase {
                 syncCalls += 1
                 if syncCalls == 1 {
                     return ChargingCommunitySyncCounts(
-                        pendingCount: 6, downloaded: 0, uploaded: 0, outcome: .pending
+                        pendingCount: 6, downloaded: 0, uploaded: 0, outcome: .finished(result: .pending)
                     )
                 }
                 throw MobileChargingError.Network
@@ -339,7 +370,7 @@ final class ChargingCommunitySyncTests: XCTestCase {
                     pendingCount: 2,
                     downloaded: 4,
                     uploaded: 3,
-                    outcome: .conflict
+                    outcome: .finished(result: .conflict)
                 )
             },
             readLastUpdated: {

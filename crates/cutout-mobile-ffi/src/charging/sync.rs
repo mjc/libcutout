@@ -1,9 +1,9 @@
-use super::sync_policy::outcome_for_error;
+use super::sync_policy::result_for_error;
 use super::{
     MobileChargingBlockReasonDto, MobileChargingError, MobileChargingIdentityDto,
     MobileChargingInputDto, MobileChargingPendingActionDto, MobileChargingResolutionDto,
-    MobileChargingSyncConflictDto, MobileChargingSyncOutcome, MobileChargingSyncSummaryDto,
-    MobileChargingWriteReceiptDto,
+    MobileChargingSyncConflictDto, MobileChargingSyncOutcome, MobileChargingSyncResult,
+    MobileChargingSyncSummaryDto, MobileChargingWriteReceiptDto,
     conversion::{input, input_dto, receipt_dto, storage_error},
 };
 use crate::{RideDatabaseHandle, persistence, ride_maps};
@@ -716,11 +716,13 @@ async fn synchronize_once_with_timeout(
         let mut outcome =
             match synchronize_once_pass(client, &database_handle, &token, progress).await {
                 Ok(outcome) => outcome,
-                Err(error) => sync_outcome(error),
+                Err(error) => finished(result_for_error(error)),
             };
         match database(database_handle, |database| database.charging_outbox_count()).await {
             Ok(pending_count) => progress.pending_count = pending_count,
-            Err(error) if !is_terminal_block(outcome) => outcome = sync_outcome(error),
+            Err(error) if !is_terminal_block(outcome) => {
+                outcome = finished(result_for_error(error));
+            }
             Err(_) => {}
         }
         Ok::<_, MobileChargingError>(outcome)
@@ -729,7 +731,7 @@ async fn synchronize_once_with_timeout(
     match result {
         Ok(Ok(outcome)) => sync_summary(progress, outcome),
         Ok(Err(error)) => Err(error),
-        Err(_) => sync_summary(progress, MobileChargingSyncOutcome::Offline),
+        Err(_) => sync_summary(progress, finished(MobileChargingSyncResult::Offline)),
     }
 }
 
@@ -761,7 +763,7 @@ async fn synchronize_once_pass(
     progress: &mut MobileChargingSyncProgress,
 ) -> Result<MobileChargingSyncOutcome, MobileChargingError> {
     if token.len() != 64 || !token.bytes().all(|value| value.is_ascii_hexdigit()) {
-        return Ok(MobileChargingSyncOutcome::AuthenticationRequired);
+        return Ok(finished(MobileChargingSyncResult::AuthenticationRequired));
     }
     let blocked_outcome =
         upload_pending_operations(client, database_handle, token, progress).await?;
@@ -778,7 +780,7 @@ async fn upload_pending_operations(
     database_handle: &persistence::RideDatabase,
     token: &str,
     progress: &mut MobileChargingSyncProgress,
-) -> Result<Option<MobileChargingSyncOutcome>, MobileChargingError> {
+) -> Result<Option<MobileChargingSyncResult>, MobileChargingError> {
     let mut blocked_outcome = None;
     for _ in 0..MAX_UPLOADS_PER_SYNC {
         let operation = database(database_handle.clone(), |database| {
@@ -803,7 +805,7 @@ async fn upload_pending_operations(
                     )
                     .await?;
                     if blocked_outcome.is_none() {
-                        blocked_outcome = Some(sync_outcome(error));
+                        blocked_outcome = Some(result_for_error(error));
                     }
                 } else {
                     return Err(error);
@@ -830,19 +832,25 @@ async fn reconcile_directory(
 }
 
 fn make_sync_outcome(
-    blocked: Option<MobileChargingSyncOutcome>,
+    blocked: Option<MobileChargingSyncResult>,
     more_changes: bool,
     pending_count: u32,
 ) -> MobileChargingSyncOutcome {
     match blocked {
-        Some(outcome) => outcome,
+        Some(result) => finished(result),
         None if more_changes || pending_count > 0 => MobileChargingSyncOutcome::MoreWork,
-        None => MobileChargingSyncOutcome::Synced,
+        None => finished(MobileChargingSyncResult::Synced),
     }
 }
 
 fn is_terminal_block(outcome: MobileChargingSyncOutcome) -> bool {
-    outcome == MobileChargingSyncOutcome::Conflict || outcome == MobileChargingSyncOutcome::Rejected
+    match outcome {
+        MobileChargingSyncOutcome::MoreWork => false,
+        MobileChargingSyncOutcome::Finished { result } => {
+            result == MobileChargingSyncResult::Conflict
+                || result == MobileChargingSyncResult::Rejected
+        }
+    }
 }
 
 fn block_kind(error: MobileChargingError) -> Option<persistence::ChargingOperationBlockKind> {
@@ -892,8 +900,8 @@ async fn block_rejected_operation(
     Ok(())
 }
 
-fn sync_outcome(error: MobileChargingError) -> MobileChargingSyncOutcome {
-    outcome_for_error(error)
+fn finished(result: MobileChargingSyncResult) -> MobileChargingSyncOutcome {
+    MobileChargingSyncOutcome::Finished { result }
 }
 
 #[cfg(test)]
@@ -922,7 +930,7 @@ async fn refresh_directory_once(
             pending_count,
             downloaded: 0,
             uploaded: 0,
-            outcome: MobileChargingSyncOutcome::Pending,
+            outcome: finished(MobileChargingSyncResult::Pending),
         });
     }
     let (downloaded, more_changes) = download_page(client, &database_handle, None).await?;
@@ -935,9 +943,9 @@ async fn refresh_directory_once(
         outcome: if more_changes {
             MobileChargingSyncOutcome::MoreWork
         } else if pending_count > 0 {
-            MobileChargingSyncOutcome::Pending
+            finished(MobileChargingSyncResult::Pending)
         } else {
-            MobileChargingSyncOutcome::Synced
+            finished(MobileChargingSyncResult::Synced)
         },
     })
 }
@@ -1112,7 +1120,7 @@ mod tests {
     #[test]
     fn sync_timeout_without_initial_progress_returns_network_error() {
         assert_eq!(
-            sync_summary(None, MobileChargingSyncOutcome::Offline),
+            sync_summary(None, finished(MobileChargingSyncResult::Offline)),
             Err(MobileChargingError::Network)
         );
     }
@@ -1485,7 +1493,10 @@ mod tests {
 
         let summary = synchronize(&client, local.clone(), identity.token).await?;
 
-        assert_eq!(summary.outcome, MobileChargingSyncOutcome::Conflict);
+        assert_eq!(
+            summary.outcome,
+            finished(MobileChargingSyncResult::Conflict)
+        );
         assert_eq!(summary.pending_count, 1);
         assert_eq!(summary.uploaded, 1);
         assert_eq!(summary.downloaded, 2);
@@ -1522,7 +1533,7 @@ mod tests {
 
         let summary = synchronize(&client, local.clone(), identity.token).await?;
 
-        assert_eq!(summary.outcome, MobileChargingSyncOutcome::Offline);
+        assert_eq!(summary.outcome, finished(MobileChargingSyncResult::Offline));
         assert_eq!(summary.pending_count, 1);
         assert_eq!(summary.uploaded, 1);
         assert_eq!(summary.downloaded, 0);
@@ -1564,7 +1575,7 @@ mod tests {
         )
         .await?;
 
-        assert_eq!(summary.outcome, MobileChargingSyncOutcome::Offline);
+        assert_eq!(summary.outcome, finished(MobileChargingSyncResult::Offline));
         assert_eq!(summary.pending_count, 1);
         assert_eq!(summary.uploaded, 1);
         assert_eq!(summary.downloaded, 0);
@@ -1651,7 +1662,8 @@ mod tests {
         .await;
         let retained_failure_progress = match first {
             Ok(summary) => {
-                summary.outcome == MobileChargingSyncOutcome::Offline && summary.uploaded == 0
+                summary.outcome == finished(MobileChargingSyncResult::Offline)
+                    && summary.uploaded == 0
             }
             Err(_) => false,
         };

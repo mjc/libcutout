@@ -21,7 +21,7 @@ final class ChargingSupplyDraftTests: XCTestCase {
         XCTAssertTrue(draft.requiresConfirmation)
         XCTAssertNil(draft.value())
         draft.confirm()
-        XCTAssertEqual(draft.snapshot?.includedSupply, draft.snapshot?.selection)
+        XCTAssertEqual(draft.snapshot.includedSupply, draft.snapshot.selection)
     }
 
     func testRestoredCustomAndUnknownSuppliesRemainConfirmedAcrossCountryAndEVChanges() {
@@ -50,6 +50,8 @@ final class ChargingSupplyDraftTests: XCTestCase {
         draft.voltageText = "24x"
 
         XCTAssertTrue(draft.hasInvalidVoltage)
+        XCTAssertEqual(draft.snapshot.selection, observed)
+        XCTAssertNil(draft.snapshot.includedSupply)
         XCTAssertNil(draft.value())
     }
 
@@ -61,11 +63,11 @@ final class ChargingSupplyDraftTests: XCTestCase {
 
         XCTAssertEqual(draft.voltageText, "24x")
         XCTAssertTrue(draft.hasInvalidVoltage)
-        XCTAssertEqual(draft.snapshot?.origin, .manual)
+        XCTAssertEqual(draft.snapshot.origin, .manual)
         XCTAssertNil(draft.value())
         draft.setVenue(isEV: true)
         XCTAssertEqual(draft.voltageText, "24x")
-        XCTAssertEqual(draft.snapshot?.origin, .manual)
+        XCTAssertEqual(draft.snapshot.origin, .manual)
     }
 
     func testSnapshotLoadingDoesNotTurnSuggestionIntoManualEdit() {
@@ -76,7 +78,7 @@ final class ChargingSupplyDraftTests: XCTestCase {
         draft.setCountryCode("GB")
 
         XCTAssertEqual(changeCount, 1)
-        XCTAssertEqual(draft.snapshot?.origin, .suggested)
+        XCTAssertEqual(draft.snapshot.origin, .suggested)
         XCTAssertTrue(draft.requiresConfirmation)
     }
 
@@ -92,8 +94,18 @@ final class ChargingSupplyDraftTests: XCTestCase {
         XCTAssertEqual(draft.otherConnectors[0].label, invalidLabel)
         XCTAssertFalse(draft.isEmpty)
         XCTAssertNil(draft.value())
-        XCTAssertEqual(draft.snapshot?.selection, observed)
-        XCTAssertEqual(draft.snapshot?.confirmation, .unconfirmed)
+        XCTAssertEqual(draft.snapshot.selection, observed)
+        XCTAssertNil(draft.snapshot.includedSupply)
+    }
+
+    func testRejectedRestoredSupplyKeepsRawFieldsVisibleWithoutIncludingIt() {
+        let invalid = MobileChargingSupplyDto(voltageVolts: 2_001, connectors: [.unknown])
+        let draft = ChargingSupplyDraft(supply: invalid, countryCode: "US", evStation: false)
+
+        XCTAssertEqual(draft.voltageText, "2001")
+        XCTAssertEqual(draft.connectors, [.unknown])
+        XCTAssertNil(draft.snapshot.includedSupply)
+        XCTAssertNil(draft.value())
     }
 
     func testClearedObservedRowStaysEmptyWhenCountryChanges() {
@@ -106,6 +118,7 @@ final class ChargingSupplyDraftTests: XCTestCase {
         XCTAssertNil(draft.value())
         draft.setCountryCode("GB")
         XCTAssertTrue(draft.isEmpty)
+        XCTAssertEqual(draft.connectorSummary, [])
         XCTAssertNil(draft.value())
     }
 

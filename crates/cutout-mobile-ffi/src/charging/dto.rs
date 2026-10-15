@@ -372,11 +372,9 @@ pub struct MobileChargingIdentityDto {
     pub token: String,
 }
 
-/// Terminal state of one bounded synchronization pass.
+/// Terminal result of synchronization.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
-pub enum MobileChargingSyncOutcome {
-    /// Directory pages or runnable outbox work remain for another round.
-    MoreWork,
+pub enum MobileChargingSyncResult {
     /// The directory and local outbox are both caught up.
     Synced,
     /// The bounded run finished with work still pending.
@@ -393,6 +391,15 @@ pub enum MobileChargingSyncOutcome {
     Offline,
     /// Local storage could not complete the pass.
     StorageUnavailable,
+}
+
+/// Result of one bounded synchronization pass.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileChargingSyncOutcome {
+    /// Directory pages or runnable outbox work remain for another round.
+    MoreWork,
+    /// The pass is finished with its terminal result.
+    Finished { result: MobileChargingSyncResult },
 }
 
 /// Result and committed progress of one bounded synchronization pass.

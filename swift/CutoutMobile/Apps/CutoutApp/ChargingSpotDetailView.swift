@@ -7,8 +7,8 @@ struct ChargingSpotDetailView: View {
     let spot: MobileChargingSpotDto
     var isDeleting = false
     var errorKey: String? = nil
-    var onEdit: ((MobileChargingSpotDto) -> Void)? = nil
-    var onDelete: ((MobileChargingSpotDto) -> Void)? = nil
+    let onEdit: (MobileChargingSpotDto) -> Void
+    let onDelete: (MobileChargingSpotDto) -> Void
     @State private var confirmsDeletion = false
     @Environment(\.dismiss) private var dismiss
 
@@ -36,18 +36,14 @@ struct ChargingSpotDetailView: View {
                         Text(localizedAppText("charging.spot.power.unknown"))
                     }
                 }
-                if canEdit, onEdit != nil || onDelete != nil {
+                if canEdit {
                     Section {
-                        if let onEdit {
-                            Button(localizedAppText("charging.editor.edit")) { onEdit(spot) }
-                                .accessibilityIdentifier("charging.details.edit")
+                        Button(localizedAppText("charging.editor.edit")) { onEdit(spot) }
+                            .accessibilityIdentifier("charging.details.edit")
+                        Button(localizedAppText("charging.editor.delete"), role: .destructive) {
+                            confirmsDeletion = true
                         }
-                        if onDelete != nil {
-                            Button(localizedAppText("charging.editor.delete"), role: .destructive) {
-                                confirmsDeletion = true
-                            }
-                            .accessibilityIdentifier("charging.details.delete")
-                        }
+                        .accessibilityIdentifier("charging.details.delete")
                         if let errorKey {
                             Text(localizedAppText(errorKey)).foregroundStyle(.red)
                         }
@@ -87,7 +83,7 @@ struct ChargingSpotDetailView: View {
             }
         }
         .confirmationDialog(localizedAppText("charging.editor.delete.confirm"), isPresented: $confirmsDeletion) {
-            Button(localizedAppText("charging.editor.delete"), role: .destructive) { onDelete?(spot) }
+            Button(localizedAppText("charging.editor.delete"), role: .destructive) { onDelete(spot) }
         }
         .interactiveDismissDisabled(isDeleting)
         .accessibilityIdentifier("charging.spot.details-screen")

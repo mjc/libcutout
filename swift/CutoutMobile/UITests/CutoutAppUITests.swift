@@ -7269,7 +7269,13 @@ final class ChargingMapDeviceUITests: XCTestCase {
         XCTAssertTrue(libraryPin(in: app).waitForExistence(timeout: 20), app.debugDescription)
         let existingPinIDs = pinIdentifiers(in: app)
         let map = app.maps.firstMatch
-        map.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.65)).press(forDuration: 1.2)
+        let placementPoint = map.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.65))
+        placementPoint.press(forDuration: 0.1)
+        XCTAssertFalse(app.buttons["charging.placement.confirm"].exists, app.debugDescription)
+        placementPoint.press(forDuration: 1.2)
+        XCTAssertTrue(app.buttons["charging.placement.confirm"].waitForExistence(timeout: 5), app.debugDescription)
+        app.buttons["charging.placement.cancel"].tap()
+        placementPoint.press(forDuration: 1.2)
         XCTAssertTrue(app.buttons["charging.placement.confirm"].waitForExistence(timeout: 5), app.debugDescription)
         app.buttons["charging.placement.confirm"].tap()
 

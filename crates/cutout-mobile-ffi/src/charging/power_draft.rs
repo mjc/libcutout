@@ -2,8 +2,8 @@
 
 use std::sync::Arc;
 
+use super::MobileChargingSupplyDto;
 use super::conversion::supply_dto;
-use super::{MobileChargingError, MobileChargingSupplyDto};
 use crate::ride_maps;
 
 /// Origin of the displayed power choice.
@@ -15,15 +15,6 @@ pub enum MobileChargingPowerDraftOriginDto {
     Manual,
 }
 
-/// Whether the displayed power choice may be included in an observation.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
-pub enum MobileChargingPowerDraftConfirmationDto {
-    /// The choice still needs an explicit include action.
-    Unconfirmed,
-    /// The choice may be included.
-    Confirmed,
-}
-
 /// Read-only state needed to render a charging power row and prepare a save.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileChargingPowerDraftSnapshot {
@@ -31,8 +22,6 @@ pub struct MobileChargingPowerDraftSnapshot {
     pub selection: MobileChargingSupplyDto,
     /// Whether the choice is suggested or manual.
     pub origin: MobileChargingPowerDraftOriginDto,
-    /// Whether explicit inclusion is required.
-    pub confirmation: MobileChargingPowerDraftConfirmationDto,
     /// Present only when the current selection is confirmed.
     pub included_supply: Option<MobileChargingSupplyDto>,
 }
@@ -55,21 +44,8 @@ impl MobileChargingPowerDraft {
             } else {
                 MobileChargingPowerDraftOriginDto::Suggested
             },
-            confirmation: if self.draft.is_confirmed() {
-                MobileChargingPowerDraftConfirmationDto::Confirmed
-            } else {
-                MobileChargingPowerDraftConfirmationDto::Unconfirmed
-            },
             included_supply: self.draft.confirmed_supply().map(supply_dto),
         }
-    }
-
-    /// Moves the current row to manual/unconfirmed as soon as editing begins.
-    #[must_use]
-    pub fn begin_edit(&self) -> Arc<Self> {
-        Arc::new(Self {
-            draft: self.draft.clone().begin_edit(),
-        })
     }
 
     /// Applies a new country observation. Manual choices survive; replaced suggestions need confirmation.
@@ -91,15 +67,15 @@ impl MobileChargingPowerDraft {
         Arc::new(Self { draft })
     }
 
-    /// Applies a complete valid manual edit. Editing is an explicit inclusion action.
-    ///
-    /// # Errors
-    /// Returns [`MobileChargingError::InvalidMetadata`] for an invalid supply.
-    pub fn edit(&self, supply: MobileChargingSupplyDto) -> Result<Arc<Self>, MobileChargingError> {
-        let supply = super::conversion::supply(supply)?;
-        Ok(Arc::new(Self {
-            draft: self.draft.clone().with_selection(supply).confirm(),
-        }))
+    /// Marks the row manual and unconfirmed, then includes a complete valid replacement.
+    #[must_use]
+    pub fn edit(&self, supply: Option<MobileChargingSupplyDto>) -> Arc<Self> {
+        let draft = self.draft.clone().begin_edit();
+        let draft = match supply.and_then(|supply| super::conversion::supply(supply).ok()) {
+            Some(supply) => draft.with_selection(supply).confirm(),
+            None => draft,
+        };
+        Arc::new(Self { draft })
     }
 
     /// Explicitly includes the current displayed choice.
@@ -121,22 +97,6 @@ pub fn mobile_charging_power_draft(
     Arc::new(MobileChargingPowerDraft {
         draft: ride_maps::ChargingPowerDraft::new(country(country_code), kind(ev_station)),
     })
-}
-
-/// Restores an existing observation as a confirmed manual row without changing connector order.
-///
-/// # Errors
-/// Returns [`MobileChargingError::InvalidMetadata`] for an invalid supply.
-#[uniffi::export]
-pub fn mobile_charging_power_draft_restored(
-    supply: MobileChargingSupplyDto,
-    country_code: Option<String>,
-    ev_station: bool,
-) -> Result<Arc<MobileChargingPowerDraft>, MobileChargingError> {
-    let draft = ride_maps::ChargingPowerDraft::new(country(country_code), kind(ev_station))
-        .with_selection(super::conversion::supply(supply)?)
-        .confirm();
-    Ok(Arc::new(MobileChargingPowerDraft { draft }))
 }
 
 /// Validates a complete voltage using the charging domain's range rules.
@@ -174,8 +134,8 @@ mod tests {
     fn country_replacement_requires_reconfirmation_but_manual_edits_are_confirmed() {
         let draft = mobile_charging_power_draft(Some("US".into()), false).confirm();
         assert_eq!(
-            draft.snapshot().confirmation,
-            MobileChargingPowerDraftConfirmationDto::Confirmed
+            draft.snapshot().included_supply,
+            Some(draft.snapshot().selection)
         );
 
         let replacement = draft.with_country(Some("GB".into())).snapshot();
@@ -183,26 +143,17 @@ mod tests {
             replacement.origin,
             MobileChargingPowerDraftOriginDto::Suggested
         );
-        assert_eq!(
-            replacement.confirmation,
-            MobileChargingPowerDraftConfirmationDto::Unconfirmed
-        );
         assert!(replacement.included_supply.is_none());
 
         let edited = mobile_charging_power_draft(None, true)
-            .edit(MobileChargingSupplyDto {
+            .edit(Some(MobileChargingSupplyDto {
                 voltage_volts: None,
                 connectors: vec![MobileChargingConnectorDto::Other {
                     label: "über plug".into(),
                 }],
-            })
-            .unwrap()
+            }))
             .snapshot();
         assert_eq!(edited.origin, MobileChargingPowerDraftOriginDto::Manual);
-        assert_eq!(
-            edited.confirmation,
-            MobileChargingPowerDraftConfirmationDto::Confirmed
-        );
         assert_eq!(edited.included_supply, Some(edited.selection.clone()));
     }
 
@@ -217,29 +168,21 @@ mod tests {
                 MobileChargingConnectorDto::Type2,
             ],
         };
-        let restored = mobile_charging_power_draft_restored(supply.clone(), None, false).unwrap();
+        let restored = mobile_charging_power_draft(None, false).edit(Some(supply.clone()));
         let changed = restored
             .with_kind(true)
             .with_country(Some("DE".into()))
             .snapshot();
         assert_eq!(changed.origin, MobileChargingPowerDraftOriginDto::Manual);
-        assert_eq!(
-            changed.confirmation,
-            MobileChargingPowerDraftConfirmationDto::Confirmed
-        );
         assert_eq!(changed.selection, supply);
         assert_eq!(changed.included_supply, Some(supply));
 
-        let unknown = mobile_charging_power_draft_restored(
-            MobileChargingSupplyDto {
+        let unknown = mobile_charging_power_draft(Some("é".into()), false)
+            .edit(Some(MobileChargingSupplyDto {
                 voltage_volts: None,
                 connectors: vec![MobileChargingConnectorDto::Unknown],
-            },
-            Some("é".into()),
-            false,
-        )
-        .unwrap()
-        .snapshot();
+            }))
+            .snapshot();
         assert_eq!(
             unknown.selection.connectors,
             vec![MobileChargingConnectorDto::Unknown]
@@ -253,25 +196,30 @@ mod tests {
     }
 
     #[test]
-    fn manual_edit_uses_domain_validation() {
-        let error = mobile_charging_power_draft(None, false).edit(MobileChargingSupplyDto {
-            voltage_volts: Some(2_001),
-            connectors: vec![MobileChargingConnectorDto::Unknown],
-        });
-        assert!(error.is_err());
+    fn invalid_manual_edit_keeps_previous_diagnostic_selection_but_revokes_inclusion() {
+        let before = MobileChargingSupplyDto {
+            voltage_volts: Some(240),
+            connectors: vec![MobileChargingConnectorDto::Type2],
+        };
+        let edited = mobile_charging_power_draft(None, false)
+            .edit(Some(before.clone()))
+            .edit(Some(MobileChargingSupplyDto {
+                voltage_volts: Some(2_001),
+                connectors: vec![MobileChargingConnectorDto::Unknown],
+            }))
+            .snapshot();
+        assert_eq!(edited.origin, MobileChargingPowerDraftOriginDto::Manual);
+        assert_eq!(edited.selection, before);
+        assert!(edited.included_supply.is_none());
     }
 
     #[test]
     fn incomplete_edit_has_manual_provenance_and_cannot_be_included() {
         let draft = mobile_charging_power_draft(Some("US".into()), false)
             .confirm()
-            .begin_edit()
+            .edit(None)
             .snapshot();
         assert_eq!(draft.origin, MobileChargingPowerDraftOriginDto::Manual);
-        assert_eq!(
-            draft.confirmation,
-            MobileChargingPowerDraftConfirmationDto::Unconfirmed
-        );
         assert!(draft.included_supply.is_none());
         assert_eq!(draft.selection.voltage_volts, Some(120));
     }

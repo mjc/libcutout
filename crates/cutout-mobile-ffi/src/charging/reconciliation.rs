@@ -28,6 +28,7 @@ enum ObservationSource {
 struct LatestObservation {
     ticket: ObservationTicket,
     source: ObservationSource,
+    revision: ChargingRevision,
     spot: MobileChargingSpotDto,
 }
 
@@ -60,7 +61,7 @@ impl ProjectionState {
             }
             self.withdrawals.remove(&spot.id);
         }
-        Some(self.record_latest(ticket, source, spot))
+        Some(self.record_latest(ticket, source, revision, spot))
     }
 
     fn accept_resolution(
@@ -77,22 +78,19 @@ impl ProjectionState {
                 self.withdrawals.remove(&spot.id);
             }
         }
-        Some(self.record_latest(ticket, ObservationSource::Readback, spot))
+        Some(self.record_latest(ticket, ObservationSource::Readback, accepted_revision, spot))
     }
 
     fn record_latest(
         &mut self,
         ticket: ObservationTicket,
         source: ObservationSource,
+        incoming_revision: ChargingRevision,
         spot: MobileChargingSpotDto,
     ) -> MobileChargingSpotDto {
-        let Some(incoming_revision) = revision(&spot) else {
-            return spot;
-        };
         if let Some(known) = self.latest.get(&spot.id)
-            && let Some(known_revision) = revision(&known.spot)
-            && (known_revision > incoming_revision
-                || (known_revision == incoming_revision && known.ticket > ticket))
+            && (known.revision > incoming_revision
+                || (known.revision == incoming_revision && known.ticket > ticket))
         {
             return known.spot.clone();
         }
@@ -101,6 +99,7 @@ impl ProjectionState {
             LatestObservation {
                 ticket,
                 source,
+                revision: incoming_revision,
                 spot: spot.clone(),
             },
         );
@@ -290,6 +289,28 @@ mod tests {
             pending_operations: 0,
             pending_vote: false,
         }
+    }
+
+    #[test]
+    fn out_of_range_revisions_are_rejected_before_caching() {
+        let state = MobileChargingReconciliation::new();
+        let ticket = state.begin_observation();
+        let invalid = spot("a", u64::MAX, MobileChargingStatusDto::Published);
+        assert!(state.reconcile_readback(ticket, invalid.clone()).is_none());
+        assert!(
+            state
+                .reconcile_resolution(ticket, invalid.clone())
+                .is_none()
+        );
+        assert_eq!(
+            state.reconcile_page(ticket, false, vec![], None, vec![invalid]),
+            Vec::new()
+        );
+        state.record_withdrawal("a".into(), u64::MAX);
+        assert!(!state.is_withdrawn("a".into()));
+        let accepted =
+            state.reconcile_readback(ticket, spot("a", 0, MobileChargingStatusDto::Published));
+        assert_eq!(accepted.map(|spot| spot.local_revision), Some(0));
     }
 
     #[test]

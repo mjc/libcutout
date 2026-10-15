@@ -20,6 +20,20 @@ struct ChargingMapContentView: View {
         }
     }
 
+    private enum SheetRoute: Identifiable {
+        case details(DetailItem)
+        case issues
+        case editor(ChargingSpotEditorModel)
+
+        var id: String {
+            switch self {
+            case .details(let item): "details-\(item.id)"
+            case .issues: "issues"
+            case .editor(let model): "editor-\(ObjectIdentifier(model))"
+            }
+        }
+    }
+
     private struct CountryLookupID: Hashable {
         let editor: ObjectIdentifier
         let hasLocation: Bool
@@ -39,12 +53,9 @@ struct ChargingMapContentView: View {
     @State private var pendingMapSelection = false
     @State private var visibleCenter: CLLocationCoordinate2D?
     @State private var cameraSpan: MKCoordinateSpan?
-    @State private var initializedLocationCamera = false
     @State private var userMovedCamera = false
     @State private var displayMode = DisplayMode.map
-    @State private var detailItem: DetailItem?
-    @State private var showsSyncIssues = false
-    @State private var pendingEditor: ChargingSpotEditorModel?
+    @State private var sheetRoute: SheetRoute?
     @State private var editorLaunchError: MobileChargingError?
     @State private var knownVoltages: Set<UInt16> = [120, 230, 240]
     @State private var cameraRevision = 0
@@ -70,26 +81,25 @@ struct ChargingMapContentView: View {
 
     var body: some View {
         locationAwareContent
-            .sheet(isPresented: $showsSyncIssues, onDismiss: presentPendingEditor) {
-                ChargingSyncIssuesView(model: model, onEdit: beginEditingConflict)
-            }
-            .sheet(item: $detailItem, onDismiss: presentPendingEditor) { item in
-                let spot = currentSpot(for: item)
-                ChargingSpotDetailView(
-                    spot: spot,
-                    isDeleting: model.pendingWithdrawalIDs.contains(item.id),
-                    errorKey: model.error.map(ChargingSpotPresentation.loadErrorKey),
-                    onEdit: { editedSpot in beginEditing(editedSpot) },
-                    onDelete: { spot in
-                        Task {
-                            if await model.withdraw(spot) { detailItem = nil }
+            .sheet(item: presentedSheet) { route in
+                switch route {
+                case .details(let item):
+                    let spot = currentSpot(for: item)
+                    ChargingSpotDetailView(
+                        spot: spot,
+                        isDeleting: model.pendingWithdrawalIDs.contains(item.id),
+                        errorKey: model.error.map(ChargingSpotPresentation.loadErrorKey),
+                        onEdit: beginEditing,
+                        onDelete: { spot in
+                            Task {
+                                if await model.withdraw(spot) { sheetRoute = nil }
+                            }
                         }
-                    }
-                )
-            }
-            .sheet(isPresented: editorSheetPresented) {
-                if let editor {
-                    ChargingSpotEditorView(model: editor, onCancel: { self.editor = nil }) { receipt in
+                    )
+                case .issues:
+                    ChargingSyncIssuesView(model: model, onEdit: beginEditingConflict)
+                case .editor(let editor):
+                    ChargingSpotEditorView(model: editor, onCancel: cancelEditor) { receipt in
                         finishAddingSpot(receipt, coordinate: editor.coordinate)
                     }
                 }
@@ -534,10 +544,24 @@ struct ChargingMapContentView: View {
         }
     }
 
-    private var editorSheetPresented: Binding<Bool> {
+    private var presentedSheet: Binding<SheetRoute?> {
         Binding(
-            get: { editor.map { $0.stage != .moving } ?? false },
-            set: { if !$0 { editor?.movePin() } }
+            get: {
+                if let editor, editor.stage != .moving { return .editor(editor) }
+                return sheetRoute
+            },
+            set: { route in
+                guard let route else {
+                    sheetRoute = nil
+                    if editor?.stage != .moving { editor?.movePin() }
+                    return
+                }
+                if case .editor = route {
+                    sheetRoute = nil
+                } else {
+                    sheetRoute = route
+                }
+            }
         )
     }
 
@@ -598,7 +622,7 @@ struct ChargingMapContentView: View {
 
     private var cancelPlacementButton: some View {
         Button {
-            editor = nil
+            cancelEditor()
         } label: {
             Text(localizedAppText("charging.editor.cancel"))
                 .frame(maxWidth: .infinity, minHeight: 44)
@@ -640,7 +664,7 @@ struct ChargingMapContentView: View {
         model.deselect()
         if displayMode == .list { pendingMapSelection = true }
         displayMode = .map
-        detailItem = nil
+        sheetRoute = nil
         editor = ChargingSpotEditorModel(coordinate: Self.dto(coordinate), inputLocale: locale)
         centerMap(on: coordinate, span: cameraSpan ?? defaultCameraSpan)
         visibleCenter = coordinate
@@ -655,6 +679,7 @@ struct ChargingMapContentView: View {
 
     private func finishAddingSpot(_ receipt: MobileChargingWriteReceiptDto, coordinate: MobileMapCoordinateDto) {
         let isNewSpot = editor?.isEditing == false
+        sheetRoute = nil
         editor = nil
         centerMap(on: Self.coordinate(coordinate), span: cameraSpan ?? defaultCameraSpan)
         if isNewSpot {
@@ -688,8 +713,8 @@ struct ChargingMapContentView: View {
                     pendingMapSelection = true
                     displayMode = .map
                 }
-                pendingEditor = editor
-                detailItem = nil
+                self.editor = editor
+                sheetRoute = nil
             } catch {
                 editorLaunchError = error as? MobileChargingError ?? .StorageFailure
             }
@@ -711,14 +736,13 @@ struct ChargingMapContentView: View {
                     expectedLocalRevision: revision,
                     fields: fields)
             })
-        pendingEditor = editor
-        showsSyncIssues = false
+        self.editor = editor
+        sheetRoute = nil
     }
 
-    private func presentPendingEditor() {
-        guard let pendingEditor else { return }
-        self.pendingEditor = nil
-        editor = pendingEditor
+    private func cancelEditor() {
+        sheetRoute = nil
+        editor = nil
     }
 
     private func centerMap(on coordinate: CLLocationCoordinate2D, span: MKCoordinateSpan) {
@@ -746,16 +770,13 @@ struct ChargingMapContentView: View {
     }
 
     private func acceptUserLocation(_ location: CLLocation) {
-        if !initializedLocationCamera {
-            initializedLocationCamera = true
-            var shouldCenter = model.userLocation == nil && !userMovedCamera && editor == nil
-            #if DEBUG
-                // Keep fixture pins in view; Add spot still uses the real location sample.
-                shouldCenter = shouldCenter && !CutoutUITestChargingFixture.isEnabled
-            #endif
-            if shouldCenter {
-                centerMap(on: location.coordinate, span: cameraSpan ?? defaultCameraSpan)
-            }
+        var shouldCenter = model.userLocation == nil && !userMovedCamera && editor == nil
+        #if DEBUG
+            // Keep fixture pins in view; Add spot still uses the real location sample.
+            shouldCenter = shouldCenter && !CutoutUITestChargingFixture.isEnabled
+        #endif
+        if shouldCenter {
+            centerMap(on: location.coordinate, span: cameraSpan ?? defaultCameraSpan)
         }
         model.setUserLocation(Self.dto(location.coordinate))
     }
@@ -843,7 +864,7 @@ struct ChargingMapContentView: View {
                     .accessibilityIdentifier("charging.pending-vote")
             }
             Button {
-                detailItem = DetailItem(spot)
+                sheetRoute = .details(DetailItem(spot))
             } label: {
                 HStack {
                     Text(localizedAppText("charging.details.button"))
@@ -965,7 +986,7 @@ struct ChargingMapContentView: View {
                 }
                 .buttonStyle(.plain)
                 Button {
-                    detailItem = DetailItem(spot)
+                    sheetRoute = .details(DetailItem(spot))
                 } label: {
                     Image(systemName: "info.circle").frame(minWidth: 44, minHeight: 44)
                 }
@@ -996,7 +1017,7 @@ struct ChargingMapContentView: View {
                 }
                 Spacer(minLength: 8)
                 Button(localizedAppText("charging.details.button")) {
-                    detailItem = DetailItem(spot)
+                    sheetRoute = .details(DetailItem(spot))
                 }
                 .frame(minHeight: 44)
                 .accessibilityIdentifier("charging.saved-selection.details")
@@ -1009,7 +1030,7 @@ struct ChargingMapContentView: View {
                 .frame(minHeight: 44).padding(.bottom, 4)
         }
         ChargingCommunityStatusView(model: model) {
-            showsSyncIssues = true
+            sheetRoute = .issues
         }
         if let error = model.voteError {
             Text(localizedAppText(ChargingSpotPresentation.voteErrorKey(error)))

@@ -33,21 +33,21 @@ struct ChargingLocationSampleSelector {
 
     func freshLocation(at date: Date = Date()) -> CLLocation? {
         guard let bestLocation,
-            mobileFreshChargingLocationFix(
+            mobileChargingLocationFixIsFresh(
                 fix: fix(from: bestLocation),
                 nowUnixSeconds: date.timeIntervalSince1970
-            ) != nil
+            )
         else { return nil }
         return bestLocation
     }
 
     private mutating func selectCandidate(_ location: CLLocation, now: Date) -> CLLocation? {
         guard
-            mobileSelectChargingLocationFix(
+            mobileChargingLocationCandidateIsAccepted(
                 current: bestLocation.map { fix(from: $0) },
                 candidate: fix(from: location),
                 nowUnixSeconds: now.timeIntervalSince1970
-            ) != nil
+            )
         else { return nil }
         bestLocation = location
         return location

@@ -37,24 +37,6 @@ impl ChargingLocationFix {
             horizontal_accuracy_meters,
         })
     }
-
-    /// Returns the WGS84 coordinate.
-    #[must_use]
-    pub const fn coordinate(self) -> Coordinate {
-        self.coordinate
-    }
-
-    /// Returns the source timestamp in Unix seconds.
-    #[must_use]
-    pub const fn source_timestamp_unix_seconds(self) -> f64 {
-        self.source_timestamp_unix_seconds
-    }
-
-    /// Returns horizontal accuracy in metres.
-    #[must_use]
-    pub const fn horizontal_accuracy_meters(self) -> f64 {
-        self.horizontal_accuracy_meters
-    }
 }
 
 /// Chooses a fresh map fix using the caller's wall-clock time.

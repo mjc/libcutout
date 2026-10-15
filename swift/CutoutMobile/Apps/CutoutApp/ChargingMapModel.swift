@@ -33,6 +33,8 @@ func withChargingDatabase<Result: Sendable>(
         return try await operation(database)
     } catch let error as MobileChargingError {
         throw error
+    } catch let error as CancellationError {
+        throw error
     } catch {
         throw MobileChargingError.Unavailable
     }
@@ -431,8 +433,9 @@ final class ChargingMapModel {
     }
 
     func consumeDiscoveryTarget() -> MobileMapCoordinateDto? {
-        defer { discoveryTarget = nil }
-        return discovery.consumeTarget()
+        let target = discoveryTarget
+        discoveryTarget = nil
+        return target
     }
 
     func withdraw(_ spot: MobileChargingSpotDto) async -> Bool {
@@ -616,9 +619,9 @@ final class ChargingMapModel {
             return
         }
         let coordinate = nearest?.input?.coordinate
-        discovery.searchCompleted(nearest: coordinate)
+        let target = discovery.searchCompleted(nearest: coordinate)
         discoveryTask = nil
-        discoveryTarget = coordinate
+        discoveryTarget = target
     }
 
     private func failInitialDiscovery(_ error: MobileChargingError, generation: UInt64) {

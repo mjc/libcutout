@@ -191,23 +191,11 @@ final class ChargingCommunitySync {
             },
             synchronize: { token in
                 let database = try await RustPersistenceStore.open()
-                let summary = try await database.synchronizeChargingSpots(token: token)
-                return ChargingCommunitySyncCounts(
-                    pendingCount: summary.pendingCount,
-                    downloaded: summary.downloaded,
-                    uploaded: summary.uploaded,
-                    outcome: summary.outcome
-                )
+                return try await database.synchronizeChargingSpots(token: token)
             },
             refreshDirectory: {
                 let database = try await RustPersistenceStore.open()
-                let summary = try await database.refreshChargingDirectory()
-                return ChargingCommunitySyncCounts(
-                    pendingCount: summary.pendingCount,
-                    downloaded: summary.downloaded,
-                    uploaded: summary.uploaded,
-                    outcome: summary.outcome
-                )
+                return try await database.refreshChargingDirectory()
             },
             readLastUpdated: {
                 let database = try await RustPersistenceStore.open()
@@ -247,9 +235,9 @@ final class ChargingCommunitySync {
     )
 
     private(set) var status: ChargingCommunitySyncStatus = .notStarted
-    private(set) var pendingCount: UInt32 = 0
-    private(set) var downloaded: UInt32 = 0
-    private(set) var uploaded: UInt32 = 0
+    var pendingCount: UInt32 { syncRunState.pendingCount }
+    var downloaded: UInt32 { syncRunState.downloaded }
+    var uploaded: UInt32 { syncRunState.uploaded }
     private(set) var lastUpdated: Date?
 
     init(
@@ -294,8 +282,6 @@ final class ChargingCommunitySync {
 
     private func perform(explicitRetry: Bool) async -> ChargingCommunitySyncStatus {
         status = .syncing
-        downloaded = 0
-        uploaded = 0
         syncRunState = MobileChargingSyncRunState(
             round: 0, attempt: 0, pendingCount: pendingCount, downloaded: 0, uploaded: 0
         )
@@ -318,30 +304,14 @@ final class ChargingCommunitySync {
                 let beganRegistration = try await credentialStore.beginRegistration()
                 try Task.checkCancellation()
                 if beganRegistration {
-                    let registration = mobileChargingRegistrationAdmission(
-                        state: .registrationStarted, explicitRetry: true
-                    )
-                    guard registration == .registerIdentity else { return .storageUnavailable }
                     credential = try await registerAndPersist()
                 } else {
                     let currentRecord = try await credentialStore.load()
-                    let claimResult: MobileChargingRegistrationClaimResult
-                    if case .ready = currentRecord {
-                        claimResult = .readyCredential
-                    } else {
-                        claimResult = .unavailable
-                    }
-                    let current = mobileChargingRegistrationClaimAdmission(result: claimResult)
-                    switch current {
-                    case .synchronize:
-                        guard case .ready(let saved) = currentRecord else {
-                            return .storageUnavailable
-                        }
-                        credential = saved
-                    case .requireExplicitRetry:
+                    guard case .ready(let saved) = currentRecord else {
                         await refreshUnauthenticatedDirectory()
                         return .registrationUncertain
                     }
+                    credential = saved
                 }
             case .publicRefresh:
                 await refreshUnauthenticatedDirectory()
@@ -351,12 +321,7 @@ final class ChargingCommunitySync {
                 return .registrationUncertain
             }
         } catch {
-            let unreadable = mobileChargingRegistrationAdmission(
-                state: .unreadable, explicitRetry: explicitRetry
-            )
-            if unreadable == .publicRefresh {
-                await refreshUnauthenticatedDirectory()
-            }
+            await refreshUnauthenticatedDirectory()
             return status(for: error)
         }
 
@@ -367,13 +332,15 @@ final class ChargingCommunitySync {
             } catch {
                 return status(for: error)
             }
-            publish(step.state)
+            syncRunState = step.state
             if step.action == .nextRound { continue }
-            if step.action == .authenticationRequired {
+            if case .finished(result: .authenticationRequired) = step.action {
                 await refreshUnauthenticatedDirectory()
             }
-            if step.action == .synced || step.state.downloaded > 0 {
-                if step.action == .synced { lastUpdated = Date() }
+            if case .finished(result: .synced) = step.action {
+                lastUpdated = Date()
+            }
+            if step.action == .finished(result: .synced) || step.state.downloaded > 0 {
                 await refreshPersistedLastUpdated()
             }
             return status(for: step.action)
@@ -388,12 +355,11 @@ final class ChargingCommunitySync {
                 let summary = try await refreshDirectory()
                 try Task.checkCancellation()
                 let step = mobileChargingSyncObserveSummary(state: syncRunState, summary: summary)
-                publish(step.state)
+                syncRunState = step.state
                 if summary.downloaded > 0 || step.action != .nextRound {
                     await refreshPersistedLastUpdated()
                 }
                 if case let .retry(afterSeconds: delay) = step.action {
-                    syncRunState = step.state
                     do { try await sleep(.seconds(Int64(delay))) } catch { return }
                     continue
                 }
@@ -402,7 +368,7 @@ final class ChargingCommunitySync {
                 guard !(error is CancellationError) else { return }
                 let failure = (error as? MobileChargingError) ?? .StorageFailure
                 let step = mobileChargingSyncObserveError(state: syncRunState, error: failure)
-                publish(step.state)
+                syncRunState = step.state
                 guard case let .retry(afterSeconds: delay) = step.action else { return }
                 do { try await sleep(.seconds(Int64(delay))) } catch { return }
             }
@@ -464,17 +430,17 @@ final class ChargingCommunitySync {
         }
     }
 
-    private func publish(_ state: MobileChargingSyncRunState) {
-        syncRunState = state
-        pendingCount = state.pendingCount
-        downloaded = state.downloaded
-        uploaded = state.uploaded
-    }
-
     private func status(for action: MobileChargingSyncAction) -> ChargingCommunitySyncStatus {
         switch action {
+        case .finished(let result): status(for: result)
+        case .nextRound, .retry(_): .pending
+        }
+    }
+
+    private func status(for result: MobileChargingSyncResult) -> ChargingCommunitySyncStatus {
+        switch result {
         case .synced: .synced
-        case .pending, .nextRound, .retry(_): .pending
+        case .pending: .pending
         case .offline: .offline
         case .authenticationRequired: .authenticationRequired
         case .conflict: .conflict
@@ -490,13 +456,6 @@ final class ChargingCommunitySync {
             return .storageUnavailable
         }
         guard let error = error as? MobileChargingError else { return .storageUnavailable }
-        return switch mobileChargingSyncFailure(error: error) {
-        case .offline: .offline
-        case .authenticationRequired: .authenticationRequired
-        case .conflict: .conflict
-        case .rejected: .rejected
-        case .throttled: .throttled
-        case .storageUnavailable: .storageUnavailable
-        }
+        return status(for: mobileChargingSyncResult(error: error))
     }
 }

@@ -1,5 +1,6 @@
 import CutoutMobile
 import CutoutMobileFFI
+import Foundation
 import MapKit
 import XCTest
 
@@ -7,6 +8,41 @@ import XCTest
 
 @MainActor
 final class ChargingMapModelTests: XCTestCase {
+    func testWithChargingDatabasePreservesCancellationWhileOpening() async {
+        do {
+            _ = try await withChargingDatabase(
+                open: { throw CancellationError() },
+                { _ in true }
+            )
+            XCTFail("database opening cancellation must propagate")
+        } catch is CancellationError {
+            // Expected: cancellation is control flow, not storage unavailability.
+        } catch {
+            XCTFail("expected cancellation, got \(error)")
+        }
+    }
+
+    func testWithChargingDatabasePreservesCancellationDuringOperation() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "ChargingMapModelTests.database.\(UUID().uuidString)", isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let database = try openRideDatabase(path: directory.appendingPathComponent("ride.sqlite").path)
+        defer { try? database.shutdown() }
+
+        do {
+            let _: Bool = try await withChargingDatabase(open: { database }) { _ in
+                throw CancellationError()
+            }
+            XCTFail("operation cancellation must propagate")
+        } catch is CancellationError {
+            // Expected: cancellation is control flow, not storage unavailability.
+        } catch {
+            XCTFail("expected cancellation, got \(error)")
+        }
+    }
+
     func testPaginationDeduplicatesAndKeepsSelectionCurrent() async {
         let model = ChargingMapModel(
             queryPage: { _, _, cursor, _ in
@@ -610,14 +646,24 @@ final class ChargingMapModelTests: XCTestCase {
         model.applicationDidBecomeActive()
         await gate.waitForCallCount(2)
 
-        await gate.release(1, counts: .init(pendingCount: 0, downloaded: 1, uploaded: 0, outcome: .synced))
+        await gate.release(
+            1,
+            counts: .init(
+                pendingCount: 0, downloaded: 1, uploaded: 0, outcome: .finished(result: .synced)
+            )
+        )
         await Task.yield()
         await Task.yield()
         let callsAfterCancelledRun = await gate.callCount()
         XCTAssertEqual(callsAfterCancelledRun, 2)
 
         model.communitySyncRequested()
-        await gate.release(2, counts: .init(pendingCount: 0, downloaded: 2, uploaded: 0, outcome: .synced))
+        await gate.release(
+            2,
+            counts: .init(
+                pendingCount: 0, downloaded: 2, uploaded: 0, outcome: .finished(result: .synced)
+            )
+        )
         await gate.waitForCallCount(3)
         for _ in 0..<100 where model.communitySyncDownloaded != 3 {
             await Task.yield()
@@ -654,7 +700,10 @@ final class ChargingMapModelTests: XCTestCase {
                 ),
                 registerIdentity: { .init(identityID: "identity", token: "token") },
                 synchronize: { _ in
-                    .init(pendingCount: 1, downloaded: 0, uploaded: 0, outcome: .pending)
+                    .init(
+                        pendingCount: 1, downloaded: 0, uploaded: 0,
+                        outcome: .finished(result: .pending)
+                    )
                 },
                 sleep: { _ in },
                 enabled: { true }
@@ -1004,7 +1053,8 @@ final class ChargingMapModelTests: XCTestCase {
             registerIdentity: { .init(identityID: "test", token: "test") },
             synchronize: { _ in
                 ChargingCommunitySyncCounts(
-                    pendingCount: 0, downloaded: 1, uploaded: 0, outcome: .synced
+                    pendingCount: 0, downloaded: 1, uploaded: 0,
+                    outcome: .finished(result: .synced)
                 )
             },
             sleep: { _ in },
@@ -1163,7 +1213,10 @@ private actor ChargingSyncRunGate {
         countWaiters.filter { $0.0 <= current }.forEach { $0.1.resume() }
         countWaiters.removeAll { $0.0 <= current }
         if current > 2 {
-            return .init(pendingCount: 0, downloaded: 3, uploaded: 0, outcome: .synced)
+            return .init(
+                pendingCount: 0, downloaded: 3, uploaded: 0,
+                outcome: .finished(result: .synced)
+            )
         }
         return try await withCheckedThrowingContinuation { waiters[current] = $0 }
     }
