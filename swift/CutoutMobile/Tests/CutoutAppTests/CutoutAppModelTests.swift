@@ -465,10 +465,16 @@ final class CutoutAppModelTests: XCTestCase {
                 )
             )
         )
+        let route = EucPackRouteView(
+            device: model.device, packScreen: .bmsOverview, selectedGroupIndex: nil, navigate: { _ in })
+        XCTAssertFalse(
+            observesChange({ _ = route.body }) {
+                driver.onDisplayStateChange?(RideDisplayState(notificationCount: 1))
+            })
         let screen = PevScreenCatalog.live.presentedBmsScreen(liveBmsSnapshot: model.device.bmsSnapshot)
         XCTAssertFalse(
             observesChange({ _ = EucPackRouteView.rideState(for: screen, device: model.device) }) {
-                driver.onDisplayStateChange?(RideDisplayState(notificationCount: 1))
+                driver.onDisplayStateChange?(RideDisplayState(notificationCount: 2))
             })
     }
 
@@ -477,10 +483,16 @@ final class CutoutAppModelTests: XCTestCase {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)
         model.liveRide.setSceneActive(true)
+        let route = EucPackRouteView(
+            device: model.device, packScreen: .bmsOverview, selectedGroupIndex: nil, navigate: { _ in })
+        XCTAssertTrue(
+            observesChange({ _ = route.body }) {
+                driver.onDisplayStateChange?(RideDisplayState(notificationCount: 1))
+            })
         let screen = PevScreenCatalog.live.presentedBmsScreen(liveBmsSnapshot: model.device.bmsSnapshot)
         XCTAssertTrue(
             observesChange({ _ = EucPackRouteView.rideState(for: screen, device: model.device) }) {
-                driver.onDisplayStateChange?(RideDisplayState(notificationCount: 1))
+                driver.onDisplayStateChange?(RideDisplayState(notificationCount: 2))
             })
     }
 
@@ -1052,13 +1064,17 @@ final class CutoutAppModelTests: XCTestCase {
             })
         XCTAssertFalse(
             observesProgressChange {
-                let screen = PevScreenCatalog.live.presentedBmsScreen(liveBmsSnapshot: $0.device.bmsSnapshot)
-                _ = EucPackRouteView.rideState(for: screen, device: $0.device)
+                _ =
+                    EucPackRouteView(
+                        device: $0.device, packScreen: .bmsOverview, selectedGroupIndex: nil, navigate: { _ in }
+                    ).body
             })
         XCTAssertFalse(
             observesProgressChange(withAvailableBms: true) {
-                let screen = PevScreenCatalog.live.presentedBmsScreen(liveBmsSnapshot: $0.device.bmsSnapshot)
-                _ = EucPackRouteView.rideState(for: screen, device: $0.device)
+                _ =
+                    EucPackRouteView(
+                        device: $0.device, packScreen: .bmsOverview, selectedGroupIndex: nil, navigate: { _ in }
+                    ).body
             })
     }
 

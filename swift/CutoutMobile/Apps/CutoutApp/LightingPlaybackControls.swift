@@ -265,7 +265,7 @@ struct LightingPlaybackControls: View {
                 LightingEffectGrid(
                     ids: favorites,
                     selectedPattern: pattern,
-                    onSelect: selectPattern
+                    onSelect: { selectPattern($0, speed: UInt8(speed)) }
                 )
                 Text(localizedAppText("lighting.group_patterns", LightingPatternCatalog.groupName(for: group)))
                     .font(.subheadline.weight(.semibold))
@@ -273,13 +273,13 @@ struct LightingPlaybackControls: View {
                 LightingEffectGrid(
                     ids: patternIDs,
                     selectedPattern: pattern,
-                    onSelect: selectPattern
+                    onSelect: { selectPattern($0, speed: UInt8(speed)) }
                 )
                 Picker(
                     localizedAppText("lighting.pattern"),
                     selection: Binding(
                         get: { pattern },
-                        set: { selectPattern($0) }
+                        set: { selectPattern($0, speed: UInt8(speed)) }
                     )
                 ) {
                     ForEach(patternIDs, id: \.self) { id in
@@ -384,13 +384,9 @@ struct LightingPlaybackControls: View {
         }
     }
 
-    func selectPattern(_ id: Int) {
+    func selectPattern(_ id: Int, speed: UInt8) {
         pattern = id
         selectGroup(for: id)
-        Self.applyPatternSelection(id, speed: UInt8(speed), to: model)
-    }
-
-    static func applyPatternSelection(_ id: Int, speed: UInt8, to model: LightingRouteModel) {
         model.setPlayback(.effect(pattern: UInt8(id), speed: speed))
     }
 

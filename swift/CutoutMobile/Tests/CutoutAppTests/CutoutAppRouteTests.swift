@@ -973,9 +973,11 @@ final class CutoutAppRouteTests: XCTestCase {
         )
         model.start()
         fake.emitState(.ready)
-        LightingPlaybackControls.applyPatternSelection(16, speed: 128, to: model)
+        LightingPlaybackControls(model: model, page: .effects).selectPattern(16, speed: 128)
 
         XCTAssertEqual(fake.stateRequests.last?.playback, .effect(pattern: 16, speed: 128))
+        LightingPlaybackControls(model: model, page: .effects).selectPattern(22, speed: 64)
+        XCTAssertEqual(fake.stateRequests.last?.playback, .effect(pattern: 22, speed: 64))
     }
 
     @MainActor
