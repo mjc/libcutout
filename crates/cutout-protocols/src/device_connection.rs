@@ -598,6 +598,12 @@ impl DeviceConnectionSession {
             identity: self.device.as_ref().map(DeviceSession::identity),
         }
     }
+
+    /// Returns the selected decoder's current normalized evidence, including charging inference.
+    #[must_use]
+    pub fn telemetry_snapshot(&self) -> Option<TelemetrySnapshotDto> {
+        self.device.as_ref().map(DeviceSession::current_snapshot)
+    }
 }
 
 #[cfg(test)]

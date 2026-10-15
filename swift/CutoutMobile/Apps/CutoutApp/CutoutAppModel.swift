@@ -38,6 +38,7 @@ final class CutoutAppModel {
     var phoneLocationReadback: PhoneLocationReadback { device.phoneLocationReadback }
     private(set) var mapLocationSample: MobilePhoneLocationSampleDto?
     let liveRide: LiveRideModel
+    let chargingStops: ChargingStopPromptModel
     let music: MusicFeatureModel
     private(set) var liveActivityError: LiveActivityRideLifecycleError?
     private(set) var rideMapCheckpointError: MobileRideMapError?
@@ -490,6 +491,10 @@ final class CutoutAppModel {
         self.rideHistory = rideHistory
         self.permitsStoredDeviceAutoPairing = permitsStoredDeviceAutoPairing
         self.core = core
+        chargingStops = ChargingStopPromptModel(
+            state: core.rideMapStateHandle, session: core.rideSessionStateHandle,
+            now: { core.now().rawValue }
+        )
         liveRide = LiveRideModel(
             state: core.rideMapStateHandle,
             storageError: core.rideMapStorageError,

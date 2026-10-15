@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		931000000000000000000003 /* ChargingStopPromptTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 931000000000000000000004 /* ChargingStopPromptTests.swift */; };
 		C86400000000000000000019 /* CutoutMobile in Frameworks */ = {isa = PBXBuildFile; productRef = C86400000000000000000020 /* CutoutMobile */; };
 		111111111111111111111111 /* Apps/CutoutApp/CutoutApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 111111111111111111111121 /* Apps/CutoutApp/CutoutApp.swift */; };
 		111111111111111111111112 /* Apps/CutoutApp/ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 111111111111111111111122 /* Apps/CutoutApp/ContentView.swift */; };
@@ -102,6 +103,7 @@
 		C89200000000000000000001 /* PhoneLocationAdapterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C89200000000000000000002 /* PhoneLocationAdapterTests.swift */; };
 		C89200000000000000000003 /* LockedRideMainThreadTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C89200000000000000000004 /* LockedRideMainThreadTests.swift */; };
 		C61700000000000000000001 /* RideSessionMarkerNonblockingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C61700000000000000000002 /* RideSessionMarkerNonblockingTests.swift */; };
+		931000000000000000000001 /* Apps/CutoutApp/ChargingStopPromptModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 931000000000000000000002 /* Apps/CutoutApp/ChargingStopPromptModel.swift */; };
 		CB9240000000000000000002 /* Apps/CutoutApp/ChargingMapModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB9240000000000000000003 /* Apps/CutoutApp/ChargingMapModel.swift */; };
 		CB9240000000000000000004 /* Apps/CutoutApp/ChargingMapContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB9240000000000000000005 /* Apps/CutoutApp/ChargingMapContentView.swift */; };
 		CB9240000000000000000006 /* Apps/CutoutApp/ChargingSpotDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB9240000000000000000007 /* Apps/CutoutApp/ChargingSpotDetailView.swift */; };
@@ -174,6 +176,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		931000000000000000000004 /* ChargingStopPromptTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/CutoutAppTests/ChargingStopPromptTests.swift; sourceTree = SOURCE_ROOT; };
 		111111111111111111111121 /* Apps/CutoutApp/CutoutApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/CutoutApp.swift; sourceTree = SOURCE_ROOT; };
 		111111111111111111111122 /* Apps/CutoutApp/ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/ContentView.swift; sourceTree = SOURCE_ROOT; };
 		111111111111111111111123 /* Apps/CutoutApp/CutoutAppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/CutoutAppModel.swift; sourceTree = SOURCE_ROOT; };
@@ -266,6 +269,7 @@
 		C89200000000000000000002 /* PhoneLocationAdapterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/CutoutMobileTests/PhoneLocationAdapterTests.swift; sourceTree = SOURCE_ROOT; };
 		C89200000000000000000004 /* LockedRideMainThreadTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/CutoutAppTests/LockedRideMainThreadTests.swift; sourceTree = SOURCE_ROOT; };
 		C61700000000000000000002 /* RideSessionMarkerNonblockingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/CutoutAppTests/RideSessionMarkerNonblockingTests.swift; sourceTree = SOURCE_ROOT; };
+		931000000000000000000002 /* Apps/CutoutApp/ChargingStopPromptModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/ChargingStopPromptModel.swift; sourceTree = SOURCE_ROOT; };
 		CB9240000000000000000003 /* Apps/CutoutApp/ChargingMapModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/ChargingMapModel.swift; sourceTree = SOURCE_ROOT; };
 		CB9240000000000000000005 /* Apps/CutoutApp/ChargingMapContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/ChargingMapContentView.swift; sourceTree = SOURCE_ROOT; };
 		CB9240000000000000000007 /* Apps/CutoutApp/ChargingSpotDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/ChargingSpotDetailView.swift; sourceTree = SOURCE_ROOT; };
@@ -356,6 +360,7 @@
 				F1D000000000000000000004 /* ChargingMapCameraTests.swift */,
 				19621AC6591CAB3E35170D5C /* ChargingSupplyDraftTests.swift */,
 				9DC47A0CDE4C0701459ED7C4 /* ChargingEditorValidationPresentationTests.swift */,
+				931000000000000000000004 /* ChargingStopPromptTests.swift */,
 				CE0000000000000000000006 /* ChargingSpotEditorModelTests.swift */,
 				A8A4266071908B8715EE5BEF /* ChargingLocationSampleSelectorTests.swift */,
 				E9895EF606FFF72A58A1316B /* ChargingMapLongPressGestureTests.swift */,
@@ -409,6 +414,7 @@
 				CAC54A074878CAA2E7A98218 /* Apps/CutoutApp/ChargingEditorValidationPresentation.swift */,
 				07CCC0DAA7F8CE4C1264DE46 /* Apps/CutoutApp/ChargingSupplyDraft.swift */,
 				F976A9CFEA6CF1EB0B1052AF /* Apps/CutoutApp/ChargingSupplyForm.swift */,
+				931000000000000000000002 /* Apps/CutoutApp/ChargingStopPromptModel.swift */,
 				CB9240000000000000000003 /* Apps/CutoutApp/ChargingMapModel.swift */,
 				400000000000000000000026 /* Apps/CutoutApp/RideMapCanvasView.swift */,
 				400000000000000000000027 /* Apps/CutoutApp/RideMapControlsView.swift */,
@@ -783,6 +789,7 @@
 				1ED7768B474F353F005F5583 /* Apps/CutoutApp/ChargingEditorValidationPresentation.swift in Sources */,
 				543286F8034E52897C5D0487 /* Apps/CutoutApp/ChargingSupplyDraft.swift in Sources */,
 				146CA1018817129D2890732F /* Apps/CutoutApp/ChargingSupplyForm.swift in Sources */,
+				931000000000000000000001 /* Apps/CutoutApp/ChargingStopPromptModel.swift in Sources */,
 				CB9240000000000000000002 /* Apps/CutoutApp/ChargingMapModel.swift in Sources */,
 				300000000000000000000026 /* Apps/CutoutApp/RideMapCanvasView.swift in Sources */,
 				300000000000000000000027 /* Apps/CutoutApp/RideMapControlsView.swift in Sources */,
@@ -862,6 +869,7 @@
 				F1D000000000000000000003 /* ChargingMapCameraTests.swift in Sources */,
 				3DC62112D22F73FC591448EF /* ChargingSupplyDraftTests.swift in Sources */,
 				3CDCC05704779FC7ADE37E24 /* ChargingEditorValidationPresentationTests.swift in Sources */,
+				931000000000000000000003 /* ChargingStopPromptTests.swift in Sources */,
 				CE0000000000000000000005 /* ChargingSpotEditorModelTests.swift in Sources */,
 				ECABD2F5D768D4FFF2766F2F /* ChargingLocationSampleSelectorTests.swift in Sources */,
 				9C904127C7BA70852C0FDC3F /* ChargingMapLongPressGestureTests.swift in Sources */,

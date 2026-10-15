@@ -823,6 +823,16 @@ public struct MobileRideMapOutcomeDto: Equatable, Hashable, Sendable {
 public final class MobileRideMapState: @unchecked Sendable {
     private let core: MobileRideMapCore?
     private let database: RideDatabaseHandle?
+
+    /// Evaluates charging-stop suggestions against this canonical recording and device owner.
+    public func chargingStopPrompt(
+        policy: MobileChargingStopPrompts,
+        session: CutoutSessionStateHandle,
+        context: MobileChargingStopContextDto
+    ) async -> MobileChargingStopDecisionDto {
+        guard let core else { return .noAssociatedRide }
+        return await policy.observe(ride: core, session: session, context: context)
+    }
     public var initializationError: MobileRideMapError? {
         if let storageUnavailableError { return storageUnavailableError }
         return core?.initializationError().map(Self.mapCoreError)

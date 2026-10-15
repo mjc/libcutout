@@ -10,6 +10,11 @@
 //! Rust-owned ride recording and geospatial domain primitives.
 
 mod charging;
+mod charging_stop;
+pub use charging_stop::{
+    CHARGING_STOP_PROMPT_RADIUS_MILLIMETRES, ChargingStopDecision, ChargingStopObservation,
+    ChargingStopPrompt, ChargingStopPrompts, ChargingStopSuppression,
+};
 mod charging_connector_catalogue;
 pub use charging_connector_catalogue::charging_connector_choices;
 mod charging_location;

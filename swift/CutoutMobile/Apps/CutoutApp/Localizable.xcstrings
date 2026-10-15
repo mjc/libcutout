@@ -1,6 +1,8 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "charging.stop.title" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Add a charging spot?" } } } },
+    "charging.stop.dismiss" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Not now" } } } },
     "charging.selected.close" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Close pin"}}}},
     "charging.sync.clear_vote" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Clear vote"}}}},
     "charging.sync.name" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Name"}}}},

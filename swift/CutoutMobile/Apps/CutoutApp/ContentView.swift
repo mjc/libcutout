@@ -16,6 +16,7 @@ struct ContentView: View {
     @State private var connectionAnnouncements = ConnectionAccessibilityAnnouncements()
     @State private var presentedSheet: Sheet?
     @Environment(\.openURL) private var openURL
+    @Environment(\.locale) private var locale
 
     private enum Sheet: Identifiable {
         case setup, music, musicSettings
@@ -70,6 +71,21 @@ struct ContentView: View {
                     liveActivityFailureBanner(presentation)
                 }
             }
+            .safeAreaInset(edge: .bottom) {
+                if chargingPromptAvailable, model.chargingStops.prompt != nil {
+                    chargingStopPrompt
+                }
+            }
+            .task(id: chargingPromptAvailable) {
+                guard chargingPromptAvailable else {
+                    model.chargingStops.dismiss()
+                    return
+                }
+                while !Task.isCancelled {
+                    await model.chargingStops.refresh(location: model.mapLocationSample)
+                    do { try await Task.sleep(for: .seconds(2)) } catch { return }
+                }
+            }
             .onChange(of: route, initial: true) { _, route in
                 focusedRoute = route
             }
@@ -116,6 +132,37 @@ struct ContentView: View {
                     AccessibilityNotification.Announcement(error.accessibilityAnnouncement).post()
                 }
             }
+    }
+
+    private var chargingPromptAvailable: Bool {
+        model.liveRide.isSceneActive && presentedSheet == nil && rideMapPresentation.chargingEditor == nil
+    }
+
+    private var chargingStopPrompt: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(localizedAppText("charging.stop.title"))
+                .font(.headline)
+                .accessibilityAddTraits(.isHeader)
+            HStack {
+                Button(localizedAppText("charging.stop.dismiss")) { model.chargingStops.dismiss() }
+                    .accessibilityIdentifier("charging.stop.dismiss")
+                Spacer()
+                Button(localizedAppText("charging.add")) {
+                    guard let prompt = model.chargingStops.prompt,
+                        rideMapPresentation.beginChargingStop(prompt, locale: locale)
+                    else { return }
+                    model.chargingStops.dismiss()
+                    navigate(to: .rideMap)
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("charging.stop.add")
+            }
+            .frame(minHeight: 44)
+        }
+        .padding(16)
+        .background(PevColors.cardFill)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("charging.stop.prompt")
     }
 
     private func liveActivityFailureBanner(_ presentation: LiveActivityFailurePresentation) -> some View {
